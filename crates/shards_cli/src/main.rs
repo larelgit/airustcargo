@@ -10,7 +10,8 @@
 //! shards act dodge dir=W
 //! shards shot                      # PNG of the window with eN marks, plus a legend
 //! shards save-replay               # this session as a replay file (cargo sandbox --replay F)
-//! shards --port-file F wait        # a game started with `--port 0 --port-file F`
+//! shards --port-file F wait        # a game started with `--port 0 --port-file F`; waits for loading
+//! shards content check             # every content file parsed and validated
 //! shards tools
 //! shards raw world.query '{"data":{"components":["sandbox::gameplay::combat::Health"]}}'
 //! ```
@@ -118,13 +119,25 @@ enum Cmd {
         #[arg(long)]
         clear_subject: bool,
     },
+    /// Content files: `check` reads every file from disk and validates it (exit 1 on
+    /// problems). Without a running game: `cargo sandbox --check-content`.
+    Content {
+        #[command(subcommand)]
+        cmd: ContentCmd,
+    },
     /// Any BRP method (world.query, world.get_components, rpc.discover, ...).
     Raw { method: String, params: Option<String> },
-    /// Wait until the game answers (for scripts).
+    /// Wait until the game answers and has finished loading (for scripts).
     Wait {
         #[arg(long, default_value_t = 60)]
         timeout: u64,
     },
+}
+
+#[derive(Subcommand)]
+enum ContentCmd {
+    /// Parse and validate every content file on disk; applies nothing.
+    Check,
 }
 
 struct Client {
@@ -226,20 +239,32 @@ fn read_port_file(path: &std::path::Path) -> Result<u16, String> {
     text.trim().parse().map_err(|_| format!("the port file {} holds no port number: `{}`", path.display(), text.trim()))
 }
 
-/// Polls `ai/status` until the game answers, then prints who answered.
+/// Polls `ai/status` until the game answers and has finished loading, then prints who
+/// answered.
 fn wait(cli: &Cli, timeout: Duration) -> Result<ExitCode, String> {
     let start = Instant::now();
     loop {
         let answer = cli.client().and_then(|client| client.call("ai/status", Value::Null));
         match answer {
-            Ok(status) => {
+            Ok(status) if still_loading(&status).is_empty() => {
                 println!("{}", ready_line(&status));
                 return Ok(ExitCode::SUCCESS);
             }
+            Ok(status) if start.elapsed() >= timeout => {
+                return Err(format!("the game answers but is still loading: {}", still_loading(&status).join(", ")));
+            }
+            Ok(_) => std::thread::sleep(Duration::from_millis(100)),
             Err(_) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(250)),
             Err(e) => return Err(e),
         }
     }
+}
+
+/// What holds the game's simulation (`content: 2 files left`); empty once it can
+/// tick. A game older than the `loading` field counts as loaded.
+fn still_loading(status: &Value) -> Vec<String> {
+    let reasons = status.get("loading").and_then(Value::as_array);
+    reasons.map(|r| r.iter().map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_owned)).collect()).unwrap_or_default()
 }
 
 /// `ready: tick 0 · pid 4242 · seed 1 · port 15711`, the line the game prints at start.
@@ -348,6 +373,12 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             )?;
             println!("{}", serde_json::to_string_pretty(&s).unwrap_or_default());
             return Ok(ExitCode::SUCCESS);
+        }
+        Cmd::Content { cmd: ContentCmd::Check } => {
+            let out = act("content_check", json!({}))?;
+            let clean = out.get("result").and_then(Value::as_str).is_some_and(|r| r.starts_with("ok:"));
+            let code = print_outcome(&out, cli.json);
+            return Ok(if clean { code } else { ExitCode::FAILURE });
         }
         Cmd::Raw { method, params } => {
             let params = match params {
@@ -543,6 +574,13 @@ mod tests {
         assert_eq!(with_token(json!({"data": 1}), Some("t")).unwrap(), json!({"data": 1, "token": "t"}));
         assert_eq!(with_token(json!({"data": 1}), None).unwrap(), json!({"data": 1}));
         assert!(with_token(json!([1]), Some("t")).is_err());
+    }
+
+    #[test]
+    fn wait_waits_for_loading_to_finish() {
+        assert_eq!(still_loading(&json!({"loading": ["content: 2 files left"]})), ["content: 2 files left"]);
+        assert!(still_loading(&json!({"loading": []})).is_empty());
+        assert!(still_loading(&json!({"tick": 0})).is_empty(), "older games count as loaded");
     }
 
     #[test]

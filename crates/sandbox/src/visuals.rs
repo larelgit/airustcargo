@@ -1,13 +1,13 @@
 //! Window-only layer: meshes, camera, HUD, keyboard → `Intent`, telegraph gizmos.
 //! Gameplay never depends on anything here, so the same game runs headless.
 
-use ai_core::highlight::AiOverlay;
-use ai_core::prelude::*;
-use ai_core::sim;
-use bevy::prelude::*;
+use shards::ai_core::highlight::AiOverlay;
+use shards::ai_core::sim;
+use shards::core::input_names::DODGE;
+use shards::core::Intent;
+use shards::prelude::*;
 
 use crate::gameplay::combat::{Action, AttackKind, Health, Shape, Stamina, Team};
-use crate::gameplay::intent::Intent;
 use crate::gameplay::{Boss, Pillar, Player, Skeleton, ARENA_HALF};
 
 pub struct VisualsPlugin;
@@ -96,8 +96,8 @@ fn dress<T: Component>(add: On<Add<T>>, mut commands: Commands, palette: Res<Pal
 }
 
 /// Human input becomes `Intent`, exactly like an agent's tool calls do. Space and J
-/// go through the same input buffer as the `dodge` and `attack` tools: a press the
-/// character cannot act on within 0.2 s shows up in the journal as rejected.
+/// are presses, like the `dodge` and `attack` tools make: one the character cannot
+/// act on within 0.2 s shows up in the journal as rejected.
 fn keyboard_to_intent(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
@@ -128,10 +128,10 @@ fn keyboard_to_intent(
         intent.move_dir = Vec3::ZERO;
     }
     if keys.just_pressed(KeyCode::Space) {
-        intent.dodge = Some(if human_moving { dir } else { *tf.forward() });
+        intent.press_dir(DODGE, if human_moving { dir } else { *tf.forward() });
     }
     if keys.just_pressed(KeyCode::KeyJ) || mouse.just_pressed(MouseButton::Left) {
-        intent.attack = Some(AttackKind::Sword);
+        intent.press(AttackKind::Sword.id());
     }
 }
 
@@ -150,21 +150,21 @@ fn dev_keys(world: &mut World) {
     };
     if pause {
         let tool = if sim::is_paused(world) { "resume" } else { "pause" };
-        ai_core::call_tool(world, "keyboard", tool, serde_json::Value::Null);
+        shards::ai_core::call_tool(world, "keyboard", tool, shards::serde_json::Value::Null);
     }
     if step && sim::is_paused(world) {
-        ai_core::call_tool(world, "keyboard", "step", serde_json::json!({"ticks": 1}));
+        shards::ai_core::call_tool(world, "keyboard", "step", shards::serde_json::json!({"ticks": 1}));
     }
     if overlay {
         let mut o = world.resource_mut::<AiOverlay>();
         o.enabled = !o.enabled;
     }
     if revive {
-        ai_core::call_tool(world, "keyboard", "heal", serde_json::Value::Null);
+        shards::ai_core::call_tool(world, "keyboard", "heal", shards::serde_json::Value::Null);
     }
     if shot {
         // The path lands in the journal once the file is written.
-        ai_core::call_tool(world, "keyboard", "shot", serde_json::Value::Null);
+        shards::ai_core::call_tool(world, "keyboard", "shot", shards::serde_json::Value::Null);
     }
 }
 
@@ -232,12 +232,12 @@ fn update_hud(
 }
 
 /// Windup shapes on the ground, health bars over heads.
-fn telegraphs(mut gizmos: Gizmos, q: Query<(&Transform, &Action, &Team, Option<&Health>)>) {
+fn telegraphs(mut gizmos: Gizmos, db: Res<ContentDb>, q: Query<(&Transform, &Action, &Team, Option<&Health>)>) {
     let ground = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
     for (tf, action, team, health) in &q {
         let p = tf.translation;
         if let Action::Windup { attack, left } = action {
-            let spec = attack.spec();
+            let spec = attack.def(&db);
             let progress = (1.0 - left / spec.windup.max(0.01)).clamp(0.0, 1.0);
             let color = if *team == Team::Monster { Color::srgb(1.0, 0.25, 0.2) } else { Color::srgb(0.4, 0.8, 1.0) };
             match spec.shape {

@@ -1,15 +1,20 @@
 //! Attacks with telegraphs, dodges with i-frames, damage, deaths, boss phases.
 //!
-//! One-shot inputs (a dodge, an attack) wait in an [`InputBuffer`] for up to
-//! [`INPUT_BUFFER`] seconds until the character can act on them; one that expires is
-//! rejected with the reason ([`ActionRejected`]). [`start_blocker`] is the rule for
-//! "can it start now, and if not, why and when", shared by [`start_actions`] and the
-//! agent tools, so the two never disagree.
+//! Attack numbers are content: [`AttackDef`]s in `assets/content/combat/attacks.attack.ron`,
+//! one per [`AttackKind`] (by its snake_case id). Editing the file while the game runs
+//! changes the next attack.
+//!
+//! One-shot inputs are `Intent` presses: `dodge` (with a direction) and an attack's id
+//! (`sword`, `claw`, ...). They wait in an [`InputBuffer`] for up to [`INPUT_BUFFER`]
+//! seconds until the character can act on them; one that expires is rejected with the
+//! reason ([`ActionRejected`]). [`start_blocker`] is the rule for "can it start now, and
+//! if not, why and when", shared by [`start_actions`] and the agent tools, so the two
+//! never disagree.
 
-use bevy::prelude::*;
-use serde::{Deserialize, Serialize};
+use shards::core::input_names::DODGE;
+use shards::core::{flat, Intent};
+use shards::prelude::*;
 
-use super::intent::{flat, Intent};
 use super::{Boss, Player};
 
 #[derive(Component, Reflect, Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +54,7 @@ pub struct Body {
 }
 
 #[derive(Reflect, Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(crate = "shards::serde")]
 pub enum AttackKind {
     Sword,
     Claw,
@@ -57,7 +63,34 @@ pub enum AttackKind {
     FrostNova,
 }
 
-#[derive(Clone, Copy, Debug)]
+impl AttackKind {
+    pub const ALL: [AttackKind; 5] =
+        [AttackKind::Sword, AttackKind::Claw, AttackKind::FrostSlash, AttackKind::IceSlam, AttackKind::FrostNova];
+
+    /// Its id in content and the name of its press: `frost_slash`.
+    pub fn id(self) -> &'static str {
+        match self {
+            AttackKind::Sword => "sword",
+            AttackKind::Claw => "claw",
+            AttackKind::FrostSlash => "frost_slash",
+            AttackKind::IceSlam => "ice_slam",
+            AttackKind::FrostNova => "frost_nova",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<AttackKind> {
+        AttackKind::ALL.into_iter().find(|k| k.id() == id)
+    }
+
+    /// Its numbers. A kind missing from content (reported when the game starts) does
+    /// nothing: no windup, no damage, no reach.
+    pub fn def(self, db: &ContentDb) -> &AttackDef {
+        db.get::<AttackDef>(self.id()).unwrap_or(&MISSING_ATTACK)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(crate = "shards::serde")]
 pub enum Shape {
     /// In front of the attacker.
     Cone { range: f32, half_angle_deg: f32 },
@@ -65,42 +98,51 @@ pub enum Shape {
     Circle { radius: f32 },
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct AttackSpec {
-    /// Telegraph time before the hit lands.
+/// One attack's numbers, from `content/combat/attacks.attack.ron`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(crate = "shards::serde", deny_unknown_fields)]
+pub struct AttackDef {
+    /// Telegraph time before the hit lands (seconds).
     pub windup: f32,
-    /// Vulnerable time after the hit.
+    /// Vulnerable time after the hit (seconds).
     pub recover: f32,
     pub damage: f32,
     pub shape: Shape,
+    /// Stamina it costs (characters without stamina ignore it).
+    #[serde(default)]
     pub stamina: f32,
 }
 
-impl AttackSpec {
+const MISSING_ATTACK: AttackDef =
+    AttackDef { windup: 0.0, recover: 0.0, damage: 0.0, shape: Shape::Circle { radius: 0.0 }, stamina: 0.0 };
+
+impl ContentDef for AttackDef {
+    const KIND: &'static str = "attack";
+
+    fn validate(&self, id: &str, refs: &mut Refs) {
+        if AttackKind::from_id(id).is_none() {
+            let known: Vec<&str> = AttackKind::ALL.iter().map(|k| k.id()).collect();
+            refs.error(format!("no attack kind uses this id; the sandbox knows {}", known.join(", ")));
+        }
+        for (name, value) in [("windup", self.windup), ("recover", self.recover), ("damage", self.damage), ("stamina", self.stamina)] {
+            if value.is_nan() || value < 0.0 {
+                refs.error(format!("{name} must be a number >= 0, not {value}"));
+            }
+        }
+    }
+}
+
+impl AttackDef {
     pub fn reach(&self) -> f32 {
         match self.shape {
             Shape::Cone { range, .. } => range,
             Shape::Circle { radius } => radius,
         }
     }
-}
-
-impl AttackKind {
-    pub fn spec(self) -> AttackSpec {
-        use Shape::*;
-        let (windup, recover, damage, shape, stamina) = match self {
-            AttackKind::Sword => (0.15, 0.25, 25.0, Cone { range: 2.4, half_angle_deg: 60.0 }, 10.0),
-            AttackKind::Claw => (0.45, 0.6, 8.0, Cone { range: 1.8, half_angle_deg: 50.0 }, 0.0),
-            AttackKind::FrostSlash => (0.55, 0.7, 18.0, Cone { range: 3.2, half_angle_deg: 70.0 }, 0.0),
-            AttackKind::IceSlam => (1.0, 1.2, 30.0, Circle { radius: 4.5 }, 0.0),
-            AttackKind::FrostNova => (1.3, 1.0, 22.0, Circle { radius: 7.5 }, 0.0),
-        };
-        AttackSpec { windup, recover, damage, shape, stamina }
-    }
 
     /// Long windups are worth a journal line ("e42 winds up IceSlam").
-    pub fn is_telegraphed(self) -> bool {
-        self.spec().windup >= 0.5
+    pub fn is_telegraphed(&self) -> bool {
+        self.windup >= 0.5
     }
 }
 
@@ -210,17 +252,17 @@ impl Blocker {
 /// A dodge starts from `Idle` or `Recover` (and cancels the recovery), an attack only
 /// from `Idle`; both need their stamina. When several things block, the one that lasts
 /// longest is reported.
-pub fn start_blocker(act: Act, action: &Action, stamina: Option<&Stamina>) -> Option<Blocker> {
+pub fn start_blocker(act: Act, action: &Action, stamina: Option<&Stamina>, db: &ContentDb) -> Option<Blocker> {
     let busy_for = match (act, *action) {
         (_, Action::Dead { .. }) => return Some(Blocker::Dead),
         (Act::Dodge, Action::Idle | Action::Recover { .. }) | (Act::Attack(_), Action::Idle) => 0.0,
         (Act::Dodge, Action::Windup { left, .. }) => left,
-        (Act::Attack(_), Action::Windup { attack, left }) => left + attack.spec().recover,
+        (Act::Attack(_), Action::Windup { attack, left }) => left + attack.def(db).recover,
         (_, Action::Recover { left } | Action::Dodge { left, .. }) => left,
     };
     let need = match act {
         Act::Dodge => DODGE_STAMINA,
-        Act::Attack(kind) => kind.spec().stamina,
+        Act::Attack(kind) => kind.def(db).stamina,
     };
     let short = stamina.filter(|s| s.current < need).map(|s| {
         // Regeneration stops while dodging.
@@ -330,26 +372,33 @@ fn advance<T: Copy>(slot: &mut Option<Buffered<T>>, blocker: Option<Blocker>, dt
     Buffer::Expired(why)
 }
 
-/// Moves one-shot inputs from `Intent` into the `InputBuffer` and starts what can
-/// start: at once, or as soon as it becomes possible within [`INPUT_BUFFER`]. An input
-/// whose time runs out is rejected with the reason ([`ActionRejected`]).
+/// Moves this tick's presses from `Intent` into the `InputBuffer` (the last of each
+/// wins) and starts what can start: at once, or as soon as it becomes possible within
+/// [`INPUT_BUFFER`]. An input whose time runs out is rejected with the reason
+/// ([`ActionRejected`]). Presses that are neither a dodge nor an attack are left to the
+/// engine, which drops them at the end of the tick.
 pub fn start_actions(
     time: Res<Time>,
+    db: Res<ContentDb>,
     mut commands: Commands,
     mut q: Query<(Entity, &mut Intent, &mut InputBuffer, &mut Action, &mut Transform, Option<&mut Stamina>, Option<&Boss>)>,
 ) {
     let dt = time.delta_secs();
     for (entity, mut intent, mut buffer, mut action, mut tf, mut stamina, boss) in &mut q {
-        if let Some(dir) = intent.dodge.take() {
-            buffer.dodge = Some(Buffered { input: dir, left: INPUT_BUFFER });
-        }
-        if let Some(kind) = intent.attack.take() {
-            buffer.attack = Some(Buffered { input: kind, left: INPUT_BUFFER });
+        if !intent.pressed.is_empty() {
+            while let Some(press) = intent.take_press(DODGE) {
+                buffer.dodge = Some(Buffered { input: press.dir.unwrap_or(Vec3::ZERO), left: INPUT_BUFFER });
+            }
+            for kind in AttackKind::ALL {
+                while intent.take_press(kind.id()).is_some() {
+                    buffer.attack = Some(Buffered { input: kind, left: INPUT_BUFFER });
+                }
+            }
         }
         let rejected = |action: Act, why: Blocker| ActionRejected { entity, action, reason: why.reason() };
 
         // The dodge first: it may cancel a recovery the attack would wait for.
-        match advance(&mut buffer.dodge, start_blocker(Act::Dodge, &action, stamina.as_deref()), dt) {
+        match advance(&mut buffer.dodge, start_blocker(Act::Dodge, &action, stamina.as_deref(), &db), dt) {
             Buffer::Start(dir) => {
                 if let Some(s) = stamina.as_mut() {
                     s.current -= DODGE_STAMINA;
@@ -362,9 +411,9 @@ pub fn start_actions(
         }
 
         let Some(kind) = buffer.attack.map(|b| b.input) else { continue };
-        match advance(&mut buffer.attack, start_blocker(Act::Attack(kind), &action, stamina.as_deref()), dt) {
+        match advance(&mut buffer.attack, start_blocker(Act::Attack(kind), &action, stamina.as_deref(), &db), dt) {
             Buffer::Start(kind) => {
-                let spec = kind.spec();
+                let spec = kind.def(&db);
                 if let Some(s) = stamina.as_mut() {
                     s.current -= spec.stamina;
                 }
@@ -374,7 +423,7 @@ pub fn start_actions(
                 }
                 let windup = spec.windup * windup_scale(boss);
                 *action = Action::Windup { attack: kind, left: windup };
-                if kind.is_telegraphed() {
+                if spec.is_telegraphed() {
                     commands.trigger(Telegraph { attacker: entity, attack: kind, windup });
                 }
             }
@@ -387,6 +436,7 @@ pub fn start_actions(
 /// Advances timers; a windup that reaches zero produces `Hit`s.
 pub fn tick_actions(
     time: Res<Time>,
+    db: Res<ContentDb>,
     mut hits: MessageWriter<Hit>,
     mut actors: Query<(Entity, &mut Action, &Transform, &Team, &Body)>,
 ) {
@@ -401,7 +451,7 @@ pub fn tick_actions(
     for (entity, mut action, tf, team, _) in &mut actors {
         match *action {
             Action::Windup { attack, left } if left - dt <= 0.0 => {
-                let spec = attack.spec();
+                let spec = attack.def(&db);
                 for &(target, pos, tteam, radius) in &targets {
                     if tteam != *team && in_shape(tf, spec.shape, pos, radius) {
                         hits.write(Hit { source: entity, target, attack, damage: spec.damage });

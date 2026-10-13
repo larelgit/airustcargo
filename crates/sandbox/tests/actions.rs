@@ -2,12 +2,12 @@
 //! action the game then silently drops. One-shot inputs wait in an input buffer for
 //! up to 0.2 s; one that runs out is journaled as rejected.
 
-use ai_core::{call_tool, AiJournal, CallOutcome, JournalKind};
-use bevy::prelude::*;
 use sandbox::gameplay::combat::{Action, InputBuffer, Stamina};
 use sandbox::gameplay::intent::Intent;
 use sandbox::gameplay::Player;
-use serde_json::{json, Value};
+use shards::ai_core::{call_tool, AiJournal, CallOutcome, JournalKind};
+use shards::prelude::*;
+use shards::serde_json::{json, Value};
 
 const PLAYER: &str = "e5";
 
@@ -64,7 +64,7 @@ fn a_dodge_without_stamina_is_refused_and_changes_nothing() {
     let refused = act(&mut app, "dodge", json!({}));
     assert!(!refused.ok && text(&refused).contains("stamina"), "{}", refused.result);
     let intent = player::<Intent>(&mut app).clone();
-    assert_eq!(intent.dodge, None, "a refused call leaves the intent alone");
+    assert!(intent.pressed.is_empty(), "a refused call leaves the intent alone: {intent:?}");
     assert_eq!(intent.orders.len(), 1, "and the orders: {intent:?}");
     ok(&mut app, "step", json!({"ticks": 1}));
     assert_eq!(*player::<Action>(&mut app), Action::Idle);
@@ -134,7 +134,7 @@ fn an_input_that_runs_out_is_journaled_as_rejected() {
     {
         let world = app.world_mut();
         let mut q = world.query_filtered::<&mut Intent, With<Player>>();
-        q.single_mut(world).unwrap().dodge = Some(Vec3::Z);
+        q.single_mut(world).unwrap().press_dir("dodge", Vec3::Z);
     }
     ok(&mut app, "step", json!({"ticks": 6}));
     assert!(player::<InputBuffer>(&mut app).dodge.is_some(), "it waits in the buffer");

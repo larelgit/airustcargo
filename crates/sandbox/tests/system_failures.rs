@@ -5,13 +5,12 @@
 
 use std::sync::Mutex;
 
-use ai_core::prelude::*;
-use ai_core::replay;
-use ai_core::{call_tool, AiFailures, AiJournal, AiReplay, CallOutcome, JournalKind};
-use bevy::app::FixedMain;
-use bevy::prelude::*;
-use bevy::time::TimeUpdateStrategy;
-use serde_json::{json, Value};
+use shards::ai_core::replay;
+use shards::ai_core::{call_tool, AiFailures, AiJournal, AiReplay, CallOutcome, JournalKind};
+use shards::bevy::app::FixedMain;
+use shards::bevy::time::TimeUpdateStrategy;
+use shards::prelude::*;
+use shards::serde_json::{json, Value};
 
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
@@ -65,7 +64,7 @@ fn a_panic_stops_the_step_at_its_tick() {
         text(&out)
     );
     assert!(text(&out).contains("the ice gave way"), "{}", text(&out));
-    assert_eq!(ai_core::sim::tick(app.world()), 50);
+    assert_eq!(shards::ai_core::sim::tick(app.world()), 50);
     let line = format!("50 [error] system {SYSTEM} panicked at tick 50: the ice gave way");
     assert!(journal(&app, JournalKind::Error).contains(&line), "{:?}", journal(&app, JournalKind::Error));
     assert!(out.journal.contains(&line), "the step reports it too: {:?}", out.journal);
@@ -79,7 +78,7 @@ fn the_game_runs_on_after_a_failure() {
     assert!(has_fixed_schedules(&app), "FixedMain and FixedUpdate must survive the panic");
     let out = ok(&mut app, "step", json!({"ticks": 10}));
     assert_eq!(text(&out), "ran 10 ticks (50 → 60)");
-    assert_eq!(ai_core::sim::tick(app.world()), 60);
+    assert_eq!(shards::ai_core::sim::tick(app.world()), 60);
     assert!(has_fixed_schedules(&app));
 }
 
@@ -92,8 +91,8 @@ fn real_time_play_pauses_on_a_failure() {
     for _ in 0..80 {
         app.update();
     }
-    assert!(ai_core::sim::is_paused(app.world()), "the failure must pause the game");
-    assert_eq!(ai_core::sim::tick(app.world()), 50, "no tick after the failing one");
+    assert!(shards::ai_core::sim::is_paused(app.world()), "the failure must pause the game");
+    assert_eq!(shards::ai_core::sim::tick(app.world()), 50, "no tick after the failing one");
     assert!(journal(&app, JournalKind::Sim).iter().any(|l| l.contains(&format!("paused: system {SYSTEM} panicked at tick 50"))));
     assert!(journal(&app, JournalKind::Error).iter().any(|l| l.contains("panicked at tick 50: the ice gave way")));
     assert!(has_fixed_schedules(&app));
@@ -142,7 +141,7 @@ fn a_panicking_tool_is_not_a_gameplay_failure() {
     let out = ok(&mut app, "orphan", json!({}));
     assert!(out.journal.iter().any(|l| l.contains("[error] tool orphan: command")), "{:?}", out.journal);
     ok(&mut app, "step", json!({"ticks": 10}));
-    assert_eq!(ai_core::sim::tick(app.world()), 10, "the tool's failure does not stop the next step");
+    assert_eq!(shards::ai_core::sim::tick(app.world()), 10, "the tool's failure does not stop the next step");
 }
 
 #[test]

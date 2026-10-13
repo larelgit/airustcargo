@@ -1,0 +1,14 @@
+// Attack numbers, by attack id (the name characters press). Edit them while the game
+// runs: the next attack uses the new numbers, and the change is journaled and recorded
+// in the replay.
+//
+// windup: telegraph before the hit lands (s) · recover: vulnerable after it (s)
+// damage · shape: Cone(range, half_angle_deg) in front, or Circle(radius) around
+// stamina: what it costs (only characters with stamina pay)
+{
+    "sword": (windup: 0.15, recover: 0.25, damage: 25.0, shape: Cone(range: 2.4, half_angle_deg: 60.0), stamina: 10.0),
+    "claw": (windup: 0.45, recover: 0.6, damage: 8.0, shape: Cone(range: 1.8, half_angle_deg: 50.0)),
+    "frost_slash": (windup: 0.55, recover: 0.7, damage: 18.0, shape: Cone(range: 3.2, half_angle_deg: 70.0)),
+    "ice_slam": (windup: 1.0, recover: 1.2, damage: 30.0, shape: Circle(radius: 4.5)),
+    "frost_nova": (windup: 1.3, recover: 1.0, damage: 22.0, shape: Circle(radius: 7.5)),
+}

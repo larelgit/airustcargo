@@ -1,17 +1,15 @@
 //! What the AI sees of this game and what it can do in it.
 
-use ai_core::prelude::*;
-use ai_core::spatial::{compass_vector, fmt_pos, relative};
-use ai_core::AiIndex;
-use bevy::prelude::*;
-use schemars::JsonSchema;
-use serde::Deserialize;
+use shards::ai_core::spatial::{compass_vector, fmt_pos, relative};
+use shards::ai_core::AiIndex;
+use shards::core::input_names::DODGE;
+use shards::core::{flat, Intent, Order, Target};
+use shards::prelude::*;
 
 use crate::gameplay::combat::{
-    self, Act, Action, ActionRejected, Blocker, Damaged, Died, Dodged, Health, InputBuffer, PhaseChanged, Stamina,
-    Telegraph, INPUT_BUFFER,
+    self, Act, Action, ActionRejected, AttackKind, Blocker, Damaged, Died, Dodged, Health, InputBuffer, PhaseChanged,
+    Stamina, Telegraph, INPUT_BUFFER,
 };
-use crate::gameplay::intent::{flat, Intent, Order, Target};
 use crate::gameplay::{self, Boss};
 
 pub struct GameAiPlugin;
@@ -23,12 +21,6 @@ impl Plugin for GameAiPlugin {
             .register_ai_component::<Boss>(|b| format!("phase {}", b.phase))
             .register_ai_component::<Action>(Action::describe)
             .register_ai_component::<InputBuffer>(describe_buffer)
-            .register_ai_describer("orders", |e| {
-                let intent = e.get::<Intent>()?;
-                let first = intent.orders.front()?;
-                let more = intent.orders.len() - 1;
-                Some(if more > 0 { format!("order {} (+{more})", first.describe()) } else { format!("order {}", first.describe()) })
-            })
             .journal_event::<Telegraph>(|e, w| {
                 Some(format!("{} winds up {:?} ({:.2}s)", label(w, e.attacker), e.attack, e.windup))
             })
@@ -61,7 +53,6 @@ impl Plugin for GameAiPlugin {
                 w.try_query_filtered::<&Action, With<gameplay::Player>>()
                     .is_some_and(|mut q| q.iter(w).any(|a| matches!(a, Action::Dead { .. })))
             })
-            .replay_input::<Intent>()
             .add_ai_tool("move_to", Scope::Player, move_to)
             .add_ai_tool("move", Scope::Player, move_dir)
             .add_ai_tool("attack", Scope::Player, attack)
@@ -82,8 +73,8 @@ fn describe_buffer(b: &InputBuffer) -> String {
 /// Whether `act` can start now, checked by the game's own rule ([`combat::start_blocker`]):
 /// `Ok(None)` now, `Ok(Some(s))` in `s` seconds (within the input buffer, so it will),
 /// or why it will not.
-fn when_can_start(act: Act, action: &Action, stamina: Option<&Stamina>) -> Result<Option<f32>, String> {
-    let Some(blocker) = combat::start_blocker(act, action, stamina) else {
+fn when_can_start(act: Act, action: &Action, stamina: Option<&Stamina>, db: &ContentDb) -> Result<Option<f32>, String> {
+    let Some(blocker) = combat::start_blocker(act, action, stamina, db) else {
         return Ok(None);
     };
     match (blocker, blocker.ready_in()) {
@@ -105,7 +96,8 @@ fn when_can_start(act: Act, action: &Action, stamina: Option<&Stamina>) -> Resul
 
 /// Where to go: an entity id (42 or "e42") or a ground point {"x": 3, "z": -4}.
 #[derive(Deserialize, JsonSchema, Clone, Copy, Debug)]
-#[serde(untagged)]
+#[serde(crate = "shards::serde", untagged)]
+#[schemars(crate = "shards::schemars")]
 pub enum TargetArg {
     Entity(Id),
     Point { x: f32, z: f32 },
@@ -133,6 +125,8 @@ fn my_intent<'a>(caller: &Caller, q: &'a mut Query<(&Transform, &mut Intent, &Ac
 /// Walk to an entity or a point. Replaces your current orders unless `queue` is set.
 /// The game steers every tick; check progress with `observe` or `step`.
 #[derive(Deserialize, JsonSchema)]
+#[serde(crate = "shards::serde")]
+#[schemars(crate = "shards::schemars")]
 pub struct MoveToArgs {
     pub target: TargetArg,
     /// Stop this close to the target (meters). Default 1.5.
@@ -168,6 +162,8 @@ fn move_to(
 
 /// Walk a distance in a compass direction (N = -Z, E = +X).
 #[derive(Deserialize, JsonSchema)]
+#[serde(crate = "shards::serde")]
+#[schemars(crate = "shards::schemars")]
 pub struct MoveArgs {
     /// N, NE, E, SE, S, SW, W or NW.
     pub dir: String,
@@ -187,6 +183,8 @@ fn move_dir(In(call): In<Call<MoveArgs>>, mut q: Query<(&Transform, &mut Intent,
 /// Without: swing once right now in the direction you face (10 stamina; from idle only:
 /// a busy character queues the swing for up to 0.2 s or is refused with the reason).
 #[derive(Deserialize, JsonSchema, Default)]
+#[serde(crate = "shards::serde")]
+#[schemars(crate = "shards::schemars")]
 pub struct AttackArgs {
     pub target: Option<Id>,
     #[serde(default)]
@@ -196,6 +194,7 @@ pub struct AttackArgs {
 fn attack(
     In(call): In<Call<AttackArgs>>,
     index: Res<AiIndex>,
+    db: Res<ContentDb>,
     stamina: Query<&Stamina>,
     mut q: Query<(&Transform, &mut Intent, &Action)>,
 ) -> ToolResult {
@@ -208,13 +207,14 @@ fn attack(
     match call.args.target {
         Some(t) => {
             intent.orders.clear();
-            intent.orders.push_back(Order::Attack { target: t.0, repeat: call.args.repeat });
+            let input = AttackKind::Sword.id().to_owned();
+            intent.orders.push_back(Order::Attack { target: t.0, input, repeat: call.args.repeat });
             Ok(format!("ok: attacking {t}{}", if call.args.repeat { " until it dies" } else { "" }))
         }
         None => {
-            let sword = combat::AttackKind::Sword;
-            let when = when_can_start(Act::Attack(sword), &action, stamina.get(me).ok())?;
-            intent.attack = Some(sword);
+            let sword = AttackKind::Sword;
+            let when = when_can_start(Act::Attack(sword), &action, stamina.get(me).ok(), &db)?;
+            intent.press(sword.id());
             Ok(match when {
                 None => "ok: swinging".into(),
                 Some(t) => format!("ok: queued, swings in {t:.2}s"),
@@ -228,6 +228,8 @@ fn attack(
 /// recovery (cancelling it); otherwise it waits up to 0.2 s ("ok: queued") or is
 /// refused with the reason and when it would work.
 #[derive(Deserialize, JsonSchema, Default)]
+#[serde(crate = "shards::serde")]
+#[schemars(crate = "shards::schemars")]
 pub struct DodgeArgs {
     /// Compass direction (N, NE, ...). Default: away from the nearest enemy windup, else forward.
     pub dir: Option<String>,
@@ -238,6 +240,7 @@ pub struct DodgeArgs {
 fn dodge(
     In(call): In<Call<DodgeArgs>>,
     index: Res<AiIndex>,
+    db: Res<ContentDb>,
     positions: Query<&Transform>,
     stamina: Query<&Stamina>,
     mut q: Query<(&Transform, &mut Intent, &Action)>,
@@ -255,10 +258,10 @@ fn dodge(
         (None, None) => Vec3::ZERO, // forward
     };
     // Refused calls leave the intent (and the orders) alone.
-    let when = when_can_start(Act::Dodge, &action, stamina.get(me).ok())?;
-    intent.dodge = Some(dir);
+    let when = when_can_start(Act::Dodge, &action, stamina.get(me).ok(), &db)?;
+    intent.press_dir(DODGE, dir);
     intent.orders.clear();
-    let towards = if dir == Vec3::ZERO { "forward".into() } else { ai_core::spatial::compass(dir).to_string() };
+    let towards = if dir == Vec3::ZERO { "forward".into() } else { shards::ai_core::spatial::compass(dir).to_string() };
     Ok(match when {
         None => format!("ok: dodging {towards}"),
         Some(t) => format!("ok: queued, dodges in {t:.2}s ({towards})"),
@@ -275,6 +278,8 @@ fn stop(In(call): In<Call<NoArgs>>, mut q: Query<(&Transform, &mut Intent, &Acti
 
 /// Spawn a monster at a ground point.
 #[derive(Deserialize, JsonSchema)]
+#[serde(crate = "shards::serde")]
+#[schemars(crate = "shards::schemars")]
 pub struct SpawnArgs {
     /// "skeleton" or "boss".
     pub kind: String,
@@ -284,7 +289,7 @@ pub struct SpawnArgs {
 
 fn spawn(In(call): In<Call<SpawnArgs>>, world: &mut World) -> ToolResult {
     let at = Vec3::new(call.args.x, 0.0, call.args.z);
-    let mut queue = bevy::ecs::world::CommandQueue::default();
+    let mut queue = shards::bevy::ecs::world::CommandQueue::default();
     let entity = {
         let mut commands = Commands::new(&mut queue, world);
         match call.args.kind.to_lowercase().as_str() {
@@ -300,6 +305,8 @@ fn spawn(In(call): In<Call<SpawnArgs>>, world: &mut World) -> ToolResult {
 
 /// Restore an entity to full health (revives the dead player). Default: you.
 #[derive(Deserialize, JsonSchema, Default)]
+#[serde(crate = "shards::serde")]
+#[schemars(crate = "shards::schemars")]
 pub struct HealArgs {
     pub id: Option<Id>,
 }

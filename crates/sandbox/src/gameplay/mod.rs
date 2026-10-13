@@ -1,16 +1,17 @@
 //! Headless-safe gameplay: no meshes, no windows, only data and `FixedUpdate` systems.
 //! Rendering attaches itself to these entities from `visuals` when a window exists.
+//! The arena is spawned when the engine enters `InGame`: content (the attack numbers)
+//! exists only after loading.
 
 pub mod brains;
 pub mod combat;
 pub mod intent;
 
-use ai_core::prelude::*;
-use bevy::prelude::*;
+use shards::core::{flat, CoreSystems, Intent};
+use shards::prelude::*;
 
 use brains::{BossBrain, SkeletonBrain};
-use combat::{Action, Body, Health, Hit, Stamina, Team};
-use intent::{flat, Intent};
+use combat::{Action, AttackDef, AttackKind, Body, Health, Hit, InputBuffer, Stamina, Team};
 
 /// Half size of the square arena (meters).
 pub const ARENA_HALF: f32 = 20.0;
@@ -37,10 +38,15 @@ pub struct GameplayPlugin;
 
 impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<Hit>().add_systems(Startup, spawn_arena).add_systems(
+        app.add_message::<Hit>()
+            .add_content::<AttackDef>()
+            // One-shot presses wait in the buffer until the character can act on them.
+            .register_required_components::<Intent, InputBuffer>()
+            .add_systems(OnEnter(EngineState::InGame), (report_missing_attacks, spawn_arena).chain());
+        app.add_systems(
             FixedUpdate,
             (
-                intent::follow_orders.in_set(SimSet::Input),
+                intent::attack_orders.in_set(SimSet::Input).after(CoreSystems::FollowOrders),
                 (brains::skeleton_brains, brains::boss_brains).chain().in_set(SimSet::Think),
                 (combat::start_actions, combat::tick_actions).chain().in_set(SimSet::Act),
                 movement.in_set(SimSet::Move),
@@ -48,6 +54,14 @@ impl Plugin for GameplayPlugin {
                 combat::remove_corpses.in_set(SimSet::Cleanup),
             ),
         );
+    }
+}
+
+/// An attack the game uses but content does not define does nothing; say so once.
+fn report_missing_attacks(db: Res<ContentDb>) {
+    let missing: Vec<&str> = AttackKind::ALL.iter().map(|k| k.id()).filter(|id| db.get::<AttackDef>(id).is_none()).collect();
+    if !missing.is_empty() {
+        error!("content: attacks {} are not defined (content/combat/attacks.attack.ron); they do nothing", missing.join(", "));
     }
 }
 

@@ -1,12 +1,11 @@
-//! End-to-end scenarios through `ai_core::call_tool`, the entry point behind BRP and
+//! End-to-end scenarios through `shards::ai_core::call_tool`, the entry point behind BRP and
 //! `shards`: what an agent sees, does and gets back.
 
-use ai_core::prelude::*;
-use ai_core::{call_tool, AgentSessions, AiJournal, CallOutcome, JournalKind};
-use bevy::ecs::schedule::{LogLevel, ScheduleBuildSettings};
-use bevy::prelude::*;
 use sandbox::gameplay::combat::{Action, Health};
-use serde_json::{json, Value};
+use shards::ai_core::{call_tool, AgentSessions, AiJournal, CallOutcome, JournalKind};
+use shards::bevy::ecs::schedule::{LogLevel, ScheduleBuildSettings};
+use shards::prelude::*;
+use shards::serde_json::{json, Value};
 
 const PLAYER: &str = "e5";
 const BOSS: &str = "e6";
@@ -84,7 +83,7 @@ fn chunked_steps_match_one_long_step() {
         ok(&mut b, "observe", json!({}));
         b.update();
     }
-    assert_eq!(ai_core::sim::tick(b.world()), 300);
+    assert_eq!(shards::ai_core::sim::tick(b.world()), 300);
     assert_eq!(state(&mut a), state(&mut b));
     assert_eq!(story(&a), story(&b));
 }
@@ -163,7 +162,7 @@ fn listed_ids(observation: &str) -> Vec<String> {
         .take_while(|l| !l.starts_with("SINCE"))
         .skip(1) // header
         .flat_map(|l| l.split([' ', '·']))
-        .filter(|t| t.starts_with('e') && ai_core::AiId::parse(t).is_some())
+        .filter(|t| t.starts_with('e') && shards::ai_core::AiId::parse(t).is_some())
         .map(str::to_owned)
         .collect()
 }
@@ -178,7 +177,7 @@ fn ai_ids_are_managed_by_the_engine() {
     let before = listed_ids(text(&ok(&mut app, "observe", json!({}))));
 
     // A raw insert over the old value (what BRP `world.insert_components` does).
-    let skeleton = app.world().resource::<ai_core::AiIndex>().get(AiId(7)).unwrap();
+    let skeleton = app.world().resource::<shards::ai_core::AiIndex>().get(AiId(7)).unwrap();
     app.world_mut().entity_mut(skeleton).insert(AiId(99));
     let moved = ok(&mut app, "inspect", json!({"id": "e99"}));
     assert!(text(&moved).starts_with("e99 Skeleton"), "{}", text(&moved));
@@ -206,7 +205,7 @@ struct AimAssist {
 fn set_hints_list_game_components_named_ai() {
     let mut app = sandbox::test_app(42);
     app.register_type::<AimAssist>();
-    let player = app.world().resource::<ai_core::AiIndex>().get(AiId(5)).unwrap();
+    let player = app.world().resource::<shards::ai_core::AiIndex>().get(AiId(5)).unwrap();
     app.world_mut().entity_mut(player).insert(AimAssist { strength: 0.5 });
     let hint = act(&mut app, "set", json!({"id": PLAYER, "component": "Mana", "value": 5}));
     let hint = text(&hint);
@@ -249,7 +248,7 @@ fn a_field_of_view_puts_what_is_behind_out_of_view() {
     let all_around = text(&ok(&mut app, "observe", json!({}))).to_owned();
     assert!(!all_around.contains("NOT IN VIEW"), "no field of view by default:\n{all_around}");
 
-    app.world_mut().resource_mut::<ai_core::AiPerception>().fov_deg = Some(120.0);
+    app.world_mut().resource_mut::<shards::ai_core::AiPerception>().fov_deg = Some(120.0);
     let seen = text(&ok(&mut app, "observe", json!({}))).to_owned();
     let (front, back) = seen.split_once("NOT IN VIEW (within 40m)").unwrap_or_else(|| panic!("{seen}"));
     assert!(front.contains("  e6 Boss"), "the boss is ahead:\n{seen}");
@@ -258,7 +257,7 @@ fn a_field_of_view_puts_what_is_behind_out_of_view() {
 
 /// A window's camera, set up the way the sandbox's follows the player: high behind it.
 fn window_camera(app: &mut App) {
-    use bevy::camera::{Camera, CameraProjection, ComputedCameraValues, PerspectiveProjection, RenderTargetInfo};
+    use shards::bevy::camera::{Camera, CameraProjection, ComputedCameraValues, PerspectiveProjection, RenderTargetInfo};
     let size = UVec2::new(1280, 720);
     let computed = ComputedCameraValues {
         clip_from_view: PerspectiveProjection { aspect_ratio: 1280.0 / 720.0, ..default() }.get_clip_from_view(),
@@ -267,12 +266,12 @@ fn window_camera(app: &mut App) {
     };
     let player = Vec3::new(-7.0, 0.0, -9.5);
     let at = Transform::from_translation(player + Vec3::new(0.0, 20.0, 12.0)).looking_at(player + Vec3::new(0.0, 0.0, -5.0), Vec3::Y);
-    app.world_mut().spawn((Camera { computed, ..default() }, GlobalTransform::from(at), at, ai_core::AiCamera));
+    app.world_mut().spawn((Camera { computed, ..default() }, GlobalTransform::from(at), at, shards::ai_core::AiCamera));
 }
 
 #[test]
 fn observe_reads_the_same_with_a_window_camera_or_without() {
-    let observe = |app: &App| ai_core::observe::observe(app.world(), &ai_core::ObserveOptions::default());
+    let observe = |app: &App| shards::ai_core::observe::observe(app.world(), &shards::ai_core::ObserveOptions::default());
     let mut app = sandbox::test_app(42);
     pillar_between(&mut app);
     let headless = observe(&app);
@@ -327,7 +326,7 @@ fn a_panicking_tool_does_not_take_the_game_down() {
         .collect();
     assert_eq!(errors.len(), 2, "{errors:?}");
     let schedules = app.world().resource::<Schedules>();
-    assert!(schedules.contains(bevy::app::FixedMain) && schedules.contains(FixedUpdate), "schedules survive a tool panic");
+    assert!(schedules.contains(shards::bevy::app::FixedMain) && schedules.contains(FixedUpdate), "schedules survive a tool panic");
     ok(&mut app, "step", json!({"ticks": 30}));
-    assert_eq!(ai_core::sim::tick(app.world()), 30);
+    assert_eq!(shards::ai_core::sim::tick(app.world()), 30);
 }

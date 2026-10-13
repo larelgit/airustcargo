@@ -1,14 +1,13 @@
 //! Replays end to end: record a session, play it back in a fresh world, and get the
 //! same game — or a report of the first tick where it stops being the same.
 
-use ai_core::prelude::*;
-use ai_core::replay::{self, Replay, ReplayEvent};
-use ai_core::{call_tool, AiJournal, AiReplay, CallOutcome, JournalKind};
-use bevy::prelude::*;
 use sandbox::gameplay::combat::{Action, Health};
 use sandbox::gameplay::intent::Intent;
 use sandbox::gameplay::Player;
-use serde_json::{json, Value};
+use shards::ai_core::replay::{self, Replay, ReplayEvent};
+use shards::ai_core::{call_tool, AiJournal, AiReplay, CallOutcome, JournalKind};
+use shards::prelude::*;
+use shards::serde_json::{json, Value};
 
 const BOSS: &str = "e6";
 
@@ -72,11 +71,11 @@ fn recorded(seed: u64) -> (App, Replay) {
     session(&mut app);
     let replay = replay::save(app.world());
     // Through JSON, like a file.
-    let replay = serde_json::from_str(&serde_json::to_string(&replay).unwrap()).unwrap();
+    let replay = shards::serde_json::from_str(&shards::serde_json::to_string(&replay).unwrap()).unwrap();
     (app, replay)
 }
 
-fn report(app: &App) -> ai_core::ReplayReport {
+fn report(app: &App) -> shards::ai_core::ReplayReport {
     app.world().resource::<AiReplay>().report().cloned().expect("playback has not finished")
 }
 
@@ -147,7 +146,7 @@ fn an_action_during_playback_takes_over() {
     assert!(!copy.world().resource::<AiReplay>().is_playing());
     // From here on the game is live.
     ok(&mut copy, "step", json!({"ticks": 10}));
-    assert_eq!(ai_core::sim::tick(copy.world()), 140);
+    assert_eq!(shards::ai_core::sim::tick(copy.world()), 140);
 }
 
 #[test]
@@ -297,14 +296,14 @@ fn sparkling_app(ignore_sparkle: bool) -> App {
     if ignore_sparkle {
         app.replay_ignore::<Sparkle>();
     }
-    let player = app.world().resource::<ai_core::AiIndex>().get(AiId(5)).unwrap();
+    let player = app.world().resource::<shards::ai_core::AiIndex>().get(AiId(5)).unwrap();
     app.world_mut().entity_mut(player).insert(Sparkle(0.0));
     app
 }
 
 /// Records the session, then plays it back changing the sparkle and/or the weather
 /// directly in the world after 100 ticks.
-fn meddle(ignore_sparkle: bool, sparkle: bool, weather: bool) -> ai_core::ReplayReport {
+fn meddle(ignore_sparkle: bool, sparkle: bool, weather: bool) -> shards::ai_core::ReplayReport {
     let mut original = sparkling_app(ignore_sparkle);
     session(&mut original);
     let replay = replay::save(original.world());
@@ -313,7 +312,7 @@ fn meddle(ignore_sparkle: bool, sparkle: bool, weather: bool) -> ai_core::Replay
     replay::play(app.world_mut(), replay).unwrap();
     ok(&mut app, "step", json!({"ticks": 100}));
     if sparkle {
-        let player = app.world().resource::<ai_core::AiIndex>().get(AiId(5)).unwrap();
+        let player = app.world().resource::<shards::ai_core::AiIndex>().get(AiId(5)).unwrap();
         app.world_mut().get_mut::<Sparkle>(player).unwrap().0 = 1.0;
     }
     if weather {
@@ -346,7 +345,7 @@ fn a_window_does_not_change_the_hash() {
     let before = replay::state_hash(app.world());
     // What the window's visuals add to gameplay entities: all engine types.
     let ids: Vec<Entity> = {
-        let index = app.world().resource::<ai_core::AiIndex>();
+        let index = app.world().resource::<shards::ai_core::AiIndex>();
         index.ids().into_iter().filter_map(|id| index.get(id)).collect()
     };
     for entity in ids {
@@ -363,7 +362,7 @@ fn an_entity_in_a_component_hashes_as_its_id() {
     // Render entities shift `Entity` indices between a window and headless; ids stay.
     let grudge = |app: &mut App| {
         app.register_type::<Grudge>();
-        let index = app.world().resource::<ai_core::AiIndex>();
+        let index = app.world().resource::<shards::ai_core::AiIndex>();
         let (player, boss) = (index.get(AiId(5)).unwrap(), index.get(AiId(6)).unwrap());
         app.world_mut().entity_mut(player).insert(Grudge(boss));
         boss
@@ -372,9 +371,9 @@ fn an_entity_in_a_component_hashes_as_its_id() {
     let mut b = sandbox::test_app(42);
     // In b the boss is the same boss, but another `Entity`.
     b.world_mut().spawn_batch((0..5).map(|_| Transform::default()));
-    let old_boss = b.world().resource::<ai_core::AiIndex>().get(AiId(6)).unwrap();
+    let old_boss = b.world().resource::<shards::ai_core::AiIndex>().get(AiId(6)).unwrap();
     b.world_mut().despawn(old_boss);
-    let mut queue = bevy::ecs::world::CommandQueue::default();
+    let mut queue = shards::bevy::ecs::world::CommandQueue::default();
     let new_boss = sandbox::gameplay::spawn_boss(&mut Commands::new(&mut queue, b.world()), Vec3::new(0.0, 0.0, -6.0));
     queue.apply(b.world_mut());
     b.world_mut().entity_mut(new_boss).insert(AiId(6));
@@ -400,7 +399,7 @@ struct Locked {
 fn a_component_that_does_not_serialize_is_left_out_once() {
     let mut app = sandbox::test_app(42);
     app.register_type::<Locked>();
-    let player = app.world().resource::<ai_core::AiIndex>().get(AiId(5)).unwrap();
+    let player = app.world().resource::<shards::ai_core::AiIndex>().get(AiId(5)).unwrap();
     app.world_mut().entity_mut(player).insert(Locked::default());
     let before = replay::state_hash(app.world());
     app.world_mut().get_mut::<Locked>(player).unwrap().secret = Secret(9);

@@ -1,10 +1,10 @@
-//! Monster brains. They write `Intent`, exactly like the player's keyboard does.
+//! Monster brains. They write `Intent`, exactly like the player's keyboard does: they
+//! move and press their attacks by name.
 
-use ai_core::prelude::*;
-use bevy::prelude::*;
+use shards::core::{flat, Intent};
+use shards::prelude::*;
 
 use super::combat::{Action, AttackKind};
-use super::intent::{flat, Intent};
 use super::{Boss, Player};
 
 const SALT_ATTACK: u64 = 1;
@@ -40,6 +40,7 @@ fn nearest_living_player(players: &Query<(&Transform, &Action), With<Player>>, f
 pub fn skeleton_brains(
     time: Res<Time>,
     rng: SimRng,
+    attacks: Res<ContentDb>,
     players: Query<(&Transform, &Action), With<Player>>,
     mut q: Query<(&AiId, &Transform, &Action, &mut SkeletonBrain, &mut Intent), Without<Player>>,
 ) {
@@ -56,10 +57,10 @@ pub fn skeleton_brains(
             continue;
         }
         intent.aim = Some(target);
-        if to.length() > AttackKind::Claw.spec().reach() * 0.9 {
+        if to.length() > AttackKind::Claw.def(&attacks).reach() * 0.9 {
             intent.move_dir = to.normalize_or_zero();
         } else if brain.cooldown <= 0.0 {
-            intent.attack = Some(AttackKind::Claw);
+            intent.press(AttackKind::Claw.id());
             brain.cooldown = 1.4 + rng.stream(*id, SALT_COOLDOWN).range(0.0, 0.5);
         }
     }
@@ -100,7 +101,7 @@ pub fn boss_brains(
         };
         match choice {
             Some(kind) => {
-                intent.attack = Some(kind);
+                intent.press(kind.id());
                 brain.cooldown = if boss.phase >= 2 { 0.6 } else { 1.0 };
             }
             None => intent.move_dir = to.normalize_or_zero(),
