@@ -30,7 +30,9 @@
 //!     .add_plugins(AiCorePlugin::default())
 //!     .register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.max))
 //!     .journal_event::<Damaged>(|e, w| Some(format!("{} -> {} -{}", label(w, e.source), label(w, e.target), e.amount)))
-//!     .add_ai_tool("move_to", Scope::Player, move_to);
+//!     .add_ai_tool("move_to", Scope::Player, move_to)
+//!     .replay_input::<Intent>()
+//!     .replay_ignore::<Sparkle>();
 //! ```
 
 pub mod builtin;
@@ -67,7 +69,7 @@ pub use failures::{ai_core_error_handler, AiFailures, SystemFailure};
 pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible};
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
 pub use observe::{AiCamera, AiPerception, ObserveOptions};
-pub use replay::{AiReplay, Replay, ReplayReport};
+pub use replay::{AiReplay, Replay, ReplayHashing, ReplayReport};
 pub use rng::{DetRng, SimRng, SimSeed};
 pub use session::{AgentSession, AgentSessions, Caller, Scope};
 pub use sim::{SimConfig, SimSet, SimTick, TickClock};
@@ -230,6 +232,15 @@ pub trait AiAppExt {
     fn replay_input<C>(&mut self) -> &mut Self
     where
         C: Component<Mutability = bevy::ecs::component::Mutable> + Clone + PartialEq + Serialize + DeserializeOwned;
+
+    /// Leaves component `C` out of replay checks: cosmetics and caches, whatever may
+    /// differ between a recording and its playback without the game being different.
+    fn replay_ignore<C: Component>(&mut self) -> &mut Self;
+
+    /// Adds `check(world)` to every replay check, for game data outside AI-visible
+    /// entities (projectiles without ids, resources). A second check with the same
+    /// name replaces the first.
+    fn add_replay_check(&mut self, name: &str, check: fn(&World) -> u64) -> &mut Self;
 }
 
 impl AiAppExt for App {
@@ -280,6 +291,16 @@ impl AiAppExt for App {
         C: Component<Mutability = bevy::ecs::component::Mutable> + Clone + PartialEq + Serialize + DeserializeOwned,
     {
         replay::register_input::<C>(self);
+        self
+    }
+
+    fn replay_ignore<C: Component>(&mut self) -> &mut Self {
+        self.world_mut().get_resource_or_init::<replay::ReplayHashing>().ignore(std::any::TypeId::of::<C>());
+        self
+    }
+
+    fn add_replay_check(&mut self, name: &str, check: fn(&World) -> u64) -> &mut Self {
+        self.world_mut().get_resource_or_init::<replay::ReplayHashing>().add_check(name, check);
         self
     }
 }

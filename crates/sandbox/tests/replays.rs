@@ -256,3 +256,164 @@ fn replay_save_writes_only_inside_replays() {
     }
     assert!(!outside.exists() && !std::path::Path::new("escaped.json").exists() && !std::path::Path::new("boss.json").exists());
 }
+
+#[test]
+fn checks_hash_the_game_not_the_text_the_ai_reads() {
+    let (_, replay) = recorded(42);
+    // A newer build that describes the same game differently.
+    let mut copy = sandbox::test_app(42);
+    copy.register_ai_describer("mood", |e| e.contains::<Health>().then(|| "grim".to_owned()));
+    let seen = ok(&mut copy, "observe", json!({}));
+    assert!(seen.result.as_str().unwrap().contains("grim"), "the extra describer is in use");
+    replay::play(copy.world_mut(), replay).unwrap();
+    ok(&mut copy, "step", json!({"ticks": 357}));
+    copy.update();
+    assert!(report(&copy).identical(), "{}", report(&copy));
+}
+
+#[test]
+fn a_version_1_replay_is_refused_with_the_reason() {
+    let (_, mut replay) = recorded(42);
+    replay.format = "shards-replay/1".into();
+    let mut copy = sandbox::test_app(42);
+    let err = replay::play(copy.world_mut(), replay).unwrap_err();
+    assert!(err.contains("recorded by an older build") && err.contains("record it again"), "{err}");
+}
+
+/// Cosmetic state: may differ between a recording and its playback.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+struct Sparkle(f32);
+
+/// Game state outside AI-visible entities.
+#[derive(Resource, Default)]
+struct Weather(u64);
+
+/// The game with a sparkle on the player and a weather check; what the checks cover is
+/// part of the build, the same for the recording and its playback.
+fn sparkling_app(ignore_sparkle: bool) -> App {
+    let mut app = sandbox::test_app(42);
+    app.register_type::<Sparkle>().init_resource::<Weather>().add_replay_check("weather", |w| w.resource::<Weather>().0);
+    if ignore_sparkle {
+        app.replay_ignore::<Sparkle>();
+    }
+    let player = app.world().resource::<ai_core::AiIndex>().get(AiId(5)).unwrap();
+    app.world_mut().entity_mut(player).insert(Sparkle(0.0));
+    app
+}
+
+/// Records the session, then plays it back changing the sparkle and/or the weather
+/// directly in the world after 100 ticks.
+fn meddle(ignore_sparkle: bool, sparkle: bool, weather: bool) -> ai_core::ReplayReport {
+    let mut original = sparkling_app(ignore_sparkle);
+    session(&mut original);
+    let replay = replay::save(original.world());
+
+    let mut app = sparkling_app(ignore_sparkle);
+    replay::play(app.world_mut(), replay).unwrap();
+    ok(&mut app, "step", json!({"ticks": 100}));
+    if sparkle {
+        let player = app.world().resource::<ai_core::AiIndex>().get(AiId(5)).unwrap();
+        app.world_mut().get_mut::<Sparkle>(player).unwrap().0 = 1.0;
+    }
+    if weather {
+        app.world_mut().resource_mut::<Weather>().0 = 7;
+    }
+    ok(&mut app, "step", json!({"ticks": 257}));
+    app.update();
+    report(&app)
+}
+
+#[test]
+fn games_choose_what_the_checks_cover() {
+    assert!(meddle(true, false, false).identical());
+    let ignored = meddle(true, true, false);
+    assert!(ignored.identical(), "replay_ignore::<Sparkle>: {ignored}");
+    let counted = meddle(false, true, false);
+    assert_eq!(counted.diverged_at, Some(120), "without replay_ignore the sparkle counts: {counted}");
+    let weather = meddle(true, false, true);
+    assert_eq!(weather.diverged_at, Some(120), "add_replay_check covers the resource: {weather}");
+}
+
+/// A gameplay component that points at another entity.
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+struct Grudge(Entity);
+
+#[test]
+fn a_window_does_not_change_the_hash() {
+    let mut app = sandbox::test_app(42);
+    let before = replay::state_hash(app.world());
+    // What the window's visuals add to gameplay entities: all engine types.
+    let ids: Vec<Entity> = {
+        let index = app.world().resource::<ai_core::AiIndex>();
+        index.ids().into_iter().filter_map(|id| index.get(id)).collect()
+    };
+    for entity in ids {
+        app.world_mut().entity_mut(entity).insert((Visibility::default(), GlobalTransform::from_xyz(1.0, 2.0, 3.0)));
+        app.world_mut().spawn((Transform::default(), ChildOf(entity)));
+    }
+    assert_eq!(replay::state_hash(app.world()), before, "visual components are not game data");
+    ok(&mut app, "set", json!({"id": "e6", "component": "Health", "path": "current", "value": 10}));
+    assert_ne!(replay::state_hash(app.world()), before, "game data is");
+}
+
+#[test]
+fn an_entity_in_a_component_hashes_as_its_id() {
+    // Render entities shift `Entity` indices between a window and headless; ids stay.
+    let grudge = |app: &mut App| {
+        app.register_type::<Grudge>();
+        let index = app.world().resource::<ai_core::AiIndex>();
+        let (player, boss) = (index.get(AiId(5)).unwrap(), index.get(AiId(6)).unwrap());
+        app.world_mut().entity_mut(player).insert(Grudge(boss));
+        boss
+    };
+    let mut a = sandbox::test_app(42);
+    let mut b = sandbox::test_app(42);
+    // In b the boss is the same boss, but another `Entity`.
+    b.world_mut().spawn_batch((0..5).map(|_| Transform::default()));
+    let old_boss = b.world().resource::<ai_core::AiIndex>().get(AiId(6)).unwrap();
+    b.world_mut().despawn(old_boss);
+    let mut queue = bevy::ecs::world::CommandQueue::default();
+    let new_boss = sandbox::gameplay::spawn_boss(&mut Commands::new(&mut queue, b.world()), Vec3::new(0.0, 0.0, -6.0));
+    queue.apply(b.world_mut());
+    b.world_mut().entity_mut(new_boss).insert(AiId(6));
+
+    let (boss_a, boss_b) = (grudge(&mut a), grudge(&mut b));
+    assert_ne!(boss_a, boss_b);
+    assert_eq!(replay::state_hash(a.world()), replay::state_hash(b.world()));
+}
+
+/// Reflects, but cannot be serialized: opaque without `ReflectSerialize`.
+#[derive(Reflect, Clone, Default)]
+#[reflect(opaque)]
+#[allow(dead_code)] // only reflection looks inside
+struct Secret(u8);
+
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+struct Locked {
+    secret: Secret,
+}
+
+#[test]
+fn a_component_that_does_not_serialize_is_left_out_once() {
+    let mut app = sandbox::test_app(42);
+    app.register_type::<Locked>();
+    let player = app.world().resource::<ai_core::AiIndex>().get(AiId(5)).unwrap();
+    app.world_mut().entity_mut(player).insert(Locked::default());
+    let before = replay::state_hash(app.world());
+    app.world_mut().get_mut::<Locked>(player).unwrap().secret = Secret(9);
+    assert_eq!(replay::state_hash(app.world()), before, "left out of the hash");
+    ok(&mut app, "step", json!({"ticks": 180}));
+    let warnings: Vec<String> = app
+        .world()
+        .resource::<AiJournal>()
+        .after(0)
+        .0
+        .filter(|e| e.kind == JournalKind::Warn && e.text.contains("leave out"))
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(warnings.len(), 1, "once, not at every check: {warnings:?}");
+    assert!(warnings[0].contains("replays::Locked: it does not serialize"), "{warnings:?}");
+}

@@ -8,6 +8,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use bevy::prelude::*;
+use bevy::reflect::TypeRegistry;
 
 use crate::id::{AiId, AiImportance, AiVisible};
 
@@ -93,6 +94,36 @@ pub fn facts(world: &World, entity: Entity) -> Option<EntityFacts> {
         facing: tf.map(|t| *t.forward()),
         importance: e.get::<AiImportance>().map_or(0.0, |i| i.0),
     })
+}
+
+/// The one rule for "game data", shared by `inspect` and replay checks: every type
+/// except the engine's (`bevy_*`: that also covers what only a window adds, like
+/// `Visibility`, `GlobalTransform` and meshes) and ai_core's own markers, plus
+/// `Transform` and `Name`.
+pub fn is_gameplay_type(type_path: &str) -> bool {
+    const KEEP: [&str; 2] = ["bevy_transform::components::transform::Transform", "bevy_ecs::name::Name"];
+    const HIDE: [&str; 4] =
+        ["ai_core::id::AiId", "ai_core::id::AiVisible", "ai_core::id::AiLandmark", "ai_core::describe::AiKind"];
+    KEEP.contains(&type_path) || !(type_path.starts_with("bevy_") || HIDE.contains(&type_path))
+}
+
+/// The gameplay components of `entity` that reflection can read, with their full type
+/// paths, in type path order.
+pub fn gameplay_components<'w>(
+    world: &'w World,
+    registry: &TypeRegistry,
+    entity: Entity,
+) -> Vec<(&'static str, &'w dyn PartialReflect)> {
+    let (Ok(infos), Ok(e)) = (world.inspect_entity(entity), world.get_entity(entity)) else {
+        return Vec::new();
+    };
+    let mut components: Vec<(&'static str, &dyn PartialReflect)> = infos
+        .filter_map(|(_, info)| registry.get(info.type_id()?))
+        .filter(|reg| is_gameplay_type(reg.type_info().type_path()))
+        .filter_map(|reg| Some((reg.type_info().type_path(), reg.data::<ReflectComponent>()?.reflect(e)?.as_partial_reflect())))
+        .collect();
+    components.sort_by_key(|(path, _)| *path);
+    components
 }
 
 /// Facts for every live AI-visible entity, ordered by id (deterministic).

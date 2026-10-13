@@ -296,7 +296,8 @@ pub fn nearby(world: &World, center: Vec3, radius: f32, filter: Option<&str>, ex
     found.iter().map(|(f, _)| entity_line(f, Some(center), None)).collect()
 }
 
-/// Full detail on one entity: fragments plus every reflectable gameplay component.
+/// Full detail on one entity: fragments plus every reflectable gameplay component
+/// ([`is_gameplay_type`](crate::describe::is_gameplay_type); engine ones are only named).
 pub fn inspect(world: &World, entity: Entity, viewer_subject: Option<Entity>) -> Result<String, String> {
     let f = facts(world, entity).ok_or_else(|| format!("{entity} is not visible to the AI"))?;
     let mut out = format!("{} {}  [{}]\n", f.id, f.label, entity);
@@ -324,7 +325,7 @@ pub fn inspect(world: &World, entity: Entity, viewer_subject: Option<Entity>) ->
         let reflected = info
             .type_id()
             .and_then(|t| registry.get(t))
-            .filter(|reg| is_gameplay_type(reg.type_info().type_path()))
+            .filter(|reg| crate::describe::is_gameplay_type(reg.type_info().type_path()))
             .and_then(|reg| reg.data::<ReflectComponent>())
             .and_then(|rc| rc.reflect(e));
         match reflected {
@@ -342,17 +343,6 @@ pub fn inspect(world: &World, entity: Entity, viewer_subject: Option<Entity>) ->
         let _ = writeln!(out, "  (+{} engine components: {})", hidden.len(), hidden.join(", "));
     }
     Ok(out)
-}
-
-/// Engine internals are noise for an agent; game types and a few basics are not.
-fn is_gameplay_type(path: &str) -> bool {
-    const KEEP: [&str; 2] = ["bevy_transform::components::transform::Transform", "bevy_ecs::name::Name"];
-    const HIDE: [&str; 4] =
-        ["ai_core::id::AiId", "ai_core::id::AiVisible", "ai_core::id::AiLandmark", "ai_core::describe::AiKind"];
-    if KEEP.contains(&path) {
-        return true;
-    }
-    !(path.starts_with("bevy_") || HIDE.contains(&path))
 }
 
 // --- diffs ---------------------------------------------------------------------

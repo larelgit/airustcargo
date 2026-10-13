@@ -130,7 +130,9 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
    .add_ai_tool("move_to", Scope::Player, move_to)   // действие: журнал + список изменений
    .add_ai_query("threats", Scope::Player, threats)  // чтение: без журнала
    .add_ai_condition("boss_phase_2", |w| /* ... */)
-   .replay_input::<Intent>();                       // вход для реплеев (см. «Реплеи»)
+   .replay_input::<Intent>()                        // вход для реплеев (см. «Реплеи»)
+   .replay_ignore::<Sparkle>()                      // косметика: не входит в проверки реплея
+   .add_replay_check("weather", |w| /* u64 */);     // данные вне AiVisible-сущностей
 ```
 
 Маркеры сущностей: `AiKind("Boss")`, `AiImportance(10.0)`, `AiLandmark`, `AiOccluder`, `AiPlayer`.
@@ -216,8 +218,9 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
   Вызовы, сделанные изнутри другого инструмента, не пишутся: их повторит внешний вызов.
   `control`-инструменты (pause, step, possess) не пишутся. Сырые правки через BRP
   (`world.insert_components`) идут мимо инструментов и тоже не пишутся;
-- **проверки**: хэш AI-видимого состояния (id, фрагменты, точные позиции) каждые 60 тиков
-  и в конце записи.
+- **проверки**: хэш игровых данных каждые 60 тиков и в конце записи: для каждой сущности с
+  `AiVisible` по порядку `AiId` — её id и все отражаемые игровые компоненты (сериализация через
+  reflection, компоненты в порядке имени типа).
 
 ```bash
 shards save-replay                          # или ai/act {"tool": "replay_save", "args": {"path": …}}
@@ -228,6 +231,15 @@ cargo sandbox --replay replays/tick332.json --verify
 # replay finished at tick 332: identical to the recording (6 checks) [332 ticks in 0.13s]
 ```
 
+- Игровые данные определяет то же правило, что и в `inspect`: всё, кроме типов `bevy_*` и внутренних
+  маркеров `ai_core`, плюс `Transform` и `Name`. Поэтому компоненты, которые добавляет только окно
+  (`Visibility`, `GlobalTransform`, меши), хэш не меняют, а `Entity` внутри компонента хэшируется
+  как `AiId`. Подписи и describe-фрагменты — это текст для ИИ, в хэш они не входят: новая формулировка
+  или новый describer не ломают старые реплеи.
+- Состав хэша задаёт игра: `replay_ignore::<C>()` исключает компонент (косметика, кэши),
+  `add_replay_check(name, fn(&World) -> u64)` добавляет данные вне `AiVisible`-сущностей (снаряды
+  без id, ресурсы). Компонент, который не сериализуется, один раз попадает в журнал
+  (`replay checks leave out …`) и дальше пропускается.
 - `replay_save` пишет только внутрь `replays/` рабочей папки игры (вложенные папки можно).
   Абсолютный путь, `..` и симлинк, который ведёт наружу, — ошибка с подсказкой:
   `path must be inside replays/, e.g. replays/boss-fight.json`.
@@ -243,7 +255,9 @@ cargo sandbox --replay replays/tick332.json --verify
   (`replay interrupted at tick 130 of 332: dev took over (teleport)`).
 - Во время проигрывания запись продолжается, поэтому ветка сохраняется одним реплеем.
 - Состояние записи и проигрывания видно в `ai/status` (поле `replay`), итог пишется в журнал.
-- Формат: JSON `shards-replay/1` (`seed`, `tick_hz`, `end`, `events`, `checks`; хэши hex-строками).
+- Формат: JSON `shards-replay/2` (`seed`, `tick_hz`, `end`, `events`, `checks`; хэши hex-строками).
+  Реплей `shards-replay/1` хэшировал текст и этой сборкой не проверяется: `play` отвечает
+  `this replay was recorded by an older build (…); record it again`, а `--verify` выходит с кодом 2.
 
 ## Скриншоты
 
@@ -400,7 +414,7 @@ source ~/.local/share/rustengine-sysdeps/env.sh   # пока не установ
 cargo test --workspace
 ```
 
-Всего 62 теста:
+Всего 68 тестов:
 
 - 26 юнит-тестов `ai_core`: id (в том числе перенумерация и занятый id), журнал, RNG,
   компас и LOS, схемы, шаги симуляции, пути снимков (только `shots/`, чужой `x.json` цел), формат
@@ -429,7 +443,7 @@ cargo test --workspace
   предупреждение сохраняет свой тик внутри `step 100`, `step --until journal:` останавливается
   на нём, 100 строк за тик режутся до 64 и одной строки про 36 отброшенных, action возвращает
   свои предупреждения;
-- 8 сценариев `crates/sandbox/tests/replays.rs`:
+- 14 сценариев `crates/sandbox/tests/replays.rs`:
   - сессия со всеми видами входов (dev-правки, инструменты игрока, клавиатура, spawn, possess,
     вызов после последнего тика) проигрывается побитово одинаково, клавиши во время просмотра игнорируются;
   - изменённая игра даёт отчёт с первым разошедшимся тиком;
@@ -437,7 +451,13 @@ cargo test --workspace
   - ветка после проигрывания сохраняется одним реплеем и тоже воспроизводится;
   - вложенные вызовы пишутся один раз;
   - проигрывание требует свежего мира с тем же seed;
-  - `replay_save` пишет файл, который читается обратно, и только внутрь `replays/`.
+  - `replay_save` пишет файл, который читается обратно, и только внутрь `replays/`;
+  - проверка хэширует игру, а не текст: проигрывание с лишним describer совпадает;
+  - реплей `shards-replay/1` отклоняется с причиной;
+  - `replay_ignore` и `add_replay_check` меняют состав хэша, правка исключённого компонента
+    при проигрывании не даёт расхождения;
+  - компоненты окна не меняют хэш, `Entity` в компоненте хэшируется как `AiId`;
+  - несериализуемый компонент пропускается, а в журнале о нём одна строка.
 
 Снимки требуют окна и GPU, поэтому в `cargo test` их нет. Без дисплея их можно проверить через
 Xvfb и программный Vulkan (`apt install xvfb mesa-vulkan-drivers`):

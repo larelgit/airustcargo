@@ -11,7 +11,8 @@
 //!   the caller's scope and body. Control tools (`pause`, `step`, `possess`) change
 //!   *when* things happen, not what, and are left out. Raw BRP edits
 //!   (`world.insert_components`) bypass the tools and are not recorded.
-//! - **checks**: a hash of the AI-visible state every [`CHECK_EVERY`] ticks.
+//! - **checks**: a hash of the game state every [`CHECK_EVERY`] ticks: every AI-visible
+//!   entity's id and gameplay components (see [`state_hash`]), not the text the AI reads.
 //!
 //! Playback needs a fresh world built with the same seed and tick rate. Events are
 //! applied between ticks, exactly where they happened; input changes nobody
@@ -23,28 +24,34 @@
 //!
 //! Recording continues during playback, so a branch saves as one whole replay.
 
+use std::any::TypeId;
 use std::fmt;
 
 use bevy::ecs::change_detection::Tick;
 use bevy::ecs::component::Mutable;
 use bevy::ecs::system::SystemChangeTick;
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
+use bevy::reflect::serde::{ReflectSerializerProcessor, TypedReflectSerializer};
+use bevy::reflect::TypeRegistry;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::describe::all_facts;
-use crate::id::{AiId, AiIndex};
+use crate::describe::gameplay_components;
+use crate::id::{AiId, AiIndex, AiVisible};
 use crate::journal::{self, JournalKind};
 use crate::rng::SimSeed;
 use crate::session::{AgentSessions, Caller, Scope};
 use crate::sim::{self, SimTick};
 use crate::tools::{call_tool, register_tool, Call, ToolKind, ToolResult};
 
-/// Format tag written into every replay file.
-pub const FORMAT: &str = "shards-replay/1";
+/// Format tag written into every replay file. Version 2 hashes game data; version 1
+/// hashed the AI's text and cannot be checked by this build.
+pub const FORMAT: &str = "shards-replay/2";
+
+const FORMAT_V1: &str = "shards-replay/1";
 
 /// Ticks between state checks (one second at 60 Hz).
 pub const CHECK_EVERY: u64 = 60;
@@ -67,7 +74,7 @@ pub struct Replay {
     pub checks: Vec<Check>,
 }
 
-/// State hash of the AI-visible world after `tick` ticks.
+/// State hash of the game after `tick` ticks.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Check {
     pub tick: u64,
@@ -319,28 +326,121 @@ pub enum ReplaySystems {
 
 // --- state hash ------------------------------------------------------------------
 
-/// FNV-1a over everything the AI can see: ids, labels, fragments, exact positions
-/// and facings. Two worlds with the same hash look the same to every agent.
+/// A game's own contribution to every replay check.
+pub type ReplayCheck = fn(&World) -> u64;
+
+/// What goes into [`state_hash`] besides AI-visible entities, and what stays out.
+#[derive(Resource, Default)]
+pub struct ReplayHashing {
+    /// Components left out ([`AiAppExt::replay_ignore`](crate::AiAppExt::replay_ignore)).
+    ignored: HashSet<TypeId>,
+    /// Game data outside AI-visible entities
+    /// ([`AiAppExt::add_replay_check`](crate::AiAppExt::add_replay_check)), by name.
+    checks: Vec<(String, ReplayCheck)>,
+    /// Components already reported as not serializable.
+    reported: HashSet<&'static str>,
+}
+
+impl ReplayHashing {
+    pub fn ignore(&mut self, component: TypeId) {
+        self.ignored.insert(component);
+    }
+
+    pub fn add_check(&mut self, name: &str, check: ReplayCheck) {
+        self.checks.retain(|(n, _)| n != name);
+        self.checks.push((name.to_owned(), check));
+    }
+}
+
+/// FNV-1a over the game state: for every AI-visible entity in `AiId` order, its id and
+/// each gameplay component ([`is_gameplay_type`](crate::describe::is_gameplay_type),
+/// the rule `inspect` uses), serialized by reflection, in type name order; then every
+/// [`add_replay_check`](crate::AiAppExt::add_replay_check). Labels and describe
+/// fragments are presentation and stay out: rewording a fragment or adding a
+/// describer keeps old replays valid. Components only a window adds are engine types
+/// and stay out too.
 pub fn state_hash(world: &World) -> u64 {
+    hash_state(world).0
+}
+
+/// The hash, and the components left out because they do not serialize.
+fn hash_state(world: &World) -> (u64, Vec<&'static str>) {
     let mut h = Fnv(0xcbf2_9ce4_8422_2325);
     h.u64(sim::tick(world));
-    for f in all_facts(world) {
-        h.u64(f.id.0 as u64);
-        h.bytes(f.label.as_bytes());
-        for (key, text) in &f.fragments {
-            h.bytes(key.as_bytes());
-            h.bytes(text.as_bytes());
-        }
-        for v in [f.pos.x, f.pos.y, f.pos.z] {
-            h.u64(v.to_bits() as u64);
-        }
-        if let Some(facing) = f.facing {
-            for v in [facing.x, facing.y, facing.z] {
-                h.u64(v.to_bits() as u64);
+    let app_registry = world.resource::<AppTypeRegistry>().clone();
+    let registry = app_registry.read();
+    let hashing = world.get_resource::<ReplayHashing>();
+    let entity_ids = EntitiesAsIds(world);
+    let mut failed = Vec::new();
+    let mut buf = Vec::new();
+    let Some(index) = world.get_resource::<AiIndex>() else {
+        return (h.0, failed);
+    };
+    for id in index.ids() {
+        let Some(entity) = index.get(id).filter(|e| world.get::<AiVisible>(*e).is_some()) else {
+            continue;
+        };
+        h.u64(id.0 as u64);
+        for (path, value) in gameplay_components(world, &registry, entity) {
+            let ignored = value
+                .get_represented_type_info()
+                .is_some_and(|info| hashing.is_some_and(|c| c.ignored.contains(&info.type_id())));
+            if ignored {
+                continue;
+            }
+            buf.clear();
+            let serializer = TypedReflectSerializer::with_processor(value, &registry, &entity_ids);
+            match serde_json::to_writer(&mut buf, &serializer) {
+                Ok(()) => {
+                    h.bytes(path.as_bytes());
+                    h.bytes(&buf);
+                }
+                Err(_) => failed.push(path),
             }
         }
     }
-    h.0
+    for (name, check) in hashing.map(|c| c.checks.as_slice()).unwrap_or_default() {
+        h.bytes(name.as_bytes());
+        h.u64(check(world));
+    }
+    failed.sort_unstable();
+    failed.dedup();
+    (h.0, failed)
+}
+
+/// [`state_hash`], journaling (once each) the components it had to leave out.
+fn checked_hash(world: &mut World) -> u64 {
+    let (hash, failed) = hash_state(world);
+    for path in failed {
+        let new = world.get_resource_or_init::<ReplayHashing>().reported.insert(path);
+        if new {
+            let text = format!("replay checks leave out {path}: it does not serialize through reflection");
+            journal::log(world, JournalKind::Warn, text);
+        }
+    }
+    hash
+}
+
+/// `Entity` values hash as the `AiId` they point to: render entities a window spawns
+/// shift `Entity` indices, never ids.
+struct EntitiesAsIds<'w>(&'w World);
+
+/// What a processor returns: serialized, or the serializer handed back untouched.
+type Processed<S> = Result<Result<<S as serde::Serializer>::Ok, S>, <S as serde::Serializer>::Error>;
+
+impl ReflectSerializerProcessor for EntitiesAsIds<'_> {
+    fn try_serialize<S>(&self, value: &dyn PartialReflect, _: &TypeRegistry, serializer: S) -> Processed<S>
+    where
+        S: serde::Serializer,
+    {
+        match value.try_downcast_ref::<Entity>() {
+            Some(entity) => {
+                let id = self.0.get::<AiId>(*entity).map_or_else(|| "untracked".to_owned(), ToString::to_string);
+                serializer.serialize_str(&id).map(Ok)
+            }
+            None => Ok(Err(serializer)),
+        }
+    }
 }
 
 struct Fnv(u64);
@@ -370,7 +470,7 @@ fn check_state(world: &mut World) {
     if tick == 0 || !tick.is_multiple_of(CHECK_EVERY) {
         return;
     }
-    let hash = state_hash(world);
+    let hash = checked_hash(world);
     let mut replay = world.resource_mut::<AiReplay>();
     replay.checks.push(Check { tick, hash });
     let Some(playback) = &mut replay.playback else {
@@ -399,6 +499,12 @@ fn check_state(world: &mut World) {
 /// yet) and built with the replay's seed and tick rate. Events are applied as ticks
 /// run; step or resume the game to play it.
 pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
+    if replay.format == FORMAT_V1 {
+        return Err(format!(
+            "this replay was recorded by an older build ({FORMAT_V1}: its checks hash the text the AI reads, \
+             not the game state), so this build cannot check it; record it again"
+        ));
+    }
     if replay.format != FORMAT {
         return Err(format!("not a replay this build can play: format `{}`, expected `{FORMAT}`", replay.format));
     }
@@ -504,7 +610,7 @@ fn replay_call(world: &mut World, agent: &str, scope: Scope, subject: Option<AiI
 }
 
 fn finish(world: &mut World) {
-    let hash = state_hash(world);
+    let hash = checked_hash(world);
     let tick = sim::tick(world);
     let Some(playback) = world.resource_mut::<AiReplay>().playback.take() else {
         return;
@@ -614,6 +720,7 @@ fn replay_save_tool(In(call): In<Call<ReplaySaveArgs>>, world: &mut World) -> To
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<AiReplay>()
+        .init_resource::<ReplayHashing>()
         .configure_sets(
             FixedFirst,
             (ReplaySystems::Calls, ReplaySystems::Inputs).chain().before(sim::advance_tick),
