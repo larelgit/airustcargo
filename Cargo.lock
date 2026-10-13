@@ -132,6 +132,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "shards_script",
 ]
 
 [[package]]
