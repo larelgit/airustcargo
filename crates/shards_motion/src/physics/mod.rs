@@ -296,7 +296,8 @@ pub struct VolumeExited {
 
 /// Deterministic collider id: insertion order, never reused. Orders every query
 /// result and every internal iteration. Assigned by the engine when [`Collider`] is
-/// added (`0` until then, or without [`PhysicsPlugin`]).
+/// added (`0` until then, or without [`PhysicsPlugin`]). Only gameplay may spawn
+/// colliders: one that only a window spawns would shift every later id.
 #[derive(
     Component, Reflect, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default,
 )]
