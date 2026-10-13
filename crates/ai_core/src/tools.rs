@@ -208,11 +208,15 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
     let origin = caller.subject.and_then(|e| world.get::<Transform>(e)).map(|t| t.translation);
     let before = digest(world);
     let args_text = if args.is_null() { String::new() } else { args.to_string() };
+    // Earlier log lines go in before the mark: they are not this call's.
+    journal::drain_logs(world);
     let mark = journal::log(world, JournalKind::Agent, format!("{}: {tool} {args_text}", caller.agent));
     let result = (entry.run)(world, caller, args);
     if is_action {
         crate::replay::end_action(world);
     }
+    // A warning the call caused comes back with it.
+    journal::drain_logs(world);
     let after = digest(world);
 
     let mut changes = diff(&before, &after, origin);

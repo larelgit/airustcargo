@@ -90,7 +90,7 @@ ai_core:              Observe — срез мира текстом            (o
 | `describe` | только явно зарегистрированные компоненты видны ИИ, у каждого короткий describe |
 | `observe` | текстовый срез: YOU / SEEN (по угрозе) / NOT IN VIEW / LANDMARKS / SINCE; `inspect`, `nearby`, диффы |
 | `spatial` | позиции относительно игрока («8.4m NE»), line of sight по `AiOccluder` (подменяемо) |
-| `journal` | кольцевой буфер игровых событий (observers) плюс перехват `warn!`/`error!` из tracing |
+| `journal` | кольцевой буфер игровых событий (observers) плюс перехват `warn!`/`error!` из tracing: строка получает тик, на котором записана, и попадает в журнал после каждого тика; не больше 64 строк на тик |
 | `tools` | реестр: args-struct + Bevy-система, JSON Schema (schemars), scope, `catch_unwind` |
 | `builtin` | встроенные инструменты: observe, inspect, step, set/get через reflection, ... |
 | `sim` | тик, пауза, синхронный `step` по FixedMain, стоп-условия |
@@ -172,6 +172,11 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 - `step` синхронно прогоняет `FixedMain` ровно N тиков, игра при этом стоит на паузе.
   Есть стоп-условия: `journal:TEXT`, `gone:ID`, `shows:ID:TEXT`, `near:A:B:M`,
   `field:ID:Comp.path<N`, `named:NAME`. Лимиты: до 216 000 тиков и 20 с реального времени за вызов.
+- **Логи внутри `step`.** `warn!`/`error!` попадают в журнал с тиком, на котором записаны, сразу после
+  этого тика, а не в конце шага. Поэтому `step --until journal:TEXT` останавливается на тике
+  предупреждения. За тик в журнал идёт не больше 64 строк, остальные сводятся в одну:
+  `70 [warn] 36 log lines dropped (limit 64 per tick)`. Предупреждение, которое вызвал action,
+  приходит в его же `JOURNAL`.
 - **Проверка порядка систем.** `AiCorePlugin` включает ambiguity detection для `FixedUpdate`:
   две системы, которые трогают одни данные без явного порядка, дают warning, и он попадает в журнал.
   Тест `gameplay_systems_have_a_total_order` превращает это в ошибку, а контрольный тест
@@ -376,7 +381,7 @@ source ~/.local/share/rustengine-sysdeps/env.sh   # пока не установ
 cargo test --workspace
 ```
 
-Всего 52 теста:
+Всего 56 тестов:
 
 - 26 юнит-тестов `ai_core`: id (в том числе перенумерация и занятый id), журнал, RNG,
   компас и LOS, схемы, шаги симуляции, пути снимков (только `shots/`, чужой `x.json` цел), формат
@@ -396,6 +401,10 @@ cargo test --workspace
     в `observe`; игровой `AimAssist` виден в подсказке `set`;
   - права scope;
   - паника в инструменте;
+- 4 теста `crates/sandbox/tests/log_capture.rs` (свой процесс: ставят глобальный логгер):
+  предупреждение сохраняет свой тик внутри `step 100`, `step --until journal:` останавливается
+  на нём, 100 строк за тик режутся до 64 и одной строки про 36 отброшенных, action возвращает
+  свои предупреждения;
 - 8 сценариев `crates/sandbox/tests/replays.rs`:
   - сессия со всеми видами входов (dev-правки, инструменты игрока, клавиатура, spawn, possess,
     вызов после последнего тика) проигрывается побитово одинаково, клавиши во время просмотра игнорируются;

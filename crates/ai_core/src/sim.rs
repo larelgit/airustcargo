@@ -9,6 +9,8 @@
 //! way Bevy's own fixed loop does, so `step(600)` completes in one call (as fast
 //! as the CPU allows) and returns only after the ticks ran.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bevy::app::FixedMain;
@@ -52,8 +54,22 @@ impl Default for SimConfig {
     }
 }
 
-pub(crate) fn advance_tick(mut tick: ResMut<SimTick>) {
+/// [`SimTick`] for code outside the ECS: the log capture layer stamps every line with
+/// it, from any thread. [`advance_tick`] stores each new tick.
+#[derive(Resource, Clone, Default, Debug)]
+pub struct TickClock(Arc<AtomicU64>);
+
+impl TickClock {
+    pub fn get(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+pub(crate) fn advance_tick(mut tick: ResMut<SimTick>, clock: Option<Res<TickClock>>) {
     tick.0 += 1;
+    if let Some(clock) = clock {
+        clock.0.store(tick.0, Ordering::Relaxed);
+    }
 }
 
 pub fn is_paused(world: &World) -> bool {

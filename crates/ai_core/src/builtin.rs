@@ -228,7 +228,11 @@ fn step_tool(In(call): In<Call<StepArgs>>, world: &mut World) -> ToolResult {
         validate(world, cond)?;
     }
     let journal_mark = world.resource::<AiJournal>().last_seq();
-    let report = sim::step(world, max, Duration::from_secs(20), |w| check(w, &until, journal_mark))?;
+    let report = sim::step(world, max, Duration::from_secs(20), |w| {
+        // The tick's log lines are in the journal before `journal:` conditions look.
+        journal::drain_logs(w);
+        check(w, &until, journal_mark)
+    })?;
     let mut msg = format!("ran {} ticks ({} → {})", report.ticks(), report.from_tick, report.to_tick);
     match report.end {
         StepEnd::Completed if until.is_empty() => {}

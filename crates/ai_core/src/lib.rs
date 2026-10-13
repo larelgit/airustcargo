@@ -68,7 +68,7 @@ pub use observe::{AiCamera, AiPerception, ObserveOptions};
 pub use replay::{AiReplay, Replay, ReplayReport};
 pub use rng::{DetRng, SimRng, SimSeed};
 pub use session::{AgentSession, AgentSessions, Caller, Scope};
-pub use sim::{SimConfig, SimSet, SimTick};
+pub use sim::{SimConfig, SimSet, SimTick, TickClock};
 pub use spatial::{AiLineOfSight, AiOccluder};
 pub use tools::{call_tool, AiTools, Call, CallOutcome, Id, NoArgs, ToolKind, ToolResult, ToolSpec};
 
@@ -103,6 +103,7 @@ impl Plugin for AiCorePlugin {
             .insert_resource(SimSeed(self.sim.seed))
             .insert_resource(self.perception.clone())
             .init_resource::<SimTick>()
+            .init_resource::<sim::TickClock>()
             .init_resource::<AiIndex>()
             .init_resource::<AiJournal>()
             .init_resource::<AiDescribers>()
@@ -115,7 +116,10 @@ impl Plugin for AiCorePlugin {
                 (SimSet::Input, SimSet::Think, SimSet::Act, SimSet::Move, SimSet::Resolve, SimSet::Cleanup).chain(),
             )
             .add_systems(FixedFirst, sim::advance_tick)
-            .add_systems(Last, journal::drain_captured_logs)
+            // Log lines into the journal after every tick (a long `step` runs many in
+            // one frame), and once per frame for lines logged between ticks.
+            .add_systems(FixedLast, journal::drain_logs.after(replay::ReplaySystems::Remember))
+            .add_systems(Last, journal::drain_logs)
             // Determinism needs an explicit order: warn (into the journal) about gameplay
             // systems that touch the same data with no ordering between them.
             .edit_schedule(FixedUpdate, |schedule| {
