@@ -4,6 +4,7 @@ members = [
     "crates/ai_core",
     "crates/shards_core",
     "crates/shards_content",
+    "crates/shards_motion",
     "crates/shards",
     "crates/sandbox",
     "crates/shards_cli",
@@ -29,10 +30,16 @@ ureq = { version = "3.4", default-features = false, features = ["json"] }
 libc = "0.2"
 # Content files (RON definitions and prefabs).
 ron = "=0.12.2"
+# Collision queries inside shards_motion only; never part of a public API. `alloc` holds
+# the support-map shape casts and EPA contacts. No `enhanced-determinism`: it switches
+# glam (shared with all of Bevy) to scalar libm math; one machine + one build is already
+# deterministic, which is what replays need.
+parry3d = { version = "=0.31.1", default-features = false, features = ["std", "alloc", "dim3", "f32"] }
 
 ai_core = { path = "crates/ai_core", default-features = false }
 shards_core = { path = "crates/shards_core" }
 shards_content = { path = "crates/shards_content", default-features = false }
+shards_motion = { path = "crates/shards_motion" }
 shards = { path = "crates/shards", default-features = false }
 
 # Bevy's recommended dev setup: optimise dependencies, keep our own code fast to compile.

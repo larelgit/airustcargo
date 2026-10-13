@@ -1,0 +1,17 @@
+[package]
+name = "shards_motion"
+description = "Shards physics layer and kinematic character controller: colliders, volumes, queries, move-and-slide."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ai_core.workspace = true
+bevy = { workspace = true, features = ["std", "serialize"] }
+serde.workspace = true
+schemars.workspace = true
+parry3d.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
