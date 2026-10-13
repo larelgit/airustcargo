@@ -49,7 +49,8 @@ pub const FORMAT: &str = "shards-replay/1";
 /// Ticks between state checks (one second at 60 Hz).
 pub const CHECK_EVERY: u64 = 60;
 
-/// Default folder for saved replays, relative to the game's working directory.
+/// Folder for saved replays, relative to the game's working directory. Tools write
+/// replays nowhere else (see [`paths`](crate::paths)).
 pub const REPLAYS_DIR: &str = "replays";
 
 /// A recorded session: everything needed to play it again, nothing derived.
@@ -581,26 +582,29 @@ pub fn status(world: &World) -> Value {
 /// exactly this game again (and to see where a changed build diverges from it).
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct ReplaySaveArgs {
-    /// Where to write it (.json). Default: replays/tick<T>.json in the game's working
-    /// directory.
+    /// Where to write it, inside replays/ in the game's working directory, e.g.
+    /// "replays/boss-fight.json". Default: replays/tick<T>.json.
     pub path: Option<String>,
+}
+
+/// A good path for the errors that refuse a bad one.
+const REPLAY_PATH_EXAMPLE: &str = "replays/boss-fight.json";
+
+/// Writes `replay` to `requested` (a path inside `replays/`); returns where it went.
+pub fn write(replay: &Replay, requested: &str) -> Result<std::path::PathBuf, String> {
+    let path = crate::paths::inside(REPLAYS_DIR, requested, REPLAY_PATH_EXAMPLE)?;
+    let text = serde_json::to_string_pretty(replay).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    Ok(path)
 }
 
 fn replay_save_tool(In(call): In<Call<ReplaySaveArgs>>, world: &mut World) -> ToolResult {
     let replay = save(world);
-    let path = match call.args.path {
-        Some(p) => std::path::PathBuf::from(p),
-        None => std::path::Path::new(REPLAYS_DIR).join(format!("tick{}.json", replay.end.tick)),
-    };
-    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    }
-    let text = serde_json::to_string_pretty(&replay).map_err(|e| e.to_string())?;
-    std::fs::write(&path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-    let shown = std::fs::canonicalize(&path).unwrap_or(path);
+    let requested = call.args.path.unwrap_or_else(|| format!("{REPLAYS_DIR}/tick{}.json", replay.end.tick));
+    let path = write(&replay, &requested)?;
     Ok(format!(
         "saved {}: {} ticks, {} events, {} checks, seed {}",
-        shown.display(),
+        path.display(),
         replay.end.tick,
         replay.events.len(),
         replay.checks.len() + 1,

@@ -40,6 +40,7 @@ pub mod highlight;
 pub mod id;
 pub mod journal;
 pub mod observe;
+pub mod paths;
 #[cfg(feature = "remote")]
 pub mod remote;
 pub mod replay;
@@ -85,6 +86,7 @@ pub struct AiCorePlugin {
     pub sim: SimConfig,
     pub perception: AiPerception,
     /// Port for the `ai/*` BRP methods (`remote` feature). `None`: no HTTP server.
+    /// Every BRP method needs the token the game writes to `.shards/<port>.token`.
     pub remote_port: Option<u16>,
 }
 
@@ -139,13 +141,26 @@ impl Plugin for AiCorePlugin {
             if !app.is_plugin_added::<bevy_remote::RemotePlugin>() {
                 app.add_plugins(bevy_remote::RemotePlugin::default());
             }
-            app.add_plugins(bevy_remote::http::RemoteHttpPlugin::default().with_port(port))
-                .insert_resource(remote::AiInstance::new(Some(port)));
+            let token = remote::AiToken::random();
             // Games should refuse to start on a busy port (see `remote::ensure_port_free`);
-            // this is the last word for those that do not.
-            if let Err(e) = remote::ensure_port_free(port) {
-                error!("ai_core: {e}; `shards` will not reach this game");
+            // this is the last word for those that do not. The token file of the game
+            // that holds the port stays untouched.
+            match remote::ensure_port_free(port) {
+                Ok(()) => match remote::TokenFile::write(&remote::token_path(port), &token) {
+                    Ok(file) => {
+                        app.insert_resource(file);
+                    }
+                    Err(e) => error!("ai_core: {e}; `shards` cannot authenticate to this game"),
+                },
+                Err(e) => error!("ai_core: {e}; `shards` will not reach this game"),
             }
+            app.add_plugins(bevy_remote::http::RemoteHttpPlugin::default().with_port(port))
+                .insert_resource(remote::AiInstance::new(Some(port)))
+                .insert_resource(token)
+                .add_systems(
+                    bevy_remote::RemoteLast,
+                    remote::protect_new_methods.before(bevy_remote::RemoteSystems::ProcessRequests),
+                );
         }
     }
 
@@ -153,6 +168,7 @@ impl Plugin for AiCorePlugin {
         #[cfg(feature = "remote")]
         if self.remote_port.is_some() {
             remote::register_methods(app.world_mut());
+            remote::protect_methods(app.world_mut());
         }
         let _ = app;
     }

@@ -234,11 +234,25 @@ fn playback_needs_a_fresh_world_with_the_same_seed() {
 #[test]
 fn replay_save_writes_a_file_that_loads_back() {
     let (mut app, replay) = recorded(42);
-    let path = std::env::temp_dir().join(format!("sandbox_replay_{}.json", std::process::id()));
-    let out = ok(&mut app, "replay_save", json!({"path": path.display().to_string()}));
+    let name = format!("replays/test/save-{}.json", std::process::id());
+    let out = ok(&mut app, "replay_save", json!({"path": name}));
     let text = out.result.as_str().unwrap();
     assert!(text.contains("357 ticks") && text.contains("seed 42"), "{text}");
+    let path = std::env::current_dir().unwrap().join(&name);
     let loaded = replay::load(&path).unwrap();
     let _ = std::fs::remove_file(&path);
     assert_eq!(loaded, replay);
+}
+
+#[test]
+fn replay_save_writes_only_inside_replays() {
+    let mut app = sandbox::test_app(42);
+    let outside = std::env::temp_dir().join(format!("sandbox_replay_{}.json", std::process::id()));
+    for path in [outside.display().to_string(), "replays/../escaped.json".into(), "boss.json".into()] {
+        let out = call_tool(app.world_mut(), "dev", "replay_save", json!({"path": path}));
+        assert!(!out.ok, "{path} must be refused");
+        let err = out.result.as_str().unwrap();
+        assert!(err.starts_with("path must be inside replays/, e.g. replays/boss-fight.json"), "{err}");
+    }
+    assert!(!outside.exists() && !std::path::Path::new("escaped.json").exists() && !std::path::Path::new("boss.json").exists());
 }

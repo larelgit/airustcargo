@@ -74,7 +74,11 @@ fn main() -> ExitCode {
             return ExitCode::from(3);
         }
     };
+    // From here on `kill` ends the game through `AppExit`, like Ctrl+C: the token
+    // and the port file are removed on the way out.
+    termination::catch_signals();
     let mut app = build_app(&cfg);
+    app.add_systems(bevy::app::First, termination::exit_when_signalled);
     if let Some(r) = replay
         && let Err(e) = replay::play(app.world_mut(), r)
     {
@@ -156,4 +160,57 @@ fn verify(cfg: GameConfig, replay: Replay) -> ExitCode {
     };
     println!("{report} [{end} ticks in {:.2}s]", started.elapsed().as_secs_f64());
     if report.identical() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+}
+
+/// `kill` (SIGTERM) and a closed terminal (SIGHUP) end the game the way Ctrl+C does:
+/// through `AppExit`, so what it wrote at start (the BRP token, `--port-file`) is
+/// removed. A signal the game was started with ignored (`nohup`) stays ignored; a
+/// second signal exits at once.
+mod termination {
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    use bevy::app::AppExit;
+    use bevy::ecs::message::MessageWriter;
+
+    /// The first termination signal received; 0: none yet.
+    static RECEIVED: AtomicI32 = AtomicI32::new(0);
+
+    #[cfg(unix)]
+    pub fn catch_signals() {
+        let handler: extern "C" fn(libc::c_int) = on_signal;
+        for signal in [libc::SIGTERM, libc::SIGHUP] {
+            // SAFETY: plain `sigaction` calls with valid pointers; the handler only
+            // makes async-signal-safe calls.
+            unsafe {
+                let mut old: libc::sigaction = std::mem::zeroed();
+                if libc::sigaction(signal, std::ptr::null(), &mut old) != 0 || old.sa_sigaction == libc::SIG_IGN {
+                    continue;
+                }
+                let mut action: libc::sigaction = std::mem::zeroed();
+                action.sa_sigaction = handler as libc::sighandler_t;
+                action.sa_flags = libc::SA_RESTART;
+                libc::sigemptyset(&mut action.sa_mask);
+                libc::sigaction(signal, &action, std::ptr::null_mut());
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    pub fn catch_signals() {}
+
+    #[cfg(unix)]
+    extern "C" fn on_signal(signal: libc::c_int) {
+        if RECEIVED.compare_exchange(0, signal, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+            // SAFETY: `_exit` is async-signal-safe (unlike `std::process::exit`).
+            unsafe { libc::_exit(128 + signal) };
+        }
+    }
+
+    /// Exit code 128 + signal, as a shell reports a process the signal killed.
+    pub fn exit_when_signalled(mut exit: MessageWriter<AppExit>) {
+        let signal = RECEIVED.load(Ordering::SeqCst);
+        if signal != 0 {
+            exit.write(AppExit::from_code((128 + signal) as u8));
+        }
+    }
 }

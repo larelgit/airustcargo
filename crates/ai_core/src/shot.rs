@@ -12,7 +12,9 @@
 //! is asynchronous (the frame comes back a frame or two later), so the tool returns
 //! the paths at once. The legend is computed in the captured frame itself (a
 //! following camera may still be moving after a `step`) and written next to the
-//! PNG as JSON, before the PNG appears: both are written to temp files and renamed.
+//! PNG as JSON (`x.png` → `x.png.legend.json`), before the PNG appears: both are
+//! written to temp files and renamed. Shots go into `shots/` only (see
+//! [`paths`](crate::paths)), so replacing a stale one never deletes a file elsewhere.
 //! A journal line says when the shot is saved; `shards shot` waits for it.
 
 use std::path::{Path, PathBuf};
@@ -36,8 +38,12 @@ use crate::session::Scope;
 use crate::sim;
 use crate::tools::{register_tool, Call, ToolKind, ToolResult};
 
-/// Default folder for screenshots, relative to the game's working directory.
+/// Folder for screenshots, relative to the game's working directory. `shot` writes
+/// (and replaces) files nowhere else.
 pub const SHOTS_DIR: &str = "shots";
+
+/// A good path for the errors that refuse a bad one.
+const SHOT_PATH_EXAMPLE: &str = "shots/boss.png";
 
 /// Frames between switching the overlay on and capturing: gizmo lines reach the GPU
 /// as an asset, one frame after they are drawn.
@@ -58,8 +64,9 @@ const TIMEOUT_FRAMES: u32 = 600;
 pub struct ShotArgs {
     /// Draw the id marks. Default true.
     pub marks: Option<bool>,
-    /// Where to save it (must end in .png). Default: shots/tick<T>-<N>.png in the
-    /// game's working directory. Existing files there are replaced.
+    /// Where to save it: inside shots/ in the game's working directory, ending in .png,
+    /// e.g. "shots/boss.png". Default: shots/tick<T>-<N>.png. An existing shot there
+    /// (and its legend) is replaced.
     pub path: Option<String>,
 }
 
@@ -75,7 +82,7 @@ pub struct ShotTicket {
     pub marks: bool,
 }
 
-/// Written next to the PNG (`x.png` → `x.json`): the captured frame described.
+/// Written next to the PNG (`x.png` → `x.png.legend.json`): the captured frame described.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ShotInfo {
     pub path: String,
@@ -129,11 +136,8 @@ fn shot_tool(In(call): In<Call<ShotArgs>>, world: &mut World) -> ToolResult<Shot
         shots.taken += 1;
         shots.taken
     };
-    let path = match call.args.path {
-        Some(p) => PathBuf::from(p),
-        None => Path::new(SHOTS_DIR).join(format!("tick{tick}-{n}.png")),
-    };
-    let path = prepare_path(&path)?;
+    let requested = call.args.path.unwrap_or_else(|| format!("{SHOTS_DIR}/tick{tick}-{n}.png"));
+    let path = prepare_path(&std::env::current_dir().map_err(|e| format!("no working directory: {e}"))?, &requested)?;
 
     let frames_left = if marks { SETTLE_FRAMES } else { 0 };
     world.resource_mut::<AiShots>().pending.push(Pending { path: path.clone(), marks, frames_left, waited: 0 });
@@ -148,21 +152,15 @@ fn shot_tool(In(call): In<Call<ShotArgs>>, world: &mut World) -> ToolResult<Shot
     })
 }
 
-/// Absolute `.png` path with an existing parent folder and no stale PNG or legend
-/// in the way (whoever waits for the file must not pick up an old one).
-fn prepare_path(path: &Path) -> Result<PathBuf, String> {
-    let is_png = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("png"));
+/// Absolute `.png` path inside `<base>/shots/`, with an existing parent folder and
+/// no stale PNG or legend in the way (whoever waits for the file must not pick up an
+/// old one).
+fn prepare_path(base: &Path, requested: &str) -> Result<PathBuf, String> {
+    let is_png = Path::new(requested).extension().is_some_and(|e| e.eq_ignore_ascii_case("png"));
     if !is_png {
-        return Err(format!("path must end in .png, got `{}`", path.display()));
+        return Err(format!("path must end in .png, e.g. {SHOT_PATH_EXAMPLE}, got `{requested}`"));
     }
-    let path = if path.is_absolute() {
-        path.to_owned()
-    } else {
-        std::env::current_dir().map_err(|e| format!("no working directory: {e}"))?.join(path)
-    };
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    }
+    let path = crate::paths::inside_of(base, SHOTS_DIR, requested, SHOT_PATH_EXAMPLE)?;
     for stale in [path.clone(), legend_path(&path)] {
         match std::fs::remove_file(&stale) {
             Ok(()) => {}
@@ -173,12 +171,14 @@ fn prepare_path(path: &Path) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// `x.png` → `x.json`.
+/// `x.png` → `x.png.legend.json`: a name nobody else's file has.
 pub fn legend_path(png: &Path) -> PathBuf {
-    png.with_extension("json")
+    let name = png.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    png.with_file_name(format!("{name}.legend.json"))
 }
 
-/// Written first, renamed when complete: `x.png` → `x.part.png`, `x.json` → `x.part.json`.
+/// Written first, renamed when complete: `x.png` → `x.part.png`,
+/// `x.png.legend.json` → `x.png.legend.part.json`.
 fn part_path(path: &Path) -> PathBuf {
     let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let ext = path.extension().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
@@ -327,19 +327,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paths_are_png_absolute_and_written_atomically() {
-        assert!(prepare_path(Path::new("shot.jpg")).unwrap_err().contains("must end in .png"));
-        let dir = std::env::temp_dir().join(format!("ai_core_shot_test_{}", std::process::id()));
-        let target = dir.join("nested/a.png");
-        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
-        std::fs::write(&target, b"stale").unwrap();
-        std::fs::write(dir.join("nested/a.json"), b"stale").unwrap();
-        let prepared = prepare_path(&target).unwrap();
-        assert!(prepared.is_absolute());
+    fn paths_are_png_inside_shots_and_written_atomically() {
+        let base = std::env::temp_dir().join(format!("ai_core_shot_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("shots/nested")).unwrap();
+        let base = base.canonicalize().unwrap();
+        assert!(prepare_path(&base, "shots/shot.jpg").unwrap_err().contains("must end in .png"));
+        for outside in ["a.png", "/tmp/a.png", "shots/../a.png", "replays/a.png"] {
+            let err = prepare_path(&base, outside).unwrap_err();
+            assert!(err.starts_with("path must be inside shots/, e.g. shots/boss.png"), "{outside}: {err}");
+        }
+
+        let dir = base.join("shots/nested");
+        std::fs::write(dir.join("a.png"), b"stale").unwrap();
+        std::fs::write(dir.join("a.png.legend.json"), b"stale").unwrap();
+        std::fs::write(dir.join("a.json"), b"someone else's").unwrap();
+        let prepared = prepare_path(&base, "shots/nested/a.png").unwrap();
+        assert_eq!(prepared, dir.join("a.png"));
         assert!(!prepared.exists(), "a stale file must not look like a finished shot");
         assert!(!legend_path(&prepared).exists(), "nor a stale legend");
-        assert_eq!(part_path(&prepared), dir.join("nested/a.part.png"));
-        assert_eq!(part_path(&legend_path(&prepared)), dir.join("nested/a.part.json"));
-        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(std::fs::read(dir.join("a.json")).unwrap(), b"someone else's", "not ours to delete");
+        assert_eq!(legend_path(&prepared), dir.join("a.png.legend.json"));
+        assert_eq!(part_path(&prepared), dir.join("a.part.png"));
+        assert_eq!(part_path(&legend_path(&prepared)), dir.join("a.png.legend.part.json"));
+        let _ = std::fs::remove_dir_all(base);
     }
 }

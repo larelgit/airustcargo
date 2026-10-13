@@ -34,6 +34,10 @@ struct Cli {
     /// `--port` wins when both are given.
     #[arg(long, global = true, env = "SHARDS_PORT_FILE", value_name = "PATH")]
     port_file: Option<std::path::PathBuf>,
+    /// The game's access token. Default: `.shards/<port>.token`, looked up from this
+    /// folder upwards (the game writes it into its working directory at start).
+    #[arg(long, global = true, env = "SHARDS_TOKEN", hide_env_values = true)]
+    token: Option<String>,
     /// Agent name: each agent has its own journal cursor, scope and body.
     #[arg(long, short, global = true, env = "SHARDS_AGENT", default_value = "dev")]
     agent: String,
@@ -126,19 +130,22 @@ enum Cmd {
 struct Client {
     url: String,
     agent: ureq::Agent,
+    port: u16,
+    token: Option<String>,
 }
 
 impl Client {
-    fn new(port: u16) -> Self {
+    fn new(port: u16, token: Option<String>) -> Self {
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(300)))
             .http_status_as_error(false)
             .build()
             .new_agent();
-        Self { url: format!("http://127.0.0.1:{port}"), agent }
+        Self { url: format!("http://127.0.0.1:{port}"), agent, port, token }
     }
 
     fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        let params = with_token(params, self.token.as_deref())?;
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
         let mut resp = self.agent.post(&self.url).send_json(&body).map_err(|e| match e {
             ureq::Error::Io(_) | ureq::Error::ConnectionFailed | ureq::Error::HostNotFound => {
@@ -149,6 +156,10 @@ impl Client {
         let reply: Value = resp.body_mut().read_json().map_err(|e| format!("bad response: {e}"))?;
         if let Some(err) = reply.get("error") {
             let msg = err.get("message").and_then(Value::as_str).unwrap_or("unknown error");
+            if self.token.is_none() && msg.starts_with("unauthorized") {
+                let here = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
+                return Err(format!("{method}: {msg} (no .shards/{}.token in {here} or above)", self.port));
+            }
             return Err(format!("{method}: {msg}"));
         }
         Ok(reply.get("result").cloned().unwrap_or(Value::Null))
@@ -160,7 +171,7 @@ fn main() -> ExitCode {
     let result = match &cli.cmd {
         // The game may still be starting: its port file may not exist yet.
         Cmd::Wait { timeout } => wait(&cli, Duration::from_secs(*timeout)),
-        _ => cli.port().map(Client::new).and_then(|client| run(&cli, &client)),
+        _ => cli.client().and_then(|client| run(&cli, &client)),
     };
     match result {
         Ok(code) => code,
@@ -180,6 +191,33 @@ impl Cli {
             (None, None) => Ok(DEFAULT_PORT),
         }
     }
+
+    fn client(&self) -> Result<Client, String> {
+        let port = self.port()?;
+        let token = self.token.clone().or_else(|| find_token(port, &std::env::current_dir().ok()?));
+        Ok(Client::new(port, token))
+    }
+}
+
+/// `.shards/<port>.token` in `start` or the nearest folder above it that has one.
+fn find_token(port: u16, start: &std::path::Path) -> Option<String> {
+    let name = format!("{port}.token");
+    start.ancestors().find_map(|dir| std::fs::read_to_string(dir.join(".shards").join(&name)).ok()).map(|t| t.trim().to_owned())
+}
+
+/// Every method wants the game's token in its params.
+fn with_token(params: Value, token: Option<&str>) -> Result<Value, String> {
+    let Some(token) = token else {
+        return Ok(params);
+    };
+    match params {
+        Value::Null => Ok(json!({"token": token})),
+        Value::Object(mut map) => {
+            map.insert("token".into(), token.into());
+            Ok(Value::Object(map))
+        }
+        _ => Err("params must be a JSON object: it carries the game's token".into()),
+    }
 }
 
 fn read_port_file(path: &std::path::Path) -> Result<u16, String> {
@@ -192,7 +230,7 @@ fn read_port_file(path: &std::path::Path) -> Result<u16, String> {
 fn wait(cli: &Cli, timeout: Duration) -> Result<ExitCode, String> {
     let start = Instant::now();
     loop {
-        let answer = cli.port().and_then(|port| Client::new(port).call("ai/status", Value::Null));
+        let answer = cli.client().and_then(|client| client.call("ai/status", Value::Null));
         match answer {
             Ok(status) => {
                 println!("{}", ready_line(&status));
@@ -486,6 +524,25 @@ mod tests {
         std::fs::remove_file(&file).unwrap();
         assert!(read_port_file(&file).unwrap_err().contains("is the game running with --port-file?"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_token_is_found_by_port_from_here_upwards() {
+        let base = std::env::temp_dir().join(format!("shards_token_{}", std::process::id()));
+        let deep = base.join("game/crates/sandbox");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::create_dir_all(base.join("game/.shards")).unwrap();
+        std::fs::write(base.join("game/.shards/15711.token"), "abc123\n").unwrap();
+        assert_eq!(find_token(15711, &deep).as_deref(), Some("abc123"));
+        assert_eq!(find_token(15711, &base.join("game")).as_deref(), Some("abc123"));
+        assert_eq!(find_token(15712, &deep), None, "another port's game");
+        assert_eq!(find_token(15711, &base), None, "not below the game folder");
+        let _ = std::fs::remove_dir_all(base);
+
+        assert_eq!(with_token(Value::Null, Some("t")).unwrap(), json!({"token": "t"}));
+        assert_eq!(with_token(json!({"data": 1}), Some("t")).unwrap(), json!({"data": 1, "token": "t"}));
+        assert_eq!(with_token(json!({"data": 1}), None).unwrap(), json!({"data": 1}));
+        assert!(with_token(json!([1]), Some("t")).is_err());
     }
 
     #[test]

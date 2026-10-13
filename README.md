@@ -198,12 +198,16 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 
 ```bash
 shards save-replay                          # или ai/act {"tool": "replay_save", "args": {"path": …}}
+shards save-replay replays/boss-fight.json  # своё имя, но только внутри replays/
 cargo sandbox --replay replays/tick332.json # окно, реальное время; seed и частота из файла
 cargo sandbox --replay replays/tick332.json --headless --paused   # дальше шагами через shards step
 cargo sandbox --replay replays/tick332.json --verify
 # replay finished at tick 332: identical to the recording (6 checks) [332 ticks in 0.13s]
 ```
 
+- `replay_save` пишет только внутрь `replays/` рабочей папки игры (вложенные папки можно).
+  Абсолютный путь, `..` и симлинк, который ведёт наружу, — ошибка с подсказкой:
+  `path must be inside replays/, e.g. replays/boss-fight.json`.
 - Проигрывание требует свежего мира: тик 0, тот же seed и та же частота тиков. События
   применяются между тиками, ровно там, где они случились. Входы, которых нет в записи
   (человек жмёт клавиши во время просмотра), откатываются.
@@ -237,9 +241,13 @@ LEGEND (image pixels)
   пропускаются.
 - Легенда считается в том кадре, который снимается. После `step` следящая камера ещё догоняет
   игрока, и координаты на момент запроса были бы неверны. Легенда пишется рядом с PNG как
-  `<имя>.json` (`path`, `width`, `height`, `tick`, `marks`, `legend`).
+  `<имя>.png.legend.json` (`path`, `width`, `height`, `tick`, `marks`, `legend`): такое имя не
+  столкнётся с чужим `<имя>.json`.
+- Снимки пишутся только внутрь `shots/` рабочей папки игры: `-o shots/boss.png` можно, абсолютный
+  путь, `..` и выход через симлинк — нет (`path must be inside shots/, e.g. shots/boss.png`).
 - Оба файла пишутся во временные и переименовываются, так что появившийся PNG уже целиком на диске.
-  Старые файлы с тем же именем удаляются при запросе. В журнале появляется `screenshot saved: …`.
+  Старый снимок и его легенда с тем же именем удаляются при запросе, и только внутри `shots/`.
+  В журнале появляется `screenshot saved: …`.
 - Инструмент сразу возвращает пути, `shards shot` ждёт файл (`--timeout`, по умолчанию 10 с).
   Флаги: `--no-marks`, `-o PATH`. Без окна (`--headless`) инструмент отвечает ошибкой
   с подсказкой использовать `observe`.
@@ -260,7 +268,23 @@ LEGEND (image pixels)
 | `ai/status` | — (в ответе `instance: {pid, seed, port, started_at}`: какая игра ответила) |
 
 Стандартные методы BRP (`world.query`, `world.get_components`, …) тоже доступны: `shards raw …`.
-BRP даёт полный доступ к миру, поэтому сервер слушает только 127.0.0.1 и включается feature `remote`.
+BRP даёт полный доступ к миру, поэтому сервер слушает только 127.0.0.1, включается feature `remote`
+и пускает только с токеном:
+
+- при старте игра пишет случайный токен в `.shards/<port>.token` своей рабочей папки (права 0600)
+  и удаляет файл при выходе: по Ctrl+C, `kill`, закрытию окна или терминала (если игра запущена
+  не через `nohup`). После `kill -9` файл остаётся, следующая игра на этом порту его перепишет;
+- каждый метод — `ai/*`, стандартные `world.*`, `registry.*`, `rpc.discover` и `+watch` — требует
+  `params.token`. Без него или с чужим токеном ответ один:
+  `unauthorized: run shards from the game folder or set SHARDS_TOKEN`;
+- `shards` берёт токен из `SHARDS_TOKEN` (`--token`) или из `.shards/<port>.token`, поднимаясь от
+  текущей папки вверх, и сам добавляет его к параметрам. Своему клиенту передайте его явно:
+
+```bash
+TOKEN=$(cat .shards/15702.token)
+curl -d '{"jsonrpc":"2.0","id":1,"method":"ai/status","params":{"token":"'$TOKEN'"}}' http://127.0.0.1:15702
+```
+
 Релизная сборка без BRP:
 
 ```bash
@@ -270,7 +294,7 @@ cargo build --release -p sandbox --no-default-features --features render
 **CLI `shards`:** observe, step, act, shot, save-replay, tools, inspect, nearby, journal, pause,
 resume, speed, status, session, raw, wait. Аргументы `act` передаются JSON-объектом или парами `key=value`.
 Флаги `--port`/`SHARDS_PORT`, `--port-file`/`SHARDS_PORT_FILE` (порт из файла игры; `--port` важнее),
-`--agent`/`SHARDS_AGENT`, `--json` (у `tools` — со схемами аргументов). `shards wait` ждёт, пока игра
+`--token`/`SHARDS_TOKEN`, `--agent`/`SHARDS_AGENT`, `--json` (у `tools` — со схемами аргументов). `shards wait` ждёт, пока игра
 ответит, и печатает, кто ответил: `ready: tick 0 · pid 4242 · seed 1 · port 15711` (ту же строку игра
 печатает при старте, её же первой строкой выводит `shards status`).
 
@@ -286,8 +310,8 @@ SHARDS_PORT=15711 cargo shards step 600 --until named:player_dead
   with --port` и выходит с кодом 3. Без этой проверки вторая игра работала бы без сервера, а `shards`
   молча управлял бы первой. Проверка доступна любой игре: `ai_core::remote::ensure_port_free(port)`.
 - Чтобы не выбирать порты вручную, `--port 0` берёт свободный порт, а `--port-file F` записывает его
-  номер в файл (при выходе по Ctrl+C или закрытию окна файл удаляется). `shards` читает его через
-  `--port-file F` или `SHARDS_PORT_FILE=F`:
+  номер в файл (при выходе по Ctrl+C, `kill` или закрытию окна файл удаляется). `shards` читает его
+  через `--port-file F` или `SHARDS_PORT_FILE=F`:
 
 ```bash
 cargo sandbox --headless --paused --seed 1 --port 0 --port-file /tmp/shards-a.port &
@@ -352,12 +376,16 @@ source ~/.local/share/rustengine-sysdeps/env.sh   # пока не установ
 cargo test --workspace
 ```
 
-Всего 45 тестов:
+Всего 52 теста:
 
-- 23 юнит-теста `ai_core`: id (в том числе перенумерация и занятый id), журнал, RNG,
-  компас и LOS, схемы, шаги симуляции, пути снимков, формат реплея и отчёт, запрет
-  BRP-правки `AiId`, занятый порт, `instance` в `ai/status`, файл порта;
-- 4 теста `shards`: парсер условий и аргументов, порт из `--port-file`, строка `ready`;
+- 26 юнит-тестов `ai_core`: id (в том числе перенумерация и занятый id), журнал, RNG,
+  компас и LOS, схемы, шаги симуляции, пути снимков (только `shots/`, чужой `x.json` цел), формат
+  реплея и отчёт, запрет BRP-правки `AiId`, занятый порт, `instance` в `ai/status`, файл порта,
+  пути внутри `replays/`/`shots/` (абсолютные, `..`, симлинки), токен у каждого метода BRP;
+- 5 тестов `shards`: парсер условий и аргументов, порт из `--port-file`, строка `ready`,
+  поиск токена по номеру порта;
+- 2 теста `crates/sandbox/tests/shutdown.rs` (запускают саму игру): после `kill` (код 143)
+  и SIGHUP (код 129) нет ни токена, ни файла порта; под `nohup` SIGHUP игру не останавливает;
 - 11 сценариев `crates/sandbox/tests/scenarios.rs`:
   - детерминизм и разные seed;
   - одинаковый результат при пошаговом и цельном прогоне;
@@ -368,7 +396,7 @@ cargo test --workspace
     в `observe`; игровой `AimAssist` виден в подсказке `set`;
   - права scope;
   - паника в инструменте;
-- 7 сценариев `crates/sandbox/tests/replays.rs`:
+- 8 сценариев `crates/sandbox/tests/replays.rs`:
   - сессия со всеми видами входов (dev-правки, инструменты игрока, клавиатура, spawn, possess,
     вызов после последнего тика) проигрывается побитово одинаково, клавиши во время просмотра игнорируются;
   - изменённая игра даёт отчёт с первым разошедшимся тиком;
@@ -376,7 +404,7 @@ cargo test --workspace
   - ветка после проигрывания сохраняется одним реплеем и тоже воспроизводится;
   - вложенные вызовы пишутся один раз;
   - проигрывание требует свежего мира с тем же seed;
-  - `replay_save` пишет файл, который читается обратно.
+  - `replay_save` пишет файл, который читается обратно, и только внутрь `replays/`.
 
 Снимки требуют окна и GPU, поэтому в `cargo test` их нет. Без дисплея их можно проверить через
 Xvfb и программный Vulkan (`apt install xvfb mesa-vulkan-drivers`):

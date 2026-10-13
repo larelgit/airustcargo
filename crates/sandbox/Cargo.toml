@@ -34,3 +34,7 @@ serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
 clap.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# `kill` and a closed terminal end the game through `AppExit` (main.rs).
+libc.workspace = true
