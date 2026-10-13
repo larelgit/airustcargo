@@ -152,6 +152,7 @@ fn ai_status(In(_): In<Option<Value>>, world: &mut World) -> BrpResult {
         "journal_seq": world.resource::<AiJournal>().last_seq(),
         "agents": world.resource::<AgentSessions>().names(),
         "tools": world.resource::<AiTools>().names(Scope::Dev),
+        "replay": crate::replay::status(world),
     }))
 }
 

@@ -12,6 +12,9 @@
 Скриншоты здесь вторичный канал, для визуальных багов. Метки `eN` на экране
 совпадают с id в тексте, а `shards shot` к каждому снимку пишет легенду: где на картинке какой id.
 
+Одинаковый seed и одинаковые входы дают одинаковую игру, поэтому сессия записывается целиком
+как входы. Любой сеанс можно сохранить реплеем, проиграть заново и проверить им новую сборку.
+
 ![sandbox](docs/sandbox.png)
 
 ## Быстрый старт
@@ -31,6 +34,11 @@ cargo shards observe
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds
 cargo shards shot                  # PNG окна с метками eN + легенда (нужно окно)
+cargo shards save-replay           # сессия с тика 0 → replays/tick<T>.json
+
+# 4. Проиграть реплей (seed и частота тиков берутся из файла):
+cargo sandbox --replay replays/tick332.json
+cargo sandbox --replay replays/tick332.json --verify   # без окна; код 0 — игра совпала с записью
 ```
 
 **Rust** ставится через rustup, он добавляет `~/.cargo/bin` в PATH. В уже открытых
@@ -63,6 +71,7 @@ ai_core:              Observe — срез мира текстом            (o
                       Journal — что случилось с прошлого раза (журнал событий, warn!/error!)
                       Tools   — типизированные действия      (add_ai_tool, Scope)
                       SimCtl  — пауза · шаг · run-until      (sim)
+                      Replay  — запись входов, проигрывание  (replay)
                               │
 транспорты:           AiLink (в процессе, для внутриигровых агентов)
                       BRP `ai/*` на 127.0.0.1 → CLI `shards` · скрипты · боты
@@ -86,6 +95,7 @@ ai_core:              Observe — срез мира текстом            (o
 | `tools` | реестр: args-struct + Bevy-система, JSON Schema (schemars), scope, `catch_unwind` |
 | `builtin` | встроенные инструменты: observe, inspect, step, set/get через reflection, ... |
 | `sim` | тик, пауза, синхронный `step` по FixedMain, стоп-условия |
+| `replay` | запись входов и action-вызовов с тика 0, проигрывание, хэши состояния, отчёт о расхождении |
 | `rng` | детерминированный RNG: счётчик по (seed, tick, AiId, salt) |
 | `session` | агенты: имя, scope (Player/Dev), «тело», курсор журнала |
 | `link` | `AiLink`: mpsc-канал к миру из любого потока |
@@ -121,7 +131,8 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
    .journal_event::<Damaged>(|e, w| Some(format!("{} -> {} -{:.0}", label(w, e.source), label(w, e.target), e.amount)))
    .add_ai_tool("move_to", Scope::Player, move_to)   // действие: журнал + список изменений
    .add_ai_query("threats", Scope::Player, threats)  // чтение: без журнала
-   .add_ai_condition("boss_phase_2", |w| /* ... */);
+   .add_ai_condition("boss_phase_2", |w| /* ... */)
+   .replay_input::<Intent>();                       // вход для реплеев (см. «Реплеи»)
 ```
 
 Маркеры сущностей: `AiKind("Boss")`, `AiImportance(10.0)`, `AiLandmark`, `AiOccluder`, `AiPlayer`.
@@ -134,7 +145,14 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 | scope | инструменты |
 |---|---|
 | **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, move_to, move, attack, dodge, stop |
-| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn, heal, shot |
+| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn, heal, shot, replay_save |
+
+У каждого инструмента есть вид (`kind` в `shards tools`):
+
+- `query` только читает мир: без записи в журнал и без диффа;
+- `action` меняет мир: пишет в журнал, возвращает `CHANGES` и попадает в реплей;
+- `control` управляет временем или сессией (pause, resume, speed, step, possess): журнал и дифф
+  как у action, но в реплей не попадает. Он меняет, *когда* что-то происходит, а не *что*.
 
 - **Действие возвращает изменения.** Каждый action-инструмент сравнивает срез мира до и после
   вызова и возвращает `CHANGES` и `JOURNAL`. Агенту не нужен второй `observe`, чтобы узнать, что произошло.
@@ -160,6 +178,44 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
   проверяет, что сама проверка ловит такую систему.
 - Тесты подтверждают: один seed и одни вызовы дают побитово одинаковый мир и журнал;
   `step 300` даёт то же, что 5 × `step 60` с `observe` и кадрами рендера между ними.
+- Реплей, записанный в окне, совпадает при проигрывании без окна (проверено вручную под Xvfb):
+  рендер-сущности не сдвигают ни `AiId`, ни порядок геймплея.
+
+## Реплеи
+
+Запись идёт всегда, с тика 0, и почти ничего не стоит. В неё попадает:
+
+- **входы**: компоненты, зарегистрированные через `replay_input` (в песочнице это `Intent`).
+  Сохраняется каждое изменение, сделанное *между* тиками (клавиатура, сетевой клиент, инструмент
+  агента), с тиком, к которому оно относится. Изменения, которые делают системы геймплея внутри
+  тика, детерминированы и не хранятся. Компонент клонируется, только когда он изменился;
+- **action-вызовы** (`teleport`, `set`, `spawn`, `attack`, …) вместе со scope и «телом» агента.
+  Вызовы, сделанные изнутри другого инструмента, не пишутся: их повторит внешний вызов.
+  `control`-инструменты (pause, step, possess) не пишутся. Сырые правки через BRP
+  (`world.insert_components`) идут мимо инструментов и тоже не пишутся;
+- **проверки**: хэш AI-видимого состояния (id, фрагменты, точные позиции) каждые 60 тиков
+  и в конце записи.
+
+```bash
+shards save-replay                          # или ai/act {"tool": "replay_save", "args": {"path": …}}
+cargo sandbox --replay replays/tick332.json # окно, реальное время; seed и частота из файла
+cargo sandbox --replay replays/tick332.json --headless --paused   # дальше шагами через shards step
+cargo sandbox --replay replays/tick332.json --verify
+# replay finished at tick 332: identical to the recording (6 checks) [332 ticks in 0.13s]
+```
+
+- Проигрывание требует свежего мира: тик 0, тот же seed и та же частота тиков. События
+  применяются между тиками, ровно там, где они случились. Входы, которых нет в записи
+  (человек жмёт клавиши во время просмотра), откатываются.
+- Каждая проверка сравнивается с записью. Отчёт называет первый тик, на котором игра перестала
+  совпадать: `DIVERGED at tick 60`. После изменения кода это регрессия. `--verify` годится для CI:
+  код выхода 0 — совпало, 1 — разошлось, 2 — реплей не читается или не подходит к игре.
+- В конце записи игра становится живой: реплей работает и как точка сохранения для ветвления.
+  Любой action-вызов во время проигрывания перехватывает управление и завершает его
+  (`replay interrupted at tick 130 of 332: dev took over (teleport)`).
+- Во время проигрывания запись продолжается, поэтому ветка сохраняется одним реплеем.
+- Состояние записи и проигрывания видно в `ai/status` (поле `replay`), итог пишется в журнал.
+- Формат: JSON `shards-replay/1` (`seed`, `tick_hz`, `end`, `events`, `checks`; хэши hex-строками).
 
 ## Скриншоты
 
@@ -211,8 +267,8 @@ BRP даёт полный доступ к миру, поэтому сервер 
 cargo build --release -p sandbox --no-default-features --features render
 ```
 
-**CLI `shards`:** observe, step, act, shot, tools, inspect, nearby, journal, pause, resume,
-speed, status, session, raw, wait. Аргументы `act` передаются JSON-объектом или парами `key=value`.
+**CLI `shards`:** observe, step, act, shot, save-replay, tools, inspect, nearby, journal, pause,
+resume, speed, status, session, raw, wait. Аргументы `act` передаются JSON-объектом или парами `key=value`.
 Флаги `--port`/`SHARDS_PORT`, `--agent`/`SHARDS_AGENT`, `--json`.
 
 **Параллельные headless-инстансы.** У каждого свой порт:
@@ -267,9 +323,10 @@ source ~/.local/share/rustengine-sysdeps/env.sh   # пока не установ
 cargo test --workspace
 ```
 
-Всего 24 теста:
+Всего 34 теста:
 
-- 13 юнит-тестов `ai_core`: id, журнал, RNG, компас и LOS, схемы, шаги симуляции, пути снимков;
+- 16 юнит-тестов `ai_core`: id, журнал, RNG, компас и LOS, схемы, шаги симуляции,
+  пути снимков, формат реплея и отчёт;
 - 2 теста парсера условий в `shards`;
 - 9 сценариев `crates/sandbox/tests/scenarios.rs`:
   - детерминизм и разные seed;
@@ -278,7 +335,16 @@ cargo test --workspace
   - фаза 2 босса через `set` + `step until named:boss_phase_2`;
   - подсказывающие ошибки;
   - права scope;
-  - паника в инструменте.
+  - паника в инструменте;
+- 7 сценариев `crates/sandbox/tests/replays.rs`:
+  - сессия со всеми видами входов (dev-правки, инструменты игрока, клавиатура, spawn, possess,
+    вызов после последнего тика) проигрывается побитово одинаково, клавиши во время просмотра игнорируются;
+  - изменённая игра даёт отчёт с первым разошедшимся тиком;
+  - action-вызов во время проигрывания перехватывает управление;
+  - ветка после проигрывания сохраняется одним реплеем и тоже воспроизводится;
+  - вложенные вызовы пишутся один раз;
+  - проигрывание требует свежего мира с тем же seed;
+  - `replay_save` пишет файл, который читается обратно.
 
 Снимки требуют окна и GPU, поэтому в `cargo test` их нет. Без дисплея их можно проверить через
 Xvfb и программный Vulkan (`apt install xvfb mesa-vulkan-drivers`):
@@ -299,14 +365,14 @@ cargo shards wait && cargo shards shot
 | 4 | скриншоты с метками | ✅ `ai/shot` / `shards shot`: PNG с метками и легенда в пикселях |
 | 5 | реестр инструментов, схемы, scope | ✅ |
 | 6 | внутриигровой агент | ◐ транспорт `AiLink` готов; LLM-цикл (tokio + Claude API) следующий |
-| 7 | реплеи / снапшоты / параллельный headless | ◐ параллельные headless-инстансы работают; реплеи и снапшоты впереди |
+| 7 | реплеи / снапшоты / параллельный headless | ◐ реплеи (запись, проигрывание, `--verify`, ветвление) и параллельные headless-инстансы работают; снапшоты впереди |
 
 ## Дальше
 
 1. Внутриигровой агент: поток tokio, два цикла (LLM ставит намерения; Rust-логика исполняет их
    каждый тик), всё через `AiLink`, ключ API на прокси-сервере.
-2. Реплеи: запись `Intent` по тикам вместе с seed; снапшоты через `DynamicScene`, чтобы
-   сохраняться, откатываться и ветвить сценарии.
+2. Снапшоты через `DynamicScene`: сохраняться и откатываться в любой тик, а не только
+   проигрывать с нуля. Реплей тогда начинается со снапшота.
 3. Снимки без окна: камера рендерит в `Image`, `Screenshot::image` (для headless-инстансов с GPU).
 4. Дерево UI в `observe`, `path_exists` поверх навмеша.
 5. LOS для воксельного мира: подменить `AiLineOfSight` на DDA по чанкам.

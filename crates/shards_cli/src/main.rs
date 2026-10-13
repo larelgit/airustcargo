@@ -9,6 +9,7 @@
 //! shards act move_to target=42
 //! shards act dodge dir=W
 //! shards shot                      # PNG of the window with eN marks, plus a legend
+//! shards save-replay               # this session as a replay file (cargo sandbox --replay F)
 //! shards tools
 //! shards raw world.query '{"data":{"components":["sandbox::gameplay::combat::Health"]}}'
 //! ```
@@ -64,6 +65,12 @@ enum Cmd {
         /// Seconds to wait for the file.
         #[arg(long, default_value_t = 10)]
         timeout: u64,
+    },
+    /// Save the session so far as a replay: seed, inputs, action calls, state checks.
+    /// Play it with `cargo sandbox --replay FILE` (add `--verify` to check a build).
+    SaveReplay {
+        /// Default: replays/tick<T>.json next to the game.
+        path: Option<String>,
     },
     /// List the tools available to this agent.
     Tools {
@@ -176,6 +183,7 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             return Ok(code);
         }
         Cmd::Act { tool, args } => act(tool, parse_args(args)?)?,
+        Cmd::SaveReplay { path } => act("replay_save", json!({"path": path}))?,
         Cmd::Shot { no_marks, out, timeout } => {
             let reply = act("shot", json!({"marks": !no_marks, "path": out}))?;
             if reply.get("ok") != Some(&Value::Bool(true)) {
