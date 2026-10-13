@@ -26,6 +26,7 @@ cargo shards act move_to target=e6      # действие → CHANGES и JOURNA
 cargo shards step 120 --until journal:died
 cargo shards inspect e6                 # все компоненты сущности
 cargo shards save-replay                # сессия с тика 0 → replays/tick<T>.json
+cargo shards scenario FILE...           # файл сценария: команды, ожидания, инварианты (README, «Сценарии»)
 ```
 
 - `shards` запускайте из папки игры или ниже: там лежит токен `.shards/<port>.token`, без него игра
@@ -88,5 +89,9 @@ cargo sandbox --replay replays/crash-tick<N>.json --verify   # код 1, пок�
 ## Проверка изменений
 
 - `cargo test --workspace`: юнит-тесты и сценарии в `crates/sandbox/tests/`.
+- Поведение, которое можно описать командами `shards`, оформляйте файлом сценария в `<crate>/scenarios/`
+  (`*.scenario`, формат в README, «Сценарии»). `tests/scenario_files.rs` песочницы гоняет каждый файл
+  в процессе, `shards scenario` — против живой игры; нужен файл, который идёт и на свежей игре, и после
+  других: начинайте его с `heal`/`teleport`/`set`, возвращающих мир к исходному.
 - Изменение геймплея проверяйте реплеем: `cargo sandbox --replay FILE --verify` называет первый тик,
   где игра разошлась с записью (код выхода 1). Если расхождение ожидаемое, запишите реплей заново.

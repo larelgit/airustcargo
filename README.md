@@ -82,6 +82,7 @@ ai_core:              Observe — срез мира текстом            (o
 | `crates/ai_core` | слой ИИ, не зависит от конкретной игры |
 | `crates/sandbox` | тестовая арена: игрок, 2 скелета, босс Frost Warden (2 фазы, телеграфируемые атаки) |
 | `crates/shards_cli` | бинарник `shards`, тонкий клиент к `ai/*` |
+| `crates/shards_script` | без Bevy: формат сценариев, их запуск, разбор условий `--until`; общий для `shards` и тестов |
 
 Модули `ai_core`:
 
@@ -97,6 +98,7 @@ ai_core:              Observe — срез мира текстом            (o
 | `sim` | тик, пауза, синхронный `step` по FixedMain, стоп-условия |
 | `replay` | запись входов и action-вызовов с тика 0, проигрывание, хэши состояния, отчёт о расхождении |
 | `rng` | детерминированный RNG: счётчик по (seed, tick, AiId, salt) |
+| `scenario` | запуск файлов сценариев в процессе через `call_tool` (`run_file`, `run_str`) |
 | `session` | агенты: имя, scope (Player/Dev), «тело», курсор журнала |
 | `remote` | методы `ai/*` для BRP (feature `remote`) |
 | `highlight` | гизмо-подсветка и оверлей id поверх сцены (feature `render`) |
@@ -283,6 +285,75 @@ cargo sandbox --replay replays/tick332.json --verify
   Реплей `shards-replay/1` хэшировал текст и этой сборкой не проверяется: `play` отвечает
   `this replay was recorded by an older build (…); record it again`, а `--verify` выходит с кодом 2.
 
+## Сценарии
+
+Сценарий — текстовый файл: команды `shards`, ожидания и инварианты. Один и тот же файл идёт в
+`cargo test` без окна и против запущенной игры (`shards scenario FILE...`). Смысл у него одинаковый:
+формат и все правила (что делает команда, как проверяется ожидание, откуда считает `mark`) лежат в
+`shards_script`, а у двух запускателей только транспорт: `ai_core::call_tool` и BRP `ai/*`.
+
+```text
+# Комментарий. Пустые строки пропускаются. Слова режутся как в shell: "…", '…' (JSON берите в одинарные).
+seed 42                                    # необязательно, первой строкой: игра должна идти с этим seed
+act attack target=e6 repeat=true           # вызвать инструмент (как `shards act`); ошибка вызова проваливает сценарий
+act? teleport id=e5                        # то же, но ошибка допустима; её текст читает `expect result`
+step 120                                   # N тиков (по умолчанию 1, а с --until 600)
+step 900 --until near:e5:e6:3 -u journal:died   # условия те же, что у `shards step`
+observe                                    # срез мира; его текст становится «последним результатом»
+mark                                       # журнал для expect считается отсюда (иначе с начала сценария)
+session --agent bot --scope player         # кто выполняет следующие команды; ещё --subject ID, --clear-subject
+
+expect result contains "ok: attacking"     # текст результата последнего act/act?/step/observe; регистр важен
+expect result !contains "error"
+expect stopped "boss_phase_2"              # последний step остановило условие, в описании которого есть текст
+expect journal "e6 phase 1->2"             # запись журнала с начала сценария или с `mark`
+expect !journal "died"
+expect field e5 Health.current > 0         # число через `get`; операции < <= > >= == !=
+expect shows e6 "phase 2"                  # то, что `inspect` пишет о сущности над списком компонентов
+
+invariant field e5 Health.current > 0      # любое ожидание; проверяется после каждого следующего act/act?/step
+```
+
+- **Кто что делает.** Команды идут от агента `scenario` со scope `dev` (`session --agent` переключает
+  его; флаг `--agent` у `shards` на сценарии не действует). Ожидания и инварианты читают мир другим агентом, `scenario-check` со scope `dev`: сценарий
+  может играть за агента со scope `player` и всё равно видеть всё, а проверки не двигают курсор
+  журнала проверяемого агента. Записи журнала с вызовами агентов (`[agent] …`) в `expect journal`
+  не попадают: `step --until journal:died` не найдёт сам себя.
+- **Регистр.** `expect result` различает регистр, чтобы можно было проверить точный текст ошибки
+  (`Expected: teleport(`). `journal`, `stopped` и `shows` не различают, как `--until journal:`/`shows:`.
+- **Инварианты** проверяются после каждой следующей команды `act`, `act?` и `step`, а не между тиками
+  одного `step`. Первое нарушение проваливает сценарий и называет команду, которая его вызвала:
+  `invariant `field e5 Health.current > 0` (line 12) broke: e5 Health.current is 0, which is not > 0`.
+  Длинный шаг режьте на части или сторожите условием: `step 600 --until field:e5:Health.current<1`.
+- **Ошибки разбора** называют строку: ``obstacle.scenario:12: unknown command `stpe`; expected act, act?,
+  step, …``. Показываются сразу все плохие строки, и пока они есть, не запускается ничего.
+- **Мир берётся как есть.** Сценарий не перезапускает игру. Чтобы файл шёл и на свежей игре, и после
+  других, он сам приводит мир в порядок первыми командами (`heal`, `teleport`, `set`): так сделаны
+  `crates/sandbox/scenarios/*.scenario`.
+
+В тесте:
+
+```rust
+let mut app = sandbox::test_app(42);
+let report = ai_core::scenario::run_file(app.world_mut(), "scenarios/boss_fight.scenario");
+assert!(report.passed, "{report}");   // отчёт — построчный журнал и вердикт
+```
+
+Против игры (`--quiet` печатает только упавшие команды и вердикты, `--json` — отчёты в JSON):
+
+```text
+$ shards scenario crates/sandbox/scenarios/boss_fight.scenario
+ok   10 seed 42 → seed 42
+…
+ok   30 step 900 --until near:e5:e6:3 → ran 101 ticks (0 → 101), stopped: e5 within 3.0m of e6
+ok   31 expect stopped "within" → e5 within 3.0m of e6
+…
+PASS crates/sandbox/scenarios/boss_fight.scenario (37 commands, 267 ticks)
+```
+
+Код выхода: 0 — все прошли, 1 — сценарий не прошёл (`FAIL file:line: сообщение`), 2 — файл не читается или
+не разбирается, игра недоступна. Если игра пропала посреди файла, остальные файлы не запускаются.
+
 ## Скриншоты
 
 `shot` (scope Dev) снимает окно игры средствами самого Bevy, это не захват рабочего стола.
@@ -353,7 +424,7 @@ curl -d '{"jsonrpc":"2.0","id":1,"method":"ai/status","params":{"token":"'$TOKEN
 cargo build --release -p sandbox --no-default-features --features render
 ```
 
-**CLI `shards`:** observe, step, act, shot, save-replay, tools, inspect, nearby, journal, pause,
+**CLI `shards`:** observe, step, act, scenario, shot, save-replay, tools, inspect, nearby, journal, pause,
 resume, speed, status, session, raw, wait. Аргументы `act` передаются JSON-объектом или парами `key=value`.
 Флаги `--port`/`SHARDS_PORT`, `--port-file`/`SHARDS_PORT_FILE` (порт из файла игры; `--port` важнее),
 `--token`/`SHARDS_TOKEN`, `--agent`/`SHARDS_AGENT`, `--json` (у `tools` — со схемами аргументов). `shards wait` ждёт, пока игра
@@ -449,14 +520,23 @@ source ~/.local/share/rustengine-sysdeps/env.sh   # пока не установ
 cargo test --workspace
 ```
 
-Всего 76 тестов:
+Всего 120 тестов:
 
-- 26 юнит-тестов `ai_core`: id (в том числе перенумерация и занятый id), журнал, RNG,
+- 33 юнит-теста `ai_core`: id (в том числе перенумерация и занятый id), журнал, RNG,
   компас и LOS, схемы, шаги симуляции, пути снимков (только `shots/`, чужой `x.json` цел), формат
   реплея и отчёт, запрет BRP-правки `AiId`, занятый порт, `instance` в `ai/status`, файл порта,
   пути внутри `replays/`/`shots/` (абсолютные, `..`, симлинки), токен у каждого метода BRP;
-- 5 тестов `shards`: парсер условий и аргументов, порт из `--port-file`, строка `ready`,
-  поиск токена по номеру порта;
+  запуск сценариев в процессе (7): проходящий сценарий, инвариант называет сломавшую его команду,
+  проверки видят всё, пока сценарий играет за `player`, отказ `session`, `seed`, ошибки разбора и
+  нечитаемый файл — отчёты, а не паники;
+- 7 тестов `shards`: порт из `--port-file`, строка `ready`, поиск токена по номеру порта; `shards scenario`
+  против поддельной игры на localhost (коды выхода 0/1/2, отказ игры на `session`, журнал без
+  записей агентов, файлы разбираются до запуска);
+- 33 юнит-теста `shards_script` (без Bevy): парсер условий и аргументов, слова как в shell, разбор
+  каждой команды и текст каждой ошибки, запуск на поддельной игре (ожидания, `mark`, инварианты,
+  `session`, `seed`, потерянная игра), разбор текста журнала;
+- 2 теста `crates/sandbox/tests/scenario_files.rs`: каждый файл из `crates/sandbox/scenarios/` проходит на
+  свежей игре (`sandbox::test_app(42)`) и все подряд в одной игре, как их гонит `shards scenario`;
 - 2 теста `crates/sandbox/tests/shutdown.rs` (запускают саму игру): после `kill` (код 143)
   и SIGHUP (код 129) нет ни токена, ни файла порта; под `nohup` SIGHUP игру не останавливает;
 - 14 сценариев `crates/sandbox/tests/scenarios.rs`:
