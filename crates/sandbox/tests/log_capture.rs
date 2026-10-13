@@ -38,6 +38,8 @@ fn app() -> App {
         .add_plugins(AiCorePlugin {
             sim: SimConfig { start_paused: true, ..default() },
             remote_port: None,
+            // Replies are compared whole, and tick timing differs from run to run.
+            report_perf: false,
             ..default()
         })
         .add_systems(FixedUpdate, noisy.in_set(SimSet::Resolve));

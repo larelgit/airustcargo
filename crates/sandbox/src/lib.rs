@@ -31,6 +31,10 @@ pub struct GameConfig {
     pub check_every: u64,
     /// What each replay check keeps to name what diverged (`--check-detail`).
     pub check_detail: CheckDetail,
+    /// A slower tick is over budget (`--tick-budget-ms`); `None`: the tick's duration.
+    pub tick_budget: Option<Duration>,
+    /// Tick timing in `step` replies and `perf` journal entries.
+    pub report_perf: bool,
 }
 
 impl Default for GameConfig {
@@ -44,6 +48,8 @@ impl Default for GameConfig {
             crash_replays: true,
             check_every: ai_core::replay::CHECK_EVERY,
             check_detail: CheckDetail::default(),
+            tick_budget: None,
+            report_perf: true,
         }
     }
 }
@@ -56,6 +62,8 @@ fn ai_plugin(cfg: &GameConfig) -> AiCorePlugin {
         crash_replays: cfg.crash_replays,
         check_every: cfg.check_every,
         check_detail: cfg.check_detail,
+        tick_budget: cfg.tick_budget,
+        report_perf: cfg.report_perf,
         ..default()
     }
 }
@@ -87,16 +95,18 @@ pub fn build_app(cfg: &GameConfig) -> App {
     app
 }
 
-/// Paused, headless, no logging, no HTTP and no crash replay files: drive it with
-/// `ai_core::call_tool`.
+/// Paused, headless, no logging, no HTTP, no crash replay files and no tick timing in
+/// replies or the journal (it differs from run to run): drive it with
+/// `ai_core::call_tool`. Tests that look at timing turn it on with `AiPerf::report`.
 pub fn test_app(seed: u64) -> App {
     test_app_with(GameConfig { seed, ..default() })
 }
 
 /// [`test_app`] with other settings (seed, tick rate, replay checks); the window, the
-/// HTTP server and crash replay files stay off, and the game starts paused.
+/// HTTP server, crash replay files and timing reports stay off, and the game starts
+/// paused.
 pub fn test_app_with(cfg: GameConfig) -> App {
-    let cfg = GameConfig { headless: true, port: None, paused: true, crash_replays: false, ..cfg };
+    let cfg = GameConfig { headless: true, port: None, paused: true, crash_replays: false, report_perf: false, ..cfg };
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
         .add_plugins(ai_plugin(&cfg))

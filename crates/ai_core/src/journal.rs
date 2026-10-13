@@ -37,6 +37,8 @@ pub enum JournalKind {
     Sim,
     Warn,
     Error,
+    /// Ticks over their time budget (see [`perf`](crate::perf)).
+    Perf,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -56,6 +58,7 @@ impl std::fmt::Display for JournalEntry {
             JournalKind::Sim => write!(f, "{} [sim] {}", self.tick, self.text),
             JournalKind::Warn => write!(f, "{} [warn] {}", self.tick, self.text),
             JournalKind::Error => write!(f, "{} [error] {}", self.tick, self.text),
+            JournalKind::Perf => write!(f, "{} [perf] {}", self.tick, self.text),
         }
     }
 }

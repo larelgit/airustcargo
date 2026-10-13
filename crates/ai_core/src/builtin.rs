@@ -294,6 +294,10 @@ fn step_tool(In(call): In<Call<StepArgs>>, world: &mut World) -> ToolResult {
             }
         }
     }
+    if let Some(line) = crate::perf::step_line(world, &report.timing) {
+        msg.push('\n');
+        msg.push_str(&line);
+    }
     Ok(msg)
 }
 

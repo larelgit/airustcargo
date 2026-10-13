@@ -19,6 +19,7 @@
 //!                  SimCtl   — pause · step · run-until  (sim)
 //!                  Rules    — invariants after a tick   (invariants, add_ai_invariant)
 //!                  Replay   — record inputs, play back  (replay)
+//!                  Perf     — real time of every tick   (perf)
 //!                          │
 //! transport:       BRP `ai/*` on localhost → `shards` CLI ← coding agents, scripts, CI
 //! ```
@@ -47,6 +48,7 @@ pub mod invariants;
 pub mod journal;
 pub mod observe;
 pub mod paths;
+pub mod perf;
 #[cfg(feature = "remote")]
 pub mod remote;
 pub mod replay;
@@ -59,6 +61,7 @@ pub mod spatial;
 pub mod tools;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use bevy::ecs::schedule::{LogLevel, ScheduleBuildSettings};
 use bevy::prelude::*;
@@ -73,6 +76,7 @@ pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible
 pub use invariants::{AiInvariants, Violation};
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
 pub use observe::{AiCamera, AiPerception, ObserveOptions};
+pub use perf::{AiPerf, TickStats};
 pub use replay::{
     AiReplay, Breakdown, CheckDetail, Divergence, EntityChange, EntityDiff, Replay, ReplayHashing, ReplayReport,
 };
@@ -111,6 +115,13 @@ pub struct AiCorePlugin {
     pub check_every: u64,
     /// What each replay check keeps next to its hash, to name what diverged.
     pub check_detail: CheckDetail,
+    /// A tick whose `FixedMain` run takes longer is over budget. `None`: the tick's own
+    /// duration (16.7 ms at 60 Hz).
+    pub tick_budget: Option<Duration>,
+    /// Report tick timing: a `ticks:` line in every `step` reply and `perf` journal
+    /// entries for ticks over budget. Timing is wall-clock, so tests that compare whole
+    /// journals turn it off; `ai/status` has it either way.
+    pub report_perf: bool,
 }
 
 impl Default for AiCorePlugin {
@@ -123,6 +134,8 @@ impl Default for AiCorePlugin {
             crash_replays: true,
             check_every: replay::CHECK_EVERY,
             check_detail: CheckDetail::default(),
+            tick_budget: None,
+            report_perf: true,
         }
     }
 }
@@ -164,6 +177,7 @@ impl Plugin for AiCorePlugin {
 
         builtin::register(app.world_mut());
         replay::plugin(app, self.check_every, self.check_detail);
+        perf::plugin(app, self.tick_budget, self.report_perf);
         failures::plugin(app, self.catch_system_panics, self.crash_replays);
         invariants::plugin(app, self.crash_replays);
 

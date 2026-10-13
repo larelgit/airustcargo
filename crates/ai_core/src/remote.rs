@@ -150,6 +150,7 @@ fn ai_status(In(_): In<Option<Value>>, world: &mut World) -> BrpResult {
         "agents": world.resource::<AgentSessions>().names(),
         "tools": world.resource::<AiTools>().names(Scope::Dev),
         "replay": crate::replay::status(world),
+        "perf": crate::perf::status(world),
     }))
 }
 
@@ -501,6 +502,32 @@ mod tests {
         }
         drop(app);
         assert!(!file.exists(), "the token file goes with the game");
+    }
+
+    #[test]
+    fn status_has_the_timing_of_the_last_ticks() {
+        let port = free_port().unwrap();
+        let mut app = App::new();
+        app.add_plugins(bevy::time::TimePlugin).add_plugins(crate::AiCorePlugin {
+            remote_port: Some(port),
+            tick_budget: Some(std::time::Duration::from_millis(250)),
+            ..Default::default()
+        });
+        app.finish();
+        app.cleanup();
+        let token = app.world().resource::<AiToken>().as_str().to_owned();
+        let none = call(app.world_mut(), "ai/status", json!({"token": token})).unwrap();
+        assert_eq!(
+            none["perf"],
+            json!({"ticks": 0, "avg_ms": 0.0, "max_ms": 0.0, "worst_tick": null, "over_budget": 0, "budget_ms": 250.0})
+        );
+        crate::sim::step(app.world_mut(), 3, std::time::Duration::from_secs(5), |_| None).unwrap();
+        let status = call(app.world_mut(), "ai/status", json!({"token": token})).unwrap();
+        let perf = &status["perf"];
+        assert_eq!((perf["ticks"].as_u64(), perf["over_budget"].as_u64()), (Some(3), Some(0)), "{perf}");
+        let (avg, max) = (perf["avg_ms"].as_f64().unwrap(), perf["max_ms"].as_f64().unwrap());
+        assert!(avg > 0.0 && max >= avg, "{perf}");
+        assert!((1..=3).contains(&perf["worst_tick"].as_u64().unwrap()), "{perf}");
     }
 
     #[test]

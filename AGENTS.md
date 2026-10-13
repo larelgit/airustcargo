@@ -52,6 +52,11 @@ cargo shards fuzz --seed 7 --steps 300  # случайные входы, пок�
 - `warn!`/`error!` игры попадают в журнал с тиком, на котором записаны, даже внутри длинного `step`:
   `step 600 --until journal:TEXT` ловит и их. За тик — не больше 64 строк, об остальных говорит
   строка `N log lines dropped`.
+- Под первой строкой ответа `step` — время его тиков: `ticks: avg 0.42 ms, max 2.10 ms (tick 142),
+  budget 16.7 ms`. Тики дольше бюджета (по умолчанию — длительность тика, у игры флаг
+  `--tick-budget-ms`) журнал называет записью `perf`, не чаще раза в игровую секунду:
+  `150 [perf] 12 ticks over budget, worst 31.4 ms at tick 150`. Время последних 600 тиков —
+  в `shards status`, поле `perf`.
 - Несколько игр параллельно: `--port` у каждого инстанса, `SHARDS_PORT` у CLI. Проще так:
   `cargo sandbox --headless --paused --port 0 --port-file F` и `SHARDS_PORT_FILE=F cargo shards wait`.
   На занятом порту игра не стартует (код выхода 3). `shards wait` печатает pid, seed и порт ответившей
@@ -70,6 +75,9 @@ cargo shards fuzz --seed 7 --steps 300  # случайные входы, пок�
 - Проверки реплея (`shards-replay/3`) сверяют игровые компоненты сущностей с `AiVisible`, а не текст
   `observe`. Косметику и кэши исключайте `replay_ignore::<C>()`, состояние вне таких сущностей
   (ресурсы, снаряды без id) добавляйте `add_replay_check(name, |w| …)`.
+- Время тика не входит ни в хэш, ни в реплей и разное от прогона к прогону. Тест, который сравнивает
+  ответы или журнал целиком, выключает его вывод: `report_perf: false` у `AiCorePlugin`
+  (`sandbox::test_app` уже так делает).
 - То, что в игре должно держаться всегда, оформляйте инвариантом:
   `add_ai_invariant(name, |w: &World| -> Option<String>)`. Правило только читает мир и возвращает
   текст нарушения с id сущности (`e6 Health.current = -5 outside 0..=4000`).
@@ -112,3 +120,7 @@ cargo sandbox --replay replays/crash-tick<N>.json --verify   # код 1, пок�
 - По умолчанию проверки идут раз в 60 тиков, и тик в отчёте — первая проверка после расхождения. Для поиска
   бага пишите реплей с `--check-every 1` (`cargo sandbox --headless --paused --check-every 1`): тогда
   отчёт называет точный тик. Значение хранится в файле, при проигрывании флаг не нужен.
+- Скорость тика проверяйте релизной сборкой: отладочная компилирует свой код с `opt-level = 1`.
+  `cargo run -p sandbox --release -- --headless --paused --tick-budget-ms 5`, затем `shards step 600`:
+  строка `ticks:` назовёт среднее, худший тик и число тиков за бюджетом. Где уходит время, покажет
+  Tracy: `--features bevy/trace_tracy` (см. README, «Время тика»).

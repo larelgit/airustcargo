@@ -176,6 +176,8 @@ pub struct StepReport {
     pub to_tick: u64,
     pub end: StepEnd,
     pub wall: Duration,
+    /// The real time of its ticks (see [`perf`](crate::perf)).
+    pub timing: crate::perf::TickStats,
 }
 
 impl StepReport {
@@ -201,6 +203,7 @@ pub fn step(
     crate::invariants::take_unreported(world);
     let from_tick = tick(world);
     let started = Instant::now();
+    crate::perf::begin_span(world);
     let mut end = StepEnd::Completed;
     for _ in 0..max_ticks {
         run_tick(world)?;
@@ -224,7 +227,8 @@ pub fn step(
             break;
         }
     }
-    Ok(StepReport { from_tick, to_tick: tick(world), end, wall: started.elapsed() })
+    let timing = crate::perf::span(world);
+    Ok(StepReport { from_tick, to_tick: tick(world), end, wall: started.elapsed(), timing })
 }
 
 #[cfg(test)]

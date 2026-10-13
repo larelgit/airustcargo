@@ -74,6 +74,7 @@ ai_core:              Observe — срез мира текстом            (o
                       SimCtl  — пауза · шаг · run-until      (sim)
                       Replay  — запись входов, проигрывание  (replay)
                       Rules   — инварианты после каждого тика (invariants)
+                      Perf    — время каждого тика           (perf)
                               │
 транспорт:            BRP `ai/*` на 127.0.0.1 → CLI `shards` ← Claude Code, Codex, скрипты, CI
 ```
@@ -98,6 +99,7 @@ ai_core:              Observe — срез мира текстом            (o
 | `sim` | тик, пауза, синхронный `step` по FixedMain, стоп-условия |
 | `invariants` | правила, которые проверяются после каждого тика: игровые (`add_ai_invariant`) и сессионные (`assert_add`); нарушение останавливает игру, как упавшая система |
 | `replay` | запись входов и action-вызовов с тика 0, проигрывание, хэши состояния, отчёт о расхождении |
+| `perf` | реальное время каждого тика против бюджета: строка `ticks:` в ответе `step`, записи `perf` в журнале, поле `perf` в `ai/status`; ни в хэше, ни в реплее |
 | `rng` | детерминированный RNG: счётчик по (seed, tick, AiId, salt) |
 | `session` | агенты: имя, scope (Player/Dev), «тело», курсор журнала |
 | `remote` | методы `ai/*` для BRP (feature `remote`) |
@@ -235,6 +237,44 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
   `step 300` даёт то же, что 5 × `step 60` с `observe` и кадрами рендера между ними.
 - Реплей, записанный в окне, совпадает при проигрывании без окна (проверено вручную под Xvfb):
   рендер-сущности не сдвигают ни `AiId`, ни порядок геймплея.
+
+## Время тика
+
+Каждый прогон `FixedMain` (один тик) замеряется по реальным часам, и в `step`, и в обычной игре.
+Система перед `run_fixed_main` ставит метку, система после него снимает замер, поэтому в замер
+входят все системы `FixedFirst` … `FixedLast`, игровые тоже. Последние 600 тиков (10 с при 60 Гц)
+хранит ресурс `AiPerf`. Ответ `step` получает строку о своих тиках:
+
+```text
+$ shards step 600
+ran 600 ticks (0 → 600)
+ticks: avg 0.52 ms, max 2.60 ms (tick 540), budget 16.7 ms
+```
+
+- Бюджет по умолчанию — длительность тика: 16.7 мс при 60 Гц. Свой задаёт `--tick-budget-ms 5`,
+  в своей игре — `AiCorePlugin { tick_budget: Some(Duration::from_millis(5)), .. }`. Тики дольше
+  бюджета `step` считает в той же строке: `…, budget 5.0 ms, 3 over budget`.
+- Тики над бюджетом попадают в журнал отдельным видом записей `perf`, не чаще раза в игровую
+  секунду. Первая запись появляется сразу, следующие тики копятся и уходят одной записью, когда с
+  прошлой пройдёт 60 тиков: `150 [perf] 12 ticks over budget, worst 31.4 ms at tick 150`. Так же и в
+  реальном времени, где `step` нет.
+- `ai/status` и `shards status` показывают поле `perf` за последние 600 тиков (`ticks` — сколько
+  их набралось):
+  `{"avg_ms": 0.522, "budget_ms": 16.667, "max_ms": 2.598, "over_budget": 0, "ticks": 600, "worst_tick": 540}`.
+- Первый тик дольше остальных: на нём Bevy строит расписания.
+- Замеры не входят ни в хэш состояния, ни в реплей: время у каждого прогона своё, а проигрывание
+  сверяет игру.
+- `sandbox::test_app` не выводит строку `ticks:` и не пишет записи `perf` (`report_perf: false`):
+  сценарии сравнивают ответы и журналы целиком. Замер при этом идёт, и `status` его показывает.
+  Тест, которому время нужно, включает вывод сам (`AiPerf::report`), как `crates/sandbox/tests/perf.rs`.
+- Отладочная сборка компилирует свой код с `opt-level = 1` (зависимости — с `opt-level = 3`),
+  поэтому тик в ней медленнее, чем в релизе. Точный бюджет проверяйте релизной сборкой:
+  `cargo run -p sandbox --release -- --headless --paused`.
+- Где именно уходит время, покажет профайлер: Bevy feature `trace_tracy` и
+  [Tracy](https://github.com/wolfpld/tracy). Запустите
+  `cargo run -p sandbox --release --features bevy/trace_tracy` и подключитесь из Tracy: каждая
+  система будет отдельной зоной. Первая сборка скачает `tracy-client`. Версия Tracy должна
+  подходить к `tracy-client-sys` (сейчас это Tracy 0.14.1).
 
 ## Инварианты
 
@@ -464,7 +504,7 @@ LEGEND (image pixels)
 | `ai/shot` | `{agent?, marks?, path?}` |
 | `ai/tools` | `{agent?}` |
 | `ai/session` | `{agent, scope?, subject?, clear_subject?}` |
-| `ai/status` | — (в ответе `instance: {pid, seed, port, started_at}`: какая игра ответила) |
+| `ai/status` | — (в ответе `instance: {pid, seed, port, started_at}`: какая игра ответила; `perf`: время последних 600 тиков) |
 
 Стандартные методы BRP (`world.query`, `world.get_components`, …) тоже доступны: `shards raw …`.
 BRP даёт полный доступ к миру, поэтому сервер слушает только 127.0.0.1, включается feature `remote`
@@ -552,6 +592,7 @@ CHANGES
   ~ e5 Player: +order attack e6 (repeat)
 $ shards step --until journal:winds
 ran 93 ticks (0 → 93), stopped: journal: 93 e6 winds up IceSlam (1.00s)
+ticks: avg 0.47 ms, max 1.17 ms (tick 1), budget 16.7 ms
 CHANGES
   ~ e5 Player: moved 9.3m N
   ~ e6 Boss "Frost Warden": +windup IceSlam 0.98s; moved 4.9m S
@@ -560,6 +601,7 @@ $ shards act dodge away_from=e6
 ok: dodging S
 $ shards step 40
 ran 40 ticks (93 → 133)
+ticks: avg 0.49 ms, max 0.84 ms (tick 94), budget 16.7 ms
 CHANGES
   ~ e5 Player: stam 80/80 → stam 60/80; moved 2.0m S
   ~ e6 Boss "Frost Warden": windup IceSlam 0.98s → windup IceSlam 0.32s
@@ -568,10 +610,14 @@ $ shards act dodge dir=W
 ok: dodging W
 $ shards step 3
 ran 3 ticks (133 → 136)
+ticks: avg 0.77 ms, max 0.88 ms (tick 134), budget 16.7 ms
+…
 $ shards act dodge dir=E
 error: busy: dodge 0.30s (ready in 0.30s)
 $ shards step 8
 ran 8 ticks (136 → 144)
+ticks: avg 0.49 ms, max 0.77 ms (tick 137), budget 16.7 ms
+…
 $ shards act dodge dir=E
 ok: queued, dodges in 0.17s (E)
 ```
@@ -609,15 +655,16 @@ source ~/.local/share/rustengine-sysdeps/env.sh   # пока не установ
 cargo test --workspace
 ```
 
-Всего 103 теста:
+Всего 112 тестов:
 
-- 33 юнит-теста `ai_core`: id (в том числе перенумерация и занятый id), журнал, RNG,
+- 36 юнит-тестов `ai_core`: id (в том числе перенумерация и занятый id), журнал, RNG,
   компас и LOS, схемы, шаги симуляции, пути снимков (только `shots/`, чужой `x.json` цел), формат
   реплея и отчёт, запрет BRP-правки `AiId`, занятый порт, `instance` в `ai/status`, файл порта,
   пути внутри `replays/`/`shots/` (абсолютные, `..`, симлинки), токен у каждого метода BRP,
   имена правил, правила игры раньше правил сессии, JSON событий `assert`, разбивка проверки в JSON
   и обратно (при любом порядке ключей), файл версии 2 без разбивки, значения без путей модулей,
-  текст отчёта о расхождении;
+  текст отчёта о расхождении, время тиков (худший тик, тики над бюджетом, только последние 600),
+  `perf` в `ai/status`;
 - 7 тестов `shards`: парсер условий (с `warning` и `error`) и аргументов, порт из `--port-file`,
   строка `ready`, поиск токена по номеру порта, коды выхода, входы `fuzz` зависят только от seed;
 - 2 теста `crates/sandbox/tests/shutdown.rs` (запускают саму игру): после `kill` (код 143)
@@ -660,6 +707,15 @@ cargo test --workspace
   - тело за стеной ловит `bodies_in_arena`, паника в правиле — тоже нарушение;
   - реплей, сохранённый при нарушении, нарушает правило на том же тике, а `--verify` выходит
     с кодом 1 и называет нарушение;
+- 6 тестов `crates/sandbox/tests/perf.rs` (свой файл: спят в системах геймплея):
+  - система спит 30 мс на тике 10 при бюджете 20 мс: `step 20` показывает `max` не меньше 30 мс
+    на тике 10 и `1 over budget`, в журнале одна запись `perf` про тик 10, `status` называет тот же тик;
+  - тики в бюджете не оставляют записей `perf`;
+  - тики над бюджетом на 10, 20, 30, 40 и 75 дают три записи, на тиках 10, 70 и 130: не чаще раза
+    в игровую секунду;
+  - с выводом, выключенным как в `test_app`, ответ `step` прежний и записей нет, а `status` время знает;
+  - `status` считает последние 600 тиков, бюджет по умолчанию — 16.667 мс;
+  - время не попадает в реплей: запись с медленным тиком проигрывается побитово одинаково;
 - 23 сценария `crates/sandbox/tests/replays.rs`:
   - сессия со всеми видами входов (dev-правки, инструменты игрока, клавиатура, spawn, possess,
     вызов после последнего тика) проигрывается побитово одинаково, клавиши во время просмотра игнорируются;

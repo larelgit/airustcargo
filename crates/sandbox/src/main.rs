@@ -59,6 +59,19 @@ struct Args {
     /// components and their values), entities, or none (the tick only).
     #[arg(long, value_name = "DETAIL", default_value_t = CheckDetail::Components, conflicts_with = "replay")]
     check_detail: CheckDetail,
+    /// A tick slower than this is over budget: `step` counts it and the journal names
+    /// it (`perf`). Default: the tick's own duration (16.7 ms at 60 Hz). Debug builds
+    /// run slower than `--release`.
+    #[arg(long, value_name = "MS", value_parser = positive_ms)]
+    tick_budget_ms: Option<f64>,
+}
+
+fn positive_ms(text: &str) -> Result<f64, String> {
+    match text.parse::<f64>() {
+        Ok(ms) if ms > 0.0 && ms.is_finite() => Ok(ms),
+        Ok(_) => Err("the budget must be above 0 ms".into()),
+        Err(_) => Err(format!("`{text}` is not a number of milliseconds")),
+    }
 }
 
 fn main() -> ExitCode {
@@ -79,6 +92,8 @@ fn main() -> ExitCode {
         crash_replays: true,
         check_every: args.check_every,
         check_detail: args.check_detail,
+        tick_budget: args.tick_budget_ms.map(|ms| Duration::from_secs_f64(ms / 1000.0)),
+        report_perf: true,
     };
     if let Some(r) = &replay {
         cfg.seed = r.seed;
