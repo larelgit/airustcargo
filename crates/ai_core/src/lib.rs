@@ -4,8 +4,12 @@
 //! everything in the frame, so it describes the world as structured text and offers
 //! a typed API for actions; screenshots are only a side channel for visual bugs.
 //!
+//! There is no LLM inside the engine. The agents are external coding agents
+//! (Claude Code, Codex, …) that drive a running game from a shell through the
+//! `shards` CLI, over the `ai/*` methods on localhost.
+//!
 //! ```text
-//! intent sources:  player · network client · AI · replay
+//! intent sources:  player · network client · agent (via shards) · replay
 //!                          │
 //! gameplay:        FixedUpdate, fixed tick, seed       (SimSet order, SimRng)
 //!                          │
@@ -15,8 +19,7 @@
 //!                  SimCtl   — pause · step · run-until  (sim)
 //!                  Replay   — record inputs, play back  (replay)
 //!                          │
-//! transports:      AiLink (in-process, for in-game agents)
-//!                  BRP `ai/*` on localhost → `shards` CLI · scripts · bots
+//! transport:       BRP `ai/*` on localhost → `shards` CLI ← coding agents, scripts, CI
 //! ```
 //!
 //! Setup:
@@ -36,7 +39,6 @@ pub mod describe;
 pub mod highlight;
 pub mod id;
 pub mod journal;
-pub mod link;
 pub mod observe;
 #[cfg(feature = "remote")]
 pub mod remote;
@@ -61,7 +63,6 @@ pub use builtin::{AiConditions, StopWhen};
 pub use describe::{AiDescribers, AiKind, Describer, EntityFacts};
 pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible};
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
-pub use link::{AiLink, AiLinkInbox};
 pub use observe::{AiCamera, AiPerception, ObserveOptions};
 pub use replay::{AiReplay, Replay, ReplayReport};
 pub use rng::{DetRng, SimRng, SimSeed};
@@ -107,13 +108,12 @@ impl Plugin for AiCorePlugin {
             .init_resource::<AgentSessions>()
             .init_resource::<AiLineOfSight>()
             .init_resource::<AiConditions>()
-            .init_resource::<AiLinkInbox>()
             .configure_sets(
                 FixedUpdate,
                 (SimSet::Input, SimSet::Think, SimSet::Act, SimSet::Move, SimSet::Resolve, SimSet::Cleanup).chain(),
             )
             .add_systems(FixedFirst, sim::advance_tick)
-            .add_systems(Last, (journal::drain_captured_logs, link::process_link_requests).chain())
+            .add_systems(Last, journal::drain_captured_logs)
             // Determinism needs an explicit order: warn (into the journal) about gameplay
             // systems that touch the same data with no ordering between them.
             .edit_schedule(FixedUpdate, |schedule| {

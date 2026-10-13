@@ -1,8 +1,8 @@
 //! Typed tools: an argument struct plus an ordinary Bevy system.
 //!
 //! `schemars` turns the argument struct into a JSON Schema (doc comments become
-//! descriptions). The same schema is the tool definition for an LLM and the input
-//! validation. Calls go through [`call_tool`], which checks the agent's scope, runs
+//! descriptions). The same schema documents the tool for agents (`shards tools`)
+//! and validates its input. Calls go through [`call_tool`], which checks the agent's scope, runs
 //! the system, survives panics, journals actions and returns what changed.
 //!
 //! ```ignore
@@ -62,7 +62,7 @@ pub enum ToolKind {
     Control,
 }
 
-/// Public description of a tool; `input_schema` is ready for an LLM `tools` field.
+/// Public description of a tool; `input_schema` is the JSON Schema of its arguments.
 #[derive(Clone, Debug, Serialize)]
 pub struct ToolSpec {
     pub name: String,
@@ -81,7 +81,7 @@ pub struct AiTool {
     run: RunFn,
 }
 
-/// Tool registry, ordered by name (stable order keeps LLM prompt caches warm).
+/// Tool registry, ordered by name (stable output for agents and diffs).
 #[derive(Resource, Default)]
 pub struct AiTools(BTreeMap<String, Arc<AiTool>>);
 
@@ -165,8 +165,8 @@ pub struct CallOutcome {
 
 const MAX_CHANGES: usize = 60;
 
-/// Runs a tool on behalf of `agent`. The single entry point for every transport:
-/// BRP, the in-process [`AiLink`](crate::AiLink), tests, an in-game agent.
+/// Runs a tool on behalf of `agent`. The single entry point: BRP (`shards`), the
+/// game's own dev keys, tests and replays all call tools through here.
 pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> CallOutcome {
     let caller = caller(world, agent);
     let outcome = |world: &World, ok: bool, result: Value, changes, journal| CallOutcome {
@@ -241,7 +241,7 @@ fn teach(error: String, spec: &ToolSpec) -> String {
 // --- schemas ---------------------------------------------------------------------
 
 /// `(description, input_schema)` for an argument type: draft 2020-12, subschemas
-/// inlined (LLM tool schemas handle `$ref` poorly), always `"type": "object"`.
+/// inlined (readable on its own, no `$ref` to chase), always `"type": "object"`.
 pub fn tool_schema<A: JsonSchema>() -> (String, Value) {
     let schema = SchemaSettings::draft2020_12()
         .with(|s| {

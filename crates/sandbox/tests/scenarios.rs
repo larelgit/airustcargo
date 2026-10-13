@@ -1,5 +1,5 @@
-//! End-to-end scenarios through `ai_core::call_tool`, the entry point every transport
-//! (BRP, `AiLink`, an in-game agent) uses: what an agent sees, does and gets back.
+//! End-to-end scenarios through `ai_core::call_tool`, the entry point behind BRP and
+//! `shards`: what an agent sees, does and gets back.
 
 use ai_core::prelude::*;
 use ai_core::{call_tool, AgentSessions, AiJournal, CallOutcome, JournalKind};

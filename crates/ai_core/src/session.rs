@@ -1,7 +1,8 @@
 //! Agent sessions: who is calling, with which rights, as which entity.
 //!
-//! A companion agent gets [`Scope::Player`] and its own body as subject; a dev agent
-//! on the CLI gets [`Scope::Dev`] and, by default, the player's character.
+//! Agents are external (a coding agent driving `shards`, a script, CI). By default
+//! an agent gets [`Scope::Dev`] and the player's character; a playtester that must
+//! play fair gets [`Scope::Player`] (`shards session --scope player`).
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -72,7 +73,7 @@ impl AgentSessions {
             .or_insert_with(|| AgentSession { name: name.to_owned(), scope, subject: None, seen_seq: 0 })
     }
 
-    /// Creates or reconfigures an agent (e.g. a companion with `Scope::Player`).
+    /// Creates or reconfigures an agent (e.g. a fair playtester with `Scope::Player`).
     pub fn configure(&mut self, name: &str, scope: Scope, subject: Option<AiId>) -> &mut AgentSession {
         let s = self.get_or_create(name);
         s.scope = scope;
