@@ -357,7 +357,7 @@ cargo build --release -p sandbox --no-default-features --features render
 resume, speed, status, session, raw, wait. Аргументы `act` передаются JSON-объектом или парами `key=value`.
 Флаги `--port`/`SHARDS_PORT`, `--port-file`/`SHARDS_PORT_FILE` (порт из файла игры; `--port` важнее),
 `--token`/`SHARDS_TOKEN`, `--agent`/`SHARDS_AGENT`, `--json` (у `tools` — со схемами аргументов). `shards wait` ждёт, пока игра
-ответит, и печатает, кто ответил: `ready: tick 0 · pid 4242 · seed 1 · port 15711` (ту же строку игра
+ответит и загрузится (контент; пока идёт загрузка, `step` отвечает ошибкой), и печатает, кто ответил: `ready: tick 0 · pid 4242 · seed 1 · port 15711` (ту же строку игра
 печатает при старте, её же первой строкой выводит `shards status`).
 
 **Параллельные headless-инстансы.** У каждого свой порт:
@@ -544,5 +544,5 @@ cargo shards observe; sleep 1; cargo shards observe
   API Bevy меняется в каждом релизе.
 - `.cargo/config.toml` ставит `jobs = 4`, потому что на этой машине мало RAM. Если памяти больше, увеличьте.
   Зависимости собираются с `opt-level = 3`, свой код с `opt-level = 1`.
-- Features `sandbox`: `render` и `remote` (по умолчанию), `audio`, `gamepad`, `wayland`, `dynamic`.
-  Без `render` игра собирается только для `--headless`.
+- Features `sandbox` (и `shards`): `render`, `remote` и `hot_reload` (по умолчанию), `audio`, `gamepad`,
+  `wayland`, `dynamic`. Без `render` игра собирается только для `--headless`.
