@@ -95,7 +95,9 @@ fn dress<T: Component>(add: On<Add<T>>, mut commands: Commands, palette: Res<Pal
     });
 }
 
-/// Human input becomes `Intent`, exactly like an agent's tool calls do.
+/// Human input becomes `Intent`, exactly like an agent's tool calls do. Space and J
+/// go through the same input buffer as the `dodge` and `attack` tools: a press the
+/// character cannot act on within 0.2 s shows up in the journal as rejected.
 fn keyboard_to_intent(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,

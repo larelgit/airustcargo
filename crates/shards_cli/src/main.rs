@@ -10,6 +10,7 @@
 //! shards act dodge dir=W
 //! shards shot                      # PNG of the window with eN marks, plus a legend
 //! shards save-replay               # this session as a replay file (cargo sandbox --replay F)
+//! shards --port-file F wait        # a game started with `--port 0 --port-file F`
 //! shards tools
 //! shards raw world.query '{"data":{"components":["sandbox::gameplay::combat::Health"]}}'
 //! ```
@@ -20,12 +21,23 @@ use std::time::{Duration, Instant};
 use clap::{Parser, Subcommand};
 use serde_json::{json, Map, Value};
 
+/// Bevy's BRP port, used when neither `--port` nor `--port-file` says otherwise.
+const DEFAULT_PORT: u16 = 15702;
+
 #[derive(Parser)]
 #[command(name = "shards", version, about = "Drive a running game through its ai/* BRP methods")]
 struct Cli {
-    /// Game's BRP port (each parallel instance gets its own).
-    #[arg(long, short, global = true, env = "SHARDS_PORT", default_value_t = 15702)]
-    port: u16,
+    /// Game's BRP port (each parallel instance gets its own). Default 15702.
+    #[arg(long, short, global = true, env = "SHARDS_PORT")]
+    port: Option<u16>,
+    /// Read the port from the file the game wrote (`cargo sandbox --port 0 --port-file F`).
+    /// `--port` wins when both are given.
+    #[arg(long, global = true, env = "SHARDS_PORT_FILE", value_name = "PATH")]
+    port_file: Option<std::path::PathBuf>,
+    /// The game's access token. Default: `.shards/<port>.token`, looked up from this
+    /// folder upwards (the game writes it into its working directory at start).
+    #[arg(long, global = true, env = "SHARDS_TOKEN", hide_env_values = true)]
+    token: Option<String>,
     /// Agent name: each agent has its own journal cursor, scope and body.
     #[arg(long, short, global = true, env = "SHARDS_AGENT", default_value = "dev")]
     agent: String,
@@ -118,19 +130,22 @@ enum Cmd {
 struct Client {
     url: String,
     agent: ureq::Agent,
+    port: u16,
+    token: Option<String>,
 }
 
 impl Client {
-    fn new(port: u16) -> Self {
+    fn new(port: u16, token: Option<String>) -> Self {
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(300)))
             .http_status_as_error(false)
             .build()
             .new_agent();
-        Self { url: format!("http://127.0.0.1:{port}"), agent }
+        Self { url: format!("http://127.0.0.1:{port}"), agent, port, token }
     }
 
     fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        let params = with_token(params, self.token.as_deref())?;
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
         let mut resp = self.agent.post(&self.url).send_json(&body).map_err(|e| match e {
             ureq::Error::Io(_) | ureq::Error::ConnectionFailed | ureq::Error::HostNotFound => {
@@ -141,6 +156,10 @@ impl Client {
         let reply: Value = resp.body_mut().read_json().map_err(|e| format!("bad response: {e}"))?;
         if let Some(err) = reply.get("error") {
             let msg = err.get("message").and_then(Value::as_str).unwrap_or("unknown error");
+            if self.token.is_none() && msg.starts_with("unauthorized") {
+                let here = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
+                return Err(format!("{method}: {msg} (no .shards/{}.token in {here} or above)", self.port));
+            }
             return Err(format!("{method}: {msg}"));
         }
         Ok(reply.get("result").cloned().unwrap_or(Value::Null))
@@ -149,14 +168,94 @@ impl Client {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let client = Client::new(cli.port);
-    match run(&cli, &client) {
+    let result = match &cli.cmd {
+        // The game may still be starting: its port file may not exist yet.
+        Cmd::Wait { timeout } => wait(&cli, Duration::from_secs(*timeout)),
+        _ => cli.client().and_then(|client| run(&cli, &client)),
+    };
+    match result {
         Ok(code) => code,
         Err(e) => {
             eprintln!("error: {e}");
             ExitCode::from(2)
         }
     }
+}
+
+impl Cli {
+    /// `--port`, else the number in `--port-file`, else the default.
+    fn port(&self) -> Result<u16, String> {
+        match (self.port, &self.port_file) {
+            (Some(port), _) => Ok(port),
+            (None, Some(file)) => read_port_file(file),
+            (None, None) => Ok(DEFAULT_PORT),
+        }
+    }
+
+    fn client(&self) -> Result<Client, String> {
+        let port = self.port()?;
+        let token = self.token.clone().or_else(|| find_token(port, &std::env::current_dir().ok()?));
+        Ok(Client::new(port, token))
+    }
+}
+
+/// `.shards/<port>.token` in `start` or the nearest folder above it that has one.
+fn find_token(port: u16, start: &std::path::Path) -> Option<String> {
+    let name = format!("{port}.token");
+    start.ancestors().find_map(|dir| std::fs::read_to_string(dir.join(".shards").join(&name)).ok()).map(|t| t.trim().to_owned())
+}
+
+/// Every method wants the game's token in its params.
+fn with_token(params: Value, token: Option<&str>) -> Result<Value, String> {
+    let Some(token) = token else {
+        return Ok(params);
+    };
+    match params {
+        Value::Null => Ok(json!({"token": token})),
+        Value::Object(mut map) => {
+            map.insert("token".into(), token.into());
+            Ok(Value::Object(map))
+        }
+        _ => Err("params must be a JSON object: it carries the game's token".into()),
+    }
+}
+
+fn read_port_file(path: &std::path::Path) -> Result<u16, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read the port file {} ({e}); is the game running with --port-file?", path.display()))?;
+    text.trim().parse().map_err(|_| format!("the port file {} holds no port number: `{}`", path.display(), text.trim()))
+}
+
+/// Polls `ai/status` until the game answers, then prints who answered.
+fn wait(cli: &Cli, timeout: Duration) -> Result<ExitCode, String> {
+    let start = Instant::now();
+    loop {
+        let answer = cli.client().and_then(|client| client.call("ai/status", Value::Null));
+        match answer {
+            Ok(status) => {
+                println!("{}", ready_line(&status));
+                return Ok(ExitCode::SUCCESS);
+            }
+            Err(_) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(250)),
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// `ready: tick 0 · pid 4242 · seed 1 · port 15711`, the line the game prints at start.
+fn ready_line(status: &Value) -> String {
+    let field = |v: &Value| match v {
+        Value::Null => "?".to_owned(),
+        other => other.to_string(),
+    };
+    let instance = &status["instance"];
+    format!(
+        "ready: tick {} · pid {} · seed {} · port {}",
+        field(&status["tick"]),
+        field(&instance["pid"]),
+        field(&status["seed"]),
+        field(&instance["port"])
+    )
 }
 
 fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
@@ -236,6 +335,9 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
         Cmd::Speed { x } => act("speed", json!({"x": x}))?,
         Cmd::Status => {
             let s = client.call("ai/status", Value::Null)?;
+            if !cli.json {
+                println!("{}", ready_line(&s));
+            }
             println!("{}", serde_json::to_string_pretty(&s).unwrap_or_default());
             return Ok(ExitCode::SUCCESS);
         }
@@ -255,21 +357,7 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             println!("{}", serde_json::to_string_pretty(&client.call(method, params)?).unwrap_or_default());
             return Ok(ExitCode::SUCCESS);
         }
-        Cmd::Wait { timeout } => {
-            let start = Instant::now();
-            loop {
-                match client.call("ai/status", Value::Null) {
-                    Ok(s) => {
-                        println!("ready: tick {}", s.get("tick").cloned().unwrap_or_default());
-                        return Ok(ExitCode::SUCCESS);
-                    }
-                    Err(_) if start.elapsed() < Duration::from_secs(*timeout) => {
-                        std::thread::sleep(Duration::from_millis(250));
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-        }
+        Cmd::Wait { timeout } => return wait(cli, Duration::from_secs(*timeout)),
     };
     Ok(print_outcome(&outcome, cli.json))
 }
@@ -416,6 +504,51 @@ mod tests {
             parse_condition("field:12:Health.current<30").unwrap(),
             json!({"field": {"id": 12, "component": "Health", "path": "current", "below": 30.0}})
         );
+    }
+
+    #[test]
+    fn the_port_comes_from_the_port_file() {
+        let dir = std::env::temp_dir().join(format!("shards_port_file_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("game.port");
+        std::fs::write(&file, "15711\n").unwrap();
+        assert_eq!(read_port_file(&file), Ok(15711));
+
+        let cli = |args: &[&str]| Cli::try_parse_from([&["shards"], args, &["status"]].concat()).unwrap();
+        let path = file.display().to_string();
+        assert_eq!(cli(&["--port-file", &path]).port(), Ok(15711));
+        assert_eq!(cli(&["--port-file", &path, "--port", "15799"]).port(), Ok(15799), "--port wins");
+
+        std::fs::write(&file, "busy").unwrap();
+        assert!(read_port_file(&file).unwrap_err().contains("holds no port number"));
+        std::fs::remove_file(&file).unwrap();
+        assert!(read_port_file(&file).unwrap_err().contains("is the game running with --port-file?"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_token_is_found_by_port_from_here_upwards() {
+        let base = std::env::temp_dir().join(format!("shards_token_{}", std::process::id()));
+        let deep = base.join("game/crates/sandbox");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::create_dir_all(base.join("game/.shards")).unwrap();
+        std::fs::write(base.join("game/.shards/15711.token"), "abc123\n").unwrap();
+        assert_eq!(find_token(15711, &deep).as_deref(), Some("abc123"));
+        assert_eq!(find_token(15711, &base.join("game")).as_deref(), Some("abc123"));
+        assert_eq!(find_token(15712, &deep), None, "another port's game");
+        assert_eq!(find_token(15711, &base), None, "not below the game folder");
+        let _ = std::fs::remove_dir_all(base);
+
+        assert_eq!(with_token(Value::Null, Some("t")).unwrap(), json!({"token": "t"}));
+        assert_eq!(with_token(json!({"data": 1}), Some("t")).unwrap(), json!({"data": 1, "token": "t"}));
+        assert_eq!(with_token(json!({"data": 1}), None).unwrap(), json!({"data": 1}));
+        assert!(with_token(json!([1]), Some("t")).is_err());
+    }
+
+    #[test]
+    fn the_ready_line_names_the_instance() {
+        let status = json!({"tick": 0, "seed": 1, "instance": {"pid": 4242, "seed": 1, "port": 15711}});
+        assert_eq!(ready_line(&status), "ready: tick 0 · pid 4242 · seed 1 · port 15711");
     }
 
     #[test]

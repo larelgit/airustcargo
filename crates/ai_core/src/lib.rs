@@ -30,16 +30,20 @@
 //!     .add_plugins(AiCorePlugin::default())
 //!     .register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.max))
 //!     .journal_event::<Damaged>(|e, w| Some(format!("{} -> {} -{}", label(w, e.source), label(w, e.target), e.amount)))
-//!     .add_ai_tool("move_to", Scope::Player, move_to);
+//!     .add_ai_tool("move_to", Scope::Player, move_to)
+//!     .replay_input::<Intent>()
+//!     .replay_ignore::<Sparkle>();
 //! ```
 
 pub mod builtin;
 pub mod describe;
+pub mod failures;
 #[cfg(feature = "render")]
 pub mod highlight;
 pub mod id;
 pub mod journal;
 pub mod observe;
+pub mod paths;
 #[cfg(feature = "remote")]
 pub mod remote;
 pub mod replay;
@@ -61,13 +65,14 @@ use serde::Serialize;
 
 pub use builtin::{AiConditions, StopWhen};
 pub use describe::{AiDescribers, AiKind, Describer, EntityFacts};
+pub use failures::{ai_core_error_handler, AiFailures, SystemFailure};
 pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible};
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
 pub use observe::{AiCamera, AiPerception, ObserveOptions};
-pub use replay::{AiReplay, Replay, ReplayReport};
+pub use replay::{AiReplay, Replay, ReplayHashing, ReplayReport};
 pub use rng::{DetRng, SimRng, SimSeed};
 pub use session::{AgentSession, AgentSessions, Caller, Scope};
-pub use sim::{SimConfig, SimSet, SimTick};
+pub use sim::{SimConfig, SimSet, SimTick, TickClock};
 pub use spatial::{AiLineOfSight, AiOccluder};
 pub use tools::{call_tool, AiTools, Call, CallOutcome, Id, NoArgs, ToolKind, ToolResult, ToolSpec};
 
@@ -85,12 +90,26 @@ pub struct AiCorePlugin {
     pub sim: SimConfig,
     pub perception: AiPerception,
     /// Port for the `ai/*` BRP methods (`remote` feature). `None`: no HTTP server.
+    /// Every BRP method needs the token the game writes to `.shards/<port>.token`.
     pub remote_port: Option<u16>,
+    /// Install [`ai_core_error_handler`]: a gameplay panic is logged, stops `step` at its
+    /// tick and pauses the game, instead of panicking again and taking `FixedMain` and
+    /// `FixedUpdate` with it. `false` keeps Bevy's own handler.
+    pub catch_system_panics: bool,
+    /// After a gameplay failure, save the session as `replays/crash-tick<N>.json` to
+    /// reproduce it with.
+    pub crash_replays: bool,
 }
 
 impl Default for AiCorePlugin {
     fn default() -> Self {
-        Self { sim: SimConfig::default(), perception: AiPerception::default(), remote_port: Some(DEFAULT_PORT) }
+        Self {
+            sim: SimConfig::default(),
+            perception: AiPerception::default(),
+            remote_port: Some(DEFAULT_PORT),
+            catch_system_panics: true,
+            crash_replays: true,
+        }
     }
 }
 
@@ -101,6 +120,7 @@ impl Plugin for AiCorePlugin {
             .insert_resource(SimSeed(self.sim.seed))
             .insert_resource(self.perception.clone())
             .init_resource::<SimTick>()
+            .init_resource::<sim::TickClock>()
             .init_resource::<AiIndex>()
             .init_resource::<AiJournal>()
             .init_resource::<AiDescribers>()
@@ -113,7 +133,10 @@ impl Plugin for AiCorePlugin {
                 (SimSet::Input, SimSet::Think, SimSet::Act, SimSet::Move, SimSet::Resolve, SimSet::Cleanup).chain(),
             )
             .add_systems(FixedFirst, sim::advance_tick)
-            .add_systems(Last, journal::drain_captured_logs)
+            // Log lines into the journal after every tick (a long `step` runs many in
+            // one frame), and once per frame for lines logged between ticks.
+            .add_systems(FixedLast, journal::drain_logs.after(replay::ReplaySystems::Remember))
+            .add_systems(Last, journal::drain_logs)
             // Determinism needs an explicit order: warn (into the journal) about gameplay
             // systems that touch the same data with no ordering between them.
             .edit_schedule(FixedUpdate, |schedule| {
@@ -127,6 +150,7 @@ impl Plugin for AiCorePlugin {
 
         builtin::register(app.world_mut());
         replay::plugin(app);
+        failures::plugin(app, self.catch_system_panics, self.crash_replays);
 
         #[cfg(feature = "render")]
         {
@@ -139,8 +163,26 @@ impl Plugin for AiCorePlugin {
             if !app.is_plugin_added::<bevy_remote::RemotePlugin>() {
                 app.add_plugins(bevy_remote::RemotePlugin::default());
             }
-            app.add_plugins(bevy_remote::http::RemoteHttpPlugin::default().with_port(port));
-            remote::check_port(port);
+            let token = remote::AiToken::random();
+            // Games should refuse to start on a busy port (see `remote::ensure_port_free`);
+            // this is the last word for those that do not. The token file of the game
+            // that holds the port stays untouched.
+            match remote::ensure_port_free(port) {
+                Ok(()) => match remote::TokenFile::write(&remote::token_path(port), &token) {
+                    Ok(file) => {
+                        app.insert_resource(file);
+                    }
+                    Err(e) => error!("ai_core: {e}; `shards` cannot authenticate to this game"),
+                },
+                Err(e) => error!("ai_core: {e}; `shards` will not reach this game"),
+            }
+            app.add_plugins(bevy_remote::http::RemoteHttpPlugin::default().with_port(port))
+                .insert_resource(remote::AiInstance::new(Some(port)))
+                .insert_resource(token)
+                .add_systems(
+                    bevy_remote::RemoteLast,
+                    remote::protect_new_methods.before(bevy_remote::RemoteSystems::ProcessRequests),
+                );
         }
     }
 
@@ -148,6 +190,7 @@ impl Plugin for AiCorePlugin {
         #[cfg(feature = "remote")]
         if self.remote_port.is_some() {
             remote::register_methods(app.world_mut());
+            remote::protect_methods(app.world_mut());
         }
         let _ = app;
     }
@@ -189,6 +232,15 @@ pub trait AiAppExt {
     fn replay_input<C>(&mut self) -> &mut Self
     where
         C: Component<Mutability = bevy::ecs::component::Mutable> + Clone + PartialEq + Serialize + DeserializeOwned;
+
+    /// Leaves component `C` out of replay checks: cosmetics and caches, whatever may
+    /// differ between a recording and its playback without the game being different.
+    fn replay_ignore<C: Component>(&mut self) -> &mut Self;
+
+    /// Adds `check(world)` to every replay check, for game data outside AI-visible
+    /// entities (projectiles without ids, resources). A second check with the same
+    /// name replaces the first.
+    fn add_replay_check(&mut self, name: &str, check: fn(&World) -> u64) -> &mut Self;
 }
 
 impl AiAppExt for App {
@@ -241,6 +293,23 @@ impl AiAppExt for App {
         replay::register_input::<C>(self);
         self
     }
+
+    fn replay_ignore<C: Component>(&mut self) -> &mut Self {
+        self.world_mut().get_resource_or_init::<replay::ReplayHashing>().ignore(std::any::TypeId::of::<C>());
+        self
+    }
+
+    fn add_replay_check(&mut self, name: &str, check: fn(&World) -> u64) -> &mut Self {
+        self.world_mut().get_resource_or_init::<replay::ReplayHashing>().add_check(name, check);
+        self
+    }
+}
+
+/// `ready: tick 0 · pid 4242 · seed 1 · port 15711`: what a game prints at start, and
+/// what `shards wait` prints once the game answers.
+pub fn ready_line(tick: u64, pid: u32, seed: u64, port: Option<u16>) -> String {
+    let port = port.map_or_else(|| "no BRP".to_owned(), |p| format!("port {p}"));
+    format!("ready: tick {tick} · pid {pid} · seed {seed} · {port}")
 }
 
 /// `game::combat::Health` → `Health`.

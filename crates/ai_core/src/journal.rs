@@ -3,6 +3,13 @@
 //! A snapshot without causes says little: "the boss entered phase 2" matters more
 //! than its coordinates. Gameplay events (via observers), agent actions, sim control
 //! and `warn!`/`error!` logs all land in one ring buffer, stamped with the tick.
+//!
+//! Log lines carry the tick they were logged at (read from [`TickClock`] by the
+//! tracing layer) and are moved into the journal after every tick, once per frame, and
+//! around every tool call. So a warning inside a long `step` keeps its own tick, ends
+//! the step if `--until journal:` looks for it, and an action's own warnings come back
+//! with that action. At most [`MAX_CAPTURED_PER_TICK`] lines per tick; the rest are
+//! counted in one `N log lines dropped` line.
 
 use std::collections::VecDeque;
 use std::fmt::Write as _;
@@ -17,7 +24,7 @@ use bevy::log::BoxedLayer;
 use bevy::prelude::*;
 use serde::Serialize;
 
-use crate::sim::SimTick;
+use crate::sim::{SimTick, TickClock};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -131,31 +138,64 @@ pub(crate) fn journal_observer<E: Event>(format: EventFormatter<E>) -> impl FnMu
 // --- tracing capture -------------------------------------------------------------
 
 struct CapturedLog {
+    tick: u64,
     level: Level,
     target: String,
     message: String,
 }
 
+/// Lines captured since the last [`drain_logs`].
+#[derive(Default)]
+struct Captured {
+    lines: Vec<CapturedLog>,
+    /// Tick of the newest line, and how many lines of that tick were kept.
+    tick: u64,
+    kept: usize,
+    /// `(tick, lines dropped)`, oldest first.
+    dropped: Vec<(u64, u64)>,
+}
+
 /// Shared buffer between the tracing layer (any thread) and the ECS.
 #[derive(Resource, Clone, Default)]
-pub struct LogCapture(Arc<Mutex<Vec<CapturedLog>>>);
+pub struct LogCapture(Arc<Mutex<Captured>>);
 
-const MAX_CAPTURED_PER_FRAME: usize = 64;
+/// Log lines kept per tick (and per frame between ticks).
+pub const MAX_CAPTURED_PER_TICK: usize = 64;
 
-struct CaptureLayer(LogCapture);
+/// The tracing subscriber is global and set once per process, while each app calls
+/// [`capture_log_layer`] again: the layer writes into the newest app's buffer.
+static CAPTURE_TARGET: Mutex<Option<(LogCapture, TickClock)>> = Mutex::new(None);
+
+struct CaptureLayer;
 
 impl<S: Subscriber> Layer<S> for CaptureLayer {
     fn on_event(&self, event: &TracingEvent<'_>, _ctx: Context<'_, S>) {
         let level = *event.metadata().level();
-        if level > Level::WARN {
+        // Failures are journaled by `failures::collect`, with their tick; once is enough.
+        if level > Level::WARN || event.metadata().target() == crate::failures::LOG_TARGET {
             return;
         }
+        let Some((capture, clock)) = CAPTURE_TARGET.lock().ok().and_then(|t| t.clone()) else {
+            return;
+        };
         let mut visitor = MessageVisitor(String::new());
         event.record(&mut visitor);
-        if let Ok(mut buf) = self.0.0.lock()
-            && buf.len() < MAX_CAPTURED_PER_FRAME
-        {
-            buf.push(CapturedLog { level, target: event.metadata().target().to_owned(), message: visitor.0 });
+        let tick = clock.get();
+        let Ok(mut buf) = capture.0.lock() else {
+            return;
+        };
+        if buf.tick != tick {
+            buf.tick = tick;
+            buf.kept = 0;
+        }
+        if buf.kept < MAX_CAPTURED_PER_TICK {
+            buf.kept += 1;
+            buf.lines.push(CapturedLog { tick, level, target: event.metadata().target().to_owned(), message: visitor.0 });
+        } else {
+            match buf.dropped.last_mut() {
+                Some((t, n)) if *t == tick => *n += 1,
+                _ => buf.dropped.push((tick, 1)),
+            }
         }
     }
 }
@@ -185,24 +225,45 @@ impl Visit for MessageVisitor {
 /// ```ignore
 /// DefaultPlugins.set(LogPlugin { custom_layer: ai_core::capture_log_layer, ..default() })
 /// ```
+///
+/// One app per process receives the lines: the one that called this last.
 pub fn capture_log_layer(app: &mut App) -> Option<BoxedLayer> {
     let capture = LogCapture::default();
+    let clock = app.world_mut().get_resource_or_init::<TickClock>().clone();
     app.insert_resource(capture.clone());
-    Some(Box::new(CaptureLayer(capture)))
+    if let Ok(mut target) = CAPTURE_TARGET.lock() {
+        *target = Some((capture, clock));
+    }
+    Some(Box::new(CaptureLayer))
 }
 
-pub(crate) fn drain_captured_logs(capture: Option<Res<LogCapture>>, tick: Res<SimTick>, mut journal: ResMut<AiJournal>) {
-    let Some(capture) = capture else {
+/// Moves captured log lines into the journal, each with the tick it was logged at.
+/// Runs after every tick and once per frame; call it before reading the journal when
+/// code that may log just ran.
+pub fn drain_logs(world: &mut World) {
+    let Some(capture) = world.get_resource::<LogCapture>() else {
         return;
     };
-    let Ok(mut buf) = capture.0.lock() else {
+    let (lines, dropped) = match capture.0.lock() {
+        Ok(mut buf) => {
+            buf.kept = 0;
+            (std::mem::take(&mut buf.lines), std::mem::take(&mut buf.dropped))
+        }
+        Err(_) => return,
+    };
+    let Some(mut journal) = world.get_resource_mut::<AiJournal>() else {
         return;
     };
-    for log in buf.drain(..) {
+    for log in lines {
         let kind = if log.level == Level::ERROR { JournalKind::Error } else { JournalKind::Warn };
-        journal.push(tick.0, kind, format!("{}: {}", log.target, log.message));
+        journal.push(log.tick, kind, format!("{}: {}", log.target, log.message));
+    }
+    for (tick, n) in dropped {
+        let text = format!("{n} log lines dropped (limit {MAX_CAPTURED_PER_TICK} per tick)");
+        journal.push(tick, JournalKind::Warn, text);
     }
 }
+
 
 #[cfg(test)]
 mod tests {

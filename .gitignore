@@ -1,6 +1,7 @@
 /target
-/shots
-/replays
+shots/
+replays/
+.shards/
 *.png
 !assets/**/*.png
 !docs/*.png

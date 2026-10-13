@@ -58,7 +58,8 @@ source ~/.local/share/rustengine-sysdeps/env.sh
 Управление в окне: WASD или стрелки — ходить, Space — уворот, J или ЛКМ — удар,
 P — пауза, N или `.` — один тик на паузе, F1 — оверлей с id, R — вылечить/воскресить,
 F12 — снимок с метками в `shots/`.
-Клавиатура человека и инструменты агента пишут в один и тот же `Intent`.
+Клавиатура человека и инструменты агента пишут в один и тот же `Intent`, и нажатия идут через
+тот же буфер ввода: уворот или удар, который не удалось начать за 0.2 с, виден в журнале как `rejected`.
 
 ## Архитектура
 
@@ -86,11 +87,11 @@ ai_core:              Observe — срез мира текстом            (o
 
 | модуль | ответственность |
 |---|---|
-| `id` | `AiId` (`e42`): стабильный монотонный id, никогда не переиспользуется; надгробия для удалённых |
+| `id` | `AiId` (`e42`): стабильный монотонный id, никогда не переиспользуется; надгробия для удалённых. Id назначает только движок: `set` и BRP `world.mutate_components` его не меняют, а новая вставка перенумеровывает сущность (надгробие `renumbered to e99`) |
 | `describe` | только явно зарегистрированные компоненты видны ИИ, у каждого короткий describe |
-| `observe` | текстовый срез: YOU / SEEN (по угрозе) / NOT IN VIEW / LANDMARKS / SINCE; `inspect`, `nearby`, диффы |
+| `observe` | текстовый срез: YOU / SEEN (по угрозе) / NOT IN VIEW / LANDMARKS / SINCE, видимость от глаз субъекта; `inspect`, `nearby`, диффы |
 | `spatial` | позиции относительно игрока («8.4m NE»), line of sight по `AiOccluder` (подменяемо) |
-| `journal` | кольцевой буфер игровых событий (observers) плюс перехват `warn!`/`error!` из tracing |
+| `journal` | кольцевой буфер игровых событий (observers) плюс перехват `warn!`/`error!` из tracing: строка получает тик, на котором записана, и попадает в журнал после каждого тика; не больше 64 строк на тик |
 | `tools` | реестр: args-struct + Bevy-система, JSON Schema (schemars), scope, `catch_unwind` |
 | `builtin` | встроенные инструменты: observe, inspect, step, set/get через reflection, ... |
 | `sim` | тик, пауза, синхронный `step` по FixedMain, стоп-условия |
@@ -115,8 +116,17 @@ SINCE seq 0
   93 e6 winds up IceSlam (1.00s)
 ```
 
-- Видимость считается так: попадание в кадр камеры (`AiCamera`, `world_to_viewport`; в окне
-  есть `scr(x,y)`) плюс луч от глаз персонажа. Если сущность за колонной, к ней приписывается `occluded`.
+- Видимость считается только от субъекта («YOU»): луч от его глаз (`pos + EYE_HEIGHT`) к цели
+  в радиусе `AiPerception::radius` (40 м). Если сущность за колонной, к ней приписывается `occluded`.
+  Камера окна на это не влияет: с окном и без вывод одинаков, даже пока следящая камера догоняет
+  игрока после большого `step`, а после `possess` агент смотрит глазами своего тела.
+- NOT IN VIEW — необязательный конус обзора: `AiPerception { fov_deg: Some(120.0), .. }`. Всё, что
+  вне конуса вокруг `facing` субъекта, попадает туда. По умолчанию (`None`) обзор круговой и этого
+  раздела нет.
+- `scr(x,y)` — отдельная пометка: если в окне есть `AiCamera` и сущность в её кадре, к строке
+  дописывается место на экране, например `e8 Skeleton  hp 40/40  6.3m NE  occluded  scr(905,342)`.
+  На SEEN, `occluded` и NOT IN VIEW она не влияет. Легенда `shot` по-прежнему считается от камеры:
+  она описывает картинку.
 - SEEN отсортирован по угрозе: `AiImportance` по убыванию, потом расстояние.
 - SINCE показывает только новые записи журнала. У каждого агента свой курсор.
 - Компас: N = −Z, E = +X.
@@ -130,7 +140,9 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
    .add_ai_tool("move_to", Scope::Player, move_to)   // действие: журнал + список изменений
    .add_ai_query("threats", Scope::Player, threats)  // чтение: без журнала
    .add_ai_condition("boss_phase_2", |w| /* ... */)
-   .replay_input::<Intent>();                       // вход для реплеев (см. «Реплеи»)
+   .replay_input::<Intent>()                        // вход для реплеев (см. «Реплеи»)
+   .replay_ignore::<Sparkle>()                      // косметика: не входит в проверки реплея
+   .add_replay_check("weather", |w| /* u64 */);     // данные вне AiVisible-сущностей
 ```
 
 Маркеры сущностей: `AiKind("Boss")`, `AiImportance(10.0)`, `AiLandmark`, `AiOccluder`, `AiPlayer`.
@@ -157,9 +169,29 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 - **Ошибки подсказывают, как исправить вызов:**
   ``bad arguments for teleport: missing field `x`. Expected: teleport(id: integer|string, x: number, y?: number, z: number)``,
   `e57 no longer exists (Skeleton despawned at tick 812); live: …`,
-  ``unknown component `Mana`; this entity has: Health, …``.
+  `e7 no longer exists (Skeleton renumbered to e99 at tick 40)`,
+  ``unknown component `Mana`; this entity has: Health, …``,
+  `AiId is managed by the engine; despawn and spawn instead`.
+- **`dodge` и `attack` объясняют отказ.** Разовый вход (уворот, удар без цели) ждёт в буфере
+  `InputBuffer` до 0.2 с, пока персонаж не сможет действовать, а `Intent` остаётся чистым входом.
+  Инструмент сразу проверяет то же правило, что и игра (`combat::start_blocker`):
+  - можно сейчас — как раньше: `ok: dodging S`, `ok: swinging`;
+  - станет можно в пределах 0.2 с — `ok: queued, dodges in 0.12s (S)`, `ok: queued, swings in 0.10s`;
+  - иначе ошибка с причиной и временем, а `Intent` не меняется:
+    `not enough stamina: 10/25 (ready in 1.0s)`,
+    `busy: windup Sword 0.80s (ready in 0.80s); a windup cannot be cancelled`.
+
+  Правила прежние: уворот из `Idle` или `Recover` (он отменяет восстановление), удар только из
+  `Idle`. Вход, записанный мимо инструментов (клавиатура, `Intent` напрямую), у которого вышло время,
+  попадает в журнал: `e5 dodge rejected: stamina 10/25`, `e5 attack rejected: busy (windup Sword 0.10s)`.
+  Ожидающий вход виден в строке сущности: `queued dodge 0.15s`. Это изменение геймплея: реплеи,
+  записанные до буфера, расходятся, их нужно записать заново.
 - **Паника в инструменте не роняет игру.** Агент получает ошибку, запись уходит в журнал,
-  инструмент перерегистрируется при следующем вызове.
+  инструмент перерегистрируется при следующем вызове. Расписания тиков при этом на месте; если
+  паника всё-таки унесла их (игра отключила перехват, `catch_system_panics: false`), ответ так и
+  говорит: `the game lost its FixedMain, FixedUpdate schedules`. Команда, которую поставил инструмент
+  и которая упала, записывается как ошибка инструмента (`tool orphan: command … failed`): это не сбой
+  геймплея, игра не встаёт на паузу.
 
 ## Время и детерминизм
 
@@ -170,7 +202,26 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 - `step` синхронно прогоняет `FixedMain` ровно N тиков, игра при этом стоит на паузе.
   Есть стоп-условия: `journal:TEXT`, `gone:ID`, `shows:ID:TEXT`, `near:A:B:M`,
   `field:ID:Comp.path<N`, `named:NAME`. Лимиты: до 216 000 тиков и 20 с реального времени за вызов.
-- **Проверка порядка систем.** `AiCorePlugin` включает ambiguity detection для `FixedUpdate`:
+- **Логи внутри `step`.** `warn!`/`error!` попадают в журнал с тиком, на котором записаны, сразу после
+  этого тика, а не в конце шага. Поэтому `step --until journal:TEXT` останавливается на тике
+  предупреждения. За тик в журнал идёт не больше 64 строк, остальные сводятся в одну:
+  `70 [warn] 36 log lines dropped (limit 64 per tick)`. Предупреждение, которое вызвал action,
+  приходит в его же `JOURNAL`.
+- **Сбой геймплея останавливает игру, а не убивает её.** В Bevy 0.20 паника системы уходит в
+  `FallbackErrorHandler`, а тот по умолчанию паникует снова. Эта паника уносит из мира `FixedMain`
+  и `FixedUpdate`: каждый следующий `step` падал бы с `cannot run a tick here`, а в реальном времени
+  тики молча переставали бы идти. `AiCorePlugin` ставит свой обработчик (`catch_system_panics`,
+  по умолчанию `true`). Он пишет ошибку в лог и в очередь сбоев, а очередь разбирается после каждого
+  тика:
+  - `step` останавливается на тике сбоя и отвечает
+    `stopped: gameplay system <name> panicked at tick 50: <msg>; crash replay: replays/crash-tick50.json`,
+    в журнале — `system <name> panicked at tick 50: <msg>`;
+  - в реальном времени игра встаёт на паузу (`[sim] paused: system <name> panicked at tick 50`),
+    следующие тики этого кадра не идут;
+  - сессия сохраняется в `replays/crash-tick<N>.json` (по одному файлу на упавшую систему).
+    Воспроизвести сбой: `cargo sandbox --replay replays/crash-tick50.json` (или `--headless --paused`
+    и `shards step`), игра упадёт на том же тике. `--verify` выходит с кодом 1, пока система падает;
+  - следующий `step` идёт дальше: расписания на месте. `AiCorePlugin` включает ambiguity detection для `FixedUpdate`:
   две системы, которые трогают одни данные без явного порядка, дают warning, и он попадает в журнал.
   Тест `gameplay_systems_have_a_total_order` превращает это в ошибку, а контрольный тест
   проверяет, что сама проверка ловит такую систему.
@@ -191,29 +242,46 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
   Вызовы, сделанные изнутри другого инструмента, не пишутся: их повторит внешний вызов.
   `control`-инструменты (pause, step, possess) не пишутся. Сырые правки через BRP
   (`world.insert_components`) идут мимо инструментов и тоже не пишутся;
-- **проверки**: хэш AI-видимого состояния (id, фрагменты, точные позиции) каждые 60 тиков
-  и в конце записи.
+- **проверки**: хэш игровых данных каждые 60 тиков и в конце записи: для каждой сущности с
+  `AiVisible` по порядку `AiId` — её id и все отражаемые игровые компоненты (сериализация через
+  reflection, компоненты в порядке имени типа).
 
 ```bash
 shards save-replay                          # или ai/act {"tool": "replay_save", "args": {"path": …}}
+shards save-replay replays/boss-fight.json  # своё имя, но только внутри replays/
 cargo sandbox --replay replays/tick332.json # окно, реальное время; seed и частота из файла
 cargo sandbox --replay replays/tick332.json --headless --paused   # дальше шагами через shards step
 cargo sandbox --replay replays/tick332.json --verify
 # replay finished at tick 332: identical to the recording (6 checks) [332 ticks in 0.13s]
 ```
 
+- Игровые данные определяет то же правило, что и в `inspect`: всё, кроме типов `bevy_*` и внутренних
+  маркеров `ai_core`, плюс `Transform` и `Name`. Поэтому компоненты, которые добавляет только окно
+  (`Visibility`, `GlobalTransform`, меши), хэш не меняют, а `Entity` внутри компонента хэшируется
+  как `AiId`. Подписи и describe-фрагменты — это текст для ИИ, в хэш они не входят: новая формулировка
+  или новый describer не ломают старые реплеи.
+- Состав хэша задаёт игра: `replay_ignore::<C>()` исключает компонент (косметика, кэши),
+  `add_replay_check(name, fn(&World) -> u64)` добавляет данные вне `AiVisible`-сущностей (снаряды
+  без id, ресурсы). Компонент, который не сериализуется, один раз попадает в журнал
+  (`replay checks leave out …`) и дальше пропускается.
+- `replay_save` пишет только внутрь `replays/` рабочей папки игры (вложенные папки можно).
+  Абсолютный путь, `..` и симлинк, который ведёт наружу, — ошибка с подсказкой:
+  `path must be inside replays/, e.g. replays/boss-fight.json`.
 - Проигрывание требует свежего мира: тик 0, тот же seed и та же частота тиков. События
   применяются между тиками, ровно там, где они случились. Входы, которых нет в записи
   (человек жмёт клавиши во время просмотра), откатываются.
 - Каждая проверка сравнивается с записью. Отчёт называет первый тик, на котором игра перестала
   совпадать: `DIVERGED at tick 60`. После изменения кода это регрессия. `--verify` годится для CI:
-  код выхода 0 — совпало, 1 — разошлось, 2 — реплей не читается или не подходит к игре.
+  код выхода 0 — совпало, 1 — разошлось или упала система геймплея, 2 — реплей не читается
+  или не подходит к игре.
 - В конце записи игра становится живой: реплей работает и как точка сохранения для ветвления.
   Любой action-вызов во время проигрывания перехватывает управление и завершает его
   (`replay interrupted at tick 130 of 332: dev took over (teleport)`).
 - Во время проигрывания запись продолжается, поэтому ветка сохраняется одним реплеем.
 - Состояние записи и проигрывания видно в `ai/status` (поле `replay`), итог пишется в журнал.
-- Формат: JSON `shards-replay/1` (`seed`, `tick_hz`, `end`, `events`, `checks`; хэши hex-строками).
+- Формат: JSON `shards-replay/2` (`seed`, `tick_hz`, `end`, `events`, `checks`; хэши hex-строками).
+  Реплей `shards-replay/1` хэшировал текст и этой сборкой не проверяется: `play` отвечает
+  `this replay was recorded by an older build (…); record it again`, а `--verify` выходит с кодом 2.
 
 ## Скриншоты
 
@@ -235,9 +303,13 @@ LEGEND (image pixels)
   пропускаются.
 - Легенда считается в том кадре, который снимается. После `step` следящая камера ещё догоняет
   игрока, и координаты на момент запроса были бы неверны. Легенда пишется рядом с PNG как
-  `<имя>.json` (`path`, `width`, `height`, `tick`, `marks`, `legend`).
+  `<имя>.png.legend.json` (`path`, `width`, `height`, `tick`, `marks`, `legend`): такое имя не
+  столкнётся с чужим `<имя>.json`.
+- Снимки пишутся только внутрь `shots/` рабочей папки игры: `-o shots/boss.png` можно, абсолютный
+  путь, `..` и выход через симлинк — нет (`path must be inside shots/, e.g. shots/boss.png`).
 - Оба файла пишутся во временные и переименовываются, так что появившийся PNG уже целиком на диске.
-  Старые файлы с тем же именем удаляются при запросе. В журнале появляется `screenshot saved: …`.
+  Старый снимок и его легенда с тем же именем удаляются при запросе, и только внутри `shots/`.
+  В журнале появляется `screenshot saved: …`.
 - Инструмент сразу возвращает пути, `shards shot` ждёт файл (`--timeout`, по умолчанию 10 с).
   Флаги: `--no-marks`, `-o PATH`. Без окна (`--headless`) инструмент отвечает ошибкой
   с подсказкой использовать `observe`.
@@ -255,10 +327,26 @@ LEGEND (image pixels)
 | `ai/shot` | `{agent?, marks?, path?}` |
 | `ai/tools` | `{agent?}` |
 | `ai/session` | `{agent, scope?, subject?, clear_subject?}` |
-| `ai/status` | — |
+| `ai/status` | — (в ответе `instance: {pid, seed, port, started_at}`: какая игра ответила) |
 
 Стандартные методы BRP (`world.query`, `world.get_components`, …) тоже доступны: `shards raw …`.
-BRP даёт полный доступ к миру, поэтому сервер слушает только 127.0.0.1 и включается feature `remote`.
+BRP даёт полный доступ к миру, поэтому сервер слушает только 127.0.0.1, включается feature `remote`
+и пускает только с токеном:
+
+- при старте игра пишет случайный токен в `.shards/<port>.token` своей рабочей папки (права 0600)
+  и удаляет файл при выходе: по Ctrl+C, `kill`, закрытию окна или терминала (если игра запущена
+  не через `nohup`). После `kill -9` файл остаётся, следующая игра на этом порту его перепишет;
+- каждый метод — `ai/*`, стандартные `world.*`, `registry.*`, `rpc.discover` и `+watch` — требует
+  `params.token`. Без него или с чужим токеном ответ один:
+  `unauthorized: run shards from the game folder or set SHARDS_TOKEN`;
+- `shards` берёт токен из `SHARDS_TOKEN` (`--token`) или из `.shards/<port>.token`, поднимаясь от
+  текущей папки вверх, и сам добавляет его к параметрам. Своему клиенту передайте его явно:
+
+```bash
+TOKEN=$(cat .shards/15702.token)
+curl -d '{"jsonrpc":"2.0","id":1,"method":"ai/status","params":{"token":"'$TOKEN'"}}' http://127.0.0.1:15702
+```
+
 Релизная сборка без BRP:
 
 ```bash
@@ -267,7 +355,10 @@ cargo build --release -p sandbox --no-default-features --features render
 
 **CLI `shards`:** observe, step, act, shot, save-replay, tools, inspect, nearby, journal, pause,
 resume, speed, status, session, raw, wait. Аргументы `act` передаются JSON-объектом или парами `key=value`.
-Флаги `--port`/`SHARDS_PORT`, `--agent`/`SHARDS_AGENT`, `--json` (у `tools` — со схемами аргументов).
+Флаги `--port`/`SHARDS_PORT`, `--port-file`/`SHARDS_PORT_FILE` (порт из файла игры; `--port` важнее),
+`--token`/`SHARDS_TOKEN`, `--agent`/`SHARDS_AGENT`, `--json` (у `tools` — со схемами аргументов). `shards wait` ждёт, пока игра
+ответит, и печатает, кто ответил: `ready: tick 0 · pid 4242 · seed 1 · port 15711` (ту же строку игра
+печатает при старте, её же первой строкой выводит `shards status`).
 
 **Параллельные headless-инстансы.** У каждого свой порт:
 
@@ -275,6 +366,20 @@ resume, speed, status, session, raw, wait. Аргументы `act` переда
 cargo sandbox --headless --paused --seed 1 --port 15711 &
 cargo sandbox --headless --paused --seed 2 --port 15712 &
 SHARDS_PORT=15711 cargo shards step 600 --until named:player_dead
+```
+
+- Занятый порт — ошибка: игра не запускается, пишет `port 15711 is busy (another game?). Pick another
+  with --port` и выходит с кодом 3. Без этой проверки вторая игра работала бы без сервера, а `shards`
+  молча управлял бы первой. Проверка доступна любой игре: `ai_core::remote::ensure_port_free(port)`.
+- Чтобы не выбирать порты вручную, `--port 0` берёт свободный порт, а `--port-file F` записывает его
+  номер в файл (при выходе по Ctrl+C, `kill` или закрытию окна файл удаляется). `shards` читает его
+  через `--port-file F` или `SHARDS_PORT_FILE=F`:
+
+```bash
+cargo sandbox --headless --paused --seed 1 --port 0 --port-file /tmp/shards-a.port &
+cargo sandbox --headless --paused --seed 2 --port 0 --port-file /tmp/shards-b.port &
+SHARDS_PORT_FILE=/tmp/shards-a.port cargo shards wait   # ready: tick 0 · pid 4242 · seed 1 · port 40817
+SHARDS_PORT_FILE=/tmp/shards-a.port cargo shards step 600 --until named:player_dead
 ```
 
 **Внутри игры** та же точка входа, что за BRP, — `ai_core::call_tool(world, agent, tool, args)`.
@@ -300,6 +405,17 @@ ran 40 ticks (93 → 133)
 CHANGES
   ~ e5 Player: stam 80/80 → stam 60/80; moved 2.0m S
   ~ e6 Boss "Frost Warden": windup IceSlam 0.98s → windup IceSlam 0.32s
+  …
+$ shards act dodge dir=W
+ok: dodging W
+$ shards step 3
+ran 3 ticks (133 → 136)
+$ shards act dodge dir=E
+error: busy: dodge 0.30s (ready in 0.30s)
+$ shards step 8
+ran 8 ticks (136 → 144)
+$ shards act dodge dir=E
+ok: queued, dodges in 0.17s (E)
 ```
 
 ## Агенты
@@ -333,20 +449,44 @@ source ~/.local/share/rustengine-sysdeps/env.sh   # пока не установ
 cargo test --workspace
 ```
 
-Всего 34 теста:
+Всего 76 тестов:
 
-- 16 юнит-тестов `ai_core`: id, журнал, RNG, компас и LOS, схемы, шаги симуляции,
-  пути снимков, формат реплея и отчёт;
-- 2 теста парсера условий в `shards`;
-- 9 сценариев `crates/sandbox/tests/scenarios.rs`:
+- 26 юнит-тестов `ai_core`: id (в том числе перенумерация и занятый id), журнал, RNG,
+  компас и LOS, схемы, шаги симуляции, пути снимков (только `shots/`, чужой `x.json` цел), формат
+  реплея и отчёт, запрет BRP-правки `AiId`, занятый порт, `instance` в `ai/status`, файл порта,
+  пути внутри `replays/`/`shots/` (абсолютные, `..`, симлинки), токен у каждого метода BRP;
+- 5 тестов `shards`: парсер условий и аргументов, порт из `--port-file`, строка `ready`,
+  поиск токена по номеру порта;
+- 2 теста `crates/sandbox/tests/shutdown.rs` (запускают саму игру): после `kill` (код 143)
+  и SIGHUP (код 129) нет ни токена, ни файла порта; под `nohup` SIGHUP игру не останавливает;
+- 14 сценариев `crates/sandbox/tests/scenarios.rs`:
   - детерминизм и разные seed;
   - одинаковый результат при пошаговом и цельном прогоне;
   - полный порядок систем и контрольный тест к этой проверке;
   - фаза 2 босса через `set` + `step until named:boss_phase_2`;
   - подсказывающие ошибки;
+  - `AiId` нельзя переписать через `set`, а вставка нового id перенумеровывает сущность без дублей
+    в `observe`; игровой `AimAssist` виден в подсказке `set`;
+  - видимость следует за субъектом: босс за колонной `occluded` для игрока и виден после `possess`
+    скелета; с `fov_deg = 120` сущность за спиной в NOT IN VIEW; вывод `observe` с камерой окна
+    и без неё одинаков, если убрать `scr(...)`;
   - права scope;
   - паника в инструменте;
-- 7 сценариев `crates/sandbox/tests/replays.rs`:
+- 5 сценариев `crates/sandbox/tests/actions.rs`: `dodge` без стамины — ошибка со словом `stamina`,
+  и через тик ничего не изменилось; `dodge` во время замаха — ошибка со словом `windup`; действие,
+  возможное через 0.1 с (стамина, замах, восстановление перед ударом), — `ok: queued` и начинается
+  не позже чем через 12 тиков; правила уворота и удара прежние; вход прямо в `Intent` без стамины
+  через 0.2 с даёт в журнале `dodge rejected`;
+- 6 тестов `crates/sandbox/tests/system_failures.rs` (свой процесс: очередь сбоев глобальная):
+  паника на тике 50 останавливает `step 100` на тике 50 с записью в журнале, следующий `step 10`
+  доходит до тика 60 и `FixedMain`/`FixedUpdate` на месте, в реальном времени сбой ставит игру
+  на паузу, краш-реплей воспроизводит сбой на том же тике, паника и упавшая команда инструмента —
+  не сбой геймплея, без обработчика ответ называет потерянные расписания;
+- 4 теста `crates/sandbox/tests/log_capture.rs` (свой процесс: ставят глобальный логгер):
+  предупреждение сохраняет свой тик внутри `step 100`, `step --until journal:` останавливается
+  на нём, 100 строк за тик режутся до 64 и одной строки про 36 отброшенных, action возвращает
+  свои предупреждения;
+- 14 сценариев `crates/sandbox/tests/replays.rs`:
   - сессия со всеми видами входов (dev-правки, инструменты игрока, клавиатура, spawn, possess,
     вызов после последнего тика) проигрывается побитово одинаково, клавиши во время просмотра игнорируются;
   - изменённая игра даёт отчёт с первым разошедшимся тиком;
@@ -354,15 +494,25 @@ cargo test --workspace
   - ветка после проигрывания сохраняется одним реплеем и тоже воспроизводится;
   - вложенные вызовы пишутся один раз;
   - проигрывание требует свежего мира с тем же seed;
-  - `replay_save` пишет файл, который читается обратно.
+  - `replay_save` пишет файл, который читается обратно, и только внутрь `replays/`;
+  - проверка хэширует игру, а не текст: проигрывание с лишним describer совпадает;
+  - реплей `shards-replay/1` отклоняется с причиной;
+  - `replay_ignore` и `add_replay_check` меняют состав хэша, правка исключённого компонента
+    при проигрывании не даёт расхождения;
+  - компоненты окна не меняют хэш, `Entity` в компоненте хэшируется как `AiId`;
+  - несериализуемый компонент пропускается, а в журнале о нём одна строка.
 
 Снимки требуют окна и GPU, поэтому в `cargo test` их нет. Без дисплея их можно проверить через
-Xvfb и программный Vulkan (`apt install xvfb mesa-vulkan-drivers`):
+Xvfb и программный Vulkan (`apt install xvfb mesa-vulkan-drivers libxkbcommon-x11-0`):
 
 ```bash
 Xvfb :99 &
 DISPLAY=:99 cargo sandbox --paused &
 cargo shards wait && cargo shards shot
+# видимость не зависит от камеры: после шага с движением два observe подряд дают одинаковые
+# SEEN и NOT IN VIEW, хотя камера ещё догоняет игрока (меняются только scr(x,y))
+cargo shards act move dir=W meters=9 && cargo shards step 300
+cargo shards observe; sleep 1; cargo shards observe
 ```
 
 ## Статус по плану внедрения

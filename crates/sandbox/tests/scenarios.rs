@@ -155,6 +155,140 @@ fn errors_teach_the_fix() {
     assert!(text(&gone).contains("e7 no longer exists") && text(&gone).contains("despawned at tick 0"), "{}", text(&gone));
 }
 
+/// Ids listed in the entity sections of an observation (YOU, SEEN, NOT IN VIEW,
+/// LANDMARKS), in order of appearance.
+fn listed_ids(observation: &str) -> Vec<String> {
+    observation
+        .lines()
+        .take_while(|l| !l.starts_with("SINCE"))
+        .skip(1) // header
+        .flat_map(|l| l.split([' ', '·']))
+        .filter(|t| t.starts_with('e') && ai_core::AiId::parse(t).is_some())
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn ai_ids_are_managed_by_the_engine() {
+    let mut app = sandbox::test_app(42);
+    let refused = act(&mut app, "set", json!({"id": "e7", "component": "AiId", "value": 99}));
+    assert!(!refused.ok, "set must not write AiId");
+    assert_eq!(text(&refused), "AiId is managed by the engine; despawn and spawn instead");
+    ok(&mut app, "inspect", json!({"id": "e7"}));
+    let before = listed_ids(text(&ok(&mut app, "observe", json!({}))));
+
+    // A raw insert over the old value (what BRP `world.insert_components` does).
+    let skeleton = app.world().resource::<ai_core::AiIndex>().get(AiId(7)).unwrap();
+    app.world_mut().entity_mut(skeleton).insert(AiId(99));
+    let moved = ok(&mut app, "inspect", json!({"id": "e99"}));
+    assert!(text(&moved).starts_with("e99 Skeleton"), "{}", text(&moved));
+    let old = act(&mut app, "inspect", json!({"id": "e7"}));
+    assert!(!old.ok && text(&old).contains("e7 no longer exists (Skeleton renumbered to e99 at tick 0)"), "{}", old.result);
+
+    let after = listed_ids(text(&ok(&mut app, "observe", json!({}))));
+    let expected: Vec<String> = before.iter().map(|id| if id == "e7" { "e99".into() } else { id.clone() }).collect();
+    let (mut after_sorted, mut expected_sorted) = (after.clone(), expected);
+    after_sorted.sort();
+    expected_sorted.sort();
+    assert_eq!(after_sorted, expected_sorted, "every entity once, under its new id: {after:?}");
+    ok(&mut app, "step", json!({"ticks": 30}));
+    ok(&mut app, "inspect", json!({"id": "e99"}));
+}
+
+/// A game component whose name happens to start with `Ai`.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+struct AimAssist {
+    strength: f32,
+}
+
+#[test]
+fn set_hints_list_game_components_named_ai() {
+    let mut app = sandbox::test_app(42);
+    app.register_type::<AimAssist>();
+    let player = app.world().resource::<ai_core::AiIndex>().get(AiId(5)).unwrap();
+    app.world_mut().entity_mut(player).insert(AimAssist { strength: 0.5 });
+    let hint = act(&mut app, "set", json!({"id": PLAYER, "component": "Mana", "value": 5}));
+    let hint = text(&hint);
+    assert!(hint.contains("AimAssist") && hint.contains("Health"), "{hint}");
+    assert!(!hint.contains("AiId") && !hint.contains("AiPlayer"), "engine markers stay hidden: {hint}");
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "AimAssist", "path": "strength", "value": 0.9}));
+}
+
+/// The observation line of one entity, e.g. `  e6 Boss "Frost Warden"  …`.
+fn line_of<'a>(observation: &'a str, id: &str) -> &'a str {
+    let prefix = format!("  {id} ");
+    observation.lines().find(|l| l.starts_with(&prefix)).unwrap_or_else(|| panic!("{id} not listed:\n{observation}"))
+}
+
+/// The player behind the pillar at (-7, -7), the boss on the other side of it, and a
+/// skeleton with a clear view of the boss.
+fn pillar_between(app: &mut App) {
+    ok(app, "teleport", json!({"id": PLAYER, "x": -7, "z": -9.5}));
+    ok(app, "teleport", json!({"id": BOSS, "x": -7, "z": -4}));
+    ok(app, "teleport", json!({"id": "e7", "x": -3, "z": -4}));
+}
+
+#[test]
+fn visibility_follows_the_subject() {
+    let mut app = sandbox::test_app(42);
+    pillar_between(&mut app);
+    let seen = text(&ok(&mut app, "observe", json!({}))).to_owned();
+    assert!(line_of(&seen, BOSS).ends_with("occluded"), "the pillar hides the boss from the player:\n{seen}");
+
+    ok(&mut app, "possess", json!({"id": "e7"}));
+    let seen = text(&ok(&mut app, "observe", json!({}))).to_owned();
+    assert!(seen.contains("you e7"), "{seen}");
+    assert!(!line_of(&seen, BOSS).contains("occluded"), "the skeleton sees it with its own eyes:\n{seen}");
+}
+
+#[test]
+fn a_field_of_view_puts_what_is_behind_out_of_view() {
+    let mut app = sandbox::test_app(42);
+    ok(&mut app, "teleport", json!({"id": "e7", "x": 0, "z": 16})); // behind the player, who faces N
+    let all_around = text(&ok(&mut app, "observe", json!({}))).to_owned();
+    assert!(!all_around.contains("NOT IN VIEW"), "no field of view by default:\n{all_around}");
+
+    app.world_mut().resource_mut::<ai_core::AiPerception>().fov_deg = Some(120.0);
+    let seen = text(&ok(&mut app, "observe", json!({}))).to_owned();
+    let (front, back) = seen.split_once("NOT IN VIEW (within 40m)").unwrap_or_else(|| panic!("{seen}"));
+    assert!(front.contains("  e6 Boss"), "the boss is ahead:\n{seen}");
+    assert!(back.contains("  e7 Skeleton") && !front.contains("  e7 "), "the skeleton is behind:\n{seen}");
+}
+
+/// A window's camera, set up the way the sandbox's follows the player: high behind it.
+fn window_camera(app: &mut App) {
+    use bevy::camera::{Camera, CameraProjection, ComputedCameraValues, PerspectiveProjection, RenderTargetInfo};
+    let size = UVec2::new(1280, 720);
+    let computed = ComputedCameraValues {
+        clip_from_view: PerspectiveProjection { aspect_ratio: 1280.0 / 720.0, ..default() }.get_clip_from_view(),
+        target_info: Some(RenderTargetInfo { physical_size: size, scale_factor: 1.0 }),
+        ..default()
+    };
+    let player = Vec3::new(-7.0, 0.0, -9.5);
+    let at = Transform::from_translation(player + Vec3::new(0.0, 20.0, 12.0)).looking_at(player + Vec3::new(0.0, 0.0, -5.0), Vec3::Y);
+    app.world_mut().spawn((Camera { computed, ..default() }, GlobalTransform::from(at), at, ai_core::AiCamera));
+}
+
+#[test]
+fn observe_reads_the_same_with_a_window_camera_or_without() {
+    let observe = |app: &App| ai_core::observe::observe(app.world(), &ai_core::ObserveOptions::default());
+    let mut app = sandbox::test_app(42);
+    pillar_between(&mut app);
+    let headless = observe(&app);
+    assert!(line_of(&headless, BOSS).ends_with("occluded"), "{headless}");
+    // From up there the camera sees the boss over the pillar; the player does not.
+    window_camera(&mut app);
+    let windowed = observe(&app);
+    assert!(line_of(&windowed, BOSS).contains("  occluded  scr("), "the camera projects: {windowed}");
+    let without_scr: String = windowed
+        .lines()
+        .map(|l| l.split("  scr(").next().unwrap_or(l))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(without_scr.trim_end(), headless.trim_end());
+}
+
 #[test]
 fn player_scope_plays_fair() {
     let mut app = sandbox::test_app(42);
@@ -192,6 +326,8 @@ fn a_panicking_tool_does_not_take_the_game_down() {
         .map(ToString::to_string)
         .collect();
     assert_eq!(errors.len(), 2, "{errors:?}");
+    let schedules = app.world().resource::<Schedules>();
+    assert!(schedules.contains(bevy::app::FixedMain) && schedules.contains(FixedUpdate), "schedules survive a tool panic");
     ok(&mut app, "step", json!({"ticks": 30}));
     assert_eq!(ai_core::sim::tick(app.world()), 30);
 }

@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::describe::facts;
+use crate::id::{AiId, AI_ID_IS_MANAGED};
 use crate::journal::{self, AiJournal, JournalKind};
 use crate::observe::{self, entity_line, ObserveOptions};
 use crate::session::{AgentSessions, Scope};
@@ -41,9 +42,11 @@ pub(crate) fn register(world: &mut World) {
 
 // --- perception ------------------------------------------------------------------
 
-/// Look at the world: your status, what you see (sorted by threat), what is near but
-/// out of view, and journal entries since your last look. Distances and compass
-/// directions are relative to you; N = -Z, E = +X. `scr(x,y)` = pixel on screen.
+/// Look at the world: your status, what you see from your eyes (sorted by threat;
+/// `occluded` when something is in the way), what is near but outside your field of
+/// view (if the game sets one), and journal entries since your last look. Distances and
+/// compass directions are relative to you; N = -Z, E = +X. `scr(x,y)`: where it is in
+/// the game window, when there is one.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct ObserveArgs {
     /// Show journal entries after this sequence number instead of "since my last look".
@@ -227,13 +230,28 @@ fn step_tool(In(call): In<Call<StepArgs>>, world: &mut World) -> ToolResult {
         validate(world, cond)?;
     }
     let journal_mark = world.resource::<AiJournal>().last_seq();
-    let report = sim::step(world, max, Duration::from_secs(20), |w| check(w, &until, journal_mark))?;
+    let report = sim::step(world, max, Duration::from_secs(20), |w| {
+        // The tick's log lines are in the journal before `journal:` conditions look.
+        journal::drain_logs(w);
+        check(w, &until, journal_mark)
+    })?;
     let mut msg = format!("ran {} ticks ({} → {})", report.ticks(), report.from_tick, report.to_tick);
     match report.end {
         StepEnd::Completed if until.is_empty() => {}
         StepEnd::Completed => msg.push_str(", no condition met"),
         StepEnd::Condition(why) => msg.push_str(&format!(", stopped: {why}")),
         StepEnd::WallClock => msg.push_str(", stopped: 20 s wall-clock budget"),
+        StepEnd::SystemFailed(failures) => {
+            let first = &failures[0];
+            msg.push_str(&format!(", stopped: gameplay {}", first.headline()));
+            if failures.len() > 1 {
+                msg.push_str(&format!(" (+{} more)", failures.len() - 1));
+            }
+            msg.push_str(&format!(": {}", first.message));
+            if let Some(path) = failures.iter().find_map(|f| f.crash_replay.as_ref()) {
+                msg.push_str(&format!("; crash replay: {path}"));
+            }
+        }
     }
     Ok(msg)
 }
@@ -397,6 +415,10 @@ fn set_tool(In(call): In<Call<SetArgs>>, world: &mut World) -> ToolResult {
     let app_registry = world.resource::<AppTypeRegistry>().clone();
     let registry = app_registry.read();
     let reg = find_registration(world, &registry, e, &component)?;
+    if reg.type_id() == std::any::TypeId::of::<AiId>() {
+        // An in-place write would bypass the hooks that keep `AiIndex` in sync.
+        return Err(AI_ID_IS_MANAGED.into());
+    }
     let reflect_component = reg.data::<ReflectComponent>().ok_or("not a reflectable component")?;
     let name = reg_name(reg);
     let mut entity = world.entity_mut(e);
@@ -459,8 +481,9 @@ fn reflectable_components(world: &World, registry: &TypeRegistry, entity: Entity
         .filter_map(|(_, info)| info.type_id())
         .filter_map(|t| registry.get(t))
         .filter(|r| r.data::<ReflectComponent>().is_some())
+        // Our own markers are noise here; a game's `AimAssist` is not.
+        .filter(|r| !r.type_info().type_path().starts_with("ai_core::"))
         .map(reg_name)
-        .filter(|n| !n.starts_with("Ai"))
         .collect();
     names.sort();
     names

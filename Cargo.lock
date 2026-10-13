@@ -4934,6 +4934,7 @@ dependencies = [
  "ai_core",
  "bevy",
  "clap",
+ "libc",
  "schemars",
  "serde",
  "serde_json",

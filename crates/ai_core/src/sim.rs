@@ -7,8 +7,11 @@
 //! `Time<Virtual>`, so `FixedUpdate` stops too, while rendering, UI and the
 //! `ai/*` endpoints keep running. [`step`] runs `FixedMain` directly, exactly the
 //! way Bevy's own fixed loop does, so `step(600)` completes in one call (as fast
-//! as the CPU allows) and returns only after the ticks ran.
+//! as the CPU allows) and returns only after the ticks ran. A gameplay system that
+//! fails ends the step at its tick (see [`failures`](crate::failures)).
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bevy::app::FixedMain;
@@ -52,8 +55,22 @@ impl Default for SimConfig {
     }
 }
 
-pub(crate) fn advance_tick(mut tick: ResMut<SimTick>) {
+/// [`SimTick`] for code outside the ECS: the log capture layer stamps every line with
+/// it, from any thread. [`advance_tick`] stores each new tick.
+#[derive(Resource, Clone, Default, Debug)]
+pub struct TickClock(Arc<AtomicU64>);
+
+impl TickClock {
+    pub fn get(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+pub(crate) fn advance_tick(mut tick: ResMut<SimTick>, clock: Option<Res<TickClock>>) {
     tick.0 += 1;
+    if let Some(clock) = clock {
+        clock.0.store(tick.0, Ordering::Relaxed);
+    }
 }
 
 pub fn is_paused(world: &World) -> bool {
@@ -108,6 +125,9 @@ pub enum StepEnd {
     Condition(String),
     /// Wall-clock budget exhausted before all ticks ran.
     WallClock,
+    /// A gameplay system panicked (or failed) in the last tick; never empty. The game
+    /// is paused, the failures are in the journal.
+    SystemFailed(Vec<crate::failures::SystemFailure>),
 }
 
 #[derive(Debug, Clone)]
@@ -133,11 +153,20 @@ pub fn step(
     mut stop: impl FnMut(&mut World) -> Option<String>,
 ) -> Result<StepReport, String> {
     pause(world);
+    // Failures from before this step are in the journal already; they are not its own.
+    crate::failures::collect(world);
+    crate::failures::take_unreported(world);
     let from_tick = tick(world);
     let started = Instant::now();
     let mut end = StepEnd::Completed;
     for _ in 0..max_ticks {
         run_tick(world)?;
+        crate::failures::collect(world);
+        let failed = crate::failures::take_unreported(world);
+        if !failed.is_empty() {
+            end = StepEnd::SystemFailed(failed);
+            break;
+        }
         if let Some(reason) = stop(world) {
             end = StepEnd::Condition(reason);
             break;
