@@ -172,6 +172,12 @@ impl AiReplay {
         self.playback.is_some()
     }
 
+    /// The recording being played back, for modules that prepare the world for it
+    /// before tick 1 (content restores the versions a recording started from).
+    pub fn playing(&self) -> Option<&Replay> {
+        self.playback.as_ref().map(|p| &p.replay)
+    }
+
     /// The outcome of the last playback.
     pub fn report(&self) -> Option<&ReplayReport> {
         self.report.as_ref()

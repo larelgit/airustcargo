@@ -53,6 +53,7 @@ pub mod session;
 pub mod shot;
 pub mod sim;
 pub mod spatial;
+pub mod status;
 pub mod tools;
 
 use std::sync::Arc;
@@ -72,8 +73,9 @@ pub use observe::{AiCamera, AiPerception, ObserveOptions};
 pub use replay::{AiReplay, Replay, ReplayHashing, ReplayReport};
 pub use rng::{DetRng, SimRng, SimSeed};
 pub use session::{AgentSession, AgentSessions, Caller, Scope};
-pub use sim::{SimConfig, SimSet, SimTick, TickClock};
+pub use sim::{SimConfig, SimGate, SimSet, SimTick, TickClock};
 pub use spatial::{AiLineOfSight, AiOccluder};
+pub use status::AiStatusFields;
 pub use tools::{call_tool, AiTools, Call, CallOutcome, Id, NoArgs, ToolKind, ToolResult, ToolSpec};
 
 pub mod prelude {
@@ -128,11 +130,15 @@ impl Plugin for AiCorePlugin {
             .init_resource::<AgentSessions>()
             .init_resource::<AiLineOfSight>()
             .init_resource::<AiConditions>()
+            .init_resource::<SimGate>()
+            .init_resource::<AiStatusFields>()
             .configure_sets(
                 FixedUpdate,
                 (SimSet::Input, SimSet::Think, SimSet::Act, SimSet::Move, SimSet::Resolve, SimSet::Cleanup).chain(),
             )
             .add_systems(FixedFirst, sim::advance_tick)
+            // Before this frame's time is counted: a held gate means no tick is due.
+            .add_systems(First, sim::apply_gate.before(bevy::time::TimeSystems))
             // Log lines into the journal after every tick (a long `step` runs many in
             // one frame), and once per frame for lines logged between ticks.
             .add_systems(FixedLast, journal::drain_logs.after(replay::ReplaySystems::Remember))
@@ -241,6 +247,11 @@ pub trait AiAppExt {
     /// entities (projectiles without ids, resources). A second check with the same
     /// name replaces the first.
     fn add_replay_check(&mut self, name: &str, check: fn(&World) -> u64) -> &mut Self;
+
+    /// Adds field `key` to `ai/status` (`shards status`), computed on every call, e.g.
+    /// the engine's version and modules. A second field with the same key replaces
+    /// the first.
+    fn add_ai_status(&mut self, key: &str, field: status::StatusField) -> &mut Self;
 }
 
 impl AiAppExt for App {
@@ -301,6 +312,11 @@ impl AiAppExt for App {
 
     fn add_replay_check(&mut self, name: &str, check: fn(&World) -> u64) -> &mut Self {
         self.world_mut().get_resource_or_init::<replay::ReplayHashing>().add_check(name, check);
+        self
+    }
+
+    fn add_ai_status(&mut self, key: &str, field: status::StatusField) -> &mut Self {
+        self.world_mut().get_resource_or_init::<AiStatusFields>().add(key, field);
         self
     }
 }

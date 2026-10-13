@@ -120,6 +120,26 @@ pub fn log(world: &mut World, kind: JournalKind, text: impl Into<String>) -> u64
     world.resource_mut::<AiJournal>().push(tick, kind, text)
 }
 
+/// Log target of [`emit`]'s console line: the capture layer leaves it out, because
+/// the entry is in the journal already.
+pub const EMIT_TARGET: &str = "ai_core::journal";
+
+/// Journals `text` and prints it on the console (`warn!`/`error!` by kind, `info!`
+/// otherwise), once each: for engine messages that must reach the journal even in
+/// apps without the log capture (tests), and the terminal too.
+pub fn emit(world: &mut World, kind: JournalKind, text: impl Into<String>) -> u64 {
+    let text = text.into();
+    match kind {
+        JournalKind::Error => error!(target: EMIT_TARGET, "{text}"),
+        JournalKind::Warn => warn!(target: EMIT_TARGET, "{text}"),
+        _ => info!(target: EMIT_TARGET, "{text}"),
+    }
+    match world.get_resource::<AiJournal>() {
+        Some(_) => log(world, kind, text),
+        None => 0,
+    }
+}
+
 /// Formatter for a gameplay event; `None` skips the entry.
 pub type EventFormatter<E> = fn(&E, &World) -> Option<String>;
 
@@ -171,8 +191,10 @@ struct CaptureLayer;
 impl<S: Subscriber> Layer<S> for CaptureLayer {
     fn on_event(&self, event: &TracingEvent<'_>, _ctx: Context<'_, S>) {
         let level = *event.metadata().level();
-        // Failures are journaled by `failures::collect`, with their tick; once is enough.
-        if level > Level::WARN || event.metadata().target() == crate::failures::LOG_TARGET {
+        // Failures are journaled by `failures::collect`, with their tick, and `emit`
+        // journals its own lines; once is enough.
+        let target = event.metadata().target();
+        if level > Level::WARN || target == crate::failures::LOG_TARGET || target == EMIT_TARGET {
             return;
         }
         let Some((capture, clock)) = CAPTURE_TARGET.lock().ok().and_then(|t| t.clone()) else {

@@ -15,7 +15,7 @@ use crate::id::{AiId, AI_ID_IS_MANAGED};
 use crate::journal::{self, AiJournal, JournalKind};
 use crate::observe::{self, entity_line, ObserveOptions};
 use crate::session::{AgentSessions, Scope};
-use crate::sim::{self, StepEnd};
+use crate::sim::{self, SimGate, StepEnd};
 use crate::spatial::{self, relative, EYE_HEIGHT};
 use crate::tools::{register_tool, AiTools, Call, Id, NoArgs, ToolKind, ToolResult};
 
@@ -164,12 +164,19 @@ fn tools_tool(In(call): In<Call<NoArgs>>, tools: Res<AiTools>) -> ToolResult {
 /// Freeze the simulation (rendering, UI and these tools keep working).
 fn pause_tool(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult {
     sim::pause(world);
+    // Paused on purpose: the end of loading must not resume it.
+    if let Some(mut gate) = world.get_resource_mut::<SimGate>() {
+        gate.forget_pause();
+    }
     journal::log(world, JournalKind::Sim, "paused");
     Ok(format!("paused at tick {}", sim::tick(world)))
 }
 
 /// Unfreeze the simulation (real-time play at the current speed).
 fn resume_tool(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult {
+    if let Some(loading) = sim::gate_message(world) {
+        return Err(format!("{loading}; a game started without --paused runs by itself once loaded"));
+    }
     sim::resume(world);
     journal::log(world, JournalKind::Sim, "resumed");
     Ok(format!("running from tick {}", sim::tick(world)))
@@ -292,7 +299,7 @@ fn check(world: &World, until: &[StopWhen], journal_mark: u64) -> Option<String>
                 let needle = text.to_lowercase();
                 id.entity(world).ok().and_then(|e| facts(world, e)).and_then(|f| {
                     let line = entity_line(&f, None, None);
-                    line.to_lowercase().contains(&needle).then(|| format!("{line}"))
+                    line.to_lowercase().contains(&needle).then(|| line.clone())
                 })
             }
             StopWhen::Near { a, b, meters } => {

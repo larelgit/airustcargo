@@ -9,7 +9,12 @@
 //! way Bevy's own fixed loop does, so `step(600)` completes in one call (as fast
 //! as the CPU allows) and returns only after the ticks ran. A gameplay system that
 //! fails ends the step at its tick (see [`failures`](crate::failures)).
+//!
+//! While something must finish first (content loading), [`SimGate`] holds the
+//! simulation: no ticks run, in real time or through [`step`], so loading never shifts
+//! a tick.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -64,6 +69,73 @@ impl TickClock {
     pub fn get(&self) -> u64 {
         self.0.load(Ordering::Relaxed)
     }
+}
+
+/// Named holds on the simulation. While any exists, no tick runs: real-time play is
+/// paused (and resumes on release only if the gate paused it, so a `--paused` game
+/// stays paused), [`step`] and `resume` refuse with [`SimGate::message`], and
+/// `ai/status` lists the [`reasons`](SimGate::reasons) under `loading`.
+///
+/// Loading never shifts ticks: whatever a game loads, tick 1 always runs on the same
+/// world.
+#[derive(Resource, Default, Debug)]
+pub struct SimGate {
+    /// Name → what it waits for, in name order.
+    holds: BTreeMap<String, String>,
+    /// The gate paused `Time<Virtual>`, so its release unpauses it.
+    paused_time: bool,
+}
+
+impl SimGate {
+    /// Holds the simulation until [`release`](Self::release)`(name)`. Holding again
+    /// under the same name only updates the reason (progress: `2 files left`).
+    pub fn hold(&mut self, name: &str, reason: impl Into<String>) {
+        self.holds.insert(name.to_owned(), reason.into());
+    }
+
+    pub fn release(&mut self, name: &str) {
+        self.holds.remove(name);
+    }
+
+    pub fn is_held(&self) -> bool {
+        !self.holds.is_empty()
+    }
+
+    /// `content: 2 files left`, one per hold, in name order.
+    pub fn reasons(&self) -> Vec<String> {
+        self.holds.iter().map(|(name, reason)| format!("{name}: {reason}")).collect()
+    }
+
+    /// Why ticks cannot run now, and what to do; `None` when nothing holds them.
+    pub fn message(&self) -> Option<String> {
+        self.is_held()
+            .then(|| format!("the game is still loading ({}); wait with `shards wait`", self.reasons().join(", ")))
+    }
+
+    /// Someone paused on purpose while the gate held: releasing it must not resume.
+    pub(crate) fn forget_pause(&mut self) {
+        self.paused_time = false;
+    }
+}
+
+/// `First`, before the clock advances: a held gate pauses `Time<Virtual>` before this
+/// frame's time is counted, so no fixed tick is due; the last release unpauses it, if
+/// the gate was the one that paused it. Systems that hold or release run before it.
+pub fn apply_gate(mut gate: ResMut<SimGate>, mut time: ResMut<Time<Virtual>>) {
+    if gate.is_held() {
+        if !time.is_paused() {
+            time.pause();
+            gate.paused_time = true;
+        }
+    } else if gate.paused_time {
+        gate.paused_time = false;
+        time.unpause();
+    }
+}
+
+/// [`SimGate::message`] for this world (no gate: nothing holds it).
+pub fn gate_message(world: &World) -> Option<String> {
+    world.get_resource::<SimGate>().and_then(SimGate::message)
 }
 
 pub(crate) fn advance_tick(mut tick: ResMut<SimTick>, clock: Option<Res<TickClock>>) {
@@ -146,12 +218,17 @@ impl StepReport {
 
 /// Pauses the game (if needed) and runs up to `max_ticks` ticks synchronously.
 /// `stop` is checked after every tick; returning `Some(reason)` ends the run.
+/// Refused while the [`SimGate`] holds the simulation; a hold that appears during the
+/// run ends it.
 pub fn step(
     world: &mut World,
     max_ticks: u64,
     wall_budget: Duration,
     mut stop: impl FnMut(&mut World) -> Option<String>,
 ) -> Result<StepReport, String> {
+    if let Some(loading) = gate_message(world) {
+        return Err(loading);
+    }
     pause(world);
     // Failures from before this step are in the journal already; they are not its own.
     crate::failures::collect(world);
@@ -169,6 +246,10 @@ pub fn step(
         }
         if let Some(reason) = stop(world) {
             end = StepEnd::Condition(reason);
+            break;
+        }
+        if let Some(gate) = world.get_resource::<SimGate>().filter(|g| g.is_held()) {
+            end = StepEnd::Condition(format!("the game started loading ({})", gate.reasons().join(", ")));
             break;
         }
         if started.elapsed() > wall_budget {
@@ -220,6 +301,37 @@ mod tests {
         // Frames after a step still do not tick while paused.
         app.update();
         assert_eq!(app.world().resource::<SimTick>().0, 5);
+    }
+
+    #[test]
+    fn a_held_gate_stops_real_time_and_step_and_its_release_restores_them() {
+        use bevy::time::{TimeSystems, TimeUpdateStrategy};
+        let mut app = app();
+        app.init_resource::<SimGate>()
+            .add_systems(First, apply_gate.before(TimeSystems))
+            .insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
+        app.world_mut().resource_mut::<SimGate>().hold("content", "2 files left");
+        for _ in 0..5 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<SimTick>().0, 0, "held: no real-time ticks");
+        let err = step(app.world_mut(), 5, Duration::from_secs(5), |_| None).unwrap_err();
+        assert_eq!(err, "the game is still loading (content: 2 files left); wait with `shards wait`");
+
+        app.world_mut().resource_mut::<SimGate>().release("content");
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<SimTick>().0, 3, "released: real time runs again");
+
+        // A game that was paused before the gate held it stays paused after.
+        pause(app.world_mut());
+        app.world_mut().resource_mut::<SimGate>().hold("region", "loading");
+        app.update();
+        app.world_mut().resource_mut::<SimGate>().release("region");
+        app.update();
+        assert!(is_paused(app.world()));
+        assert_eq!(app.world().resource::<SimTick>().0, 3);
     }
 
     #[test]

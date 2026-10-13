@@ -13,7 +13,7 @@
 //! | `ai/shot`     | `{agent?, marks?, path?}`                 |
 //! | `ai/tools`    | `{agent?}`                                |
 //! | `ai/session`  | `{agent, scope?, subject?}`               |
-//! | `ai/status`   | none (`instance`: pid, seed, port, start) |
+//! | `ai/status`   | none (`instance`: pid, seed, port, start; `loading`: what holds the simulation) |
 //!
 //! Full world access: compile it into dev builds only. It listens on 127.0.0.1, and
 //! every method, Bevy's own included, wants `params.token`: the random [`AiToken`]
@@ -24,11 +24,9 @@ use bevy_remote::{BrpError, BrpResult, RemoteMethodSystemId, RemoteMethods};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::id::{AiId, AiIndex, AI_ID_IS_MANAGED};
-use crate::journal::AiJournal;
+use crate::id::{AiId, AI_ID_IS_MANAGED};
 use crate::rng::SimSeed;
 use crate::session::{AgentSessions, Scope};
-use crate::sim;
 use crate::tools::{call_tool, AiTools, Id};
 
 pub const DEFAULT_AGENT: &str = "dev";
@@ -138,19 +136,9 @@ fn ai_status(In(_): In<Option<Value>>, world: &mut World) -> BrpResult {
     let instance = world.get_resource::<AiInstance>().map(|i| {
         json!({"pid": i.pid, "seed": seed, "port": i.port, "started_at": i.started_at})
     });
-    to_brp(json!({
-        "instance": instance,
-        "tick": sim::tick(world),
-        "paused": sim::is_paused(world),
-        "speed": sim::speed(world),
-        "tick_hz": (1.0 / world.resource::<Time<Fixed>>().timestep().as_secs_f64() * 1000.0).round() / 1000.0,
-        "seed": seed,
-        "entities": world.resource::<AiIndex>().len(),
-        "journal_seq": world.resource::<AiJournal>().last_seq(),
-        "agents": world.resource::<AgentSessions>().names(),
-        "tools": world.resource::<AiTools>().names(Scope::Dev),
-        "replay": crate::replay::status(world),
-    }))
+    let mut status = crate::status::status(world);
+    status["instance"] = instance.unwrap_or(Value::Null);
+    to_brp(status)
 }
 
 /// Registers the `ai/*` methods. Runs in `Plugin::finish`, after `RemotePlugin` built
@@ -178,7 +166,7 @@ pub(crate) fn register_methods(world: &mut World) {
 }
 
 /// BRP's `world.mutate_components` writes in place, past the hooks that keep
-/// [`AiIndex`] in sync, so it refuses `AiId` the way the `set` tool does.
+/// [`AiIndex`](crate::AiIndex) in sync, so it refuses `AiId` the way the `set` tool does.
 fn guard_ai_id(world: &mut World) {
     let method = bevy_remote::builtin_methods::BRP_MUTATE_COMPONENTS_METHOD;
     let Some(&RemoteMethodSystemId::Instant(mutate)) = world.resource::<RemoteMethods>().get(method) else {

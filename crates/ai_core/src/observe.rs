@@ -225,6 +225,9 @@ pub fn header(world: &World, subject: Option<AiId>) -> String {
     if let Some(id) = subject {
         let _ = write!(h, " | you {id}");
     }
+    if let Some(gate) = world.get_resource::<sim::SimGate>().filter(|g| g.is_held()) {
+        let _ = write!(h, " | loading: {}", gate.reasons().join(", "));
+    }
     h
 }
 

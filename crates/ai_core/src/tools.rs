@@ -76,6 +76,9 @@ pub struct ToolSpec {
 
 type RunFn = Box<dyn Fn(&mut World, Caller, Value) -> ToolResult<Value> + Send + Sync>;
 
+/// A tool's registered system, once it ran.
+type ToolSystemId<A, O> = SystemId<In<Call<A>>, ToolResult<O>>;
+
 pub struct AiTool {
     pub spec: ToolSpec,
     run: RunFn,
@@ -108,7 +111,7 @@ where
 {
     let (description, input_schema) = tool_schema::<A>();
     let signature = signature(name, &input_schema);
-    let slot: Mutex<Option<SystemId<In<Call<A>>, ToolResult<O>>>> = Mutex::new(None);
+    let slot: Mutex<Option<ToolSystemId<A, O>>> = Mutex::new(None);
     let tool_name = name.to_owned();
     let run: RunFn = Box::new(move |world: &mut World, caller: Caller, args: Value| {
         let args = if args.is_null() { json!({}) } else { args };
@@ -195,6 +198,19 @@ pub struct CallOutcome {
 
 const MAX_CHANGES: usize = 60;
 
+/// Arguments longer than this are cut in the journal line (replays keep them whole):
+/// a content edit carries whole definitions.
+const MAX_JOURNALED_ARGS: usize = 200;
+
+/// `text` cut to about `max` bytes, on a character boundary, saying how long it was.
+fn clip(text: String, max: usize) -> String {
+    if text.len() <= max {
+        return text;
+    }
+    let cut = (0..=max).rev().find(|&i| text.is_char_boundary(i)).unwrap_or(0);
+    format!("{}… ({} bytes)", &text[..cut], text.len())
+}
+
 /// Runs a tool on behalf of `agent`. The single entry point: BRP (`shards`), the
 /// game's own dev keys, tests and replays all call tools through here.
 pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> CallOutcome {
@@ -241,7 +257,7 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
     }
     let origin = caller.subject.and_then(|e| world.get::<Transform>(e)).map(|t| t.translation);
     let before = digest(world);
-    let args_text = if args.is_null() { String::new() } else { args.to_string() };
+    let args_text = if args.is_null() { String::new() } else { clip(args.to_string(), MAX_JOURNALED_ARGS) };
     // Earlier log lines go in before the mark: they are not this call's.
     journal::drain_logs(world);
     let mark = journal::log(world, JournalKind::Agent, format!("{}: {tool} {args_text}", caller.agent));
@@ -439,6 +455,12 @@ mod tests {
         assert_eq!(signature("teleport", &schema), "teleport(id: integer|string, x: number, y?: number, z: number)");
         let (_, empty) = tool_schema::<NoArgs>();
         assert_eq!(empty["type"], "object");
+    }
+
+    #[test]
+    fn long_arguments_are_clipped_on_a_char_boundary() {
+        assert_eq!(clip("short".into(), 10), "short");
+        assert_eq!(clip("ééééé".into(), 5), "éé… (10 bytes)");
     }
 
     #[test]
