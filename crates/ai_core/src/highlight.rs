@@ -27,6 +27,14 @@ pub struct Highlights(Vec<Highlight>);
 #[derive(Resource, Default, Clone, Copy)]
 pub struct AiOverlay {
     pub enabled: bool,
+    /// Marked screenshots in progress; each keeps the overlay on until it is saved.
+    pub shots: u32,
+}
+
+impl AiOverlay {
+    pub fn visible(&self) -> bool {
+        self.enabled || self.shots > 0
+    }
 }
 
 /// Gizmo group for marks: drawn on top of the scene, so a pillar never hides an id.
@@ -88,7 +96,7 @@ fn visual_top(entity: Entity, bounds: &Query<(&GlobalTransform, &Aabb)>, childre
         .reduce(f32::max)
 }
 
-fn draw_highlights(
+pub(crate) fn draw_highlights(
     mut gizmos: Gizmos<AiGizmos>,
     mut highlights: ResMut<Highlights>,
     overlay: Res<AiOverlay>,
@@ -105,6 +113,11 @@ fn draw_highlights(
     let ground = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
     let top = |e: Entity, p: Vec3| visual_top(e, &bounds, &children).unwrap_or(p.y + 1.8);
 
+    // Invisible, every frame: keeps this group's line pipelines compiled, so the first
+    // marked screenshot does not wait for the GPU to build them.
+    gizmos.line(Vec3::ZERO, Vec3::Y, Color::NONE);
+    gizmos.circle(Isometry3d::IDENTITY, 0.1, Color::NONE);
+
     for h in &highlights.0 {
         let Ok(gt) = targets.get(h.entity) else { continue };
         let p = gt.translation();
@@ -115,7 +128,7 @@ fn draw_highlights(
         gizmos.text(Isometry3d::new(p.with_y(y + 1.2), facing), &h.label, 0.45, Vec2::ZERO, h.color);
     }
 
-    if overlay.enabled {
+    if overlay.visible() {
         let marked: Vec<AiId> = highlights.0.iter().map(|h| h.id).collect();
         for (entity, id, gt) in visible.iter().filter(|(_, id, _)| !marked.contains(id)) {
             let p = gt.translation();

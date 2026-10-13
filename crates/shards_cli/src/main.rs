@@ -8,6 +8,8 @@
 //! shards step 120 --until journal:phase --until gone:57
 //! shards act move_to target=42
 //! shards act dodge dir=W
+//! shards shot                      # PNG of the window with eN marks, plus a legend
+//! shards save-replay               # this session as a replay file (cargo sandbox --replay F)
 //! shards tools
 //! shards raw world.query '{"data":{"components":["sandbox::gameplay::combat::Health"]}}'
 //! ```
@@ -51,6 +53,25 @@ enum Cmd {
     },
     /// Call any tool. ARGS: one JSON object, or key=value pairs (values parsed as JSON when possible).
     Act { tool: String, args: Vec<String> },
+    /// Screenshot of the game window with every eN id drawn on it; prints the path
+    /// (waits until the file is written) and where each entity is in the image.
+    Shot {
+        /// Leave the id marks out.
+        #[arg(long)]
+        no_marks: bool,
+        /// Where to save the PNG (default: shots/tick<T>-<N>.png next to the game).
+        #[arg(long, short)]
+        out: Option<String>,
+        /// Seconds to wait for the file.
+        #[arg(long, default_value_t = 10)]
+        timeout: u64,
+    },
+    /// Save the session so far as a replay: seed, inputs, action calls, state checks.
+    /// Play it with `cargo sandbox --replay FILE` (add `--verify` to check a build).
+    SaveReplay {
+        /// Default: replays/tick<T>.json next to the game.
+        path: Option<String>,
+    },
     /// List the tools available to this agent.
     Tools {
         /// LLM tool definitions ([{name, description, input_schema}]) as JSON.
@@ -162,6 +183,28 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             return Ok(code);
         }
         Cmd::Act { tool, args } => act(tool, parse_args(args)?)?,
+        Cmd::SaveReplay { path } => act("replay_save", json!({"path": path}))?,
+        Cmd::Shot { no_marks, out, timeout } => {
+            let reply = act("shot", json!({"marks": !no_marks, "path": out}))?;
+            if reply.get("ok") != Some(&Value::Bool(true)) {
+                return Ok(print_outcome(&reply, cli.json));
+            }
+            let ticket = reply.get("result").cloned().unwrap_or_default();
+            let path = |k: &str| ticket.get(k).and_then(Value::as_str).map(str::to_owned);
+            let (png, legend) = path("path").zip(path("legend_path")).ok_or("shot: unexpected reply")?;
+            wait_for_file(&png, Duration::from_secs(*timeout))?;
+            // Written before the PNG is renamed into place, so it is there now.
+            let info: Value = std::fs::read_to_string(&legend)
+                .ok()
+                .and_then(|t| serde_json::from_str(&t).ok())
+                .ok_or_else(|| format!("{png} is saved, but its legend {legend} is not readable"))?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&info).unwrap_or_default());
+            } else {
+                print_shot(&info);
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
         Cmd::Tools { llm } => {
             let tools = client.call("ai/tools", json!({"agent": agent, "format": if *llm { "llm" } else { "full" }}))?;
             if *llm || cli.json {
@@ -233,6 +276,39 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
         }
     };
     Ok(print_outcome(&outcome, cli.json))
+}
+
+/// The game writes the PNG under a temporary name and renames it when complete, so
+/// the file existing means it is ready.
+fn wait_for_file(path: &str, timeout: Duration) -> Result<(), String> {
+    let start = Instant::now();
+    while !std::path::Path::new(path).exists() {
+        if start.elapsed() > timeout {
+            return Err(format!(
+                "the game did not save {path} within {}s (window minimized? see `shards journal`)",
+                timeout.as_secs()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Ok(())
+}
+
+fn print_shot(info: &Value) {
+    let n = |k: &str| info.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let marks = if info.get("marks") == Some(&Value::Bool(true)) { "marks on" } else { "no marks" };
+    let path = info.get("path").and_then(Value::as_str).unwrap_or("");
+    println!("saved {path} ({}x{}, tick {}, {marks})", n("width"), n("height"), n("tick"));
+    let legend: Vec<&str> =
+        info.get("legend").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
+    if legend.is_empty() {
+        println!("LEGEND  nothing AI-visible in the picture");
+    } else {
+        println!("LEGEND (image pixels)");
+        for line in legend {
+            println!("  {line}");
+        }
+    }
 }
 
 /// Text for humans and agents: the result, then what changed, then new journal lines.

@@ -56,6 +56,7 @@ impl Plugin for GameAiPlugin {
                 w.try_query_filtered::<&Action, With<gameplay::Player>>()
                     .is_some_and(|mut q| q.iter(w).any(|a| matches!(a, Action::Dead { .. })))
             })
+            .replay_input::<Intent>()
             .add_ai_tool("move_to", Scope::Player, move_to)
             .add_ai_tool("move", Scope::Player, move_dir)
             .add_ai_tool("attack", Scope::Player, attack)

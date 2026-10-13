@@ -119,6 +119,23 @@ fn sight(world: &World, viewer: &Viewer, target: &EntityFacts) -> Sighting {
     }
 }
 
+/// AI-visible entities inside the [`AiCamera`] view (landmarks and the player
+/// included), with their logical viewport positions: the legend of a screenshot.
+/// Empty without an active camera.
+pub fn on_screen(world: &World) -> Vec<(EntityFacts, Sighting)> {
+    let viewer = viewer(world, None);
+    if viewer.camera.is_none() {
+        return Vec::new();
+    }
+    all_facts(world)
+        .into_iter()
+        .filter_map(|f| match sight(world, &viewer, &f) {
+            Sighting::NotInView => None,
+            s => Some((f, s)),
+        })
+        .collect()
+}
+
 /// One entity line as it appears in SEEN / NOT IN VIEW / nearby lists.
 pub fn entity_line(f: &EntityFacts, from: Option<Vec3>, sighting: Option<Sighting>) -> String {
     let mut line = format!("{} {}", f.id, f.label);

@@ -20,7 +20,7 @@ use crate::tools::{register_tool, AiTools, Call, Id, NoArgs, ToolKind, ToolResul
 
 pub(crate) fn register(world: &mut World) {
     use Scope::{Dev, Player};
-    use ToolKind::{Action, Query};
+    use ToolKind::{Action, Control, Query};
     register_tool(world, "observe", Player, Query, observe_tool);
     register_tool(world, "inspect", Player, Query, inspect_tool);
     register_tool(world, "nearby", Player, Query, nearby_tool);
@@ -28,11 +28,11 @@ pub(crate) fn register(world: &mut World) {
     register_tool(world, "journal", Player, Query, journal_tool);
     register_tool(world, "tools", Player, Query, tools_tool);
 
-    register_tool(world, "pause", Dev, Action, pause_tool);
-    register_tool(world, "resume", Dev, Action, resume_tool);
-    register_tool(world, "speed", Dev, Action, speed_tool);
-    register_tool(world, "step", Dev, Action, step_tool);
-    register_tool(world, "possess", Dev, Action, possess_tool);
+    register_tool(world, "pause", Dev, Control, pause_tool);
+    register_tool(world, "resume", Dev, Control, resume_tool);
+    register_tool(world, "speed", Dev, Control, speed_tool);
+    register_tool(world, "step", Dev, Control, step_tool);
+    register_tool(world, "possess", Dev, Control, possess_tool);
     register_tool(world, "teleport", Dev, Action, teleport_tool);
     register_tool(world, "despawn", Dev, Action, despawn_tool);
     register_tool(world, "get", Dev, Query, get_tool);

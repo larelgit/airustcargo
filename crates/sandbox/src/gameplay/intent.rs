@@ -18,7 +18,11 @@ use super::combat::{Action, AttackKind};
 /// Two loops: a slow one (an LLM every few seconds, or a human) chooses *what*
 /// (`orders`: "walk to the pillar", "attack e42"), the fast tick loop carries it out
 /// every tick (steering, attacking when in range).
-#[derive(Component, Reflect, Default, Clone, Debug)]
+///
+/// Being the only input also makes it the whole of a replay: the changes made to it
+/// between ticks are recorded (`replay_input::<Intent>()`), and setting them again at
+/// the same ticks replays the game.
+#[derive(Component, Reflect, Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[reflect(Component, Default)]
 pub struct Intent {
     /// Desired ground-plane movement, length ≤ 1.

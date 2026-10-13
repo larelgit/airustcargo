@@ -55,8 +55,11 @@ pub struct NoArgs {}
 pub enum ToolKind {
     /// Read-only: no journal entry, no diff.
     Query,
-    /// Changes the world: journaled, returns the list of changes.
+    /// Changes the world: journaled, returns the list of changes, recorded in replays.
     Action,
+    /// Controls time or the session (pause, step, possess): journaled with a diff like
+    /// an action, but never recorded in replays. It changes *when* things happen, not what.
+    Control,
 }
 
 /// Public description of a tool; `input_schema` is ready for an LLM `tools` field.
@@ -198,11 +201,18 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
         return outcome(world, ok, value, Vec::new(), Vec::new());
     }
 
+    let is_action = entry.spec.kind == ToolKind::Action;
+    if is_action {
+        crate::replay::begin_action(world, &caller, tool, &args);
+    }
     let origin = caller.subject.and_then(|e| world.get::<Transform>(e)).map(|t| t.translation);
     let before = digest(world);
     let args_text = if args.is_null() { String::new() } else { args.to_string() };
     let mark = journal::log(world, JournalKind::Agent, format!("{}: {tool} {args_text}", caller.agent));
     let result = (entry.run)(world, caller, args);
+    if is_action {
+        crate::replay::end_action(world);
+    }
     let after = digest(world);
 
     let mut changes = diff(&before, &after, origin);

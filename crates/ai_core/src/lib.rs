@@ -13,6 +13,7 @@
 //!                  Journal  — what happened since       (journal_event, warn!/error!)
 //!                  Tools    — typed actions             (add_ai_tool, Scope)
 //!                  SimCtl   — pause · step · run-until  (sim)
+//!                  Replay   — record inputs, play back  (replay)
 //!                          │
 //! transports:      AiLink (in-process, for in-game agents)
 //!                  BRP `ai/*` on localhost → `shards` CLI · scripts · bots
@@ -39,8 +40,11 @@ pub mod link;
 pub mod observe;
 #[cfg(feature = "remote")]
 pub mod remote;
+pub mod replay;
 pub mod rng;
 pub mod session;
+#[cfg(feature = "render")]
+pub mod shot;
 pub mod sim;
 pub mod spatial;
 pub mod tools;
@@ -59,6 +63,7 @@ pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
 pub use link::{AiLink, AiLinkInbox};
 pub use observe::{AiCamera, AiPerception, ObserveOptions};
+pub use replay::{AiReplay, Replay, ReplayReport};
 pub use rng::{DetRng, SimRng, SimSeed};
 pub use session::{AgentSession, AgentSessions, Caller, Scope};
 pub use sim::{SimConfig, SimSet, SimTick};
@@ -121,9 +126,13 @@ impl Plugin for AiCorePlugin {
         }
 
         builtin::register(app.world_mut());
+        replay::plugin(app);
 
         #[cfg(feature = "render")]
-        highlight::plugin(app);
+        {
+            highlight::plugin(app);
+            shot::plugin(app);
+        }
 
         #[cfg(feature = "remote")]
         if let Some(port) = self.remote_port {
@@ -173,6 +182,13 @@ pub trait AiAppExt {
 
     /// A named stop condition for `step {until: [{"named": ...}]}`.
     fn add_ai_condition(&mut self, name: &str, condition: fn(&World) -> bool) -> &mut Self;
+
+    /// Records component `C` in replays: the per-entity input everything writes
+    /// (keyboard, network, agents) and gameplay only reads, like the sandbox's `Intent`.
+    /// Changes made between ticks are stored; playback sets them back at the same tick.
+    fn replay_input<C>(&mut self) -> &mut Self
+    where
+        C: Component<Mutability = bevy::ecs::component::Mutable> + Clone + PartialEq + Serialize + DeserializeOwned;
 }
 
 impl AiAppExt for App {
@@ -217,10 +233,18 @@ impl AiAppExt for App {
         self.world_mut().get_resource_or_init::<AiConditions>().0.insert(name.to_owned(), condition);
         self
     }
+
+    fn replay_input<C>(&mut self) -> &mut Self
+    where
+        C: Component<Mutability = bevy::ecs::component::Mutable> + Clone + PartialEq + Serialize + DeserializeOwned,
+    {
+        replay::register_input::<C>(self);
+        self
+    }
 }
 
 /// `game::combat::Health` → `Health`.
-fn short_type_name<T>() -> &'static str {
+pub(crate) fn short_type_name<T>() -> &'static str {
     let full = std::any::type_name::<T>();
     let base = full.split('<').next().unwrap_or(full);
     base.rsplit("::").next().unwrap_or(base)

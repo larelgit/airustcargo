@@ -1,5 +1,6 @@
 /target
 /shots
+/replays
 *.png
 !assets/**/*.png
 !docs/*.png
