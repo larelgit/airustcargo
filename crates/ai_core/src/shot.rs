@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::highlight::AiOverlay;
 use crate::journal::{self, JournalKind};
-use crate::observe::{on_screen, AiCamera, Sighting};
+use crate::observe::{on_screen, AiCamera};
 use crate::session::Scope;
 use crate::sim;
 use crate::tools::{register_tool, Call, ToolKind, ToolResult};
@@ -193,14 +193,10 @@ fn legend(world: &World) -> Vec<String> {
         .unwrap_or(1.0);
     on_screen(world)
         .into_iter()
-        .filter_map(|(f, sighting)| {
-            let (scr, note) = match sighting {
-                Sighting::Visible { scr: Some(p) } => (p, ""),
-                Sighting::Occluded { scr: Some(p) } => (p, "  occluded"),
-                _ => return None,
-            };
-            let px = scr * scale;
-            Some(format!("{} {}  px({:.0},{:.0}){note}", f.id, f.label, px.x, px.y))
+        .map(|s| {
+            let px = s.scr * scale;
+            let note = if s.occluded { "  occluded" } else { "" };
+            format!("{} {}  px({:.0},{:.0}){note}", s.facts.id, s.facts.label, px.x, px.y)
         })
         .collect()
 }

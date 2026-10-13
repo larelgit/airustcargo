@@ -6,10 +6,21 @@
 //! SEEN (by threat)
 //!   e42 Boss "Frost Warden"  hp 2300/4000  phase 2  WindupSlam 0.60s  8.4m NE  scr(812,344)
 //!   e57 Skeleton  hp 40/40  Chase  15.0m W  occluded
+//! NOT IN VIEW (within 40m)
+//!   e58 Skeleton  hp 40/40  6.2m S
 //! SINCE seq 118
 //!   1490 e42 -> e12 FrostSlash -18
 //!   1512 e42 phase 1->2
 //! ```
+//!
+//! What the subject sees depends on the subject alone ([`classify`]): a ray from its
+//! eyes (`pos + EYE_HEIGHT`) to the target decides SEEN or `occluded`, within
+//! [`AiPerception::radius`]; with [`AiPerception::fov_deg`] set, whatever lies outside
+//! the cone around its facing is NOT IN VIEW (by default it sees all around and that
+//! section never appears). The window's camera plays no part: the same world reads the
+//! same with a window or without, however far a following camera lags behind, and a
+//! possessed skeleton sees with its own eyes. A window only adds `scr(x,y)`, where an
+//! entity is in the [`AiCamera`] frame.
 //!
 //! Numbers and positions always come from here, never from pixels.
 
@@ -26,7 +37,8 @@ use crate::rng::SimSeed;
 use crate::sim;
 use crate::spatial::{self, compass, fmt_pos, relative, EYE_HEIGHT};
 
-/// Marks the camera whose view defines "on screen" and `scr(x,y)` coordinates.
+/// Marks the camera that `scr(x,y)` and screenshot legends refer to. What the AI sees
+/// never depends on it.
 #[derive(Component, Reflect, Default, Clone, Copy, Debug)]
 #[reflect(Component, Default)]
 pub struct AiCamera;
@@ -38,11 +50,14 @@ pub struct AiPerception {
     pub radius: f32,
     /// Maximum entity lines per observation.
     pub max_listed: usize,
+    /// Field of view in degrees, centered on the subject's facing: entities outside it
+    /// are NOT IN VIEW. `None`: the subject sees all around.
+    pub fov_deg: Option<f32>,
 }
 
 impl Default for AiPerception {
     fn default() -> Self {
-        Self { radius: 40.0, max_listed: 24 }
+        Self { radius: 40.0, max_listed: 24, fov_deg: None }
     }
 }
 
@@ -54,24 +69,55 @@ pub struct ObserveOptions {
     pub journal_after: Option<u64>,
 }
 
-/// Where an entity stands relative to the viewer.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Where an entity stands relative to the subject.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sighting {
-    /// In view with clear line of sight. `scr` is set when a camera projects it.
-    Visible { scr: Option<Vec2> },
-    /// In view but something blocks the line of sight.
-    Occluded { scr: Option<Vec2> },
-    /// Within perception radius but off-screen.
+    /// Clear line of sight from the subject's eyes.
+    Visible,
+    /// Something blocks the line of sight.
+    Occluded,
+    /// Outside the subject's field of view ([`AiPerception::fov_deg`]).
     NotInView,
 }
 
-struct Viewer {
-    subject: Option<EntityFacts>,
-    /// Origin for distances and directions.
-    origin: Vec3,
-    /// Origin for line-of-sight rays.
-    eye: Vec3,
-    camera: Option<(Camera, GlobalTransform, Vec2)>,
+/// Where the subject looks from.
+#[derive(Clone, Copy, Debug)]
+pub struct Viewpoint {
+    /// The subject itself: its own occluder never blocks its view.
+    pub entity: Option<Entity>,
+    /// Eyes: `pos + EYE_HEIGHT`.
+    pub eye: Vec3,
+    pub facing: Option<Vec3>,
+    /// See [`AiPerception::fov_deg`].
+    pub fov_deg: Option<f32>,
+}
+
+impl Viewpoint {
+    /// The eyes of `subject` (the world origin without one).
+    pub fn of(subject: Option<&EntityFacts>, perception: &AiPerception) -> Self {
+        Self {
+            entity: subject.map(|s| s.entity),
+            eye: subject.map_or(Vec3::ZERO, |s| s.pos) + Vec3::Y * EYE_HEIGHT,
+            facing: subject.and_then(|s| s.facing),
+            fov_deg: perception.fov_deg,
+        }
+    }
+}
+
+/// SEEN, `occluded` or NOT IN VIEW, from the subject alone: its field of view and a
+/// ray from its eyes to the target's (via `line_of_sight`, which also gets the
+/// entities whose occluders must not count). Takes no camera, on purpose; the caller
+/// applies the perception radius.
+pub fn classify(from: &Viewpoint, target: &EntityFacts, line_of_sight: impl Fn(Vec3, Vec3, &[Entity]) -> bool) -> Sighting {
+    let aim = target.pos + Vec3::Y * EYE_HEIGHT;
+    if let (Some(fov), Some(facing)) = (from.fov_deg, from.facing) {
+        let (ahead, to) = (Vec3::new(facing.x, 0.0, facing.z), Vec3::new(aim.x - from.eye.x, 0.0, aim.z - from.eye.z));
+        if ahead.length() > 1e-3 && to.length() > 1e-3 && ahead.angle_between(to).to_degrees() > fov / 2.0 {
+            return Sighting::NotInView;
+        }
+    }
+    let ignore: Vec<Entity> = from.entity.into_iter().chain([target.entity]).collect();
+    if line_of_sight(from.eye, aim, &ignore) { Sighting::Visible } else { Sighting::Occluded }
 }
 
 pub fn player_entity(world: &World) -> Option<Entity> {
@@ -79,61 +125,55 @@ pub fn player_entity(world: &World) -> Option<Entity> {
     q.iter(world).next()
 }
 
-fn viewer(world: &World, subject: Option<Entity>) -> Viewer {
-    let subject = subject.or_else(|| player_entity(world)).and_then(|e| facts(world, e));
-    let camera = world.try_query_filtered::<(&Camera, &GlobalTransform), With<AiCamera>>().and_then(|mut q| {
+/// The active [`AiCamera`] and its logical viewport size, when a window renders one.
+fn screen_camera(world: &World) -> Option<(Camera, GlobalTransform, Vec2)> {
+    world.try_query_filtered::<(&Camera, &GlobalTransform), With<AiCamera>>().and_then(|mut q| {
         q.iter(world)
             .find(|(c, _)| c.is_active)
             .and_then(|(c, gt)| c.logical_viewport_size().map(|size| (c.clone(), *gt, size)))
-    });
-    let origin = match (&subject, &camera) {
-        (Some(s), _) => s.pos,
-        (None, Some((_, gt, _))) => gt.translation(),
-        (None, None) => Vec3::ZERO,
-    };
-    let eye = match &camera {
-        Some((_, gt, _)) => gt.translation(),
-        None => origin + Vec3::Y * EYE_HEIGHT,
-    };
-    Viewer { subject, origin, eye, camera }
+    })
 }
 
-fn sight(world: &World, viewer: &Viewer, target: &EntityFacts) -> Sighting {
-    let aim = target.pos + Vec3::Y * EYE_HEIGHT;
-    let ignore: Vec<Entity> = viewer.subject.iter().map(|s| s.entity).chain([target.entity]).collect();
-    let clear = || spatial::line_of_sight(world, viewer.eye, aim, &ignore);
-    match &viewer.camera {
-        Some((camera, gt, size)) => match camera.world_to_viewport(gt, aim) {
-            Ok(p) if p.x >= 0.0 && p.y >= 0.0 && p.x <= size.x && p.y <= size.y => {
-                if clear() { Sighting::Visible { scr: Some(p) } } else { Sighting::Occluded { scr: Some(p) } }
-            }
-            _ => Sighting::NotInView,
-        },
-        None => {
-            if clear() {
-                Sighting::Visible { scr: None }
-            } else {
-                Sighting::Occluded { scr: None }
-            }
-        }
-    }
+/// Where `point` is in the camera frame (logical pixels from the top left), if in it.
+fn project(camera: &(Camera, GlobalTransform, Vec2), point: Vec3) -> Option<Vec2> {
+    let (camera, gt, size) = camera;
+    camera.world_to_viewport(gt, point).ok().filter(|p| p.x >= 0.0 && p.y >= 0.0 && p.x <= size.x && p.y <= size.y)
 }
 
-/// AI-visible entities inside the [`AiCamera`] view (landmarks and the player
-/// included), with their logical viewport positions: the legend of a screenshot.
-/// Empty without an active camera.
-pub fn on_screen(world: &World) -> Vec<(EntityFacts, Sighting)> {
-    let viewer = viewer(world, None);
-    if viewer.camera.is_none() {
+/// An AI-visible entity in the [`AiCamera`] frame.
+#[derive(Clone, Debug)]
+pub struct OnScreen {
+    pub facts: EntityFacts,
+    /// Logical viewport position of its chest.
+    pub scr: Vec2,
+    /// Hidden from the camera by an occluder.
+    pub occluded: bool,
+}
+
+/// AI-visible entities inside the [`AiCamera`] frame (landmarks and the player
+/// included), with their logical viewport positions: the legend of a screenshot, so
+/// it describes the picture, as the camera sees it. Empty without an active camera.
+pub fn on_screen(world: &World) -> Vec<OnScreen> {
+    let Some(camera) = screen_camera(world) else {
         return Vec::new();
-    }
+    };
+    let lens = camera.1.translation();
     all_facts(world)
         .into_iter()
-        .filter_map(|f| match sight(world, &viewer, &f) {
-            Sighting::NotInView => None,
-            s => Some((f, s)),
+        .filter_map(|facts| {
+            let aim = facts.pos + Vec3::Y * EYE_HEIGHT;
+            let scr = project(&camera, aim)?;
+            let occluded = !spatial::line_of_sight(world, lens, aim, &[facts.entity]);
+            Some(OnScreen { facts, scr, occluded })
         })
         .collect()
+}
+
+/// An entity in a SEEN or NOT IN VIEW list.
+struct Listed {
+    f: EntityFacts,
+    dist: f32,
+    sighting: Sighting,
 }
 
 /// One entity line as it appears in SEEN / NOT IN VIEW / nearby lists.
@@ -154,12 +194,8 @@ pub fn entity_line(f: &EntityFacts, from: Option<Vec3>, sighting: Option<Sightin
             line.push_str(&fmt_pos(f.pos));
         }
     }
-    match sighting {
-        Some(Sighting::Visible { scr: Some(p) }) => {
-            let _ = write!(line, "  scr({:.0},{:.0})", p.x, p.y);
-        }
-        Some(Sighting::Occluded { .. }) => line.push_str("  occluded"),
-        _ => {}
+    if sighting == Some(Sighting::Occluded) {
+        line.push_str("  occluded");
     }
     line
 }
@@ -195,16 +231,19 @@ pub fn header(world: &World, subject: Option<AiId>) -> String {
 /// The observation text. Deterministic for a given world state.
 pub fn observe(world: &World, opts: &ObserveOptions) -> String {
     let perception = world.get_resource::<AiPerception>().cloned().unwrap_or_default();
-    let viewer = viewer(world, opts.subject);
-    let subject_id = viewer.subject.as_ref().map(|s| s.id);
+    let subject = opts.subject.or_else(|| player_entity(world)).and_then(|e| facts(world, e));
+    let subject_id = subject.as_ref().map(|s| s.id);
+    let origin = subject.as_ref().map_or(Vec3::ZERO, |s| s.pos);
+    let viewpoint = Viewpoint::of(subject.as_ref(), &perception);
+    let camera = screen_camera(world);
 
     let mut out = header(world, subject_id);
     out.push('\n');
-    match &viewer.subject {
+    match &subject {
         Some(s) => {
             let _ = writeln!(out, "YOU  {}", you_line(s));
         }
-        None => out.push_str("YOU  (no subject: viewpoint is the camera / world origin)\n"),
+        None => out.push_str("YOU  (no subject: looking from the world origin)\n"),
     }
 
     let mut seen = Vec::new();
@@ -214,7 +253,7 @@ pub fn observe(world: &World, opts: &ObserveOptions) -> String {
         if Some(f.id) == subject_id {
             continue;
         }
-        let dist = f.pos.distance(viewer.origin);
+        let dist = f.pos.distance(origin);
         if dist > perception.radius {
             continue;
         }
@@ -222,26 +261,33 @@ pub fn observe(world: &World, opts: &ObserveOptions) -> String {
             landmarks.push((f, dist));
             continue;
         }
-        match sight(world, &viewer, &f) {
-            Sighting::NotInView => unseen.push((f, dist, Sighting::NotInView)),
-            s => seen.push((f, dist, s)),
+        let sighting = classify(&viewpoint, &f, |a, b, ignore| spatial::line_of_sight(world, a, b, ignore));
+        let item = Listed { dist, sighting, f };
+        match sighting {
+            Sighting::NotInView => unseen.push(item),
+            _ => seen.push(item),
         }
     }
-    let by_threat = |a: &(EntityFacts, f32, Sighting), b: &(EntityFacts, f32, Sighting)| {
-        b.0.importance.total_cmp(&a.0.importance).then(a.1.total_cmp(&b.1)).then(a.0.id.cmp(&b.0.id))
+    let by_threat = |a: &Listed, b: &Listed| {
+        b.f.importance.total_cmp(&a.f.importance).then(a.dist.total_cmp(&b.dist)).then(a.f.id.cmp(&b.f.id))
     };
     seen.sort_by(by_threat);
     unseen.sort_by(by_threat);
 
     let mut budget = perception.max_listed;
-    let mut section = |out: &mut String, title: &str, items: &[(EntityFacts, f32, Sighting)]| {
+    let mut section = |out: &mut String, title: &str, items: &[Listed]| {
         if items.is_empty() {
             return;
         }
         let _ = writeln!(out, "{title}");
         let shown = items.len().min(budget);
-        for (f, _, s) in &items[..shown] {
-            let _ = writeln!(out, "  {}", entity_line(f, Some(viewer.origin), Some(*s)));
+        for item in &items[..shown] {
+            let mut line = entity_line(&item.f, Some(origin), Some(item.sighting));
+            // Where it is in the window, if there is one: an annotation, not a verdict.
+            if let Some(p) = camera.as_ref().and_then(|c| project(c, item.f.pos + Vec3::Y * EYE_HEIGHT)) {
+                let _ = write!(line, "  scr({:.0},{:.0})", p.x, p.y);
+            }
+            let _ = writeln!(out, "  {line}");
         }
         if shown < items.len() {
             let _ = writeln!(out, "  … {} more (use `nearby`)", items.len() - shown);
@@ -256,7 +302,7 @@ pub fn observe(world: &World, opts: &ObserveOptions) -> String {
     if !landmarks.is_empty() {
         landmarks.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.id.cmp(&b.0.id)));
         let items: Vec<String> =
-            landmarks.iter().map(|(f, _)| format!("{} {} {}", f.id, f.label, relative(viewer.origin, f.pos))).collect();
+            landmarks.iter().map(|(f, _)| format!("{} {} {}", f.id, f.label, relative(origin, f.pos))).collect();
         let _ = writeln!(out, "LANDMARKS  {}", items.join(" · "));
     }
 

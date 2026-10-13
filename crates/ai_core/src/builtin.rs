@@ -42,9 +42,11 @@ pub(crate) fn register(world: &mut World) {
 
 // --- perception ------------------------------------------------------------------
 
-/// Look at the world: your status, what you see (sorted by threat), what is near but
-/// out of view, and journal entries since your last look. Distances and compass
-/// directions are relative to you; N = -Z, E = +X. `scr(x,y)` = pixel on screen.
+/// Look at the world: your status, what you see from your eyes (sorted by threat;
+/// `occluded` when something is in the way), what is near but outside your field of
+/// view (if the game sets one), and journal entries since your last look. Distances and
+/// compass directions are relative to you; N = -Z, E = +X. `scr(x,y)`: where it is in
+/// the game window, when there is one.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct ObserveArgs {
     /// Show journal entries after this sequence number instead of "since my last look".
