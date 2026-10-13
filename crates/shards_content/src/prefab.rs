@@ -101,10 +101,10 @@ fn resolve<'r>(registry: &'r TypeRegistry, name: &str) -> Result<&'r TypeRegistr
         }
         None => {
             let components = registry.iter().filter(|r| r.data::<ReflectComponent>().is_some());
-            let hint = closest(name, components.map(|r| r.type_info().type_path_table().short_path()))
-                .map(|c| format!(" (did you mean `{c}`?)"))
-                .unwrap_or_default();
-            Err(format!("unknown component `{name}`{hint}; it must derive Reflect with #[reflect(Component)]"))
+            Err(match closest(name, components.map(|r| r.type_info().type_path_table().short_path())) {
+                Some(close) => format!("unknown component `{name}` (did you mean `{close}`?)"),
+                None => format!("unknown component `{name}`; a prefab names components that derive Reflect with #[reflect(Component)]"),
+            })
         }
     }
 }

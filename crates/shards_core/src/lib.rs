@@ -179,6 +179,12 @@ impl Plugin for CorePlugin {
         if !app.is_plugin_added::<StatesPlugin>() {
             app.add_plugins(StatesPlugin);
         }
+        // Explicitly, for apps built without `reflect_auto_register`: replay checks and
+        // `inspect` read components through the type registry.
+        app.register_type::<Intent>()
+            .register_type::<PlayerId>()
+            .register_type::<LocalPlayer>()
+            .register_type::<NetRole>();
         app.insert_resource(self.config.clone())
             .init_resource::<NetRole>()
             .init_resource::<LoadingGate>()
@@ -186,10 +192,12 @@ impl Plugin for CorePlugin {
             .init_state::<EngineState>()
             .add_sub_state::<PauseState>()
             .replay_input::<Intent>()
-            .register_ai_describer("orders", intent::describe_orders)
             .add_engine_module("core", VERSION)
             .add_ai_status("engine", engine_status)
-            .configure_sets(FixedUpdate, (CoreSystems::FollowOrders.in_set(SimSet::Input), CoreSystems::ClearPresses.in_set(SimSet::Cleanup)))
+            .configure_sets(
+                FixedUpdate,
+                (CoreSystems::FollowOrders.in_set(SimSet::Input), CoreSystems::ClearPresses.in_set(SimSet::Cleanup)),
+            )
             .add_systems(
                 FixedUpdate,
                 (
@@ -202,6 +210,11 @@ impl Plugin for CorePlugin {
             .add_systems(OnEnter(PauseState::Paused), state::pause_simulation)
             .add_systems(OnExit(PauseState::Paused), state::resume_simulation)
             .add_systems(Update, (state::journal_transitions::<EngineState>, state::journal_transitions::<PauseState>));
+    }
+
+    fn finish(&self, app: &mut App) {
+        // After the game's describers: an entity's orders end its line.
+        app.register_ai_describer("orders", intent::describe_orders);
     }
 }
 

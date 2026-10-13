@@ -82,6 +82,12 @@ pub fn asset_root(world: &World) -> PathBuf {
 /// whole folder, and a misnamed file should be reported, not break loading.)
 pub(crate) fn start_loading(world: &mut World) {
     let root = asset_root(world);
+    if !root.join(CONTENT_DIR).is_dir() {
+        let hint = "games run from cargo find `assets` in the crate folder; elsewhere it is next to the executable, \
+                    or where BEVY_ASSET_ROOT points";
+        let text = format!("content: no content folder at {}: no content ({hint})", root.join(CONTENT_DIR).display());
+        journal::emit(world, JournalKind::Warn, text);
+    }
     let kinds = world.resource::<ContentKinds>().clone();
     let (paths, listing_error) = match list_files(&root) {
         Ok(paths) => (paths, None),

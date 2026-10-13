@@ -96,6 +96,7 @@ fn visual_top(entity: Entity, bounds: &Query<(&GlobalTransform, &Aabb)>, childre
         .reduce(f32::max)
 }
 
+#[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
 pub(crate) fn draw_highlights(
     mut gizmos: Gizmos<AiGizmos>,
     mut highlights: ResMut<Highlights>,

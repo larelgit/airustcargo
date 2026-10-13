@@ -508,7 +508,7 @@ impl ContentDb {
                 (!same).then(|| DefChange {
                     kind: kind.to_owned(),
                     id: id.to_owned(),
-                    file: new.map(|e| e.file.clone()),
+                    file: new.or(old).map(|e| e.file.clone()),
                     def: new.map(|e| e.json.clone()),
                     before: old.map(|e| e.json.clone()),
                 })
@@ -569,7 +569,7 @@ impl ContentDb {
 pub struct DefChange {
     pub kind: String,
     pub id: String,
-    /// The file that holds it now; absent when removed.
+    /// The file that holds it (held it, when removed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
     /// The new definition as JSON; absent when removed.
@@ -668,7 +668,7 @@ fn edit_distance(a: &str, b: &str) -> usize {
 
 /// Asset paths (`content/...`, forward slashes) of every `.ron` file under
 /// `<base>/content`, sorted. No `content` folder: no files.
-pub fn list_files(base: &Path) -> Result<Vec<String>, ContentError> {
+pub(crate) fn list_files(base: &Path) -> Result<Vec<String>, ContentError> {
     let mut paths = Vec::new();
     let root = base.join(CONTENT_DIR);
     if root.is_dir() {
@@ -694,7 +694,7 @@ fn walk(dir: &Path, rel: &str, out: &mut Vec<String>) -> Result<(), ContentError
 }
 
 /// The text of the content file at asset path `path` under `base`.
-pub fn read_file(base: &Path, path: &str) -> Result<Source, ContentError> {
+pub(crate) fn read_file(base: &Path, path: &str) -> Result<Source, ContentError> {
     let text = std::fs::read(base.join(path)).map_err(|e| ContentError::in_file(path, format!("cannot read: {e}")))?;
     Ok(Source { path: path.to_owned(), text: String::from_utf8_lossy(&text).into_owned() })
 }
