@@ -1,0 +1,22 @@
+[package]
+name = "ai_core"
+description = "AI integration layer for Bevy games: perception, journal, typed tools, sim control, BRP methods."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = ["remote"]
+# `ai/*` methods on the Bevy Remote Protocol (JSON-RPC over HTTP, localhost only).
+# Full read/write access to the world: enable in dev builds only.
+remote = ["dep:bevy_remote", "bevy/serialize"]
+# Screen-space perception, highlight gizmos and Set-of-Mark screenshots.
+render = ["bevy/bevy_render", "bevy/bevy_gizmos", "bevy/bevy_gizmos_render", "bevy/png"]
+
+[dependencies]
+bevy = { workspace = true, features = ["std", "bevy_log", "bevy_camera", "bevy_window"] }
+bevy_remote = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true

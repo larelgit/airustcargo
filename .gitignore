@@ -1,0 +1,5 @@
+/target
+/shots
+*.png
+!assets/**/*.png
+!docs/*.png

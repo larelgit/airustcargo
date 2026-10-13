@@ -1,0 +1,36 @@
+[package]
+name = "sandbox"
+description = "Test arena for ai_core: player, skeletons and the Frost Warden boss."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = ["render", "remote"]
+remote = ["ai_core/remote"]
+# Window, 3D rendering, UI. Without it the game only runs `--headless`.
+render = [
+    "ai_core/render",
+    "bevy/3d_bevy_render",
+    "bevy/ui_bevy_render",
+    "bevy/bevy_winit",
+    "bevy/x11",
+    "bevy/default_font",
+    "bevy/keyboard",
+    "bevy/mouse",
+]
+# Need system packages: libasound2-dev / libudev-dev / libwayland-dev libxkbcommon-dev.
+audio = ["bevy/audio"]
+gamepad = ["bevy/bevy_gilrs"]
+wayland = ["bevy/wayland"]
+# Faster incremental builds (`cargo sandbox --features dynamic`).
+dynamic = ["bevy/dynamic_linking"]
+
+[dependencies]
+ai_core.workspace = true
+bevy = { workspace = true, features = ["default_app", "std", "multi_threaded", "serialize"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+clap.workspace = true

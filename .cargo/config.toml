@@ -1,0 +1,10 @@
+[build]
+# This machine has ~4 GB of free RAM; 8 parallel rustc jobs on Bevy/wgpu thrash swap.
+# Raise or delete once more memory is available.
+jobs = 4
+
+[alias]
+# `cargo shards observe`, `cargo shards step 120`, ...
+shards = "run -q -p shards_cli --"
+# `cargo sandbox` (window) / `cargo sandbox --headless --paused`
+sandbox = "run -p sandbox --"

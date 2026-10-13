@@ -1,0 +1,31 @@
+[workspace]
+resolver = "3"
+members = ["crates/ai_core", "crates/sandbox", "crates/shards_cli"]
+default-members = ["crates/sandbox", "crates/shards_cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+publish = false
+
+[workspace.dependencies]
+# Bevy is pinned to the 0.20 line on purpose: minor releases break APIs.
+# Upgrade deliberately (read the migration guide), never via `cargo update` alone.
+bevy = { version = "0.20.0", default-features = false }
+bevy_remote = { version = "0.20.0", default-features = false, features = ["http"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1.2"
+clap = { version = "4.6", features = ["derive", "env"] }
+ureq = { version = "3.4", default-features = false, features = ["json"] }
+
+ai_core = { path = "crates/ai_core", default-features = false }
+
+# Bevy's recommended dev setup: optimise dependencies, keep our own code fast to compile.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
