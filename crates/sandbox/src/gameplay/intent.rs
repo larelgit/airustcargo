@@ -11,7 +11,7 @@ use ai_core::AiIndex;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::combat::{Action, AttackKind};
+use super::combat::{Action, AttackKind, InputBuffer};
 
 /// Per-tick controls plus a queue of multi-tick orders.
 ///
@@ -24,14 +24,16 @@ use super::combat::{Action, AttackKind};
 /// the same ticks replays the game.
 #[derive(Component, Reflect, Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[reflect(Component, Default)]
+#[require(InputBuffer)]
 pub struct Intent {
     /// Desired ground-plane movement, length ≤ 1.
     pub move_dir: Vec3,
     /// Point to face (attacks go where you face).
     pub aim: Option<Vec3>,
-    /// One-shot: start this attack on the next tick (consumed).
+    /// One-shot: attack. The next tick moves it into the [`InputBuffer`], where it
+    /// waits up to `INPUT_BUFFER` seconds for the character to be able to swing.
     pub attack: Option<AttackKind>,
-    /// One-shot: dodge in this direction on the next tick (consumed).
+    /// One-shot: dodge in this direction (zero: forward), buffered like `attack`.
     pub dodge: Option<Vec3>,
     pub orders: VecDeque<Order>,
 }

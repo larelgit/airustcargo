@@ -58,7 +58,8 @@ source ~/.local/share/rustengine-sysdeps/env.sh
 Управление в окне: WASD или стрелки — ходить, Space — уворот, J или ЛКМ — удар,
 P — пауза, N или `.` — один тик на паузе, F1 — оверлей с id, R — вылечить/воскресить,
 F12 — снимок с метками в `shots/`.
-Клавиатура человека и инструменты агента пишут в один и тот же `Intent`.
+Клавиатура человека и инструменты агента пишут в один и тот же `Intent`, и нажатия идут через
+тот же буфер ввода: уворот или удар, который не удалось начать за 0.2 с, виден в журнале как `rejected`.
 
 ## Архитектура
 
@@ -171,6 +172,20 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
   `e7 no longer exists (Skeleton renumbered to e99 at tick 40)`,
   ``unknown component `Mana`; this entity has: Health, …``,
   `AiId is managed by the engine; despawn and spawn instead`.
+- **`dodge` и `attack` объясняют отказ.** Разовый вход (уворот, удар без цели) ждёт в буфере
+  `InputBuffer` до 0.2 с, пока персонаж не сможет действовать, а `Intent` остаётся чистым входом.
+  Инструмент сразу проверяет то же правило, что и игра (`combat::start_blocker`):
+  - можно сейчас — как раньше: `ok: dodging S`, `ok: swinging`;
+  - станет можно в пределах 0.2 с — `ok: queued, dodges in 0.12s (S)`, `ok: queued, swings in 0.10s`;
+  - иначе ошибка с причиной и временем, а `Intent` не меняется:
+    `not enough stamina: 10/25 (ready in 1.0s)`,
+    `busy: windup Sword 0.80s (ready in 0.80s); a windup cannot be cancelled`.
+
+  Правила прежние: уворот из `Idle` или `Recover` (он отменяет восстановление), удар только из
+  `Idle`. Вход, записанный мимо инструментов (клавиатура, `Intent` напрямую), у которого вышло время,
+  попадает в журнал: `e5 dodge rejected: stamina 10/25`, `e5 attack rejected: busy (windup Sword 0.10s)`.
+  Ожидающий вход виден в строке сущности: `queued dodge 0.15s`. Это изменение геймплея: реплеи,
+  записанные до буфера, расходятся, их нужно записать заново.
 - **Паника в инструменте не роняет игру.** Агент получает ошибку, запись уходит в журнал,
   инструмент перерегистрируется при следующем вызове. Расписания тиков при этом на месте; если
   паника всё-таки унесла их (игра отключила перехват, `catch_system_panics: false`), ответ так и
@@ -390,6 +405,17 @@ ran 40 ticks (93 → 133)
 CHANGES
   ~ e5 Player: stam 80/80 → stam 60/80; moved 2.0m S
   ~ e6 Boss "Frost Warden": windup IceSlam 0.98s → windup IceSlam 0.32s
+  …
+$ shards act dodge dir=W
+ok: dodging W
+$ shards step 3
+ran 3 ticks (133 → 136)
+$ shards act dodge dir=E
+error: busy: dodge 0.30s (ready in 0.30s)
+$ shards step 8
+ran 8 ticks (136 → 144)
+$ shards act dodge dir=E
+ok: queued, dodges in 0.17s (E)
 ```
 
 ## Агенты
@@ -423,7 +449,7 @@ source ~/.local/share/rustengine-sysdeps/env.sh   # пока не установ
 cargo test --workspace
 ```
 
-Всего 71 тест:
+Всего 76 тестов:
 
 - 26 юнит-тестов `ai_core`: id (в том числе перенумерация и занятый id), журнал, RNG,
   компас и LOS, схемы, шаги симуляции, пути снимков (только `shots/`, чужой `x.json` цел), формат
@@ -446,6 +472,11 @@ cargo test --workspace
     и без неё одинаков, если убрать `scr(...)`;
   - права scope;
   - паника в инструменте;
+- 5 сценариев `crates/sandbox/tests/actions.rs`: `dodge` без стамины — ошибка со словом `stamina`,
+  и через тик ничего не изменилось; `dodge` во время замаха — ошибка со словом `windup`; действие,
+  возможное через 0.1 с (стамина, замах, восстановление перед ударом), — `ok: queued` и начинается
+  не позже чем через 12 тиков; правила уворота и удара прежние; вход прямо в `Intent` без стамины
+  через 0.2 с даёт в журнале `dodge rejected`;
 - 6 тестов `crates/sandbox/tests/system_failures.rs` (свой процесс: очередь сбоев глобальная):
   паника на тике 50 останавливает `step 100` на тике 50 с записью в журнале, следующий `step 10`
   доходит до тика 60 и `FixedMain`/`FixedUpdate` на месте, в реальном времени сбой ставит игру

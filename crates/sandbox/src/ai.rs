@@ -7,7 +7,10 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::gameplay::combat::{Action, Damaged, Died, Dodged, Health, PhaseChanged, Stamina, Telegraph};
+use crate::gameplay::combat::{
+    self, Act, Action, ActionRejected, Blocker, Damaged, Died, Dodged, Health, InputBuffer, PhaseChanged, Stamina,
+    Telegraph, INPUT_BUFFER,
+};
 use crate::gameplay::intent::{flat, Intent, Order, Target};
 use crate::gameplay::{self, Boss};
 
@@ -18,7 +21,8 @@ impl Plugin for GameAiPlugin {
         app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.max))
             .register_ai_component::<Stamina>(|s| format!("stam {:.0}/{:.0}", s.current, s.max))
             .register_ai_component::<Boss>(|b| format!("phase {}", b.phase))
-            .register_ai_component::<Action>(describe_action)
+            .register_ai_component::<Action>(Action::describe)
+            .register_ai_component::<InputBuffer>(describe_buffer)
             .register_ai_describer("orders", |e| {
                 let intent = e.get::<Intent>()?;
                 let first = intent.orders.front()?;
@@ -49,6 +53,7 @@ impl Plugin for GameAiPlugin {
                 })
             })
             .journal_event::<PhaseChanged>(|e, w| Some(format!("{} phase {}->{}", label(w, e.boss), e.from, e.to)))
+            .journal_event::<ActionRejected>(|e, w| Some(format!("{} {} rejected: {}", label(w, e.entity), e.action, e.reason)))
             .add_ai_condition("boss_phase_2", |w| {
                 w.try_query::<&Boss>().is_some_and(|mut q| q.iter(w).any(|b| b.phase >= 2))
             })
@@ -67,13 +72,34 @@ impl Plugin for GameAiPlugin {
     }
 }
 
-fn describe_action(a: &Action) -> String {
-    match a {
-        Action::Idle => String::new(),
-        Action::Windup { attack, left } => format!("windup {attack:?} {left:.2}s"),
-        Action::Recover { left } => format!("recover {left:.2}s"),
-        Action::Dodge { left, .. } => format!("dodge {left:.2}s"),
-        Action::Dead { .. } => "dead".into(),
+/// `queued dodge 0.15s`: a one-shot input waiting for the character to be able to act.
+fn describe_buffer(b: &InputBuffer) -> String {
+    let dodge = b.dodge.map(|d| format!("queued dodge {:.2}s", d.left));
+    let attack = b.attack.map(|a| format!("queued attack {:?} {:.2}s", a.input, a.left));
+    [dodge, attack].into_iter().flatten().collect::<Vec<_>>().join("  ")
+}
+
+/// Whether `act` can start now, checked by the game's own rule ([`combat::start_blocker`]):
+/// `Ok(None)` now, `Ok(Some(s))` in `s` seconds (within the input buffer, so it will),
+/// or why it will not.
+fn when_can_start(act: Act, action: &Action, stamina: Option<&Stamina>) -> Result<Option<f32>, String> {
+    let Some(blocker) = combat::start_blocker(act, action, stamina) else {
+        return Ok(None);
+    };
+    match (blocker, blocker.ready_in()) {
+        (_, Some(t)) if t <= INPUT_BUFFER + 1e-4 => Ok(Some(t)),
+        (Blocker::Stamina { have, need, ready_in }, _) => Err(match ready_in {
+            Some(t) => format!("not enough stamina: {have:.0}/{need:.0} (ready in {t:.1}s)"),
+            None => format!("not enough stamina: {have:.0}/{need:.0}"),
+        }),
+        (Blocker::Busy { action, ready_in }, _) => {
+            let mut msg = format!("busy: {} (ready in {ready_in:.2}s)", action.describe());
+            if matches!(action, Action::Windup { .. }) {
+                msg.push_str("; a windup cannot be cancelled");
+            }
+            Err(msg)
+        }
+        (Blocker::Dead, _) => Err("you are dead; a dev agent can `heal` you".into()),
     }
 }
 
@@ -158,7 +184,8 @@ fn move_dir(In(call): In<Call<MoveArgs>>, mut q: Query<(&Transform, &mut Intent,
 }
 
 /// Attack. With `target`: walk into sword range and swing (`repeat`: until it dies).
-/// Without: swing once right now in the direction you face.
+/// Without: swing once right now in the direction you face (10 stamina; from idle only:
+/// a busy character queues the swing for up to 0.2 s or is refused with the reason).
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct AttackArgs {
     pub target: Option<Id>,
@@ -166,10 +193,17 @@ pub struct AttackArgs {
     pub repeat: bool,
 }
 
-fn attack(In(call): In<Call<AttackArgs>>, index: Res<AiIndex>, mut q: Query<(&Transform, &mut Intent, &Action)>) -> ToolResult {
+fn attack(
+    In(call): In<Call<AttackArgs>>,
+    index: Res<AiIndex>,
+    stamina: Query<&Stamina>,
+    mut q: Query<(&Transform, &mut Intent, &Action)>,
+) -> ToolResult {
     if let Some(t) = call.args.target {
         index.resolve(t.0)?;
     }
+    let me = call.caller.require_subject()?;
+    let action = q.get(me).map(|(_, _, a)| *a).unwrap_or_default();
     let (_, mut intent) = my_intent(&call.caller, &mut q)?;
     match call.args.target {
         Some(t) => {
@@ -178,14 +212,21 @@ fn attack(In(call): In<Call<AttackArgs>>, index: Res<AiIndex>, mut q: Query<(&Tr
             Ok(format!("ok: attacking {t}{}", if call.args.repeat { " until it dies" } else { "" }))
         }
         None => {
-            intent.attack = Some(crate::gameplay::combat::AttackKind::Sword);
-            Ok("ok: swinging".into())
+            let sword = combat::AttackKind::Sword;
+            let when = when_can_start(Act::Attack(sword), &action, stamina.get(me).ok())?;
+            intent.attack = Some(sword);
+            Ok(match when {
+                None => "ok: swinging".into(),
+                Some(t) => format!("ok: queued, swings in {t:.2}s"),
+            })
         }
     }
 }
 
 /// Dodge roll: 0.35 s of invulnerability, 4 m of distance, 25 stamina.
-/// Best used when an enemy windup is about to end.
+/// Best used when an enemy windup is about to end. Works from idle or during a
+/// recovery (cancelling it); otherwise it waits up to 0.2 s ("ok: queued") or is
+/// refused with the reason and when it would work.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct DodgeArgs {
     /// Compass direction (N, NE, ...). Default: away from the nearest enemy windup, else forward.
@@ -198,21 +239,30 @@ fn dodge(
     In(call): In<Call<DodgeArgs>>,
     index: Res<AiIndex>,
     positions: Query<&Transform>,
+    stamina: Query<&Stamina>,
     mut q: Query<(&Transform, &mut Intent, &Action)>,
 ) -> ToolResult {
     let away = match call.args.away_from {
         Some(id) => Some(positions.get(index.resolve(id.0)?).map_err(|_| "no position")?.translation),
         None => None,
     };
+    let me = call.caller.require_subject()?;
+    let action = q.get(me).map(|(_, _, a)| *a).unwrap_or_default();
     let (here, mut intent) = my_intent(&call.caller, &mut q)?;
     let dir = match (&call.args.dir, away) {
         (Some(d), _) => compass_vector(d).ok_or_else(|| format!("unknown direction `{d}`"))?,
         (None, Some(p)) => flat(here - p).normalize_or_zero(),
         (None, None) => Vec3::ZERO, // forward
     };
+    // Refused calls leave the intent (and the orders) alone.
+    let when = when_can_start(Act::Dodge, &action, stamina.get(me).ok())?;
     intent.dodge = Some(dir);
     intent.orders.clear();
-    Ok(format!("ok: dodging {}", if dir == Vec3::ZERO { "forward".into() } else { ai_core::spatial::compass(dir).to_string() }))
+    let towards = if dir == Vec3::ZERO { "forward".into() } else { ai_core::spatial::compass(dir).to_string() };
+    Ok(match when {
+        None => format!("ok: dodging {towards}"),
+        Some(t) => format!("ok: queued, dodges in {t:.2}s ({towards})"),
+    })
 }
 
 /// Cancel all orders and stand still.
