@@ -20,3 +20,4 @@ bevy_remote = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
+shards_script.workspace = true

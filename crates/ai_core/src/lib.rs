@@ -48,6 +48,7 @@ pub mod paths;
 pub mod remote;
 pub mod replay;
 pub mod rng;
+pub mod scenario;
 pub mod session;
 #[cfg(feature = "render")]
 pub mod shot;

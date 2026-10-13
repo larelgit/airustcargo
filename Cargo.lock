@@ -132,6 +132,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "shards_script",
 ]
 
 [[package]]
@@ -5287,6 +5288,7 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
+ "shards_script",
  "ureq",
 ]
 
@@ -5321,6 +5323,14 @@ dependencies = [
  "bevy",
  "parry3d",
  "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "shards_script"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_json",
 ]
