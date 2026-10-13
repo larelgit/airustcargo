@@ -1,6 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["crates/ai_core", "crates/sandbox", "crates/shards_cli"]
+members = [
+    "crates/ai_core",
+    "crates/shards_core",
+    "crates/sandbox",
+    "crates/shards_cli",
+]
 default-members = ["crates/sandbox", "crates/shards_cli"]
 
 [workspace.package]
@@ -22,6 +27,7 @@ ureq = { version = "3.4", default-features = false, features = ["json"] }
 libc = "0.2"
 
 ai_core = { path = "crates/ai_core", default-features = false }
+shards_core = { path = "crates/shards_core" }
 
 # Bevy's recommended dev setup: optimise dependencies, keep our own code fast to compile.
 [profile.dev]

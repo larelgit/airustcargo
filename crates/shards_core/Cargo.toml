@@ -1,0 +1,13 @@
+[package]
+name = "shards_core"
+description = "Shards engine core: config, engine states, the loading gate, Intent and orders, engine modules."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ai_core.workspace = true
+bevy = { workspace = true, features = ["std", "bevy_state", "serialize"] }
+serde.workspace = true
+serde_json.workspace = true
