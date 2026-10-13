@@ -133,15 +133,17 @@ fn keyboard_to_intent(
     }
 }
 
-/// P: pause · N / `.`: one tick while paused · F1: id overlay · R: revive.
+/// P: pause · N / `.`: one tick while paused · F1: id overlay · R: revive ·
+/// F12: marked screenshot into shots/.
 fn dev_keys(world: &mut World) {
-    let (pause, step, overlay, revive) = {
+    let (pause, step, overlay, revive, shot) = {
         let keys = world.resource::<ButtonInput<KeyCode>>();
         (
             keys.just_pressed(KeyCode::KeyP),
             keys.just_pressed(KeyCode::KeyN) || keys.just_pressed(KeyCode::Period),
             keys.just_pressed(KeyCode::F1),
             keys.just_pressed(KeyCode::KeyR),
+            keys.just_pressed(KeyCode::F12),
         )
     };
     if pause {
@@ -157,6 +159,10 @@ fn dev_keys(world: &mut World) {
     }
     if revive {
         ai_core::call_tool(world, "keyboard", "heal", serde_json::Value::Null);
+    }
+    if shot {
+        // The path lands in the journal once the file is written.
+        ai_core::call_tool(world, "keyboard", "shot", serde_json::Value::Null);
     }
 }
 
@@ -210,7 +216,7 @@ fn update_hud(
         let state = if time.is_paused() { "PAUSED" } else { "running" };
         let dead = if matches!(action, Action::Dead { .. }) { "   DEAD — R to revive" } else { "" };
         text.0 = format!(
-            "{id}  HP {:.0}/{:.0}  STAM {:.0}/{:.0}{dead}\ntick {}  {state}\nWASD move | Space dodge | J/LMB attack\nP pause | N step | F1 ids",
+            "{id}  HP {:.0}/{:.0}  STAM {:.0}/{:.0}{dead}\ntick {}  {state}\nWASD move | Space dodge | J/LMB attack\nP pause | N step | F1 ids | F12 shot",
             hp.current, hp.max, st.current, st.max, tick.0
         );
     }

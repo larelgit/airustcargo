@@ -10,6 +10,7 @@
 //! | `ai/observe`  | `{agent?, since_seq?}`                   |
 //! | `ai/step`     | `{agent?, ticks?, until?}`               |
 //! | `ai/journal`  | `{agent?, since_seq?, last?}`            |
+//! | `ai/shot`     | `{agent?, marks?, path?}`                |
 //! | `ai/tools`    | `{agent?, format?: "full"\|"llm"}`       |
 //! | `ai/session`  | `{agent, scope?, subject?}`              |
 //! | `ai/status`   | none                                     |
@@ -166,6 +167,7 @@ pub(crate) fn register_methods(world: &mut World) {
         ("ai/observe", world.register_system(shortcut("observe"))),
         ("ai/step", world.register_system(shortcut("step"))),
         ("ai/journal", world.register_system(shortcut("journal"))),
+        ("ai/shot", world.register_system(shortcut("shot"))),
         ("ai/tools", world.register_system(ai_tools)),
         ("ai/session", world.register_system(ai_session)),
         ("ai/status", world.register_system(ai_status)),

@@ -10,7 +10,7 @@
   поверх них (для Claude Code, скриптов, ботов, CI).
 
 Скриншоты здесь вторичный канал, для визуальных багов. Метки `eN` на экране
-совпадают с id в тексте.
+совпадают с id в тексте, а `shards shot` к каждому снимку пишет легенду: где на картинке какой id.
 
 ![sandbox](docs/sandbox.png)
 
@@ -30,6 +30,7 @@ cargo sandbox --headless --paused
 cargo shards observe
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds
+cargo shards shot                  # PNG окна с метками eN + легенда (нужно окно)
 ```
 
 **Rust** ставится через rustup, он добавляет `~/.cargo/bin` в PATH. В уже открытых
@@ -47,7 +48,8 @@ source ~/.local/share/rustengine-sysdeps/env.sh
 а `alsa-sys` ищет `alsa.pc` через pkg-config. После `apt install` он не нужен.
 
 Управление в окне: WASD или стрелки — ходить, Space — уворот, J или ЛКМ — удар,
-P — пауза, N или `.` — один тик на паузе, F1 — оверлей с id, R — вылечить/воскресить.
+P — пауза, N или `.` — один тик на паузе, F1 — оверлей с id, R — вылечить/воскресить,
+F12 — снимок с метками в `shots/`.
 Клавиатура человека и инструменты агента пишут в один и тот же `Intent`.
 
 ## Архитектура
@@ -89,6 +91,7 @@ ai_core:              Observe — срез мира текстом            (o
 | `link` | `AiLink`: mpsc-канал к миру из любого потока |
 | `remote` | методы `ai/*` для BRP (feature `remote`) |
 | `highlight` | гизмо-подсветка и оверлей id поверх сцены (feature `render`) |
+| `shot` | снимок окна с метками `eN` и легендой в пикселях картинки (feature `render`) |
 
 ## Что видит ИИ
 
@@ -131,7 +134,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 | scope | инструменты |
 |---|---|
 | **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, move_to, move, attack, dodge, stop |
-| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn, heal |
+| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn, heal, shot |
 
 - **Действие возвращает изменения.** Каждый action-инструмент сравнивает срез мира до и после
   вызова и возвращает `CHANGES` и `JOURNAL`. Агенту не нужен второй `observe`, чтобы узнать, что произошло.
@@ -158,6 +161,33 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 - Тесты подтверждают: один seed и одни вызовы дают побитово одинаковый мир и журнал;
   `step 300` даёт то же, что 5 × `step 60` с `observe` и кадрами рендера между ними.
 
+## Скриншоты
+
+`shot` (scope Dev) снимает окно игры средствами самого Bevy, это не захват рабочего стола.
+Поэтому окно без фокуса, которое композитор перерисовывает с задержкой, всё равно даёт текущий кадр.
+
+```text
+$ shards shot
+saved /…/shots/tick93-1.png (1280x720, tick 93, marks on)
+LEGEND (image pixels)
+  e5 Player  px(640,484)
+  e6 Boss "Frost Warden"  px(640,370)
+  e7 Skeleton  px(361,523)
+  …
+```
+
+- Оверлей с id включается на время снимка (кадр до съёмки, чтобы гизмо-линии успели дойти до GPU).
+  Сам снимок ждёт, пока GPU докомпилирует пайплайны: сразу после старта меши и метки иначе
+  пропускаются.
+- Легенда считается в том кадре, который снимается. После `step` следящая камера ещё догоняет
+  игрока, и координаты на момент запроса были бы неверны. Легенда пишется рядом с PNG как
+  `<имя>.json` (`path`, `width`, `height`, `tick`, `marks`, `legend`).
+- Оба файла пишутся во временные и переименовываются, так что появившийся PNG уже целиком на диске.
+  Старые файлы с тем же именем удаляются при запросе. В журнале появляется `screenshot saved: …`.
+- Инструмент сразу возвращает пути, `shards shot` ждёт файл (`--timeout`, по умолчанию 10 с).
+  Флаги: `--no-marks`, `-o PATH`. Без окна (`--headless`) инструмент отвечает ошибкой
+  с подсказкой использовать `observe`.
+
 ## Транспорты
 
 **BRP `ai/*`.** JSON-RPC 2.0, `POST http://127.0.0.1:15702`:
@@ -168,6 +198,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 | `ai/observe` | `{agent?, since_seq?}` |
 | `ai/step` | `{agent?, ticks?, until?}` |
 | `ai/journal` | `{agent?, since_seq?, last?}` |
+| `ai/shot` | `{agent?, marks?, path?}` |
 | `ai/tools` | `{agent?, format?: "full" \| "llm"}` |
 | `ai/session` | `{agent, scope?, subject?, clear_subject?}` |
 | `ai/status` | — |
@@ -180,8 +211,8 @@ BRP даёт полный доступ к миру, поэтому сервер 
 cargo build --release -p sandbox --no-default-features --features render
 ```
 
-**CLI `shards`:** observe, step, act, tools, inspect, nearby, journal, pause, resume, speed,
-status, session, raw, wait. Аргументы `act` передаются JSON-объектом или парами `key=value`.
+**CLI `shards`:** observe, step, act, shot, tools, inspect, nearby, journal, pause, resume,
+speed, status, session, raw, wait. Аргументы `act` передаются JSON-объектом или парами `key=value`.
 Флаги `--port`/`SHARDS_PORT`, `--agent`/`SHARDS_AGENT`, `--json`.
 
 **Параллельные headless-инстансы.** У каждого свой порт:
@@ -236,9 +267,9 @@ source ~/.local/share/rustengine-sysdeps/env.sh   # пока не установ
 cargo test --workspace
 ```
 
-Всего 23 теста:
+Всего 24 теста:
 
-- 12 юнит-тестов `ai_core`: id, журнал, RNG, компас и LOS, схемы, шаги симуляции;
+- 13 юнит-тестов `ai_core`: id, журнал, RNG, компас и LOS, схемы, шаги симуляции, пути снимков;
 - 2 теста парсера условий в `shards`;
 - 9 сценариев `crates/sandbox/tests/scenarios.rs`:
   - детерминизм и разные seed;
@@ -249,6 +280,15 @@ cargo test --workspace
   - права scope;
   - паника в инструменте.
 
+Снимки требуют окна и GPU, поэтому в `cargo test` их нет. Без дисплея их можно проверить через
+Xvfb и программный Vulkan (`apt install xvfb mesa-vulkan-drivers`):
+
+```bash
+Xvfb :99 &
+DISPLAY=:99 cargo sandbox --paused &
+cargo shards wait && cargo shards shot
+```
+
 ## Статус по плану внедрения
 
 | # | шаг | статус |
@@ -256,19 +296,18 @@ cargo test --workspace
 | 1 | Intent + FixedUpdate + seed | ✅ |
 | 2 | AiId, текстовый срез, журнал | ✅ |
 | 3 | pause / step / BRP / CLI | ✅ |
-| 4 | скриншоты с метками | ◐ метки готовы (оверлей и подсветка рисуются поверх сцены); захват `ai/shot` следующий |
+| 4 | скриншоты с метками | ✅ `ai/shot` / `shards shot`: PNG с метками и легенда в пикселях |
 | 5 | реестр инструментов, схемы, scope | ✅ |
 | 6 | внутриигровой агент | ◐ транспорт `AiLink` готов; LLM-цикл (tokio + Claude API) следующий |
 | 7 | реплеи / снапшоты / параллельный headless | ◐ параллельные headless-инстансы работают; реплеи и снапшоты впереди |
 
 ## Дальше
 
-1. `ai/shot` и `shards shot --marks`: Bevy `Screenshot` → PNG. Оверлей включается за кадр до съёмки,
-   CLI ждёт файл. Отдельный инструмент нужен потому, что окно без фокуса композитор обновляет с задержкой.
-2. Внутриигровой агент: поток tokio, два цикла (LLM ставит намерения; Rust-логика исполняет их
+1. Внутриигровой агент: поток tokio, два цикла (LLM ставит намерения; Rust-логика исполняет их
    каждый тик), всё через `AiLink`, ключ API на прокси-сервере.
-3. Реплеи: запись `Intent` по тикам вместе с seed; снапшоты через `DynamicScene`, чтобы
+2. Реплеи: запись `Intent` по тикам вместе с seed; снапшоты через `DynamicScene`, чтобы
    сохраняться, откатываться и ветвить сценарии.
+3. Снимки без окна: камера рендерит в `Image`, `Screenshot::image` (для headless-инстансов с GPU).
 4. Дерево UI в `observe`, `path_exists` поверх навмеша.
 5. LOS для воксельного мира: подменить `AiLineOfSight` на DDA по чанкам.
 6. Hot reload (`--features dynamic`, subsecond).

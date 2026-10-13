@@ -41,6 +41,8 @@ pub mod observe;
 pub mod remote;
 pub mod rng;
 pub mod session;
+#[cfg(feature = "render")]
+pub mod shot;
 pub mod sim;
 pub mod spatial;
 pub mod tools;
@@ -123,7 +125,10 @@ impl Plugin for AiCorePlugin {
         builtin::register(app.world_mut());
 
         #[cfg(feature = "render")]
-        highlight::plugin(app);
+        {
+            highlight::plugin(app);
+            shot::plugin(app);
+        }
 
         #[cfg(feature = "remote")]
         if let Some(port) = self.remote_port {
