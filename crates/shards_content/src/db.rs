@@ -56,8 +56,11 @@ pub struct ContentError {
     pub file: Option<String>,
     /// `(line, column)` of a parse error, 1-based.
     pub position: Option<(usize, usize)>,
+    /// The content kind of the definition it concerns.
     pub kind: Option<String>,
+    /// The definition it concerns.
     pub id: Option<String>,
+    /// What is wrong, and how to fix it when that is not obvious.
     pub message: String,
 }
 
@@ -88,7 +91,9 @@ impl fmt::Display for ContentError {
 /// What a clean check found: `ok: 14 definitions in 5 files`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Summary {
+    /// Content files read.
     pub files: usize,
+    /// Definitions in them.
     pub definitions: usize,
     /// Definitions per kind, every registered kind included.
     pub kinds: BTreeMap<String, usize>,
@@ -128,6 +133,7 @@ struct KindFns {
 /// One registered kind.
 #[derive(Clone)]
 pub struct KindInfo {
+    /// `attack` for `*.attack.ron`.
     pub kind: &'static str,
     /// Rust type of its definitions.
     pub type_name: &'static str,
@@ -173,6 +179,7 @@ impl ContentKinds {
         self.registry = Some(registry);
     }
 
+    /// The registered kind `kind`.
     pub fn get(&self, kind: &str) -> Option<&KindInfo> {
         self.kinds.iter().find(|k| k.kind == kind)
     }
@@ -304,6 +311,7 @@ struct Entry {
 pub struct Source {
     /// Asset path: `content/combat/attacks.attack.ron`.
     pub path: String,
+    /// The file's contents.
     pub text: String,
 }
 
@@ -456,10 +464,12 @@ impl ContentDb {
         self.tables.values().map(BTreeMap::len).sum()
     }
 
+    /// No definitions at all.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Files and definitions, per kind.
     pub fn summary(&self) -> Summary {
         Summary {
             files: self.files.len(),
@@ -567,7 +577,9 @@ impl ContentDb {
 /// record.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct DefChange {
+    /// Content kind: `attack`.
     pub kind: String,
+    /// The definition's id.
     pub id: String,
     /// The file that holds it (held it, when removed).
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -26,6 +26,7 @@ pub struct EnginePlugins {
 }
 
 impl EnginePlugins {
+    /// The engine as `config` describes it.
     pub fn new(config: EngineConfig) -> Self {
         Self { config }
     }

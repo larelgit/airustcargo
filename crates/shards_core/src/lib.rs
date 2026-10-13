@@ -30,6 +30,7 @@ pub use state::{EngineState, LocalPlayer, NetRole, PauseState, PlayerId};
 /// Version of the engine crates (they share one).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The types a game module uses most.
 pub mod prelude {
     pub use crate::{
         input_names, CoreSystems, EngineAppExt, EngineConfig, EngineState, Intent, LoadStatus, LocalPlayer, NetRole, Order,
@@ -115,7 +116,9 @@ pub enum CoreSystems {
 /// An engine module as `ai/status` lists it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct EngineModule {
+    /// `core`, `content`, `motion`, ...
     pub name: String,
+    /// Crate version.
     pub version: String,
 }
 
@@ -132,10 +135,12 @@ impl EngineModules {
         }
     }
 
+    /// Modules in the order they were added.
     pub fn iter(&self) -> impl Iterator<Item = &EngineModule> {
         self.0.iter()
     }
 
+    /// Whether module `name` runs.
     pub fn contains(&self, name: &str) -> bool {
         self.0.iter().any(|m| m.name == name)
     }
@@ -167,6 +172,7 @@ impl EngineAppExt for App {
 /// and the `engine` field of `ai/status`. Needs `AiCorePlugin` first; `EnginePlugins`
 /// adds both.
 pub struct CorePlugin {
+    /// Inserted as a resource; `after_loading` decides where loading goes.
     pub config: EngineConfig,
 }
 

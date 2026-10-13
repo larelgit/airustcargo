@@ -24,6 +24,7 @@ pub type StatusField = fn(&World) -> Value;
 pub struct AiStatusFields(Vec<(String, StatusField)>);
 
 impl AiStatusFields {
+    /// Adds (or replaces) field `key`.
     pub fn add(&mut self, key: &str, field: StatusField) {
         self.0.retain(|(k, _)| k != key);
         self.0.push((key.to_owned(), field));

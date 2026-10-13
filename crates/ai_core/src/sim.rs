@@ -93,10 +93,12 @@ impl SimGate {
         self.holds.insert(name.to_owned(), reason.into());
     }
 
+    /// Ends hold `name` (nothing if there is none).
     pub fn release(&mut self, name: &str) {
         self.holds.remove(name);
     }
 
+    /// Whether anything holds the simulation.
     pub fn is_held(&self) -> bool {
         !self.holds.is_empty()
     }

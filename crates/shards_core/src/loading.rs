@@ -19,6 +19,7 @@ use crate::{EngineConfig, EngineState};
 /// What a requirement reports each frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoadStatus {
+    /// Loaded; the simulation may run.
     Ready,
     /// Still loading; the progress text shows in `ai/status` and `observe`:
     /// `2 files left`.

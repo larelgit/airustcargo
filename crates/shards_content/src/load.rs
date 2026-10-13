@@ -24,6 +24,7 @@ use crate::db::{is_claimed, list_files, read_file, ContentDb, ContentKinds, DefC
 /// file still loads (and is reported with every other problem).
 #[derive(Asset, TypePath, Debug)]
 pub struct ContentText {
+    /// The file's contents (invalid UTF-8 replaced).
     pub text: String,
 }
 

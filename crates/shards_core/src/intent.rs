@@ -19,18 +19,29 @@ use serde::{Deserialize, Serialize};
 /// Input names the engine modules understand. Games add their own names freely; a
 /// press nobody consumes is dropped at the end of the tick.
 pub mod input_names {
+    /// Press: jump (or climb out of water).
     pub const JUMP: &str = "jump";
+    /// Held: run faster.
     pub const SPRINT: &str = "sprint";
+    /// Held in the air: glide.
     pub const GLIDE: &str = "glide";
+    /// Press, with a direction: dodge roll.
     pub const DODGE: &str = "dodge";
+    /// Press: light attack.
     pub const LIGHT: &str = "light";
+    /// Press: heavy attack.
     pub const HEAVY: &str = "heavy";
+    /// Held: block.
     pub const BLOCK: &str = "block";
+    /// Press: parry.
     pub const PARRY: &str = "parry";
     /// Pressed with a slot suffix: `technique.1`, `technique.2`, ...
     pub const TECHNIQUE: &str = "technique";
+    /// Press: use the selected item.
     pub const USE_ITEM: &str = "use_item";
+    /// Press: talk, open, pick up.
     pub const INTERACT: &str = "interact";
+    /// Press: lock onto a target, or let go.
     pub const LOCK_ON: &str = "lock_on";
 }
 
@@ -61,14 +72,18 @@ pub struct Intent {
 /// One button press, with an optional direction (a dodge to the west).
 #[derive(Reflect, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Press {
+    /// Input name: `dodge`, `light`, or a game's own.
     pub input: String,
+    /// Direction on the ground plane, for inputs that have one.
     pub dir: Option<Vec3>,
 }
 
 /// Where an order goes.
 #[derive(Reflect, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Target {
+    /// An entity, followed as it moves.
     Entity(AiId),
+    /// A point in the world.
     Point(Vec3),
 }
 
@@ -77,10 +92,22 @@ pub enum Target {
 pub enum Order {
     /// Walk in a straight line until within `within` meters of the target
     /// ([`follow_orders`]).
-    MoveTo { target: Target, within: f32 },
+    MoveTo {
+        /// Where to walk.
+        target: Target,
+        /// Meters from the target that count as arrived.
+        within: f32,
+    },
     /// Approach and use `input` (e.g. "light") on the target; `repeat` until it dies.
     /// Carried out by the game's action module, not by [`follow_orders`].
-    Attack { target: AiId, input: String, repeat: bool },
+    Attack {
+        /// Whom to attack.
+        target: AiId,
+        /// The press that attacks, e.g. "light".
+        input: String,
+        /// Keep attacking until the target dies.
+        repeat: bool,
+    },
 }
 
 impl Intent {
@@ -100,6 +127,7 @@ impl Intent {
         Some(self.pressed.remove(at))
     }
 
+    /// Whether `input` is held right now.
     pub fn is_held(&self, input: &str) -> bool {
         self.held.binary_search_by(|h| h.as_str().cmp(input)).is_ok()
     }

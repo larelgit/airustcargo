@@ -23,7 +23,9 @@ pub enum EngineState {
     /// Waiting for the loading gate (content, ...). No ticks run.
     #[default]
     Loading,
+    /// The game's menu; the engine leaves it to the game.
     MainMenu,
+    /// Playing: games spawn their world on entering it.
     InGame,
     /// Reserved for region streaming: no ticks run, and the engine returns to `InGame`
     /// once the loading gate is open again (`OnEnter(InGame)` runs again then).
@@ -34,6 +36,7 @@ pub enum EngineState {
 #[derive(SubStates, Reflect, Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Serialize, Deserialize)]
 #[source(EngineState = EngineState::InGame)]
 pub enum PauseState {
+    /// Playing.
     #[default]
     Running,
     /// In single player the simulation is paused too.
@@ -45,6 +48,7 @@ pub enum PauseState {
 #[derive(Resource, Reflect, Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[reflect(Resource, Default)]
 pub enum NetRole {
+    /// One machine, no network.
     #[default]
     Single,
     /// Runs the simulation for everyone.

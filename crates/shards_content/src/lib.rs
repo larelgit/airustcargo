@@ -46,6 +46,7 @@ pub use db::{check_dir, ContentDb, ContentDef, ContentError, ContentKinds, DefCh
 pub use load::{asset_root, ContentText};
 pub use prefab::{spawn_prefab, PrefabDef};
 
+/// The types a game module uses most.
 pub mod prelude {
     pub use crate::{Content, ContentAppExt, ContentDb, ContentDef, ContentPlugin, PrefabDef, Refs};
 }
@@ -78,6 +79,7 @@ pub struct Content<'w, T: ContentDef> {
 }
 
 impl<'w, T: ContentDef> Content<'w, T> {
+    /// Definition `id`.
     pub fn get(&self, id: &str) -> Option<&T> {
         self.db.get::<T>(id)
     }

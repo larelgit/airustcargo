@@ -233,7 +233,9 @@ pub fn spawn_prefab(world: &mut World, id: &str, transform: Transform, overrides
 pub struct SpawnPrefabArgs {
     /// Prefab id, e.g. "skeleton".
     pub id: String,
+    /// East (+X) in meters.
     pub x: f32,
+    /// South (+Z) in meters.
     pub z: f32,
     /// Height. Default 0.
     pub y: Option<f32>,
