@@ -1,0 +1,20 @@
+[package]
+name = "shards_content"
+description = "Shards content database: typed RON definitions, validation, references, hot reload, prefabs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# Apply content files as they change on disk (Bevy's file watcher).
+hot_reload = ["bevy/file_watcher"]
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+bevy = { workspace = true, features = ["std", "bevy_asset", "bevy_state", "serialize", "multi_threaded"] }
+ron.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
