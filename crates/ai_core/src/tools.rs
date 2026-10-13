@@ -117,6 +117,7 @@ where
             let mut slot = slot.lock().map_err(|_| "tool registry poisoned".to_owned())?;
             *slot.get_or_insert_with(|| world.register_system(system.clone()))
         };
+        let schedules = fixed_schedules(world);
         match catch_unwind(AssertUnwindSafe(|| world.run_system_with(id, Call { args, caller }))) {
             Ok(Ok(Ok(out))) => serde_json::to_value(out).map_err(|e| format!("cannot serialize result: {e}")),
             Ok(Ok(Err(msg))) => Err(msg),
@@ -129,7 +130,17 @@ where
                 let _ = world.unregister_system(id);
                 let msg = panic_message(&panic);
                 journal::log(world, JournalKind::Error, format!("tool {tool_name} panicked: {msg}"));
-                Err(format!("{tool_name} panicked: {msg} (the game kept running; the panic is in the journal)"))
+                // A panic that unwound through a running schedule (a gameplay panic in
+                // `step` with `catch_system_panics` off) took that schedule with it.
+                let lost: Vec<&str> = schedules.iter().filter(|s| !fixed_schedules(world).contains(s)).copied().collect();
+                if lost.is_empty() {
+                    Err(format!("{tool_name} panicked: {msg} (the game kept running; the panic is in the journal)"))
+                } else {
+                    Err(format!(
+                        "{tool_name} panicked: {msg} (the game lost its {} schedules: no more ticks, restart it)",
+                        lost.join(", ")
+                    ))
+                }
             }
         }
     });
@@ -137,12 +148,31 @@ where
     world.get_resource_or_init::<AiTools>().0.insert(name.to_owned(), Arc::new(AiTool { spec, run }));
 }
 
-fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
+pub(crate) fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
     panic
         .downcast_ref::<&str>()
         .map(|s| (*s).to_owned())
         .or_else(|| panic.downcast_ref::<String>().cloned())
         .unwrap_or_else(|| "unknown panic".to_owned())
+}
+
+/// Which of the fixed-tick schedules are in the world (a running one is taken out).
+fn fixed_schedules(world: &World) -> Vec<&'static str> {
+    use bevy::app::{FixedFirst, FixedLast, FixedMain, FixedPostUpdate, FixedPreUpdate};
+    let Some(schedules) = world.get_resource::<Schedules>() else {
+        return Vec::new();
+    };
+    [
+        ("FixedMain", schedules.contains(FixedMain)),
+        ("FixedFirst", schedules.contains(FixedFirst)),
+        ("FixedPreUpdate", schedules.contains(FixedPreUpdate)),
+        ("FixedUpdate", schedules.contains(FixedUpdate)),
+        ("FixedPostUpdate", schedules.contains(FixedPostUpdate)),
+        ("FixedLast", schedules.contains(FixedLast)),
+    ]
+    .into_iter()
+    .filter_map(|(name, present)| present.then_some(name))
+    .collect()
 }
 
 /// The result of one tool call, as returned to any transport.
@@ -192,8 +222,12 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
         return outcome(world, false, Value::String(msg), Vec::new(), Vec::new());
     }
 
+    // What failed before this call is gameplay's (journaled, the game pauses); what
+    // fails during it is the tool's.
+    crate::failures::collect(world);
     if entry.spec.kind == ToolKind::Query {
         let result = (entry.run)(world, caller, args);
+        crate::failures::blame_tool(world, tool);
         let (ok, value) = match result {
             Ok(v) => (true, v),
             Err(e) => (false, Value::String(teach(e, &entry.spec))),
@@ -215,6 +249,7 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
     if is_action {
         crate::replay::end_action(world);
     }
+    crate::failures::blame_tool(world, tool);
     // A warning the call caused comes back with it.
     journal::drain_logs(world);
     let after = digest(world);

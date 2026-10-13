@@ -63,6 +63,21 @@ cargo shards save-replay                # сессия с тика 0 → replays
   индекс «id → сущность» ведут хуки `on_insert` и `on_discard`. Вставка нового `AiId` перенумеровывает
   сущность, а старый id получает надгробие `renumbered to eN`.
 
+## Если игра упала
+
+Паника в системе геймплея не убивает игру. `step` останавливается на тике сбоя и отвечает
+`stopped: gameplay system <name> panicked at tick N: <msg>`, в реальном времени игра встаёт на паузу,
+в журнале — `system <name> panicked at tick N`. Сессия уже сохранена в `replays/crash-tick<N>.json`:
+
+```bash
+cargo sandbox --replay replays/crash-tick<N>.json --headless --paused &   # тот же мир с тика 0
+cargo shards wait && cargo shards step <N>     # сбой повторится на тике N: смотрите inspect/journal
+cargo sandbox --replay replays/crash-tick<N>.json --verify   # код 1, пока система падает
+```
+
+После исправления `--verify` больше не пишет `gameplay system … panicked`. Код 1 с `DIVERGED` тогда
+значит лишь, что исправленная система меняет мир иначе, чем упавшая.
+
 ## Проверка изменений
 
 - `cargo test --workspace`: юнит-тесты и сценарии в `crates/sandbox/tests/`.

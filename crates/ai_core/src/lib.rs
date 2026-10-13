@@ -35,6 +35,7 @@
 
 pub mod builtin;
 pub mod describe;
+pub mod failures;
 #[cfg(feature = "render")]
 pub mod highlight;
 pub mod id;
@@ -62,6 +63,7 @@ use serde::Serialize;
 
 pub use builtin::{AiConditions, StopWhen};
 pub use describe::{AiDescribers, AiKind, Describer, EntityFacts};
+pub use failures::{ai_core_error_handler, AiFailures, SystemFailure};
 pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible};
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
 pub use observe::{AiCamera, AiPerception, ObserveOptions};
@@ -88,11 +90,24 @@ pub struct AiCorePlugin {
     /// Port for the `ai/*` BRP methods (`remote` feature). `None`: no HTTP server.
     /// Every BRP method needs the token the game writes to `.shards/<port>.token`.
     pub remote_port: Option<u16>,
+    /// Install [`ai_core_error_handler`]: a gameplay panic is logged, stops `step` at its
+    /// tick and pauses the game, instead of panicking again and taking `FixedMain` and
+    /// `FixedUpdate` with it. `false` keeps Bevy's own handler.
+    pub catch_system_panics: bool,
+    /// After a gameplay failure, save the session as `replays/crash-tick<N>.json` to
+    /// reproduce it with.
+    pub crash_replays: bool,
 }
 
 impl Default for AiCorePlugin {
     fn default() -> Self {
-        Self { sim: SimConfig::default(), perception: AiPerception::default(), remote_port: Some(DEFAULT_PORT) }
+        Self {
+            sim: SimConfig::default(),
+            perception: AiPerception::default(),
+            remote_port: Some(DEFAULT_PORT),
+            catch_system_panics: true,
+            crash_replays: true,
+        }
     }
 }
 
@@ -133,6 +148,7 @@ impl Plugin for AiCorePlugin {
 
         builtin::register(app.world_mut());
         replay::plugin(app);
+        failures::plugin(app, self.catch_system_panics, self.crash_replays);
 
         #[cfg(feature = "render")]
         {

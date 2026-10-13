@@ -171,7 +171,8 @@ struct CaptureLayer;
 impl<S: Subscriber> Layer<S> for CaptureLayer {
     fn on_event(&self, event: &TracingEvent<'_>, _ctx: Context<'_, S>) {
         let level = *event.metadata().level();
-        if level > Level::WARN {
+        // Failures are journaled by `failures::collect`, with their tick; once is enough.
+        if level > Level::WARN || event.metadata().target() == crate::failures::LOG_TARGET {
             return;
         }
         let Some((capture, clock)) = CAPTURE_TARGET.lock().ok().and_then(|t| t.clone()) else {

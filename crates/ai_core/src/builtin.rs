@@ -239,6 +239,17 @@ fn step_tool(In(call): In<Call<StepArgs>>, world: &mut World) -> ToolResult {
         StepEnd::Completed => msg.push_str(", no condition met"),
         StepEnd::Condition(why) => msg.push_str(&format!(", stopped: {why}")),
         StepEnd::WallClock => msg.push_str(", stopped: 20 s wall-clock budget"),
+        StepEnd::SystemFailed(failures) => {
+            let first = &failures[0];
+            msg.push_str(&format!(", stopped: gameplay {}", first.headline()));
+            if failures.len() > 1 {
+                msg.push_str(&format!(" (+{} more)", failures.len() - 1));
+            }
+            msg.push_str(&format!(": {}", first.message));
+            if let Some(path) = failures.iter().find_map(|f| f.crash_replay.as_ref()) {
+                msg.push_str(&format!("; crash replay: {path}"));
+            }
+        }
     }
     Ok(msg)
 }

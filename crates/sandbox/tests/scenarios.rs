@@ -252,6 +252,8 @@ fn a_panicking_tool_does_not_take_the_game_down() {
         .map(ToString::to_string)
         .collect();
     assert_eq!(errors.len(), 2, "{errors:?}");
+    let schedules = app.world().resource::<Schedules>();
+    assert!(schedules.contains(bevy::app::FixedMain) && schedules.contains(FixedUpdate), "schedules survive a tool panic");
     ok(&mut app, "step", json!({"ticks": 30}));
     assert_eq!(ai_core::sim::tick(app.world()), 30);
 }

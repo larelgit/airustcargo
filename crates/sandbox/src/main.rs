@@ -3,6 +3,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use ai_core::replay::{self, Replay};
+use ai_core::sim::{StepEnd, StepReport};
 use ai_core::AiReplay;
 use bevy::app::AppExit;
 use clap::Parser;
@@ -54,8 +55,14 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let mut cfg =
-        GameConfig { headless: args.headless, seed: args.seed, port: None, paused: args.paused, tick_hz: args.hz };
+    let mut cfg = GameConfig {
+        headless: args.headless,
+        seed: args.seed,
+        port: None,
+        paused: args.paused,
+        tick_hz: args.hz,
+        crash_replays: true,
+    };
     if let Some(r) = &replay {
         cfg.seed = r.seed;
         cfg.tick_hz = r.tick_hz;
@@ -136,9 +143,12 @@ fn exit_code(exit: AppExit) -> ExitCode {
     }
 }
 
-/// Plays a replay headless, as fast as the CPU allows, and reports.
+/// Plays a replay headless, as fast as the CPU allows, and reports. A gameplay system
+/// that fails on the way counts as a difference (exit 1), even when the state matches:
+/// a crash replay reproduces its crash, a regular one must not crash.
 fn verify(cfg: GameConfig, replay: Replay) -> ExitCode {
-    let cfg = GameConfig { headless: true, port: None, paused: true, ..cfg };
+    // Verifying writes nothing, not even a crash replay over the one being verified.
+    let cfg = GameConfig { headless: true, port: None, paused: true, crash_replays: false, ..cfg };
     let end = replay.end.tick;
     let mut app = build_app(&cfg);
     app.finish();
@@ -149,17 +159,32 @@ fn verify(cfg: GameConfig, replay: Replay) -> ExitCode {
         return ExitCode::from(2);
     }
     let started = Instant::now();
-    if let Err(e) = ai_core::sim::step(app.world_mut(), end, Duration::from_secs(24 * 3600), |_| None) {
-        eprintln!("error: {e}");
-        return ExitCode::from(2);
-    }
-    app.update(); // calls made after the last tick, then the final comparison
-    let Some(report) = app.world().resource::<AiReplay>().report().cloned() else {
-        eprintln!("error: the replay did not finish");
-        return ExitCode::from(2);
+    let failures = match ai_core::sim::step(app.world_mut(), end, Duration::from_secs(24 * 3600), |_| None) {
+        Ok(StepReport { end: StepEnd::SystemFailed(failures), .. }) => failures,
+        Ok(_) => Vec::new(),
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(2);
+        }
     };
-    println!("{report} [{end} ticks in {:.2}s]", started.elapsed().as_secs_f64());
-    if report.identical() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    app.update(); // calls made after the last tick, then the final comparison
+    let report = app.world().resource::<AiReplay>().report().cloned();
+    let took = format!("[{} ticks in {:.2}s]", ai_core::sim::tick(app.world()), started.elapsed().as_secs_f64());
+    match (&report, failures.first()) {
+        (_, Some(failure)) => {
+            let shown = report.as_ref().map(|r| format!("{r}; ")).unwrap_or_default();
+            println!("{shown}gameplay {}: {} {took}", failure.headline(), failure.message);
+            ExitCode::FAILURE
+        }
+        (Some(report), None) => {
+            println!("{report} {took}");
+            if report.identical() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+        }
+        (None, None) => {
+            eprintln!("error: the replay did not finish");
+            ExitCode::from(2)
+        }
+    }
 }
 
 /// `kill` (SIGTERM) and a closed terminal (SIGHUP) end the game the way Ctrl+C does:
