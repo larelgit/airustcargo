@@ -41,7 +41,8 @@ struct Args {
     #[arg(long, value_name = "FILE")]
     replay: Option<PathBuf>,
     /// With --replay: no window, run it to the end as fast as possible, print whether
-    /// the game still matches the recording, exit 0 (same) or 1 (diverged).
+    /// the game still matches the recording and every invariant it broke on the way,
+    /// exit 0 (same, nothing broken) or 1 (diverged, a system failed, an invariant broke).
     #[arg(long, requires = "replay")]
     verify: bool,
 }
@@ -145,7 +146,8 @@ fn exit_code(exit: AppExit) -> ExitCode {
 
 /// Plays a replay headless, as fast as the CPU allows, and reports. A gameplay system
 /// that fails on the way counts as a difference (exit 1), even when the state matches:
-/// a crash replay reproduces its crash, a regular one must not crash.
+/// a crash replay reproduces its crash, a regular one must not crash. So does every
+/// invariant broken on the way: each is listed, and playback goes on to the end.
 fn verify(cfg: GameConfig, replay: Replay) -> ExitCode {
     // Verifying writes nothing, not even a crash replay over the one being verified.
     let cfg = GameConfig { headless: true, port: None, paused: true, crash_replays: false, ..cfg };
@@ -159,26 +161,44 @@ fn verify(cfg: GameConfig, replay: Replay) -> ExitCode {
         return ExitCode::from(2);
     }
     let started = Instant::now();
-    let failures = match ai_core::sim::step(app.world_mut(), end, Duration::from_secs(24 * 3600), |_| None) {
-        Ok(StepReport { end: StepEnd::SystemFailed(failures), .. }) => failures,
-        Ok(_) => Vec::new(),
-        Err(e) => {
-            eprintln!("error: {e}");
-            return ExitCode::from(2);
+    let mut violations = Vec::new();
+    let mut failures = Vec::new();
+    while ai_core::sim::tick(app.world()) < end {
+        let left = end - ai_core::sim::tick(app.world());
+        match ai_core::sim::step(app.world_mut(), left, Duration::from_secs(24 * 3600), |_| None) {
+            Ok(StepReport { end: StepEnd::SystemFailed(failed), .. }) => {
+                failures = failed;
+                break;
+            }
+            // A rule that fired stays off unless the recording re-armed it: go on.
+            Ok(StepReport { end: StepEnd::InvariantViolated(violated), .. }) => violations.extend(violated),
+            Ok(_) => break,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::from(2);
+            }
         }
-    };
+    }
     app.update(); // calls made after the last tick, then the final comparison
+    for v in &violations {
+        println!("{}: {}", v.headline(), v.text);
+    }
     let report = app.world().resource::<AiReplay>().report().cloned();
+    let broken = match violations.len() {
+        0 => String::new(),
+        1 => "; 1 invariant violated".to_owned(),
+        n => format!("; {n} invariants violated"),
+    };
     let took = format!("[{} ticks in {:.2}s]", ai_core::sim::tick(app.world()), started.elapsed().as_secs_f64());
     match (&report, failures.first()) {
         (_, Some(failure)) => {
             let shown = report.as_ref().map(|r| format!("{r}; ")).unwrap_or_default();
-            println!("{shown}gameplay {}: {} {took}", failure.headline(), failure.message);
+            println!("{shown}gameplay {}: {}{broken} {took}", failure.headline(), failure.message);
             ExitCode::FAILURE
         }
         (Some(report), None) => {
-            println!("{report} {took}");
-            if report.identical() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+            println!("{report}{broken} {took}");
+            if report.identical() && violations.is_empty() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
         }
         (None, None) => {
             eprintln!("error: the replay did not finish");

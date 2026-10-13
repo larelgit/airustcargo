@@ -7,7 +7,7 @@
 use std::sync::Mutex;
 
 use ai_core::prelude::*;
-use ai_core::{call_tool, AiJournal, CallOutcome, JournalKind};
+use ai_core::{call_tool, AiInvariants, AiJournal, CallOutcome, JournalKind};
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use serde_json::{json, Value};
@@ -82,6 +82,22 @@ fn step_until_journal_sees_a_warning_in_its_own_tick() {
     let text = out.result.as_str().unwrap();
     assert!(text.starts_with("ran 30 ticks (0 → 30), stopped: journal: 30 [warn]"), "{text}");
     assert_eq!(ai_core::sim::tick(app.world()), 30);
+}
+
+#[test]
+fn a_logged_warning_stops_until_warning_and_breaks_a_warning_rule() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let mut app = app();
+    app.world_mut().resource_mut::<AiInvariants>().replays = false;
+    let out = ok(&mut app, "step", json!({"ticks": 100, "until": ["warning"]}));
+    let text = out.result.as_str().unwrap();
+    assert!(text.starts_with("ran 30 ticks (0 → 30), stopped: journal: 30 [warn]") && text.contains("frost cracks"), "{text}");
+    ok(&mut app, "assert_add", json!({"name": "quiet", "when": "warning"}));
+    let out = ok(&mut app, "step", json!({"ticks": 100}));
+    let text = out.result.as_str().unwrap();
+    assert_eq!(text, "ran 40 ticks (30 → 70), stopped: invariant quiet violated at tick 70");
+    let line = out.journal.iter().find(|l| l.contains("invariant quiet violated")).unwrap();
+    assert!(line.starts_with("70 [error] invariant quiet violated at tick 70: journal: 70 [warn]") && line.contains("snowflake 0"), "{line}");
 }
 
 #[test]

@@ -36,7 +36,7 @@ use crate::id::{AiId, AiIndex};
 use crate::journal::{self, AiJournal, JournalKind};
 use crate::observe::{diff, digest};
 use crate::session::{caller, Caller, Scope};
-use crate::sim;
+use crate::sim::{self, Halt, Halts};
 
 pub type ToolResult<T = String> = Result<T, String>;
 
@@ -191,6 +191,10 @@ pub struct CallOutcome {
     /// Journal entries written during the call (action tools only).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub journal: Vec<String>,
+    /// The game halted during the call: a `step` stopped at a failed gameplay system or
+    /// a violated invariant.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub halted: Option<Halt>,
 }
 
 const MAX_CHANGES: usize = 60;
@@ -199,7 +203,8 @@ const MAX_CHANGES: usize = 60;
 /// game's own dev keys, tests and replays all call tools through here.
 pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> CallOutcome {
     let caller = caller(world, agent);
-    let outcome = |world: &World, ok: bool, result: Value, changes, journal| CallOutcome {
+    let halts = |world: &World| world.get_resource::<Halts>().map_or(0, |h| h.count);
+    let outcome = |world: &World, ok: bool, result: Value, changes, journal, halts_before: u64| CallOutcome {
         tool: tool.to_owned(),
         ok,
         result,
@@ -207,24 +212,26 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
         paused: sim::is_paused(world),
         changes,
         journal,
+        halted: (halts(world) > halts_before).then(|| world.resource::<Halts>().last.clone()).flatten(),
     };
 
     let Some(entry) = world.get_resource::<AiTools>().and_then(|t| t.get(tool)) else {
         let names = world.get_resource::<AiTools>().map(|t| t.names(caller.scope)).unwrap_or_default();
         let msg = format!("unknown tool `{tool}`; available: {}", names.join(", "));
-        return outcome(world, false, Value::String(msg), Vec::new(), Vec::new());
+        return outcome(world, false, Value::String(msg), Vec::new(), Vec::new(), halts(world));
     };
     if !caller.scope.allows(entry.spec.scope) {
         let msg = format!(
             "`{tool}` needs {} scope; agent `{}` has {} scope",
             entry.spec.scope, caller.agent, caller.scope
         );
-        return outcome(world, false, Value::String(msg), Vec::new(), Vec::new());
+        return outcome(world, false, Value::String(msg), Vec::new(), Vec::new(), halts(world));
     }
 
     // What failed before this call is gameplay's (journaled, the game pauses); what
     // fails during it is the tool's.
     crate::failures::collect(world);
+    let halts_before = halts(world);
     if entry.spec.kind == ToolKind::Query {
         let result = (entry.run)(world, caller, args);
         crate::failures::blame_tool(world, tool);
@@ -232,7 +239,7 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
             Ok(v) => (true, v),
             Err(e) => (false, Value::String(teach(e, &entry.spec))),
         };
-        return outcome(world, ok, value, Vec::new(), Vec::new());
+        return outcome(world, ok, value, Vec::new(), Vec::new(), halts_before);
     }
 
     let is_action = entry.spec.kind == ToolKind::Action;
@@ -265,7 +272,7 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
         Ok(v) => (true, v),
         Err(e) => (false, Value::String(teach(e, &entry.spec))),
     };
-    outcome(world, ok, value, changes, journal)
+    outcome(world, ok, value, changes, journal, halts_before)
 }
 
 /// Bad-argument errors get the expected signature appended so the agent can fix the call.
@@ -367,7 +374,7 @@ fn type_summary(v: &Value, depth: usize) -> String {
 // --- argument types shared by tools ----------------------------------------------
 
 /// An entity id: `42` or `"e42"`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct Id(pub AiId);
 
 impl Id {

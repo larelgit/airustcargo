@@ -11,6 +11,9 @@
 //!   the caller's scope and body. Control tools (`pause`, `step`, `possess`) change
 //!   *when* things happen, not what, and are left out. Raw BRP edits
 //!   (`world.insert_components`) bypass the tools and are not recorded.
+//! - **rules**: session invariants added, removed and re-armed (`assert_*`, see
+//!   [`invariants`](crate::invariants)). They do not change the game, but playback makes
+//!   them at the same ticks, so a replay catches the same violations.
 //! - **checks**: a hash of the game state every [`CHECK_EVERY`] ticks: every AI-visible
 //!   entity's id and gameplay components (see [`state_hash`]), not the text the AI reads.
 //!
@@ -41,15 +44,19 @@ use serde_json::{json, Value};
 
 use crate::describe::gameplay_components;
 use crate::id::{AiId, AiIndex, AiVisible};
+use crate::invariants::{self, AssertOp};
 use crate::journal::{self, JournalKind};
 use crate::rng::SimSeed;
 use crate::session::{AgentSessions, Caller, Scope};
 use crate::sim::{self, SimTick};
 use crate::tools::{call_tool, register_tool, Call, ToolKind, ToolResult};
 
-/// Format tag written into every replay file. Version 2 hashes game data; version 1
-/// hashed the AI's text and cannot be checked by this build.
-pub const FORMAT: &str = "shards-replay/2";
+/// Format tag written into every replay file. Version 3 adds session rules (`assert`
+/// events); version 2 files play as before. Version 1 hashed the AI's text and cannot
+/// be checked by this build.
+pub const FORMAT: &str = "shards-replay/3";
+
+const FORMAT_V2: &str = "shards-replay/2";
 
 const FORMAT_V1: &str = "shards-replay/1";
 
@@ -91,12 +98,14 @@ pub enum ReplayEvent {
     Call { at: u64, agent: String, scope: Scope, subject: Option<AiId>, tool: String, args: Value },
     /// The new value of an input component.
     Input { at: u64, id: AiId, component: String, value: Value },
+    /// A session rule added, removed or re-armed (`assert_*`).
+    Assert { at: u64, op: AssertOp },
 }
 
 impl ReplayEvent {
     pub fn at(&self) -> u64 {
         match self {
-            ReplayEvent::Call { at, .. } | ReplayEvent::Input { at, .. } => *at,
+            ReplayEvent::Call { at, .. } | ReplayEvent::Input { at, .. } | ReplayEvent::Assert { at, .. } => *at,
         }
     }
 }
@@ -211,6 +220,15 @@ pub(crate) fn begin_action(world: &mut World, caller: &Caller, tool: &str, args:
 pub(crate) fn end_action(world: &mut World) {
     let mut replay = world.resource_mut::<AiReplay>();
     replay.action_depth = replay.action_depth.saturating_sub(1);
+}
+
+/// A change to the session's rules: recorded like a call, but it never takes over a
+/// playback (rules do not change the game).
+pub(crate) fn record_assert(world: &mut World, op: AssertOp) {
+    let at = sim::tick(world);
+    if let Some(mut replay) = world.get_resource_mut::<AiReplay>() {
+        replay.events.push(ReplayEvent::Assert { at, op });
+    }
 }
 
 /// Values of an input component at the end of the last tick, and when that was.
@@ -505,7 +523,7 @@ pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
              not the game state), so this build cannot check it; record it again"
         ));
     }
-    if replay.format != FORMAT {
+    if replay.format != FORMAT && replay.format != FORMAT_V2 {
         return Err(format!("not a replay this build can play: format `{}`, expected `{FORMAT}`", replay.format));
     }
     let tick = sim::tick(world);
@@ -585,6 +603,13 @@ fn advance_playback(world: &mut World, at_tick_start: bool) {
             ReplayEvent::Input { id, component, value, .. } => {
                 if let Some(p) = &mut world.resource_mut::<AiReplay>().playback {
                     p.due_inputs.push((id, component, value));
+                }
+            }
+            ReplayEvent::Assert { op, .. } => {
+                if let Err(e) = invariants::apply(world, &op) {
+                    // The run has gone its own way already (an entity the rule names is
+                    // missing): the checks report it.
+                    journal::log(world, JournalKind::Warn, format!("replay: rule change at tick {tick} failed: {e}"));
                 }
             }
         }
