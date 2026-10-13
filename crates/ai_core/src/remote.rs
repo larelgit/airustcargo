@@ -2,7 +2,7 @@
 //!
 //! BRP itself already exposes `world.query`, `world.get_components`,
 //! `world.insert_components`, ...; these methods add the agent-level layer on top.
-//! Every call goes through [`call_tool`], exactly like the in-process [`AiLink`](crate::AiLink).
+//! Every call goes through [`call_tool`], like the game's own dev keys and the tests.
 //!
 //! | method        | params                                   |
 //! |---------------|------------------------------------------|
@@ -11,7 +11,7 @@
 //! | `ai/step`     | `{agent?, ticks?, until?}`               |
 //! | `ai/journal`  | `{agent?, since_seq?, last?}`            |
 //! | `ai/shot`     | `{agent?, marks?, path?}`                |
-//! | `ai/tools`    | `{agent?, format?: "full"\|"llm"}`       |
+//! | `ai/tools`    | `{agent?}`                               |
 //! | `ai/session`  | `{agent, scope?, subject?}`              |
 //! | `ai/status`   | none                                     |
 //!
@@ -98,24 +98,14 @@ fn shortcut(tool: &'static str) -> impl Fn(In<Option<Value>>, &mut World) -> Brp
 struct ToolsParams {
     #[serde(default = "default_agent")]
     agent: String,
-    /// `full` (default) or `llm`: `[{name, description, input_schema}]` for an LLM API.
-    #[serde(default)]
-    format: Option<String>,
 }
 
+/// Every tool this agent may call: name, description, scope, kind, signature and
+/// the JSON Schema of its arguments.
 fn ai_tools(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
     let p: ToolsParams = parse(params)?;
     let scope = world.resource_mut::<AgentSessions>().get_or_create(&p.agent).scope;
-    let specs = world.resource::<AiTools>().specs(scope);
-    match p.format.as_deref() {
-        Some("llm") => to_brp(
-            specs
-                .iter()
-                .map(|s| json!({"name": s.name, "description": s.description, "input_schema": s.input_schema}))
-                .collect::<Vec<_>>(),
-        ),
-        _ => to_brp(specs),
-    }
+    to_brp(world.resource::<AiTools>().specs(scope))
 }
 
 #[derive(Deserialize, Default)]

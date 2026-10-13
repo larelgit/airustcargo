@@ -72,12 +72,8 @@ enum Cmd {
         /// Default: replays/tick<T>.json next to the game.
         path: Option<String>,
     },
-    /// List the tools available to this agent.
-    Tools {
-        /// LLM tool definitions ([{name, description, input_schema}]) as JSON.
-        #[arg(long)]
-        llm: bool,
-    },
+    /// List the tools available to this agent (--json: with argument schemas).
+    Tools,
     /// Everything about one entity.
     Inspect { id: String },
     /// Entities around you (or around --around).
@@ -205,9 +201,9 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             }
             return Ok(ExitCode::SUCCESS);
         }
-        Cmd::Tools { llm } => {
-            let tools = client.call("ai/tools", json!({"agent": agent, "format": if *llm { "llm" } else { "full" }}))?;
-            if *llm || cli.json {
+        Cmd::Tools => {
+            let tools = client.call("ai/tools", json!({"agent": agent}))?;
+            if cli.json {
                 println!("{}", serde_json::to_string_pretty(&tools).unwrap_or_default());
             } else {
                 for t in tools.as_array().into_iter().flatten() {

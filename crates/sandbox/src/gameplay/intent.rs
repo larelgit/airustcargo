@@ -15,7 +15,7 @@ use super::combat::{Action, AttackKind};
 
 /// Per-tick controls plus a queue of multi-tick orders.
 ///
-/// Two loops: a slow one (an LLM every few seconds, or a human) chooses *what*
+/// Two loops: a slow one (a human, or an agent calling `shards` every few seconds) chooses *what*
 /// (`orders`: "walk to the pillar", "attack e42"), the fast tick loop carries it out
 /// every tick (steering, attacking when in range).
 ///

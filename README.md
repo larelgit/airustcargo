@@ -1,13 +1,13 @@
 # Shards: игровой движок с ИИ-интеграцией (Rust + Bevy 0.20)
 
+Движок, чтобы делать игру вместе с внешними агентами-кодерами: Claude Code, Codex и им подобными.
 ИИ не разглядывает пиксели. Движок и так знает всё, что есть в кадре, поэтому
 он **описывает мир структурированным текстом** и даёт **типизированный API действий**.
-ИИ подключается к движку напрямую, без MCP-прослоек. Есть два пути:
 
-- **в процессе**: `ai_core::call_tool(world, agent, tool, args)` или канал `AiLink`
-  из любого потока (для внутриигрового LLM-агента);
-- **по localhost**: JSON-RPC методы `ai/*` поверх Bevy Remote Protocol и CLI `shards`
-  поверх них (для Claude Code, скриптов, ботов, CI).
+**Внутри движка LLM нет**: ни встроенного агента, ни локальной модели, ни API-ключей, ни вызовов
+к моделям. Игра — среда. Агент запускает её, смотрит и действует из терминала через CLI `shards`
+(JSON-RPC методы `ai/*` поверх Bevy Remote Protocol на 127.0.0.1), без MCP-прослоек. Тем же CLI
+пользуются человек в терминале, скрипты и CI. Инструкции для агентов — в [AGENTS.md](AGENTS.md).
 
 Скриншоты здесь вторичный канал, для визуальных багов. Метки `eN` на экране
 совпадают с id в тексте, а `shards shot` к каждому снимку пишет легенду: где на картинке какой id.
@@ -63,7 +63,7 @@ F12 — снимок с метками в `shots/`.
 ## Архитектура
 
 ```text
-источники намерений:  игрок · сетевой клиент · ИИ · реплей
+источники намерений:  игрок · сетевой клиент · агент (через shards) · реплей
                               │  Intent
 геймплей:             FixedUpdate, фиксированный тик, seed   (SimSet, SimRng)
                               │
@@ -73,8 +73,7 @@ ai_core:              Observe — срез мира текстом            (o
                       SimCtl  — пауза · шаг · run-until      (sim)
                       Replay  — запись входов, проигрывание  (replay)
                               │
-транспорты:           AiLink (в процессе, для внутриигровых агентов)
-                      BRP `ai/*` на 127.0.0.1 → CLI `shards` · скрипты · боты
+транспорт:            BRP `ai/*` на 127.0.0.1 → CLI `shards` ← Claude Code, Codex, скрипты, CI
 ```
 
 | crate | что это |
@@ -98,7 +97,6 @@ ai_core:              Observe — срез мира текстом            (o
 | `replay` | запись входов и action-вызовов с тика 0, проигрывание, хэши состояния, отчёт о расхождении |
 | `rng` | детерминированный RNG: счётчик по (seed, tick, AiId, salt) |
 | `session` | агенты: имя, scope (Player/Dev), «тело», курсор журнала |
-| `link` | `AiLink`: mpsc-канал к миру из любого потока |
 | `remote` | методы `ai/*` для BRP (feature `remote`) |
 | `highlight` | гизмо-подсветка и оверлей id поверх сцены (feature `render`) |
 | `shot` | снимок окна с метками `eN` и легендой в пикселях картинки (feature `render`) |
@@ -255,7 +253,7 @@ LEGEND (image pixels)
 | `ai/step` | `{agent?, ticks?, until?}` |
 | `ai/journal` | `{agent?, since_seq?, last?}` |
 | `ai/shot` | `{agent?, marks?, path?}` |
-| `ai/tools` | `{agent?, format?: "full" \| "llm"}` |
+| `ai/tools` | `{agent?}` |
 | `ai/session` | `{agent, scope?, subject?, clear_subject?}` |
 | `ai/status` | — |
 
@@ -269,7 +267,7 @@ cargo build --release -p sandbox --no-default-features --features render
 
 **CLI `shards`:** observe, step, act, shot, save-replay, tools, inspect, nearby, journal, pause,
 resume, speed, status, session, raw, wait. Аргументы `act` передаются JSON-объектом или парами `key=value`.
-Флаги `--port`/`SHARDS_PORT`, `--agent`/`SHARDS_AGENT`, `--json`.
+Флаги `--port`/`SHARDS_PORT`, `--agent`/`SHARDS_AGENT`, `--json` (у `tools` — со схемами аргументов).
 
 **Параллельные headless-инстансы.** У каждого свой порт:
 
@@ -279,8 +277,8 @@ cargo sandbox --headless --paused --seed 2 --port 15712 &
 SHARDS_PORT=15711 cargo shards step 600 --until named:player_dead
 ```
 
-**В процессе:** `ai_core::call_tool` или `AiLink::call(agent, tool, args)` из любого потока.
-Запрос обрабатывается в `Last` ближайшего кадра, ответ приходит через канал.
+**Внутри игры** та же точка входа, что за BRP, — `ai_core::call_tool(world, agent, tool, args)`.
+Её вызывают тесты, реплеи и клавиши разработчика в окне (P, N, R, F12).
 
 ## Пример сеанса (реальный вывод)
 
@@ -304,17 +302,29 @@ CHANGES
   ~ e6 Boss "Frost Warden": windup IceSlam 0.98s → windup IceSlam 0.32s
 ```
 
-## Подключение LLM
+## Агенты
 
-`shards tools --llm` (или `ai/tools {"format": "llm"}`) отдаёт `[{name, description, input_schema}]`.
-Это ровно формат `tools` в Claude Messages API, его можно передавать как есть. Цикл такой:
-`observe` → модель → `tool_use` → `ai/act` → результат (с CHANGES и JOURNAL) → модель.
+Агент — внешний агент-кодер (Claude Code, Codex, …) с терминалом. Ему не нужны ни SDK, ни
+определения инструментов: он вызывает `shards` через bash и читает вывод как текст.
 
-Ограничения из дизайн-документа:
+```bash
+cargo sandbox --headless --paused &      # игра стоит, пока агент думает
+cargo shards wait
+cargo shards observe                     # что видно
+cargo shards tools                       # что можно сделать (--json: со схемами аргументов)
+cargo shards act attack target=e6 repeat=true
+cargo shards step --until journal:winds  # в ответе CHANGES и JOURNAL
+cargo shards shot                        # визуальный баг: PNG с метками и легенда (нужно окно)
+```
 
-- в релизе API-ключ живёт только на вашем сервере, не в клиенте;
-- без API игра остаётся полностью играбельной;
-- у агента в игре scope `Player`: он ходит только через `Intent`, как человек.
+- Время стоит, пока агент думает: на паузе тики идут только по `step`.
+- По умолчанию у агента scope `Dev`. Чтобы проверить, как игра играется честно, переключите его
+  в `Player` (`shards session --scope player`): тогда он ходит только через `Intent`, как человек.
+- У каждого агента своё имя (`--agent`/`SHARDS_AGENT`), а с ним свой курсор журнала, scope и «тело».
+  Агенты могут работать с одной игрой или каждый со своим headless-инстансом на своём порту.
+- Найденный баг сохраняется реплеем (`shards save-replay`), его воспроизводит человек или CI.
+- Движок не запускает модели и не ходит к их API. Всё, что нужно агенту, добавляется как инструмент
+  или команда `shards`, а не как код, который думает за агента.
 
 ## Тесты
 
@@ -364,22 +374,21 @@ cargo shards wait && cargo shards shot
 | 3 | pause / step / BRP / CLI | ✅ |
 | 4 | скриншоты с метками | ✅ `ai/shot` / `shards shot`: PNG с метками и легенда в пикселях |
 | 5 | реестр инструментов, схемы, scope | ✅ |
-| 6 | внутриигровой агент | ◐ транспорт `AiLink` готов; LLM-цикл (tokio + Claude API) следующий |
+| 6 | внутриигровой агент | ✗ исключён: в движке нет LLM, агенты внешние (Claude Code, Codex, …) и работают через `shards` |
 | 7 | реплеи / снапшоты / параллельный headless | ◐ реплеи (запись, проигрывание, `--verify`, ветвление) и параллельные headless-инстансы работают; снапшоты впереди |
 
 ## Дальше
 
-1. Внутриигровой агент: поток tokio, два цикла (LLM ставит намерения; Rust-логика исполняет их
-   каждый тик), всё через `AiLink`, ключ API на прокси-сервере.
-2. Снапшоты через `DynamicScene`: сохраняться и откатываться в любой тик, а не только
+1. Снапшоты через `DynamicScene`: сохраняться и откатываться в любой тик, а не только
    проигрывать с нуля. Реплей тогда начинается со снапшота.
-3. Снимки без окна: камера рендерит в `Image`, `Screenshot::image` (для headless-инстансов с GPU).
-4. Дерево UI в `observe`, `path_exists` поверх навмеша.
-5. LOS для воксельного мира: подменить `AiLineOfSight` на DDA по чанкам.
-6. Hot reload (`--features dynamic`, subsecond).
+2. Снимки без окна: камера рендерит в `Image`, `Screenshot::image` (для headless-инстансов с GPU).
+3. Дерево UI в `observe`, `path_exists` поверх навмеша.
+4. LOS для воксельного мира: подменить `AiLineOfSight` на DDA по чанкам.
+5. Hot reload (`--features dynamic`, subsecond).
 
 ## Соглашения и сборка
 
+- В движке нет LLM: ни встроенных агентов, ни вызовов моделей, ни API-ключей (см. [AGENTS.md](AGENTS.md)).
 - Код и комментарии на английском, документация на русском.
 - Версия Bevy закреплена (`0.20.0`). Обновлять её стоит осознанно, отдельным шагом:
   API Bevy меняется в каждом релизе.
