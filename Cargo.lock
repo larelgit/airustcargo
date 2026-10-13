@@ -5082,6 +5082,7 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
+ "shards_script",
  "ureq",
 ]
 

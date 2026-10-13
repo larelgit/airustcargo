@@ -11,6 +11,7 @@
 //! shards shot                      # PNG of the window with eN marks, plus a legend
 //! shards save-replay               # this session as a replay file (cargo sandbox --replay F)
 //! shards --port-file F wait        # a game started with `--port 0 --port-file F`
+//! shards scenario a.scenario b.scenario   # commands, expectations, invariants: exit 0 / 1 failed / 2 error
 //! shards tools
 //! shards raw world.query '{"data":{"components":["sandbox::gameplay::combat::Health"]}}'
 //! ```
@@ -20,6 +21,9 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use serde_json::{json, Map, Value};
+use shards_script::{parse_args, parse_condition};
+
+mod scenario;
 
 /// Bevy's BRP port, used when neither `--port` nor `--port-file` says otherwise.
 const DEFAULT_PORT: u16 = 15702;
@@ -83,6 +87,16 @@ enum Cmd {
     SaveReplay {
         /// Default: replays/tick<T>.json next to the game.
         path: Option<String>,
+    },
+    /// Run scenario files against the game: shards commands with expectations and
+    /// invariants, one command per line (format: see shards_script, README "Сценарии").
+    /// Exit code 0 all passed, 1 a scenario failed, 2 usage or connection error.
+    Scenario {
+        #[arg(required = true, value_name = "FILE")]
+        files: Vec<std::path::PathBuf>,
+        /// Print only the commands that failed and the verdicts.
+        #[arg(long, short)]
+        quiet: bool,
     },
     /// List the tools available to this agent (--json: with argument schemas).
     Tools,
@@ -279,6 +293,7 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
         }
         Cmd::Act { tool, args } => act(tool, parse_args(args)?)?,
         Cmd::SaveReplay { path } => act("replay_save", json!({"path": path}))?,
+        Cmd::Scenario { files, quiet } => return scenario::run(client, files, *quiet, cli.json),
         Cmd::Shot { no_marks, out, timeout } => {
             let reply = act("shot", json!({"marks": !no_marks, "path": out}))?;
             if reply.get("ok") != Some(&Value::Bool(true)) {
@@ -432,79 +447,9 @@ fn print_outcome(out: &Value, as_json: bool) -> ExitCode {
     if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE }
 }
 
-/// One JSON object, or `key=value` pairs where values are JSON if they parse as JSON.
-fn parse_args(args: &[String]) -> Result<Value, String> {
-    if args.is_empty() {
-        return Ok(json!({}));
-    }
-    if args.len() == 1 && args[0].trim_start().starts_with('{') {
-        return serde_json::from_str(&args[0]).map_err(|e| format!("arguments are not valid JSON: {e}"));
-    }
-    let mut map = Map::new();
-    for a in args {
-        let (k, v) = a.split_once('=').ok_or_else(|| format!("expected key=value, got `{a}`"))?;
-        map.insert(k.to_owned(), loose_value(v));
-    }
-    Ok(Value::Object(map))
-}
-
-fn loose_value(v: &str) -> Value {
-    serde_json::from_str(v).unwrap_or_else(|_| Value::String(v.to_owned()))
-}
-
-/// `journal:phase` · `gone:57` · `shows:42:windup` · `near:12:42:3` ·
-/// `field:12:Health.current<30` · `named:boss_phase_2` · raw JSON.
-fn parse_condition(s: &str) -> Result<Value, String> {
-    if s.trim_start().starts_with('{') {
-        return serde_json::from_str(s).map_err(|e| format!("bad condition JSON: {e}"));
-    }
-    let (kind, rest) = s.split_once(':').ok_or_else(|| format!("bad condition `{s}`"))?;
-    Ok(match kind {
-        "journal" => json!({"journal": rest}),
-        "gone" => json!({"gone": loose_value(rest)}),
-        "named" => json!({"named": rest}),
-        "shows" => {
-            let (id, text) = rest.split_once(':').ok_or("shows:ID:TEXT")?;
-            json!({"shows": {"id": loose_value(id), "text": text}})
-        }
-        "near" => {
-            let parts: Vec<&str> = rest.split(':').collect();
-            let [a, b, m] = parts[..] else { return Err("near:A:B:METERS".into()) };
-            let meters: f32 = m.parse().map_err(|_| "near: METERS must be a number")?;
-            json!({"near": {"a": loose_value(a), "b": loose_value(b), "meters": meters}})
-        }
-        "field" => {
-            let (id, expr) = rest.split_once(':').ok_or("field:ID:Component.path<N")?;
-            let (lhs, op, rhs) = if let Some((l, r)) = expr.split_once('<') {
-                (l, "below", r)
-            } else if let Some((l, r)) = expr.split_once('>') {
-                (l, "above", r)
-            } else {
-                return Err("field condition needs < or >".into());
-            };
-            let (component, path) = lhs.split_once('.').ok_or("field: use Component.path")?;
-            let n: f64 = rhs.parse().map_err(|_| "field: threshold must be a number")?;
-            json!({"field": {"id": loose_value(id), "component": component, "path": path, op: n}})
-        }
-        _ => return Err(format!("unknown condition kind `{kind}`")),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn conditions_parse() {
-        assert_eq!(parse_condition("journal:phase").unwrap(), json!({"journal": "phase"}));
-        assert_eq!(parse_condition("gone:57").unwrap(), json!({"gone": 57}));
-        assert_eq!(parse_condition("shows:e42:windup").unwrap(), json!({"shows": {"id": "e42", "text": "windup"}}));
-        assert_eq!(parse_condition("near:12:42:3").unwrap(), json!({"near": {"a": 12, "b": 42, "meters": 3.0}}));
-        assert_eq!(
-            parse_condition("field:12:Health.current<30").unwrap(),
-            json!({"field": {"id": 12, "component": "Health", "path": "current", "below": 30.0}})
-        );
-    }
 
     #[test]
     fn the_port_comes_from_the_port_file() {
@@ -549,12 +494,5 @@ mod tests {
     fn the_ready_line_names_the_instance() {
         let status = json!({"tick": 0, "seed": 1, "instance": {"pid": 4242, "seed": 1, "port": 15711}});
         assert_eq!(ready_line(&status), "ready: tick 0 · pid 4242 · seed 1 · port 15711");
-    }
-
-    #[test]
-    fn args_parse() {
-        assert_eq!(parse_args(&["target=42".into(), "queue=true".into()]).unwrap(), json!({"target": 42, "queue": true}));
-        assert_eq!(parse_args(&["dir=W".into()]).unwrap(), json!({"dir": "W"}));
-        assert_eq!(parse_args(&[r#"{"target":{"x":1,"z":2}}"#.into()]).unwrap(), json!({"target": {"x": 1, "z": 2}}));
     }
 }
