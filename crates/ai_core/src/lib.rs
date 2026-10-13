@@ -139,8 +139,13 @@ impl Plugin for AiCorePlugin {
             if !app.is_plugin_added::<bevy_remote::RemotePlugin>() {
                 app.add_plugins(bevy_remote::RemotePlugin::default());
             }
-            app.add_plugins(bevy_remote::http::RemoteHttpPlugin::default().with_port(port));
-            remote::check_port(port);
+            app.add_plugins(bevy_remote::http::RemoteHttpPlugin::default().with_port(port))
+                .insert_resource(remote::AiInstance::new(Some(port)));
+            // Games should refuse to start on a busy port (see `remote::ensure_port_free`);
+            // this is the last word for those that do not.
+            if let Err(e) = remote::ensure_port_free(port) {
+                error!("ai_core: {e}; `shards` will not reach this game");
+            }
         }
     }
 
@@ -241,6 +246,13 @@ impl AiAppExt for App {
         replay::register_input::<C>(self);
         self
     }
+}
+
+/// `ready: tick 0 · pid 4242 · seed 1 · port 15711`: what a game prints at start, and
+/// what `shards wait` prints once the game answers.
+pub fn ready_line(tick: u64, pid: u32, seed: u64, port: Option<u16>) -> String {
+    let port = port.map_or_else(|| "no BRP".to_owned(), |p| format!("port {p}"));
+    format!("ready: tick {tick} · pid {pid} · seed {seed} · {port}")
 }
 
 /// `game::combat::Health` → `Health`.

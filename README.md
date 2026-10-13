@@ -257,7 +257,7 @@ LEGEND (image pixels)
 | `ai/shot` | `{agent?, marks?, path?}` |
 | `ai/tools` | `{agent?}` |
 | `ai/session` | `{agent, scope?, subject?, clear_subject?}` |
-| `ai/status` | — |
+| `ai/status` | — (в ответе `instance: {pid, seed, port, started_at}`: какая игра ответила) |
 
 Стандартные методы BRP (`world.query`, `world.get_components`, …) тоже доступны: `shards raw …`.
 BRP даёт полный доступ к миру, поэтому сервер слушает только 127.0.0.1 и включается feature `remote`.
@@ -269,7 +269,10 @@ cargo build --release -p sandbox --no-default-features --features render
 
 **CLI `shards`:** observe, step, act, shot, save-replay, tools, inspect, nearby, journal, pause,
 resume, speed, status, session, raw, wait. Аргументы `act` передаются JSON-объектом или парами `key=value`.
-Флаги `--port`/`SHARDS_PORT`, `--agent`/`SHARDS_AGENT`, `--json` (у `tools` — со схемами аргументов).
+Флаги `--port`/`SHARDS_PORT`, `--port-file`/`SHARDS_PORT_FILE` (порт из файла игры; `--port` важнее),
+`--agent`/`SHARDS_AGENT`, `--json` (у `tools` — со схемами аргументов). `shards wait` ждёт, пока игра
+ответит, и печатает, кто ответил: `ready: tick 0 · pid 4242 · seed 1 · port 15711` (ту же строку игра
+печатает при старте, её же первой строкой выводит `shards status`).
 
 **Параллельные headless-инстансы.** У каждого свой порт:
 
@@ -277,6 +280,20 @@ resume, speed, status, session, raw, wait. Аргументы `act` переда
 cargo sandbox --headless --paused --seed 1 --port 15711 &
 cargo sandbox --headless --paused --seed 2 --port 15712 &
 SHARDS_PORT=15711 cargo shards step 600 --until named:player_dead
+```
+
+- Занятый порт — ошибка: игра не запускается, пишет `port 15711 is busy (another game?). Pick another
+  with --port` и выходит с кодом 3. Без этой проверки вторая игра работала бы без сервера, а `shards`
+  молча управлял бы первой. Проверка доступна любой игре: `ai_core::remote::ensure_port_free(port)`.
+- Чтобы не выбирать порты вручную, `--port 0` берёт свободный порт, а `--port-file F` записывает его
+  номер в файл (при выходе по Ctrl+C или закрытию окна файл удаляется). `shards` читает его через
+  `--port-file F` или `SHARDS_PORT_FILE=F`:
+
+```bash
+cargo sandbox --headless --paused --seed 1 --port 0 --port-file /tmp/shards-a.port &
+cargo sandbox --headless --paused --seed 2 --port 0 --port-file /tmp/shards-b.port &
+SHARDS_PORT_FILE=/tmp/shards-a.port cargo shards wait   # ready: tick 0 · pid 4242 · seed 1 · port 40817
+SHARDS_PORT_FILE=/tmp/shards-a.port cargo shards step 600 --until named:player_dead
 ```
 
 **Внутри игры** та же точка входа, что за BRP, — `ai_core::call_tool(world, agent, tool, args)`.
@@ -335,12 +352,12 @@ source ~/.local/share/rustengine-sysdeps/env.sh   # пока не установ
 cargo test --workspace
 ```
 
-Всего 39 тестов:
+Всего 45 тестов:
 
-- 19 юнит-тестов `ai_core`: id (в том числе перенумерация и занятый id), журнал, RNG,
+- 23 юнит-теста `ai_core`: id (в том числе перенумерация и занятый id), журнал, RNG,
   компас и LOS, схемы, шаги симуляции, пути снимков, формат реплея и отчёт, запрет
-  BRP-правки `AiId`;
-- 2 теста парсера условий в `shards`;
+  BRP-правки `AiId`, занятый порт, `instance` в `ai/status`, файл порта;
+- 4 теста `shards`: парсер условий и аргументов, порт из `--port-file`, строка `ready`;
 - 11 сценариев `crates/sandbox/tests/scenarios.rs`:
   - детерминизм и разные seed;
   - одинаковый результат при пошаговом и цельном прогоне;

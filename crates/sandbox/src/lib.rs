@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use ai_core::prelude::*;
 use ai_core::AiPerception;
-use bevy::app::ScheduleRunnerPlugin;
+use bevy::app::{ScheduleRunnerPlugin, TerminalCtrlCHandlerPlugin};
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
 
@@ -46,7 +46,8 @@ pub fn build_app(cfg: &GameConfig) -> App {
     let log = LogPlugin { custom_layer: ai_core::capture_log_layer, ..default() };
     if cfg.headless {
         let frame = Duration::from_secs_f64(1.0 / 60.0);
-        app.add_plugins((MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(frame)), log));
+        // Ctrl+C exits through `AppExit`, so files written at start (--port-file) are removed.
+        app.add_plugins((MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(frame)), TerminalCtrlCHandlerPlugin, log));
     } else {
         #[cfg(feature = "render")]
         {

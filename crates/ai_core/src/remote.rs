@@ -13,7 +13,7 @@
 //! | `ai/shot`     | `{agent?, marks?, path?}`                |
 //! | `ai/tools`    | `{agent?}`                               |
 //! | `ai/session`  | `{agent, scope?, subject?}`              |
-//! | `ai/status`   | none                                     |
+//! | `ai/status`   | none (`instance`: pid, seed, port, start) |
 //!
 //! Full world access: compile it into dev builds only, it listens on 127.0.0.1.
 
@@ -132,12 +132,17 @@ fn ai_session(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
 }
 
 fn ai_status(In(_): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let seed = world.get_resource::<SimSeed>().map(|s| s.0);
+    let instance = world.get_resource::<AiInstance>().map(|i| {
+        json!({"pid": i.pid, "seed": seed, "port": i.port, "started_at": i.started_at})
+    });
     to_brp(json!({
+        "instance": instance,
         "tick": sim::tick(world),
         "paused": sim::is_paused(world),
         "speed": sim::speed(world),
         "tick_hz": (1.0 / world.resource::<Time<Fixed>>().timestep().as_secs_f64() * 1000.0).round() / 1000.0,
-        "seed": world.get_resource::<SimSeed>().map(|s| s.0),
+        "seed": seed,
         "entities": world.resource::<AiIndex>().len(),
         "journal_seq": world.resource::<AiJournal>().last_seq(),
         "agents": world.resource::<AgentSessions>().names(),
@@ -187,10 +192,79 @@ fn guard_ai_id(world: &mut World) {
     world.resource_mut::<RemoteMethods>().insert(method, RemoteMethodSystemId::Instant(guarded));
 }
 
-/// Fails fast with a clear message: Bevy's HTTP server drops bind errors silently.
-pub(crate) fn check_port(port: u16) {
-    if let Err(e) = std::net::TcpListener::bind(("127.0.0.1", port)) {
-        error!("ai_core: BRP port {port} is not available ({e}); `shards` will not reach this game. Pick another with --port.");
+/// `Ok` if nothing listens on `127.0.0.1:port`. Check before building the app:
+/// Bevy's HTTP server loses its bind error in a background task, and the game would
+/// run without a server while `shards` talks to whatever holds the port.
+pub fn ensure_port_free(port: u16) -> Result<(), String> {
+    match std::net::TcpListener::bind(("127.0.0.1", port)) {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            Err(format!("port {port} is busy (another game?). Pick another with --port"))
+        }
+        Err(e) => Err(format!("port {port} is not available ({e}). Pick another with --port")),
+    }
+}
+
+/// A port nobody listens on right now (`--port 0`): bind port 0, take the number, close.
+pub fn free_port() -> Result<u16, String> {
+    std::net::TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|l| l.local_addr())
+        .map(|a| a.port())
+        .map_err(|e| format!("cannot find a free port: {e}"))
+}
+
+/// This running game, as `ai/status` reports it (`instance`).
+#[derive(Resource, Clone, Debug)]
+pub struct AiInstance {
+    pub pid: u32,
+    pub port: Option<u16>,
+    /// UTC, e.g. `2026-10-13T19:28:05Z`.
+    pub started_at: String,
+}
+
+impl AiInstance {
+    pub fn new(port: Option<u16>) -> Self {
+        Self { pid: std::process::id(), port, started_at: utc_timestamp(std::time::SystemTime::now()) }
+    }
+}
+
+/// `2026-10-13T19:28:05Z` (no date crate for one timestamp).
+fn utc_timestamp(time: std::time::SystemTime) -> String {
+    let secs = time.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let (days, rem) = ((secs / 86_400) as i64, secs % 86_400);
+    // Days since 1970-01-01 to a civil date (H. Hinnant's `civil_from_days`).
+    let z = days + 719_468;
+    let (era, doe) = (z.div_euclid(146_097), z.rem_euclid(146_097));
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem / 60 % 60, rem % 60)
+}
+
+/// The game's port written to a file (`--port-file`), so parallel agents can start
+/// games on `--port 0` and find them. Removed again when dropped (the game exits).
+pub struct PortFile(std::path::PathBuf);
+
+impl PortFile {
+    /// Writes `port` to `path` atomically: readers see the whole number or nothing.
+    pub fn write(path: &std::path::Path, port: u16) -> Result<Self, String> {
+        let part = path.with_extension("part");
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        }
+        std::fs::write(&part, format!("{port}\n"))
+            .and_then(|()| std::fs::rename(&part, path))
+            .map_err(|e| format!("cannot write the port file {}: {e}", path.display()))?;
+        Ok(Self(path.to_owned()))
+    }
+}
+
+impl Drop for PortFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
     }
 }
 
@@ -219,5 +293,51 @@ mod tests {
         let refused = call(&mut world, mutate, params("ai_core::id::AiId")).unwrap_err();
         assert_eq!(refused.message, AI_ID_IS_MANAGED);
         assert_eq!(call(&mut world, mutate, params("game::Health")).unwrap(), json!("mutated"));
+    }
+
+    #[test]
+    fn a_busy_port_is_reported_with_the_fix() {
+        let taken = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = taken.local_addr().unwrap().port();
+        let err = ensure_port_free(port).unwrap_err();
+        assert_eq!(err, format!("port {port} is busy (another game?). Pick another with --port"));
+        drop(taken);
+        assert_eq!(ensure_port_free(port), Ok(()));
+        assert_ne!(free_port().unwrap(), 0);
+    }
+
+    #[test]
+    fn status_names_the_instance() {
+        let port = free_port().unwrap();
+        let mut app = App::new();
+        app.add_plugins(bevy::time::TimePlugin)
+            .add_plugins(crate::AiCorePlugin { remote_port: Some(port), ..Default::default() });
+        app.finish();
+        app.cleanup();
+        let status = call(app.world_mut(), "ai/status", json!({})).unwrap();
+        let instance = &status["instance"];
+        assert_eq!(instance["pid"], json!(std::process::id()));
+        assert_eq!(instance["port"], json!(port));
+        assert_eq!(instance["seed"], json!(crate::SimConfig::default().seed));
+        assert!(instance["started_at"].as_str().is_some_and(|t| t.ends_with('Z')), "{instance}");
+    }
+
+    #[test]
+    fn timestamps_are_utc_iso_8601() {
+        let at = |secs: u64| utc_timestamp(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs));
+        assert_eq!(at(0), "1970-01-01T00:00:00Z");
+        assert_eq!(at(951_782_400), "2000-02-29T00:00:00Z");
+        assert_eq!(at(1_760_383_685), "2025-10-13T19:28:05Z");
+    }
+
+    #[test]
+    fn the_port_file_holds_the_port_while_the_game_runs() {
+        let dir = std::env::temp_dir().join(format!("ai_core_port_file_{}", std::process::id()));
+        let path = dir.join("game.port");
+        let file = PortFile::write(&path, 15711).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "15711\n");
+        drop(file);
+        assert!(!path.exists(), "removed when the game exits");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

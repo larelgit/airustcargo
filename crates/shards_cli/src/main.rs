@@ -10,6 +10,7 @@
 //! shards act dodge dir=W
 //! shards shot                      # PNG of the window with eN marks, plus a legend
 //! shards save-replay               # this session as a replay file (cargo sandbox --replay F)
+//! shards --port-file F wait        # a game started with `--port 0 --port-file F`
 //! shards tools
 //! shards raw world.query '{"data":{"components":["sandbox::gameplay::combat::Health"]}}'
 //! ```
@@ -20,12 +21,19 @@ use std::time::{Duration, Instant};
 use clap::{Parser, Subcommand};
 use serde_json::{json, Map, Value};
 
+/// Bevy's BRP port, used when neither `--port` nor `--port-file` says otherwise.
+const DEFAULT_PORT: u16 = 15702;
+
 #[derive(Parser)]
 #[command(name = "shards", version, about = "Drive a running game through its ai/* BRP methods")]
 struct Cli {
-    /// Game's BRP port (each parallel instance gets its own).
-    #[arg(long, short, global = true, env = "SHARDS_PORT", default_value_t = 15702)]
-    port: u16,
+    /// Game's BRP port (each parallel instance gets its own). Default 15702.
+    #[arg(long, short, global = true, env = "SHARDS_PORT")]
+    port: Option<u16>,
+    /// Read the port from the file the game wrote (`cargo sandbox --port 0 --port-file F`).
+    /// `--port` wins when both are given.
+    #[arg(long, global = true, env = "SHARDS_PORT_FILE", value_name = "PATH")]
+    port_file: Option<std::path::PathBuf>,
     /// Agent name: each agent has its own journal cursor, scope and body.
     #[arg(long, short, global = true, env = "SHARDS_AGENT", default_value = "dev")]
     agent: String,
@@ -149,14 +157,67 @@ impl Client {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let client = Client::new(cli.port);
-    match run(&cli, &client) {
+    let result = match &cli.cmd {
+        // The game may still be starting: its port file may not exist yet.
+        Cmd::Wait { timeout } => wait(&cli, Duration::from_secs(*timeout)),
+        _ => cli.port().map(Client::new).and_then(|client| run(&cli, &client)),
+    };
+    match result {
         Ok(code) => code,
         Err(e) => {
             eprintln!("error: {e}");
             ExitCode::from(2)
         }
     }
+}
+
+impl Cli {
+    /// `--port`, else the number in `--port-file`, else the default.
+    fn port(&self) -> Result<u16, String> {
+        match (self.port, &self.port_file) {
+            (Some(port), _) => Ok(port),
+            (None, Some(file)) => read_port_file(file),
+            (None, None) => Ok(DEFAULT_PORT),
+        }
+    }
+}
+
+fn read_port_file(path: &std::path::Path) -> Result<u16, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read the port file {} ({e}); is the game running with --port-file?", path.display()))?;
+    text.trim().parse().map_err(|_| format!("the port file {} holds no port number: `{}`", path.display(), text.trim()))
+}
+
+/// Polls `ai/status` until the game answers, then prints who answered.
+fn wait(cli: &Cli, timeout: Duration) -> Result<ExitCode, String> {
+    let start = Instant::now();
+    loop {
+        let answer = cli.port().and_then(|port| Client::new(port).call("ai/status", Value::Null));
+        match answer {
+            Ok(status) => {
+                println!("{}", ready_line(&status));
+                return Ok(ExitCode::SUCCESS);
+            }
+            Err(_) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(250)),
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// `ready: tick 0 · pid 4242 · seed 1 · port 15711`, the line the game prints at start.
+fn ready_line(status: &Value) -> String {
+    let field = |v: &Value| match v {
+        Value::Null => "?".to_owned(),
+        other => other.to_string(),
+    };
+    let instance = &status["instance"];
+    format!(
+        "ready: tick {} · pid {} · seed {} · port {}",
+        field(&status["tick"]),
+        field(&instance["pid"]),
+        field(&status["seed"]),
+        field(&instance["port"])
+    )
 }
 
 fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
@@ -236,6 +297,9 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
         Cmd::Speed { x } => act("speed", json!({"x": x}))?,
         Cmd::Status => {
             let s = client.call("ai/status", Value::Null)?;
+            if !cli.json {
+                println!("{}", ready_line(&s));
+            }
             println!("{}", serde_json::to_string_pretty(&s).unwrap_or_default());
             return Ok(ExitCode::SUCCESS);
         }
@@ -255,21 +319,7 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             println!("{}", serde_json::to_string_pretty(&client.call(method, params)?).unwrap_or_default());
             return Ok(ExitCode::SUCCESS);
         }
-        Cmd::Wait { timeout } => {
-            let start = Instant::now();
-            loop {
-                match client.call("ai/status", Value::Null) {
-                    Ok(s) => {
-                        println!("ready: tick {}", s.get("tick").cloned().unwrap_or_default());
-                        return Ok(ExitCode::SUCCESS);
-                    }
-                    Err(_) if start.elapsed() < Duration::from_secs(*timeout) => {
-                        std::thread::sleep(Duration::from_millis(250));
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-        }
+        Cmd::Wait { timeout } => return wait(cli, Duration::from_secs(*timeout)),
     };
     Ok(print_outcome(&outcome, cli.json))
 }
@@ -416,6 +466,32 @@ mod tests {
             parse_condition("field:12:Health.current<30").unwrap(),
             json!({"field": {"id": 12, "component": "Health", "path": "current", "below": 30.0}})
         );
+    }
+
+    #[test]
+    fn the_port_comes_from_the_port_file() {
+        let dir = std::env::temp_dir().join(format!("shards_port_file_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("game.port");
+        std::fs::write(&file, "15711\n").unwrap();
+        assert_eq!(read_port_file(&file), Ok(15711));
+
+        let cli = |args: &[&str]| Cli::try_parse_from([&["shards"], args, &["status"]].concat()).unwrap();
+        let path = file.display().to_string();
+        assert_eq!(cli(&["--port-file", &path]).port(), Ok(15711));
+        assert_eq!(cli(&["--port-file", &path, "--port", "15799"]).port(), Ok(15799), "--port wins");
+
+        std::fs::write(&file, "busy").unwrap();
+        assert!(read_port_file(&file).unwrap_err().contains("holds no port number"));
+        std::fs::remove_file(&file).unwrap();
+        assert!(read_port_file(&file).unwrap_err().contains("is the game running with --port-file?"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_ready_line_names_the_instance() {
+        let status = json!({"tick": 0, "seed": 1, "instance": {"pid": 4242, "seed": 1, "port": 15711}});
+        assert_eq!(ready_line(&status), "ready: tick 0 · pid 4242 · seed 1 · port 15711");
     }
 
     #[test]
