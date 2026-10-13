@@ -48,6 +48,9 @@ cargo shards save-replay                # сессия с тика 0 → replays
   (журнал, дифф, реплей), `control` управляет временем и сессией.
 - ИИ видит только сущности с `AiVisible` (его даёт `AiKind`). Что о них сказано, решают
   describe-функции (`register_ai_component`, `register_ai_describer`).
+- `AiId` назначает движок. Не пишите его на месте (`get_mut`, `set`, BRP `world.mutate_components`):
+  индекс «id → сущность» ведут хуки `on_insert` и `on_discard`. Вставка нового `AiId` перенумеровывает
+  сущность, а старый id получает надгробие `renumbered to eN`.
 
 ## Проверка изменений
 

@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::describe::facts;
+use crate::id::{AiId, AI_ID_IS_MANAGED};
 use crate::journal::{self, AiJournal, JournalKind};
 use crate::observe::{self, entity_line, ObserveOptions};
 use crate::session::{AgentSessions, Scope};
@@ -397,6 +398,10 @@ fn set_tool(In(call): In<Call<SetArgs>>, world: &mut World) -> ToolResult {
     let app_registry = world.resource::<AppTypeRegistry>().clone();
     let registry = app_registry.read();
     let reg = find_registration(world, &registry, e, &component)?;
+    if reg.type_id() == std::any::TypeId::of::<AiId>() {
+        // An in-place write would bypass the hooks that keep `AiIndex` in sync.
+        return Err(AI_ID_IS_MANAGED.into());
+    }
     let reflect_component = reg.data::<ReflectComponent>().ok_or("not a reflectable component")?;
     let name = reg_name(reg);
     let mut entity = world.entity_mut(e);
@@ -459,8 +464,9 @@ fn reflectable_components(world: &World, registry: &TypeRegistry, entity: Entity
         .filter_map(|(_, info)| info.type_id())
         .filter_map(|t| registry.get(t))
         .filter(|r| r.data::<ReflectComponent>().is_some())
+        // Our own markers are noise here; a game's `AimAssist` is not.
+        .filter(|r| !r.type_info().type_path().starts_with("ai_core::"))
         .map(reg_name)
-        .filter(|n| !n.starts_with("Ai"))
         .collect();
     names.sort();
     names

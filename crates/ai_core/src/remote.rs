@@ -22,7 +22,7 @@ use bevy_remote::{BrpError, BrpResult, RemoteMethodSystemId, RemoteMethods};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::id::AiIndex;
+use crate::id::{AiId, AiIndex, AI_ID_IS_MANAGED};
 use crate::journal::AiJournal;
 use crate::rng::SimSeed;
 use crate::session::{AgentSessions, Scope};
@@ -167,11 +167,57 @@ pub(crate) fn register_methods(world: &mut World) {
     for (name, id) in methods {
         table.insert(name, RemoteMethodSystemId::Instant(id));
     }
+    guard_ai_id(world);
+}
+
+/// BRP's `world.mutate_components` writes in place, past the hooks that keep
+/// [`AiIndex`] in sync, so it refuses `AiId` the way the `set` tool does.
+fn guard_ai_id(world: &mut World) {
+    let method = bevy_remote::builtin_methods::BRP_MUTATE_COMPONENTS_METHOD;
+    let Some(&RemoteMethodSystemId::Instant(mutate)) = world.resource::<RemoteMethods>().get(method) else {
+        return;
+    };
+    let guarded = world.register_system(move |In(params): In<Option<Value>>, world: &mut World| -> BrpResult {
+        let component = params.as_ref().and_then(|p| p.get("component")).and_then(Value::as_str);
+        if component == Some(<AiId as TypePath>::type_path()) {
+            return Err(BrpError::component_error(AI_ID_IS_MANAGED));
+        }
+        world.run_system_with(mutate, params).unwrap_or_else(|e| Err(BrpError::internal(e)))
+    });
+    world.resource_mut::<RemoteMethods>().insert(method, RemoteMethodSystemId::Instant(guarded));
 }
 
 /// Fails fast with a clear message: Bevy's HTTP server drops bind errors silently.
 pub(crate) fn check_port(port: u16) {
     if let Err(e) = std::net::TcpListener::bind(("127.0.0.1", port)) {
         error!("ai_core: BRP port {port} is not available ({e}); `shards` will not reach this game. Pick another with --port.");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn call(world: &mut World, method: &str, params: Value) -> BrpResult {
+        let Some(&RemoteMethodSystemId::Instant(id)) = world.resource::<RemoteMethods>().get(method) else {
+            panic!("{method} is not an instant method");
+        };
+        world.run_system_with(id, Some(params)).expect("method system runs")
+    }
+
+    #[test]
+    fn brp_mutation_of_ai_id_is_refused() {
+        let mut world = World::new();
+        let original = world.register_system(|In(_): In<Option<Value>>| -> BrpResult { Ok(json!("mutated")) });
+        let mut methods = RemoteMethods::new();
+        methods.insert(bevy_remote::builtin_methods::BRP_MUTATE_COMPONENTS_METHOD, RemoteMethodSystemId::Instant(original));
+        world.insert_resource(methods);
+        guard_ai_id(&mut world);
+
+        let mutate = bevy_remote::builtin_methods::BRP_MUTATE_COMPONENTS_METHOD;
+        let params = |component: &str| json!({"entity": 1, "component": component, "path": "", "value": 99});
+        let refused = call(&mut world, mutate, params("ai_core::id::AiId")).unwrap_err();
+        assert_eq!(refused.message, AI_ID_IS_MANAGED);
+        assert_eq!(call(&mut world, mutate, params("game::Health")).unwrap(), json!("mutated"));
     }
 }

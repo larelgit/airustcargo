@@ -155,6 +155,66 @@ fn errors_teach_the_fix() {
     assert!(text(&gone).contains("e7 no longer exists") && text(&gone).contains("despawned at tick 0"), "{}", text(&gone));
 }
 
+/// Ids listed in the entity sections of an observation (YOU, SEEN, NOT IN VIEW,
+/// LANDMARKS), in order of appearance.
+fn listed_ids(observation: &str) -> Vec<String> {
+    observation
+        .lines()
+        .take_while(|l| !l.starts_with("SINCE"))
+        .skip(1) // header
+        .flat_map(|l| l.split([' ', '·']))
+        .filter(|t| t.starts_with('e') && ai_core::AiId::parse(t).is_some())
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn ai_ids_are_managed_by_the_engine() {
+    let mut app = sandbox::test_app(42);
+    let refused = act(&mut app, "set", json!({"id": "e7", "component": "AiId", "value": 99}));
+    assert!(!refused.ok, "set must not write AiId");
+    assert_eq!(text(&refused), "AiId is managed by the engine; despawn and spawn instead");
+    ok(&mut app, "inspect", json!({"id": "e7"}));
+    let before = listed_ids(text(&ok(&mut app, "observe", json!({}))));
+
+    // A raw insert over the old value (what BRP `world.insert_components` does).
+    let skeleton = app.world().resource::<ai_core::AiIndex>().get(AiId(7)).unwrap();
+    app.world_mut().entity_mut(skeleton).insert(AiId(99));
+    let moved = ok(&mut app, "inspect", json!({"id": "e99"}));
+    assert!(text(&moved).starts_with("e99 Skeleton"), "{}", text(&moved));
+    let old = act(&mut app, "inspect", json!({"id": "e7"}));
+    assert!(!old.ok && text(&old).contains("e7 no longer exists (Skeleton renumbered to e99 at tick 0)"), "{}", old.result);
+
+    let after = listed_ids(text(&ok(&mut app, "observe", json!({}))));
+    let expected: Vec<String> = before.iter().map(|id| if id == "e7" { "e99".into() } else { id.clone() }).collect();
+    let (mut after_sorted, mut expected_sorted) = (after.clone(), expected);
+    after_sorted.sort();
+    expected_sorted.sort();
+    assert_eq!(after_sorted, expected_sorted, "every entity once, under its new id: {after:?}");
+    ok(&mut app, "step", json!({"ticks": 30}));
+    ok(&mut app, "inspect", json!({"id": "e99"}));
+}
+
+/// A game component whose name happens to start with `Ai`.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+struct AimAssist {
+    strength: f32,
+}
+
+#[test]
+fn set_hints_list_game_components_named_ai() {
+    let mut app = sandbox::test_app(42);
+    app.register_type::<AimAssist>();
+    let player = app.world().resource::<ai_core::AiIndex>().get(AiId(5)).unwrap();
+    app.world_mut().entity_mut(player).insert(AimAssist { strength: 0.5 });
+    let hint = act(&mut app, "set", json!({"id": PLAYER, "component": "Mana", "value": 5}));
+    let hint = text(&hint);
+    assert!(hint.contains("AimAssist") && hint.contains("Health"), "{hint}");
+    assert!(!hint.contains("AiId") && !hint.contains("AiPlayer"), "engine markers stay hidden: {hint}");
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "AimAssist", "path": "strength", "value": 0.9}));
+}
+
 #[test]
 fn player_scope_plays_fair() {
     let mut app = sandbox::test_app(42);

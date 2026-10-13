@@ -86,7 +86,7 @@ ai_core:              Observe — срез мира текстом            (o
 
 | модуль | ответственность |
 |---|---|
-| `id` | `AiId` (`e42`): стабильный монотонный id, никогда не переиспользуется; надгробия для удалённых |
+| `id` | `AiId` (`e42`): стабильный монотонный id, никогда не переиспользуется; надгробия для удалённых. Id назначает только движок: `set` и BRP `world.mutate_components` его не меняют, а новая вставка перенумеровывает сущность (надгробие `renumbered to e99`) |
 | `describe` | только явно зарегистрированные компоненты видны ИИ, у каждого короткий describe |
 | `observe` | текстовый срез: YOU / SEEN (по угрозе) / NOT IN VIEW / LANDMARKS / SINCE; `inspect`, `nearby`, диффы |
 | `spatial` | позиции относительно игрока («8.4m NE»), line of sight по `AiOccluder` (подменяемо) |
@@ -157,7 +157,9 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 - **Ошибки подсказывают, как исправить вызов:**
   ``bad arguments for teleport: missing field `x`. Expected: teleport(id: integer|string, x: number, y?: number, z: number)``,
   `e57 no longer exists (Skeleton despawned at tick 812); live: …`,
-  ``unknown component `Mana`; this entity has: Health, …``.
+  `e7 no longer exists (Skeleton renumbered to e99 at tick 40)`,
+  ``unknown component `Mana`; this entity has: Health, …``,
+  `AiId is managed by the engine; despawn and spawn instead`.
 - **Паника в инструменте не роняет игру.** Агент получает ошибку, запись уходит в журнал,
   инструмент перерегистрируется при следующем вызове.
 
@@ -333,17 +335,20 @@ source ~/.local/share/rustengine-sysdeps/env.sh   # пока не установ
 cargo test --workspace
 ```
 
-Всего 34 теста:
+Всего 39 тестов:
 
-- 16 юнит-тестов `ai_core`: id, журнал, RNG, компас и LOS, схемы, шаги симуляции,
-  пути снимков, формат реплея и отчёт;
+- 19 юнит-тестов `ai_core`: id (в том числе перенумерация и занятый id), журнал, RNG,
+  компас и LOS, схемы, шаги симуляции, пути снимков, формат реплея и отчёт, запрет
+  BRP-правки `AiId`;
 - 2 теста парсера условий в `shards`;
-- 9 сценариев `crates/sandbox/tests/scenarios.rs`:
+- 11 сценариев `crates/sandbox/tests/scenarios.rs`:
   - детерминизм и разные seed;
   - одинаковый результат при пошаговом и цельном прогоне;
   - полный порядок систем и контрольный тест к этой проверке;
   - фаза 2 босса через `set` + `step until named:boss_phase_2`;
   - подсказывающие ошибки;
+  - `AiId` нельзя переписать через `set`, а вставка нового id перенумеровывает сущность без дублей
+    в `observe`; игровой `AimAssist` виден в подсказке `set`;
   - права scope;
   - паника в инструменте;
 - 7 сценариев `crates/sandbox/tests/replays.rs`:
