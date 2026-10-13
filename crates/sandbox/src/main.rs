@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use ai_core::replay::{self, Replay};
 use ai_core::sim::{StepEnd, StepReport};
-use ai_core::AiReplay;
+use ai_core::{AiReplay, CheckDetail};
 use bevy::app::AppExit;
 use clap::Parser;
 use sandbox::{build_app, GameConfig};
@@ -45,6 +45,20 @@ struct Args {
     /// exit 0 (same, nothing broken) or 1 (diverged, a system failed, an invariant broke).
     #[arg(long, requires = "replay")]
     verify: bool,
+    /// Ticks between replay checks, stored in the replay. Record with 1 and `--verify`
+    /// names the exact tick a changed build diverges at. A replay checks at its own.
+    #[arg(
+        long,
+        value_name = "TICKS",
+        default_value_t = ai_core::replay::CHECK_EVERY,
+        value_parser = clap::value_parser!(u64).range(1..),
+        conflicts_with = "replay"
+    )]
+    check_every: u64,
+    /// What each replay check keeps to name what diverged: components (entities,
+    /// components and their values), entities, or none (the tick only).
+    #[arg(long, value_name = "DETAIL", default_value_t = CheckDetail::Components, conflicts_with = "replay")]
+    check_detail: CheckDetail,
 }
 
 fn main() -> ExitCode {
@@ -63,6 +77,8 @@ fn main() -> ExitCode {
         paused: args.paused,
         tick_hz: args.hz,
         crash_replays: true,
+        check_every: args.check_every,
+        check_detail: args.check_detail,
     };
     if let Some(r) = &replay {
         cfg.seed = r.seed;
@@ -190,15 +206,23 @@ fn verify(cfg: GameConfig, replay: Replay) -> ExitCode {
         n => format!("; {n} invariants violated"),
     };
     let took = format!("[{} ticks in {:.2}s]", ai_core::sim::tick(app.world()), started.elapsed().as_secs_f64());
+    // What diverged, then its values in this run: `  e6 now: Health { … }`.
+    let values = |report: &Option<ai_core::ReplayReport>| {
+        for line in report.iter().flat_map(|r| r.value_lines()) {
+            println!("  {line}");
+        }
+    };
     match (&report, failures.first()) {
         (_, Some(failure)) => {
-            let shown = report.as_ref().map(|r| format!("{r}; ")).unwrap_or_default();
+            let shown = report.as_ref().map(|r| format!("{}; ", r.headline())).unwrap_or_default();
             println!("{shown}gameplay {}: {}{broken} {took}", failure.headline(), failure.message);
+            values(&report);
             ExitCode::FAILURE
         }
-        (Some(report), None) => {
-            println!("{report}{broken} {took}");
-            if report.identical() && violations.is_empty() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+        (Some(r), None) => {
+            println!("{}{broken} {took}", r.headline());
+            values(&report);
+            if r.identical() && violations.is_empty() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
         }
         (None, None) => {
             eprintln!("error: the replay did not finish");

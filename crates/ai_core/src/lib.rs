@@ -73,7 +73,9 @@ pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible
 pub use invariants::{AiInvariants, Violation};
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
 pub use observe::{AiCamera, AiPerception, ObserveOptions};
-pub use replay::{AiReplay, Replay, ReplayHashing, ReplayReport};
+pub use replay::{
+    AiReplay, Breakdown, CheckDetail, Divergence, EntityChange, EntityDiff, Replay, ReplayHashing, ReplayReport,
+};
 pub use rng::{DetRng, SimRng, SimSeed};
 pub use session::{AgentSession, AgentSessions, Caller, Scope};
 pub use sim::{Halt, SimConfig, SimSet, SimTick, TickClock};
@@ -104,6 +106,11 @@ pub struct AiCorePlugin {
     /// reproduce it with; after a violated invariant, as
     /// `replays/invariant-<name>-tick<N>.json`.
     pub crash_replays: bool,
+    /// Ticks between replay checks ([`replay::CHECK_EVERY`] by default), stored in every
+    /// replay saved. Record with 1 to have a divergence named at its exact tick.
+    pub check_every: u64,
+    /// What each replay check keeps next to its hash, to name what diverged.
+    pub check_detail: CheckDetail,
 }
 
 impl Default for AiCorePlugin {
@@ -114,6 +121,8 @@ impl Default for AiCorePlugin {
             remote_port: Some(DEFAULT_PORT),
             catch_system_panics: true,
             crash_replays: true,
+            check_every: replay::CHECK_EVERY,
+            check_detail: CheckDetail::default(),
         }
     }
 }
@@ -154,7 +163,7 @@ impl Plugin for AiCorePlugin {
         }
 
         builtin::register(app.world_mut());
-        replay::plugin(app);
+        replay::plugin(app, self.check_every, self.check_detail);
         failures::plugin(app, self.catch_system_panics, self.crash_replays);
         invariants::plugin(app, self.crash_replays);
 

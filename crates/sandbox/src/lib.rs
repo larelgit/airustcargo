@@ -11,7 +11,7 @@ pub mod visuals;
 use std::time::Duration;
 
 use ai_core::prelude::*;
-use ai_core::AiPerception;
+use ai_core::{AiPerception, CheckDetail};
 use bevy::app::{ScheduleRunnerPlugin, TerminalCtrlCHandlerPlugin};
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
@@ -27,6 +27,10 @@ pub struct GameConfig {
     pub tick_hz: f64,
     /// A gameplay failure saves `replays/crash-tick<N>.json`.
     pub crash_replays: bool,
+    /// Ticks between replay checks, stored in the replay (`--check-every`).
+    pub check_every: u64,
+    /// What each replay check keeps to name what diverged (`--check-detail`).
+    pub check_detail: CheckDetail,
 }
 
 impl Default for GameConfig {
@@ -38,6 +42,8 @@ impl Default for GameConfig {
             paused: false,
             tick_hz: 60.0,
             crash_replays: true,
+            check_every: ai_core::replay::CHECK_EVERY,
+            check_detail: CheckDetail::default(),
         }
     }
 }
@@ -48,6 +54,8 @@ fn ai_plugin(cfg: &GameConfig) -> AiCorePlugin {
         perception: AiPerception::default(),
         remote_port: cfg.port,
         crash_replays: cfg.crash_replays,
+        check_every: cfg.check_every,
+        check_detail: cfg.check_detail,
         ..default()
     }
 }
@@ -82,7 +90,13 @@ pub fn build_app(cfg: &GameConfig) -> App {
 /// Paused, headless, no logging, no HTTP and no crash replay files: drive it with
 /// `ai_core::call_tool`.
 pub fn test_app(seed: u64) -> App {
-    let cfg = GameConfig { headless: true, seed, port: None, paused: true, crash_replays: false, ..default() };
+    test_app_with(GameConfig { seed, ..default() })
+}
+
+/// [`test_app`] with other settings (seed, tick rate, replay checks); the window, the
+/// HTTP server and crash replay files stay off, and the game starts paused.
+pub fn test_app_with(cfg: GameConfig) -> App {
+    let cfg = GameConfig { headless: true, port: None, paused: true, crash_replays: false, ..cfg };
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
         .add_plugins(ai_plugin(&cfg))
