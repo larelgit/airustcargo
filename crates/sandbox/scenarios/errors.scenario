@@ -1,0 +1,41 @@
+# A bad call is explained, never silently dropped: every error says what was wrong and how
+# the call should look. `act?` lets a call fail; `expect result` reads the message.
+#
+# Needs no seed and changes nothing in the arena, so it passes in any game state.
+
+# a tool that does not exist lists the ones that do
+act? fly
+expect result contains "unknown tool `fly`; available:"
+expect result contains "move_to"
+
+# a missing argument: the message ends with the signature to call it by
+act? teleport id=e5
+expect result contains "missing field `x`"
+expect result contains "Expected: teleport(id: integer|string"
+
+# an entity that does not exist
+act? inspect id=99
+expect result contains "e99 does not exist"
+
+# a component the entity does not have
+act? set id=e5 component=Mana value=5
+expect result contains "unknown component `Mana`; this entity has:"
+expect result contains "Health"
+
+# a stop condition that does not exist
+act? step until='[{"named":"nope"}]'
+expect result contains "unknown condition `nope`; known: boss_phase_2, player_dead"
+
+# a player-scope agent plays fair: no cheats, no control over time
+session --agent bot --scope player
+act? teleport id=e5 x=0 z=0
+expect result contains "`teleport` needs dev scope; agent `bot` has player scope"
+act? step ticks=10
+expect result contains "needs dev scope"
+act? dodge dir=sideways
+expect result contains "unknown direction `sideways`"
+session --agent scenario
+
+# none of this was worth a warning or an error in the journal
+expect !journal "[error]"
+expect !journal "[warn]"

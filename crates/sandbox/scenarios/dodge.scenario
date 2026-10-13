@@ -1,0 +1,47 @@
+# Dodging: an attack that lands hurts, the same attack met with a dodge does not.
+#
+# The boss's windup is forced with `set` so the timing is the same in every game; left to
+# its brain, the boss would pick its attacks at random. The dodge is played by a
+# player-scope agent, through the same controls a human has.
+#
+# Written for the CURRENT sandbox (e5 player, e6 boss, e7 and e8 skeletons).
+
+seed 42
+
+# --- the arena as the game spawns it, whatever was played in it before
+act heal id=e5
+act heal id=e6
+act set id=e5 component=Health value='{"current":100,"max":100}'
+act set id=e5 component=Stamina path=current value=80
+act set id=e5 component=Action value=Idle
+act stop
+act teleport id=e5 x=0 z=-2
+act teleport id=e6 x=0 z=-6
+act teleport id=e7 x=-19 z=-19
+act teleport id=e8 x=19 z=-19
+invariant field e5 Health.current > 0
+
+# --- 1. not dodged: an IceSlam 4 m away lands for 30
+act set id=e6 component=Action value='{"Windup":{"attack":"IceSlam","left":0.1}}'
+expect shows e6 "windup IceSlam"
+expect field e5 Health.current == 100
+step 20
+expect journal "e6 -> e5 IceSlam -30"
+expect field e5 Health.current == 70
+
+# --- 2. dodged: the same windup, and the player rolls sideways as a player-scope agent
+mark
+act set id=e5 component=Action value=Idle
+act teleport id=e5 x=0 z=-2
+act set id=e6 component=Action value='{"Windup":{"attack":"IceSlam","left":0.1}}'
+session --agent bot --scope player
+act? teleport id=e5 x=0 z=0
+expect result contains "needs dev scope"
+act dodge dir=E
+expect result contains "ok: dodging E"
+session --agent scenario      # time is the dev agent's to control
+step 20
+expect journal "e5 dodged IceSlam from e6"
+expect !journal "e6 -> e5"
+expect field e5 Health.current == 70
+expect field e5 Stamina.current < 80

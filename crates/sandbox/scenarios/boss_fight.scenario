@@ -1,0 +1,56 @@
+# The player fights the Frost Warden up to its second phase, the way an agent would:
+# attack, watch the journal, step until something happens.
+#
+# The player is made tough first (1000 hp): this checks the rules of the fight, not the
+# player's luck in a fight nobody dodges. The invariant keeps the player standing.
+#
+# Written for the CURRENT sandbox (e5 player, e6 boss, e7 and e8 skeletons); it is
+# rewritten when the sandbox moves onto the combat and motion modules.
+
+seed 42
+
+# --- the arena as the game spawns it, whatever was played in it before
+act heal id=e5
+act heal id=e6
+act set id=e5 component=Health value='{"current":1000,"max":1000}'
+act set id=e5 component=Stamina path=current value=80
+act set id=e6 component=Boss path=phase value=1
+act stop
+act teleport id=e5 x=0 z=12
+act teleport id=e6 x=0 z=-6
+act teleport id=e7 x=-19 z=-19     # the skeletons wait in the far corners
+act teleport id=e8 x=19 z=-19
+invariant field e5 Health.current > 0
+
+# --- 1. phase 1: the player walks up to the boss
+expect shows e6 "phase 1"
+expect field e6 Boss.phase == 1
+act move_to target=e6 within=3
+expect result contains "move_to e6"
+step 900 --until near:e5:e6:3
+expect stopped "within"
+
+# --- 2. the first sword hit lands
+act attack target=e6 repeat=true
+expect result contains "attacking e6 until it dies"
+step 600 --until "journal:e5 -> e6 Sword"
+expect stopped "e5 -> e6 Sword"
+expect journal "e5 -> e6 Sword -25"
+expect field e6 Health.current < 4000
+
+# --- 3. at half health the boss changes phase, however the health got there
+mark
+act set id=e6 component=Health path=current value=2010
+step 900 --until named:boss_phase_2
+expect stopped "boss_phase_2"
+expect journal "e6 phase 1->2"
+expect shows e6 "phase 2"
+expect field e6 Boss.phase == 2
+expect field e6 Health.current <= 2000
+
+# --- 4. phase 2 goes on; the boss is still fighting and the player is still up
+step 120
+expect !journal "e5 died"
+observe
+expect result contains "e5 Player"
+expect result contains "phase 2"

@@ -46,6 +46,14 @@ impl Outcome {
             other => serde_json::to_string_pretty(other).unwrap_or_default(),
         }
     }
+
+    /// The result on one line, for the log.
+    fn summary(&self) -> String {
+        match &self.result {
+            Value::String(s) => one_line(s),
+            other => clip(&other.to_string(), 160),
+        }
+    }
 }
 
 /// What the runner needs to know about the game before it starts (`ai/status`).
@@ -341,8 +349,8 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                     self.last_step = Some(StepEnd::parse(&text));
                 }
                 let detail = match (out.ok, may_fail) {
-                    (true, _) => one_line(&text),
-                    (false, true) => format!("failed, as allowed: {}", one_line(&text)),
+                    (true, _) => out.summary(),
+                    (false, true) => format!("failed, as allowed: {}", out.summary()),
                     (false, false) => return Err(Fail::check(format!("{tool} failed: {text}"))),
                 };
                 self.check_invariants()?;
@@ -359,7 +367,7 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                 }
                 self.last_step = Some(StepEnd::parse(&text));
                 self.check_invariants()?;
-                Ok(one_line(&text))
+                Ok(out.summary())
             }
             Command::Observe => {
                 let (out, text) = self.call("observe", json!({}))?;
