@@ -10,9 +10,9 @@
 //! logs the failure and queues it (the handler is a plain `fn` without the world, so
 //! the queue is global). The queue is collected after every tick, once per frame and
 //! after every tool call: the failure is journaled (`system <name> panicked at tick N:
-//! <msg>`), the game pauses, the session is saved as a crash replay
-//! (`replays/crash-tick<N>.json`, once per failing system) to reproduce it with, and
-//! a `step` in progress stops there.
+//! <msg>`), the game halts (it pauses), the session is saved as a crash
+//! replay (`replays/crash-tick<N>.json`, once per failing system) to reproduce it with,
+//! and a `step` in progress stops there.
 
 use std::sync::Mutex;
 
@@ -93,12 +93,20 @@ pub struct AiFailures {
     /// Systems that already have a crash replay this session: replaying the first one
     /// reproduces the failure, more copies would only fill the folder.
     saved: HashSet<String>,
+    /// Tick of the newest failure.
+    last_tick: Option<u64>,
 }
 
 impl AiFailures {
     pub fn new(crash_replays: bool) -> Self {
-        Self { unreported: Vec::new(), crash_replays, saved: HashSet::default() }
+        Self { unreported: Vec::new(), crash_replays, saved: HashSet::default(), last_tick: None }
     }
+}
+
+/// A gameplay system failed in tick `tick`: its state is half-updated, and the failure
+/// already halted the game, so invariants leave that tick alone.
+pub(crate) fn failed_in(world: &World, tick: u64) -> bool {
+    world.get_resource::<AiFailures>().is_some_and(|f| f.last_tick == Some(tick))
 }
 
 impl Default for AiFailures {
@@ -117,7 +125,7 @@ pub(crate) fn plugin(app: &mut App, catch_system_panics: bool, crash_replays: bo
 }
 
 /// Right after a tick: the exact tick, and in real time no further tick this frame.
-fn collect_after_tick(world: &mut World) {
+pub(crate) fn collect_after_tick(world: &mut World) {
     collect(world);
 }
 
@@ -153,15 +161,10 @@ pub fn collect(world: &mut World) -> Vec<SystemFailure> {
     }
     if let Some(mut state) = world.get_resource_mut::<AiFailures>() {
         state.unreported.extend(failures.iter().cloned());
+        state.last_tick = Some(tick);
     }
-    if !sim::is_paused(world) {
-        sim::pause(world);
-        // Real-time play may have more ticks due this frame: not after a failure.
-        let mut fixed = world.resource_mut::<Time<Fixed>>();
-        let overstep = fixed.overstep();
-        fixed.discard_overstep(overstep);
-        journal::log(world, JournalKind::Sim, format!("paused: {}", failures[0].headline()));
-    }
+    let replay = failures.iter().find_map(|f| f.crash_replay.clone());
+    sim::halt(world, sim::Halt { reason: failures[0].headline(), replay });
     failures
 }
 

@@ -17,7 +17,9 @@
 //!                  Journal  — what happened since       (journal_event, warn!/error!)
 //!                  Tools    — typed actions             (add_ai_tool, Scope)
 //!                  SimCtl   — pause · step · run-until  (sim)
+//!                  Rules    — invariants after a tick   (invariants, add_ai_invariant)
 //!                  Replay   — record inputs, play back  (replay)
+//!                  Perf     — real time of every tick   (perf)
 //!                          │
 //! transport:       BRP `ai/*` on localhost → `shards` CLI ← coding agents, scripts, CI
 //! ```
@@ -31,6 +33,7 @@
 //!     .register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.max))
 //!     .journal_event::<Damaged>(|e, w| Some(format!("{} -> {} -{}", label(w, e.source), label(w, e.target), e.amount)))
 //!     .add_ai_tool("move_to", Scope::Player, move_to)
+//!     .add_ai_invariant("health_in_range", health_in_range)
 //!     .replay_input::<Intent>()
 //!     .replay_ignore::<Sparkle>();
 //! ```
@@ -41,9 +44,11 @@ pub mod failures;
 #[cfg(feature = "render")]
 pub mod highlight;
 pub mod id;
+pub mod invariants;
 pub mod journal;
 pub mod observe;
 pub mod paths;
+pub mod perf;
 #[cfg(feature = "remote")]
 pub mod remote;
 pub mod replay;
@@ -56,6 +61,7 @@ pub mod spatial;
 pub mod tools;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use bevy::ecs::schedule::{LogLevel, ScheduleBuildSettings};
 use bevy::prelude::*;
@@ -67,12 +73,16 @@ pub use builtin::{AiConditions, StopWhen};
 pub use describe::{AiDescribers, AiKind, Describer, EntityFacts};
 pub use failures::{ai_core_error_handler, AiFailures, SystemFailure};
 pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible};
+pub use invariants::{AiInvariants, Violation};
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
 pub use observe::{AiCamera, AiPerception, ObserveOptions};
-pub use replay::{AiReplay, Replay, ReplayHashing, ReplayReport};
+pub use perf::{AiPerf, TickStats};
+pub use replay::{
+    AiReplay, Breakdown, CheckDetail, Divergence, EntityChange, EntityDiff, Replay, ReplayHashing, ReplayReport,
+};
 pub use rng::{DetRng, SimRng, SimSeed};
 pub use session::{AgentSession, AgentSessions, Caller, Scope};
-pub use sim::{SimConfig, SimSet, SimTick, TickClock};
+pub use sim::{Halt, SimConfig, SimSet, SimTick, TickClock};
 pub use spatial::{AiLineOfSight, AiOccluder};
 pub use tools::{call_tool, AiTools, Call, CallOutcome, Id, NoArgs, ToolKind, ToolResult, ToolSpec};
 
@@ -97,8 +107,21 @@ pub struct AiCorePlugin {
     /// `FixedUpdate` with it. `false` keeps Bevy's own handler.
     pub catch_system_panics: bool,
     /// After a gameplay failure, save the session as `replays/crash-tick<N>.json` to
-    /// reproduce it with.
+    /// reproduce it with; after a violated invariant, as
+    /// `replays/invariant-<name>-tick<N>.json`.
     pub crash_replays: bool,
+    /// Ticks between replay checks ([`replay::CHECK_EVERY`] by default), stored in every
+    /// replay saved. Record with 1 to have a divergence named at its exact tick.
+    pub check_every: u64,
+    /// What each replay check keeps next to its hash, to name what diverged.
+    pub check_detail: CheckDetail,
+    /// A tick whose `FixedMain` run takes longer is over budget. `None`: the tick's own
+    /// duration (16.7 ms at 60 Hz).
+    pub tick_budget: Option<Duration>,
+    /// Report tick timing: a `ticks:` line in every `step` reply and `perf` journal
+    /// entries for ticks over budget. Timing is wall-clock, so tests that compare whole
+    /// journals turn it off; `ai/status` has it either way.
+    pub report_perf: bool,
 }
 
 impl Default for AiCorePlugin {
@@ -109,6 +132,10 @@ impl Default for AiCorePlugin {
             remote_port: Some(DEFAULT_PORT),
             catch_system_panics: true,
             crash_replays: true,
+            check_every: replay::CHECK_EVERY,
+            check_detail: CheckDetail::default(),
+            tick_budget: None,
+            report_perf: true,
         }
     }
 }
@@ -149,8 +176,10 @@ impl Plugin for AiCorePlugin {
         }
 
         builtin::register(app.world_mut());
-        replay::plugin(app);
+        replay::plugin(app, self.check_every, self.check_detail);
+        perf::plugin(app, self.tick_budget, self.report_perf);
         failures::plugin(app, self.catch_system_panics, self.crash_replays);
+        invariants::plugin(app, self.crash_replays);
 
         #[cfg(feature = "render")]
         {
@@ -226,6 +255,12 @@ pub trait AiAppExt {
     /// A named stop condition for `step {until: [{"named": ...}]}`.
     fn add_ai_condition(&mut self, name: &str, condition: fn(&World) -> bool) -> &mut Self;
 
+    /// A rule the game must keep, checked after every tick: `rule` returns
+    /// `Some(explanation)` while it is broken (`e5 outside the arena: x = 31.2`), and the
+    /// game halts the way it does after a gameplay failure (see [`invariants`]). Names use
+    /// letters, digits, `_` and `-` (panics otherwise); the same name replaces a rule.
+    fn add_ai_invariant(&mut self, name: &str, rule: invariants::Invariant) -> &mut Self;
+
     /// Records component `C` in replays: the per-entity input everything writes
     /// (keyboard, network, agents) and gameplay only reads, like the sandbox's `Intent`.
     /// Changes made between ticks are stored; playback sets them back at the same tick.
@@ -283,6 +318,13 @@ impl AiAppExt for App {
 
     fn add_ai_condition(&mut self, name: &str, condition: fn(&World) -> bool) -> &mut Self {
         self.world_mut().get_resource_or_init::<AiConditions>().0.insert(name.to_owned(), condition);
+        self
+    }
+
+    fn add_ai_invariant(&mut self, name: &str, rule: invariants::Invariant) -> &mut Self {
+        if let Err(e) = self.world_mut().get_resource_or_init::<AiInvariants>().add_game_rule(name, rule) {
+            panic!("add_ai_invariant: {e}");
+        }
         self
     }
 

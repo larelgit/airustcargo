@@ -73,6 +73,8 @@ ai_core:              Observe — срез мира текстом            (o
                       Tools   — типизированные действия      (add_ai_tool, Scope)
                       SimCtl  — пауза · шаг · run-until      (sim)
                       Replay  — запись входов, проигрывание  (replay)
+                      Rules   — инварианты после каждого тика (invariants)
+                      Perf    — время каждого тика           (perf)
                               │
 транспорт:            BRP `ai/*` на 127.0.0.1 → CLI `shards` ← Claude Code, Codex, скрипты, CI
 ```
@@ -95,7 +97,9 @@ ai_core:              Observe — срез мира текстом            (o
 | `tools` | реестр: args-struct + Bevy-система, JSON Schema (schemars), scope, `catch_unwind` |
 | `builtin` | встроенные инструменты: observe, inspect, step, set/get через reflection, ... |
 | `sim` | тик, пауза, синхронный `step` по FixedMain, стоп-условия |
+| `invariants` | правила, которые проверяются после каждого тика: игровые (`add_ai_invariant`) и сессионные (`assert_add`); нарушение останавливает игру, как упавшая система |
 | `replay` | запись входов и action-вызовов с тика 0, проигрывание, хэши состояния, отчёт о расхождении |
+| `perf` | реальное время каждого тика против бюджета: строка `ticks:` в ответе `step`, записи `perf` в журнале, поле `perf` в `ai/status`; ни в хэше, ни в реплее |
 | `rng` | детерминированный RNG: счётчик по (seed, tick, AiId, salt) |
 | `session` | агенты: имя, scope (Player/Dev), «тело», курсор журнала |
 | `remote` | методы `ai/*` для BRP (feature `remote`) |
@@ -140,6 +144,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
    .add_ai_tool("move_to", Scope::Player, move_to)   // действие: журнал + список изменений
    .add_ai_query("threats", Scope::Player, threats)  // чтение: без журнала
    .add_ai_condition("boss_phase_2", |w| /* ... */)
+   .add_ai_invariant("health_in_range", |w| /* Some(текст), если нарушено */)  // см. «Инварианты»
    .replay_input::<Intent>()                        // вход для реплеев (см. «Реплеи»)
    .replay_ignore::<Sparkle>()                      // косметика: не входит в проверки реплея
    .add_replay_check("weather", |w| /* u64 */);     // данные вне AiVisible-сущностей
@@ -155,7 +160,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 | scope | инструменты |
 |---|---|
 | **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, move_to, move, attack, dodge, stop |
-| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn, heal, shot, replay_save |
+| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn, heal, shot, replay_save, assert_add, assert_list, assert_remove, assert_reset |
 
 У каждого инструмента есть вид (`kind` в `shards tools`):
 
@@ -163,6 +168,8 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 - `action` меняет мир: пишет в журнал, возвращает `CHANGES` и попадает в реплей;
 - `control` управляет временем или сессией (pause, resume, speed, step, possess): журнал и дифф
   как у action, но в реплей не попадает. Он меняет, *когда* что-то происходит, а не *что*.
+  Исключение — правила (`assert_add`, `assert_remove`, `assert_reset`): мир они не меняют, но
+  решают, где игра остановится, поэтому реплей записывает их отдельными событиями.
 
 - **Действие возвращает изменения.** Каждый action-инструмент сравнивает срез мира до и после
   вызова и возвращает `CHANGES` и `JOURNAL`. Агенту не нужен второй `observe`, чтобы узнать, что произошло.
@@ -201,7 +208,8 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
   порядка систем и от того, сколько раз кто-то «крутил» генератор.
 - `step` синхронно прогоняет `FixedMain` ровно N тиков, игра при этом стоит на паузе.
   Есть стоп-условия: `journal:TEXT`, `gone:ID`, `shows:ID:TEXT`, `near:A:B:M`,
-  `field:ID:Comp.path<N`, `named:NAME`. Лимиты: до 216 000 тиков и 20 с реального времени за вызов.
+  `field:ID:Comp.path<N`, `named:NAME`, `warning`, `error` (первая запись журнала этого уровня,
+  в том числе `warn!`/`error!` игры). Лимиты: до 216 000 тиков и 20 с реального времени за вызов.
 - **Логи внутри `step`.** `warn!`/`error!` попадают в журнал с тиком, на котором записаны, сразу после
   этого тика, а не в конце шага. Поэтому `step --until journal:TEXT` останавливается на тике
   предупреждения. За тик в журнал идёт не больше 64 строк, остальные сводятся в одну:
@@ -230,6 +238,120 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 - Реплей, записанный в окне, совпадает при проигрывании без окна (проверено вручную под Xvfb):
   рендер-сущности не сдвигают ни `AiId`, ни порядок геймплея.
 
+## Время тика
+
+Каждый прогон `FixedMain` (один тик) замеряется по реальным часам, и в `step`, и в обычной игре.
+Система перед `run_fixed_main` ставит метку, система после него снимает замер, поэтому в замер
+входят все системы `FixedFirst` … `FixedLast`, игровые тоже. Последние 600 тиков (10 с при 60 Гц)
+хранит ресурс `AiPerf`. Ответ `step` получает строку о своих тиках:
+
+```text
+$ shards step 600
+ran 600 ticks (0 → 600)
+ticks: avg 0.52 ms, max 2.60 ms (tick 540), budget 16.7 ms
+```
+
+- Бюджет по умолчанию — длительность тика: 16.7 мс при 60 Гц. Свой задаёт `--tick-budget-ms 5`,
+  в своей игре — `AiCorePlugin { tick_budget: Some(Duration::from_millis(5)), .. }`. Тики дольше
+  бюджета `step` считает в той же строке: `…, budget 5.0 ms, 3 over budget`.
+- Тики над бюджетом попадают в журнал отдельным видом записей `perf`, не чаще раза в игровую
+  секунду. Первая запись появляется сразу, следующие тики копятся и уходят одной записью, когда с
+  прошлой пройдёт 60 тиков: `150 [perf] 12 ticks over budget, worst 31.4 ms at tick 150`. Так же и в
+  реальном времени, где `step` нет.
+- `ai/status` и `shards status` показывают поле `perf` за последние 600 тиков (`ticks` — сколько
+  их набралось):
+  `{"avg_ms": 0.522, "budget_ms": 16.667, "max_ms": 2.598, "over_budget": 0, "ticks": 600, "worst_tick": 540}`.
+- Первый тик дольше остальных: на нём Bevy строит расписания.
+- Замеры не входят ни в хэш состояния, ни в реплей: время у каждого прогона своё, а проигрывание
+  сверяет игру.
+- `sandbox::test_app` не выводит строку `ticks:` и не пишет записи `perf` (`report_perf: false`):
+  сценарии сравнивают ответы и журналы целиком. Замер при этом идёт, и `status` его показывает.
+  Тест, которому время нужно, включает вывод сам (`AiPerf::report`), как `crates/sandbox/tests/perf.rs`.
+- Отладочная сборка компилирует свой код с `opt-level = 1` (зависимости — с `opt-level = 3`),
+  поэтому тик в ней медленнее, чем в релизе. Точный бюджет проверяйте релизной сборкой:
+  `cargo run -p sandbox --release -- --headless --paused`.
+- Где именно уходит время, покажет профайлер: Bevy feature `trace_tracy` и
+  [Tracy](https://github.com/wolfpld/tracy). Запустите
+  `cargo run -p sandbox --release --features bevy/trace_tracy` и подключитесь из Tracy: каждая
+  система будет отдельной зоной. Первая сборка скачает `tracy-client`. Версия Tracy должна
+  подходить к `tracy-client-sys` (сейчас это Tracy 0.14.1).
+
+## Инварианты
+
+Инвариант — именованное правило, которое проверяется после каждого тика: и в `step`, и в
+реальном времени. Нарушенное правило останавливает игру так же, как упавшая система:
+
+- в журнале ошибка `invariant <name> violated at tick N: <текст>`;
+- в реальном времени игра встаёт на паузу (`[sim] paused: invariant <name> violated at tick N`),
+  следующие тики этого кадра не идут;
+- сессия сохраняется в `replays/invariant-<name>-tick<N>.json`;
+- `step` останавливается на этом тике и отвечает
+  `stopped: invariant <name> violated at tick N (replay: replays/invariant-<name>-tick<N>.json)`,
+  а `shards` выходит с кодом 3.
+
+Правила игры задаёт код. Функция получает `&World` и возвращает текст нарушения или `None`:
+
+```rust
+app.add_ai_invariant("health_in_range", |w| /* Some("e6 Health.current = -5 outside 0..=4000") */);
+```
+
+В песочнице их два: `health_in_range` (здоровье в `0..=max`) и `bodies_in_arena` (все тела внутри
+стен арены, `e7 outside the arena: x = 31.2`). Паника внутри правила тоже нарушение:
+`the rule itself panicked: …`.
+
+Агент добавляет свои правила на время сессии (scope Dev), условием в синтаксисе `--until`:
+
+```bash
+shards assert add hp 'field:6:Health.current<3900'   # остановиться, когда у босса меньше 3900 hp
+shards assert add calm error                          # … на первой записи [error] в журнале
+shards assert list
+# 3 rules, checked after every tick
+#   health_in_range  game rule  armed
+#   bodies_in_arena  game rule  armed
+#   hp  when field:e6:Health.current<3900  armed
+shards act attack target=e6 repeat=true
+shards step 600
+# ran 225 ticks (0 → 225), stopped: invariant hp violated at tick 225 (replay: replays/invariant-hp-tick225.json)
+shards assert reset                                   # снова включить сработавшие правила
+shards assert remove hp
+```
+
+- Сработавшее правило выключено до `assert_reset`, иначе оно срабатывало бы на каждом тике, пока
+  мир не исправлен. `assert_reset` включает все сработавшие правила (игровые тоже), и проверка
+  продолжается со следующего тика.
+- `warning` и `error` срабатывают на запись журнала этого уровня, в том числе на `warn!`/`error!`
+  игры. Запись о нарушении другого правила их не будит.
+- Имя правила — до 64 букв, цифр, `_` и `-`: из него получается имя файла реплея. Правило игры
+  нельзя ни удалить, ни заменить своим.
+- `assert add/remove/reset` записываются в реплей и повторяются на том же тике, поэтому реплей,
+  сохранённый при нарушении, нарушает правило на том же тике. Сами правила в хэш не входят.
+- `--verify` перечисляет нарушения, случившиеся при проигрывании, и выходит с кодом 1, если они были:
+
+```text
+invariant hp violated at tick 225: e6 Health.current = 3875
+replay finished at tick 225: identical to the recording (4 checks); 1 invariant violated [225 ticks in 0.12s]
+```
+
+- Реплей пишется по одному на нарушение. Тестам он не нужен: `crash_replays: false` у
+  `AiCorePlugin` выключает и его (или `AiInvariants.replays = false`).
+
+**Фаззинг.** `shards fuzz --seed S --steps N` подаёт N случайных входов игрока (ходьба, удар,
+уворот; цели берутся из `observe`), после каждого — `step` на 1–30 тиков (`--max-ticks`). Тот же
+seed даёт те же входы. Если правило нарушилось, `fuzz` печатает ответ `step` и путь к реплею
+нарушения и выходит с кодом 3; если нет — сохраняет сессию в `replays/fuzz-seed<S>.json`:
+
+```text
+$ shards assert add low 'field:5:Health.current<50'
+$ shards fuzz --seed 3 --steps 300
+fuzz seed 3: the game halted after 35 inputs (ticks 0 → 474)
+ran 23 ticks (451 → 474), stopped: invariant low violated at tick 474 (replay: replays/invariant-low-tick474.json)
+…
+replay: replays/invariant-low-tick474.json
+$ cargo sandbox --replay replays/invariant-low-tick474.json --verify     # код 1
+invariant low violated at tick 474: e5 Health.current = 46
+replay finished at tick 474: identical to the recording (8 checks); 1 invariant violated [474 ticks in 0.25s]
+```
+
 ## Реплеи
 
 Запись идёт всегда, с тика 0, и почти ничего не стоит. В неё попадает:
@@ -242,9 +364,13 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
   Вызовы, сделанные изнутри другого инструмента, не пишутся: их повторит внешний вызов.
   `control`-инструменты (pause, step, possess) не пишутся. Сырые правки через BRP
   (`world.insert_components`) идут мимо инструментов и тоже не пишутся;
-- **проверки**: хэш игровых данных каждые 60 тиков и в конце записи: для каждой сущности с
-  `AiVisible` по порядку `AiId` — её id и все отражаемые игровые компоненты (сериализация через
-  reflection, компоненты в порядке имени типа).
+- **правила**: `assert_add`, `assert_remove`, `assert_reset` с тиком, на котором их вызвали
+  (см. «Инварианты»);
+- **проверки**: хэш игровых данных каждые `check_every` тиков (60 по умолчанию) и в конце записи:
+  для каждой сущности с `AiVisible` по порядку `AiId` — её id и все отражаемые игровые компоненты
+  (сериализация через reflection, компоненты в порядке имени типа). Рядом с хэшем лежит его
+  разбивка, посчитанная в том же проходе: хэш каждого компонента каждой сущности и каждое значение
+  `add_replay_check` под своим именем. По ней отчёт называет, что именно разошлось.
 
 ```bash
 shards save-replay                          # или ai/act {"tool": "replay_save", "args": {"path": …}}
@@ -270,18 +396,69 @@ cargo sandbox --replay replays/tick332.json --verify
 - Проигрывание требует свежего мира: тик 0, тот же seed и та же частота тиков. События
   применяются между тиками, ровно там, где они случились. Входы, которых нет в записи
   (человек жмёт клавиши во время просмотра), откатываются.
-- Каждая проверка сравнивается с записью. Отчёт называет первый тик, на котором игра перестала
-  совпадать: `DIVERGED at tick 60`. После изменения кода это регрессия. `--verify` годится для CI:
-  код выхода 0 — совпало, 1 — разошлось или упала система геймплея, 2 — реплей не читается
-  или не подходит к игре.
+- Каждая проверка сравнивается с записью. Отчёт называет первую проверку, на которой игра перестала
+  совпадать, и что в ней разошлось (подробнее — в «Что разошлось»). После изменения кода это
+  регрессия. `--verify` годится для CI: код выхода 0 — совпало, 1 — разошлось, упала система
+  геймплея или нарушен инвариант, 2 — реплей не читается или не подходит к игре.
 - В конце записи игра становится живой: реплей работает и как точка сохранения для ветвления.
   Любой action-вызов во время проигрывания перехватывает управление и завершает его
   (`replay interrupted at tick 130 of 332: dev took over (teleport)`).
 - Во время проигрывания запись продолжается, поэтому ветка сохраняется одним реплеем.
 - Состояние записи и проигрывания видно в `ai/status` (поле `replay`), итог пишется в журнал.
-- Формат: JSON `shards-replay/2` (`seed`, `tick_hz`, `end`, `events`, `checks`; хэши hex-строками).
-  Реплей `shards-replay/1` хэшировал текст и этой сборкой не проверяется: `play` отвечает
-  `this replay was recorded by an older build (…); record it again`, а `--verify` выходит с кодом 2.
+- Формат: JSON `shards-replay/3` (`seed`, `tick_hz`, `check_every`, `check_detail`, `end`, `events`,
+  `checks`; хэши hex-строками). События — `call`, `input` и `assert` (правила). У проверки, кроме
+  `tick` и `hash`, есть `parts`: `{"entities": {"e6": {"Health": "…", "Transform": "…"}}, "game":
+  {"weather": "…"}}`. Реплеи `shards-replay/2` (без правил, интервала и разбивки) проигрываются
+  и проверяются по общему хэшу: он считается так же, байт в байт, а отчёт о расхождении пишет
+  `no details: replay format 2`. Реплей `shards-replay/1` хэшировал текст и этой сборкой не
+  проверяется: `play` отвечает `this replay was recorded by an older build (…); record it again`,
+  а `--verify` выходит с кодом 2.
+
+### Что разошлось
+
+Отчёт, журнал и вывод `--verify` называют сущности и компоненты первой разошедшейся проверки, а
+ниже — текущее значение каждого такого компонента в живой игре, одной строкой. Реальный вывод: реплей
+записан с `--check-every 1`, потом в файле поменяли аргумент записанного вызова.
+
+```bash
+cargo sandbox --headless --paused --check-every 1 &
+cargo shards wait && cargo shards act set id=e6 component=Health path=current value=2100
+cargo shards act attack target=e6 repeat=true && cargo shards step 100
+cargo shards act teleport id=e1 x=-19 z=-19 && cargo shards step 157
+cargo shards save-replay replays/boss.json   # 257 ticks, 4 events, 258 checks, seed 42
+
+# в копии файла set ставит здоровье 2075 вместо 2100
+cargo sandbox --replay replays/boss-hp.json --verify
+# replay finished at tick 257: DIVERGED at tick 1: e6 Boss: Health differs [257 ticks in 0.21s]
+#   e6 now: Health { current: 2075.0, max: 4000.0 }
+
+# в копии файла teleport ставит колонну на x=-18 вместо -19
+cargo sandbox --replay replays/boss-pillar.json --verify
+# replay finished at tick 257: DIVERGED at tick 101: e1 Pillar: Transform differs [257 ticks in 0.19s]
+#   e1 now: Transform { translation: Vec3(-18.0, 0.0, -19.0), rotation: Quat(0.0, 0.0, 0.0, 1.0), scale: Vec3(1.0, 1.0, 1.0) }
+```
+
+- Что может быть в списке: `e6 Boss: Health, Transform differ` (разошлись компоненты, в том числе
+  пропавшие или лишние), `e9 missing (Skeleton despawned at tick 40)` (сущность есть в записи, но не
+  в игре; в скобках — что о её id знает индекс), `e12 extra (Skeleton)` (есть в игре, но не в записи),
+  `replay check weather differs` (значение `add_replay_check`). В списке не больше 10 сущностей,
+  остальные — одной строкой `… and 7 more`.
+- Значение — отладочный вывод reflection без путей модулей, не длиннее 240 символов. Объясняется
+  только первое расхождение, следующие проверки расходятся уже из-за него.
+- В журнал попадают ошибка `replay diverged at tick 60: e6 Boss: Health differs` и по записи
+  `replay: e6 now: …` на каждое значение. В `ai/status` поле `replay.last_report` содержит то же.
+- Частоту проверок задают при записи: `--check-every N` у песочницы или `check_every` у
+  `AiCorePlugin` (по умолчанию 60). Она хранится в файле, и проигрывание проверяет на тех же тиках;
+  `--check-every` вместе с `--replay` — ошибка. С частотой 60 тик в отчёте — первая проверка после
+  расхождения; чтобы найти точный тик, реплей пишут с `--check-every 1`.
+- Подробность: `--check-detail` или `check_detail` у `AiCorePlugin`. `components` (по умолчанию) —
+  хэш каждого компонента, отчёт называет сущности, компоненты и значения; `entities` — хэш сущности
+  целиком, отчёт называет сущности (`e6 Boss differs`); `none` — только общий хэш, отчёт называет тик
+  (`no details: the recording keeps hashes only (check detail none)`). Общий хэш от подробности не
+  зависит.
+- Размер: `components` с `--check-every 1` на арене из 8 сущностей — около 3 КБ на тик (реплей выше
+  весит 760 КБ), а с частотой 60 — около 3 КБ на секунду игры. Тот же реплей с `entities` весит
+  107 КБ, с `none` — 18 КБ.
 
 ## Скриншоты
 
@@ -327,7 +504,7 @@ LEGEND (image pixels)
 | `ai/shot` | `{agent?, marks?, path?}` |
 | `ai/tools` | `{agent?}` |
 | `ai/session` | `{agent, scope?, subject?, clear_subject?}` |
-| `ai/status` | — (в ответе `instance: {pid, seed, port, started_at}`: какая игра ответила) |
+| `ai/status` | — (в ответе `instance: {pid, seed, port, started_at}`: какая игра ответила; `perf`: время последних 600 тиков) |
 
 Стандартные методы BRP (`world.query`, `world.get_components`, …) тоже доступны: `shards raw …`.
 BRP даёт полный доступ к миру, поэтому сервер слушает только 127.0.0.1, включается feature `remote`
@@ -354,7 +531,7 @@ cargo build --release -p sandbox --no-default-features --features render
 ```
 
 **CLI `shards`:** observe, step, act, shot, save-replay, tools, inspect, nearby, journal, pause,
-resume, speed, status, session, raw, wait. Аргументы `act` передаются JSON-объектом или парами `key=value`.
+resume, speed, status, session, assert, fuzz, raw, wait. Аргументы `act` передаются JSON-объектом или парами `key=value`.
 Флаги `--port`/`SHARDS_PORT`, `--port-file`/`SHARDS_PORT_FILE` (порт из файла игры; `--port` важнее),
 `--token`/`SHARDS_TOKEN`, `--agent`/`SHARDS_AGENT`, `--json` (у `tools` — со схемами аргументов). `shards wait` ждёт, пока игра
 ответит, и печатает, кто ответил: `ready: tick 0 · pid 4242 · seed 1 · port 15711` (ту же строку игра
@@ -385,6 +562,27 @@ SHARDS_PORT_FILE=/tmp/shards-a.port cargo shards step 600 --until named:player_d
 **Внутри игры** та же точка входа, что за BRP, — `ai_core::call_tool(world, agent, tool, args)`.
 Её вызывают тесты, реплеи и клавиши разработчика в окне (P, N, R, F12).
 
+## Коды выхода
+
+`shards`:
+
+| код | значит |
+|---|---|
+| 0 | готово |
+| 1 | инструмент отказал; ошибка говорит, почему и как исправить вызов |
+| 2 | сбой самого `shards`: игры нет на порту, нет токена, неверная командная строка |
+| 3 | игра остановилась: `step` (или `fuzz`) встал на упавшей системе геймплея или нарушенном инварианте; ответ называет причину и реплей |
+
+`cargo sandbox`:
+
+| код | значит |
+|---|---|
+| 0 | игра закрыта; с `--verify` — реплей совпал с записью, ничего не сломалось |
+| 1 | `--verify`: игра разошлась с записью, упала система геймплея или нарушен инвариант |
+| 2 | реплей не читается или не подходит к игре; `--port-file` не записать |
+| 3 | порт занят (`port 15711 is busy (another game?)`) |
+| 128 + N | остановлена сигналом N: 130 — Ctrl+C, 143 — `kill`, 129 — закрытый терминал (SIGHUP) |
+
 ## Пример сеанса (реальный вывод)
 
 ```text
@@ -394,6 +592,7 @@ CHANGES
   ~ e5 Player: +order attack e6 (repeat)
 $ shards step --until journal:winds
 ran 93 ticks (0 → 93), stopped: journal: 93 e6 winds up IceSlam (1.00s)
+ticks: avg 0.47 ms, max 1.17 ms (tick 1), budget 16.7 ms
 CHANGES
   ~ e5 Player: moved 9.3m N
   ~ e6 Boss "Frost Warden": +windup IceSlam 0.98s; moved 4.9m S
@@ -402,6 +601,7 @@ $ shards act dodge away_from=e6
 ok: dodging S
 $ shards step 40
 ran 40 ticks (93 → 133)
+ticks: avg 0.49 ms, max 0.84 ms (tick 94), budget 16.7 ms
 CHANGES
   ~ e5 Player: stam 80/80 → stam 60/80; moved 2.0m S
   ~ e6 Boss "Frost Warden": windup IceSlam 0.98s → windup IceSlam 0.32s
@@ -410,10 +610,14 @@ $ shards act dodge dir=W
 ok: dodging W
 $ shards step 3
 ran 3 ticks (133 → 136)
+ticks: avg 0.77 ms, max 0.88 ms (tick 134), budget 16.7 ms
+…
 $ shards act dodge dir=E
 error: busy: dodge 0.30s (ready in 0.30s)
 $ shards step 8
 ran 8 ticks (136 → 144)
+ticks: avg 0.49 ms, max 0.77 ms (tick 137), budget 16.7 ms
+…
 $ shards act dodge dir=E
 ok: queued, dodges in 0.17s (E)
 ```
@@ -439,6 +643,8 @@ cargo shards shot                        # визуальный баг: PNG с �
 - У каждого агента своё имя (`--agent`/`SHARDS_AGENT`), а с ним свой курсор журнала, scope и «тело».
   Агенты могут работать с одной игрой или каждый со своим headless-инстансом на своём порту.
 - Найденный баг сохраняется реплеем (`shards save-replay`), его воспроизводит человек или CI.
+- Гипотезу о баге проверяет правило: `shards assert add NAME COND`, затем `step` или
+  `shards fuzz`. Игра остановится на тике нарушения и сама сохранит реплей (см. «Инварианты»).
 - Движок не запускает модели и не ходит к их API. Всё, что нужно агенту, добавляется как инструмент
   или команда `shards`, а не как код, который думает за агента.
 
@@ -449,14 +655,18 @@ source ~/.local/share/rustengine-sysdeps/env.sh   # пока не установ
 cargo test --workspace
 ```
 
-Всего 76 тестов:
+Всего 112 тестов:
 
-- 26 юнит-тестов `ai_core`: id (в том числе перенумерация и занятый id), журнал, RNG,
+- 36 юнит-тестов `ai_core`: id (в том числе перенумерация и занятый id), журнал, RNG,
   компас и LOS, схемы, шаги симуляции, пути снимков (только `shots/`, чужой `x.json` цел), формат
   реплея и отчёт, запрет BRP-правки `AiId`, занятый порт, `instance` в `ai/status`, файл порта,
-  пути внутри `replays/`/`shots/` (абсолютные, `..`, симлинки), токен у каждого метода BRP;
-- 5 тестов `shards`: парсер условий и аргументов, порт из `--port-file`, строка `ready`,
-  поиск токена по номеру порта;
+  пути внутри `replays/`/`shots/` (абсолютные, `..`, симлинки), токен у каждого метода BRP,
+  имена правил, правила игры раньше правил сессии, JSON событий `assert`, разбивка проверки в JSON
+  и обратно (при любом порядке ключей), файл версии 2 без разбивки, значения без путей модулей,
+  текст отчёта о расхождении, время тиков (худший тик, тики над бюджетом, только последние 600),
+  `perf` в `ai/status`;
+- 7 тестов `shards`: парсер условий (с `warning` и `error`) и аргументов, порт из `--port-file`,
+  строка `ready`, поиск токена по номеру порта, коды выхода, входы `fuzz` зависят только от seed;
 - 2 теста `crates/sandbox/tests/shutdown.rs` (запускают саму игру): после `kill` (код 143)
   и SIGHUP (код 129) нет ни токена, ни файла порта; под `nohup` SIGHUP игру не останавливает;
 - 14 сценариев `crates/sandbox/tests/scenarios.rs`:
@@ -482,14 +692,45 @@ cargo test --workspace
   доходит до тика 60 и `FixedMain`/`FixedUpdate` на месте, в реальном времени сбой ставит игру
   на паузу, краш-реплей воспроизводит сбой на том же тике, паника и упавшая команда инструмента —
   не сбой геймплея, без обработчика ответ называет потерянные расписания;
-- 4 теста `crates/sandbox/tests/log_capture.rs` (свой процесс: ставят глобальный логгер):
+- 5 тестов `crates/sandbox/tests/log_capture.rs` (свой процесс: ставят глобальный логгер):
   предупреждение сохраняет свой тик внутри `step 100`, `step --until journal:` останавливается
   на нём, 100 строк за тик режутся до 64 и одной строки про 36 отброшенных, action возвращает
-  свои предупреждения;
-- 14 сценариев `crates/sandbox/tests/replays.rs`:
+  свои предупреждения, `warn!` останавливает `step --until warning` и нарушает правило `warning`;
+- 8 тестов `crates/sandbox/tests/invariants.rs`:
+  - здоровье босса `-5` через `set`: `step 10` встаёт на тике 1 с ошибкой `health_in_range` в
+    журнале и в `halted`, следующий `step` идёт дальше; в реальном времени игра встаёт на паузу;
+  - правило `assert_add` срабатывает один раз, после `assert_reset` — снова на следующем тике,
+    а после исправления и `assert_reset` шаг идёт дальше;
+  - `assert_list`, замена и удаление правила, ошибки (плохое имя и условие, правило игры);
+  - `step --until warning`/`error` и правила `warning`/`error`: правило не срабатывает на запись
+    о нарушении другого правила;
+  - тело за стеной ловит `bodies_in_arena`, паника в правиле — тоже нарушение;
+  - реплей, сохранённый при нарушении, нарушает правило на том же тике, а `--verify` выходит
+    с кодом 1 и называет нарушение;
+- 6 тестов `crates/sandbox/tests/perf.rs` (свой файл: спят в системах геймплея):
+  - система спит 30 мс на тике 10 при бюджете 20 мс: `step 20` показывает `max` не меньше 30 мс
+    на тике 10 и `1 over budget`, в журнале одна запись `perf` про тик 10, `status` называет тот же тик;
+  - тики в бюджете не оставляют записей `perf`;
+  - тики над бюджетом на 10, 20, 30, 40 и 75 дают три записи, на тиках 10, 70 и 130: не чаще раза
+    в игровую секунду;
+  - с выводом, выключенным как в `test_app`, ответ `step` прежний и записей нет, а `status` время знает;
+  - `status` считает последние 600 тиков, бюджет по умолчанию — 16.667 мс;
+  - время не попадает в реплей: запись с медленным тиком проигрывается побитово одинаково;
+- 23 сценария `crates/sandbox/tests/replays.rs`:
   - сессия со всеми видами входов (dev-правки, инструменты игрока, клавиатура, spawn, possess,
     вызов после последнего тика) проигрывается побитово одинаково, клавиши во время просмотра игнорируются;
   - изменённая игра даёт отчёт с первым разошедшимся тиком;
+  - другое здоровье босса в записанном `set`: отчёт и журнал называют `e6 Boss: Health differs`
+    и значение `now: Health { current: 2075.0, max: 4000.0 }`, а `--verify` печатает их и выходит
+    с кодом 1;
+  - колонна, телепортированная на метр дальше в угол, — единственная названная сущность;
+  - реплей с `check_every 1` называет точный тик (38, с частотой 60 — 60);
+  - подробность `entities` называет только сущности, `none` — только тик; общий хэш тот же, файл
+    в разы меньше;
+  - пропавшие (`e9 missing`) и лишние (`e21 extra (Skeleton)`) сущности, список до 10 и
+    `… and 2 more`; удалённая сущность названа с тем, что с ней стало;
+  - файл версии 2 проверяется по общему хэшу, а расхождение даёт `no details: replay format 2`;
+  - `--check-every 0`, `--check-detail all` и `--check-every` вместе с `--replay` — ошибки;
   - action-вызов во время проигрывания перехватывает управление;
   - ветка после проигрывания сохраняется одним реплеем и тоже воспроизводится;
   - вложенные вызовы пишутся один раз;

@@ -7,7 +7,7 @@ use bevy::reflect::serde::{TypedReflectDeserializer, TypedReflectSerializer};
 use bevy::reflect::{GetPath, PartialReflect, ReflectPath, TypeRegistration, TypeRegistry};
 use schemars::JsonSchema;
 use serde::de::DeserializeSeed;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::describe::facts;
@@ -187,8 +187,9 @@ fn speed_tool(In(call): In<Call<SpeedArgs>>, world: &mut World) -> ToolResult {
     Ok(format!("speed {}x", sim::speed(world)))
 }
 
-/// Stop condition for `step`. Any matching condition stops the run.
-#[derive(Deserialize, JsonSchema, Clone, Debug)]
+/// Stop condition for `step`. Any matching condition stops the run. Invariants
+/// (`assert_add`) use the same conditions.
+#[derive(Deserialize, Serialize, JsonSchema, Clone, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum StopWhen {
     /// A new journal entry contains this text (case-insensitive), e.g. "phase", "died".
@@ -204,6 +205,36 @@ pub enum StopWhen {
     Field { id: Id, component: String, path: String, below: Option<f64>, above: Option<f64> },
     /// A condition the game registered by name.
     Named(String),
+    /// A warning appeared in the journal: a `warn!` line, a component replay checks leave out, ….
+    Warning,
+    /// An error appeared in the journal: an `error!` line, a failed tool, a diverged replay, ….
+    Error,
+}
+
+impl std::fmt::Display for StopWhen {
+    /// In `shards step --until` terms: `field:e6:Health.current<0`, `journal:died`, `error`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StopWhen::Journal(text) => write!(f, "journal:{text}"),
+            StopWhen::Gone(id) => write!(f, "gone:{id}"),
+            StopWhen::Shows { id, text } => write!(f, "shows:{id}:{text}"),
+            StopWhen::Near { a, b, meters } => write!(f, "near:{a}:{b}:{meters}"),
+            StopWhen::Field { id, component, path, below, above } => {
+                write!(f, "field:{id}:{component}.{path}")?;
+                if let Some(below) = below {
+                    write!(f, "<{below}")?;
+                }
+                match (below, above) {
+                    (Some(_), Some(above)) => write!(f, " or >{above}"),
+                    (None, Some(above)) => write!(f, ">{above}"),
+                    _ => Ok(()),
+                }
+            }
+            StopWhen::Named(name) => write!(f, "named:{name}"),
+            StopWhen::Warning => f.write_str("warning"),
+            StopWhen::Error => f.write_str("error"),
+        }
+    }
 }
 
 /// Predicate registered by the game: `app.add_ai_condition("boss_phase_2", |w| ...)`.
@@ -252,13 +283,31 @@ fn step_tool(In(call): In<Call<StepArgs>>, world: &mut World) -> ToolResult {
                 msg.push_str(&format!("; crash replay: {path}"));
             }
         }
+        StepEnd::InvariantViolated(violations) => {
+            let first = &violations[0];
+            msg.push_str(&format!(", stopped: {}", first.headline()));
+            if violations.len() > 1 {
+                msg.push_str(&format!(" (+{} more)", violations.len() - 1));
+            }
+            if let Some(path) = &first.replay {
+                msg.push_str(&format!(" (replay: {path})"));
+            }
+        }
+    }
+    if let Some(line) = crate::perf::step_line(world, &report.timing) {
+        msg.push('\n');
+        msg.push_str(&line);
     }
     Ok(msg)
 }
 
-fn validate(world: &World, cond: &StopWhen) -> Result<(), String> {
+/// Whether `cond` can be checked in this world: its entities exist, its name is known.
+pub(crate) fn validate(world: &World, cond: &StopWhen) -> Result<(), String> {
     match cond {
-        StopWhen::Gone(_) | StopWhen::Journal(_) => Ok(()),
+        StopWhen::Gone(_) | StopWhen::Journal(_) | StopWhen::Warning | StopWhen::Error => Ok(()),
+        StopWhen::Field { below: None, above: None, .. } => {
+            Err("a field condition needs `below` or `above`, e.g. field:6:Health.current<30".into())
+        }
         StopWhen::Shows { id, .. } | StopWhen::Field { id, .. } => id.entity(world).map(|_| ()),
         StopWhen::Near { a, b, .. } => a.entity(world).and(b.entity(world)).map(|_| ()),
         StopWhen::Named(name) => {
@@ -276,51 +325,47 @@ fn validate(world: &World, cond: &StopWhen) -> Result<(), String> {
 }
 
 fn check(world: &World, until: &[StopWhen], journal_mark: u64) -> Option<String> {
-    for cond in until {
-        let hit = match cond {
-            StopWhen::Journal(text) => {
-                let needle = text.to_lowercase();
-                world
-                    .resource::<AiJournal>()
-                    .after(journal_mark)
-                    .0
-                    .find(|e| e.kind != JournalKind::Agent && e.text.to_lowercase().contains(&needle))
-                    .map(|e| format!("journal: {e}"))
-            }
-            StopWhen::Gone(id) => id.entity(world).is_err().then(|| format!("{id} is gone")),
-            StopWhen::Shows { id, text } => {
-                let needle = text.to_lowercase();
-                id.entity(world).ok().and_then(|e| facts(world, e)).and_then(|f| {
-                    let line = entity_line(&f, None, None);
-                    line.to_lowercase().contains(&needle).then(|| format!("{line}"))
-                })
-            }
-            StopWhen::Near { a, b, meters } => {
-                let pa = a.entity(world).ok().and_then(|e| facts(world, e)).map(|f| f.pos);
-                let pb = b.entity(world).ok().and_then(|e| facts(world, e)).map(|f| f.pos);
-                match (pa, pb) {
-                    (Some(pa), Some(pb)) if pa.distance(pb) <= *meters => {
-                        Some(format!("{a} within {:.1}m of {b}", pa.distance(pb)))
-                    }
-                    _ => None,
-                }
-            }
-            StopWhen::Field { id, component, path, below, above } => id.entity(world).ok().and_then(|e| {
-                let v = read_number(world, e, component, path).ok()?;
-                let low = below.is_some_and(|b| v < b);
-                let high = above.is_some_and(|a| v > a);
-                (low || high).then(|| format!("{id} {component}.{path} = {v}"))
-            }),
-            StopWhen::Named(name) => world
-                .get_resource::<AiConditions>()
-                .and_then(|c| c.0.get(name).copied())
-                .and_then(|f| f(world).then(|| format!("condition {name}"))),
-        };
-        if hit.is_some() {
-            return hit;
+    until.iter().find_map(|cond| condition_hit(world, cond, journal_mark))
+}
+
+/// What `cond` sees right now, or `None` while it is not met. Journal conditions look at
+/// entries after `journal_mark` (agent lines left out: they only echo the calls).
+pub(crate) fn condition_hit(world: &World, cond: &StopWhen, journal_mark: u64) -> Option<String> {
+    let journal = || world.resource::<AiJournal>().after(journal_mark).0.filter(|e| e.kind != JournalKind::Agent);
+    match cond {
+        StopWhen::Journal(text) => {
+            let needle = text.to_lowercase();
+            journal().find(|e| e.text.to_lowercase().contains(&needle)).map(|e| format!("journal: {e}"))
         }
+        StopWhen::Warning => journal().find(|e| e.kind == JournalKind::Warn).map(|e| format!("journal: {e}")),
+        StopWhen::Error => journal().find(|e| e.kind == JournalKind::Error).map(|e| format!("journal: {e}")),
+        StopWhen::Gone(id) => id.entity(world).is_err().then(|| format!("{id} is gone")),
+        StopWhen::Shows { id, text } => {
+            let needle = text.to_lowercase();
+            id.entity(world).ok().and_then(|e| facts(world, e)).and_then(|f| {
+                let line = entity_line(&f, None, None);
+                line.to_lowercase().contains(&needle).then_some(line)
+            })
+        }
+        StopWhen::Near { a, b, meters } => {
+            let pa = a.entity(world).ok().and_then(|e| facts(world, e)).map(|f| f.pos);
+            let pb = b.entity(world).ok().and_then(|e| facts(world, e)).map(|f| f.pos);
+            match (pa, pb) {
+                (Some(pa), Some(pb)) if pa.distance(pb) <= *meters => Some(format!("{a} within {:.1}m of {b}", pa.distance(pb))),
+                _ => None,
+            }
+        }
+        StopWhen::Field { id, component, path, below, above } => id.entity(world).ok().and_then(|e| {
+            let v = read_number(world, e, component, path).ok()?;
+            let low = below.is_some_and(|b| v < b);
+            let high = above.is_some_and(|a| v > a);
+            (low || high).then(|| format!("{id} {component}.{path} = {v}"))
+        }),
+        StopWhen::Named(name) => world
+            .get_resource::<AiConditions>()
+            .and_then(|c| c.0.get(name).copied())
+            .and_then(|f| f(world).then(|| format!("condition {name}"))),
     }
-    None
 }
 
 // --- dev: possession, transforms, reflection ------------------------------------

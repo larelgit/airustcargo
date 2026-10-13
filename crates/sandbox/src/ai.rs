@@ -8,7 +8,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::gameplay::combat::{
-    self, Act, Action, ActionRejected, Blocker, Damaged, Died, Dodged, Health, InputBuffer, PhaseChanged, Stamina,
+    self, Act, Action, ActionRejected, Blocker, Body, Damaged, Died, Dodged, Health, InputBuffer, PhaseChanged, Stamina,
     Telegraph, INPUT_BUFFER,
 };
 use crate::gameplay::intent::{flat, Intent, Order, Target};
@@ -61,6 +61,8 @@ impl Plugin for GameAiPlugin {
                 w.try_query_filtered::<&Action, With<gameplay::Player>>()
                     .is_some_and(|mut q| q.iter(w).any(|a| matches!(a, Action::Dead { .. })))
             })
+            .add_ai_invariant("health_in_range", health_in_range)
+            .add_ai_invariant("bodies_in_arena", bodies_in_arena)
             .replay_input::<Intent>()
             .add_ai_tool("move_to", Scope::Player, move_to)
             .add_ai_tool("move", Scope::Player, move_dir)
@@ -70,6 +72,47 @@ impl Plugin for GameAiPlugin {
             .add_ai_tool("spawn", Scope::Dev, spawn)
             .add_ai_tool("heal", Scope::Dev, heal);
     }
+}
+
+/// The lowest id first, and how many more: `e6 … (+1 more)`.
+fn first_of(mut broken: Vec<(AiId, String)>) -> Option<String> {
+    broken.sort_by_key(|(id, _)| *id);
+    let more = broken.len().saturating_sub(1);
+    let (id, what) = broken.into_iter().next()?;
+    Some(if more > 0 { format!("{id} {what} (+{more} more)") } else { format!("{id} {what}") })
+}
+
+/// Health stays within `0..=max`: hits stop at 0 and healing at the max, so anything else
+/// is a bug (or a dev `set`).
+fn health_in_range(world: &World) -> Option<String> {
+    let mut q = world.try_query::<(&AiId, &Health)>()?;
+    let broken = q
+        .iter(world)
+        .filter(|(_, h)| !(0.0..=h.max).contains(&h.current))
+        .map(|(id, h)| (*id, format!("Health.current = {} outside 0..={}", h.current, h.max)))
+        .collect();
+    first_of(broken)
+}
+
+/// Every body stays inside the arena walls: movement keeps it there after every step.
+fn bodies_in_arena(world: &World) -> Option<String> {
+    let mut q = world.try_query::<(&AiId, &Transform, &Body)>()?;
+    let broken = q
+        .iter(world)
+        .filter_map(|(id, tf, body)| {
+            let inside = -(gameplay::ARENA_HALF - body.radius)..=gameplay::ARENA_HALF - body.radius;
+            let p = tf.translation;
+            let out = if !inside.contains(&p.x) {
+                format!("x = {:.1}", p.x)
+            } else if !inside.contains(&p.z) {
+                format!("z = {:.1}", p.z)
+            } else {
+                return None;
+            };
+            Some((*id, format!("outside the arena: {out}")))
+        })
+        .collect();
+    first_of(broken)
 }
 
 /// `queued dodge 0.15s`: a one-shot input waiting for the character to be able to act.

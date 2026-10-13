@@ -8,7 +8,8 @@
 //! `ai/*` endpoints keep running. [`step`] runs `FixedMain` directly, exactly the
 //! way Bevy's own fixed loop does, so `step(600)` completes in one call (as fast
 //! as the CPU allows) and returns only after the ticks ran. A gameplay system that
-//! fails ends the step at its tick (see [`failures`](crate::failures)).
+//! fails, or an invariant that is violated, halts the game and ends the step at its
+//! tick (see [`failures`](crate::failures) and [`invariants`](crate::invariants)).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -16,6 +17,9 @@ use std::time::{Duration, Instant};
 
 use bevy::app::FixedMain;
 use bevy::prelude::*;
+use serde::Serialize;
+
+use crate::journal::{self, JournalKind};
 
 /// Number of completed fixed ticks. Incremented at the very start of every tick,
 /// so systems inside tick `N` (and journal entries they produce) see `N`.
@@ -103,6 +107,39 @@ pub fn tick_seconds(world: &World) -> f32 {
     world.resource::<Time<Fixed>>().timestep().as_secs_f32()
 }
 
+/// The game stopped itself: a gameplay system failed or an invariant was violated.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Halt {
+    /// `invariant hp violated at tick 1`, `system game::combat::apply_hits panicked at tick 50`.
+    pub reason: String,
+    /// The replay saved for it, relative to the game's working directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replay: Option<String>,
+}
+
+/// Every halt so far: [`call_tool`](crate::call_tool) reports the one its call caused
+/// (a `step` stops right there).
+#[derive(Resource, Default, Debug)]
+pub struct Halts {
+    pub count: u64,
+    pub last: Option<Halt>,
+}
+
+/// Pauses the game right after a failure or a violation (real-time play runs no further
+/// tick this frame) and counts the halt. A `step` is paused already and stops by itself.
+pub(crate) fn halt(world: &mut World, halt: Halt) {
+    if !is_paused(world) {
+        pause(world);
+        let mut fixed = world.resource_mut::<Time<Fixed>>();
+        let overstep = fixed.overstep();
+        fixed.discard_overstep(overstep);
+        journal::log(world, JournalKind::Sim, format!("paused: {}", halt.reason));
+    }
+    let mut halts = world.get_resource_or_init::<Halts>();
+    halts.count += 1;
+    halts.last = Some(halt);
+}
+
 /// Runs exactly one fixed tick right now, independent of frame timing.
 /// Mirrors `bevy::time::run_fixed_main_schedule`.
 pub fn run_tick(world: &mut World) -> Result<(), String> {
@@ -128,6 +165,9 @@ pub enum StepEnd {
     /// A gameplay system panicked (or failed) in the last tick; never empty. The game
     /// is paused, the failures are in the journal.
     SystemFailed(Vec<crate::failures::SystemFailure>),
+    /// Invariants were violated in the last tick; never empty. The game is paused, the
+    /// violations are in the journal.
+    InvariantViolated(Vec<crate::invariants::Violation>),
 }
 
 #[derive(Debug, Clone)]
@@ -136,6 +176,8 @@ pub struct StepReport {
     pub to_tick: u64,
     pub end: StepEnd,
     pub wall: Duration,
+    /// The real time of its ticks (see [`perf`](crate::perf)).
+    pub timing: crate::perf::TickStats,
 }
 
 impl StepReport {
@@ -145,7 +187,8 @@ impl StepReport {
 }
 
 /// Pauses the game (if needed) and runs up to `max_ticks` ticks synchronously.
-/// `stop` is checked after every tick; returning `Some(reason)` ends the run.
+/// `stop` is checked after every tick; returning `Some(reason)` ends the run. A halt (a
+/// failed gameplay system, a violated invariant) ends it first.
 pub fn step(
     world: &mut World,
     max_ticks: u64,
@@ -153,18 +196,26 @@ pub fn step(
     mut stop: impl FnMut(&mut World) -> Option<String>,
 ) -> Result<StepReport, String> {
     pause(world);
-    // Failures from before this step are in the journal already; they are not its own.
+    // Failures and violations from before this step are in the journal already; they
+    // are not its own.
     crate::failures::collect(world);
     crate::failures::take_unreported(world);
+    crate::invariants::take_unreported(world);
     let from_tick = tick(world);
     let started = Instant::now();
+    crate::perf::begin_span(world);
     let mut end = StepEnd::Completed;
     for _ in 0..max_ticks {
         run_tick(world)?;
         crate::failures::collect(world);
         let failed = crate::failures::take_unreported(world);
+        let violated = crate::invariants::take_unreported(world);
         if !failed.is_empty() {
             end = StepEnd::SystemFailed(failed);
+            break;
+        }
+        if !violated.is_empty() {
+            end = StepEnd::InvariantViolated(violated);
             break;
         }
         if let Some(reason) = stop(world) {
@@ -176,7 +227,8 @@ pub fn step(
             break;
         }
     }
-    Ok(StepReport { from_tick, to_tick: tick(world), end, wall: started.elapsed() })
+    let timing = crate::perf::span(world);
+    Ok(StepReport { from_tick, to_tick: tick(world), end, wall: started.elapsed(), timing })
 }
 
 #[cfg(test)]
