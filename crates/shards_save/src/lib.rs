@@ -36,7 +36,7 @@
 //!
 //! Tools: `save_game`, `load_game` (an action: the recording restarts from the loaded state),
 //! `save_check`, `save_list`, `save_registry`, `save_damage` (QA of the recovery).
-//! `observe` stays out of it; `ai/status` gets a `save` field.
+//! `ai/status` gets a `save` field (the folder, the current slots, how many sections).
 
 pub mod autosave;
 pub mod canon;
@@ -58,8 +58,9 @@ use shards_core::EngineAppExt;
 pub use autosave::{SaveDef, SaveRequests, DEFAULT_DEBOUNCE_SECS};
 pub use file::{GameInfo, SaveFile, SectionData, SectionSet, FORMAT};
 pub use ops::{
-    apply_sections, capture_sections, check_parts, check_state, default_body, load_parts, load_slot, prepare, resolve_body, save_now, save_part,
-    save_parts, save_slot, Applied, ApplyError, CheckReport, FileCheck, LoadReport, Prepared, SaveConfig, SaveReport, SaveSlots, SaveWhat,
+    apply_sections, capture_sections, check_parts, check_state, default_body, load_parts, load_slot, prepare, read_file, resolve_body, save_now,
+    save_part, save_parts, save_slot, write_sections, Applied, ApplyError, CheckReport, FileCheck, LoadReport, Prepared, SaveConfig, SaveReport,
+    SaveSlots, SaveWhat,
 };
 pub use section::{Migration, SaveKey, SaveKind, SaveRegistry, SaveSection, SectionEntry};
 pub use store::{valid_slot, Damage, Recovery, Store, Which};

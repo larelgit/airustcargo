@@ -143,7 +143,8 @@ pub(crate) fn write_requests(world: &mut World) {
     for p in pending {
         let secs = world.get_resource::<ContentDb>().and_then(|db| db.get::<SaveDef>(p.kind.as_str())).map_or(DEFAULT_DEBOUNCE_SECS, |d| d.debounce_secs);
         let window = (f64::from(secs) * hz).ceil() as u64;
-        let last = world.resource::<SaveRequests>().last.get(&p.kind).copied();
+        // A snapshot loaded from an earlier tick takes time back: an autosave "in the future" is not a reason to wait.
+        let last = world.resource::<SaveRequests>().last.get(&p.kind).copied().filter(|last| *last <= tick);
         if last.is_some_and(|last| tick < last.saturating_add(window)) {
             waiting.push(p);
             continue;

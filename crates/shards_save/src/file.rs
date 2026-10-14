@@ -56,10 +56,18 @@ pub struct GameInfo {
 pub struct SectionSet(pub BTreeMap<String, SectionData>);
 
 impl SectionSet {
-    /// `{name: {version, data}}` as canonical JSON: what `save_check` hashes.
+    /// `{name: {version, data}}` as canonical JSON: what `save_check` hashes, and the form to
+    /// send a set between machines in ([`from_canonical`](Self::from_canonical) reads it
+    /// back exactly; `serde_json` reads about one `f64` in three a bit off).
     pub fn canonical(&self) -> String {
         let value = serde_json::to_value(self).unwrap_or(Value::Null);
         canon::to_string(&value)
+    }
+
+    /// Reads [`canonical`](Self::canonical) text.
+    pub fn from_canonical(text: &str) -> Result<SectionSet, String> {
+        let value = canon::parse(text)?;
+        serde_json::from_value(value).map_err(|e| format!("not a set of sections: {e}"))
     }
 
     pub fn len(&self) -> usize {

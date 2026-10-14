@@ -267,27 +267,44 @@ fn store(world: &World) -> Result<Store, String> {
 /// 51230)`. The state is read as it is now; nothing in the simulation changes.
 pub fn save_part(world: &mut World, kind: SaveKind, body: Option<Entity>, slot: &str, label: &str, reason: &str) -> Result<SaveReport, String> {
     valid_slot(slot)?;
-    let store = store(world)?;
     let body = if kind == SaveKind::Character { resolve_body(world, body) } else { None };
     let sections = capture_sections(world, kind, body).inspect_err(|e| {
         journal::emit(world, JournalKind::Error, format!("save: {kind}/{slot} not saved: {e}"));
     })?;
+    let tick = sim::tick(world);
+    write_sections(world, kind, slot, label, reason, tick, sections)
+}
+
+/// Writes `sections` as the save of `kind/slot`, atomically, shifting the older ones into
+/// the backups. For a character captured elsewhere (co-op: the host captures a remote player's
+/// body and the player's machine writes the file): `tick` is the one it was captured at.
+pub fn write_sections(world: &mut World, kind: SaveKind, slot: &str, label: &str, reason: &str, tick: u64, sections: SectionSet) -> Result<SaveReport, String> {
+    valid_slot(slot)?;
+    let store = store(world)?;
     let file = SaveFile {
         kind,
         slot: slot.to_owned(),
         label: if label.is_empty() { reason.to_owned() } else { label.to_owned() },
         game: game_info(world),
         engine: shards_core::VERSION.to_owned(),
-        tick: sim::tick(world),
+        tick,
         sections,
     };
     let bytes = file.encode();
     store.write(kind, slot, &bytes).inspect_err(|e| {
         journal::emit(world, JournalKind::Error, format!("save: {kind}/{slot} not saved: {e}"));
     })?;
-    let report = SaveReport { kind, slot: slot.to_owned(), tick: file.tick, bytes: bytes.len(), sections: file.sections.len(), reason: reason.to_owned() };
+    let report = SaveReport { kind, slot: slot.to_owned(), tick, bytes: bytes.len(), sections: file.sections.len(), reason: reason.to_owned() };
     journal::log(world, JournalKind::Sim, format!("save: {report}"));
     Ok(report)
+}
+
+/// Reads `kind/slot` as a file: the primary, or the newest good backup (rewriting the
+/// primary and saying so in the journal). Its sections are as written, at their saved
+/// versions; [`apply_sections`] migrates them. For a client that sends its character to the
+/// host in co-op.
+pub fn read_file(world: &mut World, kind: SaveKind, slot: &str) -> Result<SaveFile, String> {
+    read_slot(world, kind, slot, true).map(|read| read.file)
 }
 
 /// Saves `what` into `slot` (the same name for each kind), and makes it the current slot of

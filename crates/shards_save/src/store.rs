@@ -259,7 +259,9 @@ impl Store {
         repair: bool,
         mut accept: impl FnMut(&SaveFile) -> Result<T, String>,
     ) -> Result<Read<T>, String> {
-        let _ = fs::remove_file(self.path(kind, slot, Which::Tmp));
+        if repair {
+            let _ = fs::remove_file(self.path(kind, slot, Which::Tmp));
+        }
         let mut problems: Vec<(Which, String)> = Vec::new();
         let mut found_any = false;
         for which in Which::copies() {
