@@ -8,9 +8,9 @@
     "seed": 42,
     "tick_hz": 59.99999880000003,
     "engine": "0.2.0",
-    "state_hash": "76b315ba138b794b",
+    "state_hash": "ea3958e0c71c03b4",
     "checks": {
-      "content": "166b94b962a039d9",
+      "content": "1c473b05616fd715",
       "levels": "cbf29ce484222325",
       "static_colliders": "b16a4682932b69b4"
     },
@@ -1455,7 +1455,7 @@
   },
   "end": {
     "tick": 369,
-    "hash": "105bf457d14c4d89"
+    "hash": "058f87ad14eda836"
   },
   "events": [
     {
@@ -1536,19 +1536,19 @@
   "checks": [
     {
       "tick": 180,
-      "hash": "86adf7c62b7e65b6"
+      "hash": "e94b7729154b5be1"
     },
     {
       "tick": 240,
-      "hash": "469ee7731ee35810"
+      "hash": "9c01874785e73e4f"
     },
     {
       "tick": 300,
-      "hash": "fc77b00a317235e9"
+      "hash": "a2d13fcec9e35816"
     },
     {
       "tick": 360,
-      "hash": "94e08cab2a46f21b"
+      "hash": "31a6f3c5356bb1e4"
     }
   ]
 }

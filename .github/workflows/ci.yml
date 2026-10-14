@@ -3,7 +3,8 @@
 #   test           cargo test --workspace: unit tests, sandbox scenarios, checked-in replays
 #   clippy         warnings are errors, engine and template
 #   template       the template game builds and passes its tests apart from the workspace
-#   headless-cli   a live sandbox without a window, driven by the `shards` CLI
+#   headless-cli   a live sandbox without a window, driven by the `shards` CLI; content and
+#                  1000-seed worldgen checks through the game's binary
 #   replays-window the same replays verified with a window (Xvfb + software Vulkan); optional
 #
 # What the jobs run you can run by hand: the commands are the same.
@@ -110,6 +111,10 @@ jobs:
           for replay in tests/replays/*.json; do
             cargo run --locked -- --replay "$replay" --verify
           done
+      # E5: the generated region passes its checks for 1000 seeds (exit 1 if any fails).
+      - name: Worldgen report, 1000 seeds of the valley
+        working-directory: template
+        run: cargo run --locked -- --worldgen-report valley --seeds 1..1000
 
   # ---------------------------------------------------------------------------------------
   # A real game process, no window, played by the CLI the way an agent plays it.
@@ -124,6 +129,13 @@ jobs:
           cache-key: dev
       - name: Build the sandbox and the CLI
         run: cargo build --locked -p sandbox -p shards_cli
+      # Every content file, the level files tiles are built from (node by node) and the
+      # navmesh bakes (a stale one names the tile to bake again).
+      - name: Content check
+        run: cargo sandbox --check-content
+      # E5: the generated region passes its checks for 1000 seeds (exit 1 if any fails).
+      - name: Worldgen report, 1000 seeds of the wilds
+        run: cargo sandbox --worldgen-report wilds --seeds 1..1000
       - name: Scenarios against a live game
         run: |
           port_file="$RUNNER_TEMP/game.port"
@@ -138,6 +150,9 @@ jobs:
           echo "$ready"
           game_pid=$(sed -n 's/.*pid \([0-9][0-9]*\).*/\1/p' <<<"$ready")
           cargo shards --port-file "$port_file" scenario crates/sandbox/scenarios/*.scenario
+          # Then backwards, in the same game: each scenario sets up what it needs, whatever
+          # ran before (a region loaded, a snapshot's tick).
+          cargo shards --port-file "$port_file" scenario $(ls crates/sandbox/scenarios/*.scenario | sort -r)
 
   # ---------------------------------------------------------------------------------------
   # E1: the same replay matches with a window (under Xvfb, drawn by a software Vulkan driver)
