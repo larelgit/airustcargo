@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 
 use crate::id::{AiId, AI_ID_IS_MANAGED};
 use crate::rng::SimSeed;
-use crate::session::{AgentSessions, Scope};
+use crate::session::{configure_session, session_json, AgentSessions, Scope, SessionChange};
 use crate::tools::{call_tool, AiTools, Id};
 
 pub const DEFAULT_AGENT: &str = "dev";
@@ -108,6 +108,20 @@ fn ai_tools(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
     to_brp(world.resource::<AiTools>().specs(scope))
 }
 
+/// `ai/step_poll {id}`: a finished deferred request answers with its whole outcome (changes and
+/// journal lines included, like `ai/step` would have); otherwise the `step_poll` tool answers.
+fn ai_step_poll(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let p: AgentParams = parse(params)?;
+    if let Some(id) = p.rest.get("id").and_then(Value::as_u64)
+        && let Some(queue) = crate::sim::deferred_queue(world)
+        && let Ok(queue) = queue.lock()
+        && let crate::sim::StepPoll::Done(outcome) = queue.poll(id)
+    {
+        return to_brp(outcome);
+    }
+    to_brp(call_tool(world, &p.agent, "step_poll", Value::Object(p.rest)))
+}
+
 #[derive(Deserialize, Default)]
 struct SessionParams {
     #[serde(default = "default_agent")]
@@ -117,18 +131,16 @@ struct SessionParams {
     /// Reset `subject` to the player character.
     #[serde(default)]
     clear_subject: bool,
+    /// Play as this player's body (`PlayerId`), found again on every call.
+    player: Option<u8>,
 }
 
 fn ai_session(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
     let p: SessionParams = parse(params)?;
-    if let Some(id) = p.subject {
-        id.entity(world).map_err(|m| BrpError { code: bevy_remote::error_codes::INVALID_PARAMS, message: m, data: None })?;
-    }
-    let mut sessions = world.resource_mut::<AgentSessions>();
-    let current = sessions.get_or_create(&p.agent).clone();
-    let subject = if p.clear_subject { None } else { p.subject.map(|i| i.0).or(current.subject) };
-    let s = sessions.configure(&p.agent, p.scope.unwrap_or(current.scope), subject).clone();
-    to_brp(json!({"agent": s.name, "scope": s.scope, "subject": s.subject.map(|i| i.to_string()), "seen_seq": s.seen_seq}))
+    let change = SessionChange { scope: p.scope, subject: p.subject.map(|i| i.0), player: p.player, clear_subject: p.clear_subject };
+    let session = configure_session(world, &p.agent, &change)
+        .map_err(|message| BrpError { code: bevy_remote::error_codes::INVALID_PARAMS, message, data: None })?;
+    to_brp(session_json(&session))
 }
 
 fn ai_status(In(_): In<Option<Value>>, world: &mut World) -> BrpResult {
@@ -152,6 +164,7 @@ pub(crate) fn register_methods(world: &mut World) {
         ("ai/act", world.register_system(ai_act)),
         ("ai/observe", world.register_system(shortcut("observe"))),
         ("ai/step", world.register_system(shortcut("step"))),
+        ("ai/step_poll", world.register_system(ai_step_poll)),
         ("ai/journal", world.register_system(shortcut("journal"))),
         ("ai/shot", world.register_system(shortcut("shot"))),
         ("ai/tools", world.register_system(ai_tools)),

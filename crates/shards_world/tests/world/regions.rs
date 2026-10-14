@@ -244,3 +244,32 @@ fn snapshot_pos(snapshot: &shards::ai_core::Snapshot) -> Vec3 {
     let t = &hero.components["bevy_transform::components::transform::Transform"]["translation"];
     Vec3::new(t[0].as_f64().unwrap() as f32, t[1].as_f64().unwrap() as f32, t[2].as_f64().unwrap() as f32)
 }
+
+/// `WorldRebuilt` reasons, in order.
+#[derive(Resource, Default)]
+struct Rebuilt(Vec<String>);
+
+#[test]
+fn a_held_seed_holds_the_start_region_until_the_hosts_seed_is_adopted() {
+    let mut app = fresh(1, Some("meadow"));
+    app.init_resource::<Rebuilt>()
+        .add_observer(|rebuilt: On<shards::ai_core::WorldRebuilt>, mut seen: ResMut<Rebuilt>| seen.0.push(rebuilt.reason.clone()));
+    shards::core::hold_seed(app.world_mut(), "net: waiting for the host's seed");
+    let waiting = testing::wait_until_loaded(&mut app, std::time::Duration::from_secs(2)).unwrap_err();
+    assert!(waiting.contains("seed: net: waiting for the host's seed"), "{waiting}");
+    assert!(db(&app).is_loaded(), "content loaded meanwhile");
+    assert!(app.world().get_resource::<ActiveRegion>().is_none(), "no region before the seed is known");
+    assert!(!shards::core::seed_ready(app.world()));
+
+    shards::core::adopt_seed(app.world_mut(), 42);
+    testing::wait_until_loaded(&mut app, testing::LOAD_TIMEOUT).unwrap();
+    let expected = generate(db(&app), &worldgen(&app), "meadow", 42).unwrap().manifest;
+    assert_eq!(region(&app).manifest, expected, "built with the adopted seed");
+    assert_eq!(app.world().resource::<shards::ai_core::SimSeed>().0, 42);
+    assert_eq!(app.world().resource::<EngineConfig>().seed, 42);
+    assert_eq!(app.world().resource::<Rebuilt>().0, ["region meadow"]);
+    hero(&mut app);
+
+    ok(&mut app, "regen", json!({"seed": 5}));
+    assert_eq!(app.world().resource::<Rebuilt>().0, ["region meadow", "region meadow"], "a region change rebuilds the world");
+}

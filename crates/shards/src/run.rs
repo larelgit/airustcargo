@@ -12,7 +12,7 @@ use bevy::app::AppExit;
 use bevy::prelude::*;
 use clap::Parser;
 use shards_content::{asset_root, check_dir, ContentKinds};
-use shards_core::EngineConfig;
+use shards_core::{EngineConfig, NetLaunch, SettingsStore};
 
 /// A game on the Shards engine.
 #[derive(Parser, Debug)]
@@ -73,6 +73,90 @@ struct Args {
     /// Loads the game headless (content, level files) and runs no tick.
     #[arg(long, value_name = "TILES", num_args = 0..=1, default_missing_value = "all")]
     bake_nav: Option<String>,
+    /// Host a networked game on this UDP port (default 7777); other games `--join` it.
+    #[arg(long, value_name = "PORT", num_args = 0..=1, default_missing_value = "7777", conflicts_with_all = ["join", "stand"])]
+    host: Option<u16>,
+    /// Join the networked game hosted at ADDR (`127.0.0.1:7777`).
+    #[arg(long, value_name = "ADDR", conflicts_with = "stand")]
+    join: Option<String>,
+    /// The name other players see.
+    #[arg(long, value_name = "NAME")]
+    name: Option<String>,
+    /// A host and N clients from one command, each with its own `shards` port
+    /// (`--port-file F` writes F, F.c1, F.c2, ...). Needs --headless.
+    #[arg(long, value_name = "N", requires = "headless", value_parser = clap::value_parser!(u8).range(1..))]
+    stand: Option<u8>,
+    /// With --stand: the clients are child processes joining over UDP loopback, in real
+    /// time, instead of apps in this process.
+    #[arg(long, requires = "stand")]
+    stand_udp: bool,
+    /// Network conditions this game's links simulate: `latency=150,loss=0.02` (also
+    /// `jitter=`, `duplicate=`).
+    #[arg(long, value_name = "SPEC")]
+    net_sim: Option<String>,
+    /// Where saves are written, relative to the game's folder.
+    #[arg(long, value_name = "DIR", default_value = "saves")]
+    save_dir: String,
+    /// Keep player settings in DIR instead of the platform's settings folder.
+    #[arg(long, value_name = "DIR", conflicts_with = "no_settings")]
+    settings_dir: Option<String>,
+    /// Default player settings; read and write no settings files.
+    #[arg(long)]
+    no_settings: bool,
+    /// The character to play: a save slot (`[a-z0-9_-]`, up to 32).
+    #[arg(long, value_name = "SLOT", value_parser = slot_name)]
+    character: Option<String>,
+    /// The world to load: a save slot (`[a-z0-9_-]`, up to 32).
+    #[arg(long, value_name = "SLOT", value_parser = slot_name)]
+    world: Option<String>,
+    /// A client exits when its host ends the session, instead of going back to the menu.
+    #[arg(long)]
+    exit_with_host: bool,
+}
+
+/// A save slot: a name, never a path.
+fn slot_name(slot: &str) -> Result<String, String> {
+    let valid = (1..=32).contains(&slot.len())
+        && slot.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-');
+    if valid { Ok(slot.to_owned()) } else { Err("a slot is 1-32 of a-z, 0-9, `_` and `-`: `slot1`, `my-run`".into()) }
+}
+
+impl Args {
+    /// What the command line says about networking.
+    fn net(&self) -> NetLaunch {
+        match (self.host, &self.join, self.stand) {
+            (Some(port), _, _) => NetLaunch::Host { port },
+            (_, Some(addr), _) => NetLaunch::Join { addr: addr.clone() },
+            (_, _, Some(clients)) => NetLaunch::Stand { clients, udp: self.stand_udp },
+            _ => NetLaunch::Off,
+        }
+    }
+
+    /// The config the command line describes (the BRP port is settled later).
+    fn config(&self) -> EngineConfig {
+        let defaults = EngineConfig::default();
+        let settings = match (&self.settings_dir, self.no_settings) {
+            (_, true) => SettingsStore::Off,
+            (Some(dir), false) => SettingsStore::Dir(dir.clone()),
+            (None, false) => SettingsStore::Default,
+        };
+        EngineConfig {
+            headless: self.headless,
+            seed: self.seed,
+            port: None,
+            paused: self.paused,
+            tick_hz: self.hz,
+            net: self.net(),
+            player_name: self.name.clone().unwrap_or(defaults.player_name),
+            net_sim: self.net_sim.clone(),
+            save_dir: self.save_dir.clone(),
+            settings,
+            character_slot: self.character.clone(),
+            world_slot: self.world.clone(),
+            exit_with_host: self.exit_with_host,
+            ..EngineConfig::default()
+        }
+    }
 }
 
 /// The standard game `main`: parses the command line into an [`EngineConfig`], calls
@@ -89,7 +173,11 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let mut config = EngineConfig { headless: args.headless, seed: args.seed, port: None, paused: args.paused, tick_hz: args.hz, ..default() };
+    let mut config = args.config();
+    if config.net != NetLaunch::Off {
+        eprintln!("error: networking arrives with shards_net (--host, --join, --stand)");
+        return ExitCode::from(2);
+    }
     if let Some(r) = &recording {
         config.seed = r.seed;
         config.tick_hz = r.tick_hz;
@@ -416,7 +504,7 @@ mod termination {
     use std::sync::atomic::{AtomicI32, Ordering};
 
     use bevy::app::AppExit;
-    use bevy::ecs::message::MessageWriter;
+    use bevy::ecs::world::World;
 
     /// The first termination signal received; 0: none yet.
     static RECEIVED: AtomicI32 = AtomicI32::new(0);
@@ -452,11 +540,13 @@ mod termination {
         }
     }
 
-    /// Exit code 128 + signal, as a shell reports a process the signal killed.
-    pub fn exit_when_signalled(mut exit: MessageWriter<AppExit>) {
+    /// Exit code 128 + signal, as a shell reports a process the signal killed. The exit
+    /// hooks run right away (once: the `Last` system that sees this `AppExit` skips them).
+    pub fn exit_when_signalled(world: &mut World) {
         let signal = RECEIVED.load(Ordering::SeqCst);
         if signal != 0 {
-            exit.write(AppExit::from_code((128 + signal) as u8));
+            world.write_message(AppExit::from_code((128 + signal) as u8));
+            shards_core::run_exit_hooks(world);
         }
     }
 }
@@ -521,6 +611,59 @@ mod tests {
         assert!(parse(&["game", "--replay", "r.json", "--windowed"]).is_err());
         let args = parse(&["game", "--replay", "r.json", "--verify", "--windowed"]).unwrap();
         assert!(args.verify && args.windowed);
+    }
+
+    #[test]
+    fn network_save_and_settings_flags_are_checked_and_stored() {
+        let parse = |args: &[&str]| Args::try_parse_from(args.iter().copied());
+        let refused = |args: &[&str]| parse(args).unwrap_err().to_string();
+        assert!(refused(&["game", "--host", "--join", "1.2.3.4:7777"]).contains("cannot be used with"));
+        assert!(refused(&["game", "--join", "1.2.3.4:7777", "--stand", "2", "--headless"]).contains("cannot be used with"));
+        assert!(refused(&["game", "--host", "--stand", "2", "--headless"]).contains("cannot be used with"));
+        assert!(refused(&["game", "--stand", "2"]).contains("--headless"), "a stand runs headless");
+        assert!(refused(&["game", "--stand", "0", "--headless"]).contains("0"), "a stand has clients");
+        assert!(refused(&["game", "--stand-udp"]).contains("--stand"));
+        assert!(refused(&["game", "--no-settings", "--settings-dir", "s"]).contains("cannot be used with"));
+        assert!(refused(&["game", "--world", "../etc"]).contains("a slot is 1-32 of a-z"));
+        assert!(refused(&["game", "--character", "Hero"]).contains("a slot is 1-32 of a-z"));
+
+        let plain = parse(&["game"]).unwrap().config();
+        assert_eq!(plain.net, NetLaunch::Off);
+        assert_eq!((plain.save_dir.as_str(), &plain.settings, plain.player_name.as_str()), ("saves", &SettingsStore::Default, "player"));
+        let host = parse(&["game", "--host"]).unwrap().config();
+        assert_eq!(host.net, NetLaunch::Host { port: shards_core::DEFAULT_NET_PORT });
+        assert_eq!(parse(&["game", "--host", "9000"]).unwrap().config().net, NetLaunch::Host { port: 9000 });
+        let stand = parse(&["game", "--stand", "2", "--stand-udp", "--headless", "--net-sim", "latency=150"]).unwrap().config();
+        assert_eq!((stand.net, stand.net_sim.as_deref()), (NetLaunch::Stand { clients: 2, udp: true }, Some("latency=150")));
+        let join = parse(&[
+            "game", "--join", "127.0.0.1:7777", "--name", "Ann", "--character", "ann-1", "--world", "w_2", "--exit-with-host",
+            "--save-dir", "my_saves", "--no-settings",
+        ])
+        .unwrap()
+        .config();
+        assert_eq!(join.net, NetLaunch::Join { addr: "127.0.0.1:7777".into() });
+        assert_eq!((join.player_name.as_str(), join.character_slot.as_deref(), join.world_slot.as_deref()), ("Ann", Some("ann-1"), Some("w_2")));
+        assert!(join.exit_with_host);
+        assert_eq!((join.save_dir.as_str(), join.settings), ("my_saves", SettingsStore::Off));
+        let dir = parse(&["game", "--settings-dir", "/tmp/s"]).unwrap().config();
+        assert_eq!(dir.settings, SettingsStore::Dir("/tmp/s".into()));
+    }
+
+    #[test]
+    fn an_embedded_game_is_driven_from_outside_but_keeps_its_port() {
+        let config = testing::embedded_config(Some(1));
+        assert!(config.embedded && !config.testing && config.headless && config.paused);
+        assert_eq!(config.ai_core_plugin().remote_port, Some(1), "its own BRP port");
+        assert_eq!(config.settings, SettingsStore::Off);
+        assert_eq!(testing::config().ai_core_plugin().remote_port, None);
+
+        let mut app = game(&testing::embedded_config(None));
+        app.finish();
+        app.cleanup();
+        testing::wait_until_loaded(&mut app, testing::LOAD_TIMEOUT).unwrap();
+        assert!(app.world().contains_resource::<ai_core::journal::LogCapture>(), "its log lines go to its journal");
+        ok(&mut app, "step", json!({"ticks": 3}));
+        assert_eq!(ai_core::sim::tick(app.world()), 3);
     }
 
     /// Tests that write into `snapshots/` take turns: the last one out removes the folder.

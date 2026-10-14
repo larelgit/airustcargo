@@ -13,8 +13,10 @@
 //! Gameplay runs in `FixedUpdate`, in `SimSet` order: the engine's own systems are in
 //! [`CoreSystems`] so a game can order its systems against them.
 
+pub mod exit;
 pub mod intent;
 pub mod loading;
+pub mod seed;
 pub mod state;
 
 use ai_core::{AiAppExt, AiCorePlugin, SimConfig, SimSet};
@@ -24,9 +26,11 @@ use bevy::state::state::StateTransitionSystems;
 use serde::Serialize;
 use serde_json::{json, Value};
 
+pub use exit::{run_exit_hooks, ExitHook, ExitHooks};
 pub use intent::{flat, follow_orders, input_names, Intent, Order, Press, Target};
 pub use loading::{statuses as loading_statuses, LoadCheck, LoadStatus, LoadingGate};
-pub use state::{EngineState, LocalPlayer, NetRole, PauseState, PlayerId};
+pub use seed::{adopt_seed, hold_seed, seed_ready, SeedLock};
+pub use state::{player_body, predicts, simulates, EngineState, LocalPlayer, NetRole, NetSet, PauseState, PlayerId, Predicted};
 
 /// Version of the engine crates (they share one).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -34,8 +38,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The types a game module uses most.
 pub mod prelude {
     pub use crate::{
-        input_names, CoreSystems, EngineAppExt, EngineConfig, EngineState, Intent, LoadStatus, LocalPlayer, NetRole, Order,
-        PauseState, PlayerId, Press, Target,
+        input_names, CoreSystems, EngineAppExt, EngineConfig, EngineState, Intent, LoadStatus, LocalPlayer, NetRole, NetSet,
+        Order, PauseState, PlayerId, Predicted, Press, Target,
     };
 }
 
@@ -72,6 +76,57 @@ pub struct EngineConfig {
     /// A test app: headless, no logger (a process has only one), no Ctrl+C handler and
     /// no run loop; tests drive it with `app.update()` and tools.
     pub testing: bool,
+    /// A game beside another in one process (a stand's clients): like [`testing`](Self::testing)
+    /// (headless, no logger, no Ctrl+C handler, no run loop: a driver updates it), but with
+    /// its own BRP port, and its log lines go to its own journal.
+    pub embedded: bool,
+    /// Taking part in a networked game (`--host`, `--join`, `--stand`).
+    pub net: NetLaunch,
+    /// The name other players see (`--name`).
+    pub player_name: String,
+    /// Network conditions this game's links simulate (`--net-sim latency=150,loss=0.02`).
+    pub net_sim: Option<String>,
+    /// Where saves are written, relative to the game's folder (`--save-dir`).
+    pub save_dir: String,
+    /// Where player settings are kept (`--settings-dir`, `--no-settings`).
+    pub settings: SettingsStore,
+    /// The character to play (`--character SLOT`): a save slot.
+    pub character_slot: Option<String>,
+    /// The world to load (`--world SLOT`): a save slot.
+    pub world_slot: Option<String>,
+    /// A client exits when its host ends the session, instead of going back to the menu
+    /// (`--exit-with-host`).
+    pub exit_with_host: bool,
+}
+
+/// The UDP port of a hosted game unless `--host PORT` says otherwise.
+pub const DEFAULT_NET_PORT: u16 = 7777;
+
+/// How a game takes part in a networked session.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum NetLaunch {
+    /// Single player: no network.
+    #[default]
+    Off,
+    /// Hosts a session on this UDP port (`--host [PORT]`).
+    Host { port: u16 },
+    /// Joins the host at `addr` (`--join 127.0.0.1:7777`).
+    Join { addr: String },
+    /// A host and `clients` clients from one command (`--stand N`): in this process, or
+    /// child processes over UDP loopback (`udp`, `--stand-udp`).
+    Stand { clients: u8, udp: bool },
+}
+
+/// Where player settings (graphics, audio, controls) are kept.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum SettingsStore {
+    /// Defaults, no files (`--no-settings`, tests, a stand's clients).
+    Off,
+    /// The platform's settings folder for this game.
+    #[default]
+    Default,
+    /// This folder (`--settings-dir DIR`).
+    Dir(String),
 }
 
 impl Default for EngineConfig {
@@ -89,6 +144,15 @@ impl Default for EngineConfig {
             hot_reload: true,
             asset_dir: "assets".into(),
             testing: false,
+            embedded: false,
+            net: NetLaunch::Off,
+            player_name: "player".into(),
+            net_sim: None,
+            save_dir: "saves".into(),
+            settings: SettingsStore::Default,
+            character_slot: None,
+            world_slot: None,
+            exit_with_host: false,
         }
     }
 }
@@ -155,6 +219,10 @@ pub trait EngineAppExt {
     /// Holds the simulation until `check` reports [`LoadStatus::Ready`] (see
     /// [`LoadingGate`]).
     fn require_loaded(&mut self, label: &str, check: LoadCheck) -> &mut Self;
+
+    /// Runs `hook` when the game ends: once, after the hooks added before it, when an
+    /// `AppExit` is written or a termination signal arrives (see [`exit`]).
+    fn add_exit_hook(&mut self, name: &str, hook: ExitHook) -> &mut Self;
 }
 
 impl EngineAppExt for App {
@@ -165,6 +233,11 @@ impl EngineAppExt for App {
 
     fn require_loaded(&mut self, label: &str, check: LoadCheck) -> &mut Self {
         self.world_mut().get_resource_or_init::<LoadingGate>().require(label, check);
+        self
+    }
+
+    fn add_exit_hook(&mut self, name: &str, hook: ExitHook) -> &mut Self {
+        self.world_mut().get_resource_or_init::<ExitHooks>().add(name, hook);
         self
     }
 }
@@ -191,17 +264,35 @@ impl Plugin for CorePlugin {
         app.register_type::<Intent>()
             .register_type::<PlayerId>()
             .register_type::<LocalPlayer>()
+            .register_type::<Predicted>()
             .register_type::<NetRole>();
+        // `ai/session {player: N}`, `possess player=N`: the body with `PlayerId(N)`.
+        app.world_mut().get_resource_or_init::<ai_core::AgentSessions>().set_player_resolver(state::player_body);
         app.insert_resource(self.config.clone())
             .init_resource::<NetRole>()
             .init_resource::<LoadingGate>()
             .init_resource::<state::MenuPaused>()
             .init_resource::<state::RegionTrip>()
+            .init_resource::<ExitHooks>()
+            .init_resource::<SeedLock>()
             .init_state::<EngineState>()
             .add_sub_state::<PauseState>()
             .replay_input::<Intent>()
+            // "My body" is each machine's own.
+            .net_ignore::<LocalPlayer>()
+            .net_ignore::<Predicted>()
+            .replay_ignore::<Predicted>()
+            // A joining client learns the seed from its host.
+            .require_loaded("seed", seed::seed_status)
             .add_engine_module("core", VERSION)
             .add_ai_status("engine", engine_status)
+            // A client is fed the world by its host: it runs no gameplay, only its prediction.
+            .configure_sets(
+                FixedUpdate,
+                (SimSet::Input, SimSet::Think, SimSet::Act, SimSet::Move, SimSet::Resolve, SimSet::Cleanup)
+                    .distributive_run_if(simulates),
+            )
+            .configure_sets(FixedUpdate, NetSet::Predict.run_if(predicts))
             .configure_sets(
                 FixedUpdate,
                 (CoreSystems::FollowOrders.in_set(SimSet::Input), CoreSystems::ClearPresses.in_set(SimSet::Cleanup)),
@@ -215,6 +306,7 @@ impl Plugin for CorePlugin {
             )
             .add_systems(First, loading::update_loading.before(ai_core::sim::apply_gate))
             .add_systems(PreUpdate, state::close_pause_when_resumed)
+            .add_systems(Last, run_exit_hooks.run_if(exit::exiting))
             .add_systems(
                 StateTransition,
                 (

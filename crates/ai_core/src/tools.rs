@@ -36,7 +36,7 @@ use serde_json::{json, Map, Value};
 use crate::id::{AiId, AiIndex};
 use crate::journal::{self, AiJournal, JournalKind};
 use crate::observe::{diff, digest};
-use crate::session::{caller, Caller, Scope};
+use crate::session::{caller, AgentSessions, Caller, Scope};
 use crate::sim;
 
 pub type ToolResult<T = String> = Result<T, String>;
@@ -63,6 +63,31 @@ pub enum ToolKind {
     Control,
 }
 
+/// Where a call runs when this game is a client of a networked game (a [`Forwarder`] is
+/// set). Without one, every tool runs here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NetRoute {
+    /// Here: queries, a player's own actions (they act through `Intent`, which travels by
+    /// itself), time control (routed by [`StepRoute`](crate::sim::StepRoute)).
+    Local,
+    /// On the host: the call is handed to the forwarder, which sends it there.
+    Host,
+    /// Only on the host; refused here with this reason (`call it on the host`).
+    HostOnly(&'static str),
+}
+
+impl NetRoute {
+    /// The default for a tool of this kind and scope: dev actions change the shared world, so
+    /// they run on the host; everything else runs here.
+    pub fn default_for(kind: ToolKind, scope: Scope) -> NetRoute {
+        match (kind, scope) {
+            (ToolKind::Action, Scope::Dev) => NetRoute::Host,
+            _ => NetRoute::Local,
+        }
+    }
+}
+
 /// Public description of a tool; `input_schema` is the JSON Schema of its arguments.
 #[derive(Clone, Debug, Serialize)]
 pub struct ToolSpec {
@@ -70,9 +95,38 @@ pub struct ToolSpec {
     pub description: String,
     pub scope: Scope,
     pub kind: ToolKind,
+    /// Where it runs on a client of a networked game.
+    pub net: NetRoute,
     /// One-line form for prompts and errors: `move_to(target: id|{x,z}, run?: bool)`.
     pub signature: String,
     pub input_schema: Value,
+}
+
+/// The reason of the engine's [`NetRoute::HostOnly`] tools.
+pub const ON_THE_HOST: &str = "call it on the host";
+
+/// A call a client hands to its host ([`Forwarder`]).
+#[derive(Clone, Debug, Serialize)]
+pub struct ForwardedCall {
+    /// The agent that made it.
+    pub agent: String,
+    pub scope: Scope,
+    /// The player the agent is bound to, if any ([`AgentSession::player`](crate::AgentSession)).
+    pub player: Option<u8>,
+    /// The agent's subject, if it is set by id.
+    pub subject: Option<AiId>,
+    pub tool: String,
+    pub args: Value,
+    pub kind: ToolKind,
+}
+
+/// How a client hands [`NetRoute::Host`] calls to its host. `forward` returns what the call
+/// answers here: the host's result, or a promise to poll (`{"pending": id}`).
+#[derive(Clone)]
+pub struct Forwarder {
+    pub forward: fn(&mut World, ForwardedCall) -> ToolResult<Value>,
+    /// The host, for messages: `127.0.0.1:7777`.
+    pub host: String,
 }
 
 type RunFn = Box<dyn Fn(&mut World, Caller, Value) -> ToolResult<Value> + Send + Sync>;
@@ -87,19 +141,43 @@ pub struct AiTool {
 
 /// Tool registry, ordered by name (stable output for agents and diffs).
 #[derive(Resource, Default)]
-pub struct AiTools(BTreeMap<String, Arc<AiTool>>);
+pub struct AiTools {
+    tools: BTreeMap<String, Arc<AiTool>>,
+    /// Set on a client of a networked game: where [`NetRoute::Host`] calls go.
+    forwarder: Option<Forwarder>,
+}
 
 impl AiTools {
     pub fn get(&self, name: &str) -> Option<Arc<AiTool>> {
-        self.0.get(name).cloned()
+        self.tools.get(name).cloned()
     }
 
     pub fn specs(&self, scope: Scope) -> Vec<ToolSpec> {
-        self.0.values().filter(|t| scope.allows(t.spec.scope)).map(|t| t.spec.clone()).collect()
+        self.tools.values().filter(|t| scope.allows(t.spec.scope)).map(|t| t.spec.clone()).collect()
     }
 
     pub fn names(&self, scope: Scope) -> Vec<String> {
-        self.0.values().filter(|t| scope.allows(t.spec.scope)).map(|t| t.spec.name.clone()).collect()
+        self.tools.values().filter(|t| scope.allows(t.spec.scope)).map(|t| t.spec.name.clone()).collect()
+    }
+
+    /// Changes where tool `name` runs on a client. Refused for a tool that does not exist or
+    /// is running right now.
+    pub fn set_route(&mut self, name: &str, route: NetRoute) -> Result<(), String> {
+        let tool = self.tools.get_mut(name).ok_or_else(|| format!("no tool `{name}`"))?;
+        let tool = Arc::get_mut(tool).ok_or_else(|| format!("`{name}` is running; set its route at startup"))?;
+        tool.spec.net = route;
+        Ok(())
+    }
+
+    /// Hands [`NetRoute::Host`] calls to `forwarder` from now on (and refuses
+    /// [`NetRoute::HostOnly`] ones); `None`: every tool runs here again.
+    pub fn set_forwarder(&mut self, forwarder: Option<Forwarder>) {
+        self.forwarder = forwarder;
+    }
+
+    /// The forwarder, if this game is a client.
+    pub fn forwarder(&self) -> Option<&Forwarder> {
+        self.forwarder.as_ref()
     }
 }
 
@@ -153,8 +231,9 @@ where
             }
         }
     });
-    let spec = ToolSpec { name: name.to_owned(), description, scope, kind, signature, input_schema };
-    world.get_resource_or_init::<AiTools>().0.insert(name.to_owned(), Arc::new(AiTool { spec, run }));
+    let net = NetRoute::default_for(kind, scope);
+    let spec = ToolSpec { name: name.to_owned(), description, scope, kind, net, signature, input_schema };
+    world.get_resource_or_init::<AiTools>().tools.insert(name.to_owned(), Arc::new(AiTool { spec, run }));
 }
 
 pub(crate) fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
@@ -204,6 +283,34 @@ pub struct CallOutcome {
 
 const MAX_CHANGES: usize = 60;
 
+/// At most [`MAX_CHANGES`] changes, and a line saying how many more there were.
+pub(crate) fn clip_changes(mut changes: Vec<String>) -> Vec<String> {
+    if changes.len() > MAX_CHANGES {
+        let extra = changes.len() - MAX_CHANGES;
+        changes.truncate(MAX_CHANGES);
+        changes.push(format!("… {extra} more changes"));
+    }
+    changes
+}
+
+/// The answer of a call to `tool` that ended with `result`, on the world as it is now, with no
+/// changes and no journal lines: for a driver that completes deferred requests.
+pub fn finished(world: &World, tool: &str, result: ToolResult<Value>) -> CallOutcome {
+    let (ok, result) = match result {
+        Ok(value) => (true, value),
+        Err(message) => (false, Value::String(message)),
+    };
+    CallOutcome {
+        tool: tool.to_owned(),
+        ok,
+        result,
+        tick: sim::tick(world),
+        paused: sim::is_paused(world),
+        changes: Vec::new(),
+        journal: Vec::new(),
+    }
+}
+
 /// Arguments longer than this are cut in the journal line (replays keep them whole):
 /// a content edit carries whole definitions.
 const MAX_JOURNALED_ARGS: usize = 200;
@@ -220,6 +327,7 @@ fn clip(text: String, max: usize) -> String {
 /// Runs a tool on behalf of `agent`. The single entry point: BRP (`shards`), the
 /// game's own dev keys, tests and replays all call tools through here.
 pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> CallOutcome {
+    crate::process::activate(world);
     let caller = caller(world, agent);
     let outcome = |world: &World, ok: bool, result: Value, changes, journal| CallOutcome {
         tool: tool.to_owned(),
@@ -242,6 +350,41 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
             entry.spec.scope, caller.agent, caller.scope
         );
         return outcome(world, false, Value::String(msg), Vec::new(), Vec::new());
+    }
+
+    // A client: what changes the shared world runs on the host.
+    if let Some(forwarder) = world.resource::<AiTools>().forwarder.clone() {
+        match entry.spec.net {
+            NetRoute::Local => {}
+            NetRoute::HostOnly(reason) => {
+                let msg = format!("`{tool}` runs on the host only: {reason} ({})", forwarder.host);
+                return outcome(world, false, Value::String(msg), Vec::new(), Vec::new());
+            }
+            NetRoute::Host => {
+                let args_text = if args.is_null() { String::new() } else { clip(args.to_string(), MAX_JOURNALED_ARGS) };
+                journal::drain_logs(world);
+                let text = format!("{}: {tool} {args_text} (on the host {})", caller.agent, forwarder.host);
+                let mark = journal::log(world, JournalKind::Agent, text);
+                let player = world.resource::<AgentSessions>().get(&caller.agent).and_then(|s| s.player);
+                let call = ForwardedCall {
+                    agent: caller.agent.clone(),
+                    scope: caller.scope,
+                    player,
+                    subject: caller.subject_id,
+                    tool: tool.to_owned(),
+                    args,
+                    kind: entry.spec.kind,
+                };
+                let result = (forwarder.forward)(world, call);
+                journal::drain_logs(world);
+                let journal: Vec<String> = world.resource::<AiJournal>().after(mark).0.map(ToString::to_string).collect();
+                let (ok, value) = match result {
+                    Ok(v) => (true, v),
+                    Err(e) => (false, Value::String(e)),
+                };
+                return outcome(world, ok, value, Vec::new(), journal);
+            }
+        }
     }
 
     // What failed before this call is gameplay's (journaled, the game pauses); what
@@ -281,12 +424,7 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
     journal::drain_logs(world);
     let after = digest(world);
 
-    let mut changes = diff(&before, &after, origin);
-    if changes.len() > MAX_CHANGES {
-        let extra = changes.len() - MAX_CHANGES;
-        changes.truncate(MAX_CHANGES);
-        changes.push(format!("… {extra} more changes"));
-    }
+    let changes = clip_changes(diff(&before, &after, origin));
     let journal: Vec<String> = world.resource::<AiJournal>().after(mark).0.map(ToString::to_string).collect();
     let (ok, value) = match result {
         Ok(v) => (true, v),
@@ -499,5 +637,69 @@ mod tests {
         assert_eq!(a, b);
         assert!(serde_json::from_value::<Id>(json!("x")).is_err());
         assert!(serde_json::from_value::<Id>(json!(0)).is_err());
+    }
+
+    #[derive(Resource, Default)]
+    struct Forwarded(Vec<ForwardedCall>);
+
+    fn fake_forward(world: &mut World, call: ForwardedCall) -> ToolResult<Value> {
+        world.resource_mut::<Forwarded>().0.push(call);
+        Ok(json!({"pending": 7}))
+    }
+
+    fn game() -> App {
+        let mut app = App::new();
+        app.add_plugins(bevy::time::TimePlugin)
+            .add_plugins(crate::AiCorePlugin {
+                remote_port: None,
+                crash_replays: false,
+                sim: crate::SimConfig { start_paused: true, ..Default::default() },
+                ..Default::default()
+            })
+            .init_resource::<Forwarded>();
+        app.world_mut().spawn((crate::AiKind::new("Crate"), Transform::default()));
+        app.finish();
+        app.cleanup();
+        app.update();
+        app
+    }
+
+    #[test]
+    fn a_client_hands_dev_actions_to_its_host_and_refuses_host_only_tools() {
+        let mut app = game();
+        let route = |app: &App, name: &str| app.world().resource::<AiTools>().get(name).unwrap().spec.net;
+        assert_eq!(route(&app, "teleport"), NetRoute::Host);
+        assert_eq!(route(&app, "observe"), NetRoute::Local);
+        assert_eq!(route(&app, "step"), NetRoute::Local);
+        assert_eq!(route(&app, "replay_save"), NetRoute::HostOnly(ON_THE_HOST));
+        assert_eq!(route(&app, "snapshot_load"), NetRoute::HostOnly(ON_THE_HOST));
+        let teleport = |x: f32| json!({"id": 1, "x": x, "z": 0});
+
+        // No forwarder: everything runs here.
+        let out = call_tool(app.world_mut(), "dev", "teleport", teleport(2.0));
+        assert!(out.ok && !out.changes.is_empty(), "{out:?}");
+
+        let forwarder = Forwarder { forward: fake_forward, host: "127.0.0.1:7777".into() };
+        app.world_mut().resource_mut::<AiTools>().set_forwarder(Some(forwarder));
+        let out = call_tool(app.world_mut(), "dev", "teleport", teleport(5.0));
+        assert!(out.ok, "{out:?}");
+        assert_eq!(out.result, json!({"pending": 7}));
+        let journal = app.world().resource::<AiJournal>();
+        let line = journal.after(journal.last_seq() - 1).0.next().unwrap().to_string();
+        assert_eq!(line, "0 [agent] dev: teleport {\"id\":1,\"x\":5.0,\"z\":0} (on the host 127.0.0.1:7777)");
+        let sent = &app.world().resource::<Forwarded>().0;
+        assert_eq!((sent.len(), sent[0].tool.as_str(), sent[0].args["x"].as_f64()), (1, "teleport", Some(5.0)));
+        let crate_x = |app: &mut App| app.world_mut().query::<&Transform>().single(app.world()).unwrap().translation.x;
+        assert_eq!(crate_x(&mut app), 2.0, "the host moves it, not this game");
+
+        let out = call_tool(app.world_mut(), "dev", "snapshot_save", json!({}));
+        assert!(!out.ok);
+        assert_eq!(out.result, "`snapshot_save` runs on the host only: call it on the host (127.0.0.1:7777)");
+        assert!(call_tool(app.world_mut(), "dev", "observe", json!({})).ok, "queries run here");
+
+        app.world_mut().resource_mut::<AiTools>().set_forwarder(None);
+        assert!(call_tool(app.world_mut(), "dev", "teleport", teleport(9.0)).ok);
+        assert_eq!(crate_x(&mut app), 9.0);
+        assert_eq!(app.world().resource::<Forwarded>().0.len(), 1);
     }
 }

@@ -245,7 +245,19 @@ impl Plugin for ActionPlugin {
             .register_type::<Invulnerable>()
             .register_type::<Statuses>()
             .register_type::<StatusResist>()
-            .register_type::<Animated>();
+            .register_type::<Animated>()
+            // Typed for the network layer, which forwards them to clients.
+            .register_type::<ActionStarted>()
+            .register_type::<ActionRejected>()
+            .register_type::<Telegraph>()
+            .register_type::<Healed>()
+            .register_type::<Damaged>()
+            .register_type::<Blocked>()
+            .register_type::<Parried>()
+            .register_type::<Evaded>()
+            .register_type::<GuardBroken>()
+            .register_type::<Staggered>()
+            .register_type::<Died>();
         // Known to the world from the start, so `&World` queries (tools, zones) work
         // before the first tick or the first death.
         let world = app.world_mut();

@@ -8,14 +8,16 @@ use bevy::reflect::{GetPath, PartialReflect, ReflectFromReflect, ReflectPath, Ty
 use schemars::JsonSchema;
 use serde::de::DeserializeSeed;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::describe::facts;
 use crate::id::{AiId, AI_ID_IS_MANAGED};
 use crate::journal::{self, AiJournal, JournalKind};
 use crate::observe::{self, entity_line, ObserveOptions};
-use crate::session::{AgentSessions, Scope};
-use crate::sim::{self, SimGate, StepEnd};
+use crate::session::{configure_session, AgentSessions, Scope, SessionChange};
+use crate::observe::Digest;
+use crate::sim::{self, ClockAction, SimGate, StepEnd, StepPoll, StepReport, StepRequest, FINISHED_KEPT};
+use crate::tools::CallOutcome;
 use crate::spatial::{self, relative, EYE_HEIGHT};
 use crate::tools::{register_tool, AiTools, Call, Id, NoArgs, ToolKind, ToolResult};
 
@@ -33,6 +35,7 @@ pub(crate) fn register(world: &mut World) {
     register_tool(world, "resume", Dev, Control, resume_tool);
     register_tool(world, "speed", Dev, Control, speed_tool);
     register_tool(world, "step", Dev, Control, step_tool);
+    register_tool(world, "step_poll", Dev, Query, step_poll_tool);
     register_tool(world, "possess", Dev, Control, possess_tool);
     register_tool(world, "teleport", Dev, Action, teleport_tool);
     register_tool(world, "despawn", Dev, Action, despawn_tool);
@@ -161,25 +164,54 @@ fn tools_tool(In(call): In<Call<NoArgs>>, tools: Res<AiTools>) -> ToolResult {
 
 // --- time ------------------------------------------------------------------------
 
-/// Freeze the simulation (rendering, UI and these tools keep working).
-fn pause_tool(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult {
-    sim::pause(world);
-    // Paused on purpose: the end of loading must not resume it.
-    if let Some(mut gate) = world.get_resource_mut::<SimGate>() {
-        gate.forget_pause();
+/// What `pause`, `resume` and `speed` do to this world, and what they answer. A driver of
+/// deferred clock requests applies them with this.
+pub fn apply_clock(world: &mut World, action: ClockAction) -> ToolResult {
+    match action {
+        ClockAction::Pause => {
+            sim::pause(world);
+            // Paused on purpose: the end of loading must not resume it.
+            if let Some(mut gate) = world.get_resource_mut::<SimGate>() {
+                gate.forget_pause();
+            }
+            journal::log(world, JournalKind::Sim, "paused");
+            Ok(format!("paused at tick {}", sim::tick(world)))
+        }
+        ClockAction::Resume => {
+            if let Some(loading) = sim::gate_message(world) {
+                return Err(format!("{loading}; a game started without --paused runs by itself once loaded"));
+            }
+            sim::resume(world);
+            journal::log(world, JournalKind::Sim, "resumed");
+            Ok(format!("running from tick {}", sim::tick(world)))
+        }
+        ClockAction::Speed(x) => {
+            sim::set_speed(world, x);
+            journal::log(world, JournalKind::Sim, format!("speed {x}x"));
+            Ok(format!("speed {}x", sim::speed(world)))
+        }
     }
-    journal::log(world, JournalKind::Sim, "paused");
-    Ok(format!("paused at tick {}", sim::tick(world)))
+}
+
+/// A clock tool on a world whose steps are deferred: queued, `{"pending": id}`.
+fn clock(world: &mut World, action: ClockAction, agent: &str) -> ToolResult<Value> {
+    match sim::deferred_queue(world) {
+        Some(queue) => {
+            let id = queue.lock().map_err(|_| "the step queue is poisoned".to_owned())?.push_clock(action, agent);
+            Ok(json!({ "pending": id }))
+        }
+        None => apply_clock(world, action).map(Value::String),
+    }
+}
+
+/// Freeze the simulation (rendering, UI and these tools keep working).
+fn pause_tool(In(call): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
+    clock(world, ClockAction::Pause, &call.caller.agent)
 }
 
 /// Unfreeze the simulation (real-time play at the current speed).
-fn resume_tool(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult {
-    if let Some(loading) = sim::gate_message(world) {
-        return Err(format!("{loading}; a game started without --paused runs by itself once loaded"));
-    }
-    sim::resume(world);
-    journal::log(world, JournalKind::Sim, "resumed");
-    Ok(format!("running from tick {}", sim::tick(world)))
+fn resume_tool(In(call): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
+    clock(world, ClockAction::Resume, &call.caller.agent)
 }
 
 /// Real-time speed multiplier, e.g. 0.25 for slow motion. Does not affect `step`.
@@ -188,10 +220,8 @@ pub struct SpeedArgs {
     pub x: f32,
 }
 
-fn speed_tool(In(call): In<Call<SpeedArgs>>, world: &mut World) -> ToolResult {
-    sim::set_speed(world, call.args.x);
-    journal::log(world, JournalKind::Sim, format!("speed {}x", call.args.x));
-    Ok(format!("speed {}x", sim::speed(world)))
+fn speed_tool(In(call): In<Call<SpeedArgs>>, world: &mut World) -> ToolResult<Value> {
+    clock(world, ClockAction::Speed(call.args.x), &call.caller.agent)
 }
 
 /// Stop condition for `step`. Any matching condition stops the run.
@@ -230,24 +260,34 @@ pub struct StepArgs {
 
 const MAX_STEP: u64 = 216_000; // one hour of game time
 
-fn step_tool(In(call): In<Call<StepArgs>>, world: &mut World) -> ToolResult {
+fn step_tool(In(call): In<Call<StepArgs>>, world: &mut World) -> ToolResult<Value> {
     let StepArgs { ticks, until } = call.args;
     let max = ticks.unwrap_or(if until.is_empty() { 1 } else { 600 }).min(MAX_STEP);
     for cond in &until {
         validate(world, cond)?;
     }
     let journal_mark = world.resource::<AiJournal>().last_seq();
-    let report = sim::step(world, max, Duration::from_secs(20), |w| {
-        // The tick's log lines are in the journal before `journal:` conditions look.
-        journal::drain_logs(w);
-        check(w, &until, journal_mark)
-    })?;
+    if let Some(queue) = sim::deferred_queue(world) {
+        let mut queue = queue.lock().map_err(|_| "the step queue is poisoned".to_owned())?;
+        let id = queue.push_step(max, until, &call.caller.agent, journal_mark);
+        return Ok(json!({ "pending": id }));
+    }
+    let report = sim::step(world, max, Duration::from_secs(STEP_WALL_SECS), |w| check_until(w, &until, journal_mark))?;
+    Ok(Value::String(step_report_text(&report, !until.is_empty())))
+}
+
+/// Wall-clock budget of one `step` call.
+pub const STEP_WALL_SECS: u64 = 20;
+
+/// What `step` answers for `report`: `ran 120 ticks (0 → 120), stopped: journal: …`.
+/// `conditions`: the step had `until` conditions (so running all ticks says none was met).
+pub fn step_report_text(report: &StepReport, conditions: bool) -> String {
     let mut msg = format!("ran {} ticks ({} → {})", report.ticks(), report.from_tick, report.to_tick);
-    match report.end {
-        StepEnd::Completed if until.is_empty() => {}
+    match &report.end {
+        StepEnd::Completed if !conditions => {}
         StepEnd::Completed => msg.push_str(", no condition met"),
         StepEnd::Condition(why) => msg.push_str(&format!(", stopped: {why}")),
-        StepEnd::WallClock => msg.push_str(", stopped: 20 s wall-clock budget"),
+        StepEnd::WallClock => msg.push_str(&format!(", stopped: {STEP_WALL_SECS} s wall-clock budget")),
         StepEnd::SystemFailed(failures) => {
             let first = &failures[0];
             msg.push_str(&format!(", stopped: gameplay {}", first.headline()));
@@ -260,7 +300,79 @@ fn step_tool(In(call): In<Call<StepArgs>>, world: &mut World) -> ToolResult {
             }
         }
     }
-    Ok(msg)
+    msg
+}
+
+/// After a tick of a step: the tick's log lines go into the journal, then the first
+/// condition of `until` that holds says why the step stops (`None`: none does).
+pub fn check_until(world: &mut World, until: &[StopWhen], journal_mark: u64) -> Option<String> {
+    journal::drain_logs(world);
+    check(world, until, journal_mark)
+}
+
+/// A deferred step, driven from outside the tool (a stand's driver): what the driver needs so
+/// the step stops where a local one would and its answer is the one `step` gives.
+///
+/// ```ignore
+/// let mut watch = StepWatch::begin(world, &request);
+/// // run ticks; after each: if let Some(why) = watch.check(world) { stop with why }
+/// let outcome = watch.finish(world, &report);
+/// queue.lock().unwrap().complete(request.id, outcome);
+/// ```
+pub struct StepWatch {
+    until: Vec<StopWhen>,
+    journal_mark: u64,
+    before: Digest,
+    origin: Option<Vec3>,
+}
+
+impl StepWatch {
+    /// Before the first tick: what the world looks like now, for the changes.
+    pub fn begin(world: &mut World, request: &StepRequest) -> StepWatch {
+        let caller = crate::session::caller(world, &request.requester);
+        let origin = caller.subject.and_then(|e| world.get::<Transform>(e)).map(|t| t.translation);
+        StepWatch { until: request.until.clone(), journal_mark: request.journal_mark, before: observe::digest(world), origin }
+    }
+
+    /// After a tick: why the step stops here, if it does.
+    pub fn check(&self, world: &mut World) -> Option<String> {
+        check_until(world, &self.until, self.journal_mark)
+    }
+
+    /// After the last tick: the call's answer, with the changes and journal lines since the
+    /// request.
+    pub fn finish(self, world: &mut World, report: &StepReport) -> CallOutcome {
+        journal::drain_logs(world);
+        let text = step_report_text(report, !self.until.is_empty());
+        let changes = crate::tools::clip_changes(observe::diff(&self.before, &observe::digest(world), self.origin));
+        let journal: Vec<String> = world.resource::<AiJournal>().after(self.journal_mark).0.map(ToString::to_string).collect();
+        CallOutcome { changes, journal, ..crate::tools::finished(world, "step", Ok(Value::String(text))) }
+    }
+}
+
+/// Ask how a deferred `step`, `pause`, `resume` or `speed` went: `{"pending": id}` while it
+/// waits or runs, then its answer, as the call would have given it right away.
+#[derive(Deserialize, JsonSchema)]
+pub struct StepPollArgs {
+    /// The id the call answered with (`{"pending": 3}`).
+    pub id: u64,
+}
+
+fn step_poll_tool(In(call): In<Call<StepPollArgs>>, world: &mut World) -> ToolResult<Value> {
+    let id = call.args.id;
+    let Some(queue) = sim::deferred_queue(world) else {
+        return Err("steps run right away in this game, so there is nothing to poll: `step` answers with its report".into());
+    };
+    let queue = queue.lock().map_err(|_| "the step queue is poisoned".to_owned())?;
+    match queue.poll(id) {
+        StepPoll::Pending => Ok(json!({ "pending": id })),
+        StepPoll::Done(outcome) if outcome.ok => Ok(outcome.result),
+        StepPoll::Done(outcome) => Err(outcome.result.as_str().map_or_else(|| outcome.result.to_string(), str::to_owned)),
+        StepPoll::Unknown => Err(format!(
+            "no request {id}: ids so far go up to {}, and only the last {FINISHED_KEPT} finished ones are kept",
+            queue.last_id()
+        )),
+    }
 }
 
 fn validate(world: &World, cond: &StopWhen) -> Result<(), String> {
@@ -337,6 +449,9 @@ fn check(world: &World, until: &[StopWhen], journal_mark: u64) -> Option<String>
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct PossessArgs {
     pub id: Option<Id>,
+    /// Play as this player's body instead (a networked game's players: 0 is the host's),
+    /// found again on every call, so a respawned body is still yours.
+    pub player: Option<u8>,
 }
 
 fn possess_tool(In(call): In<Call<PossessArgs>>, world: &mut World) -> ToolResult {
@@ -344,11 +459,17 @@ fn possess_tool(In(call): In<Call<PossessArgs>>, world: &mut World) -> ToolResul
         id.entity(world)?;
     }
     let subject = call.args.id.map(|i| i.0);
-    let session = world.resource_mut::<AgentSessions>().get_or_create(&call.caller.agent).clone();
-    world.resource_mut::<AgentSessions>().configure(&call.caller.agent, session.scope, subject);
-    Ok(match subject {
-        Some(id) => format!("you are now {id}"),
-        None => "you are the player character again".to_owned(),
+    let change = SessionChange {
+        subject,
+        player: call.args.player,
+        clear_subject: subject.is_none() && call.args.player.is_none(),
+        ..Default::default()
+    };
+    let session = configure_session(world, &call.caller.agent, &change)?;
+    Ok(match (session.subject, session.player) {
+        (Some(id), _) => format!("you are now {id}"),
+        (_, Some(n)) => format!("you are now player {n}'s body, whichever entity that is"),
+        _ => "you are the player character again".to_owned(),
     })
 }
 
@@ -592,5 +713,93 @@ mod tests {
         assert_eq!(bag(&mut app), Bag { items: Vec::new(), weight: 1.5 }, "the whole component, lists included");
         set(&mut app, Some("weight"), json!(2));
         assert_eq!(bag(&mut app).weight, 2.0);
+    }
+
+    #[derive(Component)]
+    struct Walker;
+
+    #[derive(Event)]
+    struct Rang;
+
+    fn walk(mut walkers: Query<&mut Transform, With<Walker>>, tick: Res<SimTick>, mut commands: Commands) {
+        for mut t in &mut walkers {
+            t.translation.x += 1.0;
+        }
+        if tick.0 == 4 {
+            commands.trigger(Rang);
+        }
+    }
+
+    fn stepper(deferred: bool) -> App {
+        use crate::AiAppExt;
+        let mut app = App::new();
+        app.add_plugins(bevy::time::TimePlugin)
+            .add_plugins(crate::AiCorePlugin {
+                remote_port: None,
+                crash_replays: false,
+                sim: SimConfig { start_paused: true, ..Default::default() },
+                ..Default::default()
+            })
+            .journal_event::<Rang>(|_, _| Some("the bell rang".into()))
+            .add_systems(FixedUpdate, walk.in_set(SimSet::Resolve));
+        if deferred {
+            app.insert_resource(crate::sim::StepRoute::Deferred(Default::default()));
+        }
+        app.world_mut().spawn((AiKind::new("Walker"), Walker, Transform::default()));
+        app.finish();
+        app.cleanup();
+        app.update();
+        app
+    }
+
+    /// What a stand's driver does between frames.
+    fn drive(app: &mut App) {
+        let world = app.world_mut();
+        let queue = crate::sim::deferred_queue(world).unwrap();
+        let (steps, clock) = {
+            let mut queue = queue.lock().unwrap();
+            (queue.take_steps(), queue.take_clock())
+        };
+        for request in clock {
+            let result = super::apply_clock(world, request.action).map(serde_json::Value::String);
+            let outcome = crate::tools::finished(world, request.action.tool(), result);
+            queue.lock().unwrap().complete(request.id, outcome);
+        }
+        for request in steps {
+            let watch = super::StepWatch::begin(world, &request);
+            let wall = std::time::Duration::from_secs(super::STEP_WALL_SECS);
+            let report = crate::sim::step(world, request.ticks, wall, |w| watch.check(w)).unwrap();
+            let outcome = watch.finish(world, &report);
+            queue.lock().unwrap().complete(request.id, outcome);
+        }
+    }
+
+    #[test]
+    fn a_deferred_step_answers_later_exactly_as_a_local_one() {
+        let (mut local, mut deferred) = (stepper(false), stepper(true));
+        let args = json!({"ticks": 10, "until": [{"journal": "rang"}]});
+        let direct = crate::call_tool(local.world_mut(), "dev", "step", args.clone());
+        assert_eq!(direct.result, "ran 4 ticks (0 → 4), stopped: journal: 4 the bell rang");
+
+        let asked = crate::call_tool(deferred.world_mut(), "dev", "step", args);
+        assert_eq!(asked.result, json!({"pending": 1}));
+        let poll = |app: &mut App, id: u64| crate::call_tool(app.world_mut(), "dev", "step_poll", json!({"id": id}));
+        assert_eq!(poll(&mut deferred, 1).result, json!({"pending": 1}));
+        deferred.update();
+        assert_eq!(crate::sim::tick(deferred.world()), 0, "nothing runs until the driver does");
+        drive(&mut deferred);
+        deferred.update();
+        assert_eq!(poll(&mut deferred, 1).result, direct.result);
+        let queue = crate::sim::deferred_queue(deferred.world()).unwrap();
+        let crate::sim::StepPoll::Done(outcome) = queue.lock().unwrap().poll(1) else { panic!("not done") };
+        assert_eq!((outcome.tick, &outcome.changes, &outcome.journal), (direct.tick, &direct.changes, &direct.journal));
+        assert!(!outcome.changes.is_empty() && !outcome.journal.is_empty());
+
+        // The clock tools go the same way.
+        assert_eq!(crate::call_tool(deferred.world_mut(), "dev", "speed", json!({"x": 2})).result, json!({"pending": 2}));
+        drive(&mut deferred);
+        assert_eq!(poll(&mut deferred, 2).result, "speed 2x");
+        assert!(poll(&mut deferred, 9).result.as_str().unwrap().starts_with("no request 9"));
+        assert!(!poll(&mut local, 1).ok, "nothing to poll where steps run right away");
     }
 }

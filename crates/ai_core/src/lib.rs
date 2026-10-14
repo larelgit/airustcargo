@@ -43,8 +43,10 @@ pub mod failures;
 pub mod highlight;
 pub mod id;
 pub mod journal;
+pub mod net_rules;
 pub mod observe;
 pub mod paths;
+pub mod process;
 #[cfg(feature = "remote")]
 pub mod remote;
 pub mod replay;
@@ -56,6 +58,7 @@ pub mod shot;
 pub mod sim;
 pub mod snapshot;
 pub mod spatial;
+pub mod state;
 pub mod status;
 pub mod tools;
 
@@ -73,15 +76,19 @@ pub use describe::{AdviceFn, AiAdvisors, AiDescribers, AiKind, AiObserveLines, D
 pub use failures::{ai_core_error_handler, AiFailures, SystemFailure};
 pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible};
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
+pub use net_rules::{replicated_components, rules_hash, NetRules};
 pub use observe::{AiCamera, AiPerception, ObserveOptions};
+pub use process::{activate, AppToken};
 pub use replay::{AiReplay, Replay, ReplayHashing, ReplayReport};
 pub use rng::{DetRng, SimRng, SimSeed};
-pub use session::{AgentSession, AgentSessions, Caller, Scope};
-pub use sim::{SimConfig, SimGate, SimSet, SimTick, TickClock};
-pub use snapshot::{EntityKey, Snapshot, SnapshotRegistry};
+pub use session::{configure_session, AgentSession, AgentSessions, Caller, PlayerResolver, Scope, SessionChange};
+pub use sim::{SimConfig, SimGate, SimSet, SimTick, StepQueue, StepRoute, TickClock};
+pub use snapshot::{world_rebuilt, EntityKey, Snapshot, SnapshotRegistry, WorldRebuilt};
 pub use spatial::{AiLineOfSight, AiOccluder};
 pub use status::AiStatusFields;
-pub use tools::{call_tool, AiTools, Call, CallOutcome, Id, NoArgs, ToolKind, ToolResult, ToolSpec};
+pub use tools::{
+    call_tool, AiTools, Call, CallOutcome, ForwardedCall, Forwarder, Id, NetRoute, NoArgs, ToolKind, ToolResult, ToolSpec,
+};
 
 pub mod prelude {
     pub use crate::{
@@ -122,6 +129,7 @@ impl Default for AiCorePlugin {
 
 impl Plugin for AiCorePlugin {
     fn build(&self, app: &mut App) {
+        process::ensure_token(app.world_mut());
         app.insert_resource(self.sim.clone())
             .insert_resource(Time::<Fixed>::from_hz(self.sim.tick_hz))
             .insert_resource(SimSeed(self.sim.seed))
@@ -138,6 +146,9 @@ impl Plugin for AiCorePlugin {
             .init_resource::<AiConditions>()
             .init_resource::<SimGate>()
             .init_resource::<AiStatusFields>()
+            .init_resource::<NetRules>()
+            // Which body is "mine" is each machine's own business.
+            .net_ignore::<AiPlayer>()
             .configure_sets(
                 FixedUpdate,
                 (SimSet::Input, SimSet::Think, SimSet::Act, SimSet::Move, SimSet::Resolve, SimSet::Cleanup).chain(),
@@ -145,6 +156,9 @@ impl Plugin for AiCorePlugin {
             .add_systems(FixedFirst, sim::advance_tick)
             // Before this frame's time is counted: a held gate means no tick is due.
             .add_systems(First, sim::apply_gate.before(bevy::time::TimeSystems))
+            // Several apps in one process: this one is working now (its log lines and
+            // failures are its own).
+            .add_systems(First, process::activate_app.before(sim::apply_gate))
             // Log lines into the journal after every tick (a long `step` runs many in
             // one frame), and once per frame for lines logged between ticks.
             .add_systems(FixedLast, journal::drain_logs.after(replay::ReplaySystems::Remember))
@@ -298,6 +312,22 @@ pub trait AiAppExt {
     /// How references to entities without an `AiId` are written in snapshots (see
     /// [`EntityKey`]).
     fn add_snapshot_entity_key(&mut self, key: EntityKey) -> &mut Self;
+
+    /// Keeps component `C` on each machine: a host does not send it to clients (see
+    /// [`net_rules`]). For what says "this machine" (`AiPlayer`, the local body's marker) and
+    /// bookkeeping each machine does for itself.
+    fn net_ignore<C: Component>(&mut self) -> &mut Self;
+
+    /// Keeps snapshot resource `R` on each machine: a host does not send it (id counters).
+    fn net_ignore_resource<R: Resource>(&mut self) -> &mut Self;
+
+    /// A client predicts component `C` for its own body: it travels with the input
+    /// acknowledgement and is corrected from there, not overwritten with the rest.
+    fn net_predicted<C: Component>(&mut self) -> &mut Self;
+
+    /// Where tool `name` (registered already) runs on a client of a networked game; the
+    /// default is [`NetRoute::default_for`] its kind and scope.
+    fn net_route(&mut self, name: &str, route: NetRoute) -> &mut Self;
 }
 
 impl AiAppExt for App {
@@ -401,6 +431,29 @@ impl AiAppExt for App {
 
     fn add_snapshot_entity_key(&mut self, key: EntityKey) -> &mut Self {
         self.world_mut().get_resource_or_init::<SnapshotRegistry>().add_key(key);
+        self
+    }
+
+    fn net_ignore<C: Component>(&mut self) -> &mut Self {
+        self.world_mut().get_resource_or_init::<NetRules>().ignore(std::any::TypeId::of::<C>(), std::any::type_name::<C>());
+        self
+    }
+
+    fn net_ignore_resource<R: Resource>(&mut self) -> &mut Self {
+        let (id, name) = (std::any::TypeId::of::<R>(), std::any::type_name::<R>());
+        self.world_mut().get_resource_or_init::<NetRules>().ignore_resource(id, name);
+        self
+    }
+
+    fn net_predicted<C: Component>(&mut self) -> &mut Self {
+        self.world_mut().get_resource_or_init::<NetRules>().predict(std::any::TypeId::of::<C>(), std::any::type_name::<C>());
+        self
+    }
+
+    fn net_route(&mut self, name: &str, route: NetRoute) -> &mut Self {
+        if let Err(why) = self.world_mut().get_resource_or_init::<AiTools>().set_route(name, route) {
+            panic!("net_route: {why} (register the tool first)");
+        }
         self
     }
 }

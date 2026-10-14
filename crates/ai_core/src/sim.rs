@@ -14,9 +14,9 @@
 //! simulation: no ticks run, in real time or through [`step`], so loading never shifts
 //! a tick.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bevy::app::FixedMain;
@@ -103,6 +103,11 @@ impl SimGate {
         self.holds.remove(name);
     }
 
+    /// What hold `name` waits for, if it is held.
+    pub fn reason(&self, name: &str) -> Option<&str> {
+        self.holds.get(name).map(String::as_str)
+    }
+
     /// Whether anything holds the simulation.
     pub fn is_held(&self) -> bool {
         !self.holds.is_empty()
@@ -178,6 +183,26 @@ pub fn tick(world: &World) -> u64 {
     world.resource::<SimTick>().0
 }
 
+/// The simulation clock goes to `tick`: the counter, the log's copy of it and the fixed
+/// time (a system that reads `Res<Time>` in a tick sees the same elapsed time as in the
+/// original session).
+pub fn set_tick(world: &mut World, tick: u64) {
+    let before = self::tick(world);
+    world.resource_mut::<SimTick>().0 = tick;
+    if let Some(clock) = world.get_resource::<TickClock>() {
+        clock.set(tick);
+    }
+    let fixed = world.resource::<Time<Fixed>>();
+    let step = fixed.timestep();
+    let of = |n: u64| Duration::from_nanos((step.as_nanos() * n as u128) as u64);
+    // Called from inside a tick (a replay's start, before the tick counter moves), the
+    // fixed time is one step ahead of the counter: it stays so.
+    let ahead = if fixed.elapsed().saturating_sub(of(before)) >= step { step } else { Duration::ZERO };
+    let mut time = Time::<Fixed>::from_duration(step);
+    time.advance_by(of(tick) + ahead);
+    *world.resource_mut::<Time<Fixed>>() = time;
+}
+
 /// Seconds of simulated time per tick.
 pub fn tick_seconds(world: &World) -> f32 {
     world.resource::<Time<Fixed>>().timestep().as_secs_f32()
@@ -186,6 +211,7 @@ pub fn tick_seconds(world: &World) -> f32 {
 /// Runs exactly one fixed tick right now, independent of frame timing.
 /// Mirrors `bevy::time::run_fixed_main_schedule`.
 pub fn run_tick(world: &mut World) -> Result<(), String> {
+    crate::process::activate(world);
     let result = world.try_schedule_scope(FixedMain, |world, schedule| {
         let timestep = world.resource::<Time<Fixed>>().timestep();
         world.resource_mut::<Time<Fixed>>().advance_by(timestep);
@@ -234,6 +260,7 @@ pub fn step(
     wall_budget: Duration,
     mut stop: impl FnMut(&mut World) -> Option<String>,
 ) -> Result<StepReport, String> {
+    crate::process::activate(world);
     if let Some(loading) = gate_message(world) {
         return Err(loading);
     }
@@ -266,6 +293,159 @@ pub fn step(
         }
     }
     Ok(StepReport { from_tick, to_tick: tick(world), end, wall: started.elapsed() })
+}
+
+// --- deferred steps --------------------------------------------------------------
+
+/// Where `step`, `pause`, `resume` and `speed` run.
+///
+/// [`Local`](StepRoute::Local) (the default): right away, on this world. In an in-process
+/// stand (a host and its clients as apps of one process) a member cannot run ticks alone: one
+/// tick is a tick of every member. There the route is [`Deferred`](StepRoute::Deferred): the
+/// tools put a request into the [`StepQueue`] and answer `{"pending": id}`; the stand's driver
+/// runs it between frames ([`StepWatch`](crate::builtin::StepWatch) makes its report the one
+/// `step` prints) and completes it; `step_poll {id}` (BRP `ai/step_poll`) answers with it.
+#[derive(Resource, Clone, Default)]
+pub enum StepRoute {
+    #[default]
+    Local,
+    Deferred(Arc<Mutex<StepQueue>>),
+}
+
+/// A `step` waiting for the driver.
+#[derive(Clone, Debug)]
+pub struct StepRequest {
+    pub id: u64,
+    /// At most this many ticks (the default and the cap already applied).
+    pub ticks: u64,
+    /// Stop conditions, already checked against the world.
+    pub until: Vec<crate::builtin::StopWhen>,
+    /// The agent that asked.
+    pub requester: String,
+    /// The journal's newest entry when it was asked: `journal:` conditions and the report's
+    /// journal lines look after it.
+    pub journal_mark: u64,
+}
+
+/// What a deferred clock tool asks for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ClockAction {
+    Pause,
+    Resume,
+    Speed(f32),
+}
+
+impl ClockAction {
+    /// The tool that asks for it.
+    pub fn tool(self) -> &'static str {
+        match self {
+            ClockAction::Pause => "pause",
+            ClockAction::Resume => "resume",
+            ClockAction::Speed(_) => "speed",
+        }
+    }
+}
+
+/// A `pause`, `resume` or `speed` waiting for the driver.
+#[derive(Clone, Debug)]
+pub struct ClockRequest {
+    pub id: u64,
+    pub action: ClockAction,
+    pub requester: String,
+}
+
+/// Where a deferred request is.
+#[derive(Clone, Debug)]
+pub enum StepPoll {
+    /// Waiting for the driver, or running.
+    Pending,
+    /// Done: what the call would have answered right away.
+    Done(crate::tools::CallOutcome),
+    /// No such request (or finished too long ago).
+    Unknown,
+}
+
+/// Finished requests kept for `step_poll`.
+pub const FINISHED_KEPT: usize = 64;
+
+/// Requests of [`StepRoute::Deferred`], shared between the tools and the driver.
+#[derive(Default, Debug)]
+pub struct StepQueue {
+    next_id: u64,
+    steps: VecDeque<StepRequest>,
+    clock: VecDeque<ClockRequest>,
+    /// Taken by the driver, not completed yet.
+    running: BTreeSet<u64>,
+    finished: VecDeque<(u64, crate::tools::CallOutcome)>,
+}
+
+impl StepQueue {
+    fn next(&mut self) -> u64 {
+        self.next_id += 1;
+        self.next_id
+    }
+
+    /// Queues a step; returns its id.
+    pub fn push_step(&mut self, ticks: u64, until: Vec<crate::builtin::StopWhen>, requester: &str, journal_mark: u64) -> u64 {
+        let id = self.next();
+        self.steps.push_back(StepRequest { id, ticks, until, requester: requester.to_owned(), journal_mark });
+        id
+    }
+
+    /// Queues a clock change; returns its id.
+    pub fn push_clock(&mut self, action: ClockAction, requester: &str) -> u64 {
+        let id = self.next();
+        self.clock.push_back(ClockRequest { id, action, requester: requester.to_owned() });
+        id
+    }
+
+    /// The queued steps, oldest first; they count as running until [`complete`](Self::complete)d.
+    pub fn take_steps(&mut self) -> Vec<StepRequest> {
+        let steps: Vec<StepRequest> = self.steps.drain(..).collect();
+        self.running.extend(steps.iter().map(|s| s.id));
+        steps
+    }
+
+    /// The queued clock changes, oldest first; they count as running until completed.
+    pub fn take_clock(&mut self) -> Vec<ClockRequest> {
+        let clock: Vec<ClockRequest> = self.clock.drain(..).collect();
+        self.running.extend(clock.iter().map(|c| c.id));
+        clock
+    }
+
+    /// Request `id` is done; `outcome` is what its call answers (see
+    /// [`StepWatch::finish`](crate::builtin::StepWatch::finish), [`finished`](crate::tools::finished)).
+    pub fn complete(&mut self, id: u64, outcome: crate::tools::CallOutcome) {
+        self.running.remove(&id);
+        self.steps.retain(|s| s.id != id);
+        self.clock.retain(|c| c.id != id);
+        self.finished.retain(|(done, _)| *done != id);
+        self.finished.push_back((id, outcome));
+        while self.finished.len() > FINISHED_KEPT {
+            self.finished.pop_front();
+        }
+    }
+
+    pub fn poll(&self, id: u64) -> StepPoll {
+        if let Some((_, outcome)) = self.finished.iter().find(|(done, _)| *done == id) {
+            return StepPoll::Done(outcome.clone());
+        }
+        let waiting = self.running.contains(&id) || self.steps.iter().any(|s| s.id == id) || self.clock.iter().any(|c| c.id == id);
+        if waiting { StepPoll::Pending } else { StepPoll::Unknown }
+    }
+
+    /// The newest id handed out (0: none yet).
+    pub fn last_id(&self) -> u64 {
+        self.next_id
+    }
+}
+
+/// The queue, when this world's steps are deferred.
+pub fn deferred_queue(world: &World) -> Option<Arc<Mutex<StepQueue>>> {
+    match world.get_resource::<StepRoute>() {
+        Some(StepRoute::Deferred(queue)) => Some(queue.clone()),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

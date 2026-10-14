@@ -22,7 +22,7 @@ use crate::machine::ActionState;
 
 /// A hit shape placed in the world: `origin` is its [`HitDef::at`](crate::HitDef)
 /// point, `facing` the action's direction on the ground plane.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Reflect, Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct WorldShape {
     pub shape: HitShape,
     pub origin: Vec3,

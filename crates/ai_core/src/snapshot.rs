@@ -51,16 +51,10 @@
 use std::any::TypeId;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
-use std::time::Duration;
 
-use bevy::ecs::relationship::RelationshipHookMode;
 use bevy::prelude::*;
-use bevy::reflect::serde::{
-    ReflectDeserializerProcessor, ReflectSerializerProcessor, TypedReflectDeserializer, TypedReflectSerializer,
-};
-use bevy::reflect::{FromReflect, GetTypeRegistration, PartialReflect, Reflect, TypePath, TypeRegistration, TypeRegistry};
+use bevy::reflect::{FromReflect, GetTypeRegistration, Reflect, TypePath, TypeRegistry};
 use schemars::JsonSchema;
-use serde::de::DeserializeSeed;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -68,7 +62,8 @@ use crate::id::{AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible, To
 use crate::journal::{self, JournalKind};
 use crate::rng::SimSeed;
 use crate::session::Scope;
-use crate::sim::{self, SimTick, TickClock};
+use crate::sim::{self, SimGate};
+use crate::state::{self, from_json, to_json, Decoder, Encoder, StateChanges, StateEncoder, StateRule};
 use crate::spatial::AiOccluder;
 use crate::tools::{register_tool, Call, ToolKind, ToolResult};
 use crate::{describe::AiKind, replay};
@@ -81,10 +76,6 @@ pub const FORMAT: &str = "shards-snapshot/1";
 pub const SNAPSHOTS_DIR: &str = "snapshots";
 
 const SNAPSHOT_PATH_EXAMPLE: &str = "snapshots/boss_phase2.json";
-
-/// How an entity reference with no key is written: the entity has no `AiId` and no module
-/// knows another name for it. Loads back as [`Entity::PLACEHOLDER`].
-const UNTRACKED: &str = "untracked";
 
 /// The engine's version, written into snapshots (all crates share it).
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -187,10 +178,11 @@ pub struct EntityKey {
 }
 
 #[derive(Clone, Copy)]
-struct SnapshotResource {
-    name: &'static str,
-    save: fn(&World, &TypeRegistry, &Encoder) -> Option<Result<Value, String>>,
-    load: fn(&mut World, &TypeRegistry, &Value, &mut Decoder) -> Result<(), String>,
+pub(crate) struct SnapshotResource {
+    pub(crate) name: &'static str,
+    pub(crate) type_id: TypeId,
+    pub(crate) save: fn(&World, &TypeRegistry, &Encoder) -> Option<Result<Value, String>>,
+    pub(crate) load: fn(&mut World, &TypeRegistry, &Value, &mut Decoder) -> Result<(), String>,
 }
 
 /// Runs after a load: a name for the journal and the code.
@@ -222,11 +214,11 @@ struct SnapshotCheck {
 /// What modules registered with [`AiAppExt`](crate::AiAppExt)'s `add_snapshot_*`.
 #[derive(Resource, Default, Clone)]
 pub struct SnapshotRegistry {
-    resources: Vec<SnapshotResource>,
+    pub(crate) resources: Vec<SnapshotResource>,
     checks: Vec<SnapshotCheck>,
     prepares: Vec<SnapshotPrepare>,
     rebuilds: Vec<Rebuild>,
-    keys: Vec<EntityKey>,
+    pub(crate) keys: Vec<EntityKey>,
 }
 
 impl SnapshotRegistry {
@@ -236,7 +228,12 @@ impl SnapshotRegistry {
     {
         let name = R::type_path();
         self.resources.retain(|r| r.name != name);
-        self.resources.push(SnapshotResource { name, save: save_resource::<R>, load: load_resource::<R> });
+        self.resources.push(SnapshotResource { name, type_id: TypeId::of::<R>(), save: save_resource::<R>, load: load_resource::<R> });
+    }
+
+    /// The saved resources, by type and type path, in registration order.
+    pub fn resource_types(&self) -> impl Iterator<Item = (TypeId, &'static str)> + '_ {
+        self.resources.iter().map(|r| (r.type_id, r.name))
     }
 
     pub(crate) fn add_check(&mut self, name: &'static str, hint: &'static str, check: fn(&World) -> u64) {
@@ -283,119 +280,6 @@ fn load_resource<R: Resource + Reflect + FromReflect + TypePath>(
     Ok(())
 }
 
-// --- entity references ----------------------------------------------------------------
-
-/// Writes `Entity` values as `e12`, `c7` or `untracked`.
-struct Encoder<'w> {
-    world: &'w World,
-    keys: &'w [EntityKey],
-}
-
-impl Encoder<'_> {
-    fn name(&self, entity: Entity) -> String {
-        if let Some(id) = self.world.get::<AiId>(entity) {
-            return id.to_string();
-        }
-        for key in self.keys {
-            if let Some(n) = (key.encode)(self.world, entity) {
-                return format!("{}{n}", key.prefix);
-            }
-        }
-        UNTRACKED.to_owned()
-    }
-}
-
-impl ReflectSerializerProcessor for Encoder<'_> {
-    fn try_serialize<S>(
-        &self,
-        value: &dyn PartialReflect,
-        _: &TypeRegistry,
-        serializer: S,
-    ) -> Result<Result<S::Ok, S>, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match value.try_downcast_ref::<Entity>() {
-            Some(entity) => serializer.serialize_str(&self.name(*entity)).map(Ok),
-            None => Ok(Err(serializer)),
-        }
-    }
-}
-
-/// Reads `Entity` values back: `e12` is the entity restored under that id, `c7` the
-/// entity a module keyed so. What cannot be found becomes [`Entity::PLACEHOLDER`] and is
-/// reported once.
-struct Decoder<'a> {
-    ids: &'a HashMap<u32, Entity>,
-    keyed: &'a HashMap<(String, u32), Entity>,
-    /// Checking only: no entity exists yet, everything maps to the placeholder.
-    dry: bool,
-    unresolved: Vec<String>,
-}
-
-impl<'a> Decoder<'a> {
-    fn new(ids: &'a HashMap<u32, Entity>, keyed: &'a HashMap<(String, u32), Entity>) -> Self {
-        Self { ids, keyed, dry: false, unresolved: Vec::new() }
-    }
-
-    fn dry(ids: &'a HashMap<u32, Entity>, keyed: &'a HashMap<(String, u32), Entity>) -> Self {
-        Self { ids, keyed, dry: true, unresolved: Vec::new() }
-    }
-
-    fn resolve(&mut self, text: &str) -> Entity {
-        if self.dry || text == UNTRACKED {
-            return Entity::PLACEHOLDER;
-        }
-        let split = text.find(|c: char| c.is_ascii_digit()).unwrap_or(text.len());
-        let (prefix, digits) = text.split_at(split);
-        let found = digits.parse::<u32>().ok().and_then(|n| match prefix {
-            "e" => self.ids.get(&n).copied(),
-            _ => self.keyed.get(&(prefix.to_owned(), n)).copied(),
-        });
-        found.unwrap_or_else(|| {
-            let note = format!("a reference to `{text}` points at nothing in this world");
-            if !self.unresolved.contains(&note) {
-                self.unresolved.push(note);
-            }
-            Entity::PLACEHOLDER
-        })
-    }
-}
-
-impl ReflectDeserializerProcessor for Decoder<'_> {
-    fn try_deserialize<'de, D>(
-        &mut self,
-        registration: &TypeRegistration,
-        _: &TypeRegistry,
-        deserializer: D,
-    ) -> Result<Result<Box<dyn PartialReflect>, D>, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        if registration.type_id() != TypeId::of::<Entity>() {
-            return Ok(Err(deserializer));
-        }
-        let text = String::deserialize(deserializer)?;
-        Ok(Ok(Box::new(self.resolve(&text))))
-    }
-}
-
-/// A value as JSON, entity references encoded. Through text and back, so numbers print the
-/// way their type does (`0.1`, not the `f64` an `f32` widens to).
-fn to_json(value: &dyn PartialReflect, registry: &TypeRegistry, encoder: &Encoder) -> Result<Value, String> {
-    let text = serde_json::to_string(&TypedReflectSerializer::with_processor(value, registry, encoder)).map_err(|e| e.to_string())?;
-    serde_json::from_str(&text).map_err(|e| e.to_string())
-}
-
-fn from_json(
-    registration: &TypeRegistration,
-    registry: &TypeRegistry,
-    value: &Value,
-    decoder: &mut Decoder,
-) -> Result<Box<dyn PartialReflect>, String> {
-    TypedReflectDeserializer::with_processor(registration, registry, decoder).deserialize(value.clone()).map_err(|e| e.to_string())
-}
-
 // --- which components ------------------------------------------------------------------
 
 /// Whether a component type belongs in a snapshot: everything a game or an engine module
@@ -407,90 +291,21 @@ pub fn is_snapshot_type(type_id: TypeId, type_path: &str) -> bool {
         && (type_id == TypeId::of::<Transform>() || type_id == TypeId::of::<Name>() || !type_path.starts_with("bevy_"))
 }
 
-/// The components of `entity` a snapshot holds, with their type paths.
-fn snapshot_components<'w>(
-    world: &'w World,
-    registry: &'w TypeRegistry,
-    entity: Entity,
-    left_out: &mut BTreeSet<String>,
-) -> Vec<(&'w TypeRegistration, &'w dyn PartialReflect)> {
-    let (Ok(infos), Ok(e)) = (world.inspect_entity(entity), world.get_entity(entity)) else {
-        return Vec::new();
-    };
-    let mut found = Vec::new();
-    for (_, info) in infos {
-        let Some(type_id) = info.type_id() else { continue };
-        let name = info.name().to_string();
-        let Some(registration) = registry.get(type_id) else {
-            // Bevy's own are not ours to save; a build without Bevy's `debug` feature has no
-            // names to tell them from a game's (`<Enable the debug feature to see the name>`).
-            if !name.starts_with("bevy_") && !name.starts_with('<') {
-                left_out.insert(format!("{name} (not registered for reflection)"));
-            }
-            continue;
-        };
-        let path = registration.type_info().type_path();
-        if !is_snapshot_type(type_id, path) {
-            continue;
-        }
-        let Some(component) = registration.data::<ReflectComponent>() else {
-            left_out.insert(format!("{path} (not a reflected component: add #[reflect(Component)])"));
-            continue;
-        };
-        if let Some(value) = component.reflect(e) {
-            found.push((registration, value.as_partial_reflect()));
-        }
-    }
-    found
-}
-
 // --- saving ----------------------------------------------------------------------------
 
 /// The simulation state as it is now. Reads only; the world is not touched.
 pub fn capture(world: &World) -> Result<Snapshot, String> {
     let index = world.get_resource::<AiIndex>().ok_or("this world has no AiIndex: AiCorePlugin is not added")?;
-    let app_registry = world.resource::<AppTypeRegistry>().clone();
-    let registry = app_registry.read();
     let modules = world.get_resource::<SnapshotRegistry>().cloned().unwrap_or_default();
-    let encoder = Encoder { world, keys: &modules.keys };
+    let encoder = StateEncoder::new(world, StateRule::Snapshot);
 
     let mut left_out = BTreeSet::new();
-    let mut entities = Vec::new();
-    let (no_ids, no_keys) = (HashMap::new(), HashMap::new());
-    for (id, entity) in index.live() {
-        let mut components = BTreeMap::new();
-        for (registration, value) in snapshot_components(world, &registry, entity, &mut left_out) {
-            let path = registration.type_info().type_path();
-            // What is written must read back (a NaN or an infinity does not: JSON has none).
-            let written = to_json(value, &registry, &encoder).map_err(|why| format!("does not serialize: {why}")).and_then(|json| {
-                from_json(registration, &registry, &json, &mut Decoder::dry(&no_ids, &no_keys))
-                    .map(|_| json)
-                    .map_err(|why| format!("does not read back: {why}"))
-            });
-            match written {
-                Ok(json) => {
-                    components.insert(path.to_owned(), json);
-                }
-                Err(why) => {
-                    left_out.insert(format!("{path} ({why})"));
-                }
-            }
-        }
-        entities.push(EntitySnapshot { id: id.0, components });
-    }
-
-    let mut resources = BTreeMap::new();
-    for resource in &modules.resources {
-        match (resource.save)(world, &registry, &encoder) {
-            Some(Ok(json)) => {
-                resources.insert(resource.name.to_owned(), json);
-            }
-            Some(Err(why)) => {
-                left_out.insert(format!("{} (does not serialize: {why})", resource.name));
-            }
-            None => {}
-        }
-    }
+    let entities: Vec<EntitySnapshot> = index
+        .live()
+        .into_iter()
+        .map(|(id, entity)| EntitySnapshot { id: id.0, components: encoder.encode(entity, &mut left_out) })
+        .collect();
+    let resources = encoder.encode_resources(&mut left_out);
 
     let checks = modules.checks.iter().map(|c| (c.name.to_owned(), format!("{:016x}", (c.check)(world)))).collect();
     Ok(Snapshot {
@@ -607,11 +422,8 @@ pub fn restore(world: &mut World, snapshot: &Snapshot, force: bool) -> Result<Lo
         }
     }
 
-    {
-        let registry = app_registry.read();
-        replace_world(world, &registry, &modules, snapshot, &skipped, &mut warnings);
-    }
-    set_tick(world, snapshot.tick);
+    replace_world(world, snapshot, &skipped, &mut warnings);
+    sim::set_tick(world, snapshot.tick);
     for (_, rebuild) in &modules.rebuilds {
         rebuild(world);
     }
@@ -632,6 +444,7 @@ pub fn restore(world: &mut World, snapshot: &Snapshot, force: bool) -> Result<Lo
         }
         Err(why) => differences.push(format!("cannot save the restored world again: {why}")),
     }
+    world_rebuilt(world, format!("snapshot of tick {}", snapshot.tick));
     Ok(LoadReport {
         tick: snapshot.tick,
         entities: snapshot.entities.len(),
@@ -639,6 +452,40 @@ pub fn restore(world: &mut World, snapshot: &Snapshot, force: bool) -> Result<Lo
         warnings,
         differences,
     })
+}
+
+/// [`restore`] while hold `gate` of the [`SimGate`] keeps the world from ticking (a client
+/// that waited for the host's world): the hold is released right before the checks (they
+/// refuse under a held gate) and held again, with its reason, when the restore fails.
+pub fn restore_releasing(world: &mut World, snapshot: &Snapshot, gate: &str) -> Result<LoadReport, String> {
+    let held = world.get_resource_mut::<SimGate>().and_then(|mut g| {
+        let reason = g.reason(gate).map(str::to_owned);
+        g.release(gate);
+        reason
+    });
+    let result = restore(world, snapshot, false);
+    if result.is_err()
+        && let Some(reason) = held
+        && let Some(mut g) = world.get_resource_mut::<SimGate>()
+    {
+        g.hold(gate, reason);
+    }
+    result
+}
+
+/// The world was built again from something other than its own ticks: a snapshot was
+/// loaded, a region changed, a save was loaded. Who mirrors the world elsewhere (a host's
+/// clients) starts over from here. Triggered by [`world_rebuilt`].
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct WorldRebuilt {
+    /// What rebuilt it: `snapshot of tick 600`, `region wilds`.
+    pub reason: String,
+}
+
+/// Says that the world was built again ([`WorldRebuilt`]): [`restore`] does, and so does a
+/// module that rebuilds the world (a region change).
+pub fn world_rebuilt(world: &mut World, reason: impl Into<String>) {
+    world.trigger(WorldRebuilt { reason: reason.into() });
 }
 
 /// What a snapshot holds that this game cannot take.
@@ -809,31 +656,14 @@ fn join(set: &BTreeSet<String>) -> String {
     set.iter().cloned().collect::<Vec<_>>().join(", ")
 }
 
-/// An entity just spawned and the components read for it.
-type Decoded<'r> = (Entity, Vec<(&'r TypeRegistration, Box<dyn PartialReflect>)>);
-
-/// Despawns every entity with an `AiId` and spawns the snapshot's, then sets the resources
-/// and the id counter.
-fn replace_world(
-    world: &mut World,
-    registry: &TypeRegistry,
-    modules: &SnapshotRegistry,
-    snapshot: &Snapshot,
-    skipped: &Skipped,
-    warnings: &mut Vec<String>,
-) {
+/// Despawns every entity with an `AiId` and spawns the snapshot's (through
+/// [`state::apply_changes`]'s steps), then sets the resources and the id counter.
+fn replace_world(world: &mut World, snapshot: &Snapshot, skipped: &Skipped, warnings: &mut Vec<String>) {
     let doomed: Vec<Entity> = world.resource::<AiIndex>().live().into_iter().map(|(_, e)| e).collect();
     let going: BTreeSet<Entity> = doomed.iter().copied().collect();
     // The entities that stay (no AiId) that modules can name: references to them in the
     // snapshot (`c7`) find them again. Taken before anything goes.
-    let mut keyed: HashMap<(String, u32), Entity> = HashMap::new();
-    for key in &modules.keys {
-        for (n, entity) in (key.index)(world) {
-            if !going.contains(&entity) {
-                keyed.insert((key.prefix.to_owned(), n), entity);
-            }
-        }
-    }
+    let keyed = state::keyed_entities(world, &going);
     for entity in doomed {
         // A child goes with its parent: it may be gone already.
         if let Ok(entity) = world.get_entity_mut(entity) {
@@ -841,92 +671,21 @@ fn replace_world(
         }
     }
 
-    // Every entity exists, under its id, before any component refers to another.
-    let mut ids: HashMap<u32, Entity> = HashMap::new();
-    for entity in &snapshot.entities {
-        ids.insert(entity.id, world.spawn(AiId(entity.id)).id());
-    }
-
-    let mut decoder = Decoder::new(&ids, &keyed);
-    let mut decoded: Vec<Decoded> = Vec::new();
-    for entity in &snapshot.entities {
-        let mut components = Vec::new();
-        for (path, value) in &entity.components {
-            if skipped.components.contains(path) {
-                continue;
-            }
-            let Some(registration) = registry.get_with_type_path(path) else { continue };
-            match from_json(registration, registry, value, &mut decoder) {
-                Ok(boxed) => components.push((registration, boxed)),
-                Err(why) => warnings.push(format!("e{}: {path}: {why}", entity.id)),
-            }
-        }
-        decoded.push((ids[&entity.id], components));
-    }
-
-    // Inserting one component may add others (`#[require]`) and run hooks that change
-    // them (a collider gets a new id, a character's collider is fitted), so every value is
-    // written again, in place, once all are there. Components the hooks added that the
-    // snapshot did not have go.
-    for _ in 0..2 {
-        for (entity, components) in &decoded {
-            let mut target = world.entity_mut(*entity);
-            for (registration, value) in components {
-                if let Some(component) = registration.data::<ReflectComponent>() {
-                    component.apply_or_insert_mapped(&mut target, value.as_ref(), registry, &mut (), RelationshipHookMode::Run);
-                }
-            }
-        }
-    }
-    for (entity, components) in &decoded {
-        let kept: BTreeSet<TypeId> = components.iter().map(|(r, _)| r.type_id()).collect();
-        let extra: Vec<&TypeRegistration> = match world.inspect_entity(*entity) {
-            Ok(infos) => infos
-                .filter_map(|(_, info)| registry.get(info.type_id()?))
-                .filter(|r| r.data::<ReflectComponent>().is_some())
-                .filter(|r| is_snapshot_type(r.type_id(), r.type_info().type_path()) && !kept.contains(&r.type_id()))
-                .collect(),
-            Err(_) => Vec::new(),
-        };
-        for registration in extra {
-            if let Some(component) = registration.data::<ReflectComponent>() {
-                component.remove(&mut world.entity_mut(*entity));
-            }
-        }
-    }
-
-    for resource in &modules.resources {
-        let Some(value) = snapshot.resources.get(resource.name) else { continue };
-        if skipped.resources.contains(resource.name) {
-            continue;
-        }
-        if let Err(why) = (resource.load)(world, registry, value, &mut decoder) {
-            warnings.push(format!("resource {}: {why}", resource.name));
-        }
-    }
-    warnings.extend(decoder.unresolved);
+    let set = snapshot
+        .entities
+        .iter()
+        .map(|entity| {
+            let components =
+                entity.components.iter().filter(|(path, _)| !skipped.components.contains(*path)).map(|(p, v)| (p.clone(), v.clone()));
+            (entity.id, components.collect())
+        })
+        .collect();
+    let resources =
+        snapshot.resources.iter().filter(|(name, _)| !skipped.resources.contains(*name)).map(|(n, v)| (n.clone(), v.clone())).collect();
+    let changes = StateChanges { set, resources, ..Default::default() };
+    warnings.extend(state::apply(world, &changes, &keyed, StateRule::Snapshot));
 
     world.resource_mut::<AiIndex>().restore_counters(snapshot.ids.next, snapshot.ids.graveyard.iter().cloned());
-}
-
-/// The simulation clock goes to `tick`: the counter, the log's copy of it and the fixed
-/// time (a system that reads `Res<Time>` in a tick sees the same elapsed time as in the
-/// original session).
-fn set_tick(world: &mut World, tick: u64) {
-    let before = sim::tick(world);
-    world.resource_mut::<SimTick>().0 = tick;
-    if let Some(clock) = world.get_resource::<TickClock>() {
-        clock.set(tick);
-    }
-    let fixed = world.resource::<Time<Fixed>>();
-    let step = fixed.timestep();
-    let of = |n: u64| Duration::from_nanos((step.as_nanos() * n as u128) as u64);
-    // Called from inside a tick (a replay's start, before the tick counter moves), the
-    // fixed time is one step ahead of the counter: it stays so.
-    let ahead = if fixed.elapsed().saturating_sub(of(before)) >= step { step } else { Duration::ZERO };
-    let mut time = Time::<Fixed>::from_duration(step);
-    time.advance_by(of(tick) + ahead);
-    *world.resource_mut::<Time<Fixed>>() = time;
 }
 
 /// Where `again` (the restored world, saved) is not what `wanted` says, ignoring what was
@@ -1076,6 +835,11 @@ pub(crate) fn plugin(app: &mut App) {
         .register_type::<Name>();
     register_tool(app.world_mut(), "snapshot_save", Scope::Dev, ToolKind::Control, snapshot_save_tool);
     register_tool(app.world_mut(), "snapshot_load", Scope::Dev, ToolKind::Control, snapshot_load_tool);
+    // The world a snapshot holds is the host's; a client holds a view of it.
+    let mut tools = app.world_mut().resource_mut::<crate::AiTools>();
+    for name in ["snapshot_save", "snapshot_load"] {
+        let _ = tools.set_route(name, crate::tools::NetRoute::HostOnly(crate::tools::ON_THE_HOST));
+    }
 }
 
 /// Registration for [`AiAppExt::add_snapshot_resource`](crate::AiAppExt::add_snapshot_resource).
@@ -1091,6 +855,8 @@ where
 mod tests {
     use super::*;
     use crate::prelude::*;
+    use crate::sim::TickClock;
+    use std::time::Duration;
     use crate::AiAppExt;
 
     #[derive(Component, Reflect, Default, Clone, PartialEq, Debug)]
@@ -1462,5 +1228,73 @@ mod tests {
         std::fs::write(dir.join("snapshots/bad.json"), "{\"format\": \"shards-snapshot/9\"}").unwrap();
         assert!(Snapshot::read(&dir.join("snapshots/bad.json")).unwrap_err().contains("is not a snapshot"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[derive(Resource, Default)]
+    struct Rebuilt(Vec<String>);
+
+    #[test]
+    fn restore_releasing_loads_under_a_held_gate_and_holds_it_again_when_it_fails() {
+        let mut app = game();
+        app.init_resource::<Rebuilt>()
+            .add_observer(|rebuilt: On<WorldRebuilt>, mut seen: ResMut<Rebuilt>| seen.0.push(rebuilt.reason.clone()));
+        step(&mut app, 3);
+        let snapshot = capture(app.world()).unwrap();
+        step(&mut app, 4);
+        app.world_mut().resource_mut::<SimGate>().hold("net", "waiting for the world");
+        assert!(restore(app.world_mut(), &snapshot, false).unwrap_err().contains("still loading"));
+
+        let report = restore_releasing(app.world_mut(), &snapshot, "net").unwrap();
+        assert!(report.exact(), "{:?}", report.differences);
+        assert_eq!(sim::tick(app.world()), 3);
+        assert!(!app.world().resource::<SimGate>().is_held());
+        assert_eq!(app.world().resource::<Rebuilt>().0, ["snapshot of tick 3"]);
+
+        app.world_mut().resource_mut::<SimGate>().hold("net", "waiting for the world");
+        let mut other = snapshot.clone();
+        other.seed = 7;
+        assert!(restore_releasing(app.world_mut(), &other, "net").unwrap_err().contains("seed"));
+        assert_eq!(app.world().resource::<SimGate>().reasons(), ["net: waiting for the world"], "held again");
+        assert_eq!(app.world().resource::<Rebuilt>().0.len(), 1, "a refused load rebuilt nothing");
+    }
+
+    fn encode_all(world: &World) -> Vec<(u32, state::ComponentValues)> {
+        let index = world.resource::<AiIndex>();
+        index.live().into_iter().map(|(id, e)| (id.0, state::encode_entity(world, e).unwrap())).collect()
+    }
+
+    #[test]
+    fn the_state_codec_carries_a_world_into_another_built_the_same_way() {
+        let (mut a, mut b) = (game(), game());
+        step(&mut a, 6);
+        let late = a.world_mut().spawn((AiKind::new("Late"), Hp { current: 1.0, max: 2.0 })).id();
+        let hero = a.world().resource::<AiIndex>().get(AiId(1)).unwrap();
+        a.world_mut().entity_mut(late).insert(Grudge { against: hero, others: vec![late] });
+        let resources = StateEncoder::new(a.world(), StateRule::Snapshot).resources().0;
+        let changes = StateChanges { set: encode_all(a.world()), resources, ..Default::default() };
+        let warnings = state::apply_changes(b.world_mut(), &changes);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        sim::set_tick(b.world_mut(), 6);
+        assert_eq!(encode_all(b.world()), encode_all(a.world()), "a new entity is spawned under its id, references resolve");
+        assert_eq!(replay::state_hash(b.world()), replay::state_hash(a.world()));
+        assert_eq!(b.world().resource::<Score>().points, 6);
+
+        // Removing a component and despawning with a note.
+        let imp = a.world().resource::<AiIndex>().get(AiId(2)).unwrap();
+        a.world_mut().entity_mut(imp).remove::<Grudge>();
+        a.world_mut().despawn(late);
+        let grudge = std::any::type_name::<Grudge>().to_owned();
+        let changes = StateChanges { remove: vec![(2, vec![grudge])], despawn: vec![(3, "out of view".into())], ..Default::default() };
+        assert!(state::apply_changes(b.world_mut(), &changes).is_empty());
+        assert_eq!(encode_all(b.world()), encode_all(a.world()));
+        let gone = b.world().resource::<AiIndex>().resolve(AiId(3)).unwrap_err();
+        assert!(gone.starts_with("e3 is out of view since tick 6"), "{gone}");
+
+        // What this game does not know is a warning, not a stop.
+        let mut values = state::ComponentValues::new();
+        values.insert("game::Nope".into(), serde_json::json!(1));
+        let changes = StateChanges { set: vec![(9, values)], resources: [("game::Gone".to_owned(), serde_json::json!(0))].into(), ..Default::default() };
+        let warnings = state::apply_changes(b.world_mut(), &changes);
+        assert_eq!(warnings, ["e9: unknown component `game::Nope`", "unknown resource `game::Gone` (this game does not register it)"]);
     }
 }

@@ -77,7 +77,7 @@ pub type DamageHook = fn(&mut DamageCtx, &World);
 pub struct DamageHooks(pub(crate) Vec<DamageHook>);
 
 /// Why a fighter staggered.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Reflect, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StaggerCause {
     PoiseBroken,
     Parried,
@@ -97,7 +97,7 @@ impl StaggerCause {
     }
 }
 
-#[derive(Event, Clone, Debug, PartialEq)]
+#[derive(Event, Reflect, Clone, Debug, PartialEq)]
 pub struct Damaged {
     pub attacker: Entity,
     pub target: Entity,
@@ -109,7 +109,7 @@ pub struct Damaged {
     pub invulnerable: bool,
 }
 
-#[derive(Event, Clone, Debug, PartialEq)]
+#[derive(Event, Reflect, Clone, Debug, PartialEq)]
 pub struct Blocked {
     pub attacker: Entity,
     pub defender: Entity,
@@ -120,21 +120,21 @@ pub struct Blocked {
     pub hp_left: f32,
 }
 
-#[derive(Event, Clone, Debug, PartialEq)]
+#[derive(Event, Reflect, Clone, Debug, PartialEq)]
 pub struct Parried {
     pub attacker: Entity,
     pub defender: Entity,
     pub action: String,
 }
 
-#[derive(Event, Clone, Debug, PartialEq)]
+#[derive(Event, Reflect, Clone, Debug, PartialEq)]
 pub struct Evaded {
     pub attacker: Entity,
     pub defender: Entity,
     pub action: String,
 }
 
-#[derive(Event, Clone, Debug, PartialEq)]
+#[derive(Event, Reflect, Clone, Debug, PartialEq)]
 pub struct GuardBroken {
     pub attacker: Entity,
     pub defender: Entity,
@@ -143,13 +143,13 @@ pub struct GuardBroken {
     pub hp_left: f32,
 }
 
-#[derive(Event, Clone, Debug, PartialEq)]
+#[derive(Event, Reflect, Clone, Debug, PartialEq)]
 pub struct Staggered {
     pub entity: Entity,
     pub cause: StaggerCause,
 }
 
-#[derive(Event, Clone, Debug, PartialEq)]
+#[derive(Event, Reflect, Clone, Debug, PartialEq)]
 pub struct Died {
     pub entity: Entity,
     pub killer: Option<Entity>,

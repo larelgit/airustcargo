@@ -356,3 +356,42 @@ fn damage_hooks_run_after_the_engine_modifiers() {
     assert_eq!(hp(&app, armored), 84.0, "20 halved, less 2, then doubled from behind: armor comes first");
     let _ = hero;
 }
+
+/// Whether `T` is in the app's type registry.
+fn registered<T: 'static>(app: &App) -> bool {
+    app.world().resource::<AppTypeRegistry>().read().contains(std::any::TypeId::of::<T>())
+}
+
+#[test]
+fn combat_events_reflect_for_the_network_layer() {
+    use shards_action::{
+        ActionRejected, ActionStarted, Blocked, Damaged, Died, Evaded, GuardBroken, Healed, HitShape, Parried, Staggered,
+        Telegraph, WorldShape,
+    };
+    let app = app();
+    let all = [
+        registered::<ActionStarted>(&app),
+        registered::<ActionRejected>(&app),
+        registered::<Telegraph>(&app),
+        registered::<Healed>(&app),
+        registered::<Damaged>(&app),
+        registered::<Blocked>(&app),
+        registered::<Parried>(&app),
+        registered::<Evaded>(&app),
+        registered::<GuardBroken>(&app),
+        registered::<Staggered>(&app),
+        registered::<Died>(&app),
+    ];
+    assert!(all.iter().all(|r| *r), "{all:?}");
+    let shape = WorldShape { shape: HitShape::Circle { radius: 4.0, height: 1.0 }, origin: Vec3::X, facing: Vec3::NEG_Z };
+    let telegraph = Telegraph {
+        attacker: Entity::PLACEHOLDER,
+        action: "slam".into(),
+        lands_in: 0.5,
+        zone: Some(shape),
+        symbol: "!".into(),
+        sound: None,
+    };
+    let copy = telegraph.reflect_clone().unwrap().take::<Telegraph>().unwrap();
+    assert_eq!(copy, telegraph);
+}

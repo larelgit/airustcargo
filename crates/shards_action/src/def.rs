@@ -69,7 +69,7 @@ impl Local {
 
 /// A hit window's shape, placed at [`HitDef::at`] and turned to the action's facing.
 /// Sizes in meters, angles in degrees.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Reflect, Clone, Copy, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub enum HitShape {
     /// A ball around `at`.
