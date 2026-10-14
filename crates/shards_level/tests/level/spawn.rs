@@ -246,6 +246,41 @@ fn a_file_with_problems_leaves_the_spawned_level_as_it_was() {
 }
 
 #[test]
+fn a_degenerate_pose_leaves_the_spawned_level_as_it_was() {
+    let mut level = arena();
+    let dir = arena_assets("flat", &level);
+    let mut app = app_in(&dir);
+    ok(&mut app, "spawn_level", json!({"id": "arena"}));
+    let before = fingerprint(&mut app);
+    assert!(!before.is_empty());
+
+    // An object flattened with `S Z 0` in Blender exports a zero scale: no usable pose.
+    level.node_mut("Pillar.001").scale = Some([1.0, 0.0, 1.0]);
+    std::fs::write(dir.join("arena.gltf"), level.gltf()).unwrap();
+    app.world().resource::<AssetServer>().reload("arena.gltf");
+    update_until(&mut app, "the refusal", |app| errors(app).iter().any(|e| e.contains("kept as it was")));
+
+    let refusal = errors(&app).into_iter().find(|e| e.contains("kept as it was")).unwrap();
+    assert!(refusal.contains("arena (instance 1) kept as it was") && refusal.contains("not a valid pose") && refusal.contains("Pillar.001"), "{refusal}");
+    assert_eq!(fingerprint(&mut app), before, "the old level is still there");
+    assert_eq!(app.world().resource::<LevelInstances>().iter().count(), 1);
+
+    // The tool says the same, and the instance is still there to reload.
+    let err = fails(&mut app, "level_reload", json!({"id": "arena"}));
+    assert!(err.contains("kept as it was") && err.contains("not a valid pose"), "{err}");
+    assert_eq!(fingerprint(&mut app), before);
+    assert_eq!(app.world().resource::<LevelInstances>().iter().count(), 1);
+
+    // The artist fixes the file: the level follows it, under the same instance number.
+    level.node_mut("Pillar.001").scale = Some([1.0, 1.0, 1.0]);
+    level.node_mut("Pillar.001").translation = Some([7.5, 2.0, 6.0]);
+    std::fs::write(dir.join("arena.gltf"), level.gltf()).unwrap();
+    app.world().resource::<AssetServer>().reload("arena.gltf");
+    update_until(&mut app, "the fixed file", |app| journal(app).iter().any(|l| l.contains("level reloaded: arena (instance 1")));
+    assert_eq!(app.world().resource::<LevelInstances>().iter().map(|i| i.id).collect::<Vec<_>>(), [1]);
+}
+
+#[test]
 fn reloading_without_a_spawned_level_says_what_is_spawned() {
     let mut app = app();
     let err = fails(&mut app, "level_reload", json!({}));

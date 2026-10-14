@@ -60,7 +60,7 @@
 
 | модуль | фаза | состояние |
 |---|---|---|
-| E1. Ядро, сборка, шаблон | A | ✅ кроме сохранения и кооператива в шаблоне (C) и CI на GitHub |
+| E1. Ядро, сборка, шаблон | A | ✅ кроме сохранения и кооператива в шаблоне (C) |
 | E2. Движение | A | ✅ физика на parry3d, контроллер, ввод, камера, оценка пути; навсетка — E6 |
 | E3. Действия, бой, анимация | A | ✅ бой на данных, анимационный мост, телеграфы |
 | E4. Контент и уровни | A (часть), B, D | 🟡 база, префабы, `content check` — ✅; уровни из Blender — 🟡 (формат и пайплайн ✅, настоящий экспорт Blender не пробовали) |
@@ -93,7 +93,7 @@
 | 2 | режим без окна из тех же плагинов, минус окно, рендер и звук | ✅ | `crates/shards/src/plugins.rs` (`without_display`); тест `headless_is_the_same_plugins_minus_display`; `MinimalPlugins` в песочнице больше нет |
 | 3 | состояния: загрузка, меню, игра, экран загрузки региона, пауза | 🟡 | `crates/shards_core/src/state.rs`, `loading.rs`; тесты `crates/shards_core/tests/core.rs`. `EngineState::{Loading, MainMenu, InGame, RegionLoading}` и `PauseState`, шлюз загрузки. `RegionLoading` теперь работает: через него идёт каждая смена региона (`regen`, `region_load`), с тестами `shards_world` (`regen_replaces_the_region_through_the_loading_screen_and_keeps_the_hero`). Картинки экрана загрузки нет (E9) |
 | 4 | версии: SemVer, теги git, CHANGELOG | 🟡 | `CHANGELOG.md`, версия `0.2.0` в `[workspace.package]`. Теги ставит мейнтейнер; ни `v0.1.0`, ни `v0.2.0` ещё нет |
-| 5 | шаблон в `template/`: персонаж, враг, арена, сохранение, кооп на двоих | 🟡 | `template/`: персонаж, враг, арена, свой вид контента, инструмент и условие, сценарий, реплей, 19 тестов. Сохранения и кооп — фазы C (в README шаблона оставлены разделы-заглушки) |
+| 5 | шаблон в `template/`: персонаж, враг, арена, сохранение, кооп на двоих | 🟡 | `template/`: персонаж, враг, арена, свой вид контента, инструмент и условие, сценарий, реплей, 23 теста (и один `#[ignore]`: запись эталонных реплеев). Сохранения и кооп — фазы C (в README шаблона оставлены разделы-заглушки) |
 | 6 | CI: тесты, clippy, сборка шаблона, `--verify` реплеев | ✅ | `.github/workflows/ci.yml` (задания `test`, `clippy`, `template`, `headless-cli`, `replays-window`), `.github/actions/setup`. Идёт на GitHub на каждый push и pull request |
 
 Граница («игра добавляет плагины поверх `EnginePlugins` и не меняет код движка»): ✅, шаблон и песочница
@@ -153,7 +153,7 @@
 | № | что сделать | статус | где и чем проверено |
 |---|---|---|---|
 | 1 | база контента: типизированные определения, стабильные id, горячая перезагрузка, проверка схемы и ссылок | ✅ | `crates/shards_content` (`db.rs`, `load.rs`); `tests/content.rs` (17). Формат RON; BSN — когда у Bevy появится загрузчик `.bsn` |
-| 2 | конвейер уровней из Blender | 🟡 | `crates/shards_level` (E4.2): glTF 2.0 с custom properties → коллайдеры, датчики, маркеры (`spawn`, `socket`, `navlink`, `trigger`, `interactable`, `camp`, `landmark`, `custom:`), префабы, компоненты по имени; вид `level`; инструменты `level_info`, `spawn_level`, `level_reload`; горячая перезагрузка; тесты `tests/level/` (76). Читает только JSON файла, крейт `gltf =1.4.1` (Skein не берём). **Не проверено на настоящем экспорте Blender:** файлы в репозитории сделаны тестовым генератором glTF |
+| 2 | конвейер уровней из Blender | 🟡 | `crates/shards_level` (E4.2): glTF 2.0 с custom properties → коллайдеры, датчики, маркеры (`spawn`, `socket`, `navlink`, `trigger`, `interactable`, `camp`, `landmark`, `custom:`), префабы, компоненты по имени; вид `level`; инструменты `level_info`, `spawn_level`, `level_reload`; горячая перезагрузка; тесты `tests/level/` (77). Читает только JSON файла, крейт `gltf =1.4.1` (Skein не берём). **Не проверено на настоящем экспорте Blender:** файлы в репозитории сделаны тестовым генератором glTF |
 | 3 | префабы: сущность из ассета плюс переопределения | ✅ | `src/prefab.rs`; `prefabs_spawn_with_extends_and_overrides`, `prefab_problems_are_found_when_content_loads`. Сейчас это RON с компонентами по именам и `extends`; BSN-сцен нет |
 | 4 | `shards content check` | ✅ | `shards content check` (живая игра) и `--check-content` (без игры, код 0/1), `check_dir`. Читает файлы уровней (`level`: узлы, компоненты, префабы, обязательные маркеры), наличие файлов уровней тайлов, запечённую навигацию. Нет: проверки, что маркеры-сокеты файла совпадают с сокетами тайла в RON (в `shards_content` нет связи между видами); узлы файла тайла читаются, только если файл назван ещё и определением `level` |
 | 5 | детерминированная загрузка: симуляция стартует после загрузки, загрузка не сдвигает тики | ✅ | `LoadingGate` и `SimGate`; `nothing_ticks_until_loaded_and_loading_never_shifts_a_tick`; файлы уровней тайлов тоже за шлюзом (`the_start_region_waits_for_its_level_files_and_stands_before_the_hero`) |
@@ -294,7 +294,7 @@ Xvfb показывает его вместе с оверлеем навсетк
 | 3 | инструменты: бессмертие, телепорт к тайлу или точке, фаза босса, спавн префаба, замедление | ✅ | `god`, `teleport` (в точку), `goto_tile` (к тайлу; тест `goto_tile_lands_on_the_ground_of_a_tile`), `spawn_prefab`, `spawn_level`, `speed`; переход к фазе босса через снапшот (`snapshot_load`, тест `go_to_boss_phase_two_is_a_snapshot_loaded_by_name`, сценарий `snapshot`) |
 | 4 | снапшоты в любой тик | ✅ | `ai_core::snapshot`: `snapshot_save`/`snapshot_load`, `shards save-snapshot`/`load-snapshot`, реплей `shards-replay/3` со снапшота; регион, его уровни-тайлы и навсетка возвращаются со снапшотом (`add_snapshot_prepare`, `RegionBuild`, `add_snapshot_rebuild("navmesh")`), загрузка, которой отказали после подготовки, возвращает мир, каким он был, номера уровней (`LevelCounter`) — состояние снапшота; `tests/sandbox/snapshots.rs` (27), `ai_core::snapshot` (14), `shards::run` (2), `shards_npc/tests/npc/snapshot.rs` (4), тесты регионов и уровней `shards_world`. Не входит: правка контента и `spawn_level` до снапшота в реплей со снапшота (свежая игра должна быть уже такой); в реплее `content_apply`, который добавляет файл уровня тайла, и `regen` в тот же тик файл не успевают загрузить |
 | 5 | `clearance`, `path_to`, видимость лучами физики | 🟡 | по физике — ✅ (`src/perception/`, `physics_line_of_sight`; `tests/motion/perception.rs` (29)). По навсетке — `nav_path` (формат `path_to`, плюс тайлы маршрута; `tools::nav_path_answers_with_the_route_around_a_wall`) и `move_to path=true` (`move_to_path_follows_the_navmesh_beyond_the_local_planners_reach`); сами `path_to` и `clearance` остались запросами к физике |
-| 6 | связать слой ИИ с модулями | 🟡 | модули фазы A и B — ✅ (генератор: `regen`, `region_load`, `goto_tile`, `worldgen_report`; уровни и NPC — инструменты и строки в `observe`). Дерево интерфейса (D), агент-игрок и стенд «хост + клиенты» (C), инструменты сохранений (C) — впереди |
+| 6 | связать слой ИИ с модулями | 🟡 | модули фазы A и B — ✅ (генератор: `regen`, `region_load`, `goto_tile`, `worldgen_report`; уровни и NPC — инструменты и строки в `observe`). Инструменты сохранений (C) — ✅ (`save_game`, `load_game`, `save_check`, `save_list`, `save_registry`, `save_damage`: `crates/shards_save/src/tools.rs`, тесты `tests/save/tools.rs`). Дерево интерфейса (D), агент-игрок и стенд «хост + клиенты» (C) — впереди |
 | 7 | сценарные тесты: файл сценария в CI без окна, свой набор у модуля | ✅ для A и B | `shards_script`, `ai_core::scenario`, `shards scenario`; сценарии песочницы: `obstacle_course` (E2), `combat_prototype`, `boss_fight`, `dodge`, `errors` (E3), `npc_director`, `npc_navmesh` (E6), `region` (E5), `snapshot` (E11), сценарии шаблона `smoke`, `valley`; CI-задания `test` (в процессе, вперёд и назад) и `headless-cli` (против живой игры, вперёд и назад). Сценарии остальных модулей — по мере появления |
 
 | «Готово, когда» | статус |
@@ -319,7 +319,7 @@ Xvfb показывает его вместе с оверлеем навсетк
 | `shards_content` | 22 | `src/` и `tests/content.rs` |
 | `shards_motion` | 154 | `src/` и `tests/motion/` (контроллер 28, перцепция 29, ввод 15, физика 11, …) |
 | `shards_action` | 136 | `src/` и `tests/combat/` |
-| `shards_level` | 79 | `src/` (3) и `tests/level/` (76: файл и узлы, свойства, коллайдеры, маркеры, спавн, `level` в контенте, реплей, картинка) |
+| `shards_level` | 80 | `src/` (3) и `tests/level/` (77: файл и узлы, свойства, коллайдеры, маркеры, спавн, `level` в контенте, реплей, картинка) |
 | `shards_world` | 71 | `src/` (17) и `tests/world/` (54: генерация, проверки, подземелья, регионы, смена региона, уровни-тайлы, зоны, навсетка региона) |
 | `shards_npc` | 79 | `src/` (19) и `tests/npc/` (60: поведение, восприятие, директор, навсетка, реплей, снапшот, инструменты, страж данными) |
 | `shards` | 12 | `src/`, `tests/engine.rs`, `tests/failures.rs`, `tests/level_render.rs`, `tests/action_render/` |

@@ -81,21 +81,23 @@ cargo game                 # окно (`cargo game` = `cargo run --`, см. .car
 2. **Переименуйте пакет.** Имя `my_game` встречается в `Cargo.toml` (`name`, `[[bin]]`), `src/main.rs`
    (`my_game::build_app`), `src/lib.rs` (`app_name`, заголовок окна), `src/arena.rs` (`require_content … "my_game"`)
    и в `tests/` (`my_game::test_app`). Найти все места: `grep -rn my_game .`.
-3. **Подключите движок по тегу.** В `Cargo.toml` замените путь на тег релиза (версии и тег описаны в
-   `CHANGELOG.md` движка):
+3. **Подключите движок.** В `Cargo.toml` замените путь на git-зависимость. Шаблон использует мир, врагов-NPC и
+   навсетку, поэтому нужен движок фазы B (будущий `0.3.0`); тег `v0.2.0` (фаза A) не подойдёт. Пока тегов в
+   репозитории нет (`v0.3.0` ставит мейнтейнер, см. `CHANGELOG.md` движка), закрепите коммит:
    ```toml
    [dependencies]
-   shards = { git = "https://github.com/larelgit/airustcargo", tag = "v0.2.0", default-features = false }
+   shards = { git = "https://github.com/larelgit/airustcargo", rev = "<хэш коммита>", default-features = false }
    ```
-   Затем `cargo update`. Сборка не меняется, пока вы сами не поменяете `tag`. Чтобы перейти на новую версию,
-   поменяйте тег, выполните `cargo update -p shards`, прочитайте раздел «Изменено» в `CHANGELOG.md` и прогоните
-   тесты и реплеи. Список `[features]` (`render`, `remote`, `hot_reload`, …) пробрасывает features движка;
+   Затем `cargo update`. Когда `v0.3.0` будет выпущен, замените `rev = "<хэш коммита>"` на `tag = "v0.3.0"`. Сборка не
+   меняется, пока вы сами не поменяете `rev` (или `tag`). Чтобы перейти на новую версию, поменяйте `rev` (или `tag`),
+   выполните `cargo update -p shards`, прочитайте раздел «Изменено» в `CHANGELOG.md` и прогоните тесты и реплеи.
+   Список `[features]` (`render`, `remote`, `hot_reload`, …) пробрасывает features движка;
    `default-features = false` нужен, чтобы ими управляли они.
 4. **Соберите и запустите.** `cargo test`, потом `cargo game`. Если игра запущена не через `cargo` (прямо
    `target/debug/my_game`), она ищет `assets/` рядом с исполняемым файлом; укажите `BEVY_ASSET_ROOT=$PWD`.
-5. **Установите CLI `shards`** (один раз; берите версию, что и у движка в игре):
+5. **Установите CLI `shards`** (один раз; берите ту же версию, что и у движка в игре, тот же `rev`):
    ```bash
-   cargo install shards_cli --git https://github.com/larelgit/airustcargo --tag v0.2.0
+   cargo install shards_cli --git https://github.com/larelgit/airustcargo --rev <хэш коммита>   # после выпуска: --tag v0.3.0
    ```
    Внутри репозитория движка можно так: `cargo install --path ../crates/shards_cli`.
 6. **Меняйте контент, потом код.** Сначала посмотрите, нельзя ли обойтись файлами (раздел «Контент»).
