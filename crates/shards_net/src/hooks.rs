@@ -55,14 +55,24 @@ pub struct NetHooks {
     /// Takes a leaving player's body away. Default: its `Intent` is cleared and it is despawned
     /// after `rejoin_grace_secs` (a rejoin within that time takes it back).
     pub remover: fn(&mut World, Entity, &LeaveRequest),
+    /// Which character a joining player's body gets: asked on the host before the recorded
+    /// `player_join`, whose arguments carry the answer (so a replay builds the same body).
+    /// `request.character` is what they brought; the answer may be another (the host's own
+    /// newer copy of it), `None` for none (the body keeps what it has). When the answer is
+    /// not what they brought, they are sent the host's version (`CharacterSave`). Default:
+    /// what they brought.
+    pub join_character: fn(&mut World, &JoinRequest) -> Option<Value>,
     /// Puts a joining player's character (their save sections) onto their new body.
     pub on_join_character: fn(&mut World, Entity, &Value),
-    /// A remote player's character as the host has it, to send them (`CharacterSave`).
-    pub capture_character: fn(&World, Entity) -> Option<Value>,
-    /// A client got its character from the host: write it to its slot.
-    pub on_character_save: fn(&mut World, &Value),
-    /// The host ends the session: save the world (before the clients are told).
-    pub on_session_end: fn(&mut World),
+    /// A remote player's character as the host has it, to send them (`CharacterSave`): at
+    /// their leave, at the end of the session and when the host overrode what they brought.
+    pub capture_character: fn(&mut World, Entity) -> Option<Value>,
+    /// A client got its character from the host (`CharacterSave`: the host tick it was
+    /// captured at, why, the sections): write it to its slot.
+    pub on_character_save: fn(&mut World, u64, &str, &Value),
+    /// The host ends the session: save the world (before the clients are told). Answers the
+    /// slot the world was saved in, which `SessionEnd` tells the clients.
+    pub on_session_end: fn(&mut World) -> Option<String>,
     /// Where player `n` starts (the region's spawn point). Set by the engine when it has regions.
     pub spawn_point: fn(&World, u8) -> Option<Vec3>,
     /// After a client put the host's world in: what else must restart (collider numbers).
@@ -78,10 +88,11 @@ impl Default for NetHooks {
             spawner: default_spawner,
             join_policy: |_, _| JoinDecision::Accept,
             remover: default_remover,
+            join_character: |_, request| request.character.clone(),
             on_join_character: |_, _, _| {},
             capture_character: |_, _| None,
-            on_character_save: |_, _| {},
-            on_session_end: |_| {},
+            on_character_save: |_, _, _, _| {},
+            on_session_end: |_| None,
             spawn_point: |_, _| None,
             after_restore: |_| {},
             describe_world: |_| None,

@@ -217,6 +217,10 @@ pub struct NetHost {
     pub ended: Option<String>,
     /// Tokens issued so far.
     issued: u64,
+    /// Tokens of players whose slot another player took since (the newest last): their holders
+    /// come back to a slot of their own with the same token, so what the host kept of them
+    /// (co-op saves) is still theirs.
+    retired: Vec<String>,
     /// The endpoint runs on a wall clock (UDP): tokens are random, not derived.
     wall_clock: bool,
     /// The host tick the last send saw: a tick that is neither it nor the next moved time.
@@ -232,6 +236,7 @@ impl NetHost {
         Self {
             peers: BTreeMap::new(),
             slots: BTreeMap::new(),
+            retired: Vec::new(),
             cache: EncodeCache::default(),
             journal_seq: 0,
             tasks: Vec::new(),
@@ -273,9 +278,23 @@ impl NetHost {
                 }
             };
             let token = format!("{:016x}{:016x}", word(1), word(2));
-            if !self.slots.values().any(|s| s.token == token) {
+            if !self.slots.values().any(|s| s.token == token) && !self.retired.contains(&token) {
                 return token;
             }
+        }
+    }
+
+    /// Retired tokens kept: the oldest are forgotten beyond this.
+    const RETIRED_KEPT: usize = 64;
+
+    /// Puts `token` of a slot another player takes among the retired ones.
+    fn retire(&mut self, token: String) {
+        if token.is_empty() || self.retired.contains(&token) {
+            return;
+        }
+        self.retired.push(token);
+        if self.retired.len() > Self::RETIRED_KEPT {
+            self.retired.remove(0);
         }
     }
 
@@ -301,6 +320,16 @@ impl NetHost {
             self.tasks.push(Task::Leave { player, peer: id, reason: reason.to_owned() });
         }
         Ok(())
+    }
+
+    /// Sends player `player`'s machine its character (co-op saves: `sections` as the game
+    /// captured it on the host, at host tick `tick`, saved for `reason`). Reliable and in order
+    /// with everything else the host says. `false`: that player is not connected.
+    pub fn send_character(&mut self, player: u8, tick: u64, reason: &str, sections: Value) -> bool {
+        let Some(peer) = self.peers.values_mut().find(|p| p.player == player && p.stage == PeerStage::Connected) else {
+            return false;
+        };
+        peer.send(&Msg::CharacterSave { tick, reason: reason.to_owned(), sections }).is_ok()
     }
 
     /// Sends `peer` the whole world again at the next send.
@@ -461,7 +490,7 @@ pub fn end_session(world: &mut World, reason: &str) {
         return;
     }
     let on_end = hooks(world).on_session_end;
-    on_end(world);
+    let saved_slot = on_end(world);
     with_host(world, |world, host, endpoint| {
         let tick = sim::tick(world);
         let capture = hooks(world).capture_character;
@@ -475,7 +504,7 @@ pub fn end_session(world: &mut World, reason: &str) {
                     {
                         let _ = peer.send(&Msg::CharacterSave { tick, reason: "session ended".into(), sections });
                     }
-                    let _ = peer.send(&Msg::SessionEnd { reason: reason.to_owned(), saved_slot: None });
+                    let _ = peer.send(&Msg::SessionEnd { reason: reason.to_owned(), saved_slot: saved_slot.clone() });
                     leaving.push((peer.player, peer.id));
                 }
                 _ => {
@@ -764,14 +793,24 @@ fn on_hello(world: &mut World, host: &mut NetHost, id: PeerId, hello: Hello) {
         refuse(world, host, id, &format!("the session is full ({} players)", def.max_players));
         return;
     };
-    // A new player gets a token of the host's (any other they bring means nothing here).
+    // A new player gets a token of the host's (any other they bring means nothing here), unless
+    // the one they bring is of a player whose slot was taken since: it is theirs again.
+    let revived = known.is_none() && !hello.token.is_empty() && host.retired.contains(&hello.token);
     let token = match known {
         Some(n) => host.slots[&n].token.clone(),
+        None if revived => hello.token.clone(),
         None => {
             let seed = world.get_resource::<ai_core::SimSeed>().map_or(0, |s| s.0);
             host.issue_token(seed, player, &hello.name)
         }
     };
+    if revived {
+        host.retired.retain(|t| *t != token);
+    }
+    if let Some(old) = host.slots.get(&player).filter(|old| old.token != token) {
+        let old = old.token.clone();
+        host.retire(old);
+    }
     host.slots.insert(player, Slot { token, name: hello.name.clone(), peer: Some(id), left_at: None });
     let peer = host.peers.get_mut(&id).expect("known peer");
     peer.player = player;
@@ -878,14 +917,13 @@ fn reconcile_players(world: &mut World, host: &mut NetHost) {
             continue;
         }
         let Some(hello) = host.peers.get(id).and_then(|p| p.hello.clone()) else { continue };
-        let mut args = json!({ "player": player, "name": hello.name });
-        if let Some(character) = &hello.character {
-            args["character"] = character.clone();
-        }
+        let (args, overrode) = join_call(world, host, player, &hello);
         let joined = call_tool(world, NET_AGENT, "player_join", args);
         if !joined.ok {
             let why = joined.result.as_str().map_or_else(|| joined.result.to_string(), str::to_owned);
             let _ = host.kick(player, &format!("the host's world has no body for you ({why})"));
+        } else if overrode {
+            send_character(world, host, player, body_of(&joined.result), "rejoined");
         }
     }
     let others: BTreeSet<u8> = {
@@ -918,13 +956,17 @@ fn admit(world: &mut World, host: &mut NetHost, id: PeerId) {
     let Some(peer) = host.peers.get(&id).filter(|p| p.stage == PeerStage::Ready) else { return };
     let Some(hello) = peer.hello.clone() else { return };
     let player = peer.player;
-    // The token stays out of the recorded call: replays are shared, a token says who you are.
-    let mut args = json!({ "player": player, "name": hello.name });
-    if let Some(character) = &hello.character {
-        args["character"] = character.clone();
-    }
+    let had_live_body = live_body(world, player).is_some();
+    let (args, overrode) = join_call(world, host, player, &hello);
     let joined = call_tool(world, NET_AGENT, "player_join", args);
     if !joined.ok {
+        // A join that failed after it made a live body (a hook that panicked: a new one, or one
+        // that waited for the player and no longer does) must not leave it playing for nobody and
+        // holding the slot: it waits for a rejoin, a leaver's way, and keeps its seat. A body
+        // that was live before is another's, not this join's to take away.
+        if !had_live_body && live_body(world, player).is_some() {
+            leave_body(world, player, "cannot spawn your body");
+        }
         let reason = format!("cannot spawn your body: {}", joined.result.as_str().unwrap_or_default());
         refuse(world, host, id, &reason);
         return;
@@ -959,6 +1001,31 @@ fn admit(world: &mut World, host: &mut NetHost, id: PeerId) {
     }
     NetMarks::mark(world, |m| &mut m.joined);
     journal::emit(world, JournalKind::Sim, format!("net: p{player} ({}) joined at tick {tick} (world {kb:.1} KB)", hello.name));
+    if overrode {
+        // The host has a newer character for them than the one they brought.
+        send_character(world, host, player, body, "rejoined");
+    }
+}
+
+/// The recorded `player_join` of `player` and whether the host chose another character than
+/// the one they brought (`NetHooks::join_character`). The token stays out of the call:
+/// replays are shared, and a token says who you are.
+fn join_call(world: &mut World, host: &NetHost, player: u8, hello: &Hello) -> (Value, bool) {
+    let token = host.slots.get(&player).map(|s| s.token.clone()).unwrap_or_default();
+    let request = JoinRequest { player, name: hello.name.clone(), token, character: hello.character.clone() };
+    let chosen = (hooks(world).join_character)(world, &request);
+    let mut args = json!({ "player": player, "name": hello.name });
+    if let Some(character) = &chosen {
+        args["character"] = character.clone();
+    }
+    (args, chosen != hello.character)
+}
+
+/// Sends `player` their character as the host has it now.
+fn send_character(world: &mut World, host: &mut NetHost, player: u8, body: Option<u32>, reason: &str) {
+    let Some(entity) = body.and_then(|id| world.resource::<AiIndex>().get(AiId(id))) else { return };
+    let Some(sections) = (hooks(world).capture_character)(world, entity) else { return };
+    host.send_character(player, sim::tick(world), reason, sections);
 }
 
 fn reset_view(peer: &mut Peer) {
@@ -1374,6 +1441,24 @@ mod tests {
         assert_eq!(rtt_jump(300.0, 180.0).as_deref(), None, "120 ms less is not half of 300");
         assert_eq!(rtt_jump(20.0, 60.0).as_deref(), None, "40 ms is noise");
         assert_eq!(rtt_jump(0.0, 300.0).as_deref(), None, "the first measure is not a jump");
+    }
+
+    #[test]
+    fn a_retired_token_is_remembered_bounded_and_never_issued_again() {
+        let mut host = NetHost::new();
+        let first = host.issue_token(7, 1, "player");
+        host.retire(first.clone());
+        host.retire(first.clone());
+        host.retire(String::new());
+        assert_eq!(host.retired, std::slice::from_ref(&first), "once, and an empty token is no one's");
+        // Issuing the same inputs again would give the same token (a stand repeats): it is skipped.
+        host.issued = 0;
+        assert_ne!(host.issue_token(7, 1, "player"), first);
+        for n in 0..NetHost::RETIRED_KEPT + 5 {
+            host.retire(format!("t{n}"));
+        }
+        assert_eq!(host.retired.len(), NetHost::RETIRED_KEPT);
+        assert!(!host.retired.contains(&first), "the oldest is forgotten first");
     }
 
     #[test]

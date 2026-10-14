@@ -320,7 +320,25 @@ mod stand {
         PathBuf::from(file)
     }
 
+    /// The character slot of stand client `n`: named after it, because the members share the save
+    /// folder.
+    pub(super) fn client_slot(n: u8) -> String {
+        format!("c{n}")
+    }
+
+    /// Why a stand cannot start with `--character slot`: the host would play the file of a client.
+    pub(super) fn slot_clash(character: Option<&str>, clients: u8) -> Option<String> {
+        let slot = character?;
+        (1..=clients).any(|n| client_slot(n) == slot).then(|| {
+            format!("--character {slot} is the slot of stand client {slot}, whose character is kept there; name another slot for the host")
+        })
+    }
+
     pub fn run(build: &impl Fn(&EngineConfig) -> App, args: &Args, config: EngineConfig, clients: u8) -> ExitCode {
+        if let Some(clash) = slot_clash(config.character_slot.as_deref(), clients) {
+            eprintln!("error: {clash}");
+            return ExitCode::from(2);
+        }
         // `--net-sim` was checked when the command line was parsed.
         let links: LinkConditions = config.net_sim.as_deref().and_then(|spec| spec.parse().ok()).unwrap_or(LinkConditions::NONE);
         let mut ports = vec![config.port];
@@ -410,6 +428,7 @@ mod stand {
         let mut apps = vec![("host".to_owned(), host)];
         let mut client_links = Vec::new();
         for (n, port) in ports.iter().enumerate().skip(1) {
+            let number = u8::try_from(n).unwrap_or(u8::MAX);
             let name = format!("c{n}");
             let client_config = EngineConfig {
                 embedded: true,
@@ -419,7 +438,8 @@ mod stand {
                 net: NetLaunch::Join { addr: "host".into() },
                 player_name: name.clone(),
                 settings: SettingsStore::Off,
-                character_slot: None,
+                // Its own character file, named after it: members share the save folder.
+                character_slot: Some(client_slot(number)),
                 world_slot: None,
                 ..config.clone()
             };
@@ -898,6 +918,16 @@ mod tests {
         assert!(parse(&["game", "--replay", "r.json", "--windowed"]).is_err());
         let args = parse(&["game", "--replay", "r.json", "--verify", "--windowed"]).unwrap();
         assert!(args.verify && args.windowed);
+    }
+
+    #[test]
+    fn a_stand_hosts_character_is_never_a_clients_slot() {
+        assert_eq!(stand::client_slot(2), "c2");
+        assert!(stand::slot_clash(None, 2).is_none());
+        assert!(stand::slot_clash(Some("hero"), 2).is_none());
+        assert!(stand::slot_clash(Some("c3"), 2).is_none(), "there is no client 3");
+        let clash = stand::slot_clash(Some("c2"), 2).unwrap();
+        assert!(clash.contains("--character c2") && clash.contains("name another slot for the host"), "{clash}");
     }
 
     #[test]

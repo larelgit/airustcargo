@@ -158,6 +158,10 @@ impl SaveSection for PositionSave {
         if !rotation.is_finite() || rotation.length_squared() < 1e-6 {
             return Err(format!("rotation {:?} is not a rotation", self.rotation));
         }
+        // A character may come from another machine (co-op): a body at infinity is not a position.
+        if self.feet.iter().any(|v| !v.is_finite()) {
+            return Err(format!("feet {:?} are not a position", self.feet));
+        }
         let mut tf = world.get_mut::<Transform>(body).ok_or("the body has no Transform")?;
         tf.translation = Vec3::from_array(self.feet);
         tf.rotation = rotation;
@@ -181,6 +185,23 @@ pub struct Pool {
     pub current: f32,
     pub max: f32,
 }
+
+impl Pool {
+    /// Whether this can be applied: a character comes from a file, and over the network from
+    /// another machine, so its numbers are checked before anything changes (`f32::clamp`
+    /// panics when the ceiling is below zero).
+    fn check(&self, what: &str) -> Result<(), String> {
+        if !self.current.is_finite() || !self.max.is_finite() || self.max < 0.0 {
+            return Err(format!("{what} {} of {} is not a pool (finite numbers, a ceiling of 0 or more)", self.current, self.max));
+        }
+        Ok(())
+    }
+}
+
+/// Charges a saved character may name, and the longest name: a character is a file, and a file
+/// that comes over the network is not trusted with more.
+const MAX_CHARGES: usize = 64;
+const MAX_CHARGE_NAME: usize = 64;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ChargeSave {
@@ -208,6 +229,15 @@ impl SaveSection for VitalsSave {
 
     fn apply(self, world: &mut World, body: Option<Entity>) -> Result<(), String> {
         let body = body.ok_or("there is no body")?;
+        // Everything is checked first, so a section that is refused changes nothing.
+        for (what, pool) in [("health", &self.health), ("stamina", &self.stamina)] {
+            if let Some(pool) = pool {
+                pool.check(what)?;
+            }
+        }
+        if self.charges.len() > MAX_CHARGES || self.charges.iter().any(|c| c.name.len() > MAX_CHARGE_NAME || c.name.chars().any(char::is_control)) {
+            return Err(format!("at most {MAX_CHARGES} charges, named in {MAX_CHARGE_NAME} characters without control characters"));
+        }
         let mut entity = world.get_entity_mut(body).map_err(|e| e.to_string())?;
         let mut hp = None;
         if let (Some(saved), Some(mut health)) = (self.health, entity.get_mut::<Health>()) {
@@ -247,5 +277,21 @@ impl SaveSection for VitalsSave {
             world.trigger(Healed { entity: body, amount: hp, hp });
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pool_of_another_machine_is_checked_before_it_is_applied() {
+        assert!(Pool { current: 40.0, max: 100.0 }.check("health").is_ok());
+        assert!(Pool { current: 0.0, max: 0.0 }.check("health").is_ok(), "a body with nothing left is a pool");
+        assert!(Pool { current: 500.0, max: 100.0 }.check("health").is_ok(), "a current above the ceiling is clamped, not refused");
+        for bad in [Pool { current: 1.0, max: -1.0 }, Pool { current: f32::NAN, max: 10.0 }, Pool { current: 1.0, max: f32::INFINITY }] {
+            let why = bad.check("stamina").unwrap_err();
+            assert!(why.starts_with("stamina ") && why.contains("is not a pool"), "{why}");
+        }
     }
 }

@@ -164,26 +164,29 @@ fn a_replay_that_plays_loads_nothing_at_launch() {
 }
 
 #[test]
-fn a_host_or_client_is_left_to_the_network_code_which_has_a_hook() {
+fn a_host_loads_its_slots_like_a_single_game_and_a_client_loads_none() {
     let dir = TempDir::new("launch_net");
     save_ada(&dir);
     let camp = |config: &mut shards::EngineConfig| {
         config.world_slot = Some("camp".into());
         config.character_slot = Some("camp".into());
     };
-    // A host (on a free port: test runs go side by side) plays a world of its own.
+    // A host (on a free port: test runs go side by side) plays a world of its own: the co-op
+    // glue (`shards::coop`) loads its slots before its first tick, as a `load_game` call.
     let mut app = launched_with(&dir, |config| {
         config.net = NetLaunch::Host { port: 0 };
         camp(config);
     });
-    assert_eq!((hero(&mut app).name, calendar(&app).day), (String::new(), 0), "a host: nothing loads by itself");
+    assert_eq!(sim::tick(app.world()), 0, "loaded before the first tick");
+    assert_eq!((hero(&mut app).name, calendar(&app).day), ("Ada".to_owned(), 40), "a host: the world and its own character");
     assert_eq!(slots(&app), ("camp".to_owned(), "camp".to_owned()));
+    assert_eq!(lines(&app, JournalKind::Agent, "launch: load_game").len(), 2, "{:?}", journal(&app));
+    // Once: asking again would load the same files again, by hand.
     let done = load_launch_slots(app.world_mut());
     assert_eq!(done.iter().map(|l| (l.kind.as_str(), l.slot.as_str(), l.outcome.clone())).collect::<Vec<_>>(), [
         ("world", "camp", LaunchOutcome::Loaded),
         ("character", "camp", LaunchOutcome::Loaded)
     ]);
-    assert_eq!((hero(&mut app).name, calendar(&app).day), ("Ada".to_owned(), 40));
 
     // A client's world is its host's: it waits for it (none answers here), and nothing of
     // the slots loads by itself meanwhile.
