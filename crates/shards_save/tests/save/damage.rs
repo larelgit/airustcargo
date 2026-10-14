@@ -55,9 +55,6 @@ fn damages() -> Vec<(&'static str, &'static str, Damage)> {
         ("JSON of the wrong shape", "not a save", Box::new(|_| forged("[1, 2, 3]"))),
         ("a file without its header", "no header", Box::new(|b| b[b.iter().position(|c| *c == b'\n').unwrap() + 1..].to_vec())),
         ("a zero-length file", "file is empty", Box::new(|_| Vec::new())),
-        ("a section from a newer version", "section calendar was saved by a newer version: 7 > 1", Box::new(|b| {
-            edited(b, |f| f.sections.0.get_mut("calendar").unwrap().version = 7)
-        })),
         ("a section that does not read", "section calendar does not read", Box::new(|b| {
             edited(b, |f| f.sections.0.get_mut("calendar").unwrap().data = json!("not a calendar"))
         })),

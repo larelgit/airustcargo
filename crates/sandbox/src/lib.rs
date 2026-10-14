@@ -53,13 +53,18 @@ pub fn build_app(config: &EngineConfig) -> App {
     app
 }
 
-/// Paused at tick 0 with the world spawned, headless, no logging, no HTTP and no
-/// crash replay files: drive it with `shards::ai_core::call_tool`.
+/// Paused at tick 0 with the world spawned, headless, no logging, no HTTP, no crash
+/// replay files and no tick timing in replies or the journal (it differs from run to
+/// run): drive it with `shards::ai_core::call_tool`. Tests that look at timing turn it on
+/// with `AiPerf::report`.
 pub fn test_app(seed: u64) -> App {
-    shards::testing::test_app(
-        |config| config.seed = seed,
-        |app| {
-            app.add_plugins(SandboxPlugin);
-        },
-    )
+    test_app_with(|config| config.seed = seed)
+}
+
+/// [`test_app`] with other settings (seed, tick rate, replay checks): `configure` changes
+/// [`shards::testing::config`]. Keep it headless and paused.
+pub fn test_app_with(configure: impl FnOnce(&mut EngineConfig)) -> App {
+    shards::testing::test_app(configure, |app| {
+        app.add_plugins(SandboxPlugin);
+    })
 }

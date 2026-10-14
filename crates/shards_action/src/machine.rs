@@ -92,7 +92,6 @@ impl Running {
         dir: Option<Vec3>,
         input: Option<String>,
     ) -> Self {
-        let zone_until = def.hits.iter().filter_map(|h| def.span(&h.span)).map(|w| w.1).fold(0.0, f32::max);
         let mut run = Running {
             action: id.to_owned(),
             instance,
@@ -108,17 +107,31 @@ impl Running {
             phase_end: 0.0,
             windows: Windows::default(),
             zone: def.telegraph_zone().map(|(shape, _)| shape.to_string()),
-            zone_until,
+            zone_until: zone_until(def),
             anim: def.anim.clone(),
         };
         run.refresh(def);
         run
     }
 
-    /// Recomputes the phase and the open windows after `t` moved (and the length: a
-    /// hot reload may have changed it).
+    /// Recomputes the phase and the open windows after `t` moved, and follows a hot reload
+    /// of the definition: its length, zone and clip. They are compared first, so a tick that
+    /// changes nothing allocates nothing (this runs every tick for every acting fighter).
     pub(crate) fn refresh(&mut self, def: &ActionDef) {
         self.length = def.length();
+        self.zone_until = zone_until(def);
+        let zone = def.telegraph_zone().map(|(shape, _)| shape);
+        let same_zone = match (&self.zone, &zone) {
+            (Some(shown), Some(shape)) => displays_as(shape, shown),
+            (None, None) => true,
+            _ => false,
+        };
+        if !same_zone {
+            self.zone = zone.map(|shape| shape.to_string());
+        }
+        if self.anim != def.anim {
+            self.anim.clone_from(&def.anim);
+        }
         if let Some((phase, end)) = def.phase_at(self.t) {
             if self.phase != phase {
                 self.phase = phase.to_owned();
@@ -135,6 +148,33 @@ impl Running {
             hyper_armor: def.any_open(&def.hyper_armor, prev, t),
         };
     }
+}
+
+/// When the last hit window of `def` closes: the zone is shown until then.
+fn zone_until(def: &ActionDef) -> f32 {
+    def.hits.iter().filter_map(|h| def.span(&h.span)).map(|w| w.1).fold(0.0, f32::max)
+}
+
+/// Whether `value` formats as exactly `text`, without building the string (so it allocates
+/// only if `value`'s own `Display` does; `HitShape`'s does not).
+fn displays_as(value: &impl std::fmt::Display, text: &str) -> bool {
+    use std::fmt::Write;
+    /// A writer that only checks that what is written continues `rest`.
+    struct Compare<'a> {
+        rest: &'a str,
+        same: bool,
+    }
+    impl Write for Compare<'_> {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            match self.rest.strip_prefix(s) {
+                Some(rest) => self.rest = rest,
+                None => self.same = false,
+            }
+            Ok(())
+        }
+    }
+    let mut compare = Compare { rest: text, same: true };
+    write!(compare, "{value}").is_ok() && compare.same && compare.rest.is_empty()
 }
 
 /// `windup heavy_slam 0.32s (zone circle 4.5m)`, `active roll 0.10s i-frames`; empty
@@ -930,8 +970,49 @@ pub fn force_action(world: &mut World, entity: Entity, action: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
     use super::*;
+    use crate::def::HitShape;
     use shards_content::{ContentDb, ContentKinds};
+
+    thread_local! {
+        /// Heap allocations this thread has made (tests run in parallel, one count each).
+        static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// Counts allocations, to hold the per-tick paths to none.
+    struct Counting;
+
+    // SAFETY: every call goes to the system allocator unchanged; the counter only observes.
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let _ = ALLOCATIONS.try_with(|n| n.set(n.get() + 1));
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            unsafe { System.dealloc(ptr, layout) }
+        }
+    }
+
+    #[global_allocator]
+    static COUNTING: Counting = Counting;
+
+    /// How many times `f` allocated on this thread.
+    fn allocations_in(f: impl FnOnce()) -> usize {
+        let before = ALLOCATIONS.with(Cell::get);
+        f();
+        ALLOCATIONS.with(Cell::get) - before
+    }
+
+    fn parse_def(text: &str) -> ActionDef {
+        ron::Options::default()
+            .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+            .from_str(text)
+            .unwrap_or_else(|e| panic!("{e}"))
+    }
 
     fn db() -> ContentDb {
         let mut kinds = ContentKinds::default();
@@ -978,6 +1059,69 @@ mod tests {
         held: &'a [String],
     ) -> FighterView<'a> {
         FighterView { db, moveset: "hero", state, stamina, cooldowns: None, charges: None, held, dead: false }
+    }
+
+    #[test]
+    fn a_running_action_follows_a_reloaded_definition() {
+        let parse = parse_def;
+        let first = parse(
+            r#"(net_id: 1, anim: "a", phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)],
+                hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 90), damage: 20)])"#,
+        );
+        let second = parse(
+            r#"(net_id: 1, anim: "b", phases: [("windup", 0.5), ("active", 0.1), ("recovery", 0.3)],
+                hits: [(span: Phase("active"), shape: Circle(radius: 4.0), damage: 20)])"#,
+        );
+        let mut run = Running::new("swing", &first, 0, Vec3::NEG_Z, None, Some("light".into()));
+        assert_eq!((run.zone.as_deref(), run.anim.as_deref()), (Some("cone 2m 90°"), Some("a")));
+        assert!((run.zone_until - 0.3).abs() < 1e-6, "{}", run.zone_until);
+
+        // The content was reloaded under the running action: the next tick's refresh follows.
+        run.refresh(&second);
+        assert_eq!((run.zone.as_deref(), run.anim.as_deref()), (Some("circle 4m"), Some("b")));
+        assert!((run.zone_until - 0.6).abs() < 1e-6, "the later hit span: {}", run.zone_until);
+        let settled = run.clone();
+        run.refresh(&second);
+        assert_eq!(run, settled, "a tick that changes nothing changes nothing");
+
+        // And a definition that lost them.
+        let bare = parse(r#"(net_id: 1, phases: [("windup", 0.2), ("recovery", 0.3)])"#);
+        run.refresh(&bare);
+        assert_eq!((run.zone.as_deref(), run.anim.as_deref(), run.zone_until), (None, None, 0.0));
+    }
+
+    #[test]
+    fn a_tick_that_changes_nothing_allocates_nothing() {
+        // `refresh` runs every tick for every fighter with a running action: whatever the
+        // zone's shape, following the definition must not build a string while it is unchanged.
+        let shapes = [
+            "Sphere(radius: 1.5)",
+            "Capsule(radius: 0.5, length: 2.0)",
+            "Cone(range: 3.0, angle: 90)",
+            "Box(width: 1.0, height: 2.0, depth: 2.5)",
+            "Circle(radius: 4.5)",
+            "Line(length: 8.0, width: 1.6)",
+        ];
+        for shape in shapes {
+            let def = parse_def(&format!(
+                r#"(net_id: 1, anim: "swing", phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)],
+                    hits: [(span: Phase("active"), shape: {shape}, damage: 20)])"#
+            ));
+            let mut run = Running::new("swing", &def, 0, Vec3::NEG_Z, None, Some("light".into()));
+            run.t = 0.1;
+            run.prev = 0.1 - DT;
+            run.refresh(&def);
+            assert!(run.zone.is_some(), "{shape}");
+            let allocated = allocations_in(|| run.refresh(&def));
+            assert_eq!(allocated, 0, "{shape}: an unchanged tick allocated");
+        }
+        // The counter does see a string being built, so the zeros above mean something.
+        let shape = HitShape::Cone { range: 3.0, angle: 90.0, height: 2.0 };
+        assert!(allocations_in(|| drop(shape.to_string())) > 0);
+        assert!(displays_as(&shape, "cone 3m 90°"));
+        assert!(!displays_as(&shape, "cone 3m 90"));
+        assert!(!displays_as(&shape, "cone 3m 90°!"));
+        assert!(!displays_as(&shape, "cone 4m 90°"));
     }
 
     #[test]

@@ -1,0 +1,11 @@
+// Where the sandbox's characters may be: the `bodies_in_world` invariant halts the game when
+// one ends a tick elsewhere. Inside means over what the built layouts cover on the ground
+// (the arena and its corridor, x -21.5..44; the obstacle course, x 44..141.5, z -17.5..17.5)
+// or over the loaded region's cells (the wilds: x -64..64, z 48..176), `margin` meters wider,
+// and above `fall_below` (the canyon floor under the course's cliff is at -10).
+{
+    "world": (
+        margin: 4.0,
+        fall_below: -30.0,
+    ),
+}

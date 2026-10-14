@@ -60,8 +60,19 @@ pub struct EngineConfig {
     pub paused: bool,
     /// Simulation ticks per second.
     pub tick_hz: f64,
-    /// A gameplay failure saves `replays/crash-tick<N>.json` to reproduce it with.
+    /// A gameplay failure saves `replays/crash-tick<N>.json` to reproduce it with, a
+    /// violated invariant `replays/invariant-<name>-tick<N>.json`.
     pub crash_replays: bool,
+    /// Ticks between replay checks (`--check-every`), stored in every replay saved.
+    pub check_every: u64,
+    /// What each replay check keeps to name what diverged (`--check-detail`).
+    pub check_detail: ai_core::CheckDetail,
+    /// A tick that takes longer is over budget (`--tick-budget-ms`); `None`: the tick's
+    /// own duration.
+    pub tick_budget: Option<std::time::Duration>,
+    /// Tick timing in `step` replies and `perf` journal lines; off in tests, whose
+    /// journals must not depend on the machine.
+    pub report_perf: bool,
     /// Window size in logical pixels.
     pub window: (u32, u32),
     /// Where `EngineState::Loading` goes once everything is loaded.
@@ -139,6 +150,10 @@ impl Default for EngineConfig {
             paused: false,
             tick_hz: 60.0,
             crash_replays: true,
+            check_every: ai_core::replay::CHECK_EVERY,
+            check_detail: ai_core::CheckDetail::default(),
+            tick_budget: None,
+            report_perf: true,
             window: (1280, 720),
             after_loading: EngineState::InGame,
             hot_reload: true,
@@ -164,6 +179,10 @@ impl EngineConfig {
             sim: SimConfig { tick_hz: self.tick_hz, seed: self.seed, start_paused: self.paused },
             remote_port: if self.testing { None } else { self.port },
             crash_replays: self.crash_replays,
+            check_every: self.check_every,
+            check_detail: self.check_detail,
+            tick_budget: self.tick_budget,
+            report_perf: self.report_perf,
             ..default()
         }
     }
@@ -293,6 +312,8 @@ impl Plugin for CorePlugin {
                     .distributive_run_if(simulates),
             )
             .configure_sets(FixedUpdate, NetSet::Predict.run_if(predicts))
+            // Invariants check the simulation where it runs: a client's world is the host's.
+            .configure_sets(FixedLast, ai_core::InvariantSystems.run_if(simulates))
             .configure_sets(
                 FixedUpdate,
                 (CoreSystems::FollowOrders.in_set(SimSet::Input), CoreSystems::ClearPresses.in_set(SimSet::Cleanup)),

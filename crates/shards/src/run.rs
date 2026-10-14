@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use ai_core::replay::{self, Replay};
 #[cfg(feature = "render")]
 use ai_core::sim::{StepEnd, StepReport};
-use ai_core::AiReplay;
+use ai_core::{AiReplay, CheckDetail, ReplayReport, Violation};
 use bevy::app::AppExit;
 use bevy::prelude::*;
 use clap::Parser;
@@ -46,8 +46,9 @@ struct Args {
     #[arg(long, value_name = "FILE")]
     replay: Option<PathBuf>,
     /// With --replay: no window, load, run it to the end as fast as possible, print
-    /// whether the game still matches the recording, exit 0 (same), 1 (diverged or a
-    /// gameplay system failed) or 2 (could not play it).
+    /// whether the game still matches the recording and every invariant it broke on the
+    /// way, exit 0 (same, nothing broken), 1 (diverged, a gameplay system failed, an
+    /// invariant broke) or 2 (could not play it).
     #[arg(long, requires = "replay")]
     verify: bool,
     /// With --verify: keep the window. The replay plays as fast as the machine allows, a
@@ -56,6 +57,25 @@ struct Args {
     /// and all); needs a display (`xvfb-run -a` on a server).
     #[arg(long, requires = "verify")]
     windowed: bool,
+    /// Ticks between replay checks, stored in the replay. Record with 1 and `--verify`
+    /// names the exact tick a changed build diverges at. A replay checks at its own.
+    #[arg(
+        long,
+        value_name = "TICKS",
+        default_value_t = ai_core::replay::CHECK_EVERY,
+        value_parser = clap::value_parser!(u64).range(1..),
+        conflicts_with = "replay"
+    )]
+    check_every: u64,
+    /// What each replay check keeps to name what diverged: components (entities,
+    /// components and their values), entities, or none (the tick only).
+    #[arg(long, value_name = "DETAIL", default_value_t = CheckDetail::Components, conflicts_with = "replay")]
+    check_detail: CheckDetail,
+    /// A tick slower than this is over budget: `step` counts it and the journal names
+    /// it (`perf`). Default: the tick's own duration (16.7 ms at 60 Hz). Debug builds
+    /// run slower than `--release`.
+    #[arg(long, value_name = "MS", value_parser = positive_ms)]
+    tick_budget_ms: Option<f64>,
     /// Read, parse and validate every content file, print the problems, exit 0 (clean)
     /// or 1. Runs nothing.
     #[arg(long)]
@@ -94,8 +114,8 @@ struct Args {
     /// `jitter=`, `duplicate=`).
     #[arg(long, value_name = "SPEC")]
     net_sim: Option<String>,
-    /// Where saves are written, relative to the game's folder.
-    #[arg(long, value_name = "DIR", default_value = "saves")]
+    /// Where saves are written: a folder inside the game's folder (no absolute path, no `..`).
+    #[arg(long, value_name = "DIR", default_value = "saves", value_parser = save_dir_name)]
     save_dir: String,
     /// Keep player settings in DIR instead of the platform's settings folder.
     #[arg(long, value_name = "DIR", conflicts_with = "no_settings")]
@@ -112,6 +132,19 @@ struct Args {
     /// A client exits when its host ends the session, instead of going back to the menu.
     #[arg(long)]
     exit_with_host: bool,
+}
+
+fn positive_ms(text: &str) -> Result<f64, String> {
+    match text.parse::<f64>() {
+        Ok(ms) if ms > 0.0 && ms.is_finite() => Ok(ms),
+        Ok(_) => Err("the budget must be above 0 ms".into()),
+        Err(_) => Err(format!("`{text}` is not a number of milliseconds")),
+    }
+}
+
+/// The save folder: inside the game's folder, like `replays/`.
+fn save_dir_name(dir: &str) -> Result<String, String> {
+    shards_save::check_save_dir(dir).map(|()| dir.to_owned())
 }
 
 /// A save slot: a name, never a path.
@@ -154,6 +187,9 @@ impl Args {
             character_slot: self.character.clone(),
             world_slot: self.world.clone(),
             exit_with_host: self.exit_with_host,
+            check_every: self.check_every,
+            check_detail: self.check_detail,
+            tick_budget: self.tick_budget_ms.map(|ms| Duration::from_secs_f64(ms / 1000.0)),
             ..EngineConfig::default()
         }
     }
@@ -412,7 +448,8 @@ fn exit_code(exit: AppExit) -> ExitCode {
 
 /// Plays a replay headless, as fast as the CPU allows, and reports. A gameplay system
 /// that fails on the way counts as a difference (exit 1), even when the state matches:
-/// a crash replay reproduces its crash, a regular one must not crash.
+/// a crash replay reproduces its crash, a regular one must not crash. So does every
+/// invariant broken on the way: each is listed, and playback goes on to the end.
 fn verify(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, recording: Replay) -> ExitCode {
     // Verifying writes nothing, not even a crash replay over the one being verified.
     let config = EngineConfig { headless: true, port: None, paused: true, crash_replays: false, hot_reload: false, ..config };
@@ -437,8 +474,8 @@ fn verify(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, recording
         return ExitCode::from(2);
     }
     let started = Instant::now();
-    let failures = match crate::testing::run_to(&mut app, end, Duration::from_secs(60)) {
-        Ok(failures) => failures,
+    let stops = match crate::testing::run_to(&mut app, end, Duration::from_secs(60)) {
+        Ok(stops) => stops,
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::from(2);
@@ -447,21 +484,48 @@ fn verify(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, recording
     app.update(); // calls made after the last tick, then the final comparison
     let report = app.world().resource::<AiReplay>().report().cloned();
     let took = format!("[{} ticks in {:.2}s]", ai_core::sim::tick(app.world()), started.elapsed().as_secs_f64());
-    match (&report, failures.first()) {
-        (_, Some(failure)) => {
-            let shown = report.as_ref().map(|r| format!("{r}; ")).unwrap_or_default();
-            println!("{shown}gameplay {}: {} {took}", failure.headline(), failure.message);
-            ExitCode::FAILURE
-        }
-        (Some(report), None) => {
-            println!("{report} {took}");
-            if report.identical() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
-        }
-        (None, None) => {
+    let failure = stops.failures.first().map(|f| format!("gameplay {}: {}", f.headline(), f.message));
+    match print_verdict(report.as_ref(), failure.as_deref(), &stops.violations, &took) {
+        Some(true) => ExitCode::SUCCESS,
+        Some(false) => ExitCode::FAILURE,
+        None => {
             eprintln!("error: the replay did not finish");
             ExitCode::from(2)
         }
     }
+}
+
+/// Prints what `--verify` found: every violation (`invariant hp violated at tick 31: …`), the
+/// verdict line (`replay finished at tick 600: identical to the recording (10 checks); 1
+/// invariant violated [600 ticks in 1.20s]`), then what diverged holds in this run, a line
+/// per value. Returns whether it passed; `None` when there is nothing to say (no report, no
+/// failure).
+fn print_verdict(report: Option<&ReplayReport>, failure: Option<&str>, violations: &[Violation], took: &str) -> Option<bool> {
+    for v in violations {
+        println!("{}: {}", v.headline(), v.text);
+    }
+    let broken = match violations.len() {
+        0 => String::new(),
+        1 => "; 1 invariant violated".to_owned(),
+        n => format!("; {n} invariants violated"),
+    };
+    let passed = match (report, failure) {
+        (_, Some(failure)) => {
+            let shown = report.map(|r| format!("{}; ", r.headline())).unwrap_or_default();
+            println!("{shown}{failure}{broken} {took}");
+            false
+        }
+        (Some(r), None) => {
+            println!("{}{broken} {took}", r.headline());
+            r.identical() && violations.is_empty()
+        }
+        (None, None) => return None,
+    };
+    // What diverged, then its values in this run: `  e6 now: Health { … }`.
+    for line in report.iter().flat_map(|r| r.value_lines()) {
+        println!("  {line}");
+    }
+    Some(passed)
 }
 
 /// `--verify --windowed`: the same check as [`verify`], in a window.
@@ -484,12 +548,14 @@ mod windowed {
         started: Option<Instant>,
         frames: u64,
         created: Instant,
+        /// Invariants broken on the way: listed at the end, the run goes on past them.
+        violations: Vec<Violation>,
     }
 
     /// Plays `recording` in a window: the game's own app with a window, loaded, then
     /// [`BATCH`] ticks per frame until the recording's end; prints the report like a
-    /// headless `--verify` and exits 0 (same), 1 (diverged or a gameplay system failed) or
-    /// 2 (could not play it).
+    /// headless `--verify` and exits 0 (same, nothing broken), 1 (diverged, a gameplay
+    /// system failed, an invariant broke) or 2 (could not play it).
     #[cfg(feature = "render")]
     pub fn verify(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, recording: Replay) -> ExitCode {
         // Writes nothing, serves nothing, starts paused: time moves only by the driver's steps.
@@ -504,7 +570,14 @@ mod windowed {
         }
         // Frames keep coming without focus or input (a virtual display has neither).
         app.insert_resource(bevy::winit::WinitSettings::continuous())
-            .insert_resource(Verifying { end, from, started: None, frames: 0, created: Instant::now() })
+            .insert_resource(Verifying {
+                end,
+                from,
+                started: None,
+                frames: 0,
+                created: Instant::now(),
+                violations: Vec::new(),
+            })
             .add_systems(Update, drive);
         exit_code(app.run())
     }
@@ -535,10 +608,11 @@ mod windowed {
         };
         // The playback finishes in `Last` of the frame that ran its last tick.
         if let Some(report) = world.resource::<AiReplay>().report().cloned() {
-            println!("{report} {}", took(world));
+            let violations = std::mem::take(&mut world.resource_mut::<Verifying>().violations);
+            let passed = print_verdict(Some(&report), None, &violations, &took(world)) == Some(true);
             // 2: it could not be played (its snapshot did not load).
             let code = if report.interrupted.is_some() { 2 } else { 1 };
-            world.write_message(if report.identical() { AppExit::Success } else { AppExit::from_code(code) });
+            world.write_message(if passed { AppExit::Success } else { AppExit::from_code(code) });
             return;
         }
         // Until the snapshot is in (the first tick puts it in), the game is at tick 0 but
@@ -550,8 +624,14 @@ mod windowed {
         match ai_core::sim::step(world, BATCH.min(end - tick), Duration::from_secs(24 * 3600), |_| None) {
             Ok(StepReport { end: StepEnd::SystemFailed(failures), .. }) => {
                 let failure = &failures[0];
-                println!("gameplay {}: {} {}", failure.headline(), failure.message, took(world));
+                let failure = format!("gameplay {}: {}", failure.headline(), failure.message);
+                let violations = std::mem::take(&mut world.resource_mut::<Verifying>().violations);
+                print_verdict(None, Some(&failure), &violations, &took(world));
                 world.write_message(AppExit::from_code(1));
+            }
+            // A rule that fired stays off unless the recording re-armed it: go on.
+            Ok(StepReport { end: StepEnd::InvariantViolated(violated), .. }) => {
+                world.resource_mut::<Verifying>().violations.extend(violated);
             }
             Ok(_) => {}
             Err(e) => {
@@ -769,6 +849,10 @@ mod tests {
         assert!(refused(&["game", "--no-settings", "--settings-dir", "s"]).contains("cannot be used with"));
         assert!(refused(&["game", "--world", "../etc"]).contains("a slot is 1-32 of a-z"));
         assert!(refused(&["game", "--character", "Hero"]).contains("a slot is 1-32 of a-z"));
+        assert!(refused(&["game", "--save-dir", "/var/saves"]).contains("is absolute"));
+        assert!(refused(&["game", "--save-dir", "../saves"]).contains("goes up with `..`"));
+        assert!(refused(&["game", "--save-dir", ""]).contains("is empty"));
+        assert_eq!(parse(&["game", "--save-dir", "saves/qa-1"]).unwrap().config().save_dir, "saves/qa-1");
 
         let plain = parse(&["game"]).unwrap().config();
         assert_eq!(plain.net, NetLaunch::Off);

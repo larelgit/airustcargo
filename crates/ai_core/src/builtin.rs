@@ -7,7 +7,7 @@ use bevy::reflect::serde::{TypedReflectDeserializer, TypedReflectSerializer};
 use bevy::reflect::{GetPath, PartialReflect, ReflectFromReflect, ReflectPath, TypeRegistration, TypeRegistry};
 use schemars::JsonSchema;
 use serde::de::DeserializeSeed;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::describe::facts;
@@ -224,8 +224,9 @@ fn speed_tool(In(call): In<Call<SpeedArgs>>, world: &mut World) -> ToolResult<Va
     clock(world, ClockAction::Speed(call.args.x), &call.caller.agent)
 }
 
-/// Stop condition for `step`. Any matching condition stops the run.
-#[derive(Deserialize, JsonSchema, Clone, Debug)]
+/// Stop condition for `step`. Any matching condition stops the run. Invariants
+/// (`assert_add`) use the same conditions.
+#[derive(Deserialize, Serialize, JsonSchema, Clone, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum StopWhen {
     /// A new journal entry contains this text (case-insensitive), e.g. "phase", "died".
@@ -241,6 +242,36 @@ pub enum StopWhen {
     Field { id: Id, component: String, path: String, below: Option<f64>, above: Option<f64> },
     /// A condition the game registered by name.
     Named(String),
+    /// A warning appeared in the journal: a `warn!` line, a component replay checks leave out, ….
+    Warning,
+    /// An error appeared in the journal: an `error!` line, a failed tool, a diverged replay, ….
+    Error,
+}
+
+impl std::fmt::Display for StopWhen {
+    /// In `shards step --until` terms: `field:e6:Health.current<0`, `journal:died`, `error`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StopWhen::Journal(text) => write!(f, "journal:{text}"),
+            StopWhen::Gone(id) => write!(f, "gone:{id}"),
+            StopWhen::Shows { id, text } => write!(f, "shows:{id}:{text}"),
+            StopWhen::Near { a, b, meters } => write!(f, "near:{a}:{b}:{meters}"),
+            StopWhen::Field { id, component, path, below, above } => {
+                write!(f, "field:{id}:{component}.{path}")?;
+                if let Some(below) = below {
+                    write!(f, "<{below}")?;
+                }
+                match (below, above) {
+                    (Some(_), Some(above)) => write!(f, " or >{above}"),
+                    (None, Some(above)) => write!(f, ">{above}"),
+                    _ => Ok(()),
+                }
+            }
+            StopWhen::Named(name) => write!(f, "named:{name}"),
+            StopWhen::Warning => f.write_str("warning"),
+            StopWhen::Error => f.write_str("error"),
+        }
+    }
 }
 
 /// Predicate registered by the game: `app.add_ai_condition("boss_phase_2", |w| ...)`.
@@ -273,15 +304,16 @@ fn step_tool(In(call): In<Call<StepArgs>>, world: &mut World) -> ToolResult<Valu
         return Ok(json!({ "pending": id }));
     }
     let report = sim::step(world, max, Duration::from_secs(STEP_WALL_SECS), |w| check_until(w, &until, journal_mark))?;
-    Ok(Value::String(step_report_text(&report, !until.is_empty())))
+    Ok(Value::String(step_report_text(world, &report, !until.is_empty())))
 }
 
 /// Wall-clock budget of one `step` call.
 pub const STEP_WALL_SECS: u64 = 20;
 
-/// What `step` answers for `report`: `ran 120 ticks (0 → 120), stopped: journal: …`.
+/// What `step` answers for `report`: `ran 120 ticks (0 → 120), stopped: journal: …`, and
+/// the `ticks:` timing line when the game reports it ([`perf`](crate::perf)).
 /// `conditions`: the step had `until` conditions (so running all ticks says none was met).
-pub fn step_report_text(report: &StepReport, conditions: bool) -> String {
+pub fn step_report_text(world: &World, report: &StepReport, conditions: bool) -> String {
     let mut msg = format!("ran {} ticks ({} → {})", report.ticks(), report.from_tick, report.to_tick);
     match &report.end {
         StepEnd::Completed if !conditions => {}
@@ -299,6 +331,20 @@ pub fn step_report_text(report: &StepReport, conditions: bool) -> String {
                 msg.push_str(&format!("; crash replay: {path}"));
             }
         }
+        StepEnd::InvariantViolated(violations) => {
+            let first = &violations[0];
+            msg.push_str(&format!(", stopped: {}", first.headline()));
+            if violations.len() > 1 {
+                msg.push_str(&format!(" (+{} more)", violations.len() - 1));
+            }
+            if let Some(path) = &first.replay {
+                msg.push_str(&format!(" (replay: {path})"));
+            }
+        }
+    }
+    if let Some(line) = crate::perf::step_line(world, &report.timing) {
+        msg.push('\n');
+        msg.push_str(&line);
     }
     msg
 }
@@ -319,11 +365,18 @@ pub fn check_until(world: &mut World, until: &[StopWhen], journal_mark: u64) -> 
 /// let outcome = watch.finish(world, &report);
 /// queue.lock().unwrap().complete(request.id, outcome);
 /// ```
+///
+/// Run the ticks with [`sim::step`] (one call per member, a tick at a time if the members
+/// must stay in lockstep): it stops at a failed gameplay system or a violated invariant
+/// ([`StepEnd::SystemFailed`], [`StepEnd::InvariantViolated`]), and `finish` then reports
+/// the halt (`halted`) the way a local `step` does.
 pub struct StepWatch {
     until: Vec<StopWhen>,
     journal_mark: u64,
     before: Digest,
     origin: Option<Vec3>,
+    /// Halts before the first tick: one after it is this step's.
+    halts_before: u64,
 }
 
 impl StepWatch {
@@ -331,7 +384,14 @@ impl StepWatch {
     pub fn begin(world: &mut World, request: &StepRequest) -> StepWatch {
         let caller = crate::session::caller(world, &request.requester);
         let origin = caller.subject.and_then(|e| world.get::<Transform>(e)).map(|t| t.translation);
-        StepWatch { until: request.until.clone(), journal_mark: request.journal_mark, before: observe::digest(world), origin }
+        let halts_before = world.get_resource::<sim::Halts>().map_or(0, |h| h.count);
+        StepWatch {
+            until: request.until.clone(),
+            journal_mark: request.journal_mark,
+            before: observe::digest(world),
+            origin,
+            halts_before,
+        }
     }
 
     /// After a tick: why the step stops here, if it does.
@@ -343,10 +403,12 @@ impl StepWatch {
     /// request.
     pub fn finish(self, world: &mut World, report: &StepReport) -> CallOutcome {
         journal::drain_logs(world);
-        let text = step_report_text(report, !self.until.is_empty());
+        let text = step_report_text(world, report, !self.until.is_empty());
         let changes = crate::tools::clip_changes(observe::diff(&self.before, &observe::digest(world), self.origin));
         let journal: Vec<String> = world.resource::<AiJournal>().after(self.journal_mark).0.map(ToString::to_string).collect();
-        CallOutcome { changes, journal, ..crate::tools::finished(world, "step", Ok(Value::String(text))) }
+        let halts = world.get_resource::<sim::Halts>();
+        let halted = halts.filter(|h| h.count > self.halts_before).and_then(|h| h.last.clone());
+        CallOutcome { changes, journal, halted, ..crate::tools::finished(world, "step", Ok(Value::String(text))) }
     }
 }
 
@@ -375,9 +437,13 @@ fn step_poll_tool(In(call): In<Call<StepPollArgs>>, world: &mut World) -> ToolRe
     }
 }
 
-fn validate(world: &World, cond: &StopWhen) -> Result<(), String> {
+/// Whether `cond` can be checked in this world: its entities exist, its name is known.
+pub(crate) fn validate(world: &World, cond: &StopWhen) -> Result<(), String> {
     match cond {
-        StopWhen::Gone(_) | StopWhen::Journal(_) => Ok(()),
+        StopWhen::Gone(_) | StopWhen::Journal(_) | StopWhen::Warning | StopWhen::Error => Ok(()),
+        StopWhen::Field { below: None, above: None, .. } => {
+            Err("a field condition needs `below` or `above`, e.g. field:6:Health.current<30".into())
+        }
         StopWhen::Shows { id, .. } | StopWhen::Field { id, .. } => id.entity(world).map(|_| ()),
         StopWhen::Near { a, b, .. } => a.entity(world).and(b.entity(world)).map(|_| ()),
         StopWhen::Named(name) => {
@@ -395,51 +461,47 @@ fn validate(world: &World, cond: &StopWhen) -> Result<(), String> {
 }
 
 fn check(world: &World, until: &[StopWhen], journal_mark: u64) -> Option<String> {
-    for cond in until {
-        let hit = match cond {
-            StopWhen::Journal(text) => {
-                let needle = text.to_lowercase();
-                world
-                    .resource::<AiJournal>()
-                    .after(journal_mark)
-                    .0
-                    .find(|e| e.kind != JournalKind::Agent && e.text.to_lowercase().contains(&needle))
-                    .map(|e| format!("journal: {e}"))
-            }
-            StopWhen::Gone(id) => id.entity(world).is_err().then(|| format!("{id} is gone")),
-            StopWhen::Shows { id, text } => {
-                let needle = text.to_lowercase();
-                id.entity(world).ok().and_then(|e| facts(world, e)).and_then(|f| {
-                    let line = entity_line(&f, None, None);
-                    line.to_lowercase().contains(&needle).then(|| line.clone())
-                })
-            }
-            StopWhen::Near { a, b, meters } => {
-                let pa = a.entity(world).ok().and_then(|e| facts(world, e)).map(|f| f.pos);
-                let pb = b.entity(world).ok().and_then(|e| facts(world, e)).map(|f| f.pos);
-                match (pa, pb) {
-                    (Some(pa), Some(pb)) if pa.distance(pb) <= *meters => {
-                        Some(format!("{a} within {:.1}m of {b}", pa.distance(pb)))
-                    }
-                    _ => None,
-                }
-            }
-            StopWhen::Field { id, component, path, below, above } => id.entity(world).ok().and_then(|e| {
-                let v = read_number(world, e, component, path).ok()?;
-                let low = below.is_some_and(|b| v < b);
-                let high = above.is_some_and(|a| v > a);
-                (low || high).then(|| format!("{id} {component}.{path} = {v}"))
-            }),
-            StopWhen::Named(name) => world
-                .get_resource::<AiConditions>()
-                .and_then(|c| c.0.get(name).copied())
-                .and_then(|f| f(world).then(|| format!("condition {name}"))),
-        };
-        if hit.is_some() {
-            return hit;
+    until.iter().find_map(|cond| condition_hit(world, cond, journal_mark))
+}
+
+/// What `cond` sees right now, or `None` while it is not met. Journal conditions look at
+/// entries after `journal_mark` (agent lines left out: they only echo the calls).
+pub(crate) fn condition_hit(world: &World, cond: &StopWhen, journal_mark: u64) -> Option<String> {
+    let journal = || world.resource::<AiJournal>().after(journal_mark).0.filter(|e| e.kind != JournalKind::Agent);
+    match cond {
+        StopWhen::Journal(text) => {
+            let needle = text.to_lowercase();
+            journal().find(|e| e.text.to_lowercase().contains(&needle)).map(|e| format!("journal: {e}"))
         }
+        StopWhen::Warning => journal().find(|e| e.kind == JournalKind::Warn).map(|e| format!("journal: {e}")),
+        StopWhen::Error => journal().find(|e| e.kind == JournalKind::Error).map(|e| format!("journal: {e}")),
+        StopWhen::Gone(id) => id.entity(world).is_err().then(|| format!("{id} is gone")),
+        StopWhen::Shows { id, text } => {
+            let needle = text.to_lowercase();
+            id.entity(world).ok().and_then(|e| facts(world, e)).and_then(|f| {
+                let line = entity_line(&f, None, None);
+                line.to_lowercase().contains(&needle).then_some(line)
+            })
+        }
+        StopWhen::Near { a, b, meters } => {
+            let pa = a.entity(world).ok().and_then(|e| facts(world, e)).map(|f| f.pos);
+            let pb = b.entity(world).ok().and_then(|e| facts(world, e)).map(|f| f.pos);
+            match (pa, pb) {
+                (Some(pa), Some(pb)) if pa.distance(pb) <= *meters => Some(format!("{a} within {:.1}m of {b}", pa.distance(pb))),
+                _ => None,
+            }
+        }
+        StopWhen::Field { id, component, path, below, above } => id.entity(world).ok().and_then(|e| {
+            let v = read_number(world, e, component, path).ok()?;
+            let low = below.is_some_and(|b| v < b);
+            let high = above.is_some_and(|a| v > a);
+            (low || high).then(|| format!("{id} {component}.{path} = {v}"))
+        }),
+        StopWhen::Named(name) => world
+            .get_resource::<AiConditions>()
+            .and_then(|c| c.0.get(name).copied())
+            .and_then(|f| f(world).then(|| format!("condition {name}"))),
     }
-    None
 }
 
 // --- dev: possession, transforms, reflection ------------------------------------
@@ -737,6 +799,7 @@ mod tests {
             .add_plugins(crate::AiCorePlugin {
                 remote_port: None,
                 crash_replays: false,
+                report_perf: false,
                 sim: SimConfig { start_paused: true, ..Default::default() },
                 ..Default::default()
             })
@@ -801,5 +864,31 @@ mod tests {
         assert_eq!(poll(&mut deferred, 2).result, "speed 2x");
         assert!(poll(&mut deferred, 9).result.as_str().unwrap().starts_with("no request 9"));
         assert!(!poll(&mut local, 1).ok, "nothing to poll where steps run right away");
+    }
+
+    fn walked_too_far(world: &World) -> Option<String> {
+        let mut q = world.try_query_filtered::<&Transform, With<Walker>>()?;
+        q.iter(world).find(|t| t.translation.x > 2.5).map(|t| format!("x = {}", t.translation.x))
+    }
+
+    /// A violated invariant stops a deferred step at the same tick, with the same answer and
+    /// the same halt, as a local one.
+    #[test]
+    fn a_deferred_step_halts_at_a_violation_as_a_local_one() {
+        use crate::AiAppExt;
+        let (mut local, mut deferred) = (stepper(false), stepper(true));
+        local.add_ai_invariant("fence", walked_too_far);
+        deferred.add_ai_invariant("fence", walked_too_far);
+        let args = json!({"ticks": 10});
+        let direct = crate::call_tool(local.world_mut(), "dev", "step", args.clone());
+        assert_eq!(direct.result, "ran 3 ticks (0 → 3), stopped: invariant fence violated at tick 3");
+        let halt = direct.halted.clone().expect("the local step halted");
+
+        assert_eq!(crate::call_tool(deferred.world_mut(), "dev", "step", args).result, json!({"pending": 1}));
+        drive(&mut deferred);
+        let queue = crate::sim::deferred_queue(deferred.world()).unwrap();
+        let crate::sim::StepPoll::Done(outcome) = queue.lock().unwrap().poll(1) else { panic!("not done") };
+        assert_eq!((&outcome.result, outcome.tick, outcome.halted.as_ref()), (&direct.result, 3, Some(&halt)));
+        assert!(crate::sim::is_paused(deferred.world()));
     }
 }

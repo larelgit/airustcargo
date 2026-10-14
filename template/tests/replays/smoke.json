@@ -2,9 +2,89 @@
   "format": "shards-replay/3",
   "seed": 42,
   "tick_hz": 59.99999880000003,
+  "check_every": 60,
+  "check_detail": "components",
   "end": {
     "tick": 258,
-    "hash": "d30164e8835b4f7e"
+    "hash": "d30164e8835b4f7e",
+    "parts": {
+      "entities": {
+        "e1": {
+          "ActionState": "bf8e961c4590883e",
+          "AiImportance": "c9809818c69781c7",
+          "AiPlayer": "5bbc70d05f43552a",
+          "Body": "c5fb29ebf3188250",
+          "CharacterController": "721e67b99dbbcaf7",
+          "Collider": "24c98f83e815c6ca",
+          "ColliderId": "287591bbc22a2c46",
+          "Cooldowns": "e590eaa870b29409",
+          "Fighter": "96a7daae59c4f54b",
+          "Health": "9f787f3e7bfbd238",
+          "InputBuffer": "ef38bf400db90191",
+          "Intent": "efc21f5a2e526384",
+          "LocalPlayer": "9649be778570e9b6",
+          "LocomotionInput": "4f1a93feb56560a8",
+          "MotionState": "eb4bb2e42f164025",
+          "Name": "ce1e47879de8c7a1",
+          "PlayerId": "881ccf3ad5b62384",
+          "Poise": "ca3929246ff27a75",
+          "Stamina": "6f212cdc865a2f25",
+          "Statuses": "3fb30d18ef67d4e2",
+          "Team": "165e6b65a6b6cead",
+          "Transform": "3975a056ff596f13"
+        },
+        "e2": {
+          "ActionState": "40ba1e72bdfd5c39",
+          "AiImportance": "89520b33e189ae73",
+          "Body": "c5fb29ebf3188250",
+          "CharacterController": "7c494aef0333baac",
+          "Collider": "16dfd9ebb2c9c2fb",
+          "ColliderId": "d300ca70436dca75",
+          "Cooldowns": "1ed04e85c185a138",
+          "Dead": "209163bd41f316c0",
+          "Fighter": "96cfdb6f3c89ddd4",
+          "Grunt": "8fa0bd7c8e1ee631",
+          "Health": "c9ad0c483b0b4443",
+          "InputBuffer": "ef38bf400db90191",
+          "Intent": "46b74b4f65dfc167",
+          "LockOnTarget": "8e7e24c8d091cff2",
+          "LocomotionInput": "031944208650e41a",
+          "MotionState": "9449d231e0a3f008",
+          "Name": "ff2e9aef750f28b8",
+          "Poise": "18588f6e549ca032",
+          "Statuses": "3fb30d18ef67d4e2",
+          "Team": "e1125bce710d6b86",
+          "Transform": "c039350ce30a3d1e"
+        },
+        "e3": {
+          "Body": "e406ed6e99cc6b9a",
+          "Collider": "376c5712df75e071",
+          "ColliderId": "664e3c13f41c8f88",
+          "Transform": "8c3fc88e8aa2ddf4"
+        },
+        "e4": {
+          "Body": "e406ed6e99cc6b9a",
+          "Collider": "376c5712df75e071",
+          "ColliderId": "10d974c875602db7",
+          "Transform": "84023be84ae4a104"
+        },
+        "e5": {
+          "Body": "e406ed6e99cc6b9a",
+          "Collider": "39f64d5c88aef5cd",
+          "ColliderId": "bed2f67298c5d4b8",
+          "Transform": "3385738796fceaab"
+        },
+        "e6": {
+          "Body": "e406ed6e99cc6b9a",
+          "Collider": "39f64d5c88aef5cd",
+          "ColliderId": "ce2867f4591df34f",
+          "Transform": "838580a807f66e17"
+        }
+      },
+      "game": {
+        "content": "6a88c3374f9874b6"
+      }
+    }
   },
   "events": [
     {
@@ -111,19 +191,327 @@
   "checks": [
     {
       "tick": 60,
-      "hash": "c1484b9e1d104f4d"
+      "hash": "c1484b9e1d104f4d",
+      "parts": {
+        "entities": {
+          "e1": {
+            "ActionState": "a414b3792e392e19",
+            "AiImportance": "c9809818c69781c7",
+            "AiPlayer": "5bbc70d05f43552a",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "721e67b99dbbcaf7",
+            "Collider": "24c98f83e815c6ca",
+            "ColliderId": "287591bbc22a2c46",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "96a7daae59c4f54b",
+            "Health": "7a4bdd5c767454d8",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "0d3bfe20d042f5a6",
+            "LocalPlayer": "9649be778570e9b6",
+            "LocomotionInput": "0c2da60b72c10b32",
+            "MotionState": "c34882907a8125ee",
+            "Name": "ce1e47879de8c7a1",
+            "PlayerId": "881ccf3ad5b62384",
+            "Poise": "53546dce4d2b9cfb",
+            "Stamina": "b87a70e945624bac",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "165e6b65a6b6cead",
+            "Transform": "bf58b76e5fe846aa"
+          },
+          "e2": {
+            "ActionState": "a414b3792e392e19",
+            "AiImportance": "89520b33e189ae73",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "7c494aef0333baac",
+            "Collider": "16dfd9ebb2c9c2fb",
+            "ColliderId": "d300ca70436dca75",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "96cfdb6f3c89ddd4",
+            "Grunt": "8fa0bd7c8e1ee631",
+            "Health": "7746745f41e618de",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "38dab3b75de55ab8",
+            "LockOnTarget": "8e7e24c8d091cff2",
+            "LocomotionInput": "39e4de9fd83ac7a7",
+            "MotionState": "f356552503cd2cb2",
+            "Name": "ff2e9aef750f28b8",
+            "Poise": "8c2609fc4557aa39",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "e1125bce710d6b86",
+            "Transform": "d9cd696730878f70"
+          },
+          "e3": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "376c5712df75e071",
+            "ColliderId": "664e3c13f41c8f88",
+            "Transform": "8c3fc88e8aa2ddf4"
+          },
+          "e4": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "376c5712df75e071",
+            "ColliderId": "10d974c875602db7",
+            "Transform": "84023be84ae4a104"
+          },
+          "e5": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "39f64d5c88aef5cd",
+            "ColliderId": "bed2f67298c5d4b8",
+            "Transform": "3385738796fceaab"
+          },
+          "e6": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "39f64d5c88aef5cd",
+            "ColliderId": "ce2867f4591df34f",
+            "Transform": "838580a807f66e17"
+          }
+        },
+        "game": {
+          "content": "6a88c3374f9874b6"
+        }
+      }
     },
     {
       "tick": 120,
-      "hash": "9d4f02df32ef40ef"
+      "hash": "9d4f02df32ef40ef",
+      "parts": {
+        "entities": {
+          "e1": {
+            "ActionState": "a414b3792e392e19",
+            "AiImportance": "c9809818c69781c7",
+            "AiPlayer": "5bbc70d05f43552a",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "721e67b99dbbcaf7",
+            "Collider": "24c98f83e815c6ca",
+            "ColliderId": "287591bbc22a2c46",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "96a7daae59c4f54b",
+            "Health": "7a4bdd5c767454d8",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "0d3bfe20d042f5a6",
+            "LocalPlayer": "9649be778570e9b6",
+            "LocomotionInput": "0c2da60b72c10b32",
+            "MotionState": "d0137a10b1814f0e",
+            "Name": "ce1e47879de8c7a1",
+            "PlayerId": "881ccf3ad5b62384",
+            "Poise": "53546dce4d2b9cfb",
+            "Stamina": "b87a70e945624bac",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "165e6b65a6b6cead",
+            "Transform": "105d2a42d8671cce"
+          },
+          "e2": {
+            "ActionState": "a414b3792e392e19",
+            "AiImportance": "89520b33e189ae73",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "7c494aef0333baac",
+            "Collider": "16dfd9ebb2c9c2fb",
+            "ColliderId": "d300ca70436dca75",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "96cfdb6f3c89ddd4",
+            "Grunt": "8fa0bd7c8e1ee631",
+            "Health": "7746745f41e618de",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "520703a08c1a3178",
+            "LockOnTarget": "8e7e24c8d091cff2",
+            "LocomotionInput": "6bd74f2753bd97b8",
+            "MotionState": "5319055c7fc0c45b",
+            "Name": "ff2e9aef750f28b8",
+            "Poise": "8c2609fc4557aa39",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "e1125bce710d6b86",
+            "Transform": "d4f52ee5d7c32652"
+          },
+          "e3": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "376c5712df75e071",
+            "ColliderId": "664e3c13f41c8f88",
+            "Transform": "8c3fc88e8aa2ddf4"
+          },
+          "e4": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "376c5712df75e071",
+            "ColliderId": "10d974c875602db7",
+            "Transform": "84023be84ae4a104"
+          },
+          "e5": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "39f64d5c88aef5cd",
+            "ColliderId": "bed2f67298c5d4b8",
+            "Transform": "3385738796fceaab"
+          },
+          "e6": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "39f64d5c88aef5cd",
+            "ColliderId": "ce2867f4591df34f",
+            "Transform": "838580a807f66e17"
+          }
+        },
+        "game": {
+          "content": "6a88c3374f9874b6"
+        }
+      }
     },
     {
       "tick": 180,
-      "hash": "16791cbeb174249b"
+      "hash": "16791cbeb174249b",
+      "parts": {
+        "entities": {
+          "e1": {
+            "ActionState": "fa61fc1d561e10ab",
+            "AiImportance": "c9809818c69781c7",
+            "AiPlayer": "5bbc70d05f43552a",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "721e67b99dbbcaf7",
+            "Collider": "24c98f83e815c6ca",
+            "ColliderId": "287591bbc22a2c46",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "96a7daae59c4f54b",
+            "Health": "7a4bdd5c767454d8",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "efc21f5a2e526384",
+            "LocalPlayer": "9649be778570e9b6",
+            "LocomotionInput": "6801e5f3a113f594",
+            "MotionState": "8a07eade4fd582f3",
+            "Name": "ce1e47879de8c7a1",
+            "PlayerId": "881ccf3ad5b62384",
+            "Poise": "53546dce4d2b9cfb",
+            "Stamina": "1eaea83a32c7ba43",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "165e6b65a6b6cead",
+            "Transform": "01b7c8fc47b4b44c"
+          },
+          "e2": {
+            "ActionState": "b27b4dfb8865e20a",
+            "AiImportance": "89520b33e189ae73",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "7c494aef0333baac",
+            "Collider": "16dfd9ebb2c9c2fb",
+            "ColliderId": "d300ca70436dca75",
+            "Cooldowns": "282a79bb36692c26",
+            "Fighter": "96cfdb6f3c89ddd4",
+            "Grunt": "8fa0bd7c8e1ee631",
+            "Health": "37eaca6e75a8deb0",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "e0ca250c59da9840",
+            "LockOnTarget": "8e7e24c8d091cff2",
+            "LocomotionInput": "031944208650e41a",
+            "MotionState": "9449d231e0a3f008",
+            "Name": "ff2e9aef750f28b8",
+            "Poise": "994a570eda8dfe0a",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "e1125bce710d6b86",
+            "Transform": "c039350ce30a3d1e"
+          },
+          "e3": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "376c5712df75e071",
+            "ColliderId": "664e3c13f41c8f88",
+            "Transform": "8c3fc88e8aa2ddf4"
+          },
+          "e4": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "376c5712df75e071",
+            "ColliderId": "10d974c875602db7",
+            "Transform": "84023be84ae4a104"
+          },
+          "e5": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "39f64d5c88aef5cd",
+            "ColliderId": "bed2f67298c5d4b8",
+            "Transform": "3385738796fceaab"
+          },
+          "e6": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "39f64d5c88aef5cd",
+            "ColliderId": "ce2867f4591df34f",
+            "Transform": "838580a807f66e17"
+          }
+        },
+        "game": {
+          "content": "6a88c3374f9874b6"
+        }
+      }
     },
     {
       "tick": 240,
-      "hash": "09b20541fd23a63f"
+      "hash": "09b20541fd23a63f",
+      "parts": {
+        "entities": {
+          "e1": {
+            "ActionState": "7a410dc7770da987",
+            "AiImportance": "c9809818c69781c7",
+            "AiPlayer": "5bbc70d05f43552a",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "721e67b99dbbcaf7",
+            "Collider": "24c98f83e815c6ca",
+            "ColliderId": "287591bbc22a2c46",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "96a7daae59c4f54b",
+            "Health": "9f787f3e7bfbd238",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "efc21f5a2e526384",
+            "LocalPlayer": "9649be778570e9b6",
+            "LocomotionInput": "6801e5f3a113f594",
+            "MotionState": "5f8d878223e91a0d",
+            "Name": "ce1e47879de8c7a1",
+            "PlayerId": "881ccf3ad5b62384",
+            "Poise": "aa1f84b9b4abbcf2",
+            "Stamina": "465a9306298f0df4",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "165e6b65a6b6cead",
+            "Transform": "27a6a28247bc676b"
+          },
+          "e2": {
+            "ActionState": "a7764145801dc900",
+            "AiImportance": "89520b33e189ae73",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "7c494aef0333baac",
+            "Collider": "16dfd9ebb2c9c2fb",
+            "ColliderId": "d300ca70436dca75",
+            "Cooldowns": "d6976d47a3d71268",
+            "Fighter": "96cfdb6f3c89ddd4",
+            "Grunt": "8fa0bd7c8e1ee631",
+            "Health": "313e3963cbcc1899",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "db2ac61006d7c4f3",
+            "LockOnTarget": "8e7e24c8d091cff2",
+            "LocomotionInput": "031944208650e41a",
+            "MotionState": "9449d231e0a3f008",
+            "Name": "ff2e9aef750f28b8",
+            "Poise": "4d686ea02a3f4a47",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "e1125bce710d6b86",
+            "Transform": "c039350ce30a3d1e"
+          },
+          "e3": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "376c5712df75e071",
+            "ColliderId": "664e3c13f41c8f88",
+            "Transform": "8c3fc88e8aa2ddf4"
+          },
+          "e4": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "376c5712df75e071",
+            "ColliderId": "10d974c875602db7",
+            "Transform": "84023be84ae4a104"
+          },
+          "e5": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "39f64d5c88aef5cd",
+            "ColliderId": "bed2f67298c5d4b8",
+            "Transform": "3385738796fceaab"
+          },
+          "e6": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "39f64d5c88aef5cd",
+            "ColliderId": "ce2867f4591df34f",
+            "Transform": "838580a807f66e17"
+          }
+        },
+        "game": {
+          "content": "6a88c3374f9874b6"
+        }
+      }
     }
   ]
 }

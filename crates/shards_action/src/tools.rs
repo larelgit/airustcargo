@@ -13,7 +13,7 @@ use shards_content::ContentDb;
 use shards_core::input_names::{BLOCK, DODGE, HEAVY, LIGHT, PARRY, TECHNIQUE, USE_ITEM};
 use shards_core::{flat, Intent, Order};
 
-use crate::combat::{stagger, StaggerCause};
+use crate::combat::{revive, stagger, StaggerCause};
 use crate::def::{ActionDef, CombatTuning, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team};
 use crate::machine::{can_start, fits_buffer, ActionState, FighterView, Healed};
@@ -323,6 +323,14 @@ fn attack(In(call): In<Call<AttackArgs>>, world: &mut World) -> ToolResult {
     if world.get::<Dead>(target).is_some() {
         return Err(format!("{} is already dead", call.args.target));
     }
+    // An AI-visible entity need not be in the world (a director, a quest): the order would be
+    // dropped by `follow_attack_orders` on the next tick, which walks to and faces a position.
+    if world.get::<Transform>(target).is_none() {
+        return Err(format!(
+            "{} has no position, so there is nothing to walk to and hit; attack a body that stands in the world",
+            call.args.target
+        ));
+    }
     let input = call.args.input.unwrap_or_else(|| LIGHT.to_owned());
     // An order that waiting cannot start (no such input, a raised guard, no charges)
     // would sit there for ever: refuse it now, with the reason.
@@ -389,15 +397,9 @@ fn heal(In(call): In<Call<HealArgs>>, world: &mut World) -> ToolResult {
         s.current = s.max;
     }
     if let Some(mut p) = world.get_mut::<Poise>(e) {
-        (p.current, p.broken) = (p.max, 0.0);
+        p.refill();
     }
-    let revived = world.get::<Dead>(e).is_some();
-    if revived {
-        world.entity_mut(e).remove::<Dead>();
-        if let Some(mut state) = world.get_mut::<ActionState>(e) {
-            state.current = None;
-        }
-    }
+    let revived = revive(world, e);
     world.trigger(Healed { entity: e, amount: gained, hp });
     Ok(format!("healed {who} to {hp:.0}{}", if revived { ", revived" } else { "" }))
 }

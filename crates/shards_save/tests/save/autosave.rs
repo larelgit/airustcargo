@@ -161,3 +161,43 @@ fn autosaves_write_nothing_while_a_replay_plays_and_the_replay_still_verifies() 
     assert!(!dir_b.file("world").exists() && !dir_b.file("character").exists(), "the player's saves are not overwritten by a replay");
     assert!(!lines(&app, JournalKind::Sim, "autosave (camp_rested) skipped while a replay plays").is_empty(), "{:?}", journal(&app));
 }
+
+#[test]
+fn autosaves_still_waiting_are_written_when_the_game_exits() {
+    let dir = TempDir::new("exit");
+    let mut app = camp_game(&dir, true);
+    step(&mut app, 8);
+    // The camp at tick 5 was written; the one at tick 8 waits for the debounce window (30 and 60 ticks).
+    assert_eq!(day_in(&dir), (5, 5));
+    assert!(app.world().resource::<SaveRequests>().is_pending());
+    assert!(
+        app.world().resource::<shards::core::ExitHooks>().names().any(|n| n.starts_with("save:")),
+        "the save module registers its exit hook"
+    );
+
+    // The game ends: an `AppExit`, as a closed window or `kill` makes one.
+    app.world_mut().write_message(AppExit::Success);
+    app.update();
+    assert_eq!(day_in(&dir), (8, 8), "the file holds the newest state, not the one before the debounce");
+    assert!(!app.world().resource::<SaveRequests>().is_pending());
+    assert_eq!(lines(&app, JournalKind::Sim, "saved (camp_rested").len(), 4, "tick 5 and the flush, both kinds: {:?}", journal(&app));
+    let (world, character) = (SaveFile::decode(&fs::read(dir.file("world/slot1.save")).unwrap()).unwrap(), SaveFile::decode(&fs::read(dir.file("character/slot1.save")).unwrap()).unwrap());
+    assert_eq!((world.tick, character.tick), (8, 8));
+    // The previous save is the first backup.
+    assert!(dir.file("world/slot1.save.bak1").exists());
+}
+
+#[test]
+fn flush_saves_is_there_for_a_games_own_way_out() {
+    let dir = TempDir::new("flush");
+    let mut app = camp_game(&dir, true);
+    step(&mut app, 8);
+    assert_eq!(shards::save::flush_saves(app.world_mut()), 2, "the world and the character");
+    assert_eq!(day_in(&dir), (8, 8));
+    assert_eq!(shards::save::flush_saves(app.world_mut()), 0, "nothing is left");
+    // And the exit that follows has nothing to do.
+    let before = fs::read(dir.file("world/slot1.save")).unwrap();
+    app.world_mut().write_message(AppExit::Success);
+    app.update();
+    assert_eq!(fs::read(dir.file("world/slot1.save")).unwrap(), before);
+}

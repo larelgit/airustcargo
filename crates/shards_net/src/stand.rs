@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use ai_core::builtin::{apply_clock, StepWatch};
 use ai_core::sim::{self, ClockAction, StepEnd, StepPoll, StepReport};
 use ai_core::tools::finished;
+use ai_core::invariants::Violation;
 use ai_core::{call_tool, CallOutcome, SimGate, StepQueue, StepRoute, SystemFailure};
 use bevy::prelude::*;
 use serde_json::Value;
@@ -33,6 +34,38 @@ pub fn attach(app: &mut App, hub: &MemoryHub, name: &str, host: Option<PeerId>) 
     let id = transport.id();
     app.insert_resource(NetEndpoint { transport: Box::new(transport), clock: NetClock::Hub(hub.clone()), host });
     id
+}
+
+/// Why a member stopped in a stand tick: a failed gameplay system or a violated invariant.
+#[derive(Debug, Clone)]
+pub enum MemberHalt {
+    Failed(SystemFailure),
+    Violated(Violation),
+}
+
+impl MemberHalt {
+    pub fn headline(&self) -> String {
+        match self {
+            MemberHalt::Failed(f) => f.headline(),
+            MemberHalt::Violated(v) => v.headline(),
+        }
+    }
+
+    /// How a step that hit `halts` ends: failures first, as [`sim::step`] reports them.
+    fn step_end(halts: Vec<MemberHalt>) -> StepEnd {
+        let (mut failed, mut violated) = (Vec::new(), Vec::new());
+        for halt in halts {
+            match halt {
+                MemberHalt::Failed(f) => failed.push(f),
+                MemberHalt::Violated(v) => violated.push(v),
+            }
+        }
+        if failed.is_empty() {
+            StepEnd::InvariantViolated(violated)
+        } else {
+            StepEnd::SystemFailed(failed)
+        }
+    }
 }
 
 /// One app of a stand.
@@ -203,7 +236,7 @@ impl Stand {
     }
 
     /// One stand tick. Returns the gameplay failures it caused, by member.
-    pub fn tick(&mut self) -> Result<Vec<(usize, SystemFailure)>, String> {
+    pub fn tick(&mut self) -> Result<Vec<(usize, MemberHalt)>, String> {
         self.wait_local()?;
         let mut failed = Vec::new();
         for (i, member) in self.members.iter_mut().enumerate() {
@@ -225,7 +258,8 @@ impl Stand {
                 sim::run_tick(world)?;
             }
             ai_core::failures::collect(world);
-            failed.extend(ai_core::failures::take_unreported(world).into_iter().map(|f| (i, f)));
+            failed.extend(ai_core::failures::take_unreported(world).into_iter().map(|f| (i, MemberHalt::Failed(f))));
+            failed.extend(ai_core::invariants::take_unreported(world).into_iter().map(|v| (i, MemberHalt::Violated(v))));
         }
         self.advance_hub();
         Ok(failed)
@@ -236,7 +270,7 @@ impl Stand {
         for _ in 0..ticks {
             match self.tick() {
                 Ok(failed) if failed.is_empty() => {}
-                Ok(failed) => panic!("gameplay failed: {:?}", failed.iter().map(|(i, f)| format!("{}: {}", self.members[*i].name, f.headline())).collect::<Vec<_>>()),
+                Ok(halted) => panic!("gameplay halted: {:?}", halted.iter().map(|(i, h)| format!("{}: {}", self.members[*i].name, h.headline())).collect::<Vec<_>>()),
                 Err(e) => panic!("{e}"),
             }
         }
@@ -290,12 +324,13 @@ impl Stand {
                 let started = Instant::now();
                 let from_tick = sim::tick(self.world(m));
                 let watch = StepWatch::begin(self.world_mut(m), &request);
+                ai_core::perf::begin_span(self.world_mut(m));
                 let mut end = StepEnd::Completed;
                 for _ in 0..request.ticks {
                     match self.tick() {
-                        Ok(failed) if failed.is_empty() => {}
-                        Ok(failed) => {
-                            end = StepEnd::SystemFailed(failed.into_iter().map(|(_, f)| f).collect());
+                        Ok(halted) if halted.is_empty() => {}
+                        Ok(halted) => {
+                            end = MemberHalt::step_end(halted.into_iter().map(|(_, h)| h).collect());
                             break;
                         }
                         Err(e) => {
@@ -315,7 +350,8 @@ impl Stand {
                     }
                 }
                 let world = self.world_mut(m);
-                let report = StepReport { from_tick, to_tick: sim::tick(world), end, wall: started.elapsed() };
+                let timing = ai_core::perf::span(world);
+                let report = StepReport { from_tick, to_tick: sim::tick(world), end, wall: started.elapsed(), timing };
                 let outcome = watch.finish(world, &report);
                 if let Ok(mut q) = queue.lock() {
                     q.complete(request.id, outcome);
@@ -342,10 +378,10 @@ impl Stand {
             for _ in 0..due {
                 match self.tick() {
                     Ok(failed) if failed.is_empty() => {}
-                    Ok(failed) => {
-                        for (i, failure) in failed {
+                    Ok(halted) => {
+                        for (i, halt) in halted {
                             let member = &mut self.members[i];
-                            let text = format!("stand paused: {}", failure.headline());
+                            let text = format!("stand paused: {}", halt.headline());
                             ai_core::journal::emit(member.app.world_mut(), ai_core::journal::JournalKind::Error, text);
                         }
                         self.running = false;

@@ -457,7 +457,8 @@ pub fn select_clip_for<'a>(
 }
 
 /// The cues the animation passed going from `prev` to `now` (seconds on the clip's
-/// timeline), in time order.
+/// timeline), in the order they were passed: after a wrap, the rest of the last pass comes
+/// before the start of the new one.
 ///
 /// - `prev` `None`: the clip just started; every cue at or before `now` fires.
 /// - `now >= prev`: cues in `(prev, now]`.
@@ -476,7 +477,10 @@ pub fn crossed_cues(cues: &[CueDef], prev: Option<f32>, now: f32, wrap_at: Optio
             },
         })
         .collect();
-    found.sort_by(|a, b| a.at.total_cmp(&b.at));
+    // After a wrap, the cues at or before `now` are the new pass's head: they come last.
+    let wrapped = wrap_at.is_some() && prev.is_some_and(|p| now < p);
+    let head = |c: &CueDef| wrapped && c.at <= now + EPS;
+    found.sort_by(|a, b| head(a).cmp(&head(b)).then(a.at.total_cmp(&b.at)));
     found
 }
 
@@ -800,6 +804,18 @@ mod tests {
         // An action clip that restarts (same clip, new swing) fires from its start.
         let restarted: Vec<&str> = crossed_cues(&cues, Some(0.55), 0.12, None).iter().map(|c| c.cue.as_str()).collect();
         assert_eq!(restarted, ["draw"]);
+    }
+
+    #[test]
+    fn a_wrapped_loop_fires_the_rest_of_the_last_pass_before_the_new_one() {
+        let cues = [CueDef { at: 0.1, cue: "head".into() }, CueDef { at: 0.95, cue: "tail".into() }];
+        let at = |prev, now, wrap_at| -> Vec<f32> { crossed_cues(&cues, prev, now, wrap_at).iter().map(|c| c.at).collect() };
+        assert_eq!(at(Some(0.9), 0.2, Some(1.0)), [0.95, 0.1], "the order they were passed in");
+        // Everything else stays in time order.
+        assert_eq!(at(None, 1.0, None), [0.1, 0.95]);
+        assert_eq!(at(Some(0.05), 0.99, Some(1.0)), [0.1, 0.95]);
+        assert!(at(Some(0.5), 0.05, None).is_empty(), "a restart fires what is behind `now` again");
+        assert_eq!(at(Some(0.99), 0.12, None), [0.1]);
     }
 
     #[test]

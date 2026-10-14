@@ -18,7 +18,7 @@
   `cargo test --manifest-path template/Cargo.toml`.
 - Крейты: `shards` (зонтик, единственная зависимость игры), `shards_core`, `shards_content`, `shards_motion`,
   `shards_action`, `shards_level` (уровни из Blender), `shards_world` (регионы, генерация), `shards_npc` (враги, навсетка),
-  `ai_core`, `shards_script`, `shards_cli`, `sandbox` (арена движка). Карта — в README, «Архитектура».
+  `shards_save` (сохранения: секции, слоты, миграции, копии), `ai_core`, `shards_script`, `shards_cli`, `sandbox` (арена движка). Карта — в README, «Архитектура».
 
 ## Как смотреть на игру и действовать в ней
 
@@ -41,6 +41,8 @@ cargo shards act nav_path to=e6         # маршрут по навсетке �
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # пакетная проверка генератора; без игры: cargo sandbox --worldgen-report wilds --seeds 1..1000
 cargo sandbox --bake-nav                # запечь навигацию тайлов в assets/nav/ (после правки тайла, его файла уровня или тела agent)
 cargo sandbox --replay FILE --verify    # реплей без окна; добавьте --windowed (под xvfb-run -a) для окна
+cargo shards assert add hp 'field:6:Health.current<300'   # правило: игра встанет, когда оно нарушено (`step` → код выхода 3)
+cargo shards fuzz --seed 7 --steps 300  # случайные входы, пока не нарушится правило
 kill <pid>                              # pid из `wait`
 ```
 
@@ -60,7 +62,8 @@ kill <pid>                              # pid из `wait`
   `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on`, `attack`, `god`, `heal`, `stagger`; **контент** —
   `content_list`, `content_get`, `content_check`, `content_reload`, `spawn_prefab`; **мир** — `regen`, `region_load`,
   `goto_tile`, `region_info`, `worldgen_report`, `spawn_level`, `level_info`, `level_reload`; **NPC и навигация** —
-  `npc_state`, `npc_set_state`, `nav_path`, `nav_info`, `nav_bake`, оверлеи `world_overlay` и `nav_overlay` (окно). Условия для
+  `npc_state`, `npc_set_state`, `nav_path`, `nav_info`, `nav_bake`, оверлеи `world_overlay` и `nav_overlay` (окно); **правила** —
+  `assert_add`, `assert_list`, `assert_remove`, `assert_reset` (`shards assert`). Условия для
   `step --until named:…`: `near_poi`, `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`; свои у игры (в песочнице
   `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`).
 - Инструменты боя (`dodge`, `light_attack`, `block`, `use_item`, `attack`) отвечают по правилам игры сразу: `ok: roll (W)`,
@@ -69,9 +72,22 @@ kill <pid>                              # pid из `wait`
   на названное время и повторите. Входы мимо инструментов, у которых вышло время, видны в журнале: `e5 dodge rejected: …`.
 - Предупреждения врагов приходят в журнал заранее (`e6 winds up slam (0.50s) ⚠ circle 4m`), а `observe`
   под строкой `YOU` пишет, куда выйти из зоны: `step --until "journal:winds up"`, потом `dodge`.
+- Коды выхода `shards`: 0 — готово, 1 — инструмент отказал (ошибка говорит почему), 2 — сбой самого
+  `shards` (нет игры, нет токена, неверная команда), 3 — игра остановилась: `step` (или `fuzz`) встал на упавшей
+  системе или нарушенном инварианте.
+- Ищете баг — опишите его правилом: `shards assert add NAME COND`, где `COND` в синтаксисе `--until`
+  (плюс `warning` и `error`). После каждого тика игра проверяет правила игры и ваши; на нарушении
+  `step` отвечает `stopped: invariant NAME violated at tick N (replay: …)`, и реплей уже сохранён.
+  Сработавшее правило молчит до `shards assert reset`; `shards assert list` показывает все правила.
+  `shards fuzz --seed S --steps N` подаёт случайные входы игрока по зерну, пока правило не нарушится.
 - `warn!`/`error!` игры попадают в журнал с тиком, на котором записаны, даже внутри длинного `step`:
   `step 600 --until journal:TEXT` ловит и их. За тик — не больше 64 строк, об остальных говорит
   строка `N log lines dropped`.
+- Под первой строкой ответа `step` — время его тиков: `ticks: avg 0.42 ms, max 2.10 ms (tick 142),
+  budget 16.7 ms`. Тики дольше бюджета (по умолчанию — длительность тика, у игры флаг
+  `--tick-budget-ms`) журнал называет записью `perf`, не чаще раза в игровую секунду:
+  `150 [perf] 12 ticks over budget, worst 31.4 ms at tick 150`. Время последних 600 тиков —
+  в `shards status`, поле `perf`.
 - Несколько игр параллельно: `--port` у каждого инстанса, `SHARDS_PORT` у CLI. Проще так:
   `cargo sandbox --headless --paused --port 0 --port-file F` и `SHARDS_PORT_FILE=F cargo shards wait`.
   На занятом порту игра не стартует (код выхода 3). `shards wait` печатает pid, seed и порт ответившей
@@ -108,6 +124,13 @@ kill <pid>                              # pid из `wait`
   `observe`. Косметику и кэши исключайте `replay_ignore::<C>()`, состояние вне таких сущностей
   (ресурсы, снаряды без id) добавляйте `add_replay_check(name, |w| …)`. Всё, что только для окна, не должно менять
   игровые компоненты.
+- Время тика не входит ни в хэш, ни в реплей и разное от прогона к прогону. Тест, который сравнивает
+  ответы или журнал целиком, выключает его вывод: `report_perf: false` в `EngineConfig`
+  (`shards::testing::config()` уже так делает).
+- То, что в игре должно держаться всегда, оформляйте инвариантом:
+  `add_ai_invariant(name, |w: &World| -> Option<String>)`. Правило только читает мир и возвращает
+  текст нарушения с id сущности (`e6 Health.current = 700 outside 0..=600`). Правила и их срабатывания
+  не входят ни в хэш реплея, ни в снапшот; сессионные (`assert_add`) реплей записывает событиями.
 - Новый инструмент — структура аргументов с doc-комментариями (они становятся описанием схемы)
   и Bevy-система `In<Call<Args>> -> ToolResult`. Вид: `query` читает, `action` меняет мир
   (журнал, дифф, реплей), `control` управляет временем и сессией. Ошибка инструмента говорит, как исправить вызов.
@@ -161,6 +184,11 @@ cargo sandbox --replay replays/crash-tick<N>.json --verify   # код 1, пок�
 После исправления `--verify` больше не пишет `gameplay system … panicked`. Код 1 с `DIVERGED` тогда
 значит лишь, что исправленная система меняет мир иначе, чем упавшая.
 
+Нарушенный инвариант останавливает игру так же: `stopped: invariant <name> violated at tick N`, в
+журнале — текст нарушения, реплей — `replays/invariant-<name>-tick<N>.json`. Правила `assert_*`
+записаны в нём, поэтому проигрывание нарушит правило на том же тике, а `--verify` перечислит
+нарушения и выйдет с кодом 1, пока ошибка не исправлена.
+
 ## Проверка изменений
 
 - `cargo test --workspace`: юнит-тесты и сценарии в `crates/sandbox/tests/`; `cargo clippy --workspace --all-targets
@@ -174,9 +202,18 @@ cargo sandbox --replay replays/crash-tick<N>.json --verify   # код 1, пок�
   --worldgen-report wilds --seeds 1..1000` (в шаблоне `valley`) должен вернуть 0; CI гоняет оба.
 - Новый компонент или ресурс состояния проверяйте снапшотом: `crates/sandbox/tests/sandbox/snapshots.rs` берёт
   снапшот в тик N, догоняет до M и сравнивает с игрой, загрузившей снапшот (одно состояние, один журнал).
-- Изменение геймплея проверяйте реплеем: `cargo sandbox --replay FILE --verify` называет первый тик,
-  где игра разошлась с записью (код выхода 1); `--verify --windowed` (под `xvfb-run -a`) — то же в окне.
+- Изменение геймплея проверяйте реплеем: `cargo sandbox --replay FILE --verify` называет первую
+  разошедшуюся проверку, сущности и компоненты, а ниже — их значения в этом прогоне (код выхода 1);
+  `--verify --windowed` (под `xvfb-run -a`) — то же в окне:
+  `DIVERGED at tick 60: e6 Boss: Health differs`, `  e6 now: Health { current: 390.0, max: 600.0 }`.
   Если расхождение ожидаемое, запишите реплей заново.
+- По умолчанию проверки идут раз в 60 тиков, и тик в отчёте — первая проверка после расхождения. Для поиска
+  бага пишите реплей с `--check-every 1` (`cargo sandbox --headless --paused --check-every 1`): тогда
+  отчёт называет точный тик. Значение хранится в файле, при проигрывании флаг не нужен.
+- Скорость тика проверяйте релизной сборкой: отладочная компилирует свой код с `opt-level = 1`.
+  `cargo run -p sandbox --release -- --headless --paused --tick-budget-ms 5`, затем `shards step 600`:
+  строка `ticks:` назовёт среднее, худший тик и число тиков за бюджетом. Где уходит время, покажет
+  профайлер Tracy (см. README, «Время тика»).
 - Эталонные реплеи `tests/replays/*.json` (полоса препятствий, бой-прототип, директор жетонов, страж на навсетке, смена
   регионов и реплей со снапшота песочницы) проверяет `cargo test`. После намеренной правки геймплея или контента перезапишите их:
   `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays` (у шаблона —

@@ -33,12 +33,15 @@ Remote Protocol на 127.0.0.1), без MCP-прослоек. Тем же CLI п
 10. [Навигация и NPC (E6)](#навигация-и-npc-e6)
 11. [Слой ИИ](#слой-ии): [что видит ИИ](#что-видит-ии) · [инструменты](#инструменты) · [время и детерминизм](#время-и-детерминизм) · [задел под сеть](#задел-под-сеть-фаза-c) · [транспорты и CLI](#транспорты-и-cli) · [скриншоты](#скриншоты) · [агенты](#агенты)
 12. [Сценарии (E11)](#сценарии-e11)
-13. [Реплеи](#реплеи)
-14. [Снапшоты (E11.4)](#снапшоты-e114)
-15. [Песочница](#песочница)
-16. [Тесты и CI](#тесты-и-ci)
-17. [Что дальше](#что-дальше)
-18. [Соглашения и сборка](#соглашения-и-сборка)
+13. [Инварианты (E11)](#инварианты-e11)
+14. [Время тика (E11)](#время-тика-e11)
+15. [Реплеи](#реплеи)
+16. [Снапшоты (E11.4)](#снапшоты-e114)
+17. [Сохранения (E8.1–5)](#сохранения-e815)
+18. [Песочница](#песочница)
+19. [Тесты и CI](#тесты-и-ci)
+20. [Что дальше](#что-дальше)
+21. [Соглашения и сборка](#соглашения-и-сборка)
 
 ## Быстрый старт
 
@@ -57,7 +60,7 @@ cargo shards observe                       # срез мира текстом + 
 cargo shards tools                         # что можно сделать (--json: со схемами аргументов)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # в ответе CHANGES и JOURNAL
-cargo shards content check                 # ok: 69 definitions in 22 files
+cargo shards content check                 # ok: 70 definitions in 23 files
 cargo shards act regen region=wilds seed=42   # сгенерированный регион к югу от арены; игрок у его ворот
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # маршрут к логову по навсетке: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # проверка генератора на тысяче зёрен
@@ -78,7 +81,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Контент без игры: читает и проверяет все файлы (в том числе файлы уровней тайлов и запечённую навигацию), код 0 или 1.
 cargo sandbox --check-content
-# ok: 69 definitions in 22 files
+# ok: 70 definitions in 23 files
 
 # 7. Мир без игры: генератор на тысяче зёрен (код 0, если прошли все) и запекание навигации тайлов.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -120,16 +123,18 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
    cp -r template ~/games/pit && cd ~/games/pit && git init
    grep -rIl my_game . | grep -v Cargo.lock | xargs sed -i 's/my_game/pit/g'   # пакет `pit`; Cargo.lock правится сам
    ```
-2. **Подключите движок по тегу.** В `Cargo.toml` вместо пути (`../crates/shards`) — тег релиза; версии и тег описаны в
-   [CHANGELOG.md](CHANGELOG.md). Сборка не меняется, пока вы сами не поменяете тег.
+2. **Подключите движок по тегу или коммиту.** В `Cargo.toml` вместо пути (`../crates/shards`) — git-зависимость;
+   версии и теги описаны в [CHANGELOG.md](CHANGELOG.md). Шаблон использует мир, NPC и навсетку, поэтому нужен движок
+   фазы B (будущий `0.3.0`), тег `v0.2.0` (фаза A) не подойдёт. Пока мейнтейнер не поставил тег, закрепите коммит:
    ```toml
    [dependencies]
-   shards = { git = "https://github.com/larelgit/airustcargo", tag = "v0.2.0", default-features = false }
+   shards = { git = "https://github.com/larelgit/airustcargo", rev = "<хэш>", default-features = false }
    ```
-   Пока тег не поставлен мейнтейнером, закрепите коммит: `rev = "<хэш>"`. `default-features = false` нужен, чтобы
+   После выпуска `v0.3.0` замените `rev = "<хэш>"` на `tag = "v0.3.0"`. Сборка не меняется, пока вы сами не поменяете
+   `rev` или `tag`. `default-features = false` нужен, чтобы
    features (`render`, `remote`, `hot_reload`, `audio`, `gamepad`, …) включала игра в своём `[features]`. Других
    зависимостей нет: Bevy, serde и schemars приходят через `shards` (`shards::prelude::*`, `shards::serde`,
-   `shards::schemars`). CLI ставится той же версии: `cargo install shards_cli --git … --tag v0.2.0`.
+   `shards::schemars`). CLI ставится той же версии: `cargo install shards_cli --git … --rev <хэш>` (после выпуска — `--tag v0.3.0`).
 3. **`main` — одна строка.** `shards::run` читает командную строку (`--headless --seed --port --port-file --no-remote
    --paused --hz --replay --verify --windowed --check-content --worldgen-report --seeds --bake-nav`), ловит `kill` и закрытый
    терминал:
@@ -260,6 +265,8 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 | `crates/shards_action` | бой (E3): действия, мувсеты, машина, попадания, ресурсы, статусы, телеграфы, анимационный мост, оверлеи |
 | `crates/shards_level` | уровни из Blender (E4.2): glTF с custom properties → коллайдеры, датчики, маркеры, префабы, компоненты; вид `level`, инструменты |
 | `crates/shards_world` | мир (E5): тайлы, регионы и подземелья в контенте, генератор с решателем сокетов и проверками, манифест, пакетные отчёты, загрузка и смена региона, активные зоны, стриминг картинки |
+| `crates/shards_net` | канальный слой сети (E7.2), без Bevy: транспорты `Transport` (в памяти — `MemoryHub`, детерминированный; UDP для LAN), имитация задержки и потерь (`LinkConditions`, `--net-sim`), `Link` — надёжные и ненадёжные сообщения, блобы, сжатие, подтверждения, RTT и статистика. Сессия кооператива строится поверх него |
+| `crates/shards_save` | сохранения (E8.1–5): секции и реестр, слоты, конверт `shards-save/1`, миграции, атомарная запись с тремя копиями и восстановлением, `save_now` и автосохранение, инструменты `save_*` и `load_game`; секции движка (`region`, `position`, `vitals`) регистрирует зонтик |
 | `crates/shards_npc` | враги (E6): автомат поведения, восприятие, режиссёр боя (жетоны), планировщик атак, навсетка по тайлам (`nav`: запекание, сшивка, маршруты), агенты и поводок |
 | `crates/ai_core` | слой ИИ, не зависит от конкретной игры: id, срез мира, журнал, инструменты, время, реплеи, транспорт |
 | `crates/shards_script` | без Bevy: формат сценариев, их запуск, разбор условий `--until`; общий для `shards` и тестов |
@@ -278,8 +285,10 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 | `journal` | кольцевой буфер игровых событий (observers) плюс перехват `warn!`/`error!` из tracing: строка получает тик, на котором записана, и попадает в журнал после каждого тика; не больше 64 строк на тик |
 | `tools` | реестр: args-struct + Bevy-система, JSON Schema (schemars), scope, `catch_unwind` |
 | `builtin` | встроенные инструменты: observe, inspect, step, set/get через reflection, … |
-| `sim` | тик, пауза, синхронный `step` по FixedMain, стоп-условия, `SimGate` (удержание тиков на время загрузки) |
+| `sim` | тик, пауза, синхронный `step` по FixedMain, стоп-условия, остановка игры (`Halt`) на упавшей системе и нарушенном инварианте, `SimGate` (удержание тиков на время загрузки) |
+| `invariants` | правила, которые проверяются после каждого тика: игровые (`add_ai_invariant`) и сессионные (`assert_add`); нарушение останавливает игру, как упавшая система |
 | `replay` | запись входов и action-вызовов с тика 0, проигрывание, хэши состояния, отчёт о расхождении |
+| `perf` | реальное время каждого тика против бюджета: строка `ticks:` в ответе `step`, записи `perf` в журнале, поле `perf` в `ai/status`; ни в хэше, ни в реплее |
 | `rng` | детерминированный RNG: счётчик по (seed, tick, AiId, salt) |
 | `scenario` | запуск файлов сценариев в процессе через `call_tool` (`run_file`, `run_str`) |
 | `session` | агенты: имя, scope (Player/Dev), «тело», курсор журнала |
@@ -513,7 +522,7 @@ reflection, как в сценах Bevy; каждый компонент дол�
 
 ```text
 $ shards act content_list
-content: 69 definitions in 22 files
+content: 70 definitions in 23 files
   action  23
   animset  0
   attack_plan  3
@@ -544,7 +553,7 @@ CHANGES
 ```
 
 **`--check-content` и `shards content check`.** Первый читает файлы без игры (для CI: код 0 или 1; отсутствующая папка
-`content` — тоже ошибка, чтобы проверка не прошла впустую), второй спрашивает запущенную игру: `ok: 69 definitions in 22
+`content` — тоже ошибка, чтобы проверка не прошла впустую), второй спрашивает запущенную игру: `ok: 70 definitions in 23
 files`. Модули добавляют к проверке своё: файлы уровней, названные определениями `level` (каждый узел, компонент и
 обязательный маркер), файлы уровней, из которых построены тайлы (должны лежать в папке ассетов), и запечённая навигация
 тайлов (с определением `nav` устаревший или отсутствующий файл — ошибка с командой `--bake-nav`).
@@ -994,8 +1003,10 @@ spawned level `ruin` as instance 1 at (60.0, -40.0): 11 entities (5 solids, 0 vo
 **Детерминизм.** Спавн — чистая функция файла и места, в фиксированном порядке, поэтому `AiId` и `ColliderId` одинаковы в
 каждом запуске. `spawn_level` и `level_reload` — действия, реплей записывает их. Проверка реплея `level` хэширует, где поставлен
 каждый уровень, и дайджест его файла: реплей, записанный на другой версии файла, расходится на первой проверке (после
-правки уровня эталоны записывают заново). Проверка входит в запись с первым уровнем, поэтому у игры без уровней хэши прежние.
-Снапшот проверяет те же поставленные уровни (`levels`).
+правки уровня эталоны записывают заново). Пока не стоит ни один уровень, проверка ничего не добавляет в хэш
+(`add_optional_replay_check`): у игры без уровней хэши прежние, и хэш не помнит уровней, которые были и ушли (снапшот, снятый
+до первого уровня, грузится точно и после региона с тайлами-уровнями). Снапшот проверяет те же поставленные уровни
+(`levels`) и хранит счётчик номеров экземпляров (`LevelCounter`).
 
 ## Мир и генерация (E5)
 
@@ -1716,6 +1727,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
    .add_ai_query("threats", Scope::Player, threats)  // чтение: без журнала
    .add_ai_condition("boss_phase_2", |w| /* ... */)
    .add_ai_status("my_field", |w| /* serde_json::Value в ai/status */)
+   .add_ai_invariant("health_in_range", |w| /* Some(текст), если нарушено */)  // см. «Инварианты»
    .replay_input::<Intent>()                        // вход для реплеев (см. «Реплеи»)
    .replay_ignore::<Sparkle>()                      // косметика: не входит в проверки реплея
    .add_replay_check("weather", |w| /* u64 */);     // данные вне AiVisible-сущностей
@@ -1731,7 +1743,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 | scope | инструменты |
 |---|---|
 | **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; движение: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; бой: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack; мир: region_info, level_info, nav_path, npc_state |
-| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load; мир: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay |
+| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, assert_add, assert_list, assert_remove, assert_reset; мир: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay |
 
 Игра добавляет свои (в шаблоне `taunt` и условие `arena_cleared`, в песочнице условия `boss_phase_2`, `boss_dead`,
 `player_dead`, `three_attacking`). Модули добавляют условия для `step --until named:…`: `near_poi` (мир, появляется с первым
@@ -1742,6 +1754,8 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 - `control` управляет временем или сессией (pause, resume, speed, step, possess, content_reload, rebind, snapshot_save,
   snapshot_load, nav_bake): журнал и дифф
   как у action, но в реплей не попадает. Он меняет, *когда* что-то происходит, а не *что*.
+  Исключение — правила (`assert_add`, `assert_remove`, `assert_reset`): мир они не меняют, но
+  решают, где игра остановится, поэтому реплей записывает их отдельными событиями.
 
 - **Действие возвращает изменения.** Каждый action-инструмент сравнивает срез мира до и после вызова и возвращает
   `CHANGES` и `JOURNAL`. Агенту не нужен второй `observe`, чтобы узнать, что произошло.
@@ -1771,8 +1785,8 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 - `SimRng` — счётчиковый RNG по ключу (seed, tick, AiId, salt). Результат не зависит от порядка систем и от того, сколько
   раз кто-то «крутил» генератор.
 - `step` синхронно прогоняет `FixedMain` ровно N тиков, игра при этом стоит на паузе. Есть стоп-условия: `journal:TEXT`,
-  `gone:ID`, `shows:ID:TEXT`, `near:A:B:M`, `field:ID:Comp.path<N`, `named:NAME`. Лимиты: до 216 000 тиков и 20 с
-  реального времени за вызов.
+  `gone:ID`, `shows:ID:TEXT`, `near:A:B:M`, `field:ID:Comp.path<N`, `named:NAME`, `warning`, `error` (первая запись журнала
+  этого уровня, в том числе `warn!`/`error!` игры). Лимиты: до 216 000 тиков и 20 с реального времени за вызов.
 - **Логи внутри `step`.** `warn!`/`error!` попадают в журнал с тиком, на котором записаны, сразу после этого тика, а не в
   конце шага. Поэтому `step --until journal:TEXT` останавливается на тике предупреждения. За тик в журнал идёт не больше
   64 строк, остальные сводятся в одну: `70 [warn] 36 log lines dropped (limit 64 per tick)`. Предупреждение, которое
@@ -1790,6 +1804,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
     `cargo sandbox --replay replays/crash-tick50.json` (или `--headless --paused` и `shards step`), игра упадёт на том же
     тике. `--verify` выходит с кодом 1, пока система падает;
   - следующий `step` идёт дальше: расписания на месте.
+- Так же останавливает игру нарушенный инвариант: `stopped: invariant <name> violated at tick N` (см. «Инварианты»).
 - `AiCorePlugin` включает ambiguity detection для `FixedUpdate`: две системы, которые трогают одни данные без явного
   порядка, дают warning, и он попадает в журнал. Тест `gameplay_systems_have_a_total_order` превращает это в ошибку, а
   контрольный тест проверяет, что сама проверка ловит такую систему.
@@ -1815,7 +1830,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
   `encode_resources`, `apply_changes(world, &StateChanges)` (недостающие id создаются по порядку, значения пишутся
   дважды, удаления, despawn с пометкой надгробия: `e7 is out of view since tick 180`).
 - **Снапшоты и id:** `sim::set_tick`, `snapshot::restore_releasing(world, &snap, gate)` (грузит под удержанным
-  `SimGate`), `AiIndex::set_local_base(base)` (свои id клиента — со второго счётчика, id хоста их не сдвигают).
+  `SimGate`; отказ возвращает мир, как и у `restore`), `AiIndex::set_local_base(base)` (свои id клиента — со второго счётчика, id хоста их не сдвигают).
 - **Реплей и журнал:** `replay::set_recording(world, false)` (клиент не пишет реплей; `replay_save` говорит почему),
   `replay::restart_from_current`, `journal::set_local_events(world, false)` (события пишет хост),
   `journal::push_remote(world, host_tick, kind, text)` — строка хоста, которую видят `journal`, `observe` и
@@ -1827,7 +1842,12 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
   так что переживает респаун.
 - **Отложенный шаг:** с `StepRoute::Deferred` инструменты `step`, `pause`, `resume`, `speed` ставят запрос в очередь и
   отвечают `{"pending": id}`; драйвер стенда выполняет его между кадрами, а `step_poll {id}` (BRP `ai/step_poll`)
-  возвращает отчёт ровно как у обычного `step`.
+  возвращает отчёт ровно как у обычного `step`. Тики драйвер гоняет через `sim::step`, поэтому отложенный шаг встаёт на
+  упавшей системе и нарушенном инварианте так же, как обычный, и его отчёт называет остановку (`halted`).
+- **Правила на клиенте:** инварианты (`InvariantSystems`) идут только там, где идёт симуляция (`shards_core::simulates`):
+  мир клиента следует за хостом, и правила игры проверяет хост. `assert_add`, `assert_remove` и `assert_reset` у
+  клиента с форвардером уходят хосту (`NetRoute::Host`); `assert_list` — запрос, а запрос хосту не уходит: клиент
+  отказывает и советует спросить хост (`NetRoute::HostOnly`).
 
 ### Транспорты и CLI
 
@@ -1842,7 +1862,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 | `ai/shot` | `{agent?, marks?, path?}` |
 | `ai/tools` | `{agent?}` |
 | `ai/session` | `{agent, scope?, subject?, clear_subject?}` |
-| `ai/status` | — (в ответе `instance: {pid, seed, port, started_at}`: какая игра ответила; `engine`: версия, модули, состояние; `loading`: что ещё грузится) |
+| `ai/status` | — (в ответе `instance: {pid, seed, port, started_at}`: какая игра ответила; `engine`: версия, модули, состояние; `loading`: что ещё грузится; `perf`: время последних 600 тиков) |
 
 Стандартные методы BRP (`world.query`, `world.get_components`, …) тоже доступны: `shards raw …`. BRP даёт полный доступ к
 миру, поэтому сервер слушает только 127.0.0.1, включается feature `remote` и пускает только с токеном:
@@ -1867,8 +1887,8 @@ cargo build --release -p sandbox --no-default-features --features render
 cargo build --release -p sandbox --no-default-features --features remote   # только для --headless (сервер, генерация)
 ```
 
-**CLI `shards`:** observe, step, act, scenario, shot, save-replay, save-snapshot, load-snapshot, tools, inspect, nearby, journal, pause, resume, speed,
-status, session, content, worldgen, raw, wait. Аргументы `act` передаются JSON-объектом или парами `key=value`. Флаги
+**CLI `shards`:** observe, step, act, scenario, shot, save-replay, save-snapshot, load-snapshot, assert, fuzz, tools, inspect, nearby,
+journal, pause, resume, speed, status, session, content, worldgen, raw, wait. Аргументы `act` передаются JSON-объектом или парами `key=value`. Флаги
 `--port`/`SHARDS_PORT`, `--port-file`/`SHARDS_PORT_FILE` (порт из файла игры; `--port` важнее), `--token`/`SHARDS_TOKEN`,
 `--agent`/`SHARDS_AGENT`, `--json` (у `tools` — со схемами аргументов). `shards wait` ждёт, пока игра ответит и
 загрузится (контент; пока идёт загрузка, `step` отвечает ошибкой), и печатает, кто ответил: `ready: tick 0 · pid 4242 ·
@@ -1876,6 +1896,7 @@ seed 1 · port 15711` (ту же строку игра печатает при �
 content check` перечитывает файлы контента запущенной игры и выходит с кодом 1 при ошибках; без запущенной игры —
 `--check-content`. `shards worldgen --region R --seeds 1..1000 --report` печатает пакетный отчёт генератора запущенной игры
 (код 1, пока прошли не все зёрна); без игры — `--worldgen-report R --seeds …` самой игры.
+Коды выхода — ниже.
 
 **Параллельные headless-инстансы.** У каждого свой порт:
 
@@ -1902,38 +1923,64 @@ SHARDS_PORT_FILE=/tmp/shards-a.port cargo shards step 600 --until named:player_d
 **Внутри игры** та же точка входа, что за BRP, — `ai_core::call_tool(world, agent, tool, args)`. Её вызывают тесты,
 реплеи и клавиши разработчика в окне.
 
-**Пример сеанса (реальный вывод).**
+**Коды выхода.** `shards`:
+
+| код | значит |
+|---|---|
+| 0 | готово |
+| 1 | инструмент отказал; ошибка говорит, почему и как исправить вызов (`content check` и `worldgen` — ещё и когда нашли ошибки) |
+| 2 | сбой самого `shards`: игры нет на порту, нет токена, неверная командная строка |
+| 3 | игра остановилась: `step` (или `fuzz`) встал на упавшей системе геймплея или нарушенном инварианте; ответ называет причину и реплей |
+
+У `shards scenario` свои: 0 — все прошли, 1 — сценарий не прошёл, 2 — файл не читается или игра недоступна (см. «Сценарии»).
+
+`cargo sandbox` (и любая игра на `shards::run`):
+
+| код | значит |
+|---|---|
+| 0 | игра закрыта; с `--verify` — реплей совпал с записью, ничего не сломалось; `--check-content`, `--worldgen-report` — ошибок нет |
+| 1 | `--verify`: игра разошлась с записью, упала система геймплея или нарушен инвариант; `--check-content`, `--worldgen-report` — нашли ошибки |
+| 2 | реплей не читается или не подходит к игре; `--port-file` не записать |
+| 3 | порт занят (`port 15711 is busy (another game?)`) |
+| 128 + N | остановлена сигналом N: 130 — Ctrl+C, 143 — `kill`, 129 — закрытый терминал (SIGHUP) |
+
+**Пример сеанса (реальный вывод).** Под первой строкой ответа `step` — время его тиков (см. «Время тика»).
 
 ```text
 $ shards step --until journal:winds
-ran 207 ticks (0 → 207), stopped: journal: 207 e6 winds up shockwave (0.50s) ≈ line 9m×1.6m
+ran 208 ticks (0 → 208), stopped: journal: 208 e6 winds up shockwave (0.50s) ≈ line 9m×1.6m
+ticks: avg 1.49 ms, max 3.89 ms (tick 120), budget 16.7 ms
 CHANGES
-  ~ e6 Boss "Frost Warden": +windup shockwave 0.50s (zone line 9m×1.6m); moved 10.6m S
-  ~ e7 Skeleton: +ground 3.6m/s; moved 11.1m SE
+  ~ e6 Boss "Frost Warden": +windup shockwave 0.50s (zone line 9m×1.6m); +fight e5 · token · leash 11/26m; moved 10.6m S
+  …
 JOURNAL
-  207 e6 winds up shockwave (0.50s) ≈ line 9m×1.6m
+  2 e6 guard → fight e5
+  2 e6 takes an attack token on e5 (1/1)
+  208 e6 winds up shockwave (0.50s) ≈ line 9m×1.6m
 $ shards act dodge
 ok: roll (W)
 $ shards step 40
-ran 40 ticks (207 → 247)
+ran 40 ticks (208 → 248)
+ticks: avg 1.43 ms, max 3.20 ms (tick 242), budget 16.7 ms
 CHANGES
   ~ e5 Player: stam 100/100 → stam 88/100; moved 4.0m W
   ~ e6 Boss "Frost Warden": windup shockwave 0.50s (zone line 9m×1.6m) → active shockwave 0.08s (zone line 9m×1.6m)
-  ~ e7 Skeleton: +windup claw 0.28s (zone cone 1.8m 100°); -ground 3.6m/s; moved 1.7m S
 $ shards act attack target=e6 repeat=true
 ok: attacking e6 with light until it dies
 CHANGES
   ~ e5 Player: +order attack e6 (repeat)
 $ shards step --until journal:light_2
-ran 109 ticks (247 → 356), stopped: journal: 356 e5 -> e6 light_2 -22 (hp 558)
+ran 101 ticks (248 → 349), stopped: journal: 349 e5 -> e6 light_2 -22 (hp 558)
+ticks: avg 1.28 ms, max 3.55 ms (tick 338), budget 16.7 ms
 CHANGES
-  ~ e5 Player: hp 100/100 → hp 92/100; stam 88/100 → stam 84/100; poise 60/60 → poise 50/60; +active light_2 0.10s (zone cone 2.2m 110°); moved 5.7m NE
-  ~ e6 Boss "Frost Warden": hp 600/600 → hp 558/600; poise 140/140 → poise 114/140; -active shockwave 0.08s (zone line 9m×1.6m); moved 0.7m SW
+  ~ e5 Player: stam 88/100 → stam 84/100; +active light_2 0.10s (zone cone 2.2m 110°); moved 6.2m NE
+  ~ e6 Boss "Frost Warden": hp 600/600 → hp 558/600; poise 140/140 → poise 114/140; fight e5 · token · leash 11/26m → fight e5 · hold · leash 11/26m; -active shockwave 0.08s (zone line 9m×1.6m)
   …
 JOURNAL
-  264 e7 -> e5 claw -8 (hp 92)
-  338 e5 -> e6 light_1 -20 (hp 580)
-  356 e5 -> e6 light_2 -22 (hp 558)
+  296 e8 idle → fight e5
+  …
+  331 e5 -> e6 light_1 -20 (hp 580)
+  349 e5 -> e6 light_2 -22 (hp 558)
 $ shards act heavy_attack
 ok: queued, heavy starts in 0.10s
 ```
@@ -1998,8 +2045,10 @@ cargo shards shot                        # визуальный баг: PNG с �
 - У каждого агента своё имя (`--agent`/`SHARDS_AGENT`), а с ним свой курсор журнала, scope и «тело». Агенты могут работать
   с одной игрой или каждый со своим headless-инстансом на своём порту.
 - Найденный баг сохраняется реплеем (`shards save-replay`), его воспроизводит человек или CI.
-- Движок не запускает модели и не ходит к их API. Всё, что нужно агенту, добавляется как инструмент или команда `shards`,
-  а не как код, который думает за агента.
+- Гипотезу о баге проверяет правило: `shards assert add NAME COND`, затем `step` или
+  `shards fuzz`. Игра остановится на тике нарушения и сама сохранит реплей (см. «Инварианты»).
+- Движок не запускает модели и не ходит к их API. Всё, что нужно агенту, добавляется как инструмент
+  или команда `shards`, а не как код, который думает за агента.
 
 ## Сценарии (E11)
 
@@ -2042,7 +2091,8 @@ invariant field e5 Health.current > 0      # любое ожидание; про
   (line 12) broke: e5 Health.current is 0, which is not > 0`. Длинный шаг режьте на части или сторожите условием: `step 600
   --until field:e5:Health.current<1`.
 - **Оборванный шаг** проваливает сценарий, хотя вызов `step` успешен: упала система геймплея (`stopped: gameplay system …
-  panicked`) или тики не уложились в 20 с реального времени. Падение, которого сценарий ждёт, разрешает `act? step …`.
+  panicked`), нарушен инвариант (`stopped: invariant … violated`, см. «Инварианты») или тики не уложились в 20 с
+  реального времени. Падение или нарушение, которого сценарий ждёт, разрешает `act? step …`.
 - **`expect !journal`** (и такой же инвариант) проваливается, если часть записей с `mark` вытеснена из буфера журнала и не
   прочитана: среди них могла быть искомая. Ставьте `mark` чаще.
 - **Ошибки разбора** называют строку: ``obstacle.scenario:12: unknown command `stpe`; expected act, act?, step, …``.
@@ -2071,13 +2121,139 @@ PASS crates/sandbox/scenarios/npc_director.scenario (38 commands, 1923 ticks)
 PASS crates/sandbox/scenarios/npc_navmesh.scenario (31 commands, 1271 ticks)
 PASS crates/sandbox/scenarios/obstacle_course.scenario (86 commands, 1010 ticks)
 PASS crates/sandbox/scenarios/region.scenario (40 commands, 353 ticks)
-PASS crates/sandbox/scenarios/snapshot.scenario (51 commands, 357 ticks)
-9 of 9 scenarios passed
+PASS crates/sandbox/scenarios/saves.scenario (76 commands, 157 ticks)
+PASS crates/sandbox/scenarios/snapshot.scenario (51 commands, 365 ticks)
+10 of 10 scenarios passed
 ```
 
 Без `--quiet` каждая команда печатается строкой `ok  39 step 900 --until near:e5:e6:3.2 → ran 129 ticks (150 → 279),
 stopped: e5 within 3.2m of e6`. Код выхода: 0 — все прошли, 1 — сценарий не прошёл (`FAIL file:line: сообщение`), 2 —
 файл не читается или не разбирается, игра недоступна. Если игра пропала посреди файла, остальные файлы не запускаются.
+
+## Инварианты (E11)
+
+Инвариант — именованное правило, которое проверяется после каждого тика: и в `step`, и в реальном времени. Нарушенное
+правило останавливает игру так же, как упавшая система:
+
+- в журнале ошибка `invariant <name> violated at tick N: <текст>`;
+- в реальном времени игра встаёт на паузу (`[sim] paused: invariant <name> violated at tick N`), следующие тики этого кадра
+  не идут;
+- сессия сохраняется в `replays/invariant-<name>-tick<N>.json`;
+- `step` останавливается на этом тике и отвечает `stopped: invariant <name> violated at tick N (replay:
+  replays/invariant-<name>-tick<N>.json)`, в ответе есть поле `halted`, а `shards` выходит с кодом 3. Отложенный шаг
+  (`StepRoute::Deferred`) встаёт так же.
+
+Правила игры задаёт код. Функция получает `&World` и возвращает текст нарушения или `None`:
+
+```rust
+app.add_ai_invariant("health_in_range", |w| /* Some("e6 Health.current = 700 outside 0..=600") */);
+```
+
+В песочнице их два: `health_in_range` (здоровье в `0..=max`) и `bodies_in_world` (каждый персонаж над миром: над ареной с
+коридором, полосой препятствий или загруженным регионом, с запасом `margin`, и не ниже `fall_below`; числа — в
+`world/world.bounds.ron`, площади — из построенных layout и манифеста региона): `e7 outside the world: x = 200.0, z = 0.0`,
+`e7 fell out of the world: y = -80.0`. Ни один сценарий, тест и эталонный реплей песочницы их не нарушает. Паника внутри
+правила тоже нарушение: `the rule itself panicked: …`.
+
+Агент добавляет свои правила на время сессии (scope Dev), условием в синтаксисе `--until`. Реальный вывод:
+
+```text
+$ shards assert add hp 'field:6:Health.current<500'      # остановиться, когда у стража меньше 500 hp
+added hp: the game halts when field:e6:Health.current<500
+$ shards assert add calm error                            # … на первой записи [error] в журнале
+added calm: the game halts when error
+$ shards assert list
+4 rules, checked after every tick
+  health_in_range  game rule  armed
+  bodies_in_world  game rule  armed
+  hp  when field:e6:Health.current<500  armed
+  calm  when error  armed
+$ shards act attack target=e6 repeat=true
+ok: attacking e6 with light until it dies
+$ shards step 600                                          # код выхода 3
+ran 230 ticks (0 → 230), stopped: invariant hp violated at tick 230 (replay: replays/invariant-hp-tick230.json)
+ticks: avg 0.76 ms, max 3.55 ms (tick 108), budget 16.7 ms
+…
+JOURNAL
+  …
+  230 e5 -> e6 light_2 -22 (hp 486)
+  230 [error] invariant hp violated at tick 230: e6 Health.current = 486
+  230 [sim] invariant replay saved: replays/invariant-hp-tick230.json (play it with --replay to reproduce)
+$ shards assert reset                                      # снова включить сработавшие правила
+re-armed hp
+$ shards assert remove bodies_in_world                     # код выхода 1
+error: `bodies_in_world` is one of the game's invariants and stays; after it fires, `assert_reset` re-arms it
+$ cargo sandbox --replay replays/invariant-hp-tick230.json --verify    # код выхода 1
+invariant hp violated at tick 230: e6 Health.current = 486
+replay finished at tick 230: identical to the recording (4 checks); 1 invariant violated [230 ticks in 0.46s]
+```
+
+- Сработавшее правило выключено до `assert_reset`, иначе оно срабатывало бы на каждом тике, пока мир не исправлен.
+  `assert_reset` включает все сработавшие правила (игровые тоже), и проверка продолжается со следующего тика.
+- `warning` и `error` срабатывают на запись журнала этого уровня, в том числе на `warn!`/`error!` игры. Запись о нарушении
+  другого правила их не будит.
+- Имя правила — до 64 букв, цифр, `_` и `-`: из него получается имя файла реплея. Правило игры нельзя ни удалить, ни
+  заменить своим.
+- `assert add/remove/reset` записываются в реплей (события `assert`) и повторяются на том же тике, поэтому реплей,
+  сохранённый при нарушении, нарушает правило на том же тике. Сами правила не входят ни в хэш, ни в снапшот: загрузка
+  снапшота (и проигрывание с него) оставляет правила сессии, включает сработавшие заново, а запись с этого тика начинается
+  с событий `assert`, которые добавляют правила сессии, — так реплей со снапшота проверяет те же правила.
+- `--verify` перечисляет нарушения, случившиеся при проигрывании, идёт до конца записи и выходит с кодом 1, если они были.
+- Реплей пишется по одному на нарушение и только пока идёт запись (клиент сети его не пишет). Тестам он не нужен:
+  `crash_replays: false` у `EngineConfig` выключает и его (или `AiInvariants.replays = false`).
+- Правила проверяет тот, кто считает мир: на клиенте сети `InvariantSystems` не идёт (см. «Задел под сеть»).
+
+**Фаззинг.** `shards fuzz --seed S --steps N` подаёт N случайных входов игрока (ходьба, удар, уворот; цели берутся из
+`observe`), после каждого — `step` на 1–30 тиков (`--max-ticks`). Тот же seed против той же свежей игры даёт те же вызовы.
+Если правило нарушилось, `fuzz` печатает ответ `step` и путь к реплею нарушения и выходит с кодом 3; если нет — сохраняет
+сессию в `replays/fuzz-seed<S>.json`. Реальный вывод:
+
+```text
+$ shards fuzz --seed 1 --steps 50
+fuzz seed 1: 50 inputs, nothing broke (ticks 0 → 857)
+replay: /…/replays/fuzz-seed1.json
+$ shards assert add low 'field:5:Health.current<50'       # в свежей игре
+$ shards fuzz --seed 3 --steps 300                        # код выхода 3
+fuzz seed 3: the game halted after 177 inputs (ticks 0 → 2752)
+ran 23 ticks (2729 → 2752), stopped: invariant low violated at tick 2752 (replay: replays/invariant-low-tick2752.json)
+…
+replay: replays/invariant-low-tick2752.json
+$ cargo sandbox --replay replays/invariant-low-tick2752.json --verify    # код выхода 1
+invariant low violated at tick 2752: e5 Health.current = 42
+replay finished at tick 2752: identical to the recording (46 checks); 1 invariant violated [2752 ticks in 2.45s]
+```
+
+## Время тика (E11)
+
+Каждый прогон `FixedMain` (один тик) замеряется по реальным часам, и в `step`, и в обычной игре. Замер оборачивает
+`run_fixed_main` своего приложения, поэтому в него входят все системы `FixedFirst` … `FixedLast`, игровые тоже, а несколько
+игр в одном процессе меряют каждая своё. Последние 600 тиков (10 с при 60 Гц) хранит ресурс `AiPerf`. Ответ `step` получает
+строку о своих тиках:
+
+```text
+$ shards step 600
+ran 600 ticks (0 → 600)
+ticks: avg 0.52 ms, max 2.60 ms (tick 540), budget 16.7 ms
+```
+
+- Бюджет по умолчанию — длительность тика: 16.7 мс при 60 Гц. Свой задаёт `--tick-budget-ms 5`, в своей игре —
+  `EngineConfig { tick_budget: Some(Duration::from_millis(5)), .. }`. Тики дольше бюджета `step` считает в той же строке:
+  `…, budget 5.0 ms, 3 over budget`.
+- Тики над бюджетом попадают в журнал отдельным видом записей `perf`, не чаще раза в игровую секунду. Первая запись появляется
+  сразу, следующие тики копятся и уходят одной записью, когда с прошлой пройдёт 60 тиков: `150 [perf] 12 ticks over budget,
+  worst 31.4 ms at tick 150`. Так же и в реальном времени, где `step` нет.
+- `ai/status` и `shards status` показывают поле `perf` за последние 600 тиков (`ticks` — сколько их набралось):
+  `{"avg_ms": 0.522, "budget_ms": 16.667, "max_ms": 2.598, "over_budget": 0, "ticks": 600, "worst_tick": 540}`.
+- Первый тик дольше остальных: на нём Bevy строит расписания.
+- Замеры не входят ни в хэш состояния, ни в реплей, ни в снапшот: время у каждого прогона своё, а проигрывание сверяет игру.
+- Тестовые приложения (`shards::testing::config`) не выводят строку `ticks:` и не пишут записи `perf` (`report_perf: false`
+  у `EngineConfig`): сценарии сравнивают ответы и журналы целиком. Замер при этом идёт, и `status` его показывает. Тест,
+  которому время нужно, включает вывод сам (`AiPerf::report`), как `crates/sandbox/tests/perf.rs` (отдельный бинарник: остальные тесты не сбивают ему часы).
+- Отладочная сборка медленнее релизной. Точный бюджет проверяйте релизной: `cargo run -p sandbox --release -- --headless
+  --paused --tick-budget-ms 5`, затем `shards step 600`.
+- Где именно уходит время внутри тика, покажет профайлер [Tracy](https://github.com/wolfpld/tracy) через фичу Bevy
+  `trace_tracy`: каждая система — отдельная зона. Игре на `shards` её пока не пробросить одним флагом (у неё нет своей
+  зависимости от `bevy`, а фича `shards` для этого ещё не заведена).
 
 ## Реплеи
 
@@ -2087,14 +2263,17 @@ stopped: e5 within 3.2m of e6`. Код выхода: 0 — все прошли, 
   Сохраняется каждое изменение, сделанное *между* тиками (клавиатура, сетевой клиент, инструмент агента), с тиком, к
   которому оно относится. Изменения, которые делают системы геймплея внутри тика, детерминированы и не хранятся.
   Компонент клонируется, только когда он изменился;
-- **action-вызовы** (`teleport`, `set`, `spawn`, `attack`, `content_apply`, `regen`, `region_load`, `goto_tile`, `spawn_level`,
-  `level_reload`, `npc_set_state`, …) вместе со scope и «телом» агента. Вызовы,
+- **action-вызовы** (`teleport`, `set`, `spawn_prefab`, `attack`, `content_apply`, `regen`, `region_load`, `goto_tile`,
+  `spawn_level`, `level_reload`, `npc_set_state`, …) вместе со scope и «телом» агента. Вызовы,
   сделанные изнутри другого инструмента, не пишутся: их повторит внешний вызов. `control`-инструменты (pause, step,
   possess, content_reload, rebind) не пишутся. Сырые правки через BRP (`world.insert_components`) идут мимо инструментов
   и тоже не пишутся. Правка контента на лету записывается как `content_apply` на своём тике;
-- **проверки**: хэш игровых данных каждые 60 тиков и в конце записи: для каждой сущности с `AiVisible` по порядку `AiId` —
-  её id и все отражаемые игровые компоненты (сериализация через reflection, компоненты в порядке имени типа); плюс хэш
-  базы контента.
+- **правила**: `assert_add`, `assert_remove`, `assert_reset` с тиком, на котором их вызвали (см. «Инварианты»);
+- **проверки**: хэш игровых данных каждые `check_every` тиков (60 по умолчанию) и в конце записи: для каждой сущности с
+  `AiVisible` по порядку `AiId` — её id и все отражаемые игровые компоненты (сериализация через reflection, компоненты в
+  порядке имени типа); плюс значения `add_replay_check` (хэш базы контента среди них). Рядом с хэшем лежит его разбивка,
+  посчитанная в том же проходе: хэш каждого компонента каждой сущности и каждое значение `add_replay_check` под своим
+  именем. По ней отчёт называет, что именно разошлось.
 
 ```bash
 shards save-replay                          # или ai/act {"tool": "replay_save", "args": {"path": …}}
@@ -2119,26 +2298,80 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
   меняют, а `Entity` внутри компонента хэшируется как `AiId`. Подписи и describe-фрагменты — это текст для ИИ, в хэш они не
   входят: новая формулировка или новый describer не ломают старые реплеи.
 - Состав хэша задаёт игра: `replay_ignore::<C>()` исключает компонент (косметика, кэши), `add_replay_check(name, fn(&World)
-  -> u64)` добавляет данные вне `AiVisible`-сущностей (снаряды без id, ресурсы). Компонент, который не сериализуется, один
-  раз попадает в журнал (`replay checks leave out …`) и дальше пропускается.
+  -> u64)` добавляет данные вне `AiVisible`-сущностей (снаряды без id, ресурсы). Для состояния, которого может не быть, —
+  `add_optional_replay_check(name, fn(&World) -> Option<u64>)`: пока функция возвращает `None`, хэш такой же, как без
+  проверки (так модуль уровней хэширует `level`: игра без уровней хэширует как раньше, и хэш не зависит от того, были ли
+  уровни прежде). Компонент, который не сериализуется, один раз попадает в журнал (`replay checks leave out …`) и дальше
+  пропускается.
 - `replay_save` пишет только внутрь `replays/` рабочей папки игры (вложенные папки можно). Абсолютный путь, `..` и симлинк,
   который ведёт наружу, — ошибка с подсказкой: `path must be inside replays/, e.g. replays/boss-fight.json`.
 - Проигрывание требует свежего мира: тик 0, тот же seed и та же частота тиков. События применяются между тиками, ровно там,
   где они случились. Входы, которых нет в записи (человек жмёт клавиши во время просмотра), откатываются. Реплей, начатый
   до загрузки контента, создаёт мир из контента, с которым был записан.
-- Каждая проверка сравнивается с записью. Отчёт называет первый тик, на котором игра перестала совпадать: `DIVERGED at tick
-  60`. После изменения кода это регрессия. `--verify` годится для CI: код выхода 0 — совпало, 1 — разошлось или упала
-  система геймплея, 2 — реплей не читается или не подходит к игре.
+- Каждая проверка сравнивается с записью. Отчёт называет первую проверку, на которой игра перестала совпадать, и что в ней
+  разошлось: `DIVERGED at tick 60: e6 Boss: Health differs` (подробнее — в «Что разошлось»). После изменения кода это
+  регрессия. `--verify` годится для CI: код выхода 0 — совпало и ничего не нарушено, 1 — разошлось, упала система геймплея
+  или нарушен инвариант (нарушения перечислены выше вердикта), 2 — реплей не читается или не подходит к игре.
 - В конце записи игра становится живой: реплей работает и как точка сохранения для ветвления. Любой action-вызов во время
   проигрывания перехватывает управление и завершает его (`replay interrupted at tick 130 of 332: dev took over
   (teleport)`).
 - Во время проигрывания запись продолжается, поэтому ветка сохраняется одним реплеем.
 - Состояние записи и проигрывания видно в `ai/status` (поле `replay`), итог пишется в журнал.
-- Формат: JSON `shards-replay/3` (`seed`, `tick_hz`, необязательный `start`, `end`, `events`, `checks`; хэши hex-строками).
-  Реплеи `shards-replay/2` (всегда с тика 0) эта сборка тоже проигрывает. Реплей `shards-replay/1`
-  хэшировал текст и этой сборкой не проверяется: `play` отвечает `this replay was recorded by an older build (…); record it
-  again`, а `--verify` выходит с кодом 2.
-- Реплей начинается с тика 0 или со снапшота: см. «Снапшоты».
+- Формат один: JSON `shards-replay/3` — `seed`, `tick_hz`, `check_every`, `check_detail`, необязательный `start`
+  (снапшот, с которого реплей начинается), `end`, `events`, `checks`; хэши hex-строками. События — `call`, `input` и
+  `assert` (правила). У проверки, кроме `tick` и `hash`, есть `parts`: `{"entities": {"e6": {"Health": "…", "Transform":
+  "…"}}, "game": {"content": "…"}}`. Всё, что добавлено к формату, необязательно: файл `/3` без `check_every` и
+  `check_detail` (так их писала сборка до разбивки) читается как проверки раз в 60 тиков без разбивки и проверяется по
+  общему хэшу, а расхождение в нём называет только тик (`no details: the recording keeps hashes only (check detail none)`).
+  Общий хэш считается так же, байт в байт, при любой подробности. Реплеи `shards-replay/2` (всегда с тика 0, без правил,
+  интервала и разбивки) эта сборка тоже проигрывает и проверяет по общему хэшу (`no details: replay format 2`). Реплей
+  `shards-replay/1` хэшировал текст и этой сборкой не проверяется: `play` отвечает `this replay was recorded by an older
+  build (…); record it again`, а `--verify` выходит с кодом 2.
+- Реплей начинается с тика 0 или со снапшота: см. «Снапшоты». Реплей со снапшота хранит ту же разбивку проверок.
+- Эталонные реплеи (`tests/replays/` песочницы и шаблона) записаны с разбивкой по компонентам: упавший в CI `--verify`
+  сразу называет сущность, компонент и значение. Файлы от этого крупнее: у песочницы 64–380 КБ, у шаблона 16–240 КБ.
+
+### Что разошлось
+
+Отчёт, журнал и вывод `--verify` называют сущности и компоненты первой разошедшейся проверки, а ниже — текущее значение
+каждого такого компонента в живой игре, одной строкой. Реальный вывод: реплей записан с `--check-every 1`, потом в копиях
+файла поменяли аргумент записанного вызова.
+
+```bash
+cargo sandbox --headless --paused --check-every 1 --port 0 --port-file /tmp/g.port &
+cargo shards wait && cargo shards act set id=e6 component=Health path=current value=400
+cargo shards act attack target=e6 repeat=true && cargo shards step 100
+cargo shards act teleport id=e1 x=-19 z=-19 && cargo shards step 157
+cargo shards save-replay replays/boss.json   # 257 ticks, 8 events, 258 checks, seed 42
+
+# в копии файла set ставит здоровье 390 вместо 400
+cargo sandbox --replay replays/boss-hp.json --verify
+# replay finished at tick 257: DIVERGED at tick 1: e6 Boss: Health differs [257 ticks in 1.07s]
+#   e6 now: Health { current: 390.0, max: 600.0 }
+
+# в копии файла teleport ставит колонну на x=-18 вместо -19
+cargo sandbox --replay replays/boss-pillar.json --verify
+# replay finished at tick 257: DIVERGED at tick 101: e1 Pillar: Transform differs [257 ticks in 0.64s]
+#   e1 now: Transform { translation: Vec3(-18.0, 0.0, -19.0), rotation: Quat(0.0, -0.0, -0.0, 1.0), scale: Vec3(1.0, 1.0, 1.0) }
+```
+
+- Что может быть в списке: `e6 Boss: Health, Transform differ` (разошлись компоненты, в том числе пропавшие или лишние),
+  `e15 missing (Skeleton despawned at tick 40)` (сущность есть в записи, но не в игре; в скобках — что о её id знает индекс),
+  `e27 extra (Skeleton)` (есть в игре, но не в записи), `replay check content differs` (значение `add_replay_check`). В
+  списке не больше 10 сущностей, остальные — одной строкой `… and 7 more`.
+- Значение — отладочный вывод reflection без путей модулей, не длиннее 240 символов. Объясняется только первое
+  расхождение, следующие проверки расходятся уже из-за него.
+- В журнал попадают ошибка `replay diverged at tick 60: e6 Boss: Health differs` и по записи `replay: e6 now: …` на каждое
+  значение. В `ai/status` поле `replay.last_report` содержит то же.
+- Частоту проверок задают при записи: `--check-every N` у игры или `check_every` у `EngineConfig` (по умолчанию 60). Она
+  хранится в файле, и проигрывание проверяет на тех же тиках; `--check-every` вместе с `--replay` — ошибка. С частотой 60
+  тик в отчёте — первая проверка после расхождения; чтобы найти точный тик, реплей пишут с `--check-every 1`.
+- Подробность: `--check-detail` или `check_detail` у `EngineConfig`. `components` (по умолчанию) — хэш каждого компонента,
+  отчёт называет сущности, компоненты и значения; `entities` — хэш сущности целиком, отчёт называет сущности (`e6 Boss
+  differs`); `none` — только общий хэш, отчёт называет тик (`no details: the recording keeps hashes only (check detail
+  none)`). Общий хэш от подробности не зависит.
+- Размер: реплей выше (арена, 14 сущностей, проверка на каждом тике) с `components` весит 2.2 МБ (около 8.6 КБ на тик; с
+  частотой 60 — столько же на секунду игры), с `entities` — 183 КБ, с `none` — 19 КБ.
 
 ## Снапшоты (E11.4)
 
@@ -2160,8 +2393,8 @@ shards load-snapshot snapshots/boss_phase2.json   # или act snapshot_load pat
 - **сохраняется**: все сущности с `AiId` под своим id и их отражаемые компоненты (игры и модулей движка, плюс `Transform` и
   `Name`; типы `bevy_*`, которые добавляет окно, не входят); ссылка на сущность внутри компонента пишется как `e12`
   (`AiId`) или `c7` (ключ модуля: коллайдер без id, `add_snapshot_entity_key`); тик; счётчик `AiId` и надгробия;
-  ресурсы, которые модуль зарегистрировал `add_snapshot_resource::<R>()` (`ColliderIds`, `RegionBuild` — регион в мире, см.
-  ниже);
+  ресурсы, которые модуль зарегистрировал `add_snapshot_resource::<R>()` (`ColliderIds`, `LevelCounter` — номера
+  экземпляров уровней, `RegionBuild` — регион в мире, см. ниже);
 - **пересобирается** после загрузки (`add_snapshot_rebuild`): кэши, выведенные из сохранённого, — `PhysicsWorld`,
   запомненные значения входов записи реплея, **навсетка региона** (`navmesh`: строится заново для региона и твёрдых тел,
   которые снапшот вернул; NPC игры, загруженной из снапшота, ходят теми же маршрутами, что в исходной);
@@ -2178,15 +2411,21 @@ shards load-snapshot snapshots/boss_phase2.json   # или act snapshot_load pat
 сохранённого ресурса; проверки из `covers` (`static_colliders`, `levels`) идут после. Мир сохраняет `RegionBuild`: канонический
 манифест региона, первый `ColliderId` и номер экземпляра уровня, с которыми он строился. При загрузке регион снапшота строится
 заново, с теми же id, в игре, где другой регион или никакого; если снапшот снят без региона, регион в мире выгружается;
-манифест, который контент не может построить, отказывает до любых изменений. Настоящий вывод: снапшот, снятый в дебрях в
+манифест, который контент не может построить, отказывает до любых изменений. Счётчики коллайдеров и экземпляров уровней
+снапшот ставит свои сразу после этого: уровень, поставленный после загрузки, получает номер исходной сессии, и тайл региона
+не займёт номер уровня, который поставил агент. Проверки из `covers` могут отказать, когда регион уже построен заново (агент
+поставил `spawn_level` другие уровни): тогда загрузка возвращает мир, каким он был до неё (тот же регион, сущности под теми
+же id, счётчики, ресурсы), строки попытки уходят из журнала, и одна строка говорит, что случилось:
+`snapshot of tick 332 not loaded (this game is not the one the snapshot was taken in): the world is as it was before the load`.
+Запись реплея идёт дальше, как будто загрузки не было. Настоящий вывод: снапшот, снятый в дебрях в
 разгар боя стража логова, загружен в свежую игру на арене.
 
 ```text
 $ shards save-snapshot snapshots/wilds_fight.json                  # игра 1: регион wilds, на 332-м тике страж бьёт игрока
-saved /…/snapshots/wilds_fight.json: tick 332, 30 entities, 2 resources
+saved /…/snapshots/wilds_fight.json: tick 332, 30 entities, 3 resources
 $ shards load-snapshot snapshots/wilds_fight.json                  # игра 2: свежая, на арене, региона нет
-loaded /…/snapshots/wilds_fight.json: tick 332, 30 entities, 2 resources; region: wilds seed 42 v1 built again from its manifest (199 entities); the recording now starts at tick 332
-  332 [sim] snapshot loaded: …/snapshots/wilds_fight.json (tick 332, 30 entities, 2 resources; region: wilds seed 42 v1 built again from its manifest (199 entities))
+loaded /…/snapshots/wilds_fight.json: tick 332, 30 entities, 3 resources; region: wilds seed 42 v1 built again from its manifest (199 entities); the recording now starts at tick 332
+  332 [sim] snapshot loaded: …/snapshots/wilds_fight.json (tick 332, 30 entities, 3 resources; region: wilds seed 42 v1 built again from its manifest (199 entities))
 $ shards step 120                                                  # то же, что в игре 1
 ran 120 ticks (332 → 452)
   ~ e25 Skeleton "Den Guard": +ground 1.6m/s; fight e5 · token · leash 9/10m → fight e5 · circle · leash 7/10m; -active claw 0.10s (zone cone 1.8m 100°); moved 1.8m S
@@ -2195,13 +2434,15 @@ ran 120 ticks (332 → 452)
 Состояние вне сущностей с `AiId`, которое не подпадает ни под одно из четырёх, — единственная ловушка. Поэтому загрузка
 кончается проверкой: мир сохраняется снова и сравнивается с файлом, а `state_hash` (с `add_replay_check`-ами) — с хэшем
 снапшота. Расхождение — ошибка с первыми местами: `the restored state differs from the snapshot in 1 place(s): …` с
-советом, что зарегистрировать, а не продолжение, которое тихо пойдёт иначе. Компонент, который нельзя записать (не
-отражается, не сериализуется, бесконечность в `f32`), называется сразу при сохранении (`snapshot leaves out: …`) и в
-файле (`left_out`).
+советом, что зарегистрировать, а не продолжение, которое тихо пойдёт иначе. Компонент или ресурс, который нельзя записать
+(не отражается, не сериализуется, бесконечность в `f32`, не читается обратно), называется сразу при сохранении
+(`snapshot leaves out: …`) и в файле (`left_out`).
 
 **Загрузка** (`snapshot_load`, control-инструмент, Dev): все сущности с `AiId` заменяются сущностями снапшота под теми же
 id, ставятся тик, счётчики и ресурсы, пересобираются кэши. Ошибка (другой seed, контент, неизвестный компонент) возвращается
-до любых изменений. Запись реплея после загрузки начинается с этого снапшота, всё записанное раньше отбрасывается
+до любых изменений. До них же проверяется, что игра прочтёт каждое значение файла: компонент и ресурс, который не читается,
+id сущности `0` или `u32::MAX` и записанный руками `AiId` (ключ сущности ставит движок, типы `bevy_*` строятся заново) — отказ.
+`force=true` пропускает только то, чего игра не знает, и такие служебные записи; значение, которое не читается, он не грузит; отказ после подготовки региона возвращает мир, каким он был (см. выше). Запись реплея после загрузки начинается с этого снапшота, всё записанное раньше отбрасывается
 (`save-replay` до загрузки, если оно нужно). Загрузка во время проигрывания реплея заканчивает проигрывание.
 
 **Реплей со снапшота** (`shards-replay/3`, поле `start`): `cargo sandbox --replay FILE --verify` загружает снапшот сразу после
@@ -2220,6 +2461,85 @@ id, ставятся тик, счётчики и ресурсы, пересоб�
 регион с тремя NPC на навсетке и ящиками, вырезаемыми и возвращаемыми (`shards_npc/tests/npc/snapshot.rs`).
 Почему не `DynamicWorld` Bevy: тот же слой reflection под ним, но сущности названы битами `Entity`, а не `AiId`; порядок
 вставки компонентов зависит от архетипа, а `AiId` должен встать раньше хуков; файл не стабилен по байтам.
+## Сохранения (E8.1–5)
+
+Сохранение — прогресс игрока, наложенный на мир, который игра построила как обычно. Это не снапшот: снапшот (`snapshot_save`)
+хранит точное состояние симуляции на одном тике и нужен разработчику, а сохранение — явные структуры, которые игра назвала
+сама. Ничего, что не названо, в файл не попадает. Крейт `crates/shards_save`, модуль `save` (`ai/status`), в зонтике
+`shards::save`.
+
+Два вида: **персонаж** (прогресс каждого игрока, лежит у него) и **мир** (хоста). У каждого есть слоты (`slot1`, `ford-camp`:
+`[a-z0-9_-]`, до 32 знаков, не пути).
+
+```rust
+app.save_component::<Bag>(SaveKind::Character, "bag", 1)        // компонент на теле игрока
+   .save_component::<Opened>(SaveKind::World, "chests", 1)       // карта SaveKey -> компонент по сущностям с SaveKey
+   .save_resource::<Calendar>("calendar", 1)
+   .add_save_section::<Quests>()                                 // структура с capture / apply / missing
+   .add_save_migration("bag", 1, |old| Ok(old))                  // JSON версии 1 -> версия 2
+   .autosave_on::<CampRested>(SaveWhat::All);                    // пишется в конце тика
+```
+
+- **Секции.** `SaveSection`: `NAME`, `VERSION`, `KIND`, `capture`, `apply`, `missing`. Секции применяются в порядке
+  регистрации. Неизвестная файлу секция получает `missing()`, неизвестная игре пропускается с предупреждением. Цепочка
+  миграций с дырой (`add_save_migration` не хватает на шаг) роняет приложение при сборке с именем секции. Реестр —
+  инструмент `save_registry`. Движок регистрирует свои: `region` (мир: регион, зерно, версия генератора, хэш манифеста; при
+  применении регион строится заново и отказывает до любых изменений, если выходит другим; мир, сохранённый вне региона
+  (на арене), при загрузке ничего не выгружает: текущий регион остаётся, пока его не заменит `regen` или `change_region`,
+  — в отличие от снапшота, который заменяет мир целиком и регион выгружает), `position` (позиция и поворот тела; в
+  другом регионе тело остаётся где стоит, журнал говорит почему) и `vitals` (здоровье, выносливость, заряды).
+  Загруженное `vitals` возвращает к жизни тело, умершее после сохранения (`shards_action::revive`, как делает dev-`heal`,
+  и событие `Healed`, чтобы игра отменила то, что сделал её `Died`); сохранение с нулевым здоровьем оставляет мёртвым
+  (`check_deaths`).
+- **Файл** `<save_dir>/<kind>/<slot>.save`: первая строка `shards-save/1 crc32=<hex> len=<байты>`, дальше канонический JSON
+  (ключи по алфавиту) с `{kind, slot, label, game, engine, tick, sections: {имя: {version, data}}}`.
+- **Запись** атомарна: `.tmp`, `sync_all`, ротация `.bak1`→`.bak2`→`.bak3`, `rename`, fsync папки. Трёх копий хватает на
+  три предыдущих сохранения. Битый основной файл в копии не превращается: он уходит в `.damaged`.
+- **Чтение.** Основной файл, а при любой порче (контрольная сумма, обрезан, не JSON, миграция не удалась) — первая хорошая
+  копия; основной файл переписывается из неё, журнал: `save: world/slot1.save is damaged (checksum mismatch); restored from
+  backup 1 (tick 50110)`. Все копии плохи — ошибка называет каждую, мир не тронут. Остаток `.tmp` (сбой при записи)
+  убирается.
+- **Сохранение из более новой версии — не порча.** Секция выше версии этой сборки или конверт `shards-save/2`
+  (`Fault::Newer`) отказывает с ясной ошибкой `world/slot1 was saved by a newer version of the game (section inventory v7
+  > v5); nothing was changed`: без перехода к старой копии (потерялся бы прогресс), без `.damaged`, без перезаписи.
+  **Запись в такой слот тоже отказывает**, пока любая копия слота новее (`so this build does not overwrite it`): ротация
+  не может ни переименовать новый файл, ни выдавить его через три сохранения. Выход: другой слот или новая версия игры.
+  Выбрано это, а не «оставить как копию»: копию вытеснили бы три следующих сохранения. `save_list` показывает такой файл
+  как `newer`.
+- **Когда.** `save_now(world, SaveWhat, reason)` пишет сразу (награда, находка). `autosave_on::<E>(what)` и
+  `SaveRequests::request` ставят запрос; он исполняется в `FixedLast` того же тика, после симуляции, с дебаунсом по виду
+  (`*.save.ron`, `SaveDef { debounce_secs }`). **При выходе** (хук `add_exit_hook`) ожидающие запросы пишутся сразу, не
+  глядя на дебаунс; `flush_saves(world)` — для собственного выхода игры. Сохранение никогда не меняет симуляцию (тест
+  сравнивает хэш состояния с автосохранениями и без).
+- **Реплей не пишет файлов.** Пока проигрывается реплей (`--replay`, `--verify`), на диск не идёт ничего: ни `save_now`
+  из системы, ни инструмент игры, ни `save_game`, ни исправление основного файла при загрузке, ни `save_damage`. Ответ
+  `save_now` — `Ok` с `written: false` (код игры видит то же, что в записи), журнал: `save: not written during replay
+  playback (world/slot1, reward)`, инструменты отвечают ошибкой `save: not written during replay playback: …`. Реплей
+  сверяет состояние, а не тексты ответов, так что расхождения это не даёт.
+
+**Запуск.** `--save-dir DIR` — папка внутри папки игры (не абсолютный путь, без `..`, как `replays/`; иначе код 2),
+`--world SLOT` и `--character SLOT` — текущие слоты, куда пишут `save_now` и автосохранения. Одиночная игра ещё и
+**загружает** их до первого тика вызовом `load_game` (агент `launch`, в журнале `launch: load_game …`); запись реплея
+начинается со снапшота этого состояния, так что `--verify` проходит без флагов. Слота нет — новая игра, строка в журнале
+(`save: --world fresh: no world save in that slot yet, starting a new game`), первое сохранение создаёт его. Слот есть, но не
+читается (все копии порчены, новее сборки) — `Error` в журнале, игра начинается как есть и ничего не перезаписывает.
+Хост и клиент сети грузят слоты по-своему: `shards::save::load_launch_slot(world, kind, slot)` и `load_launch_slots(world)`
+— крючок для кооператива.
+
+**Инструменты.** `save_game what=world|character|all slot= label=` (control, не пишется в реплей; персонаж — Player,
+мир — Dev), `load_game what= slot=` (Dev, action: применяет секции и перезапускает запись от загруженного состояния,
+`replay::restart_from_current`, поэтому реплей после загрузки проходит `--verify`), `save_check what= slot=` (хэш
+сохраняемого состояния и, со слотом, сравнение с файлом по секциям), `save_list` (слоты, подписи, тики, копии и их
+здоровье), `save_registry`, `save_damage what= slot= how=flip|truncate|garbage copy=` (Dev: портит файл только внутри
+`save_dir`, для проверки восстановления). Сценарий `crates/sandbox/scenarios/saves.scenario` проходит весь путь: сохранить,
+потерять состояние, загрузить, испортить файл, получить восстановление из копии, испортить всё, умереть, загрузить снова;
+эталонный реплей `tests/replays/saves.json` записан с него.
+
+**Доказательство.** `crates/shards_save/tests/save/` — 1000 случайных состояний туда и обратно, матрица порчи, образцы
+файлов версии 1 (`tests/samples/`, не переписываются), автосохранение и хэш состояния, `load_game` и `--verify`, запуск с
+`--world`/`--character`, реплей, который сохраняет и ничего не пишет (байты и времена изменения слота не тронуты), выход,
+новые сохранения; `crates/sandbox/tests/sandbox/saves.rs` — секции движка и оживление мёртвого тела.
+
 ## Песочница
 
 Песочница (`crates/sandbox`) — тестовая арена движка, на которой проверяется каждый модуль. Она собрана только на
@@ -2250,11 +2570,12 @@ id, ставятся тик, счётчики и ресурсы, пересоб�
 | `region/wilds.*.ron` | дебри: тайлы, правила сокетов, точки интереса, регион, запасная карта, настройки навсетки |
 | `region/camps.prefab.ron`, `region/ruin.level.ron` | лагерные скелеты (`Home` 12 м) и страж логова (10 м); файл руины и маркеры, обязательные в нём |
 | `world/watch.layout.ron` | третий скелет арены (`e14`) |
+| `world/world.bounds.ron` | границы мира для правила `bodies_in_world`: запас вокруг построенных layout и региона, высота, ниже которой тело выпало |
 
 `layout` — вид контента самой песочницы: коробки (`solids`), пандусы, объёмы (вода, поток, триггер), ориентиры для ИИ и
 префабы для спавна. Слои спавнятся по порядку id, внутри — по порядку списков, так что `AiId` и `ColliderId` одинаковы в
 каждом запуске: e1–e4 колонны, e5 игрок, e6 страж, e7–e8 скелеты, e9–e13 ориентиры полосы `Stairs`, `Ledge`, `Pool`,
-`Cliff`, `Goal`, e14 третий скелет; регион (`regen`) добавляет свои сущности после них. Правка layout на лету перестраивает геометрию на следующем тике; ориентиры сохраняют id, персонажи остаются.
+`Cliff`, `Goal`, e14 третий скелет; регион (`regen`) добавляет свои сущности после них. Правка layout на лету перестраивает геометрию на следующем тике; ориентиры сохраняют id, персонажи остаются. Новый файл `*.layout.ron` на лету строится как при старте (с префабами), а удалённый убирает свою геометрию и ориентиры.
 
 **Бой — прототип из GDD 39.** У игрока комбо из трёх лёгких ударов через окна отмены, тяжёлый удар с гипербронёй на
 замахе, перекат, блок (держать; первые 0.15 с — идеальный блок, он и есть парирование: урона нет, атакующий шатается),
@@ -2265,6 +2586,10 @@ id, ставятся тик, счётчики и ресурсы, пересоб�
 после парирования отдыхом не считается). Предупреждение (`e6 winds up slam (0.50s) ⚠ circle 4m`) приходит ровно за 0.50 с до удара. С половины здоровья —
 фаза 2: второй мувсет, короче замахи и отдых. Скелеты: один коготь, вздрагивают от ударов, их тела исчезают через 1.5 с;
 тело стража остаётся (dev `heal` его поднимает).
+
+**Правила (инварианты).** После каждого тика песочница проверяет `health_in_range` (здоровье в `0..=max`) и
+`bodies_in_world` (каждый персонаж над ареной с коридором, полосой или загруженным регионом, см. «Инварианты»). Ни один
+сценарий, тест и эталонный реплей их не нарушает.
 
 **Полоса препятствий (E2).** Прыжок (1.2 м) не перепрыгивает ничего: уступ 1.3 м берётся перелезанием, бассейн 10 м —
 вплавь с выходом через `jump`, до площадки цели долетает только планер и только с подъёмом в потоке. Площадка —
@@ -2301,23 +2626,25 @@ cargo test -p sandbox --test sandbox          # песочница: сценар
 cargo test --manifest-path template/Cargo.toml # шаблон отдельно: свой workspace и свой Cargo.lock
 ```
 
-Всего 752 теста в `cargo test --workspace` (на 14 октября 2026; ещё 17 `#[ignore]`: запись эталонных реплеев, проверка
+Всего 1003 теста в `cargo test --workspace` (на 14 октября 2026; ещё 22 `#[ignore]`: запись эталонных реплеев, проверка
 окна под Xvfb и примеры в документации) и 23 теста шаблона (ещё один `#[ignore]`: запись его эталонов):
 
 | крейт | тестов | что проверяют |
 |---|---|---|
-| `ai_core` | 51 | снапшоты (сохранение и загрузка, отказ для чужой игры, ссылки на сущности, реплей со снапшота без загрузки), id (перенумерация, занятый id), журнал, RNG, компас и LOS, схемы, шаги симуляции, пути снимков, реплеев и снапшотов (только `shots/`, `replays/`, `snapshots/`; абсолютные пути, `..`, симлинки), формат реплея и отчёт, запрет BRP-правки `AiId`, занятый порт, `instance` в `ai/status`, файл порта, токен у каждого метода BRP, запуск сценариев в процессе |
-| `shards_script` | 35 | без Bevy: условия и аргументы, слова как в shell, разбор каждой команды сценария и текст каждой ошибки, запуск на поддельной игре (ожидания, `mark`, инварианты, `session`, `seed`, потерянная игра) |
-| `shards_cli` | 8 | порт из `--port-file`, строка `ready`, токен по номеру порта; `shards scenario` против поддельной игры на localhost (коды выхода 0/1/2) |
-| `shards_core` | 11 | загрузка не сдвигает тики, пауза, `after_loading`, нажатия живут один тик, `move_to`, `ai/status` называет модули |
+| `ai_core` | 78 | снапшоты (сохранение и загрузка, отказ для чужой игры, ссылки на сущности, реплей со снапшота без загрузки), id (перенумерация, занятый id), журнал, RNG, компас и LOS, схемы, шаги симуляции, пути снимков, реплеев и снапшотов (только `shots/`, `replays/`, `snapshots/`; абсолютные пути, `..`, симлинки), формат реплея и отчёт, запрет BRP-правки `AiId`, занятый порт, `instance` в `ai/status`, файл порта, токен у каждого метода BRP, запуск сценариев в процессе, инварианты (правило игры и сессии, срабатывание один раз, маршрут к хосту), время тика, части проверок реплея и отчёт о расхождении |
+| `shards_script` | 35 | без Bevy: условия и аргументы, слова как в shell, разбор каждой команды сценария и текст каждой ошибки, запуск на поддельной игре (ожидания, `mark`, инварианты, `session`, `seed`, потерянная игра, шаг, оборванный нарушенным инвариантом), условия `warning` и `error` |
+| `shards_cli` | 12 | порт из `--port-file`, строка `ready`, токен по номеру порта; `shards scenario` против поддельной игры на localhost (коды выхода 0/1/2); код выхода по исходу `step` (3 — игра остановилась), входы `fuzz` из зерна |
+| `shards_core` | 14 | загрузка не сдвигает тики, пауза, `after_loading`, нажатия живут один тик, `move_to`, `ai/status` называет модули |
 | `shards_content` | 22 | определения и их файлы, повторы и ссылки называют файл и поле, `check_dir`, префабы (`extends`, переопределения), перезагрузка пишется в реплей и проигрывается, сломанная правка отклоняется, правка файла в работающей игре |
 | `shards_motion` | 154 | физика (запросы, слои, порядок по `ColliderId`), контроллер (ступени, перелезание, плавание, планер, прыжок, стены), числа из контента, ввод (режимы, контексты, переназначение, сохранение), камера, `clearance` и `path_to`, инструменты, реплей и независимость от индексов `Entity` |
-| `shards_action` | 136 | действия, буфер, отмены и комбо, `can_start`, попадания и конвейер урона (уклонение, блок, парирование, стойкость, гиперброня), статусы, зоны и подсказка «выйди», анимация (`select_clip`), геометрия телеграфов, инструменты и их ошибки, реплей боя |
-| `shards_level` | 79 | glTF и узлы, свойства (`collider`, `volume`, `prefab`, компоненты по имени, текстовый JSON), маркеры и их ошибки, коллайдеры нужных размеров и слоёв, вид `level` и его проверка в `content check`, спавн (мировые позиции, порядок, id), горячая перезагрузка, реплей и хэш `level`, картинка уровня |
-| `shards_world` | 71 | формат тайлов, регионов, комнат (ошибки называют файл и ближайший id); решатель, проверки (недоступность, уклон, расстояния, дорога никуда), сотни и тысяча зёрен, манифест байт в байт, запасная карта, паника шага игры с номером зерна; подземелья; смена региона через `RegionLoading`, стартовый регион, `goto_tile`, реплей со сменами регионов, снапшот в регионе; тайлы из файлов уровней во всех четвертях оборота; активные зоны |
-| `shards_npc` | 79 | автомат поведения и его ошибки, зрение/слух/память, жетоны директора (включая смену числа игроков и приказы агента), планировщик (запреты, бюджет, отдых), запекание и сшивка (в том числе ступени на краю тайла), вырезание в любом порядке, маршруты и обход колонн, поводок, `npc_state`, реплей и снапшот на десяти тиках боя и в сгенерированном регионе |
-| `shards` | 12 | реплей со снапшота (`--verify`: тот же результат, код 2 для чужого снапшота), режим без окна — те же плагины, тестовое приложение, `testing::ok` на сбое геймплея, анимационный мост на настоящей модели со скином |
-| `sandbox` | 94 | в одном бинарнике `tests/sandbox`: снапшоты (`snapshots.rs`: состояние после загрузки то же, что в исходной сессии, на перекате, комбо, телеграфе, планировании, плавании, флаконе, боях NPC и в сгенерированном регионе), тайл руины (`tiles.rs`: файл из тестового генератора glTF совпадает с закоммиченным), сценарии (`scenario_files`: каждый файл на свежей игре, все подряд в одной игре, бой-прототип после шести разных пауз), эталонные реплеи, действия, контент, полоса препятствий, детерминизм, видимость, права scope, реплеи, `kill` и SIGHUP; отдельно `system_failures` (сбой геймплея, краш-реплей) и `log_capture` (строки лога в `step`): у них свои процессы |
+| `shards_action` | 137 | действия, буфер, отмены и комбо, `can_start`, попадания и конвейер урона (уклонение, блок, парирование, стойкость, гиперброня), статусы, зоны и подсказка «выйди», анимация (`select_clip`), геометрия телеграфов, инструменты и их ошибки, реплей боя |
+| `shards_level` | 80 | glTF и узлы, свойства (`collider`, `volume`, `prefab`, компоненты по имени, текстовый JSON), маркеры и их ошибки, коллайдеры нужных размеров и слоёв, вид `level` и его проверка в `content check`, спавн (мировые позиции, порядок, id), горячая перезагрузка, реплей и хэш `level`, картинка уровня |
+| `shards_world` | 72 | формат тайлов, регионов, комнат (ошибки называют файл и ближайший id); решатель, проверки (недоступность, уклон, расстояния, дорога никуда), сотни и тысяча зёрен, манифест байт в байт, запасная карта, паника шага игры с номером зерна; подземелья; смена региона через `RegionLoading`, стартовый регион, `goto_tile`, реплей со сменами регионов, снапшот в регионе; тайлы из файлов уровней во всех четвертях оборота; активные зоны |
+| `shards_npc` | 82 | автомат поведения и его ошибки, зрение/слух/память, жетоны директора (включая смену числа игроков и приказы агента), планировщик (запреты, бюджет, отдых), запекание и сшивка (в том числе ступени на краю тайла), вырезание в любом порядке, маршруты и обход колонн, поводок, `npc_state`, реплей и снапшот на десяти тиках боя и в сгенерированном регионе |
+| `shards_save` | 87 | секции и реестр, конверт `shards-save/1` и контрольная сумма, атомарная запись, три копии и восстановление, матрица порчи, миграции, сохранения из более новой версии, слоты, автосохранение, инструменты `save_*` и `load_game` |
+| `shards_net` | 80 | без Bevy: транспорты (хаб в памяти, UDP), имитация связи, канал (надёжные и последние сообщения, блобы, подтверждения, RTT, потери, тайм-ауты), формат датаграмм |
+| `shards` | 17 | реплей со снапшота (`--verify`: тот же результат, код 2 для чужого снапшота), режим без окна — те же плагины, тестовое приложение, `testing::ok` на сбое геймплея, анимационный мост на настоящей модели со скином |
+| `sandbox` | 133 | в одном бинарнике `tests/sandbox`: снапшоты (`snapshots.rs`: состояние после загрузки то же, что в исходной сессии, на перекате, комбо, телеграфе, планировании, плавании, флаконе, боях NPC и в сгенерированном регионе), тайл руины (`tiles.rs`: файл из тестового генератора glTF совпадает с закоммиченным), сценарии (`scenario_files`: каждый файл на свежей игре, все подряд в одной игре, бой-прототип после шести разных пауз), эталонные реплеи, действия, контент, полоса препятствий, детерминизм, видимость, права scope, реплеи, `kill` и SIGHUP; инварианты (`invariants.rs`: правила песочницы, сессии, остановка в реальном времени, реплей нарушения, снапшот); отдельно `system_failures` (сбой геймплея, краш-реплей), `log_capture` (строки лога в `step`) и `perf` (время тика: бюджет, журнал, `ai/status`): у них свои процессы |
 
 Тесты шаблона (`template/tests/game`, 23) собираются в одном бинарнике: сценарии, детерминизм, реплеи, контент, регион
 (тысяча зёрен долины, манифест байт в байт, экран загрузки без окна, колонна руины, рейдер на навсетке), манифест (единственная

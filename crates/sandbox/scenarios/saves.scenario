@@ -2,8 +2,9 @@
 # and how healthy they are) in a file with a checksum and three rotating backups. The scenario
 # saves the player, loses the state, loads it back, then breaks the file on purpose
 # (`save_damage`, QA of the recovery path): the next load takes the newest good backup and the
-# journal says so; when every copy is broken the load fails and changes nothing. Files go to
-# saves/character/qa* of the game's working directory (not committed: made here).
+# journal says so; when every copy is broken the load fails and changes nothing. Last, a body that
+# died since the save is brought back by the load. Files go to saves/character/qa* of the game's
+# working directory (not committed: made here).
 
 seed 42
 
@@ -64,6 +65,37 @@ act? load_game what=character slot=qa
 expect result contains "cannot load character/qa, every copy is unusable, nothing was applied"
 expect result contains "qa.save.bak1: no header"
 expect field e5 Transform.translation.x == -9
+
+# --- death: a body that died since the save lives again, as the dev `heal` brings it back. Save, get hurt,
+# load, die, load again and keep playing. Every load restarts the recording, so the reference replay of this
+# scenario (tests/replays/saves.json) starts from the state right after the last load and holds the play after it
+act npc_set_state id=e6 state=calm
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act heal id=e5
+act teleport id=e5 x=0 z=12 y=0
+act save_game what=character slot=qa label="before the fight"
+expect result contains "ok: character/qa saved"
+act set id=e5 component=Health path=current value=30
+step 5
+act load_game what=character slot=qa
+expect field e5 Health.current > 30
+mark
+act set id=e5 component=Health path=current value=0
+step 2
+expect journal "e5 died"
+act? light_attack
+expect result contains "dead"
+act load_game what=character slot=qa
+expect result contains "ok: character/qa loaded"
+expect journal "e5 healed"
+expect field e5 Health.current > 30
+act light_attack
+step 90
+act move dir=W meters=2
+step 60
+expect field e5 Health.current > 0
 
 # --- the world back as it was
 act heal id=e5
