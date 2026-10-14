@@ -9,9 +9,10 @@
 //! - [`intent`](MotionSystems): `Intent` → [`LocomotionInput`], the one way characters are
 //!   steered.
 //! - [`input`]: the input action map: keyboard, mouse and gamepad become `Intent`;
-//!   contexts, press/hold/toggle, rebinding saved in the user's config folder.
+//!   contexts, press/hold/toggle, rebinding kept in the `controls` settings (`shards_settings`).
 //! - [`camera`]: the third-person camera (orbit, wall collision, lock-on, aim assist,
-//!   shake) — presentation only.
+//!   shake) — presentation only; its field of view, shake and look speed follow the player's
+//!   accessibility and control settings.
 //! - AI tools for agents: `move_to` (with `path`), `move`, `stop`, `jump`, `sprint`,
 //!   `glide`, and the perception queries `clearance` and `path_to` ([`perception`]);
 //!   `input_bindings` and `rebind`; `physics_overlay` with a window.
@@ -99,6 +100,10 @@ impl Plugin for MotionPlugin {
         }
         if !app.is_plugin_added::<ControllerPlugin>() {
             app.add_plugins(ControllerPlugin);
+        }
+        // The controls and the camera follow what the player set (E8.6).
+        if !app.is_plugin_added::<shards_settings::ShardsSettingsPlugin>() {
+            app.add_plugins(shards_settings::ShardsSettingsPlugin);
         }
         app.add_engine_module("motion", VERSION);
         ai::plugin(app);

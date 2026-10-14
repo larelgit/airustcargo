@@ -7,8 +7,11 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use shards_settings::{AccessibilitySettings, ControlSettings, SettingsStorage};
+
+use super::controls::{self, ControlSync};
 use super::map::{BindMode, Binding, InputMap, RebindError};
-use super::{InputContexts, InputDefaults, InputSettings};
+use super::{InputContexts, InputDefaults};
 
 pub(super) fn register(world: &mut World) {
     register_tool(world, "input_bindings", Scope::Player, ToolKind::Query, input_bindings);
@@ -24,7 +27,20 @@ pub struct InputBindingsArgs {
     pub context: Option<String>,
 }
 
-fn input_bindings(In(call): In<Call<InputBindingsArgs>>, map: Res<InputMap>, contexts: Res<InputContexts>) -> ToolResult {
+fn input_bindings(
+    In(call): In<Call<InputBindingsArgs>>,
+    map: Res<InputMap>,
+    defaults: Res<InputDefaults>,
+    controls: Option<Res<ControlSettings>>,
+    sync: Res<ControlSync>,
+    contexts: Res<InputContexts>,
+    accessibility: Option<Res<AccessibilitySettings>>,
+) -> ToolResult {
+    // What the controls settings say, even when `settings_set` changed them a moment ago and the map has not followed yet.
+    let map = match controls.as_deref() {
+        Some(controls) => controls::current_map(&map, &defaults.0, controls, &sync),
+        None => std::borrow::Cow::Borrowed(&*map),
+    };
     let name = call.args.context.unwrap_or_else(|| contexts.top().to_owned());
     let Some(context) = map.context(&name) else {
         let names: Vec<&str> = map.contexts.iter().map(|c| c.name.as_str()).collect();
@@ -40,6 +56,9 @@ fn input_bindings(In(call): In<Call<InputBindingsArgs>>, map: Res<InputMap>, con
         };
         let bindings: Vec<String> = action.bindings.iter().map(Binding::text).collect();
         out.push_str(&format!("\n  {:<width$}  {mode}{}", action.action, bindings.join(" · ")));
+    }
+    if accessibility.is_some_and(|a| a.hold_to_toggle) {
+        out.push_str("\naccessibility.hold_to_toggle is on: [hold] actions work as toggles (a press holds, the next lets go)");
     }
     let others: Vec<&str> = map.contexts.iter().map(|c| c.name.as_str()).filter(|n| *n != name).collect();
     if !others.is_empty() {
@@ -71,22 +90,26 @@ pub struct RebindArgs {
     /// Take the input from the action that uses it.
     #[serde(default)]
     pub force: bool,
-    /// Write the change to the player's controls file. Default: yes in a windowed game, no headless.
-    pub save: Option<bool>,
 }
 
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
 fn rebind(
     In(call): In<Call<RebindArgs>>,
+    mut commands: Commands,
     contexts: Res<InputContexts>,
     defaults: Res<InputDefaults>,
-    settings: Res<InputSettings>,
+    storage: Option<Res<SettingsStorage>>,
+    mut controls: ResMut<ControlSettings>,
+    mut sync: ResMut<ControlSync>,
     mut map: ResMut<InputMap>,
 ) -> ToolResult {
-    let RebindArgs { context, action, binding, slot, mode, unbind, force, save } = call.args;
+    let RebindArgs { context, action, binding, slot, mode, unbind, force } = call.args;
     let context = context.unwrap_or_else(|| contexts.top().to_owned());
-    let names: Vec<String> = map.action_names(&context).iter().map(|n| (*n).to_owned()).collect();
-    if map.context(&context).is_some() && !names.contains(&action) {
+    // The map the settings make, not one they have moved on from (see `current_map`): the change is
+    // written back over the settings, and must not take another one of theirs with it.
+    let current = controls::current_map(&map, &defaults.0, &controls, &sync).into_owned();
+    let names: Vec<String> = current.action_names(&context).iter().map(|n| (*n).to_owned()).collect();
+    if current.context(&context).is_some() && !names.contains(&action) {
         let hint = InputMap::suggest(&action, names.iter().map(String::as_str));
         return Err(format!("no action `{action}` in context `{context}`{hint}; actions: {}", names.join(", ")));
     }
@@ -95,14 +118,14 @@ fn rebind(
     }
     let explain = |e: RebindError| match e {
         RebindError::NoContext(name) => {
-            let all: Vec<&str> = map.contexts.iter().map(|c| c.name.as_str()).collect();
+            let all: Vec<&str> = current.contexts.iter().map(|c| c.name.as_str()).collect();
             format!("no input context `{name}`{}; contexts: {}", InputMap::suggest(&name, all.iter().copied()), all.join(", "))
         }
         other => other.to_string(),
     };
     let mut done: Vec<String> = Vec::new();
     // Work on a copy: a refusal halfway leaves the controls as they were.
-    let mut next = map.clone();
+    let mut next = current.clone();
     if unbind {
         let gone = next.unbind(&context, &action, slot).map_err(explain)?;
         done.push(format!("removed {gone} from slot {slot}"));
@@ -131,18 +154,23 @@ fn rebind(
         done.push(format!("mode {mode:?}").to_lowercase());
     }
     let mut message = format!("ok: {context}/{action}: {}", done.join(", "));
-    if save.unwrap_or(settings.persist) {
-        let path = settings.path().ok_or("cannot save: no config folder (set HOME or XDG_CONFIG_HOME, or InputSettings::file)")?;
-        let kept = next.save_overrides(&defaults.0, &path)?;
-        message.push_str(&format!("; saved to {}", path.display()));
-        if let Some(bad) = kept {
-            message.push_str(&format!(
-                " (the file there could not be read, so the game ran on the default controls and it holds none of \
-                 your edits; it is kept as {}: fix it and merge it back)",
-                bad.display()
-            ));
+    // The player's controls are settings: what differs from the defaults goes into
+    // `controls.bindings` / `controls.hold_or_toggle`, written a second later.
+    let mut changed = controls.clone();
+    if controls::encode(&next, &defaults.0, &mut changed) {
+        *controls = changed;
+        shards_settings::save_soon(&mut commands);
+    }
+    if let Some(SettingsStorage { file: Some(file), .. }) = storage.as_deref() {
+        // Settings keep differences on the default controls only; an action a game added to the map by
+        // itself is the game's to set up each time.
+        if defaults.0.action(&context, &action).is_some() {
+            message.push_str(&format!("; saved to {} in a second", file.display()));
+        } else {
+            message.push_str(&format!("; not saved: `{context}.{action}` is not one of the default controls, so it lasts until the game ends"));
         }
     }
+    sync.agree(&next, &defaults.0, &controls);
     *map = next;
     Ok(message)
 }

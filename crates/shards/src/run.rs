@@ -277,6 +277,12 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
         return stand::run(&build, &args, config, clients);
     }
     let mut app = build(&config);
+    // Player settings are read now, not earlier: Bevy's settings plugin scans the type registry
+    // once, so every group the game registered while building must be there.
+    if let Err(e) = shards_settings::install(&mut app, &config) {
+        eprintln!("error: {e}");
+        return ExitCode::from(2);
+    }
     app.add_systems(First, termination::exit_when_signalled);
     if let Some(r) = recording
         && let Err(e) = replay::play(app.world_mut(), r)
@@ -334,6 +340,12 @@ mod stand {
         let host_config = EngineConfig { paused: true, player_name: args.name.clone().unwrap_or_else(|| "host".into()), ..config.clone() };
         let hub = MemoryHub::new(config.seed);
         let mut host = build(&host_config);
+        // The host is the player at this machine: its settings are read as a game's of its own
+        // are (`--settings-dir`, `--no-settings`). The clients keep none (`SettingsStore::Off`).
+        if let Err(e) = shards_settings::install(&mut host, &host_config) {
+            eprintln!("error: {e}");
+            return ExitCode::from(2);
+        }
         host.add_systems(First, termination::exit_when_signalled);
         shards_net::stand::attach(&mut host, &hub, "host", None);
         host.finish();

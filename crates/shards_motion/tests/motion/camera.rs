@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use shards_core::{Intent, LocalPlayer};
 use shards_motion::camera::{AddTrauma, CameraShake};
 use shards_motion::*;
+use shards_settings::AccessibilitySettings;
 
 use crate::common::*;
 
@@ -224,4 +225,55 @@ fn field_of_view_and_shake_follow_the_settings() {
     s.app.update();
     assert!((s.app.world().get::<Transform>(s.camera).unwrap().translation - steady).length() < 1e-5);
     assert_eq!(s.app.world().resource::<CameraShake>().trauma, 0.0);
+}
+
+#[test]
+fn the_players_settings_drive_the_camera_in_a_window() {
+    let mut s = scene();
+    s.app.world_mut().resource_mut::<AccessibilitySettings>().fov_deg = 100.0;
+    s.app.world_mut().resource_mut::<AccessibilitySettings>().camera_shake = 0.0;
+    frame(&mut s.app);
+    frame(&mut s.app);
+    let Projection::Perspective(p) = s.app.world().get::<Projection>(s.camera).unwrap() else { panic!("perspective") };
+    assert!((p.fov - 100f32.to_radians()).abs() < 1e-5, "the accessibility field of view");
+    // No shake at all: a hit does nothing.
+    let steady = s.app.world().get::<Transform>(s.camera).unwrap().translation;
+    s.app.world_mut().commands().trigger(AddTrauma(1.0));
+    s.app.update();
+    s.app.update();
+    assert!((s.app.world().get::<Transform>(s.camera).unwrap().translation - steady).length() < 1e-5);
+}
+
+#[test]
+fn motion_blur_follows_the_accessibility_setting() {
+    use bevy::post_process::motion_blur::MotionBlur;
+    let mut s = scene();
+    let blur = s.app.world_mut().spawn(MotionBlur::default()).id();
+    let read = |s: &Scene| {
+        let b = s.app.world().get::<MotionBlur>(blur).unwrap();
+        (b.shutter_angle, b.samples)
+    };
+    s.app.world_mut().resource_mut::<AccessibilitySettings>().motion_blur = 0.2;
+    frame(&mut s.app);
+    assert_eq!(read(&s), (0.2, 1));
+    // None is off: the shutter never opens, so Bevy skips the pass.
+    s.app.world_mut().resource_mut::<AccessibilitySettings>().motion_blur = 0.0;
+    frame(&mut s.app);
+    assert_eq!(read(&s), (0.0, 1));
+    s.app.world_mut().resource_mut::<AccessibilitySettings>().motion_blur = 1.0;
+    frame(&mut s.app);
+    assert_eq!(read(&s), (1.0, 1));
+}
+
+#[test]
+fn motion_blur_off_and_on_again_keeps_the_games_sample_count() {
+    use bevy::post_process::motion_blur::MotionBlur;
+    let mut s = scene();
+    let blur = s.app.world_mut().spawn(MotionBlur { samples: 4, ..default() }).id();
+    for strength in [0.0, 0.7, 0.0, 1.0] {
+        s.app.world_mut().resource_mut::<AccessibilitySettings>().motion_blur = strength;
+        frame(&mut s.app);
+        let b = s.app.world().get::<MotionBlur>(blur).unwrap();
+        assert_eq!((b.shutter_angle, b.samples), (strength as f32, 4), "at {strength}");
+    }
 }

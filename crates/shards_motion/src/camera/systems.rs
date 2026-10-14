@@ -4,9 +4,11 @@
 
 use ai_core::{AiId, AiIndex};
 use bevy::camera::Projection;
+use bevy::post_process::motion_blur::MotionBlur;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 use shards_core::{Intent, LocalPlayer};
+use shards_settings::AccessibilitySettings;
 
 use super::math::{
     aim_assist, damp, lock_holds, next_lock_target, orbit_angles, orbit_position, pick_lock_target, resolve_camera_collision,
@@ -40,7 +42,24 @@ type Lockable<'w, 's> =Query<'w, 's, (&'static AiId, &'static Transform), (With<
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(PreUpdate, lock_on.after(ControlSystems::Read))
-        .add_systems(PostUpdate, orbit_camera.before(TransformSystems::Propagate));
+        .add_systems(PostUpdate, orbit_camera.before(TransformSystems::Propagate))
+        .add_systems(Update, apply_motion_blur);
+}
+
+/// `Update`: the accessibility setting `motion_blur` (0 none, 1 full) on every camera that
+/// carries Bevy's `MotionBlur` (a game opts in by adding the component; this only sets how
+/// strong, and 0 switches the effect off). Presentation only.
+fn apply_motion_blur(settings: Option<Res<AccessibilitySettings>>, mut cameras: Query<&mut MotionBlur>) {
+    let Some(settings) = settings else { return };
+    let strength = settings.blur();
+    for mut blur in &mut cameras {
+        // A shutter that is never open is no blur at all (Bevy skips the pass at 0). The samples are
+        // the game's choice of quality and stay as they are, so turning the blur off and on again
+        // gives back what the game asked for.
+        if blur.shutter_angle != strength {
+            blur.shutter_angle = strength;
+        }
+    }
 }
 
 /// The chest of a character: where the camera aims and rays go.

@@ -4,8 +4,8 @@
 //! the AI layer ([`ai_core`]), engine states and the loading gate ([`core`]), the
 //! content database ([`content`]), physics, the character controller, input and
 //! camera ([`motion`]), data-driven combat ([`action`]), levels from Blender ([`level`]),
-//! generated regions ([`world`]), enemy AI ([`npc`]) and saves ([`save`]); Bevy and serde come
-//! re-exported.
+//! generated regions ([`world`]), enemy AI ([`npc`]), saves ([`save`]) and the player's settings
+//! ([`settings`]); Bevy and serde come re-exported.
 //!
 //! ```ignore
 //! use shards::prelude::*;
@@ -23,8 +23,10 @@
 //! [`run`] is the standard `main`: `--headless --seed --port --port-file --no-remote
 //! --paused --hz --replay --verify [--windowed] --check-every N
 //! --check-detail components|entities|none --tick-budget-ms MS --check-content
-//! --worldgen-report REGION --seeds 1..1000 --bake-nav [TILES]`. [`testing::test_app`] builds the
-//! same game headless for tests, loaded and paused at tick 0.
+//! --worldgen-report REGION --seeds 1..1000 --bake-nav [TILES] --settings-dir DIR --no-settings`.
+//! [`testing::test_app`] builds the same game headless for tests, loaded and paused at tick 0. The
+//! player's settings start after the game's builder returned, so every settings group a game
+//! registers is there ([`settings::install`]).
 //!
 //! A game without a `bevy` dependency of its own uses Bevy's derives through the
 //! prelude (`use shards::prelude::*` in the module). serde and schemars derives need
@@ -57,6 +59,7 @@ pub use shards_motion as motion;
 pub use shards_net as net;
 pub use shards_npc as npc;
 pub use shards_save as save;
+pub use shards_settings as settings;
 pub use shards_world as world;
 
 pub use plugins::EnginePlugins;
@@ -77,6 +80,7 @@ pub mod prelude {
     pub use shards_motion::prelude::*;
     pub use shards_npc::prelude::*;
     pub use shards_save::prelude::*;
+    pub use shards_settings::prelude::*;
     pub use shards_world::prelude::*;
 
     pub use crate::EnginePlugins;

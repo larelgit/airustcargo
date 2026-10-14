@@ -34,6 +34,8 @@ gamepad = ["bevy/bevy_gilrs", "shards_motion/gamepad"]
 wayland = ["bevy/wayland"]
 # Faster incremental builds (`--features dynamic`).
 dynamic = ["bevy/dynamic_linking"]
+# Tracy profiler zones for every system (`--features trace_tracy`; connect the Tracy client).
+trace_tracy = ["bevy/trace_tracy"]
 
 [dependencies]
 ai_core.workspace = true
@@ -46,6 +48,7 @@ shards_npc.workspace = true
 shards_world.workspace = true
 shards_save.workspace = true
 shards_net.workspace = true
+shards_settings.workspace = true
 bevy = { workspace = true, features = ["default_app", "std", "multi_threaded", "serialize"] }
 serde.workspace = true
 serde_json.workspace = true

@@ -21,6 +21,7 @@ mod replays;
 mod saves;
 mod scenario_files;
 mod scenarios;
+mod settings;
 mod shutdown;
 mod snapshots;
 mod tiles;

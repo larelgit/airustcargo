@@ -12,6 +12,8 @@ use bevy::prelude::*;
 use bevy::text::{Font, FontSize, FontSource};
 use bevy::window::Window;
 
+use shards_settings::FlashLevel;
+
 use crate::draw::{self, edge_marker, palette, EdgeMarker};
 use crate::zone::{threat_indicators, Indicator};
 
@@ -28,11 +30,13 @@ pub struct ThreatHud {
     /// A font with the symbols of the game's telegraphs (`⚠`, `↯`). Bevy's default font only
     /// has ASCII; without a font those are shown as ASCII stand-ins (`!`, `/`).
     pub font: Option<Handle<Font>>,
+    /// How much the markers flicker (the player's accessibility setting).
+    pub flashes: FlashLevel,
 }
 
 impl Default for ThreatHud {
     fn default() -> Self {
-        Self { enabled: true, horizon: 3.0, margin: 56.0, size: 52.0, font: None }
+        Self { enabled: true, horizon: 3.0, margin: 56.0, size: 52.0, font: None, flashes: FlashLevel::Full }
     }
 }
 
@@ -219,7 +223,7 @@ fn update_ui(
             continue;
         };
         let urgency = draw::intensity(indicator.lands_in, hud.horizon);
-        let flicker = draw::pulse(urgency, now);
+        let flicker = draw::pulse_at(urgency, now, hud.flashes);
         let size = hud.size * (0.85 + 0.35 * urgency);
         let color = palette::rgba(palette::DANGER, (0.55 + 0.45 * urgency) * flicker);
         node.display = Display::Flex;
