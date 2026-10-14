@@ -45,8 +45,10 @@ pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        // The player's settings (rebound keys, volume, accessibility) are kept in the user's config folder, under this game's name.
-        app.insert_resource(SettingsAppId::new("my-game"));
+        // The player's settings (rebound keys, volume, accessibility) are kept in the user's config folder, under this
+        // game's name (`my_game` becomes the folder `my-game`). Spelled like the package, so the rename of the package
+        // finds it: games made from the template must not share one folder.
+        app.insert_resource(SettingsAppId::new("my_game"));
         // Earlier versions of the template kept rebound keys in `~/.config/my_game/input.ron`; asking
         // for them here imports them once. A game that never shipped that file deletes this line.
         app.insert_resource(shards::motion::InputSettings::for_game("my_game"));

@@ -7,7 +7,8 @@
 //! - `content`: content files are valid; the game's tool and condition behave
 //! - `region`: the generated valley: 1000 seeds pass, the same seed the same bytes, the
 //!   loading screen headless, a raider on the navmesh and its leash
-//! - `manifest`: the game depends on `shards` and nothing else
+//! - `manifest`: the game depends on `shards` and nothing else, and its settings folder is named
+//!   after the package (a rename finds it)
 
 mod content;
 mod determinism;

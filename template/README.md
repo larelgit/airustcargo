@@ -79,9 +79,12 @@ cargo game                 # окно (`cargo game` = `cargo run --`, см. .car
    git init
    ```
 2. **Переименуйте пакет.** Имя `my_game` встречается в `Cargo.toml` (`name`, `[[bin]]`), `src/main.rs`
-   (`my_game::build_app`), `src/lib.rs` (`SettingsAppId`, `InputSettings::for_game("my_game")`, заголовок окна),
-   `src/arena.rs` (`require_content … "my_game"`) и в `tests/` (`my_game::test_app`). Найти все места:
-   `grep -rn my_game .`. Строка `InputSettings::for_game` переносит клавиши из старого `~/.config/my_game/input.ron`,
+   (`my_game::build_app`), `src/lib.rs` (`SettingsAppId::new("my_game")`, `InputSettings::for_game("my_game")`,
+   заголовок окна), `src/arena.rs` (`require_content … "my_game"`) и в `tests/` (`my_game::test_app`). Найти все места:
+   `grep -rn my_game .`. `SettingsAppId::new("my_game")` называет папку настроек игрока (`~/.config/my-game/`; `_`
+   становится `-`): её нужно переименовать вместе с пакетом, иначе игры, сделанные из шаблона, хранят настройки в одной
+   папке и затирают друг другу клавиши и громкость (тест `the_settings_folder_is_named_after_the_package_the_way_a_rename_finds_it`
+   напомнит). Строка `InputSettings::for_game` переносит клавиши из старого `~/.config/my_game/input.ron`,
    который писали прежние версии шаблона; новой игре она не нужна, её можно удалить.
 3. **Подключите движок.** В `Cargo.toml` замените путь на git-зависимость. Шаблон использует мир, врагов-NPC и
    навсетку, поэтому нужен движок фазы B (будущий `0.3.0`); тег `v0.2.0` (фаза A) не подойдёт. Пока тегов в
@@ -267,7 +270,7 @@ cargo test --test game determinism
 | `replays.rs` | запись → проигрывание совпадает; изменённая игра называет тик расхождения; эталонные реплеи |
 | `content.rs` | контент без ошибок (в игре и как в `--check-content`), опечатки называют исправление, правка числа меняет следующий удар без пересборки, `taunt`, `arena_cleared` |
 | `region.rs` | тысяча зёрен долины проходят проверки; тот же seed и версия — тот же манифест байт в байт; переход в регион без окна через экран загрузки (герой тот же, тики не сдвинулись); колонна руины из файла Blender стоит, где её поставил тайл; рейдер идёт по навсетке и не уходит за поводок |
-| `manifest.rs` | единственная зависимость — `shards`, `target-dir` не переопределён |
+| `manifest.rs` | единственная зависимость — `shards`, `target-dir` не переопределён, папка настроек названа как пакет (переименование её найдёт) |
 
 ## CI игры
 

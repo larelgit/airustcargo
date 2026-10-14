@@ -33,6 +33,19 @@ fn the_game_depends_on_shards_and_nothing_else() {
 }
 
 #[test]
+fn the_settings_folder_is_named_after_the_package_the_way_a_rename_finds_it() {
+    // A game made from the template is renamed with a search for `my_game` (template/README.md, README.md). A folder
+    // name spelled another way (`my-game`) is not found, and every game made that way then keeps its settings in one
+    // folder and overwrites the others'. The slug turns `_` into `-`, so the name in the code is the package's own.
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs")).unwrap();
+    let named = format!("SettingsAppId::new(\"{}\")", env!("CARGO_PKG_NAME"));
+    assert!(source.contains(&named), "src/lib.rs must contain `{named}`: rename it together with the package");
+    let app = my_game::test_app(1);
+    let id = app.world().resource::<shards::settings::SettingsAppId>();
+    assert_eq!(*id, shards::settings::SettingsAppId::new(env!("CARGO_PKG_NAME")));
+}
+
+#[test]
 fn the_game_does_not_point_cargo_at_another_target_dir() {
     let config = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/.cargo/config.toml")).unwrap();
     assert!(!config.lines().any(|l| l.trim_start().starts_with("target-dir")), "a game's target/ lives next to its Cargo.toml");
