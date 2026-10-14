@@ -24,7 +24,8 @@ pub struct NetDef {
     pub desync_every: u32,
     /// Prediction error, in meters, above which the own body snaps instead of blending (C4).
     pub snap_distance: f32,
-    /// Share of the pending correction applied per tick (C4).
+    /// Share of the correction still to make that moves the own body each tick, until the
+    /// next comparison with the host's state says what is left (C4).
     pub correction_rate: f32,
     /// Seconds of silence after which a peer counts as gone.
     pub timeout_secs: f32,

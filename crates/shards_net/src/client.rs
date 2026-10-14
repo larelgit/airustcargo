@@ -702,7 +702,8 @@ fn apply_pending(world: &mut World, client: &mut NetClient) {
     if let Some(margin) = delta.margin {
         client.clock.report(margin);
     }
-    // The host's order queue for the body (orders finish there), unless ours is on its way.
+    // The host's order queue for the body (orders finish there), unless ours is on its way;
+    // with an order that ended, the aim and lock-on it left.
     if let Some(own) = &delta.own
         && let Some(value) = own.components.get(Intent::type_path())
         && let Ok(reflected) = decode_value(world, Intent::type_path(), value)
@@ -710,7 +711,7 @@ fn apply_pending(world: &mut World, client: &mut NetClient) {
         && let Some(body) = client.body.and_then(|id| world.resource::<AiIndex>().get(AiId(id)))
         && let Some(mut intent) = world.get_mut::<Intent>(body)
     {
-        client.capture.adopt_orders(own.applied_input_tick, &mut intent, &host_intent.orders);
+        client.capture.adopt_orders(own.applied_input_tick, &mut intent, &host_intent);
     }
     // The desync check: what this world holds of the host's, against the host's hash.
     if let Some(host_hash) = delta.hash {

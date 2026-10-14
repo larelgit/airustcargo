@@ -214,6 +214,8 @@ pub struct InputCapture {
     /// Order commands sent and not acknowledged: until then the host's orders do not replace
     /// the local ones.
     pub orders_pending_until: u64,
+    /// The tick of the newest frame with a held state.
+    pub state_sent_at: u64,
 }
 
 impl InputCapture {
@@ -237,6 +239,7 @@ impl InputCapture {
         if state != self.state || orders_changed {
             frame.state = Some(state.clone());
             self.state = state;
+            self.state_sent_at = tick;
         }
         let take = intent.pressed.len().min(MAX_PRESSES_PER_FRAME);
         frame.presses = intent.pressed.drain(..take).collect();
@@ -274,18 +277,29 @@ impl InputCapture {
         }
     }
 
-    /// The host's orders for the body: taken over (here and in what is remembered) unless an
-    /// order command of ours is not applied there yet, or not even captured (a tool changed
-    /// the queue this tick; the state is applied before the capture). `applied` is the newest
-    /// frame the host applied to the body (`OwnState::applied_input_tick`), not the newest it
-    /// received: a received frame waits for its tick, and the orders sent until then are from
-    /// before it.
-    pub fn adopt_orders(&mut self, applied: u64, intent: &mut Intent, host: &VecDeque<Order>) {
-        if self.orders_pending_until > applied || intent.orders != self.orders || intent.orders == *host {
+    /// The host's orders for the body (its `Intent`): taken over (here and in what is
+    /// remembered) unless an order command of ours is not applied there yet, or not even
+    /// captured (a tool changed the queue this tick; the state is applied before the capture).
+    /// `applied` is the newest frame the host applied to the body
+    /// (`OwnState::applied_input_tick`), not the newest it received: a received frame waits
+    /// for its tick, and the orders sent until then are from before it.
+    ///
+    /// An order that ended there (the queue is shorter) leaves the body's `aim` and `target`
+    /// as it steered them (an attack's lock-on, the aim of its swing): taken over as well,
+    /// when the host has every held state of ours and this machine did not change it since.
+    pub fn adopt_orders(&mut self, applied: u64, intent: &mut Intent, host: &Intent) {
+        if self.orders_pending_until > applied || intent.orders != self.orders || intent.orders == host.orders {
             return;
         }
-        intent.orders = host.clone();
-        self.orders = host.clone();
+        let ended = host.orders.len() < intent.orders.len();
+        let mut now = IntentState::of(intent);
+        now.held.truncate(MAX_HELD);
+        if ended && self.state_sent_at <= applied && now == self.state {
+            (intent.aim, intent.target) = (host.aim, host.target);
+            (self.state.aim, self.state.target) = (host.aim, host.target);
+        }
+        intent.orders = host.orders.clone();
+        self.orders = host.orders.clone();
     }
 }
 
@@ -411,6 +425,11 @@ mod tests {
         assert!(check(&crate::msg::Inputs { frames: vec![InputFrame { tick: 5, presses: vec![long], ..default() }], ..default() }).is_err());
     }
 
+    /// The host's `Intent` of the body with `orders`.
+    fn host(orders: &[Order]) -> Intent {
+        Intent { orders: orders.iter().cloned().collect(), ..default() }
+    }
+
     #[test]
     fn orders_are_taken_from_the_host_once_it_applied_ours() {
         let mut intent = Intent::default();
@@ -419,19 +438,48 @@ mod tests {
         intent.orders.push_back(order.clone());
         capture.capture(10, &mut intent, 32).unwrap();
         // A state from before tick 10's frame ran on the host: its queue is the old one.
-        capture.adopt_orders(9, &mut intent, &VecDeque::new());
+        capture.adopt_orders(9, &mut intent, &host(&[]));
         assert_eq!(intent.orders.len(), 1, "ours is not applied there yet: kept");
-        capture.adopt_orders(10, &mut intent, &VecDeque::from([order.clone()]));
+        capture.adopt_orders(10, &mut intent, &host(&[order.clone()]));
         assert_eq!(intent.orders.len(), 1);
         // The order finished on the host.
-        capture.adopt_orders(12, &mut intent, &VecDeque::new());
+        capture.adopt_orders(12, &mut intent, &host(&[]));
         assert!(intent.orders.is_empty());
         assert_eq!(capture.capture(13, &mut intent, 32), None, "taken over: nothing to send");
         // A new order, given before this tick's capture: a state of the host's arriving
         // first does not take it back.
         intent.orders.push_back(order);
-        capture.adopt_orders(13, &mut intent, &VecDeque::new());
+        capture.adopt_orders(13, &mut intent, &host(&[]));
         assert_eq!(intent.orders.len(), 1, "not captured yet: kept");
         assert!(capture.capture(14, &mut intent, 32).is_some_and(|f| f.orders.is_some_and(|o| o.len() == 1)));
+    }
+
+    #[test]
+    fn an_order_that_ended_on_the_host_leaves_its_aim_and_lock_on_here_too() {
+        // Locked on e6, then a one-shot attack on e7.
+        let mut intent = Intent { target: Some(AiId(6)), ..default() };
+        let mut capture = InputCapture::starting_from(&intent);
+        let swing = Order::Attack { target: AiId(7), input: "light".into(), repeat: false };
+        intent.orders.push_back(swing.clone());
+        capture.capture(10, &mut intent, 32).unwrap();
+        // The swing ended on the host: the lock-on moved to e7, the aim stayed on it.
+        let ended = Intent { aim: Some(Vec3::Z), target: Some(AiId(7)), ..default() };
+        capture.adopt_orders(12, &mut intent, &ended);
+        assert_eq!((intent.orders.len(), intent.aim, intent.target), (0, Some(Vec3::Z), Some(AiId(7))));
+        assert_eq!(capture.capture(13, &mut intent, 32), None, "the host holds it already: nothing to send");
+
+        // Locked on e8 since the last state the host applied: the player's lock-on stays.
+        intent.orders.push_back(swing.clone());
+        capture.capture(20, &mut intent, 32).unwrap();
+        intent.target = Some(AiId(8));
+        capture.capture(21, &mut intent, 32).unwrap();
+        capture.adopt_orders(20, &mut intent, &ended);
+        assert_eq!((intent.orders.len(), intent.target), (0, Some(AiId(8))), "e8 is on its way");
+        // Changed and not captured yet: kept as well.
+        intent.orders.push_back(swing);
+        capture.capture(30, &mut intent, 32).unwrap();
+        intent.target = Some(AiId(9));
+        capture.adopt_orders(30, &mut intent, &ended);
+        assert_eq!((intent.orders.len(), intent.target), (0, Some(AiId(9))));
     }
 }
