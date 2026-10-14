@@ -890,5 +890,13 @@ mod tests {
         let crate::sim::StepPoll::Done(outcome) = queue.lock().unwrap().poll(1) else { panic!("not done") };
         assert_eq!((&outcome.result, outcome.tick, outcome.halted.as_ref()), (&direct.result, 3, Some(&halt)));
         assert!(crate::sim::is_paused(deferred.world()));
+
+        // The `step_poll` tool (the CLI's `shards act step_poll`, which exits with 3 on a halt)
+        // carries the halt along; a poll of an unfinished or unknown request has none.
+        let polled = crate::call_tool(deferred.world_mut(), "dev", "step_poll", json!({"id": 1}));
+        assert_eq!((&polled.result, polled.halted.as_ref()), (&direct.result, Some(&halt)));
+        assert_eq!((polled.tick, &polled.journal), (outcome.tick, &outcome.journal));
+        let unknown = crate::call_tool(deferred.world_mut(), "dev", "step_poll", json!({"id": 9}));
+        assert!(!unknown.ok && unknown.halted.is_none(), "{unknown:?}");
     }
 }

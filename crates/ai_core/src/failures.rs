@@ -153,20 +153,21 @@ pub struct AiFailures {
     /// Systems that already have a crash replay this session: replaying the first one
     /// reproduces the failure, more copies would only fill the folder.
     saved: HashSet<String>,
-    /// Tick of the newest failure.
-    last_tick: Option<u64>,
+    /// A gameplay system failed in the tick that just ran. Set after every tick, so a tick
+    /// that runs again after a rewind (a snapshot was loaded) starts clean.
+    failed_this_tick: bool,
 }
 
 impl AiFailures {
     pub fn new(crash_replays: bool) -> Self {
-        Self { unreported: Vec::new(), crash_replays, saved: HashSet::default(), last_tick: None }
+        Self { unreported: Vec::new(), crash_replays, saved: HashSet::default(), failed_this_tick: false }
     }
 }
 
-/// A gameplay system failed in tick `tick`: its state is half-updated, and the failure
-/// already halted the game, so invariants leave that tick alone.
-pub(crate) fn failed_in(world: &World, tick: u64) -> bool {
-    world.get_resource::<AiFailures>().is_some_and(|f| f.last_tick == Some(tick))
+/// A gameplay system failed in the tick that just ran: its state is half-updated, and the
+/// failure already halted the game, so invariants leave that tick alone.
+pub(crate) fn failed_this_tick(world: &World) -> bool {
+    world.get_resource::<AiFailures>().is_some_and(|f| f.failed_this_tick)
 }
 
 impl Default for AiFailures {
@@ -187,7 +188,10 @@ pub(crate) fn plugin(app: &mut App, catch_system_panics: bool, crash_replays: bo
 
 /// Right after a tick: the exact tick, and in real time no further tick this frame.
 pub(crate) fn collect_after_tick(world: &mut World) {
-    collect(world);
+    let failed = !collect(world).is_empty();
+    if let Some(mut state) = world.get_resource_mut::<AiFailures>() {
+        state.failed_this_tick = failed;
+    }
 }
 
 /// This app's failures (and untagged ones); other apps' stay queued for them.
@@ -230,7 +234,6 @@ pub fn collect(world: &mut World) -> Vec<SystemFailure> {
     }
     if let Some(mut state) = world.get_resource_mut::<AiFailures>() {
         state.unreported.extend(failures.iter().cloned());
-        state.last_tick = Some(tick);
     }
     let replay = failures.iter().find_map(|f| f.crash_replay.clone());
     sim::halt(world, sim::Halt { reason: failures[0].headline(), replay });

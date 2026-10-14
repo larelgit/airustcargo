@@ -402,6 +402,14 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
         }
     }
 
+    // A finished deferred step answers with its whole outcome, `halted` included, as `step`
+    // would have: a poll runs no ticks, so the tool alone cannot tell the CLI to exit with 3.
+    if tool == "step_poll"
+        && let Some(done) = args.get("id").and_then(Value::as_u64).and_then(|id| sim::finished_request(world, id))
+    {
+        return done;
+    }
+
     // What failed before this call is gameplay's (journaled, the game pauses); what
     // fails during it is the tool's.
     crate::failures::collect(world);
@@ -689,11 +697,12 @@ mod tests {
         assert_eq!(route(&app, "step"), NetRoute::Local);
         assert_eq!(route(&app, "replay_save"), NetRoute::HostOnly(ON_THE_HOST));
         assert_eq!(route(&app, "snapshot_load"), NetRoute::HostOnly(ON_THE_HOST));
-        for rules in ["assert_add", "assert_remove", "assert_reset"] {
-            assert_eq!(route(&app, rules), NetRoute::Host, "{rules}: the rules are checked on the host");
+        // The rules are checked on the host, and a host caps a guest's forwarded calls to the
+        // player scope (these are Dev tools): no `assert_*` tool is handed over, the list
+        // (a query) included.
+        for rules in ["assert_add", "assert_list", "assert_remove", "assert_reset"] {
+            assert_eq!(route(&app, rules), NetRoute::HostOnly(crate::invariants::RULES_ON_THE_HOST), "{rules}");
         }
-        // A query never goes to the host: the list is asked there.
-        assert_eq!(route(&app, "assert_list"), NetRoute::HostOnly(ON_THE_HOST));
         let teleport = |x: f32| json!({"id": 1, "x": x, "z": 0});
 
         // No forwarder: everything runs here.
@@ -712,6 +721,19 @@ mod tests {
         assert_eq!((sent.len(), sent[0].tool.as_str(), sent[0].args["x"].as_f64()), (1, "teleport", Some(5.0)));
         let crate_x = |app: &mut App| app.world_mut().query::<&Transform>().single(app.world()).unwrap().translation.x;
         assert_eq!(crate_x(&mut app), 2.0, "the host moves it, not this game");
+
+        for (tool, args) in [
+            ("assert_add", json!({"name": "calm", "when": "error"})),
+            ("assert_list", json!({})),
+            ("assert_remove", json!({"name": "calm"})),
+            ("assert_reset", json!({})),
+        ] {
+            let out = call_tool(app.world_mut(), "dev", tool, args);
+            assert!(!out.ok, "{tool}: {out:?}");
+            let why = "the rules are checked on the host: call it there";
+            assert_eq!(out.result, format!("`{tool}` runs on the host only: {why} (127.0.0.1:7777)"));
+        }
+        assert_eq!(app.world().resource::<Forwarded>().0.len(), 1, "no rule change went to the host");
 
         let out = call_tool(app.world_mut(), "dev", "snapshot_save", json!({}));
         assert!(!out.ok);
