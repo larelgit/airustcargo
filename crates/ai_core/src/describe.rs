@@ -52,6 +52,20 @@ pub fn advice(world: &World, subject: Entity) -> Vec<String> {
     world.get_resource::<AiAdvisors>().map(|a| a.0.iter().flat_map(|f| f(world, subject)).collect()).unwrap_or_default()
 }
 
+/// Where the subject is, from the whole world, in lines of their own under `YOU` (after its
+/// `ALERT`s): `TILE (3, 4) road_bend rot 90 · forest_a seed 42 v3`. Return nothing to add
+/// nothing.
+pub type ObserveLinesFn = fn(&World, Entity) -> Vec<String>;
+
+/// Registered sources of lines under `YOU`, in registration order.
+#[derive(Resource, Default, Clone)]
+pub struct AiObserveLines(pub Vec<ObserveLinesFn>);
+
+/// Every line about `subject`'s surroundings, in registration order.
+pub fn observe_lines(world: &World, subject: Entity) -> Vec<String> {
+    world.get_resource::<AiObserveLines>().map(|l| l.0.iter().flat_map(|f| f(world, subject)).collect()).unwrap_or_default()
+}
+
 /// Everything the AI layer knows about one entity, independent of the viewer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EntityFacts {

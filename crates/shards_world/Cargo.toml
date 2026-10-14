@@ -1,0 +1,27 @@
+[package]
+name = "shards_world"
+description = "Shards world: tiles and sockets, the region generator (solver, checks, retries, fallback), canonical manifests, dungeons, region loading, active zones, tile streaming."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# The tile overlay (bounds and sockets drawn with gizmos). The streaming of tile visuals
+# itself is always built and runs whenever there is a window and a spawner.
+render = ["ai_core/render", "shards_motion/render", "bevy/bevy_gizmos"]
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+shards_motion.workspace = true
+bevy = { workspace = true, features = ["std", "serialize", "bevy_state"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+# Integration tests build the game the way a game does: `shards::testing::test_app`. With
+# the features a game has, so `cargo test -p shards_world` builds Bevy as the workspace does.
+shards = { workspace = true, features = ["render", "remote", "hot_reload"] }

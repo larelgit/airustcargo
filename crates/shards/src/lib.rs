@@ -3,8 +3,8 @@
 //! A game depends on this crate alone and gets a deterministic fixed-tick core with
 //! the AI layer ([`ai_core`]), engine states and the loading gate ([`core`]), the
 //! content database ([`content`]), physics, the character controller, input and
-//! camera ([`motion`]), data-driven combat ([`action`]), levels from Blender ([`level`])
-//! and enemy AI ([`npc`]); Bevy and serde come re-exported.
+//! camera ([`motion`]), data-driven combat ([`action`]), levels from Blender ([`level`]),
+//! generated regions ([`world`]) and enemy AI ([`npc`]); Bevy and serde come re-exported.
 //!
 //! ```ignore
 //! use shards::prelude::*;
@@ -20,7 +20,8 @@
 //! ```
 //!
 //! [`run`] is the standard `main`: `--headless --seed --port --port-file --no-remote
-//! --paused --hz --replay --verify [--windowed] --check-content`. [`testing::test_app`] builds the
+//! --paused --hz --replay --verify [--windowed] --check-content --worldgen-report REGION
+//! --seeds 1..1000`. [`testing::test_app`] builds the
 //! same game headless for tests, loaded and paused at tick 0.
 //!
 //! A game without a `bevy` dependency of its own uses Bevy's derives through the
@@ -49,6 +50,7 @@ pub use shards_core as core;
 pub use shards_level as level;
 pub use shards_motion as motion;
 pub use shards_npc as npc;
+pub use shards_world as world;
 
 pub use plugins::EnginePlugins;
 pub use run::run;
@@ -66,6 +68,7 @@ pub mod prelude {
     pub use shards_level::prelude::*;
     pub use shards_motion::prelude::*;
     pub use shards_npc::prelude::*;
+    pub use shards_world::prelude::*;
 
     pub use crate::EnginePlugins;
 

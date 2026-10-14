@@ -66,7 +66,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 pub use builtin::{AiConditions, StopWhen};
-pub use describe::{AdviceFn, AiAdvisors, AiDescribers, AiKind, Describer, EntityFacts};
+pub use describe::{AdviceFn, AiAdvisors, AiDescribers, AiKind, AiObserveLines, Describer, EntityFacts, ObserveLinesFn};
 pub use failures::{ai_core_error_handler, AiFailures, SystemFailure};
 pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible};
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
@@ -219,6 +219,10 @@ pub trait AiAppExt {
     /// 0.32s): move 2.1m S to leave it`). Return nothing when there is nothing to say.
     fn register_ai_advice(&mut self, advise: describe::AdviceFn) -> &mut Self;
 
+    /// Lines about where the subject is, printed under `YOU` as they are (`TILE (3, 4)
+    /// road_bend rot 90`): for modules whose state is about places, not entities.
+    fn register_ai_observe_lines(&mut self, lines: describe::ObserveLinesFn) -> &mut Self;
+
     /// An action tool: journaled, returns the list of changes it caused.
     fn add_ai_tool<A, O, M, S>(&mut self, name: &str, scope: Scope, system: S) -> &mut Self
     where
@@ -276,6 +280,11 @@ impl AiAppExt for App {
 
     fn register_ai_advice(&mut self, advise: describe::AdviceFn) -> &mut Self {
         self.world_mut().get_resource_or_init::<AiAdvisors>().0.push(advise);
+        self
+    }
+
+    fn register_ai_observe_lines(&mut self, lines: describe::ObserveLinesFn) -> &mut Self {
+        self.world_mut().get_resource_or_init::<AiObserveLines>().0.push(lines);
         self
     }
 

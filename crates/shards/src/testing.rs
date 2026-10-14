@@ -10,7 +10,9 @@
 
 use std::time::{Duration, Instant};
 
-use ai_core::{call_tool, CallOutcome, SimGate};
+use ai_core::replay::{self, Replay};
+use ai_core::sim::{StepEnd, StepReport};
+use ai_core::{call_tool, AiReplay, CallOutcome, ReplayReport, SimGate, SystemFailure};
 use bevy::prelude::*;
 use serde_json::Value;
 use shards_core::{EngineConfig, EngineState};
@@ -79,6 +81,33 @@ pub fn loading(world: &World) -> Option<String> {
         (_, false) => Some(reasons.join(", ")),
         (true, true) => Some(format!("{state:?}")),
     }
+}
+
+/// Runs ticks until tick `end`, waiting out loading on the way: a region change loads
+/// behind the gate, and playback waits for it as the recording did. Returns the gameplay
+/// failures that stopped it early (none: it got there).
+pub fn run_to(app: &mut App, end: u64, load_timeout: Duration) -> Result<Vec<SystemFailure>, String> {
+    loop {
+        let left = end.saturating_sub(ai_core::sim::tick(app.world()));
+        match ai_core::sim::step(app.world_mut(), left, Duration::from_secs(24 * 3600), |_| None)? {
+            StepReport { end: StepEnd::SystemFailed(failures), .. } => return Ok(failures),
+            report if report.to_tick < end && loading(app.world()).is_some() => wait_until_loaded(app, load_timeout)?,
+            _ => return Ok(Vec::new()),
+        }
+    }
+}
+
+/// Plays `recording` on `app` — the game built fresh with the recording's seed, finished but
+/// not yet loaded — to its end, and returns how it compares (`--verify` in a test).
+pub fn verify(app: &mut App, recording: Replay) -> Result<ReplayReport, String> {
+    let end = recording.end.tick;
+    replay::play(app.world_mut(), recording)?;
+    wait_until_loaded(app, LOAD_TIMEOUT)?;
+    if let Some(failure) = run_to(app, end, LOAD_TIMEOUT)?.first() {
+        return Err(format!("gameplay {}: {}", failure.headline(), failure.message));
+    }
+    app.update();
+    app.world().resource::<AiReplay>().report().cloned().ok_or_else(|| "the replay did not finish".to_owned())
 }
 
 /// Calls `tool` as agent `dev` (dev scope, the player's body).

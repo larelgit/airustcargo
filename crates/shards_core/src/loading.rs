@@ -53,6 +53,16 @@ impl LoadingGate {
     }
 }
 
+/// Every requirement and what it reports right now, in registration order: for code that
+/// must know whether a loading state can end at once (a region change finishes inside the
+/// call that started it when nothing else is pending).
+pub fn statuses(world: &World) -> Vec<(String, LoadStatus)> {
+    let Some(gate) = world.get_resource::<LoadingGate>() else {
+        return Vec::new();
+    };
+    gate.checks.iter().map(|(label, check)| (label.clone(), check(world))).collect()
+}
+
 /// Hold name for the frame between "everything is loaded" and `OnEnter` having run.
 const ENTERING: &str = "engine";
 

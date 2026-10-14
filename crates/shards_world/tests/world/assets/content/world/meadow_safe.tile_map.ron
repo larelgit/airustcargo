@@ -1,0 +1,21 @@
+// The hand-made meadow: a road along the north edge from the spawn to the far camp.
+{
+    "meadow_safe": (
+        rows: [
+            "road_end:90 road_straight:90 road_straight:90 road_straight:90 road_straight:90 road_straight:90 road_straight:90 road_end:270",
+            "grass grass grass grass grass grass grass grass",
+            "grass grass grass grass grass grass grass grass",
+            "grass grass grass grass grass grass grass grass",
+            "grass grass grass grass grass grass grass grass",
+            "grass grass grass grass grass grass grass grass",
+            "grass grass grass grass grass grass grass grass",
+            "grass grass grass grass grass grass grass grass",
+        ],
+        pois: [
+            (poi: "spawn", at: (0, 0)),
+            (poi: "camp", at: (3, 0)),
+            (poi: "shrine", at: (5, 0)),
+            (poi: "camp", at: (7, 0)),
+        ],
+    ),
+}

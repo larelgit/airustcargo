@@ -8,7 +8,7 @@ use sandbox::gameplay::LayoutPiece;
 use sandbox::SandboxPlugin;
 use shards::ai_core::replay;
 use shards::ai_core::AiReplay;
-use shards::motion::{Volume, VolumeKind};
+use shards::motion::{ColliderId, Volume, VolumeKind};
 use shards::prelude::*;
 use shards::serde_json::json;
 
@@ -87,10 +87,12 @@ fn the_world_is_spawned_from_its_layout() {
     let world = app.world_mut();
     let pieces = world.query::<&LayoutPiece>().iter(world).count();
     assert_eq!(pieces, 30 + 1 + 2 + 5, "boxes, the ramp, water and updraft, landmarks");
-    // Query order follows archetypes, not spawn order: compare as a set.
-    let mut kinds: Vec<String> = world.query::<&Volume>().iter(world).map(|v| format!("{}", v.kind)).collect();
-    kinds.sort();
-    assert_eq!(kinds, ["trigger \"goal\"", "updraft", "water"]);
+    // In spawn order (query order follows archetypes, which other modules add to).
+    let mut volumes: Vec<(ColliderId, String)> =
+        world.query::<(&ColliderId, &Volume)>().iter(world).map(|(id, v)| (*id, format!("{}", v.kind))).collect();
+    volumes.sort();
+    let kinds: Vec<String> = volumes.into_iter().map(|(_, kind)| kind).collect();
+    assert_eq!(kinds, ["water", "updraft", "trigger \"goal\""]);
 }
 
 #[test]

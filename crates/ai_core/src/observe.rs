@@ -249,6 +249,9 @@ pub fn observe(world: &World, opts: &ObserveOptions) -> String {
             for line in crate::describe::advice(world, s.entity) {
                 let _ = writeln!(out, "ALERT {line}");
             }
+            for line in crate::describe::observe_lines(world, s.entity) {
+                let _ = writeln!(out, "{line}");
+            }
         }
         None => out.push_str("YOU  (no subject: looking from the world origin)\n"),
     }

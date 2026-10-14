@@ -12,6 +12,7 @@
 //! shards save-replay               # this session as a replay file (cargo sandbox --replay F)
 //! shards --port-file F wait        # a game started with `--port 0 --port-file F`; waits for loading
 //! shards content check             # every content file parsed and validated
+//! shards worldgen --region meadow --seeds 1..1000 --report   # batch check of the generator
 //! shards scenario a.scenario b.scenario   # commands, expectations, invariants: exit 0 / 1 failed / 2 error
 //! shards tools
 //! shards raw world.query '{"data":{"components":["sandbox::gameplay::combat::Health"]}}'
@@ -138,6 +139,20 @@ enum Cmd {
     Content {
         #[command(subcommand)]
         cmd: ContentCmd,
+    },
+    /// Generate a region for many seeds in the running game and print the batch report:
+    /// seeds passed, failed attempts by reason, distances between points of interest, panics
+    /// (exit 1 unless every seed passed). Without a game: `<game> --worldgen-report R --seeds S`.
+    Worldgen {
+        /// `region` or `dungeon` content id.
+        #[arg(long)]
+        region: String,
+        /// `1..1000` (both ends included), `7`, `1,5,10..20`.
+        #[arg(long, default_value = "1..100")]
+        seeds: String,
+        /// Print the batch report (what this command does; the flag reads well in scripts).
+        #[arg(long)]
+        report: bool,
     },
     /// Any BRP method (world.query, world.get_components, rpc.discover, ...).
     Raw { method: String, params: Option<String> },
@@ -391,6 +406,12 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
         }
         Cmd::Content { cmd: ContentCmd::Check } => {
             let out = act("content_check", json!({}))?;
+            let clean = out.get("result").and_then(Value::as_str).is_some_and(|r| r.starts_with("ok:"));
+            let code = print_outcome(&out, cli.json);
+            return Ok(if clean { code } else { ExitCode::FAILURE });
+        }
+        Cmd::Worldgen { region, seeds, report: _ } => {
+            let out = act("worldgen_report", json!({"region": region, "seeds": seeds}))?;
             let clean = out.get("result").and_then(Value::as_str).is_some_and(|r| r.starts_with("ok:"));
             let code = print_outcome(&out, cli.json);
             return Ok(if clean { code } else { ExitCode::FAILURE });
