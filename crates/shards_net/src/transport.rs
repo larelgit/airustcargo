@@ -32,7 +32,9 @@ pub trait Transport: Send + Sync + 'static {
         None
     }
 
-    /// Forget everything kept about `peer` (address tables). Called when a link is dropped.
+    /// Forget everything kept about `peer` (address tables). Called when a link is dropped. A UDP stranger
+    /// that was heard from but never answered expires by itself; answering it (`send`) is what makes it a
+    /// peer that needs this call.
     fn forget(&mut self, _peer: PeerId) {}
 
     /// The simulated conditions this transport applies to what it sends, `None` when it cannot simulate.
