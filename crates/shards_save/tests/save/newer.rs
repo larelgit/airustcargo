@@ -50,8 +50,11 @@ fn newer_envelope(bytes: &[u8]) -> Vec<u8> {
     String::from_utf8_lossy(bytes).replacen("shards-save/1", "shards-save/2", 1).into_bytes()
 }
 
+/// Makes the bytes of a save into a newer one.
+type MakeNewer = Box<dyn Fn(&[u8]) -> Vec<u8>>;
+
 /// How the primary becomes a newer one, and what the error says is newer.
-fn newer_primaries() -> Vec<(&'static str, &'static str, Box<dyn Fn(&[u8]) -> Vec<u8>>)> {
+fn newer_primaries() -> Vec<(&'static str, &'static str, MakeNewer)> {
     vec![
         ("a section above this build's", "section calendar v7 > v1", Box::new(|b| edited(b, |f| f.sections.0.get_mut("calendar").unwrap().version = 7))),
         ("a newer envelope", "save format shards-save/2 > shards-save/1", Box::new(newer_envelope)),
