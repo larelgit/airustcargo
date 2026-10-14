@@ -68,3 +68,55 @@ fn a_crypt_loads_like_any_region() {
     assert!(seen.contains("TILE (") && seen.contains(" entry rot 0 · crypt seed 4 v1"), "{seed}", seed = seen);
     assert!(pos(&app, hero).y > -0.5, "standing on the entry's floor: {}", pos(&app, hero));
 }
+
+/// A crypt whose main path may be as short as one room, with two hand-made rooms on it.
+const TIGHT: &str = r##"{
+    "tight": (
+        version: 1,
+        cell_size: 8.0,
+        entrance: "entry",
+        goal: "throne",
+        rooms: ["#crypt"],
+        fixed: ["vault", "shrine"],
+        path: (1, 5),
+        branches: (0, 1),
+        backtracks: 500,
+        attempts: 20,
+    ),
+}"##;
+
+const SHRINE: &str = r#"{
+    "shrine": (
+        doors: [(at: (0, 0), side: N), (at: (0, 0), side: S)],
+        rotations: [0, 90],
+        geometry: Inline([Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0))]),
+    ),
+}"#;
+
+#[test]
+fn every_fixed_room_is_on_the_main_path_even_when_the_path_may_be_shorter() {
+    let app = app(1, None);
+    let db = db_with(&app, &[("dungeon/tight.dungeon.ron", TIGHT), ("dungeon/shrine.room.ron", SHRINE)]);
+    assert_eq!(db.errors().count(), 0, "{:?}", db.errors().map(ToString::to_string).collect::<Vec<_>>());
+    let worldgen = worldgen(&app);
+    for seed in 1..=60 {
+        let made = generate(&db, &worldgen, "tight", seed).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        let count = |room: &str| made.manifest.tiles.iter().filter(|t| t.tile == room).count();
+        assert_eq!((count("vault"), count("shrine")), (1, 1), "seed {seed}: both hand-made rooms are in the dungeon");
+    }
+}
+
+#[test]
+fn a_fixed_room_with_one_door_is_refused_because_it_cannot_stand_between_two_others() {
+    let app = app(1, None);
+    let dead_end = r#"{ "dead_end": (doors: [(at: (0, 0), side: S)], geometry: Inline([Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0))])) }"#;
+    let dungeon = TIGHT.replace(r#"fixed: ["vault", "shrine"]"#, r#"fixed: ["vault", "dead_end"]"#);
+    let db = db_with(&app, &[("dungeon/tight.dungeon.ron", &dungeon), ("dungeon/dead_end.room.ron", dead_end)]);
+    let errors: Vec<String> = db.errors().map(ToString::to_string).collect();
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert!(
+        errors[0].contains("dungeon `tight`: fixed[1]: room `dead_end` has 1 door, but a fixed room stands between the entrance and the goal"),
+        "{}",
+        errors[0]
+    );
+}

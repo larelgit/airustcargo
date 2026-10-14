@@ -293,8 +293,10 @@ pub fn generate(db: &ContentDb, worldgen: &WorldGen, id: &str, def: &DungeonDef,
             message: format!("{stage}: {message}"),
             cells: Vec::new(),
         };
-        // The main path: entrance, the fixed rooms at random places among the fillers, goal.
-        let length = def.path.0 + b.rng.below(def.path.1 - def.path.0 + 1);
+        // The main path: entrance, the fixed rooms at random places among the fillers, goal. It
+        // is never shorter than the fixed list: a room the author put there is not dropped.
+        let shortest = def.path.0.max(fixed.len() as u32);
+        let length = shortest + b.rng.below(def.path.1.max(shortest) - shortest + 1);
         let mut middle = vec![Want::Filler; length as usize];
         let mut places: Vec<usize> = (0..middle.len()).collect();
         b.shuffle(&mut places);

@@ -937,7 +937,8 @@ pub struct DungeonDef {
     /// Hand-made rooms that must be on the main path.
     #[serde(default)]
     pub fixed: Vec<String>,
-    /// Rooms between entrance and goal (min, max), the fixed ones included.
+    /// Rooms between entrance and goal (min, max), the fixed ones included: a minimum below
+    /// the number of fixed rooms is raised to it.
     pub path: (u32, u32),
     /// Extra rooms off the main path (min, max).
     #[serde(default)]
@@ -979,6 +980,14 @@ impl ContentDef for DungeonDef {
         refs.require::<RoomDef>(&self.goal, "goal");
         for (i, room) in self.fixed.iter().enumerate() {
             refs.require::<RoomDef>(room, &format!("fixed[{i}]"));
+            // A fixed room is never the last of the path, so it needs a door in and a door out.
+            if let Some(doors) = refs.get::<RoomDef>(room).map(|r| r.doors.len()).filter(|n| *n < 2) {
+                refs.error(format!(
+                    "fixed[{i}]: room `{room}` has {doors} door{}, but a fixed room stands between the entrance and the goal; \
+                     give it two (one to come in by, one to leave by)",
+                    if doors == 1 { "" } else { "s" }
+                ));
+            }
         }
         let all: Vec<(&str, &RoomDef)> = refs.iter::<RoomDef>().collect();
         match resolve_set(&self.rooms, all.iter().copied(), |r: &RoomDef| &r.tags, "room") {
