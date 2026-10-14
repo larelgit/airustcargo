@@ -18,7 +18,7 @@ use bevy::prelude::*;
 use serde_json::json;
 use shards_core::{EngineConfig, LoadStatus};
 
-use crate::db::{is_claimed, list_files, read_file, ContentDb, ContentKinds, DefChange, Source, CONTENT_DIR};
+use crate::db::{is_claimed, list_files, read_file, ContentDb, ContentKinds, DefChange, Source, CONTENT_DIR, NO_FOLDER_HINT};
 
 /// One content file's text. Parsing happens when the database is built, so a broken
 /// file still loads (and is reported with every other problem).
@@ -84,9 +84,7 @@ pub fn asset_root(world: &World) -> PathBuf {
 pub(crate) fn start_loading(world: &mut World) {
     let root = asset_root(world);
     if !root.join(CONTENT_DIR).is_dir() {
-        let hint = "games run from cargo find `assets` in the crate folder; elsewhere it is next to the executable, \
-                    or where BEVY_ASSET_ROOT points";
-        let text = format!("content: no content folder at {}: no content ({hint})", root.join(CONTENT_DIR).display());
+        let text = format!("content: no content folder at {}: no content ({NO_FOLDER_HINT})", root.join(CONTENT_DIR).display());
         journal::emit(world, JournalKind::Warn, text);
     }
     let kinds = world.resource::<ContentKinds>().clone();

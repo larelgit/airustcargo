@@ -82,8 +82,8 @@ impl AttackKind {
         AttackKind::ALL.into_iter().find(|k| k.id() == id)
     }
 
-    /// Its numbers. A kind missing from content (reported when the game starts) does
-    /// nothing: no windup, no damage, no reach.
+    /// Its numbers. A kind missing from content (a content error: content with errors
+    /// still loads, but no edit removes one) does nothing: no windup, no damage, no reach.
     pub fn def(self, db: &ContentDb) -> &AttackDef {
         db.get::<AttackDef>(self.id()).unwrap_or(&MISSING_ATTACK)
     }

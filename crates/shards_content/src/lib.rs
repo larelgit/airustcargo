@@ -56,11 +56,24 @@ pub trait ContentAppExt {
     /// Registers content kind `T`: its files (`content/**/*.<KIND>.ron`) load into the
     /// [`ContentDb`]. Call it while building the app (before `App::finish`).
     fn add_content<T: ContentDef>(&mut self) -> &mut Self;
+
+    /// Ids of kind `T` the game's code uses by name: content without one of them has an
+    /// error saying `by` (`AttackKind`) needs it. Reported at load and by
+    /// `--check-content`, and a hot edit that deletes one is refused.
+    fn require_content<T: ContentDef>(&mut self, ids: &[&str], by: &str) -> &mut Self;
 }
 
 impl ContentAppExt for App {
     fn add_content<T: ContentDef>(&mut self) -> &mut Self {
         self.world_mut().get_resource_or_init::<ContentKinds>().register::<T>();
+        self
+    }
+
+    fn require_content<T: ContentDef>(&mut self, ids: &[&str], by: &str) -> &mut Self {
+        let mut kinds = self.world_mut().get_resource_or_init::<ContentKinds>();
+        for id in ids {
+            kinds.require::<T>(id, by);
+        }
         self
     }
 }

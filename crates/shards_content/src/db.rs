@@ -126,7 +126,7 @@ type Parsed = Result<Vec<(String, AnyDef)>, ParseFailure>;
 struct KindFns {
     parse: fn(&str) -> Parsed,
     from_json: fn(&Value) -> Result<AnyDef, String>,
-    to_json: fn(&AnyDef) -> Value,
+    to_json: fn(&AnyDef) -> Result<Value, String>,
     validate: fn(&AnyDef, &str, &mut Refs),
 }
 
@@ -141,12 +141,15 @@ pub struct KindInfo {
     fns: KindFns,
 }
 
-/// The registered content kinds, and the type registry prefabs validate against.
-/// Built by [`add_content`](crate::ContentAppExt::add_content); [`check_dir`] needs
-/// it to read files without an app running.
+/// The registered content kinds, the ids the game requires, and the type registry
+/// prefabs validate against. Built by [`add_content`](crate::ContentAppExt::add_content)
+/// and [`require_content`](crate::ContentAppExt::require_content); [`check_dir`] needs it
+/// to read files without an app running.
 #[derive(Resource, Clone, Default)]
 pub struct ContentKinds {
     kinds: Vec<KindInfo>,
+    /// (kind, id, who needs it).
+    required: Vec<(&'static str, String, String)>,
     registry: Option<AppTypeRegistry>,
 }
 
@@ -172,6 +175,14 @@ impl ContentKinds {
         let fns = KindFns { parse: parse_file::<T>, from_json: def_from_json::<T>, to_json: def_to_json::<T>, validate: validate_def::<T> };
         self.kinds.push(KindInfo { kind: T::KIND, type_name: std::any::type_name::<T>(), type_id: TypeId::of::<T>(), fns });
         self.kinds.sort_by_key(|k| k.kind);
+    }
+
+    /// Requires definition `id` of kind `T`: content without it has an error saying
+    /// that `by` (the code that uses the id, e.g. `AttackKind`) needs it.
+    pub fn require<T: ContentDef>(&mut self, id: &str, by: &str) {
+        if !self.required.iter().any(|(kind, known, _)| *kind == T::KIND && known == id) {
+            self.required.push((T::KIND, id.to_owned(), by.to_owned()));
+        }
     }
 
     /// The type registry prefabs (and other kinds that need reflection) validate with.
@@ -283,11 +294,11 @@ fn def_from_json<T: ContentDef>(json: &Value) -> Result<AnyDef, String> {
 }
 
 /// Through text, so floats keep their short form (`0.1`, not `0.10000000149011612`).
-fn def_to_json<T: ContentDef>(def: &AnyDef) -> Value {
-    let Some(def) = def.downcast_ref::<T>() else {
-        return Value::Null;
-    };
-    serde_json::to_string(def).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or(Value::Null)
+/// Fails for what JSON cannot hold (a map with keys that are not strings).
+fn def_to_json<T: ContentDef>(def: &AnyDef) -> Result<Value, String> {
+    let def = def.downcast_ref::<T>().ok_or("not a definition of this kind")?;
+    let text = serde_json::to_string(def).map_err(|e| e.to_string())?;
+    serde_json::from_str(&text).map_err(|e| e.to_string())
 }
 
 fn validate_def<T: ContentDef>(def: &AnyDef, id: &str, refs: &mut Refs) {
@@ -376,7 +387,17 @@ impl ContentDb {
                 self.file_errors.push(error);
                 continue;
             }
-            let json = (kind.fns.to_json)(&def);
+            // Tools, replays and reloads see definitions as JSON: one that has none would
+            // compare equal to anything.
+            let json = match (kind.fns.to_json)(&def) {
+                Ok(json) => json,
+                Err(why) => {
+                    let message = format!("cannot be written as JSON: {why} (maps need string keys)");
+                    let error = ContentError { kind: Some(kind.kind.to_owned()), id: Some(id), ..ContentError::in_file(path, message) };
+                    self.file_errors.push(error);
+                    continue;
+                }
+            };
             table.insert(id, Entry { file: path.to_owned(), def, json });
         }
     }
@@ -391,6 +412,17 @@ impl ContentDb {
             for (id, entry) in table {
                 let mut refs = Refs { db: self, kind, id, file: &entry.file, registry, errors: &mut errors };
                 (info.fns.validate)(&entry.def, id, &mut refs);
+            }
+        }
+        for (kind, id, by) in &kinds.required {
+            if self.entry(kind, id).is_none() {
+                errors.push(ContentError {
+                    file: None,
+                    position: None,
+                    kind: Some((*kind).to_owned()),
+                    id: Some(id.clone()),
+                    message: format!("missing; {by} needs it (define it in a content/**/*.{kind}.ron file)"),
+                });
             }
         }
         self.def_errors = errors;
@@ -538,9 +570,10 @@ impl ContentDb {
             let table = db.tables.entry(info.kind).or_default();
             match &change.def {
                 Some(json) => {
-                    let def = (info.fns.from_json)(json).map_err(|e| format!("{} `{}`: {e}", change.kind, change.id))?;
+                    let what = |e: String| format!("{} `{}`: {e}", change.kind, change.id);
+                    let def = (info.fns.from_json)(json).map_err(what)?;
                     let file = change.file.clone().or_else(|| table.get(&change.id).map(|e| e.file.clone())).unwrap_or_default();
-                    let json = (info.fns.to_json)(&def);
+                    let json = (info.fns.to_json)(&def).map_err(what)?;
                     table.insert(change.id.clone(), Entry { file, def, json });
                 }
                 None => {
@@ -678,6 +711,10 @@ fn edit_distance(a: &str, b: &str) -> usize {
 
 // --- files on disk -------------------------------------------------------------------
 
+/// Where to look when there is no content folder.
+pub(crate) const NO_FOLDER_HINT: &str = "games run from cargo find `assets` in the crate folder; elsewhere it is next \
+     to the executable, or where BEVY_ASSET_ROOT points";
+
 /// Asset paths (`content/...`, forward slashes) of every `.ron` file under
 /// `<base>/content`, sorted. No `content` folder: no files.
 pub(crate) fn list_files(base: &Path) -> Result<Vec<String>, ContentError> {
@@ -722,8 +759,14 @@ pub(crate) fn is_claimed(kinds: &ContentKinds, path: &str) -> bool {
 }
 
 /// Reads, parses and validates every content file under `<base>/content` without an
-/// app: for a game's `--check-content` in CI. `base` is the asset folder.
+/// app: for a game's `--check-content` in CI. `base` is the asset folder. A missing
+/// `content` folder is an error: a check that looked in the wrong place must not pass.
 pub fn check_dir(base: &Path, kinds: &ContentKinds) -> Result<Summary, Vec<ContentError>> {
+    let folder = base.join(CONTENT_DIR);
+    if !folder.is_dir() {
+        let message = format!("no content folder at {} ({NO_FOLDER_HINT})", folder.display());
+        return Err(vec![ContentError { file: None, position: None, kind: None, id: None, message }]);
+    }
     let sources = read_dir(base).map_err(|e| vec![e])?;
     let db = ContentDb::build(kinds, &sources);
     let errors: Vec<ContentError> = db.errors().cloned().collect();
@@ -753,5 +796,23 @@ mod tests {
         };
         assert_eq!(e.to_string(), "content/combat/sword.moveset.ron:4:12: moveset `hero`: light -> unknown action `sword_lite_1`");
         assert_eq!(Summary { files: 1, definitions: 1, ..default() }.to_string(), "ok: 1 definition in 1 file");
+    }
+
+    #[test]
+    fn a_definition_json_cannot_hold_is_an_error_not_null() {
+        #[derive(Serialize, Deserialize, Clone)]
+        struct Grid {
+            cells: BTreeMap<(u8, u8), f32>,
+        }
+        impl ContentDef for Grid {
+            const KIND: &'static str = "grid";
+        }
+        let mut kinds = ContentKinds::default();
+        kinds.register::<Grid>();
+        let source = Source { path: "content/a.grid.ron".into(), text: r#"{ "g": (cells: {(1, 2): 3.0}) }"#.into() };
+        let db = ContentDb::build(&kinds, &[source]);
+        let errors: Vec<String> = db.errors().map(ToString::to_string).collect();
+        assert_eq!(errors, ["content/a.grid.ron: grid `g`: cannot be written as JSON: key must be a string (maps need string keys)"]);
+        assert!(db.get::<Grid>("g").is_none());
     }
 }

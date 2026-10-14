@@ -40,9 +40,11 @@ impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<Hit>()
             .add_content::<AttackDef>()
+            // A content error, so a hot edit that deletes one is refused.
+            .require_content::<AttackDef>(&AttackKind::ALL.map(AttackKind::id), "AttackKind")
             // One-shot presses wait in the buffer until the character can act on them.
             .register_required_components::<Intent, InputBuffer>()
-            .add_systems(OnEnter(EngineState::InGame), (report_missing_attacks, spawn_arena).chain());
+            .add_systems(OnEnter(EngineState::InGame), spawn_arena);
         app.add_systems(
             FixedUpdate,
             (
@@ -54,14 +56,6 @@ impl Plugin for GameplayPlugin {
                 combat::remove_corpses.in_set(SimSet::Cleanup),
             ),
         );
-    }
-}
-
-/// An attack the game uses but content does not define does nothing; say so once.
-fn report_missing_attacks(db: Res<ContentDb>) {
-    let missing: Vec<&str> = AttackKind::ALL.iter().map(|k| k.id()).filter(|id| db.get::<AttackDef>(id).is_none()).collect();
-    if !missing.is_empty() {
-        error!("content: attacks {} are not defined (content/combat/attacks.attack.ron); they do nothing", missing.join(", "));
     }
 }
 

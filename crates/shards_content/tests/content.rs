@@ -140,6 +140,13 @@ fn app(dir: &Path) -> App {
 }
 
 fn app_with(dir: &Path, watch: bool) -> App {
+    let mut app = unloaded(dir, watch, |_| {});
+    load(&mut app);
+    app
+}
+
+/// The test app on `dir` with `setup` added, built but not loaded yet.
+fn unloaded(dir: &Path, watch: bool, setup: impl FnOnce(&mut App)) -> App {
     let asset_dir = dir.to_string_lossy().into_owned();
     let config = EngineConfig {
         headless: true,
@@ -167,8 +174,14 @@ fn app_with(dir: &Path, watch: bool) -> App {
         .register_type::<SwordDamage>()
         .add_systems(OnEnter(EngineState::InGame), spawn_dummy)
         .add_systems(FixedUpdate, read_sword.in_set(SimSet::Act));
+    setup(&mut app);
     app.finish();
     app.cleanup();
+    app
+}
+
+/// Updates `app` until it is in the game and the simulation is free.
+fn load(app: &mut App) {
     let started = Instant::now();
     while *app.world().resource::<State<EngineState>>().get() != EngineState::InGame
         || app.world().resource::<SimGate>().is_held()
@@ -177,7 +190,6 @@ fn app_with(dir: &Path, watch: bool) -> App {
         app.update();
         std::thread::sleep(Duration::from_millis(1));
     }
-    app
 }
 
 fn act(app: &mut App, tool: &str, args: Value) -> CallOutcome {
@@ -274,8 +286,18 @@ fn check_dir_works_without_an_app() {
     let errors = check_dir(&dir, &kinds()).unwrap_err();
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0].to_string(), "content/hero.moveset.ron: moveset `hero`: light -> unknown attack `axe`");
-    let empty = assets("check_empty", &[]);
-    assert_eq!(check_dir(&empty, &kinds()).unwrap().to_string(), "ok: 0 definitions in 0 files");
+    // Looking in the wrong place must not pass.
+    let elsewhere = assets("check_elsewhere", &[]);
+    let errors = check_dir(&elsewhere, &kinds()).unwrap_err();
+    let expected = format!("no content folder at {} (games run from cargo", elsewhere.join("content").display());
+    assert!(errors[0].to_string().starts_with(&expected), "{}", errors[0]);
+    std::fs::create_dir_all(elsewhere.join("content")).unwrap();
+    assert_eq!(check_dir(&elsewhere, &kinds()).unwrap().to_string(), "ok: 0 definitions in 0 files");
+    let mut required = kinds();
+    required.require::<AttackDef>("kick", "the test's moves");
+    write(&dir, "content/hero.moveset.ron", MOVESETS);
+    let errors = check_dir(&dir, &required).unwrap_err();
+    assert_eq!(errors[0].to_string(), "attack `kick`: missing; the test's moves needs it (define it in a content/**/*.attack.ron file)");
 }
 
 #[test]
@@ -382,6 +404,24 @@ fn a_reload_is_recorded_and_its_replay_plays_the_same_game() {
     let report = again.world().resource::<AiReplay>().report().cloned().unwrap();
     assert!(report.identical(), "{report}");
     assert_eq!(again.world().get::<SwordDamage>(dummy).unwrap().0, 40.0);
+}
+
+#[test]
+fn a_required_id_is_an_error_and_cannot_be_deleted() {
+    let dir = assets("required", &[("content/combat/attacks.attack.ron", ATTACKS)]);
+    let mut app = unloaded(&dir, false, |app| {
+        app.require_content::<AttackDef>(&["sword", "claw"], "AttackKind");
+    });
+    load(&mut app);
+    assert!(errors(&app).is_empty(), "{:?}", errors(&app));
+    write(&dir, "content/combat/attacks.attack.ron", r#"{ "sword": (damage: 25.0) }"#);
+    let refused = act(&mut app, "content_reload", json!({}));
+    assert_eq!(
+        text(&refused),
+        "attack `claw`: missing; AttackKind needs it (define it in a content/**/*.attack.ron file); \
+         kept the previous version of combat/attacks.attack.ron"
+    );
+    assert!(app.world().resource::<ContentDb>().get::<AttackDef>("claw").is_some());
 }
 
 #[test]
