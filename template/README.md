@@ -79,8 +79,10 @@ cargo game                 # окно (`cargo game` = `cargo run --`, см. .car
    git init
    ```
 2. **Переименуйте пакет.** Имя `my_game` встречается в `Cargo.toml` (`name`, `[[bin]]`), `src/main.rs`
-   (`my_game::build_app`), `src/lib.rs` (`SettingsAppId`, заголовок окна), `src/arena.rs` (`require_content … "my_game"`)
-   и в `tests/` (`my_game::test_app`). Найти все места: `grep -rn my_game .`.
+   (`my_game::build_app`), `src/lib.rs` (`SettingsAppId`, `InputSettings::for_game("my_game")`, заголовок окна),
+   `src/arena.rs` (`require_content … "my_game"`) и в `tests/` (`my_game::test_app`). Найти все места:
+   `grep -rn my_game .`. Строка `InputSettings::for_game` переносит клавиши из старого `~/.config/my_game/input.ron`,
+   который писали прежние версии шаблона; новой игре она не нужна, её можно удалить.
 3. **Подключите движок.** В `Cargo.toml` замените путь на git-зависимость. Шаблон использует мир, врагов-NPC и
    навсетку, поэтому нужен движок фазы B (будущий `0.3.0`); тег `v0.2.0` (фаза A) не подойдёт. Пока тегов в
    репозитории нет (`v0.3.0` ставит мейнтейнер, см. `CHANGELOG.md` движка), закрепите коммит:

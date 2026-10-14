@@ -140,23 +140,36 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
 - Хранилище: `shards::run` запускает его после `build` игры (`shards_settings::install`): папка платформы под `SettingsAppId`
   (игра задаёт имя, иначе `shards-<заголовок>`), `--settings-dir DIR`, `--no-settings`; окно без флагов читает и пишет,
   `--headless` без `--settings-dir`, тесты, `--verify` и встроенные игры нет. Запись через секунду после последнего изменения
-  и при выходе, без изменений ничего не пишется.
+  (в том числе сделанного кодом игры) и при выходе, без изменений ничего не пишется. `--settings-dir` на платформе без папки
+  настроек — ошибка с советом (раньше «kept in DIR/settings.toml», а хранилище не писало ничего).
+- Файл настроек не теряется: не TOML — копия `settings.toml.bad` (занятые имена не затираются), старт с последней хорошей
+  копии `settings.toml.bak` или умолчаний; запись, после которой файл пуст или не читается (диск полон), возвращает копию и
+  повторяется до трёх раз, журнал называет причину; `controls` читается запись за записью; `nan`/`inf` в числе — умолчание.
+- `reset=true` возвращает умолчания игры (ресурс группы до файла), а не `Default` типа, и проверяет ключ как `set`; группа с
+  двумя испорченными значениями из файла не блокирует `settings_set` третьего (судят только изменение). Проверки группы с
+  доступом к миру: `add_settings_world_check`.
 - Инструменты `settings {group?}` (Player, запрос) и `settings_set group= key= value= | reset=true` (Player, control: не
   попадает в реплей); значение читается по типу поля, отказ называет допустимое, изменение — строка журнала
   `settings: accessibility.camera_shake 1 → 0.3`. `ai/status.settings`.
 - Применение: основное окно (`apply_graphics`: полный экран, vsync, размер, масштаб), камера (поле зрения, сила тряски,
-  чувствительность, инверсия Y, `MotionBlur` у камер, где он есть), мерцание телеграфов и маркеров за кадром
+  чувствительность, инверсия Y, `MotionBlur` у камер, где он есть: меняется только сила, число сэмплов игры остаётся), мерцание телеграфов и маркеров за кадром
   (`accessibility.flashes`, `draw::pulse_at`), `hold_to_toggle` в карте ввода. Громкости хранятся для звука (E9).
 - Настройки не входят в снапшоты, реплеи, их хэш и репликацию (`net_ignore_resource`); эталонные реплеи прежние.
-- Песочница: `SettingsAppId` `shards-sandbox`, сценарий `settings.scenario`; шаблон: `SettingsAppId::new("my-game")`.
+- Песочница: `SettingsAppId` `shards-sandbox`, `InputSettings::for_game("shards")`, сценарий `settings.scenario`; шаблон:
+  `SettingsAppId::new("my-game")`, `InputSettings::for_game("my_game")`.
 
 ### Изменено
 
 - **Переназначение клавиш — настройки.** `rebind` пишет разницу с умолчаниями в `controls.bindings` и
   `controls.hold_or_toggle` (запись через секунду) и больше не пишет `input.ron`; у него нет аргумента `save`.
-  `InputSettings` остался только как место старого файла (`app_name`, `file`; поля `persist` нет): при первом запуске, если в
-  настройках ещё нет управления, `input.ron` переносится в настройки и переименовывается в `input.ron.imported`.
-  `InputMap::save_overrides` удалён. Игре, которая задавала `InputSettings.app_name`, нужен `SettingsAppId`.
+  `InputSettings` остался только как место старого файла (`app_name`, `file`, `import`, `config_dir`; поля `persist` нет):
+  перенос включает игра (`InputSettings::for_game("<папка игры>")`; по умолчанию выключен, чтобы игра не брала чужой общий
+  `~/.config/shards/input.ron`) и он идёт только в папке настроек платформы. Если в настройках ещё нет управления,
+  `input.ron` переносится в настройки и переименовывается в `input.ron.imported` только после того, как `settings.toml`
+  записан. `InputMap::save_overrides` удалён. Игре, которая задавала `InputSettings.app_name`, нужен `SettingsAppId`.
+- `settings_set` для `controls` проверяет то же, что `rebind` (неизвестное действие и контекст, вход, который читает другое
+  действие); запись, которая не читается, остаётся в файле, а не стирается при следующем сохранении. Правка управления не
+  пересобирает карту из умолчаний: контексты и действия, добавленные игрой, остаются.
 - `shards_motion` и `shards_action` зависят от `shards_settings`; `MotionPlugin` сам добавляет `ShardsSettingsPlugin`, если
   его нет; feature `render` у `shards_motion` включает `bevy_post_process`.
 
