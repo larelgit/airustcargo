@@ -47,7 +47,9 @@
 pub mod ai;
 pub mod controller;
 mod intent;
+pub mod perception;
 pub mod physics;
+mod tools;
 
 use bevy::prelude::*;
 use shards_core::EngineAppExt;
@@ -63,6 +65,7 @@ pub use physics::{
     PhysicsSystems, PhysicsWorld, QueryFilter, RayHit, Shape, ShapeHit, SpatialQuery, Volume, VolumeEntered,
     VolumeExited, VolumeKind,
 };
+pub use tools::TargetArg;
 
 /// Version of the engine crates (they share one).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -94,5 +97,7 @@ impl Plugin for MotionPlugin {
         app.add_engine_module("motion", VERSION);
         ai::plugin(app);
         intent::plugin(app);
+        tools::plugin(app);
+        perception::plugin(app);
     }
 }

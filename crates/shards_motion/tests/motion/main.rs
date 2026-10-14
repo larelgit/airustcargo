@@ -6,4 +6,7 @@ mod course;
 mod drive;
 mod edge_cases;
 mod engine;
+mod perception;
 mod physics;
+mod replays;
+mod tools;
