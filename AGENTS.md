@@ -18,7 +18,7 @@
   `cargo test --manifest-path template/Cargo.toml`.
 - Крейты: `shards` (зонтик, единственная зависимость игры), `shards_core`, `shards_content`, `shards_motion`,
   `shards_action`, `shards_level` (уровни из Blender), `shards_world` (регионы, генерация), `shards_npc` (враги, навсетка),
-  `ai_core`, `shards_script`, `shards_cli`, `sandbox` (арена движка). Карта — в README, «Архитектура».
+  `shards_save` (сохранения: секции, слоты, миграции, копии), `ai_core`, `shards_script`, `shards_cli`, `sandbox` (арена движка). Карта — в README, «Архитектура».
 
 ## Как смотреть на игру и действовать в ней
 
