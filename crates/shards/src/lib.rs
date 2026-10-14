@@ -21,11 +21,12 @@
 //! ```
 //!
 //! [`run`] is the standard `main`: `--headless --seed --port --port-file --no-remote
-//! --paused --hz --replay --verify [--windowed] --check-content --worldgen-report REGION
-//! --seeds 1..1000 --bake-nav [TILES] --settings-dir DIR --no-settings`. [`testing::test_app`]
-//! builds the same game headless for tests, loaded and paused at tick 0. The player's settings
-//! start after the game's builder returned, so every settings group a game registers is
-//! there ([`settings::install`]).
+//! --paused --hz --replay --verify [--windowed] --check-every N
+//! --check-detail components|entities|none --tick-budget-ms MS --check-content
+//! --worldgen-report REGION --seeds 1..1000 --bake-nav [TILES] --settings-dir DIR --no-settings`.
+//! [`testing::test_app`] builds the same game headless for tests, loaded and paused at tick 0. The
+//! player's settings start after the game's builder returned, so every settings group a game
+//! registers is there ([`settings::install`]).
 //!
 //! A game without a `bevy` dependency of its own uses Bevy's derives through the
 //! prelude (`use shards::prelude::*` in the module). serde and schemars derives need

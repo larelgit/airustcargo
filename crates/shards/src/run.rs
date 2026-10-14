@@ -75,7 +75,7 @@ struct Args {
     /// it (`perf`). Default: the tick's own duration (16.7 ms at 60 Hz). Debug builds
     /// run slower than `--release`.
     #[arg(long, value_name = "MS", value_parser = positive_ms)]
-    tick_budget_ms: Option<f64>,
+    tick_budget_ms: Option<Duration>,
     /// Read, parse and validate every content file, print the problems, exit 0 (clean)
     /// or 1. Runs nothing.
     #[arg(long)]
@@ -134,11 +134,19 @@ struct Args {
     exit_with_host: bool,
 }
 
-fn positive_ms(text: &str) -> Result<f64, String> {
-    match text.parse::<f64>() {
-        Ok(ms) if ms > 0.0 && ms.is_finite() => Ok(ms),
-        Ok(_) => Err("the budget must be above 0 ms".into()),
-        Err(_) => Err(format!("`{text}` is not a number of milliseconds")),
+/// `--tick-budget-ms`: milliseconds, as a `Duration` that cannot be zero or too big to hold.
+fn positive_ms(text: &str) -> Result<Duration, String> {
+    let ms: f64 = text.parse().map_err(|_| format!("`{text}` is not a number of milliseconds"))?;
+    if !ms.is_finite() {
+        return Err("the budget must be a finite number of milliseconds".into());
+    }
+    if ms <= 0.0 {
+        return Err("the budget must be above 0 ms".into());
+    }
+    match Duration::try_from_secs_f64(ms / 1000.0) {
+        Ok(budget) if budget.is_zero() => Err("the budget is below 1 ns".into()),
+        Ok(budget) => Ok(budget),
+        Err(_) => Err("the budget is too large".into()),
     }
 }
 
@@ -189,7 +197,7 @@ impl Args {
             exit_with_host: self.exit_with_host,
             check_every: self.check_every,
             check_detail: self.check_detail,
-            tick_budget: self.tick_budget_ms.map(|ms| Duration::from_secs_f64(ms / 1000.0)),
+            tick_budget: self.tick_budget_ms,
             ..EngineConfig::default()
         }
     }
@@ -688,6 +696,27 @@ mod tests {
         });
         // The file says Idol now; the recording spawned a Totem.
         assert_eq!(verify(&game, config, recording), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn the_tick_budget_is_a_duration_the_game_can_hold() {
+        let parse = |ms: &str| Args::try_parse_from(["game".to_owned(), format!("--tick-budget-ms={ms}")]);
+        let budget = |ms: &str| parse(ms).unwrap().config().tick_budget;
+        assert_eq!(budget("5"), Some(Duration::from_millis(5)));
+        assert_eq!(budget("16.7"), Some(Duration::from_micros(16_700)));
+        assert_eq!(Args::try_parse_from(["game"]).unwrap().config().tick_budget, None);
+        // Too big for a Duration: a refusal at the command line, not a panic in `config`.
+        assert!(parse("1e30").unwrap_err().to_string().contains("the budget is too large"));
+        assert!(parse("999999999999999999999999").is_err());
+        // So small that it rounds to nothing: every tick would be over budget.
+        assert!(parse("1e-10").unwrap_err().to_string().contains("the budget is below 1 ns"));
+        for bad in ["inf", "nan", "-inf"] {
+            assert!(parse(bad).unwrap_err().to_string().contains("finite"), "{bad}");
+        }
+        for bad in ["0", "-3"] {
+            assert!(parse(bad).unwrap_err().to_string().contains("above 0 ms"), "{bad}");
+        }
+        assert!(parse("soon").unwrap_err().to_string().contains("is not a number of milliseconds"));
     }
 
     #[test]

@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use shards::ai_core::state::{apply_changes, encode_replicated, encode_resources, StateChanges};
-use shards::ai_core::{replay, sim, AiVisible};
+use shards::ai_core::{replay, sim, AiInvariants, AiVisible};
 use shards::bevy::ecs::schedule::{ScheduleLabel, SystemSet};
 use shards::prelude::*;
 use shards::serde_json::json;
@@ -65,6 +65,26 @@ fn a_client_sandbox_simulates_nothing() {
     app.insert_resource(NetRole::Single);
     let played = step(&mut app, 60);
     assert!(!played.changes.is_empty(), "single player simulates again");
+}
+
+#[test]
+fn a_client_checks_no_invariants_and_a_host_does() {
+    let mut app = sandbox::test_app(42);
+    // Breaks the game's `health_in_range` (above the max); a client does not simulate, so its
+    // body would only ever be a replicated or predicted one that a rule must not judge.
+    ok(&mut app, "set", json!({"id": BOSS, "component": "Health", "path": "current", "value": 700.0}));
+    app.insert_resource(NetRole::Client);
+    let ran = step(&mut app, 5);
+    assert_eq!(text(&ran), "ran 5 ticks (0 → 5)");
+    assert!(ran.halted.is_none());
+    assert!(app.world().resource::<AiInvariants>().violations().is_empty(), "no rule ran on the client");
+
+    // The rule had not fired: the same state halts the game where it is simulated.
+    app.insert_resource(NetRole::Single);
+    let hosted = act(&mut app, "step", json!({"ticks": 5}));
+    assert_eq!(text(&hosted), "ran 1 ticks (5 → 6), stopped: invariant health_in_range violated at tick 6");
+    assert!(hosted.halted.is_some());
+    assert_eq!(app.world().resource::<AiInvariants>().violations().len(), 1);
 }
 
 /// Everything a host would send a client that has nothing: every AI-visible entity's

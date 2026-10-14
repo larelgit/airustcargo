@@ -115,7 +115,17 @@ pub fn run_to(app: &mut App, end: u64, load_timeout: Duration) -> Result<RunStop
                 stops.failures = failures;
                 return Ok(stops);
             }
-            StepReport { end: StepEnd::InvariantViolated(violated), .. } => stops.violations.extend(violated),
+            StepReport { end: StepEnd::InvariantViolated(violated), to_tick, .. } => {
+                stops.violations.extend(violated);
+                // The tick that broke a rule may also have started a load (a region change
+                // behind the gate): the gate holds until it is waited out, here as below.
+                if loading(app.world()).is_some() {
+                    wait_until_loaded(app, load_timeout)?;
+                }
+                if to_tick >= end {
+                    return Ok(stops);
+                }
+            }
             report if report.to_tick < end && loading(app.world()).is_some() => wait_until_loaded(app, load_timeout)?,
             _ => return Ok(stops),
         }
