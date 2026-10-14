@@ -1,12 +1,16 @@
 //! Window-only layer: meshes for what the physics layer collides with, the engine's
-//! third-person camera, a HUD, telegraph zones with their symbols. Keyboard, mouse and
-//! gamepad reach the player through the engine's input map (into `Intent`), like an
-//! agent's tools do. Gameplay never depends on anything here, so the same game runs
-//! headless; nothing here adds a component a replay would hash.
+//! third-person camera, a HUD, the updrafts' wireframes. Keyboard, mouse and gamepad reach
+//! the player through the engine's input map (into `Intent`), like an agent's tools do.
+//! Gameplay never depends on anything here, so the same game runs headless; nothing here
+//! adds a component a replay would hash.
+//!
+//! The combat picture is the engine's (`shards_action`'s `render` feature, part of
+//! `EnginePlugins`): ground telegraphs with their symbols, the F2 combat overlay and the
+//! markers for attacks off screen, drawn for the `LocalPlayer` (the player prefab has it)
+//! through the active camera (the `AiCamera` below). Nothing of that is drawn here.
 
 use std::collections::HashSet;
 
-use shards::action::{hit_zones, HitShape, HitZone, WorldShape};
 use shards::ai_core::highlight::AiOverlay;
 use shards::ai_core::sim;
 use shards::motion::{CharacterController, Collider, Shape, Volume, VolumeKind};
@@ -20,13 +24,9 @@ impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ClearColor(Color::srgb(0.05, 0.06, 0.09)))
             .init_resource::<Dressed>()
-            .init_resource::<Zones>()
             .add_systems(PreStartup, setup_assets)
             .add_systems(Startup, (setup_scene, setup_hud).chain())
-            .add_systems(
-                Update,
-                (dev_keys, dress, update_hud, collect_zones, (draw_zones, label_zones, draw_updrafts)).chain(),
-            );
+            .add_systems(Update, (dev_keys, dress, update_hud, draw_updrafts).chain());
     }
 }
 
@@ -181,9 +181,10 @@ fn dress(
     }
 }
 
-/// P: pause · N / `.`: one tick while paused · F1: id overlay · F2: revive the player ·
-/// F3: collider overlay · F12: marked screenshot into shots/. (The rest of the keyboard is
-/// the engine's input map: WASD, Space, Shift, F, Ctrl, mouse, Q, C, Tab.)
+/// P: pause · N / `.`: one tick while paused · F1: id overlay · F3: collider overlay ·
+/// F4: revive the player · F12: marked screenshot into shots/. (F2, the combat overlay, is
+/// the engine's, and so is the rest of the keyboard, its input map: WASD, Space, Shift, F,
+/// Ctrl, mouse, Q, C, Tab.)
 fn dev_keys(world: &mut World) {
     let (pause, step, overlay, revive, colliders, shot) = {
         let keys = world.resource::<ButtonInput<KeyCode>>();
@@ -191,7 +192,7 @@ fn dev_keys(world: &mut World) {
             keys.just_pressed(KeyCode::KeyP),
             keys.just_pressed(KeyCode::KeyN) || keys.just_pressed(KeyCode::Period),
             keys.just_pressed(KeyCode::F1),
-            keys.just_pressed(KeyCode::F2),
+            keys.just_pressed(KeyCode::F4),
             keys.just_pressed(KeyCode::F3),
             keys.just_pressed(KeyCode::F12),
         )
@@ -281,7 +282,7 @@ fn setup_hud(mut commands: Commands) {
 /// The keys, for the HUD: the engine's input map (`InputMap::standard`) and the dev keys.
 const CONTROLS: &str = "WASD move | Space jump | Shift sprint | F glide | Ctrl dodge\n\
                         LMB light | RMB heavy | Q block | C flask | Tab lock-on\n\
-                        P pause | N step | F1 ids | F2 revive | F3 colliders | F12 shot";
+                        P pause | N step | F1 ids | F2 combat | F3 colliders | F4 revive | F12 shot";
 
 type PlayerHud<'a> = (
     &'a AiId,
@@ -325,7 +326,7 @@ fn update_hud(
                 .unwrap_or_default()
                 .replace('↑', "up ")
                 .replace('↓', "down ");
-            let dead = if dead { "   DEAD (F2 revives)" } else { "" };
+            let dead = if dead { "   DEAD (F4 revives)" } else { "" };
             text.0 = format!(
                 "{id}  HP {:.0}/{:.0}  STAM {:.0}  flasks {flasks}{dead}\n{doing}  {moving}\ntick {}  {state}\n{CONTROLS}",
                 hp.current,
@@ -348,67 +349,6 @@ fn update_hud(
     }
 }
 
-/// This frame's hit zones (`shards::action::hit_zones` reads the whole world).
-#[derive(Resource, Default)]
-struct Zones(Vec<HitZone>);
-
-fn collect_zones(world: &mut World) {
-    let zones = hit_zones(world);
-    world.resource_mut::<Zones>().0 = zones;
-}
-
-/// The ground outline of every attack still to land: red for enemies, blue for the
-/// player's; a second outline grows toward the edge as it is about to land.
-fn draw_zones(mut gizmos: Gizmos, zones: Res<Zones>, teams: Query<&Team>) {
-    for zone in &zones.0 {
-        let hostile = teams.get(zone.attacker).is_ok_and(|t| t.0 != "heroes");
-        let color = if hostile { Color::srgb(1.0, 0.25, 0.2) } else { Color::srgb(0.4, 0.8, 1.0) };
-        let soon = (1.0 - zone.lands_in / 0.5).clamp(0.05, 1.0);
-        outline(&mut gizmos, &zone.shape, 1.0, color);
-        outline(&mut gizmos, &zone.shape, soon, color.with_alpha(0.6));
-    }
-}
-
-/// `shape`'s footprint on the ground, scaled by `scale` about its origin.
-fn outline(gizmos: &mut Gizmos, s: &WorldShape, scale: f32, color: Color) {
-    let ground = |p: Vec3| Vec3::new(p.x, s.origin.y.min(p.y) + 0.05, p.z);
-    let (o, f, r) = (s.origin, s.facing, s.right());
-    let flat_circle = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-    match s.shape {
-        HitShape::Sphere { radius } | HitShape::Circle { radius, .. } => {
-            gizmos.circle(Isometry3d::new(ground(o), flat_circle), radius * scale, color);
-        }
-        HitShape::Cone { range, angle, .. } => {
-            let half = angle.to_radians() * 0.5;
-            let steps = 12;
-            let edge = |i: i32| {
-                let a = -half + 2.0 * half * i as f32 / steps as f32;
-                ground(o + (f * a.cos() + r * a.sin()) * range * scale)
-            };
-            gizmos.line(ground(o), edge(0), color);
-            gizmos.line(ground(o), edge(steps), color);
-            for i in 0..steps {
-                gizmos.line(edge(i), edge(i + 1), color);
-            }
-        }
-        HitShape::Capsule { radius, length } => {
-            rect(gizmos, ground(o + f * length * 0.5), f, r, radius * 2.0, length * scale, color)
-        }
-        HitShape::Box { width, depth, .. } => rect(gizmos, ground(o), f, r, width, depth * scale, color),
-        HitShape::Line { length, width, .. } => {
-            rect(gizmos, ground(o + f * length * scale * 0.5), f, r, width, length * scale, color)
-        }
-    }
-}
-
-fn rect(gizmos: &mut Gizmos, center: Vec3, f: Vec3, r: Vec3, width: f32, depth: f32, color: Color) {
-    let (hf, hr) = (f * depth * 0.5, r * width * 0.5);
-    let corners = [center + hf + hr, center + hf - hr, center - hf - hr, center - hf + hr];
-    for i in 0..4 {
-        gizmos.line(corners[i], corners[(i + 1) % 4], color);
-    }
-}
-
 /// Updrafts: their box as a wireframe and streaks rising through it.
 fn draw_updrafts(mut gizmos: Gizmos, time: Res<Time<Real>>, q: Query<(&Volume, &Collider, &Transform)>) {
     let color = Color::srgba(0.5, 0.95, 1.0, 0.6);
@@ -423,64 +363,5 @@ fn draw_updrafts(mut gizmos: Gizmos, time: Res<Time<Real>>, q: Query<(&Volume, &
             let y = (rise + i as f32 * 1.7).rem_euclid(half.y * 2.0);
             gizmos.line(base + Vec3::Y * y, base + Vec3::Y * (y + 1.5).min(half.y * 2.0), color);
         }
-    }
-}
-
-/// One screen label per zone: its symbol and when it lands (`⚠ 0.32s`), so danger reads
-/// without colour.
-#[derive(Component)]
-struct ZoneLabel;
-
-fn label_zones(
-    mut commands: Commands,
-    zones: Res<Zones>,
-    camera: Query<(&Camera, &GlobalTransform), With<AiCamera>>,
-    mut labels: Query<(Entity, &mut Text, &mut Node, &mut Visibility), With<ZoneLabel>>,
-) {
-    let Ok((camera, eye)) = camera.single() else { return };
-    let mut free: Vec<_> = labels.iter_mut().collect();
-    for zone in &zones.0 {
-        let Some(symbol) = &zone.symbol else { continue };
-        let at = zone.shape.center() + Vec3::Y * 0.3;
-        let Ok(screen) = camera.world_to_viewport(eye, at) else { continue };
-        let symbol = readable(symbol);
-        let text = if zone.lands_in > 0.0 { format!("{symbol} {:.2}s", zone.lands_in) } else { symbol.to_owned() };
-        match free.pop() {
-            Some((_, mut label, mut node, mut visible)) => {
-                label.0 = text;
-                (node.left, node.top) = (Val::Px(screen.x - 14.0), Val::Px(screen.y - 12.0));
-                *visible = Visibility::Inherited;
-            }
-            None => {
-                commands.spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: Val::Px(screen.x - 14.0),
-                        top: Val::Px(screen.y - 12.0),
-                        ..default()
-                    },
-                    Text::new(text),
-                    TextFont::from_font_size(22.0),
-                    TextColor(Color::srgb(1.0, 0.9, 0.3)),
-                    ZoneLabel,
-                ));
-            }
-        }
-    }
-    for (_, _, _, mut visible) in free {
-        *visible = Visibility::Hidden;
-    }
-}
-
-/// The symbol as the window's built-in font can draw it (ASCII only): the content's
-/// symbols for the warden's attacks get ASCII stand-ins; a game ships a font with its own.
-fn readable(symbol: &str) -> &str {
-    match symbol {
-        "⚠" => "/!\\",
-        "⟲" => "(@)",
-        "≈" => "~~~",
-        "↯" => ">>",
-        s if s.is_ascii() => s,
-        _ => "!",
     }
 }
