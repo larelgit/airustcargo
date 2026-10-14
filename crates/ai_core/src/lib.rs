@@ -78,7 +78,7 @@ pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
 pub use net_rules::{replicated_components, rules_hash, NetRules};
 pub use observe::{AiCamera, AiPerception, ObserveOptions};
-pub use process::AppToken;
+pub use process::{activate, AppToken};
 pub use replay::{AiReplay, Replay, ReplayHashing, ReplayReport};
 pub use rng::{DetRng, SimRng, SimSeed};
 pub use session::{configure_session, AgentSession, AgentSessions, Caller, PlayerResolver, Scope, SessionChange};
