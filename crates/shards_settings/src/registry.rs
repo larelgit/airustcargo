@@ -315,8 +315,9 @@ pub trait SettingsAppExt {
     /// ```
     ///
     /// Panics, naming the field, when the group cannot be written as TOML (a `u64`, a map keyed
-    /// by anything but `String`; see [`check_toml_safe`]), or when it lacks
-    /// `#[reflect(SettingsGroup)]`.
+    /// by anything but `String`; see [`check_toml_safe`]), when it lacks
+    /// `#[reflect(SettingsGroup)]`, or when it asks for a file of its own
+    /// (`#[settings_group(file = "...")]`): the engine looks after `settings.toml` only.
     fn add_settings_group<G>(&mut self) -> &mut Self
     where
         G: SettingsGroup + Reflect + FromReflect + GetTypeRegistration + Typed;
@@ -356,6 +357,16 @@ impl SettingsAppExt for App {
                     G::type_path()
                 );
             };
+            // Bevy keeps a group with `file = "..."` in a file of its own, which the engine neither
+            // creates, checks, backs up nor watches, and which the `settings` tool would call
+            // settings.toml all the same.
+            if let Some(file) = group.settings_source().filter(|file| *file != "settings") {
+                panic!(
+                    "settings group {}: #[settings_group(file = \"{file}\")] is not supported: the engine keeps, checks and backs up \
+                     settings.toml only; drop `file` and the group is saved there under its group name",
+                    G::type_path()
+                );
+            }
             group.settings_group_name()
         };
         self.init_resource::<G>()

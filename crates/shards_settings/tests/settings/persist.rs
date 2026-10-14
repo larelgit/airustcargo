@@ -225,6 +225,7 @@ fn a_write_that_fails_does_not_cost_the_settings() {
     shards::settings::flush(app.world_mut());
 
     let text = std::fs::read_to_string(dir.file()).unwrap();
+    eprintln!("DEBUG {:?} {:?}", lines(&app, JournalKind::Error, "settings:"), std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name()).collect::<Vec<_>>());
     assert!(text.contains("master = 0.3"), "the write was tried again and worked:\n{text}");
     assert!(std::fs::symlink_metadata(dir.file()).unwrap().file_type().is_file(), "no link, no partial file");
     let failed = lines(&app, JournalKind::Error, "failed");
@@ -257,6 +258,238 @@ fn a_write_that_cannot_happen_is_reported_and_given_up() {
     set(&mut app, "audio", "master", "0.2");
     updates(&mut app);
     assert!(std::fs::read_to_string(dir.file()).unwrap().contains("master = 0.2"));
+}
+
+/// A change the store gave up on is not lost: the exit hook writes it once more, whatever Bevy's
+/// marks of what changed say (its "last saved" mark moved on with every try that failed).
+#[test]
+fn a_change_given_up_on_is_written_when_the_game_exits() {
+    let dir = TempDir::new("blocked_exit");
+    let mut app = game_in(&dir);
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(4)));
+    set(&mut app, "audio", "master", "0.4");
+    shards::settings::flush(app.world_mut());
+    std::fs::create_dir(dir.path().join("settings.toml.new")).unwrap();
+    set(&mut app, "audio", "master", "0.3");
+    for _ in 0..8 {
+        app.update();
+    }
+    assert_eq!(lines(&app, JournalKind::Error, "giving up").len(), 1);
+    assert!(std::fs::read_to_string(dir.file()).unwrap().contains("master = 0.4"), "the good file stayed");
+
+    // The player frees the disk and quits without touching a setting again.
+    std::fs::remove_dir(dir.path().join("settings.toml.new")).unwrap();
+    run_exit_hooks(app.world_mut());
+    assert!(std::fs::read_to_string(dir.file()).unwrap().contains("master = 0.3"), "written at exit after all");
+    // And it is written once: a second exit has nothing left to do.
+    std::fs::remove_file(dir.file()).unwrap();
+    run_exit_hooks(app.world_mut());
+    assert!(!dir.file().exists(), "nothing was unsaved any more");
+}
+
+/// A full disk that stays full: a link to a device that is always full as the temporary file makes
+/// Bevy's write fail, and its rename uses the link up, so the link is made again before each try.
+#[cfg(target_os = "linux")]
+fn fill_the_disk(dir: &TempDir) {
+    let _ = std::os::unix::fs::symlink("/dev/full", dir.path().join("settings.toml.new"));
+}
+
+/// A write that leaves a bad file puts the good one back and waits before the next try, as the
+/// README says; when the tries are over the exit hook writes the change once more.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_write_that_leaves_a_bad_file_is_tried_again_a_pause_later() {
+    let dir = TempDir::new("pause");
+    let mut app = game_in(&dir);
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(1200)));
+    app.update();
+    set(&mut app, "audio", "master", "0.4");
+    shards::settings::flush(app.world_mut());
+    // A frame between the writes: Bevy tells a change from the last write by ticks, and one made
+    // within the tick of a write is missed (the store catches that case on its own, later).
+    app.update();
+    let stored = |dir: &TempDir| std::fs::read_to_string(dir.file()).unwrap();
+    let failed = |app: &shards::bevy::prelude::App| lines(app, JournalKind::Error, "failed").len();
+
+    fill_the_disk(&dir);
+    set(&mut app, "audio", "master", "0.3");
+    app.update();
+    assert_eq!(failed(&app), 1, "the debounce is over: the write was tried and failed");
+    assert!(stored(&dir).contains("master = 0.4"), "the good file is back, and the change is not put on it in the same frame");
+    // 1.2 s and 2.4 s later it is not time yet.
+    for _ in 0..2 {
+        fill_the_disk(&dir);
+        app.update();
+    }
+    assert!(stored(&dir).contains("master = 0.4") && failed(&app) == 1, "no second try yet");
+    // 3.6 s later it is, and the disk is still full.
+    fill_the_disk(&dir);
+    app.update();
+    assert_eq!(failed(&app), 2, "tried again after the pause: {:?}", lines(&app, JournalKind::Error, "settings:"));
+    assert!(stored(&dir).contains("master = 0.4"));
+
+    // Two more tries, then the journal gives up, once.
+    for _ in 0..9 {
+        fill_the_disk(&dir);
+        app.update();
+    }
+    assert_eq!((failed(&app), lines(&app, JournalKind::Error, "giving up").len()), (3, 1), "{:?}", lines(&app, JournalKind::Error, "settings:"));
+    assert!(stored(&dir).contains("master = 0.4"));
+
+    // The disk has room again, and the player quits.
+    let _ = std::fs::remove_file(dir.path().join("settings.toml.new"));
+    run_exit_hooks(app.world_mut());
+    assert!(stored(&dir).contains("master = 0.3"), "the change is written at exit after all:\n{}", stored(&dir));
+}
+
+#[test]
+fn a_hand_edit_made_while_the_game_runs_is_not_taken_for_a_failed_write() {
+    let dir = TempDir::new("hand_edit");
+    let mut app = game_in(&dir);
+    set(&mut app, "graphics", "vsync", "false");
+    shards::settings::flush(app.world_mut());
+    let good = std::fs::read_to_string(dir.file()).unwrap();
+
+    // The player saves the file in an editor, with a typo.
+    let typo = "[graphics\noops";
+    std::fs::write(dir.file(), typo).unwrap();
+    app.update();
+    app.update();
+    let bad = dir.path().join("settings.toml.bad");
+    assert_eq!(std::fs::read_to_string(&bad).unwrap(), typo, "the player's text is kept, as at the start");
+    assert_eq!(std::fs::read_to_string(dir.file()).unwrap(), good, "the last good copy is in its place");
+    let said = lines(&app, JournalKind::Warn, "was edited");
+    assert!(said.len() == 1 && said[0].contains("settings.toml.bad") && said[0].contains("the last good copy"), "{said:?}");
+    assert!(lines(&app, JournalKind::Error, "settings:").is_empty(), "no write failed: {:?}", lines(&app, JournalKind::Error, "settings:"));
+    assert!(!app.world().resource::<GraphicsSettings>().vsync, "the settings in memory are untouched");
+
+    // Closing the game does not lose it either.
+    run_exit_hooks(app.world_mut());
+    assert_eq!(std::fs::read_to_string(&bad).unwrap(), typo);
+    assert!(!dir.path().join("settings.toml.bad.1").exists());
+}
+
+#[test]
+fn a_valid_hand_edit_made_while_the_game_runs_is_left_alone() {
+    let dir = TempDir::new("hand_edit_valid");
+    let mut app = game_in(&dir);
+    set(&mut app, "audio", "master", "0.4");
+    shards::settings::flush(app.world_mut());
+    let edited = "[audio]\nmaster = 0.9\n";
+    std::fs::write(dir.file(), edited).unwrap();
+    app.update();
+    app.update();
+    run_exit_hooks(app.world_mut());
+    assert_eq!(std::fs::read_to_string(dir.file()).unwrap(), edited, "nothing changed in the game: nothing is written over it");
+    assert_eq!(std::fs::read_to_string(dir.path().join("settings.toml.bak")).unwrap(), edited, "it is the last copy that read");
+    assert!(!dir.path().join("settings.toml.bad").exists());
+    assert!(lines(&app, JournalKind::Error, "settings:").is_empty() && lines(&app, JournalKind::Warn, "settings:").is_empty());
+    drop(app);
+    assert_eq!(game_in(&dir).world().resource::<AudioSettings>().master, 0.9, "the next start reads it");
+}
+
+#[test]
+fn an_emptied_or_deleted_file_is_left_alone_while_the_game_runs() {
+    let dir = TempDir::new("hand_edit_empty");
+    let mut app = game_in(&dir);
+    set(&mut app, "audio", "master", "0.4");
+    shards::settings::flush(app.world_mut());
+    // An editor that truncates the file before it writes the new text is caught half way.
+    std::fs::write(dir.file(), "").unwrap();
+    app.update();
+    assert_eq!(std::fs::read_to_string(dir.file()).unwrap(), "", "not restored under the editor's feet");
+    std::fs::write(dir.file(), "[audio]\nmusic = 0.2\n").unwrap();
+    app.update();
+    assert!(std::fs::read_to_string(dir.file()).unwrap().contains("music = 0.2"));
+    std::fs::remove_file(dir.file()).unwrap();
+    app.update();
+    assert!(!dir.file().exists(), "a deleted file stays deleted until something is written");
+    assert!(lines(&app, JournalKind::Error, "settings:").is_empty() && lines(&app, JournalKind::Warn, "settings:").is_empty());
+    // A change made after that is written as usual.
+    set(&mut app, "audio", "sfx", "0.5");
+    run_exit_hooks(app.world_mut());
+    assert!(std::fs::read_to_string(dir.file()).unwrap().contains("sfx = 0.5"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_settings_file_that_is_a_link_is_read_through() {
+    let dir = TempDir::new("link");
+    let real = dir.path().join("dotfiles.toml");
+    std::fs::write(&real, "[graphics]\nvsync = false\n").unwrap();
+    std::os::unix::fs::symlink(&real, dir.file()).unwrap();
+    let app = game_in(&dir);
+    assert!(!app.world().resource::<GraphicsSettings>().vsync, "the linked settings are read");
+    assert!(lines(&app, JournalKind::Warn, "did not read").is_empty(), "{:?}", lines(&app, JournalKind::Warn, "settings:"));
+    assert!(!dir.path().join("settings.toml.bad").exists());
+    assert!(std::fs::symlink_metadata(dir.file()).unwrap().file_type().is_symlink(), "the link stays until a save");
+    drop(app);
+
+    // A link to what is not a settings file is still moved aside.
+    let other = TempDir::new("link_to_a_folder");
+    std::os::unix::fs::symlink(other.path(), other.file()).unwrap();
+    let app = game_in(&other);
+    assert!(other.path().join("settings.toml.bad").exists());
+    assert!(lines(&app, JournalKind::Warn, "not a regular file").len() == 1);
+}
+
+#[test]
+fn an_unusable_entry_that_stays_in_the_file_is_kept_aside_once() {
+    let dir = TempDir::new("controls_twice");
+    let written = "[controls.bindings]\n\"gameplay.jump\" = [\"Key(KeyJ)\"]\n\"gameplay.heavy\" = 7\n";
+    std::fs::write(dir.file(), written).unwrap();
+    // Nothing changes in these runs, so nothing is written and the entry stays in the file.
+    for start in 1..=3 {
+        let mut app = game_in(&dir);
+        let said = lines(&app, JournalKind::Warn, "the file as it was is kept as");
+        assert!(said.len() == 1 && said[0].ends_with("settings.toml.bad"), "start {start}: {said:?}");
+        run_exit_hooks(app.world_mut());
+    }
+    let bad = dir.path().join("settings.toml.bad");
+    assert_eq!(std::fs::read_to_string(&bad).unwrap(), written);
+    assert!(!dir.path().join("settings.toml.bad.1").exists(), "one copy of one text");
+    assert_eq!(std::fs::read_to_string(dir.file()).unwrap(), written, "and the file is as the player left it");
+
+    // Another text is another copy.
+    let other = "[controls.bindings]\n\"gameplay.heavy\" = 8\n";
+    std::fs::write(dir.file(), other).unwrap();
+    let _app = game_in(&dir);
+    assert_eq!(std::fs::read_to_string(dir.path().join("settings.toml.bad.1")).unwrap(), other);
+}
+
+#[test]
+fn an_empty_file_where_there_was_a_good_copy_is_a_write_that_went_wrong() {
+    let dir = TempDir::new("emptied");
+    let mut app = game_in(&dir);
+    set(&mut app, "graphics", "vsync", "false");
+    shards::settings::flush(app.world_mut());
+    drop(app);
+
+    // What a write that failed on a full disk, or a process killed half way, leaves.
+    std::fs::write(dir.file(), "").unwrap();
+    let app = game_in(&dir);
+    assert!(!app.world().resource::<GraphicsSettings>().vsync, "the last good settings are back");
+    let said = lines(&app, JournalKind::Warn, "the last good copy");
+    assert!(said.len() == 1 && said[0].contains("is empty"), "{said:?}");
+    assert!(std::fs::read_to_string(dir.file()).unwrap().contains("vsync = false"));
+}
+
+#[test]
+fn deleting_the_file_resets_the_settings_for_good() {
+    let dir = TempDir::new("deleted");
+    let mut app = game_in(&dir);
+    set(&mut app, "graphics", "vsync", "false");
+    shards::settings::flush(app.world_mut());
+    drop(app);
+
+    std::fs::remove_file(dir.file()).unwrap();
+    // Two starts that change nothing: the empty file of the first must not read as a failed write at the second.
+    for start in 1..=2 {
+        let app = game_in(&dir);
+        assert!(app.world().resource::<GraphicsSettings>().vsync, "start {start}: the defaults");
+        assert!(lines(&app, JournalKind::Warn, "settings:").is_empty());
+    }
+    assert_eq!(std::fs::read_to_string(dir.file()).unwrap(), "");
 }
 
 #[test]

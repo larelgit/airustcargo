@@ -21,7 +21,8 @@
 //!   accessors (`fov()`, [`AccessibilitySettings::flash_level`]) because a hand-edited file may
 //!   say anything. A game adds its own with [`SettingsAppExt::add_settings_group`]; a group that
 //!   TOML cannot hold (a `u64`, a map keyed by something else than `String`) is refused at
-//!   registration, naming the field ([`check_toml_safe`]).
+//!   registration, naming the field ([`check_toml_safe`]), and so is one that asks for a file of
+//!   its own (`#[settings_group(file = "...")]`): the engine looks after `settings.toml` only.
 //! - **Applying**: each module applies the groups it owns, outside the simulation: this crate
 //!   puts [`GraphicsSettings`] on the primary window ([`apply_graphics`]); `shards_motion`
 //!   turns [`ControlSettings`] into the input map (and `rebind` writes back), and

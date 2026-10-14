@@ -20,7 +20,7 @@ use bevy::settings::{SaveSettingsDeferred, SaveSettingsSync, SettingsPlugin};
 use bevy::tasks::IoTaskPool;
 use shards_core::{EngineConfig, SettingsStore};
 
-use crate::file::{self, backup_path, read_table, refresh_backup, restore_backup, unique_bad_path, ApplyTo, StoreHealth};
+use crate::file::{self, backup_path, bad_copy, read_table, refresh_backup, restore_backup, unique_bad_path, ApplyTo, StoreHealth};
 use crate::{recover, registry, ControlSettings};
 
 /// The name of this game's settings folder: `<config dir>/<id>/settings.toml`. A game sets it
@@ -88,8 +88,11 @@ pub enum Installed {
 /// - a file that is not valid TOML (a typo in a hand edit) is moved to `settings.toml.bad` (a
 ///   free name: an earlier `.bad` is never overwritten) and the game starts from the last good
 ///   copy (`settings.toml.bak`), or the defaults, instead of the next save replacing the text;
+/// - a file that is a link to a regular file is read through it, as Bevy reads it;
+/// - an empty file where a last good copy exists is a write that went wrong: the copy comes back;
 /// - a missing file is made empty (an empty file reads as the defaults, and nothing is written
-///   while nothing changes), so Bevy does not log "not found" on a first run;
+///   while nothing changes), so Bevy does not log "not found" on a first run; a file the player
+///   deleted takes its old copy with it;
 /// - the controls table is read again entry by entry ([`recover`](crate::recover)): one bad
 ///   entry no longer costs every rebinding.
 ///
@@ -161,6 +164,9 @@ fn dir_store_usable(preferences_dir: Option<&Path>, dir: &str) -> Result<(), Str
 /// See [`install`]: what is made of the file before Bevy reads it.
 fn prepare_file(file: &Path) -> Vec<String> {
     if std::fs::symlink_metadata(file).is_err() {
+        // A settings file that is gone is the player's reset: the copy of what they threw away goes
+        // with it, or the next empty file would read as a write that failed and bring it back.
+        let _ = std::fs::remove_file(backup_path(file));
         if let Some(folder) = file.parent()
             && std::fs::create_dir_all(folder).is_ok()
         {
@@ -169,10 +175,17 @@ fn prepare_file(file: &Path) -> Vec<String> {
         return Vec::new();
     }
     match read_table(file) {
-        Ok(table) => {
-            if !table.is_empty() {
-                refresh_backup(file);
+        // Bevy never writes less than one table per group, so an empty file where there was a good
+        // copy is a write that went wrong (a full disk, a process killed half way), not defaults.
+        Ok(table) if table.is_empty() => {
+            if restore_backup(file) {
+                vec![format!("settings: {} is empty; the last good copy ({}) is back", file.display(), backup_path(file).display())]
+            } else {
+                Vec::new()
             }
+        }
+        Ok(_) => {
+            refresh_backup(file);
             Vec::new()
         }
         Err(why) => {
@@ -200,11 +213,12 @@ fn recover_controls(world: &mut World, file: &Path) -> Vec<String> {
     if found.notes.is_empty() && found.bindings.is_empty() && found.modes.is_empty() {
         return Vec::new();
     }
-    if found.dropped {
-        let bad = unique_bad_path(file);
-        if std::fs::copy(file, &bad).is_ok() {
-            found.notes.push(format!("settings: the entries that could not be used are in {} only; the file as it was is kept as {}", file.display(), bad.display()));
-        }
+    // One copy per text: while the entry stays in the file (nothing is written until something
+    // changes), every start finds it unusable again and must not add another copy.
+    if found.dropped
+        && let Some(bad) = bad_copy(file)
+    {
+        found.notes.push(format!("settings: the entries that could not be used are in {} only; the file as it was is kept as {}", file.display(), bad.display()));
     }
     if !found.bindings.is_empty() || !found.modes.is_empty() {
         let mut controls = world.resource_mut::<ControlSettings>();
@@ -234,9 +248,16 @@ pub fn save_soon_in(world: &mut World) {
 /// Without a store it does nothing. The exit hook calls it; tests call it to see the file.
 pub fn flush(world: &mut World) {
     if world.contains_resource::<SettingsStorage>() {
-        SaveSettingsSync::IfChanged.apply_to(world);
-        file::check_store(world, true);
-        file::check_store(world, false);
+        // What the player did to the file since the last frame is theirs, not this write's result.
+        file::check_store(world, file::Look::Frame);
+        // After a write that failed, Bevy has moved its "last saved" mark past the change, so
+        // `IfChanged` would find nothing to write: the change is written whatever it says.
+        let sync = if file::unsaved(world) { SaveSettingsSync::Always } else { SaveSettingsSync::IfChanged };
+        file::begin_write(world);
+        sync.apply_to(world);
+        file::check_store(world, file::Look::Exit);
+        file::check_store(world, file::Look::Again);
+        file::end_write(world);
     }
 }
 

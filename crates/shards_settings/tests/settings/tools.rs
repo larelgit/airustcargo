@@ -255,3 +255,35 @@ fn a_group_toml_cannot_hold_is_refused_when_it_is_added() {
     });
     assert!(unsaved.contains("NotSaved") && unsaved.contains("#[reflect(Resource, SettingsGroup, Default)]"), "{unsaved}");
 }
+
+#[test]
+fn a_group_in_a_file_of_its_own_is_refused() {
+    // Bevy would keep it in keys.toml, which the engine does not create, check, back up or watch,
+    // while the `settings` tool says settings.toml: refused, naming the type and the attribute.
+    #[derive(Resource, Reflect, SettingsGroup, Default)]
+    #[reflect(Resource, SettingsGroup, Default)]
+    #[settings_group(group = "keys", file = "keys")]
+    struct OwnFile {
+        flag: bool,
+    }
+
+    // Naming the engine's own file is the default, spelled out.
+    #[derive(Resource, Reflect, SettingsGroup, Default)]
+    #[reflect(Resource, SettingsGroup, Default)]
+    #[settings_group(group = "plain", file = "settings")]
+    struct SameFile {
+        flag: bool,
+    }
+
+    let mut app = shards::bevy::prelude::App::new();
+    app.add_plugins(shards::bevy::prelude::MinimalPlugins)
+        .add_plugins(shards::ai_core::AiCorePlugin { remote_port: None, crash_replays: false, ..Default::default() })
+        .add_plugins(shards::settings::ShardsSettingsPlugin);
+    app.add_settings_group::<SameFile>();
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        app.add_settings_group::<OwnFile>();
+    }))
+    .expect_err("should have been refused");
+    let said = caught.downcast_ref::<String>().cloned().unwrap_or_default();
+    assert!(said.contains("OwnFile") && said.contains("file = \"keys\"") && said.contains("settings.toml only"), "{said}");
+}
