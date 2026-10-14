@@ -40,7 +40,7 @@ use ai_core::journal::{self, JournalKind};
 use bevy::prelude::*;
 use shards_content::{asset_root, ContentDb};
 use shards_level::{LevelMarker, MarkerKind};
-use shards_motion::perception::{step_onto, Probe, Stance, StepKind, Terrain};
+use shards_motion::perception::{hop_allowed, step_onto, Block, Probe, Stance, StepKind, Terrain};
 use shards_motion::physics::sync_physics;
 use shards_motion::{Body, CharacterParams, ColliderId, ColliderInfo, LayerMask, PhysicsWorld, Shape, VolumeKind};
 use shards_world::grid::{rotation, turn, turns_of, Dir};
@@ -267,6 +267,35 @@ fn movers(physics: &PhysicsWorld) -> Vec<Entity> {
 /// The terrain probe carving and stitching use: the baked body, what stands still.
 fn terrain<'a>(physics: &'a PhysicsWorld, settings: &'a NavSettings) -> Terrain<'a> {
     Terrain::new(physics, &settings.agent, &movers(physics))
+}
+
+/// A move across a tile edge: `(from, over, to)` columns, `over` for a two-cell hop.
+type EdgeMove = ([i32; 2], Option<[i32; 2]>, [i32; 2]);
+
+/// One row across a tile edge: column `a` (west or north of the edge) faces column `b`.
+#[derive(Clone, Copy, Debug)]
+struct EdgeRow {
+    a: [i32; 2],
+    b: [i32; 2],
+    /// From `a` to `b`.
+    step: [i32; 2],
+    open: bool,
+    edge: usize,
+}
+
+impl EdgeRow {
+    /// The four columns its moves touch: one more on either side.
+    fn columns(&self) -> [[i32; 2]; 4] {
+        let [dx, dz] = self.step;
+        [[self.a[0] - dx, self.a[1] - dz], self.a, self.b, [self.b[0] + dx, self.b[1] + dz]]
+    }
+
+    /// The moves across it, `(from, over, to)`: into the facing column both ways, and the
+    /// two-cell hops over either edge column both ways.
+    fn moves(&self) -> [EdgeMove; 6] {
+        let [before, a, b, after] = self.columns();
+        [(a, None, b), (b, None, a), (before, Some(a), b), (a, Some(b), after), (after, Some(b), a), (b, Some(a), before)]
+    }
 }
 
 /// A region whose navmesh could not be built, and the content it was tried with: not tried
@@ -960,9 +989,10 @@ impl NavRegion {
         changed
     }
 
-    /// Every pair of facing columns across the region's tile edges, west/north side first,
-    /// and whether the sockets leave that edge open; with how many edges there are.
-    fn edge_columns(&self, graph: &RegionGraph) -> Vec<([i32; 2], [i32; 2], bool, usize)> {
+    /// Every row across the region's tile edges: the facing columns (west/north side first),
+    /// the step from the first to the second, whether the sockets leave that edge open, and
+    /// which edge it is.
+    fn edge_rows(&self, graph: &RegionGraph) -> Vec<EdgeRow> {
         let per = self.per as i32;
         let mut out = Vec::new();
         let mut edge = 0;
@@ -982,7 +1012,7 @@ impl NavRegion {
                     let open = graph.open([x, y], dir);
                     for k in 0..per {
                         let ca = if dir == Dir::E { [(x + 1) * per - 1, y * per + k] } else { [x * per + k, (y + 1) * per - 1] };
-                        out.push((ca, [ca[0] + dx, ca[1] + dz], open, edge));
+                        out.push(EdgeRow { a: ca, b: [ca[0] + dx, ca[1] + dz], step: [dx, dz], open, edge });
                     }
                     edge += 1;
                 }
@@ -991,22 +1021,25 @@ impl NavRegion {
         out
     }
 
-    /// Links across every tile edge the sockets leave open: each boundary node gets the move
-    /// the motion planner would make into the facing column, both ways, in the world as it is
-    /// (a link to or from a switched-off node stays, unused while it is off).
+    /// Links across every tile edge the sockets leave open, made in the world as it is: each
+    /// boundary node gets the move the motion planner would make into the facing column, and
+    /// the two-cell hop over it where the body does not fit there (a ledge or a drop whose
+    /// face lies on the edge), both ways. A link to or from a switched-off node stays, unused
+    /// while it is off.
     fn stitch(&mut self, terrain: &Terrain, settings: &NavSettings, graph: &RegionGraph) {
         let mut extras = Vec::new();
         let mut closed: Vec<usize> = Vec::new();
-        for (ca, cb, open, edge) in self.edge_columns(graph) {
-            if !open {
+        for row in self.edge_rows(graph) {
+            if !row.open {
                 // Counted, for the report: both sides have ground, the sockets close it.
-                if !self.nodes_at(ca).is_empty() && !self.nodes_at(cb).is_empty() && closed.last() != Some(&edge) {
-                    closed.push(edge);
+                if !self.nodes_at(row.a).is_empty() && !self.nodes_at(row.b).is_empty() && closed.last() != Some(&row.edge) {
+                    closed.push(row.edge);
                 }
                 continue;
             }
-            self.link_columns(terrain, settings, ca, cb, &mut extras);
-            self.link_columns(terrain, settings, cb, ca, &mut extras);
+            for (from, over, to) in row.moves() {
+                self.link_columns(terrain, settings, from, over, to, &mut extras);
+            }
         }
         self.report.closed_edges = closed.len();
         self.extras.extend(extras);
@@ -1014,32 +1047,32 @@ impl NavRegion {
         self.report.stitched = self.extras.iter().filter(|e| !e.navlink).count();
     }
 
-    /// The links across open tile edges whose columns are `marked`, made again in the world
-    /// as it is; whether any changed.
+    /// The links across open tile edges near `marked` columns, made again in the world as it
+    /// is; whether any changed.
     fn restitch(&mut self, terrain: &Terrain, settings: &NavSettings, graph: &RegionGraph, marked: &[bool]) -> bool {
         let width = (self.per * self.size[0]) as i32;
-        let is_marked = |c: [i32; 2]| marked.get((c[1] * width + c[0]) as usize).copied().unwrap_or(false);
-        let mut redo: Vec<([i32; 2], [i32; 2])> = self
-            .edge_columns(graph)
-            .into_iter()
-            .filter(|(ca, cb, open, _)| *open && (is_marked(*ca) || is_marked(*cb)))
-            .flat_map(|(ca, cb, ..)| [(ca, cb), (cb, ca)])
-            .collect();
-        if redo.is_empty() {
+        let height = (self.per * self.size[1]) as i32;
+        let is_marked = |[x, z]: [i32; 2]| (0..width).contains(&x) && (0..height).contains(&z) && marked[(z * width + x) as usize];
+        let rows: Vec<EdgeRow> = self.edge_rows(graph).into_iter().filter(|r| r.open && r.columns().into_iter().any(is_marked)).collect();
+        if rows.is_empty() {
             return false;
         }
-        redo.sort_unstable();
         let mut made = Vec::new();
-        for &(a, b) in &redo {
-            self.link_columns(terrain, settings, a, b, &mut made);
+        let mut pairs: Vec<([i32; 2], [i32; 2])> = Vec::new();
+        for row in &rows {
+            for (from, over, to) in row.moves() {
+                self.link_columns(terrain, settings, from, over, to, &mut made);
+                pairs.push((from, to));
+            }
         }
         made.sort_by_key(|e| (e.from, e.to));
-        let in_redo = |nav: &NavRegion, e: &Extra| !e.navlink && redo.binary_search(&(nav.node_column(e.from), nav.node_column(e.to))).is_ok();
-        let old: Vec<Extra> = self.extras.iter().filter(|e| in_redo(self, e)).copied().collect();
+        pairs.sort_unstable();
+        let in_rows = |nav: &NavRegion, e: &Extra| !e.navlink && pairs.binary_search(&(nav.node_column(e.from), nav.node_column(e.to))).is_ok();
+        let old: Vec<Extra> = self.extras.iter().filter(|e| in_rows(self, e)).copied().collect();
         if old == made {
             return false;
         }
-        let kept: Vec<Extra> = self.extras.iter().filter(|e| !in_redo(self, e)).copied().collect();
+        let kept: Vec<Extra> = self.extras.iter().filter(|e| !in_rows(self, e)).copied().collect();
         self.extras = kept;
         self.extras.extend(made);
         self.extras.sort_by_key(|e| (e.from, e.to));
@@ -1047,8 +1080,10 @@ impl NavRegion {
         true
     }
 
-    /// The moves from the nodes of column `from` into column `to`; how many.
-    fn link_columns(&self, terrain: &Terrain, settings: &NavSettings, from: [i32; 2], to: [i32; 2], out: &mut Vec<Extra>) -> usize {
+    /// The moves from the nodes of column `from` onto column `to`: the next column, or with
+    /// `over`, a two-cell hop over a column where the body does not fit (only a climb, a drop
+    /// or a jump into water, as the bake hops). How many.
+    fn link_columns(&self, terrain: &Terrain, settings: &NavSettings, from: [i32; 2], over: Option<[i32; 2]>, to: [i32; 2], out: &mut Vec<Extra>) -> usize {
         let targets = self.nodes_at(to);
         if targets.is_empty() {
             return 0;
@@ -1060,8 +1095,21 @@ impl NavRegion {
             let local = self.instances[inst as usize].nav.nodes[n as usize];
             let pos = self.node_pos(a);
             let stance = Stance { pos, swimming: local.swim, up: local.up() };
+            let dist = match over {
+                None => self.cell,
+                Some(o) => {
+                    let o = self.column_center(o);
+                    if !matches!(terrain.probe(o.x, o.z, pos.y), Probe::Blocked(Block::Tight)) {
+                        continue;
+                    }
+                    2.0 * self.cell
+                }
+            };
             let probe = terrain.probe(c.x, c.z, pos.y);
-            let Some(step) = step_onto(terrain, stance, (c.x, c.z), probe, self.cell, settings.safe_drop) else { continue };
+            let Some(step) = step_onto(terrain, stance, (c.x, c.z), probe, dist, settings.safe_drop) else { continue };
+            if over.is_some() && !hop_allowed(step.kind, stance.swimming) {
+                continue;
+            }
             let found = targets
                 .clone()
                 .filter(|b| self.is_swim(*b) == step.swimming)
@@ -1074,6 +1122,12 @@ impl NavRegion {
             }
         }
         made
+    }
+
+    /// Whether `e` is a two-cell hop across a tile edge (not a step into the facing column).
+    fn is_hop(&self, e: &Extra) -> bool {
+        let (a, b) = (self.node_column(e.from), self.node_column(e.to));
+        !e.navlink && (a[0] - b[0]).abs() + (a[1] - b[1]).abs() == 2
     }
 
     /// The node nearest `pos` within `reach` meters (flat), preferring its own height
@@ -1180,8 +1234,8 @@ impl NavRegion {
                 graph.nodes.push(GraphNode { inst: inst as u32, node: node.map(|n| self.base[inst] + n), portal: Some(p as u32) });
             }
         }
-        // Navlink ends.
-        let mut ends: Vec<NodeId> = self.extras.iter().filter(|e| e.navlink).flat_map(|e| [e.from, e.to]).collect();
+        // Ends of navlinks and of hops across tile edges (they start or land off the edge).
+        let mut ends: Vec<NodeId> = self.extras.iter().filter(|e| e.navlink || self.is_hop(e)).flat_map(|e| [e.from, e.to]).collect();
         ends.sort_unstable();
         ends.dedup();
         let mut end_index: BTreeMap<NodeId, u32> = BTreeMap::new();
@@ -1192,7 +1246,8 @@ impl NavRegion {
             graph.nodes.push(GraphNode { inst, node: Some(node), portal: None });
         }
         let mut edges: Vec<(u32, u32, u32)> = Vec::new();
-        // Inside each instance: the bake's costs, or measured again where it is carved or has navlink ends.
+        // Inside each instance: the bake's costs, or measured again where it is carved or has
+        // navlink or hop ends.
         for (inst, instance) in self.instances.iter().enumerate() {
             let keys = &graph.of_instance[inst];
             let plain = instance.disabled.is_empty() && keys.len() == instance.nav.portals.len();
@@ -1212,9 +1267,10 @@ impl NavRegion {
                 }
             }
         }
-        // Across tiles: a stitch joins the portals of the two sides; a navlink its two ends.
+        // Across tiles: a stitch joins the portals of the two sides; a navlink or a hop its
+        // two ends.
         for extra in &self.extras {
-            let pair = if extra.navlink {
+            let pair = if extra.navlink || self.is_hop(extra) {
                 end_index.get(&extra.from).copied().zip(end_index.get(&extra.to).copied())
             } else {
                 self.portal_node(&graph, extra.from, extra.to).zip(self.portal_node(&graph, extra.to, extra.from))

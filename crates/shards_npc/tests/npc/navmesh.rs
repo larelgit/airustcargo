@@ -630,3 +630,21 @@ fn a_bake_goes_stale_when_any_prefab_down_its_chains_changes() {
     assert_ne!(inline, inline2, "a tile's prefab extends one that changed");
     assert_ne!(level, level2, "a tile's level file spawns a prefab whose parent changed");
 }
+
+/// A ledge whose face lies on a tile edge: the floor tile's last column is too close to the
+/// face to stand in, so the way up is the bake's own two-cell hop (a mantle over the foot of
+/// the ledge), across the edge; and down is a drop the same way.
+#[test]
+fn a_ledge_on_a_tile_edge_is_climbed_and_dropped_across_it() {
+    let dir = assets_with_nav("edge_ledge");
+    let block = r#"{ "block": (sockets: (n: "open", e: "open", s: "open", w: "open"), geometry: Inline([Box(min: (-4.0, -1.0, -4.0), max: (4.0, 1.0, 4.0))])) }"#;
+    std::fs::write(dir.join("content/world/edge.tile.ron"), block).unwrap();
+    let mut app = app_in(dir.to_str().unwrap(), 7, |_| {});
+    load_region(&mut app, &["floor block"]);
+    let (low, high) = (Vec3::new(4.0, 0.0, 4.0), Vec3::new(12.0, 1.0, 4.0));
+    let up = route(&app, low, high).unwrap_or_else(|e| panic!("up: {e}"));
+    assert!(up.legs.iter().any(|l| l.kind == StepKind::Mantle), "{}", up.to_plan().summary());
+    let down = route(&app, high, low).unwrap_or_else(|e| panic!("down: {e}"));
+    assert!(down.legs.iter().any(|l| l.kind == StepKind::Drop), "{}", down.to_plan().summary());
+    let _ = std::fs::remove_dir_all(&dir);
+}
