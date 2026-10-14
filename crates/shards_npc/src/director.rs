@@ -192,7 +192,7 @@ pub(crate) fn direct(
     for &(id, entity) in &order {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         let plan_def = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p));
-        f.plan.tick(dt);
+        f.plan.tick(dt, f.state.current.is_none());
         let Some(mut grant) = f.token.held.clone() else { continue };
         grant.age += dt;
         let running = running_attack(&db, f.state, &grant);

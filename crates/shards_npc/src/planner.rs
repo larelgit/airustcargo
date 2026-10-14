@@ -59,9 +59,10 @@ impl NpcPlan {
         self.cooldowns.iter().find(|c| c.name == name).map_or(0.0, |c| c.left)
     }
 
-    /// Timers run down by `dt`.
-    pub fn tick(&mut self, dt: f32) {
-        if self.rest > 0.0 {
+    /// Timers run down by `dt`: the cooldowns always, the rest only while the NPC is `free`
+    /// (running no action): a stagger after a parried attack is no rest.
+    pub fn tick(&mut self, dt: f32, free: bool) {
+        if self.rest > 0.0 && free {
             self.rest = (self.rest - dt).max(0.0);
         }
         if !self.cooldowns.is_empty() {
@@ -440,11 +441,24 @@ mod tests {
         for t in 0..60 {
             let pick = choose(&options, |o| plan.cooldown(&o.name) <= 0.0, 1.0, false, &mut DetRng::new(t)).unwrap();
             assert_eq!(options[pick].name, "jab", "slam is on cooldown at {t}/60 s");
-            plan.tick(1.0 / 60.0);
+            plan.tick(1.0 / 60.0, false);
         }
-        plan.tick(1.0 / 60.0);
+        plan.tick(1.0 / 60.0, false);
         assert_eq!(plan.cooldown("slam"), 0.0);
-        assert!(plan.cooldowns.is_empty());
+        assert!(plan.cooldowns.is_empty(), "cooldowns run while busy too");
+    }
+
+    #[test]
+    fn the_rest_after_an_attack_waits_while_the_npc_is_busy() {
+        let mut plan = NpcPlan { rest: 1.0, ..Default::default() };
+        for _ in 0..96 {
+            plan.tick(1.0 / 60.0, false); // staggered: no rest
+        }
+        assert_eq!(plan.rest, 1.0);
+        for _ in 0..30 {
+            plan.tick(1.0 / 60.0, true);
+        }
+        assert!((plan.rest - 0.5).abs() < 1e-4, "{}", plan.rest);
     }
 
     #[test]

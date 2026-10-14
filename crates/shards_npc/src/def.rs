@@ -512,7 +512,8 @@ pub struct AttackPlanDef {
     pub in_range_only: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub bans: Vec<SequenceBan>,
-    /// Seconds of rest after an attack before it asks for the next token: `(min, max)`.
+    /// Seconds of rest after an attack before it asks for the next token: `(min, max)`,
+    /// counted while it runs no action (a stagger after a parried attack is no rest).
     pub rest: (f32, f32),
 }
 
