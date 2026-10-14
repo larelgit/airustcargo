@@ -1,0 +1,26 @@
+[package]
+name = "shards_settings"
+description = "Shards player settings (E8.6): graphics, audio, controls and accessibility groups on Bevy's settings framework, apply helpers, tools."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# Applies the graphics group to the primary window. Without it (headless) the values are only kept.
+render = ["ai_core/render"]
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+# `bevy_settings` is Bevy's own settings framework (`bevy-settings`, the only crate this adds);
+# `bevy_window` is for the graphics group's window.
+bevy = { workspace = true, features = ["std", "serialize", "bevy_settings", "bevy_window"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+# Integration tests build apps the way a game does: the whole engine (`shards::testing`).
+# With the features a game has, so `cargo test -p shards_settings` builds Bevy as the workspace does.
+shards = { workspace = true, features = ["render", "remote", "hot_reload"] }

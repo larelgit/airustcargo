@@ -464,6 +464,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy-settings"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec71f0c76dda2b661af0f91d8812b70d6f52f5d5b2a5686324518b2411eb2a61"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_ecs_macros",
+ "bevy_log",
+ "bevy_platform",
+ "bevy_reflect",
+ "bevy_tasks",
+ "bevy_time",
+ "serde",
+ "thiserror 2.0.21",
+ "toml",
+ "web-sys",
+]
+
+[[package]]
 name = "bevy_a11y"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1116,6 +1136,7 @@ version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4ed1cb58d1761426a077a8aff55e6a2e0cdfd19e411211d4b0217409330bb84"
 dependencies = [
+ "bevy-settings",
  "bevy_a11y",
  "bevy_android",
  "bevy_animation",
@@ -5206,6 +5227,7 @@ dependencies = [
  "shards_motion",
  "shards_npc",
  "shards_save",
+ "shards_settings",
  "shards_world",
 ]
 
@@ -5221,6 +5243,7 @@ dependencies = [
  "shards_content",
  "shards_core",
  "shards_motion",
+ "shards_settings",
 ]
 
 [[package]]
@@ -5274,6 +5297,7 @@ dependencies = [
  "serde_json",
  "shards_content",
  "shards_core",
+ "shards_settings",
 ]
 
 [[package]]
@@ -5314,6 +5338,18 @@ version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "shards_settings"
+version = "0.2.0"
+dependencies = [
+ "ai_core",
+ "bevy",
+ "schemars",
+ "serde",
+ "serde_json",
+ "shards_core",
 ]
 
 [[package]]

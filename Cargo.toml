@@ -9,6 +9,7 @@ members = [
     "crates/shards_action",
     "crates/shards_level",
     "crates/shards_save",
+    "crates/shards_settings",
     "crates/shards_npc",
     "crates/shards_world",
     "crates/shards_net",
@@ -63,6 +64,7 @@ shards_action = { path = "crates/shards_action" }
 shards_level = { path = "crates/shards_level" }
 shards_npc = { path = "crates/shards_npc" }
 shards_save = { path = "crates/shards_save" }
+shards_settings = { path = "crates/shards_settings" }
 shards_world = { path = "crates/shards_world" }
 shards_net = { path = "crates/shards_net" }
 shards = { path = "crates/shards", default-features = false }
