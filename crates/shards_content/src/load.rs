@@ -2,13 +2,15 @@
 //!
 //! At start the `content` folder is loaded asynchronously; the loading gate holds the
 //! simulation until every file is in and the database is built, so loading never
-//! shifts a tick. Afterwards (with the `hot_reload` feature) a changed file is parsed
-//! and the whole database checked again: a clean result is applied through the
-//! `content_apply` tool, which journals it and records it in the replay at the tick it
-//! happened, so playback reproduces it; a broken one is journaled and the previous
-//! version kept.
+//! shifts a tick. Afterwards (with the `hot_reload` feature) a changed, created or
+//! deleted file is parsed and the whole database checked again: a clean result is
+//! applied through the `content_apply` tool, which journals it and records it in the
+//! replay at the tick it happened, so playback reproduces it; a broken one is journaled
+//! and the previous version kept.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use ai_core::journal::{self, JournalKind};
 use ai_core::{call_tool, sim, AiReplay};
@@ -58,7 +60,11 @@ impl AssetLoader for ContentLoader {
     }
 }
 
-/// The files being loaded, and file changes waiting to be applied.
+/// How often hot reload lists the content folder for files created or deleted: the
+/// file watcher only follows files the game loaded.
+const RESCAN: Duration = Duration::from_secs(1);
+
+/// The files being loaded, and what hot reload has seen of them since.
 #[derive(Resource, Default)]
 pub(crate) struct ContentLoading {
     started: bool,
@@ -67,8 +73,14 @@ pub(crate) struct ContentLoading {
     files: Vec<(String, Handle<ContentText>)>,
     /// `.ron` files no kind claims, read from disk to be reported.
     unclaimed: Vec<Source>,
-    /// Sources changed on disk since the last frame (hot reload).
-    changed: Vec<Source>,
+    /// Hot reload: every content file as last seen on disk (`None`: deleted), edits
+    /// that were refused included. An edit is checked together with all of them, so
+    /// one that spans files applies once its last file is saved.
+    seen: BTreeMap<String, Option<String>>,
+    /// `seen` changed since hot reload last tried to apply it.
+    dirty: bool,
+    /// When hot reload lists the folder next (real time).
+    next_scan: Duration,
 }
 
 /// The asset folder on disk: where Bevy reads it, so synchronous reads see the same
@@ -153,6 +165,7 @@ pub(crate) fn finish_loading(world: &mut World) {
     let summary = db.summary();
     let errors: Vec<String> = failed.into_iter().chain(db.errors().map(ToString::to_string)).collect();
     world.insert_resource(db);
+    world.resource_mut::<ContentLoading>().seen = sources.into_iter().map(|s| (s.path, Some(s.text))).collect();
     for error in &errors {
         journal::emit(world, JournalKind::Error, format!("content: {error}"));
     }
@@ -166,8 +179,48 @@ pub(crate) fn finish_loading(world: &mut World) {
     restore_for_playback(world);
 }
 
-/// `Update`: content files the asset server reloaded (the file watcher saw them
-/// change) whose text differs from what is applied.
+/// `Update`, with the file watcher on: every [`RESCAN`], content files created since
+/// the game started load (and apply like an edit once in), and deleted ones count as
+/// removed.
+pub(crate) fn rescan_folder(world: &mut World) {
+    if !world.resource::<AssetServer>().watching_for_changes() || !world.resource::<ContentDb>().is_loaded() {
+        return;
+    }
+    let now = world.resource::<Time<Real>>().elapsed();
+    if now < world.resource::<ContentLoading>().next_scan {
+        return;
+    }
+    world.resource_mut::<ContentLoading>().next_scan = now + RESCAN;
+    let root = asset_root(world);
+    let Ok(paths) = list_files(&root) else { return };
+    let kinds = world.resource::<ContentKinds>().clone();
+    let server = world.resource::<AssetServer>().clone();
+    let mut loading = world.resource_mut::<ContentLoading>();
+    let loading = &mut *loading;
+    for (path, text) in &mut loading.seen {
+        if text.is_some() && !paths.contains(path) {
+            *text = None;
+            loading.dirty = true;
+        }
+    }
+    for path in paths {
+        // A file the game holds a handle to comes back through the watcher.
+        if loading.seen.get(&path).is_some_and(Option::is_some) || loading.files.iter().any(|(p, _)| *p == path) {
+            continue;
+        }
+        if is_claimed(&kinds, &path) {
+            let handle = server.load::<ContentText>(path.clone());
+            loading.files.push((path, handle));
+        } else if let Ok(source) = read_file(&root, &path) {
+            // Checked like any edit: refused, with what is wrong with its name.
+            loading.seen.insert(source.path, Some(source.text));
+            loading.dirty = true;
+        }
+    }
+}
+
+/// `Update`: content files the asset server (re)loaded because the file watcher saw
+/// them change.
 pub(crate) fn collect_changes(
     mut events: MessageReader<AssetEvent<ContentText>>,
     server: Res<AssetServer>,
@@ -182,19 +235,34 @@ pub(crate) fn collect_changes(
         }
         let (Some(path), Some(text)) = (server.get_path(*id), texts.get(*id)) else { continue };
         let path = path.path().to_string_lossy().replace('\\', "/");
-        if db.file_text(&path) == Some(text.text.as_str()) || loading.changed.iter().any(|s| s.path == path && s.text == text.text) {
-            continue;
+        if loading.seen.get(&path).and_then(Option::as_deref) != Some(text.text.as_str()) {
+            loading.seen.insert(path, Some(text.text.clone()));
+            loading.dirty = true;
         }
-        loading.changed.retain(|s| s.path != path);
-        loading.changed.push(Source { path, text: text.text.clone() });
     }
 }
 
-/// `Update`, after [`collect_changes`]: checks and applies them.
+/// `Update`, after [`collect_changes`]: applies every file seen on disk that differs
+/// from what is applied, checked together. Not while the game loads: then an edit
+/// waits, since an action cannot run.
 pub(crate) fn apply_changes(world: &mut World) {
-    let changed = std::mem::take(&mut world.resource_mut::<ContentLoading>().changed);
-    if !changed.is_empty() {
-        let _ = reload(world, changed, Vec::new());
+    if !world.resource::<ContentLoading>().dirty || sim::gate_message(world).is_some() {
+        return;
+    }
+    world.resource_mut::<ContentLoading>().dirty = false;
+    let loading = world.resource::<ContentLoading>();
+    let db = world.resource::<ContentDb>();
+    let mut changed = Vec::new();
+    let mut removed = Vec::new();
+    for (path, text) in &loading.seen {
+        match text {
+            Some(text) if db.file_text(path) != Some(text.as_str()) => changed.push(Source { path: path.clone(), text: text.clone() }),
+            None if db.file_text(path).is_some() => removed.push(path.clone()),
+            _ => {}
+        }
+    }
+    if !changed.is_empty() || !removed.is_empty() {
+        let _ = reload(world, changed, removed);
     }
 }
 

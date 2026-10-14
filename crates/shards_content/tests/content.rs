@@ -192,6 +192,17 @@ fn load(app: &mut App) {
     }
 }
 
+/// Updates `app` (the file watcher works meanwhile) until `done`, or fails naming `what`.
+#[cfg(feature = "hot_reload")]
+fn wait_for(app: &mut App, what: &str, done: impl Fn(&App) -> bool) {
+    let started = Instant::now();
+    while !done(app) {
+        assert!(started.elapsed() < Duration::from_secs(20), "{what} never happened: {:?}", app.world().resource::<AiJournal>().after(0).0.map(ToString::to_string).collect::<Vec<_>>());
+        app.update();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 /// `OnEnter(InGame)`, after the dummy: a game that spawns its world from content.
 fn spawn_skeleton(world: &mut World) {
     spawn_prefab(world, "skeleton", Transform::default(), None).unwrap();
@@ -556,4 +567,35 @@ fn an_edited_file_is_reloaded_while_the_game_runs() {
     }
     let events = journal(&app, JournalKind::Event);
     assert!(events.contains(&"content reloaded: combat/attacks.attack.ron (1 definition changed)".to_owned()), "{events:?}");
+}
+
+#[cfg(feature = "hot_reload")]
+#[test]
+fn an_edit_across_files_applies_once_its_last_file_is_saved() {
+    let dir = assets("watch_rename", &[("content/combat/attacks.attack.ron", ATTACKS), ("content/hero.moveset.ron", MOVESETS)]);
+    let mut app = app_with(&dir, true);
+    std::thread::sleep(Duration::from_millis(500));
+    // The sword becomes a saber: refused while the moveset still says sword...
+    write(&dir, "content/combat/attacks.attack.ron", &ATTACKS.replace("\"sword\"", "\"saber\""));
+    wait_for(&mut app, "the refusal", |app| journal(app, JournalKind::Error).iter().any(|l| l.contains("unknown attack `sword`")));
+    // ...and applied with it once the moveset follows.
+    write(&dir, "content/hero.moveset.ron", &MOVESETS.replace("sword", "saber"));
+    wait_for(&mut app, "the saber", |app| app.world().resource::<ContentDb>().get::<AttackDef>("saber").is_some());
+    let events = journal(&app, JournalKind::Event);
+    let applied = "content reloaded: combat/attacks.attack.ron, hero.moveset.ron (3 definitions changed)";
+    assert!(events.contains(&applied.to_owned()), "{events:?}");
+}
+
+#[cfg(feature = "hot_reload")]
+#[test]
+fn files_created_or_deleted_while_the_game_runs_are_applied() {
+    let dir = assets("watch_files", &[("content/combat/attacks.attack.ron", ATTACKS)]);
+    let mut app = app_with(&dir, true);
+    std::thread::sleep(Duration::from_millis(500));
+    write(&dir, "content/extra.attack.ron", r#"{ "kick": (damage: 3.0) }"#);
+    wait_for(&mut app, "the new file", |app| app.world().resource::<ContentDb>().get::<AttackDef>("kick").is_some());
+    std::fs::remove_file(dir.join("content/extra.attack.ron")).unwrap();
+    wait_for(&mut app, "the deletion", |app| app.world().resource::<ContentDb>().get::<AttackDef>("kick").is_none());
+    write(&dir, "content/old.atack.ron", "{}");
+    wait_for(&mut app, "the misnamed file", |app| journal(app, JournalKind::Error).iter().any(|l| l.contains("no content kind `atack`")));
 }

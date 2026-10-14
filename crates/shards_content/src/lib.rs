@@ -129,7 +129,10 @@ impl Plugin for ContentPlugin {
             .add_engine_module("content", env!("CARGO_PKG_VERSION"))
             .add_replay_check("content", |w| w.get_resource::<ContentDb>().map_or(0, ContentDb::hash))
             .add_systems(Startup, load::start_loading)
-            .add_systems(Update, (load::finish_loading, load::collect_changes, load::apply_changes).chain())
+            .add_systems(
+                Update,
+                (load::finish_loading, load::rescan_folder, load::collect_changes, load::apply_changes).chain(),
+            )
             .add_systems(FixedFirst, load::prepare_playback.before(ReplaySystems::Calls));
         tools::register(app.world_mut());
     }
