@@ -28,7 +28,7 @@ use shards_action::{ActionState, Dead, Health};
 use shards_content::ContentDb;
 use shards_core::flat;
 
-use crate::def::{BehaviorDef, Cond, Params};
+use crate::def::{AttackPlanDef, BehaviorDef, Cond, DirectorDef, Params, PerceptionDef};
 use crate::director::{AttackToken, Grant};
 use crate::nav::NavAgent;
 use crate::perception::Perceived;
@@ -446,30 +446,10 @@ struct Decided {
 /// runs its state's hook; the results apply after all of them decided.
 pub(crate) fn decide(world: &mut World) {
     let dt = world.resource::<Time>().delta_secs();
-    let hooks = world.get_resource::<NpcHooks>().cloned().unwrap_or_default();
-    let mut decided = Vec::new();
-    let mut problems: Vec<(String, String)> = Vec::new();
-    {
-        let world: &World = world;
-        let Some(db) = world.get_resource::<ContentDb>() else { return };
-        for (_, entity) in npcs_in_order(world) {
-            let (Some(npc), Some(brain)) = (world.get::<Npc>(entity), world.get::<NpcBrain>(entity)) else { continue };
-            if !brain.active {
-                decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None });
-                continue;
-            }
-            let Some(behavior) = db.get::<BehaviorDef>(&npc.behavior) else {
-                let id = world.get::<AiId>(entity).copied().unwrap_or_default();
-                problems.push((
-                    format!("behavior {}", npc.behavior),
-                    format!("{id}: behavior `{}` is not in content; it stands still (`content_list kind=behavior`)", npc.behavior),
-                ));
-                decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None });
-                continue;
-            };
-            decided.push(decide_one(world, entity, brain, behavior, &npc.behavior, &hooks, dt, &mut problems));
-        }
+    if !world.contains_resource::<NpcHooks>() {
+        world.init_resource::<NpcHooks>();
     }
+    let (decided, problems) = world.resource_scope(|world, hooks: Mut<NpcHooks>| decide_all(world, &hooks, dt));
     for (key, text) in problems {
         report_once(world, key, text);
     }
@@ -498,6 +478,52 @@ pub(crate) fn decide(world: &mut World) {
         if let Some((from, to)) = d.changed {
             world.trigger(NpcStateChanged { entity: d.entity, from, to, target, forced: false });
         }
+    }
+}
+
+/// Every NPC's decision, on the world as it is, and the content problems met on the way.
+fn decide_all(world: &World, hooks: &NpcHooks, dt: f32) -> (Vec<Decided>, Vec<(String, String)>) {
+    let mut decided = Vec::new();
+    let mut problems: Vec<(String, String)> = Vec::new();
+    let Some(db) = world.get_resource::<ContentDb>() else { return (decided, problems) };
+    for (id, entity) in npcs_in_order(world) {
+        let (Some(npc), Some(brain)) = (world.get::<Npc>(entity), world.get::<NpcBrain>(entity)) else { continue };
+        if !brain.active {
+            decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None });
+            continue;
+        }
+        check_ids(db, id, npc, &mut problems);
+        let Some(behavior) = db.get::<BehaviorDef>(&npc.behavior) else {
+            decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None });
+            continue;
+        };
+        decided.push(decide_one(world, entity, brain, behavior, &npc.behavior, hooks, dt, &mut problems));
+    }
+    (decided, problems)
+}
+
+/// Content ids an NPC names that content does not have: said once each, with what it
+/// means and the closest id.
+fn check_ids(db: &ContentDb, id: AiId, npc: &Npc, problems: &mut Vec<(String, String)>) {
+    fn missing<T: shards_content::ContentDef>(db: &ContentDb, name: &str, means: &str) -> Option<(String, String)> {
+        if db.get::<T>(name).is_some() {
+            return None;
+        }
+        let hint = shards_content::db::closest(name, db.ids::<T>()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
+        Some((format!("{} {name}", T::KIND), format!("{} `{name}` is not in content{hint}; {means}", T::KIND)))
+    }
+    let found = [
+        missing::<BehaviorDef>(db, &npc.behavior, "it stands still"),
+        npc.plan.as_deref().and_then(|p| missing::<AttackPlanDef>(db, p, "it never attacks")),
+        Some(npc.perception.as_str())
+            .filter(|p| !p.is_empty())
+            .and_then(|p| missing::<PerceptionDef>(db, p, "it senses by the engine's defaults")),
+        Some(npc.director.as_str())
+            .filter(|d| !d.is_empty())
+            .and_then(|d| missing::<DirectorDef>(db, d, "it fights by the engine's numbers")),
+    ];
+    for (key, text) in found.into_iter().flatten() {
+        problems.push((key, format!("{id}: {text}")));
     }
 }
 

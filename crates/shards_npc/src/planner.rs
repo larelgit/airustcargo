@@ -279,7 +279,7 @@ pub(crate) fn plan_attacks(
             continue;
         }
         let Some(mut grant) = f.token.held.clone() else { continue };
-        let Some((target, radius)) = target_of(&index, &targets, grant.target) else { continue };
+        let Some((target, radius)) = target_of(&index, &targets, f.perceived, grant.target) else { continue };
         let here = f.transform.translation;
         let distance = flat(target - here).length();
         f.drive.waiting = false;
@@ -356,7 +356,9 @@ pub(crate) fn plan_attacks(
             let starts = can_start(&view, &o.input, dt).is_ok();
             let fits = budget.is_none_or(|left| o.cost <= left + 1e-4)
                 && overlapping.iter().all(|tags| director.may_overlap(&o.tags, tags));
-            if starts && fits {
+            // It swings at what it perceives now, not at a memory.
+            let sensed = f.perceived.get(grant.target).is_none_or(|k| k.age <= 1e-4);
+            if starts && fits && sensed {
                 grant.pressed = Some(tick.0);
                 grant.instance = f.state.started;
                 f.drive.press.push(o.input.clone());

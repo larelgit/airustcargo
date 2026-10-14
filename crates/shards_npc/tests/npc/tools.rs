@@ -56,6 +56,21 @@ fn npc_set_state_puts_it_there_or_lists_the_states() {
 }
 
 #[test]
+fn agents_step_until_the_npcs_attack_or_calm_down() {
+    let mut app = app();
+    let hero = player(app.world_mut(), 0, Vec3::ZERO);
+    let g = grunt(app.world_mut(), "grunt", "jabber", "default", Vec3::new(0.0, 0.0, -6.0));
+    let run = ok(&mut app, "step", json!({"ticks": 600, "until": [{"named": "npc_attacking"}]}));
+    assert!(text(&run).contains("stopped: condition npc_attacking"), "{}", text(&run));
+    assert!(attacking(&app, g) || action(&app, g).is_some(), "it swings");
+    // The hero goes far away for good: the grunt forgets it.
+    teleport(&mut app, hero, Vec3::new(0.0, 0.0, 50.0));
+    let run = ok(&mut app, "step", json!({"ticks": 900, "until": [{"named": "npcs_calm"}]}));
+    assert!(text(&run).contains("stopped: condition npcs_calm"), "{}", text(&run));
+    assert_eq!(state(&app, g), "idle");
+}
+
+#[test]
 fn nav_path_answers_with_the_route_around_a_wall() {
     let mut app = app();
     player(app.world_mut(), 0, Vec3::new(-4.0, 0.0, 0.0));

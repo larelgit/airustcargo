@@ -29,6 +29,7 @@ use shards_motion::Collider;
 
 use crate::brain::{clamp_to_leash, salt, Home, Npc, NpcBrain, NpcDrive};
 use crate::def::{AttackPlanDef, DirectorDef, Role, WaitRole};
+use crate::perception::Perceived;
 use crate::planner::{feasible, resolve, InFlight, NpcPlan};
 
 /// An NPC's attack token, while it holds one, and its place in the queue while it asks.
@@ -132,6 +133,7 @@ pub(crate) struct Fighting {
     pub state: &'static ActionState,
     pub buffer: &'static InputBuffer,
     pub transform: &'static Transform,
+    pub perceived: &'static Perceived,
     pub home: Option<&'static Home>,
     pub stamina: Option<&'static Stamina>,
     pub cooldowns: Option<&'static Cooldowns>,
@@ -142,10 +144,13 @@ pub(crate) struct Fighting {
 /// Where a target stands, its body radius, whether it is alive.
 pub(crate) type Targets<'w, 's> = Query<'w, 's, (&'static Transform, Has<Dead>, Option<&'static Collider>)>;
 
-/// A live target: feet and body radius.
-pub(crate) fn target_of(index: &AiIndex, targets: &Targets, id: AiId) -> Option<(Vec3, f32)> {
+/// A live target as an NPC knows it: where it perceives it (seen this tick: where it is;
+/// else where it was last seen or heard) and its body radius. NPCs do not cheat: what they
+/// steer and strike at is what they perceive.
+pub(crate) fn target_of(index: &AiIndex, targets: &Targets, perceived: &Perceived, id: AiId) -> Option<(Vec3, f32)> {
     let (tf, dead, collider) = targets.get(index.get(id)?).ok()?;
-    (!dead).then(|| (tf.translation, collider.map_or(0.4, |c| c.shape.half_extents().x)))
+    let at = perceived.get(id).map_or(tf.translation, |k| k.pos);
+    (!dead).then(|| (at, collider.map_or(0.4, |c| c.shape.half_extents().x)))
 }
 
 /// NPCs by `AiId`.
@@ -208,7 +213,7 @@ pub(crate) fn direct(
             (!running && !buffered).then_some(if grant.started { "attack over" } else { "attack never started" })
         } else if !f.brain.active {
             Some("dormant")
-        } else if target_of(&index, &targets, grant.target).is_none() {
+        } else if target_of(&index, &targets, f.perceived, grant.target).is_none() {
             Some("target gone")
         } else if !f.drive.strike && !f.drive.request_token {
             Some("left the fight")
@@ -270,7 +275,7 @@ pub(crate) fn direct(
             && !f.dead
             && f.plan.rest <= 0.0
             && f.npc.plan.is_some()
-            && f.brain.target.is_some_and(|t| target_of(&index, &targets, t).is_some());
+            && f.brain.target.is_some_and(|t| target_of(&index, &targets, f.perceived, t).is_some());
         if !wants {
             if f.token.asking_since.is_some() && f.token.held.is_none() {
                 f.token.asking_since = None;
@@ -289,7 +294,7 @@ pub(crate) fn direct(
             continue;
         }
         let Some(target) = f.brain.target else { continue };
-        let Some((_, radius)) = target_of(&index, &targets, target) else { continue };
+        let Some((_, radius)) = target_of(&index, &targets, f.perceived, target) else { continue };
         let director = DirectorDef::of(&db, &f.npc.director);
         let Some(plan_def) = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)) else { continue };
         let options = resolve(plan_def, &db, &f.fighter.moveset, radius);
@@ -320,7 +325,7 @@ pub(crate) fn direct(
     for &(id, entity) in &order {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         let waiting = f.drive.waiting && f.token.held.is_none() && f.brain.active && !f.dead;
-        let target = f.brain.target.filter(|t| waiting && target_of(&index, &targets, *t).is_some());
+        let target = f.brain.target.filter(|t| waiting && target_of(&index, &targets, f.perceived, *t).is_some());
         let Some(target) = target else {
             if f.brain.slot.is_some() || f.brain.role.is_some() {
                 f.brain.slot = None;
@@ -340,7 +345,7 @@ pub(crate) fn direct(
     for (_, entity) in waiters {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         let Some(target) = f.brain.target else { continue };
-        let Some((center, _)) = target_of(&index, &targets, target) else { continue };
+        let Some((center, _)) = target_of(&index, &targets, f.perceived, target) else { continue };
         let slot = match f.brain.slot {
             Some(slot) => slot,
             None => {

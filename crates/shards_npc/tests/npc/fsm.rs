@@ -79,5 +79,21 @@ fn unknown_names_are_reported_once_with_the_closest_name() {
     let typo: Vec<&String> = errors.iter().filter(|l| l.contains("unknown condition `flg_on`")).collect();
     assert_eq!(typo.len(), 1, "once, not every tick: {errors:#?}");
     assert!(typo[0].contains("(did you mean `flag_on`?)"), "{}", typo[0]);
-    assert!(errors.iter().any(|l| l.contains("behavior `nosuch` is not in content")), "{errors:#?}");
+    assert!(errors.iter().any(|l| l.contains("behavior `nosuch` is not in content; it stands still")), "{errors:#?}");
+}
+
+#[test]
+fn ids_content_lacks_are_reported_with_what_they_mean() {
+    let mut app = hooked();
+    let npc_def = Npc::new("grunt", "eyez").with_plan("grnt").with_director("bos");
+    npc(app.world_mut(), "grunt", npc_def, Vec3::ZERO, N);
+    step(&mut app, 5);
+    let errors: Vec<String> = all_journal(&app).into_iter().filter(|l| l.contains("[error]")).collect();
+    for needle in [
+        "attack_plan `grnt` is not in content (did you mean `grunt`?); it never attacks",
+        "perception `eyez` is not in content (did you mean `eyes`?); it senses by the engine's defaults",
+        "director `bos` is not in content (did you mean `boss`?); it fights by the engine's numbers",
+    ] {
+        assert_eq!(errors.iter().filter(|l| l.contains(needle)).count(), 1, "`{needle}` once in {errors:#?}");
+    }
 }

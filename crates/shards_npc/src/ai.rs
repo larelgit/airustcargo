@@ -37,7 +37,15 @@ pub(crate) fn register(app: &mut App) {
         })
         .add_ai_query("npc_state", Scope::Player, npc_state)
         .add_ai_query("nav_path", Scope::Player, nav_path)
-        .add_ai_tool("npc_set_state", Scope::Dev, npc_set_state);
+        .add_ai_tool("npc_set_state", Scope::Dev, npc_set_state)
+        // `step --until named:npc_attacking`: until an NPC's attack (by its token) is under way.
+        .add_ai_condition("npc_attacking", |w| {
+            w.try_query::<&AttackToken>().is_some_and(|mut q| q.iter(w).any(|t| t.held.as_ref().is_some_and(|g| g.started)))
+        })
+        // `step --until named:npcs_calm`: until no active NPC has a target.
+        .add_ai_condition("npcs_calm", |w| {
+            w.try_query::<&NpcBrain>().is_none_or(|mut q| q.iter(w).all(|b| !b.active || b.target.is_none()))
+        });
 }
 
 /// `chase e5 · token · leash 12/20m`, `attack e5 · circle`, `idle (dormant)`.

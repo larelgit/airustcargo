@@ -2,7 +2,7 @@
 //!
 //! - **Routes** come from [`NavPaths`], a seam: `fn(&World, from, to, radius) -> waypoints`.
 //!   The default is the motion module's local grid planner
-//!   ([`plan_path`](shards_motion::perception::plan_path)); a navmesh replaces it without
+//!   ([`plan_path`]); a navmesh replaces it without
 //!   touching the agents. A goal in plain sight (a body-wide cast through the `WORLD` layer)
 //!   needs no route; a blocked one is planned again when the goal moves or every
 //!   [`NpcTuning::repath`] seconds.
