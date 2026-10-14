@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use ai_core::builtin::{apply_clock, StepWatch};
-use ai_core::sim::{self, ClockAction, StepEnd, StepPoll, StepReport};
+use ai_core::sim::{self, ClockAction, DrivenClock, StepEnd, StepPoll, StepReport};
 use ai_core::tools::finished;
 use ai_core::invariants::Violation;
 use ai_core::{call_tool, CallOutcome, SimGate, StepQueue, StepRoute, SystemFailure};
@@ -84,6 +84,7 @@ pub struct Stand {
     pub iteration: u64,
     tick_ms: f64,
     /// Running in real time (`resume`), at `speed`: for a driver with a clock (`--stand`).
+    /// What every member's `ai/status`, `observe` and replies say (see [`DrivenClock`]).
     pub running: bool,
     pub speed: f32,
     /// How long a member may load by itself.
@@ -109,7 +110,21 @@ impl Stand {
             }
             members.push(Member { name, app, link: None, queue });
         }
-        Self { hub, members, iteration: 0, tick_ms, running: false, speed: 1.0, load_timeout: Duration::from_secs(30), owed: 0.0, counted: None }
+        let stand =
+            Self { hub, members, iteration: 0, tick_ms, running: false, speed: 1.0, load_timeout: Duration::from_secs(30), owed: 0.0, counted: None };
+        stand.sync_clock();
+        stand
+    }
+
+    /// Tells every member how the stand runs their ticks (`running`, `speed`): their virtual
+    /// clocks stay paused, the stand runs the ticks.
+    pub fn sync_clock(&self) {
+        let clock = DrivenClock { running: self.running, speed: self.speed };
+        for member in &self.members {
+            if let Ok(mut queue) = member.queue.lock() {
+                queue.set_driven(clock);
+            }
+        }
     }
 
     /// Adds a member (a client joining later, on hub link `link`); returns its index.
@@ -117,6 +132,7 @@ impl Stand {
         let queue = Arc::new(Mutex::new(StepQueue::default()));
         app.insert_resource(StepRoute::Deferred(queue.clone()));
         self.members.push(Member { name: name.to_owned(), app, link, queue });
+        self.sync_clock();
         self.members.len() - 1
     }
 
@@ -310,10 +326,13 @@ impl Stand {
                         Ok(format!("running from tick {}", sim::tick(self.world(m))))
                     }
                     ClockAction::Speed(x) => {
-                        self.speed = x;
-                        apply_clock(self.world_mut(m), ClockAction::Speed(x))
+                        // As `sim::set_speed`: no negative speed (it would owe ticks forever).
+                        self.speed = x.max(0.0);
+                        let speed = self.speed;
+                        apply_clock(self.world_mut(m), ClockAction::Speed(speed))
                     }
                 };
+                self.sync_clock();
                 let outcome = finished(self.world(m), request.action.tool(), result.map(Value::String));
                 if let Ok(mut q) = queue.lock() {
                     q.complete(request.id, outcome);
@@ -321,6 +340,9 @@ impl Stand {
             }
             let steps = queue.lock().map(|mut q| q.take_steps()).unwrap_or_default();
             for request in steps {
+                // A step pauses, as `sim::step` does: after it, time stands where it stopped.
+                self.running = false;
+                self.sync_clock();
                 let started = Instant::now();
                 let from_tick = sim::tick(self.world(m));
                 let watch = StepWatch::begin(self.world_mut(m), &request);
@@ -366,6 +388,7 @@ impl Stand {
     /// it (the failing member journals it), as a game in real time pauses. Returns whether a
     /// member is exiting.
     pub fn serve(&mut self) -> bool {
+        self.sync_clock();
         self.frame();
         self.drive();
         let now = Instant::now();
@@ -398,7 +421,33 @@ impl Stand {
             self.owed = 0.0;
         }
         self.counted = Some(now);
-        self.members.iter().any(|m| m.app.should_exit().is_some())
+        // Only the host ends the stand: a client that exits (`--exit-with-host`, kicked) has
+        // left the session, the others play on.
+        self.members.first().is_some_and(|host| host.app.should_exit().is_some())
+    }
+
+    /// Ends the stand as a host quitting ends a session: the host's exit hooks (the clients
+    /// are told, get their characters), the hub's clock running until that has arrived over
+    /// links with latency and loss (at most `max_ms` of hub time), then the clients' exit
+    /// hooks. Returns how the host exits.
+    pub fn shut_down(&mut self, max_ms: u64) -> AppExit {
+        let Some(host) = self.members.first_mut() else { return AppExit::Success };
+        shards_core::run_exit_hooks(host.app.world_mut());
+        let until = self.hub.now() + max_ms;
+        loop {
+            self.frame();
+            let told = self.members.iter().skip(1).all(|m| {
+                m.app.world().get_resource::<NetClient>().is_none_or(|c| matches!(c.stage, client::ClientStage::Ended(_)))
+            });
+            if (told && self.hub.in_transit() == 0) || self.hub.now() >= until {
+                break;
+            }
+            self.advance_hub();
+        }
+        for member in self.members.iter_mut().skip(1) {
+            shards_core::run_exit_hooks(member.app.world_mut());
+        }
+        self.members[0].app.should_exit().unwrap_or(AppExit::Success)
     }
 
     /// Member `name`'s index.

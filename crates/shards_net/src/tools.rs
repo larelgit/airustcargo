@@ -60,7 +60,7 @@ fn state_text(world: &World) -> String {
 }
 
 /// `ai/status.net`: `{role, member, player, body, session, host_tick, peers}` (and the
-/// desync count), what `shards wait` prints of a member.
+/// desync count; a UDP host's bound address in `udp`), what `shards wait` prints of a member.
 fn status(world: &World) -> Value {
     let role = role(world);
     let member = world.get_resource::<shards_core::EngineConfig>().map(|c| c.player_name.clone()).unwrap_or_default();
@@ -78,6 +78,10 @@ fn status(world: &World) -> Value {
             .collect();
         out["peers"] = json!(peers);
         out["desyncs"] = json!(host.desyncs);
+        // The address clients `--join` (the port actually bound: `--host 0` picks one).
+        if let Some(udp) = world.get_resource::<NetEndpoint>().and_then(|e| e.transport.local_addr()) {
+            out["udp"] = json!(udp);
+        }
     }
     if let Some(client) = world.get_resource::<NetClient>() {
         out["host"] = json!(client.address);
@@ -260,8 +264,12 @@ pub struct NetEndArgs {
 }
 
 fn net_end(In(call): In<Call<NetEndArgs>>, world: &mut World) -> ToolResult<Value> {
-    if !world.contains_resource::<NetHost>() {
-        return Err("this game is not hosting".into());
+    match world.get_resource::<NetHost>() {
+        None => return Err("this game is not hosting".into()),
+        Some(host) if host.ended.is_some() => {
+            return Err(format!("the session has ended already ({}); net_status shows it", host.ended.as_deref().unwrap_or_default()).into());
+        }
+        Some(_) => {}
     }
     let reason = call.args.reason.unwrap_or_else(|| "the host ended the session".into());
     end_session(world, &reason);

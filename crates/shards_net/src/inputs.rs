@@ -17,6 +17,45 @@ use shards_core::{Intent, Order, Press};
 /// Frames further ahead of the host than this are dropped.
 pub const MAX_AHEAD: u64 = 120;
 
+/// Frames one `Inputs` packet may carry (`input_redundancy` is at most this).
+pub const MAX_FRAMES_PER_PACKET: usize = 64;
+/// Presses one frame may carry; a client keeps the rest for its next frames.
+pub const MAX_PRESSES_PER_FRAME: usize = 8;
+/// Inputs one frame may hold down.
+pub const MAX_HELD: usize = 16;
+/// Orders one frame's queue may hold.
+pub const MAX_ORDERS: usize = 16;
+/// Longest input name in a frame (a press, a held input, an attack order's input), bytes.
+pub const MAX_INPUT_NAME: usize = 64;
+/// Presses a host tick takes from one player, however many of their frames are due at once.
+pub const MAX_PRESSES_PER_TICK: usize = 32;
+
+/// Why `inputs` is over the limits a client keeps to, if it is.
+pub fn check(inputs: &crate::msg::Inputs) -> Result<(), String> {
+    if inputs.frames.len() > MAX_FRAMES_PER_PACKET {
+        return Err(format!("{} frames, at most {MAX_FRAMES_PER_PACKET}", inputs.frames.len()));
+    }
+    let long = |name: &str| name.len() > MAX_INPUT_NAME;
+    for frame in &inputs.frames {
+        let tick = frame.tick;
+        if frame.presses.len() > MAX_PRESSES_PER_FRAME || frame.presses.iter().any(|p| long(&p.input)) {
+            return Err(format!("frame {tick}: {} presses, at most {MAX_PRESSES_PER_FRAME} of at most {MAX_INPUT_NAME} bytes", frame.presses.len()));
+        }
+        if let Some(state) = &frame.state
+            && (state.held.len() > MAX_HELD || state.held.iter().any(|h| long(h)))
+        {
+            return Err(format!("frame {tick}: {} held inputs, at most {MAX_HELD}", state.held.len()));
+        }
+        if let Some(orders) = &frame.orders {
+            let long_order = orders.iter().any(|o| matches!(o, Order::Attack { input, .. } if long(input)));
+            if orders.len() > MAX_ORDERS || long_order {
+                return Err(format!("frame {tick}: {} orders, at most {MAX_ORDERS}", orders.len()));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The held state of an `Intent`: what lasts until it changes.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct IntentState {
@@ -183,18 +222,26 @@ impl InputCapture {
         Self { state: IntentState::of(intent), orders: intent.orders.clone(), ..Self::default() }
     }
 
-    /// Captures tick `tick` from the own `intent`: presses are taken out of it. Returns the
-    /// frame when something changed (it is queued for sending as well).
+    /// Captures tick `tick` from the own `intent`: presses are taken out of it (at most
+    /// [`MAX_PRESSES_PER_FRAME`]; the rest wait for the next tick). Returns the frame when
+    /// something changed (it is queued for sending as well). A frame stays within the limits
+    /// the host checks ([`check`]).
     pub fn capture(&mut self, tick: u64, intent: &mut Intent, redundancy: usize) -> Option<InputFrame> {
-        let state = IntentState::of(intent);
+        let mut state = IntentState::of(intent);
+        state.held.truncate(MAX_HELD);
+        let orders_changed = intent.orders != self.orders;
         let mut frame = InputFrame { tick, ..default() };
-        if state != self.state {
+        // A new order queue goes with the held state as this machine holds it: on the host,
+        // orders steer the body (`move_dir`, `aim`, `target`), which a client never sees; a
+        // `stop` must stop it there too.
+        if state != self.state || orders_changed {
             frame.state = Some(state.clone());
             self.state = state;
         }
-        frame.presses = std::mem::take(&mut intent.pressed);
-        if intent.orders != self.orders {
-            frame.orders = Some(intent.orders.iter().cloned().collect());
+        let take = intent.pressed.len().min(MAX_PRESSES_PER_FRAME);
+        frame.presses = intent.pressed.drain(..take).collect();
+        if orders_changed {
+            frame.orders = Some(intent.orders.iter().take(MAX_ORDERS).cloned().collect());
             self.orders = intent.orders.clone();
             self.orders_pending_until = tick;
         }
@@ -212,6 +259,14 @@ impl InputCapture {
         Some(frame)
     }
 
+    /// Puts what this machine holds (the held state, the order queue) into `intent`: the
+    /// body as the host's world gave it again, while frames after that world's tick still
+    /// come to the host.
+    pub fn hold(&self, intent: &mut Intent) {
+        self.state.write(intent);
+        intent.orders = self.orders.clone();
+    }
+
     /// The host has every frame up to `tick`.
     pub fn ack(&mut self, tick: u64) {
         while self.unacked.front().is_some_and(|f| f.tick <= tick) {
@@ -220,9 +275,13 @@ impl InputCapture {
     }
 
     /// The host's orders for the body: taken over (here and in what is remembered) unless an
-    /// order command of ours is still on its way.
-    pub fn adopt_orders(&mut self, acked: u64, intent: &mut Intent, host: &VecDeque<Order>) {
-        if self.orders_pending_until > acked || intent.orders == *host {
+    /// order command of ours is not applied there yet, or not even captured (a tool changed
+    /// the queue this tick; the state is applied before the capture). `applied` is the newest
+    /// frame the host applied to the body (`OwnState::applied_input_tick`), not the newest it
+    /// received: a received frame waits for its tick, and the orders sent until then are from
+    /// before it.
+    pub fn adopt_orders(&mut self, applied: u64, intent: &mut Intent, host: &VecDeque<Order>) {
+        if self.orders_pending_until > applied || intent.orders != self.orders || intent.orders == *host {
             return;
         }
         intent.orders = host.clone();
@@ -305,5 +364,74 @@ mod tests {
             capture.capture(tick, &mut intent, 32);
         }
         assert_eq!(capture.unacked.len(), 32, "at most the redundancy waits");
+    }
+
+    #[test]
+    fn a_new_order_queue_carries_the_held_state() {
+        let mut intent = Intent::default();
+        let mut capture = InputCapture::starting_from(&intent);
+        intent.orders.push_back(Order::MoveTo { target: shards_core::Target::Point(Vec3::X), within: 1.0 });
+        let walk = capture.capture(1, &mut intent, 32).unwrap();
+        assert!(walk.orders.is_some());
+        // `stop`: no orders, nothing held. The client's held state did not change (the host's
+        // order steered the body there), yet the host must hear it with the empty queue.
+        intent.orders.clear();
+        let stop = capture.capture(2, &mut intent, 32).unwrap();
+        assert_eq!(stop.orders, Some(vec![]));
+        assert_eq!(stop.state.as_ref().map(|s| s.move_dir), Some(Vec3::ZERO), "{stop:?}");
+        let mut host = Intent { move_dir: Vec3::X, aim: Some(Vec3::X), ..default() };
+        apply_frame(&mut host, &walk);
+        host.move_dir = Vec3::X; // steered by the order
+        apply_frame(&mut host, &stop);
+        assert_eq!((host.move_dir, host.aim), (Vec3::ZERO, None), "stopped on the host");
+    }
+
+    #[test]
+    fn frames_stay_within_the_limits_the_host_checks() {
+        let mut intent = Intent::default();
+        let mut capture = InputCapture::starting_from(&intent);
+        for _ in 0..20 {
+            intent.press("light");
+        }
+        let first = capture.capture(1, &mut intent, 32).unwrap();
+        assert_eq!(first.presses.len(), MAX_PRESSES_PER_FRAME);
+        assert_eq!(intent.pressed.len(), 20 - MAX_PRESSES_PER_FRAME, "the rest wait for the next ticks");
+        let inputs = crate::msg::Inputs { tick: 1, frames: vec![first], ..default() };
+        assert_eq!(check(&inputs), Ok(()));
+
+        let flood = InputFrame { tick: 2, presses: vec![press("light"); 40_000], ..default() };
+        let err = check(&crate::msg::Inputs { tick: 2, frames: vec![flood], ..default() }).unwrap_err();
+        assert!(err.contains("40000 presses"), "{err}");
+        let many = crate::msg::Inputs { tick: 3, frames: (0..100).map(frame).collect(), ..default() };
+        assert!(check(&many).unwrap_err().contains("100 frames"));
+        let held = IntentState { held: vec!["block".into(); 17], ..default() };
+        let err = check(&crate::msg::Inputs { frames: vec![InputFrame { tick: 4, state: Some(held), ..default() }], ..default() }).unwrap_err();
+        assert!(err.contains("17 held"), "{err}");
+        let long = press(&"x".repeat(MAX_INPUT_NAME + 1));
+        assert!(check(&crate::msg::Inputs { frames: vec![InputFrame { tick: 5, presses: vec![long], ..default() }], ..default() }).is_err());
+    }
+
+    #[test]
+    fn orders_are_taken_from_the_host_once_it_applied_ours() {
+        let mut intent = Intent::default();
+        let mut capture = InputCapture::starting_from(&intent);
+        let order = Order::MoveTo { target: shards_core::Target::Point(Vec3::X), within: 1.0 };
+        intent.orders.push_back(order.clone());
+        capture.capture(10, &mut intent, 32).unwrap();
+        // A state from before tick 10's frame ran on the host: its queue is the old one.
+        capture.adopt_orders(9, &mut intent, &VecDeque::new());
+        assert_eq!(intent.orders.len(), 1, "ours is not applied there yet: kept");
+        capture.adopt_orders(10, &mut intent, &VecDeque::from([order.clone()]));
+        assert_eq!(intent.orders.len(), 1);
+        // The order finished on the host.
+        capture.adopt_orders(12, &mut intent, &VecDeque::new());
+        assert!(intent.orders.is_empty());
+        assert_eq!(capture.capture(13, &mut intent, 32), None, "taken over: nothing to send");
+        // A new order, given before this tick's capture: a state of the host's arriving
+        // first does not take it back.
+        intent.orders.push_back(order);
+        capture.adopt_orders(13, &mut intent, &VecDeque::new());
+        assert_eq!(intent.orders.len(), 1, "not captured yet: kept");
+        assert!(capture.capture(14, &mut intent, 32).is_some_and(|f| f.orders.is_some_and(|o| o.len() == 1)));
     }
 }

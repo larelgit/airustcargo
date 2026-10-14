@@ -8,18 +8,19 @@ use ai_core::journal::{self, JournalKind};
 use ai_core::net_rules::{self, NetRules};
 use ai_core::snapshot::{self, ENGINE_VERSION};
 use ai_core::state::StateEncoder;
-use ai_core::{call_tool, configure_session, sim, AiId, AiIndex, AiJournal, SessionChange, SimGate, WorldRebuilt};
+use ai_core::tools::NetRoute;
+use ai_core::{call_tool, configure_session, sim, AiId, AiIndex, AiJournal, AiTools, Scope, SessionChange, SimGate, WorldRebuilt};
 use bevy::prelude::*;
 use serde_json::{json, Value};
 use shards_content::ContentDb;
-use shards_core::{player_body, Intent};
+use shards_core::{player_body, Intent, PlayerId};
 
 use crate::def::{net_def, NetDef};
 use crate::hooks::{hooks, JoinDecision, JoinRequest, NetLeft};
 use crate::inputs::InputQueue;
-use crate::link::{Delivered, Link, Role, Verdict};
+use crate::link::{Delivered, Link, Role, SendError, Verdict};
 use crate::msg::{self, Accept, CallMsg, Hello, Inputs, Msg, Welcome, PROTO};
-use crate::replicate::{base_view, build_delta, close_view, DeltaInput, EncodeCache, Encoded, SentView, ACK_PATIENCE, SENT_KEPT};
+use crate::replicate::{base_view, build_delta, close_view, DeltaInput, EncodeCache, Encoded, Fnv, SentView, ACK_PATIENCE, SENT_KEPT};
 use crate::session::{NetEndpoint, NetGame, NetMarks, NetState, Ticked, NET_AGENT};
 use crate::transport::PeerId;
 use crate::wire;
@@ -27,6 +28,27 @@ use crate::wire;
 /// How long a peer that is gone may stay silent with messages unacknowledged before it is
 /// forgotten, milliseconds.
 const GONE_PATIENCE_MS: u64 = 3000;
+
+/// Calls a peer may have waiting for one tick; more are refused.
+pub const MAX_CALLS_PER_TICK: u32 = 16;
+
+/// Agents (`p1/<name>`) one player may run calls as on the host.
+pub const MAX_AGENTS: usize = 8;
+
+/// Seconds between two resyncs a peer's desync reports may cause.
+pub const DESYNC_RESYNC_COOLDOWN_SECS: u64 = 5;
+
+/// Longest player name a `Hello` may carry, in characters.
+pub const MAX_NAME: usize = 32;
+
+/// Longest token a `Hello` may carry (the host issues 32 hex digits).
+pub const MAX_TOKEN: usize = 64;
+
+/// Largest character (save sections) a `Hello` may carry, as JSON bytes.
+pub const MAX_CHARACTER_BYTES: usize = 64 * 1024;
+
+/// Longest peer text (a desync's first difference, a version string) put into the journal.
+pub const MAX_PEER_TEXT: usize = 200;
 
 /// Where a peer is in the session.
 #[derive(Clone, Debug, PartialEq)]
@@ -77,6 +99,15 @@ pub struct Peer {
     pub by_component: BTreeMap<String, u64>,
     /// What the link watch saw a second ago: late inputs, RTT.
     watched: (u64, f32),
+    /// Inputs of epochs before this one belong to a world whose ticks went back: dropped.
+    accept_from_epoch: u32,
+    /// The agents this player's calls ran as (at most [`MAX_AGENTS`]).
+    agents: BTreeSet<String>,
+    /// Calls waiting for the next tick.
+    calls_queued: u32,
+    /// The host tick of the newest desync report taken, and of the last resync one caused.
+    last_desync: Option<u64>,
+    desync_resync_at: Option<u64>,
 }
 
 impl Peer {
@@ -105,13 +136,21 @@ impl Peer {
             closure_capped: 0,
             by_component: BTreeMap::new(),
             watched: (0, 0.0),
+            accept_from_epoch: 0,
+            agents: BTreeSet::new(),
+            calls_queued: 0,
+            last_desync: None,
+            desync_resync_at: None,
         }
     }
 
-    fn send(&mut self, message: &Msg) {
-        if let Err(e) = self.link.send_reliable(&msg::encode(message)) {
+    /// Queues `message`; the link refuses it when the peer has not acknowledged too much.
+    fn send(&mut self, message: &Msg) -> Result<(), SendError> {
+        let sent = self.link.send_reliable(&msg::encode(message));
+        if let Err(e) = &sent {
             warn!("net: cannot send to peer {}: {e}", self.id);
         }
+        sent
     }
 
     fn name(&self) -> String {
@@ -152,6 +191,14 @@ pub struct NetHost {
     /// Desyncs reported by clients.
     pub desyncs: u32,
     pub ended: Option<String>,
+    /// Tokens issued so far.
+    issued: u64,
+    /// The endpoint runs on a wall clock (UDP): tokens are random, not derived.
+    wall_clock: bool,
+    /// The host tick of the last send: a rebase at an earlier tick moved time back.
+    last_tick: u64,
+    /// Components already said to be left out of the state (they do not read back).
+    left_out_said: BTreeSet<String>,
 }
 
 impl NetHost {
@@ -167,6 +214,41 @@ impl NetHost {
             encode_total: (0, 0),
             desyncs: 0,
             ended: None,
+            issued: 0,
+            wall_clock: false,
+            last_tick: 0,
+            left_out_said: BTreeSet::new(),
+        }
+    }
+
+    /// Values kept between sends (`net_status`).
+    pub fn cache_len(&self) -> usize {
+        self.cache.len()
+    }
+
+    /// A token for a new player: who they are when they come back (a restarted client brings
+    /// it). Random over a real network; derived from the session in a stand, whose runs must
+    /// repeat. Never one a slot holds already.
+    fn issue_token(&mut self, seed: u64, player: u8, name: &str) -> String {
+        loop {
+            self.issued += 1;
+            let n = self.issued;
+            let word = |salt: u64| -> u64 {
+                if self.wall_clock {
+                    random_word(salt, n)
+                } else {
+                    let mut h = Fnv::default();
+                    for part in [seed, n, u64::from(player), salt] {
+                        h.eat_u64(part);
+                    }
+                    h.eat(name.as_bytes());
+                    h.0
+                }
+            };
+            let token = format!("{:016x}{:016x}", word(1), word(2));
+            if !self.slots.values().any(|s| s.token == token) {
+                return token;
+            }
         }
     }
 
@@ -184,7 +266,7 @@ impl NetHost {
         let Some(peer) = peer else {
             return Err(format!("no player {player} is connected; net_status lists them"));
         };
-        peer.send(&Msg::Bye { reason: reason.to_owned() });
+        let _ = peer.send(&Msg::Bye { reason: reason.to_owned() });
         let connected = peer.stage == PeerStage::Connected;
         peer.stage = PeerStage::Gone;
         if connected {
@@ -208,6 +290,42 @@ impl Default for NetHost {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// 64 random bits: the process's random hasher keys (from the OS), the time and `salt`/`n`.
+pub(crate) fn random_word(salt: u64, n: u64) -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::hash::RandomState::new().build_hasher();
+    h.write_u64(salt);
+    h.write_u64(n);
+    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
+    h.write_u32(std::process::id());
+    h.finish()
+}
+
+/// Peer text as one journal line: at most `max` characters, control characters (a newline
+/// that would forge a line) escaped.
+pub fn clip(text: &str, max: usize) -> String {
+    let mut out = String::new();
+    for (i, c) in text.chars().enumerate() {
+        if i >= max {
+            out.push('…');
+            break;
+        }
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Player `n`'s body, unless it waits for a rejoin (`NetLeft`).
+fn live_body(world: &World, n: u8) -> Option<u32> {
+    let id = player_body(world, n)?;
+    let entity = world.resource::<AiIndex>().get(id)?;
+    world.get::<NetLeft>(entity).is_none().then_some(id.0)
 }
 
 /// Takes the host and the endpoint out of the world for `f`, and puts them back.
@@ -236,10 +354,20 @@ pub(crate) fn apply_calls(world: &mut World) {
 }
 
 /// `NetSystems::ApplyInputs`: every frame stamped up to this tick, into the players' `Intent`.
+/// A player's body is looked up every tick: a game that respawns a player as a new entity
+/// gets their inputs there, and their client is sent the world with its new body.
 pub(crate) fn apply_inputs(world: &mut World) {
     let Some(mut host) = world.remove_resource::<NetHost>() else { return };
     let tick = sim::tick(world);
     for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Connected) {
+        // Never an id the player's body no longer has: once gone, it may be another entity's.
+        let now = live_body(world, peer.player);
+        if peer.body != now {
+            if let Some(now) = now {
+                peer.rebase.get_or_insert_with(|| format!("a new body e{now}"));
+            }
+            peer.body = now;
+        }
         let due = peer.inputs.take_due(tick);
         let Some(entity) = peer.body.and_then(|id| world.resource::<AiIndex>().get(AiId(id))) else { continue };
         if world.get::<NetLeft>(entity).is_some() {
@@ -248,6 +376,8 @@ pub(crate) fn apply_inputs(world: &mut World) {
         for frame in &due {
             if let Some(mut intent) = world.get_mut::<Intent>(entity) {
                 crate::inputs::apply_frame(&mut intent, frame);
+                // However many frames are due at once, a tick takes a bounded number of presses.
+                intent.pressed.truncate(crate::inputs::MAX_PRESSES_PER_TICK);
             }
             peer.applied_input_tick = peer.applied_input_tick.max(frame.tick);
         }
@@ -263,6 +393,7 @@ pub(crate) fn send(world: &mut World) {
         send_state(world, host);
         watch_links(world, host);
         flush(host, endpoint);
+        host.last_tick = sim::tick(world);
     });
 }
 
@@ -274,6 +405,7 @@ pub(crate) fn pump(world: &mut World) {
         send_journal(world, host);
         send_rebases(world, host);
         flush(host, endpoint);
+        host.last_tick = sim::tick(world);
     });
 }
 
@@ -291,23 +423,24 @@ pub(crate) fn on_exit(world: &mut World) {
     end_session(world, "the host quit");
 }
 
-/// Ends the session: characters to their players, `SessionEnd` to everyone, a last flush.
+/// Ends the session, once (`net_end`, then the host quitting, end it once): the game saves
+/// the world, characters go to their players, `SessionEnd` to everyone, a last flush.
 pub fn end_session(world: &mut World, reason: &str) {
+    if world.get_resource::<NetHost>().is_none_or(|h| h.ended.is_some()) {
+        return;
+    }
     let on_end = hooks(world).on_session_end;
     on_end(world);
     with_host(world, |world, host, endpoint| {
-        if host.ended.is_some() {
-            return;
-        }
         let tick = sim::tick(world);
         let capture = hooks(world).capture_character;
         for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Connected) {
             if let Some(body) = peer.body.and_then(|id| world.resource::<AiIndex>().get(AiId(id)))
                 && let Some(sections) = capture(world, body)
             {
-                peer.send(&Msg::CharacterSave { tick, reason: "session ended".into(), sections });
+                let _ = peer.send(&Msg::CharacterSave { tick, reason: "session ended".into(), sections });
             }
-            peer.send(&Msg::SessionEnd { reason: reason.to_owned(), saved_slot: None });
+            let _ = peer.send(&Msg::SessionEnd { reason: reason.to_owned(), saved_slot: None });
         }
         host.ended = Some(reason.to_owned());
         flush(host, endpoint);
@@ -341,6 +474,7 @@ fn io_in_links(host: &mut NetHost, endpoint: &mut NetEndpoint) {
 
 fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
     let now = endpoint.clock.now();
+    host.wall_clock = endpoint.clock.is_wall();
     let mut datagrams = Vec::new();
     endpoint.transport.recv(now, &mut datagrams);
     for (from, bytes) in datagrams {
@@ -365,6 +499,8 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
                     Ok(m) => on_message(world, host, id, m),
                     Err(e) => crate::hooks::net_line(world, "undecodable", JournalKind::Warn, format!("peer {id}: {e}")),
                 },
+                // Only a player sends inputs: anyone else's are not even read.
+                Delivered::Unreliable(_) if host.peers.get(&id).is_none_or(|p| p.stage != PeerStage::Connected) => {}
                 Delivered::Unreliable(bytes) => match msg::decode::<Inputs>(&bytes) {
                     Ok(inputs) => on_inputs(world, host, id, inputs),
                     Err(e) => crate::hooks::net_line(world, "undecodable", JournalKind::Warn, format!("peer {id}: {e}")),
@@ -409,52 +545,88 @@ fn on_message(world: &mut World, host: &mut NetHost, id: PeerId, message: Msg) {
             peer.stage = PeerStage::Gone;
         }
         Msg::Call(call) => {
-            if host.peers.get(&id).is_some_and(|p| p.stage == PeerStage::Connected) {
-                host.tasks.push(Task::Call { peer: id, call });
+            let Some(peer) = host.peers.get_mut(&id).filter(|p| p.stage == PeerStage::Connected) else { return };
+            if peer.calls_queued >= MAX_CALLS_PER_TICK {
+                let text = format!("too many calls at once (at most {MAX_CALLS_PER_TICK} a tick); call again");
+                let _ = peer.send(&Msg::CallReply { id: call.id, ok: false, text, tick: sim::tick(world) });
+                return;
             }
+            peer.calls_queued += 1;
+            host.tasks.push(Task::Call { peer: id, call });
         }
-        Msg::Desync { tick, first, .. } => {
-            let Some(peer) = host.peers.get_mut(&id) else { return };
+        Msg::Desync { tick, host: hash, first, epoch, .. } => {
+            let Some(peer) = host.peers.get_mut(&id).filter(|p| p.stage == PeerStage::Connected) else { return };
+            // Only a report on a hash this host sent this peer in its current world, once.
+            let sent = epoch == peer.resyncs && peer.sent.iter().any(|(t, view)| *t == tick && view.hash == Some(hash));
+            if !sent || peer.last_desync.is_some_and(|t| tick <= t) {
+                return;
+            }
+            peer.last_desync = Some(tick);
             peer.desyncs += 1;
             host.desyncs += 1;
             let player = peer.player;
-            if net_def(world).resync_on_desync {
+            let now = sim::tick(world);
+            let cooldown = DESYNC_RESYNC_COOLDOWN_SECS * (1.0 / sim::tick_seconds(world).max(1e-6)).round() as u64;
+            if net_def(world).resync_on_desync && peer.desync_resync_at.is_none_or(|at| now >= at + cooldown) {
                 peer.rebase = Some("desync".into());
+                peer.desync_resync_at = Some(now);
             }
-            journal::emit(world, JournalKind::Warn, format!("net: p{player} desync at tick {tick} ({first})"));
+            NetMarks::mark(world, |m| &mut m.desync);
+            let first = clip(&first, MAX_PEER_TEXT);
+            crate::hooks::net_line(world, &format!("desync p{player}"), JournalKind::Warn, format!("p{player} desync at tick {tick} ({first})"));
         }
         _ => {}
     }
 }
 
-fn on_inputs(world: &World, host: &mut NetHost, id: PeerId, inputs: Inputs) {
+fn on_inputs(world: &mut World, host: &mut NetHost, id: PeerId, inputs: Inputs) {
     let tick = sim::tick(world);
     let Some(peer) = host.peers.get_mut(&id).filter(|p| p.stage == PeerStage::Connected) else { return };
-    if inputs.epoch != peer.resyncs {
-        // Sent before the client took the world again: ticks of another timeline.
+    if inputs.epoch < peer.accept_from_epoch || inputs.epoch > peer.resyncs {
+        // Sent before the client took a world whose ticks went back: another timeline.
+        return;
+    }
+    if let Err(why) = crate::inputs::check(&inputs) {
+        let player = peer.player;
+        crate::hooks::net_line(world, &format!("inputs p{player}"), JournalKind::Warn, format!("p{player} sent inputs over the limits ({why}): dropped"));
         return;
     }
     for frame in inputs.frames {
         peer.inputs.receive(frame, tick);
     }
-    peer.margin = Some((inputs.tick, inputs.tick as i64 - tick as i64));
+    // Saturating: a tick near `u64::MAX` from a broken client is a large margin, not a panic.
+    let margin = i64::try_from(inputs.tick).unwrap_or(i64::MAX).saturating_sub(i64::try_from(tick).unwrap_or(i64::MAX));
+    peer.margin = Some((inputs.tick, margin));
     if peer.acked.is_none_or(|a| inputs.state_ack > a) && inputs.state_ack > 0 {
         peer.acked = Some(inputs.state_ack);
         peer.acked_at = tick;
     }
 }
 
-/// Why `hello` cannot join this game, if it cannot.
+/// Why `hello` cannot join this game, if it cannot. What the peer wrote is clipped before it
+/// goes into the answer and the journal.
 fn refusal(world: &World, hello: &Hello) -> Option<String> {
     if hello.proto != PROTO {
         return Some(format!("session protocol differs: host {PROTO}, you {}; run the same build", hello.proto));
     }
     if hello.engine != ENGINE_VERSION {
-        return Some(format!("engine version differs: host {ENGINE_VERSION}, you {}; run the same build", hello.engine));
+        return Some(format!("engine version differs: host {ENGINE_VERSION}, you {}; run the same build", clip(&hello.engine, 40)));
     }
     let game = world.get_resource::<NetGame>().cloned().unwrap_or_default().0;
     if hello.game != game {
-        return Some(format!("game differs: host `{game}`, you `{}`", hello.game));
+        return Some(format!("game differs: host `{game}`, you `{}`", clip(&hello.game, 60)));
+    }
+    let name_chars = hello.name.chars().count();
+    if name_chars == 0 || name_chars > MAX_NAME || hello.name.chars().any(char::is_control) {
+        return Some(format!("a player name is 1 to {MAX_NAME} characters, no control characters; pick another with --name"));
+    }
+    if hello.token.len() > MAX_TOKEN {
+        return Some(format!("the token is over {MAX_TOKEN} bytes; delete the kept one (saves/net/) to join as a new player"));
+    }
+    if let Some(character) = &hello.character
+        && msg::encode(character).len() > MAX_CHARACTER_BYTES
+    {
+        return Some(format!("the character is over {} KB; the host takes at most that", MAX_CHARACTER_BYTES / 1024));
     }
     let content = world.get_resource::<ContentDb>().map_or(0, ContentDb::hash);
     if hello.content_hash != content {
@@ -480,7 +652,7 @@ fn on_hello(world: &mut World, host: &mut NetHost, id: PeerId, hello: Hello) {
         return;
     }
     let def = net_def(world);
-    // A token the session knows takes its slot back (and its body, if it still waits).
+    // A token the session issued takes its slot back (and its body, if it still waits).
     let known = (!hello.token.is_empty()).then(|| host.slots.iter().find(|(_, s)| s.token == hello.token).map(|(n, _)| *n)).flatten();
     let player = match known {
         Some(n) => {
@@ -502,7 +674,15 @@ fn on_hello(world: &mut World, host: &mut NetHost, id: PeerId, hello: Hello) {
         refuse(world, host, id, &format!("the session is full ({} players)", def.max_players));
         return;
     };
-    host.slots.insert(player, Slot { token: hello.token.clone(), name: hello.name.clone(), peer: Some(id), left_at: None });
+    // A new player gets a token of the host's (any other they bring means nothing here).
+    let token = match known {
+        Some(n) => host.slots[&n].token.clone(),
+        None => {
+            let seed = world.get_resource::<ai_core::SimSeed>().map_or(0, |s| s.0);
+            host.issue_token(seed, player, &hello.name)
+        }
+    };
+    host.slots.insert(player, Slot { token, name: hello.name.clone(), peer: Some(id), left_at: None });
     let peer = host.peers.get_mut(&id).expect("known peer");
     peer.player = player;
     peer.hello = Some(hello);
@@ -526,7 +706,8 @@ fn free_slot(world: &World, host: &NetHost, def: &NetDef) -> Option<u8> {
 fn decide(world: &mut World, host: &mut NetHost, id: PeerId) {
     let Some(peer) = host.peers.get_mut(&id) else { return };
     let Some(hello) = peer.hello.clone() else { return };
-    let request = JoinRequest { player: peer.player, name: hello.name.clone(), token: hello.token.clone(), character: hello.character.clone() };
+    let token = host.slots.get(&peer.player).map(|s| s.token.clone()).unwrap_or_default();
+    let request = JoinRequest { player: peer.player, name: hello.name.clone(), token: token.clone(), character: hello.character.clone() };
     match (hooks(world).join_policy)(world, &request) {
         JoinDecision::Accept => {
             let seed = world.get_resource::<ai_core::SimSeed>().map_or(0, |s| s.0);
@@ -536,15 +717,16 @@ fn decide(world: &mut World, host: &mut NetHost, id: PeerId) {
                 session: peer.link.session(),
                 player: peer.player,
                 region: (hooks(world).describe_world)(world),
+                token,
             };
-            peer.send(&Msg::Accept(accept));
+            let _ = peer.send(&Msg::Accept(accept));
             peer.stage = PeerStage::Accepted;
             let (player, name) = (peer.player, peer.name());
             crate::hooks::net_line(world, &format!("accept {player}"), JournalKind::Sim, format!("p{player} ({name}) accepted, building the world"));
         }
         JoinDecision::Wait(reason) => {
             if peer.stage != PeerStage::Waiting(reason.clone()) {
-                peer.send(&Msg::Wait { reason: reason.clone() });
+                let _ = peer.send(&Msg::Wait { reason: reason.clone() });
                 peer.stage = PeerStage::Waiting(reason.clone());
                 let (player, name) = (peer.player, peer.name());
                 crate::hooks::net_line(world, &format!("wait {player}"), JournalKind::Sim, format!("p{player} ({name}) waits to join: {reason}"));
@@ -556,24 +738,81 @@ fn decide(world: &mut World, host: &mut NetHost, id: PeerId) {
 
 fn refuse(world: &mut World, host: &mut NetHost, id: PeerId, reason: &str) {
     let Some(peer) = host.peers.get_mut(&id) else { return };
-    peer.send(&Msg::Refused { reason: reason.to_owned() });
+    let _ = peer.send(&Msg::Refused { reason: reason.to_owned() });
     peer.stage = PeerStage::Gone;
     let name = peer.name();
     for slot in host.slots.values_mut().filter(|s| s.peer == Some(id)) {
         slot.peer = None;
     }
-    journal::emit(world, JournalKind::Warn, format!("net: refused {name}: {reason}"));
+    // At most a line a second: anyone who can send a datagram can be refused.
+    crate::hooks::net_line(world, "refused", JournalKind::Warn, format!("refused {name}: {reason}"));
 }
 
 // --- tasks ---------------------------------------------------------------------------------
 
 fn run_tasks(world: &mut World, host: &mut NetHost) {
+    // A rebuilt world, once out of its loading gate: its players first, then every client
+    // gets it whole.
+    if host.rebase_all.is_some() && !world.get_resource::<SimGate>().is_some_and(SimGate::is_held) {
+        let reason = host.rebase_all.take().unwrap_or_default();
+        reconcile_players(world, host);
+        for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Connected) {
+            peer.rebase = Some(reason.clone());
+        }
+        // Values cached for ids of the old world mean nothing now.
+        host.cache.clear();
+    }
     for task in std::mem::take(&mut host.tasks) {
         match task {
             Task::Admit(id) => admit(world, host, id),
             Task::Leave { player, reason } => leave(world, host, player, &reason),
             Task::Call { peer, call } => forwarded(world, host, peer, call),
         }
+    }
+    for peer in host.peers.values_mut() {
+        peer.calls_queued = 0;
+    }
+}
+
+/// After the world was rebuilt (a snapshot load, a region change): every connected player has
+/// a body in it, and no one else's body plays on. A snapshot from before a player joined has
+/// none for them: they join again (recorded). One from after a player left has their body
+/// without `NetLeft`: it leaves again, and waits for their rejoin.
+fn reconcile_players(world: &mut World, host: &mut NetHost) {
+    let connected: BTreeMap<u8, PeerId> = host.peers.iter().filter(|(_, p)| p.stage == PeerStage::Connected).map(|(id, p)| (p.player, *id)).collect();
+    for (&player, id) in &connected {
+        if live_body(world, player).is_some() {
+            continue;
+        }
+        let Some(hello) = host.peers.get(id).and_then(|p| p.hello.clone()) else { continue };
+        let mut args = json!({ "player": player, "name": hello.name });
+        if let Some(character) = &hello.character {
+            args["character"] = character.clone();
+        }
+        let joined = call_tool(world, NET_AGENT, "player_join", args);
+        if !joined.ok {
+            let why = joined.result.as_str().map_or_else(|| joined.result.to_string(), str::to_owned);
+            let _ = host.kick(player, &format!("the host's world has no body for you ({why})"));
+        }
+    }
+    let others: BTreeSet<u8> = {
+        let mut q = world.query_filtered::<&PlayerId, Without<NetLeft>>();
+        q.iter(world).map(|p| p.0).filter(|n| *n != 0 && !connected.contains_key(n)).collect()
+    };
+    for player in others {
+        let out = call_tool(world, NET_AGENT, "player_leave", json!({ "player": player, "reason": "not in the session" }));
+        if !out.ok {
+            journal::emit(world, JournalKind::Warn, format!("net: p{player}'s body is in the world, but player_leave failed: {}", out.result));
+        }
+    }
+}
+
+/// Takes back the body just spawned for a player who could not be admitted: it waits for a
+/// rejoin, as a leaver's does.
+fn leave_body(world: &mut World, player: u8, reason: &str) {
+    let out = call_tool(world, NET_AGENT, "player_leave", json!({ "player": player, "reason": reason }));
+    if !out.ok {
+        journal::emit(world, JournalKind::Warn, format!("net: p{player} was not admitted, but player_leave failed: {}", out.result));
     }
 }
 
@@ -586,7 +825,8 @@ fn admit(world: &mut World, host: &mut NetHost, id: PeerId) {
     let Some(peer) = host.peers.get(&id).filter(|p| p.stage == PeerStage::Ready) else { return };
     let Some(hello) = peer.hello.clone() else { return };
     let player = peer.player;
-    let mut args = json!({ "player": player, "name": hello.name, "token": hello.token });
+    // The token stays out of the recorded call: replays are shared, a token says who you are.
+    let mut args = json!({ "player": player, "name": hello.name });
     if let Some(character) = &hello.character {
         args["character"] = character.clone();
     }
@@ -601,6 +841,7 @@ fn admit(world: &mut World, host: &mut NetHost, id: PeerId) {
     let welcome = match welcome(world, player, body, "join") {
         Ok(w) => w,
         Err(e) => {
+            leave_body(world, player, "the world could not be sent");
             refuse(world, host, id, &format!("the host cannot capture its world: {e}"));
             return;
         }
@@ -608,7 +849,12 @@ fn admit(world: &mut World, host: &mut NetHost, id: PeerId) {
     let peer = host.peers.get_mut(&id).expect("checked above");
     let welcome = Msg::Welcome(welcome);
     let kb = msg::encode(&welcome).len() as f64 / 1024.0;
-    peer.send(&welcome);
+    if let Err(e) = peer.send(&welcome) {
+        // Not queued: they are not in the session; the body waits for them to join again.
+        leave_body(world, player, "the world could not be sent");
+        refuse(world, host, id, &format!("the host cannot send you its world ({e}); join again"));
+        return;
+    }
     peer.stage = PeerStage::Connected;
     peer.body = body;
     peer.joined_at = tick;
@@ -630,7 +876,15 @@ fn reset_view(peer: &mut Peer) {
 /// The world as a client must take it.
 fn welcome(world: &World, player: u8, body: Option<u32>, reason: &str) -> Result<Welcome, String> {
     let snapshot = snapshot::capture(world)?;
-    Ok(Welcome { player, body, tick: sim::tick(world), reason: reason.to_owned(), snapshot, region: (hooks(world).describe_world)(world) })
+    Ok(Welcome {
+        player,
+        body,
+        tick: sim::tick(world),
+        reason: reason.to_owned(),
+        snapshot,
+        region: (hooks(world).describe_world)(world),
+        carry_inputs: false,
+    })
 }
 
 fn leave(world: &mut World, host: &mut NetHost, player: u8, reason: &str) {
@@ -639,7 +893,7 @@ fn leave(world: &mut World, host: &mut NetHost, player: u8, reason: &str) {
         if let Some(sections) = (hooks(world).capture_character)(world, body)
             && let Some(peer) = host.peers.values_mut().find(|p| p.player == player)
         {
-            peer.send(&Msg::CharacterSave { tick, reason: reason.to_owned(), sections });
+            let _ = peer.send(&Msg::CharacterSave { tick, reason: reason.to_owned(), sections });
         }
         if world.get::<NetLeft>(body).is_none() {
             let out = call_tool(world, NET_AGENT, "player_leave", json!({ "player": player, "reason": reason }));
@@ -656,17 +910,55 @@ fn leave(world: &mut World, host: &mut NetHost, player: u8, reason: &str) {
     journal::emit(world, JournalKind::Sim, format!("net: p{player} left ({reason})"));
 }
 
+/// A name a guest's agent may have on the host (`p1/<name>`).
+fn agent_name_ok(name: &str) -> bool {
+    !name.is_empty() && name.len() <= MAX_NAME && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+}
+
+/// Checks a guest's call and sets up the agent it runs as: `p<n>/<name>`, at most
+/// [`MAX_AGENTS`] per player, bound to the guest's own body (whichever entity that is at the
+/// time) unless it may act as another (dev scope).
+fn guest_agent(world: &mut World, peer: &mut Peer, call: &CallMsg, scope: Scope) -> Result<String, String> {
+    // Only what a client forwards runs here: the host has no forwarder, so the route is
+    // checked here or nowhere.
+    match world.resource::<AiTools>().get(&call.tool).map(|t| t.spec.net) {
+        Some(NetRoute::Host) => {}
+        Some(NetRoute::Local) => return Err(format!("`{}` runs on your own game, not on the host", clip(&call.tool, 40))),
+        Some(NetRoute::HostOnly(_)) => return Err(format!("`{}` is the host's own; ask the host to call it", clip(&call.tool, 40))),
+        None => return Err(format!("the host has no tool `{}`", clip(&call.tool, 40))),
+    }
+    if !agent_name_ok(&call.agent) {
+        return Err(format!("`{}` is not an agent name: 1 to {MAX_NAME} letters, digits, `_`, `-` or `.`", clip(&call.agent, MAX_NAME)));
+    }
+    if !peer.agents.contains(&call.agent) && peer.agents.len() >= MAX_AGENTS {
+        let agents: Vec<&str> = peer.agents.iter().map(String::as_str).collect();
+        return Err(format!("at most {MAX_AGENTS} agents per player call the host; yours are {}", agents.join(", ")));
+    }
+    // A guest acts as its own body, whatever subject its game set: a tool's own arguments
+    // name other entities, and the scope decides what it may do to them.
+    if call.subject.is_some() && call.subject != peer.body {
+        let mine = peer.body.map_or_else(|| "none".to_owned(), |b| format!("e{b}"));
+        return Err(format!(
+            "your calls act as your own body ({mine}), not as e{}; clear the subject and name the entity in the tool's arguments",
+            call.subject.unwrap_or_default()
+        ));
+    }
+    let agent = format!("p{}/{}", peer.player, call.agent);
+    let change = SessionChange { scope: Some(scope), subject: None, player: Some(peer.player), clear_subject: false };
+    configure_session(world, &agent, &change)?;
+    peer.agents.insert(call.agent.clone());
+    Ok(agent)
+}
+
 fn forwarded(world: &mut World, host: &mut NetHost, id: PeerId, call: CallMsg) {
-    let Some(peer) = host.peers.get(&id) else { return };
-    let player = peer.player;
+    let Some(peer) = host.peers.get_mut(&id) else { return };
     let def = net_def(world);
-    let agent = format!("p{player}/{}", call.agent);
     let scope = call.scope.min(def.guest_scope);
-    // Acting as their own body: bound to the player, whichever entity that is at the time.
-    let own = call.subject.is_none() || call.subject == peer.body;
-    let change = SessionChange { scope: Some(scope), subject: (!own).then(|| call.subject.map(AiId)).flatten(), player: own.then_some(player), clear_subject: false };
-    let reply = match configure_session(world, &agent, &change) {
-        Ok(_) => {
+    let reply = match guest_agent(world, peer, &call, scope) {
+        Ok(agent) => {
+            if call.scope > scope {
+                debug!("net: {agent} asked with {} scope, runs with {scope}", call.scope);
+            }
             let out = call_tool(world, &agent, &call.tool, call.args);
             let text = match &out.result {
                 Value::String(s) => s.clone(),
@@ -677,10 +969,7 @@ fn forwarded(world: &mut World, host: &mut NetHost, id: PeerId, call: CallMsg) {
         Err(e) => Msg::CallReply { id: call.id, ok: false, text: e, tick: sim::tick(world) },
     };
     if let Some(peer) = host.peers.get_mut(&id) {
-        peer.send(&reply);
-    }
-    if call.scope > scope {
-        debug!("net: {agent} asked with {} scope, ran with {scope}", call.scope);
+        let _ = peer.send(&reply);
     }
 }
 
@@ -704,7 +993,7 @@ fn send_journal(world: &mut World, host: &mut NetHost) {
     }
     for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Connected) {
         for line in &lines {
-            peer.send(line);
+            let _ = peer.send(line);
         }
     }
 }
@@ -713,37 +1002,67 @@ fn send_rebases(world: &mut World, host: &mut NetHost) {
     if world.get_resource::<SimGate>().is_some_and(SimGate::is_held) {
         return;
     }
-    if let Some(reason) = host.rebase_all.take() {
-        for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Connected) {
-            peer.rebase = Some(reason.clone());
-        }
-        // Values cached for ids of the old world mean nothing now.
-        host.cache.clear();
-    }
+    let tick = sim::tick(world);
+    // The host's ticks went on as they were (a resync, a new body, a region change), not back
+    // or ahead (a snapshot load): inputs on their way are still good.
+    let carry = (host.last_tick..=host.last_tick + 1).contains(&tick);
     let mut captured: Option<Result<ai_core::Snapshot, String>> = None;
     let mut sent = Vec::new();
-    for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Connected) {
-        let Some(reason) = peer.rebase.take() else { continue };
+    let mut waiting = Vec::new();
+    let mut desync = false;
+    for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Connected && p.rebase.is_some()) {
+        // Its link refuses more now: the world waits, and the peer keeps its epoch (as its
+        // client does) until it goes.
+        if peer.link.footprint().reliable_out >= peer.link.config().max_reliable_messages {
+            waiting.push((peer.player, "its link has too much unacknowledged".to_owned()));
+            continue;
+        }
         let snapshot = captured.get_or_insert_with(|| snapshot::capture(world)).clone();
         let Ok(snapshot) = snapshot else { continue };
-        // The body may be another entity now (a region change spawns players anew).
-        let body = player_body(world, peer.player).map(|id| id.0).or(peer.body);
+        let reason = peer.rebase.clone().unwrap_or_default();
+        // The player's body in this world, or none: never an id of the old world.
+        let body = live_body(world, peer.player);
+        let welcome = Msg::Rebase(Welcome {
+            player: peer.player,
+            body,
+            tick,
+            reason: reason.clone(),
+            snapshot,
+            region: (hooks(world).describe_world)(world),
+            carry_inputs: carry,
+        });
+        let kb = msg::encode(&welcome).len() as f64 / 1024.0;
+        if let Err(e) = peer.send(&welcome) {
+            waiting.push((peer.player, e.to_string()));
+            continue;
+        }
+        sent.push(format!("p{} gets the world again ({reason}, {kb:.1} KB)", peer.player));
+        desync |= reason == "desync";
+        peer.rebase = None;
         peer.body = body;
-        let welcome = Msg::Rebase(Welcome { player: peer.player, body, tick: sim::tick(world), reason: reason.clone(), snapshot, region: (hooks(world).describe_world)(world) });
-        sent.push(format!("p{} gets the world again ({reason}, {:.1} KB)", peer.player, msg::encode(&welcome).len() as f64 / 1024.0));
-        peer.send(&welcome);
         peer.resyncs += 1;
         reset_view(peer);
-        // Its inputs start over on the new world's ticks.
-        peer.inputs = InputQueue::default();
-        peer.margin = None;
-        peer.applied_input_tick = 0;
+        if !carry {
+            // Its inputs start over on the new world's ticks: what it sent before is of
+            // another timeline.
+            peer.inputs = InputQueue::default();
+            peer.accept_from_epoch = peer.resyncs;
+            peer.margin = None;
+            peer.applied_input_tick = 0;
+        }
+    }
+    if desync {
+        // A client saw something else: what is sent next is encoded afresh.
+        host.cache.clear();
     }
     if let Some(Err(e)) = captured {
         journal::emit(world, JournalKind::Error, format!("net: the world cannot be sent again: {e}"));
     }
     for line in sent {
         journal::emit(world, JournalKind::Sim, format!("net: {line}"));
+    }
+    for (player, why) in waiting {
+        crate::hooks::net_line(world, &format!("rebase p{player}"), JournalKind::Warn, format!("p{player} cannot be sent the world now ({why}); it goes at a later send"));
     }
 }
 
@@ -808,11 +1127,13 @@ fn send_state(world: &mut World, host: &mut NetHost) {
             (id, center, base_view(world, center, &peer.view, def.interest_radius, def.interest_hysteresis))
         })
         .collect();
-    let world = &*world;
-    let encoder = StateEncoder::new(world, ai_core::state::StateRule::Replicated).without_read_back();
+    // Every value written is read back (the encoder's rule): one that does not (a NaN, an
+    // infinity) is left out for every client, as a snapshot leaves it out.
+    let shared = &*world;
+    let encoder = StateEncoder::new(shared, ai_core::state::StateRule::Replicated);
     for (id, center, mut view) in views {
         let peer = host.peers.get_mut(&id).expect("listed above");
-        if close_view(world, &encoder, &mut host.cache, &mut encoded, &mut view) {
+        if close_view(shared, &encoder, &mut host.cache, &mut encoded, &mut view) {
             peer.closure_capped += 1;
         }
         // The newest acknowledged view, unless the client has been quiet too long.
@@ -852,9 +1173,17 @@ fn send_state(world: &mut World, host: &mut NetHost) {
             peer.sent.pop_front();
         }
     }
+    drop(encoder);
+    host.cache.end_send();
     let us = started.elapsed().as_micros() as u64;
     host.encode_us = (us, host.encode_us.1.max(us));
     host.encode_total = (host.encode_total.0 + us, host.encode_total.1 + 1);
+    for (path, (id, why)) in encoded.left_out {
+        if host.left_out_said.insert(path.clone()) {
+            let short = path.rsplit("::").next().unwrap_or(&path);
+            journal::emit(world, JournalKind::Warn, format!("net: {short} of e{id} is not sent to clients ({why}); JSON has no NaN or infinity, so they go without it"));
+        }
+    }
 }
 
 fn flush(host: &mut NetHost, endpoint: &mut NetEndpoint) {

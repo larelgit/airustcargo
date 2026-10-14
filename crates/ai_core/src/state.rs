@@ -39,7 +39,7 @@ pub type ComponentValues = BTreeMap<String, Value>;
 
 /// How an entity reference with no key is written: the entity has no `AiId` and no module
 /// knows another name for it. Loads back as [`Entity::PLACEHOLDER`].
-pub(crate) const UNTRACKED: &str = "untracked";
+pub const UNTRACKED: &str = "untracked";
 
 /// Which components (and resources) an encoder writes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -91,8 +91,6 @@ pub struct StateEncoder<'w> {
     registry: RwLockReadGuard<'w, TypeRegistry>,
     modules: SnapshotRegistry,
     rule: StateRule,
-    /// Every written value is read back (one that does not, a NaN, is left out).
-    read_back: bool,
 }
 
 impl<'w> StateEncoder<'w> {
@@ -102,15 +100,13 @@ impl<'w> StateEncoder<'w> {
             registry: world.resource::<AppTypeRegistry>().read(),
             modules: world.get_resource::<SnapshotRegistry>().cloned().unwrap_or_default(),
             rule,
-            read_back: true,
         }
     }
 
-    /// Without reading every written value back: for a caller that encodes the same world
-    /// every few ticks (a host's state sends) and lets the reader report what it cannot read.
-    pub fn without_read_back(mut self) -> Self {
-        self.read_back = false;
-        self
+    /// The prefixes of the modules' entity keys (`c` in `c12`): a written value that names an
+    /// entity by one depends on that entity, not only on its own component.
+    pub fn key_prefixes(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.modules.keys.iter().map(|k| k.prefix)
     }
 
     /// `entity`'s components by type path, and what had to be left out (`path (why)`: it does
@@ -164,10 +160,8 @@ impl<'w> StateEncoder<'w> {
                 continue;
             }
             // What is written must read back (a NaN or an infinity does not: JSON has none).
+            // A value handed back by `reuse` was read back when it was written.
             let written = to_json(value, registry, &encoder).map_err(|why| format!("does not serialize: {why}")).and_then(|json| {
-                if !self.read_back {
-                    return Ok(json);
-                }
                 from_json(registration, registry, &json, &mut Decoder::dry(&no_ids, &no_keys))
                     .map(|_| json)
                     .map_err(|why| format!("does not read back: {why}"))

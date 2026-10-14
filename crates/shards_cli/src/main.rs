@@ -397,6 +397,10 @@ fn ready_line(status: &Value) -> String {
         if let Some(body) = net["body"].as_str() {
             line.push_str(&format!(" · body {body}"));
         }
+        // A host's bound UDP address: what `--join` takes (`--host 0` picks a free port).
+        if let Some(udp) = net["udp"].as_str() {
+            line.push_str(&format!(" · udp {udp}"));
+        }
     }
     line
 }
@@ -825,6 +829,9 @@ mod tests {
         let member = json!({"tick": 9, "seed": 1, "instance": {"pid": 4242, "port": 15712},
             "net": {"role": "client", "member": "c1", "player": 1, "body": "e23"}});
         assert_eq!(ready_line(&member), "ready: tick 9 · pid 4242 · seed 1 · port 15712 · member c1 · role client · player 1 · body e23");
+        let host = json!({"tick": 0, "seed": 1, "instance": {"pid": 4242, "port": 15711},
+            "net": {"role": "host", "member": "host", "player": 0, "body": "e5", "udp": "0.0.0.0:54321"}});
+        assert_eq!(ready_line(&host), "ready: tick 0 · pid 4242 · seed 1 · port 15711 · member host · role host · player 0 · body e5 · udp 0.0.0.0:54321");
     }
 
     #[test]

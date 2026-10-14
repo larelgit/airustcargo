@@ -159,54 +159,54 @@ fn spike_session_cost() {
 
 // --- the stand -----------------------------------------------------------------------------
 
-const HOST: usize = 0;
-const C1: usize = 1;
-const C2: usize = 2;
+pub(super) const HOST: usize = 0;
+pub(super) const C1: usize = 1;
+pub(super) const C2: usize = 2;
 
 /// A sandbox stand: the host (seed 42) and `clients` clients, joined at tick 0.
-fn stand(clients: u8) -> Stand {
+pub(super) fn stand(clients: u8) -> Stand {
     stand_with(clients, LinkConditions::NONE)
 }
 
-fn stand_with(clients: u8, links: LinkConditions) -> Stand {
+pub(super) fn stand_with(clients: u8, links: LinkConditions) -> Stand {
     shards::testing::stand(clients, links, |c| c.seed = 42, |app| {
         app.add_plugins(sandbox::SandboxPlugin);
     })
 }
 
-fn net_state(stand: &Stand, member: usize) -> NetState {
+pub(super) fn net_state(stand: &Stand, member: usize) -> NetState {
     stand.world(member).resource::<NetState>().clone()
 }
 
 /// The body of member `member`'s player, as an `eN`.
-fn body(stand: &Stand, member: usize) -> String {
+pub(super) fn body(stand: &Stand, member: usize) -> String {
     match net_state(stand, member) {
         NetState::Connected { body: Some(b), .. } => format!("e{b}"),
         other => panic!("member {member} is not playing: {other:?}"),
     }
 }
 
-fn journal(stand: &Stand, member: usize) -> Vec<String> {
+pub(super) fn journal(stand: &Stand, member: usize) -> Vec<String> {
     let journal = stand.world(member).resource::<AiJournal>();
     journal.after(0).0.map(ToString::to_string).collect()
 }
 
-fn has_line(stand: &Stand, member: usize, needle: &str) -> bool {
+pub(super) fn has_line(stand: &Stand, member: usize, needle: &str) -> bool {
     journal(stand, member).iter().any(|l| l.contains(needle))
 }
 
-fn position(stand: &Stand, member: usize, id: &str) -> Vec3 {
+pub(super) fn position(stand: &Stand, member: usize, id: &str) -> Vec3 {
     let world = stand.world(member);
     let entity = world.resource::<AiIndex>().get(AiId::parse(id).unwrap()).unwrap_or_else(|| panic!("member {member} has no {id}"));
     world.get::<Transform>(entity).unwrap().translation
 }
 
-fn desyncs(stand: &Stand, member: usize) -> u32 {
+pub(super) fn desyncs(stand: &Stand, member: usize) -> u32 {
     stand.world(member).get_resource::<NetDesync>().map_or(0, |d| d.count)
 }
 
 /// Plays the host's recording in single player: it must come out the same.
-fn verify_host(stand: &Stand) {
+pub(super) fn verify_host(stand: &Stand) {
     let recording = shards::ai_core::replay::save(stand.world(HOST));
     let mut config = shards::testing::config();
     config.seed = recording.seed;
@@ -282,20 +282,20 @@ fn a_dodge_on_a_client_is_an_input_of_the_host_at_its_tick() {
 // --- conditions, joins, leaves -------------------------------------------------------------
 
 /// The links of the contract's stand tests: 150 ms one way, 2 % loss.
-fn lossy() -> LinkConditions {
+pub(super) fn lossy() -> LinkConditions {
     "latency=150,loss=0.02".parse().unwrap()
 }
 
-fn configure(config: &mut shards::EngineConfig) {
+pub(super) fn configure(config: &mut shards::EngineConfig) {
     config.seed = 42;
 }
 
-fn sandbox_setup(app: &mut App) {
+pub(super) fn sandbox_setup(app: &mut App) {
     app.add_plugins(sandbox::SandboxPlugin);
 }
 
 /// Stand ticks until `done` (at most `max`); panics saying what it waited for.
-fn run_until(stand: &mut Stand, max: u64, what: &str, done: impl Fn(&Stand) -> bool) {
+pub(super) fn run_until(stand: &mut Stand, max: u64, what: &str, done: impl Fn(&Stand) -> bool) {
     for _ in 0..max {
         if done(stand) {
             return;
@@ -305,11 +305,11 @@ fn run_until(stand: &mut Stand, max: u64, what: &str, done: impl Fn(&Stand) -> b
     assert!(done(stand), "{what}: not after {max} stand ticks");
 }
 
-fn connected(stand: &Stand, member: usize) -> bool {
+pub(super) fn connected(stand: &Stand, member: usize) -> bool {
     matches!(net_state(stand, member), NetState::Connected { .. })
 }
 
-fn host_calls(stand: &Stand, tool: &str) -> Vec<(u64, String, Value)> {
+pub(super) fn host_calls(stand: &Stand, tool: &str) -> Vec<(u64, String, Value)> {
     shards::ai_core::replay::save(stand.world(HOST))
         .events
         .into_iter()
@@ -320,11 +320,11 @@ fn host_calls(stand: &Stand, tool: &str) -> Vec<(u64, String, Value)> {
         .collect()
 }
 
-fn entity(stand: &Stand, member: usize, id: &str) -> Option<Entity> {
+pub(super) fn entity(stand: &Stand, member: usize, id: &str) -> Option<Entity> {
     stand.world(member).resource::<AiIndex>().get(AiId::parse(id).unwrap())
 }
 
-fn events_of(stand: &Stand, member: usize) -> Vec<String> {
+pub(super) fn events_of(stand: &Stand, member: usize) -> Vec<String> {
     let journal = stand.world(member).resource::<AiJournal>();
     journal.after(0).0.filter(|e| e.kind == JournalKind::Event).map(|e| e.text.clone()).collect()
 }
@@ -388,7 +388,7 @@ fn a_player_waits_out_the_boss_fight_then_joins_mid_session() {
 }
 
 /// Guests whose dev calls run with dev scope on the host (the default is player scope).
-fn dev_guests() -> shards::net::NetDefaults {
+pub(super) fn dev_guests() -> shards::net::NetDefaults {
     shards::net::NetDefaults(shards::net::NetDef { guest_scope: Scope::Dev, ..Default::default() })
 }
 
@@ -680,28 +680,23 @@ fn a_three_minute_session_stays_in_sync() {
     }
 }
 
-fn udp_member(net: shards::core::NetLaunch, name: &str) -> App {
+pub(super) fn udp_member(net: shards::core::NetLaunch, name: &str, save_dir: Option<&str>) -> App {
     let mut config = shards::testing::config();
     config.seed = 42;
     config.net = net;
     config.player_name = name.into();
+    if let Some(dir) = save_dir {
+        config.save_dir = dir.into();
+    }
     let mut app = sandbox::build_app(&config);
     app.finish();
     app.cleanup();
     app
 }
 
-/// The one test on a real socket: a host on a free UDP port of this machine and a client that
-/// joins it, in real time (at most 10 s). Only that it connects and stays in sync.
-#[test]
-fn a_client_joins_a_host_over_udp_loopback() {
-    let started = Instant::now();
-    let deadline = Duration::from_secs(10);
-    let mut host = udp_member(shards::core::NetLaunch::Host { port: 0 }, "host");
-    shards::testing::wait_until_loaded(&mut host, deadline).unwrap();
-    let address = host.world().resource::<shards::net::NetEndpoint>().transport.local_addr().expect("a bound socket");
-    let port = address.rsplit(':').next().unwrap().to_owned();
-    let mut client = udp_member(shards::core::NetLaunch::Join { addr: format!("127.0.0.1:{port}") }, "udp");
+/// Host and client in real time until the client has played `ticks` ticks of the host's
+/// connected, or `deadline` (from `started`) is over. Returns the host's tick when it joined.
+fn play_over_udp(host: &mut App, client: &mut App, ticks: u64, started: Instant, deadline: Duration) -> Option<u64> {
     let mut joined_at = None;
     while started.elapsed() < deadline {
         sim::run_tick(host.world_mut()).unwrap();
@@ -710,7 +705,7 @@ fn a_client_joins_a_host_over_udp_loopback() {
             NetState::Connected { .. } => {
                 sim::run_tick(client.world_mut()).unwrap();
                 let at = *joined_at.get_or_insert(sim::tick(host.world()));
-                if sim::tick(host.world()) > at + 90 {
+                if sim::tick(host.world()) > at + ticks {
                     break;
                 }
             }
@@ -719,13 +714,60 @@ fn a_client_joins_a_host_over_udp_loopback() {
         }
         std::thread::sleep(Duration::from_millis(16));
     }
-    let journal: Vec<String> = client.world().resource::<AiJournal>().after(0).0.map(ToString::to_string).collect();
-    assert!(joined_at.is_some(), "not connected within {deadline:?}: {journal:#?}");
-    let newest = client.world().resource::<NetClient>().newest_host_tick;
-    assert!(newest > joined_at.unwrap() + 60, "states arrive: newest host tick {newest}");
-    assert_eq!(client.world().get_resource::<NetDesync>().map_or(0, |d| d.count), 0, "{journal:#?}");
-    let host_journal: Vec<String> = host.world().resource::<AiJournal>().after(0).0.map(ToString::to_string).collect();
-    assert!(host_journal.iter().any(|l| l.contains("net: p1 (udp) joined at tick")), "{host_journal:#?}");
-    assert!(host_journal.iter().any(|l| l.contains(&format!("net: hosting on UDP 0.0.0.0:{port}"))), "{host_journal:#?}");
+    joined_at
 }
 
+fn lines(app: &App) -> Vec<String> {
+    app.world().resource::<AiJournal>().after(0).0.map(ToString::to_string).collect()
+}
+
+/// The one test on a real socket: a host on a free UDP port of this machine and a client that
+/// joins it, in real time (at most 10 s). It connects and stays in sync; it keeps the token
+/// its host issued beside its saves, quits, and its next run (a new process to the host: a
+/// new link) takes its slot and its body back with it.
+#[test]
+fn a_client_joins_a_host_over_udp_loopback() {
+    let started = Instant::now();
+    let deadline = Duration::from_secs(10);
+    // A save folder of this run's own, inside the game's folder (as `--save-dir` must be).
+    let saves = format!("saves/test-net-udp-{}", std::process::id());
+    let _ = std::fs::remove_dir_all(&saves);
+    let mut host = udp_member(shards::core::NetLaunch::Host { port: 0 }, "host", None);
+    shards::testing::wait_until_loaded(&mut host, deadline).unwrap();
+    let address = host.world().resource::<shards::net::NetEndpoint>().transport.local_addr().expect("a bound socket");
+    let port = address.rsplit(':').next().unwrap().to_owned();
+    // What `shards wait` prints of a host: the address clients join.
+    assert_eq!(shards::ai_core::status::status(host.world())["net"]["udp"].as_str(), Some(address.as_str()));
+    let join = shards::core::NetLaunch::Join { addr: format!("127.0.0.1:{port}") };
+    let mut client = udp_member(join.clone(), "udp", Some(&saves));
+    let joined_at = play_over_udp(&mut host, &mut client, 60, started, deadline);
+    assert!(joined_at.is_some(), "not connected within {deadline:?}: {:#?}", lines(&client));
+    let newest = client.world().resource::<NetClient>().newest_host_tick;
+    assert!(newest > joined_at.unwrap() + 30, "states arrive: newest host tick {newest}");
+    assert_eq!(client.world().get_resource::<NetDesync>().map_or(0, |d| d.count), 0, "{:#?}", lines(&client));
+    assert!(lines(&host).iter().any(|l| l.contains("net: p1 (udp) joined at tick")), "{:#?}", lines(&host));
+    assert!(lines(&host).iter().any(|l| l.contains(&format!("net: hosting on UDP 0.0.0.0:{port}"))), "{:#?}", lines(&host));
+    let NetState::Connected { player: 1, body: Some(body) } = client.world().resource::<NetState>().clone() else { panic!("not p1") };
+
+    // The host's token: random (nothing of the name or the process), kept beside the saves.
+    let token = host.world().resource::<NetHost>().slots[&1].token.clone();
+    assert!(token.len() == 32 && token.chars().all(|c| c.is_ascii_hexdigit()), "{token}");
+    let kept = std::fs::read_to_string(format!("{saves}/net/udp@127.0.0.1_{port}.token")).unwrap_or_default();
+    assert_eq!(kept, token, "kept for the next run");
+
+    // The player quits; the host keeps the body for their return.
+    shards::core::run_exit_hooks(client.world_mut());
+    drop(client);
+    while started.elapsed() < deadline && !lines(&host).iter().any(|l| l.contains("net: p1 left (quit)")) {
+        sim::run_tick(host.world_mut()).unwrap();
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    assert!(lines(&host).iter().any(|l| l.contains("net: p1 left (quit)")), "{:#?}", lines(&host));
+
+    let mut again = udp_member(join, "udp", Some(&saves));
+    let rejoined = play_over_udp(&mut host, &mut again, 10, started, deadline);
+    assert!(rejoined.is_some(), "not back within {deadline:?}: {:#?}", lines(&again));
+    let state = again.world().resource::<NetState>().clone();
+    assert_eq!(state, NetState::Connected { player: 1, body: Some(body) }, "the same slot and body");
+    let _ = std::fs::remove_dir_all(&saves);
+}

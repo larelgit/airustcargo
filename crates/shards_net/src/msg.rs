@@ -40,8 +40,16 @@ pub enum Msg {
     /// A client's call that runs on the host.
     Call(CallMsg),
     CallReply { id: u64, ok: bool, text: String, tick: u64 },
-    /// The client's copy differs from the host's.
-    Desync { tick: u64, here: u64, host: u64, first: String },
+    /// The client's copy differs from the host's: the state of host tick `tick`, whose hash
+    /// was `host`, in the world of the client's rebase `epoch`.
+    Desync {
+        tick: u64,
+        here: u64,
+        host: u64,
+        first: String,
+        #[serde(default)]
+        epoch: u32,
+    },
     /// A player's character, captured by the host (co-op saves).
     CharacterSave { tick: u64, reason: String, sections: Value },
     Paused(bool),
@@ -60,7 +68,8 @@ pub struct Hello {
     /// `net_rules::rules_hash`.
     pub net_rules_hash: u64,
     pub name: String,
-    /// Who this player is across reconnects: a rejoin with the same token keeps the slot.
+    /// The token the host issued this player at an earlier join (kept beside the client's
+    /// saves), empty the first time: a rejoin with it keeps the slot and the body.
     pub token: String,
     /// The character the player brings (`--character`), as the game's save sections.
     pub character: Option<Value>,
@@ -77,6 +86,10 @@ pub struct Accept {
     /// The region the host is in (id, generator version, manifest hash), when the game has
     /// regions.
     pub region: Option<Value>,
+    /// Who this player is to the host from now on: random, issued at the first join; the
+    /// client keeps it to take its slot back after a restart.
+    #[serde(default)]
+    pub token: String,
 }
 
 /// The world as the host has it at `tick`, and whose body is whose.
@@ -89,6 +102,10 @@ pub struct Welcome {
     pub snapshot: Snapshot,
     /// The host's region description (as in [`Accept`]).
     pub region: Option<Value>,
+    /// The host's ticks did not move (a resync, a new body): the client keeps the inputs it
+    /// sent after `tick` and its own intent, and the host keeps the ones it has.
+    #[serde(default)]
+    pub carry_inputs: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

@@ -34,6 +34,8 @@ pub const CLIENT_KEPT: usize = 32;
 pub const ACK_PATIENCE: u64 = 30;
 /// Entities a reference closure may add to a view.
 pub const CLOSURE_CAP: usize = 64;
+/// Every this many sends, values no view used since the previous sweep leave the cache.
+pub const CACHE_SWEEP: u64 = 60;
 
 /// In every client's view wherever it is (a quest giver, a world boss's health bar).
 #[derive(Component, Reflect, Clone, Copy, Debug, Default)]
@@ -119,6 +121,10 @@ struct Cached {
     hash: u64,
     size: u32,
     at: Tick,
+    /// The `eN` the value names: it is good while each is still that entity.
+    refs: Vec<u32>,
+    /// The send it was last used on.
+    used: u64,
 }
 
 /// Encoded values kept between send ticks, by `(id, type path)`.
@@ -128,11 +134,51 @@ pub struct EncodeCache {
     /// Components encoded and reused, for `net_status`.
     pub encoded: u64,
     pub reused: u64,
+    /// Sends so far.
+    sends: u64,
 }
 
 impl EncodeCache {
     pub fn clear(&mut self) {
         self.values.clear();
+    }
+
+    /// Values kept.
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    /// A send is done. Every [`CACHE_SWEEP`] sends, what no view used since the previous
+    /// sweep goes: values of despawned entities and of components taken off.
+    pub fn end_send(&mut self) {
+        self.sends += 1;
+        if self.sends.is_multiple_of(CACHE_SWEEP) {
+            let since = self.sends - CACHE_SWEEP;
+            self.values.retain(|_, c| c.used >= since);
+        }
+    }
+}
+
+/// Whether an encoded value can be kept: it names other entities only by `eN` (a module key
+/// such as `c12`, or `untracked`, may name another entity later without its holder changing).
+/// Collects the `eN` into `refs`.
+fn keepable(value: &Value, prefixes: &[&str], refs: &mut Vec<u32>) -> bool {
+    match value {
+        Value::String(s) => {
+            if let Some(n) = s.strip_prefix('e').and_then(|d| d.parse::<u32>().ok()) {
+                refs.push(n);
+                return true;
+            }
+            let keyed = prefixes.iter().any(|p| s.strip_prefix(p).is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())));
+            !keyed && s != ai_core::state::UNTRACKED
+        }
+        Value::Array(items) => items.iter().all(|v| keepable(v, prefixes, refs)),
+        Value::Object(map) => map.values().all(|v| keepable(v, prefixes, refs)),
+        _ => true,
     }
 }
 
@@ -153,6 +199,9 @@ pub struct EncodedEntity {
 pub struct Encoded {
     pub entities: BTreeMap<u32, Arc<EncodedEntity>>,
     pub resources: BTreeMap<String, (Value, u64)>,
+    /// Components left out because their value does not read back (a NaN, an infinity: JSON
+    /// has none): by type path, the first entity and why.
+    pub left_out: BTreeMap<String, (u32, String)>,
 }
 
 impl Encoded {
@@ -167,7 +216,8 @@ impl Encoded {
         if self.entities.contains_key(&id) {
             return;
         }
-        let Some(entity) = world.resource::<AiIndex>().get(AiId(id)) else { return };
+        let index = world.resource::<AiIndex>();
+        let Some(entity) = index.get(AiId(id)) else { return };
         let now = encoder.change_tick();
         let mut reused: Vec<&'static str> = Vec::new();
         let encoded = {
@@ -177,18 +227,30 @@ impl Encoded {
                 if cached.entity != entity || changed.is_newer_than(cached.at, now) {
                     return None;
                 }
+                // The entities it names may be gone (or renumbered): their names are not
+                // what a fresh encode writes.
+                if cached.refs.iter().any(|r| index.get(AiId(*r)).is_none()) {
+                    return None;
+                }
                 reused.push(path);
                 Some(cached.value.clone())
             })
         };
-        let Some((values, _)) = encoded else { return };
+        let Some((values, left_out)) = encoded else { return };
+        for why in left_out {
+            let (path, why) = why.split_once(" (").map_or((why.as_str(), ""), |(p, w)| (p, w.trim_end_matches(')')));
+            self.left_out.entry(path.to_owned()).or_insert_with(|| (id, why.to_owned()));
+        }
+        let prefixes: Vec<&str> = encoder.key_prefixes().collect();
+        let send = cache.sends;
         let mut hashes = BTreeMap::new();
         let mut sizes = BTreeMap::new();
         for (path, value) in &values {
             let key = (id, path.clone());
             if reused.contains(&path.as_str()) {
                 cache.reused += 1;
-                let cached = &cache.values[&key];
+                let cached = cache.values.get_mut(&key).expect("reused from the cache");
+                cached.used = send;
                 hashes.insert(path.clone(), cached.hash);
                 sizes.insert(path.clone(), cached.size);
             } else {
@@ -196,7 +258,12 @@ impl Encoded {
                 let (hash, size) = hash_and_size(value);
                 hashes.insert(path.clone(), hash);
                 sizes.insert(path.clone(), size);
-                cache.values.insert(key, Cached { entity, value: value.clone(), hash, size, at: now });
+                let mut refs = Vec::new();
+                if keepable(value, &prefixes, &mut refs) {
+                    cache.values.insert(key, Cached { entity, value: value.clone(), hash, size, at: now, refs, used: send });
+                } else {
+                    cache.values.remove(&key);
+                }
             }
         }
         let position = world.get::<Transform>(entity).map(|t| t.translation);
@@ -248,10 +315,12 @@ pub fn references(value: &Value, out: &mut BTreeSet<u32>) {
 }
 
 /// `view` plus what its entities refer to (transitively), encoding as it goes. Returns
-/// whether the cap stopped it.
+/// whether the cap stopped it from adding references (every entity in the view is encoded
+/// either way).
 pub fn close_view(world: &World, encoder: &StateEncoder, cache: &mut EncodeCache, encoded: &mut Encoded, view: &mut BTreeSet<u32>) -> bool {
     let mut work: Vec<u32> = view.iter().copied().collect();
     let mut added = 0;
+    let mut capped = false;
     while let Some(id) = work.pop() {
         encoded.ensure(world, encoder, cache, id);
         let Some(entity) = encoded.entities.get(&id).cloned() else { continue };
@@ -260,23 +329,26 @@ pub fn close_view(world: &World, encoder: &StateEncoder, cache: &mut EncodeCache
                 continue;
             }
             if added >= CLOSURE_CAP {
-                return true;
+                capped = true;
+                break;
             }
             added += 1;
             view.insert(r);
             work.push(r);
         }
     }
-    false
+    capped
 }
 
 // --- host: deltas -------------------------------------------------------------------------
 
-/// What a client was sent at one tick: component hashes by entity, resource hashes.
+/// What a client was sent at one tick: component hashes by entity, resource hashes, and the
+/// desync hash when it carried one.
 #[derive(Clone, Debug, Default)]
 pub struct SentView {
     pub entities: BTreeMap<u32, BTreeMap<String, u64>>,
     pub resources: BTreeMap<String, u64>,
+    pub hash: Option<u64>,
 }
 
 /// Inputs to one client's delta.
@@ -391,6 +463,7 @@ pub fn build_delta(input: DeltaInput) -> Built {
     if with_hash && held_back.is_empty() {
         let entities = sent.entities.iter().map(|(id, h)| (*id, h.iter().map(|(p, v)| (p.as_str(), *v)).collect()));
         delta.hash = Some(view_hash(entities, sent.resources.iter().map(|(n, h)| (n.as_str(), *h))));
+        sent.hash = delta.hash;
     }
     let by_component = sizes_by_component(&delta, encoded);
     Built { delta, sent, held_back, bytes, by_component }
@@ -740,6 +813,31 @@ mod tests {
         assert!(built.held_back.windows(2).all(|w| w[0] < w[1]));
         assert!(built.delta.hash.is_none(), "a capped view is not complete: no check");
         assert!(!built.sent.entities.contains_key(&20), "held back, never sent: not in the client's view");
+    }
+
+    #[test]
+    fn only_values_naming_entities_by_id_are_kept() {
+        let mut refs = Vec::new();
+        assert!(keepable(&json!({"target": "e7", "list": ["e9", "east"], "n": 5}), &["c"], &mut refs));
+        refs.sort_unstable();
+        assert_eq!(refs, [7, 9], "kept while e7 and e9 are those entities");
+        assert!(!keepable(&json!({"owner": "untracked"}), &["c"], &mut Vec::new()), "may name an entity later");
+        assert!(!keepable(&json!(["c12"]), &["c"], &mut Vec::new()), "a module key may move to another entity");
+        assert!(keepable(&json!(["c", "camp"]), &["c"], &mut Vec::new()), "words are not keys");
+    }
+
+    #[test]
+    fn the_cache_forgets_what_no_send_used() {
+        let mut cache = EncodeCache::default();
+        let cached = |used| Cached { entity: Entity::PLACEHOLDER, value: json!(1), hash: 0, size: 1, at: Tick::new(0), refs: Vec::new(), used };
+        cache.values.insert((1, "A".into()), cached(0));
+        cache.values.insert((2, "B".into()), cached(0));
+        for _ in 0..2 * CACHE_SWEEP {
+            cache.values.get_mut(&(1, "A".into())).unwrap().used = cache.sends;
+            cache.end_send();
+        }
+        assert_eq!(cache.len(), 1, "e2 was not used for a whole sweep: gone");
+        assert!(cache.values.contains_key(&(1, "A".into())));
     }
 
     #[test]
