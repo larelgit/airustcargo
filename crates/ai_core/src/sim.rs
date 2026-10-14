@@ -69,6 +69,11 @@ impl TickClock {
     pub fn get(&self) -> u64 {
         self.0.load(Ordering::Relaxed)
     }
+
+    /// A snapshot moved the simulation to another tick.
+    pub(crate) fn set(&self, tick: u64) {
+        self.0.store(tick, Ordering::Relaxed);
+    }
 }
 
 /// Named holds on the simulation. While any exists, no tick runs: real-time play is

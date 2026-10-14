@@ -18,6 +18,7 @@
 //!                  Tools    — typed actions             (add_ai_tool, Scope)
 //!                  SimCtl   — pause · step · run-until  (sim)
 //!                  Replay   — record inputs, play back  (replay)
+//!                  Snapshot — save / load the state     (snapshot)
 //!                          │
 //! transport:       BRP `ai/*` on localhost → `shards` CLI ← coding agents, scripts, CI
 //! ```
@@ -53,6 +54,7 @@ pub mod session;
 #[cfg(feature = "render")]
 pub mod shot;
 pub mod sim;
+pub mod snapshot;
 pub mod spatial;
 pub mod status;
 pub mod tools;
@@ -61,6 +63,7 @@ use std::sync::Arc;
 
 use bevy::ecs::schedule::{LogLevel, ScheduleBuildSettings};
 use bevy::prelude::*;
+use bevy::reflect::{FromReflect, GetTypeRegistration, TypePath};
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -75,6 +78,7 @@ pub use replay::{AiReplay, Replay, ReplayHashing, ReplayReport};
 pub use rng::{DetRng, SimRng, SimSeed};
 pub use session::{AgentSession, AgentSessions, Caller, Scope};
 pub use sim::{SimConfig, SimGate, SimSet, SimTick, TickClock};
+pub use snapshot::{EntityKey, Snapshot, SnapshotRegistry};
 pub use spatial::{AiLineOfSight, AiOccluder};
 pub use status::AiStatusFields;
 pub use tools::{call_tool, AiTools, Call, CallOutcome, Id, NoArgs, ToolKind, ToolResult, ToolSpec};
@@ -158,6 +162,7 @@ impl Plugin for AiCorePlugin {
 
         builtin::register(app.world_mut());
         replay::plugin(app);
+        snapshot::plugin(app);
         failures::plugin(app, self.catch_system_panics, self.crash_replays);
 
         #[cfg(feature = "render")]
@@ -259,6 +264,28 @@ pub trait AiAppExt {
     /// the engine's version and modules. A second field with the same key replaces
     /// the first.
     fn add_ai_status(&mut self, key: &str, field: status::StatusField) -> &mut Self;
+
+    /// Saves resource `R` in snapshots and puts it back on load: for state that lives
+    /// outside entities with an `AiId` and decides what a tick does (a counter, a timer).
+    /// `R` reflects (`#[derive(Reflect)]`, `#[reflect(Resource)]`).
+    fn add_snapshot_resource<R>(&mut self) -> &mut Self
+    where
+        R: Resource + Reflect + FromReflect + GetTypeRegistration + TypePath;
+
+    /// What the world is built around and a snapshot does not hold, as a hash: loading
+    /// refuses where it differs from the snapshot's, with `hint` (what to do about it).
+    /// The content database and the static colliders are checked this way. A second check
+    /// with the same name replaces the first.
+    fn add_snapshot_check(&mut self, name: &'static str, hint: &'static str, check: fn(&World) -> u64) -> &mut Self;
+
+    /// Runs after a snapshot was loaded, to make a cache again that is derived from
+    /// components and resources (a spatial index). A second one with the same name
+    /// replaces the first.
+    fn add_snapshot_rebuild(&mut self, name: &'static str, rebuild: fn(&mut World)) -> &mut Self;
+
+    /// How references to entities without an `AiId` are written in snapshots (see
+    /// [`EntityKey`]).
+    fn add_snapshot_entity_key(&mut self, key: EntityKey) -> &mut Self;
 }
 
 impl AiAppExt for App {
@@ -329,6 +356,29 @@ impl AiAppExt for App {
 
     fn add_ai_status(&mut self, key: &str, field: status::StatusField) -> &mut Self {
         self.world_mut().get_resource_or_init::<AiStatusFields>().add(key, field);
+        self
+    }
+
+    fn add_snapshot_resource<R>(&mut self) -> &mut Self
+    where
+        R: Resource + Reflect + FromReflect + GetTypeRegistration + TypePath,
+    {
+        snapshot::register_resource::<R>(self);
+        self
+    }
+
+    fn add_snapshot_check(&mut self, name: &'static str, hint: &'static str, check: fn(&World) -> u64) -> &mut Self {
+        self.world_mut().get_resource_or_init::<SnapshotRegistry>().add_check(name, hint, check);
+        self
+    }
+
+    fn add_snapshot_rebuild(&mut self, name: &'static str, rebuild: fn(&mut World)) -> &mut Self {
+        self.world_mut().get_resource_or_init::<SnapshotRegistry>().add_rebuild(name, rebuild);
+        self
+    }
+
+    fn add_snapshot_entity_key(&mut self, key: EntityKey) -> &mut Self {
+        self.world_mut().get_resource_or_init::<SnapshotRegistry>().add_key(key);
         self
     }
 }
