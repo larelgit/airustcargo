@@ -25,7 +25,7 @@ use bevy::prelude::*;
 use bevy::reflect::serde::{
     ReflectDeserializerProcessor, ReflectSerializerProcessor, TypedReflectDeserializer, TypedReflectSerializer,
 };
-use bevy::reflect::{PartialReflect, TypeRegistration, TypeRegistry};
+use bevy::reflect::{PartialReflect, ReflectFromReflect, TypeRegistration, TypeRegistry};
 use serde::de::DeserializeSeed;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -91,6 +91,8 @@ pub struct StateEncoder<'w> {
     registry: RwLockReadGuard<'w, TypeRegistry>,
     modules: SnapshotRegistry,
     rule: StateRule,
+    /// Every written value is read back (one that does not, a NaN, is left out).
+    read_back: bool,
 }
 
 impl<'w> StateEncoder<'w> {
@@ -100,7 +102,15 @@ impl<'w> StateEncoder<'w> {
             registry: world.resource::<AppTypeRegistry>().read(),
             modules: world.get_resource::<SnapshotRegistry>().cloned().unwrap_or_default(),
             rule,
+            read_back: true,
         }
+    }
+
+    /// Without reading every written value back: for a caller that encodes the same world
+    /// every few ticks (a host's state sends) and lets the reader report what it cannot read.
+    pub fn without_read_back(mut self) -> Self {
+        self.read_back = false;
+        self
     }
 
     /// `entity`'s components by type path, and what had to be left out (`path (why)`: it does
@@ -155,6 +165,9 @@ impl<'w> StateEncoder<'w> {
             }
             // What is written must read back (a NaN or an infinity does not: JSON has none).
             let written = to_json(value, registry, &encoder).map_err(|why| format!("does not serialize: {why}")).and_then(|json| {
+                if !self.read_back {
+                    return Ok(json);
+                }
                 from_json(registration, registry, &json, &mut Decoder::dry(&no_ids, &no_keys))
                     .map(|_| json)
                     .map_err(|why| format!("does not read back: {why}"))
@@ -288,6 +301,23 @@ pub(crate) fn keyed_entities(world: &mut World, going: &BTreeSet<Entity>) -> Has
 /// An entity and the components read for it.
 type Decoded<'r> = (u32, Entity, Vec<(&'r TypeRegistration, Box<dyn PartialReflect>)>);
 
+/// Writes `value` as the entity's component, whole and in place (no hooks) when it has one
+/// already: reflection's `apply` patches, so a list that got shorter would keep its tail and
+/// a map its old keys. Inserts it when the entity has none (or it is immutable).
+fn write_component(target: &mut EntityWorldMut, registration: &TypeRegistration, value: &dyn PartialReflect, registry: &TypeRegistry) {
+    let Some(component) = registration.data::<ReflectComponent>() else { return };
+    let components = target.world().components();
+    let mutable = components.get_id(registration.type_id()).and_then(|id| components.get_info(id)).is_some_and(|info| info.mutable());
+    if mutable
+        && let Some(whole) = registration.data::<ReflectFromReflect>().and_then(|f| f.from_reflect(value))
+        && let Some(mut there) = component.reflect_mut(&mut *target)
+        && there.set(whole).is_ok()
+    {
+        return;
+    }
+    component.apply_or_insert_mapped(target, value, registry, &mut (), RelationshipHookMode::Run);
+}
+
 /// [`apply_changes`] with the keyed entities taken beforehand and the rule for what a new
 /// entity must not have beyond its values (`strip`).
 pub(crate) fn apply(
@@ -348,9 +378,7 @@ pub(crate) fn apply(
         for (_, entity, components) in &decoded {
             let mut target = world.entity_mut(*entity);
             for (registration, value) in components {
-                if let Some(component) = registration.data::<ReflectComponent>() {
-                    component.apply_or_insert_mapped(&mut target, value.as_ref(), &registry, &mut (), RelationshipHookMode::Run);
-                }
+                write_component(&mut target, registration, value.as_ref(), &registry);
             }
         }
     }
