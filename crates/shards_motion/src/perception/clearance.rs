@@ -6,7 +6,7 @@
 use ai_core::spatial::compass_vector;
 use bevy::prelude::*;
 
-use super::terrain::{Probe, Terrain};
+use super::terrain::{Block, Probe, Terrain};
 use crate::controller::CharacterParams;
 use crate::physics::PhysicsWorld;
 
@@ -62,14 +62,16 @@ impl Reach {
 /// How a probe relates to the walker's state.
 enum Sample {
     /// Walkable: the walker is now at height `y`.
-    Pass { y: f32, flat: bool, swim: bool },
+    Pass { y: f32, up: f32, swim: bool },
     Stop(Hazard),
-    /// Blocked or tight: the next probes say whether it is a wall, a ledge or the edge of a drop.
-    Blocked,
+    /// Blocked or tight: for a tight spot the next probes say whether it is a wall, a ledge or
+    /// the edge of a drop.
+    Blocked(Block),
 }
 
 /// What a character of `params` at `origin` (feet) finds in the eight directions, up to
-/// `range` meters. `swimming_at`: the water surface, when the character swims.
+/// `range` meters. `swimming_at`: the water surface, when the character swims. `exclude`:
+/// entities whose colliders never count (the character, and whatever it looks around).
 pub fn clearance(
     physics: &PhysicsWorld,
     params: &CharacterParams,
@@ -77,7 +79,7 @@ pub fn clearance(
     swimming_at: Option<f32>,
     range: f32,
     safe_drop: f32,
-    exclude: Option<Entity>,
+    exclude: &[Entity],
 ) -> Vec<Reach> {
     let (marcher, start) = Marcher::at(physics, params, origin, swimming_at, range, safe_drop, exclude);
     COMPASS
@@ -102,7 +104,7 @@ pub fn reach_toward(
     safe_drop: f32,
     exclude: Option<Entity>,
 ) -> (f32, Hazard) {
-    let (marcher, start) = Marcher::at(physics, params, origin, swimming_at, range, safe_drop, exclude);
+    let (marcher, start) = Marcher::at(physics, params, origin, swimming_at, range, safe_drop, exclude.as_slice());
     marcher.march(origin, dir.normalize_or(Vec3::NEG_Z), start)
 }
 
@@ -112,11 +114,12 @@ struct Marcher<'a> {
     range: f32,
 }
 
-/// The walker's state along a march: floor (or swimming) height, whether the floor is flat.
+/// The walker's state along a march: floor (or swimming) height, the `y` of the floor's
+/// normal (1: flat).
 #[derive(Clone, Copy)]
 struct State {
     y: f32,
-    flat: bool,
+    up: f32,
     swim: bool,
 }
 
@@ -130,7 +133,7 @@ impl<'a> Marcher<'a> {
         swimming_at: Option<f32>,
         range: f32,
         safe_drop: f32,
-        exclude: Option<Entity>,
+        exclude: &[Entity],
     ) -> (Self, (f32, bool)) {
         let marcher = Marcher { terrain: Terrain::new(physics, params, exclude), safe_drop, range };
         let start = match swimming_at {
@@ -148,39 +151,39 @@ impl<'a> Marcher<'a> {
         match self.terrain.probe(at.x, at.z, from.y) {
             Probe::Floor { y, normal } => {
                 let dy = y - from.y;
-                let flat = normal.y > 0.999;
-                let allowance = if flat && from.flat { 0.0 } else { STEP * p.max_slope_deg.to_radians().tan() };
+                let allowance = self.terrain.slope_rise(STEP, from.up, normal.y);
                 if dy < -self.safe_drop {
                     Sample::Stop(Hazard::Cliff { drop: Some(-dy) })
                 } else if dy > p.step_height + allowance {
-                    Sample::Stop(Hazard::Ledge { rise: dy })
+                    // Up to what the controller climbs it is a ledge, above that a wall.
+                    Sample::Stop(if p.can_climb(dy, from.swim) { Hazard::Ledge { rise: dy } } else { Hazard::Wall })
                 } else {
-                    Sample::Pass { y, flat, swim: false }
+                    Sample::Pass { y, up: normal.y, swim: false }
                 }
             }
-            Probe::Water { surface } if from.swim => Sample::Pass { y: self.terrain.swim_height(surface), flat: true, swim: true },
+            Probe::Water { surface } if from.swim => Sample::Pass { y: self.terrain.swim_height(surface), up: 1.0, swim: true },
             Probe::Water { .. } => Sample::Stop(Hazard::Water),
             Probe::Void => Sample::Stop(Hazard::Cliff { drop: None }),
-            Probe::Blocked(_) => Sample::Blocked,
+            Probe::Blocked(block) => Sample::Blocked(block),
         }
     }
 
     /// Marches from `origin` along `dir`; returns how far the walker gets and what stops it.
     fn march(&self, origin: Vec3, dir: Vec3, start: (f32, bool)) -> (f32, Hazard) {
-        let mut state = State { y: start.0, flat: true, swim: start.1 };
+        let mut state = State { y: start.0, up: 1.0, swim: start.1 };
         let mut passed = 0.0;
         let mut s = 0.0;
         while passed < self.range - 1e-4 {
             s = (s + STEP).min(self.range);
             let at = |t: f32| origin + dir * t;
             let stop = match self.sample(at(s), state) {
-                Sample::Pass { y, flat, swim } => {
-                    state = State { y, flat, swim };
+                Sample::Pass { y, up, swim } => {
+                    state = State { y, up, swim };
                     passed = s;
                     continue;
                 }
                 Sample::Stop(hazard) => hazard,
-                Sample::Blocked => self.beyond_blocked(at(s), dir, state),
+                Sample::Blocked(block) => self.beyond_blocked(at(s), dir, state, block),
             };
             // The stop lies between the last pass and `s`: narrow it down.
             let (mut lo, mut hi) = (passed, s);
@@ -196,15 +199,23 @@ impl<'a> Marcher<'a> {
         (self.range, Hazard::Free)
     }
 
-    /// A blocked probe is a wall, unless just past it there is a ledge to climb (the cell
-    /// beside a ledge face is within the body's reach of it) or the ground drops away (the
-    /// cell beside a cliff edge is within reach of the cliff's face).
-    fn beyond_blocked(&self, at: Vec3, dir: Vec3, state: State) -> Hazard {
+    /// A blocked probe is a wall, unless it is only a tight spot (floor, but the body does
+    /// not fit) and just past it there is a ledge to climb (the cell beside a ledge face is
+    /// within the body's reach of it) or the ground drops away (the cell beside a cliff edge
+    /// is within reach of the cliff's face). What lies past a solid taller than a climb says
+    /// nothing about it: behind a wall there may be anything.
+    fn beyond_blocked(&self, at: Vec3, dir: Vec3, state: State, block: Block) -> Hazard {
         let p = self.terrain.params;
+        if block != Block::Tight {
+            return Hazard::Wall;
+        }
+        if self.terrain.blocker_top(at.x, at.z, state.y).is_some_and(|top| !p.can_climb(top - state.y, state.swim)) {
+            return Hazard::Wall;
+        }
         for k in 1..=2 {
             let ahead = at + dir * (STEP * k as f32);
             match self.terrain.probe(ahead.x, ahead.z, state.y) {
-                Probe::Floor { y, .. } if y - state.y > p.step_height && y - state.y <= p.mantle_height => {
+                Probe::Floor { y, .. } if y - state.y > p.step_height && p.can_climb(y - state.y, state.swim) => {
                     return Hazard::Ledge { rise: y - state.y };
                 }
                 Probe::Floor { y, .. } if y - state.y < -self.safe_drop => return Hazard::Cliff { drop: Some(state.y - y) },

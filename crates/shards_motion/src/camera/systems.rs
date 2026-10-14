@@ -50,8 +50,9 @@ fn chest(tf: &Transform) -> Vec3 {
 
 /// `PreUpdate`: the `lock_on` button picks a target (nearest the screen center, in range
 /// and in sight) or lets go; a look flick switches to the neighbour on that side; a
-/// target that is gone, no longer a [`LockOnTarget`] (dead) or too far lets go by itself.
-/// The result goes to `Intent.target`, so it is recorded and drives facing.
+/// target it picked that is gone, no longer a [`LockOnTarget`] (dead) or too far lets go by
+/// itself. The result goes to `Intent.target`, so it is recorded and drives facing. A
+/// target somebody else set is left alone.
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
 fn lock_on(
     time: Res<Time<Real>>,
@@ -81,12 +82,16 @@ fn lock_on(
     all.sort_by_key(|c| c.key);
     let position_of = |id: AiId| all.iter().position(|c| c.key == id.0);
 
-    // A target that is gone or too far lets go; so does one this camera picked that is no
-    // longer lockable (dead). A target an agent set stays until it is gone or too far.
-    if let Some(id) = intent.target {
+    // A lock this camera picked lets go by itself: the target is gone, no longer lockable
+    // (dead) or too far from the eye. A lock anyone else set (an agent's tool, a brain) is
+    // gameplay's, whatever the camera sees of it: the eye is presentation, so measuring a
+    // rule from it would play the same script differently with and without a window.
+    if *picked != intent.target {
+        *picked = None;
+    }
+    if let Some(id) = *picked {
         let at = index.get(id).and_then(|e| positions.get(e).ok()).map(chest);
-        let dead = *picked == Some(id) && position_of(id).is_none();
-        if dead || at.is_none_or(|p| !lock_holds(&view, p, RELEASE_FACTOR)) {
+        if position_of(id).is_none() || at.is_none_or(|p| !lock_holds(&view, p, RELEASE_FACTOR)) {
             intent.target = None;
         }
     }

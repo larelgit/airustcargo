@@ -10,6 +10,9 @@ use shards_content::{ContentDb, ContentDef, Refs};
 use super::CharacterController;
 use crate::physics::{Collider, CollisionLayers, Shape};
 
+/// How far above `mantle_height` a ledge may stand and still be climbed (m): float noise.
+const MANTLE_SLACK: f32 = 1e-3;
+
 /// How a character moves. Distances in meters, times in seconds, speeds in m/s.
 /// Missing fields in a file take the defaults; unknown ones are an error, so a typo
 /// (`walk_spead`) is reported with its file and line instead of silently doing nothing.
@@ -157,6 +160,26 @@ impl CharacterParams {
             .with_layers(CollisionLayers::CHARACTER)
     }
 
+    /// The gap the capsule keeps from the world: `skin_width`, as far as the capsule can carry it.
+    pub fn skin(&self) -> f32 {
+        self.skin_width.clamp(0.001, self.radius.max(0.01) * 0.5)
+    }
+
+    /// Whether a ledge whose standing surface is `height` above the feet can be climbed. The
+    /// controller's rule, and the only one: the planner, `clearance` and the `jump` tool
+    /// ask [`can_climb`](Self::can_climb), which turns the height they see into this one.
+    pub fn can_mantle(&self, height: f32) -> bool {
+        height <= self.mantle_height + MANTLE_SLACK
+    }
+
+    /// [`can_mantle`](Self::can_mantle) for a floor `rise` meters above the floor (or the
+    /// water, when `swimming`) a character stands in. On the ground the feet rest a skin above
+    /// the floor and the climb stands them a skin above the ledge, so the skins cancel; a
+    /// swimmer floats at a height of its own and the second skin counts.
+    pub fn can_climb(&self, rise: f32, swimming: bool) -> bool {
+        self.can_mantle(if swimming { rise + self.skin() } else { rise })
+    }
+
     /// Initial upward speed that peaks at `jump_height`.
     pub fn jump_speed(&self) -> f32 {
         (2.0 * self.gravity.max(0.0) * self.jump_height.max(0.0)).sqrt()
@@ -226,6 +249,14 @@ mod tests {
         let p = CharacterParams { float_depth: 2.0, radius: -1.0, ..default() };
         let err = p.check().unwrap_err();
         assert!(err.contains("radius must be > 0") && err.contains("float_depth"), "{err}");
+    }
+
+    #[test]
+    fn one_rule_says_what_can_be_climbed() {
+        let p = CharacterParams::default();
+        assert!(p.can_mantle(1.6) && !p.can_mantle(1.61), "mantle_height is the limit, with float noise to spare");
+        assert!(p.can_climb(1.6, false), "on the ground the skins cancel");
+        assert!(!p.can_climb(1.6, true) && p.can_climb(1.57, true), "a swimmer's second skin counts");
     }
 
     #[test]

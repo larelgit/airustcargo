@@ -3,7 +3,9 @@
 //! **Presentation only.** The simulation and the AI's `observe` never read the camera:
 //! what the AI sees comes from its subject's eyes, and a window with this camera plays the
 //! same game as a headless run. The one thing the camera writes into the game is the
-//! lock-on target, as `Intent.target` between ticks (it is input, so replays record it).
+//! lock-on target it picks, as `Intent.target` between ticks (it is input, so replays
+//! record it). It never takes away a target anybody else set: that is gameplay's, and the
+//! camera is only where the eye happens to be.
 //!
 //! The math is in [`math`] as plain functions (`orbit_position`, `resolve_camera_collision`,
 //! `pick_lock_target`, `next_lock_target`, `shake_offset`, `aim_assist`); the systems that

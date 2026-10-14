@@ -42,7 +42,7 @@ fn clearance_names_the_wall_the_cliff_the_water_and_the_open_way() {
     let mut app = app();
     lay_out_the_surroundings(app.world_mut());
     settle(&mut app);
-    let reaches = clearance(physics(&app), &params(), Vec3::ZERO, None, 15.0, 2.0, None);
+    let reaches = clearance(physics(&app), &params(), Vec3::ZERO, None, 15.0, 2.0, &[]);
     assert_eq!(reaches.len(), 8);
     let dirs: Vec<&str> = reaches.iter().map(|r| r.dir).collect();
     assert_eq!(dirs, ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]);
@@ -98,6 +98,50 @@ fn clearance_reads_like_the_example_in_the_docs() {
 }
 
 #[test]
+fn the_tools_see_colliders_spawned_or_moved_in_the_same_breath() {
+    // Scenario runners call tools back to back, with no frame in between to sync physics.
+    let mut app = bare_engine("fresh_physics");
+    floor(app.world_mut());
+    let e = player(app.world_mut(), Vec3::ZERO);
+    step(&mut app, 2);
+
+    let wall = block(app.world_mut(), Vec3::new(-2.0, 0.0, -4.0), Vec3::new(2.0, 3.0, -3.0));
+    let out = ok(&mut app, "clearance", json!({}));
+    assert!(out.starts_with("N wall 2.6m"), "a wall that was just spawned: {out}");
+    app.world_mut().get_mut::<Transform>(wall).unwrap().translation.z = -9.5;
+    let out = ok(&mut app, "clearance", json!({}));
+    assert!(out.starts_with("N wall 8.6m") || out.starts_with("N wall 8.5m"), "a wall that was just moved: {out}");
+
+    // A pen of walls round the goal, just built: no route, instead of a straight line through them.
+    block(app.world_mut(), Vec3::new(-6.0, 0.0, -8.0), Vec3::new(6.0, 3.0, -7.0));
+    block(app.world_mut(), Vec3::new(-6.0, 0.0, -15.0), Vec3::new(6.0, 3.0, -14.0));
+    block(app.world_mut(), Vec3::new(-7.0, 0.0, -15.0), Vec3::new(-6.0, 3.0, -7.0));
+    block(app.world_mut(), Vec3::new(6.0, 0.0, -15.0), Vec3::new(7.0, 3.0, -7.0));
+    let err = fails(&mut app, "path_to", json!({"target": {"x": 0, "z": -11}}));
+    assert!(err.starts_with("no walkable route"), "{err}");
+    let err = fails(&mut app, "move_to", json!({"target": {"x": 0, "z": -11}, "path": true}));
+    assert!(err.starts_with("no walkable route"), "{err}");
+    let _ = e;
+}
+
+#[test]
+fn clearance_around_a_prop_does_not_see_the_prop_as_a_wall() {
+    let mut app = app();
+    floor(app.world_mut());
+    player(app.world_mut(), Vec3::new(-8.0, 0.0, 0.0));
+    // A crate is on the world layer, like the walls: it must not wall in its own surroundings.
+    let crate_ = app
+        .world_mut()
+        .spawn((ai_core::AiKind::new("Crate"), Collider::standing_box(Vec3::splat(0.5)), Transform::from_xyz(5.0, 0.0, 0.0)))
+        .id();
+    let id = app.world().get::<ai_core::AiId>(crate_).unwrap().to_string();
+    step(&mut app, 2);
+    let around = ok(&mut app, "clearance", json!({"around": id}));
+    let line = around.split(": ").nth(1).unwrap();
+    assert!(line.split(" · ").all(|part| part.ends_with("free 15.0m")), "{around}");
+}
+
+#[test]
 fn clearance_sees_a_ledge_it_could_climb() {
     let mut app = app();
     floor(app.world_mut());
@@ -106,12 +150,61 @@ fn clearance_sees_a_ledge_it_could_climb() {
     // And a tall one to the east.
     block(app.world_mut(), Vec3::new(4.0, 0.0, -4.0), Vec3::new(6.0, 3.0, 4.0));
     settle(&mut app);
-    let reaches = clearance(physics(&app), &params(), Vec3::ZERO, None, 15.0, 2.0, None);
+    let reaches = clearance(physics(&app), &params(), Vec3::ZERO, None, 15.0, 2.0, &[]);
     let w = reach(&reaches, "W");
     assert!(matches!(w.hazard, Hazard::Ledge { rise } if (rise - 1.1).abs() < 0.05), "{w:?}");
     assert!((w.distance - 3.6).abs() < 0.05, "{w:?}");
     assert_eq!(w.describe(), "W ledge 3.6m (+1.1m)");
     assert_eq!(reach(&reaches, "E").hazard, Hazard::Wall);
+}
+
+/// A 3 m high wall 0.4 m thick at x = 3 across the whole way east, and what lies behind it.
+fn thin_wall_with_something_behind(world: &mut World, behind: &str) {
+    block(world, Vec3::new(-200.0, -1.0, -200.0), Vec3::new(3.0, 0.0, 200.0));
+    block(world, Vec3::new(3.0, -6.0, -200.0), Vec3::new(3.4, 3.0, 200.0));
+    match behind {
+        "moat" => {
+            block(world, Vec3::new(3.4, -6.0, -200.0), Vec3::new(200.0, -4.0, 200.0));
+            volume(world, Vec3::new(3.4, -4.0, -200.0), Vec3::new(200.0, -0.5, 200.0), VolumeKind::Water);
+        }
+        "terrace" => {
+            block(world, Vec3::new(3.4, -1.0, -200.0), Vec3::new(200.0, 1.0, 200.0));
+        }
+        "cliff" => {
+            block(world, Vec3::new(3.4, -14.0, -200.0), Vec3::new(200.0, -12.0, 200.0));
+        }
+        other => panic!("nothing like {other}"),
+    }
+}
+
+#[test]
+fn a_tall_thin_wall_is_a_wall_whatever_lies_behind_it() {
+    for behind in ["moat", "terrace", "cliff"] {
+        let mut app = app();
+        thin_wall_with_something_behind(app.world_mut(), behind);
+        settle(&mut app);
+        // However the 0.5 m probes fall against the wall's face.
+        for offset in [0.0, 0.1, 0.2, 0.3, 0.4] {
+            let reaches = clearance(physics(&app), &params(), Vec3::new(offset, 0.0, 0.0), None, 15.0, 2.0, &[]);
+            let e = reach(&reaches, "E");
+            assert_eq!(e.hazard, Hazard::Wall, "behind it: {behind}, from x = {offset}: {e:?}");
+            assert!((e.distance - (2.6 - offset)).abs() < 0.05, "{behind}: {e:?}");
+        }
+    }
+}
+
+#[test]
+fn the_planner_does_not_hop_a_tall_thin_wall_onto_what_is_behind_it() {
+    for behind in ["moat", "terrace", "cliff"] {
+        let mut app = app();
+        thin_wall_with_something_behind(app.world_mut(), behind);
+        settle(&mut app);
+        for offset in [0.0, 0.1, 0.2, 0.3, 0.4] {
+            let request = PathRequest { max_length: 400.0, ..request(Vec3::new(offset, 0.0, 0.0), Vec3::new(8.0, 0.0, 0.0)) };
+            let plan = plan_path(physics(&app), &params(), &request);
+            assert!(plan.is_err(), "behind it: {behind}, from x = {offset}: {:?}", plan.map(|p| p.summary()));
+        }
+    }
 }
 
 #[test]
@@ -187,6 +280,50 @@ fn a_path_goes_around_a_wall_through_the_gap() {
     assert_eq!(plan, plan_path(physics(&app), &params(), &request(Vec3::ZERO, goal)).unwrap());
 }
 
+/// A 1 m pillar in the open, 5 m north of the origin.
+fn pillar_in_the_open(world: &mut World) {
+    floor(world);
+    block(world, Vec3::new(-0.5, 0.0, -5.5), Vec3::new(0.5, 3.0, -4.5));
+}
+
+/// Whether the straight lines between `points` come nearer than `gap` to the pillar of
+/// [`pillar_in_the_open`].
+fn cuts_the_pillar(points: &[Vec3], gap: f32) -> Option<Vec3> {
+    points.windows(2).find_map(|w| {
+        let len = Vec2::new(w[1].x - w[0].x, w[1].z - w[0].z).length();
+        (0..=(len / 0.05).ceil() as usize)
+            .map(|k| w[0].lerp(w[1], k as f32 * 0.05 / len.max(1e-3)))
+            .find(|p| p.x.abs() < 0.5 + gap && p.z > -5.5 - gap && p.z < -4.5 + gap)
+    })
+}
+
+#[test]
+fn a_path_around_a_pillar_keeps_every_bend_of_the_route() {
+    let mut app = app();
+    pillar_in_the_open(app.world_mut());
+    settle(&mut app);
+    let goal = Vec3::new(0.0, 0.0, -10.0);
+    let plan = plan_path(physics(&app), &params(), &request(Vec3::ZERO, goal)).unwrap();
+    assert!(plan.length > 10.1 && plan.length < 11.5, "round the pillar, not through it: {}", plan.summary());
+    let mut points = vec![Vec3::ZERO];
+    points.extend(plan.legs.iter().map(|l| l.end));
+    assert_eq!(cuts_the_pillar(&points, 0.3), None, "the legs' ends are the route: {}", plan.summary());
+    // Both legs head "N" (45° octants) but they are not one line: the bend is the way round.
+    assert!(plan.legs.len() >= 2, "out to the side of the pillar and back in: {}", plan.summary());
+}
+
+#[test]
+fn move_to_with_path_walks_round_a_pillar() {
+    let mut app = bare_engine("move_to_path_pillar");
+    pillar_in_the_open(app.world_mut());
+    let e = player(app.world_mut(), Vec3::ZERO);
+    step(&mut app, 2);
+    ok(&mut app, "move_to", json!({"target": {"x": 0, "z": -10}, "path": true}));
+    walk_until_there(&mut app, e, Vec3::new(0.0, 0.0, -10.0), 0.5, 1200);
+    step(&mut app, 30);
+    assert!(intent(&app, e).orders.is_empty(), "the orders are done: {:?}", intent(&app, e).orders);
+}
+
 #[test]
 fn path_to_answers_with_a_summary_and_the_waypoints() {
     let mut app = app();
@@ -218,6 +355,90 @@ fn a_ledge_in_the_way_is_a_mantle_in_the_path() {
     assert!(plan.summary().contains("(mantle 1.1m)"), "{}", plan.summary());
     // And then down the other side.
     assert!(plan.legs.iter().any(|l| l.kind == StepKind::Drop), "{}", plan.summary());
+}
+
+/// A ledge `height` m high and 2 m deep across the whole way, 5 m north of the origin.
+fn ledge_across_the_way(world: &mut World, height: f32) {
+    floor(world);
+    block(world, Vec3::new(-60.0, 0.0, -7.0), Vec3::new(60.0, height, -5.0));
+}
+
+#[test]
+fn the_planner_climbs_what_the_controller_climbs_and_nothing_higher() {
+    // Mantle height is 1.6 m. The controller refuses anything above it (to a thousandth),
+    // so a route over a 1.62 m ledge would be a walker standing at its foot for good.
+    let goal = Vec3::new(0.0, 0.0, -10.0);
+    for (height, climbs) in [(1.58, true), (1.62, false)] {
+        let mut app = bare_engine("climb_rule");
+        ledge_across_the_way(app.world_mut(), height);
+        let e = player(app.world_mut(), Vec3::ZERO);
+        step(&mut app, 2);
+        let plan = plan_path(physics(&app), &params(), &request(Vec3::ZERO, goal));
+        match plan {
+            Ok(plan) => assert!(climbs && plan.summary().contains("(mantle "), "{height} m: planned {}", plan.summary()),
+            Err(err) => assert!(!climbs && err.contains(&format!("{height:.2}m high (a character climbs at most 1.60m)")), "{height} m: {err}"),
+        }
+        // What the walker does, straight at it.
+        ok(&mut app, "move_to", json!({"target": {"x": 0, "z": -10}}));
+        step(&mut app, 300);
+        assert_eq!(seen(&app).mantled.len(), usize::from(climbs), "{height} m: the controller {:?}", feet(&app, e));
+    }
+}
+
+/// A pool whose bank is a ledge with its top `top` m above the surface (y = 0).
+fn pool_with_a_bank(world: &mut World, top: f32) {
+    block(world, Vec3::new(-20.0, -6.0, -20.0), Vec3::new(20.0, -5.0, 20.0));
+    block(world, Vec3::new(4.0, -6.0, -20.0), Vec3::new(8.0, top, 20.0));
+    volume(world, Vec3::new(-20.0, -5.0, -20.0), Vec3::new(4.0, 0.0, 20.0), VolumeKind::Water);
+}
+
+#[test]
+fn a_swimmer_climbs_out_where_the_planner_and_the_jump_tool_say_it_can() {
+    // A swimmer floats 1.1 m below the surface and the controller adds its skin to the
+    // rise: a bank 0.5 m over the water is 1.62 m up, 0.45 m is 1.57 m.
+    for (top, climbs) in [(0.45, true), (0.5, false)] {
+        let mut app = app();
+        pool_with_a_bank(app.world_mut(), top);
+        let e = player(app.world_mut(), Vec3::new(3.4, -1.1, 0.0));
+        app.world_mut().get_mut::<Transform>(e).unwrap().look_to(Vec3::X, Vec3::Y);
+        step(&mut app, 30);
+        assert_eq!(state(&app, e).mode, MotionMode::Water);
+        let start = Vec3::new(3.0, -1.1, 0.0);
+        let request = PathRequest { swimming_at: Some(0.0), ..request(start, Vec3::new(7.0, 0.0, 0.0)) };
+        let plan = plan_path(physics(&app), &params(), &request);
+        let jump = call(&mut app, "jump", json!({}));
+        step(&mut app, 60);
+        let climbed = !seen(&app).mantled.is_empty();
+        assert_eq!(climbed, climbs, "bank {top} m over the water: the controller");
+        assert_eq!(plan.is_ok(), climbs, "bank {top} m over the water: the planner said {plan:?}");
+        assert_eq!(jump.ok, climbs, "bank {top} m over the water: the jump tool said {}", jump.result);
+    }
+}
+
+/// Ground tilted 3.6° about the x axis (so it is level going east, and not flat), and a
+/// 0.8 m high, 2 m deep ledge across the way east at x = 5.
+fn tilted_ground_with_a_ledge(world: &mut World) {
+    turned_block(world, Vec3::new(0.0, -0.5, 0.0), Vec3::new(200.0, 0.5, 200.0), Quat::from_rotation_x(3.6f32.to_radians()));
+    block(world, Vec3::new(5.0, -3.0, -20.0), Vec3::new(7.0, 0.8, 20.0));
+}
+
+#[test]
+fn a_gentle_slope_does_not_make_a_ledge_walkable() {
+    // The slope between two floors lifts one over the other by the tilt, not by the steepest
+    // slope a character can walk: ground a few degrees off flat is no excuse for a 0.8 m step.
+    let mut app = bare_engine("tilted_ledge");
+    tilted_ground_with_a_ledge(app.world_mut());
+    let e = player(app.world_mut(), Vec3::ZERO);
+    step(&mut app, 2);
+    let reaches = clearance(physics(&app), &params(), feet(&app, e), None, 15.0, 2.0, &[]);
+    let east = reach(&reaches, "E");
+    assert!(matches!(east.hazard, Hazard::Ledge { rise } if (rise - 0.8).abs() < 0.05), "{east:?}");
+    let plan = plan_path(physics(&app), &params(), &request(feet(&app, e), Vec3::new(10.0, 0.0, 0.0))).unwrap();
+    assert!(plan.summary().contains("(mantle 0.8m)"), "{}", plan.summary());
+
+    ok(&mut app, "move_to", json!({"target": {"x": 10, "z": 0}, "path": true}));
+    walk_until_there(&mut app, e, Vec3::new(10.0, 0.8, 0.0), 0.5, 900);
+    assert_eq!(seen(&app).mantled.len(), 1, "climbed once, as planned");
 }
 
 /// Ground, a 16.7° ramp up 3 m over 10 m, and a platform on top.
@@ -256,7 +477,7 @@ fn deep_water_over_a_steep_bottom_still_swims() {
     volume(app.world_mut(), Vec3::new(0.0, -6.0, -10.0), Vec3::new(10.0, 0.0, 10.0), VolumeKind::Water);
     settle(&mut app);
     let params = CharacterParams::default();
-    let terrain = shards_motion::perception::Terrain::new(physics(&app), &params, None);
+    let terrain = shards_motion::perception::Terrain::new(physics(&app), &params, &[]);
     // Over the ramp where the water is deeper than a character can stand in.
     let probed = terrain.probe(4.0, 0.0, 0.0);
     assert!(matches!(probed, shards_motion::perception::Probe::Water { .. }), "{probed:?}");
@@ -414,4 +635,47 @@ fn move_to_with_path_refuses_what_has_no_route_and_changes_nothing() {
     assert!(err.contains("no walkable route") && err.contains("Without path=true move_to walks a straight line"), "{err}");
     assert_eq!(intent(&app, e).orders.len(), 1, "the order from before is still there");
     let _: Value = json!(null);
+}
+
+#[test]
+fn move_to_with_path_and_queue_is_refused_while_orders_are_pending() {
+    let mut app = bare_engine("move_to_path_queue");
+    wall_with_a_gap(app.world_mut());
+    let e = player(app.world_mut(), Vec3::ZERO);
+    step(&mut app, 2);
+    // Nothing pending: the route starts where the walker stands, so it can be queued.
+    let first = ok(&mut app, "move_to", json!({"target": {"x": 0, "z": -12}, "path": true, "queue": true}));
+    assert!(first.starts_with("ok: following path "), "{first}");
+    let legs = intent(&app, e).orders.len();
+
+    // Orders pending: a route planned from here would not start where they end.
+    let second = fails(&mut app, "move_to", json!({"target": {"x": 20, "z": -12}, "path": true, "queue": true}));
+    assert!(second.contains("pending") && second.contains("path=true") && second.contains("without `queue`"), "{second}");
+    assert_eq!(intent(&app, e).orders.len(), legs, "a refusal changes nothing");
+    // Plain queued orders are straight lines from wherever the last one ends: still fine.
+    ok(&mut app, "move_to", json!({"target": {"x": 20, "z": -12}, "queue": true}));
+    assert_eq!(intent(&app, e).orders.len(), legs + 1);
+}
+
+#[test]
+fn move_to_with_path_already_in_range_stops_a_walk_under_way() {
+    let mut app = bare_engine("move_to_path_in_range");
+    floor(app.world_mut());
+    let e = player(app.world_mut(), Vec3::ZERO);
+    step(&mut app, 2);
+    ok(&mut app, "move_to", json!({"target": {"x": 0, "z": -40}}));
+    step(&mut app, 40);
+    assert!(intent(&app, e).move_dir != Vec3::ZERO, "on its way");
+
+    // Somebody stands a meter ahead: nothing to plan, and the walk to the old goal ends here.
+    let at = feet(&app, e);
+    let near = app.world_mut().spawn((ai_core::AiKind::new("Dummy"), Transform::from_translation(at + Vec3::new(0.0, 0.0, -1.0)))).id();
+    let id = app.world().get::<ai_core::AiId>(near).unwrap().to_string();
+    let out = ok(&mut app, "move_to", json!({"target": id, "path": true}));
+    assert!(out.starts_with("ok: already within"), "{out}");
+    assert!(intent(&app, e).orders.is_empty());
+    assert_eq!(intent(&app, e).move_dir, Vec3::ZERO, "the old walk is over with its orders");
+    step(&mut app, 120);
+    let stopped = feet(&app, e);
+    assert!(Vec2::new(stopped.x - at.x, stopped.z - at.z).length() < 1.0, "it kept running: {at} -> {stopped}");
 }

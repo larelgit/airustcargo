@@ -134,6 +134,39 @@ fn a_target_an_agent_set_is_not_taken_away_for_lacking_the_marker() {
 }
 
 #[test]
+fn the_camera_never_lets_go_of_a_target_an_agent_set() {
+    // The eye sits behind the player, so a target 24 m ahead of the player is some 29 m from
+    // it: past what the camera lets go of (1.3 x its 20 m range). The camera is a view of
+    // the game, not a rule of it: an agent's lock reads the same with and without a window.
+    let rock = |s: &mut Scene, z: f32| {
+        let rock = s.app.world_mut().spawn((AiKind::new("Rock"), Transform::from_xyz(0.0, 0.0, z))).id();
+        id(&s.app, rock)
+    };
+    let set = |s: &mut Scene, to: AiId| s.app.world_mut().get_mut::<Intent>(s.player).unwrap().target = Some(to);
+
+    let mut s = scene();
+    let far = rock(&mut s, -24.0);
+    set(&mut s, far);
+    for _ in 0..5 {
+        frame(&mut s.app);
+    }
+    assert_eq!(target(&s), Some(far), "the player and the lock are 24 m apart, and the camera has no say");
+
+    // Even one the camera had picked once, when the agent has taken the lock over.
+    let mut s = scene();
+    tap_lock(&mut s);
+    let near = id(&s.app, s.near);
+    assert_eq!(target(&s), Some(near));
+    let other = rock(&mut s, -5.0);
+    set(&mut s, other);
+    frame(&mut s.app);
+    set(&mut s, near);
+    s.app.world_mut().get_mut::<Transform>(s.near).unwrap().translation = Vec3::new(0.0, 0.0, -80.0);
+    frame(&mut s.app);
+    assert_eq!(target(&s), Some(near), "set by the agent, so kept");
+}
+
+#[test]
 fn the_camera_follows_looks_and_stays_out_of_walls() {
     let mut s = scene();
     let at = |s: &Scene| s.app.world().get::<Transform>(s.camera).unwrap().translation;

@@ -118,6 +118,46 @@ fn the_move_axis_is_turned_by_the_camera() {
 }
 
 #[test]
+fn keys_held_before_the_player_exists_reach_it_when_it_appears() {
+    let mut app = input_app();
+    press(&mut app, KeyCode::KeyW);
+    press(&mut app, KeyCode::ShiftLeft);
+    frame(&mut app);
+    frame(&mut app);
+    let e = local_player(&mut app);
+    frame(&mut app);
+    let now = intent(&app, e);
+    assert_eq!(now.move_dir, Vec3::NEG_Z, "W has been down the whole time");
+    assert!(now.is_held(SPRINT), "so has shift");
+}
+
+#[test]
+fn the_controls_follow_the_local_player_to_a_new_body() {
+    let mut app = input_app();
+    let first = local_player(&mut app);
+    let second = app.world_mut().spawn((AiKind::new("Hero"), character("", Vec3::X * 4.0))).id();
+    press(&mut app, KeyCode::KeyW);
+    press(&mut app, KeyCode::ShiftLeft);
+    frame(&mut app);
+    assert!(intent(&app, first).is_held(SPRINT) && intent(&app, first).move_dir == Vec3::NEG_Z);
+
+    // The marker moves on (a respawn, a hand-over) with the keys still down.
+    app.world_mut().entity_mut(first).remove::<LocalPlayer>();
+    app.world_mut().entity_mut(second).insert(LocalPlayer);
+    frame(&mut app);
+    let (old, new) = (intent(&app, first), intent(&app, second));
+    assert_eq!((new.move_dir, new.is_held(SPRINT)), (Vec3::NEG_Z, true), "the new body gets what is down");
+    assert_eq!((old.move_dir, old.is_held(SPRINT)), (Vec3::ZERO, false), "the old one is not left running");
+
+    // An agent's own steering of the old body is its own: only what the keys wrote is let go.
+    edit_intent(&mut app, first, |i| i.move_dir = Vec3::X);
+    release(&mut app, KeyCode::KeyW);
+    frame(&mut app);
+    assert_eq!(intent(&app, first).move_dir, Vec3::X);
+    assert_eq!(intent(&app, second).move_dir, Vec3::ZERO);
+}
+
+#[test]
 fn intent_is_left_untouched_when_nothing_changes() {
     let mut app = input_app();
     let e = local_player(&mut app);
@@ -342,6 +382,28 @@ fn the_players_changes_are_saved_and_loaded_again() {
     assert_eq!(*broken.world().resource::<InputMap>(), InputMap::standard());
     let said = broken.world().resource::<AiJournal>().after(0).0.any(|e| e.kind == JournalKind::Warn && e.text.contains("using the default controls"));
     assert!(said);
+}
+
+#[test]
+fn a_rebind_does_not_destroy_a_controls_file_that_could_not_be_read() {
+    let dir = temp_dir("input_bad_file");
+    let file = dir.join("input.ron");
+    let hand_edited = "(contexts: [ (name: \"gameplay\", actions: [ (action: \"jump\", bindings: [Key(KeyJ)]), oops";
+    std::fs::write(&file, hand_edited).unwrap();
+    let mut app = input_app_with(Some(InputSettings { file: Some(file.clone()), ..default() }));
+    assert_eq!(*app.world().resource::<InputMap>(), InputMap::standard(), "the defaults, and a warning");
+
+    // The first save says the old file is kept, and keeps it.
+    let out = ok(&mut app, "rebind", json!({"action": "sprint", "binding": "Key(KeyV)", "save": true}));
+    let backup = file.with_extension("ron.bad");
+    assert!(out.contains("saved to") && out.contains("could not be read") && out.contains("input.ron.bad"), "{out}");
+    assert_eq!(std::fs::read_to_string(&backup).unwrap(), hand_edited, "everything the player had written is still there");
+    assert!(InputMap::load_overrides(&file).is_ok(), "and the new file reads");
+
+    // Later saves are on a file that reads: the copy of the broken one stays as it was.
+    let again = ok(&mut app, "rebind", json!({"action": "jump", "binding": "Key(KeyU)", "save": true}));
+    assert!(!again.contains("could not be read"), "{again}");
+    assert_eq!(std::fs::read_to_string(&backup).unwrap(), hand_edited);
 }
 
 #[test]

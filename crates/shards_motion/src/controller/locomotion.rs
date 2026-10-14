@@ -411,7 +411,7 @@ impl Step<'_, '_> {
         let top = m.obstacle_top(feet, wall.point, dir, p.mantle_height)?;
         let rest = top + m.skin;
         let height = rest - feet.y;
-        if height <= min_height || height > p.mantle_height + 1e-3 {
+        if height <= min_height || !p.can_mantle(height) {
             return None;
         }
         // Prefer standing fully on top; a narrow top takes a shorter step.

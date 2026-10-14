@@ -41,6 +41,8 @@ const DROP_COST: f32 = 0.4;
 const WATER_DROP: f32 = 20.0;
 /// The goal's floor must be within this height of the target's feet (m).
 const GOAL_BAND: f32 = 2.5;
+/// Two steps whose headings have a dot product above this are one straight run (under 1°).
+const STRAIGHT: f32 = 0.9999;
 /// Nodes the search may expand before it gives up.
 const MAX_EXPANSIONS: usize = 40_000;
 /// Neighbour offsets, clockwise from north (N = -Z, E = +X).
@@ -167,8 +169,8 @@ type Key = (i32, i32, i32, bool);
 struct Node {
     pos: Vec3,
     cell: Cell,
-    /// The floor here is flat (no slope allowance when stepping from it).
-    flat: bool,
+    /// The `y` of the floor's normal here (1: flat), for the slope between it and the next floor.
+    up: f32,
     cost: u32,
     parent: Option<usize>,
     kind: StepKind,
@@ -180,7 +182,7 @@ struct Node {
 struct Move {
     pos: Vec3,
     cell: Cell,
-    flat: bool,
+    up: f32,
     kind: StepKind,
     cost: u32,
     rise: f32,
@@ -200,6 +202,13 @@ fn centre(i: i32) -> f32 {
 
 fn flat_distance(a: Vec3, b: Vec3) -> f32 {
     Vec2::new(a.x - b.x, a.z - b.z).length()
+}
+
+/// `1.7m high (a character climbs at most 1.6m)`; a hair over the limit gets the second
+/// decimal, or it would read as no more than the limit.
+fn too_high(height: f32, limit: f32) -> String {
+    let places = if format!("{height:.1}") == format!("{limit:.1}") { 2 } else { 1 };
+    format!("{height:.places$}m high (a character climbs at most {limit:.places$}m)")
 }
 
 /// Plans a route for a character of `params`. `Err` says why there is none and what stops
@@ -234,7 +243,7 @@ impl<'a> Planner<'a> {
             cell_of(a.z.max(b.z) + margin),
         );
         Self {
-            terrain: Terrain::new(physics, params, request.exclude),
+            terrain: Terrain::new(physics, params, request.exclude.as_slice()),
             request,
             probes: HashMap::new(),
             nodes: Vec::new(),
@@ -314,7 +323,7 @@ impl<'a> Planner<'a> {
                 }
             }
         };
-        Ok(Node { pos, cell, flat: true, cost: 0, parent: None, kind: StepKind::Walk, rise: 0.0, closed: false })
+        Ok(Node { pos, cell, up: 1.0, cost: 0, parent: None, kind: StepKind::Walk, rise: 0.0, closed: false })
     }
 
     fn heuristic(&self, node: usize, within: f32) -> u32 {
@@ -337,7 +346,7 @@ impl<'a> Planner<'a> {
                 self.nodes.push(Node {
                     pos: next.pos,
                     cell: next.cell,
-                    flat: next.flat,
+                    up: next.up,
                     cost,
                     parent: None,
                     kind: next.kind,
@@ -365,7 +374,7 @@ impl<'a> Planner<'a> {
 
     /// Every move out of node `at`, in a fixed order.
     fn neighbours(&mut self, at: usize) -> Vec<Move> {
-        let from = (self.nodes[at].pos, self.nodes[at].cell, self.nodes[at].flat);
+        let from = (self.nodes[at].pos, self.nodes[at].cell, self.nodes[at].up);
         let (ci, cj) = (cell_of(from.0.x), cell_of(from.0.z));
         let mut out = Vec::with_capacity(8);
         // From an off-grid start, the cell it stands in is a move too.
@@ -407,7 +416,7 @@ impl<'a> Planner<'a> {
 
     /// The move from `from` to cell `(i, j)`, if one exists. `distance` overrides the
     /// distance between the centres (a two-cell hop).
-    fn step(&mut self, from: (Vec3, Cell, bool), i: i32, j: i32, distance: Option<f32>) -> Option<Move> {
+    fn step(&mut self, from: (Vec3, Cell, f32), i: i32, j: i32, distance: Option<f32>) -> Option<Move> {
         let p = self.terrain.params;
         let (x, z) = (centre(i), centre(j));
         let dist = distance.unwrap_or_else(|| flat_distance(from.0, Vec3::new(x, from.0.y, z)));
@@ -418,28 +427,25 @@ impl<'a> Planner<'a> {
                 if from.1 == Cell::Floor && from.0.y - y > WATER_DROP {
                     return None;
                 }
-                Some(Move { pos: Vec3::new(x, y, z), cell: Cell::Swim, flat: true, kind: StepKind::Swim, cost: (dist * SWIM_FACTOR * UNIT) as u32, rise: 0.0 })
+                Some(Move { pos: Vec3::new(x, y, z), cell: Cell::Swim, up: 1.0, kind: StepKind::Swim, cost: (dist * SWIM_FACTOR * UNIT) as u32, rise: 0.0 })
             }
             Probe::Floor { y, normal } => {
                 let dy = y - from.0.y;
-                let flat = normal.y > 0.999;
-                let slope = p.max_slope_deg.to_radians().tan();
-                let allowance = if flat && from.2 { 0.0 } else { dist * slope };
+                let up = normal.y;
+                let allowance = self.terrain.slope_rise(dist, from.2, up);
                 let walkable_up = p.step_height + allowance;
                 let pos = Vec3::new(x, y, z);
                 let base = (dist * UNIT) as u32;
-                if dy > p.mantle_height + 0.05 {
-                    None
-                } else if dy > walkable_up {
-                    // Room to go up the face first.
-                    let head = self.terrain.room_for(from.0.x, from.0.z, from.0.y + dy);
-                    head.then(|| Move { pos, cell: Cell::Floor, flat, kind: StepKind::Mantle, cost: base + ((MANTLE_COST + dy * 0.5) * UNIT) as u32, rise: dy })
+                if dy > walkable_up {
+                    // Only what the controller climbs, and with room to go up the face first.
+                    let climbable = p.can_climb(dy, from.1 == Cell::Swim) && self.terrain.room_for(from.0.x, from.0.z, from.0.y + dy);
+                    climbable.then(|| Move { pos, cell: Cell::Floor, up, kind: StepKind::Mantle, cost: base + ((MANTLE_COST + dy * 0.5) * UNIT) as u32, rise: dy })
                 } else if dy < -self.request.safe_drop {
                     None
                 } else if dy < -(p.step_height + allowance) {
-                    Some(Move { pos, cell: Cell::Floor, flat, kind: StepKind::Drop, cost: base + (-dy * DROP_COST * UNIT) as u32, rise: -dy })
+                    Some(Move { pos, cell: Cell::Floor, up, kind: StepKind::Drop, cost: base + (-dy * DROP_COST * UNIT) as u32, rise: -dy })
                 } else {
-                    Some(Move { pos, cell: Cell::Floor, flat, kind: StepKind::Walk, cost: base, rise: 0.0 })
+                    Some(Move { pos, cell: Cell::Floor, up, kind: StepKind::Walk, cost: base, rise: 0.0 })
                 }
             }
             Probe::Void | Probe::Blocked(_) => None,
@@ -465,6 +471,7 @@ impl<'a> Planner<'a> {
         let steps = self.straighten(self.nodes[chain[0]].pos, steps);
         let mut legs: Vec<Leg> = Vec::new();
         let mut at = req.start;
+        let mut heading = Vec3::ZERO;
         let mut length = 0.0;
         for (pos, kind, rise) in steps {
             let delta = Vec3::new(pos.x - at.x, 0.0, pos.z - at.z);
@@ -479,14 +486,18 @@ impl<'a> Planner<'a> {
             if legs.is_empty() && len < 0.3 && kind == StepKind::Walk && rise == 0.0 {
                 continue;
             }
-            let dir = compass(delta);
+            let (dir, way) = (compass(delta), delta / len);
             match legs.last_mut() {
-                Some(leg) if leg.dir == dir && leg.kind == kind && matches!(kind, StepKind::Walk | StepKind::Swim) => {
+                // Only a straight continuation is the same leg. The compass name covers 45°,
+                // so steps that merely share it are bends, and a leg that skipped one would
+                // cut across what the route goes round.
+                Some(leg) if leg.kind == kind && matches!(kind, StepKind::Walk | StepKind::Swim) && heading.dot(way) > STRAIGHT => {
                     leg.length += len;
                     leg.end = pos;
                 }
                 _ => legs.push(Leg { dir, length: len, kind, rise, end: pos }),
             }
+            heading = way;
         }
         if length > req.max_length {
             return Err(format!(
@@ -555,7 +566,7 @@ impl<'a> Planner<'a> {
         let req = self.request;
         let p = self.terrain.params;
         let node = &self.nodes[closest];
-        let (here, gap) = (node.pos, flat_distance(node.pos, req.goal));
+        let (here, gap, swimming) = (node.pos, flat_distance(node.pos, req.goal), node.cell == Cell::Swim);
         let to_goal = Vec3::new(req.goal.x - here.x, 0.0, req.goal.z - here.z).normalize_or_zero();
         let (ci, cj) = (cell_of(here.x), cell_of(here.z));
         let (di, dj) = *DIRS
@@ -574,7 +585,7 @@ impl<'a> Planner<'a> {
                     .map(|top| top - here.y)
                     .find(|h| *h > 0.3);
                 match high {
-                    Some(h) => format!("a wall {h:.1}m high (a character climbs at most {:.1}m)", p.mantle_height),
+                    Some(h) => format!("a wall {}", too_high(h, p.mantle_height)),
                     None => format!("a gap too narrow for the {:.1}m wide body", 2.0 * p.radius),
                 }
             }
@@ -583,7 +594,9 @@ impl<'a> Planner<'a> {
             Probe::Floor { y, .. } if y - here.y < -req.safe_drop => {
                 format!("a cliff {:.1}m deep (the limit for a drop is {:.1}m)", here.y - y, req.safe_drop)
             }
-            Probe::Floor { y, .. } if y - here.y > p.mantle_height => format!("a ledge {:.1}m high (a character climbs at most {:.1}m)", y - here.y, p.mantle_height),
+            Probe::Floor { y, .. } if !p.can_climb(y - here.y, swimming) => {
+                format!("a ledge {}", too_high(y - here.y, p.mantle_height))
+            }
             Probe::Floor { .. } | Probe::Water { .. } => "the edge of the search area".to_owned(),
         };
         let place = if gap <= within + CELL {

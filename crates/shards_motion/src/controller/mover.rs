@@ -77,7 +77,7 @@ impl<'a> Mover<'a> {
         let radius = params.radius.max(0.01);
         let height = params.height.max(2.0 * radius);
         let mask = layers.filters.without(LayerMask::CHARACTER);
-        let skin = params.skin_width.clamp(0.001, radius * 0.5);
+        let skin = params.skin();
         let grown = skin * MIN_GAP;
         Self {
             physics,

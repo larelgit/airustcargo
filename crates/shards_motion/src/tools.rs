@@ -19,15 +19,15 @@ use crate::controller::locomotion::CLIMB_OUT_REACH;
 use crate::controller::{CharacterController, CharacterParams, LocomotionInput, MotionMode, MotionState};
 use crate::intent::GlideUntilLanded;
 use crate::perception::{self, reach_toward, Bodies, Hazard};
-use crate::physics::PhysicsWorld;
+use crate::physics::{fresh, PhysicsWorld};
 
 pub(crate) fn plugin(app: &mut App) {
     use ToolKind::Action;
     let world = app.world_mut();
-    register_tool(world, "move_to", Scope::Player, Action, move_to);
+    register_tool(world, "move_to", Scope::Player, Action, fresh::<MoveToArgs>.pipe(move_to));
     register_tool(world, "move", Scope::Player, Action, move_dir);
     register_tool(world, "stop", Scope::Player, Action, stop);
-    register_tool(world, "jump", Scope::Player, Action, jump);
+    register_tool(world, "jump", Scope::Player, Action, fresh::<NoArgs>.pipe(jump));
     register_tool(world, "sprint", Scope::Player, Action, sprint);
     register_tool(world, "glide", Scope::Player, Action, glide);
 }
@@ -62,6 +62,7 @@ pub struct MoveToArgs {
     #[serde(default)]
     pub queue: bool,
     /// Plan a route over what you can walk, swim and climb (like `path_to`) and follow it.
+    /// The route starts where you stand, so with `queue` it needs no pending orders.
     #[serde(default)]
     pub path: bool,
 }
@@ -95,6 +96,14 @@ fn move_to(
         }
     };
     let within = within.unwrap_or(default_within).max(0.2);
+    let pending = bodies.as_readonly().get(me).map_or(0, |(_, intent)| intent.orders.len());
+    if path && queue && pending > 0 {
+        return Err(format!(
+            "path=true plans a route from where you stand, which is not where your {pending} pending order(s) end: \
+             `step` until they are done (or `stop`), then move_to with path=true and without `queue`; \
+             or drop `path` to queue a straight line"
+        ));
+    }
     // Plan before touching the orders: a refused plan leaves them alone.
     let plan = if path {
         let plan = perception::plan_for(me, &target, Some(within), None, &index, &physics, &ai, db.as_deref(), &perceiving)
@@ -123,6 +132,11 @@ fn move_to(
     // that is itself that far short.
     let legs = plan.waypoints();
     if legs.is_empty() {
+        // Nothing left to walk, and no order will zero the steering of the walk that was
+        // under way (a plain `move_to` pops its order at once and does).
+        if intent.orders.is_empty() {
+            intent.move_dir = Vec3::ZERO;
+        }
         return Ok(format!("ok: already within {within:.1}m"));
     }
     let last = legs.len() - 1;
