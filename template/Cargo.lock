@@ -5276,6 +5276,7 @@ dependencies = [
  "shards_core",
  "shards_level",
  "shards_motion",
+ "shards_net",
  "shards_npc",
  "shards_save",
  "shards_settings",
@@ -5349,6 +5350,20 @@ dependencies = [
  "shards_content",
  "shards_core",
  "shards_settings",
+]
+
+[[package]]
+name = "shards_net"
+version = "0.2.0"
+dependencies = [
+ "ai_core",
+ "bevy",
+ "flate2",
+ "schemars",
+ "serde",
+ "serde_json",
+ "shards_content",
+ "shards_core",
 ]
 
 [[package]]

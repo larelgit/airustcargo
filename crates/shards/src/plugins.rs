@@ -12,11 +12,13 @@ use shards_content::ContentPlugin;
 use shards_core::{CorePlugin, EngineConfig};
 use shards_level::LevelPlugin;
 use shards_motion::MotionPlugin;
+use shards_net::NetPlugin;
 use shards_npc::NpcPlugin;
 use shards_save::SavePlugin;
 use shards_settings::ShardsSettingsPlugin;
 use shards_world::WorldPlugin;
 
+use crate::net_wiring::EngineNetPlugin;
 use crate::save_sections::EngineSavePlugin;
 use crate::TileLevelsPlugin;
 
@@ -91,6 +93,9 @@ impl PluginGroup for EnginePlugins {
             // Level files as the geometry of tiles: joins the two above.
             .add(TileLevelsPlugin)
             .add(NpcPlugin)
+            // Co-op: roles, join, inputs, replication; then what it needs of the modules above.
+            .add(NetPlugin)
+            .add(EngineNetPlugin)
             // Saves: the registry and tools, then what the engine itself saves.
             .add(SavePlugin)
             .add(EngineSavePlugin)

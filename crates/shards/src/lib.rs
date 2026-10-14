@@ -39,6 +39,7 @@
 //! struct Args { target: Id }
 //! ```
 
+mod net_wiring;
 mod plugins;
 mod run;
 pub mod save_sections;
@@ -55,6 +56,7 @@ pub use shards_content as content;
 pub use shards_core as core;
 pub use shards_level as level;
 pub use shards_motion as motion;
+pub use shards_net as net;
 pub use shards_npc as npc;
 pub use shards_save as save;
 pub use shards_settings as settings;

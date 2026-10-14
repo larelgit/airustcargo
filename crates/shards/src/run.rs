@@ -112,7 +112,7 @@ struct Args {
     stand_udp: bool,
     /// Network conditions this game's links simulate: `latency=150,loss=0.02` (also
     /// `jitter=`, `duplicate=`).
-    #[arg(long, value_name = "SPEC")]
+    #[arg(long, value_name = "SPEC", value_parser = net_sim_spec)]
     net_sim: Option<String>,
     /// Where saves are written: a folder inside the game's folder (no absolute path, no `..`).
     #[arg(long, value_name = "DIR", default_value = "saves", value_parser = save_dir_name)]
@@ -147,6 +147,23 @@ fn positive_ms(text: &str) -> Result<Duration, String> {
         Ok(budget) if budget.is_zero() => Err("the budget is below 1 ns".into()),
         Ok(budget) => Ok(budget),
         Err(_) => Err("the budget is too large".into()),
+    }
+}
+
+/// `--net-sim`: refused when it does not parse, whatever the role (a typo must not give a
+/// clean link to a run that claims 150 ms).
+fn net_sim_spec(text: &str) -> Result<String, String> {
+    text.parse::<shards_net::LinkConditions>().map(|_| text.to_owned())
+}
+
+/// What the ready line says of the session: the role and, for a host, its UDP port. A host
+/// on port 0 has none yet (a free one is bound at startup; `shards wait` prints it).
+fn net_ready(net: &NetLaunch) -> String {
+    match net {
+        NetLaunch::Host { port: 0 } => " · role host".to_owned(),
+        NetLaunch::Host { port } => format!(" · role host · net udp:{port}"),
+        NetLaunch::Join { addr } => format!(" · role client · net udp:{addr}"),
+        _ => String::new(),
     }
 }
 
@@ -218,8 +235,12 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
         }
     };
     let mut config = args.config();
-    if config.net != NetLaunch::Off {
-        eprintln!("error: networking arrives with shards_net (--host, --join, --stand)");
+    if matches!(config.net, NetLaunch::Stand { udp: true, .. }) {
+        eprintln!("error: --stand-udp arrives with the network CLI; run --stand N (in this process), or --host and --join");
+        return ExitCode::from(2);
+    }
+    if config.net != NetLaunch::Off && (args.replay.is_some() || args.check_content || args.worldgen_report.is_some() || args.bake_nav.is_some()) {
+        eprintln!("error: --host, --join and --stand start a session; drop them to verify, check or bake");
         return ExitCode::from(2);
     }
     if let Some(r) = &recording {
@@ -252,6 +273,9 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
     // From here on `kill` ends the game through `AppExit`, like Ctrl+C: the token
     // and the port file are removed on the way out.
     termination::catch_signals();
+    if let NetLaunch::Stand { clients, .. } = config.net {
+        return stand::run(&build, &args, config, clients);
+    }
     let mut app = build(&config);
     // Player settings are read now, not earlier: Bevy's settings plugin scans the type registry
     // once, so every group the game registered while building must be there.
@@ -266,15 +290,163 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
         eprintln!("error: {e}");
         return ExitCode::from(2);
     }
-    let _port_file = match write_port_file(&args, config.port) {
+    let _port_file = match write_port_file(args.port_file.as_deref(), config.port) {
         Ok(file) => file,
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::from(2);
         }
     };
-    println!("{}", ai_core::ready_line(0, std::process::id(), config.seed, config.port));
+    let net = net_ready(&config.net);
+    println!("{}{net}", ai_core::ready_line(0, std::process::id(), config.seed, config.port));
     exit_code(app.run())
+}
+
+/// `--stand N`: the host and N clients as apps of this process on an in-memory network
+/// (`shards_net::stand::Stand`), each with its own BRP port, port file (`F`, `F.c1`, …) and
+/// ready line. Time is the stand's: paused, `step` on any member runs every member, `resume`
+/// runs them in real time. Ctrl+C or `kill` ends the session the way a host quitting does.
+mod stand {
+    use super::*;
+    use shards_net::{LinkConditions, MemoryHub, NetState, Stand};
+
+    /// Hub time a stand's shutdown may take for the end of the session to reach its clients.
+    const SHUTDOWN_MS: u64 = 5_000;
+
+    /// The port file of member `name` beside `path` (`F` → `F.c1`).
+    fn member_file(path: &std::path::Path, name: &str) -> PathBuf {
+        let mut file = path.as_os_str().to_owned();
+        file.push(format!(".{name}"));
+        PathBuf::from(file)
+    }
+
+    pub fn run(build: &impl Fn(&EngineConfig) -> App, args: &Args, config: EngineConfig, clients: u8) -> ExitCode {
+        // `--net-sim` was checked when the command line was parsed.
+        let links: LinkConditions = config.net_sim.as_deref().and_then(|spec| spec.parse().ok()).unwrap_or(LinkConditions::NONE);
+        let mut ports = vec![config.port];
+        for _ in 0..clients {
+            ports.push(match config.port {
+                Some(_) => match free_port() {
+                    Ok(port) => Some(port),
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        return ExitCode::from(3);
+                    }
+                },
+                None => None,
+            });
+        }
+        let host_name = args.name.clone().unwrap_or_else(|| "host".into());
+        let mut stand = match members(build, &config, &host_name, links, &ports) {
+            Ok(stand) => stand,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::from(2);
+            }
+        };
+        if let Err(e) = stand.settle() {
+            eprintln!("error: {e}");
+            return ExitCode::from(1);
+        }
+        let mut files = Vec::new();
+        if let Some(path) = &args.port_file {
+            for (i, member) in stand.members.iter().enumerate() {
+                let file = if i == 0 { path.clone() } else { member_file(path, &member.name) };
+                match write_port_file(Some(&file), ports[i]) {
+                    Ok(f) => files.push(f),
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+        }
+        for (i, member) in stand.members.iter().enumerate() {
+            let world = member.app.world();
+            let role = match world.get_resource::<NetState>() {
+                Some(NetState::Connected { player, body }) => {
+                    format!("role client · player {player}{}", body.map_or_else(String::new, |b| format!(" · body e{b}")))
+                }
+                Some(NetState::Ended(why)) => format!("role client · ended: {why}"),
+                _ => "role host · player 0".to_owned(),
+            };
+            let line = ai_core::ready_line(ai_core::sim::tick(world), std::process::id(), config.seed, ports[i]);
+            println!("{line} · member {} · {role}", member.name);
+        }
+        stand.running = !args.paused;
+        loop {
+            if stand.serve() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        // The host's exit hooks end the session; the clients hear it (over the links'
+        // latency and loss: the hub's clock runs on), then leave too.
+        let exit = stand.shut_down(SHUTDOWN_MS);
+        drop(files);
+        exit_code(exit)
+    }
+
+    /// The stand's apps, built and attached to one hub, not loaded yet: the host (`host_name`)
+    /// and a client per further entry of `ports` (their BRP ports).
+    pub(super) fn members(
+        build: &impl Fn(&EngineConfig) -> App,
+        config: &EngineConfig,
+        host_name: &str,
+        links: LinkConditions,
+        ports: &[Option<u16>],
+    ) -> Result<Stand, String> {
+        // The stand owns time: every member is paused and ticks when it says.
+        let host_config = EngineConfig { paused: true, player_name: host_name.to_owned(), port: ports[0], ..config.clone() };
+        let hub = MemoryHub::new(config.seed);
+        let mut host = build(&host_config);
+        // The host is the player at this machine: its settings are read as a game's of its own
+        // are (`--settings-dir`, `--no-settings`). The clients keep none (`SettingsStore::Off`).
+        shards_settings::install(&mut host, &host_config)?;
+        host.add_systems(First, termination::exit_when_signalled);
+        shards_net::stand::attach(&mut host, &hub, "host", None);
+        host.finish();
+        host.cleanup();
+        let mut apps = vec![("host".to_owned(), host)];
+        let mut client_links = Vec::new();
+        for (n, port) in ports.iter().enumerate().skip(1) {
+            let name = format!("c{n}");
+            let client_config = EngineConfig {
+                embedded: true,
+                headless: true,
+                paused: true,
+                port: *port,
+                net: NetLaunch::Join { addr: "host".into() },
+                player_name: name.clone(),
+                settings: SettingsStore::Off,
+                character_slot: None,
+                world_slot: None,
+                ..config.clone()
+            };
+            let mut app = build(&client_config);
+            let id = shards_net::stand::attach(&mut app, &hub, &name, Some(0));
+            client_links.push(hub.connect_both(0, id, links));
+            app.finish();
+            app.cleanup();
+            apps.push((name, app));
+        }
+        let mut stand = Stand::new(hub, apps);
+        for (i, link) in client_links.into_iter().enumerate() {
+            stand.members[i + 1].link = Some(link);
+        }
+        stand.load_timeout = Duration::from_secs(120);
+        Ok(stand)
+    }
+
+    #[cfg(feature = "remote")]
+    fn free_port() -> Result<u16, String> {
+        ai_core::remote::free_port()
+    }
+
+    #[cfg(not(feature = "remote"))]
+    fn free_port() -> Result<u16, String> {
+        Ok(0)
+    }
 }
 
 /// The port the BRP server will listen on: `--port`, or a free one for `--port 0`.
@@ -294,8 +466,8 @@ fn remote_port(_: &Args) -> Result<Option<u16>, String> {
 }
 
 #[cfg(feature = "remote")]
-fn write_port_file(args: &Args, port: Option<u16>) -> Result<Option<ai_core::remote::PortFile>, String> {
-    match (&args.port_file, port) {
+fn write_port_file(path: Option<&std::path::Path>, port: Option<u16>) -> Result<Option<ai_core::remote::PortFile>, String> {
+    match (path, port) {
         (Some(path), Some(port)) => ai_core::remote::PortFile::write(path, port).map(Some),
         (Some(_), None) => Err("--port-file needs the BRP server (drop --no-remote)".into()),
         (None, _) => Ok(None),
@@ -303,8 +475,8 @@ fn write_port_file(args: &Args, port: Option<u16>) -> Result<Option<ai_core::rem
 }
 
 #[cfg(not(feature = "remote"))]
-fn write_port_file(args: &Args, _: Option<u16>) -> Result<Option<()>, String> {
-    match args.port_file {
+fn write_port_file(path: Option<&std::path::Path>, _: Option<u16>) -> Result<Option<()>, String> {
+    match path {
         Some(_) => Err("--port-file needs the BRP server: build with the `remote` feature".into()),
         None => Ok(None),
     }
@@ -738,6 +910,10 @@ mod tests {
         assert!(refused(&["game", "--stand", "2"]).contains("--headless"), "a stand runs headless");
         assert!(refused(&["game", "--stand", "0", "--headless"]).contains("0"), "a stand has clients");
         assert!(refused(&["game", "--stand-udp"]).contains("--stand"));
+        for role in [&["--host"][..], &["--join", "1.2.3.4:7777"], &["--stand", "2", "--headless"]] {
+            let args: Vec<&str> = ["game"].into_iter().chain(role.iter().copied()).chain(["--net-sim", "latency=15O"]).collect();
+            assert!(refused(&args).contains("--net-sim"), "a typo in --net-sim is refused for {role:?}: {}", refused(&args));
+        }
         assert!(refused(&["game", "--no-settings", "--settings-dir", "s"]).contains("cannot be used with"));
         assert!(refused(&["game", "--world", "../etc"]).contains("a slot is 1-32 of a-z"));
         assert!(refused(&["game", "--character", "Hero"]).contains("a slot is 1-32 of a-z"));
@@ -766,6 +942,31 @@ mod tests {
         assert_eq!((join.save_dir.as_str(), join.settings), ("my_saves", SettingsStore::Off));
         let dir = parse(&["game", "--settings-dir", "/tmp/s"]).unwrap().config();
         assert_eq!(dir.settings, SettingsStore::Dir("/tmp/s".into()));
+    }
+
+    #[test]
+    fn a_stands_host_reads_the_players_settings_and_its_clients_keep_none() {
+        let dir = std::env::temp_dir().join(format!("shards_stand_settings_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config = EngineConfig {
+            net: NetLaunch::Stand { clients: 1, udp: false },
+            settings: SettingsStore::Dir(dir.to_string_lossy().into_owned()),
+            ..testing::config()
+        };
+        let stand = stand::members(&game, &config, "host", shards_net::LinkConditions::NONE, &[None, None]).unwrap();
+        let file = |member: usize| stand.world(member).get_resource::<shards_settings::SettingsStorage>().map(|s| s.file.clone());
+        assert_eq!(file(0), Some(Some(dir.join("settings.toml"))), "the host's settings live in --settings-dir");
+        assert_eq!(file(1), None, "a client of the stand keeps none");
+        drop(stand);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_ready_line_names_a_hosts_port_only_when_it_is_known() {
+        assert_eq!(net_ready(&NetLaunch::Host { port: 9000 }), " · role host · net udp:9000");
+        assert_eq!(net_ready(&NetLaunch::Host { port: 0 }), " · role host", "port 0 is picked at startup: `shards wait` prints it");
+        assert_eq!(net_ready(&NetLaunch::Join { addr: "1.2.3.4:7777".into() }), " · role client · net udp:1.2.3.4:7777");
+        assert_eq!(net_ready(&NetLaunch::Off), "");
     }
 
     #[test]

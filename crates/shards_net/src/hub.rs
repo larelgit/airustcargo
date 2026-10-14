@@ -85,6 +85,9 @@ struct Hub {
     unroutable: u64,
     oversize: u64,
     log: Option<Vec<HubEvent>>,
+    /// What endpoints keep across their restarts (a client's token): the stand's process
+    /// outlives its members.
+    kept: BTreeMap<String, String>,
 }
 
 const LOG_CAP: usize = 200_000;
@@ -173,6 +176,7 @@ impl MemoryHub {
                 unroutable: 0,
                 oversize: 0,
                 log: None,
+                kept: BTreeMap::new(),
             })),
         }
     }
@@ -261,6 +265,17 @@ impl MemoryHub {
     /// Datagrams still on their way (queued, not yet due or not yet collected).
     pub fn in_transit(&self) -> usize {
         self.lock().endpoints.iter().map(|e| e.inbox.len()).sum()
+    }
+
+    /// Keeps `value` under `key` for an endpoint built later (a client restarted in the same
+    /// stand), as a real machine keeps a file.
+    pub fn keep(&self, key: &str, value: &str) {
+        self.lock().kept.insert(key.to_owned(), value.to_owned());
+    }
+
+    /// What [`keep`](Self::keep) kept under `key`.
+    pub fn kept(&self, key: &str) -> Option<String> {
+        self.lock().kept.get(key).cloned()
     }
 
     /// Start or stop recording [`HubEvent`]s (capped at 200,000; stopping discards them).

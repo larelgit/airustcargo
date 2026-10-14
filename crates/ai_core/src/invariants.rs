@@ -272,8 +272,8 @@ pub(crate) fn restarted(world: &mut World) -> Vec<AssertOp> {
     ops
 }
 
-/// Violations since the last call, for the `step` that is running.
-pub(crate) fn take_unreported(world: &mut World) -> Vec<Violation> {
+/// Violations since the last call, for the `step` that is running (or a stand's driver).
+pub fn take_unreported(world: &mut World) -> Vec<Violation> {
     let Some(mut invariants) = world.get_resource_mut::<AiInvariants>() else {
         return Vec::new();
     };

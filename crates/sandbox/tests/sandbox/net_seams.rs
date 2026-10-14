@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use shards::ai_core::state::{apply_changes, encode_replicated, encode_resources, StateChanges};
+use shards::ai_core::state::{apply_changes, encode_entity, encode_replicated, encode_resources, StateChanges};
 use shards::ai_core::{replay, sim, AiInvariants, AiVisible};
 use shards::bevy::ecs::schedule::{ScheduleLabel, SystemSet};
 use shards::prelude::*;
@@ -108,6 +108,23 @@ fn full_state(from: &mut App, to: &mut App) -> StateChanges {
     }
 }
 
+/// What `net_ignore` keeps on the host, from `host` into `client`.
+fn copy_host_only(host: &mut App, client: &mut App) {
+    let world = host.world_mut();
+    let mut q = world.query_filtered::<(Entity, &AiId), With<AiVisible>>();
+    let ids: Vec<(u32, Entity)> = q.iter(world).map(|(e, id)| (id.0, e)).collect();
+    let set = ids
+        .iter()
+        .map(|(id, e)| {
+            let replicated = encode_replicated(world, *e).unwrap();
+            let all = encode_entity(world, *e).unwrap();
+            (*id, all.into_iter().filter(|(path, _)| !replicated.contains_key(path)).collect())
+        })
+        .collect();
+    let warnings = apply_changes(client.world_mut(), &StateChanges { set, ..Default::default() });
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
 #[test]
 fn the_state_codec_carries_a_played_world_into_another_app() {
     let mut host = sandbox::test_app(42);
@@ -127,6 +144,10 @@ fn the_state_codec_carries_a_played_world_into_another_app() {
     assert_eq!(again.set, changes.set, "every entity encodes the same");
     assert!(again.despawn.is_empty());
     assert_eq!(again.resources, changes.resources);
+    // The replay's state hash also covers what stays on the host (`net_ignore`: an NPC's
+    // senses, path and steering), so it differs; with those taken across too it is the same.
+    assert_ne!(replay::state_hash(client.world()), replay::state_hash(host.world()));
+    copy_host_only(&mut host, &mut client);
     assert_eq!(replay::state_hash(client.world()), replay::state_hash(host.world()));
     let gone = act(&mut client, "inspect", json!({"id": "e7"}));
     assert!(text(&gone).contains("e7 is out of view since tick 180"), "{}", text(&gone));

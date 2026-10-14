@@ -162,8 +162,13 @@ pub(crate) fn advance_tick(mut tick: ResMut<SimTick>, clock: Option<Res<TickCloc
     }
 }
 
+/// Whether the simulation is paused: its virtual clock is, or (an in-process stand) the
+/// driver that runs its ticks says so.
 pub fn is_paused(world: &World) -> bool {
-    world.resource::<Time<Virtual>>().is_paused()
+    match driven(world) {
+        Some(clock) => !clock.running,
+        None => world.resource::<Time<Virtual>>().is_paused(),
+    }
 }
 
 pub fn pause(world: &mut World) {
@@ -174,13 +179,27 @@ pub fn resume(world: &mut World) {
     world.resource_mut::<Time<Virtual>>().unpause();
 }
 
-/// Game speed multiplier for real-time play (1.0 = normal).
+/// Game speed multiplier for real-time play (1.0 = normal). An infinity or NaN changes
+/// nothing (Bevy's clock would panic on it).
 pub fn set_speed(world: &mut World, speed: f32) {
-    world.resource_mut::<Time<Virtual>>().set_relative_speed(speed.max(0.0));
+    if speed.is_finite() {
+        world.resource_mut::<Time<Virtual>>().set_relative_speed(speed.max(0.0));
+    }
 }
 
 pub fn speed(world: &World) -> f32 {
-    world.resource::<Time<Virtual>>().relative_speed()
+    match driven(world) {
+        Some(clock) => clock.speed,
+        None => world.resource::<Time<Virtual>>().relative_speed(),
+    }
+}
+
+/// The driver's clock, when a driver runs this world's ticks ([`StepQueue::set_driven`]).
+fn driven(world: &World) -> Option<DrivenClock> {
+    match world.get_resource::<StepRoute>() {
+        Some(StepRoute::Deferred(queue)) => queue.lock().ok()?.driven,
+        _ => None,
+    }
 }
 
 pub fn tick(world: &World) -> u64 {
@@ -423,6 +442,15 @@ pub enum StepPoll {
 /// Finished requests kept for `step_poll`.
 pub const FINISHED_KEPT: usize = 64;
 
+/// How a driver runs a world's ticks: in real time or not, and at what speed. A stand's
+/// members keep their virtual clocks paused (the driver runs their ticks); this is what
+/// [`is_paused`] and [`speed`] report for them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrivenClock {
+    pub running: bool,
+    pub speed: f32,
+}
+
 /// Requests of [`StepRoute::Deferred`], shared between the tools and the driver.
 #[derive(Default, Debug)]
 pub struct StepQueue {
@@ -432,9 +460,15 @@ pub struct StepQueue {
     /// Taken by the driver, not completed yet.
     running: BTreeSet<u64>,
     finished: VecDeque<(u64, crate::tools::CallOutcome)>,
+    driven: Option<DrivenClock>,
 }
 
 impl StepQueue {
+    /// The driver says how it runs the world's ticks now (see [`DrivenClock`]).
+    pub fn set_driven(&mut self, clock: DrivenClock) {
+        self.driven = Some(clock);
+    }
+
     fn next(&mut self) -> u64 {
         self.next_id += 1;
         self.next_id

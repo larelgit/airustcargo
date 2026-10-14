@@ -1575,6 +1575,12 @@ mod tests {
         assert_eq!(replay::state_hash(b.world()), replay::state_hash(a.world()));
         assert_eq!(b.world().resource::<Score>().points, 6);
 
+        // A value is written whole: a list that got shorter loses its tail.
+        a.world_mut().get_mut::<Grudge>(late).unwrap().others.clear();
+        let changes = StateChanges { set: encode_all(a.world()), ..Default::default() };
+        assert!(state::apply_changes(b.world_mut(), &changes).is_empty());
+        assert_eq!(encode_all(b.world()), encode_all(a.world()), "the list is empty there too");
+
         // Removing a component and despawning with a note.
         let imp = a.world().resource::<AiIndex>().get(AiId(2)).unwrap();
         a.world_mut().entity_mut(imp).remove::<Grudge>();

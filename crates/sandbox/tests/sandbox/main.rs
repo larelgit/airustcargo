@@ -11,6 +11,10 @@ mod course;
 #[path = "../../../shards_level/tests/level/gltf.rs"]
 mod gltf;
 mod invariants;
+mod net;
+mod net_guards;
+mod net_lifecycle;
+mod net_sync;
 mod net_seams;
 mod reference_replays;
 mod replays;

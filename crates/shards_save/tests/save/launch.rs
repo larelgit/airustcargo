@@ -167,21 +167,52 @@ fn a_replay_that_plays_loads_nothing_at_launch() {
 fn a_host_or_client_is_left_to_the_network_code_which_has_a_hook() {
     let dir = TempDir::new("launch_net");
     save_ada(&dir);
-    for net in [NetLaunch::Host { port: 7777 }, NetLaunch::Join { addr: "127.0.0.1:7777".into() }] {
-        let mut app = launched_with(&dir, |config| {
-            config.net = net.clone();
-            config.world_slot = Some("camp".into());
-            config.character_slot = Some("camp".into());
-        });
-        assert_eq!((hero(&mut app).name, calendar(&app).day), (String::new(), 0), "{net:?}: nothing loads by itself");
-        assert_eq!(slots(&app), ("camp".to_owned(), "camp".to_owned()));
-        let done = load_launch_slots(app.world_mut());
-        assert_eq!(done.iter().map(|l| (l.kind.as_str(), l.slot.as_str(), l.outcome.clone())).collect::<Vec<_>>(), [
-            ("world", "camp", LaunchOutcome::Loaded),
-            ("character", "camp", LaunchOutcome::Loaded)
-        ]);
-        assert_eq!((hero(&mut app).name, calendar(&app).day), ("Ada".to_owned(), 40));
+    let camp = |config: &mut shards::EngineConfig| {
+        config.world_slot = Some("camp".into());
+        config.character_slot = Some("camp".into());
+    };
+    // A host (on a free port: test runs go side by side) plays a world of its own.
+    let mut app = launched_with(&dir, |config| {
+        config.net = NetLaunch::Host { port: 0 };
+        camp(config);
+    });
+    assert_eq!((hero(&mut app).name, calendar(&app).day), (String::new(), 0), "a host: nothing loads by itself");
+    assert_eq!(slots(&app), ("camp".to_owned(), "camp".to_owned()));
+    let done = load_launch_slots(app.world_mut());
+    assert_eq!(done.iter().map(|l| (l.kind.as_str(), l.slot.as_str(), l.outcome.clone())).collect::<Vec<_>>(), [
+        ("world", "camp", LaunchOutcome::Loaded),
+        ("character", "camp", LaunchOutcome::Loaded)
+    ]);
+    assert_eq!((hero(&mut app).name, calendar(&app).day), ("Ada".to_owned(), 40));
+
+    // A client's world is its host's: it waits for it (none answers here), and nothing of
+    // the slots loads by itself meanwhile.
+    let mut client = waiting(&dir, |config| {
+        config.net = NetLaunch::Join { addr: "127.0.0.1:9".into() };
+        camp(config);
+    });
+    for _ in 0..5 {
+        client.update();
     }
+    assert!(matches!(client.world().resource::<shards::net::NetState>(), shards::net::NetState::Joining(_)));
+    assert_eq!(calendar(&client).day, 0, "a client: nothing loads by itself");
+    assert_eq!(slots(&client), ("camp".to_owned(), "camp".to_owned()));
+}
+
+/// The test game as [`launched_with`] builds it, without waiting for it to load (a client
+/// loads when its host's world arrives).
+fn waiting(dir: &TempDir, configure: impl FnOnce(&mut shards::EngineConfig)) -> App {
+    let mut config = testing::config();
+    config.asset_dir = ASSETS.into();
+    configure(&mut config);
+    let mut app = App::new();
+    app.add_plugins(shards::EnginePlugins::new(config));
+    app.init_resource::<Calendar>().add_systems(OnEnter(EngineState::InGame), spawn_world);
+    app.world_mut().resource_mut::<SaveConfig>().dir = dir.path().to_owned();
+    register_saves(&mut app);
+    app.finish();
+    app.cleanup();
+    app
 }
 
 #[test]

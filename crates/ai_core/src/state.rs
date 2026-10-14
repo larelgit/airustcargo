@@ -18,13 +18,14 @@
 use std::any::TypeId;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use bevy::ecs::change_detection::Tick;
 use bevy::ecs::relationship::RelationshipHookMode;
 use bevy::platform::sync::RwLockReadGuard;
 use bevy::prelude::*;
 use bevy::reflect::serde::{
     ReflectDeserializerProcessor, ReflectSerializerProcessor, TypedReflectDeserializer, TypedReflectSerializer,
 };
-use bevy::reflect::{PartialReflect, TypeRegistration, TypeRegistry};
+use bevy::reflect::{PartialReflect, ReflectFromReflect, TypeRegistration, TypeRegistry};
 use serde::de::DeserializeSeed;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -38,7 +39,7 @@ pub type ComponentValues = BTreeMap<String, Value>;
 
 /// How an entity reference with no key is written: the entity has no `AiId` and no module
 /// knows another name for it. Loads back as [`Entity::PLACEHOLDER`].
-pub(crate) const UNTRACKED: &str = "untracked";
+pub const UNTRACKED: &str = "untracked";
 
 /// Which components (and resources) an encoder writes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -102,6 +103,12 @@ impl<'w> StateEncoder<'w> {
         }
     }
 
+    /// The prefixes of the modules' entity keys (`c` in `c12`): a written value that names an
+    /// entity by one depends on that entity, not only on its own component.
+    pub fn key_prefixes(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.modules.keys.iter().map(|k| k.prefix)
+    }
+
     /// `entity`'s components by type path, and what had to be left out (`path (why)`: it does
     /// not reflect, or its value does not read back). `None`: no such entity.
     pub fn entity(&self, entity: Entity) -> Option<(ComponentValues, Vec<String>)> {
@@ -112,13 +119,48 @@ impl<'w> StateEncoder<'w> {
     }
 
     pub(crate) fn encode(&self, entity: Entity, left_out: &mut BTreeSet<String>) -> ComponentValues {
+        self.encode_reusing(entity, left_out, &mut |_, _| None)
+    }
+
+    /// [`entity`](Self::entity) for a caller that keeps encoded values between calls (a host
+    /// encoding the same entities every few ticks): `reuse(path, changed)` hands back the value
+    /// it holds for a component that last changed at `changed`, if that value is still good;
+    /// every other component is encoded. `None`: no such entity.
+    pub fn entity_reusing(
+        &self,
+        entity: Entity,
+        reuse: &mut dyn FnMut(&'static str, Tick) -> Option<Value>,
+    ) -> Option<(ComponentValues, Vec<String>)> {
+        self.world.get_entity(entity).ok()?;
+        let mut left_out = BTreeSet::new();
+        let values = self.encode_reusing(entity, &mut left_out, reuse);
+        Some((values, left_out.into_iter().collect()))
+    }
+
+    /// The world's change tick now: a value encoded now stays good while its component's
+    /// change tick is not newer than this.
+    pub fn change_tick(&self) -> Tick {
+        self.world.read_change_tick()
+    }
+
+    fn encode_reusing(
+        &self,
+        entity: Entity,
+        left_out: &mut BTreeSet<String>,
+        reuse: &mut dyn FnMut(&'static str, Tick) -> Option<Value>,
+    ) -> ComponentValues {
         let registry = &*self.registry;
         let encoder = Encoder { world: self.world, keys: &self.modules.keys };
         let (no_ids, no_keys) = (HashMap::new(), HashMap::new());
         let mut values = BTreeMap::new();
-        for (registration, value) in components(self.world, registry, entity, self.rule, left_out) {
+        for (registration, value, changed) in components(self.world, registry, entity, self.rule, left_out) {
             let path = registration.type_info().type_path();
+            if let Some(kept) = reuse(path, changed) {
+                values.insert(path.to_owned(), kept);
+                continue;
+            }
             // What is written must read back (a NaN or an infinity does not: JSON has none).
+            // A value handed back by `reuse` was read back when it was written.
             let written = to_json(value, registry, &encoder).map_err(|why| format!("does not serialize: {why}")).and_then(|json| {
                 from_json(registration, registry, &json, &mut Decoder::dry(&no_ids, &no_keys))
                     .map(|_| json)
@@ -204,12 +246,12 @@ fn components<'w>(
     entity: Entity,
     rule: StateRule,
     left_out: &mut BTreeSet<String>,
-) -> Vec<(&'w TypeRegistration, &'w dyn PartialReflect)> {
+) -> Vec<(&'w TypeRegistration, &'w dyn PartialReflect, Tick)> {
     let (Ok(infos), Ok(e)) = (world.inspect_entity(entity), world.get_entity(entity)) else {
         return Vec::new();
     };
     let mut found = Vec::new();
-    for (_, info) in infos {
+    for (component_id, info) in infos {
         let Some(type_id) = info.type_id() else { continue };
         let name = info.name().to_string();
         let Some(registration) = registry.get(type_id) else {
@@ -229,7 +271,8 @@ fn components<'w>(
             continue;
         };
         if let Some(value) = component.reflect(e) {
-            found.push((registration, value.as_partial_reflect()));
+            let changed = e.get_change_ticks_by_id(component_id).map_or(Tick::new(0), |t| t.changed);
+            found.push((registration, value.as_partial_reflect(), changed));
         }
     }
     found
@@ -266,6 +309,23 @@ pub(crate) fn keyed_entities(world: &mut World, going: &BTreeSet<Entity>) -> Has
 
 /// An entity and the components read for it.
 type Decoded<'r> = (u32, Entity, Vec<(&'r TypeRegistration, Box<dyn PartialReflect>)>);
+
+/// Writes `value` as the entity's component, whole and in place (no hooks) when it has one
+/// already: reflection's `apply` patches, so a list that got shorter would keep its tail and
+/// a map its old keys. Inserts it when the entity has none (or it is immutable).
+fn write_component(target: &mut EntityWorldMut, registration: &TypeRegistration, value: &dyn PartialReflect, registry: &TypeRegistry) {
+    let Some(component) = registration.data::<ReflectComponent>() else { return };
+    let components = target.world().components();
+    let mutable = components.get_id(registration.type_id()).and_then(|id| components.get_info(id)).is_some_and(|info| info.mutable());
+    if mutable
+        && let Some(whole) = registration.data::<ReflectFromReflect>().and_then(|f| f.from_reflect(value))
+        && let Some(mut there) = component.reflect_mut(&mut *target)
+        && there.set(whole).is_ok()
+    {
+        return;
+    }
+    component.apply_or_insert_mapped(target, value, registry, &mut (), RelationshipHookMode::Run);
+}
 
 /// [`apply_changes`] with the keyed entities taken beforehand and the rule for what a new
 /// entity must not have beyond its values (`strip`).
@@ -328,9 +388,7 @@ pub(crate) fn apply(
         for (_, entity, components) in &decoded {
             let mut target = world.entity_mut(*entity);
             for (registration, value) in components {
-                if let Some(component) = registration.data::<ReflectComponent>() {
-                    component.apply_or_insert_mapped(&mut target, value.as_ref(), &registry, &mut (), RelationshipHookMode::Run);
-                }
+                write_component(&mut target, registration, value.as_ref(), &registry);
             }
         }
     }
@@ -385,6 +443,29 @@ pub(crate) fn apply(
     }
     warnings.extend(decoder.unresolved);
     warnings
+}
+
+// --- single values -----------------------------------------------------------------------
+
+/// A reflected value (an event a host forwards) as JSON, entity references written as `e12`,
+/// numbers as their type prints them.
+pub fn encode_value(world: &World, value: &dyn PartialReflect) -> Result<Value, String> {
+    let registry = world.resource::<AppTypeRegistry>().read();
+    let modules = world.get_resource::<SnapshotRegistry>().cloned().unwrap_or_default();
+    to_json(value, &registry, &Encoder { world, keys: &modules.keys })
+}
+
+/// Reads a value of the registered type `type_path` written by [`encode_value`], entity
+/// references resolved by id in this world (one that is not here reads as
+/// [`Entity::PLACEHOLDER`]).
+pub fn decode_value(world: &World, type_path: &str, value: &Value) -> Result<Box<dyn PartialReflect>, String> {
+    let registry = world.resource::<AppTypeRegistry>().read();
+    let registration =
+        registry.get_with_type_path(type_path).ok_or_else(|| format!("`{type_path}` is not registered for reflection"))?;
+    let ids: HashMap<u32, Entity> =
+        world.get_resource::<AiIndex>().map(|i| i.live().into_iter().map(|(id, e)| (id.0, e)).collect()).unwrap_or_default();
+    let keyed = HashMap::new();
+    from_json(registration, &registry, value, &mut Decoder::new(&ids, &keyed))
 }
 
 // --- entity references ----------------------------------------------------------------

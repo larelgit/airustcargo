@@ -15,7 +15,8 @@ use ai_core::sim::{StepEnd, StepReport};
 use ai_core::{call_tool, AiReplay, CallOutcome, ReplayReport, SimGate, SystemFailure, Violation};
 use bevy::prelude::*;
 use serde_json::Value;
-use shards_core::{EngineConfig, EngineState, SettingsStore};
+use shards_core::{EngineConfig, EngineState, NetLaunch, SettingsStore};
+use shards_net::{LinkConditions, MemoryHub, PeerId, Stand};
 
 use crate::EnginePlugins;
 
@@ -166,4 +167,66 @@ pub fn ok(app: &mut App, tool: &str, args: Value) -> CallOutcome {
     assert!(!text.contains(", stopped: gameplay "), "{tool} {args}: {text}");
     assert!(out.halted.is_none(), "{tool} {args}: the game halted: {text}");
     out
+}
+
+/// A stand: the host and `clients` clients (`c1`, `c2`, …) of the game `setup` adds, in this
+/// process, on an in-memory hub with `links` on every link (`LinkConditions::NONE`: none).
+/// `configure` changes every member's [`config`] (the host's seed is the session's). Returns it
+/// settled: loaded, every client joined at the host's tick 0. Panics, saying who waits for
+/// what, after [`LOAD_TIMEOUT`].
+pub fn stand(clients: u8, links: LinkConditions, configure: impl Fn(&mut EngineConfig), setup: impl Fn(&mut App)) -> Stand {
+    let mut stand = stand_host(clients, &configure, &setup);
+    for n in 1..=clients {
+        stand_client(&mut stand, &format!("c{n}"), links, &configure, &setup);
+    }
+    if let Err(e) = stand.settle() {
+        panic!("{e}");
+    }
+    stand
+}
+
+/// A stand with only its host, loaded: clients join later with [`stand_client`].
+pub fn stand_host(clients: u8, configure: &impl Fn(&mut EngineConfig), setup: &impl Fn(&mut App)) -> Stand {
+    let mut config = config();
+    configure(&mut config);
+    config.net = NetLaunch::Stand { clients, udp: false };
+    config.player_name = "host".into();
+    let hub = MemoryHub::new(config.seed);
+    let mut host = App::new();
+    host.add_plugins(EnginePlugins::new(config));
+    setup(&mut host);
+    crate::net::stand::attach(&mut host, &hub, "host", None);
+    host.finish();
+    host.cleanup();
+    let mut stand = Stand::new(hub, vec![("host".into(), host)]);
+    stand.load_timeout = LOAD_TIMEOUT;
+    if let Err(e) = stand.settle() {
+        panic!("{e}");
+    }
+    stand
+}
+
+/// Adds client `name` to `stand`: it joins during the stand's next ticks (or
+/// [`Stand::settle`]). Returns its member index.
+pub fn stand_client(
+    stand: &mut Stand,
+    name: &str,
+    links: LinkConditions,
+    configure: &impl Fn(&mut EngineConfig),
+    setup: &impl Fn(&mut App),
+) -> usize {
+    let mut config = config();
+    configure(&mut config);
+    config.net = NetLaunch::Join { addr: "host".into() };
+    config.player_name = name.to_owned();
+    let mut app = App::new();
+    app.add_plugins(EnginePlugins::new(config));
+    setup(&mut app);
+    // The host is the hub's first endpoint.
+    let host: PeerId = 0;
+    let id = crate::net::stand::attach(&mut app, &stand.hub, name, Some(host));
+    let link = stand.hub.connect_both(host, id, links);
+    app.finish();
+    app.cleanup();
+    stand.add(name, app, Some(link))
 }
