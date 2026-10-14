@@ -1,10 +1,13 @@
 //! Kinematic character controller: the only thing that moves characters.
 //!
-//! Gameplay writes a [`LocomotionInput`] before `SimSet::Move` (the next step fills it
-//! from `Intent` and the action machine); [`move_characters`] turns it into motion with
-//! shape casts against the world ([`PhysicsWorld`]) and keeps the result in
-//! [`MotionState`]. Actions never move a body themselves: a dodge roll is
-//! [`LocomotionInput::external`], integrated here with everything else.
+//! Gameplay writes a [`LocomotionInput`] before `SimSet::Move`
+//! ([`intent_to_locomotion`](crate::intent_to_locomotion) fills it from `Intent`, the
+//! action machine adds its displacement);
+//! [`move_characters`] turns it into motion with shape casts against the world
+//! ([`PhysicsWorld`]) and keeps the result in [`MotionState`]. Actions never move a body
+//! themselves: a dodge roll is [`LocomotionInput::external`], integrated here with
+//! everything else. The numbers come from content ([`CharacterParams`], kind
+//! `locomotion`), read again every tick, so editing the file changes the next step.
 //!
 //! Modes ([`MotionMode`]): **Ground** walks, runs and sprints, follows slopes up to
 //! `max_slope_deg`, steps onto obstacles up to `step_height` and snaps down stairs;
@@ -15,46 +18,58 @@
 //!
 //! The transform's translation is the character's feet.
 
-mod locomotion;
-mod mover;
+pub(crate) mod locomotion;
+pub(crate) mod mover;
 mod params;
 
-use ai_core::{label, AiAppExt, AiId, SimSet};
+use std::collections::HashSet;
+
+use ai_core::{journal, JournalKind, SimSet};
 use bevy::ecs::lifecycle::HookContext;
 use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use shards_content::{ContentAppExt, ContentDb};
+use shards_core::Intent;
 
 pub use params::CharacterParams;
 
-use crate::physics::{
-    Body, Collider, ColliderId, PhysicsPlugin, PhysicsWorld, VolumeEntered, VolumeExited,
-};
+use crate::physics::{Body, Collider, ColliderId, PhysicsPlugin, PhysicsWorld, VolumeEntered, VolumeExited};
 use locomotion::{Note, Step};
 use mover::{flat, Mover};
 
 /// Makes an entity a character moved by this controller. Its [`Collider`] is the capsule
-/// `params` describe (kept in sync, layers left alone); its transform is at the feet.
+/// its numbers describe (kept in sync, layers left alone); its transform is at the feet.
+/// Add [`Intent`] for it to be driven like every character is
+/// (keyboard, agent, brain, replay): [`character`] does.
 #[derive(Component, Reflect, Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[reflect(Component, Default)]
+#[serde(default)]
 #[require(Collider = CharacterParams::default().collider(), Body = Body::Kinematic, LocomotionInput, MotionState)]
 #[component(on_insert = fit_collider)]
 pub struct CharacterController {
-    pub params: CharacterParams,
+    /// Content id of the `locomotion` definition ([`CharacterParams`]) to move by. Empty:
+    /// the code defaults (tests). An id the content does not have is the same, and says
+    /// so once in the journal.
+    pub params: String,
 }
 
 impl CharacterController {
-    pub fn new(params: CharacterParams) -> Self {
-        Self { params }
+    /// A controller moving by the `locomotion` definition `params`.
+    pub fn new(params: impl Into<String>) -> Self {
+        Self { params: params.into() }
     }
 }
 
 /// The capsule follows the params from the first moment, so queries between spawn
 /// and the first tick already see the right body.
 fn fit_collider(mut world: DeferredWorld, ctx: HookContext) {
-    let Some(want) = world.get::<CharacterController>(ctx.entity).map(|c| c.params.collider()) else {
+    let Some(controller) = world.get::<CharacterController>(ctx.entity) else {
         return;
     };
+    let want = controller
+        .resolve(world.get::<CharacterParams>(ctx.entity), world.get_resource::<ContentDb>())
+        .collider();
     if let Some(mut collider) = world.get_mut::<Collider>(ctx.entity) {
         fit(&mut collider, &want);
     }
@@ -199,83 +214,23 @@ impl Plugin for ControllerPlugin {
         if !app.is_plugin_added::<PhysicsPlugin>() {
             app.add_plugins(PhysicsPlugin);
         }
-        app.register_type::<CharacterParams>()
+        app.add_content::<CharacterParams>()
+            .register_type::<CharacterParams>()
             .register_type::<CharacterController>()
             .register_type::<LocomotionInput>()
             .register_type::<MotionMode>()
             .register_type::<Mantle>()
             .register_type::<MotionState>()
             .configure_sets(FixedUpdate, ControllerSystems::Move.in_set(SimSet::Move))
-            .add_systems(FixedUpdate, move_characters.in_set(ControllerSystems::Move))
-            .register_ai_component::<MotionState>(describe_motion)
-            .journal_event::<Landed>(|e, w| {
-                (e.fall_height >= 0.5).then(|| tracked(w, e.entity)).flatten().map(|who| {
-                    format!("{who} landed: fell {:.1} m at {:.1} m/s", e.fall_height, e.impact_speed)
-                })
-            })
-            .journal_event::<Jumped>(|e, w| tracked(w, e.entity).map(|who| format!("{who} jumped")))
-            .journal_event::<Mantled>(|e, w| {
-                tracked(w, e.entity).map(|who| format!("{who} climbs a {:.1} m ledge", e.height))
-            })
-            .journal_event::<ModeChanged>(|e, w| {
-                let notable = |m: MotionMode| matches!(m, MotionMode::Water | MotionMode::Glide);
-                (notable(e.from) || notable(e.to))
-                    .then(|| tracked(w, e.entity))
-                    .flatten()
-                    .map(|who| format!("{who} {} → {}", mode_name(e.from), mode_name(e.to)))
-            })
-            .journal_event::<VolumeEntered>(|e, w| {
-                tracked(w, e.entity).map(|who| format!("{who} entered {}", volume_name(w, e.volume)))
-            })
-            .journal_event::<VolumeExited>(|e, w| {
-                tracked(w, e.entity).map(|who| format!("{who} left {}", volume_name(w, e.volume)))
-            });
+            .add_systems(FixedUpdate, move_characters.in_set(ControllerSystems::Move));
     }
 }
 
-/// `e5` for entities the AI tracks; journal lines about the rest are noise.
-fn tracked(world: &World, entity: Entity) -> Option<String> {
-    world.get::<AiId>(entity).is_some().then(|| label(world, entity))
-}
-
-fn volume_name(world: &World, volume: Entity) -> String {
-    let kind = world.get_resource::<PhysicsWorld>().and_then(|p| p.collider(volume)).and_then(|c| c.volume.clone());
-    match (kind, world.get::<AiId>(volume)) {
-        (Some(kind), Some(id)) => format!("{kind} {id}"),
-        (Some(kind), None) => kind.to_string(),
-        (None, _) => "a volume".to_owned(),
-    }
-}
-
-fn mode_name(mode: MotionMode) -> &'static str {
-    match mode {
-        MotionMode::Ground => "ground",
-        MotionMode::Air => "air",
-        MotionMode::Water => "water",
-        MotionMode::Glide => "glide",
-        MotionMode::Mantle => "climbing",
-    }
-}
-
-/// `run 5.0m/s`, `air 4.0m/s ↓7.2`, `swimming 2.0m/s`, `gliding 9.0m/s ↓2.0`,
-/// `climbing 40%`; nothing while standing still.
-pub fn describe_motion(s: &MotionState) -> String {
-    let speed = flat(s.velocity).length();
-    let vertical = if s.velocity.y >= 0.0 { format!("↑{:.1}", s.velocity.y) } else { format!("↓{:.1}", -s.velocity.y) };
-    match s.mode {
-        MotionMode::Ground if speed < 0.05 => String::new(),
-        MotionMode::Ground if s.sprinting => format!("sprint {speed:.1}m/s"),
-        MotionMode::Ground => format!("moving {speed:.1}m/s"),
-        MotionMode::Air => format!("air {speed:.1}m/s {vertical}"),
-        MotionMode::Glide => format!("gliding {speed:.1}m/s {vertical}"),
-        MotionMode::Water => format!("swimming {speed:.1}m/s"),
-        MotionMode::Mantle => format!("climbing {:.0}%", s.mantle.map_or(0.0, |m| m.t * 100.0)),
-    }
-}
-
-/// Bundle-free spawning: `commands.spawn(character(params, at))`.
-pub fn character(params: CharacterParams, feet: Vec3) -> (CharacterController, Transform) {
-    (CharacterController::new(params), Transform::from_translation(feet))
+/// `commands.spawn(character("hero", feet))`: a character moving by the `locomotion`
+/// definition `params` (empty: code defaults), standing at `feet`, driven through
+/// `Intent`.
+pub fn character(params: &str, feet: Vec3) -> (CharacterController, Intent, Transform) {
+    (CharacterController::new(params), Intent::default(), Transform::from_translation(feet))
 }
 
 type CharacterQuery<'w, 's> = Query<
@@ -285,6 +240,7 @@ type CharacterQuery<'w, 's> = Query<
         Entity,
         &'static ColliderId,
         &'static CharacterController,
+        Option<&'static CharacterParams>,
         &'static mut LocomotionInput,
         &'static mut MotionState,
         &'static mut Transform,
@@ -300,6 +256,7 @@ struct Placed {
     height: f32,
     /// Climbing: follows its checked path, others give way.
     pinned: bool,
+    params: CharacterParams,
 }
 
 /// Moves every character one tick, in [`ColliderId`] order, then pushes overlapping
@@ -307,21 +264,34 @@ struct Placed {
 pub fn move_characters(
     time: Res<Time>,
     physics: Res<PhysicsWorld>,
+    db: Option<Res<ContentDb>>,
     mut commands: Commands,
     mut characters: CharacterQuery,
+    mut dangling: Local<HashSet<String>>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
         return;
     }
+    let db = db.as_deref();
     let mut order: Vec<(ColliderId, Entity)> = characters.iter().map(|(e, id, ..)| (*id, e)).collect();
     order.sort_unstable();
     let mut placed = Vec::with_capacity(order.len());
     for &(_, entity) in &order {
-        let Ok((_, _, controller, mut input, mut state, mut tf, mut collider)) = characters.get_mut(entity) else {
+        let Ok((_, _, controller, own, mut input, mut state, mut tf, mut collider)) = characters.get_mut(entity) else {
             continue;
         };
-        let params = &controller.params;
+        if controller.is_dangling(own, db) && dangling.insert(controller.params.clone()) {
+            let text = format!(
+                "{entity}: locomotion `{}` is not defined in content, so its character moves by the engine defaults; \
+                 define it in content/**/*.locomotion.ron or set CharacterController::params to one that exists",
+                controller.params
+            );
+            commands.queue(move |world: &mut World| {
+                journal::emit(world, JournalKind::Warn, text);
+            });
+        }
+        let params = controller.resolve(own, db);
         fit(&mut collider, &params.collider());
         let now = sanitized(&input);
         if input.jump || input.external != Vec3::ZERO {
@@ -345,7 +315,8 @@ pub fn move_characters(
             trigger(&mut commands, entity, note);
         }
         let pinned = state.mode == MotionMode::Mantle;
-        placed.push(Placed { entity, feet, radius: mover.radius, height: params.height.max(2.0 * mover.radius), pinned });
+        let (radius, height) = (mover.radius, params.height.max(2.0 * mover.radius));
+        placed.push(Placed { entity, feet, radius, height, pinned, params: params.clone() });
     }
     separate(&physics, &mut characters, &placed);
 }
@@ -434,25 +405,13 @@ fn separate(physics: &PhysicsWorld, characters: &mut CharacterQuery, placed: &[P
         if push == Vec3::ZERO {
             continue;
         }
-        let Ok((_, _, controller, _, _, mut tf, collider)) = characters.get_mut(body.entity) else {
+        let Ok((.., mut tf, collider)) = characters.get_mut(body.entity) else {
             continue;
         };
-        let mover = Mover::new(physics, &controller.params, body.entity, collider.layers);
+        let mover = Mover::new(physics, &body.params, body.entity, collider.layers);
         let feet = mover.depenetrate(mover.slide(body.feet, push, true).feet);
         if tf.translation != feet {
             tf.translation = feet;
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn describe_is_short_and_silent_when_idle() {
-        assert_eq!(describe_motion(&MotionState::default()), "");
-        let s = MotionState { mode: MotionMode::Glide, velocity: Vec3::new(9.0, -2.0, 0.0), ..default() };
-        assert_eq!(describe_motion(&s), "gliding 9.0m/s ↓2.0");
     }
 }

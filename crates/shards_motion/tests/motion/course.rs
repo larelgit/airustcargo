@@ -121,7 +121,7 @@ fn the_obstacle_course_is_finished_the_same_way_every_time() {
 fn replay_checks_cover_motion_components() {
     let mut app = app();
     floor(app.world_mut());
-    let hero = app.world_mut().spawn((AiKind::new("Hero"), character(CharacterParams::default(), Vec3::ZERO))).id();
+    let hero = app.world_mut().spawn((AiKind::new("Hero"), CharacterController::default(), Transform::default())).id();
     walk(app.world_mut(), hero, Vec3::X);
     step(&mut app, 30);
     press_jump(app.world_mut(), hero);
@@ -137,5 +137,5 @@ fn replay_checks_cover_motion_components() {
     assert_ne!(hash, ai_core::replay::state_hash(app.world()), "MotionState is part of the replay hash");
 
     let facts = ai_core::describe::facts(app.world(), hero).unwrap();
-    assert_eq!(facts.fragment("MotionState"), Some("moving 5.0m/s"), "{facts:?}");
+    assert_eq!(facts.fragment("MotionState"), Some("ground 5.0m/s"), "{facts:?}");
 }

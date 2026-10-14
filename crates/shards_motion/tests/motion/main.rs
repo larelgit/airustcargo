@@ -3,5 +3,7 @@
 mod common;
 mod controller;
 mod course;
+mod drive;
 mod edge_cases;
+mod engine;
 mod physics;

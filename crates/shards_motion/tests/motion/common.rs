@@ -97,8 +97,9 @@ pub fn hero(world: &mut World, feet: Vec3) -> Entity {
     hero_with(world, feet, CharacterParams::default())
 }
 
+/// A character moved by its own numbers; no `Intent`, so tests write `LocomotionInput` directly.
 pub fn hero_with(world: &mut World, feet: Vec3, params: CharacterParams) -> Entity {
-    world.spawn((Name::new("Hero"), character(params, feet))).id()
+    world.spawn((Name::new("Hero"), CharacterController::default(), params, Transform::from_translation(feet))).id()
 }
 
 pub fn feet(app: &App, e: Entity) -> Vec3 {
@@ -124,7 +125,8 @@ pub fn press_jump(world: &mut World, e: Entity) {
 /// The character's capsule is not inside any static geometry (beyond float noise).
 pub fn assert_clear(app: &App, e: Entity) {
     let world = app.world();
-    let params = &world.get::<CharacterController>(e).unwrap().params;
+    let params = world.get::<CharacterParams>(e).cloned().unwrap_or_default();
+    let params = &params;
     let at = world.get::<Transform>(e).unwrap().translation + Vec3::Y * params.height * 0.5;
     let shape = Shape::capsule(params.radius, params.height);
     let filter = QueryFilter::new(LayerMask::WORLD).excluding(e);

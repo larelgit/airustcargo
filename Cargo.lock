@@ -5279,6 +5279,7 @@ dependencies = [
  "serde_json",
  "shards_content",
  "shards_core",
+ "shards_motion",
 ]
 
 [[package]]
@@ -5322,9 +5323,12 @@ dependencies = [
  "ai_core",
  "bevy",
  "parry3d",
+ "ron",
  "schemars",
  "serde",
  "serde_json",
+ "shards_content",
+ "shards_core",
 ]
 
 [[package]]
