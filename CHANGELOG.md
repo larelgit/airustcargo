@@ -74,6 +74,23 @@ git push origin v0.1.0
   `--verify` грузят его перед первым тиком. Реплеи `shards-replay/2` проигрываются как раньше.
 - Для модулей: `add_snapshot_resource`, `add_snapshot_check`, `add_snapshot_rebuild`, `add_snapshot_entity_key`.
 
+**Задел фазы C (`ai_core`, `shards_core`, `shards`, `shards_world`, `shards_action`)** — без сети и сохранений, в
+одиночной игре ничего не меняет (эталонные реплеи прежние):
+
+- `ai_core`: токены приложений (`process`: логи и сбои нескольких игр одного процесса не смешиваются), правила
+  репликации (`net_ignore`, `net_ignore_resource`, `net_predicted`, `replicated_components`, `rules_hash`), кодек
+  состояния `state` (общий со снапшотами; `apply_changes`), `sim::set_tick`, `snapshot::restore_releasing`, событие
+  `WorldRebuilt`, `AiIndex::set_local_base`, `replay::set_recording` и `restart_from_current`,
+  `journal::set_local_events` и `push_remote`, маршруты инструментов (`NetRoute`, `Forwarder`), привязка агента к
+  игроку (`ai/session {player}`, `possess player=N`), отложенный шаг (`StepRoute`, `step_poll`, `ai/step_poll`).
+- `shards_core`: `SimSet` идут только где `simulates`, `NetSet::Predict`, `Predicted`, хуки выхода
+  (`add_exit_hook`), `SeedLock`, поля `EngineConfig` для сети, сохранений и настроек.
+- `shards::run`: флаги `--host`, `--join`, `--stand`, `--stand-udp`, `--name`, `--net-sim`, `--save-dir`,
+  `--settings-dir`, `--no-settings`, `--character`, `--world`, `--exit-with-host` (сетевые пока выходят с кодом 2);
+  `EngineConfig::embedded` и `testing::embedded_config`.
+- `shards_world`: стартовый регион ждёт `seed_ready` и берёт `SimSeed`; смена региона шлёт `WorldRebuilt`.
+- `shards_action`: события действий и боя (`ActionStarted`, `Telegraph`, `Damaged`, `Died`, …) отражаются (`Reflect`).
+
 ### Планируется
 
 - Шаблон игры: сохранение и кооп на двоих (фаза C, модули E7 и E8). В `template/README.md` для них оставлены

@@ -31,7 +31,7 @@ Remote Protocol на 127.0.0.1), без MCP-прослоек. Тем же CLI п
 8. [Уровни из Blender (E4.2)](#уровни-из-blender-e42)
 9. [Мир и генерация (E5)](#мир-и-генерация-e5)
 10. [Навигация и NPC (E6)](#навигация-и-npc-e6)
-11. [Слой ИИ](#слой-ии): [что видит ИИ](#что-видит-ии) · [инструменты](#инструменты) · [время и детерминизм](#время-и-детерминизм) · [транспорты и CLI](#транспорты-и-cli) · [скриншоты](#скриншоты) · [агенты](#агенты)
+11. [Слой ИИ](#слой-ии): [что видит ИИ](#что-видит-ии) · [инструменты](#инструменты) · [время и детерминизм](#время-и-детерминизм) · [задел под сеть](#задел-под-сеть-фаза-c) · [транспорты и CLI](#транспорты-и-cli) · [скриншоты](#скриншоты) · [агенты](#агенты)
 12. [Сценарии (E11)](#сценарии-e11)
 13. [Реплеи](#реплеи)
 14. [Снапшоты (E11.4)](#снапшоты-e114)
@@ -362,6 +362,12 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 | `hot_reload` | применять файлы контента по мере правки (нужна cargo feature `hot_reload`; в тестах и `--verify` выключено) |
 | `asset_dir` | папка ассетов; контент в `<asset_dir>/content/`. Относительно папки игры (`CARGO_MANIFEST_DIR` под cargo, иначе рядом с исполняемым файлом); `BEVY_ASSET_ROOT` перекрывает |
 | `testing` | тестовое приложение: без окна, логгера, Ctrl+C и цикла; его ведут через `app.update()` и инструменты |
+| `embedded` | игра рядом с другой в том же процессе (клиенты стенда): как `testing`, но со своим портом BRP, а её логи идут в её журнал (`testing::embedded_config(port)`) |
+| `net` | `NetLaunch`: `Off`, `Host { port }` (`--host`, 7777 = `DEFAULT_NET_PORT`), `Join { addr }`, `Stand { clients, udp }` |
+| `player_name`, `net_sim` | имя игрока для других (`--name`); условия сети для своих линков (`--net-sim latency=150,loss=0.02`) |
+| `save_dir`, `character_slot`, `world_slot` | папка сохранений (`saves`); слоты персонажа и мира (`--character`, `--world`) |
+| `settings` | `SettingsStore`: `Default` (папка настроек платформы), `Dir(путь)` (`--settings-dir`), `Off` (`--no-settings`, тесты) |
+| `exit_with_host` | клиент выходит, когда хост завершил сессию, а не возвращается в меню |
 
 **Окно и без окна — те же плагины.** Режим без окна — `EnginePlugins` без окна, GPU и звука: `WindowPlugin` без
 окна, нет winit, `RenderPlugin` без бэкенда (плагины рендера остаются зарегистрированными), цикл на 60 Гц вместо цикла
@@ -371,7 +377,11 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 `hot_reload` (по умолчанию все три), `audio`, `gamepad`, `wayland`, `dynamic`.
 
 **`shards::run`** — стандартный `main`. Флаги: `--headless --seed N --port N|0 --port-file F --no-remote --paused --hz N
---replay FILE --verify [--windowed] --check-content --worldgen-report REGION [--seeds S] --bake-nav [TILES]`. Занятый порт —
+--replay FILE --verify [--windowed] --check-content --worldgen-report REGION [--seeds S] --bake-nav [TILES]`; для фазы C:
+`--host [PORT] | --join ADDR | --stand N [--stand-udp]` (взаимоисключающие, `--stand` только с `--headless`), `--name`,
+`--net-sim SPEC`, `--save-dir DIR`, `--settings-dir DIR | --no-settings`, `--character SLOT`, `--world SLOT` (слот —
+1–32 символа `a-z0-9_-`), `--exit-with-host`. Пока сети нет, `--host`, `--join` и `--stand` выходят с кодом 2
+(`networking arrives with shards_net`). Занятый порт —
 выход с кодом 3 до того, как собрано хоть что-то. `--verify` выходит с кодом 0 (совпало), 1 (разошлось или упала система
 геймплея) или 2 (реплей или его снапшот не читаются); `--check-content`, `--worldgen-report` (все зёрна прошли) и `--bake-nav`
 (все тайлы запеклись) — 0 или 1. Эти три режима ничего не запускают (`--bake-nav` грузит игру без окна, но не делает ни тика).
@@ -403,6 +413,18 @@ InGame`).
 `parry`, `technique.N`, `use_item`, `interact`, `lock_on`); игра добавляет свои. `Intent` — вход реплея
 (`replay_input::<Intent>()` движок делает сам): записываются изменения между тиками. `PlayerId` и `LocalPlayer`
 отмечают игроков, `NetRole` (`Single` по умолчанию) — задел под сеть.
+
+**Задел под сеть (фаза C).** Всё это в одиночной игре ничего не меняет.
+
+- Клиент не симулирует: каждый `SimSet` идёт с `run_if(simulates)` (`NetRole::simulates()` — всё, кроме `Client`).
+  На клиенте из `FixedUpdate` идут только `NetSet::Predict` (`run_if(predicts)`, своё тело с маркером `Predicted`) и
+  системы вне `SimSet`. Их список — тест песочницы `net_seams`: сейчас это `sync_physics` дважды.
+- `app.add_exit_hook(name, fn(&mut World))`: хуки выхода идут один раз, по порядку регистрации, когда записан
+  `AppExit` (система в `Last`) или пришёл сигнал (`shards::run`).
+- `SeedLock`: `hold_seed(world, reason)` держит шлюз загрузки под `seed`, `adopt_seed(world, seed)` пишет seed в
+  `EngineConfig`, `SimSeed` и `SimConfig` и отпускает. Стартовый регион ждёт `seed_ready` и строится по `SimSeed`.
+- Смена региона заканчивается событием `WorldRebuilt { reason: "region <id>" }` (как и загрузка снапшота).
+- `player_body(world, n)` — тело с `PlayerId(n)`; через него агент, привязанный к игроку, находит своё тело.
 
 **`ai/status`** показывает версию и модули: `engine: {version: "0.2.0", modules: [core, content, motion, action, level,
 world, npc], state: "InGame", pause: "Running"}` и `loading: []`, пока ничего не грузится; с регионом в мире ещё поле `world`.
@@ -1763,6 +1785,36 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 - Реплей одинаков с окном и без: `--verify --windowed` проигрывает его в окне (рендер, камера, карта ввода, визуал игры
   работают) и даёт тот же отчёт, что и `--verify` без окна. Рендер-сущности не сдвигают ни `AiId`, ни `ColliderId`, ни
   порядок геймплея.
+
+### Задел под сеть (фаза C)
+
+Точки опоры для `shards_net` и сохранений; в одиночной игре они ничего не меняют, реплеи и их хэши прежние.
+
+- **Несколько игр в одном процессе** (`ai_core::process`). У каждого приложения свой `AppToken`; `process::activate`
+  делает его активным (это делают `First`, `call_tool`, `sim::step`, `sim::run_tick`, `failures::collect`). Строки лога
+  идут в журнал активной игры (`journal::register_capture` для игры без своего `LogPlugin`), паника системы — в её
+  очередь сбоев. Игры одного процесса обновляются по очереди, не параллельно.
+- **Правила репликации** (`ai_core::net_rules`): реплицируется то, что хэширует реплей (`state_hash`), минус
+  `net_ignore::<C>()`; ресурсы — снапшотные минус `net_ignore_resource::<R>()`; `net_predicted::<C>()` — что клиент
+  предсказывает для своего тела. `replicated_components(world, e)` и `rules_hash(world)` (для проверки протокола).
+  Движок исключает `AiPlayer`, `LocalPlayer`, `Predicted` и `ColliderIds`.
+- **Кодек состояния** (`ai_core::state`), общий со снапшотами: `encode_entity`, `encode_replicated`,
+  `encode_resources`, `apply_changes(world, &StateChanges)` (недостающие id создаются по порядку, значения пишутся
+  дважды, удаления, despawn с пометкой надгробия: `e7 is out of view since tick 180`).
+- **Снапшоты и id:** `sim::set_tick`, `snapshot::restore_releasing(world, &snap, gate)` (грузит под удержанным
+  `SimGate`), `AiIndex::set_local_base(base)` (свои id клиента — со второго счётчика, id хоста их не сдвигают).
+- **Реплей и журнал:** `replay::set_recording(world, false)` (клиент не пишет реплей; `replay_save` говорит почему),
+  `replay::restart_from_current`, `journal::set_local_events(world, false)` (события пишет хост),
+  `journal::push_remote(world, host_tick, kind, text)` — строка хоста, которую видят `journal`, `observe` и
+  `--until journal:`.
+- **Маршруты инструментов:** `ToolSpec.net` — `Local`, `Host` (по умолчанию у Dev-действий) или `HostOnly`
+  (`snapshot_save`, `snapshot_load`, `replay_save`). С `AiTools::set_forwarder` вызовы `Host` уходят хосту, `HostOnly`
+  получают отказ с причиной; без форвардера всё как раньше. `app.net_route(name, route)` меняет маршрут.
+- **Агент, привязанный к игроку:** `ai/session {player: N}` и `possess player=N`; тело ищется заново на каждом вызове,
+  так что переживает респаун.
+- **Отложенный шаг:** с `StepRoute::Deferred` инструменты `step`, `pause`, `resume`, `speed` ставят запрос в очередь и
+  отвечают `{"pending": id}`; драйвер стенда выполняет его между кадрами, а `step_poll {id}` (BRP `ai/step_poll`)
+  возвращает отчёт ровно как у обычного `step`.
 
 ### Транспорты и CLI
 
