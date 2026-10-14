@@ -58,6 +58,24 @@ pub const MAX_JOINING_MESSAGE: usize = MAX_CHARACTER_BYTES + 16 * 1024;
 /// report). A larger one is dropped unread.
 pub const MAX_PLAYER_MESSAGE: usize = 1 << 20;
 
+/// What the host decodes of a peer that does not play yet in one poll, in bytes: two of the
+/// largest message it is read. The size caps bound one message; this bounds the work a peer
+/// makes of a poll. What comes past it is dropped unread.
+pub const JOINING_POLL_BYTES: usize = 2 * MAX_JOINING_MESSAGE;
+
+/// What the host decodes of a player in one poll, in bytes: four of the largest message.
+pub const PLAYER_POLL_BYTES: usize = 4 * MAX_PLAYER_MESSAGE;
+
+/// A peer that stays in one stage of joining (no hello, building its world) longer than this
+/// many times the silence timeout (`NetDef::timeout_secs`, 10 s: a minute) is dropped,
+/// whatever it keeps sending: the join of an honest client takes the time to load a world.
+/// A peer the game keeps waiting (`join_policy`) is the game's to hold, and exempt.
+pub const HANDSHAKE_TIMEOUTS: f32 = 6.0;
+
+/// A peer that is gone is forgotten at the latest this long after, however it goes on talking
+/// (one that never acknowledges its last message keeps sending keepalives for ever).
+const GONE_LIMIT_MS: u64 = 10_000;
+
 /// Where a peer is in the session.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PeerStage {
@@ -126,14 +144,23 @@ pub struct Peer {
     /// them the link watch has said.
     pub unsent: u64,
     unsent_said: u64,
+    /// Messages dropped unread: past what one poll decodes, or from a peer that was gone.
+    pub unread: u64,
+    /// The stage it was last seen in, and when it entered it (host clock, milliseconds).
+    stage_mark: (std::mem::Discriminant<PeerStage>, u64),
+    /// When it was first seen gone.
+    gone_since: Option<u64>,
 }
 
 impl Peer {
-    fn new(id: PeerId, session: u32) -> Self {
+    fn new(id: PeerId, session: u32, now: u64) -> Self {
         Self {
             id,
             link: Link::new(session, Role::Host),
             stage: PeerStage::New,
+            stage_mark: (std::mem::discriminant(&PeerStage::New), now),
+            gone_since: None,
+            unread: 0,
             hello: None,
             player: 0,
             body: None,
@@ -307,16 +334,25 @@ impl NetHost {
         (self.cache.encoded, self.cache.reused)
     }
 
-    /// Asks for `player` to leave at the next tick (`net_kick`, a timeout).
+    /// Asks for `player` to leave at the next tick (`net_kick`, a timeout): one playing, or
+    /// still joining (waiting for the game, building its world).
     pub fn kick(&mut self, player: u8, reason: &str) -> Result<(), String> {
-        let peer = self.peers.values_mut().find(|p| p.player == player && p.stage != PeerStage::Gone && p.stage != PeerStage::New);
-        let Some(peer) = peer else {
+        let peer = self.peers.values().find(|p| p.player == player && p.stage != PeerStage::Gone && p.stage != PeerStage::New);
+        let Some(id) = peer.map(|p| p.id) else {
             return Err(format!("no player {player} is connected; net_status lists them"));
         };
+        self.kick_peer(id, reason)
+    }
+
+    /// Sends peer `id` away, whatever it is: a player, one joining, or a stranger that never
+    /// said hello and has no player number (`net_kick peer=`).
+    pub fn kick_peer(&mut self, id: PeerId, reason: &str) -> Result<(), String> {
+        let Some(peer) = self.peers.get_mut(&id).filter(|p| p.stage != PeerStage::Gone) else {
+            return Err(format!("no peer {id} is here; net_status lists them"));
+        };
         let _ = peer.send(&Msg::Bye { reason: reason.to_owned() });
-        let connected = peer.stage == PeerStage::Connected;
+        let (connected, player) = (peer.stage == PeerStage::Connected, peer.player);
         peer.stage = PeerStage::Gone;
-        let id = peer.id;
         if connected {
             self.tasks.push(Task::Leave { player, peer: id, reason: reason.to_owned() });
         }
@@ -570,7 +606,7 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
                 continue;
             }
             let Some(session) = wire::peek_session(&bytes) else { continue };
-            host.peers.insert(from, Peer::new(from, session));
+            host.peers.insert(from, Peer::new(from, session, now));
         }
         let peer = host.peers.get_mut(&from).expect("inserted above");
         if let Verdict::Rejected(reason) = peer.link.on_datagram(now, &bytes) {
@@ -579,14 +615,25 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
     }
     let ids: Vec<PeerId> = host.peers.keys().copied().collect();
     for id in ids {
+        // A peer that is gone is polled too (its link's buffers empty), but never read.
         let delivered = host.peers.get_mut(&id).map(|p| p.link.poll(now)).unwrap_or_default();
         // Every packet repeats the frames not acknowledged: the newest holds the rest.
         let newest_inputs = delivered.iter().rposition(|m| matches!(m, Delivered::Unreliable(_)));
+        let total = delivered.len();
+        // The size caps bound one message; this bounds what a poll decodes of one peer.
+        let (mut spent, mut unread, mut over) = (0usize, 0u64, false);
         for (i, message) in delivered.into_iter().enumerate() {
-            let Some(playing) = host.peers.get(&id).map(|p| p.stage == PeerStage::Connected) else { break };
+            let Some((playing, gone)) = host.peers.get(&id).map(|p| (p.stage == PeerStage::Connected, p.stage == PeerStage::Gone)) else { break };
+            if gone {
+                // Refused, kicked or left (by an earlier message of this poll too): what else it
+                // sent is not read.
+                unread += (total - i) as u64;
+                break;
+            }
             if matches!(message, Delivered::Unreliable(_)) && Some(i) != newest_inputs {
                 continue;
             }
+            let budget = if playing { PLAYER_POLL_BYTES } else { JOINING_POLL_BYTES };
             // Sizes first: nothing larger than an honest client sends is decoded.
             match message {
                 Delivered::Reliable(bytes) => {
@@ -595,6 +642,11 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
                         oversized(world, host, id, bytes.len(), max);
                         continue;
                     }
+                    if spent + bytes.len() > budget {
+                        (unread, over) = (unread + 1, true);
+                        continue;
+                    }
+                    spent += bytes.len();
                     match msg::decode::<Msg>(&bytes) {
                         Ok(m) => on_message(world, host, id, m),
                         Err(e) => undecodable(world, id, &e),
@@ -605,15 +657,35 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
                 Delivered::Unreliable(bytes) if bytes.len() > crate::inputs::MAX_INPUTS_BYTES => {
                     oversized(world, host, id, bytes.len(), crate::inputs::MAX_INPUTS_BYTES);
                 }
-                Delivered::Unreliable(bytes) => match msg::decode::<Inputs>(&bytes) {
-                    Ok(inputs) => on_inputs(world, host, id, inputs),
-                    Err(e) => undecodable(world, id, &e),
-                },
+                Delivered::Unreliable(bytes) => {
+                    if spent + bytes.len() > budget {
+                        (unread, over) = (unread + 1, true);
+                        continue;
+                    }
+                    spent += bytes.len();
+                    match msg::decode::<Inputs>(&bytes) {
+                        Ok(inputs) => on_inputs(world, host, id, inputs),
+                        Err(e) => undecodable(world, id, &e),
+                    }
+                }
+            }
+        }
+        if let Some(peer) = host.peers.get_mut(&id) {
+            peer.unread += unread;
+            if over {
+                let who = if peer.stage == PeerStage::Connected { format!("p{}", peer.player) } else { format!("peer {id}") };
+                crate::hooks::net_line(
+                    world,
+                    &format!("flood {id}"),
+                    JournalKind::Warn,
+                    format!("{who} sent over {} KB in one tick: the rest was dropped unread", spent / 1024),
+                );
             }
         }
     }
     // Silence: a connected player leaves, anyone else is forgotten.
-    let timeout_ms = (net_def(world).timeout_secs * 1000.0) as u64;
+    let def = net_def(world);
+    let timeout_ms = (def.timeout_secs * 1000.0) as u64;
     for peer in host.peers.values_mut() {
         if peer.stage != PeerStage::Gone && peer.link.is_timed_out(now, timeout_ms) {
             if peer.stage == PeerStage::Connected {
@@ -622,6 +694,22 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
             }
             peer.stage = PeerStage::Gone;
         }
+    }
+    // A peer that does not get on with joining is dropped, keepalives or not: the host holds a
+    // peer (and a slot) for each. The game's "not now" (`Waiting`) is the game's to hold.
+    let handshake_ms = (def.timeout_secs * HANDSHAKE_TIMEOUTS * 1000.0) as u64;
+    let mut stuck = Vec::new();
+    for (id, peer) in host.peers.iter_mut() {
+        let mark = std::mem::discriminant(&peer.stage);
+        if peer.stage_mark.0 != mark {
+            peer.stage_mark = (mark, now);
+        }
+        if matches!(peer.stage, PeerStage::New | PeerStage::Accepted | PeerStage::Ready) && now.saturating_sub(peer.stage_mark.1) > handshake_ms {
+            stuck.push((*id, format!("joining did not go on in {} s ({:?}); join again", handshake_ms / 1000, peer.stage)));
+        }
+    }
+    for (id, reason) in stuck {
+        refuse(world, host, id, &reason);
     }
     // Waiting players are asked again every tick.
     let waiting: Vec<PeerId> = host.peers.iter().filter(|(_, p)| matches!(p.stage, PeerStage::Waiting(_))).map(|(id, _)| *id).collect();
@@ -1437,11 +1525,19 @@ fn flush(host: &mut NetHost, endpoint: &mut NetEndpoint) {
         peer.link.flush(now, &mut |datagram| transport.send(*id, datagram));
     }
     // Gone peers are dropped once nothing of theirs waits (a refusal, a kick), or once they
-    // stopped answering (a timeout, a peer that went before acknowledging).
+    // stopped answering (a timeout, a peer that went before acknowledging), or at the latest
+    // `GONE_LIMIT_MS` after they went: one that sends keepalives but never acknowledges its
+    // last message would stay for ever.
+    for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Gone) {
+        peer.gone_since.get_or_insert(now);
+    }
     let gone: Vec<PeerId> = host
         .peers
         .iter()
-        .filter(|(_, p)| p.stage == PeerStage::Gone && (p.link.is_idle() || p.link.is_timed_out(now, GONE_PATIENCE_MS)))
+        .filter(|(_, p)| {
+            p.stage == PeerStage::Gone
+                && (p.link.is_idle() || p.link.is_timed_out(now, GONE_PATIENCE_MS) || p.gone_since.is_some_and(|since| now.saturating_sub(since) > GONE_LIMIT_MS))
+        })
         .map(|(id, _)| *id)
         .collect();
     for id in gone {
