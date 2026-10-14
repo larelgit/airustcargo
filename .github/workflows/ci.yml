@@ -155,10 +155,12 @@ jobs:
           # failure the game's own log is what explains it.
           trap 'status=$?; if [ -n "$game_pid" ]; then kill "$game_pid" || true; fi; if [ "$status" -ne 0 ]; then cat "$log"; fi' EXIT
           cargo sandbox --headless --paused --port 0 --port-file "$port_file" > "$log" 2>&1 &
+          # `cargo run` replaces itself with the game, so this is the game's pid from the start: the
+          # trap ends a game that never came up, which `wait` could not have named.
+          game_pid=$!
           # `shards wait` prints which game answered: "ready: tick 0 · pid 4242 · seed 42 · port 40817".
           ready=$(cargo shards --port-file "$port_file" wait --timeout 180)
           echo "$ready"
-          game_pid=$(sed -n 's/.*pid \([0-9][0-9]*\).*/\1/p' <<<"$ready")
           cargo shards --port-file "$port_file" scenario crates/sandbox/scenarios/*.scenario
           # Then backwards, in the same game: each scenario sets up what it needs, whatever
           # ran before (a region loaded, a snapshot's tick).
@@ -175,10 +177,12 @@ jobs:
           # `stand stop` ends it the polite way; the signal is only for a stand that never came up.
           trap 'status=$?; if [ -n "$stand_pid" ]; then kill "$stand_pid" || true; fi; if [ "$status" -ne 0 ]; then cat "$log"; fi' EXIT
           cargo sandbox --stand 2 --headless --paused --port 0 --port-file "$port_file" --net-sim latency=150,loss=0.02 > "$log" 2>&1 &
+          # The stand's pid from the start (`cargo run` replaces itself with the game): a stand that
+          # never came up is the one the trap has to end.
+          stand_pid=$!
           # One line per member: "member=c1 role=client player=1 body=e15 port=… pid=… seed=42 tick=14".
           ready=$(cargo shards --port-file "$port_file" wait --peer all --timeout 180)
           echo "$ready"
-          stand_pid=$(sed -n 's/^member=host .* pid=\([0-9][0-9]*\).*/\1/p' <<<"$ready")
           cargo shards --port-file "$port_file" scenario crates/sandbox/scenarios/stand/*.scenario
           cargo shards --port-file "$port_file" stand
           cargo shards --port-file "$port_file" stand stop
