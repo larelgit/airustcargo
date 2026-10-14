@@ -764,6 +764,64 @@ fn losses_are_repaired_by_acks_not_only_by_timeouts() {
 }
 
 #[test]
+fn session_like_traffic_at_150_ms_and_2_percent_loss() {
+    // What the session layer will do: state deltas down at 30 Hz (a few KB of JSON-ish text, deflated),
+    // inputs up at 60 Hz, now and then a reliable event, and a snapshot blob to start with.
+    let mut sim = Sim::new(2027);
+    sim.add(cond(150, 10, 0.02, 0.0), cond(150, 10, 0.02, 0.0));
+    let snapshot: String = (0..4000).map(|i| format!("{{\"id\":\"e{i}\",\"pos\":[{},{},{}],\"hp\":{}}},", i % 97, i % 31, i % 53, i % 100)).collect();
+    sim.pairs[0].b.send_reliable(snapshot.as_bytes()).unwrap();
+    let (mut deltas, mut inputs, mut events) = (0u32, 0u32, 0u32);
+    let mut hook = |now: u64, pairs: &mut [Pair]| {
+        if !now.is_multiple_of(16) {
+            return;
+        }
+        let p = &mut pairs[0];
+        if (now / 16).is_multiple_of(2) {
+            let body: String = (0..60)
+                .map(|i| format!("{{\"e\":{i},\"p\":[{:.2},{:.2},{:.2}],\"hp\":{}}},", (deltas + i) as f32 * 0.37, i as f32 * 1.1, 0.0, (deltas + i) % 100))
+                .collect();
+            let mut m = deltas.to_le_bytes().to_vec();
+            m.extend_from_slice(body.as_bytes());
+            p.b.send_unreliable(&m).unwrap();
+            deltas += 1;
+        }
+        let mut m = inputs.to_le_bytes().to_vec();
+        m.extend_from_slice(&[7; 40]);
+        p.a.send_unreliable(&m).unwrap();
+        inputs += 1;
+        if inputs.is_multiple_of(40) {
+            p.b.send_reliable(&numbered(events, 150)).unwrap();
+            events += 1;
+        }
+    };
+    sim.run_for(60_000, &mut hook);
+    sim.run_for(3_000, &mut |_, _| {});
+    let p = &sim.pairs[0];
+    let (a, b) = (p.a.stats(), p.b.stats());
+    let to_a = p.reliable_a();
+    assert_eq!(to_a.len(), 1 + events as usize, "the snapshot and every event, in order");
+    assert_eq!(to_a[0].as_slice(), snapshot.as_bytes());
+    for (i, m) in to_a[1..].iter().enumerate() {
+        assert_eq!(number_of(m), i as u32);
+    }
+    let got_deltas = p.got_a.iter().filter(|d| matches!(d, Delivered::Unreliable(_))).count();
+    eprintln!(
+        "session-like: snapshot {} B; {deltas} deltas sent, {got_deltas} arrived; host out {} B/s, client out {} B/s; srtt {:.0} ms, loss in {:.3}, resends {}/{}",
+        snapshot.len(),
+        b.bytes_out / 63,
+        a.bytes_out / 63,
+        a.srtt_ms,
+        a.loss_lifetime,
+        a.resends,
+        b.resends
+    );
+    assert!(got_deltas as f32 > deltas as f32 * 0.90, "{got_deltas} of {deltas}");
+    assert!((a.srtt_ms - 300.0).abs() < 40.0, "{}", a.srtt_ms);
+    assert!(b.bytes_out / 63 < 60_000, "host sends {} B/s", b.bytes_out / 63);
+}
+
+#[test]
 fn the_public_types_can_live_in_a_bevy_resource() {
     fn send_sync<T: Send + Sync + 'static>() {}
     send_sync::<Link>();
