@@ -53,11 +53,11 @@ fn apply_motion_blur(settings: Option<Res<AccessibilitySettings>>, mut cameras: 
     let Some(settings) = settings else { return };
     let strength = settings.blur();
     for mut blur in &mut cameras {
-        // No samples is no blur at all (the pass is skipped); a game that asked for more keeps them.
-        let samples = if strength <= 0.0 { 0 } else { blur.samples.max(1) };
-        if blur.shutter_angle != strength || blur.samples != samples {
+        // A shutter that is never open is no blur at all (Bevy skips the pass at 0). The samples are
+        // the game's choice of quality and stay as they are, so turning the blur off and on again
+        // gives back what the game asked for.
+        if blur.shutter_angle != strength {
             blur.shutter_angle = strength;
-            blur.samples = samples;
         }
     }
 }

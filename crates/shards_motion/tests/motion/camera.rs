@@ -256,11 +256,24 @@ fn motion_blur_follows_the_accessibility_setting() {
     s.app.world_mut().resource_mut::<AccessibilitySettings>().motion_blur = 0.2;
     frame(&mut s.app);
     assert_eq!(read(&s), (0.2, 1));
-    // None is off: no samples, so the pass is skipped.
+    // None is off: the shutter never opens, so Bevy skips the pass.
     s.app.world_mut().resource_mut::<AccessibilitySettings>().motion_blur = 0.0;
     frame(&mut s.app);
-    assert_eq!(read(&s), (0.0, 0));
+    assert_eq!(read(&s), (0.0, 1));
     s.app.world_mut().resource_mut::<AccessibilitySettings>().motion_blur = 1.0;
     frame(&mut s.app);
     assert_eq!(read(&s), (1.0, 1));
+}
+
+#[test]
+fn motion_blur_off_and_on_again_keeps_the_games_sample_count() {
+    use bevy::post_process::motion_blur::MotionBlur;
+    let mut s = scene();
+    let blur = s.app.world_mut().spawn(MotionBlur { samples: 4, ..default() }).id();
+    for strength in [0.0, 0.7, 0.0, 1.0] {
+        s.app.world_mut().resource_mut::<AccessibilitySettings>().motion_blur = strength;
+        frame(&mut s.app);
+        let b = s.app.world().get::<MotionBlur>(blur).unwrap();
+        assert_eq!((b.shutter_angle, b.samples), (strength as f32, 4), "at {strength}");
+    }
 }
