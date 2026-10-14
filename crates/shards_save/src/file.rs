@@ -155,8 +155,8 @@ impl SaveFile {
         let (header, body) = split(bytes)?;
         let (stated_len, stated_crc) = parse_header(header)?;
         if body.len() as u64 != stated_len {
-            let relation = if (body.len() as u64) < stated_len { "truncated" } else { "longer than written" };
-            return Err(format!("length mismatch: the header says {stated_len} bytes, the file has {} ({relation})", body.len()));
+            let relation = if (body.len() as u64) < stated_len { "so it is truncated" } else { "so it is longer than written" };
+            return Err(format!("length mismatch: the header says {stated_len} bytes, the file has {}, {relation}", body.len()));
         }
         let crc = crc32fast::hash(body);
         if crc != stated_crc {
@@ -275,7 +275,7 @@ mod tests {
 
         let truncated = &good[..good.len() - 7];
         let err = SaveFile::decode(truncated).unwrap_err();
-        assert!(err.starts_with("length mismatch") && err.contains("truncated"), "{err}");
+        assert!(err.starts_with("length mismatch") && err.contains("so it is truncated"), "{err}");
 
         let mut longer = good.clone();
         longer.extend_from_slice(b"\n\n");

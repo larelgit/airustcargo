@@ -15,7 +15,7 @@
 //!    .autosave_on::<CampRested>(SaveWhat::All);                   // written at the end of the tick
 //! ```
 //!
-//! - **File** ([`file`]): `<save_dir>/<kind>/<slot>.save`, one header line
+//! - **File** ([`mod@file`]): `<save_dir>/<kind>/<slot>.save`, one header line
 //!   `shards-save/1 crc32=<hex> len=<bytes>` and canonical JSON (sorted keys, shortest
 //!   numbers) with `{kind, slot, label, game, engine, tick, sections: {name: {version, data}}}`.
 //!   Slot names are `[a-z0-9_-]{1,32}`, never paths.
