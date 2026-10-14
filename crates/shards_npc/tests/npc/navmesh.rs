@@ -525,3 +525,38 @@ fn a_navmesh_that_cannot_be_built_is_said_once() {
     assert!(app.world().get_resource::<NavRegion>().is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Navlinks the body cannot make (a climb higher than its mantle, a walk over no ground: it
+/// has no jump) are not used, and `nav_info` says why.
+#[test]
+fn navlinks_the_body_cannot_make_are_not_used() {
+    let mut app = app();
+    let world = app.world_mut();
+    // Up the 4 m cliff face: too high to climb.
+    world.spawn((
+        LevelMarker { kind: MarkerKind::NavLink, name: "ladder".into(), to: Some(Vec3::new(12.6, 4.0, 2.0)) },
+        Transform::from_xyz(11.0, 0.0, 2.0),
+    ));
+    // Across the spire's tile at one level: a jump, and the body has none.
+    world.spawn((
+        LevelMarker { kind: MarkerKind::NavLink, name: "leap".into(), to: Some(Vec3::new(20.0, 0.0, 12.0)) },
+        Transform::from_xyz(4.0, 0.0, 12.0),
+    ));
+    // A step down onto the ground: fine.
+    world.spawn((
+        LevelMarker { kind: MarkerKind::NavLink, name: "rope".into(), to: Some(Vec3::new(11.0, 0.0, 4.0)) },
+        Transform::from_xyz(12.6, 4.0, 4.0),
+    ));
+    load_region(&mut app, &["floor cliff floor", "floor spire floor"]);
+    let info = ok(&mut app, "nav_info", json!({}));
+    let link = |name: &str| info.result["navlinks"].as_array().unwrap().iter().find(|l| l["name"] == name).cloned().unwrap();
+    let ladder = link("ladder");
+    assert_eq!(ladder["used"], false, "{ladder}");
+    assert!(ladder["why"].as_str().unwrap().contains("more than the body's mantle height"), "{ladder}");
+    let leap = link("leap");
+    assert_eq!(leap["used"], false, "{leap}");
+    assert!(leap["why"].as_str().unwrap().contains("has no jump"), "{leap}");
+    assert_eq!(link("rope")["used"], true);
+    let err = route(&app, Vec3::new(4.0, 0.0, 2.0), Vec3::new(14.0, 4.0, 2.0)).unwrap_err();
+    assert!(err.contains("only reached the other way") || err.contains("cannot reach"), "no way up: {err}");
+}

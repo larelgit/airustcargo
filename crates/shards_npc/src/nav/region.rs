@@ -16,8 +16,10 @@
 //!    module's [`RegionGraph`](shards_world::RegionGraph)), each boundary node gets the move
 //!    the motion planner would make into the facing column; edges whose sockets are not
 //!    passable stay closed, whatever the geometry.
-//! 5. **Navlinks**: level markers `navlink` with a `to` are one-way links (a drop, a
-//!    climb, a jump) from the node at the marker to the node at `to`.
+//! 5. **Navlinks**: level markers `navlink` with a `to` are one-way links from the node at
+//!    the marker to the node at `to`, for the moves the body makes: a drop of any depth, a
+//!    climb within its mantle height, a step to the next column (`nav_info` says why
+//!    another is not used: the body has no jump).
 //! 6. **The tile graph**: portals (one per side and area of each tile), the costs between
 //!    them inside each tile, the links between tiles; and which nodes reach which at all.
 //!
@@ -150,8 +152,11 @@ pub struct NavLinkUse {
     pub name: String,
     pub from: Vec3,
     pub to: Vec3,
-    /// The nodes it joins, when both ends are on walkable ground.
+    /// The nodes it joins, when both ends are on walkable ground and the body can make the
+    /// move.
     pub nodes: Option<(NodeId, NodeId)>,
+    /// Why it is not used, when it is not.
+    pub unused: Option<String>,
 }
 
 /// A node of the tile graph: a portal of an instance, or a navlink's end.
@@ -487,6 +492,7 @@ pub fn rebuild(world: &mut World) {
     match build(world) {
         Ok(nav) => {
             let report = nav.report.clone();
+            let unused: Vec<(String, String)> = nav.navlinks.iter().filter_map(|l| Some((l.name.clone(), l.unused.clone()?))).collect();
             let line = format!("navmesh: {} ({})", nav.title, nav.summary());
             world.insert_resource(nav);
             journal::emit(world, JournalKind::Event, line);
@@ -508,6 +514,9 @@ pub fn rebuild(world: &mut World) {
             }
             for (tile, why) in report.failed {
                 journal::emit(world, JournalKind::Warn, format!("navmesh: tile `{tile}` cannot be baked ({why}); NPCs plan on the local grid there"));
+            }
+            for (name, why) in unused {
+                journal::emit(world, JournalKind::Warn, format!("navmesh: navlink `{name}` is not used: {why}"));
             }
         }
         Err(why) => {
@@ -1083,30 +1092,46 @@ impl NavRegion {
     }
 
     /// Navlink markers as one-way links between the nodes at their two ends (carved or not:
-    /// a switched-off end is left out while it is off).
+    /// a switched-off end is left out while it is off), when the body can make the move: a
+    /// drop of any depth, a climb within its mantle height onto a ledge next to it, a walk
+    /// to the next column. The others are reported unused, with why.
     fn add_navlinks(&mut self, settings: &NavSettings, markers: Vec<(String, Vec3, Vec3)>) {
         let reach = (settings.agent.radius * 2.0 + self.cell).max(1.0);
+        let step = settings.agent.step_height;
         for (name, from, to) in markers {
-            let ends = self.nearest(from, reach, 1.5, true).zip(self.nearest(to, reach, 1.5, true));
-            if let Some((a, b)) = ends
-                && a != b
-            {
-                let (pa, pb) = (self.node_pos(a), self.node_pos(b));
-                let dy = pb.y - pa.y;
-                let step = settings.agent.step_height;
-                let kind = if dy > step {
-                    StepKind::Mantle
-                } else if dy < -step {
-                    StepKind::Drop
+            let ends = self.nearest(from, reach, 1.5, true).zip(self.nearest(to, reach, 1.5, true)).filter(|(a, b)| a != b);
+            let Some((a, b)) = ends else {
+                let why = "an end is not on walkable ground (within reach of a node of the navmesh)".to_owned();
+                self.navlinks.push(NavLinkUse { name, from, to, nodes: None, unused: Some(why) });
+                continue;
+            };
+            let (pa, pb) = (self.node_pos(a), self.node_pos(b));
+            let dy = pb.y - pa.y;
+            let flat = Vec2::new(pb.x - pa.x, pb.z - pa.z).length();
+            let (kind, unused) = if dy < -step {
+                (StepKind::Drop, None)
+            } else if dy > step {
+                let why = if !settings.agent.can_climb(dy, false) {
+                    Some(format!("a climb of {dy:.1} m is more than the body's mantle height ({:.1} m)", settings.agent.mantle_height))
+                } else if flat > reach {
+                    Some(format!("a climb onto a ledge {flat:.1} m away: the body only mantles what is in front of it"))
                 } else {
-                    StepKind::Walk
+                    None
                 };
-                let flat = Vec2::new(pb.x - pa.x, pb.z - pa.z).length();
+                (StepKind::Mantle, why)
+            } else if flat > self.cell * 1.5 + 1e-3 {
+                let why = format!("a level jump of {flat:.1} m: the body has no jump; make it a drop or a climb, or leave it out");
+                (StepKind::Walk, Some(why))
+            } else {
+                (StepKind::Walk, None)
+            };
+            if unused.is_none() {
                 let rise = if kind == StepKind::Walk { 0.0 } else { dy.abs() };
                 let cost = link_cost(kind, flat.max(self.cell), rise);
                 self.extras.push(Extra { from: a, to: b, kind, cost, rise, navlink: true });
             }
-            self.navlinks.push(NavLinkUse { name, from, to, nodes: ends.filter(|(a, b)| a != b) });
+            let nodes = unused.is_none().then_some((a, b));
+            self.navlinks.push(NavLinkUse { name, from, to, nodes, unused });
         }
         self.extras.sort_by_key(|e| (e.from, e.to));
     }

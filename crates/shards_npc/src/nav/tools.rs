@@ -151,12 +151,16 @@ fn nav_info(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
         .navlinks
         .iter()
         .map(|l| {
-            json!({
+            let mut link = json!({
                 "name": l.name,
                 "from": ai_core::spatial::fmt_pos(l.from),
                 "to": ai_core::spatial::fmt_pos(l.to),
                 "used": l.nodes.is_some(),
-            })
+            });
+            if let Some(why) = &l.unused {
+                link["why"] = json!(why);
+            }
+            link
         })
         .collect();
     let r = &nav.report;
