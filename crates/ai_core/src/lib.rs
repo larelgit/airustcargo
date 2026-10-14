@@ -66,7 +66,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 pub use builtin::{AiConditions, StopWhen};
-pub use describe::{AiDescribers, AiKind, Describer, EntityFacts};
+pub use describe::{AdviceFn, AiAdvisors, AiDescribers, AiKind, Describer, EntityFacts};
 pub use failures::{ai_core_error_handler, AiFailures, SystemFailure};
 pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible};
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
@@ -127,6 +127,7 @@ impl Plugin for AiCorePlugin {
             .init_resource::<AiIndex>()
             .init_resource::<AiJournal>()
             .init_resource::<AiDescribers>()
+            .init_resource::<AiAdvisors>()
             .init_resource::<AiTools>()
             .init_resource::<AgentSessions>()
             .init_resource::<AiLineOfSight>()
@@ -213,6 +214,11 @@ pub trait AiAppExt {
     /// A fragment computed from the whole entity (several components, conditions).
     fn register_ai_describer(&mut self, key: &'static str, describe: fn(EntityRef) -> Option<String>) -> &mut Self;
 
+    /// Advice for the subject, computed from the whole world: each line shows in
+    /// `observe` as `ALERT <line>` right under `YOU` (`in hit zone of e6 slam (lands in
+    /// 0.32s): move 2.1m S to leave it`). Return nothing when there is nothing to say.
+    fn register_ai_advice(&mut self, advise: describe::AdviceFn) -> &mut Self;
+
     /// An action tool: journaled, returns the list of changes it caused.
     fn add_ai_tool<A, O, M, S>(&mut self, name: &str, scope: Scope, system: S) -> &mut Self
     where
@@ -265,6 +271,11 @@ impl AiAppExt for App {
 
     fn register_ai_describer(&mut self, key: &'static str, describe: fn(EntityRef) -> Option<String>) -> &mut Self {
         self.world_mut().get_resource_or_init::<AiDescribers>().0.push(Describer { key, describe: Arc::new(describe) });
+        self
+    }
+
+    fn register_ai_advice(&mut self, advise: describe::AdviceFn) -> &mut Self {
+        self.world_mut().get_resource_or_init::<AiAdvisors>().0.push(advise);
         self
     }
 
