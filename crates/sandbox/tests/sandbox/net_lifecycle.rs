@@ -313,6 +313,33 @@ fn a_stands_members_say_how_the_stand_runs_them() {
     assert!(stand.call(C1, "resume", json!({})).ok && stand.call(C1, "pause", json!({})).ok);
 }
 
+#[test]
+fn a_step_and_a_resume_asked_in_one_frame_run_in_the_order_they_were_asked() {
+    let mut stand = stand(1);
+    let ask = |stand: &mut Stand, tool: &str, args: Value| -> u64 {
+        let out = shards::ai_core::call_tool(stand.world_mut(HOST), "dev", tool, args);
+        out.result.get("pending").and_then(Value::as_u64).unwrap_or_else(|| panic!("{tool} was not deferred: {}", out.result))
+    };
+    let polled = |stand: &mut Stand, id: u64| shards::ai_core::call_tool(stand.world_mut(HOST), "dev", "step_poll", json!({"id": id})).result;
+    let from = sim::tick(stand.world(HOST));
+
+    // Two requests land between one pass of the stand's driver and the next: the step first, then
+    // the resume. The stand ends up running, as a game that ran them one after the other.
+    let (step, resume) = (ask(&mut stand, "step", json!({"ticks": 3})), ask(&mut stand, "resume", json!({})));
+    stand.drive();
+    assert!(stand.running, "the resume came last");
+    assert_eq!(sim::tick(stand.world(HOST)), from + 3, "the step ran too");
+    assert!(polled(&mut stand, step).as_str().is_some_and(|t| t.starts_with("ran 3 ticks")), "{}", polled(&mut stand, step));
+    assert!(polled(&mut stand, resume).as_str().is_some_and(|t| t.starts_with("running from tick")), "{}", polled(&mut stand, resume));
+
+    // The other way round it ends paused: a step pauses.
+    let (resume, step) = (ask(&mut stand, "resume", json!({})), ask(&mut stand, "step", json!({"ticks": 2})));
+    stand.drive();
+    assert!(!stand.running, "the step came last");
+    assert!(polled(&mut stand, resume).as_str().is_some_and(|t| t.starts_with("running from tick")));
+    assert!(polled(&mut stand, step).as_str().is_some_and(|t| t.starts_with("ran 2 ticks")));
+}
+
 /// Whether the app was the active one when its exit hooks ran.
 #[derive(Resource)]
 struct ActiveAtExit(bool);

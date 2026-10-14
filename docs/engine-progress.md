@@ -264,7 +264,8 @@ Xvfb показывает его вместе с оверлеем навсетк
 
 Ревью CodeRabbit по PR C3: часы клиента по UDP не идут назад (далеко впереди хоста клиент идёт вдвое медленнее, далеко
 позади прыгает только вперёд; юнит-тесты `client::tests`), события `net_event` старого мира не показываются после мира заново
-(`events_of_the_world_a_snapshot_replaced_are_not_shown_and_do_not_hold_back_the_new_ones`).
+(`events_of_the_world_a_snapshot_replaced_are_not_shown_and_do_not_hold_back_the_new_ones`), `step` и `resume` одного участника
+в одном кадре идут по порядку вызовов (`a_step_and_a_resume_asked_in_one_frame_run_in_the_order_they_were_asked`).
 
 ## E8. Сохранения и настройки (фаза C)
 

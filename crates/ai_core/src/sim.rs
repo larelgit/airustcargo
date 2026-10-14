@@ -428,6 +428,22 @@ pub struct ClockRequest {
     pub requester: String,
 }
 
+/// A deferred request, as the driver takes it.
+#[derive(Clone, Debug)]
+pub enum Request {
+    Step(StepRequest),
+    Clock(ClockRequest),
+}
+
+impl Request {
+    pub fn id(&self) -> u64 {
+        match self {
+            Request::Step(step) => step.id,
+            Request::Clock(clock) => clock.id,
+        }
+    }
+}
+
 /// Where a deferred request is.
 #[derive(Clone, Debug)]
 pub enum StepPoll {
@@ -455,8 +471,9 @@ pub struct DrivenClock {
 #[derive(Default, Debug)]
 pub struct StepQueue {
     next_id: u64,
-    steps: VecDeque<StepRequest>,
-    clock: VecDeque<ClockRequest>,
+    /// Steps and clock changes in the order they were asked: a `resume` after a `step` leaves
+    /// the clock running, as it would where they run right away.
+    requests: VecDeque<Request>,
     /// Taken by the driver, not completed yet.
     running: BTreeSet<u64>,
     finished: VecDeque<(u64, crate::tools::CallOutcome)>,
@@ -477,37 +494,30 @@ impl StepQueue {
     /// Queues a step; returns its id.
     pub fn push_step(&mut self, ticks: u64, until: Vec<crate::builtin::StopWhen>, requester: &str, journal_mark: u64) -> u64 {
         let id = self.next();
-        self.steps.push_back(StepRequest { id, ticks, until, requester: requester.to_owned(), journal_mark });
+        self.requests.push_back(Request::Step(StepRequest { id, ticks, until, requester: requester.to_owned(), journal_mark }));
         id
     }
 
     /// Queues a clock change; returns its id.
     pub fn push_clock(&mut self, action: ClockAction, requester: &str) -> u64 {
         let id = self.next();
-        self.clock.push_back(ClockRequest { id, action, requester: requester.to_owned() });
+        self.requests.push_back(Request::Clock(ClockRequest { id, action, requester: requester.to_owned() }));
         id
     }
 
-    /// The queued steps, oldest first; they count as running until [`complete`](Self::complete)d.
-    pub fn take_steps(&mut self) -> Vec<StepRequest> {
-        let steps: Vec<StepRequest> = self.steps.drain(..).collect();
-        self.running.extend(steps.iter().map(|s| s.id));
-        steps
-    }
-
-    /// The queued clock changes, oldest first; they count as running until completed.
-    pub fn take_clock(&mut self) -> Vec<ClockRequest> {
-        let clock: Vec<ClockRequest> = self.clock.drain(..).collect();
-        self.running.extend(clock.iter().map(|c| c.id));
-        clock
+    /// The queued steps and clock changes, in the order they were asked; they count as running
+    /// until [`complete`](Self::complete)d.
+    pub fn take_requests(&mut self) -> Vec<Request> {
+        let requests: Vec<Request> = self.requests.drain(..).collect();
+        self.running.extend(requests.iter().map(Request::id));
+        requests
     }
 
     /// Request `id` is done; `outcome` is what its call answers (see
     /// [`StepWatch::finish`](crate::builtin::StepWatch::finish), [`finished`](crate::tools::finished)).
     pub fn complete(&mut self, id: u64, outcome: crate::tools::CallOutcome) {
         self.running.remove(&id);
-        self.steps.retain(|s| s.id != id);
-        self.clock.retain(|c| c.id != id);
+        self.requests.retain(|r| r.id() != id);
         self.finished.retain(|(done, _)| *done != id);
         self.finished.push_back((id, outcome));
         while self.finished.len() > FINISHED_KEPT {
@@ -519,7 +529,7 @@ impl StepQueue {
         if let Some((_, outcome)) = self.finished.iter().find(|(done, _)| *done == id) {
             return StepPoll::Done(outcome.clone());
         }
-        let waiting = self.running.contains(&id) || self.steps.iter().any(|s| s.id == id) || self.clock.iter().any(|c| c.id == id);
+        let waiting = self.running.contains(&id) || self.requests.iter().any(|r| r.id() == id);
         if waiting { StepPoll::Pending } else { StepPoll::Unknown }
     }
 
@@ -632,5 +642,17 @@ mod tests {
         assert_eq!(report.to_tick, 7);
         assert_eq!(report.end, StepEnd::Condition("tick 7".into()));
         assert!(is_paused(app.world()));
+    }
+
+    #[test]
+    fn deferred_requests_come_in_the_order_they_were_asked() {
+        let mut queue = StepQueue::default();
+        let step = queue.push_step(2, Vec::new(), "dev", 0);
+        let resume = queue.push_clock(ClockAction::Resume, "dev");
+        let again = queue.push_step(1, Vec::new(), "dev", 0);
+        let taken: Vec<u64> = queue.take_requests().iter().map(Request::id).collect();
+        assert_eq!(taken, [step, resume, again], "a clock change is not run before the step asked first");
+        assert!(matches!(queue.poll(resume), StepPoll::Pending), "taken, not completed yet");
+        assert!(queue.take_requests().is_empty());
     }
 }

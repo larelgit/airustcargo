@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use ai_core::builtin::{apply_clock, StepWatch};
-use ai_core::sim::{self, ClockAction, DrivenClock, StepEnd, StepPoll, StepReport};
+use ai_core::sim::{self, ClockAction, ClockRequest, DrivenClock, Request, StepEnd, StepPoll, StepReport, StepRequest};
 use ai_core::tools::finished;
 use ai_core::invariants::Violation;
 use ai_core::{call_tool, CallOutcome, SimGate, StepQueue, StepRoute, SystemFailure};
@@ -310,80 +310,87 @@ impl Stand {
         }
     }
 
-    /// Runs every deferred request of every member.
+    /// Runs every deferred request of every member, a member's in the order they were asked: a
+    /// `resume` after a `step` leaves the stand running, as it does where they run right away.
     pub fn drive(&mut self) {
         for m in 0..self.len() {
             let queue = self.members[m].queue.clone();
-            let clock = queue.lock().map(|mut q| q.take_clock()).unwrap_or_default();
-            for request in clock {
-                let result = match request.action {
-                    ClockAction::Pause => {
-                        self.running = false;
-                        Ok(format!("paused at tick {}", sim::tick(self.world(m))))
-                    }
-                    ClockAction::Resume => {
-                        self.running = true;
-                        Ok(format!("running from tick {}", sim::tick(self.world(m))))
-                    }
-                    // Refused as a game of its own refuses it (an infinity), the stand untouched.
-                    ClockAction::Speed(x) if !x.is_finite() => apply_clock(self.world_mut(m), ClockAction::Speed(x)),
-                    ClockAction::Speed(x) => {
-                        // As `sim::set_speed`: no negative speed (it would owe ticks forever).
-                        self.speed = x.max(0.0);
-                        // The answer reads the stand's clock: it says the new speed.
-                        self.sync_clock();
-                        let speed = self.speed;
-                        apply_clock(self.world_mut(m), ClockAction::Speed(speed))
-                    }
+            let requests = queue.lock().map(|mut q| q.take_requests()).unwrap_or_default();
+            for request in requests {
+                let (id, outcome) = match request {
+                    Request::Clock(request) => (request.id, self.run_clock(m, &request)),
+                    Request::Step(request) => (request.id, self.run_step(m, &request)),
                 };
-                self.sync_clock();
-                let outcome = finished(self.world(m), request.action.tool(), result.map(Value::String));
                 if let Ok(mut q) = queue.lock() {
-                    q.complete(request.id, outcome);
-                }
-            }
-            let steps = queue.lock().map(|mut q| q.take_steps()).unwrap_or_default();
-            for request in steps {
-                // A step pauses, as `sim::step` does: after it, time stands where it stopped.
-                self.running = false;
-                self.sync_clock();
-                let started = Instant::now();
-                let from_tick = sim::tick(self.world(m));
-                let watch = StepWatch::begin(self.world_mut(m), &request);
-                ai_core::perf::begin_span(self.world_mut(m));
-                let mut end = StepEnd::Completed;
-                for _ in 0..request.ticks {
-                    match self.tick() {
-                        Ok(halted) if halted.is_empty() => {}
-                        Ok(halted) => {
-                            end = MemberHalt::step_end(halted.into_iter().map(|(_, h)| h).collect());
-                            break;
-                        }
-                        Err(e) => {
-                            end = StepEnd::Condition(e);
-                            break;
-                        }
-                    }
-                    let world = self.world_mut(m);
-                    ai_core::activate(world);
-                    if let Some(reason) = watch.check(world) {
-                        end = StepEnd::Condition(reason);
-                        break;
-                    }
-                    if started.elapsed() > Duration::from_secs(ai_core::builtin::STEP_WALL_SECS) {
-                        end = StepEnd::WallClock;
-                        break;
-                    }
-                }
-                let world = self.world_mut(m);
-                let timing = ai_core::perf::span(world);
-                let report = StepReport { from_tick, to_tick: sim::tick(world), end, wall: started.elapsed(), timing };
-                let outcome = watch.finish(world, &report);
-                if let Ok(mut q) = queue.lock() {
-                    q.complete(request.id, outcome);
+                    q.complete(id, outcome);
                 }
             }
         }
+    }
+
+    /// A deferred `pause`, `resume` or `speed` of member `m`.
+    fn run_clock(&mut self, m: usize, request: &ClockRequest) -> CallOutcome {
+        let result = match request.action {
+            ClockAction::Pause => {
+                self.running = false;
+                Ok(format!("paused at tick {}", sim::tick(self.world(m))))
+            }
+            ClockAction::Resume => {
+                self.running = true;
+                Ok(format!("running from tick {}", sim::tick(self.world(m))))
+            }
+            // Refused as a game of its own refuses it (an infinity), the stand untouched.
+            ClockAction::Speed(x) if !x.is_finite() => apply_clock(self.world_mut(m), ClockAction::Speed(x)),
+            ClockAction::Speed(x) => {
+                // As `sim::set_speed`: no negative speed (it would owe ticks forever).
+                self.speed = x.max(0.0);
+                // The answer reads the stand's clock: it says the new speed.
+                self.sync_clock();
+                let speed = self.speed;
+                apply_clock(self.world_mut(m), ClockAction::Speed(speed))
+            }
+        };
+        self.sync_clock();
+        finished(self.world(m), request.action.tool(), result.map(Value::String))
+    }
+
+    /// A deferred `step` of member `m`: stand ticks until it is done.
+    fn run_step(&mut self, m: usize, request: &StepRequest) -> CallOutcome {
+        // A step pauses, as `sim::step` does: after it, time stands where it stopped.
+        self.running = false;
+        self.sync_clock();
+        let started = Instant::now();
+        let from_tick = sim::tick(self.world(m));
+        let watch = StepWatch::begin(self.world_mut(m), request);
+        ai_core::perf::begin_span(self.world_mut(m));
+        let mut end = StepEnd::Completed;
+        for _ in 0..request.ticks {
+            match self.tick() {
+                Ok(halted) if halted.is_empty() => {}
+                Ok(halted) => {
+                    end = MemberHalt::step_end(halted.into_iter().map(|(_, h)| h).collect());
+                    break;
+                }
+                Err(e) => {
+                    end = StepEnd::Condition(e);
+                    break;
+                }
+            }
+            let world = self.world_mut(m);
+            ai_core::activate(world);
+            if let Some(reason) = watch.check(world) {
+                end = StepEnd::Condition(reason);
+                break;
+            }
+            if started.elapsed() > Duration::from_secs(ai_core::builtin::STEP_WALL_SECS) {
+                end = StepEnd::WallClock;
+                break;
+            }
+        }
+        let world = self.world_mut(m);
+        let timing = ai_core::perf::span(world);
+        let report = StepReport { from_tick, to_tick: sim::tick(world), end, wall: started.elapsed(), timing };
+        watch.finish(world, &report)
     }
 
     /// One frame of a stand driven from outside in real time (`--stand N`): every member
