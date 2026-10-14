@@ -39,7 +39,8 @@ fn hurt(name: &str) -> Value {
 #[test]
 fn a_broken_game_rule_stops_the_step_at_its_tick() {
     let mut app = sandbox::test_app(42);
-    // Above the max: below 0 the boss dies, and death keeps its health at 0.
+    // Above the max. (Below 0 a living boss dies, and death writes its health back as 0:
+    // the lower bound is tested on a dead one, below.)
     boss_health(&mut app, 700.0);
     let out = called(&mut app, "step", json!({"ticks": 10}));
     assert_eq!(text(&out), "ran 1 ticks (0 → 1), stopped: invariant health_in_range violated at tick 1");
@@ -55,6 +56,20 @@ fn a_broken_game_rule_stops_the_step_at_its_tick() {
     let next = called(&mut app, "step", json!({"ticks": 10}));
     assert_eq!(text(&next), "ran 10 ticks (1 → 11)");
     assert!(next.halted.is_none());
+}
+
+#[test]
+fn health_below_zero_breaks_the_game_rule_of_a_dead_boss() {
+    let mut app = sandbox::test_app(42);
+    // A dead fighter keeps the health it is set to (death only rewrites a living one's), and
+    // the boss leaves no remains: its body stays to carry a negative value.
+    boss_health(&mut app, 0.0);
+    assert_eq!(step(&mut app, 1), "ran 1 ticks (0 → 1)", "0 is in range: the boss dies, nothing halts");
+    boss_health(&mut app, -5.0);
+    let out = called(&mut app, "step", json!({"ticks": 10}));
+    assert_eq!(text(&out), "ran 1 ticks (1 → 2), stopped: invariant health_in_range violated at tick 2");
+    let line = "2 [error] invariant health_in_range violated at tick 2: e6 Health.current = -5 outside 0..=600";
+    assert!(journal(&app, JournalKind::Error).iter().any(|l| l == line), "{:?}", journal(&app, JournalKind::Error));
 }
 
 #[test]
@@ -206,6 +221,27 @@ fn the_world_rule_covers_the_corridor_the_course_and_the_region() {
     called(&mut app, "regen", json!({"region": "wilds", "seed": 42}));
     assert!(!step(&mut app, 30).contains("stopped"), "the player at the region's gate is in the world");
     assert!(app.world().resource::<AiInvariants>().violations().is_empty());
+}
+
+#[test]
+fn the_world_rule_leaves_out_the_voids_beside_the_corridor_and_the_lane() {
+    // Where bodies belong: the corridor, the lane of the course, the air over the canyon.
+    let mut app = sandbox::test_app(42);
+    for (x, z, y) in [(30.0, 0.0, 1.0), (60.0, 0.0, 1.0), (110.0, 14.0, 12.0)] {
+        called(&mut app, "teleport", json!({"id": "e5", "x": x, "z": z, "y": y}));
+        assert!(!step(&mut app, 1).contains("stopped"), "e5 at ({x}, {z}, {y}) is in the world");
+    }
+
+    // The bounding box of the arena layout covers the void beside the corridor, and the
+    // course's the void beside its lane: neither is part of the world.
+    for (x, z, line_x, line_z) in [(30.0, 15.0, "30.0", "15.0"), (60.0, -12.0, "60.0", "-12.0")] {
+        let mut app = sandbox::test_app(42);
+        called(&mut app, "teleport", json!({"id": "e5", "x": x, "z": z, "y": 1.0}));
+        let out = step(&mut app, 10);
+        assert_eq!(out, "ran 1 ticks (0 → 1), stopped: invariant bodies_in_world violated at tick 1");
+        let line = format!("1 [error] invariant bodies_in_world violated at tick 1: e5 outside the world: x = {line_x}, z = {line_z}");
+        assert!(journal(&app, JournalKind::Error).contains(&line), "{:?}", journal(&app, JournalKind::Error));
+    }
 }
 
 #[test]

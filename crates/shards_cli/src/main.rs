@@ -680,7 +680,8 @@ fn random_input(rng: &mut SplitMix, ids: &[String]) -> (&'static str, Value) {
         0 => ("move", json!({"dir": dir(rng), "meters": 1 + rng.below(8)})),
         1 => match target(rng) {
             Some(id) if rng.below(2) == 0 => ("attack", json!({"target": id, "repeat": rng.below(2) == 0})),
-            _ => ("attack", json!({})),
+            // `attack` needs a target; a plain swing in the facing direction is `light_attack`.
+            _ => ("light_attack", json!({})),
         },
         _ => match target(rng) {
             Some(id) if rng.below(2) == 0 => ("dodge", json!({"away_from": id})),
@@ -771,7 +772,14 @@ mod tests {
         assert_eq!(run(7), run(7));
         assert_ne!(run(7), run(8));
         let tools: Vec<&str> = run(7).iter().map(|(t, _)| *t).collect();
-        assert!(["move", "attack", "dodge"].iter().all(|t| tools.contains(t)), "{tools:?}");
+        assert!(["move", "attack", "light_attack", "dodge"].iter().all(|t| tools.contains(t)), "{tools:?}");
+        // `attack` takes a target (a call without one is refused), with entities seen or not.
+        for ids in [ids_in(observation), Vec::new()] {
+            let mut rng = SplitMix(3);
+            let inputs: Vec<_> = (0..200).map(|_| random_input(&mut rng, &ids)).collect();
+            assert!(inputs.iter().filter(|(t, _)| *t == "attack").all(|(_, args)| args["target"].is_string()), "{inputs:?}");
+            assert!(inputs.iter().any(|(t, _)| *t == "light_attack"), "a plain swing is still sent");
+        }
     }
 
     #[test]

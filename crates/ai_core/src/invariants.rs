@@ -21,10 +21,11 @@
 //! rules, so a replay from a snapshot checks them too.
 //!
 //! Rules run where the simulation runs: [`InvariantSystems`] is a set a game can gate
-//! (the engine skips it on a network client, whose world follows the host's), and a
-//! client hands the rule changes (`assert_add`, `assert_remove`, `assert_reset`) to its host
-//! ([`NetRoute::Host`]). `assert_list` is a query, and a query runs where it is called: a
-//! client refuses it and says to call it on the host ([`NetRoute::HostOnly`]).
+//! (the engine skips it on a network client, whose world follows the host's), and the four
+//! `assert_*` tools are [`NetRoute::HostOnly`]: a client refuses them and says the rules are
+//! checked on the host. (They are Dev tools, which a host caps for a guest to the player's
+//! scope, so handing them over would be refused there while the client reported `ok`; and
+//! `assert_list` is a query, which runs where it is called.)
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -37,7 +38,10 @@ use crate::journal::{self, AiJournal, JournalKind};
 use crate::replay;
 use crate::session::Scope;
 use crate::sim::{self, Halt};
-use crate::tools::{register_tool, AiTools, Call, NetRoute, ToolKind, ToolResult, ON_THE_HOST};
+use crate::tools::{register_tool, AiTools, Call, NetRoute, ToolKind, ToolResult};
+
+/// Why a client refuses the `assert_*` tools ([`NetRoute::HostOnly`]).
+pub const RULES_ON_THE_HOST: &str = "the rules are checked on the host: call it there";
 
 /// A game rule: `Some(explanation)` while it is broken.
 pub type Invariant = fn(&World) -> Option<String>;
@@ -153,17 +157,13 @@ pub(crate) fn plugin(app: &mut App, replays: bool) {
     register_tool(world, "assert_list", Scope::Dev, ToolKind::Query, assert_list_tool);
     register_tool(world, "assert_remove", Scope::Dev, ToolKind::Control, assert_remove_tool);
     register_tool(world, "assert_reset", Scope::Dev, ToolKind::Control, assert_reset_tool);
-    // The rules live where they are checked: a client hands the changes to its host. The list
-    // is a query, which never goes to the host (it would journal the hand-over): on a client
-    // it is refused with the way to ask the host.
+    // The rules live where they are checked, on the host. A client does not hand the changes
+    // over: the host caps a guest's forwarded calls to the player scope, so it would refuse
+    // these Dev tools while the client's call reported `ok`. The list is a query, which never
+    // goes to the host either. A client refuses all four and says where to call them.
     let mut tools = world.get_resource_or_init::<AiTools>();
-    for (name, route) in [
-        ("assert_add", NetRoute::Host),
-        ("assert_list", NetRoute::HostOnly(ON_THE_HOST)),
-        ("assert_remove", NetRoute::Host),
-        ("assert_reset", NetRoute::Host),
-    ] {
-        if let Err(why) = tools.set_route(name, route) {
+    for name in ["assert_add", "assert_list", "assert_remove", "assert_reset"] {
+        if let Err(why) = tools.set_route(name, NetRoute::HostOnly(RULES_ON_THE_HOST)) {
             panic!("invariants: {why}");
         }
     }
@@ -178,7 +178,7 @@ fn check_after_tick(world: &mut World) {
         return;
     };
     // A failed system left this tick half-done, and the failure halted the game already.
-    let broken: Vec<(usize, String)> = if crate::failures::failed_in(world, tick) {
+    let broken: Vec<(usize, String)> = if crate::failures::failed_this_tick(world) {
         Vec::new()
     } else {
         invariants

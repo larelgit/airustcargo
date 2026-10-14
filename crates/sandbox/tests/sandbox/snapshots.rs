@@ -678,6 +678,25 @@ fn a_replay_from_a_snapshot_names_the_first_diverging_tick_and_refuses_other_con
 }
 
 #[test]
+fn a_replay_whose_start_does_not_restore_exactly_says_so_in_its_headline() {
+    let file = Scratch::new("inexact");
+    let (_, mut recording) = recorded_from_a_snapshot(&file);
+    // A newer build that hashes state the snapshot cannot carry: the restore finds the world
+    // is not what the snapshot says, though every entity matches.
+    recording.start.as_mut().unwrap().state_hash ^= 1;
+    let start_tick = recording.start.as_ref().unwrap().tick;
+    let mut copy = sandbox::test_app(42);
+    replay::play(copy.world_mut(), recording.clone()).unwrap();
+    ok(&mut copy, "step", json!({"ticks": recording.end.tick - start_tick}));
+    copy.update();
+    let report = copy.world().resource::<shards::ai_core::AiReplay>().report().cloned().expect("playback finished");
+    assert_eq!(report.diverged_at, Some(start_tick), "{report}");
+    let headline = report.headline();
+    let expected = format!("DIVERGED at tick {start_tick}: no details: the start does not restore exactly: the state hash is ");
+    assert!(headline.contains(&expected), "`--verify` prints the headline, so it carries the reason: {headline}");
+}
+
+#[test]
 fn loading_a_snapshot_ends_a_playback_and_starts_a_new_recording() {
     let file = Scratch::new("takeover");
     let (_, recording) = recorded_from_a_snapshot(&file);

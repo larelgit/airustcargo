@@ -1367,8 +1367,22 @@ fn apply_start(world: &mut World) {
                     JournalKind::Error,
                     format!("replay diverged at tick {tick}: {}", report.explain_differences()),
                 );
+                // `--verify` prints the headline, not the journal: it says what the restore found.
+                let found: Vec<&str> = report.differences.iter().take(3).map(String::as_str).collect();
+                let more = report.differences.len().saturating_sub(found.len());
+                let mut why = format!("the start does not restore exactly: {}", found.join("; "));
+                if more > 0 {
+                    why.push_str(&format!("; … (+{more})"));
+                }
                 if let Some(playback) = &mut world.resource_mut::<AiReplay>().playback {
                     playback.diverged_at.get_or_insert(tick);
+                    playback.divergence.get_or_insert(Divergence {
+                        tick,
+                        entities: Vec::new(),
+                        more: 0,
+                        checks: Vec::new(),
+                        no_details: Some(why),
+                    });
                 }
             }
         }

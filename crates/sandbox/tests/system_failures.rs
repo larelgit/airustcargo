@@ -146,6 +146,40 @@ fn missing_floor() {
     panic!("the floor is missing");
 }
 
+/// Gives way at tick 3 while `Boom` is set: another run of the same ticks does not.
+#[derive(Resource)]
+struct Boom(bool);
+
+fn flaky_ice(tick: Res<SimTick>, boom: Res<Boom>) {
+    if tick.0 == 3 && boom.0 {
+        panic!("the ice gave way");
+    }
+}
+
+#[test]
+fn a_rewind_past_a_failure_checks_the_rules_of_the_tick_that_failed() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let mut app = sandbox::test_app(42);
+    app.insert_resource(Boom(true))
+        .add_systems(FixedUpdate, flaky_ice.in_set(SimSet::Resolve))
+        // Broken at tick 3 and not before or after.
+        .add_ai_invariant("only_at_three", |w| (shards::ai_core::sim::tick(w) == 3).then(|| "broken at tick 3".to_owned()));
+    ok(&mut app, "step", json!({"ticks": 1}));
+    let before = shards::ai_core::snapshot::capture(app.world()).unwrap();
+
+    // The failure halted tick 3, and its rules were left alone.
+    let out = ok(&mut app, "step", json!({"ticks": 10}));
+    assert!(text(&out).contains("stopped: gameplay system system_failures::flaky_ice panicked at tick 3"), "{}", text(&out));
+    assert!(app.world().resource::<shards::ai_core::AiInvariants>().violations().is_empty());
+
+    // Back to tick 1 and on another way (the system does not fail now): tick 3 is a tick like
+    // any other, and the rule that is broken in it fires.
+    app.world_mut().resource_mut::<Boom>().0 = false;
+    shards::ai_core::snapshot::restore(app.world_mut(), &before, false).unwrap();
+    let out = ok(&mut app, "step", json!({"ticks": 5}));
+    assert_eq!(text(&out), "ran 2 ticks (1 → 3), stopped: invariant only_at_three violated at tick 3");
+}
+
 #[test]
 fn a_panicking_tool_is_not_a_gameplay_failure() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());

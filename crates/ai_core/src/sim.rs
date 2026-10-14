@@ -526,6 +526,17 @@ impl StepQueue {
     }
 }
 
+/// A finished deferred request, with the whole outcome the call would have answered right
+/// away (`halted` included); `None` while it is pending, unknown, or steps run here.
+pub fn finished_request(world: &World, id: u64) -> Option<crate::tools::CallOutcome> {
+    let queue = deferred_queue(world)?;
+    let queue = queue.lock().ok()?;
+    match queue.poll(id) {
+        StepPoll::Done(outcome) => Some(outcome),
+        StepPoll::Pending | StepPoll::Unknown => None,
+    }
+}
+
 /// The queue, when this world's steps are deferred.
 pub fn deferred_queue(world: &World) -> Option<Arc<Mutex<StepQueue>>> {
     match world.get_resource::<StepRoute>() {
