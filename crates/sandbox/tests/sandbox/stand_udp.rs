@@ -61,15 +61,28 @@ impl UdpStand {
         let dir = std::env::temp_dir().join(format!("sandbox-stand-udp-{}-{clients}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        // Every process of the stand writes its output to one file, which a failure shows.
+        let log = std::fs::File::create(dir.join("out.log")).unwrap();
         let host = Command::new(env!("CARGO_BIN_EXE_sandbox"))
             .args(["--stand", &clients.to_string(), "--stand-udp", "--headless", "--port", "0", "--port-file", "g.port"])
             .current_dir(&dir)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(log.try_clone().unwrap())
+            .stderr(log)
             .spawn()
             .unwrap();
         UdpStand { dir, host }
+    }
+
+    /// What the stand's processes printed, and the `net` part of each member's status: what a
+    /// failed wait shows.
+    fn report(&self) -> String {
+        let log = std::fs::read_to_string(self.dir.join("out.log")).unwrap_or_default();
+        let members: Vec<String> = ["g.port", "g.port.c1", "g.port.c2"]
+            .iter()
+            .map(|file| format!("{file}: {}", self.status(file).map_or_else(|| "no answer".to_owned(), |s| s["net"].to_string())))
+            .collect();
+        format!("{}\n--- output of the stand\n{log}", members.join("\n"))
     }
 
     /// The BRP port in `g.port` (`g.port.c1`, …), once the game has written it.
@@ -107,8 +120,8 @@ impl UdpStand {
             if let Some(found) = ready(self) {
                 return found;
             }
-            assert!(self.host.try_wait().unwrap().is_none(), "the host exited while waiting for {what}");
-            assert!(started.elapsed() < limit, "not there within {limit:?}: {what}");
+            assert!(self.host.try_wait().unwrap().is_none(), "the host exited while waiting for {what}\n{}", self.report());
+            assert!(started.elapsed() < limit, "not there within {limit:?}: {what}\n{}", self.report());
             std::thread::sleep(Duration::from_millis(50));
         }
     }
