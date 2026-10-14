@@ -63,7 +63,7 @@
 //!                  ActionSystems::Effects   heal, stamina, statuses, game effects
 //! SimSet::Move     (controller)             integrates LocomotionInput, external included
 //! SimSet::Resolve  ActionSystems::Hits      overlaps → damage pipeline → events
-//!                  ActionSystems::Fighters  sprint drain, regeneration, cooldowns
+//!                  ActionSystems::Fighters  sprint drain, regeneration, cooldowns, finished actions end
 //!                  ActionSystems::Statuses  status ticks and expiry
 //!                  ActionSystems::Deaths    fighters at 0 health die
 //! ```
@@ -130,7 +130,7 @@ pub enum ActionSystems {
     Effects,
     /// `SimSet::Resolve`: hit detection and the damage pipeline.
     Hits,
-    /// `SimSet::Resolve`: sprint drain, regeneration, cooldowns.
+    /// `SimSet::Resolve`: sprint drain, regeneration, cooldowns; actions that ran out end.
     Fighters,
     /// `SimSet::Resolve`: statuses tick and expire.
     Statuses,
@@ -246,6 +246,7 @@ impl Plugin for ActionPlugin {
                     machine::apply_effects.in_set(ActionSystems::Effects),
                     combat::resolve_hits.in_set(ActionSystems::Hits),
                     fighter::update_fighters.in_set(ActionSystems::Fighters),
+                    machine::finish_actions.in_set(ActionSystems::Fighters),
                     status::update_statuses.in_set(ActionSystems::Statuses),
                     combat::check_deaths.in_set(ActionSystems::Deaths),
                 ),

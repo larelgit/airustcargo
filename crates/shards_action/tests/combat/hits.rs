@@ -166,6 +166,27 @@ fn one_action_hits_a_target_once_however_long_it_overlaps() {
     assert_eq!(lines(&app, &format!("{h} -> {b}")), [format!("30 {h} -> {b} heavy -0 (hp 100, god mode)")]);
 }
 
+#[test]
+fn the_last_tick_of_an_action_still_hits_and_still_protects() {
+    // The jab's hit window and the dash's i-frames both reach the end of their action,
+    // and the tick that ends an action is still part of it.
+    let mut app = app();
+    let world = app.world_mut();
+    let dasher = fighter(world, "Hero", "edges", "heroes", Vec3::new(-1.0, 0.0, 0.0), N);
+    let idle = fighter(world, "Hero", "edges", "heroes", Vec3::new(1.0, 0.0, 0.0), N);
+    let foe = fighter(world, "Dummy", "edges", "monsters", Vec3::new(0.0, 0.0, -1.5), S);
+    let (d, i, f) = (id(&app, dasher), id(&app, idle), id(&app, foe));
+    press(&mut app, foe, "light");
+    press(&mut app, dasher, "dodge");
+    step(&mut app, 14);
+    assert!(lines(&app, "jab").is_empty(), "nothing before the last tick: {:#?}", journal(&app));
+    step(&mut app, 1);
+    assert_eq!(action(&app, foe), "idle", "the jab is over after its last tick");
+    // Targets in `AiId` order: the dasher first.
+    assert_eq!(lines(&app, "jab"), [format!("15 {d} evaded {f} jab"), format!("15 {f} -> {i} jab -7 (hp 93)")]);
+    assert_eq!(hp(&app, dasher), 100.0);
+}
+
 /// Spawns `n` fighters so that a query visits them in the opposite of `AiId` order.
 fn spawn_out_of_order(app: &mut App, spots: &[(Vec3, Vec3, &str, &str)]) -> Vec<Entity> {
     #[derive(Component)]

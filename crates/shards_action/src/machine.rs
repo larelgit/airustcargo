@@ -10,8 +10,9 @@
 //!
 //! Timing: everything is decided between ticks. An action started in tick `N` runs
 //! during tick `N` (its time goes from 0 to `dt`); it ends in the tick its time
-//! reaches its length, and the next action can start in the tick after. A window is
-//! open in a tick when it touches the time that tick covered.
+//! reaches its length (that tick still counts: hits and defensive windows see it, the
+//! state clears at the end of the tick), and the next action can start in the tick
+//! after. A window is open in a tick when it touches the time that tick covered.
 
 use ai_core::{AiId, AiIndex};
 use bevy::ecs::query::QueryData;
@@ -581,7 +582,7 @@ pub(crate) fn run_machines(
 
         // The running action (perhaps the one just started) takes this tick.
         let mut external = Vec3::ZERO;
-        let mut ended = false;
+        let mut gone = false;
         if let Some(run) = f.state.current.as_mut() {
             match db.get::<ActionDef>(&run.action) {
                 Some(def) => {
@@ -604,14 +605,13 @@ pub(crate) fn run_machines(
                             commands.trigger(telegraph(entity, def, run, here));
                         }
                     }
-                    ended = run.t >= run.length - EPS;
                     run.refresh(def);
                 }
                 // Its definition left content (a hot reload): it stops.
-                None => ended = true,
+                None => gone = true,
             }
         }
-        if ended {
+        if gone {
             f.state.current = None;
         }
 
@@ -836,6 +836,17 @@ fn steer_body(f: &mut FighterDataItem, db: &ContentDb, external: Vec3) {
     }
     if owns || out_of_stamina {
         loco.sprint = false;
+    }
+}
+
+/// `SimSet::Resolve`, after hits: actions whose time ran out in this tick end now. The
+/// machine leaves them in place so the tick that ends an action still hits and
+/// defends (hit windows, i-frames, guards), as the timing rules say.
+pub(crate) fn finish_actions(mut fighters: Query<&mut ActionState>) {
+    for mut state in &mut fighters {
+        if state.current.as_ref().is_some_and(|r| r.t >= r.length - EPS) {
+            state.current = None;
+        }
     }
 }
 

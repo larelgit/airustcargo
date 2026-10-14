@@ -1,0 +1,11 @@
+// Corner cases of the timeline: windows that reach the end of their action.
+{
+    // Its only hit tick is the action's last.
+    "jab": (
+        net_id: 30,
+        phases: [("windup", 0.2), ("recovery", 0.05)],
+        hits: [(span: Secs(0.24, 0.25), shape: Sphere(radius: 3), damage: 7)],
+    ),
+    // Protected from the first tick to the last.
+    "dash": (net_id: 31, phases: [("dash", 0.25)], iframes: [Phase("dash")], steer: Move),
+}
