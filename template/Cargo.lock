@@ -5203,6 +5203,7 @@ dependencies = [
  "shards_content",
  "shards_core",
  "shards_motion",
+ "shards_world",
 ]
 
 [[package]]
@@ -5263,6 +5264,20 @@ version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "shards_world"
+version = "0.2.0"
+dependencies = [
+ "ai_core",
+ "bevy",
+ "schemars",
+ "serde",
+ "serde_json",
+ "shards_content",
+ "shards_core",
+ "shards_motion",
 ]
 
 [[package]]

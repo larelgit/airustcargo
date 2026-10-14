@@ -5,6 +5,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use ai_core::replay::{self, Replay};
+#[cfg(feature = "render")]
 use ai_core::sim::{StepEnd, StepReport};
 use ai_core::AiReplay;
 use bevy::app::AppExit;
@@ -59,6 +60,14 @@ struct Args {
     /// or 1. Runs nothing.
     #[arg(long)]
     check_content: bool,
+    /// Generate REGION (a `region` or `dungeon` content id) for every seed of `--seeds`,
+    /// print the batch report, exit 0 (every seed passed) or 1. Runs no game.
+    #[arg(long, value_name = "REGION")]
+    worldgen_report: Option<String>,
+    /// Seeds for --worldgen-report: `1..1000` (both ends included), `7`, `1,5,10..20`.
+    /// Default 1..100.
+    #[arg(long, requires = "worldgen_report")]
+    seeds: Option<String>,
 }
 
 /// The standard game `main`: parses the command line into an [`EngineConfig`], calls
@@ -82,6 +91,9 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
     }
     if args.check_content {
         return check_content(&build, config);
+    }
+    if let Some(region) = &args.worldgen_report {
+        return worldgen_report(&build, config, region, args.seeds.as_deref().unwrap_or("1..100"));
     }
     if args.verify
         && let Some(r) = recording.take()
@@ -180,9 +192,8 @@ fn verify(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, recording
         return ExitCode::from(2);
     }
     let started = Instant::now();
-    let failures = match ai_core::sim::step(app.world_mut(), end, Duration::from_secs(24 * 3600), |_| None) {
-        Ok(StepReport { end: StepEnd::SystemFailed(failures), .. }) => failures,
-        Ok(_) => Vec::new(),
+    let failures = match crate::testing::run_to(&mut app, end, Duration::from_secs(60)) {
+        Ok(failures) => failures,
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::from(2);
@@ -320,6 +331,38 @@ fn check_content(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig) ->
     }
 }
 
+/// `--worldgen-report REGION --seeds 1..1000`: the region generated for every seed from the
+/// content on disk, the batch report printed, exit 0 (every seed passed) or 1. For CI.
+fn worldgen_report(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, region: &str, seeds: &str) -> ExitCode {
+    let config = EngineConfig { headless: true, testing: true, port: None, paused: true, crash_replays: false, hot_reload: false, ..config };
+    let app = build(&config);
+    let kinds = app.world().resource::<ContentKinds>().clone();
+    let root = asset_root(app.world());
+    let sources = match shards_content::db::read_dir(&root) {
+        Ok(sources) => sources,
+        Err(e) => {
+            println!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let db = shards_content::ContentDb::build(&kinds, &sources);
+    let errors = db.errors().count();
+    if errors > 0 {
+        println!("warning: content has {errors} errors (--check-content lists them); generating with what loaded");
+    }
+    let worldgen = app.world().resource::<shards_world::WorldGen>().clone();
+    match shards_world::report::run(&db, &worldgen, region, seeds) {
+        Ok(report) => {
+            print!("{report}");
+            if report.all_passed() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+        }
+        Err(e) => {
+            println!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// `kill` (SIGTERM) and a closed terminal (SIGHUP) end the game the way Ctrl+C does:
 /// through `AppExit`, so what it wrote at start (the BRP token, `--port-file`) is
 /// removed. A signal the game was started with ignored (`nohup`) stays ignored; a
@@ -443,5 +486,27 @@ mod tests {
         });
         assert_eq!(recording.end.tick, 0);
         assert_eq!(verify(&game, config, recording), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn worldgen_report_checks_a_region_over_seeds_without_a_game() {
+        let parse = |args: &[&str]| Args::try_parse_from(args.iter().copied());
+        assert!(parse(&["game", "--seeds", "1..10"]).is_err(), "--seeds belongs to --worldgen-report");
+        let args = parse(&["game", "--worldgen-report", "tiny", "--seeds", "1..10"]).unwrap();
+        assert_eq!((args.worldgen_report.as_deref(), args.seeds.as_deref()), (Some("tiny"), Some("1..10")));
+
+        let config = content("worldgen", "Totem");
+        let dir = std::path::PathBuf::from(&config.asset_dir).join("content");
+        let files = [
+            ("w.socket_rules.ron", r#"{ "default": (kinds: ["grass"], passable: ["grass"]) }"#),
+            ("w.tile.ron", r#"{ "field": (sockets: (n: "grass", e: "grass", s: "grass", w: "grass"), slots: [(at: (0.0, 0.0, 0.0), accepts: ["spawn"])]) }"#),
+            ("w.poi.ron", r#"{ "spawn": () }"#),
+            ("w.region.ron", r#"{ "tiny": (size: (2, 2), tile_size: 8.0, version: 1, pois: [(poi: "spawn")]) }"#),
+        ];
+        for (name, text) in files {
+            std::fs::write(dir.join(name), text).unwrap();
+        }
+        assert_eq!(worldgen_report(&game, config.clone(), "tiny", "1..50"), ExitCode::SUCCESS);
+        assert_eq!(worldgen_report(&game, config, "tinny", "1..5"), ExitCode::FAILURE, "an unknown region fails");
     }
 }
