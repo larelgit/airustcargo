@@ -278,6 +278,12 @@ pub trait AiAppExt {
     /// name replaces the first.
     fn add_replay_check(&mut self, name: &str, check: fn(&World) -> u64) -> &mut Self;
 
+    /// [`add_replay_check`](Self::add_replay_check) for state that may be absent: while
+    /// `check` returns `None` it adds nothing to the hash, not even its name, so a game hashes
+    /// the same whether or not that state ever existed (the level module's `level`: a game
+    /// without placed levels hashes as one without the module).
+    fn add_optional_replay_check(&mut self, name: &str, check: fn(&World) -> Option<u64>) -> &mut Self;
+
     /// Adds field `key` to `ai/status` (`shards status`), computed on every call, e.g.
     /// the engine's version and modules. A second field with the same key replaces
     /// the first.
@@ -401,6 +407,11 @@ impl AiAppExt for App {
 
     fn add_replay_check(&mut self, name: &str, check: fn(&World) -> u64) -> &mut Self {
         self.world_mut().get_resource_or_init::<replay::ReplayHashing>().add_check(name, check);
+        self
+    }
+
+    fn add_optional_replay_check(&mut self, name: &str, check: fn(&World) -> Option<u64>) -> &mut Self {
+        self.world_mut().get_resource_or_init::<replay::ReplayHashing>().add_optional_check(name, check);
         self
     }
 

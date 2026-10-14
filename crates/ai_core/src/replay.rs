@@ -484,6 +484,16 @@ pub enum ReplaySystems {
 /// A game's own contribution to every replay check.
 pub type ReplayCheck = fn(&World) -> u64;
 
+/// A contribution to every replay check for state that may be absent: `None` adds nothing,
+/// not even the check's name.
+pub type OptionalReplayCheck = fn(&World) -> Option<u64>;
+
+#[derive(Clone, Copy)]
+enum HashedCheck {
+    Always(ReplayCheck),
+    WhenSome(OptionalReplayCheck),
+}
+
 /// What goes into [`state_hash`] besides AI-visible entities, and what stays out.
 #[derive(Resource, Default)]
 pub struct ReplayHashing {
@@ -491,7 +501,7 @@ pub struct ReplayHashing {
     ignored: HashSet<TypeId>,
     /// Game data outside AI-visible entities
     /// ([`AiAppExt::add_replay_check`](crate::AiAppExt::add_replay_check)), by name.
-    checks: Vec<(String, ReplayCheck)>,
+    checks: Vec<(String, HashedCheck)>,
     /// Components already reported as not serializable.
     reported: HashSet<&'static str>,
 }
@@ -508,6 +518,18 @@ impl ReplayHashing {
     }
 
     pub fn add_check(&mut self, name: &str, check: ReplayCheck) {
+        self.push_check(name, HashedCheck::Always(check));
+    }
+
+    /// [`add_check`](Self::add_check) for state that may be absent (no level placed): while
+    /// `check` returns `None` the hash is what it would be without the check. So the hash
+    /// depends on the state only, never on whether the state existed before (a snapshot taken
+    /// before the first level loads exactly after one came and went).
+    pub fn add_optional_check(&mut self, name: &str, check: OptionalReplayCheck) {
+        self.push_check(name, HashedCheck::WhenSome(check));
+    }
+
+    fn push_check(&mut self, name: &str, check: HashedCheck) {
         self.checks.retain(|(n, _)| n != name);
         self.checks.push((name.to_owned(), check));
     }
@@ -561,8 +583,15 @@ fn hash_state(world: &World) -> (u64, Vec<&'static str>) {
         }
     }
     for (name, check) in hashing.map(|c| c.checks.as_slice()).unwrap_or_default() {
+        let value = match check {
+            HashedCheck::Always(check) => check(world),
+            HashedCheck::WhenSome(check) => match check(world) {
+                Some(value) => value,
+                None => continue,
+            },
+        };
         h.bytes(name.as_bytes());
-        h.u64(check(world));
+        h.u64(value);
     }
     failed.sort_unstable();
     failed.dedup();
