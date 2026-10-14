@@ -37,12 +37,14 @@ use bevy::gltf::Gltf;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 use shards_content::ContentDb;
+use shards_core::Predicted;
 use shards_motion::MotionState;
 
 use crate::anim::{select_clip_for, AnimSet, Animated, AnimationCue, BodyStatus, crossed_cues};
 use crate::def::{ActionDef, MovesetDef};
 use crate::fighter::{Dead, Fighter};
 use crate::machine::ActionState;
+use crate::predict::PredictedAction;
 
 /// A seeked clip stops this far (seconds) before its end: Bevy's player wraps a time at the
 /// duration back to zero, which would show the first pose in place of the last.
@@ -256,6 +258,9 @@ pub struct Driven {
     animated: &'static Animated,
     bound: &'static mut AnimationBound,
     state: Option<&'static ActionState>,
+    /// A client's own body shows the action it predicts, not the host's older state.
+    shown: Option<&'static PredictedAction>,
+    predicted: Has<Predicted>,
     motion: Option<&'static MotionState>,
     fighter: Option<&'static Fighter>,
     dead: Has<Dead>,
@@ -277,7 +282,7 @@ pub fn drive(
     let overstep = fixed.overstep().as_secs_f32();
     let frozen = time.delta_secs() <= 0.0;
     let standing = MotionState::default();
-    for DrivenItem { entity, animated: set_ref, mut bound, state, motion, fighter, dead } in &mut animated {
+    for DrivenItem { entity, animated: set_ref, mut bound, state, shown, predicted, motion, fighter, dead } in &mut animated {
         let (Some(set), Some(built)) = (db.get::<AnimSet>(&set_ref.animset), graphs.built(&set_ref.animset)) else {
             continue;
         };
@@ -288,7 +293,7 @@ pub fn drive(
 
         // The running action as (key, seconds in, length). One that has a hold loop (a raised
         // block) is not looked ahead: it would run past the loop's end.
-        let run = state.and_then(|s| s.current.as_ref());
+        let run = if predicted { shown.map(|p| &p.run) } else { state.and_then(|s| s.current.as_ref()) };
         let def = run.and_then(|r| db.get::<ActionDef>(&r.action));
         let action = run.map(|r| {
             let key = set.action_key(&r.action, r.anim.as_deref(), def.map_or(&[], |d| d.tags.as_slice()));

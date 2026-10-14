@@ -29,6 +29,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use shards_core::{predicts, NetSet};
 
 pub use world::{ColliderInfo, Penetration, PhysicsWorld, RayHit, ShapeHit};
 
@@ -455,6 +456,12 @@ impl Plugin for PhysicsPlugin {
                 (
                     PhysicsSystems::Sync.before(SimSet::Input),
                     PhysicsSystems::SyncAfterMove.after(SimSet::Move).before(SimSet::Resolve),
+                    // A client's prediction sees the replicated world where the host had it.
+                    // Before the simulation (as the core plugin orders it too): motion also
+                    // runs without it.
+                    NetSet::PredictInput.after(PhysicsSystems::Sync),
+                    NetSet::Predict.after(PhysicsSystems::Sync).before(PhysicsSystems::SyncAfterMove),
+                    (NetSet::PredictInput, NetSet::Predict, NetSet::PredictEnd).chain().before(SimSet::Input).run_if(predicts),
                 ),
             )
             .add_systems(

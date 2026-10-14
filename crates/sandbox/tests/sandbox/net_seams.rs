@@ -6,26 +6,31 @@ use std::collections::BTreeSet;
 use shards::ai_core::state::{apply_changes, encode_entity, encode_replicated, encode_resources, StateChanges};
 use shards::ai_core::{replay, sim, AiInvariants, AiVisible};
 use shards::bevy::ecs::schedule::{ScheduleLabel, SystemSet};
+use shards::core::NetSet;
 use shards::prelude::*;
 use shards::serde_json::json;
 
 use crate::common::*;
 
-/// `FixedUpdate` systems outside every `SimSet`: all a client runs of `FixedUpdate`
-/// besides `NetSet::Predict` (the client allowlist). Anything new here runs on clients,
-/// which do not simulate: it must not change gameplay state. `sync_physics` runs twice
+/// `FixedUpdate` systems outside every `SimSet` and every `NetSet`: all a client runs of
+/// `FixedUpdate` besides its own body's prediction (the client allowlist; what prediction may
+/// change is checked in `net_predict`). Anything new here runs on clients, which do not
+/// simulate: it must not change gameplay state. `sync_physics` runs twice
 /// (`PhysicsSystems::Sync` and `SyncAfterMove`): proxies' colliders follow replicated
 /// transforms.
 const CLIENT_ALLOWLIST: &[&str] = &["shards_motion::physics::sync_physics", "shards_motion::physics::sync_physics"];
 
-/// Names of the `FixedUpdate` systems of `app` that are in no `SimSet`, sorted; Bevy's own
-/// sync points (`apply_deferred`) left out.
+/// Names of the `FixedUpdate` systems of `app` that are in no `SimSet` and no `NetSet`,
+/// sorted; Bevy's own sync points (`apply_deferred`) left out.
 fn outside_sim_sets(app: &mut App) -> Vec<String> {
     app.world_mut().schedule_scope(FixedUpdate.intern(), |world, schedule| {
         schedule.initialize(world).unwrap();
         let graph = schedule.graph();
         let mut inside = BTreeSet::new();
         for set in [SimSet::Input, SimSet::Think, SimSet::Act, SimSet::Move, SimSet::Resolve, SimSet::Cleanup] {
+            inside.extend(graph.systems_in_set(set.intern()).unwrap().iter().copied());
+        }
+        for set in [NetSet::PredictInput, NetSet::Predict, NetSet::PredictEnd] {
             inside.extend(graph.systems_in_set(set.intern()).unwrap().iter().copied());
         }
         let mut names: Vec<String> = schedule

@@ -6,6 +6,11 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+# A client's window: others' entities blended between the host's states (`interp`), the net
+# overlay's text. The buffer math and the `net_overlay` tool are always built.
+render = ["ai_core/render", "bevy/bevy_text", "bevy/bevy_ui"]
+
 [dependencies]
 ai_core.workspace = true
 shards_core.workspace = true
