@@ -456,6 +456,7 @@ fn install(world: &mut World, manifest: RegionManifest) -> Result<RegionSpawned,
     };
     let title = manifest.title();
     world.insert_resource(ActiveRegion::new(manifest, graph, radius, spawned.entities));
+    crate::ai::register_conditions(world);
     let players = match move_players(world) {
         Some(at) => format!(", players at {}", ai_core::spatial::fmt_pos(at)),
         None => String::new(),

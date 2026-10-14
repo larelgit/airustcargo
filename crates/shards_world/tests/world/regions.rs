@@ -76,6 +76,8 @@ fn the_start_region_stands_before_the_game_spawns_its_hero() {
     let text = journal(&app).join("\n");
     assert!(text.contains("region generated: meadow seed 42 v1 (attempt "), "{text}");
     assert!(text.contains("region loaded: meadow seed 42 v1 (64 tiles, "), "{text}");
+    let at_spawn = testing::ok(&mut app, "step", json!({"ticks": 30, "until": [{"named": "near_poi"}]}));
+    assert_eq!(at_spawn.tick, 21, "standing at the spawn point stops the step at once: {}", at_spawn.result);
     let status = shards::ai_core::status::status(app.world());
     assert_eq!(status["world"]["region"], "meadow");
     assert_eq!(status["world"]["seed"], 42);

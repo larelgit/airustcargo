@@ -25,10 +25,14 @@ const NEAREST: usize = 3;
 pub const NEAR_POI: f32 = 3.0;
 
 pub(crate) fn plugin(app: &mut App) {
-    app.register_ai_component::<Dormant>(|_| "dormant".into())
-        .register_ai_observe_lines(observe_lines)
-        .add_ai_status("world", status)
-        .add_ai_condition("near_poi", near_poi);
+    app.register_ai_component::<Dormant>(|_| "dormant".into()).register_ai_observe_lines(observe_lines).add_ai_status("world", status);
+}
+
+/// Registers the stop conditions once a region exists: a game without regions keeps the
+/// list of conditions it had (its errors name them).
+pub(crate) fn register_conditions(world: &mut World) {
+    let mut conditions = world.get_resource_or_init::<ai_core::AiConditions>();
+    conditions.0.entry("near_poi".to_owned()).or_insert(near_poi as fn(&World) -> bool);
 }
 
 /// The `AiId` of every point of interest entity, by POI id.
