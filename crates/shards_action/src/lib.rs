@@ -106,6 +106,7 @@ pub mod draw;
 pub mod fighter;
 pub mod machine;
 mod orders;
+mod predict;
 #[cfg(feature = "render")]
 pub mod render;
 pub mod status;
@@ -115,8 +116,8 @@ pub mod zone;
 use ai_core::{AiAppExt, SimSet};
 use bevy::prelude::*;
 use shards_content::ContentAppExt;
-use shards_core::{CoreSystems, EngineAppExt};
-use shards_motion::{MotionPlugin, MotionSystems};
+use shards_core::{CoreSystems, EngineAppExt, NetSet};
+use shards_motion::{ControllerSystems, MotionPlugin, MotionSystems};
 
 pub use anim::{
     crossed_cues, locomotion_state, select_clip, select_clip_for, AnimSet, Animated, AnimationCue, BodyStatus,
@@ -138,6 +139,7 @@ pub use machine::{
     action_progress, apply_effect, can_start, force_action, ActionEffect, ActionEffects, ActionRejected, ActionStarted,
     ActionState, Blocker, FighterView, Healed, InputBuffer, Queued, Running, Start, Telegraph,
 };
+pub use predict::{shown_state, ActionPredictor, PredictedAction, CONFIRM_SLACK};
 pub use status::{
     add_status_buildup, StatusApplied, StatusDef, StatusEffects, StatusExpired, StatusHook, StatusHooks, StatusResist,
     Statuses,
@@ -172,6 +174,12 @@ pub enum ActionSystems {
     Statuses,
     /// `SimSet::Resolve`, last: fighters at 0 health die.
     Deaths,
+    /// `NetSet::Predict`, between `MotionSystems::PredictOrders` and `PredictIntent`: a
+    /// client's own body walks into reach of its `Order::Attack` (the walk only).
+    PredictOrders,
+    /// `NetSet::Predict`, between `MotionSystems::PredictIntent` and the controller: a
+    /// client starts its own body's actions ahead of the host ([`PredictedAction`]).
+    Predict,
 }
 
 /// Registration API for games.
@@ -286,6 +294,14 @@ impl Plugin for ActionPlugin {
                     (ActionSystems::Hits, ActionSystems::Fighters, ActionSystems::Statuses, ActionSystems::Deaths)
                         .chain()
                         .in_set(SimSet::Resolve),
+                    ActionSystems::PredictOrders
+                        .in_set(NetSet::Predict)
+                        .after(MotionSystems::PredictOrders)
+                        .before(MotionSystems::PredictIntent),
+                    ActionSystems::Predict
+                        .in_set(NetSet::Predict)
+                        .after(MotionSystems::PredictIntent)
+                        .before(ControllerSystems::PredictMove),
                 ),
             )
             .add_systems(
@@ -299,11 +315,14 @@ impl Plugin for ActionPlugin {
                     machine::finish_actions.in_set(ActionSystems::Fighters),
                     status::update_statuses.in_set(ActionSystems::Statuses),
                     combat::check_deaths.in_set(ActionSystems::Deaths),
+                    orders::steer_attack_orders.in_set(ActionSystems::PredictOrders),
+                    predict::predict_actions.in_set(ActionSystems::Predict),
                 ),
             )
             .add_observer(fighter::hurtbox_on_collider)
             // Cosmetic: a game may add it in a window only, and replays must not care.
             .replay_ignore::<Animated>();
+        predict::plugin(app);
         ai::register(app);
         tools::register(app);
         cue::plugin(app);

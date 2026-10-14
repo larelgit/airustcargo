@@ -11,12 +11,13 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use shards_content::ContentDb;
 use shards_core::input_names::{BLOCK, DODGE, HEAVY, LIGHT, PARRY, TECHNIQUE, USE_ITEM};
-use shards_core::{flat, Intent, Order};
+use shards_core::{flat, Intent, Order, Predicted};
 
 use crate::combat::{revive, stagger, StaggerCause};
 use crate::def::{ActionDef, CombatTuning, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team};
 use crate::machine::{can_start, fits_buffer, ActionState, FighterView, Healed};
+use crate::predict::shown_state;
 use crate::zone::{body_radius, zones_threatening};
 
 pub(crate) fn register(app: &mut App) {
@@ -55,11 +56,16 @@ enum When {
     In(f32),
 }
 
-/// The shared rule's answer for `input`: now, within the input buffer, or the error.
+/// The shared rule's answer for `input`: now, within the input buffer, or the error. On a
+/// client's own body it asks about the action shown there ([`shown_state`]).
 fn when(world: &World, me: Entity, input: &str) -> Result<When, String> {
     let dt = world.resource::<Time<Fixed>>().timestep().as_secs_f32();
     let ttl = CombatTuning::of(world.resource::<ContentDb>()).input_buffer;
-    let view = FighterView::of(world, me).ok_or("your body is not a complete fighter")?;
+    let shown = shown_state(world, me);
+    let mut view = FighterView::of(world, me).ok_or("your body is not a complete fighter")?;
+    if let Some(state) = &shown {
+        view.state = state;
+    }
     match can_start(&view, input, dt) {
         Ok(start) => Ok(When::Now(start.action)),
         Err(blocker) => match blocker.ready_in() {
@@ -69,37 +75,45 @@ fn when(world: &World, me: Entity, input: &str) -> Result<When, String> {
     }
 }
 
-/// Presses `input` (towards `dir`) when the rule says it will start.
-fn press(world: &mut World, caller: &Caller, input: &str, dir: Option<Vec3>) -> ToolResult {
+/// Presses `input` (towards `dir`) when the rule says it will start. `detail` follows the
+/// answer (a dodge's direction).
+fn press(world: &mut World, caller: &Caller, input: &str, dir: Option<Vec3>, detail: &str) -> ToolResult {
     let me = me(world, caller)?;
     let when = when(world, me, input)?;
+    let note = predicted_note(world, me);
     let mut intent = world.get_mut::<Intent>(me).ok_or("no Intent")?;
     match dir {
         Some(dir) => intent.press_dir(input, dir),
         None => intent.press(input),
     }
     Ok(match when {
-        When::Now(action) => format!("ok: {action}"),
-        When::In(t) => format!("ok: queued, {input} starts in {t:.2}s"),
+        When::Now(action) => format!("ok: {action}{detail}{note}"),
+        When::In(t) => format!("ok: queued, {input} starts in {t:.2}s{detail}{note}"),
     })
+}
+
+/// ` · predicted, host confirms` on a client's own body: it starts here at once, and the
+/// host has the last word.
+fn predicted_note(world: &World, me: Entity) -> &'static str {
+    if world.get::<Predicted>(me).is_some() { " · predicted, host confirms" } else { "" }
 }
 
 /// Light attack in the direction you face (or at your lock-on target). Chains into a
 /// combo when pressed again inside the attack's cancel window. Answers `ok`, `ok:
 /// queued` (it starts within the input buffer) or why not and when it would work.
 fn light_attack(In(call): In<Call<NoArgs>>, world: &mut World) -> ToolResult {
-    press(world, &call.caller, LIGHT, None)
+    press(world, &call.caller, LIGHT, None, "")
 }
 
 /// Heavy attack: slower, costs more stamina, hits harder.
 fn heavy_attack(In(call): In<Call<NoArgs>>, world: &mut World) -> ToolResult {
-    press(world, &call.caller, HEAVY, None)
+    press(world, &call.caller, HEAVY, None, "")
 }
 
 /// Parry: a short perfect guard. A hit landing in it does no damage and staggers the
 /// attacker; time it to the end of an enemy windup.
 fn parry(In(call): In<Call<NoArgs>>, world: &mut World) -> ToolResult {
-    press(world, &call.caller, PARRY, None)
+    press(world, &call.caller, PARRY, None, "")
 }
 
 /// Raise (or lower) your guard: hold block. Blocked hits cost stamina instead of
@@ -128,19 +142,24 @@ fn block(In(call): In<Call<BlockArgs>>, world: &mut World) -> ToolResult {
         .is_some_and(|h| h.input == BLOCK);
     if !held {
         // A block without a hold loop is a timed press.
-        return press(world, &call.caller, BLOCK, None);
+        return press(world, &call.caller, BLOCK, None, "");
     }
     if action.as_deref().is_some_and(|a| holding_up(world, me, a)) {
         world.get_mut::<Intent>(me).ok_or("no Intent")?.set_held(BLOCK, true);
         return Ok("ok: already blocking".into());
     }
     let dt = world.resource::<Time<Fixed>>().timestep().as_secs_f32();
-    let view = FighterView::of(world, me).ok_or("your body is not a complete fighter")?;
+    let shown = shown_state(world, me);
+    let mut view = FighterView::of(world, me).ok_or("your body is not a complete fighter")?;
+    if let Some(state) = &shown {
+        view.state = state;
+    }
+    let note = predicted_note(world, me);
     let answer = match can_start(&view, BLOCK, dt) {
-        Ok(start) => format!("ok: {} (holding block)", start.action),
+        Ok(start) => format!("ok: {} (holding block){note}", start.action),
         // Held, it rises whenever it can: no buffer to run out.
         Err(blocker) => match blocker.ready_in() {
-            Some(t) => format!("ok: holding block; it rises in {t:.2}s"),
+            Some(t) => format!("ok: holding block; it rises in {t:.2}s{note}"),
             None => return Err(blocker.message()),
         },
     };
@@ -151,7 +170,9 @@ fn block(In(call): In<Call<BlockArgs>>, world: &mut World) -> ToolResult {
 /// Whether `action` is running and still inside its hold span, i.e. a held input keeps
 /// it up. A block that is lowering is not: it ends, and only then rises again.
 fn holding_up(world: &World, me: Entity, action: &str) -> bool {
-    let run = world.get::<ActionState>(me).and_then(|s| s.current.as_ref()).filter(|r| r.action == action);
+    let shown = shown_state(world, me);
+    let state = shown.as_ref().or_else(|| world.get::<ActionState>(me));
+    let run = state.and_then(|s| s.current.as_ref()).filter(|r| r.action == action);
     let def = world.resource::<ContentDb>().get::<ActionDef>(action);
     let end = def.and_then(|d| d.span(&d.hold.as_ref()?.span)).map(|(_, end)| end);
     run.zip(end).is_some_and(|(run, end)| run.t < end - EPS)
@@ -186,8 +207,7 @@ fn dodge(In(call): In<Call<DodgeArgs>>, world: &mut World) -> ToolResult {
     // The roll goes where the press says, else along the movement input (as `steer` does).
     let moving = world.get::<Intent>(me).and_then(|i| flat(i.move_dir).try_normalize());
     let towards = dir.or(moving).map_or("forward", compass);
-    let answer = press(world, &call.caller, DODGE, dir)?;
-    Ok(format!("{answer} ({towards})"))
+    press(world, &call.caller, DODGE, dir, &format!(" ({towards})"))
 }
 
 /// Use a technique from a moveset slot (`technique.<slot>`).
@@ -212,7 +232,7 @@ fn use_technique(In(call): In<Call<TechniqueArgs>>, world: &mut World) -> ToolRe
     let input = format!("{TECHNIQUE}.{slot}");
     let me = me(world, &call.caller)?;
     require_input(world, me, &input, TECHNIQUE, "technique")?;
-    press(world, &call.caller, &input, None)
+    press(world, &call.caller, &input, None, "")
 }
 
 /// Use an item, e.g. a healing flask (`use_item.<item>` in your moveset). Items with
@@ -227,7 +247,7 @@ fn use_item(In(call): In<Call<ItemArgs>>, world: &mut World) -> ToolResult {
     let input = format!("{USE_ITEM}.{}", call.args.item);
     let me = me(world, &call.caller)?;
     require_input(world, me, &input, USE_ITEM, "item")?;
-    press(world, &call.caller, &input, None)
+    press(world, &call.caller, &input, None, "")
 }
 
 /// An error listing what the moveset has under `prefix` when it lacks `input`.
