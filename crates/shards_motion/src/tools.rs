@@ -61,6 +61,7 @@ pub struct MoveToArgs {
     #[serde(default)]
     pub queue: bool,
     /// Plan a route over what you can walk, swim and climb (like `path_to`) and follow it.
+    /// The route starts where you stand, so with `queue` it needs no pending orders.
     #[serde(default)]
     pub path: bool,
 }
@@ -94,6 +95,14 @@ fn move_to(
         }
     };
     let within = within.unwrap_or(default_within).max(0.2);
+    let pending = bodies.as_readonly().get(me).map_or(0, |(_, intent)| intent.orders.len());
+    if path && queue && pending > 0 {
+        return Err(format!(
+            "path=true plans a route from where you stand, which is not where your {pending} pending order(s) end: \
+             `step` until they are done (or `stop`), then move_to with path=true and without `queue`; \
+             or drop `path` to queue a straight line"
+        ));
+    }
     // Plan before touching the orders: a refused plan leaves them alone.
     let plan = if path {
         let plan = perception::plan_for(me, &target, Some(within), None, &index, &physics, &ai, db.as_deref(), &perceiving)

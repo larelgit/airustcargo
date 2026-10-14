@@ -577,6 +577,26 @@ fn move_to_with_path_refuses_what_has_no_route_and_changes_nothing() {
 }
 
 #[test]
+fn move_to_with_path_and_queue_is_refused_while_orders_are_pending() {
+    let mut app = bare_engine("move_to_path_queue");
+    wall_with_a_gap(app.world_mut());
+    let e = player(app.world_mut(), Vec3::ZERO);
+    step(&mut app, 2);
+    // Nothing pending: the route starts where the walker stands, so it can be queued.
+    let first = ok(&mut app, "move_to", json!({"target": {"x": 0, "z": -12}, "path": true, "queue": true}));
+    assert!(first.starts_with("ok: following path "), "{first}");
+    let legs = intent(&app, e).orders.len();
+
+    // Orders pending: a route planned from here would not start where they end.
+    let second = fails(&mut app, "move_to", json!({"target": {"x": 20, "z": -12}, "path": true, "queue": true}));
+    assert!(second.contains("pending") && second.contains("path=true") && second.contains("without `queue`"), "{second}");
+    assert_eq!(intent(&app, e).orders.len(), legs, "a refusal changes nothing");
+    // Plain queued orders are straight lines from wherever the last one ends: still fine.
+    ok(&mut app, "move_to", json!({"target": {"x": 20, "z": -12}, "queue": true}));
+    assert_eq!(intent(&app, e).orders.len(), legs + 1);
+}
+
+#[test]
 fn move_to_with_path_already_in_range_stops_a_walk_under_way() {
     let mut app = bare_engine("move_to_path_in_range");
     floor(app.world_mut());
