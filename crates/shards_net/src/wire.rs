@@ -113,6 +113,13 @@ pub fn peek_session(datagram: &[u8]) -> Option<u32> {
     peek(datagram).ok().map(|h| h.session)
 }
 
+/// Whether a datagram carries a message (or a piece of one), not just acks and the clock. A
+/// host makes a link for an unknown address only for this: a game that ended keeps acking and
+/// keeping its link alive for a while, and that alone is nobody joining.
+pub fn carries_messages(datagram: &[u8]) -> bool {
+    decode_with(datagram, &mut Budget::new()).is_ok_and(|(_, body)| body.has_payload())
+}
+
 /// What is left of the inflate budget of one datagram: [`decode_with`] takes the body's share, the link
 /// takes each deflated inline message's.
 #[derive(Clone, Copy, Debug)]
@@ -413,6 +420,20 @@ mod tests {
         let (_, b) = decode(&bytes).unwrap();
         assert!(!b.has_payload());
         assert_eq!(b.time_echo, None);
+    }
+
+    #[test]
+    fn only_a_datagram_with_a_message_is_someone_talking() {
+        assert!(!carries_messages(&encode(&header(), &Body::default())), "a keepalive");
+        let acks = Body { time_echo: Some(5), reliable_ack: 9, ..Body::default() };
+        assert!(!carries_messages(&encode(&header(), &acks)), "acks and the clock");
+        assert!(carries_messages(&encode(&header(), &full_body())));
+        let hello = Body { reliable: vec![(1, Msg { data: b"hello".to_vec(), deflated: false })], ..Body::default() };
+        assert!(carries_messages(&encode(&header(), &hello)));
+        let mut cut = encode(&header(), &hello);
+        cut.truncate(cut.len() - 1);
+        assert!(!carries_messages(&cut), "a body that does not decode");
+        assert!(!carries_messages(b"SH"), "shorter than a header");
     }
 
     #[test]

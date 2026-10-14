@@ -39,6 +39,7 @@
 //! struct Args { target: Id }
 //! ```
 
+pub mod coop;
 mod net_wiring;
 mod plugins;
 mod run;
