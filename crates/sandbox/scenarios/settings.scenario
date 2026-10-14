@@ -65,6 +65,14 @@ expect result contains "controls.bindings.gameplay.jump = [\"Key(KeyJ)\",\"Gamep
 act settings_set group=controls key=bindings.gameplay.jump reset=true
 act settings group=controls
 expect result !contains "gameplay.jump"
+# the same checks as `rebind`: an action that does not exist, an input another action reads
+act? settings_set group=controls key=bindings.gameplay.jmp value="[\"Key(KeyJ)\"]"
+expect result contains "no action `jmp`"
+expect result contains "did you mean `jump`"
+act? settings_set group=controls key=bindings.gameplay.jump value="[\"Key(KeyW)\"]"
+expect result contains "already bound to `move`"
+act settings group=controls
+expect result !contains "gameplay.jump"
 
 # --- and back to the defaults
 act settings_set group=accessibility reset=true

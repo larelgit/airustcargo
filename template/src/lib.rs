@@ -47,6 +47,9 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         // The player's settings (rebound keys, volume, accessibility) are kept in the user's config folder, under this game's name.
         app.insert_resource(SettingsAppId::new("my-game"));
+        // Earlier versions of the template kept rebound keys in `~/.config/my_game/input.ron`; asking
+        // for them here imports them once. A game that never shipped that file deletes this line.
+        app.insert_resource(shards::motion::InputSettings::for_game("my_game"));
         app.add_plugins((arena::ArenaPlugin, brain::BrainPlugin, ai::GameAiPlugin));
     }
 }

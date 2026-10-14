@@ -36,6 +36,10 @@ impl Plugin for SandboxPlugin {
     fn build(&self, app: &mut App) {
         // The window title carries the seed and the port, so it cannot name the settings folder.
         app.insert_resource(SettingsAppId::new("shards-sandbox"));
+        // The sandbox is the game that kept its rebound keys in `~/.config/shards/input.ron`: it
+        // asks for them to be imported (a windowed run with the settings in the platform's own
+        // folder only; a game that does not ask never reads that shared file).
+        app.insert_resource(shards::motion::InputSettings::for_game("shards"));
         app.add_plugins((gameplay::GameplayPlugin, ai::GameAiPlugin));
     }
 }
