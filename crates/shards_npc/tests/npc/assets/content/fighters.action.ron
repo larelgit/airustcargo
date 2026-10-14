@@ -1,0 +1,56 @@
+// Test fighters: a hero with a quick swing and a roll, grunts with a jab and a smash, and a
+// warden with four telegraphed attacks (three of them cover a zone).
+{
+    "hero_swing": (
+        net_id: 1,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 100), damage: 5, poise: 5)],
+    ),
+    "hero_roll": (net_id: 2, phases: [("roll", 0.4)], iframes: [Secs(0.0, 0.2)], displacement: [(0.35, 3.0)], steer: Move),
+
+    "jab": (
+        net_id: 10,
+        phases: [("windup", 0.4), ("active", 0.1), ("recovery", 0.4)],
+        track_until: 0.2,
+        hits: [(span: Phase("active"), shape: Cone(range: 1.8, angle: 100), damage: 4, poise: 2)],
+        telegraph: (symbol: "!"),
+    ),
+    "smash": (
+        net_id: 11,
+        phases: [("windup", 0.6), ("active", 0.15), ("recovery", 0.5)],
+        track_until: 0.3,
+        hits: [(span: Phase("active"), shape: Circle(radius: 2.0), damage: 8, poise: 4)],
+        telegraph: (symbol: "⚠"),
+        tags: ["heavy"],
+    ),
+    "grunt_stagger": (net_id: 12, phases: [("stagger", 0.6)]),
+
+    "slash": (
+        net_id: 20,
+        phases: [("windup", 0.5), ("active", 0.15), ("recovery", 0.6)],
+        track_until: 0.1,
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 100), damage: 6)],
+        telegraph: (at: 0.1, symbol: "!"),
+    ),
+    "slam": (
+        net_id: 21,
+        phases: [("windup", 0.8), ("active", 0.15), ("recovery", 0.9)],
+        hits: [(span: Phase("active"), shape: Circle(radius: 4.0), damage: 10)],
+        telegraph: (at: 0.3, symbol: "⚠"),
+        tags: ["zone"],
+    ),
+    "sweep": (
+        net_id: 22,
+        phases: [("windup", 0.6), ("active", 0.2), ("recovery", 0.8)],
+        hits: [(span: Phase("active"), shape: Cone(range: 4.2, angle: 150), damage: 8)],
+        telegraph: (at: 0.2, symbol: "⟲"),
+        tags: ["zone"],
+    ),
+    "shockwave": (
+        net_id: 23,
+        phases: [("windup", 0.6), ("active", 0.25), ("recovery", 0.8)],
+        hits: [(span: Phase("active"), shape: Line(length: 9.0, width: 1.6, height: 0.6), damage: 8)],
+        telegraph: (at: 0.2, symbol: "≈"),
+        tags: ["zone"],
+    ),
+}

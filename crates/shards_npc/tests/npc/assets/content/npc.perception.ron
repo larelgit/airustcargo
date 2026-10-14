@@ -1,0 +1,5 @@
+{
+    "grunt": (sight_range: 20.0, fov_deg: 360.0, memory: 8.0),
+    "eyes": (sight_range: 12.0, fov_deg: 120.0, near: 1.5, eye_height: 1.6, hearing: 1.0, memory: 1.0),
+    "boss": (sight_range: 40.0, fov_deg: 360.0, line_of_sight: false, memory: 2.0),
+}

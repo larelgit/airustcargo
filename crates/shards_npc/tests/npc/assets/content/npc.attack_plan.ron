@@ -1,0 +1,12 @@
+{
+    "grunt": (
+        options: [(input: "light", weight: 3.0, tags: ["light"]), (input: "heavy", cooldown: 3.0, tags: ["heavy"])],
+        bans: [(after: ["heavy"], then: ["heavy"], within: 2)],
+        rest: (0.3, 0.8),
+    ),
+    "jabber": (options: [(input: "light")], rest: (0.2, 0.4)),
+    "mixed": (options: [(input: "light", tags: ["light"]), (input: "heavy", tags: ["heavy"])], rest: (0.1, 0.3)),
+    // Every attack of the moveset, chosen among those that reach, never two zone attacks in a
+    // row, a rest of 1-1.5 s after each: the sandbox warden's brain.
+    "warden": (auto: true, in_range_only: true, bans: [(after: ["zone"], then: ["zone"], within: 1)], rest: (1.0, 1.5)),
+}
