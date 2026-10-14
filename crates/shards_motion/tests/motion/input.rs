@@ -679,6 +679,9 @@ fn settings_set_judges_the_map_in_play_with_what_the_game_added() {
     // An input an added action reads is taken, for `settings_set` as for `rebind`.
     let err = fails(&mut app, "settings_set", json!({"group": "controls", "key": "bindings.gameplay.jump", "value": "[\"Key(KeyG)\"]"}));
     assert!(err.contains("already bound to `emote` in `gameplay`"), "{err}");
+    // `settings_set` can never move `emote`, so the refusal must not send the caller there; it names the dev route instead.
+    assert!(!err.contains("free it first: settings_set"), "{err}");
+    assert!(err.contains("a control the game adds itself") && err.contains("pick another input") && err.contains("force=true"), "{err}");
     assert!(fails(&mut app, "rebind", json!({"action": "jump", "binding": "Key(KeyG)"})).contains("emote"));
     // An entry for a control the game added is not a setting; the refusal says so instead of saying it does not exist,
     // when `input_bindings` lists it.

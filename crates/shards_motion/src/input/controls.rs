@@ -257,7 +257,7 @@ pub fn check_known(current: &ControlSettings, next: &ControlSettings, world: &Wo
                 return Err(format!(
                     "controls.bindings.{key}: {binding} is already bound to `{other}` in `{context}`; {}; \
                      a dev session can take it over with `rebind context={context} action={action} binding='{}' force=true`",
-                    free_it_first(context, other),
+                    free_it_first(defaults, context, other),
                     binding.text()
                 ));
             }
@@ -276,15 +276,19 @@ pub fn check_known(current: &ControlSettings, next: &ControlSettings, world: &Wo
             }
             return Err(format!(
                 "controls.bindings.{key}: back to the default, `{action}` would read {binding}, which `{other}` already reads in `{context}`; {}",
-                free_it_first(context, other)
+                free_it_first(defaults, context, other)
             ));
         }
     }
     Ok(())
 }
 
-/// How a caller of `settings_set` (a player's agent has no `rebind`) makes an input free.
-fn free_it_first(context: &str, other: &str) -> String {
+/// How a caller of `settings_set` (a player's agent has no `rebind`) makes an input free. A control
+/// the game added itself is not a setting: `settings_set` is refused for it, so it is no way out.
+fn free_it_first(defaults: &InputMap, context: &str, other: &str) -> String {
+    if defaults.action(context, other).is_none() {
+        return format!("`{other}` is a control the game adds itself, which settings cannot move, so pick another input");
+    }
     format!("free it first: settings_set group=controls key=bindings.{context}.{other} value=<another input>")
 }
 
