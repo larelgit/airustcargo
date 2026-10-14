@@ -105,8 +105,8 @@ pub use def::{
 };
 pub use director::{AttackToken, Grant, TokenGranted, TokenReturned};
 pub use nav::{
-    bake_files, find_path, local_grid_path, navmesh_path, navmesh_route, straight_clear, NavAgent, NavError, NavPath, NavPaths,
-    NavQuery, NavRegion, NavSettingsDef, NavTile,
+    bake_files, find_path, local_grid_path, navmesh_path, navmesh_route, plain_sight, straight_clear, NavAgent, NavError, NavPath,
+    NavPaths, NavQuery, NavRegion, NavSettingsDef, NavTile,
 };
 pub use perception::{sees, sight_clear, HeardAt, Noise, Perceived, Sensed, Sound};
 pub use planner::{banned, choose, pick_weighted, resolve, NpcPlan, PastAttack, Resolved};

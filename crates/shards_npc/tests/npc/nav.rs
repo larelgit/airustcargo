@@ -125,3 +125,20 @@ fn a_sentry_chases_to_its_leash_goes_home_healing_and_never_crosses() {
         assert!(story.iter().any(|l| l.contains(&format!("{me} {change}"))), "no `{change}` in {story:#?}");
     }
 }
+
+/// Outside any region: an NPC on a 4 m block sees its target below. A straight walk would
+/// fall off (deeper than the safe drop) and the local grid knows no way down: it stays up.
+#[test]
+fn an_npc_off_the_navmesh_does_not_walk_off_a_ledge_either() {
+    let mut app = app();
+    wall(app.world_mut(), Vec3::new(-2.0, 0.0, -2.0), Vec3::new(2.0, 4.0, 2.0));
+    let world = app.world_mut();
+    let sentry = npc(world, "grunt", Npc::new("sentry", "boss"), Vec3::new(0.0, 4.0, 0.0), E);
+    player(world, 0, Vec3::new(9.0, 0.0, 0.0));
+    for t in 0..240 {
+        step(&mut app, 1);
+        let at = feet(&app, sentry);
+        assert!(at.y > 3.9, "tick {t}: it went over the edge: {at}");
+    }
+    assert_eq!(state(&app, sentry), "chase");
+}

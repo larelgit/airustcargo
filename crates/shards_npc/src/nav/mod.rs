@@ -35,9 +35,12 @@
 //! - **Routes** come from [`NavPaths`], a seam: `fn(&World, from, to, radius) -> waypoints`.
 //!   The default asks the navmesh inside a loaded region and the motion module's local grid
 //!   planner ([`plan_path`]) everywhere else (and for bodies bigger than the baked one); a
-//!   game may plug in its own. A goal in plain sight (a body-wide cast through the `WORLD`
-//!   layer) needs no route; a blocked one is planned again when the goal moves or every
-//!   [`NpcTuning::repath`] seconds, which keeps route queries few however many NPCs chase.
+//!   game may plug in its own. A goal in plain sight ([`plain_sight`]: on the navmesh a
+//!   straight line of walking links, so never over a drop or a ledge; elsewhere a body-wide
+//!   cast through the `WORLD` layer over ground without holes or deep drops) needs no route;
+//!   another is planned again when the goal moves or every [`NpcTuning::repath`] seconds,
+//!   which keeps route queries few however many NPCs chase. Where there is no route the NPC
+//!   holds its ground until the next plan (it never walks blindly at the goal).
 //! - **Following**: toward the next waypoint at the state's speed; arrived within `within`
 //!   meters of the goal.
 //! - **Avoidance** between NPCs: each looks [`NpcTuning::avoid_time`] seconds ahead at where
@@ -69,7 +72,7 @@ use ai_core::AiId;
 use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::{flat, Intent};
-use shards_motion::perception::{plan_path, PathPlan, PathRequest, RoutePlanner, RouteRequest};
+use shards_motion::perception::{plan_path, Block, PathPlan, PathRequest, Probe, RoutePlanner, RouteRequest, Terrain};
 use shards_world::ActiveRegion;
 use shards_motion::{
     CharacterController, CharacterParams, LayerMask, MotionAi, MotionState, PhysicsWorld, QueryFilter, Shape,
@@ -175,7 +178,7 @@ pub struct NavAgent {
     pub within: f32,
     /// Movement input: 0.5 walks, 1 runs.
     pub speed: f32,
-    /// Waypoints, the last at the goal.
+    /// Waypoints, the last at the goal; none while there is no way there (it holds).
     pub path: Vec<Vec3>,
     /// The waypoint it walks to.
     pub index: u32,
@@ -203,6 +206,45 @@ fn params_of<'a>(
     }
 }
 
+/// Whether a body of `params` walks from `from` straight to `to`, so it needs no route: on
+/// the navmesh where it covers the walk, a line of walking links (no drop, no ledge, nothing
+/// carved) a body-wide sweep agrees with; elsewhere [`straight_clear`] over ground without a
+/// hole or a drop deeper than the safe drop all along.
+pub fn plain_sight(world: &World, from: Vec3, to: Vec3, params: &CharacterParams) -> bool {
+    let Some(physics) = world.get_resource::<PhysicsWorld>() else { return true };
+    if let Some(nav) = world.get_resource::<NavRegion>()
+        && world.get_resource::<ActiveRegion>().map(|r| r.hash) == Some(nav.hash)
+    {
+        // Only the radius counts, as for routes (`navmesh_path`): the body is the baked one.
+        let query = NavQuery { from, to, goal_level: false, radius: params.radius, height: nav.agent_height, step_height: params.step_height };
+        if let Some(straight) = nav.straight_walk(physics, &query) {
+            return straight;
+        }
+    }
+    let safe_drop = world.get_resource::<MotionAi>().map_or(2.0, |m| m.safe_drop);
+    straight_clear(physics, from, to, params.radius, params.step_height) && ground_along(physics, from, to, params, safe_drop)
+}
+
+/// Whether there is ground all along the line from `from` to `to` for a body of `params`:
+/// no hole, no floor too steep to stand on, no drop deeper than `safe_drop` (what stands in
+/// the way is [`straight_clear`]'s business).
+fn ground_along(physics: &PhysicsWorld, from: Vec3, to: Vec3, params: &CharacterParams, safe_drop: f32) -> bool {
+    let terrain = Terrain::new(physics, params, &[]);
+    let delta = flat(to - from);
+    let steps = (delta.length() / 0.5).ceil() as usize;
+    let mut y = from.y;
+    for k in 1..=steps {
+        let at = from + delta * (k as f32 / steps as f32);
+        match terrain.probe(at.x, at.z, y) {
+            Probe::Floor { y: floor, .. } if floor >= y - safe_drop => y = floor,
+            Probe::Water { surface } => y = terrain.swim_height(surface),
+            Probe::Blocked(Block::Tight | Block::Wall) => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
 /// Whether a body of `radius` walks from `from` straight to `to` without touching the
 /// `WORLD` layer (above its step height).
 pub fn straight_clear(physics: &PhysicsWorld, from: Vec3, to: Vec3, radius: f32, step_height: f32) -> bool {
@@ -224,7 +266,9 @@ pub(crate) fn nav_paths(world: &mut World) {
     {
         let world: &World = world;
         let Some(db) = world.get_resource::<ContentDb>() else { return };
-        let Some(physics) = world.get_resource::<PhysicsWorld>() else { return };
+        if !world.contains_resource::<PhysicsWorld>() {
+            return;
+        }
         let tuning = NpcTuning::of(db);
         for (_, entity) in npcs_in_order(world) {
             let e = world.entity(entity);
@@ -254,11 +298,12 @@ pub(crate) fn nav_paths(world: &mut World) {
             let away = flat(goal - here).length();
             let moved = next.planned_to.is_none_or(|p| flat(p - goal).length() > (0.2 * away).max(0.75));
             if moved || (!next.direct && next.repath <= 0.0) {
-                next.direct = straight_clear(physics, here, goal, params.radius, params.step_height);
+                next.direct = plain_sight(world, here, goal, &params);
+                // No route: no path, and it holds where it is until it plans again.
                 next.path = if next.direct {
                     vec![goal]
                 } else {
-                    find_path(world, here, goal, params.radius).filter(|p| !p.is_empty()).unwrap_or_else(|| vec![goal])
+                    find_path(world, here, goal, params.radius).filter(|p| !p.is_empty()).unwrap_or_default()
                 };
                 next.index = 0;
                 next.planned_to = Some(goal);
@@ -331,6 +376,8 @@ pub(crate) fn nav_steer(db: Res<ContentDb>, mut agents: Agents) {
         match next.goal.filter(|_| brain.active) {
             None => next.arrived = true,
             Some(goal) if flat(goal - here).length() <= next.within.max(0.05) => next.arrived = true,
+            // No way there: it holds (and plans again every `repath` seconds).
+            Some(_) if next.path.is_empty() => next.arrived = false,
             Some(goal) => {
                 next.arrived = false;
                 let last = next.path.len().saturating_sub(1);

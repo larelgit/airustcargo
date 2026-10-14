@@ -560,3 +560,23 @@ fn navlinks_the_body_cannot_make_are_not_used() {
     let err = route(&app, Vec3::new(4.0, 0.0, 2.0), Vec3::new(14.0, 4.0, 2.0)).unwrap_err();
     assert!(err.contains("only reached the other way") || err.contains("cannot reach"), "no way up: {err}");
 }
+
+/// An NPC on the cliff's plateau chasing a player on the ground below: in plain sight, but
+/// the only way down is a 4 m fall. The navmesh has no walk there and no route: it stays up.
+#[test]
+fn an_npc_does_not_walk_off_a_cliff_toward_a_target_in_plain_sight() {
+    let mut app = app();
+    load_region(&mut app, &["floor cliff floor"]);
+    let world = app.world_mut();
+    let top = Vec3::new(14.0, 4.0, 4.0);
+    let sentry = npc(world, "grunt", Npc::new("sentry", "boss"), top, W);
+    player(world, 0, Vec3::new(4.0, 0.0, 4.0));
+    for t in 0..240 {
+        step(&mut app, 1);
+        let at = feet(&app, sentry);
+        assert!(at.y > 3.9 && at.x > 12.0, "tick {t}: it went over the edge: {at}");
+    }
+    assert_eq!(state(&app, sentry), "chase");
+    let agent = app.world().get::<NavAgent>(sentry).unwrap();
+    assert!(!agent.direct && agent.path.is_empty(), "no straight walk, no route: it holds ({agent:?})");
+}

@@ -169,6 +169,26 @@ impl NavRegion {
         Ok(self.finish(physics, query, start, goal, hops, explored))
     }
 
+    /// Whether a body walks from `query.from` straight to `query.to` on the navmesh: every
+    /// column on the line entered by a walking link (no drop, no ledge, nothing switched off)
+    /// and a body-wide sweep through the physics world meets nothing, ending in the goal's
+    /// own column. `None` where the navmesh does not cover the walk (see [`path`](Self::path)).
+    pub fn straight_walk(&self, physics: &PhysicsWorld, query: &NavQuery) -> Option<bool> {
+        if !self.fits(query.radius, query.height) || !query.from.is_finite() || !query.to.is_finite() {
+            return None;
+        }
+        self.instance_at(self.column_of(query.from))?;
+        self.instance_at(self.column_of(query.to))?;
+        let start = self.start_node(query.from)?;
+        let Some(goal) = self.goal_node(query) else { return Some(false) };
+        if self.component(start) != self.component(goal) || self.column_of(query.to) != self.node_column(goal) {
+            return Some(false);
+        }
+        let a = Hop { node: start, pos: query.from, kind: StepKind::Walk, rise: 0.0 };
+        let b = Hop { node: goal, pos: Vec3::new(query.to.x, self.node_pos(goal).y, query.to.z), kind: StepKind::Walk, rise: 0.0 };
+        Some(self.line_clear(physics, query, a, b))
+    }
+
     /// The walker's node: in its own column, a floor at most a meter below its feet (or half
     /// a meter above); else the nearest such within a meter.
     fn start_node(&self, from: Vec3) -> Option<NodeId> {
