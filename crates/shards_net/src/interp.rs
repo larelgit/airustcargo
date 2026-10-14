@@ -8,9 +8,11 @@
 //! the frame is into: `PostUpdate`, after transform propagation, writes their
 //! `GlobalTransform` (and moves their descendants' by the same amount). Before the oldest
 //! state kept and after the newest, the entity holds there; a jump longer than [`JUMP`]
-//! between two states (a teleport) is not blended.
+//! between two states (a teleport) is not blended. An entity that starts moving moves away
+//! from where it was shown; one spawned (or spawned again on coming back into view) shows
+//! at its state at once.
 //!
-//! [`sample`] is the buffer math, built without a window and unit-tested.
+//! [`sample`] and [`track`] are the buffer math, built without a window and unit-tested.
 
 use std::collections::VecDeque;
 
@@ -47,6 +49,19 @@ pub fn sample(states: &VecDeque<(u64, Transform)>, at: f64) -> Option<Transform>
     })
 }
 
+/// The host's state `tf` of host tick `newest` into an entity's track (empty: not tracked
+/// yet). An entity tracked from now on starts at `shown` (where it was last shown, as the state
+/// of host tick `before`), so it moves away from there; one `new` in the world (spawned, or
+/// spawned again under its id: never shown at its place) starts afresh at `tf`.
+pub fn track(states: &mut VecDeque<(u64, Transform)>, new: bool, before: u64, shown: Transform, newest: u64, tf: Transform) {
+    if new {
+        states.clear();
+    } else if states.is_empty() && before > 0 && before < newest {
+        push(states, before, shown);
+    }
+    push(states, newest, tf);
+}
+
 /// Adds `(tick, tf)` to `states`, keeping [`KEPT`]; a tick not after the newest replaces the
 /// states from it on (a world taken again).
 pub fn push(states: &mut VecDeque<(u64, Transform)>, tick: u64, tf: Transform) {
@@ -71,7 +86,7 @@ mod window {
     use bevy::transform::TransformSystems;
     use shards_core::{NetPrediction, Predicted};
 
-    use super::{push, sample};
+    use super::{sample, track};
     use crate::client::{ClientStage, NetClient};
     use crate::def::net_def;
 
@@ -105,7 +120,8 @@ mod window {
 
     /// The host's newest state of each remote entity, when a new one was applied. An entity
     /// gets a track once its `Transform` changes: its last shown place (its
-    /// `GlobalTransform`, not propagated yet this frame) is the state before.
+    /// `GlobalTransform`, not propagated yet this frame) is the state before, unless the
+    /// entity is new (its `GlobalTransform` was never propagated: the origin).
     fn record(
         client: Res<NetClient>,
         prediction: Res<NetPrediction>,
@@ -137,10 +153,7 @@ mod window {
                 continue;
             }
             let states = interp.tracks.entry(id.0).or_default();
-            if !tracked && before > 0 && before < newest {
-                push(states, before, shown.compute_transform());
-            }
-            push(states, newest, *tf);
+            track(states, tf.is_added(), before, shown.compute_transform(), newest, *tf);
             live.push(id.0);
         }
         live.sort_unstable();
@@ -230,5 +243,28 @@ mod tests {
         }
         assert_eq!(states.len(), KEPT, "only the newest are kept");
         assert_eq!(states.front().unwrap().0, 20 + 100 - KEPT as u64);
+    }
+
+    #[test]
+    fn a_track_starts_where_the_entity_was_shown_unless_it_is_new() {
+        // Standing at 1, shown there until host tick 10; it moves at 12: from 1 to 2.
+        let mut states = VecDeque::new();
+        track(&mut states, false, 10, at(1.0), 12, at(2.0));
+        assert_eq!(states, VecDeque::from([(10, at(1.0)), (12, at(2.0))]));
+        assert_eq!(sample(&states, 11.0), Some(at(1.5)));
+        // Spawned with this state: never shown, its place unknown before (the origin). It
+        // shows where it is at once.
+        let mut states = VecDeque::new();
+        track(&mut states, true, 10, Transform::IDENTITY, 12, at(30.0));
+        assert_eq!(states, VecDeque::from([(12, at(30.0))]));
+        assert_eq!(sample(&states, 9.0), Some(at(30.0)));
+        // Gone out of view and spawned again under its id before its track went: the old
+        // states are another entity's.
+        let mut states = VecDeque::from([(4, at(5.0)), (6, at(6.0))]);
+        track(&mut states, true, 10, Transform::IDENTITY, 12, at(40.0));
+        assert_eq!(states, VecDeque::from([(12, at(40.0))]));
+        // Tracked already: the newest state goes on the end.
+        track(&mut states, false, 12, at(0.0), 14, at(41.0));
+        assert_eq!(states, VecDeque::from([(12, at(40.0)), (14, at(41.0))]));
     }
 }
