@@ -1,0 +1,14 @@
+shards-save/1 crc32=ce21cf90 len=447
+{
+  "engine": "0.2.0",
+  "game": {"title":"Shards","version":"0.0.0"},
+  "kind": "character",
+  "label": "version 1 sample",
+  "sections": {
+    "inventory": {"data":{"gold":12,"items":["sword","potion","potion"]},"version":1},
+    "position": {"data":{"feet":[0.0,0.0,0.0],"region":null,"rotation":[0.0,0.0,0.0,1.0]},"version":1},
+    "vitals": {"data":{"charges":[],"health":null,"stamina":null},"version":1}
+  },
+  "slot": "old",
+  "tick": 0
+}
