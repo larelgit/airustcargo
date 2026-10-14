@@ -39,7 +39,7 @@ use ai_core::{sim, AiIndex, AiId, AiTools};
 use bevy::prelude::*;
 use serde_json::Value;
 use shards_core::{player_body, EngineAppExt, EngineConfig, EngineState, NetLaunch, NetRole, PlayerId};
-use shards_net::host::PeerStage;
+use shards_net::host::{clip, PeerStage, MAX_PEER_TEXT};
 use shards_net::{JoinRequest, NetClient, NetHooks, NetHost};
 use shards_save::{
     apply_sections, canon, capture_sections, load_launch_slots, prepare, read_file, replay_playing, save_parts, write_sections, LaunchLoaded,
@@ -49,8 +49,8 @@ use shards_save::{
 /// Why a client's `load_game` is refused (`NetRoute::HostOnly`).
 pub const LOAD_ON_THE_HOST: &str = "the host keeps the world, and your character is loaded when you join (--character SLOT)";
 
-/// Characters the host remembers per player (token) for rejoins, the last this many sent
-/// are known to be the player's own.
+/// How many of the characters the host sent a player it remembers as theirs: a file holding
+/// one of them is the host's own copy.
 const KNOWN_SENT: usize = 16;
 
 /// Co-op saves: fills [`NetHooks`] and [`SaveRouting`]. Part of
@@ -181,28 +181,38 @@ fn join_character(world: &mut World, request: &JoinRequest) -> Option<Value> {
     sessions.choose(&request.token, request.character.as_ref(), body)
 }
 
-/// `NetHooks::on_join_character`: the character's sections onto the new body.
+/// `NetHooks::on_join_character`: the character's sections onto the new body. What a peer
+/// sends is not trusted with the journal: its text is clipped, and sections this game does
+/// not save as characters (another kind's, or none) never reach the apply.
 fn on_join_character(world: &mut World, body: Entity, value: &Value) {
     let who = world.get::<PlayerId>(body).map_or_else(|| "a player".to_owned(), |p| format!("p{}", p.0));
+    let peer = |text: &str| clip(text, MAX_PEER_TEXT);
     let set = match parse_character(value) {
         Ok(set) => set,
         Err(e) => {
-            journal::emit(world, JournalKind::Warn, format!("save: {who} character could not be applied ({e}); starting fresh"));
+            journal::emit(world, JournalKind::Warn, format!("save: {who} character could not be applied ({}); starting fresh", peer(&e)));
             return;
         }
     };
+    let registry = world.resource::<SaveRegistry>();
+    let (ours, foreign): (Vec<_>, Vec<_>) = set.0.into_iter().partition(|(name, _)| registry.get(name).is_some_and(|entry| entry.kind == SaveKind::Character));
+    if !foreign.is_empty() {
+        let names: Vec<&str> = foreign.iter().map(|(name, _)| name.as_str()).collect();
+        journal::emit(world, JournalKind::Warn, format!("save: {who} brought sections this game does not save: {}; skipped", peer(&names.join(", "))));
+    }
+    let set = SectionSet(ours.into_iter().collect());
     match apply_sections(world, SaveKind::Character, Some(body), &set) {
         Ok(done) => {
             journal::log(world, JournalKind::Sim, format!("save: {who} character applied ({})", done.applied.join(", ")));
         }
         Err(e) if e.applied.is_empty() => {
-            journal::emit(world, JournalKind::Warn, format!("save: {who} character could not be applied ({}); starting fresh", e.message));
+            journal::emit(world, JournalKind::Warn, format!("save: {who} character could not be applied ({}); starting fresh", peer(&e.message)));
         }
         Err(e) => {
             journal::emit(
                 world,
                 JournalKind::Warn,
-                format!("save: {who} character could only be applied in part ({}); applied: {}; the body keeps the rest as it was", e.message, e.applied.join(", ")),
+                format!("save: {who} character could only be applied in part ({}); applied: {}; the body keeps the rest as it was", peer(&e.message), e.applied.join(", ")),
             );
         }
     }

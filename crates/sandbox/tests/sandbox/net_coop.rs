@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use shards::action::Health;
-use shards::ai_core::Scope;
-use shards::net::{LinkConditions, NetClient, NetDef, NetDefaults, NetLeft, Stand};
+use shards::ai_core::{sim, AiIndex, Scope};
+use shards::net::{LinkConditions, NetClient, NetDef, NetDefaults, NetLeft, NetState, Stand};
 use shards::prelude::*;
 use shards::save::{Damage, GameInfo, SaveConfig, SaveFile, SaveKey, SaveKind, SaveWhat, SectionData, SectionSet, Store, Which};
 use shards::serde_json::{json, Value};
@@ -212,6 +212,21 @@ fn an_unreadable_character_is_journaled_and_the_player_starts_fresh() {
     assert!(newer.ok, "{}", newer.result);
     assert!(has_line(&stand, HOST, "save: p3 character could not be applied (the save was saved by a newer version"), "{:#?}", journal(&stand, HOST));
     assert!(shards::core::player_body(stand.world(HOST), 2).is_some() && shards::core::player_body(stand.world(HOST), 3).is_some());
+
+    // Sections of another kind, or that this game does not save, are skipped before anything applies, and
+    // what a peer names never forges a journal line.
+    let foreign = json!({
+        "region": {"version": 1, "data": {"active": null}},
+        "evil\n0 [error] forged": {"version": 1, "data": {}},
+        "vitals": {"version": 1, "data": {"health": {"current": 7.0, "max": 100.0}, "stamina": null, "charges": []}}
+    });
+    let sent = stand.call(HOST, "player_join", json!({"player": 4, "name": "eve", "character": foreign}));
+    assert!(sent.ok, "{}", sent.result);
+    let line = journal(&stand, HOST).into_iter().find(|l| l.contains("p4 brought sections this game does not save")).expect("the skipped sections are said");
+    assert!(line.contains("evil\\n0 [error] forged") && line.contains("region"), "{line}");
+    assert!(journal(&stand, HOST).iter().all(|l| !l.starts_with("0 [error] forged")), "{:#?}", journal(&stand, HOST));
+    let p4 = shards::core::player_body(stand.world(HOST), 4).unwrap().to_string();
+    assert_eq!(health(&stand, HOST, &p4), 7.0, "what is ours was applied");
 }
 
 // --- progress goes back to its player -------------------------------------------------------
@@ -503,4 +518,62 @@ fn a_hosts_launch_slots_load_before_its_first_tick_as_recorded_calls() {
     stand.run(30);
     assert_eq!(health(&stand, c1, PLAYER), 33.0);
     assert_eq!(desyncs(&stand, c1), 0, "{:#?}", journal(&stand, c1));
+}
+
+// --- over a real socket ---------------------------------------------------------------------
+
+/// Save folders inside the game's folder (as `--save-dir` must be), removed when the test ends.
+struct Gone(Vec<String>);
+
+impl Drop for Gone {
+    fn drop(&mut self) {
+        for dir in &self.0 {
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+}
+
+/// A client that quits over UDP waits, up to 300 ms, for the character its host captures as it
+/// leaves: its file holds the progress made since the last save. (The host plays on in a thread
+/// of its own, as a real host is another process.)
+#[test]
+fn over_udp_a_quitting_client_waits_for_the_character_its_host_sends_as_it_leaves() {
+    use std::sync::atomic::AtomicBool;
+    use std::time::{Duration, Instant};
+
+    let tag = std::process::id();
+    let (host_saves, client_saves) = (format!("saves/test-coop-udp-host-{tag}"), format!("saves/test-coop-udp-client-{tag}"));
+    let _gone = Gone(vec![host_saves.clone(), client_saves.clone()]);
+    for dir in [&host_saves, &client_saves] {
+        let _ = fs::remove_dir_all(dir);
+    }
+    write_character(Path::new(&client_saves), "slot1", 61.5, 5, 900);
+    let (started, deadline) = (Instant::now(), Duration::from_secs(20));
+    let mut host = udp_member(shards::core::NetLaunch::Host { port: 0 }, "host", Some(&host_saves));
+    shards::testing::wait_until_loaded(&mut host, deadline).unwrap();
+    let address = host.world().resource::<shards::net::NetEndpoint>().transport.local_addr().expect("a bound socket");
+    let join = shards::core::NetLaunch::Join { addr: format!("127.0.0.1:{}", address.rsplit(':').next().unwrap()) };
+    let mut client = udp_member(join, "udp", Some(&client_saves));
+    assert!(play_over_udp(&mut host, &mut client, 30, started, deadline).is_some(), "not connected within {deadline:?}");
+    let NetState::Connected { body: Some(body), .. } = client.world().resource::<NetState>().clone() else { panic!("not playing") };
+    // What the player did since their file was written, on the host.
+    let on_host = host.world().resource::<AiIndex>().get(AiId(body)).expect("the body on the host");
+    host.world_mut().get_mut::<Health>(on_host).unwrap().current = 12.5;
+    assert_eq!(read_file(Path::new(&client_saves), SaveKind::Character, "slot1").sections.0["vitals"].data["health"]["current"], 61.5);
+
+    let stop = AtomicBool::new(false);
+    let host_world = host.world_mut();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            while !stop.load(Ordering::Relaxed) {
+                sim::run_tick(host_world).unwrap();
+                std::thread::sleep(Duration::from_millis(16));
+            }
+        });
+        shards::core::run_exit_hooks(client.world_mut());
+        stop.store(true, Ordering::Relaxed);
+    });
+    let file = read_file(Path::new(&client_saves), SaveKind::Character, "slot1");
+    assert_eq!(file.sections.0["vitals"].data["health"]["current"], 12.5, "the last word of the host is in the file");
+    assert!(file.label.starts_with("quit"), "{}", file.label);
 }
