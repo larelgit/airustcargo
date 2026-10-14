@@ -49,9 +49,10 @@
 //! an error at `content check`, naming the tile and the path.
 //!
 //! When a file changes on disk (hot reload) `shards_level` replaces its instances; the
-//! entities that come back are tagged again within a frame.
+//! entities that come back are tagged again as they are made, inside the reload (a replay
+//! plays without frames, so a frame later is too late).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use bevy::prelude::*;
 use shards_content::ContentDb;
@@ -71,7 +72,8 @@ impl Plugin for TileLevelsPlugin {
         );
         app.init_resource::<TileLevels>()
             .set_level_spawner(LevelSpawner { spawn, request, status, check, forget })
-            .add_systems(Update, retag_reloaded);
+            .add_observer(retag_level_entity)
+            .add_observer(retag_level_marker);
     }
 }
 
@@ -118,37 +120,39 @@ fn mark(world: &mut World, entity: Entity) {
     }
 }
 
-/// The region is about to despawn `doomed`: the level entities go in their order, then the
-/// instances they belonged to (and their visual scenes) are dropped.
+/// The region is about to despawn `doomed`: the level entities go in their order, then every
+/// instance the region's tiles made (and its visual scene) is dropped, those whose file spawned
+/// no entity to find them by included. A region owns all of them.
 fn forget(world: &mut World, doomed: &[Entity]) {
-    let mut instances = BTreeSet::new();
     for &entity in doomed {
-        let Some(from) = world.get::<FromLevel>(entity) else { continue };
-        instances.insert(from.instance);
-        world.despawn(entity);
+        if world.get::<FromLevel>(entity).is_some() {
+            world.despawn(entity);
+        }
     }
-    for instance in instances {
+    for instance in std::mem::take(&mut world.resource_mut::<TileLevels>().instances).into_keys() {
         despawn_level(world, instance);
-        world.resource_mut::<TileLevels>().instances.remove(&instance);
     }
 }
 
-/// `Update`: entities of a tile's level that came back from a reload (`level_reload` replaces
-/// them without the region's tags) are tagged again.
-fn retag_reloaded(
-    untagged: Query<(Entity, &FromLevel, Option<&LevelMarker>), Without<RegionPart>>,
-    tiles: Res<TileLevels>,
-    mut commands: Commands,
-) {
-    if tiles.instances.is_empty() {
-        return;
+/// An entity of a tile's level that came back from a reload (`level_reload` replaces the
+/// instance's entities) is tagged like the first spawn made it, as it is made: tags are part
+/// of the replay hash, and a region change finds its entities by them. A first spawn is
+/// tagged by [`spawn`], after the instance is known.
+fn retag(entity: Entity, levels: &Query<(&FromLevel, Option<&LevelMarker>)>, tiles: &TileLevels, commands: &mut Commands) {
+    let Ok((from, marker)) = levels.get(entity) else { return };
+    let Some(&tile) = tiles.instances.get(&from.instance) else { return };
+    let mut tagged = commands.entity(entity);
+    tagged.insert((tile, RegionPart));
+    if let Some(marker) = marker {
+        tagged.insert(Marker { name: marker.name.clone() });
     }
-    for (entity, from, marker) in &untagged {
-        let Some(tile) = tiles.instances.get(&from.instance) else { continue };
-        let mut tagged = commands.entity(entity);
-        tagged.insert((*tile, RegionPart));
-        if let Some(marker) = marker {
-            tagged.insert(Marker { name: marker.name.clone() });
-        }
-    }
+}
+
+fn retag_level_entity(add: On<Add<FromLevel>>, levels: Query<(&FromLevel, Option<&LevelMarker>)>, tiles: Res<TileLevels>, mut commands: Commands) {
+    retag(add.entity, &levels, &tiles, &mut commands);
+}
+
+/// The marker comes after [`FromLevel`] in the node, so a marker needs its own look.
+fn retag_level_marker(add: On<Add<LevelMarker>>, levels: Query<(&FromLevel, Option<&LevelMarker>)>, tiles: Res<TileLevels>, mut commands: Commands) {
+    retag(add.entity, &levels, &tiles, &mut commands);
 }
