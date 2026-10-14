@@ -535,3 +535,34 @@ fn a_client_admitted_in_the_frame_the_hosts_ticks_jump_keeps_its_inputs_through_
     assert_eq!(rebases(&stand, C1), 1);
     assert_eq!(peer_of(&stand, 1).applied_input_tick, applied, "the resync started c1's inputs over");
 }
+
+#[test]
+fn a_view_that_stops_being_capped_gives_the_client_the_references_it_read_as_nothing() {
+    let mut stand = shards::testing::stand(1, LinkConditions::NONE, configure, with_references);
+    // 70 pillars far out of view, all named by the boss, which every client sees wherever it is.
+    let far: Vec<String> = (0..70)
+        .map(|i| spawned(&stand.call(HOST, "spawn_prefab", json!({"id": "pillar", "x": 300.0 + 3.0 * i as f32, "z": 300.0}))))
+        .collect();
+    let boss = entity(&stand, HOST, BOSS).unwrap();
+    let roster: Vec<Entity> = far.iter().map(|id| entity(&stand, HOST, id).unwrap()).collect();
+    stand.world_mut(HOST).entity_mut(boss).insert((Roster(roster), shards::net::NetAlways));
+    stand.run(200);
+    assert!(peer_of(&stand, 1).closure_capped > 0, "the cap was reached");
+    let theirs = |stand: &shards::net::Stand| -> Vec<Entity> { stand.world(C1).get::<Roster>(entity(stand, C1, BOSS).unwrap()).unwrap().0.clone() };
+    assert!(theirs(&stand).contains(&Entity::PLACEHOLDER), "what the cap kept out reads as nothing on c1");
+
+    // Eight of the pillars move into c1's view: the other 62 are within the cap.
+    for (i, id) in far.iter().take(8).enumerate() {
+        assert!(stand.call(HOST, "teleport", json!({"id": id, "x": -10.0 + i as f32, "z": 18.0})).ok);
+    }
+    stand.run(200);
+    let before = peer_of(&stand, 1).closure_capped;
+    stand.run(60);
+    assert_eq!(peer_of(&stand, 1).closure_capped, before, "no longer capped");
+    assert!(has_line(&stand, C1, "net: the host's world again (view complete)"), "{:#?}", journal(&stand, C1));
+    assert_eq!(rebases(&stand, C1), 1);
+    assert!(!theirs(&stand).contains(&Entity::PLACEHOLDER), "every pillar of the roster is there now");
+    // The copy is checked again, and it is the host's.
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+    assert_eq!(rebases(&stand, C1), 1, "and no more worlds");
+}

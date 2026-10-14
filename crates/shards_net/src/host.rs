@@ -103,6 +103,9 @@ pub struct Peer {
     pub delta_bytes: u64,
     pub held_back: u64,
     pub closure_capped: u64,
+    /// The last view was capped: it named entities the client does not have, and the client's
+    /// references to them read as nothing.
+    capped: bool,
     /// JSON bytes of state values sent, by component type path (or resource name).
     pub by_component: BTreeMap<String, u64>,
     /// What the link watch saw a second ago: late inputs, RTT.
@@ -149,6 +152,7 @@ impl Peer {
             delta_bytes: 0,
             held_back: 0,
             closure_capped: 0,
+            capped: false,
             by_component: BTreeMap::new(),
             watched: (0, 0.0),
             accept_from_epoch: 0,
@@ -1341,6 +1345,14 @@ fn send_state(world: &mut World, host: &mut NetHost) {
         // A capped view names entities the client does not get: its copy cannot hash as the
         // host's, so it is not checked (as a view held back is not).
         let capped = close_view(shared, &encoder, &mut host.cache, &mut encoded, &mut view);
+        // The entities the cap kept out are in the view now (the player came closer): the
+        // references to them that the client read as nothing do not change in any delta, so the
+        // client is given the world once more, and its copy is not checked before it has it.
+        let completed = peer.capped && !capped;
+        peer.capped = capped;
+        if completed {
+            peer.rebase.get_or_insert_with(|| "view complete".into());
+        }
         if capped {
             peer.closure_capped += 1;
             if peer.closure_capped == 1 {
@@ -1359,7 +1371,7 @@ fn send_state(world: &mut World, host: &mut NetHost) {
             baseline: baseline.as_ref().map(|(t, s)| (*t, &**s)),
             own: peer.body.map(|b| (b, &predicted)),
             applied_input_tick: peer.applied_input_tick,
-            with_hash: with_hash && !capped,
+            with_hash: with_hash && !capped && !completed,
             cap_bytes: def.delta_cap_kb as usize * 1024,
             center,
         });

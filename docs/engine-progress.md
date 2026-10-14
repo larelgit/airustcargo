@@ -270,6 +270,8 @@ Xvfb показывает его вместе с оверлеем навсетк
 `a_load_that_cannot_restore_exactly_fails_and_changes_nothing`).
 Третье ревью C3 (раунд 3): скачок тика хоста замечается до приёма игроков кадра
 (`a_client_admitted_in_the_frame_the_hosts_ticks_jump_keeps_its_inputs_through_a_resync`).
+Вид, с которого сняли предел ссылок, отправляет клиенту мир один раз, а не ждёт рассинхрона
+(`a_view_that_stops_being_capped_gives_the_client_the_references_it_read_as_nothing`).
 
 ## E8. Сохранения и настройки (фаза C)
 
