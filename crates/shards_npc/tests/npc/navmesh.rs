@@ -412,3 +412,116 @@ fn solids_the_bakes_never_saw_are_carved_out_and_back_in() {
     assert_eq!(carved(&app), 0);
     assert!(route(&app, from, to).unwrap().length < 4.01, "straight across again");
 }
+
+/// The nodes switched off now, in node order.
+fn disabled(app: &App) -> Vec<u32> {
+    let nav = app.world().resource::<NavRegion>();
+    (0..nav.node_count()).filter(|n| nav.is_disabled(*n)).collect()
+}
+
+/// The disabled nodes of a region built now around the solids `solids` (fresh: no history).
+fn fresh_disabled(rows: &[&str], solids: &[(Vec3, Vec3)]) -> Vec<u32> {
+    let mut app = app();
+    for (min, max) in solids {
+        wall(app.world_mut(), *min, *max);
+    }
+    load_region(&mut app, rows);
+    disabled(&app)
+}
+
+/// Two solids carving the same ground, spawned and taken away one at a time in either
+/// order: after every change the navmesh is what a region built around the solids standing
+/// then would be, and the ground comes back whole at the end.
+#[test]
+fn carving_is_the_solids_standing_now_not_their_history() {
+    let rows = ["floor floor floor"];
+    let a = (Vec3::new(11.0, 0.0, 2.0), Vec3::new(12.0, 2.5, 6.0));
+    let b = (Vec3::new(11.6, 0.0, 3.0), Vec3::new(12.6, 2.5, 7.0));
+    let (from, to) = (Vec3::new(10.0, 0.0, 4.0), Vec3::new(14.0, 0.0, 4.0));
+    for gone_first in [0, 1] {
+        let mut app = app();
+        load_region(&mut app, &rows);
+        let wa = wall(app.world_mut(), a.0, a.1);
+        step(&mut app, 1);
+        let wb = wall(app.world_mut(), b.0, b.1);
+        step(&mut app, 1);
+        assert_eq!(disabled(&app), fresh_disabled(&rows, &[a, b]), "both standing");
+        let (first, rest) = if gone_first == 0 { (wa, b) } else { (wb, a) };
+        app.world_mut().despawn(first);
+        step(&mut app, 1);
+        assert_eq!(disabled(&app), fresh_disabled(&rows, &[rest]), "one gone (gone first: {gone_first})");
+        let second = if gone_first == 0 { wb } else { wa };
+        app.world_mut().despawn(second);
+        step(&mut app, 1);
+        assert_eq!(disabled(&app), Vec::<u32>::new(), "both gone (gone first: {gone_first})");
+        assert!(route(&app, from, to).unwrap().length < 4.01, "straight across again");
+    }
+}
+
+/// A solid that moves (it keeps its collider id) is carved where it stands now.
+#[test]
+fn a_solid_that_moves_is_carved_where_it_stands() {
+    let rows = ["floor floor floor"];
+    let mut app = app();
+    load_region(&mut app, &rows);
+    let block = wall(app.world_mut(), Vec3::new(11.0, 0.0, 2.0), Vec3::new(12.0, 2.5, 3.0));
+    step(&mut app, 1);
+    app.world_mut().get_mut::<Transform>(block).unwrap().translation += Vec3::new(0.0, 0.0, 3.0);
+    step(&mut app, 1);
+    assert_eq!(disabled(&app), fresh_disabled(&rows, &[(Vec3::new(11.0, 0.0, 5.0), Vec3::new(12.0, 2.5, 6.0))]));
+}
+
+/// A solid standing on a tile edge when the region loads seals that edge only while it
+/// stands: once it goes, the tiles are joined again.
+#[test]
+fn a_solid_on_a_tile_edge_at_load_seals_it_only_while_it_stands() {
+    let mut app = app();
+    let blocker = wall(app.world_mut(), Vec3::new(7.75, 0.0, -0.5), Vec3::new(8.25, 3.0, 8.5));
+    load_region(&mut app, &["floor floor"]);
+    let (from, to) = (Vec3::new(4.0, 0.0, 4.0), Vec3::new(12.0, 0.0, 4.0));
+    let err = route(&app, from, to).unwrap_err();
+    assert!(err.contains("cannot reach at all"), "{err}");
+    app.world_mut().despawn(blocker);
+    step(&mut app, 1);
+    let path = route(&app, from, to).unwrap_or_else(|e| panic!("joined again: {e}"));
+    assert!(path.length < 8.01, "straight across: {:?}", path.points);
+}
+
+/// Ground a solid seals off is known to be cut off at once (no search over the region).
+#[test]
+fn ground_sealed_by_a_solid_is_cut_off_at_once() {
+    let mut app = app();
+    load_region(&mut app, &["floor floor floor"]);
+    wall(app.world_mut(), Vec3::new(11.0, 0.0, -1.0), Vec3::new(13.0, 3.0, 9.0));
+    step(&mut app, 1);
+    let err = route(&app, Vec3::new(4.0, 0.0, 4.0), Vec3::new(20.0, 0.0, 4.0)).unwrap_err();
+    assert!(err.contains("cannot reach at all"), "{err}");
+}
+
+/// A huge solid near the region (a ground plane kilometers wide) is carved in no time.
+#[test]
+fn a_huge_solid_is_carved_in_no_time() {
+    let mut app = app();
+    load_region(&mut app, &["floor pillar floor"]);
+    let started = Instant::now();
+    wall(app.world_mut(), Vec3::new(-20000.0, -2.0, -20000.0), Vec3::new(20000.0, -0.5, 20000.0));
+    step(&mut app, 1);
+    let took = started.elapsed();
+    assert!(took.as_secs_f32() < 2.0, "carving took {took:?}");
+    assert_eq!(app.world().resource::<NavRegion>().report.carved, 0, "below the ground: nothing carved");
+}
+
+/// A region whose navmesh cannot be built says so once, not every tick.
+#[test]
+fn a_navmesh_that_cannot_be_built_is_said_once() {
+    let dir = assets_with_nav("odd_cell");
+    std::fs::write(dir.join("content/world/default.nav.ron"), "{ \"default\": (cell: 0.3, check_bakes: false) }\n").unwrap();
+    let mut app = app_in(dir.to_str().unwrap(), 7, |_| {});
+    floor(app.world_mut());
+    load_region(&mut app, &["floor floor"]);
+    step(&mut app, 30);
+    let said: Vec<String> = warnings(&app).into_iter().filter(|w| w.contains("navmesh: none for this region")).collect();
+    assert_eq!(said.len(), 1, "{said:#?}");
+    assert!(app.world().get_resource::<NavRegion>().is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}

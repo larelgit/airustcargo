@@ -87,7 +87,7 @@ pub mod nav;
 pub mod perception;
 pub mod planner;
 
-use ai_core::SimSet;
+use ai_core::{AiAppExt, SimSet};
 use bevy::prelude::*;
 use shards_action::{ActionPlugin, ActionSystems};
 use shards_content::ContentAppExt;
@@ -209,8 +209,10 @@ impl Plugin for NpcPlugin {
             .init_resource::<NavPaths>()
             .init_resource::<NpcActivity>()
             .init_resource::<nav::NavBakes>()
-            // The navmesh of each region, stitched as it loads.
+            // The navmesh of each region, stitched as it loads; after a snapshot load it is
+            // made again for the region and the solids the snapshot put back.
             .on_region_loaded(nav::region::region_loaded)
+            .add_snapshot_rebuild("navmesh", nav::rebuild)
             .add_engine_module("npc", VERSION)
             .configure_sets(
                 FixedUpdate,
