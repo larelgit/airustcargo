@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 
 pub use intent::{flat, follow_orders, input_names, Intent, Order, Press, Target};
 pub use loading::{statuses as loading_statuses, LoadCheck, LoadStatus, LoadingGate};
-pub use state::{player_body, EngineState, LocalPlayer, NetRole, PauseState, PlayerId};
+pub use state::{player_body, predicts, simulates, EngineState, LocalPlayer, NetRole, NetSet, PauseState, PlayerId, Predicted};
 
 /// Version of the engine crates (they share one).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -34,8 +34,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The types a game module uses most.
 pub mod prelude {
     pub use crate::{
-        input_names, CoreSystems, EngineAppExt, EngineConfig, EngineState, Intent, LoadStatus, LocalPlayer, NetRole, Order,
-        PauseState, PlayerId, Press, Target,
+        input_names, CoreSystems, EngineAppExt, EngineConfig, EngineState, Intent, LoadStatus, LocalPlayer, NetRole, NetSet,
+        Order, PauseState, PlayerId, Predicted, Press, Target,
     };
 }
 
@@ -191,6 +191,7 @@ impl Plugin for CorePlugin {
         app.register_type::<Intent>()
             .register_type::<PlayerId>()
             .register_type::<LocalPlayer>()
+            .register_type::<Predicted>()
             .register_type::<NetRole>();
         // `ai/session {player: N}`, `possess player=N`: the body with `PlayerId(N)`.
         app.world_mut().get_resource_or_init::<ai_core::AgentSessions>().set_player_resolver(state::player_body);
@@ -204,8 +205,17 @@ impl Plugin for CorePlugin {
             .replay_input::<Intent>()
             // "My body" is each machine's own.
             .net_ignore::<LocalPlayer>()
+            .net_ignore::<Predicted>()
+            .replay_ignore::<Predicted>()
             .add_engine_module("core", VERSION)
             .add_ai_status("engine", engine_status)
+            // A client is fed the world by its host: it runs no gameplay, only its prediction.
+            .configure_sets(
+                FixedUpdate,
+                (SimSet::Input, SimSet::Think, SimSet::Act, SimSet::Move, SimSet::Resolve, SimSet::Cleanup)
+                    .distributive_run_if(simulates),
+            )
+            .configure_sets(FixedUpdate, NetSet::Predict.run_if(predicts))
             .configure_sets(
                 FixedUpdate,
                 (CoreSystems::FollowOrders.in_set(SimSet::Input), CoreSystems::ClearPresses.in_set(SimSet::Cleanup)),

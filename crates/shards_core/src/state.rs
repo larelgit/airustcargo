@@ -61,6 +61,44 @@ pub enum NetRole {
     Client,
 }
 
+impl NetRole {
+    /// Whether this machine runs the simulation: everyone but a client, which is fed the
+    /// world by its host. Every `SimSet` runs only if it does ([`simulates`]).
+    pub fn simulates(self) -> bool {
+        self != NetRole::Client
+    }
+
+    /// Whether this machine predicts its own body between the host's states: a client.
+    pub fn predicts(self) -> bool {
+        self == NetRole::Client
+    }
+}
+
+/// Run condition of every `SimSet`: this machine simulates ([`NetRole::simulates`]; no
+/// `NetRole` counts as single player).
+pub fn simulates(role: Option<Res<NetRole>>) -> bool {
+    role.is_none_or(|r| r.simulates())
+}
+
+/// Run condition of [`NetSet::Predict`]: this machine is a client ([`NetRole::predicts`]).
+pub fn predicts(role: Option<Res<NetRole>>) -> bool {
+    role.is_some_and(|r| r.predicts())
+}
+
+/// `FixedUpdate` sets of the network layer.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NetSet {
+    /// A client moves its own body ahead of the host's state ([`Predicted`]); runs only
+    /// where [`predicts`]. It is outside every `SimSet`: a client runs no `SimSet`.
+    Predict,
+}
+
+/// The body a client predicts: its own. Never on a host or in single player; each machine
+/// marks it itself, so it is neither replicated nor checked by replays.
+#[derive(Component, Reflect, Clone, Copy, Debug, Default)]
+#[reflect(Component, Default)]
+pub struct Predicted;
+
 /// A player-controlled character: player 0, 1, ... in a session.
 #[derive(Component, Reflect, Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Serialize, Deserialize)]
 #[reflect(Component, Default)]
