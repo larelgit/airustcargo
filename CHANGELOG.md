@@ -36,8 +36,9 @@ cargo install shards_cli --git https://github.com/larelgit/airustcargo --tag v0.
 1. Поднять `version` в `[workspace.package]` корневого `Cargo.toml` и выполнить `cargo update --workspace`
    (обновит `Cargo.lock`). Перенести записи из `Unreleased` в новый раздел `[X.Y.Z] — дата` и поправить
    ссылки внизу файла.
-2. Обновить `template/Cargo.toml` (тег в комментарии о зависимости) и `template/Cargo.lock`:
-   `cargo update --manifest-path template/Cargo.toml -p shards`.
+2. Обновить в `template/Cargo.toml` тег в комментарии о зависимости и синхронизировать `template/Cargo.lock` с
+   корневым (CI проверяет, что версии зависимостей в них не расходятся):
+   `cp Cargo.lock template/Cargo.lock && cargo metadata --manifest-path template/Cargo.toml --format-version 1 >/dev/null`.
 3. Убедиться, что CI зелёный на коммите, который станет релизом, и влить его в основную ветку.
 4. Поставить и отправить аннотированный тег на этот коммит:
 
