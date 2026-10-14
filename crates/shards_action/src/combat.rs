@@ -466,7 +466,8 @@ pub fn stagger(world: &mut World, entity: Entity, cause: StaggerCause) -> bool {
 /// `entity` dies: [`Dead`], health 0, its buffer emptied, [`Died`], then its moveset's
 /// `death` action (or nothing).
 pub fn kill(world: &mut World, entity: Entity, killer: Option<Entity>, action: Option<String>) {
-    if world.get::<Dead>(entity).is_some() {
+    // Already dead, or gone (a game hook despawned it earlier in the tick).
+    if world.get_entity(entity).is_err() || world.get::<Dead>(entity).is_some() {
         return;
     }
     world.entity_mut(entity).insert(Dead);
