@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use sandbox::gameplay::LayoutPiece;
 use sandbox::SandboxPlugin;
 use shards::ai_core::replay;
+use shards::ai_core::AiLandmark;
 use shards::ai_core::AiReplay;
 use shards::motion::{ColliderId, Volume, VolumeKind};
 use shards::prelude::*;
@@ -158,6 +159,52 @@ fn an_edited_layout_rebuilds_the_course_on_the_next_tick() {
     // Landmarks keep their ids and places.
     let after = text(&ok(&mut app, "inspect", json!({"id": "e13"}))).lines().nth(1).unwrap().to_owned();
     assert_eq!(before, after);
+    assert!(text(&ok(&mut app, "inspect", json!({"id": "e9"}))).starts_with("e9 Stairs"));
+}
+
+#[test]
+fn an_added_layout_is_built_and_a_removed_one_goes() {
+    let dir = assets_copy("layout_added");
+    let file = dir.join("content/world/annex.layout.ron");
+    let mut app = app_on(&dir);
+    // The pieces the annex built, its landmark, and the pillars standing (a prefab it spawns).
+    let annex = |app: &mut App| -> (usize, usize, usize) {
+        let world = app.world_mut();
+        let pieces = world.query::<&LayoutPiece>().iter(world).filter(|p| p.layout == "annex").count();
+        let gates = world.query_filtered::<&Name, With<AiLandmark>>().iter(world).filter(|n| n.as_str() == "Annex Gate").count();
+        let pillars = world.query::<&sandbox::gameplay::Pillar>().iter(world).count();
+        (pieces, gates, pillars)
+    };
+    let built = |app: &App| -> Vec<String> {
+        app.world().resource::<sandbox::gameplay::layout::BuiltLayouts>().0.iter().map(|(id, _)| id.clone()).collect()
+    };
+    let (_, _, pillars) = annex(&mut app);
+    assert_eq!((annex(&mut app).0, built(&app)), (0, ["arena", "course", "watch"].map(String::from).to_vec()));
+
+    // A new file while the game runs: built like the others at start, prefabs included.
+    std::fs::write(
+        &file,
+        r#"{ "annex": (
+            solids: [(min: (50.0, -1.0, 50.0), max: (54.0, 0.0, 54.0))],
+            landmarks: [(name: "Annex Gate", at: (52.0, 0.0, 52.0))],
+            spawns: [(prefab: "pillar", at: (52.0, 0.0, 53.0))],
+        ) }"#,
+    )
+    .unwrap();
+    ok(&mut app, "content_reload", json!({}));
+    step(&mut app, 1);
+    assert_eq!(annex(&mut app), (2, 1, pillars + 1), "a box and a landmark, and its pillar");
+    assert_eq!(built(&app), ["arena", "course", "watch", "annex"]);
+    step(&mut app, 1);
+    assert_eq!(annex(&mut app), (2, 1, pillars + 1), "built once");
+
+    // The file goes: its geometry and landmark with it, the pillar it spawned stays.
+    std::fs::remove_file(&file).unwrap();
+    ok(&mut app, "content_reload", json!({}));
+    step(&mut app, 1);
+    assert_eq!(annex(&mut app), (0, 0, pillars + 1));
+    assert_eq!(built(&app), ["arena", "course", "watch"]);
+    // The others were left alone.
     assert!(text(&ok(&mut app, "inspect", json!({"id": "e9"}))).starts_with("e9 Stairs"));
 }
 

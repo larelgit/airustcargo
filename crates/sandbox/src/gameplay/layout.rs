@@ -6,7 +6,9 @@
 //! Layouts spawn in id order, each in a fixed order (solids, ramps, volumes, landmarks,
 //! spawns), so colliders and AI ids come out the same in every run. A hot edit rebuilds the
 //! edited layout's geometry inside the next tick (recorded in replays like any content
-//! change); landmarks keep their ids and move in place; spawned characters stay.
+//! change); landmarks keep their ids and move in place; spawned characters stay. A layout
+//! file added while the game runs is built the same way, prefabs included; one removed
+//! takes its geometry and landmarks with it, and again leaves the characters.
 
 use shards::motion::{Collider, CollisionLayers, Shape, Volume, VolumeKind};
 use shards::prelude::*;
@@ -159,16 +161,21 @@ pub fn spawn_world(world: &mut World) {
     let layouts: Vec<(String, LayoutDef)> =
         world.resource::<ContentDb>().iter::<LayoutDef>().map(|(id, def)| (id.to_owned(), def.clone())).collect();
     for (id, def) in &layouts {
-        build(world, id, def);
-        for spawn in &def.spawns {
-            let facing = spawn.facing.and_then(|f| f.with_y(0.0).try_normalize()).unwrap_or(Vec3::NEG_Z);
-            let at = Transform::from_translation(spawn.at).looking_to(facing, Vec3::Y);
-            if let Err(why) = shards::content::spawn_prefab(world, &spawn.prefab, at, None) {
-                error!("layout `{id}`: cannot spawn `{}`: {why}", spawn.prefab);
-            }
-        }
+        build_with_spawns(world, id, def);
     }
     world.insert_resource(BuiltLayouts(layouts));
+}
+
+/// A layout as built when the game starts: its geometry and landmarks, then its prefabs.
+fn build_with_spawns(world: &mut World, id: &str, def: &LayoutDef) {
+    build(world, id, def);
+    for spawn in &def.spawns {
+        let facing = spawn.facing.and_then(|f| f.with_y(0.0).try_normalize()).unwrap_or(Vec3::NEG_Z);
+        let at = Transform::from_translation(spawn.at).looking_to(facing, Vec3::Y);
+        if let Err(why) = shards::content::spawn_prefab(world, &spawn.prefab, at, None) {
+            error!("layout `{id}`: cannot spawn `{}`: {why}", spawn.prefab);
+        }
+    }
 }
 
 /// The geometry of one layout: everything but the spawns.
@@ -257,20 +264,48 @@ fn volume_box(v: &VolumeBox) -> (Collider, Volume, Transform) {
     (collider, volume, Transform::from_translation(floor))
 }
 
-/// `SimSet::Cleanup`: a layout whose definition changed (a hot edit, a replayed
-/// `content_apply`) is rebuilt for the next tick: its boxes, ramps and plain volumes anew,
-/// its landmarks moved in place (they keep their ids; extra ones are added, missing ones
-/// removed). Characters it spawned stay where they are.
+/// `SimSet::Cleanup`: the layouts built are made to match the definitions for the next tick
+/// (a hot edit, a replayed `content_apply`), in id order within each step:
+///
+/// 1. One whose definition is gone (its file was removed) loses its boxes, ramps, volumes
+///    and landmarks.
+/// 2. One whose definition changed is rebuilt: its boxes, ramps and plain volumes anew, its
+///    landmarks moved in place (they keep their ids; extra ones are added, missing ones
+///    removed).
+/// 3. One that was added (its file is new) is built as at start, prefabs included.
+///
+/// Characters a layout spawned stay where they are.
 pub fn rebuild_changed_layouts(world: &mut World) {
-    let changed: Vec<(String, LayoutDef)> = {
+    let (removed, changed, added): (Vec<String>, Vec<(String, LayoutDef)>, Vec<(String, LayoutDef)>) = {
+        let Some(built) = world.get_resource::<BuiltLayouts>().map(|b| &b.0[..]) else { return };
         let db = world.resource::<ContentDb>();
-        let built = world.get_resource::<BuiltLayouts>().map(|b| &b.0[..]).unwrap_or_default();
-        db.iter::<LayoutDef>()
-            .filter(|(id, def)| built.iter().all(|(b, old)| b != id || old != *def))
-            .filter(|(id, _)| built.iter().any(|(b, _)| b == id))
-            .map(|(id, def)| (id.to_owned(), def.clone()))
-            .collect()
+        let mut removed: Vec<String> =
+            built.iter().filter(|(id, _)| db.get::<LayoutDef>(id).is_none()).map(|(id, _)| id.clone()).collect();
+        removed.sort();
+        let owned = |(id, def): (&str, &LayoutDef)| (id.to_owned(), def.clone());
+        let changed = db
+            .iter::<LayoutDef>()
+            .filter(|(id, def)| built.iter().any(|(b, old)| b == id && old != *def))
+            .map(owned)
+            .collect();
+        let added = db.iter::<LayoutDef>().filter(|(id, _)| built.iter().all(|(b, _)| b != id)).map(owned).collect();
+        (removed, changed, added)
     };
+    for id in removed {
+        let mut pieces: Vec<(Option<AiId>, Entity)> = world
+            .query::<(Entity, &LayoutPiece, Option<&AiId>)>()
+            .iter(world)
+            .filter(|(_, p, _)| p.layout == id)
+            .map(|(e, _, ai)| (ai.copied(), e))
+            .collect();
+        // By id, not by entity: the tombstones of the landmarks come out the same in every run.
+        pieces.sort_by_key(|(ai, _)| *ai);
+        for (_, entity) in pieces {
+            world.despawn(entity);
+        }
+        world.resource_mut::<BuiltLayouts>().0.retain(|(b, _)| *b != id);
+        info!("layout `{id}` removed");
+    }
     for (id, def) in changed {
         let pieces: Vec<(Entity, PieceKind, Option<AiId>)> = world
             .query::<(Entity, &LayoutPiece, Option<&AiId>)>()
@@ -316,6 +351,11 @@ pub fn rebuild_changed_layouts(world: &mut World) {
             Some(slot) => slot.1 = def,
             None => built.0.push((id, def)),
         }
+    }
+    for (id, def) in added {
+        build_with_spawns(world, &id, &def);
+        info!("layout `{id}` added");
+        world.resource_mut::<BuiltLayouts>().0.push((id, def));
     }
 }
 

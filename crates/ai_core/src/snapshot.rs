@@ -694,16 +694,23 @@ fn check_fits(
     let (ids, keyed) = (HashMap::new(), HashMap::new());
     let mut skipped = Skipped::default();
     let mut errors: Vec<String> = Vec::new();
+    // Errors `force` would turn into warnings; the others it cannot load past.
+    let mut skippable = 0;
+    // Left out under `force` because they are not snapshot state, not because they are unknown.
+    let mut reserved_paths = BTreeSet::new();
     let mut seen = BTreeSet::new();
     for entity in &snapshot.entities {
-        if entity.id == 0 || !seen.insert(entity.id) {
-            errors.push(format!("entity id {} is {}", entity.id, if entity.id == 0 { "not an id" } else { "listed twice" }));
+        // 0 is "not assigned yet"; `u32::MAX` has no id after it for the counter to move to.
+        let reserved = entity.id == 0 || entity.id == u32::MAX;
+        if reserved || !seen.insert(entity.id) {
+            errors.push(format!("entity id {} is {}", entity.id, if reserved { "not an id" } else { "listed twice" }));
         }
         for (path, value) in &entity.components {
             let Some(registration) = registry.get_with_type_path(path).filter(|r| r.data::<ReflectComponent>().is_some()) else {
                 if force {
                     skipped.components.insert(path.clone());
                 } else {
+                    skippable += 1;
                     errors.push(format!(
                         "e{}: unknown component `{path}` (a snapshot from another game or version?)",
                         entity.id
@@ -711,33 +718,69 @@ fn check_fits(
                 }
                 continue;
             };
+            // Written in place by `apply_or_insert_mapped`, a hand-written `AiId` would skip the
+            // hooks that keep `AiIndex` right; Bevy's own types are made again, not loaded.
+            if !is_snapshot_type(registration.type_id(), path) {
+                if force {
+                    skipped.components.insert(path.clone());
+                    reserved_paths.insert(path.clone());
+                } else {
+                    skippable += 1;
+                    errors.push(format!(
+                        "e{}: `{path}` is not snapshot state (AiId is the entity's key; Bevy's own types are rebuilt)",
+                        entity.id
+                    ));
+                }
+                continue;
+            }
             if let Err(why) = from_json(registration, registry, value, &mut Decoder::dry(&ids, &keyed)) {
                 errors.push(format!("e{}: {path}: {why}", entity.id));
             }
         }
     }
-    // Whether a saved resource's value reads is found out when it is loaded (they are few).
-    for name in snapshot.resources.keys() {
-        if modules.resources.iter().all(|r| r.name != name) {
+    // A resource that does not read would fail inside `replace_world`, with the world already
+    // replaced: `force` does not skip it, only a resource this game does not register.
+    for (name, value) in &snapshot.resources {
+        let Some(resource) = modules.resources.iter().find(|r| r.name == name.as_str()) else {
             if force {
                 skipped.resources.insert(name.clone());
             } else {
+                skippable += 1;
                 errors.push(format!("unknown saved resource `{name}` (this game does not register it)"));
             }
+            continue;
+        };
+        let read = registry
+            .get(resource.type_id)
+            .ok_or_else(|| "not registered for reflection".to_owned())
+            .and_then(|registration| from_json(registration, registry, value, &mut Decoder::dry(&ids, &keyed)));
+        if let Err(why) = read {
+            errors.push(format!("resource `{name}`: {why}"));
         }
     }
     if !errors.is_empty() {
         let shown: Vec<String> = errors.iter().take(8).map(|e| format!("  - {e}")).collect();
         let more = errors.len().saturating_sub(shown.len());
+        let hint = if skippable == errors.len() {
+            "Load with force=true to leave these out"
+        } else if skippable > 0 {
+            "force=true leaves out the unknown and reserved entries, not the others: fix the file or take the snapshot again"
+        } else {
+            "force=true does not load past these: fix the file or take the snapshot again"
+        };
         return Err(format!(
-            "the snapshot does not fit this game ({} problem(s)):\n{}{}\nLoad with force=true to skip what this game does not know",
+            "the snapshot does not fit this game ({} problem(s)):\n{}{}\n{hint}",
             errors.len(),
             shown.join("\n"),
             if more > 0 { format!("\n  … (+{more})") } else { String::new() }
         ));
     }
-    if !skipped.components.is_empty() {
-        warnings.push(format!("left out components this game does not know: {}", join(&skipped.components)));
+    let unknown: BTreeSet<String> = skipped.components.difference(&reserved_paths).cloned().collect();
+    if !unknown.is_empty() {
+        warnings.push(format!("left out components this game does not know: {}", join(&unknown)));
+    }
+    if !reserved_paths.is_empty() {
+        warnings.push(format!("left out components that are not snapshot state: {}", join(&reserved_paths)));
     }
     if !skipped.resources.is_empty() {
         warnings.push(format!("left out resources this game does not register: {}", join(&skipped.resources)));
@@ -1130,6 +1173,69 @@ mod tests {
     }
 
     #[test]
+    fn a_snapshot_with_a_resource_that_does_not_read_is_refused_before_anything_changes() {
+        let mut app = game();
+        step(&mut app, 3);
+        let mut snapshot = capture(app.world()).unwrap();
+        snapshot.resources.insert("ai_core::snapshot::tests::Score".into(), serde_json::json!({"points": "many", "best": null}));
+        step(&mut app, 2);
+        let before = capture(app.world()).unwrap();
+        assert_eq!(before.tick, 5);
+
+        // Not even `force` loads a value the game cannot read: it would fail half way.
+        for force in [false, true] {
+            let err = restore(app.world_mut(), &snapshot, force).unwrap_err();
+            assert!(err.contains("resource `ai_core::snapshot::tests::Score`:"), "{err}");
+            assert!(err.contains("force=true does not load past these"), "it does not send the caller to force: {err}");
+            assert_eq!(capture(app.world()).unwrap(), before, "nothing changed (force={force})");
+        }
+    }
+
+    #[test]
+    fn a_snapshot_cannot_write_the_ai_id_in_place() {
+        let mut app = game();
+        step(&mut app, 3);
+        let mut snapshot = capture(app.world()).unwrap();
+        snapshot.entities[1].components.insert("ai_core::id::AiId".into(), serde_json::json!(77));
+        step(&mut app, 2);
+        let before = capture(app.world()).unwrap();
+
+        let err = restore(app.world_mut(), &snapshot, false).unwrap_err();
+        assert!(err.contains("e2: `ai_core::id::AiId` is not snapshot state"), "{err}");
+        assert!(err.contains("Load with force=true to leave these out"), "{err}");
+        assert_eq!(capture(app.world()).unwrap(), before, "nothing changed");
+
+        // Forced, it is left out and said so (not as unknown): the entity keeps
+        // the id the snapshot gave it, and the index still finds it.
+        let report = restore(app.world_mut(), &snapshot, true).unwrap();
+        assert!(report.exact(), "{:?}", report.differences);
+        assert!(
+            report.warnings.iter().any(|w| w == "left out components that are not snapshot state: ai_core::id::AiId"),
+            "{:?}",
+            report.warnings
+        );
+        assert!(!report.warnings.iter().any(|w| w.contains("does not know")), "{:?}", report.warnings);
+        let index = app.world().resource::<AiIndex>();
+        assert_eq!((index.ids(), index.get(AiId(77))), ([AiId(1), AiId(2)].to_vec(), None));
+        let imp = index.get(AiId(2)).unwrap();
+        assert_eq!(app.world().get::<AiId>(imp), Some(&AiId(2)));
+    }
+
+    #[test]
+    fn an_entity_id_nothing_can_follow_is_refused_before_anything_changes() {
+        let mut app = game();
+        step(&mut app, 3);
+        let mut snapshot = capture(app.world()).unwrap();
+        snapshot.entities[1].id = u32::MAX;
+        let before = capture(app.world()).unwrap();
+        for force in [false, true] {
+            let err = restore(app.world_mut(), &snapshot, force).unwrap_err();
+            assert!(err.contains(&format!("entity id {} is not an id", u32::MAX)), "{err}");
+            assert_eq!(capture(app.world()).unwrap(), before, "nothing changed (force={force})");
+        }
+    }
+
+    #[test]
     fn force_leaves_out_what_the_game_does_not_know() {
         let mut app = game();
         let mut snapshot = capture(app.world()).unwrap();
@@ -1370,6 +1476,24 @@ mod tests {
         // A load tells what the snapshot could not hold.
         let report = restore(app.world_mut(), &snapshot, false).unwrap();
         assert!(report.warnings.iter().any(|w| w.starts_with("the snapshot could not hold: ai_core::snapshot::tests::Hp")), "{:?}", report.warnings);
+    }
+
+    #[test]
+    fn a_resource_that_does_not_read_back_is_said_at_save_time() {
+        #[derive(Resource, Reflect, Default, Clone, PartialEq, Debug)]
+        #[reflect(Resource, Default)]
+        struct Gauge {
+            level: f32,
+        }
+        let mut app = game_with(|app| {
+            app.register_type::<Gauge>().init_resource::<Gauge>().add_snapshot_resource::<Gauge>();
+        });
+        app.world_mut().resource_mut::<Gauge>().level = f32::NAN;
+        let snapshot = capture(app.world()).unwrap();
+        assert_eq!(snapshot.left_out.len(), 1, "{:?}", snapshot.left_out);
+        assert!(snapshot.left_out[0].starts_with("ai_core::snapshot::tests::Gauge (does not read back"), "{:?}", snapshot.left_out);
+        assert!(!snapshot.resources.contains_key("ai_core::snapshot::tests::Gauge"));
+        assert!(snapshot.resources.contains_key("ai_core::snapshot::tests::Score"), "the others are still written");
     }
 
     #[test]

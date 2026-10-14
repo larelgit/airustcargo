@@ -231,7 +231,9 @@ pub fn bind_players(
 ) {
     for (entity, set, bound) in &animated {
         let Some(built) = graphs.built(&set.animset) else { continue };
-        if bound.is_some_and(|b| b.graph == built.graph.id()) {
+        // The graph is the set's current one and its player is still there (a model reload
+        // or a scene swap spawns the scene again, the player with it).
+        if bound.is_some_and(|b| b.graph == built.graph.id() && players.contains(b.player)) {
             continue;
         }
         let found = std::iter::once(entity).chain(children.iter_descendants(entity)).find(|e| players.contains(*e));
@@ -779,6 +781,26 @@ mod tests {
         rig.velocity(2.0);
         rig.app.update();
         assert_eq!(rig.main_clip().as_deref(), Some("run"), "no walk clip any more: the run clip stands in");
+    }
+
+    #[test]
+    fn a_respawned_player_is_bound_again() {
+        let mut rig = rig();
+        // A scene swap: the old player goes with its scene instance, a new one comes.
+        rig.app.world_mut().despawn(rig.player);
+        let fresh = rig.app.world_mut().spawn(AnimationPlayer::default()).id();
+        rig.app.world_mut().entity_mut(rig.character).add_child(fresh);
+        rig.app.update();
+        rig.app.update();
+        let world = rig.app.world();
+        let bound = world.get::<AnimationBound>(rig.character).unwrap();
+        assert_eq!(bound.player, fresh, "the binding follows the new player");
+        let built = world.resource::<AnimGraphs>().built("humanoid").unwrap();
+        assert_eq!(world.get::<AnimationGraphHandle>(fresh).map(|h| h.id()), Some(built.graph.id()));
+        assert!(world.get::<AnimationTransitions>(fresh).is_some());
+        assert_eq!(rig.main_clip().as_deref(), Some("idle"));
+        let playing = world.get::<AnimationPlayer>(fresh).unwrap();
+        assert!(playing.animation(rig.nodes["idle"]).is_some(), "the main clip plays on it");
     }
 
     #[test]

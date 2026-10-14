@@ -466,7 +466,7 @@ impl AiAppExt for App {
 
     fn net_route(&mut self, name: &str, route: NetRoute) -> &mut Self {
         if let Err(why) = self.world_mut().get_resource_or_init::<AiTools>().set_route(name, route) {
-            panic!("net_route: {why} (register the tool first)");
+            panic!("net_route: {why}");
         }
         self
     }

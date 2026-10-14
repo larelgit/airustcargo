@@ -323,6 +323,14 @@ fn attack(In(call): In<Call<AttackArgs>>, world: &mut World) -> ToolResult {
     if world.get::<Dead>(target).is_some() {
         return Err(format!("{} is already dead", call.args.target));
     }
+    // An AI-visible entity need not be in the world (a director, a quest): the order would be
+    // dropped by `follow_attack_orders` on the next tick, which walks to and faces a position.
+    if world.get::<Transform>(target).is_none() {
+        return Err(format!(
+            "{} has no position, so there is nothing to walk to and hit; attack a body that stands in the world",
+            call.args.target
+        ));
+    }
     let input = call.args.input.unwrap_or_else(|| LIGHT.to_owned());
     // An order that waiting cannot start (no such input, a raised guard, no charges)
     // would sit there for ever: refuse it now, with the reason.

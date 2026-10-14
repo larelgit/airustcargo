@@ -289,19 +289,19 @@ pub(crate) fn begin_action(world: &mut World, caller: &Caller, tool: &str, args:
     if replay.action_depth > 1 {
         return;
     }
-    if replay.not_recording {
-        return;
-    }
-    replay.current_call = Some(replay.events.len());
-    replay.events.push(ReplayEvent::Call {
-        at,
-        agent: caller.agent.clone(),
-        scope: caller.scope,
-        subject: caller.subject_id,
-        tool: tool.to_owned(),
-        args: args.clone(),
-    });
+    // Whether a game records its session does not change what its playback does.
     let takeover = replay.playback.is_some() && !replay.replaying;
+    if !replay.not_recording {
+        replay.current_call = Some(replay.events.len());
+        replay.events.push(ReplayEvent::Call {
+            at,
+            agent: caller.agent.clone(),
+            scope: caller.scope,
+            subject: caller.subject_id,
+            tool: tool.to_owned(),
+            args: args.clone(),
+        });
+    }
     if takeover {
         interrupt(world, format!("{} took over ({tool})", caller.agent));
     }
@@ -1123,6 +1123,24 @@ mod tests {
         let replay = app.world().resource::<AiReplay>();
         assert_eq!(replay.started_from().map(|s| s.tick), Some(CHECK_EVERY * 3));
         assert_eq!(replay.recorded_events(), 0);
+    }
+
+    #[test]
+    fn a_takeover_ends_playback_even_when_the_game_does_not_record() {
+        let mut app = game();
+        // A recording of a fresh game that ends later: nothing to replay but the ticks.
+        let mut replay = save(app.world());
+        replay.end.tick = 120;
+        set_recording(app.world_mut(), false);
+        play(app.world_mut(), replay).unwrap();
+        assert!(app.world().resource::<AiReplay>().is_playing());
+
+        let out = crate::call_tool(app.world_mut(), "dev", "teleport", json!({"id": 1, "x": 3, "z": 0}));
+        assert!(out.ok, "{}", out.result);
+        let state = app.world().resource::<AiReplay>();
+        assert!(!state.is_playing(), "the action interrupted the playback");
+        assert_eq!(state.report().and_then(|r| r.interrupted.as_deref()), Some("dev took over (teleport)"));
+        assert_eq!(state.recorded_events(), 0, "and nothing was recorded");
     }
 
     #[derive(Component)]

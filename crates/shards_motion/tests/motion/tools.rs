@@ -172,6 +172,22 @@ fn move_to_walks_move_goes_a_distance_and_stop_cancels() {
 }
 
 #[test]
+fn move_to_an_entity_with_no_position_is_refused() {
+    let mut app = bare_engine("move_to_no_position");
+    floor(app.world_mut());
+    let e = player(app.world_mut(), Vec3::ZERO);
+    // The AI sees it, but it stands nowhere: a director, a quest.
+    let ghost = app.world_mut().spawn(ai_core::AiKind::new("Director")).id();
+    let ghost = *app.world().get::<AiId>(ghost).unwrap();
+    step(&mut app, 3);
+    for path in [false, true] {
+        let err = fails(&mut app, "move_to", json!({"target": ghost.to_string(), "path": path}));
+        assert_eq!(err, format!("{ghost} has no position, so move_to cannot walk to it; pass a point {{x, z}} or another entity"));
+        assert!(intent(&app, e).orders.is_empty(), "nothing was queued (path={path})");
+    }
+}
+
+#[test]
 fn movement_tools_teach_the_fix() {
     let mut app = bare_engine("tools_teach");
     floor(app.world_mut());

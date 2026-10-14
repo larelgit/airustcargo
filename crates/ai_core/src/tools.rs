@@ -161,9 +161,15 @@ impl AiTools {
     }
 
     /// Changes where tool `name` runs on a client. Refused for a tool that does not exist or
-    /// is running right now.
+    /// is running right now, and for a query routed to the host (a query writes no journal,
+    /// and the hand-over to the host is journaled).
     pub fn set_route(&mut self, name: &str, route: NetRoute) -> Result<(), String> {
-        let tool = self.tools.get_mut(name).ok_or_else(|| format!("no tool `{name}`"))?;
+        let tool = self.tools.get_mut(name).ok_or_else(|| format!("no tool `{name}` (register the tool first)"))?;
+        if route == NetRoute::Host && tool.spec.kind == ToolKind::Query {
+            return Err(format!(
+                "`{name}` is a query, and queries run locally: route it to NetRoute::Local, or NetRoute::HostOnly if only the host can answer"
+            ));
+        }
         let tool = Arc::get_mut(tool).ok_or_else(|| format!("`{name}` is running; set its route at startup"))?;
         tool.spec.net = route;
         Ok(())
@@ -701,5 +707,31 @@ mod tests {
         assert!(call_tool(app.world_mut(), "dev", "teleport", teleport(9.0)).ok);
         assert_eq!(crate_x(&mut app), 9.0);
         assert_eq!(app.world().resource::<Forwarded>().0.len(), 1);
+    }
+
+    #[test]
+    fn a_query_cannot_be_routed_to_the_host() {
+        let mut app = game();
+        let route = |app: &App, name: &str| app.world().resource::<AiTools>().get(name).unwrap().spec.net;
+        // The host arm of `call_tool` journals the hand-over; a query writes no journal.
+        let err = app.world_mut().resource_mut::<AiTools>().set_route("observe", NetRoute::Host).unwrap_err();
+        assert!(err.contains("`observe` is a query") && err.contains("queries run locally"), "{err}");
+        assert_eq!(route(&app, "observe"), NetRoute::Local, "the route stays as it was");
+
+        // The other routes are fine for a query, and an action may still go to the host.
+        {
+            let mut tools = app.world_mut().resource_mut::<AiTools>();
+            tools.set_route("observe", NetRoute::HostOnly(ON_THE_HOST)).unwrap();
+            tools.set_route("observe", NetRoute::Local).unwrap();
+            tools.set_route("teleport", NetRoute::Host).unwrap();
+        }
+        assert_eq!(route(&app, "observe"), NetRoute::Local);
+    }
+
+    #[test]
+    #[should_panic(expected = "queries run locally")]
+    fn the_app_builder_refuses_a_query_routed_to_the_host() {
+        use crate::AiAppExt;
+        game().net_route("observe", NetRoute::Host);
     }
 }
