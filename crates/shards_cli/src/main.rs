@@ -22,6 +22,7 @@
 
 use std::io::{self, ErrorKind, Write};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
@@ -486,12 +487,19 @@ fn print_shot(info: &Value) {
 }
 
 /// Prints one line of command output, as `println!` does. A reader that has gone away
-/// (`shards observe | head -1`) is the end of the output, not an error: exit 0 quietly
-/// instead of panicking. Any other write error ends the process with code 2.
+/// (`shards observe | head -1`) is the end of the output, not an error: the rest of the
+/// output is dropped quietly instead of panicking, and the command still finishes and
+/// exits with its own code (a failed `shards scenario` stays a failure). Any other write
+/// error ends the process with code 2.
 fn say(line: impl std::fmt::Display) {
+    static GONE: AtomicBool = AtomicBool::new(false);
+    if GONE.load(Ordering::Relaxed) {
+        return;
+    }
     if let Err(e) = write_line(&mut io::stdout().lock(), line) {
         if e.kind() == ErrorKind::BrokenPipe {
-            std::process::exit(0);
+            GONE.store(true, Ordering::Relaxed);
+            return;
         }
         let _ = writeln!(io::stderr(), "error: cannot write to stdout: {e}");
         std::process::exit(2);
