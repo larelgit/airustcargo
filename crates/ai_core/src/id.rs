@@ -83,7 +83,7 @@ pub struct AiLandmark;
 pub struct AiPlayer;
 
 /// What is known about an id that is gone, for helpful errors ("e57 died at tick 1530").
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Tombstone {
     pub id: AiId,
     pub label: String,
@@ -138,6 +138,29 @@ impl AiIndex {
     /// Next id that will be assigned (for snapshots).
     pub fn next_id(&self) -> u32 {
         self.next
+    }
+
+    /// The tombstones, oldest first (for snapshots).
+    pub fn graveyard(&self) -> impl Iterator<Item = &Tombstone> {
+        self.graveyard.iter()
+    }
+
+    /// Live ids with their entities, in ascending id order.
+    pub fn live(&self) -> Vec<(AiId, Entity)> {
+        let mut live: Vec<(AiId, Entity)> = self.live.iter().map(|(id, e)| (*id, *e)).collect();
+        live.sort_unstable_by_key(|(id, _)| *id);
+        live
+    }
+
+    /// Puts the counter and the tombstones back as a snapshot had them. The counter never
+    /// drops below the highest live id, so a stale snapshot cannot hand out an id twice.
+    pub(crate) fn restore_counters(&mut self, next: u32, graveyard: impl IntoIterator<Item = Tombstone>) {
+        let highest = self.live.keys().map(|id| id.0).max().unwrap_or(0);
+        self.next = next.max(highest + 1).max(1);
+        self.graveyard = graveyard.into_iter().collect();
+        while self.graveyard.len() > GRAVEYARD_LEN {
+            self.graveyard.pop_front();
+        }
     }
 
     /// Like [`get`](Self::get), but the error explains what happened and what exists,

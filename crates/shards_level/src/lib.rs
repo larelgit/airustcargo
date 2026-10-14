@@ -190,6 +190,14 @@ impl Plugin for LevelPlugin {
             .add_content::<LevelDef>()
             .init_resource::<LevelLibrary>()
             .init_resource::<LevelInstances>()
+            // Which levels are placed where is not in a snapshot (their colliders are checked
+            // as static colliders, their files with this): a snapshot loads where it is the same.
+            .add_snapshot_check(
+                "levels",
+                "other levels are placed than when the snapshot was taken: spawn the same levels (spawn_level) \
+                 first",
+                spawn::level_hash,
+            )
             .require_loaded("levels", library::level_status)
             .add_engine_module("level", VERSION)
             .register_ai_describer("marker", tools::describe_marker)

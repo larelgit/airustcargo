@@ -12,3 +12,4 @@ mod replays;
 mod scenario_files;
 mod scenarios;
 mod shutdown;
+mod snapshots;

@@ -191,6 +191,12 @@ fn verify(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, recording
         eprintln!("error: {e}");
         return ExitCode::from(2);
     }
+    // A recording that starts from a snapshot has it put in by now, or could not (other
+    // content, another build): then it cannot be played at all.
+    if let Some(report) = app.world().resource::<AiReplay>().report().filter(|r| r.interrupted.is_some()) {
+        eprintln!("error: {report}");
+        return ExitCode::from(2);
+    }
     let started = Instant::now();
     let failures = match crate::testing::run_to(&mut app, end, Duration::from_secs(60)) {
         Ok(failures) => failures,
@@ -232,6 +238,9 @@ mod windowed {
     #[derive(Resource)]
     struct Verifying {
         end: u64,
+        /// The tick a recording that starts from a snapshot begins at (0 otherwise): the
+        /// snapshot goes in before the first tick, so the ticks to play start counting there.
+        from: u64,
         /// When loading was done and the playback began.
         started: Option<Instant>,
         frames: u64,
@@ -247,7 +256,7 @@ mod windowed {
         // Writes nothing, serves nothing, starts paused: time moves only by the driver's steps.
         let config =
             EngineConfig { headless: false, port: None, paused: true, crash_replays: false, hot_reload: false, ..config };
-        let end = recording.end.tick;
+        let (end, from) = (recording.end.tick, recording.start.as_ref().map_or(0, |s| s.tick));
         let mut app = build(&config);
         // Before loading, as a live `--replay` does.
         if let Err(e) = replay::play(app.world_mut(), recording) {
@@ -256,7 +265,7 @@ mod windowed {
         }
         // Frames keep coming without focus or input (a virtual display has neither).
         app.insert_resource(bevy::winit::WinitSettings::continuous())
-            .insert_resource(Verifying { end, started: None, frames: 0, created: Instant::now() })
+            .insert_resource(Verifying { end, from, started: None, frames: 0, created: Instant::now() })
             .add_systems(Update, drive);
         exit_code(app.run())
     }
@@ -280,17 +289,22 @@ mod windowed {
             }
             return;
         }
-        let (end, started, frames) = (state.end, *state.started.get_or_insert_with(Instant::now), state.frames);
+        let (end, from) = (state.end, state.from);
+        let (started, frames) = (*state.started.get_or_insert_with(Instant::now), state.frames);
         let took = |world: &World| {
             format!("[{} ticks in {:.2}s, {frames} frames]", ai_core::sim::tick(world), started.elapsed().as_secs_f64())
         };
         // The playback finishes in `Last` of the frame that ran its last tick.
         if let Some(report) = world.resource::<AiReplay>().report().cloned() {
             println!("{report} {}", took(world));
-            world.write_message(if report.identical() { AppExit::Success } else { AppExit::from_code(1) });
+            // 2: it could not be played (its snapshot did not load).
+            let code = if report.interrupted.is_some() { 2 } else { 1 };
+            world.write_message(if report.identical() { AppExit::Success } else { AppExit::from_code(code) });
             return;
         }
-        let tick = ai_core::sim::tick(world);
+        // Until the snapshot is in (the first tick puts it in), the game is at tick 0 but
+        // its recording starts at `from`.
+        let tick = ai_core::sim::tick(world).max(from);
         if tick >= end {
             return;
         }
@@ -476,6 +490,63 @@ mod tests {
         assert!(parse(&["game", "--replay", "r.json", "--windowed"]).is_err());
         let args = parse(&["game", "--replay", "r.json", "--verify", "--windowed"]).unwrap();
         assert!(args.verify && args.windowed);
+    }
+
+    /// Tests that write into `snapshots/` take turns: the last one out removes the folder.
+    static FOLDER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A file in `snapshots/` of the working directory that goes away with the test.
+    struct Scratch(String, #[allow(dead_code, reason = "held until the test is over")] std::sync::MutexGuard<'static, ()>);
+
+    impl Scratch {
+        fn new(name: &str) -> Scratch {
+            let turn = FOLDER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            Scratch(format!("snapshots/shards_verify_{name}_{}.json", std::process::id()), turn)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+            let _ = std::fs::remove_dir("snapshots");
+        }
+    }
+
+    /// A session that loads a snapshot and goes on: its replay starts from the snapshot.
+    fn recorded_from_a_snapshot(config: &EngineConfig, file: &Scratch) -> Replay {
+        record(config, |app| {
+            ok(app, "step", json!({"ticks": 30}));
+            ok(app, "snapshot_save", json!({"path": file.0}));
+            // Later, elsewhere: the first 30 ticks and this teleport are not part of the replay.
+            ok(app, "teleport", json!({"id": "e1", "x": 9, "z": 9}));
+            ok(app, "step", json!({"ticks": 20}));
+            ok(app, "snapshot_load", json!({"path": file.0}));
+            ok(app, "step", json!({"ticks": 10}));
+            ok(app, "teleport", json!({"id": "e1", "x": 3, "z": 0}));
+            ok(app, "step", json!({"ticks": 70}));
+        })
+    }
+
+    #[test]
+    fn verify_plays_a_replay_that_starts_from_a_snapshot() {
+        let config = content("snapshot", "Totem");
+        let file = Scratch::new("ok");
+        let recording = recorded_from_a_snapshot(&config, &file);
+        assert_eq!(recording.start.as_ref().map(|s| s.tick), Some(30));
+        assert_eq!((recording.end.tick, recording.events.len()), (110, 1), "{:?}", recording.events);
+        // Only the file is needed to play it: the snapshot is inside.
+        let _ = std::fs::remove_file(&file.0);
+        assert_eq!(verify(&game, config, recording), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn verify_cannot_play_a_replay_whose_snapshot_this_build_cannot_load() {
+        let config = content("snapshot_other", "Totem");
+        let file = Scratch::new("other");
+        let mut recording = recorded_from_a_snapshot(&config, &file);
+        recording.start.as_mut().unwrap().checks.insert("content".into(), "00000000000000ff".into());
+        // Exit code 2: it could not be played (1 is a replay that diverged).
+        assert_eq!(verify(&game, config, recording), ExitCode::from(2));
     }
 
     #[test]

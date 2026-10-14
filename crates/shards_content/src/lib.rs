@@ -128,6 +128,13 @@ impl Plugin for ContentPlugin {
             .require_loaded("content", load::content_status)
             .add_engine_module("content", env!("CARGO_PKG_VERSION"))
             .add_replay_check("content", |w| w.get_resource::<ContentDb>().map_or(0, ContentDb::hash))
+            // Content is not in a snapshot (it is files); a snapshot loads where it is the same.
+            .add_snapshot_check(
+                "content",
+                "the content files differ from the ones the snapshot was taken with, or a content edit came before \
+                 it: put those files back, or take the snapshot again",
+                |w| w.get_resource::<ContentDb>().map_or(0, ContentDb::hash),
+            )
             .add_systems(Startup, load::start_loading)
             .add_systems(
                 Update,

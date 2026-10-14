@@ -10,6 +10,8 @@
 //! shards act dodge dir=W
 //! shards shot                      # PNG of the window with eN marks, plus a legend
 //! shards save-replay               # this session as a replay file (cargo sandbox --replay F)
+//! shards save-snapshot             # the state at this tick as a file (snapshots/tick<T>.json)
+//! shards load-snapshot snapshots/tick120.json   # back to it: the next step continues from there
 //! shards --port-file F wait        # a game started with `--port 0 --port-file F`; waits for loading
 //! shards content check             # every content file parsed and validated
 //! shards worldgen --region meadow --seeds 1..1000 --report   # batch check of the generator
@@ -89,6 +91,24 @@ enum Cmd {
     SaveReplay {
         /// Default: replays/tick<T>.json next to the game.
         path: Option<String>,
+    },
+    /// Save the simulation state at this tick as a snapshot: every entity with its id and
+    /// components, the tick, the id counters. Load it with `load-snapshot` (here, or in a
+    /// fresh game with the same seed and content); a replay recorded after loading one
+    /// starts from it.
+    SaveSnapshot {
+        /// Default: snapshots/tick<T>.json next to the game.
+        path: Option<String>,
+    },
+    /// Load a snapshot written by `save-snapshot`: the next `step` continues as the original
+    /// session did ("go to boss phase" is a snapshot taken there). Refused, changing nothing,
+    /// when the game is not the one it was taken in; the error says what differs.
+    LoadSnapshot {
+        /// A file inside snapshots/.
+        path: String,
+        /// Load although the seed, engine version or content differ.
+        #[arg(long)]
+        force: bool,
     },
     /// Run scenario files against the game: shards commands with expectations and
     /// invariants, one command per line (format: see shards_script, README "Сценарии").
@@ -333,6 +353,8 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
         }
         Cmd::Act { tool, args } => act(tool, parse_args(args)?)?,
         Cmd::SaveReplay { path } => act("replay_save", json!({"path": path}))?,
+        Cmd::SaveSnapshot { path } => act("snapshot_save", json!({"path": path}))?,
+        Cmd::LoadSnapshot { path, force } => act("snapshot_load", json!({"path": path, "force": force}))?,
         Cmd::Scenario { files, quiet } => return scenario::run(client, files, *quiet, cli.json),
         Cmd::Shot { no_marks, out, timeout } => {
             let reply = act("shot", json!({"marks": !no_marks, "path": out}))?;

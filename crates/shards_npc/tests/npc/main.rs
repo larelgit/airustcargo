@@ -7,5 +7,6 @@ mod fsm;
 mod nav;
 mod perception;
 mod replay;
+mod snapshot;
 mod tools;
 mod warden;

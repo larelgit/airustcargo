@@ -24,6 +24,14 @@
 //! from. An action call from anyone during playback takes over and ends it.
 //!
 //! Recording continues during playback, so a branch saves as one whole replay.
+//!
+//! **From a snapshot.** A recording that starts at tick `N` instead of 0 carries the
+//! [`Snapshot`] it started from (`start`, format `shards-replay/3`). Loading a snapshot
+//! into a running game (`snapshot_load`) restarts the recording there: what came before
+//! is not part of it any more, the snapshot is. Playback loads that snapshot as soon as
+//! the game has loaded, then plays the events and compares the checks as usual, so
+//! `--replay FILE --verify` works for such a replay too. Replays without a start are
+//! `shards-replay/2` or `/3` files that begin at tick 0; this build plays both.
 
 use std::any::TypeId;
 use std::fmt;
@@ -46,12 +54,15 @@ use crate::journal::{self, JournalKind};
 use crate::rng::SimSeed;
 use crate::session::{AgentSessions, Caller, Scope};
 use crate::sim::{self, SimTick};
+use crate::snapshot::{self, Snapshot};
 use crate::tools::{call_tool, register_tool, Call, ToolKind, ToolResult};
 
-/// Format tag written into every replay file. Version 2 hashes game data; version 1
-/// hashed the AI's text and cannot be checked by this build.
-pub const FORMAT: &str = "shards-replay/2";
+/// Format tag written into every replay file. Version 3 can start from a snapshot;
+/// version 2 (hashes of game data, always from tick 0) still plays; version 1 hashed the
+/// AI's text and cannot be checked by this build.
+pub const FORMAT: &str = "shards-replay/3";
 
+const FORMAT_V2: &str = "shards-replay/2";
 const FORMAT_V1: &str = "shards-replay/1";
 
 /// Ticks between state checks (one second at 60 Hz).
@@ -67,6 +78,10 @@ pub struct Replay {
     pub format: String,
     pub seed: u64,
     pub tick_hz: f64,
+    /// The state the recording starts from, when it does not start at tick 0: playback
+    /// loads it first. Every event and check is at or after its tick.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<Snapshot>,
     /// The recording ends after this many ticks, in this state.
     pub end: Check,
     /// In the order they happened.
@@ -144,6 +159,8 @@ impl fmt::Display for ReplayReport {
 
 struct Playback {
     replay: Replay,
+    /// The recording's starting snapshot, until the game has loaded and it is put in.
+    pending_start: Option<Snapshot>,
     /// Index of the next event to apply.
     next: usize,
     /// Input events due before the current tick, picked up by the typed input systems.
@@ -157,8 +174,13 @@ struct Playback {
 pub struct AiReplay {
     events: Vec<ReplayEvent>,
     checks: Vec<Check>,
+    /// The snapshot this recording starts from (`None`: tick 0).
+    start: Option<Snapshot>,
     /// Names of the registered input components.
     inputs: Vec<&'static str>,
+    /// Per registered input component: learn the values it has now (after a snapshot
+    /// replaced the entities, the remembered ones belong to entities that are gone).
+    memory_resets: Vec<fn(&mut World)>,
     playback: Option<Playback>,
     report: Option<ReplayReport>,
     /// Set while playback itself calls tools, so its calls do not count as a takeover.
@@ -189,6 +211,32 @@ impl AiReplay {
     pub fn recorded_events(&self) -> usize {
         self.events.len()
     }
+
+    /// The snapshot this recording starts from, if it does not start at tick 0.
+    pub fn started_from(&self) -> Option<&Snapshot> {
+        self.start.as_ref()
+    }
+}
+
+/// A snapshot was loaded: the recording starts here now. What was recorded before is
+/// dropped (a replay is one run from one start), a playback in progress is over when
+/// `interrupt_playback` (someone loaded a snapshot into it; playback itself putting its
+/// own start in does not), and the input memories learn the entities that are there now.
+pub(crate) fn restart_from(world: &mut World, start: Snapshot, interrupt_playback: bool) -> usize {
+    if interrupt_playback && world.resource::<AiReplay>().playback.is_some() {
+        interrupt(world, format!("a snapshot was loaded (tick {})", start.tick));
+    }
+    let mut replay = world.resource_mut::<AiReplay>();
+    let dropped = replay.events.len();
+    replay.events.clear();
+    replay.checks.clear();
+    replay.start = Some(start);
+    replay.current_call = None;
+    let resets = replay.memory_resets.clone();
+    for reset in resets {
+        reset(world);
+    }
+    dropped
 }
 
 // --- recording -------------------------------------------------------------------
@@ -326,12 +374,26 @@ fn inputs_between_ticks<C: Component<Mutability = Mutable> + Clone + PartialEq +
     }
 }
 
+/// After a snapshot replaced the entities: remember what the new ones hold, as of now.
+fn reset_memory<C: Component + Clone>(world: &mut World) {
+    let last: HashMap<Entity, C> = world.query::<(Entity, &C)>().iter(world).map(|(e, c)| (e, c.clone())).collect();
+    // Writes made from here on are newer than this; what was restored is not.
+    let since = world.increment_change_tick();
+    let mut memory = world.resource_mut::<InputMemory<C>>();
+    memory.last = last;
+    memory.since = since;
+}
+
 /// Registers input component `C`. Prefer [`AiAppExt::replay_input`](crate::AiAppExt::replay_input).
 pub fn register_input<C>(app: &mut App)
 where
     C: Component<Mutability = Mutable> + Clone + PartialEq + Serialize + DeserializeOwned,
 {
-    app.world_mut().get_resource_or_init::<AiReplay>().inputs.push(crate::short_type_name::<C>());
+    {
+        let mut replay = app.world_mut().get_resource_or_init::<AiReplay>();
+        replay.inputs.push(crate::short_type_name::<C>());
+        replay.memory_resets.push(reset_memory::<C>);
+    }
     app.init_resource::<InputMemory<C>>()
         .add_systems(PostStartup, remember_inputs::<C>)
         .add_systems(FixedFirst, inputs_between_ticks::<C>.in_set(ReplaySystems::Inputs))
@@ -526,7 +588,9 @@ fn check_state(world: &mut World) {
 /// yet) and built with the replay's seed and tick rate. Events are applied as ticks
 /// run; step or resume the game to play it. Start it before the game loads when you
 /// can (right after building the app): modules then prepare the world before it is
-/// spawned (content restores the definitions the recording started from).
+/// spawned (content restores the definitions the recording started from). A recording
+/// that starts from a snapshot has it put in as soon as the game has loaded, before the
+/// first tick: the world the game spawned is replaced by the snapshot's.
 pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
     if replay.format == FORMAT_V1 {
         return Err(format!(
@@ -534,8 +598,14 @@ pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
              not the game state), so this build cannot check it; record it again"
         ));
     }
-    if replay.format != FORMAT {
-        return Err(format!("not a replay this build can play: format `{}`, expected `{FORMAT}`", replay.format));
+    if replay.format != FORMAT && replay.format != FORMAT_V2 {
+        return Err(format!(
+            "not a replay this build can play: format `{}`, expected `{FORMAT}` (or `{FORMAT_V2}`)",
+            replay.format
+        ));
+    }
+    if replay.start.is_some() && replay.format != FORMAT {
+        return Err(format!("a replay that starts from a snapshot is `{FORMAT}`, this one says `{}`", replay.format));
     }
     let tick = sim::tick(world);
     if tick != 0 {
@@ -560,7 +630,19 @@ pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
     if !state.events.is_empty() {
         return Err(format!("this world already recorded {} events; playback needs a fresh one", state.events.len()));
     }
-    let mut last_at = 0;
+    if let Some(start) = &replay.start {
+        if start.seed != replay.seed || (start.tick_hz - replay.tick_hz).abs() > 1e-3 {
+            return Err(format!(
+                "the replay's snapshot is from seed {} at {} ticks/s, the replay itself from seed {} at {}",
+                start.seed, start.tick_hz, replay.seed, replay.tick_hz
+            ));
+        }
+        if start.tick > replay.end.tick {
+            return Err(format!("the replay ends at tick {}, before its snapshot (tick {})", replay.end.tick, start.tick));
+        }
+    }
+    let from = replay.start.as_ref().map_or(0, |s| s.tick);
+    let mut last_at = from;
     for event in &replay.events {
         if event.at() < last_at || event.at() > replay.end.tick {
             return Err(format!("events out of order or past the end (tick {})", event.at()));
@@ -576,10 +658,16 @@ pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
         }
     }
     let end = replay.end.tick;
+    let pending_start = replay.start.clone();
     let mut state = world.resource_mut::<AiReplay>();
     state.report = None;
-    state.playback = Some(Playback { replay, next: 0, due_inputs: Vec::new(), matched: 0, diverged_at: None });
-    journal::log(world, JournalKind::Sim, format!("replay started: {end} ticks"));
+    state.playback =
+        Some(Playback { replay, pending_start, next: 0, due_inputs: Vec::new(), matched: 0, diverged_at: None });
+    let text = match from {
+        0 => format!("replay started: {end} ticks"),
+        from => format!("replay started: ticks {from} to {end}, from a snapshot"),
+    };
+    journal::log(world, JournalKind::Sim, text);
     Ok(())
 }
 
@@ -588,11 +676,20 @@ pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
 /// and once per frame (so a paused game finishes right at the last tick), but not
 /// while the game loads: a recording that ends at tick 0 finishes on the spawned world.
 fn advance_playback(world: &mut World, at_tick_start: bool) {
-    let tick = sim::tick(world);
     let end = match &world.resource::<AiReplay>().playback {
         Some(p) => p.replay.end.tick,
         None => return,
     };
+    // Once the game has loaded (its own world is spawned), before anything else.
+    if world.resource::<AiReplay>().playback.as_ref().is_some_and(|p| p.pending_start.is_some())
+        && sim::gate_message(world).is_none()
+    {
+        apply_start(world);
+        if world.resource::<AiReplay>().playback.is_none() {
+            return;
+        }
+    }
+    let tick = sim::tick(world);
     if !at_tick_start && (tick != end || sim::gate_message(world).is_some()) {
         return;
     }
@@ -625,6 +722,37 @@ fn advance_playback(world: &mut World, at_tick_start: bool) {
     }
     if tick >= end {
         finish(world);
+    }
+}
+
+/// Puts the recording's starting snapshot in. A snapshot this game cannot load (other
+/// content, another build) ends the playback with the reason: it cannot be played.
+fn apply_start(world: &mut World) {
+    let Some(start) = world.resource_mut::<AiReplay>().playback.as_mut().and_then(|p| p.pending_start.take()) else {
+        return;
+    };
+    let tick = start.tick;
+    match snapshot::restore(world, &start, false) {
+        Ok(report) => {
+            // The playback's recording starts where the recording being played did.
+            restart_from(world, start, false);
+            journal::log(world, JournalKind::Sim, format!("replay starts from its snapshot at tick {tick}: {report}"));
+            if !report.exact() {
+                // The game is not where the recording was: report it from the first tick.
+                journal::log(
+                    world,
+                    JournalKind::Error,
+                    format!("replay diverged at tick {tick}: {}", report.explain_differences()),
+                );
+                if let Some(playback) = &mut world.resource_mut::<AiReplay>().playback {
+                    playback.diverged_at.get_or_insert(tick);
+                }
+            }
+        }
+        Err(why) => {
+            journal::log(world, JournalKind::Error, format!("replay cannot start from its snapshot (tick {tick}): {why}"));
+            interrupt(world, format!("cannot start from its snapshot (tick {tick}): {why}"));
+        }
     }
 }
 
@@ -687,6 +815,7 @@ pub fn save(world: &World) -> Replay {
         format: FORMAT.to_owned(),
         seed: world.get_resource::<SimSeed>().map_or(0, |s| s.0),
         tick_hz: 1.0 / world.resource::<Time<Fixed>>().timestep().as_secs_f64(),
+        start: replay.start.clone(),
         end: Check { tick: sim::tick(world), hash: state_hash(world) },
         events: replay.events.clone(),
         checks: replay.checks.clone(),
@@ -704,6 +833,7 @@ pub fn status(world: &World) -> Value {
     let replay = world.resource::<AiReplay>();
     json!({
         "recorded_events": replay.events.len(),
+        "starts_at_tick": replay.start.as_ref().map(|s| s.tick),
         "playing": replay.playback.as_ref().map(|p| json!({
             "end_tick": p.replay.end.tick,
             "events_left": p.replay.events.len() - p.next,
@@ -762,7 +892,7 @@ pub(crate) fn plugin(app: &mut App) {
     register_tool(app.world_mut(), "replay_save", Scope::Dev, ToolKind::Query, replay_save_tool);
 }
 
-mod hex_u64 {
+pub(crate) mod hex_u64 {
     use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S: Serializer>(v: &u64, s: S) -> Result<S::Ok, S::Error> {

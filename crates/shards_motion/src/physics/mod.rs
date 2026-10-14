@@ -23,7 +23,7 @@ pub(crate) mod world;
 use std::fmt;
 use std::ops::{BitAnd, BitOr, BitOrAssign, Not};
 
-use ai_core::SimSet;
+use ai_core::{AiAppExt, AiId, EntityKey, SimSet};
 use bevy::ecs::lifecycle::HookContext;
 use bevy::ecs::system::SystemParam;
 use bevy::ecs::world::DeferredWorld;
@@ -310,8 +310,10 @@ impl fmt::Display for ColliderId {
     }
 }
 
-/// The counter behind [`ColliderId`].
-#[derive(Resource, Debug)]
+/// The counter behind [`ColliderId`]. Part of snapshots: ids handed out after a load
+/// continue where the original session's did.
+#[derive(Resource, Reflect, Debug)]
+#[reflect(Resource, Default)]
 pub struct ColliderIds {
     next: u32,
 }
@@ -425,6 +427,19 @@ impl Plugin for PhysicsPlugin {
             .register_type::<Volume>()
             .register_type::<VolumeKind>()
             .register_type::<ColliderId>()
+            // Snapshots: the counter is saved; the colliders of entities without an `AiId`
+            // (level geometry) are not, but must be the same where a snapshot is loaded
+            // (they are checked) and can be named in references (`c7`); `PhysicsWorld` is a
+            // cache and is made again.
+            .add_snapshot_resource::<ColliderIds>()
+            .add_snapshot_check(
+                "static_colliders",
+                "the colliders of entities without an AiId (level geometry) differ: spawn the same levels first, \
+                 or give what moves an AiId so the snapshot holds it",
+                static_colliders_hash,
+            )
+            .add_snapshot_rebuild("physics", rebuild_physics)
+            .add_snapshot_entity_key(EntityKey { prefix: "c", encode: collider_number, index: collider_index })
             .configure_sets(
                 FixedUpdate,
                 (
@@ -441,6 +456,51 @@ impl Plugin for PhysicsPlugin {
             // that call tools with no frame between). The result depends only on the ECS,
             // so this never changes a tick's outcome.
             .add_systems(Last, sync_physics);
+    }
+}
+
+/// Snapshot check: every collider without an `AiId`, by id: its shape, pose, layers and
+/// volume. Those are not saved (a snapshot is loaded into a world that spawned them the
+/// same way), so they must match.
+fn static_colliders_hash(world: &World) -> u64 {
+    let mut found: Vec<(ColliderId, String)> = world
+        .iter_entities()
+        .filter(|e| !e.contains::<AiId>())
+        .filter_map(|e| {
+            let id = *e.get::<ColliderId>()?;
+            let facts = format!(
+                "{:?} {:?} {:?} {:?}",
+                e.get::<Collider>(),
+                e.get::<Transform>().map(|t| (t.translation, t.rotation, t.scale)),
+                e.get::<Body>(),
+                e.get::<Volume>()
+            );
+            Some((id, facts))
+        })
+        .collect();
+    found.sort_by_key(|(id, _)| *id);
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for (id, facts) in found {
+        for b in id.0.to_le_bytes().iter().chain(facts.as_bytes()).chain(&[0xff]) {
+            h = (h ^ *b as u64).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    h
+}
+
+fn collider_number(world: &World, entity: Entity) -> Option<u32> {
+    world.get::<ColliderId>(entity).map(|id| id.0)
+}
+
+fn collider_index(world: &mut World) -> Vec<(u32, Entity)> {
+    world.query_filtered::<(Entity, &ColliderId), Without<AiId>>().iter(world).map(|(e, id)| (id.0, e)).collect()
+}
+
+/// After a snapshot replaced the characters: the cache catches up with the ECS now rather
+/// than at the next tick, so queries from tools see the restored world.
+fn rebuild_physics(world: &mut World) {
+    if let Err(e) = world.run_system_cached(sync_physics) {
+        warn!("physics: cannot catch up after loading a snapshot: {e}");
     }
 }
 

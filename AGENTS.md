@@ -31,6 +31,8 @@ cargo shards act move_to target=e6      # действие → CHANGES и JOURNA
 cargo shards step 120 --until journal:died
 cargo shards inspect e6                 # все компоненты сущности
 cargo shards save-replay                # сессия с тика 0 → replays/tick<T>.json
+cargo shards save-snapshot              # состояние на этом тике → snapshots/tick<T>.json
+cargo shards load-snapshot snapshots/tick120.json   # вернуться к нему; реплей дальше идёт с этого снапшота
 cargo shards scenario FILE...           # файл сценария: команды, ожидания, инварианты (README, «Сценарии»)
 cargo shards content check              # контент запущенной игры; без игры: cargo sandbox --check-content
 cargo sandbox --replay FILE --verify    # реплей без окна; добавьте --windowed (под xvfb-run -a) для окна
@@ -42,8 +44,9 @@ kill <pid>                              # pid из `wait`
 - Останавливайте игру `kill` (или Ctrl+C), не `kill -9`: так она удаляет токен и `--port-file`.
 - Собранный бинарник запускайте через `cargo sandbox` (или с `BEVY_ASSET_ROOT=crates/sandbox`): иначе он не найдёт
   `assets/`, и мир окажется пустым.
-- Файлы игра пишет только к себе: реплеи в `replays/`, снимки в `shots/` (`save-replay replays/x.json`,
-  `shot -o shots/x.png`). Абсолютные пути и `..` не принимаются.
+- Файлы игра пишет только к себе: реплеи в `replays/`, снимки экрана в `shots/`, снапшоты состояния в `snapshots/`
+  (`save-replay replays/x.json`, `shot -o shots/x.png`, `save-snapshot snapshots/x.json`). Абсолютные пути и `..`
+  не принимаются.
 - Числа и позиции берите из `observe` и `inspect`, не из картинок. `shards shot` (нужно окно, можно под Xvfb) —
   для визуальных багов: PNG с метками `eN` и легенда, где на картинке какой id.
 - Ошибки инструментов объясняют, как исправить вызов. Читайте их, а не повторяйте вызов вслепую.
@@ -89,7 +92,11 @@ kill <pid>                              # pid из `wait`
   сдвигает индексы `Entity`, а реплей должен совпасть с окном и без него.
 - Персонажами управляют только через `Intent`: клавиатура, инструменты агента, мозги врагов и реплей пишут в него.
   Новый компонент-вход регистрируйте через `replay_input::<C>()`, иначе реплеи разойдутся.
-- Проверки реплея (`shards-replay/2`) сверяют игровые компоненты сущностей с `AiVisible`, а не текст
+- Новое состояние симуляции вне сущностей с `AiId` (ресурс, счётчик) снапшот не увидит: зарегистрируйте его
+  `add_snapshot_resource::<R>()` (нужен `Reflect`), кэш из него — `add_snapshot_rebuild`, то, вокруг чего строится
+  мир (файлы, геометрия), — `add_snapshot_check`. Иначе `snapshot_load` скажет `the restored state differs`,
+  а реплей со снапшота разойдётся. Ссылки на сущности без `AiId` — `add_snapshot_entity_key`.
+- Проверки реплея (`shards-replay/3`) сверяют игровые компоненты сущностей с `AiVisible`, а не текст
   `observe`. Косметику и кэши исключайте `replay_ignore::<C>()`, состояние вне таких сущностей
   (ресурсы, снаряды без id) добавляйте `add_replay_check(name, |w| …)`. Всё, что только для окна, не должно менять
   игровые компоненты.
@@ -134,6 +141,8 @@ cargo sandbox --replay replays/crash-tick<N>.json --verify   # код 1, пок�
   других: начинайте его с `heal`/`teleport`/`set`, возвращающих мир к исходному.
 - Контент: `cargo sandbox --check-content` (или `cargo run -- --check-content` в шаблоне) находит битые ссылки и
   называет файл.
+- Новый компонент или ресурс состояния проверяйте снапшотом: `crates/sandbox/tests/sandbox/snapshots.rs` берёт
+  снапшот в тик N, догоняет до M и сравнивает с игрой, загрузившей снапшот (одно состояние, один журнал).
 - Изменение геймплея проверяйте реплеем: `cargo sandbox --replay FILE --verify` называет первый тик,
   где игра разошлась с записью (код выхода 1); `--verify --windowed` (под `xvfb-run -a`) — то же в окне.
   Если расхождение ожидаемое, запишите реплей заново.

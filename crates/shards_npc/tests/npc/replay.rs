@@ -15,7 +15,7 @@ use shards_npc::NpcPlan;
 use crate::common::*;
 
 /// A hero, three grunts and a warden.
-fn arena(app: &mut App) -> (Entity, Vec<Entity>) {
+pub fn arena(app: &mut App) -> (Entity, Vec<Entity>) {
     let world = app.world_mut();
     let hero = player(world, 0, Vec3::ZERO);
     let mut npcs: Vec<Entity> = [Vec3::new(5.0, 0.0, 1.0), Vec3::new(-4.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -6.0)]

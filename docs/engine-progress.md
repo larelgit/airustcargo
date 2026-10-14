@@ -230,8 +230,8 @@ Actions для неё ещё не запускался (см. «Фазы»).
 |---|---|---|---|
 | 1 | меню разработчика и консоль через `call_tool` | 🟡 | единая точка входа `ai_core::call_tool` есть, ею пользуются тесты, реплеи и клавиши разработчика в окне песочницы (P, N, F1–F4, F12). Самого внутриигрового меню и консоли нет — D |
 | 2 | оверлеи: хитбоксы, хёртбоксы, зоны атак; навсетка; состояние NPC; сеть; границы тайлов | 🟡 | `combat_overlay`, `physics_overlay`, `overlay` (id) — ✅ (`shards_action::render`, `shards_motion::overlay`). Навсетка, NPC, сеть, тайлы — B, C |
-| 3 | инструменты: бессмертие, телепорт, фаза босса, спавн префаба, замедление | 🟡 | `god`, `teleport` (в точку), `spawn_prefab`, `speed` — ✅. Телепорт к тайлу — B; переход к фазе босса через снапшот — B (в песочнице фазу 2 включает `set`) |
-| 4 | снапшоты в любой тик | ⏳ B | реплеи начинаются только с тика 0 |
+| 3 | инструменты: бессмертие, телепорт, фаза босса, спавн префаба, замедление | 🟡 | `god`, `teleport` (в точку), `spawn_prefab`, `speed` — ✅. Телепорт к тайлу — B; переход к фазе босса через снапшот — ✅ (`snapshot_load`, тест `go_to_boss_phase_two_is_a_snapshot_loaded_by_name`) |
+| 4 | снапшоты в любой тик | ✅ | `ai_core::snapshot`: `snapshot_save`/`snapshot_load`, `shards save-snapshot`/`load-snapshot`, реплей `shards-replay/3` со снапшота; `tests/sandbox/snapshots.rs` (21), `ai_core::snapshot` (11), `shards::run` (2) |
 | 5 | `clearance`, `path_to`, видимость лучами физики | ✅ (по физике), ⏳ B (по навсетке) | `src/perception/`, `physics_line_of_sight`; `tests/motion/perception.rs` (29) |
 | 6 | связать слой ИИ с модулями | 🟡 | модули фазы A — ✅. Дерево интерфейса (D), агент-игрок и стенд «хост + клиенты» (C), сохранения и генератор (C, B) — впереди |
 | 7 | сценарные тесты: файл сценария в CI без окна, свой набор у модуля | 🟡 | `shards_script`, `ai_core::scenario`, `shards scenario`; сценарии песочницы (E2, E3) и шаблона; CI-задания `test` и `headless-cli`. Сценарии остальных модулей — по мере появления модулей |
@@ -245,20 +245,20 @@ Actions для неё ещё не запускался (см. «Фазы»).
 
 `cargo test --workspace` на 14 октября 2026:
 
-Всего 475 тестов проходят, 0 падают, 14 помечены `#[ignore]` (запись эталонных реплеев, проверка окна под Xvfb, примеры в
+Всего 513 тестов проходят, 0 падают, 14 помечены `#[ignore]` (запись эталонных реплеев, проверка окна под Xvfb, примеры в
 документации); у шаблона отдельно 19 проходят.
 
 | крейт | тестов | где |
 |---|---|---|
-| `ai_core` | 36 | `crates/ai_core/src/*` |
+| `ai_core` | 49 | `crates/ai_core/src/*` (снапшоты 13) |
 | `shards_script` | 35 | `crates/shards_script/src/*` |
 | `shards_cli` | 8 | `crates/shards_cli/src/*` |
 | `shards_core` | 10 | `src/` и `tests/core.rs` |
 | `shards_content` | 22 | `src/` и `tests/content.rs` |
 | `shards_motion` | 154 | `src/` и `tests/motion/` (контроллер 28, перцепция 29, ввод 15, физика 11, …) |
 | `shards_action` | 136 | `src/` и `tests/combat/` |
-| `shards` | 7 | `src/`, `tests/engine.rs`, `tests/failures.rs`, `tests/action_render/` |
-| `sandbox` | 67 | `tests/sandbox/` (54), `tests/system_failures.rs` (7), `tests/log_capture.rs` (4), `src/` (2) |
+| `shards` | 9 | `src/`, `tests/engine.rs`, `tests/failures.rs`, `tests/action_render/` |
+| `sandbox` | 90 | `tests/sandbox/` (77, из них `snapshots.rs` 23), `tests/system_failures.rs` (7), `tests/log_capture.rs` (4), `src/` (2) |
 | шаблон | 19 | `template/tests/game/` |
 
 ## Известные ограничения и отложенное

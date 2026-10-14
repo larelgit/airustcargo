@@ -2,6 +2,7 @@
 # Written by the running game, next to its Cargo.toml.
 /replays/
 /shots/
+/snapshots/
 /.shards/
 *.png
 !assets/**/*.png
