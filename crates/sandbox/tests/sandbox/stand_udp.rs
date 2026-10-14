@@ -129,9 +129,9 @@ impl Drop for UdpStand {
         }
         let _ = self.host.kill();
         let _ = self.host.wait();
-        // The client leaves with the host; its files going is how we know.
+        // The clients leave with the host; their files going is how we know.
         let started = Instant::now();
-        while self.dir.join("g.port.c1").exists() && started.elapsed() < Duration::from_secs(10) {
+        while (self.dir.join("g.port.c1").exists() || self.dir.join("g.port.c2").exists()) && started.elapsed() < Duration::from_secs(10) {
             std::thread::sleep(Duration::from_millis(50));
         }
         let _ = std::fs::remove_dir_all(&self.dir);
@@ -139,38 +139,54 @@ impl Drop for UdpStand {
 }
 
 #[test]
-fn a_udp_stand_starts_a_client_process_that_joins_and_leaves_with_the_host() {
-    let mut stand = UdpStand::start(1);
-    // The host and its client, each with a port of its own, the client connected.
-    let (host, client) = stand.until(Duration::from_secs(90), "the client connected to the host", |s| {
+fn a_udp_stand_starts_client_processes_that_join_and_leave_with_the_host() {
+    let mut stand = UdpStand::start(2);
+    // The host and its two clients, each with a port of its own, both connected, and the host
+    // listing them: all three statuses are read together, until they agree (the host sees a
+    // client join a little before the client does, or after).
+    let (host, c1, c2) = stand.until(Duration::from_secs(90), "both clients connected, and listed by the host", |s| {
         let host = s.status("g.port")?;
-        let client = s.status("g.port.c1")?;
-        let connected = client["net"]["session"].as_str().is_some_and(|text| text.starts_with("connected as p1"));
-        (connected && host["loading"] == json!([])).then_some((host, client))
+        let c1 = s.status("g.port.c1")?;
+        let c2 = s.status("g.port.c2")?;
+        let joined = |client: &Value| client["net"]["session"].as_str().is_some_and(|text| text.starts_with("connected as p"));
+        let lists = |client: &Value| {
+            host["net"]["peers"].as_array().is_some_and(|peers| {
+                peers.iter().any(|p| p["player"] == client["net"]["player"] && p["body"] == client["net"]["body"] && !p["body"].is_null())
+            })
+        };
+        (joined(&c1) && joined(&c2) && lists(&c1) && lists(&c2) && host["loading"] == json!([])).then_some((host, c1, c2))
     });
     assert_eq!(host["net"]["role"], "host");
     assert_eq!(host["net"]["member"], "host");
-    assert_eq!(host["net"]["stand"], json!({"clients": 1, "udp": true}));
+    assert_eq!(host["net"]["stand"], json!({"clients": 2, "udp": true}));
     assert!(host["net"]["udp"].as_str().is_some(), "the host says where its socket is: {}", host["net"]);
-    assert_eq!(client["net"]["role"], "client");
-    assert_eq!(client["net"]["member"], "c1");
-    assert_eq!(client["net"]["player"], 1);
-    // Two processes: the client is a child of the host.
-    assert_ne!(host["instance"]["pid"], client["instance"]["pid"]);
-    assert_eq!(host["net"]["peers"][0]["player"], 1);
-    assert_eq!(host["net"]["peers"][0]["body"], client["net"]["body"], "the host lists the body the client says is its own");
-    // The same game: the host's seed.
-    assert_eq!(client["seed"], host["seed"]);
-    let client_pid = client["instance"]["pid"].as_i64().unwrap() as libc::pid_t;
+    for (client, name) in [(&c1, "c1"), (&c2, "c2")] {
+        assert_eq!(client["net"]["role"], "client", "{name}");
+        assert_eq!(client["net"]["member"], name);
+        // The same game: the host's seed.
+        assert_eq!(client["seed"], host["seed"], "{name}");
+    }
+    // Two processes that start together join in either order: players 1 and 2, one each.
+    let mut players = [c1["net"]["player"].as_u64().unwrap(), c2["net"]["player"].as_u64().unwrap()];
+    players.sort_unstable();
+    assert_eq!(players, [1, 2]);
+    // Three processes, and the clients are told apart: own BRP ports (the port files c1 and c2 were
+    // written by processes starting together, each to a file of its own), own pids, own bodies.
+    let ports = [stand.port("g.port").unwrap(), stand.port("g.port.c1").unwrap(), stand.port("g.port.c2").unwrap()];
+    assert_eq!(ports.iter().collect::<std::collections::BTreeSet<_>>().len(), 3, "three ports: {ports:?}");
+    assert_eq!(c1["instance"]["port"], ports[1], "F.c1 holds c1's port");
+    assert_eq!(c2["instance"]["port"], ports[2], "F.c2 holds c2's port");
+    let pids = [&host, &c1, &c2].map(|s| s["instance"]["pid"].as_i64().unwrap());
+    assert_eq!(pids.iter().collect::<std::collections::BTreeSet<_>>().len(), 3, "three processes: {pids:?}");
+    assert_ne!(c1["net"]["body"], c2["net"]["body"]);
 
-    // `net_status` of the client: connected, in sync.
-    let port = stand.port("g.port.c1").unwrap();
-    let net = stand.brp(port, "ai/act", json!({"tool": "net_status", "args": {}})).expect("the client answers");
+    // `net_status` of a client: connected, in sync.
+    let net = stand.brp(ports[1], "ai/act", json!({"tool": "net_status", "args": {}})).expect("the client answers");
     assert_eq!(net["ok"], true, "{net}");
     assert_eq!(net["result"]["stage"], "Connected", "{net}");
     assert_eq!(net["result"]["desyncs"], 0, "{net}");
 
-    // SIGTERM to the host ends the session, and the client goes with it, the way a game leaves.
+    // SIGTERM to the host ends the session, and the clients go with it, the way a game leaves.
     stand.terminate();
     let started = Instant::now();
     let code = loop {
@@ -181,20 +197,68 @@ fn a_udp_stand_starts_a_client_process_that_joins_and_leaves_with_the_host() {
         std::thread::sleep(Duration::from_millis(50));
     };
     assert_eq!(code, Some(143), "exits on the signal like any game");
-    stand.until(Duration::from_secs(20), "the client's files gone: it left", |s| (!s.dir.join("g.port.c1").exists()).then_some(()));
+    stand.until(Duration::from_secs(20), "the clients' files gone: they left", |s| {
+        (!s.dir.join("g.port.c1").exists() && !s.dir.join("g.port.c2").exists()).then_some(())
+    });
     assert!(!stand.dir.join("g.port").exists(), "the host removed its port file");
-    // The client process is gone (or on its way out as a zombie nobody has reaped yet).
+    // The client processes are gone (or on their way out as zombies nobody has reaped yet).
+    for pid in [pids[1], pids[2]] {
+        let pid = pid as libc::pid_t;
+        let started = Instant::now();
+        loop {
+            // SAFETY: signal 0 only asks whether the process exists.
+            let alive = unsafe { libc::kill(pid, 0) } == 0;
+            let zombie = std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|s| s.contains(") Z "));
+            if !alive || zombie {
+                break;
+            }
+            assert!(started.elapsed() < Duration::from_secs(10), "client process {pid} is still running");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
+/// A client that cannot start (here: its port file is a folder, so it cannot write it) ends the
+/// stand at once with that client's exit status and says which one, instead of leaving the
+/// host to run on and `wait --peer all` to time out.
+#[test]
+fn a_client_that_cannot_start_ends_the_stand_with_its_exit_status() {
+    let dir = std::env::temp_dir().join(format!("sandbox-stand-udp-bad-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("g.port.c1")).unwrap();
+    let errors = std::fs::File::create(dir.join("stderr.log")).unwrap();
+    let mut host = Command::new(env!("CARGO_BIN_EXE_sandbox"))
+        .args(["--stand", "1", "--stand-udp", "--headless", "--port", "0", "--port-file", "g.port"])
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(errors)
+        .spawn()
+        .unwrap();
     let started = Instant::now();
-    while started.elapsed() < Duration::from_secs(10) {
-        // SAFETY: signal 0 only asks whether the process exists.
-        let alive = unsafe { libc::kill(client_pid, 0) } == 0;
-        let zombie = std::fs::read_to_string(format!("/proc/{client_pid}/stat")).is_ok_and(|s| s.contains(") Z "));
-        if !alive || zombie {
-            return;
+    let status = loop {
+        if let Some(status) = host.try_wait().unwrap() {
+            break status;
+        }
+        if started.elapsed() > Duration::from_secs(60) {
+            // SAFETY: a plain `kill` of our own child, the polite way.
+            unsafe { libc::kill(host.id() as libc::pid_t, libc::SIGTERM) };
+            let _ = host.wait();
+            let log = std::fs::read_to_string(dir.join("stderr.log")).unwrap_or_default();
+            panic!("the host runs on without its client: {log}");
         }
         std::thread::sleep(Duration::from_millis(50));
-    }
-    panic!("client process {client_pid} is still running");
+    };
+    let log = std::fs::read_to_string(dir.join("stderr.log")).unwrap_or_default();
+    // The client's own exit code (2: it could not write its port file) is the host's.
+    assert_eq!(status.code(), Some(2), "{log}");
+    assert!(log.contains("cannot write the port file"), "the client said why: {log}");
+    assert!(
+        log.contains("error: stand: client c1 exited with code 2 before it was ready (it never wrote its port file): see its output above"),
+        "the host said which client: {log}"
+    );
+    assert!(!dir.join("g.port").exists(), "the host removed its port file");
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
