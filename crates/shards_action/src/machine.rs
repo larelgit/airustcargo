@@ -18,6 +18,7 @@ use ai_core::{AiId, AiIndex};
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use shards_content::ContentDb;
+use shards_core::input_names::SPRINT;
 use shards_core::{flat, Intent};
 use shards_motion::LocomotionInput;
 
@@ -819,9 +820,16 @@ fn telegraph(attacker: Entity, def: &ActionDef, run: &Running, feet: Vec3) -> Te
 }
 
 /// Tells the controller what the action wants: its displacement this tick, whether it
-/// owns the body, where to face; no sprinting without stamina.
+/// owns the body, where to face; no sprinting without stamina, nor after sprinting it
+/// dry until the button is let go.
 fn steer_body(f: &mut FighterDataItem, db: &ContentDb, external: Vec3) {
-    let out_of_stamina = f.stamina.as_ref().is_some_and(|s| s.current <= EPS);
+    if let Some(s) = f.stamina.as_mut()
+        && s.exhausted
+        && !f.intent.is_held(SPRINT)
+    {
+        s.exhausted = false;
+    }
+    let out_of_stamina = f.stamina.as_ref().is_some_and(|s| s.current <= EPS || s.exhausted);
     let Some(loco) = f.loco.as_mut() else { return };
     let run = f.state.current.as_ref();
     let def = run.and_then(|r| db.get::<ActionDef>(&r.action));

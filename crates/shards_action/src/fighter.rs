@@ -83,11 +83,14 @@ pub struct Stamina {
     pub delay: f32,
     /// Seconds since it was last spent (stops counting at `delay`).
     pub since_use: f32,
+    /// Sprinting ran it dry: no sprint until the button is let go. Without this the
+    /// first regenerated drop would be sprinted away again, over and over.
+    pub exhausted: bool,
 }
 
 impl Stamina {
     pub fn new(max: f32, regen: f32, delay: f32) -> Self {
-        Self { current: max, max, regen, delay, since_use: delay }
+        Self { current: max, max, regen, delay, since_use: delay, exhausted: false }
     }
 
     /// Takes `amount` and restarts the regeneration delay.
@@ -255,6 +258,7 @@ pub fn update_fighters(time: Res<Time>, db: Res<ContentDb>, mut fighters: Query<
         if let Some(mut s) = stamina {
             if motion.is_some_and(|m| m.sprinting) && !dead {
                 s.spend(drain * dt);
+                s.exhausted |= s.current <= EPS;
             } else {
                 regen_stamina(&mut s, dt);
             }
@@ -301,9 +305,10 @@ pub fn describe_health(h: &Health) -> String {
     format!("hp {:.0}/{:.0}", h.current, h.max)
 }
 
-/// `stam 30/80`.
+/// `stam 30/80`, `stam 40/80 exhausted (release sprint)`.
 pub fn describe_stamina(s: &Stamina) -> String {
-    format!("stam {:.0}/{:.0}", s.current, s.max)
+    let note = if s.exhausted { " exhausted (release sprint)" } else { "" };
+    format!("stam {:.0}/{:.0}{note}", s.current, s.max)
 }
 
 /// `poise 30/60`, `poise broken 0.8s`.
