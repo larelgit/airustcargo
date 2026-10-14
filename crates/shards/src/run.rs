@@ -362,7 +362,8 @@ mod stand {
                 net: NetLaunch::Join { addr: "host".into() },
                 player_name: name.clone(),
                 settings: SettingsStore::Off,
-                character_slot: None,
+                // Its own character file, named after it: members share the save folder.
+                character_slot: Some(name.clone()),
                 world_slot: None,
                 ..config.clone()
             };

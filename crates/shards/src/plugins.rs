@@ -18,6 +18,7 @@ use shards_save::SavePlugin;
 use shards_settings::ShardsSettingsPlugin;
 use shards_world::WorldPlugin;
 
+use crate::coop::CoopPlugin;
 use crate::net_wiring::EngineNetPlugin;
 use crate::save_sections::EngineSavePlugin;
 use crate::TileLevelsPlugin;
@@ -99,6 +100,8 @@ impl PluginGroup for EnginePlugins {
             // Saves: the registry and tools, then what the engine itself saves.
             .add(SavePlugin)
             .add(EngineSavePlugin)
+            // Where the two meet: characters travel with their players, the host keeps the world.
+            .add(CoopPlugin)
     }
 }
 
