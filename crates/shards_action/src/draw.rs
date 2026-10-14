@@ -20,6 +20,7 @@ use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::{flat, LocalPlayer};
 use shards_motion::{Collider, LayerMask, PhysicsWorld, Shape};
+use shards_settings::FlashLevel;
 
 use crate::def::{touches, ActionDef, HitShape, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Invulnerable, Team};
@@ -429,11 +430,21 @@ pub struct TelegraphStyle {
     /// Height of the symbol (m) and how far above the ground it floats.
     pub symbol_size: f32,
     pub symbol_lift: f32,
+    /// How much the warning flickers (the player's accessibility setting).
+    pub flashes: FlashLevel,
 }
 
 impl Default for TelegraphStyle {
     fn default() -> Self {
-        Self { horizon: 1.2, hatch_far: 1.1, hatch_near: 0.28, lift: 0.04, symbol_size: 0.9, symbol_lift: 2.4 }
+        Self {
+            horizon: 1.2,
+            hatch_far: 1.1,
+            hatch_near: 0.28,
+            lift: 0.04,
+            symbol_size: 0.9,
+            symbol_lift: 2.4,
+            flashes: FlashLevel::Full,
+        }
     }
 }
 
@@ -448,7 +459,21 @@ pub fn intensity(lands_in: f32, horizon: f32) -> f32 {
 
 /// A flicker that speeds up as the hit nears: a factor around 0.75..1.
 pub fn pulse(intensity: f32, time: f32) -> f32 {
-    0.875 + 0.125 * (time * (4.0 + 14.0 * intensity) * TAU * 0.5).sin()
+    pulse_at(intensity, time, FlashLevel::Full)
+}
+
+/// [`pulse`] as the player's flash setting allows (accessibility): `Full` is the flicker as
+/// designed (2 to 9 pulses a second), `Reduced` half as deep and never faster than 2 a second,
+/// `Off` a steady 1.
+pub fn pulse_at(intensity: f32, time: f32, flashes: FlashLevel) -> f32 {
+    match flashes {
+        FlashLevel::Full => 0.875 + 0.125 * (time * (4.0 + 14.0 * intensity) * TAU * 0.5).sin(),
+        FlashLevel::Reduced => {
+            let rate = ((4.0 + 14.0 * intensity) * 0.5).min(2.0);
+            0.9375 + 0.0625 * (time * rate * TAU).sin()
+        }
+        FlashLevel::Off => 1.0,
+    }
 }
 
 /// The ground telegraph of one zone: outline, hatch, the filling ring and the symbol.
@@ -464,7 +489,7 @@ pub fn telegraph(
     let mut out = DrawList::default();
     let k = intensity(zone.lands_in, style.horizon);
     let base = if hostile { palette::DANGER } else { palette::ALLY };
-    let flicker = pulse(k, time);
+    let flicker = pulse_at(k, time, style.flashes);
     let y = ground_y + style.lift;
     let outline = footprint(&zone.shape, y);
     let middle = centroid(&outline);
@@ -853,6 +878,31 @@ mod tests {
                 assert!((0.74..=1.01).contains(&p), "{p}");
             }
         }
+    }
+
+    #[test]
+    fn the_flash_setting_tames_the_flicker() {
+        // Off is steady; reduced is shallower and never faster than twice a second; full is as designed.
+        for k in [0.0, 0.5, 1.0] {
+            for t in [0.0, 0.1, 0.77, 3.0] {
+                assert_eq!(pulse_at(k, t, FlashLevel::Off), 1.0);
+                assert_eq!(pulse_at(k, t, FlashLevel::Full), pulse(k, t));
+                assert!((0.87..=1.0).contains(&pulse_at(k, t, FlashLevel::Reduced)), "{}", pulse_at(k, t, FlashLevel::Reduced));
+            }
+        }
+        // Urgent warnings flicker faster in full, but reduced stays at 2 a second: the same value half a period apart.
+        let (k, period) = (1.0, 0.5);
+        for t in [0.03, 0.2, 0.41] {
+            let (a, b) = (pulse_at(k, t, FlashLevel::Reduced), pulse_at(k, t + period, FlashLevel::Reduced));
+            assert!((a - b).abs() < 1e-5, "{a} vs {b}");
+        }
+        let fast = (0..100).map(|i| pulse_at(1.0, i as f32 * 0.01, FlashLevel::Full)).fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p), hi.max(p)));
+        let slow = (0..100).map(|i| pulse_at(1.0, i as f32 * 0.01, FlashLevel::Reduced)).fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p), hi.max(p)));
+        assert!(slow.1 - slow.0 < fast.1 - fast.0, "shallower: {slow:?} against {fast:?}");
+        // The ground telegraph reads the style.
+        let z = zone(HitShape::Circle { radius: 3.0, height: 2.0 }, 0.6, Some("!"));
+        let steady = TelegraphStyle { flashes: FlashLevel::Off, ..TelegraphStyle::default() };
+        assert_eq!(telegraph(&z, 0.0, true, &steady, 0.0, Quat::IDENTITY), telegraph(&z, 0.0, true, &steady, 0.3, Quat::IDENTITY), "steady in time");
     }
 
     #[test]

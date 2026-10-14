@@ -22,6 +22,7 @@ pub mod overlay;
 
 use bevy::prelude::*;
 use shards_core::LocalPlayer;
+use shards_settings::AccessibilitySettings;
 
 pub use bridge::{AnimGraphs, AnimationBound};
 pub use hud::ThreatHud;
@@ -30,8 +31,49 @@ pub use overlay::{CombatOverlay, CombatOverlayGizmos, TelegraphGizmos, Telegraph
 pub(crate) fn plugin(app: &mut App) {
     overlay::plugin(app);
     hud::plugin(app);
+    app.add_systems(Update, apply_flashes);
     if app.is_plugin_added::<bevy::animation::AnimationPlugin>() {
         bridge::plugin(app);
+    }
+}
+
+/// `Update`: the player's flash setting (accessibility) into the ground telegraphs and the
+/// off-screen markers, which flicker as an attack nears. Presentation only.
+fn apply_flashes(
+    settings: Option<Res<AccessibilitySettings>>,
+    mut telegraphs: ResMut<TelegraphSettings>,
+    mut hud: ResMut<ThreatHud>,
+) {
+    let Some(settings) = settings.filter(|s| s.is_changed()) else { return };
+    let level = settings.flash_level();
+    if telegraphs.style.flashes != level {
+        telegraphs.style.flashes = level;
+    }
+    if hud.flashes != level {
+        hud.flashes = level;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use shards_settings::FlashLevel;
+
+    use super::*;
+
+    #[test]
+    fn the_flash_setting_reaches_the_warnings() {
+        let mut app = App::new();
+        app.init_resource::<TelegraphSettings>().init_resource::<ThreatHud>().init_resource::<AccessibilitySettings>().add_systems(Update, apply_flashes);
+        app.update();
+        assert_eq!(app.world().resource::<ThreatHud>().flashes, FlashLevel::Full);
+        app.world_mut().resource_mut::<AccessibilitySettings>().flashes = "reduced".into();
+        app.update();
+        assert_eq!(app.world().resource::<ThreatHud>().flashes, FlashLevel::Reduced);
+        assert_eq!(app.world().resource::<TelegraphSettings>().style.flashes, FlashLevel::Reduced);
+        // A hand-edited word nobody knows is the default, not a crash.
+        app.world_mut().resource_mut::<AccessibilitySettings>().flashes = "strobe".into();
+        app.update();
+        assert_eq!(app.world().resource::<ThreatHud>().flashes, FlashLevel::Full);
     }
 }
 
