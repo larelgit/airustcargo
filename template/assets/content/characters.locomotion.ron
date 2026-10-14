@@ -1,0 +1,24 @@
+// How characters move. A `CharacterController` names one of these ids; fields left out keep
+// the engine's defaults, and a misspelled one is an error with its line.
+// Edit it while the game runs (`cargo game`): the next tick already walks by the new numbers.
+//
+// Speeds in m/s, lengths in m, times in s. `walk_speed` is the pace at half stick,
+// `run_speed` at full stick, `sprint_speed` while `sprint` is held.
+{
+    "hero": (
+        radius: 0.4,
+        height: 1.8,
+        walk_speed: 2.0,
+        run_speed: 5.5,
+        sprint_speed: 8.0,
+        jump_height: 1.3,
+    ),
+    // Slower and heavier than the hero, so the hero can walk away from a fight.
+    "grunt": (
+        radius: 0.45,
+        height: 1.9,
+        walk_speed: 1.5,
+        run_speed: 3.8,
+        turn_speed_deg: 360.0,
+    ),
+}

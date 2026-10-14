@@ -1,0 +1,14 @@
+# Do not point builds at another directory here (`[build] target-dir`): a game's
+# `target/` lives next to its Cargo.toml.
+
+# [build]
+# Bevy builds slowly and hungrily. On a machine with little RAM limit the parallel jobs:
+# jobs = 4
+
+[alias]
+# `cargo game` (window) · `cargo game --headless --paused` (no window, time stands still
+# until `shards step`) · `cargo game --check-content`. Everything after `game` goes to
+# `shards::run`.
+game = "run --"
+# There is no `cargo shards` here: install the CLI once, at the engine version this game
+# depends on (see the README, "Управление через shards"), and run `shards observe`.

@@ -1,0 +1,9 @@
+/target
+# Written by the running game, next to its Cargo.toml.
+/replays/
+/shots/
+/.shards/
+*.png
+!assets/**/*.png
+# Reference replays checked in and verified by CI (`--replay tests/replays/x.json --verify`).
+!/tests/replays/

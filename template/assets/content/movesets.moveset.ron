@@ -1,0 +1,17 @@
+// Which input starts which action. The input names are the engine's (`light`, `heavy`,
+// `dodge`, ...) or the game's own. Keys and mouse buttons are bound to them by the engine's
+// input map, an agent presses them through tools (`light_attack`, `dodge`).
+//
+// `stagger` and `death` are the actions the engine forces when poise breaks and at 0 health.
+{
+    "hero": (
+        inputs: {"light": "light_1", "dodge": "roll"},
+        stagger: "hero_stagger",
+        death: "hero_death",
+    ),
+    "grunt": (
+        inputs: {"light": "swipe", "heavy": "slam"},
+        stagger: "grunt_stagger",
+        death: "grunt_death",
+    ),
+}

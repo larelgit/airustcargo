@@ -1,0 +1,69 @@
+//! A minimal game on the Shards engine, to copy and grow.
+//!
+//! It depends on one crate, `shards`. The engine gives it a deterministic fixed-tick core,
+//! the AI layer (`shards observe`, `shards step`, scenarios, replays), a content database,
+//! a character controller with physics, and data-driven combat. This crate only adds what
+//! makes it *this* game:
+//!
+//! | module | what |
+//! |---|---|
+//! | [`arena`] | the level as content (`assets/content/arena.arena.ron`) and the system that builds it |
+//! | [`brain`] | the grunt: notices the hero and attacks it, through `Intent` like a player |
+//! | [`ai`] | what an agent can do that is this game's (`taunt`) and wait for (`arena_cleared`) |
+//! | `visuals` | meshes, light and the camera when there is a window (`render` feature) |
+//!
+//! All numbers are content in `assets/content/`: how the hero moves, every action's timing
+//! and damage, movesets, fighter stats (prefabs), the level. Edit them while the game runs.
+//!
+//! ```text
+//! cargo game                              # window: WASD, mouse, Space, Ctrl, left click
+//! cargo game --headless --paused &        # no window, time stands still until `shards step`
+//! shards wait && shards observe           # what the world looks like, as text
+//! shards scenario scenarios/smoke.scenario
+//! ```
+
+// Bevy queries name every component they touch, which clippy finds complex.
+#![allow(clippy::type_complexity)]
+
+pub mod ai;
+pub mod arena;
+pub mod brain;
+#[cfg(feature = "render")]
+pub mod visuals;
+
+use shards::motion::InputSettings;
+use shards::prelude::*;
+
+/// Everything that is this game, on top of the engine: its content kinds, its level, its
+/// brains and what its AI agents can do. Add it after [`EnginePlugins`].
+pub struct GamePlugin;
+
+impl Plugin for GamePlugin {
+    fn build(&self, app: &mut App) {
+        // Rebound keys are saved in the user's config folder, under this game's name.
+        app.world_mut().get_resource_mut::<InputSettings>().expect("add EnginePlugins before GamePlugin").app_name = "my_game".into();
+        app.add_plugins((arena::ArenaPlugin, brain::BrainPlugin, ai::GameAiPlugin));
+    }
+}
+
+/// The app `shards::run` runs: the engine from `config` (which the command line filled:
+/// `--headless`, `--seed`, ...), this game, and its looks when there is a window.
+pub fn build_app(config: &EngineConfig) -> App {
+    let mut app = App::new();
+    app.add_plugins(EnginePlugins::new(EngineConfig { title: "My game".into(), ..config.clone() })).add_plugins(GamePlugin);
+    if !config.headless && !config.testing {
+        #[cfg(feature = "render")]
+        app.add_plugins(visuals::VisualsPlugin);
+        #[cfg(not(feature = "render"))]
+        panic!("built without the `render` feature: run with --headless");
+    }
+    app
+}
+
+/// A headless test game: paused at tick 0 with the arena spawned, no logger, no HTTP, no
+/// crash replay files. Drive it with `shards::testing::{call, ok}` or scenarios.
+pub fn test_app(seed: u64) -> App {
+    shards::testing::test_app(|config| config.seed = seed, |app| {
+        app.add_plugins(GamePlugin);
+    })
+}

@@ -1,0 +1,129 @@
+{
+  "format": "shards-replay/2",
+  "seed": 42,
+  "tick_hz": 59.99999880000003,
+  "end": {
+    "tick": 258,
+    "hash": "07d7ca0f427f62e4"
+  },
+  "events": [
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 1,
+        "tool": "move_to",
+        "args": {
+          "target": "e2",
+          "within": 3
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 1,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [
+            {
+              "MoveTo": {
+                "target": {
+                  "Entity": 2
+                },
+                "within": 3.0
+              }
+            }
+          ],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 2,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 161,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 1,
+        "tool": "attack",
+        "args": {
+          "repeat": true,
+          "target": "e2"
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 161,
+        "id": 1,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            -1.0
+          ],
+          "orders": [
+            {
+              "Attack": {
+                "input": "light",
+                "repeat": true,
+                "target": 2
+              }
+            }
+          ],
+          "pressed": [],
+          "target": null
+        }
+      }
+    }
+  ],
+  "checks": [
+    {
+      "tick": 60,
+      "hash": "9f96dd44056b207f"
+    },
+    {
+      "tick": 120,
+      "hash": "dc814da7ef709515"
+    },
+    {
+      "tick": 180,
+      "hash": "c4e10a55a7007931"
+    },
+    {
+      "tick": 240,
+      "hash": "86acdb704053276d"
+    }
+  ]
+}

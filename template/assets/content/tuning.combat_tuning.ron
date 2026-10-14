@@ -1,0 +1,11 @@
+// Numbers for the whole combat system (the engine reads the id `default`).
+{
+    "default": (
+        // A press that cannot start yet waits this long for its action to become possible.
+        input_buffer: 0.2,
+        // Sprinting drains stamina.
+        sprint_stamina_per_s: 12,
+        // How far `lock_on` looks for a target (m).
+        lock_on_range: 18,
+    ),
+}

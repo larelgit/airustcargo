@@ -11,10 +11,12 @@ members = [
     "crates/sandbox",
     "crates/shards_cli",
 ]
+# A separate workspace on purpose: it depends on `shards` alone, like a game in its own repo.
+exclude = ["template"]
 default-members = ["crates/sandbox", "crates/shards_cli"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.97.1"
 publish = false

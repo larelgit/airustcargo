@@ -125,7 +125,7 @@ dependencies = [
 
 [[package]]
 name = "ai_core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "bevy_remote",
@@ -5126,7 +5126,7 @@ dependencies = [
 
 [[package]]
 name = "sandbox"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "shards",
@@ -5268,7 +5268,7 @@ dependencies = [
 
 [[package]]
 name = "shards"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ai_core",
  "bevy",
@@ -5285,7 +5285,7 @@ dependencies = [
 
 [[package]]
 name = "shards_action"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ai_core",
  "bevy",
@@ -5300,7 +5300,7 @@ dependencies = [
 
 [[package]]
 name = "shards_cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "serde",
@@ -5311,7 +5311,7 @@ dependencies = [
 
 [[package]]
 name = "shards_content"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ai_core",
  "bevy",
@@ -5324,7 +5324,7 @@ dependencies = [
 
 [[package]]
 name = "shards_core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ai_core",
  "bevy",
@@ -5334,7 +5334,7 @@ dependencies = [
 
 [[package]]
 name = "shards_motion"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ai_core",
  "bevy",
@@ -5349,7 +5349,7 @@ dependencies = [
 
 [[package]]
 name = "shards_script"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
