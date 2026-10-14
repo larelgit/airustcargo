@@ -5369,6 +5369,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "shards_net"
+version = "0.2.0"
+dependencies = [
+ "ai_core",
+ "flate2",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "shards_npc"
 version = "0.2.0"
 dependencies = [
