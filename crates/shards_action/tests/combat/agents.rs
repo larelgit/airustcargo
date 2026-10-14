@@ -30,7 +30,12 @@ fn a_telegraph_journals_its_zone_and_the_advice_leads_out_of_it() {
     let seen = observe(app.world(), &ObserveOptions::default());
     let alert = seen.lines().nth(2).unwrap();
     assert_eq!(alert, format!("ALERT in hit zone of {b} slam (lands in 0.78s): move 2.9m S to leave it"), "{seen}");
-    assert!(seen.contains(&format!("{b} Brute  hp 100/100  stam 100/100  poise 30/30  windup slam 0.78s (zone circle 4.5m) hyper-armor")), "{seen}");
+    assert!(
+        seen.contains(&format!(
+            "{b} Brute  hp 100/100  stam 100/100  poise 30/30  windup slam 0.78s (zone circle 4.5m) hyper-armor"
+        )),
+        "{seen}"
+    );
 
     let ahead = threat_indicators(app.world(), hero, N);
     assert_eq!(ahead.len(), 1);
@@ -69,7 +74,10 @@ fn an_attack_order_walks_up_and_combos_until_the_target_dies() {
     let hero = hero(world, "hero", Vec3::ZERO, N);
     let dummy = fighter(world, "Dummy", "dummy", "monsters", Vec3::new(3.0, 0.0, -6.0), S);
     let (h, d) = (id(&app, hero), id(&app, dummy));
-    assert_eq!(ok(&mut app, "attack", json!({"target": d, "repeat": true})), format!("ok: attacking {d} with light until it dies"));
+    assert_eq!(
+        ok(&mut app, "attack", json!({"target": d, "repeat": true})),
+        format!("ok: attacking {d} with light until it dies")
+    );
     step(&mut app, 300);
     let hits: Vec<String> = lines(&app, &format!("{h} -> {d}"));
     let actions: Vec<&str> = hits.iter().map(|l| l.split_whitespace().nth(4).unwrap()).collect();
@@ -142,7 +150,11 @@ fn describe_lines_read_like_a_status_bar() {
     step(&mut app, 1);
     let seen = observe(app.world(), &ObserveOptions::default());
     let you = seen.lines().nth(1).unwrap();
-    assert!(you.starts_with(&format!("YOU  {h} Hero  hp 100/100  stam 75/100  poise 30/30  roll roll 0.33s i-frames  queued light 0.13s  flask 2/2")), "{you}");
+    let expected = concat!(
+        "Hero  hp 100/100  stam 75/100  poise 30/30  ",
+        "roll roll 0.33s i-frames  queued light 0.13s  flask 2/2"
+    );
+    assert!(you.starts_with(&format!("YOU  {h} {expected}")), "{you}");
     ok(&mut app, "god", json!({}));
     let seen = observe(app.world(), &ObserveOptions::default());
     assert!(seen.lines().nth(1).unwrap().contains("god mode"), "{seen}");
@@ -156,7 +168,20 @@ fn describe_lines_read_like_a_status_bar() {
 fn every_tool_documents_itself() {
     let app = app();
     let tools = app.world().resource::<ai_core::AiTools>();
-    for name in ["light_attack", "heavy_attack", "block", "parry", "dodge", "use_technique", "use_item", "lock_on", "attack", "god", "heal", "stagger"] {
+    for name in [
+        "light_attack",
+        "heavy_attack",
+        "block",
+        "parry",
+        "dodge",
+        "use_technique",
+        "use_item",
+        "lock_on",
+        "attack",
+        "god",
+        "heal",
+        "stagger",
+    ] {
         let tool = tools.get(name).unwrap_or_else(|| panic!("no tool {name}"));
         assert!(!tool.spec.description.is_empty(), "{name} has no description");
     }

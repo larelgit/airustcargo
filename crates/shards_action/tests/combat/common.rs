@@ -61,7 +61,11 @@ pub fn app_with(setup: impl FnOnce(&mut App)) -> App {
     while *app.world().resource::<State<EngineState>>().get() != EngineState::InGame
         || app.world().resource::<SimGate>().is_held()
     {
-        assert!(started.elapsed() < Duration::from_secs(20), "still loading: {:?}", app.world().resource::<SimGate>().reasons());
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "still loading: {:?}",
+            app.world().resource::<SimGate>().reasons()
+        );
         app.update();
         std::thread::sleep(Duration::from_millis(1));
     }
@@ -166,7 +170,13 @@ pub fn text(out: &CallOutcome) -> String {
 
 /// Gameplay journal lines (`tick text`).
 pub fn journal(app: &App) -> Vec<String> {
-    app.world().resource::<AiJournal>().after(0).0.filter(|e| e.kind == JournalKind::Event).map(ToString::to_string).collect()
+    app.world()
+        .resource::<AiJournal>()
+        .after(0)
+        .0
+        .filter(|e| e.kind == JournalKind::Event)
+        .map(ToString::to_string)
+        .collect()
 }
 
 /// Journal lines containing `needle`.

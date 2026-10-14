@@ -82,9 +82,15 @@ pub struct Windows {
 }
 
 impl Running {
-    pub(crate) fn new(id: &str, def: &ActionDef, instance: u32, facing: Vec3, dir: Option<Vec3>, input: Option<String>) -> Self {
-        let zone_until =
-            def.hits.iter().filter_map(|h| def.span(&h.span)).map(|w| w.1).fold(0.0, f32::max);
+    pub(crate) fn new(
+        id: &str,
+        def: &ActionDef,
+        instance: u32,
+        facing: Vec3,
+        dir: Option<Vec3>,
+        input: Option<String>,
+    ) -> Self {
+        let zone_until = def.hits.iter().filter_map(|h| def.span(&h.span)).map(|w| w.1).fold(0.0, f32::max);
         let mut run = Running {
             action: id.to_owned(),
             instance,
@@ -118,7 +124,8 @@ impl Running {
             self.phase_end = end;
         }
         let (prev, t) = (self.prev, self.t);
-        let open = |span: Option<&crate::def::Span>| span.and_then(|s| def.span(s)).is_some_and(|w| touches(w, prev, t));
+        let open =
+            |span: Option<&crate::def::Span>| span.and_then(|s| def.span(s)).is_some_and(|w| touches(w, prev, t));
         self.windows = Windows {
             iframes: def.any_open(&def.iframes, prev, t),
             guard: open(def.guard.as_ref().map(|g| &g.span)),
@@ -139,7 +146,12 @@ pub fn describe_action(s: &ActionState) -> String {
         out.push_str(&format!(" (zone {zone})"));
     }
     let w = r.windows;
-    for (on, mark) in [(w.iframes, "i-frames"), (w.perfect, "perfect guard"), (w.guard && !w.perfect, "guard"), (w.hyper_armor, "hyper-armor")] {
+    for (on, mark) in [
+        (w.iframes, "i-frames"),
+        (w.perfect, "perfect guard"),
+        (w.guard && !w.perfect, "guard"),
+        (w.hyper_armor, "hyper-armor"),
+    ] {
         if on {
             out.push(' ');
             out.push_str(mark);
@@ -226,19 +238,45 @@ pub struct Start {
 pub enum Blocker {
     Dead,
     /// The fighter's moveset is not in content.
-    NoMoveset { moveset: String },
+    NoMoveset {
+        moveset: String,
+    },
     /// The moveset has nothing for this input.
-    NoInput { input: String, moveset: String, known: Vec<String> },
+    NoInput {
+        input: String,
+        moveset: String,
+        known: Vec<String>,
+    },
     /// The moveset names an action content does not have.
-    NoAction { action: String },
+    NoAction {
+        action: String,
+    },
     /// In an action that does not let this input through yet. `ready_in`: seconds until
     /// it ends or a cancel window lets the input through (`by_cancel`); `None` while a
     /// held loop keeps it going (`release` names the input to let go of).
-    Busy { action: String, phase: String, phase_left: f32, ready_in: Option<f32>, by_cancel: bool, release: Option<String> },
+    Busy {
+        action: String,
+        phase: String,
+        phase_left: f32,
+        ready_in: Option<f32>,
+        by_cancel: bool,
+        release: Option<String>,
+    },
     /// `ready_in`: seconds until regeneration covers it; `None` if it never will.
-    Stamina { have: f32, need: f32, ready_in: Option<f32> },
-    Cooldown { action: String, ready_in: f32 },
-    NoCharges { charge: String, have: u32, max: u32 },
+    Stamina {
+        have: f32,
+        need: f32,
+        ready_in: Option<f32>,
+    },
+    Cooldown {
+        action: String,
+        ready_in: f32,
+    },
+    NoCharges {
+        charge: String,
+        have: u32,
+        max: u32,
+    },
 }
 
 impl Blocker {
@@ -287,7 +325,9 @@ impl Blocker {
                 (None, Some(input)) => format!("busy: {phase} {action} while `{input}` is held; release it first"),
                 (None, None) => format!("busy: {phase} {action}"),
             },
-            Blocker::Stamina { have, need, ready_in: Some(t) } => format!("not enough stamina: {have:.0}/{need:.0} (ready in {t:.1}s)"),
+            Blocker::Stamina { have, need, ready_in: Some(t) } => {
+                format!("not enough stamina: {have:.0}/{need:.0} (ready in {t:.1}s)")
+            }
             Blocker::Stamina { have, need, ready_in: None } => format!("not enough stamina: {have:.0}/{need:.0}"),
             Blocker::Cooldown { action, ready_in } => format!("{action} is on cooldown (ready in {ready_in:.2}s)"),
             Blocker::NoCharges { charge, have, max } => format!("no {charge} charges left ({have}/{max})"),
@@ -297,7 +337,11 @@ impl Blocker {
 
 /// Ticks until `secs` have passed (0 when they already have).
 pub fn ticks_until(secs: f32, dt: f32) -> u32 {
-    if secs <= EPS || dt <= 0.0 { 0 } else { ((secs - EPS) / dt).ceil() as u32 }
+    if secs <= EPS || dt <= 0.0 {
+        0
+    } else {
+        ((secs - EPS) / dt).ceil() as u32
+    }
 }
 
 /// Whether an input that becomes possible in `ready_in` seconds starts before its
@@ -328,9 +372,10 @@ pub fn can_start(v: &FighterView, input: &str, dt: f32) -> Result<Start, Blocker
                 }
             }
             None => {
-                let held = def.hold.as_ref().filter(|h| {
-                    v.held.contains(&h.input) && def.span(&h.span).is_some_and(|w| run.t < w.1 - EPS)
-                });
+                let held = def
+                    .hold
+                    .as_ref()
+                    .filter(|h| v.held.contains(&h.input) && def.span(&h.span).is_some_and(|w| run.t < w.1 - EPS));
                 let ends_in = held.is_none().then(|| ticks_until(run.length - run.t, dt) as f32 * dt);
                 let next = def.next_cancel(input, run.t);
                 let cancel_in = next.as_ref().map(|(from, _)| ticks_until(from - run.t, dt) as f32 * dt);
@@ -514,7 +559,8 @@ pub(crate) fn run_machines(
         let choice = choose(&f, &db, dt);
         let here = f.transform.translation;
         let forward = *f.transform.forward();
-        let target = f.intent.target.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok()).map(|t| t.translation);
+        let target =
+            f.intent.target.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok()).map(|t| t.translation);
 
         if let Some(choice) = &choice {
             if let Some(i) = choice.queued {
@@ -525,7 +571,8 @@ pub(crate) fn run_machines(
                 let facing = steer(def, choice.dir, &f.intent, here, forward, target);
                 let instance = f.state.started;
                 f.state.started += 1;
-                let run = Running::new(&choice.start.action, def, instance, facing, choice.dir, Some(choice.input.clone()));
+                let run =
+                    Running::new(&choice.start.action, def, instance, facing, choice.dir, Some(choice.input.clone()));
                 begin(entity, def, &run, here, &mut pending.0, &mut |e| commands.trigger(e));
                 commands.trigger(ActionStarted { entity, action: run.action.clone(), input: run.input.clone() });
                 f.state.current = Some(run);
@@ -545,7 +592,8 @@ pub(crate) fn run_machines(
                     {
                         run.facing = dir;
                     }
-                    external = run.facing * (spans.iter().map(|&(a, b)| def.displacement_at(b) - def.displacement_at(a)).sum::<f32>());
+                    external = run.facing
+                        * (spans.iter().map(|&(a, b)| def.displacement_at(b) - def.displacement_at(a)).sum::<f32>());
                     for &(lo, hi) in &spans {
                         for e in def.effects.iter().filter(|e| crosses(e.at, lo, hi)) {
                             pending.0.push((entity, run.action.clone(), e.effect.clone()));
@@ -632,10 +680,20 @@ fn choose(f: &FighterDataItem, db: &ContentDb, dt: f32) -> Option<Choice> {
 
 /// Moves this tick's presses of inputs the fighter understands into its buffer (the
 /// newest press of an input replaces an older one). Others stay for other systems.
-fn take_presses(intent: &mut Mut<Intent>, buffer: &mut Mut<InputBuffer>, moveset: Option<&MovesetDef>, running: Option<&ActionDef>, ttl: f32) {
+fn take_presses(
+    intent: &mut Mut<Intent>,
+    buffer: &mut Mut<InputBuffer>,
+    moveset: Option<&MovesetDef>,
+    running: Option<&ActionDef>,
+    ttl: f32,
+) {
     let known = |input: &str| {
         moveset.is_some_and(|m| m.inputs.contains_key(input))
-            || running.is_some_and(|d| d.cancels.iter().any(|c| c.into.iter().any(|t| matches!(t, crate::def::Transition::Combo(i, _) if i == input))))
+            || running.is_some_and(|d| {
+                d.cancels
+                    .iter()
+                    .any(|c| c.into.iter().any(|t| matches!(t, crate::def::Transition::Combo(i, _) if i == input)))
+            })
     };
     if !intent.pressed.iter().any(|p| known(&p.input)) {
         return;
@@ -668,7 +726,14 @@ fn pay(f: &mut FighterDataItem, action: &str, def: &ActionDef) {
 }
 
 /// Where an action points when it starts.
-pub(crate) fn steer(def: &ActionDef, dir: Option<Vec3>, intent: &Intent, here: Vec3, forward: Vec3, target: Option<Vec3>) -> Vec3 {
+pub(crate) fn steer(
+    def: &ActionDef,
+    dir: Option<Vec3>,
+    intent: &Intent,
+    here: Vec3,
+    forward: Vec3,
+    target: Option<Vec3>,
+) -> Vec3 {
     let toward = |p: Vec3| flat(p - here).try_normalize();
     let pressed = dir.and_then(|d| flat(d).try_normalize());
     let moving = flat(intent.move_dir).try_normalize();
@@ -715,7 +780,14 @@ pub(crate) fn advance(run: &mut Running, def: &ActionDef, dt: f32, holding: bool
 }
 
 /// What starting an action does at once: effects and a telegraph at time 0.
-fn begin(entity: Entity, def: &ActionDef, run: &Running, feet: Vec3, effects: &mut Vec<(Entity, String, Effect)>, trigger: &mut impl FnMut(Telegraph)) {
+fn begin(
+    entity: Entity,
+    def: &ActionDef,
+    run: &Running,
+    feet: Vec3,
+    effects: &mut Vec<(Entity, String, Effect)>,
+    trigger: &mut impl FnMut(Telegraph),
+) {
     for e in def.effects.iter().filter(|e| e.at <= EPS) {
         effects.push((entity, run.action.clone(), e.effect.clone()));
     }
@@ -799,7 +871,8 @@ pub fn apply_effect(world: &mut World, entity: Entity, action: &str, effect: &Ef
             match hook {
                 Some(hook) => hook(world, entity),
                 None => {
-                    let text = format!("action `{action}`: no effect hook `{name}`; register it with app.add_action_effect");
+                    let text =
+                        format!("action `{action}`: no effect hook `{name}`; register it with app.add_action_effect");
                     report_once(world, format!("effect {name}"), text);
                 }
             }
@@ -877,7 +950,12 @@ mod tests {
         ActionState { current: Some(run), started: 1 }
     }
 
-    fn view<'a>(db: &'a ContentDb, state: &'a ActionState, stamina: Option<&'a Stamina>, held: &'a [String]) -> FighterView<'a> {
+    fn view<'a>(
+        db: &'a ContentDb,
+        state: &'a ActionState,
+        stamina: Option<&'a Stamina>,
+        held: &'a [String],
+    ) -> FighterView<'a> {
         FighterView { db, moveset: "hero", state, stamina, cooldowns: None, charges: None, held, dead: false }
     }
 
@@ -886,9 +964,15 @@ mod tests {
         let db = db();
         let state = ActionState::default();
         let s = Stamina::new(100.0, 20.0, 0.5);
-        assert_eq!(can_start(&view(&db, &state, Some(&s), &[]), "light", DT), Ok(Start { action: "light_1".into(), cancel: false }));
+        assert_eq!(
+            can_start(&view(&db, &state, Some(&s), &[]), "light", DT),
+            Ok(Start { action: "light_1".into(), cancel: false })
+        );
         let err = can_start(&view(&db, &state, Some(&s), &[]), "kick", DT).unwrap_err();
-        assert_eq!(err.message(), "your moveset `hero` has no `kick`; it has: block, dodge, heavy, light, use_item.flask");
+        assert_eq!(
+            err.message(),
+            "your moveset `hero` has no `kick`; it has: block, dodge, heavy, light, use_item.flask"
+        );
     }
 
     #[test]

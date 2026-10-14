@@ -95,7 +95,9 @@ pub use def::{
     ActionDef, CancelDef, CombatTuning, Cost, Effect, GuardDef, HitDef, HitFlag, HitShape, HoldDef, Local, MovesetDef,
     Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
 };
-pub use fighter::{Armor, Charge, Charges, Cooldown, Cooldowns, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team};
+pub use fighter::{
+    Armor, Charge, Charges, Cooldown, Cooldowns, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team,
+};
 pub use machine::{
     action_progress, apply_effect, can_start, force_action, ActionEffect, ActionEffects, ActionRejected, ActionStarted,
     ActionState, Blocker, FighterView, Healed, InputBuffer, Queued, Running, Start, Telegraph,
@@ -144,7 +146,13 @@ pub trait ActionAppExt {
 
     /// The game's code for status effect `name` (a [`StatusDef::effect`]): when it
     /// applies, every tick while active, when it expires.
-    fn add_status_effect(&mut self, name: &str, on_apply: StatusHook, on_tick: StatusHook, on_expire: StatusHook) -> &mut Self;
+    fn add_status_effect(
+        &mut self,
+        name: &str,
+        on_apply: StatusHook,
+        on_tick: StatusHook,
+        on_expire: StatusHook,
+    ) -> &mut Self;
 
     /// The game's code for an action's `Custom(name)` effect.
     fn add_action_effect(&mut self, name: &str, effect: ActionEffect) -> &mut Self;
@@ -156,7 +164,13 @@ impl ActionAppExt for App {
         self
     }
 
-    fn add_status_effect(&mut self, name: &str, on_apply: StatusHook, on_tick: StatusHook, on_expire: StatusHook) -> &mut Self {
+    fn add_status_effect(
+        &mut self,
+        name: &str,
+        on_apply: StatusHook,
+        on_tick: StatusHook,
+        on_expire: StatusHook,
+    ) -> &mut Self {
         let hooks = StatusHooks { on_apply, on_tick, on_expire };
         self.world_mut().get_resource_or_init::<StatusEffects>().insert(name, hooks);
         self

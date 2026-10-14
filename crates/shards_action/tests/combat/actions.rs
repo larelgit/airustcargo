@@ -180,8 +180,14 @@ fn errors_teach_the_fix() {
     let hero = hero(world, "hero", Vec3::ZERO, N);
     let brute = brute(world, Vec3::new(0.0, 0.0, -5.0), S);
     let b = id(&app, brute);
-    assert_eq!(fails(&mut app, "attack", json!({"target": b, "input": "kick"})), "your moveset `hero` has no `kick`; it has: block, dodge, heavy, light, parry, technique.1, use_item.flask");
-    assert_eq!(fails(&mut app, "dodge", json!({"dir": "up"})), "unknown direction `up`; use N, NE, E, SE, S, SW, W or NW");
+    assert_eq!(
+        fails(&mut app, "attack", json!({"target": b, "input": "kick"})),
+        "your moveset `hero` has no `kick`; it has: block, dodge, heavy, light, parry, technique.1, use_item.flask"
+    );
+    assert_eq!(
+        fails(&mut app, "dodge", json!({"dir": "up"})),
+        "unknown direction `up`; use N, NE, E, SE, S, SW, W or NW"
+    );
     ok(&mut app, "god", json!({"id": b}));
     shards_action::kill(app.world_mut(), hero, None, None);
     assert_eq!(fails(&mut app, "light_attack", json!({})), "you are dead; a dev agent can `heal` you");

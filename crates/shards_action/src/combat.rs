@@ -230,7 +230,8 @@ fn detect(world: &mut World) -> Vec<Detected> {
 }
 
 fn resolve(world: &mut World, d: Detected) {
-    let swinging = world.get::<ActionState>(d.attacker).and_then(|s| s.current.as_ref()).is_some_and(|r| r.instance == d.instance);
+    let swinging =
+        world.get::<ActionState>(d.attacker).and_then(|s| s.current.as_ref()).is_some_and(|r| r.instance == d.instance);
     if !swinging || world.get::<Dead>(d.target).is_some() || world.get::<Dead>(d.attacker).is_some() {
         return;
     }
@@ -321,7 +322,14 @@ fn apply(world: &mut World, ctx: DamageCtx) {
                 s.spend(stamina);
             }
             let hp_left = hurt(world, target, ctx.damage);
-            world.trigger(Blocked { attacker, defender: target, action: action.clone(), amount: ctx.damage, stamina, hp_left });
+            world.trigger(Blocked {
+                attacker,
+                defender: target,
+                action: action.clone(),
+                amount: ctx.damage,
+                stamina,
+                hp_left,
+            });
             if !finish_if_dead(world, target, attacker, &action) {
                 take_poise(world, target, ctx.poise);
             }
@@ -332,7 +340,13 @@ fn apply(world: &mut World, ctx: DamageCtx) {
                 s.spend(all);
             }
             let hp_left = hurt(world, target, ctx.damage);
-            world.trigger(GuardBroken { attacker, defender: target, action: action.clone(), amount: ctx.damage, hp_left });
+            world.trigger(GuardBroken {
+                attacker,
+                defender: target,
+                action: action.clone(),
+                amount: ctx.damage,
+                hp_left,
+            });
             apply_statuses(world, target, &ctx.status);
             if !finish_if_dead(world, target, attacker, &action) {
                 stagger(world, target, StaggerCause::GuardBroken);

@@ -147,7 +147,12 @@ impl Statuses {
     /// One tick: active statuses tick and run out, buildup decays, a status waiting at
     /// full buildup takes a free slot. `def` finds definitions (a status whose
     /// definition is gone just runs out).
-    pub fn tick<'d>(&mut self, def: impl Fn(&str) -> Option<&'d StatusDef>, dt: f32, limit: usize) -> Vec<StatusChange> {
+    pub fn tick<'d>(
+        &mut self,
+        def: impl Fn(&str) -> Option<&'d StatusDef>,
+        dt: f32,
+        limit: usize,
+    ) -> Vec<StatusChange> {
         let mut changes = Vec::new();
         for entry in &mut self.0 {
             if entry.active > 0.0 {
@@ -258,7 +263,8 @@ fn run_changes(world: &mut World, entity: Entity, changes: Vec<StatusChange>) {
             Some(name) => {
                 let hooks = world.resource::<StatusEffects>().get(name);
                 if hooks.is_none() {
-                    let text = format!("status `{id}`: no effect hook `{name}`; register it with app.add_status_effect");
+                    let text =
+                        format!("status `{id}`: no effect hook `{name}`; register it with app.add_status_effect");
                     report_once(world, format!("status effect {name}"), text);
                 }
                 hooks

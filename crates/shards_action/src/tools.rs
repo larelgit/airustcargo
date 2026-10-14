@@ -121,7 +121,11 @@ fn block(In(call): In<Call<BlockArgs>>, world: &mut World) -> ToolResult {
     let db = world.resource::<ContentDb>();
     let moveset = world.get::<Fighter>(me).and_then(|f| db.get::<crate::MovesetDef>(&f.moveset));
     let action = moveset.and_then(|m| m.action(BLOCK)).map(str::to_owned);
-    let held = action.as_deref().and_then(|a| db.get::<ActionDef>(a)).and_then(|d| d.hold.as_ref()).is_some_and(|h| h.input == BLOCK);
+    let held = action
+        .as_deref()
+        .and_then(|a| db.get::<ActionDef>(a))
+        .and_then(|d| d.hold.as_ref())
+        .is_some_and(|h| h.input == BLOCK);
     if !held {
         // A block without a hold loop is a timed press.
         return press(world, &call.caller, BLOCK, None);
@@ -159,12 +163,16 @@ fn dodge(In(call): In<Call<DodgeArgs>>, world: &mut World) -> ToolResult {
     let me = me(world, &call.caller)?;
     let here = world.get::<Transform>(me).map(|t| t.translation).unwrap_or_default();
     let dir = match (&call.args.dir, call.args.away_from) {
-        (Some(d), _) => Some(compass_vector(d).ok_or_else(|| format!("unknown direction `{d}`; use N, NE, E, SE, S, SW, W or NW"))?),
+        (Some(d), _) => Some(
+            compass_vector(d).ok_or_else(|| format!("unknown direction `{d}`; use N, NE, E, SE, S, SW, W or NW"))?,
+        ),
         (None, Some(id)) => {
             let there = world.get::<Transform>(id.entity(world)?).map(|t| t.translation).ok_or("it has no position")?;
             Some(flat(here - there).try_normalize().ok_or("you stand on it; give `dir`")?)
         }
-        (None, None) => zones_threatening(world, me, here, body_radius(world, me)).first().and_then(|(_, out)| out.try_normalize()),
+        (None, None) => {
+            zones_threatening(world, me, here, body_radius(world, me)).first().and_then(|(_, out)| out.try_normalize())
+        }
     };
     let towards = dir.map_or_else(|| "forward".to_owned(), |d| compass(d).to_owned());
     let answer = press(world, &call.caller, DODGE, dir)?;
@@ -255,7 +263,8 @@ fn lock_on(In(call): In<Call<LockOnArgs>>, world: &mut World) -> ToolResult {
         }
         None => {
             let range = CombatTuning::of(world.resource::<ContentDb>()).lock_on_range;
-            nearest_enemy(world, me, here, range).ok_or_else(|| format!("no enemy within {range:.0}m to lock on to; pass `target`"))?
+            nearest_enemy(world, me, here, range)
+                .ok_or_else(|| format!("no enemy within {range:.0}m to lock on to; pass `target`"))?
         }
     };
     let there = world.resource::<AiIndex>().get(target).and_then(|e| world.get::<Transform>(e)).map(|t| t.translation);
@@ -269,7 +278,8 @@ fn lock_on(In(call): In<Call<LockOnArgs>>, world: &mut World) -> ToolResult {
 /// The nearest living hostile fighter within `range`, lowest id on ties.
 fn nearest_enemy(world: &World, me: Entity, here: Vec3, range: f32) -> Option<AiId> {
     let team = world.get::<Team>(me);
-    let mut q = world.try_query_filtered::<(Entity, &AiId, &Transform, Option<&Team>), (With<Fighter>, Without<Dead>)>()?;
+    let mut q =
+        world.try_query_filtered::<(Entity, &AiId, &Transform, Option<&Team>), (With<Fighter>, Without<Dead>)>()?;
     q.iter(world)
         .filter(|(e, _, _, t)| *e != me && hostile(team, *t))
         .map(|(_, id, tf, _)| (flat(tf.translation - here).length(), *id))
@@ -303,14 +313,20 @@ fn attack(In(call): In<Call<AttackArgs>>, world: &mut World) -> ToolResult {
     let input = call.args.input.unwrap_or_else(|| LIGHT.to_owned());
     let db = world.resource::<ContentDb>();
     let fighter = world.get::<Fighter>(me).ok_or("not a fighter")?;
-    let moveset = db.get::<crate::MovesetDef>(&fighter.moveset).ok_or_else(|| format!("your moveset `{}` is not in content", fighter.moveset))?;
+    let moveset = db
+        .get::<crate::MovesetDef>(&fighter.moveset)
+        .ok_or_else(|| format!("your moveset `{}` is not in content", fighter.moveset))?;
     if moveset.action(&input).is_none() {
         let known: Vec<&str> = moveset.inputs.keys().map(String::as_str).collect();
         return Err(format!("your moveset `{}` has no `{input}`; it has: {}", fighter.moveset, known.join(", ")));
     }
     let mut intent = world.get_mut::<Intent>(me).ok_or("no Intent")?;
     intent.orders.clear();
-    intent.orders.push_back(Order::Attack { target: call.args.target.0, input: input.clone(), repeat: call.args.repeat });
+    intent.orders.push_back(Order::Attack {
+        target: call.args.target.0,
+        input: input.clone(),
+        repeat: call.args.repeat,
+    });
     let until = if call.args.repeat { " until it dies" } else { "" };
     Ok(format!("ok: attacking {} with {input}{until}", call.args.target))
 }
@@ -381,7 +397,10 @@ pub struct StaggerArgs {
 
 fn stagger_tool(In(call): In<Call<StaggerArgs>>, world: &mut World) -> ToolResult {
     let e = call.args.id.entity(world)?;
-    let moveset = world.get::<Fighter>(e).map(|f| f.moveset.clone()).ok_or_else(|| format!("{} is not a fighter", call.args.id))?;
+    let moveset = world
+        .get::<Fighter>(e)
+        .map(|f| f.moveset.clone())
+        .ok_or_else(|| format!("{} is not a fighter", call.args.id))?;
     if world.get::<Dead>(e).is_some() {
         return Err(format!("{} is dead", call.args.id));
     }

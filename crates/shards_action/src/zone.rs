@@ -56,7 +56,9 @@ impl WorldShape {
             HitShape::Cone { range, height, .. } => {
                 (Shape::Cylinder { half_height: height * 0.5, radius: range }, self.origin + up * height * 0.5, rot)
             }
-            HitShape::Box { width, height, depth } => (Shape::cuboid(Vec3::new(width, height, depth) * 0.5), self.origin, rot),
+            HitShape::Box { width, height, depth } => {
+                (Shape::cuboid(Vec3::new(width, height, depth) * 0.5), self.origin, rot)
+            }
             HitShape::Circle { radius, height } => {
                 (Shape::Cylinder { half_height: height * 0.5, radius }, self.origin + up * height * 0.5, rot)
             }
@@ -78,7 +80,9 @@ impl WorldShape {
             HitShape::Cone { .. } => found
                 .into_iter()
                 .filter(|e| {
-                    physics.collider(*e).is_some_and(|c| self.contains(c.position, c.shape.half_extents().x.max(c.shape.half_extents().z)))
+                    physics.collider(*e).is_some_and(|c| {
+                        self.contains(c.position, c.shape.half_extents().x.max(c.shape.half_extents().z))
+                    })
                 })
                 .collect(),
             _ => found,
@@ -199,13 +203,14 @@ pub struct HitZone {
     pub flags: Vec<HitFlag>,
 }
 
+/// What [`hit_zones`] reads of an attacker.
+type Attacker<'a> = (Entity, Option<&'a AiId>, &'a ActionState, &'a Transform, Option<&'a Team>);
+
 /// Every hit window not over yet, of every fighter in an action, in attacker `AiId`
 /// order then time order. Pure: reads the world, changes nothing.
 pub fn hit_zones(world: &World) -> Vec<HitZone> {
     let Some(db) = world.get_resource::<ContentDb>() else { return Vec::new() };
-    let Some(mut q) = world.try_query_filtered::<(Entity, Option<&AiId>, &ActionState, &Transform, Option<&Team>), (With<Fighter>, Without<Dead>)>() else {
-        return Vec::new();
-    };
+    let Some(mut q) = world.try_query_filtered::<Attacker, (With<Fighter>, Without<Dead>)>() else { return Vec::new() };
     let mut attackers: Vec<_> = q.iter(world).filter(|(_, _, s, ..)| s.current.is_some()).collect();
     attackers.sort_by_key(|(e, id, ..)| (id.map_or(u32::MAX, |i| i.0), *e));
     let mut zones = Vec::new();
@@ -228,7 +233,9 @@ pub fn hit_zones(world: &World) -> Vec<HitZone> {
 /// spanning all remaining hit windows.
 pub fn action_zones(def: &ActionDef, t: f32, feet: Vec3, facing: Vec3) -> Vec<HitZone> {
     let symbol = def.telegraph.as_ref().map(|tg| tg.symbol.clone());
-    let at = |from: f32| feet + flat(facing).normalize_or_zero() * (def.displacement_at(from.max(t)) - def.displacement_at(t));
+    let at = |from: f32| {
+        feet + flat(facing).normalize_or_zero() * (def.displacement_at(from.max(t)) - def.displacement_at(t))
+    };
     let zone = |hit: usize, shape: HitShape, local: Local, from: f32, to: f32, flags: Vec<HitFlag>| HitZone {
         attacker: Entity::PLACEHOLDER,
         attacker_id: None,
@@ -256,7 +263,10 @@ pub fn action_zones(def: &ActionDef, t: f32, feet: Vec3, facing: Vec3) -> Vec<Hi
         let flags = windows.iter().flat_map(|(i, _)| def.hits[*i].flags.clone()).collect();
         return vec![zone(windows[0].0, shape, tg.zone_at, from, to, flags)];
     }
-    windows.into_iter().map(|(i, (from, to))| zone(i, def.hits[i].shape, def.hits[i].at, from, to, def.hits[i].flags.clone())).collect()
+    windows
+        .into_iter()
+        .map(|(i, (from, to))| zone(i, def.hits[i].shape, def.hits[i].at, from, to, def.hits[i].flags.clone()))
+        .collect()
 }
 
 /// Hostile zones a body of `radius` at `point` stands in, soonest first, with the way
@@ -360,7 +370,12 @@ mod tests {
 
     #[test]
     fn box_exit_takes_the_nearest_side() {
-        let z = WorldShape::new(HitShape::Box { width: 2.0, height: 2.0, depth: 4.0 }, Local { forward: 2.0, ..default() }, Vec3::ZERO, N);
+        let z = WorldShape::new(
+            HitShape::Box { width: 2.0, height: 2.0, depth: 4.0 },
+            Local { forward: 2.0, ..default() },
+            Vec3::ZERO,
+            N,
+        );
         // The box spans x -1..1, z -4..0; a point at x 0.5 is nearest the east side.
         let out = z.exit(Vec3::new(0.5, 0.0, -2.0), 0.0).unwrap();
         assert!(close(out, Vec3::new(0.5, 0.0, 0.0)), "{out}");
@@ -398,9 +413,16 @@ mod tests {
 
     #[test]
     fn world_shapes_turn_with_the_facing() {
-        let east = WorldShape::new(HitShape::Sphere { radius: 1.0 }, Local { forward: 2.0, up: 1.0, right: 0.5 }, Vec3::new(10.0, 0.0, 0.0), Vec3::X);
+        let east = WorldShape::new(
+            HitShape::Sphere { radius: 1.0 },
+            Local { forward: 2.0, up: 1.0, right: 0.5 },
+            Vec3::new(10.0, 0.0, 0.0),
+            Vec3::X,
+        );
         assert!(close(east.origin, Vec3::new(12.0, 1.0, 0.5)), "{}", east.origin);
-        let (_, center, rot) = WorldShape::new(HitShape::Capsule { radius: 0.3, length: 2.0 }, Local::default(), Vec3::ZERO, Vec3::X).physics();
+        let (_, center, rot) =
+            WorldShape::new(HitShape::Capsule { radius: 0.3, length: 2.0 }, Local::default(), Vec3::ZERO, Vec3::X)
+                .physics();
         assert!(close(center, Vec3::new(1.0, 0.0, 0.0)) && close(rot * Vec3::Y, Vec3::X), "{center} {}", rot * Vec3::Y);
     }
 }

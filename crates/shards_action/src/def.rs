@@ -154,7 +154,11 @@ impl fmt::Display for HitShape {
 pub(crate) fn meters(v: f32) -> String {
     let s = format!("{v:.2}");
     let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s == "-0" { "0".to_owned() } else { s.to_owned() }
+    if s == "-0" {
+        "0".to_owned()
+    } else {
+        s.to_owned()
+    }
 }
 
 /// What a hit does beyond damage.
@@ -392,7 +396,11 @@ pub enum CancelTo {
 /// Whether window `win` is open in the tick that went from `prev` to `t`: it touches
 /// `(prev, t]`, or, right at the start (`t` = 0), it starts at 0.
 pub fn touches(win: (f32, f32), prev: f32, t: f32) -> bool {
-    if t <= EPS { win.0 <= EPS && win.1 >= 0.0 } else { win.0 <= t + EPS && win.1 > prev + EPS }
+    if t <= EPS {
+        win.0 <= EPS && win.1 >= 0.0
+    } else {
+        win.0 <= t + EPS && win.1 > prev + EPS
+    }
 }
 
 impl ActionDef {
@@ -482,7 +490,7 @@ impl ActionDef {
             .iter()
             .filter_map(|c| Some((self.span(&c.span)?, transition(&c.into, input)?)))
             .filter(|(w, _)| w.0 > t + EPS)
-            .min_by(|a, b| a.0.0.total_cmp(&b.0.0))
+            .min_by(|a, b| a.0 .0.total_cmp(&b.0 .0))
             .map(|(w, to)| (w.0, to))
     }
 
@@ -493,7 +501,7 @@ impl ActionDef {
             .enumerate()
             .filter_map(|(i, h)| Some((i, self.span(&h.span)?)))
             .filter(|(_, w)| w.1 > t + EPS)
-            .min_by(|a, b| a.1.0.total_cmp(&b.1.0).then(a.0.cmp(&b.0)))
+            .min_by(|a, b| a.1 .0.total_cmp(&b.1 .0).then(a.0.cmp(&b.0)))
     }
 
     /// The zone a telegraph shows: its own, else the first hit window's.
@@ -594,8 +602,12 @@ impl ContentDef for ActionDef {
                 check.refs.error("telegraph has no zone: give it `zone` or the action a hit window");
             }
         }
-        let others: Vec<String> =
-            check.refs.iter::<ActionDef>().filter(|(other, def)| *other != id && def.net_id == self.net_id).map(|(o, _)| o.to_owned()).collect();
+        let others: Vec<String> = check
+            .refs
+            .iter::<ActionDef>()
+            .filter(|(other, def)| *other != id && def.net_id == self.net_id)
+            .map(|(o, _)| o.to_owned())
+            .collect();
         if let Some(other) = others.first() {
             check.refs.error(format!(
                 "net_id {} is also used by action `{other}`; net ids name actions on the wire, so each must be unique",
@@ -659,7 +671,8 @@ impl Check<'_, '_, '_> {
                 let hint = shards_content::db::closest(wanted, names.iter().copied())
                     .map(|c| format!(" (did you mean `{c}`?)"))
                     .unwrap_or_default();
-                self.refs.error(format!("{field} names an unknown phase `{wanted}`{hint}; phases: {}", names.join(", ")));
+                self.refs
+                    .error(format!("{field} names an unknown phase `{wanted}`{hint}; phases: {}", names.join(", ")));
             }
             Some((from, to)) => {
                 if !(from >= 0.0 && from <= to && to <= self.length + EPS) {

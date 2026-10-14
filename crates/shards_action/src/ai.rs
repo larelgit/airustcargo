@@ -50,8 +50,12 @@ pub(crate) fn register(app: &mut App) {
                 e.hp_left
             ))
         })
-        .journal_event::<Parried>(|e, w| Some(format!("{} parried {} {}", label(w, e.defender), label(w, e.attacker), e.action)))
-        .journal_event::<Evaded>(|e, w| Some(format!("{} evaded {} {}", label(w, e.defender), label(w, e.attacker), e.action)))
+        .journal_event::<Parried>(|e, w| {
+            Some(format!("{} parried {} {}", label(w, e.defender), label(w, e.attacker), e.action))
+        })
+        .journal_event::<Evaded>(|e, w| {
+            Some(format!("{} evaded {} {}", label(w, e.defender), label(w, e.attacker), e.action))
+        })
         .journal_event::<GuardBroken>(|e, w| {
             Some(format!(
                 "{} broke {}'s guard with {} -{:.0} (hp {:.0})",
@@ -65,12 +69,16 @@ pub(crate) fn register(app: &mut App) {
         .journal_event::<Staggered>(|e, w| Some(format!("{} staggered ({})", label(w, e.entity), e.cause.describe())))
         .journal_event::<Died>(|e, w| {
             Some(match (e.killer, &e.action) {
-                (Some(k), Some(action)) => format!("{} died (killed by {} with {action})", label(w, e.entity), label(w, k)),
+                (Some(k), Some(action)) => {
+                    format!("{} died (killed by {} with {action})", label(w, e.entity), label(w, k))
+                }
                 (Some(k), None) => format!("{} died (killed by {})", label(w, e.entity), label(w, k)),
                 _ => format!("{} died", label(w, e.entity)),
             })
         })
-        .journal_event::<ActionRejected>(|e, w| Some(format!("{} {} rejected: {}", label(w, e.entity), e.input, e.reason)))
+        .journal_event::<ActionRejected>(|e, w| {
+            Some(format!("{} {} rejected: {}", label(w, e.entity), e.input, e.reason))
+        })
         .journal_event::<StatusApplied>(|e, w| {
             Some(match e.stacks {
                 n if n > 1 => format!("{} {} ×{n}", label(w, e.entity), e.status),
@@ -78,7 +86,9 @@ pub(crate) fn register(app: &mut App) {
             })
         })
         .journal_event::<StatusExpired>(|e, w| Some(format!("{} {} expired", label(w, e.entity), e.status)))
-        .journal_event::<Healed>(|e, w| Some(format!("{} healed +{:.0} (hp {:.0})", label(w, e.entity), e.amount, e.hp)));
+        .journal_event::<Healed>(|e, w| {
+            Some(format!("{} healed +{:.0} (hp {:.0})", label(w, e.entity), e.amount, e.hp))
+        });
 }
 
 /// The hostile hit zones the subject stands in, soonest first, one per attacker and

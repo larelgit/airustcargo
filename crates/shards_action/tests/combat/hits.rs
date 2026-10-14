@@ -208,7 +208,14 @@ fn hits_resolve_in_ai_id_order_whatever_the_query_order() {
     step(&mut app, 13);
     let (i1, i2, t) = (id(&app, a1), id(&app, a2), id(&app, target));
     let story: Vec<String> = journal(&app).into_iter().filter(|l| l.contains(&t)).collect();
-    assert_eq!(story, [format!("12 {i1} -> {t} light_1 -20 (hp 10)"), format!("12 {i2} -> {t} light_1 -20 (hp 0)"), format!("12 {t} died (killed by {i2} with light_1)")]);
+    assert_eq!(
+        story,
+        [
+            format!("12 {i1} -> {t} light_1 -20 (hp 10)"),
+            format!("12 {i2} -> {t} light_1 -20 (hp 0)"),
+            format!("12 {t} died (killed by {i2} with light_1)")
+        ]
+    );
 
     // One attacker, two targets in its cone: targets in id order too, though the
     // physics layer lists the second one first (its collider is older).
@@ -226,7 +233,10 @@ fn hits_resolve_in_ai_id_order_whatever_the_query_order() {
     press(&mut app, f[2], "light");
     step(&mut app, 13);
     let (t1, t2, a) = (id(&app, f[0]), id(&app, f[1]), id(&app, f[2]));
-    assert_eq!(lines(&app, &format!("{a} ->")), [format!("12 {a} -> {t1} light_1 -20 (hp 80)"), format!("12 {a} -> {t2} light_1 -20 (hp 80)")]);
+    assert_eq!(
+        lines(&app, &format!("{a} ->")),
+        [format!("12 {a} -> {t1} light_1 -20 (hp 80)"), format!("12 {a} -> {t2} light_1 -20 (hp 80)")]
+    );
 }
 
 fn bleed_applied(world: &mut World, e: Entity) {

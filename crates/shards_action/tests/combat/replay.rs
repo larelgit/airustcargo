@@ -52,7 +52,15 @@ fn fight(app: &mut App, hero: Entity, brute: Entity) {
 /// Every fighter's gameplay state, bit-exact.
 fn state(app: &mut App) -> Vec<String> {
     let world = app.world_mut();
-    let mut q = world.query::<(&ai_core::AiId, &Transform, &Health, Option<&Stamina>, Option<&Poise>, &ActionState, &InputBuffer)>();
+    let mut q = world.query::<(
+        &ai_core::AiId,
+        &Transform,
+        &Health,
+        Option<&Stamina>,
+        Option<&Poise>,
+        &ActionState,
+        &InputBuffer,
+    )>();
     let mut out: Vec<String> = q.iter(world).map(|c| format!("{c:?}")).collect();
     out.sort();
     out
