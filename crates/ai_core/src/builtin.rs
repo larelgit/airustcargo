@@ -186,6 +186,10 @@ pub fn apply_clock(world: &mut World, action: ClockAction) -> ToolResult {
             Ok(format!("running from tick {}", sim::tick(world)))
         }
         ClockAction::Speed(x) => {
+            // A JSON number past `f32::MAX` arrives as an infinity.
+            if !x.is_finite() {
+                return Err(format!("speed {x} is not a speed a clock can run at; give a number like 0.25 or 4"));
+            }
             sim::set_speed(world, x);
             journal::log(world, JournalKind::Sim, format!("speed {x}x"));
             Ok(format!("speed {}x", sim::speed(world)))

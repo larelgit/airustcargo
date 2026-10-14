@@ -228,6 +228,10 @@ impl Plugin for NetPlugin {
     }
 }
 
+/// The exit code of a game started with `--exit-with-host` whose session could not open (a
+/// port it cannot host on, an address it cannot reach).
+pub const NO_SESSION_EXIT: u8 = 2;
+
 /// `Startup`: the session's agent, and a UDP socket unless a stand put a transport in already.
 fn open_endpoint(world: &mut World) {
     world.resource_mut::<AgentSessions>().configure(NET_AGENT, Scope::Dev, None);
@@ -249,6 +253,9 @@ fn open_endpoint(world: &mut World) {
             Err(e) => {
                 journal::emit(world, JournalKind::Error, format!("net: cannot host on UDP port {port}: {e}; pick another with --host PORT"));
                 world.insert_resource(NetState::Ended(format!("cannot host on port {port}: {e}")));
+                if config.exit_with_host {
+                    world.write_message(AppExit::from_code(NO_SESSION_EXIT));
+                }
             }
         },
         NetLaunch::Join { addr } => {
@@ -271,7 +278,14 @@ fn open_endpoint(world: &mut World) {
                 }
                 Err(e) => {
                     journal::emit(world, JournalKind::Error, format!("net: cannot reach {addr}: {e}; give it as HOST:PORT"));
-                    world.insert_resource(NetState::Ended(format!("cannot reach {addr}: {e}")));
+                    // Nothing will come: the world waits with the reason (`status`), or the game
+                    // exits (`--exit-with-host`).
+                    let reason = format!("cannot reach {addr}: {e}");
+                    shards_core::seed::hold_seed(world, &format!("net: {reason}"));
+                    if let Some(mut client) = world.remove_resource::<NetClient>() {
+                        client::end(world, &mut client, &reason, AppExit::from_code(NO_SESSION_EXIT));
+                        world.insert_resource(client);
+                    }
                 }
             }
         }

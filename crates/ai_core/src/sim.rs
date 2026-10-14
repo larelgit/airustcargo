@@ -179,9 +179,12 @@ pub fn resume(world: &mut World) {
     world.resource_mut::<Time<Virtual>>().unpause();
 }
 
-/// Game speed multiplier for real-time play (1.0 = normal).
+/// Game speed multiplier for real-time play (1.0 = normal). An infinity or NaN changes
+/// nothing (Bevy's clock would panic on it).
 pub fn set_speed(world: &mut World, speed: f32) {
-    world.resource_mut::<Time<Virtual>>().set_relative_speed(speed.max(0.0));
+    if speed.is_finite() {
+        world.resource_mut::<Time<Virtual>>().set_relative_speed(speed.max(0.0));
+    }
 }
 
 pub fn speed(world: &World) -> f32 {

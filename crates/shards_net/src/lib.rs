@@ -64,7 +64,7 @@ pub use client::{clock_ticks, ClientStage, NetClient, NetDesync};
 pub use conditioner::{Conditioned, Conditioner, Fate, LinkConditions};
 pub use def::{net_def, NetDef, NetDefaults};
 pub use events::{NetEventAppExt, NetEvents};
-pub use hooks::{JoinDecision, JoinRequest, LeaveRequest, NetHooks, NetLeft, PlayerJoined, PlayerLeft};
+pub use hooks::{JoinDecision, JoinRequest, LeaveRequest, NetHooks, NetLeft, NetSeat, PlayerJoined, PlayerLeft};
 pub use host::{end_session, NetHost};
 pub use hub::{HubEvent, HubEventKind, HubLinkStats, LinkId, MemoryHub, MemoryTransport};
 pub use link::{Delivered, Footprint, Link, LinkConfig, Role, SendError, Verdict};

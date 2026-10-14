@@ -55,14 +55,24 @@ pub struct NetHooks {
     /// Takes a leaving player's body away. Default: its `Intent` is cleared and it is despawned
     /// after `rejoin_grace_secs` (a rejoin within that time takes it back).
     pub remover: fn(&mut World, Entity, &LeaveRequest),
+    /// Which character a joining player's body gets: asked on the host before the recorded
+    /// `player_join`, whose arguments carry the answer (so a replay builds the same body).
+    /// `request.character` is what they brought; the answer may be another (the host's own
+    /// newer copy of it), `None` for none (the body keeps what it has). When the answer is
+    /// not what they brought, they are sent the host's version (`CharacterSave`). Default:
+    /// what they brought.
+    pub join_character: fn(&mut World, &JoinRequest) -> Option<Value>,
     /// Puts a joining player's character (their save sections) onto their new body.
     pub on_join_character: fn(&mut World, Entity, &Value),
-    /// A remote player's character as the host has it, to send them (`CharacterSave`).
-    pub capture_character: fn(&World, Entity) -> Option<Value>,
-    /// A client got its character from the host: write it to its slot.
-    pub on_character_save: fn(&mut World, &Value),
-    /// The host ends the session: save the world (before the clients are told).
-    pub on_session_end: fn(&mut World),
+    /// A remote player's character as the host has it, to send them (`CharacterSave`): at
+    /// their leave, at the end of the session and when the host overrode what they brought.
+    pub capture_character: fn(&mut World, Entity) -> Option<Value>,
+    /// A client got its character from the host (`CharacterSave`: the host tick it was
+    /// captured at, why, the sections): write it to its slot.
+    pub on_character_save: fn(&mut World, u64, &str, &Value),
+    /// The host ends the session: save the world (before the clients are told). Answers the
+    /// slot the world was saved in, which `SessionEnd` tells the clients.
+    pub on_session_end: fn(&mut World) -> Option<String>,
     /// Where player `n` starts (the region's spawn point). Set by the engine when it has regions.
     pub spawn_point: fn(&World, u8) -> Option<Vec3>,
     /// After a client put the host's world in: what else must restart (collider numbers).
@@ -78,10 +88,11 @@ impl Default for NetHooks {
             spawner: default_spawner,
             join_policy: |_, _| JoinDecision::Accept,
             remover: default_remover,
+            join_character: |_, request| request.character.clone(),
             on_join_character: |_, _, _| {},
             capture_character: |_, _| None,
-            on_character_save: |_, _| {},
-            on_session_end: |_| {},
+            on_character_save: |_, _, _, _| {},
+            on_session_end: |_| None,
             spawn_point: |_, _| None,
             after_restore: |_| {},
             describe_world: |_| None,
@@ -117,6 +128,15 @@ pub struct NetLeft {
     pub since: u64,
     pub until: u64,
 }
+
+/// A body the session holds for a remote player: joined for a peer (`player_join` called by
+/// the host's session), or that player's new body. A world rebuilt (a snapshot load, also in
+/// a new host process) while no peer of that player is connected sends it through
+/// `player_leave`. A body the host joined itself (co-op on its own machine) has none and
+/// stays, whichever number a guest held before.
+#[derive(Component, Reflect, Clone, Copy, Debug, Default)]
+#[reflect(Component, Default)]
+pub struct NetSeat;
 
 /// Spawns `NetDef.player_prefab` for the player at their spawn point (or beside player 0).
 pub fn default_spawner(world: &mut World, request: &JoinRequest) -> Result<Entity, String> {
@@ -191,6 +211,12 @@ fn player_join_tool(In(call): In<Call<PlayerJoinArgs>>, world: &mut World) -> To
     if world.get::<PlayerId>(body).is_none() {
         world.entity_mut(body).insert(PlayerId(player));
     }
+    // Who holds the player now: the session for a peer, or the host itself.
+    if call.caller.agent == crate::session::NET_AGENT {
+        world.entity_mut(body).insert(NetSeat);
+    } else {
+        world.entity_mut(body).remove::<NetSeat>();
+    }
     if let Some(character) = &request.character {
         (hooks(world).on_join_character)(world, body, character);
     }
@@ -230,6 +256,10 @@ fn player_leave_tool(In(call): In<Call<PlayerLeaveArgs>>, world: &mut World) -> 
 pub(crate) fn register(app: &mut App) {
     use ai_core::AiAppExt;
     app.register_type::<NetLeft>()
+        .register_type::<NetSeat>()
+        // Session bookkeeping (a respawned guest body gets it outside any call): a replay in
+        // single player has no session to hold it.
+        .replay_ignore::<NetSeat>()
         .register_type::<PlayerJoined>()
         .register_type::<PlayerLeft>()
         .journal_event::<PlayerJoined>(|e, w| {

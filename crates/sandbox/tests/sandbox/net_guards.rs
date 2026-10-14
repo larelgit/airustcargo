@@ -12,7 +12,7 @@ use shards::net::inputs::InputFrame;
 use shards::net::msg::{self, Hello, Inputs, Msg, StateDelta, Welcome};
 use shards::net::{Delivered, Link, LinkConditions, MemoryTransport, NetGame, NetHost, NetState, Role, Stand, Transport};
 use shards::prelude::*;
-use shards::serde_json::json;
+use shards::serde_json::{json, Map, Value};
 
 use super::net::*;
 use crate::common::*;
@@ -39,6 +39,11 @@ impl Rogue {
 
     fn say_unreliable(&mut self, bytes: &[u8]) {
         self.link.send_unreliable(bytes).unwrap();
+    }
+
+    /// Any bytes as a reliable message.
+    fn say_raw(&mut self, bytes: &[u8]) {
+        self.link.send_reliable(bytes).unwrap();
     }
 
     /// Takes what arrived, sends what is queued.
@@ -263,7 +268,8 @@ fn a_hello_out_of_bounds_is_refused_and_its_text_never_reaches_the_journal() {
     stand.run(70);
     let mut heavy = Rogue::new(&stand, "heavy", 83);
     let mut big = hello(&stand, "heavy");
-    big.character = Some(json!({"bag": "x".repeat(100_000)}));
+    // Over the 64 KB of a character, under the 80 KB the host reads before it plays.
+    big.character = Some(json!({"bag": "x".repeat(70_000)}));
     heavy.say(&Msg::Hello(big));
     heavy.run(&mut stand, 5);
     assert!(heavy.refused().unwrap().contains("the character is over 64 KB"), "{:?}", heavy.refused());
@@ -310,6 +316,70 @@ fn a_hello_of_another_build_is_refused_saying_what_differs() {
     slow.say(&Msg::Hello(changed));
     slow.run(&mut stand, 5);
     assert!(slow.refused().is_some_and(|r| r.contains("start with --hz 60")), "{:?}", slow.got);
+}
+
+// --- sizes and words -----------------------------------------------------------------------
+
+#[test]
+fn a_message_larger_than_an_honest_client_sends_is_not_read() {
+    let mut stand = stand(0);
+    // A stranger's hello of a megabyte: refused for its size, unread.
+    let mut heavy = Rogue::new(&stand, "heavy", 101);
+    let mut big = hello(&stand, "heavy");
+    big.character = Some(json!({"bag": "x".repeat(1 << 20)}));
+    heavy.say(&Msg::Hello(big));
+    heavy.run(&mut stand, 10);
+    let reason = heavy.refused().unwrap_or_else(|| panic!("{:?}", heavy.got.iter().map(short).collect::<Vec<_>>()));
+    assert!(reason.contains("before you play is over the 80 KB the host reads"), "{reason}");
+
+    // A guest's inputs of 600 KB: dropped unread; an honest packet is a few KB.
+    let mut guest = Rogue::new(&stand, "guest", 103);
+    guest.join(&mut stand, "guest");
+    let tick = sim::tick(stand.world(HOST));
+    let frame = InputFrame { tick: tick + 3, presses: vec![Press { input: "x".repeat(600 << 10), dir: None }], ..Default::default() };
+    let bytes = msg::encode(&Inputs { tick: tick + 3, frames: vec![frame], state_ack: 0, epoch: 0 });
+    guest.say_unreliable(&bytes);
+    guest.run(&mut stand, 10);
+    let line = format!("net: p1 sent a message of {} KB, over 512 KB: dropped unread", bytes.len().div_ceil(1024));
+    assert!(has_line(&stand, HOST, &line), "{line}: {:#?}", journal(&stand, HOST));
+    assert!(host_lines(&stand, "over the limits").is_empty(), "not decoded, so not checked: {:#?}", journal(&stand, HOST));
+    assert!(connected_peers(&stand) == 1, "the guest plays on");
+}
+
+fn connected_peers(stand: &Stand) -> usize {
+    stand.world(HOST).resource::<NetHost>().peers.values().filter(|p| p.stage == shards::net::host::PeerStage::Connected).count()
+}
+
+#[test]
+fn a_peers_words_reach_every_journal_on_one_short_line() {
+    let mut stand = stand(1);
+    // A stranger's message that is no message (a newline escaped in JSON, 50 KB of name):
+    // the decoder's error quotes its words.
+    let mut stranger = Rogue::new(&stand, "stranger", 105);
+    stranger.say_raw(format!("{{\"zz\\n123 [error] net: forged {}\":{{}}}}", "y".repeat(50_000)).as_bytes());
+    stranger.run(&mut stand, 70);
+    // A guest's order of a kind no game has, then its goodbye: words of its own.
+    let mut guest = Rogue::new(&stand, "guest", 107);
+    guest.join(&mut stand, "guest");
+    let tick = sim::tick(stand.world(HOST));
+    let mut inputs = shards::serde_json::to_value(Inputs { tick: tick + 3, frames: vec![InputFrame { tick: tick + 3, ..Default::default() }], state_ack: 0, epoch: 0 }).unwrap();
+    let mut order = Map::new();
+    order.insert(format!("zz\n123 [error] net: forged {}", "y".repeat(100_000)), json!({}));
+    inputs["frames"][0]["orders"] = Value::Array(vec![Value::Object(order)]);
+    guest.say_unreliable(&shards::serde_json::to_vec(&inputs).unwrap());
+    guest.run(&mut stand, 10);
+    guest.say(&Msg::Bye { reason: format!("bye\n123 [error] net: forged {}", "z".repeat(100_000)) });
+    guest.run(&mut stand, 10);
+
+    assert_eq!(host_lines(&stand, "net: peer").iter().filter(|l| l.contains("undecodable")).count(), 2, "{:#?}", journal(&stand, HOST));
+    assert!(has_line(&stand, HOST, "net: p2 left (bye\\n123 [error] net: forged zzz"), "{:#?}", journal(&stand, HOST));
+    for member in [HOST, C1] {
+        let lines = journal(&stand, member);
+        assert!(lines.iter().all(|l| !l.contains('\n') && l.len() < 400), "member {member}: {:#?}", lines.iter().map(|l| l.chars().take(120).collect::<String>()).collect::<Vec<_>>());
+    }
+    let left = host_calls(&stand, "player_leave");
+    let reason = left.last().and_then(|(_, _, args)| args["reason"].as_str().map(str::to_owned)).unwrap_or_default();
+    assert!(reason.starts_with("bye") && reason.len() < 300 && !reason.contains('\n'), "recorded: {} bytes", reason.len());
 }
 
 // --- inputs --------------------------------------------------------------------------------

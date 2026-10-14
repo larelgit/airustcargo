@@ -72,8 +72,8 @@ pub use file::{Fault, GameInfo, SaveFile, SectionData, SectionSet, FORMAT};
 pub use launch::{load_launch_slot, load_launch_slots, LaunchLoad, LaunchLoaded, LaunchOutcome};
 pub use ops::{
     apply_sections, capture_sections, check_parts, check_save_dir, check_state, default_body, load_parts, load_slot, newer_check, newer_sections, prepare, read_file,
-    replay_playing, resolve_body, save_now, save_part, save_parts, save_slot, write_sections, Applied, ApplyError, CheckReport, FileCheck, LoadReport,
-    Prepared, SaveConfig, SaveReport, SaveSlots, SaveWhat, NOT_WRITTEN_DURING_PLAYBACK,
+    replay_playing, resolve_body, save_now, save_part, save_parts, save_slot, slot_from_name, write_sections, Applied, ApplyError, CheckReport, FileCheck, LoadReport,
+    Prepared, Routed, SaveConfig, SaveReport, SaveRouting, SaveSlots, SaveWhat, NOT_WRITTEN_DURING_PLAYBACK,
 };
 pub use section::{Migration, SaveKey, SaveKind, SaveRegistry, SaveSection, SectionEntry};
 pub use store::{valid_slot, Damage, Recovery, Store, Which};
@@ -112,6 +112,7 @@ impl Plugin for SavePlugin {
             .insert_resource(config)
             .insert_resource(slots)
             .init_resource::<SaveRequests>()
+            .init_resource::<SaveRouting>()
             .init_resource::<LaunchLoaded>()
             .add_content::<SaveDef>()
             .add_engine_module("save", VERSION)

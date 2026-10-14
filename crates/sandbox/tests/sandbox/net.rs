@@ -722,7 +722,7 @@ pub(super) fn udp_member(net: shards::core::NetLaunch, name: &str, save_dir: Opt
 
 /// Host and client in real time until the client has played `ticks` ticks of the host's
 /// connected, or `deadline` (from `started`) is over. Returns the host's tick when it joined.
-fn play_over_udp(host: &mut App, client: &mut App, ticks: u64, started: Instant, deadline: Duration) -> Option<u64> {
+pub(super) fn play_over_udp(host: &mut App, client: &mut App, ticks: u64, started: Instant, deadline: Duration) -> Option<u64> {
     let mut joined_at = None;
     while started.elapsed() < deadline {
         sim::run_tick(host.world_mut()).unwrap();
