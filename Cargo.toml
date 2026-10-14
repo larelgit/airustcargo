@@ -8,6 +8,7 @@ members = [
     "crates/shards_motion",
     "crates/shards_action",
     "crates/shards_level",
+    "crates/shards_save",
     "crates/shards_npc",
     "crates/shards_world",
     "crates/shards",
@@ -37,6 +38,8 @@ ureq = { version = "3.4", default-features = false, features = ["json"] }
 libc = "0.2"
 # Content files (RON definitions and prefabs).
 ron = "=0.12.2"
+# Checksums of save files, inside shards_save only.
+crc32fast = "=1.5.2"
 # Collision queries inside shards_motion only; never part of a public API. `alloc` holds
 # the support-map shape casts and EPA contacts. No `enhanced-determinism`: it switches
 # glam (shared with all of Bevy) to scalar libm math; one machine + one build is already
@@ -55,6 +58,7 @@ shards_motion = { path = "crates/shards_motion" }
 shards_action = { path = "crates/shards_action" }
 shards_level = { path = "crates/shards_level" }
 shards_npc = { path = "crates/shards_npc" }
+shards_save = { path = "crates/shards_save" }
 shards_world = { path = "crates/shards_world" }
 shards = { path = "crates/shards", default-features = false }
 
