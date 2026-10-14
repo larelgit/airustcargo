@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy::reflect::serde::{TypedReflectDeserializer, TypedReflectSerializer};
-use bevy::reflect::{GetPath, PartialReflect, ReflectPath, TypeRegistration, TypeRegistry};
+use bevy::reflect::{GetPath, PartialReflect, ReflectFromReflect, ReflectPath, TypeRegistration, TypeRegistry};
 use schemars::JsonSchema;
 use serde::de::DeserializeSeed;
 use serde::Deserialize;
@@ -443,7 +443,16 @@ fn set_tool(In(call): In<Call<SetArgs>>, world: &mut World) -> ToolResult {
     let parsed = TypedReflectDeserializer::new(field_reg, &registry)
         .deserialize(value.clone())
         .map_err(|err| format!("value does not fit {}: {err}", field_reg.type_info().type_path_table().short_path()))?;
-    field.try_apply(parsed.as_ref()).map_err(|err| err.to_string())?;
+    // The value replaces what is there: applied, a shorter list (`[]`) would only overwrite
+    // the first elements and leave the rest.
+    let whole = field_reg.data::<ReflectFromReflect>().and_then(|from| from.from_reflect(parsed.as_ref()));
+    let replaced = match (whole, field.try_as_reflect_mut()) {
+        (Some(value), Some(field)) => field.set(value).is_ok(),
+        _ => false,
+    };
+    if !replaced {
+        field.try_apply(parsed.as_ref()).map_err(|err| err.to_string())?;
+    }
     let at = path.map(|p| format!("{name}.{p}")).unwrap_or(name);
     Ok(format!("{id} {at} = {value}"))
 }
@@ -530,4 +539,58 @@ pub fn read_number(world: &World, entity: Entity, component: &str, path: &str) -
     }
     try_num!(f32, f64, i8, i16, i32, i64, u8, u16, u32, u64, usize, isize);
     Err(format!("{component}.{path} is not a number"))
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::prelude::*;
+    use serde_json::json;
+
+    use crate::prelude::*;
+
+    #[derive(Component, Reflect, Default, Clone, PartialEq, Debug)]
+    #[reflect(Component, Default)]
+    struct Bag {
+        items: Vec<String>,
+        weight: f32,
+    }
+
+    fn game() -> App {
+        let mut app = App::new();
+        app.add_plugins(bevy::time::TimePlugin)
+            .add_plugins(crate::AiCorePlugin {
+                remote_port: None,
+                crash_replays: false,
+                sim: SimConfig { seed: 1, start_paused: true, ..Default::default() },
+                ..Default::default()
+            })
+            .register_type::<Bag>();
+        app.world_mut().spawn((AiKind::new("Mule"), Bag { items: vec!["rope".into(), "lamp".into()], weight: 3.0 }));
+        app.finish();
+        app.cleanup();
+        app.update();
+        app
+    }
+
+    fn bag(app: &mut App) -> Bag {
+        let world = app.world_mut();
+        world.query::<&Bag>().single(world).unwrap().clone()
+    }
+
+    #[test]
+    fn set_replaces_lists_instead_of_writing_over_their_first_elements() {
+        let mut app = game();
+        let set = |app: &mut App, path: Option<&str>, value: serde_json::Value| {
+            let out = crate::call_tool(app.world_mut(), "dev", "set", json!({"id": "e1", "component": "Bag", "path": path, "value": value}));
+            assert!(out.ok, "{}", out.result);
+        };
+        set(&mut app, Some("items"), json!([]));
+        assert_eq!(bag(&mut app).items, Vec::<String>::new(), "an empty list empties it");
+        set(&mut app, Some("items"), json!(["map"]));
+        assert_eq!(bag(&mut app).items, ["map"]);
+        set(&mut app, None, json!({"items": [], "weight": 1.5}));
+        assert_eq!(bag(&mut app), Bag { items: Vec::new(), weight: 1.5 }, "the whole component, lists included");
+        set(&mut app, Some("weight"), json!(2));
+        assert_eq!(bag(&mut app).weight, 2.0);
+    }
 }
