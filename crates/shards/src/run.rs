@@ -49,6 +49,12 @@ struct Args {
     /// gameplay system failed) or 2 (could not play it).
     #[arg(long, requires = "replay")]
     verify: bool,
+    /// With --verify: keep the window. The replay plays as fast as the machine allows, a
+    /// batch of ticks between rendered frames, then the same report and exit code. Shows
+    /// that a window plays the same game as headless (render entities, camera, input map
+    /// and all); needs a display (`xvfb-run -a` on a server).
+    #[arg(long, requires = "verify")]
+    windowed: bool,
     /// Read, parse and validate every content file, print the problems, exit 0 (clean)
     /// or 1. Runs nothing.
     #[arg(long)]
@@ -80,7 +86,7 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
     if args.verify
         && let Some(r) = recording.take()
     {
-        return verify(&build, config, r);
+        return if args.windowed { windowed::verify(&build, config, r) } else { verify(&build, config, r) };
     }
     // Before anything is built: a second game on a busy port would run without a
     // server while `shards` quietly drives the first one.
@@ -198,6 +204,96 @@ fn verify(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, recording
         (None, None) => {
             eprintln!("error: the replay did not finish");
             ExitCode::from(2)
+        }
+    }
+}
+
+/// `--verify --windowed`: the same check as [`verify`], in a window.
+mod windowed {
+    use super::*;
+
+    /// Ticks played between two rendered frames.
+    #[cfg(feature = "render")]
+    const BATCH: u64 = 60;
+
+    /// What the frame-by-frame driver needs to know.
+    #[cfg(feature = "render")]
+    #[derive(Resource)]
+    struct Verifying {
+        end: u64,
+        /// When loading was done and the playback began.
+        started: Option<Instant>,
+        frames: u64,
+        created: Instant,
+    }
+
+    /// Plays `recording` in a window: the game's own app with a window, loaded, then
+    /// [`BATCH`] ticks per frame until the recording's end; prints the report like a
+    /// headless `--verify` and exits 0 (same), 1 (diverged or a gameplay system failed) or
+    /// 2 (could not play it).
+    #[cfg(feature = "render")]
+    pub fn verify(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, recording: Replay) -> ExitCode {
+        // Writes nothing, serves nothing, starts paused: time moves only by the driver's steps.
+        let config =
+            EngineConfig { headless: false, port: None, paused: true, crash_replays: false, hot_reload: false, ..config };
+        let end = recording.end.tick;
+        let mut app = build(&config);
+        // Before loading, as a live `--replay` does.
+        if let Err(e) = replay::play(app.world_mut(), recording) {
+            eprintln!("error: {e}");
+            return ExitCode::from(2);
+        }
+        // Frames keep coming without focus or input (a virtual display has neither).
+        app.insert_resource(bevy::winit::WinitSettings::continuous())
+            .insert_resource(Verifying { end, started: None, frames: 0, created: Instant::now() })
+            .add_systems(Update, drive);
+        exit_code(app.run())
+    }
+
+    #[cfg(not(feature = "render"))]
+    pub fn verify(_: &impl Fn(&EngineConfig) -> App, _: EngineConfig, _: Replay) -> ExitCode {
+        eprintln!("error: --windowed needs a window: build with the `render` feature");
+        ExitCode::from(2)
+    }
+
+    /// One frame: wait for loading, play a batch of ticks, or report and exit.
+    #[cfg(feature = "render")]
+    fn drive(world: &mut World) {
+        let loading = crate::testing::loading(world);
+        let mut state = world.resource_mut::<Verifying>();
+        state.frames += 1;
+        if let Some(waiting) = loading {
+            if state.created.elapsed() > Duration::from_secs(60) {
+                eprintln!("error: the game did not finish loading within 60s; still waiting for: {waiting}");
+                world.write_message(AppExit::from_code(2));
+            }
+            return;
+        }
+        let (end, started, frames) = (state.end, *state.started.get_or_insert_with(Instant::now), state.frames);
+        let took = |world: &World| {
+            format!("[{} ticks in {:.2}s, {frames} frames]", ai_core::sim::tick(world), started.elapsed().as_secs_f64())
+        };
+        // The playback finishes in `Last` of the frame that ran its last tick.
+        if let Some(report) = world.resource::<AiReplay>().report().cloned() {
+            println!("{report} {}", took(world));
+            world.write_message(if report.identical() { AppExit::Success } else { AppExit::from_code(1) });
+            return;
+        }
+        let tick = ai_core::sim::tick(world);
+        if tick >= end {
+            return;
+        }
+        match ai_core::sim::step(world, BATCH.min(end - tick), Duration::from_secs(24 * 3600), |_| None) {
+            Ok(StepReport { end: StepEnd::SystemFailed(failures), .. }) => {
+                let failure = &failures[0];
+                println!("gameplay {}: {} {}", failure.headline(), failure.message, took(world));
+                world.write_message(AppExit::from_code(1));
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("error: {e}");
+                world.write_message(AppExit::from_code(2));
+            }
         }
     }
 }
@@ -328,6 +424,15 @@ mod tests {
         });
         // The file says Idol now; the recording spawned a Totem.
         assert_eq!(verify(&game, config, recording), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn windowed_is_a_way_to_verify() {
+        let parse = |args: &[&str]| Args::try_parse_from(args.iter().copied());
+        assert!(parse(&["game", "--windowed"]).is_err(), "--windowed alone means nothing");
+        assert!(parse(&["game", "--replay", "r.json", "--windowed"]).is_err());
+        let args = parse(&["game", "--replay", "r.json", "--verify", "--windowed"]).unwrap();
+        assert!(args.verify && args.windowed);
     }
 
     #[test]

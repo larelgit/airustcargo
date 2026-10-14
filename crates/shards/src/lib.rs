@@ -19,7 +19,7 @@
 //! ```
 //!
 //! [`run`] is the standard `main`: `--headless --seed --port --port-file --no-remote
-//! --paused --hz --replay --verify --check-content`. [`testing::test_app`] builds the
+//! --paused --hz --replay --verify [--windowed] --check-content`. [`testing::test_app`] builds the
 //! same game headless for tests, loaded and paused at tick 0.
 //!
 //! A game without a `bevy` dependency of its own uses Bevy's derives through the

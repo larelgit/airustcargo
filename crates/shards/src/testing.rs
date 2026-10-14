@@ -56,21 +56,28 @@ pub fn test_app(configure: impl FnOnce(&mut EngineConfig), setup: impl FnOnce(&m
 /// For apps already finished (`App::finish`, `App::cleanup`).
 pub fn wait_until_loaded(app: &mut App, timeout: Duration) -> Result<(), String> {
     let started = Instant::now();
-    loop {
-        let world = app.world();
-        let state = world.get_resource::<State<EngineState>>().map(|s| *s.get());
-        let reasons = world.get_resource::<SimGate>().map(SimGate::reasons).unwrap_or_default();
-        let loading = matches!(state, None | Some(EngineState::Loading | EngineState::RegionLoading));
-        if !loading && reasons.is_empty() {
-            return Ok(());
-        }
+    while let Some(waiting) = loading(app.world()) {
         if started.elapsed() > timeout {
-            let waiting = if reasons.is_empty() { format!("{state:?}") } else { reasons.join(", ") };
-            return Err(format!("the game did not finish loading within {}s; still waiting for: {waiting}", timeout.as_secs()));
+            let secs = timeout.as_secs();
+            return Err(format!("the game did not finish loading within {secs}s; still waiting for: {waiting}"));
         }
         app.update();
         // Files load on the IO threads.
         std::thread::sleep(Duration::from_millis(1));
+    }
+    Ok(())
+}
+
+/// What the game is still loading (the gate's reasons, or its state), `None` once it has
+/// left the loading states and nothing holds the simulation.
+pub fn loading(world: &World) -> Option<String> {
+    let state = world.get_resource::<State<EngineState>>().map(|s| *s.get());
+    let reasons = world.get_resource::<SimGate>().map(SimGate::reasons).unwrap_or_default();
+    let loading = matches!(state, None | Some(EngineState::Loading | EngineState::RegionLoading));
+    match (loading, reasons.is_empty()) {
+        (false, true) => None,
+        (_, false) => Some(reasons.join(", ")),
+        (true, true) => Some(format!("{state:?}")),
     }
 }
 
