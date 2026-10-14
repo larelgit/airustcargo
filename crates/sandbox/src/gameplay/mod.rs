@@ -8,6 +8,7 @@ pub mod combat;
 pub mod intent;
 
 use shards::core::{flat, CoreSystems, Intent};
+use shards::motion::ControllerSystems;
 use shards::prelude::*;
 
 use brains::{BossBrain, SkeletonBrain};
@@ -43,14 +44,19 @@ impl Plugin for GameplayPlugin {
             // One-shot presses wait in the buffer until the character can act on them.
             .register_required_components::<Intent, InputBuffer>()
             .add_systems(OnEnter(EngineState::InGame), (report_missing_attacks, spawn_arena).chain());
+        // The engine's action and motion systems run on their own fighters and
+        // characters; the sandbox's own combat and movement go after them, in order.
         app.add_systems(
             FixedUpdate,
             (
-                intent::attack_orders.in_set(SimSet::Input).after(CoreSystems::FollowOrders),
+                intent::attack_orders.in_set(SimSet::Input).after(CoreSystems::FollowOrders).after(ActionSystems::Orders),
                 (brains::skeleton_brains, brains::boss_brains).chain().in_set(SimSet::Think),
-                (combat::start_actions, combat::tick_actions).chain().in_set(SimSet::Act),
-                movement.in_set(SimSet::Move),
-                (combat::apply_hits, combat::boss_phases, combat::regen_stamina).chain().in_set(SimSet::Resolve),
+                (combat::start_actions, combat::tick_actions).chain().in_set(SimSet::Act).after(ActionSystems::Effects),
+                movement.in_set(SimSet::Move).after(ControllerSystems::Move),
+                (combat::apply_hits, combat::boss_phases, combat::regen_stamina)
+                    .chain()
+                    .in_set(SimSet::Resolve)
+                    .after(ActionSystems::Deaths),
                 combat::remove_corpses.in_set(SimSet::Cleanup),
             ),
         );
