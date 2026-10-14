@@ -1,0 +1,697 @@
+//! Snapshots (E11.4) on the sandbox: motion, actions, statuses, cooldowns, input buffers
+//! and the telegraph state all have to come back, so a session loaded from a snapshot
+//! continues exactly like the one it was taken in. The proof is always the same: take a
+//! snapshot at tick N and go on to tick M (state A); load it into a fresh game, give it
+//! the same inputs, go on to M (state B); A and B are the same state, byte for byte, and
+//! the journal from N to M reads the same.
+
+use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
+
+use shards::action::InputBuffer;
+use shards::ai_core::snapshot::{self, Snapshot};
+use shards::ai_core::{replay, sim, AgentSessions, AiJournal, JournalKind, Scope};
+use shards::motion::{MotionMode, MotionState, Volume, VolumeKind};
+use shards::prelude::*;
+use shards::serde_json::{json, Value};
+
+use crate::common::*;
+
+fn tick(app: &App) -> u64 {
+    sim::tick(app.world())
+}
+
+/// What happened after tick `n`: gameplay lines, warnings and errors (not the agents' own
+/// echoes, and not the sim control lines a load adds).
+fn story_after(app: &App, n: u64) -> Vec<String> {
+    let journal = app.world().resource::<AiJournal>();
+    journal
+        .after(0)
+        .0
+        .filter(|e| e.tick > n && matches!(e.kind, JournalKind::Event | JournalKind::Warn | JournalKind::Error))
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// Where two snapshots differ, one line each: which entity, which component.
+fn differences(a: &Snapshot, b: &Snapshot) -> Vec<String> {
+    let mut out = Vec::new();
+    for (name, x, y) in [
+        ("tick", json!(a.tick), json!(b.tick)),
+        ("ids", json!(a.ids), json!(b.ids)),
+        ("resources", json!(a.resources), json!(b.resources)),
+        ("checks", json!(a.checks), json!(b.checks)),
+        ("state_hash", json!(a.state_hash), json!(b.state_hash)),
+    ] {
+        if x != y {
+            out.push(format!("{name}: {x} vs {y}"));
+        }
+    }
+    let ids = |s: &Snapshot| s.entities.iter().map(|e| e.id).collect::<Vec<_>>();
+    if ids(a) != ids(b) {
+        out.push(format!("entities {:?} vs {:?}", ids(a), ids(b)));
+        return out;
+    }
+    for (x, y) in a.entities.iter().zip(&b.entities) {
+        for path in x.components.keys().chain(y.components.keys()) {
+            if x.components.get(path) != y.components.get(path) {
+                out.push(format!("e{} {path}: {:?} vs {:?}", x.id, x.components.get(path), y.components.get(path)));
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn assert_same_state(what: &str, a: &App, b: &App) {
+    assert_eq!(tick(a), tick(b), "{what}: tick");
+    let (sa, sb) = (snapshot::capture(a.world()).unwrap(), snapshot::capture(b.world()).unwrap());
+    let diff = differences(&sa, &sb);
+    assert!(diff.is_empty(), "{what}: the states differ:\n{}", diff.join("\n"));
+    assert_eq!(replay::state_hash(a.world()), replay::state_hash(b.world()), "{what}: state hash");
+}
+
+/// The proof. `a` is a game in the situation to prove; `after` is what both games do next
+/// (the same inputs, then time passing).
+fn assert_continues_alike(what: &str, mut a: App, after: impl Fn(&mut App)) {
+    let snapshot = snapshot::capture(a.world()).unwrap();
+    let n = tick(&a);
+    after(&mut a);
+
+    let mut b = sandbox::test_app(42);
+    let report = snapshot::restore(b.world_mut(), &snapshot, false).unwrap_or_else(|e| panic!("{what}: {e}"));
+    assert!(report.exact(), "{what}: restored differently: {:?}", report.differences);
+    assert_eq!(tick(&b), n);
+    assert_eq!(replay::state_hash(b.world()), snapshot.state_hash, "{what}: the loaded state is the saved one");
+    after(&mut b);
+
+    assert_same_state(what, &a, &b);
+    assert_eq!(story_after(&a, n), story_after(&b, n), "{what}: the journal from tick {n} on");
+    assert!(tick(&a) > n, "{what}: the game went on");
+}
+
+/// The player 3 m south of the warden, facing it; the warden calm, the skeletons too.
+fn face_to_face() -> App {
+    let mut app = sandbox::test_app(42);
+    calm_skeletons(&mut app);
+    calm_warden(&mut app);
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 0, "z": -3}));
+    ok(&mut app, "lock_on", json!({"target": BOSS}));
+    step(&mut app, 2);
+    app
+}
+
+/// Presses `tool` on the warden's body, as an agent possessing it would.
+fn as_warden(app: &mut App, tool: &str) {
+    app.world_mut().resource_mut::<AgentSessions>().configure("warden", Scope::Dev, Some(AiId(6)));
+    let out = shards::ai_core::call_tool(app.world_mut(), "warden", tool, json!({}));
+    assert!(out.ok, "{tool} as the warden: {}", out.result);
+}
+
+/// The player at `(x, y, 0)` standing, the skeletons and the warden calm.
+fn on_the_course(x: f32, y: f32) -> App {
+    let mut app = sandbox::test_app(42);
+    calm_skeletons(&mut app);
+    calm_warden(&mut app);
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": x, "z": 0, "y": y}));
+    step(&mut app, 10);
+    app
+}
+
+fn mode(app: &App) -> MotionMode {
+    get::<MotionState>(app, PLAYER).mode
+}
+
+// --- the same game, from a snapshot ------------------------------------------------------
+
+#[test]
+fn mid_dodge() {
+    let mut app = face_to_face();
+    ok(&mut app, "dodge", json!({"dir": "S"}));
+    step(&mut app, 4);
+    assert_eq!(action(&app, PLAYER), "roll", "the roll is running");
+    assert_continues_alike("mid-dodge", app, |app| {
+        step(app, 90);
+    });
+}
+
+#[test]
+fn mid_combo() {
+    let mut app = face_to_face();
+    ok(&mut app, "attack", json!({"target": BOSS, "repeat": true}));
+    ok(&mut app, "step", json!({"ticks": 200, "until": [{"journal": "e5 -> e6 light_2"}]}));
+    step(&mut app, 1);
+    assert!(action(&app, PLAYER).starts_with("light"), "{}", action(&app, PLAYER));
+    assert_continues_alike("mid-combo", app, |app| {
+        step(app, 150);
+    });
+}
+
+/// The warden's slash is winding up, the player stands in its zone.
+fn winding_up() -> App {
+    let mut app = face_to_face();
+    as_warden(&mut app, "light_attack");
+    // The warning shows 0.1 s in; the slash lands at 0.6 s.
+    step(&mut app, 12);
+    assert!(!lines(&app, "e6 winds up").is_empty(), "the warning is out: {:?}", events(&app));
+    assert_ne!(action(&app, BOSS), "idle");
+    app
+}
+
+#[test]
+fn during_a_telegraph() {
+    // The player does nothing about it in one game, blocks in the other.
+    assert_continues_alike("telegraph, hit taken", winding_up(), |app| {
+        step(app, 60);
+    });
+    assert_continues_alike("telegraph, blocked", winding_up(), |app| {
+        ok(app, "block", json!({}));
+        step(app, 60);
+    });
+}
+
+#[test]
+fn while_gliding() {
+    let mut app = on_the_course(84.5, 8.0);
+    ok(&mut app, "glide", json!({}));
+    ok(&mut app, "move_to", json!({"target": "e13"}));
+    ok(&mut app, "jump", json!({}));
+    ok(&mut app, "step", json!({"ticks": 200, "until": [{"journal": "e5 air → glide"}]}));
+    ok(&mut app, "step", json!({"ticks": 300, "until": [{"shows": {"id": PLAYER, "text": "glide ↑"}}]}));
+    assert_eq!(mode(&app), MotionMode::Glide);
+    let motion = get::<MotionState>(&app, PLAYER);
+    assert!(motion.updraft.is_some(), "in the updraft: {motion:?}");
+    // The updraft is a volume without an id: the character's reference to it must survive.
+    let world = app.world_mut();
+    let keyless = motion.volumes.iter().filter(|v| world.get::<AiId>(**v).is_none()).count();
+    assert!(keyless >= 1, "a volume without an AiId is touched: {:?}", motion.volumes);
+
+    assert_continues_alike("gliding", app, |app| {
+        ok(app, "step", json!({"ticks": 900, "until": [{"journal": "glide → ground"}]}));
+        step(app, 30);
+    });
+}
+
+#[test]
+fn while_swimming() {
+    let mut app = on_the_course(60.0, 3.3);
+    ok(&mut app, "step", json!({"ticks": 200, "until": [{"journal": "e5 air → water"}]}));
+    step(&mut app, 20);
+    assert_eq!(mode(&app), MotionMode::Water);
+    assert_continues_alike("swimming", app, |app| {
+        ok(app, "move_to", json!({"target": {"x": 65.5, "z": 0}, "within": 0.1}));
+        step(app, 240);
+    });
+}
+
+#[test]
+fn input_buffer_cooldowns_and_stamina_come_back() {
+    let mut app = face_to_face();
+    // A press that waits in the buffer, a spent flask, stamina in recovery.
+    ok(&mut app, "heavy_attack", json!({}));
+    step(&mut app, 2);
+    let queued = act(&mut app, "dodge", json!({"dir": "S"}));
+    step(&mut app, 3);
+    let stamina = get::<Stamina>(&app, PLAYER).current;
+    assert!(stamina < 100.0, "{stamina} ({})", text(&queued));
+    assert!(!get::<InputBuffer>(&app, PLAYER).queued.is_empty() || action(&app, PLAYER) != "idle");
+    assert_continues_alike("buffer and stamina", app, |app| {
+        act(app, "dodge", json!({"dir": "W"}));
+        step(app, 120);
+    });
+}
+
+#[test]
+fn a_flask_in_the_making_with_charges_cooldowns_and_statuses() {
+    let mut app = face_to_face();
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "Health", "path": "current", "value": 40}));
+    assert_eq!(text(&ok(&mut app, "use_item", json!({"item": "flask"}))), "ok: drink");
+    step(&mut app, 25);
+    assert_eq!(action(&app, PLAYER), "drink", "the heal at 0.6 s has not happened yet");
+    let statuses = json!([{"id": "bleed", "buildup": 40.0, "threshold": 100.0, "active": 0.0, "stacks": 0}]);
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "Statuses", "value": statuses}));
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "Cooldowns", "value": [{"action": "roll", "left": 3.0}]}));
+    let charges = get::<Charges>(&app, PLAYER);
+    assert_eq!(charges.0[0].current, 2, "{charges:?}");
+    assert_continues_alike("flask, statuses, cooldowns", app, |app| {
+        step(app, 150);
+    });
+}
+
+/// The inputs of a fight: (tick, tool, arguments).
+fn fight_inputs() -> Vec<(u64, &'static str, Value)> {
+    vec![
+        (0, "attack", json!({"target": BOSS, "repeat": true})),
+        (240, "dodge", json!({"away_from": BOSS})),
+        (330, "block", json!({})),
+    ]
+}
+
+/// Plays `inputs` from the current tick to `until` (inputs at `until` are for the next call).
+fn drive(app: &mut App, inputs: &[(u64, &str, Value)], until: u64) {
+    loop {
+        let now = tick(app);
+        if now >= until {
+            break;
+        }
+        for (_, tool, args) in inputs.iter().filter(|(at, ..)| *at == now) {
+            act(app, tool, args.clone());
+        }
+        let next = inputs.iter().map(|(at, ..)| *at).filter(|at| *at > now).min().unwrap_or(until);
+        step(app, next.min(until) - now);
+    }
+}
+
+/// A fight loaded from snapshots taken at `offsets` ticks into it ends like the original.
+/// `make` is the game at the start of the fight.
+fn fight_loaded_at_every_checkpoint(make: fn() -> App, offsets: &[u64], needle: &str) {
+    let inputs = fight_inputs();
+    let mut original = make();
+    let start = tick(&original);
+    let shifted: Vec<(u64, &str, Value)> = inputs.iter().map(|(at, t, a)| (at + start, *t, a.clone())).collect();
+    let end = start + 600;
+    let mut snapshots = Vec::new();
+    for &offset in offsets {
+        drive(&mut original, &shifted, start + offset);
+        snapshots.push((start + offset, snapshot::capture(original.world()).unwrap()));
+    }
+    drive(&mut original, &shifted, end);
+    assert!(!lines(&original, needle).is_empty(), "the fight happened: {:?}", events(&original));
+
+    for (at, snapshot) in snapshots {
+        let mut copy = sandbox::test_app(42);
+        let report = snapshot::restore(copy.world_mut(), &snapshot, false).unwrap();
+        assert!(report.exact(), "tick {at}: {:?}", report.differences);
+        drive(&mut copy, &shifted, end);
+        assert_same_state(&format!("loaded at tick {at}"), &original, &copy);
+        let after: Vec<String> = story_after(&original, at);
+        assert_eq!(story_after(&copy, at), after, "journal after tick {at}");
+    }
+}
+
+#[test]
+fn a_fight_loaded_at_any_tick_ends_the_same() {
+    fight_loaded_at_every_checkpoint(face_to_face, &[1, 45, 100, 190, 239, 240, 241, 335, 480], "e5 -> e6");
+}
+
+/// Nobody is calmed: the skeletons chase, the warden picks its attacks with `SimRng`; the
+/// player is in god mode and lives through it.
+fn lively() -> App {
+    let mut app = sandbox::test_app(42);
+    ok(&mut app, "god", json!({}));
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 0, "z": 4}));
+    step(&mut app, 2);
+    app
+}
+
+#[test]
+fn brains_and_their_random_choices_go_on_the_same_after_a_load() {
+    fight_loaded_at_every_checkpoint(lively, &[30, 90, 150, 210, 300, 400, 500], "winds up");
+    let mut app = lively();
+    let inputs = fight_inputs();
+    drive(&mut app, &inputs, 600);
+    let attacks: std::collections::BTreeSet<String> = lines(&app, "e6 winds up")
+        .iter()
+        .filter_map(|l| l.split("winds up ").nth(1)?.split(' ').next().map(str::to_owned))
+        .collect();
+    assert!(attacks.len() >= 2, "the warden chose between attacks (SimRng): {attacks:?}");
+}
+
+#[test]
+fn loading_into_the_same_game_rewinds_it() {
+    let inputs = fight_inputs();
+    let mut app = face_to_face();
+    let start = tick(&app);
+    let shifted: Vec<(u64, &str, Value)> = inputs.iter().map(|(at, t, a)| (at + start, *t, a.clone())).collect();
+    drive(&mut app, &shifted, start + 150);
+    let snapshot = snapshot::capture(app.world()).unwrap();
+    drive(&mut app, &shifted, start + 420);
+    let end_state = snapshot::capture(app.world()).unwrap();
+    assert!(!lines(&app, "e5 -> e6").is_empty());
+
+    // Back to tick 150 in the very same game, and the same again.
+    let report = snapshot::restore(app.world_mut(), &snapshot, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert_eq!(tick(&app), start + 150);
+    drive(&mut app, &shifted, start + 420);
+    let diff = differences(&end_state, &snapshot::capture(app.world()).unwrap());
+    assert!(diff.is_empty(), "{}", diff.join("\n"));
+}
+
+// --- what a load keeps and what it brings back ---------------------------------------------
+
+#[test]
+fn a_load_brings_back_the_ids_the_counters_and_the_references() {
+    let mut app = sandbox::test_app(42);
+    step(&mut app, 30);
+    // A body that is gone and a spawn that is new, so the counters moved.
+    ok(&mut app, "despawn", json!({"id": "e8"}));
+    ok(&mut app, "spawn_prefab", json!({"id": "skeleton", "x": 3, "z": 3}));
+    let snapshot = snapshot::capture(app.world()).unwrap();
+    let ids_then = app.world().resource::<shards::ai_core::AiIndex>().ids();
+    let next_then = app.world().resource::<shards::ai_core::AiIndex>().next_id();
+    ok(&mut app, "spawn_prefab", json!({"id": "skeleton", "x": -3, "z": 3}));
+    ok(&mut app, "despawn", json!({"id": "e7"}));
+
+    let report = snapshot::restore(app.world_mut(), &snapshot, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    let index = app.world().resource::<shards::ai_core::AiIndex>();
+    assert_eq!(index.ids(), ids_then);
+    assert_eq!(index.next_id(), next_then);
+    assert!(index.resolve(AiId(8)).unwrap_err().contains("no longer exists"), "e8 is still gone");
+    // The next collider and the next entity get the numbers they would have had.
+    assert_eq!(snapshot::capture(app.world()).unwrap().resources, snapshot.resources);
+    let next = ok(&mut app, "spawn_prefab", json!({"id": "skeleton", "x": -3, "z": 3}));
+    assert!(text(&next).contains(&format!("e{next_then}")), "{}", text(&next));
+}
+
+#[test]
+fn what_a_window_adds_to_the_entities_does_not_get_in() {
+    let mut app = sandbox::test_app(42);
+    step(&mut app, 5);
+    let before = snapshot::capture(app.world()).unwrap();
+    let ids: Vec<Entity> = {
+        let index = app.world().resource::<shards::ai_core::AiIndex>();
+        index.ids().into_iter().filter_map(|id| index.get(id)).collect()
+    };
+    for entity in ids {
+        app.world_mut().entity_mut(entity).insert((Visibility::default(), GlobalTransform::from_xyz(1.0, 2.0, 3.0)));
+        app.world_mut().spawn((Transform::default(), ChildOf(entity)));
+    }
+    let with_window = snapshot::capture(app.world()).unwrap();
+    assert_eq!(differences(&before, &with_window), Vec::<String>::new());
+    let engine_types: Vec<&String> = with_window.entities[0]
+        .components
+        .keys()
+        .filter(|k| k.starts_with("bevy_") && !k.contains("Transform") && !k.contains("Name"))
+        .collect();
+    assert!(engine_types.is_empty(), "{engine_types:?}");
+}
+
+#[test]
+fn a_snapshot_is_the_same_bytes_every_time() {
+    let (mut a, mut b) = (sandbox::test_app(42), sandbox::test_app(42));
+    for app in [&mut a, &mut b] {
+        ok(app, "attack", json!({"target": BOSS, "repeat": true}));
+        step(app, 120);
+    }
+    let text = |app: &App| shards::serde_json::to_string_pretty(&snapshot::capture(app.world()).unwrap()).unwrap();
+    assert_eq!(text(&a), text(&b));
+    // And through the file text and back.
+    let parsed: Snapshot = shards::serde_json::from_str(&text(&a)).unwrap();
+    assert_eq!(parsed, snapshot::capture(a.world()).unwrap());
+}
+
+#[test]
+fn save_load_save_gives_the_same_observation() {
+    let mut app = face_to_face();
+    ok(&mut app, "attack", json!({"target": BOSS, "repeat": true}));
+    step(&mut app, 90);
+    let seen = |app: &mut App| text(&ok(app, "observe", json!({"since_seq": u64::MAX >> 1}))).to_owned();
+    let before = seen(&mut app);
+    let snapshot = snapshot::capture(app.world()).unwrap();
+    step(&mut app, 100);
+    assert_ne!(seen(&mut app), before);
+    snapshot::restore(app.world_mut(), &snapshot, false).unwrap();
+    assert_eq!(seen(&mut app), before);
+    let mut fresh = sandbox::test_app(42);
+    snapshot::restore(fresh.world_mut(), &snapshot, false).unwrap();
+    assert_eq!(seen(&mut fresh), before);
+}
+
+#[test]
+fn volumes_a_character_touches_are_found_again() {
+    let mut app = on_the_course(84.5, 8.0);
+    ok(&mut app, "glide", json!({}));
+    ok(&mut app, "move_to", json!({"target": "e13"}));
+    ok(&mut app, "jump", json!({}));
+    ok(&mut app, "step", json!({"ticks": 300, "until": [{"shows": {"id": PLAYER, "text": "glide ↑"}}]}));
+    let snapshot = snapshot::capture(app.world()).unwrap();
+    let motion = &snapshot.entities.iter().find(|e| e.id == 5).unwrap().components["shards_motion::controller::MotionState"];
+    let volumes = motion["volumes"].as_array().unwrap();
+    assert!(volumes.iter().any(|v| v.as_str().unwrap().starts_with('c')), "a keyless volume is written as c<n>: {volumes:?}");
+
+    let mut copy = sandbox::test_app(42);
+    snapshot::restore(copy.world_mut(), &snapshot, false).unwrap();
+    // The reference leads to the updraft of the copy, the same collider.
+    let touched = get::<MotionState>(&copy, PLAYER).volumes;
+    let world = copy.world_mut();
+    let updrafts: Vec<Entity> = touched
+        .iter()
+        .copied()
+        .filter(|v| world.get::<Volume>(*v).is_some_and(|v| matches!(v.kind, VolumeKind::Updraft { .. })))
+        .collect();
+    assert_eq!(updrafts.len(), 1, "{touched:?}");
+}
+
+// --- when a snapshot does not fit ----------------------------------------------------------
+
+#[test]
+fn a_snapshot_of_other_content_or_geometry_is_refused() {
+    let mut app = sandbox::test_app(42);
+    step(&mut app, 10);
+    let good = snapshot::capture(app.world()).unwrap();
+    assert!(good.checks.contains_key("content") && good.checks.contains_key("static_colliders"), "{:?}", good.checks);
+
+    let before = snapshot::capture(app.world()).unwrap();
+    let mut other = good.clone();
+    other.checks.insert("content".into(), "0000000000000000".into());
+    let err = snapshot::restore(app.world_mut(), &other, false).unwrap_err();
+    assert!(err.contains("content differs") && err.contains("force=true"), "{err}");
+    assert_eq!(snapshot::capture(app.world()).unwrap(), before, "nothing changed");
+
+    // A static collider moved: the snapshot cannot say where it was.
+    let wall = {
+        let world = app.world_mut();
+        let mut q = world.query_filtered::<(Entity, &Transform), (With<shards::motion::Collider>, Without<AiId>)>();
+        q.iter(world).next().map(|(e, _)| e).unwrap()
+    };
+    app.world_mut().get_mut::<Transform>(wall).unwrap().translation.y += 1.0;
+    let err = snapshot::restore(app.world_mut(), &good, false).unwrap_err();
+    assert!(err.contains("static_colliders differs"), "{err}");
+
+    // Forced, it loads and says what it ignored.
+    let report = snapshot::restore(app.world_mut(), &good, true).unwrap();
+    assert!(report.warnings.iter().any(|w| w.contains("loaded anyway: static_colliders differs")), "{:?}", report.warnings);
+}
+
+#[test]
+fn another_seed_or_engine_version_is_refused_with_the_fix() {
+    let mut app = sandbox::test_app(42);
+    let mut snapshot = snapshot::capture(app.world()).unwrap();
+    snapshot.seed = 7;
+    snapshot.engine = "0.1.0".into();
+    let err = snapshot::restore(app.world_mut(), &snapshot, false).unwrap_err();
+    assert!(err.contains("start the game with --seed 7"), "{err}");
+    assert!(err.contains("written by engine 0.1.0"), "{err}");
+    snapshot.tick_hz = 30.0;
+    assert!(snapshot::restore(app.world_mut(), &snapshot, true).unwrap_err().contains("--hz 30"));
+}
+
+// --- through the tools and the files -------------------------------------------------------
+
+/// Tests that write into `snapshots/` take turns: the last one out removes the folder.
+static FOLDER: Mutex<()> = Mutex::new(());
+
+/// A file in `snapshots/` (of the working directory) that goes away with the test.
+struct Scratch(PathBuf, String, #[allow(dead_code, reason = "held until the test is over")] MutexGuard<'static, ()>);
+
+impl Scratch {
+    fn new(name: &str) -> Scratch {
+        let turn = FOLDER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let relative = format!("snapshots/sandbox_test_{}_{name}.json", std::process::id());
+        Scratch(PathBuf::from(&relative), relative, turn)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+        let _ = std::fs::remove_dir("snapshots");
+    }
+}
+
+#[test]
+fn the_tools_save_and_load_and_keep_to_their_folder() {
+    let file = Scratch::new("tools");
+    let mut app = face_to_face();
+    ok(&mut app, "attack", json!({"target": BOSS, "repeat": true}));
+    step(&mut app, 60);
+    let saved = ok(&mut app, "snapshot_save", json!({"path": file.1}));
+    assert!(text(&saved).contains("saved ") && text(&saved).contains(&format!("tick {}", tick(&app))), "{}", text(&saved));
+    assert!(file.0.exists());
+    let state_then = snapshot::capture(app.world()).unwrap();
+    step(&mut app, 120);
+
+    let loaded = ok(&mut app, "snapshot_load", json!({"path": file.1}));
+    assert!(text(&loaded).contains("loaded ") && text(&loaded).contains("the recording now starts at tick"), "{}", text(&loaded));
+    let diff = differences(&state_then, &snapshot::capture(app.world()).unwrap());
+    assert!(diff.is_empty(), "{}", diff.join("\n"));
+    let journal = app.world().resource::<AiJournal>();
+    assert!(journal.after(0).0.any(|e| e.kind == JournalKind::Sim && e.text.starts_with("snapshot loaded:")));
+
+    for bad in ["/tmp/x.json", "snapshots/../x.json", "x.json", "replays/x.json"] {
+        for tool in ["snapshot_save", "snapshot_load"] {
+            let err = fails(&mut app, tool, json!({"path": bad}));
+            assert!(err.starts_with("path must be inside snapshots/, e.g. snapshots/boss_phase2.json"), "{tool} {bad}: {err}");
+        }
+    }
+    let missing = fails(&mut app, "snapshot_load", json!({"path": "snapshots/nowhere.json"}));
+    assert!(missing.contains("cannot read") && missing.contains("nowhere.json"), "{missing}");
+}
+
+#[test]
+fn the_tools_tell_what_does_not_fit() {
+    let file = Scratch::new("refused");
+    let mut app = sandbox::test_app(42);
+    let mut snapshot = snapshot::capture(app.world()).unwrap();
+    snapshot.checks.insert("content".into(), "00000000000000ff".into());
+    std::fs::create_dir_all("snapshots").unwrap();
+    std::fs::write(&file.0, shards::serde_json::to_string(&snapshot).unwrap()).unwrap();
+    let err = fails(&mut app, "snapshot_load", json!({"path": file.1}));
+    assert!(err.contains("content differs") && err.contains("force=true"), "{err}");
+    let forced = ok(&mut app, "snapshot_load", json!({"path": file.1, "force": true}));
+    assert!(text(&forced).contains("loaded anyway: content differs"), "{}", text(&forced));
+}
+
+#[test]
+fn go_to_boss_phase_two_is_a_snapshot_loaded_by_name() {
+    // Recorded once (here by a test; by hand with `shards save-snapshot snapshots/boss_phase2.json`
+    // when the fight stands where you want it): the warden at half health, in its second phase.
+    let file = Scratch::new("boss_phase2");
+    let mut recorder = sandbox::test_app(42);
+    for id in ["e7", "e8"] {
+        ok(&mut recorder, "set", json!({"id": id, "component": "SkeletonBrain", "path": "aggro", "value": 0}));
+    }
+    ok(&mut recorder, "god", json!({}));
+    ok(&mut recorder, "teleport", json!({"id": PLAYER, "x": 0, "z": 12}));
+    ok(&mut recorder, "teleport", json!({"id": BOSS, "x": 0, "z": -6}));
+    ok(&mut recorder, "set", json!({"id": BOSS, "component": "Health", "path": "current", "value": 295}));
+    ok(&mut recorder, "step", json!({"ticks": 300, "until": [{"named": "boss_phase_2"}]}));
+    assert!(text(&ok(&mut recorder, "observe", json!({}))).contains("phase 2"));
+    ok(&mut recorder, "snapshot_save", json!({"path": file.1}));
+
+    // Any later session, on a fresh game: one call, and the fight is in phase 2.
+    let mut game = sandbox::test_app(42);
+    assert!(text(&ok(&mut game, "observe", json!({}))).contains("phase 1"));
+    ok(&mut game, "snapshot_load", json!({"path": file.1}));
+    assert!(text(&ok(&mut game, "observe", json!({}))).contains("phase 2"));
+    assert_eq!(get::<Fighter>(&game, BOSS).moveset, "warden_enraged");
+    let out = ok(&mut game, "step", json!({"ticks": 900, "until": [{"journal": "e6 winds up"}]}));
+    assert!(text(&out).contains("stopped: journal:") && text(&out).contains("_enraged"), "{}", text(&out));
+}
+
+// --- replays that start from a snapshot ----------------------------------------------------
+
+/// A session recorded after loading a snapshot: the replay starts from it.
+fn recorded_from_a_snapshot(file: &Scratch) -> (App, replay::Replay) {
+    let mut origin = face_to_face();
+    ok(&mut origin, "attack", json!({"target": BOSS, "repeat": true}));
+    step(&mut origin, 70);
+    ok(&mut origin, "snapshot_save", json!({"path": file.1}));
+
+    let mut app = sandbox::test_app(42);
+    // Something recorded before the load: it is not part of the new replay.
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 5, "z": 5}));
+    step(&mut app, 3);
+    let loaded = ok(&mut app, "snapshot_load", json!({"path": file.1}));
+    assert!(text(&loaded).contains("2 earlier events dropped") || text(&loaded).contains("earlier events dropped"), "{}", text(&loaded));
+    // The session after the snapshot: inputs and calls.
+    step(&mut app, 40);
+    ok(&mut app, "dodge", json!({"away_from": BOSS}));
+    step(&mut app, 80);
+    let recording = replay::save(app.world());
+    // Through JSON, like a file.
+    let recording = shards::serde_json::from_str(&shards::serde_json::to_string(&recording).unwrap()).unwrap();
+    (app, recording)
+}
+
+#[test]
+fn a_replay_recorded_after_a_load_starts_from_the_snapshot_and_plays_back() {
+    let file = Scratch::new("replay");
+    let (original, recording) = recorded_from_a_snapshot(&file);
+    assert_eq!(recording.format, "shards-replay/3");
+    let start = recording.start.as_ref().expect("the replay carries its start");
+    assert_eq!(start.tick, 70 + 2, "the snapshot is the start (the two ticks of the face-to-face setup, then 70)");
+    assert_eq!(recording.end.tick, start.tick + 120);
+    assert!(recording.events.iter().all(|e| e.at() >= start.tick), "{:?}", recording.events);
+    assert!(
+        recording.events.iter().all(|e| !matches!(e, replay::ReplayEvent::Call { tool, .. } if tool == "teleport" || tool.starts_with("snapshot"))),
+        "what came before the load, and the load itself, are not events: {:?}",
+        recording.events
+    );
+    assert!(recording.events.iter().any(|e| matches!(e, replay::ReplayEvent::Call { tool, .. } if tool == "dodge")));
+
+    // Played in a fresh game, loaded already: the snapshot goes in before the first tick.
+    let mut copy = sandbox::test_app(42);
+    replay::play(copy.world_mut(), recording.clone()).unwrap();
+    ok(&mut copy, "step", json!({"ticks": recording.end.tick - start.tick}));
+    copy.update();
+    let report = copy.world().resource::<shards::ai_core::AiReplay>().report().cloned().expect("playback finished");
+    assert!(report.identical(), "{report}");
+    assert_eq!(report.matched as usize, recording.checks.len() + 1);
+    assert_same_state("the playback", &original, &copy);
+    // A branch from the playback saves as one replay with the same start.
+    assert_eq!(replay::save(copy.world()).start, recording.start);
+
+    // And started before it has loaded, as `--replay` does.
+    let mut early = shards::testing::test_app(|c| c.seed = 42, |app| {
+        app.add_plugins(sandbox::SandboxPlugin);
+        replay::play(app.world_mut(), recording.clone()).unwrap();
+    });
+    ok(&mut early, "step", json!({"ticks": recording.end.tick - start.tick}));
+    early.update();
+    let report = early.world().resource::<shards::ai_core::AiReplay>().report().cloned().expect("playback finished");
+    assert!(report.identical(), "{report}");
+}
+
+#[test]
+fn a_replay_from_a_snapshot_names_the_first_diverging_tick_and_refuses_other_content() {
+    let file = Scratch::new("diverge");
+    let (_, mut recording) = recorded_from_a_snapshot(&file);
+    // The boss with less health than the recording says: the first check after the start differs.
+    for event in &mut recording.events {
+        if let replay::ReplayEvent::Call { args, tool, .. } = event
+            && tool == "dodge"
+        {
+            // As if the boss had less health in a newer build.
+            *tool = "set".into();
+            *args = json!({"id": BOSS, "component": "Health", "path": "current", "value": 299});
+        }
+    }
+    let mut copy = sandbox::test_app(42);
+    replay::play(copy.world_mut(), recording.clone()).unwrap();
+    ok(&mut copy, "step", json!({"ticks": recording.end.tick - recording.start.as_ref().unwrap().tick}));
+    copy.update();
+    let report = copy.world().resource::<shards::ai_core::AiReplay>().report().cloned().unwrap();
+    assert!(report.diverged_at.is_some(), "{report}");
+
+    // A snapshot of other content cannot be played at all.
+    let (_, mut recording) = recorded_from_a_snapshot(&file);
+    recording.start.as_mut().unwrap().checks.insert("content".into(), "00000000000000ff".into());
+    let mut copy = sandbox::test_app(42);
+    replay::play(copy.world_mut(), recording).unwrap();
+    copy.update();
+    let report = copy.world().resource::<shards::ai_core::AiReplay>().report().cloned().expect("playback ended at once");
+    let why = report.interrupted.expect("interrupted");
+    assert!(why.contains("cannot start from its snapshot") && why.contains("content differs"), "{why}");
+}
+
+#[test]
+fn loading_a_snapshot_ends_a_playback_and_starts_a_new_recording() {
+    let file = Scratch::new("takeover");
+    let (_, recording) = recorded_from_a_snapshot(&file);
+    let mut app = sandbox::test_app(42);
+    replay::play(app.world_mut(), recording).unwrap();
+    ok(&mut app, "step", json!({"ticks": 30}));
+    assert!(app.world().resource::<shards::ai_core::AiReplay>().is_playing());
+    ok(&mut app, "snapshot_load", json!({"path": file.1}));
+    let report = app.world().resource::<shards::ai_core::AiReplay>().report().cloned().unwrap();
+    assert!(report.interrupted.as_deref().is_some_and(|w| w.contains("a snapshot was loaded")), "{report}");
+    assert!(!app.world().resource::<shards::ai_core::AiReplay>().is_playing());
+    // The recording is the snapshot's now.
+    let now = replay::save(app.world());
+    assert_eq!(now.start.as_ref().map(|s| s.tick), Some(tick(&app)));
+    assert!(now.events.is_empty());
+}
