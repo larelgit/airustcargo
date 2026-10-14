@@ -119,6 +119,11 @@ fn move_to(
     // One order per leg end; passing a waypoint needs less precision than arriving.
     let legs = plan.waypoints();
     if legs.is_empty() {
+        // Nothing left to walk, and no order will zero the steering of the walk that was
+        // under way (a plain `move_to` pops its order at once and does).
+        if intent.orders.is_empty() {
+            intent.move_dir = Vec3::ZERO;
+        }
         return Ok(format!("ok: already within {within:.1}m"));
     }
     let last = legs.len() - 1;

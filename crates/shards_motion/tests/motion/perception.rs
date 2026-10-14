@@ -398,3 +398,26 @@ fn move_to_with_path_refuses_what_has_no_route_and_changes_nothing() {
     assert_eq!(intent(&app, e).orders.len(), 1, "the order from before is still there");
     let _: Value = json!(null);
 }
+
+#[test]
+fn move_to_with_path_already_in_range_stops_a_walk_under_way() {
+    let mut app = bare_engine("move_to_path_in_range");
+    floor(app.world_mut());
+    let e = player(app.world_mut(), Vec3::ZERO);
+    step(&mut app, 2);
+    ok(&mut app, "move_to", json!({"target": {"x": 0, "z": -40}}));
+    step(&mut app, 40);
+    assert!(intent(&app, e).move_dir != Vec3::ZERO, "on its way");
+
+    // Somebody stands a meter ahead: nothing to plan, and the walk to the old goal ends here.
+    let at = feet(&app, e);
+    let near = app.world_mut().spawn((ai_core::AiKind::new("Dummy"), Transform::from_translation(at + Vec3::new(0.0, 0.0, -1.0)))).id();
+    let id = app.world().get::<ai_core::AiId>(near).unwrap().to_string();
+    let out = ok(&mut app, "move_to", json!({"target": id, "path": true}));
+    assert!(out.starts_with("ok: already within"), "{out}");
+    assert!(intent(&app, e).orders.is_empty());
+    assert_eq!(intent(&app, e).move_dir, Vec3::ZERO, "the old walk is over with its orders");
+    step(&mut app, 120);
+    let stopped = feet(&app, e);
+    assert!(Vec2::new(stopped.x - at.x, stopped.z - at.z).length() < 1.0, "it kept running: {at} -> {stopped}");
+}
