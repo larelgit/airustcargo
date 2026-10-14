@@ -5,7 +5,8 @@
 //! over edge signatures), and count limits remove a tile everywhere once it reached its
 //! maximum. The cell with the fewest options left is decided next (ties go to the lowest
 //! row-major index), its option drawn by weight from [`DetRng`]; a contradiction undoes
-//! the last decision and forbids it, up to a bounded number of backtracks.
+//! the last decision and forbids it, up to a bounded number of backtracks. Every change to a
+//! domain is logged, so a decision costs memory for what it changed, not for the grid.
 //!
 //! Only integers decide: weights are integer milli-units, the order is option counts, so
 //! the same seed gives the same tiles on every platform.
@@ -292,10 +293,57 @@ pub struct Solver<'a> {
     pub max_backtracks: u32,
 }
 
+/// A decision: the trail as it was (`mark`), the cell and the option drawn for it.
 struct Frame {
-    domains: Vec<u64>,
+    mark: usize,
     cell: usize,
     option: usize,
+}
+
+/// The domains' changes in order, each as the cell and its `words` before the change, so that
+/// undoing a decision puts back what it and its consequences changed.
+struct Trail {
+    words: usize,
+    cells: Vec<usize>,
+    saved: Vec<u64>,
+}
+
+impl Trail {
+    fn new(words: usize) -> Self {
+        Self { words, cells: Vec::new(), saved: Vec::new() }
+    }
+
+    fn len(&self) -> usize {
+        self.cells.len()
+    }
+
+    /// Logs `cell`'s domain before a change.
+    fn save(&mut self, cell: usize, d: &[u64]) {
+        self.cells.push(cell);
+        self.saved.extend_from_slice(&d[cell * self.words..(cell + 1) * self.words]);
+    }
+
+    /// Takes the last [`save`](Self::save) back: nothing changed after all.
+    fn unsave(&mut self) {
+        self.cells.pop();
+        self.saved.truncate(self.saved.len() - self.words);
+    }
+
+    /// Puts back every domain changed since the trail was `mark` long, newest first.
+    fn undo(&mut self, mark: usize, d: &mut [u64]) {
+        let w = self.words;
+        while self.cells.len() > mark {
+            let cell = self.cells.pop().unwrap_or_default();
+            let from = self.saved.len() - w;
+            d[cell * w..(cell + 1) * w].copy_from_slice(&self.saved[from..]);
+            self.saved.truncate(from);
+        }
+    }
+
+    fn clear(&mut self) {
+        self.cells.clear();
+        self.saved.clear();
+    }
 }
 
 impl Solver<'_> {
@@ -311,16 +359,22 @@ impl Solver<'_> {
         let mut queue: VecDeque<usize> = (0..self.cells()).collect();
         let mut queued = vec![true; self.cells()];
         let mut stack: Vec<Frame> = Vec::new();
+        let mut trail = Trail::new(w);
         let (mut choices, mut backtracks) = (0u32, 0u32);
         loop {
-            match self.settle(&mut domains, &mut queue, &mut queued) {
+            match self.settle(&mut domains, &mut queue, &mut queued, &mut trail) {
                 Ok(()) => {
                     let Some(cell) = self.pick_cell(&domains) else {
                         let options = (0..self.cells()).map(|c| ones(&domains[c * w..(c + 1) * w]).next().unwrap_or(0)).collect();
                         return Ok(Solution { options, choices, backtracks });
                     };
                     let option = self.choose(&domains[cell * w..(cell + 1) * w], rng);
-                    stack.push(Frame { domains: domains.clone(), cell, option });
+                    if stack.is_empty() {
+                        // Nothing before the first decision is ever taken back.
+                        trail.clear();
+                    }
+                    stack.push(Frame { mark: trail.len(), cell, option });
+                    trail.save(cell, &domains);
                     let dom = &mut domains[cell * w..(cell + 1) * w];
                     dom.fill(0);
                     set(dom, option);
@@ -345,8 +399,10 @@ impl Solver<'_> {
                         return Err(SolveError::GaveUp { backtracks: self.max_backtracks });
                     }
                     // Back to before the choice, without it. The cell had two options or
-                    // more, so one is left.
-                    domains = frame.domains;
+                    // more, so one is left. Dropping it is logged too: it holds only while
+                    // the decision before this one does.
+                    trail.undo(frame.mark, &mut domains);
+                    trail.save(frame.cell, &domains);
                     let bit = 1u64 << (frame.option % 64);
                     domains[frame.cell * w + frame.option / 64] &= !bit;
                     queue.clear();
@@ -365,16 +421,16 @@ impl Solver<'_> {
     }
 
     /// Propagation and limits until nothing changes.
-    fn settle(&self, d: &mut [u64], queue: &mut VecDeque<usize>, queued: &mut [bool]) -> Result<(), Conflict> {
+    fn settle(&self, d: &mut [u64], queue: &mut VecDeque<usize>, queued: &mut [bool], trail: &mut Trail) -> Result<(), Conflict> {
         loop {
-            self.propagate(d, queue, queued)?;
-            if !self.apply_limits(d, queue, queued)? {
+            self.propagate(d, queue, queued, trail)?;
+            if !self.apply_limits(d, queue, queued, trail)? {
                 return Ok(());
             }
         }
     }
 
-    fn propagate(&self, d: &mut [u64], queue: &mut VecDeque<usize>, queued: &mut [bool]) -> Result<(), Conflict> {
+    fn propagate(&self, d: &mut [u64], queue: &mut VecDeque<usize>, queued: &mut [bool], trail: &mut Trail) -> Result<(), Conflict> {
         let w = self.set.words;
         let mut allowed = vec![0u64; w];
         while let Some(c) = queue.pop_front() {
@@ -396,12 +452,15 @@ impl Solver<'_> {
                         }
                     }
                 }
+                trail.save(n, d);
                 let neighbor = &mut d[n * w..(n + 1) * w];
                 if and_assign(neighbor, &allowed) {
                     if is_empty(neighbor) {
                         return Err(Conflict::Cell(n));
                     }
                     self.enqueue(n, queue, queued);
+                } else {
+                    trail.unsave();
                 }
             }
         }
@@ -410,7 +469,7 @@ impl Solver<'_> {
 
     /// Checks every limit; a limit at its maximum is removed from the cells not bound to
     /// it. Returns whether a domain changed.
-    fn apply_limits(&self, d: &mut [u64], queue: &mut VecDeque<usize>, queued: &mut [bool]) -> Result<bool, Conflict> {
+    fn apply_limits(&self, d: &mut [u64], queue: &mut VecDeque<usize>, queued: &mut [bool], trail: &mut Trail) -> Result<bool, Conflict> {
         let w = self.set.words;
         let mut changed = false;
         for (l, limit) in self.limits.iter().enumerate() {
@@ -427,10 +486,15 @@ impl Solver<'_> {
             }
             if limit.max == Some(certain) && possible > certain {
                 for c in 0..self.cells() {
-                    let dom = &mut d[c * w..(c + 1) * w];
-                    if !subset(dom, &limit.bits) && and_not_assign(dom, &limit.bits) {
+                    if subset(&d[c * w..(c + 1) * w], &limit.bits) {
+                        continue;
+                    }
+                    trail.save(c, d);
+                    if and_not_assign(&mut d[c * w..(c + 1) * w], &limit.bits) {
                         changed = true;
                         self.enqueue(c, queue, queued);
+                    } else {
+                        trail.unsave();
                     }
                 }
             }
@@ -472,8 +536,34 @@ impl Solver<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+
     use super::*;
     use crate::content::{SocketRulesDef, Sockets};
+
+    /// Counts the bytes alive and their peak, to see how much memory a solve holds.
+    struct Counting;
+
+    static LIVE: AtomicUsize = AtomicUsize::new(0);
+    static PEAK: AtomicUsize = AtomicUsize::new(0);
+
+    // SAFETY: every call goes to the system allocator unchanged; the counters only observe.
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let now = LIVE.fetch_add(layout.size(), Relaxed) + layout.size();
+            PEAK.fetch_max(now, Relaxed);
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            LIVE.fetch_sub(layout.size(), Relaxed);
+            unsafe { System.dealloc(ptr, layout) }
+        }
+    }
+
+    #[global_allocator]
+    static COUNTING: Counting = Counting;
 
     fn rules() -> Rules {
         Rules::new(&SocketRulesDef {
@@ -632,6 +722,21 @@ mod tests {
         let s = solver(&set, w, h, &[]).solve(d, &mut DetRng::new(3)).unwrap();
         let ids: Vec<&str> = s.options.iter().map(|&o| set.tile_of(o).id.as_str()).collect();
         assert_eq!(ids, ["l", "m", "r"]);
+    }
+
+    #[test]
+    fn a_choice_costs_memory_for_what_it_changed_not_for_the_whole_grid() {
+        // Two tiles that fit anywhere: every cell of a 64×64 grid is decided, one choice each.
+        // A copy of the grid per choice would hold 4096 × 4096 words, over 100 MB.
+        let set = TileSet::new(rules(), vec![tile("a", ["a", "a", "a", "a"], &[0]), tile("b", ["a", "a", "a", "a"], &[0])]);
+        let (w, h) = (64, 64);
+        let domains = full(&set, w * h);
+        let before = LIVE.load(Relaxed);
+        PEAK.store(before, Relaxed);
+        let solved = solver(&set, w, h, &[]).solve(domains, &mut DetRng::new(5)).unwrap();
+        let held = PEAK.load(Relaxed).saturating_sub(before);
+        assert_eq!(solved.choices as usize, w * h);
+        assert!(held < 8 << 20, "a solve held {} MiB", held >> 20);
     }
 
     #[test]
