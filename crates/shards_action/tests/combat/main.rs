@@ -6,3 +6,4 @@ mod agents;
 mod common;
 mod hits;
 mod replay;
+mod visuals;

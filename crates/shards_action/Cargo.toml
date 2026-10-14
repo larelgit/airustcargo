@@ -6,6 +6,23 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+# The animation bridge (glTF clips follow the action machine), the combat overlay, the ground
+# telegraphs and the off-screen warnings. They need a window to be seen; the pure logic behind
+# them (clip choice, zone geometry, indicator placement) and the `animset` content kind are always
+# built, so headless runs and `--check-content` know them too.
+render = [
+    "ai_core/render",
+    "shards_motion/render",
+    "bevy/bevy_animation",
+    "bevy/bevy_gizmos",
+    "bevy/bevy_gltf",
+    "bevy/bevy_text",
+    "bevy/bevy_ui",
+    "bevy/bevy_world_serialization",
+    "bevy/gltf_animation",
+]
+
 [dependencies]
 ai_core.workspace = true
 shards_core.workspace = true
