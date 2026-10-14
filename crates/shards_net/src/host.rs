@@ -73,6 +73,10 @@ pub struct Peer {
     pub delta_bytes: u64,
     pub held_back: u64,
     pub closure_capped: u64,
+    /// JSON bytes of state values sent, by component type path (or resource name).
+    pub by_component: BTreeMap<String, u64>,
+    /// What the link watch saw a second ago: late inputs, RTT.
+    watched: (u64, f32),
 }
 
 impl Peer {
@@ -99,6 +103,8 @@ impl Peer {
             delta_bytes: 0,
             held_back: 0,
             closure_capped: 0,
+            by_component: BTreeMap::new(),
+            watched: (0, 0.0),
         }
     }
 
@@ -255,6 +261,7 @@ pub(crate) fn send(world: &mut World) {
         send_journal(world, host);
         send_rebases(world, host);
         send_state(world, host);
+        watch_links(world, host);
         flush(host, endpoint);
     });
 }
@@ -599,7 +606,9 @@ fn admit(world: &mut World, host: &mut NetHost, id: PeerId) {
         }
     };
     let peer = host.peers.get_mut(&id).expect("checked above");
-    peer.send(&Msg::Welcome(welcome));
+    let welcome = Msg::Welcome(welcome);
+    let kb = msg::encode(&welcome).len() as f64 / 1024.0;
+    peer.send(&welcome);
     peer.stage = PeerStage::Connected;
     peer.body = body;
     peer.joined_at = tick;
@@ -609,7 +618,7 @@ fn admit(world: &mut World, host: &mut NetHost, id: PeerId) {
         slot.left_at = None;
     }
     NetMarks::mark(world, |m| &mut m.joined);
-    journal::emit(world, JournalKind::Sim, format!("net: p{player} ({}) joined at tick {tick}", hello.name));
+    journal::emit(world, JournalKind::Sim, format!("net: p{player} ({}) joined at tick {tick} (world {kb:.1} KB)", hello.name));
 }
 
 fn reset_view(peer: &mut Peer) {
@@ -700,7 +709,7 @@ fn send_journal(world: &mut World, host: &mut NetHost) {
     }
 }
 
-fn send_rebases(world: &World, host: &mut NetHost) {
+fn send_rebases(world: &mut World, host: &mut NetHost) {
     if world.get_resource::<SimGate>().is_some_and(SimGate::is_held) {
         return;
     }
@@ -712,6 +721,7 @@ fn send_rebases(world: &World, host: &mut NetHost) {
         host.cache.clear();
     }
     let mut captured: Option<Result<ai_core::Snapshot, String>> = None;
+    let mut sent = Vec::new();
     for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Connected) {
         let Some(reason) = peer.rebase.take() else { continue };
         let snapshot = captured.get_or_insert_with(|| snapshot::capture(world)).clone();
@@ -719,8 +729,9 @@ fn send_rebases(world: &World, host: &mut NetHost) {
         // The body may be another entity now (a region change spawns players anew).
         let body = player_body(world, peer.player).map(|id| id.0).or(peer.body);
         peer.body = body;
-        let welcome = Welcome { player: peer.player, body, tick: sim::tick(world), reason, snapshot, region: (hooks(world).describe_world)(world) };
-        peer.send(&Msg::Rebase(welcome));
+        let welcome = Msg::Rebase(Welcome { player: peer.player, body, tick: sim::tick(world), reason: reason.clone(), snapshot, region: (hooks(world).describe_world)(world) });
+        sent.push(format!("p{} gets the world again ({reason}, {:.1} KB)", peer.player, msg::encode(&welcome).len() as f64 / 1024.0));
+        peer.send(&welcome);
         peer.resyncs += 1;
         reset_view(peer);
         // Its inputs start over on the new world's ticks.
@@ -728,6 +739,46 @@ fn send_rebases(world: &World, host: &mut NetHost) {
         peer.margin = None;
         peer.applied_input_tick = 0;
     }
+    if let Some(Err(e)) = captured {
+        journal::emit(world, JournalKind::Error, format!("net: the world cannot be sent again: {e}"));
+    }
+    for line in sent {
+        journal::emit(world, JournalKind::Sim, format!("net: {line}"));
+    }
+}
+
+/// Once a second: a peer's loss over 5 %, its RTT jumping, its inputs coming late (journal,
+/// rate-limited).
+fn watch_links(world: &mut World, host: &mut NetHost) {
+    let hz = (1.0 / sim::tick_seconds(world).max(1e-6)).round() as u64;
+    if !sim::tick(world).is_multiple_of(hz.max(1)) {
+        return;
+    }
+    let mut lines = Vec::new();
+    for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Connected) {
+        let stats = peer.link.stats();
+        let (late, srtt) = peer.watched;
+        let p = peer.player;
+        if stats.loss > 0.05 {
+            lines.push((format!("loss p{p}"), JournalKind::Warn, format!("p{p} loses {:.1}% of datagrams", stats.loss * 100.0)));
+        }
+        if let Some(text) = rtt_jump(srtt, stats.srtt_ms) {
+            lines.push((format!("rtt p{p}"), JournalKind::Sim, format!("p{p} {text}")));
+        }
+        if peer.inputs.late > late {
+            lines.push((format!("late p{p}"), JournalKind::Warn, format!("p{p}: {} inputs came late in the last second", peer.inputs.late - late)));
+        }
+        peer.watched = (peer.inputs.late, stats.srtt_ms);
+    }
+    for (kind, level, text) in lines {
+        crate::hooks::net_line(world, &kind, level, text);
+    }
+}
+
+/// `rtt 40 → 180 ms` when the round trip changed by half and 50 ms or more.
+pub(crate) fn rtt_jump(before: f32, now: f32) -> Option<String> {
+    let jumped = before > 0.0 && (now - before).abs() >= 50.0 && (now - before).abs() >= before * 0.5;
+    jumped.then(|| format!("rtt {before:.0} → {now:.0} ms"))
 }
 
 /// On send ticks: every connected peer's view, encoded once, as a delta against what it
@@ -792,6 +843,9 @@ fn send_state(world: &mut World, host: &mut NetHost) {
         peer.deltas += 1;
         peer.delta_bytes += built.bytes as u64;
         peer.held_back += built.held_back.len() as u64;
+        for (path, bytes) in built.by_component {
+            *peer.by_component.entry(path).or_default() += bytes;
+        }
         peer.view = view;
         peer.sent.push_back((tick, Arc::new(built.sent)));
         while peer.sent.len() > SENT_KEPT {
@@ -820,5 +874,18 @@ fn flush(host: &mut NetHost, endpoint: &mut NetEndpoint) {
     for id in gone {
         host.peers.remove(&id);
         transport.forget(id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rtt_jump;
+
+    #[test]
+    fn an_rtt_jump_is_half_again_and_50_ms() {
+        assert_eq!(rtt_jump(40.0, 180.0).as_deref(), Some("rtt 40 → 180 ms"));
+        assert_eq!(rtt_jump(300.0, 180.0).as_deref(), None, "120 ms less is not half of 300");
+        assert_eq!(rtt_jump(20.0, 60.0).as_deref(), None, "40 ms is noise");
+        assert_eq!(rtt_jump(0.0, 300.0).as_deref(), None, "the first measure is not a jump");
     }
 }

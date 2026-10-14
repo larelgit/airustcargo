@@ -65,9 +65,15 @@ impl Fnv {
 
 /// The hash of one encoded value: FNV over its JSON bytes.
 pub fn value_hash(value: &Value) -> u64 {
+    hash_and_size(value).0
+}
+
+/// [`value_hash`] and the length of the JSON it hashed (before deflate).
+pub fn hash_and_size(value: &Value) -> (u64, u32) {
+    let bytes = serde_json::to_vec(value).unwrap_or_default();
     let mut h = Fnv::default();
-    h.eat(&serde_json::to_vec(value).unwrap_or_default());
-    h.0
+    h.eat(&bytes);
+    (h.0, bytes.len() as u32)
 }
 
 /// Equal as encoded (and hashed): unlike `==` on JSON values, `-0.0` and `0.0` differ.
@@ -111,6 +117,7 @@ struct Cached {
     entity: Entity,
     value: Value,
     hash: u64,
+    size: u32,
     at: Tick,
 }
 
@@ -137,6 +144,8 @@ pub struct EncodedEntity {
     pub position: Option<Vec3>,
     /// The `eN` its values mention.
     pub refs: BTreeSet<u32>,
+    /// Each value's JSON length, for the bandwidth by component.
+    pub sizes: BTreeMap<String, u32>,
 }
 
 /// Everything encoded on one send tick, shared by every client's delta.
@@ -174,16 +183,20 @@ impl Encoded {
         };
         let Some((values, _)) = encoded else { return };
         let mut hashes = BTreeMap::new();
+        let mut sizes = BTreeMap::new();
         for (path, value) in &values {
             let key = (id, path.clone());
             if reused.contains(&path.as_str()) {
                 cache.reused += 1;
-                hashes.insert(path.clone(), cache.values[&key].hash);
+                let cached = &cache.values[&key];
+                hashes.insert(path.clone(), cached.hash);
+                sizes.insert(path.clone(), cached.size);
             } else {
                 cache.encoded += 1;
-                let hash = value_hash(value);
+                let (hash, size) = hash_and_size(value);
                 hashes.insert(path.clone(), hash);
-                cache.values.insert(key, Cached { entity, value: value.clone(), hash, at: now });
+                sizes.insert(path.clone(), size);
+                cache.values.insert(key, Cached { entity, value: value.clone(), hash, size, at: now });
             }
         }
         let position = world.get::<Transform>(entity).map(|t| t.translation);
@@ -191,7 +204,7 @@ impl Encoded {
         for value in values.values() {
             references(value, &mut refs);
         }
-        self.entities.insert(id, Arc::new(EncodedEntity { values, hashes, position, refs }));
+        self.entities.insert(id, Arc::new(EncodedEntity { values, hashes, position, refs, sizes }));
     }
 }
 
@@ -286,6 +299,8 @@ pub struct Built {
     pub sent: SentView,
     pub held_back: Vec<u32>,
     pub bytes: usize,
+    /// JSON bytes of the values sent, by component type path (or resource name).
+    pub by_component: BTreeMap<String, u64>,
 }
 
 /// Builds one client's delta.
@@ -377,7 +392,30 @@ pub fn build_delta(input: DeltaInput) -> Built {
         let entities = sent.entities.iter().map(|(id, h)| (*id, h.iter().map(|(p, v)| (p.as_str(), *v)).collect()));
         delta.hash = Some(view_hash(entities, sent.resources.iter().map(|(n, h)| (n.as_str(), *h))));
     }
-    Built { delta, sent, held_back, bytes }
+    let by_component = sizes_by_component(&delta, encoded);
+    Built { delta, sent, held_back, bytes, by_component }
+}
+
+/// What each component (and resource) of `delta` weighs, as JSON before deflate.
+fn sizes_by_component(delta: &StateDelta, encoded: &Encoded) -> BTreeMap<String, u64> {
+    let mut out: BTreeMap<String, u64> = BTreeMap::new();
+    let mut add = |id: u32, paths: &mut dyn Iterator<Item = &String>| {
+        let sizes = encoded.entities.get(&id).map(|e| &e.sizes);
+        for path in paths {
+            let size = sizes.and_then(|s| s.get(path)).copied().unwrap_or(0);
+            *out.entry(path.clone()).or_default() += u64::from(size);
+        }
+    };
+    for entity in &delta.entities {
+        add(entity.id, &mut entity.set.keys());
+    }
+    if let Some(own) = &delta.own {
+        add(own.body, &mut own.components.keys());
+    }
+    for (name, value) in &delta.resources {
+        *out.entry(name.clone()).or_default() += u64::from(hash_and_size(value).1);
+    }
+    out
 }
 
 // --- client -------------------------------------------------------------------------------
@@ -604,9 +642,11 @@ mod tests {
         for (id, v) in entities {
             let values: ComponentValues = v.as_object().unwrap().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
             let hashes = values.iter().map(|(k, v)| (k.clone(), value_hash(v))).collect();
+            let sizes = values.iter().map(|(k, v)| (k.clone(), hash_and_size(v).1)).collect();
             let mut refs = BTreeSet::new();
             values.values().for_each(|v| references(v, &mut refs));
-            out.entities.insert(*id, Arc::new(EncodedEntity { values, hashes, position: Some(Vec3::new(*id as f32, 0.0, 0.0)), refs }));
+            let position = Some(Vec3::new(*id as f32, 0.0, 0.0));
+            out.entities.insert(*id, Arc::new(EncodedEntity { values, hashes, position, refs, sizes }));
         }
         out
     }
@@ -658,6 +698,8 @@ mod tests {
         let d4 = build(4, &view, &t4, Some((2, &full.sent)), 1 << 20);
         let e1 = d4.delta.entities.iter().find(|e| e.id == 1).unwrap();
         assert_eq!(e1.set.keys().collect::<Vec<_>>(), ["P"], "only what changed is sent");
+        // What was sent weighs: e1's `[1,0]` (5 bytes), e3's `1`.
+        assert_eq!(d4.by_component, BTreeMap::from([("P".to_owned(), 5), ("H".to_owned(), 1)]));
         assert_eq!(d4.delta.entities.iter().find(|e| e.id == 2).unwrap().removed, ["H"]);
         let (s4, prev) = ring.accept(&d4.delta).unwrap();
         assert_eq!(hash_of(&s4), d4.delta.hash.unwrap());

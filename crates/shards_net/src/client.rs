@@ -133,6 +133,8 @@ pub struct NetClient {
     pub deltas: u64,
     pub skipped: u64,
     pub delta_bytes: u64,
+    /// The RTT the link watch saw a second ago.
+    watched_rtt: f32,
 }
 
 impl NetClient {
@@ -165,6 +167,7 @@ impl NetClient {
             host_paused: false,
             deltas: 0,
             skipped: 0,
+            watched_rtt: 0.0,
             delta_bytes: 0,
         }
     }
@@ -267,8 +270,25 @@ pub(crate) fn send(world: &mut World) {
         if endpoint.clock.is_wall() {
             pace(world, client);
         }
+        watch_link(world, client);
         flush(client, endpoint);
     });
+}
+
+/// Once a second: loss over 5 % and RTT jumps (journal, rate-limited).
+fn watch_link(world: &mut World, client: &mut NetClient) {
+    let hz = (1.0 / sim::tick_seconds(world).max(1e-6)).round() as u64;
+    if client.stage != ClientStage::Connected || !sim::tick(world).is_multiple_of(hz.max(1)) {
+        return;
+    }
+    let Some(stats) = client.link.as_ref().map(Link::stats) else { return };
+    if stats.loss > 0.05 {
+        crate::hooks::net_line(world, "loss", JournalKind::Warn, format!("{:.1}% of the host's datagrams lost", stats.loss * 100.0));
+    }
+    if let Some(text) = crate::host::rtt_jump(client.watched_rtt, stats.srtt_ms) {
+        crate::hooks::net_line(world, "rtt", JournalKind::Sim, text);
+    }
+    client.watched_rtt = stats.srtt_ms;
 }
 
 /// Exit hook: the host is told.

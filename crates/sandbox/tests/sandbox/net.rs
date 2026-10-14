@@ -153,6 +153,7 @@ fn spike_session_cost() {
             per_client.join(", "),
             wall.as_secs_f64()
         );
+        println!("{place}: heaviest components {}", status.result["bandwidth_by_component"]);
     }
 }
 
@@ -241,6 +242,9 @@ fn clients_join_at_tick_zero_and_see_the_hosts_world() {
     let status = stand.call(HOST, "net_status", json!({}));
     assert!(status.ok, "{}", status.result);
     assert_eq!(status.result["peers"].as_array().unwrap().len(), 2, "{}", status.result);
+    let heaviest = status.result["bandwidth_by_component"].as_array().cloned().unwrap_or_default();
+    assert!((1..=10).contains(&heaviest.len()), "{}", status.result);
+    assert!(heaviest.iter().any(|c| c["component"] == "Transform"), "{heaviest:?}");
     // What `shards wait` prints of a member.
     let net = &shards::ai_core::status::status(stand.world(C1))["net"];
     let who = (net["member"].as_str(), net["role"].as_str(), net["player"].as_u64(), net["body"].as_str());

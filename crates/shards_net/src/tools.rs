@@ -113,6 +113,35 @@ fn observe_lines(world: &World, _: Entity) -> Vec<String> {
     Vec::new()
 }
 
+/// The ten components (or resources) that weighed most in the state sent to every peer so
+/// far: JSON bytes before deflate, and their share.
+fn by_component(host: &NetHost) -> Value {
+    let mut total: std::collections::BTreeMap<&str, u64> = std::collections::BTreeMap::new();
+    for peer in host.peers.values() {
+        for (path, bytes) in &peer.by_component {
+            *total.entry(path.as_str()).or_default() += bytes;
+        }
+    }
+    let all: u64 = total.values().sum();
+    let mut top: Vec<(&str, u64)> = total.into_iter().collect();
+    top.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+    let top: Vec<Value> = top
+        .into_iter()
+        .take(10)
+        .map(|(path, bytes)| {
+            let share = if all > 0 { (bytes as f64 * 1000.0 / all as f64).round() / 10.0 } else { 0.0 };
+            json!({ "component": short_path(path), "bytes": bytes, "percent": share })
+        })
+        .collect();
+    json!(top)
+}
+
+/// `shards_core::state::Health` → `Health` (generic arguments kept).
+fn short_path(path: &str) -> String {
+    let (name, args) = path.split_at(path.find('<').unwrap_or(path.len()));
+    format!("{}{args}", name.rsplit("::").next().unwrap_or(name))
+}
+
 /// The session: role, players, links (RTT, loss, bytes per second), inputs (late, early,
 /// dropped), state sends, desyncs.
 fn net_status(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
@@ -150,6 +179,7 @@ fn net_status(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
             .collect();
         let (encoded, reused) = host.encode_counts();
         out["peers"] = json!(peers);
+        out["bandwidth_by_component"] = by_component(host);
         let mean = host.encode_total.0.checked_div(host.encode_total.1).unwrap_or(0);
         out["encode_us"] = json!({ "last": host.encode_us.0, "max": host.encode_us.1, "mean": mean });
         out["encode_cache"] = json!({ "encoded": encoded, "reused": reused });
