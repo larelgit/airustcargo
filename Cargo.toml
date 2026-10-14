@@ -10,6 +10,7 @@ members = [
     "crates/shards_level",
     "crates/shards_npc",
     "crates/shards_world",
+    "crates/shards_net",
     "crates/shards",
     "crates/sandbox",
     "crates/shards_cli",
@@ -46,6 +47,9 @@ parry3d = { version = "=0.31.1", default-features = false, features = ["std", "a
 # The JSON alone is enough (node tree, transforms, names, extras, POSITION bounds): no `import`
 # feature, so no image decoders. Bevy's own glTF loader uses the same crate for the visuals.
 gltf = { version = "=1.4.1", default-features = false, features = ["names", "extras"] }
+# Deflate of link bodies and blobs inside shards_net only; never part of a public API. Pure Rust
+# (miniz_oxide), raw deflate streams: no zlib header, no C or SIMD backends.
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
 
 ai_core = { path = "crates/ai_core", default-features = false }
 shards_script = { path = "crates/shards_script" }
@@ -56,6 +60,7 @@ shards_action = { path = "crates/shards_action" }
 shards_level = { path = "crates/shards_level" }
 shards_npc = { path = "crates/shards_npc" }
 shards_world = { path = "crates/shards_world" }
+shards_net = { path = "crates/shards_net" }
 shards = { path = "crates/shards", default-features = false }
 
 # Bevy's recommended dev setup: optimise dependencies, keep our own code fast to compile.
