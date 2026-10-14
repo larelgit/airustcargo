@@ -204,6 +204,9 @@ pub struct NavRegion {
     pub title: String,
     pub cell: f32,
     pub tile_size: f32,
+    /// The world position (x, z) of the region's north-west corner: global column `(0, 0)`
+    /// starts there ([`RegionManifest::origin`](shards_world::RegionManifest::origin)).
+    pub origin: Vec2,
     /// Grid columns per region cell.
     pub per: u32,
     /// Region cells (x, y).
@@ -246,12 +249,17 @@ enum Source {
 impl NavRegion {
     /// Global grid column of a world position.
     pub fn column_of(&self, pos: Vec3) -> [i32; 2] {
-        [(pos.x / self.cell).floor() as i32, (pos.z / self.cell).floor() as i32]
+        [((pos.x - self.origin.x) / self.cell).floor() as i32, ((pos.z - self.origin.y) / self.cell).floor() as i32]
     }
 
     /// The world position of a global column's center (y 0).
     pub fn column_center(&self, [gx, gz]: [i32; 2]) -> Vec3 {
-        Vec3::new((gx as f32 + 0.5) * self.cell, 0.0, (gz as f32 + 0.5) * self.cell)
+        Vec3::new(self.origin.x + (gx as f32 + 0.5) * self.cell, 0.0, self.origin.y + (gz as f32 + 0.5) * self.cell)
+    }
+
+    /// The region's north-west corner in the world (y 0).
+    pub fn corner(&self) -> Vec3 {
+        Vec3::new(self.origin.x, 0.0, self.origin.y)
     }
 
     /// The instance covering global column `col`.
@@ -538,6 +546,7 @@ fn build(world: &mut World) -> Result<NavRegion, String> {
         title: manifest.title(),
         cell: settings.cell,
         tile_size: manifest.tile_size,
+        origin: Vec2::from_array(manifest.origin),
         per,
         size: manifest.size,
         agent_radius: settings.agent.radius,
@@ -651,6 +660,7 @@ impl NavRegion {
             let b = ((hi + margin) / s).floor().min(n as f32 - 1.0) as i64;
             a..=b
         };
+        let (min, max) = (min - self.corner(), max - self.corner());
         let mut out = Vec::new();
         for y in cells(min.z, max.z, self.size[1]) {
             for x in cells(min.x, max.x, self.size[0]) {

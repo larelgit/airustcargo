@@ -337,10 +337,11 @@ impl<'a> GenContext<'a> {
         (nx >= 0 && ny >= 0 && (nx as u32) < self.width && (ny as u32) < self.height).then_some((nx as u32, ny as u32))
     }
 
-    /// World position of a cell's center.
+    /// World position of a cell's center (the region's `origin` included).
     pub fn center(&self, (x, y): (u32, u32)) -> Vec3 {
         let s = self.def.tile_size;
-        Vec3::new((x as f32 + 0.5) * s, 0.0, (y as f32 + 0.5) * s)
+        let (ox, oz) = self.def.origin;
+        Vec3::new(ox + (x as f32 + 0.5) * s, 0.0, oz + (y as f32 + 0.5) * s)
     }
 
     fn domain(&self, cell: usize) -> &[u64] {
@@ -531,6 +532,7 @@ impl<'a> GenContext<'a> {
             fallback: None,
             size: [self.width, self.height],
             tile_size: self.def.tile_size,
+            origin: [self.def.origin.0, self.def.origin.1],
             tiles,
             pois,
             links,

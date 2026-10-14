@@ -62,7 +62,7 @@ fn draw_tiles(mut gizmos: Gizmos<AiGizmos>, overlay: Res<TileOverlay>, region: O
     let rules = db.get::<crate::content::RegionDef>(&m.region).and_then(|r| db.get::<crate::content::SocketRulesDef>(&r.rules));
     let rules = rules.map(crate::sockets::Rules::new);
     for t in &m.tiles {
-        let min = Vec3::new(t.at[0] as f32 * s, 0.0, t.at[1] as f32 * s) + lift;
+        let min = m.corner() + Vec3::new(t.at[0] as f32 * s, 0.0, t.at[1] as f32 * s) + lift;
         let max = min + Vec3::new(t.size[0] as f32 * s, 0.0, t.size[1] as f32 * s);
         let corners = [min, Vec3::new(max.x, min.y, min.z), max, Vec3::new(min.x, min.y, max.z)];
         for i in 0..4 {

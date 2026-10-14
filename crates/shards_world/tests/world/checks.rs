@@ -44,6 +44,7 @@ fn manifest(rows: &[&str], pois: &[(&str, (i32, i32))]) -> RegionManifest {
         fallback: None,
         size: [width, rows.len() as u32],
         tile_size: 16.0,
+        origin: [0.0, 0.0],
         tiles,
         spawn: pois.iter().find(|p| p.poi == "spawn").map(|p| p.id.clone()),
         pois,

@@ -503,10 +503,11 @@ impl NavRegion {
         let cell = self.cell;
         let step_x = if dx > 0.0 { 1 } else { -1 };
         let step_z = if dz > 0.0 { 1 } else { -1 };
-        let next_edge = |c: i32, s: i32| (c + if s > 0 { 1 } else { 0 }) as f32 * cell;
+        // Column edges in the world: the grid starts at the region's corner.
+        let next_edge = |c: i32, s: i32, corner: f32| corner + (c + if s > 0 { 1 } else { 0 }) as f32 * cell;
         let t_of = |edge: f32, o: f32, d: f32| if d.abs() < 1e-9 { f32::INFINITY } else { (edge - o) / d };
-        let mut t_x = t_of(next_edge(col[0], step_x), origin.x, dx);
-        let mut t_z = t_of(next_edge(col[1], step_z), origin.z, dz);
+        let mut t_x = t_of(next_edge(col[0], step_x, self.origin.x), origin.x, dx);
+        let mut t_z = t_of(next_edge(col[1], step_z, self.origin.y), origin.z, dz);
         let dt_x = if dx.abs() < 1e-9 { f32::INFINITY } else { cell / dx.abs() };
         let dt_z = if dz.abs() < 1e-9 { f32::INFINITY } else { cell / dz.abs() };
         let limit = (target[0] - col[0]).abs() + (target[1] - col[1]).abs() + 2;

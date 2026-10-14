@@ -53,7 +53,15 @@ fn observe_lines(world: &World, subject: Entity) -> Vec<String> {
     let m = &region.manifest;
     let mut lines = vec![match region.tile_at(pos) {
         Some(([x, y], tile)) => format!("TILE ({x}, {y}) {} rot {} · {}", tile.tile, tile.rot, m.title()),
-        None => format!("TILE outside {} ({}×{} tiles of {}m from (0, 0))", m.title(), m.size[0], m.size[1], m.tile_size),
+        None => format!(
+            "TILE outside {} ({}×{} tiles of {}m from ({}, {}))",
+            m.title(),
+            m.size[0],
+            m.size[1],
+            m.tile_size,
+            m.origin[0],
+            m.origin[1]
+        ),
     }];
     let mut pois: Vec<(f32, &str, Vec3)> = m
         .pois

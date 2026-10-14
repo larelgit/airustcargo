@@ -61,6 +61,10 @@ fn is_zero(n: &usize) -> bool {
     *n == 0
 }
 
+fn is_origin(at: &[f32; 2]) -> bool {
+    *at == [0.0, 0.0]
+}
+
 /// A point of interest.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -118,6 +122,11 @@ pub struct RegionManifest {
     pub size: [u32; 2],
     /// Edge of a cell, meters.
     pub tile_size: f32,
+    /// The world position of the region's north-west corner, meters `(x, z)`. Left out of
+    /// the canonical text when it is `(0, 0)`, so manifests of regions at the world's origin
+    /// keep their bytes.
+    #[serde(default, skip_serializing_if = "is_origin")]
+    pub origin: [f32; 2],
     /// Row-major for grids (one per cell); rooms by their north-west cell.
     pub tiles: Vec<PlacedTile>,
     pub pois: Vec<ManifestPoi>,
@@ -173,21 +182,27 @@ impl RegionManifest {
         fnv(self.to_canonical().as_bytes())
     }
 
+    /// The world position of the region's north-west corner (y 0).
+    pub fn corner(&self) -> Vec3 {
+        Vec3::new(self.origin[0], 0.0, self.origin[1])
+    }
+
     /// The center of cell `(x, y)` on the ground plane.
     pub fn cell_center(&self, [x, y]: [i32; 2]) -> Vec3 {
-        Vec3::new((x as f32 + 0.5) * self.tile_size, 0.0, (y as f32 + 0.5) * self.tile_size)
+        self.corner() + Vec3::new((x as f32 + 0.5) * self.tile_size, 0.0, (y as f32 + 0.5) * self.tile_size)
     }
 
     /// The center of a placed tile or room.
     pub fn tile_center(&self, tile: &PlacedTile) -> Vec3 {
         let [x, y] = tile.at;
         let [w, h] = tile.size;
-        Vec3::new((x as f32 + w as f32 * 0.5) * self.tile_size, 0.0, (y as f32 + h as f32 * 0.5) * self.tile_size)
+        self.corner() + Vec3::new((x as f32 + w as f32 * 0.5) * self.tile_size, 0.0, (y as f32 + h as f32 * 0.5) * self.tile_size)
     }
 
     /// The cell `pos` is in (it may be outside the region).
     pub fn cell_of(&self, pos: Vec3) -> [i32; 2] {
-        [(pos.x / self.tile_size).floor() as i32, (pos.z / self.tile_size).floor() as i32]
+        let local = pos - self.corner();
+        [(local.x / self.tile_size).floor() as i32, (local.z / self.tile_size).floor() as i32]
     }
 
     /// Whether `cell` is inside the region.
@@ -203,7 +218,7 @@ impl RegionManifest {
     pub fn spawn_position(&self) -> Vec3 {
         match self.spawn.as_deref().and_then(|id| self.poi(id)) {
             Some(poi) => poi.position(),
-            None => Vec3::new(self.size[0] as f32 * self.tile_size * 0.5, 0.0, self.size[1] as f32 * self.tile_size * 0.5),
+            None => self.corner() + Vec3::new(self.size[0] as f32 * self.tile_size * 0.5, 0.0, self.size[1] as f32 * self.tile_size * 0.5),
         }
     }
 
@@ -307,6 +322,7 @@ mod tests {
             fallback: None,
             size: [2, 1],
             tile_size: 16.0,
+            origin: [0.0, 0.0],
             tiles: vec![
                 PlacedTile { at: [0, 0], size: [1, 1], tile: "road_end".into(), rot: 90, decor: Some("rocks".into()) },
                 PlacedTile { at: [1, 0], size: [1, 1], tile: "camp".into(), rot: 270, decor: None },
@@ -337,6 +353,23 @@ mod tests {
         let mut other = m.clone();
         other.version = 4;
         assert_ne!(other.hash(), m.hash());
+    }
+
+    #[test]
+    fn an_origin_moves_the_cells_and_is_written_only_when_set() {
+        let mut m = manifest();
+        assert!(!m.to_canonical().contains("origin"), "a region at the world's origin keeps its bytes");
+        assert_eq!(m.cell_center([1, 0]), Vec3::new(24.0, 0.0, 8.0));
+        m.origin = [-64.0, 80.5];
+        let text = m.to_canonical();
+        assert!(text.contains("\"origin\": [-64, 80.5]"), "{text}");
+        assert_eq!(RegionManifest::from_json(&text).unwrap(), m);
+        assert_eq!(m.cell_center([1, 0]), Vec3::new(-40.0, 0.0, 88.5));
+        assert_eq!(m.tile_center(&m.tiles[0]), Vec3::new(-56.0, 0.0, 88.5));
+        assert_eq!(m.cell_of(Vec3::new(-40.0, 3.0, 88.5)), [1, 0]);
+        assert_eq!(m.cell_of(Vec3::new(-65.0, 0.0, 80.0)), [-1, -1], "west and north of the corner: outside");
+        m.spawn = None;
+        assert_eq!(m.spawn_position(), Vec3::new(-48.0, 0.0, 88.5), "the middle of the region");
     }
 
     #[test]

@@ -273,6 +273,7 @@ pub fn manifest(region: &str, rows: &[&str]) -> RegionManifest {
         fallback: None,
         size: [width, rows.len() as u32],
         tile_size: 8.0,
+        origin: [0.0, 0.0],
         tiles,
         pois: Vec::new(),
         links: Vec::new(),

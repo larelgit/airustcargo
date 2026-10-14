@@ -89,6 +89,7 @@ fn spawn_alone(main: &World, scratch: &mut World, kind: TileKind, id: &str, geom
                 fallback: None,
                 size: footprint,
                 tile_size,
+                origin: [0.0, 0.0],
                 tiles: vec![placed],
                 pois: Vec::new(),
                 links: Vec::new(),

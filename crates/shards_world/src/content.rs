@@ -572,6 +572,12 @@ pub struct RegionDef {
     /// NPCs farther than this from every player are dormant (meters).
     #[serde(default)]
     pub active_radius: Option<f32>,
+    /// Where the region's north-west corner is in the world, meters `(x, z)`: cell `(x, y)`
+    /// spans `origin + (x, y) × tile_size` to one tile further. Default `(0, 0)`. A game that
+    /// keeps other places in the same world (a hub, a hand-made arena) puts the region beside
+    /// them.
+    #[serde(default)]
+    pub origin: (f32, f32),
 }
 
 /// The tile ids `entries` (ids and `#tags`; empty: all) name, sorted, or what is wrong.
@@ -639,6 +645,9 @@ impl ContentDef for RegionDef {
         }
         if self.attempts == 0 {
             refs.error("attempts is 0; give at least 1");
+        }
+        if !(self.origin.0.is_finite() && self.origin.1.is_finite()) {
+            refs.error(format!("origin {:?} must be finite meters (x, z)", self.origin));
         }
         let rules = refs.require::<SocketRulesDef>(&self.rules, "rules").then(|| refs.get::<SocketRulesDef>(&self.rules)).flatten();
         let all: Vec<(&str, &TileDef)> = refs.iter::<TileDef>().collect();

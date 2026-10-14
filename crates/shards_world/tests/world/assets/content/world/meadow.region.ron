@@ -32,6 +32,21 @@
         roads: true,
         checks: (max_slope: 1),
     ),
+    // The walled region put beside other places: its north-west corner 200 m west and 64 m
+    // south of the world's origin.
+    "walled_far": (
+        size: (6, 4),
+        tile_size: 16.0,
+        version: 1,
+        origin: (-200.0, 64.0),
+        tiles: ["grass", "road_straight", "road_bend", "road_end", "road_t", "#old"],
+        border: "grass",
+        fixed: [(at: (0, 0), tile: "road_end", rot: 90)],
+        limits: [(of: "#old", min: 1, max: 1)],
+        pois: [(poi: "spawn", cells: [(0, 0)]), (poi: "camp", cells: [(5, 3)])],
+        roads: true,
+        checks: (max_slope: 1),
+    ),
     // Cannot be made: the spawn must sit in a cell fixed to grass, which has no slot for it.
     // Falls back.
     "impossible": (

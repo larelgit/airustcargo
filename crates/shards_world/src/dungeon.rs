@@ -459,6 +459,7 @@ fn finish(b: &Builder, def: &DungeonDef, id: &str, seed: u64, attempt: u32, hash
         fallback: None,
         size: [(max_x - min_x + 1) as u32, (max_y - min_y + 1) as u32],
         tile_size: size,
+        origin: [0.0, 0.0],
         tiles,
         pois,
         links,
