@@ -37,6 +37,8 @@ pub enum JournalKind {
     Sim,
     Warn,
     Error,
+    /// Ticks over their time budget (see [`perf`](crate::perf)).
+    Perf,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -56,6 +58,7 @@ impl std::fmt::Display for JournalEntry {
             JournalKind::Sim => write!(f, "{} [sim] {}", self.tick, self.text),
             JournalKind::Warn => write!(f, "{} [warn] {}", self.tick, self.text),
             JournalKind::Error => write!(f, "{} [error] {}", self.tick, self.text),
+            JournalKind::Perf => write!(f, "{} [perf] {}", self.tick, self.text),
         }
     }
 }
@@ -113,7 +116,10 @@ impl AiJournal {
     pub fn after(&self, after: u64) -> (impl Iterator<Item = &JournalEntry>, u64) {
         let oldest = self.entries.front().map_or(self.next_seq, |e| e.seq);
         let missed = oldest.saturating_sub(after + 1);
-        (self.entries.iter().filter(move |e| e.seq > after), missed)
+        // Sequence numbers only grow: start at the first new entry instead of scanning
+        // the whole buffer (conditions and invariants look after every tick).
+        let first = self.entries.partition_point(|e| e.seq <= after);
+        (self.entries.range(first..), missed)
     }
 
     pub fn since_tick(&self, tick: u64) -> impl Iterator<Item = &JournalEntry> {
@@ -400,6 +406,7 @@ mod tests {
             .add_plugins(crate::AiCorePlugin {
                 remote_port: None,
                 crash_replays: false,
+                report_perf: false,
                 sim: crate::SimConfig { start_paused: true, ..Default::default() },
                 ..Default::default()
             })

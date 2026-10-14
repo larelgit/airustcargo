@@ -15,7 +15,7 @@ pub mod layout;
 use shards::core::CoreSystems;
 use shards::prelude::*;
 
-pub use layout::{LayoutDef, LayoutPiece, Look, PieceKind};
+pub use layout::{BoundsDef, LayoutDef, LayoutPiece, Look, PieceKind};
 
 /// Half size of the square arena (meters).
 pub const ARENA_HALF: f32 = 20.0;
@@ -54,6 +54,7 @@ impl Plugin for GameplayPlugin {
             .register_type::<Pillar>()
             .register_type::<LayoutPiece>()
             .add_content::<LayoutDef>()
+            .add_content::<BoundsDef>()
             .add_systems(OnEnter(EngineState::InGame), layout::spawn_world)
             .add_plugins(fate::plugin);
         // The engine's systems decide (NPCs), move, fight and resolve; the sandbox's react
