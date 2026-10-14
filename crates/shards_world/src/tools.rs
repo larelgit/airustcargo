@@ -159,6 +159,9 @@ fn region_info(In(call): In<Call<RegionInfoArgs>>, region: Option<Res<ActiveRegi
         "links": m.links.iter().map(|l| format!("{} {}–{} through {}", l.kind, l.a, l.b, cells_text(&l.cells))).collect::<Vec<_>>(),
         "manifest_hash": format!("{:016x}", region.hash),
     });
+    if m.origin != [0.0, 0.0] {
+        out["north_west_corner"] = serde_json::json!(fmt_pos(m.corner()));
+    }
     if call.args.manifest {
         out["manifest"] = serde_json::to_value(m).map_err(|e| e.to_string())?;
     }
