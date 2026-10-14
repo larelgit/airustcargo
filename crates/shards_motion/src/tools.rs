@@ -245,15 +245,15 @@ fn jump(
             let toward = if intent.move_dir.length_squared() > 1e-4 { intent.move_dir } else { facing };
             let (distance, hazard) =
                 reach_toward(&physics, &params, tf.translation, state.water_surface, toward, 1.2, ai.safe_drop, Some(entity));
+            // The one rule for what is climbed (a swimmer's rise counts its skin), the same the
+            // controller, the planner and `clearance` ask.
             match hazard {
-                Hazard::Ledge { rise }
-                    if rise <= params.mantle_height + 0.05 && distance <= CLIMB_OUT_REACH + 0.02 =>
-                {
+                Hazard::Ledge { rise } if params.can_climb(rise, true) && distance <= CLIMB_OUT_REACH + 0.02 => {
                     format!("ok: jumping out of the water onto the ledge {distance:.1}m ahead (+{rise:.1}m)")
                 }
                 // The controller climbs out only from right at the ledge: an "ok" here would
                 // press a jump that does nothing.
-                Hazard::Ledge { rise } if rise <= params.mantle_height + 0.05 => {
+                Hazard::Ledge { rise } if params.can_climb(rise, true) => {
                     return Err(format!(
                         "the ledge is {distance:.1}m ahead (+{rise:.1}m), out of reach from the water: swim within \
                          {CLIMB_OUT_REACH:.1}m of it and jump, or keep swimming into it (that climbs out too)"
