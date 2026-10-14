@@ -44,8 +44,19 @@ fn jump_in_water_next_to_a_ledge_climbs_out() {
     block(app.world_mut(), Vec3::new(-20.0, -6.0, -20.0), Vec3::new(20.0, -5.0, 20.0));
     block(app.world_mut(), Vec3::new(4.0, -6.0, -20.0), Vec3::new(8.0, 0.3, 20.0));
     volume(app.world_mut(), Vec3::new(-20.0, -5.0, -20.0), Vec3::new(4.0, 0.0, 20.0), VolumeKind::Water);
-    let e = player(app.world_mut(), Vec3::new(3.4, -1.1, 0.0));
+    // 0.7 m short of the ledge: a jump would do nothing there, so the tool says so.
+    let e = player(app.world_mut(), Vec3::new(2.9, -1.1, 0.0));
     app.world_mut().get_mut::<Transform>(e).unwrap().look_to(Vec3::X, Vec3::Y);
+    step(&mut app, 30);
+    assert_eq!(state(&app, e).mode, MotionMode::Water);
+    let far = fails(&mut app, "jump", json!({}));
+    assert!(far.starts_with("the ledge is 0.7m ahead (+1.4m), out of reach"), "{far}");
+    assert!(far.contains("swim within 0.3m"), "{far}");
+    assert_eq!(intent(&app, e).pressed.len(), 0, "a refused jump presses nothing");
+    step(&mut app, 60);
+    assert!(seen(&app).mantled.is_empty());
+
+    app.world_mut().get_mut::<Transform>(e).unwrap().translation = Vec3::new(3.4, -1.1, 0.0);
     step(&mut app, 30);
     assert_eq!(state(&app, e).mode, MotionMode::Water);
     let out = ok(&mut app, "jump", json!({}));

@@ -18,6 +18,8 @@ const SHALLOW_MARGIN: f32 = 0.1;
 const FLOAT_RATE: f32 = 4.0;
 /// A ledge is climbed when the input points at it within 60°.
 const PUSH_COS: f32 = 0.5;
+/// A jump in water climbs out onto a ledge this close in front of the body (m).
+pub(crate) const CLIMB_OUT_REACH: f32 = 0.3;
 
 /// What happened, for the events the system triggers afterwards.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -434,7 +436,7 @@ impl Step<'_, '_> {
 
     /// A steep surface right in front (within a hand's reach), as a slide would touch it.
     fn wall_ahead(&self, feet: Vec3, dir: Vec3) -> Option<Touch> {
-        let hit = self.mover.cast(feet, dir, self.mover.skin + 0.3)?;
+        let hit = self.mover.cast(feet, dir, self.mover.skin + CLIMB_OUT_REACH)?;
         (!self.mover.walkable(hit.normal)).then_some(Touch {
             plane: hit.normal,
             normal: hit.normal,

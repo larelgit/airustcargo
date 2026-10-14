@@ -15,6 +15,7 @@ use shards_core::input_names::{GLIDE, JUMP, SPRINT};
 use shards_core::{Intent, Order, Target};
 
 use crate::ai::MotionAi;
+use crate::controller::locomotion::CLIMB_OUT_REACH;
 use crate::controller::{CharacterController, CharacterParams, LocomotionInput, MotionMode, MotionState};
 use crate::intent::GlideUntilLanded;
 use crate::perception::{self, reach_toward, Bodies, Hazard};
@@ -231,8 +232,18 @@ fn jump(
             let (distance, hazard) =
                 reach_toward(&physics, &params, tf.translation, state.water_surface, toward, 1.2, ai.safe_drop, Some(entity));
             match hazard {
-                Hazard::Ledge { rise } if rise <= params.mantle_height + 0.05 => {
+                Hazard::Ledge { rise }
+                    if rise <= params.mantle_height + 0.05 && distance <= CLIMB_OUT_REACH + 0.02 =>
+                {
                     format!("ok: jumping out of the water onto the ledge {distance:.1}m ahead (+{rise:.1}m)")
+                }
+                // The controller climbs out only from right at the ledge: an "ok" here would
+                // press a jump that does nothing.
+                Hazard::Ledge { rise } if rise <= params.mantle_height + 0.05 => {
+                    return Err(format!(
+                        "the ledge is {distance:.1}m ahead (+{rise:.1}m), out of reach from the water: swim within \
+                         {CLIMB_OUT_REACH:.1}m of it and jump, or keep swimming into it (that climbs out too)"
+                    ));
                 }
                 _ => {
                     return Err(format!(
