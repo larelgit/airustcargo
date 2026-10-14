@@ -109,6 +109,51 @@ fn the_same_file_spawns_again_as_a_new_instance() {
 }
 
 #[test]
+fn a_game_places_level_files_the_content_does_not_list() {
+    // The tiles of a region: files nobody listed, requested by path, waited for, placed.
+    let mut tile = crate::gltf::Gltf::new();
+    let cube = tile.cube();
+    tile.root(NodeSpec::new("Ground").scale([8.0, 0.5, 8.0]).mesh(cube).props(json!({"collider": "auto"})));
+    tile.root(NodeSpec::new("North").at([0.0, 0.0, -4.0]).props(json!({"socket": "road"})));
+    tile.root(NodeSpec::new("South").at([0.0, 0.0, 4.0]).props(json!({"socket": "road"})));
+    let dir = temp_assets("tiles", &[("tiles/ruin_a.gltf", tile.gltf().as_bytes())]);
+    let mut app = app_in(&dir);
+
+    let path = "tiles/ruin_a.gltf";
+    let status = |app: &App| app.world().resource::<shards_level::LevelLibrary>().status(app.world(), path);
+    assert!(matches!(status(&app), shards_core::LoadStatus::Failed(why) if why.contains("was never requested")));
+    let err = shards_level::spawn_level_file(app.world_mut(), path, Transform::default(), "tile").unwrap_err();
+    assert!(err.contains("was never requested"), "{err}");
+
+    shards_level::request_level(app.world_mut(), path);
+    update_until(&mut app, "the tile loads", |app| status(app) == shards_core::LoadStatus::Ready);
+
+    // Sockets can be read from the file before anything is spawned.
+    let sockets: Vec<(String, Vec3)> = level_asset(app.world(), path)
+        .unwrap()
+        .markers()
+        .into_iter()
+        .map(|m| (m.name, m.position))
+        .collect();
+    assert_eq!(sockets, [("road".to_owned(), Vec3::new(0.0, 0.0, -4.0)), ("road".to_owned(), Vec3::new(0.0, 0.0, 4.0))]);
+
+    // Two tiles, one next to the other and one turned.
+    let a = shards_level::spawn_level_file(app.world_mut(), path, Transform::from_xyz(0.0, 0.0, 0.0), "tile").unwrap();
+    let turned = Transform::from_xyz(8.0, 0.0, 0.0).with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
+    let b = shards_level::spawn_level_file(app.world_mut(), path, turned, "tile").unwrap();
+    assert_eq!((a.instance, b.instance, a.entities.len(), b.entities.len()), (1, 2, 3, 3));
+    let socket_at = |app: &App, e: Entity| app.world().get::<Transform>(e).unwrap().translation;
+    // The turned tile's north socket (0, 0, -4) turns to (-4, 0, 0): at x = 4.
+    assert!(close(socket_at(&app, b.entities[1]), Vec3::new(4.0, 0.0, 0.0)));
+    assert!(close(socket_at(&app, b.entities[2]), Vec3::new(12.0, 0.0, 0.0)));
+    assert_eq!(app.world().get::<FromLevel>(b.entities[0]).unwrap().level, "tile");
+
+    // A region change removes a tile by its instance.
+    assert_eq!(despawn_level(app.world_mut(), a.instance), 3);
+    assert_eq!(app.world().resource::<LevelInstances>().iter().map(|i| i.id).collect::<Vec<_>>(), [2]);
+}
+
+#[test]
 fn a_level_loaded_by_the_gate_is_there_at_tick_zero() {
     let app = app();
     assert_eq!(shards_core_tick(&app), 0);

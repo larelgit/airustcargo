@@ -94,6 +94,15 @@ fn never_requested(path: &str) -> String {
     format!("level file `{path}` was never requested: ask LevelLibrary::request, or list it in a content `level` definition")
 }
 
+/// Starts loading the level file `path` (an asset path like `tiles/ruin_a.gltf`) and returns
+/// its handle; asking again returns the same one. Wait for it with
+/// [`LevelLibrary::status`] in a loading-gate check, then spawn with
+/// [`spawn_level_file`](crate::spawn_level_file).
+pub fn request_level(world: &mut World, path: &str) -> Handle<LevelAsset> {
+    let server = world.resource::<AssetServer>().clone();
+    world.resource_mut::<LevelLibrary>().request(&server, path)
+}
+
 /// The loaded level at `path` (see [`LevelLibrary::asset`]).
 pub fn level_asset<'a>(world: &'a World, path: &str) -> Result<&'a LevelAsset, String> {
     match world.get_resource::<LevelLibrary>() {

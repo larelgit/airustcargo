@@ -106,11 +106,11 @@
 //! ## Many levels (tiles, regions)
 //!
 //! A game that places level files the content does not list (the tiles of a generated
-//! region) calls [`LevelLibrary::request`] for each path, holds the simulation with a
-//! loading-gate check on [`LevelLibrary::status`], reads sockets and other markers from
-//! [`LevelAsset::markers`] without spawning anything, and spawns with [`spawn_level_as`] at
-//! the tile's transform (composed with every node's). [`despawn_level`] removes a tile by its
-//! instance number.
+//! region) calls [`request_level`] for each path, holds the simulation with a loading-gate
+//! check on [`LevelLibrary::status`], reads sockets and other markers from
+//! [`LevelAsset::markers`] without spawning anything, and spawns with [`spawn_level_file`]
+//! at the tile's transform (composed with every node's). [`despawn_level`] removes a tile by
+//! its instance number.
 //!
 //! ## Determinism
 //!
@@ -144,14 +144,14 @@ use shards_core::EngineAppExt;
 
 pub use asset::{Bounds, LevelAsset, LevelLoadError, LevelLoader, LevelNode, MarkerInfo};
 pub use def::LevelDef;
-pub use library::{level_asset, LevelLibrary};
+pub use library::{level_asset, request_level, LevelLibrary};
 pub use marker::{LevelMarker, MarkerKind, RequiredMarker};
 pub use props::{check_level, LevelProblem, PROPERTIES};
 pub use render::LevelVisual;
 pub use spawn::{
     despawn_level, reload_level, spawn_level, spawn_level_as, FromLevel, LevelInstance, LevelInstances, SpawnedLevel,
 };
-pub use tools::{spawn_level_by_id, LevelInfoArgs, LevelReloadArgs, SpawnLevelArgs};
+pub use tools::{spawn_level_by_id, spawn_level_file, LevelInfoArgs, LevelReloadArgs, SpawnLevelArgs};
 
 /// Version of the engine crates (they share one).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

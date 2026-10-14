@@ -67,9 +67,15 @@ pub(crate) fn def_of(world: &World, id: &str) -> Result<LevelDef, String> {
 /// spawned again (each spawn is an instance).
 pub fn spawn_level_by_id(world: &mut World, id: &str, at: Option<Transform>) -> Result<SpawnedLevel, String> {
     let def = def_of(world, id)?;
-    let level = level_asset(world, &def.file)?.clone();
     let at = at.unwrap_or_else(|| Transform::from_translation(def.at));
-    spawn_level_as(world, &level, at, id)
+    spawn_level_file(world, &def.file, at, id)
+}
+
+/// Spawns the already loaded level file `path` (see [`request_level`]) under `label`.
+/// For games that place level files the content does not list: the tiles of a region.
+pub fn spawn_level_file(world: &mut World, path: &str, at: Transform, label: &str) -> Result<SpawnedLevel, String> {
+    let level = level_asset(world, path)?.clone();
+    spawn_level_as(world, &level, at, label)
 }
 
 /// Spawn a level (content kind `level`, a glTF file from Blender): its objects become
