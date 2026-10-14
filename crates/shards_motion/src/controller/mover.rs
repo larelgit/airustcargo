@@ -16,6 +16,9 @@ const TINY: f32 = 1e-5;
 const EDGE_PROBE: f32 = 0.02;
 /// A ledge probe needs at least this much room on top (m).
 const MIN_LEDGE_ROOM: f32 = 0.1;
+/// The nearest the capsule may sit to anything, in skins, before it is pushed back out
+/// to a full skin: room for rounding, and for resting on an edge.
+const MIN_GAP: f32 = 0.5;
 
 /// Ground under the capsule.
 #[derive(Clone, Copy, Debug)]
@@ -57,6 +60,8 @@ pub(crate) struct Mover<'a> {
     physics: &'a PhysicsWorld,
     filter: QueryFilter,
     geom: Geom,
+    /// The capsule grown by the minimum gap: the ground probe (see [`Mover::ground`]).
+    probe: Geom,
     /// Capsule center above the feet.
     center: f32,
     pub radius: f32,
@@ -72,15 +77,24 @@ impl<'a> Mover<'a> {
         let radius = params.radius.max(0.01);
         let height = params.height.max(2.0 * radius);
         let mask = layers.filters.without(LayerMask::CHARACTER);
+        let skin = params.skin_width.clamp(0.001, radius * 0.5);
+        let grown = skin * MIN_GAP;
         Self {
             physics,
             filter: QueryFilter::new(mask).excluding(me),
             geom: Geom::new(&Shape::capsule(radius, height)),
+            probe: Geom::new(&Shape::capsule(radius + grown, height + 2.0 * grown)),
             center: height * 0.5,
             radius,
-            skin: params.skin_width.clamp(0.001, radius * 0.5),
+            skin,
             min_ground_y: params.max_slope_deg.clamp(0.0, 89.9).to_radians().cos(),
         }
+    }
+
+    /// The nearest the capsule may sit to anything before
+    /// [`depenetrate`](Self::depenetrate) pushes it back out.
+    fn min_gap(&self) -> f32 {
+        self.skin * MIN_GAP
     }
 
     fn pose(&self, feet: Vec3) -> Pose {
@@ -101,8 +115,7 @@ impl<'a> Mover<'a> {
     /// the surface measured along the surface normal, so a slanted approach (into a
     /// corner, along a wall) does not end closer than a straight one.
     fn stop(&self, hit: &ShapeHit, dir: Vec3) -> f32 {
-        let closing = dir.dot(-hit.normal).max(1e-3);
-        (hit.distance - self.skin / closing).max(0.0)
+        stop_short(hit, dir, self.skin)
     }
 
     /// How far a move of `dist` looks ahead: a surface met at an angle is a skin away
@@ -157,11 +170,18 @@ impl<'a> Mover<'a> {
         Slide { feet: pos, touches }
     }
 
-    /// Ground within `max` below the feet.
+    /// Ground within `max` below the feet. The probe is the capsule grown by the
+    /// minimum gap: going down past an edge beside the feet (a stair nosing) it settles
+    /// on that edge instead of slipping by nearer than [`depenetrate`](Self::depenetrate)
+    /// allows, which would push it back off sideways and undo every step onto it. On a
+    /// plain floor or slope it rests where a bare capsule would, a skin above.
     pub fn ground(&self, feet: Vec3, max: f32) -> Option<Ground> {
-        let hit = self.cast(feet, Vec3::NEG_Y, max + self.skin)?;
+        let grown = self.min_gap();
+        let reach = max + self.skin - grown;
+        let hit = self.physics.sweep(&self.probe, &self.pose(feet), Vec3::NEG_Y, reach, &self.filter, StartOverlap::LetOut)?;
         let normal = self.surface_normal(feet, &hit);
-        Some(Ground { drop: self.stop(&hit, Vec3::NEG_Y), normal, walkable: self.walkable(normal) })
+        let drop = stop_short(&hit, Vec3::NEG_Y, self.skin - grown);
+        Some(Ground { drop, normal, walkable: self.walkable(normal) })
     }
 
     /// The surface the capsule rests on. Resting on an edge (a stair nosing, a ledge)
@@ -183,15 +203,16 @@ impl<'a> Mover<'a> {
     }
 
     /// Steps over something up to `height` tall: up, along `delta` (horizontal), down
-    /// onto walkable ground no lower than the start.
+    /// onto walkable ground no lower than the start. Ground level with the start is
+    /// right at the bottom of that search, so it looks a skin deeper than it goes.
     pub fn step_up(&self, feet: Vec3, delta: Vec3, height: f32) -> Option<Slide> {
         let rise = self.free(feet, Vec3::Y, height);
         if rise < TINY * 100.0 {
             return None;
         }
         let moved = self.slide(feet + Vec3::Y * rise, delta, true);
-        let ground = self.ground(moved.feet, rise)?;
-        ground.walkable.then(|| Slide { feet: moved.feet - Vec3::Y * ground.drop, touches: moved.touches })
+        let ground = self.ground(moved.feet, rise + self.skin)?;
+        ground.walkable.then(|| Slide { feet: moved.feet - Vec3::Y * ground.drop.min(rise), touches: moved.touches })
     }
 
     /// A walkable top at most `max_rise` above the feet, reached by going up, then
@@ -236,9 +257,9 @@ impl<'a> Mover<'a> {
         Some(corner)
     }
 
-    /// Pushes the capsule out of anything it sinks into or sits closer to than half the
-    /// skin (spawned inside a wall, moved by something else, rounding), back to a full
-    /// skin away; nearest first.
+    /// Pushes the capsule out of anything it sinks into or sits nearer to than the
+    /// minimum gap (spawned inside a wall, moved by something else, rounding), back to a
+    /// full skin away; nearest first.
     pub fn depenetrate(&self, mut feet: Vec3) -> Vec3 {
         for _ in 0..4 {
             let near = self.physics.closer_than(&self.geom, &self.pose(feet), &self.filter, self.skin);
@@ -248,7 +269,8 @@ impl<'a> Mover<'a> {
                 _ => Some(p),
             });
             match deepest {
-                Some(p) if p.depth > self.skin * 0.5 => feet += p.normal * p.depth,
+                // `depth` is how far short of a full skin it sits.
+                Some(p) if self.skin - p.depth < self.min_gap() => feet += p.normal * p.depth,
                 _ => break,
             }
         }
@@ -296,6 +318,13 @@ pub(crate) struct Surroundings {
     pub volumes: Vec<Entity>,
     pub water: Option<f32>,
     pub updraft: Option<(f32, f32)>,
+}
+
+/// How far along `dir` a shape may go toward `hit` to end `gap` away from it, measured
+/// along the surface normal.
+fn stop_short(hit: &ShapeHit, dir: Vec3, gap: f32) -> f32 {
+    let closing = dir.dot(-hit.normal).max(1e-3);
+    (hit.distance - gap / closing).max(0.0)
 }
 
 /// `v` on the ground plane.

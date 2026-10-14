@@ -211,3 +211,27 @@ fn crowd() -> Vec<[u32; 3]> {
 fn a_crowd_settles_apart_and_deterministically() {
     assert_eq!(crowd(), crowd());
 }
+
+#[test]
+fn resting_against_a_turned_wall_stays_on_the_ground() {
+    // Whatever the gap the body happens to rest at, sliding down along a wall is not
+    // landing on it.
+    let mut lifted = Vec::new();
+    for (x, turn) in [(3.0_f32, 0.0_f32), (3.0, 0.3), (12.9, 1.1), (55.55, 0.7)] {
+        for k in -10..=10 {
+            let gap = SKIN * 0.5 + k as f32 * 2e-6;
+            let mut app = app();
+            floor(app.world_mut());
+            let rot = Quat::from_rotation_y(turn);
+            let face = Vec3::new(x, 0.0, 0.0);
+            turned_block(app.world_mut(), face + Vec3::Y * 1.5 + rot * Vec3::X * 0.5, Vec3::new(0.5, 1.5, 5.0), rot);
+            let e = hero(app.world_mut(), face + rot * Vec3::NEG_X * (RADIUS + gap) + Vec3::Y * SKIN);
+            step(&mut app, 3);
+            let s = state(&app, e);
+            if s.mode != MotionMode::Ground || !s.grounded {
+                lifted.push(format!("wall at {x} turned {turn}, gap {gap}: {:?} at {}", s.mode, feet(&app, e)));
+            }
+        }
+    }
+    assert!(lifted.is_empty(), "{}", lifted.join("\n"));
+}
