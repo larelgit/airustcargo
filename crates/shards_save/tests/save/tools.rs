@@ -229,7 +229,6 @@ fn the_status_names_the_save_folder() {
 }
 
 #[test]
-#[ignore = "SEAM(C1): needs ai_core::replay::restart_from_current, which C1 adds"]
 fn a_load_keeps_the_recording_verifiable() {
     let dir = TempDir::new("verify");
     let mut app = game(&dir);

@@ -105,7 +105,7 @@ fn old_files_migrate_and_load() {
     assert_eq!(chests(&mut app)[0], ("chest.0".to_owned(), Chest { open: true, loot: vec![5] }));
     // `weather` is newer than the file: its `missing` ran.
     assert_eq!(app.world().resource::<Weather>().0, "clear");
-    assert!(lines(&app, JournalKind::Warn, "").iter().all(|l| l.contains("SEAM(C1)")), "no warning but the interim one: {:?}", journal(&app));
+    assert!(lines(&app, JournalKind::Warn, "").is_empty(), "no warnings: {:?}", journal(&app));
 
     // The file is not touched by reading it; saving again writes the current versions.
     let sample = fs::read(dir.file("world/old.save")).unwrap();
@@ -149,8 +149,10 @@ fn a_section_from_a_newer_version_is_refused_by_name() {
     file.sections.0.get_mut("inventory").unwrap().version = 7;
     fs::write(&path, file.encode()).unwrap();
     let err = fails(&mut app, "load_game", json!({"what": "character"}));
-    assert!(err.contains("slot1.save: section inventory was saved by a newer version: 7 > 3"), "{err}");
-    assert!(err.contains("nothing was applied"), "{err}");
+    assert!(
+        err.starts_with("character/slot1 was saved by a newer version of the game (section inventory v7 > v3); nothing was changed"),
+        "{err}"
+    );
 }
 
 #[test]

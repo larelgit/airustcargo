@@ -21,12 +21,22 @@
 //! decides what "everything" is: the envelope, then migration and reading each section).
 //! When that is not the primary, the primary is rewritten from it and the caller is told
 //! what was wrong, to put in the journal.
+//!
+//! **A newer save is not damage.** A copy that only fails because a newer version of the
+//! game wrote it (the envelope is `shards-save/2`, or a section is at a version above this
+//! build's: [`Fault::Newer`]) is refused with a clear error and *nothing is touched*: no
+//! fallback to an older backup (that would quietly lose the newer progress), no `.damaged`,
+//! no rewritten primary. Writing refuses the same way ([`Store::write_guarded`]): while any
+//! copy of the slot is newer, this build saves nothing into that slot, so the newer file
+//! can never be rotated away or renamed. The error says to use another slot or update the
+//! game. (The other way out, keeping the newer file as one more backup, would lose it after
+//! three more saves.)
 
 use std::fs::{self, File};
 use std::io::{ErrorKind, Write};
 use std::path::PathBuf;
 
-use crate::file::{is_intact, SaveFile};
+use crate::file::{is_intact, Fault, SaveFile};
 use crate::section::SaveKind;
 
 /// How many older saves are kept next to the newest.
@@ -86,6 +96,14 @@ fn file_name(slot: &str, which: Which) -> String {
     format!("{slot}{}", which.suffix())
 }
 
+/// How a message names a copy: `world/slot1`, `world/slot1 (backup 2)`.
+fn subject(kind: SaveKind, slot: &str, which: Which) -> String {
+    match which {
+        Which::Save => format!("{kind}/{slot}"),
+        other => format!("{kind}/{slot} ({})", other.describe()),
+    }
+}
+
 /// What a read had to do to get a save.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Recovery {
@@ -120,6 +138,8 @@ pub enum FileState {
     Ok { tick: u64, label: String, size: u64, sections: usize },
     /// Fails a check: the reason.
     Damaged(String),
+    /// A newer version of the game wrote it: what is newer. Not damaged, and left alone.
+    Newer(String),
 }
 
 /// A file of a slot and its health.
@@ -187,8 +207,18 @@ impl Store {
     }
 
     /// Writes `bytes` (an encoded [`SaveFile`]) as the slot's save, shifting the older ones
-    /// into the backups. Atomic: whatever happens, the slot keeps a complete save.
+    /// into the backups. Atomic: whatever happens, the slot keeps a complete save. Refuses,
+    /// writing nothing, when a copy of the slot is from a newer format ([`write_guarded`](Self::write_guarded)
+    /// also looks at what the game's sections say).
     pub fn write(&self, kind: SaveKind, slot: &str, bytes: &[u8]) -> Result<(), String> {
+        self.write_guarded(kind, slot, bytes, &|_| None)
+    }
+
+    /// [`write`](Self::write), but first looks at every copy of the slot that is there: one
+    /// from a newer format, or one `newer` says is newer (it gets the decoded file and returns
+    /// what is newer, `section inventory v7 > v5`) makes the write refuse, changing nothing.
+    pub fn write_guarded(&self, kind: SaveKind, slot: &str, bytes: &[u8], newer: &dyn Fn(&SaveFile) -> Option<String>) -> Result<(), String> {
+        self.refuse_newer(kind, slot, newer)?;
         let dir = self.dir(kind);
         fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         let (primary, tmp) = (self.path(kind, slot, Which::Save), self.path(kind, slot, Which::Tmp));
@@ -199,6 +229,29 @@ impl Store {
             return Err(e);
         }
         self.sync_dir(&dir)
+    }
+
+    /// Errors when a copy of the slot is from a newer version: writing would rotate it into
+    /// the backups and, three saves later, lose it.
+    fn refuse_newer(&self, kind: SaveKind, slot: &str, newer: &dyn Fn(&SaveFile) -> Option<String>) -> Result<(), String> {
+        for which in Which::copies() {
+            let Ok(bytes) = fs::read(self.path(kind, slot, which)) else {
+                continue;
+            };
+            let detail = match SaveFile::decode(&bytes) {
+                Err(Fault::Newer(detail)) => Some(detail),
+                Err(Fault::Damaged(_)) => None,
+                Ok(file) => newer(&file),
+            };
+            if let Some(detail) = detail {
+                return Err(format!(
+                    "{} was saved by a newer version of the game ({detail}), so this build does not overwrite it and nothing was written. \
+                     Save into another slot, or update the game",
+                    subject(kind, slot, which)
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn write_tmp(&self, tmp: &PathBuf, bytes: &[u8]) -> Result<(), String> {
@@ -252,16 +305,32 @@ impl Store {
     /// it into the value the caller wants; an `Err` from it makes the copy damaged.
     /// With `repair`, a primary that was not usable is written again from the backup that
     /// was. A leftover `.tmp` (a crash while writing) is removed.
+    ///
+    /// A copy that is [`Fault::Newer`] ends the read at once: the error says so and nothing
+    /// is changed (see the module docs).
     pub fn read<T>(
         &self,
         kind: SaveKind,
         slot: &str,
         repair: bool,
-        mut accept: impl FnMut(&SaveFile) -> Result<T, String>,
+        mut accept: impl FnMut(&SaveFile) -> Result<T, Fault>,
     ) -> Result<Read<T>, String> {
-        if repair {
+        let mut newer = false;
+        let result = self.read_copies(kind, slot, repair, &mut accept, &mut newer);
+        if repair && !newer {
             let _ = fs::remove_file(self.path(kind, slot, Which::Tmp));
         }
+        result
+    }
+
+    fn read_copies<T>(
+        &self,
+        kind: SaveKind,
+        slot: &str,
+        repair: bool,
+        accept: &mut dyn FnMut(&SaveFile) -> Result<T, Fault>,
+        newer: &mut bool,
+    ) -> Result<Read<T>, String> {
         let mut problems: Vec<(Which, String)> = Vec::new();
         let mut found_any = false;
         for which in Which::copies() {
@@ -281,13 +350,19 @@ impl Store {
             found_any = true;
             let outcome = SaveFile::decode(&bytes).and_then(|file| {
                 if file.kind != kind {
-                    return Err(format!("it is a {} save, not a {kind} save", file.kind));
+                    return Err(Fault::Damaged(format!("it is a {} save, not a {kind} save", file.kind)));
                 }
                 accept(&file).map(|value| (file, value))
             });
             let (file, value) = match outcome {
                 Ok(ok) => ok,
-                Err(problem) => {
+                Err(fault @ Fault::Newer(_)) => {
+                    *newer = true;
+                    let before: Vec<String> = problems.iter().map(|(w, p)| format!("{}: {p}", file_name(slot, *w))).collect();
+                    let also = if before.is_empty() { String::new() } else { format!(" (the copies before it are unusable: {})", before.join("; ")) };
+                    return Err(format!("{} was {fault}; nothing was changed{also}. Update the game to read it, or use another slot", subject(kind, slot, which)));
+                }
+                Err(Fault::Damaged(problem)) => {
                     problems.push((which, problem));
                     continue;
                 }
@@ -354,6 +429,12 @@ impl Store {
 
     /// How each copy of a slot is, without changing anything.
     pub fn inspect(&self, kind: SaveKind, slot: &str) -> SlotInfo {
+        self.inspect_with(kind, slot, &|_| None)
+    }
+
+    /// [`inspect`](Self::inspect), where `newer` (see [`write_guarded`](Self::write_guarded))
+    /// also says which copies are from a newer version of the game.
+    pub fn inspect_with(&self, kind: SaveKind, slot: &str, newer: &dyn Fn(&SaveFile) -> Option<String>) -> SlotInfo {
         let files = Which::copies()
             .map(|which| {
                 let name = file_name(slot, which);
@@ -361,9 +442,13 @@ impl Store {
                     Err(e) if e.kind() == ErrorKind::NotFound => FileState::Missing,
                     Err(e) => FileState::Damaged(format!("cannot be read: {e}")),
                     Ok(bytes) => match SaveFile::decode(&bytes) {
-                        Ok(f) if f.kind == kind => FileState::Ok { tick: f.tick, label: f.label, size: bytes.len() as u64, sections: f.sections.len() },
+                        Ok(f) if f.kind == kind => match newer(&f) {
+                            Some(detail) => FileState::Newer(detail),
+                            None => FileState::Ok { tick: f.tick, label: f.label, size: bytes.len() as u64, sections: f.sections.len() },
+                        },
                         Ok(f) => FileState::Damaged(format!("it is a {} save, not a {kind} save", f.kind)),
-                        Err(e) => FileState::Damaged(e),
+                        Err(Fault::Newer(detail)) => FileState::Newer(detail),
+                        Err(Fault::Damaged(e)) => FileState::Damaged(e),
                     },
                 };
                 FileInfo { which, name, state }
@@ -518,9 +603,108 @@ mod tests {
         let store = Store::new(dir("accept"));
         store.write(SaveKind::World, "a", &file(1).encode()).unwrap();
         store.write(SaveKind::World, "a", &file(2).encode()).unwrap();
-        let r = store.read(SaveKind::World, "a", true, |f| if f.tick == 2 { Err("section s was saved by a newer version: 7 > 5".to_owned()) } else { Ok(f.tick) }).unwrap();
+        let r = store.read(SaveKind::World, "a", true, |f| if f.tick == 2 { Err(Fault::Damaged("section s does not read".to_owned())) } else { Ok(f.tick) }).unwrap();
         assert_eq!(r.value, 1);
-        assert_eq!(r.recovery.unwrap().problem, "section s was saved by a newer version: 7 > 5");
+        assert_eq!(r.recovery.unwrap().problem, "section s does not read");
+        let _ = fs::remove_dir_all(&store.root);
+    }
+
+    /// The bytes of every file in the slot's folder, by name.
+    fn snapshot(store: &Store) -> BTreeMap<String, Vec<u8>> {
+        fs::read_dir(store.dir(SaveKind::World)).unwrap().map(|e| e.unwrap()).map(|e| (e.file_name().into_string().unwrap(), fs::read(e.path()).unwrap())).collect()
+    }
+
+    fn newer_than(file: &SaveFile) -> Option<String> {
+        (file.tick >= 100).then(|| format!("section s v{} > v1", file.tick))
+    }
+
+    #[test]
+    fn a_newer_save_is_refused_and_nothing_is_touched() {
+        let store = Store::new(dir("newer"));
+        store.write(SaveKind::World, "a", &file(1).encode()).unwrap();
+        store.write(SaveKind::World, "a", &file(2).encode()).unwrap();
+        // The primary is from a newer build (here: tick 100 stands for section version 100).
+        store.write(SaveKind::World, "a", &file(100).encode()).unwrap();
+        let before = snapshot(&store);
+        let read = |repair| {
+            store.read(SaveKind::World, "a", repair, |f| match newer_than(f) {
+                Some(detail) => Err(Fault::Newer(detail)),
+                None => Ok(f.tick),
+            })
+        };
+        for repair in [false, true] {
+            let err = read(repair).unwrap_err();
+            assert!(
+                err.starts_with("world/a was saved by a newer version of the game (section s v100 > v1); nothing was changed"),
+                "{err}"
+            );
+        }
+        assert_eq!(snapshot(&store), before, "no fallback, no .damaged, no rewrite");
+        // `inspect` calls it newer, not damaged.
+        let info = store.inspect(SaveKind::World, "a");
+        assert!(info.files.iter().all(|f| !matches!(f.state, FileState::Damaged(_))));
+
+        // A newer format reads as newer too, and so does one that is only a header: nothing else is checked.
+        fs::write(store.path(SaveKind::World, "a", Which::Save), b"shards-save/2 crc32=00000000 len=0\n").unwrap();
+        let before = snapshot(&store);
+        let err = store.read(SaveKind::World, "a", true, |f| Ok(f.tick)).unwrap_err();
+        assert!(err.starts_with("world/a was saved by a newer version of the game (save format shards-save/2 > shards-save/1); nothing was changed"), "{err}");
+        assert_eq!(snapshot(&store), before);
+        assert_eq!(store.inspect(SaveKind::World, "a").files[0].state, FileState::Newer("save format shards-save/2 > shards-save/1".to_owned()));
+        let _ = fs::remove_dir_all(&store.root);
+    }
+
+    #[test]
+    fn a_newer_backup_behind_a_damaged_primary_is_not_skipped() {
+        let store = Store::new(dir("newer_backup"));
+        for tick in [1, 100, 2] {
+            store.write(SaveKind::World, "a", &file(tick).encode()).unwrap();
+        }
+        // Primary 2, bak1 100 (newer), bak2 1. The primary is damaged: the newest good copy
+        // is the newer one, and the older bak2 would lose its progress, so the read stops.
+        store.damage(SaveKind::World, "a", Which::Save, Damage::Flip).unwrap();
+        let before = snapshot(&store);
+        let err = store
+            .read(SaveKind::World, "a", true, |f| match newer_than(f) {
+                Some(detail) => Err(Fault::Newer(detail)),
+                None => Ok(f.tick),
+            })
+            .unwrap_err();
+        assert!(err.starts_with("world/a (backup 1) was saved by a newer version of the game (section s v100 > v1); nothing was changed"), "{err}");
+        assert!(err.contains("the copies before it are unusable: a.save: checksum mismatch"), "{err}");
+        assert_eq!(snapshot(&store), before);
+        let _ = fs::remove_dir_all(&store.root);
+    }
+
+    #[test]
+    fn writing_never_rotates_a_newer_save_away() {
+        let store = Store::new(dir("newer_write"));
+        store.write(SaveKind::World, "a", &file(1).encode()).unwrap();
+        store.write(SaveKind::World, "a", &file(100).encode()).unwrap();
+        let before = snapshot(&store);
+        // Section versions are the game's to judge: the guard says the primary is newer.
+        let err = store.write_guarded(SaveKind::World, "a", &file(3).encode(), &newer_than).unwrap_err();
+        assert!(err.starts_with("world/a was saved by a newer version of the game (section s v100 > v1), so this build does not overwrite it"), "{err}");
+        assert!(err.contains("Save into another slot"), "{err}");
+        assert_eq!(snapshot(&store), before, "not even a .tmp is left");
+
+        // So does a newer backup behind a primary that is damaged: the shift would push it out.
+        store.write_guarded(SaveKind::World, "b", &file(100).encode(), &|_| None).unwrap();
+        store.write_guarded(SaveKind::World, "b", &file(2).encode(), &|_| None).unwrap();
+        fs::write(store.path(SaveKind::World, "b", Which::Save), b"damaged").unwrap();
+        let err = store.write_guarded(SaveKind::World, "b", &file(3).encode(), &newer_than).unwrap_err();
+        assert!(err.starts_with("world/b (backup 1) was saved by a newer version"), "{err}");
+
+        // A newer format is refused by plain `write` too, whatever the sections say.
+        fs::write(store.path(SaveKind::World, "c", Which::Save), b"shards-save/7 whatever\n").unwrap();
+        let err = store.write(SaveKind::World, "c", &file(1).encode()).unwrap_err();
+        assert!(err.contains("(save format shards-save/7 > shards-save/1)"), "{err}");
+        assert_eq!(fs::read(store.path(SaveKind::World, "c", Which::Save)).unwrap(), b"shards-save/7 whatever\n");
+        assert!(!store.path(SaveKind::World, "c", Which::Damaged).exists());
+
+        // A slot whose copies are only damaged is written as before.
+        fs::write(store.path(SaveKind::World, "d", Which::Save), b"junk").unwrap();
+        store.write_guarded(SaveKind::World, "d", &file(4).encode(), &newer_than).unwrap();
         let _ = fs::remove_dir_all(&store.root);
     }
 
