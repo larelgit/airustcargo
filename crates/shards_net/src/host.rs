@@ -1208,7 +1208,7 @@ fn flush(host: &mut NetHost, endpoint: &mut NetEndpoint) {
 
 #[cfg(test)]
 mod tests {
-    use super::rtt_jump;
+    use super::{rtt_jump, NetHost, Slot};
 
     #[test]
     fn an_rtt_jump_is_half_again_and_50_ms() {
@@ -1216,5 +1216,23 @@ mod tests {
         assert_eq!(rtt_jump(300.0, 180.0).as_deref(), None, "120 ms less is not half of 300");
         assert_eq!(rtt_jump(20.0, 60.0).as_deref(), None, "40 ms is noise");
         assert_eq!(rtt_jump(0.0, 300.0).as_deref(), None, "the first measure is not a jump");
+    }
+
+    #[test]
+    fn a_token_is_the_hosts_own_and_no_two_players_share_one() {
+        let hex = |t: &str| t.len() == 32 && t.chars().all(|c| c.is_ascii_hexdigit());
+        // A stand (runs repeat): two players of one name still get two tokens.
+        let mut host = NetHost::new();
+        let first = host.issue_token(7, 1, "player");
+        host.slots.insert(1, Slot { token: first.clone(), name: "player".into(), peer: None, left_at: None });
+        let second = host.issue_token(7, 2, "player");
+        assert!(hex(&first) && hex(&second), "{first} {second}");
+        assert_ne!(first, second);
+        assert!(!first.contains("player"));
+        // Over a real network: random, so another host (or run) issues another one.
+        let mut lan = NetHost { wall_clock: true, ..NetHost::new() };
+        let mut other = NetHost { wall_clock: true, ..NetHost::new() };
+        let (a, b) = (lan.issue_token(7, 1, "player"), other.issue_token(7, 1, "player"));
+        assert!(hex(&a) && a != b, "{a} {b}");
     }
 }
