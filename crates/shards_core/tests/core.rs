@@ -282,7 +282,7 @@ fn a_client_runs_no_sim_set_system_only_its_prediction() {
     }
     app.add_systems(
         FixedUpdate,
-        (|mut ran: ResMut<Ran>| ran.0.push("predict")).in_set(NetSet::Predict).after(SimSet::Cleanup),
+        (|mut ran: ResMut<Ran>| ran.0.push("predict")).in_set(NetSet::Predict),
     );
     load(&mut app);
     let hero = app.world_mut().query_filtered::<Entity, With<Hero>>().single(app.world()).unwrap();

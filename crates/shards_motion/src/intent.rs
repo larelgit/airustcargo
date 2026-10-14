@@ -5,10 +5,11 @@
 //! `.after(MotionSystems::Intent)` and then owns `external`, `locked`, `face` and may take
 //! `sprint` away (no stamina). Nothing here resets those after it.
 
-use ai_core::{AiIndex, SimSet};
+use ai_core::{AiAppExt, AiIndex, SimSet};
+use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
 use shards_core::input_names::{GLIDE, JUMP, SPRINT};
-use shards_core::{flat, Intent};
+use shards_core::{flat, follow_orders, Intent, NetSet, Predicted};
 
 use crate::controller::{LocomotionInput, MotionMode, MotionState};
 
@@ -18,6 +19,13 @@ pub enum MotionSystems {
     /// `SimSet::Act`: [`intent_to_locomotion`] fills [`LocomotionInput`] from `Intent`
     /// (`move_dir`, held `sprint` and `glide`, the `jump` press, facing).
     Intent,
+    /// `NetSet::Predict`, first: `follow_orders` for a client's own body ([`Predicted`]).
+    /// The action module steers its `Order::Attack` after it.
+    PredictOrders,
+    /// `NetSet::Predict`, after [`MotionSystems::PredictOrders`]: [`intent_to_locomotion`]
+    /// for a client's own body. The action machine's prediction comes after it, the
+    /// controller's ([`ControllerSystems::PredictMove`](crate::ControllerSystems::PredictMove)) last.
+    PredictIntent,
 }
 
 /// Put on a character by the `glide` tool: the glide is held until the character has been
@@ -32,8 +40,18 @@ pub struct GlideUntilLanded {
 
 pub(crate) fn plugin(app: &mut App) {
     app.register_type::<GlideUntilLanded>()
+        // The latch is the own body's on a client (its `glide` tool runs there).
+        .net_predicted::<GlideUntilLanded>()
         .configure_sets(FixedUpdate, MotionSystems::Intent.in_set(SimSet::Act))
-        .add_systems(FixedUpdate, intent_to_locomotion.in_set(MotionSystems::Intent));
+        .configure_sets(FixedUpdate, (MotionSystems::PredictOrders, MotionSystems::PredictIntent).chain().in_set(NetSet::Predict))
+        .add_systems(
+            FixedUpdate,
+            (
+                intent_to_locomotion::<()>.in_set(MotionSystems::Intent),
+                follow_orders::<With<Predicted>>.in_set(MotionSystems::PredictOrders),
+                intent_to_locomotion::<With<Predicted>>.in_set(MotionSystems::PredictIntent),
+            ),
+        );
 }
 
 /// What [`intent_to_locomotion`] reads and writes of a character.
@@ -48,11 +66,14 @@ type Steered = (Entity, &'static mut Intent, &'static mut LocomotionInput, &'sta
 /// - `face` toward `Intent.aim`, else toward the lock-on `Intent.target`.
 ///
 /// Dead or stunned characters are the action machine's business: it sets `locked`.
-pub fn intent_to_locomotion(
+///
+/// `F` picks the characters: `()` in the simulation, `With<Predicted>` where a client
+/// predicts its own body.
+pub fn intent_to_locomotion<F: QueryFilter + 'static>(
     mut commands: Commands,
     index: Res<AiIndex>,
     positions: Query<&Transform>,
-    mut characters: Query<Steered>,
+    mut characters: Query<Steered, F>,
 ) {
     for (entity, mut intent, mut input, state, tf, latch) in &mut characters {
         if input.external != Vec3::ZERO {

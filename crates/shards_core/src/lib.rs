@@ -30,7 +30,10 @@ pub use exit::{run_exit_hooks, ExitHook, ExitHooks};
 pub use intent::{flat, follow_orders, input_names, Intent, Order, Press, Target};
 pub use loading::{statuses as loading_statuses, LoadCheck, LoadStatus, LoadingGate};
 pub use seed::{adopt_seed, hold_seed, seed_ready, SeedLock};
-pub use state::{player_body, predicts, simulates, EngineState, LocalPlayer, NetRole, NetSet, PauseState, PlayerId, Predicted};
+pub use state::{
+    player_body, predicts, simulates, EngineState, LocalPlayer, NetPrediction, NetRole, NetSet, PauseState, PlayerId, Predicted,
+    PredictedMotion,
+};
 
 /// Version of the engine crates (they share one).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -311,7 +314,14 @@ impl Plugin for CorePlugin {
                 (SimSet::Input, SimSet::Think, SimSet::Act, SimSet::Move, SimSet::Resolve, SimSet::Cleanup)
                     .distributive_run_if(simulates),
             )
-            .configure_sets(FixedUpdate, NetSet::Predict.run_if(predicts))
+            .init_resource::<NetPrediction>()
+            .configure_sets(
+                FixedUpdate,
+                (NetSet::PredictInput, NetSet::Predict, NetSet::PredictEnd)
+                    .chain()
+                    .before(SimSet::Input)
+                    .distributive_run_if(predicts),
+            )
             // Invariants check the simulation where it runs: a client's world is the host's.
             .configure_sets(FixedLast, ai_core::InvariantSystems.run_if(simulates))
             .configure_sets(
@@ -321,7 +331,7 @@ impl Plugin for CorePlugin {
             .add_systems(
                 FixedUpdate,
                 (
-                    follow_orders.in_set(CoreSystems::FollowOrders),
+                    follow_orders::<()>.in_set(CoreSystems::FollowOrders),
                     intent::clear_presses.in_set(CoreSystems::ClearPresses),
                 ),
             )

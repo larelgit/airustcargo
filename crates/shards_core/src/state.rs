@@ -15,6 +15,7 @@
 //! leaves `PauseState` alone, so stepping a game never pops a menu up.
 
 use ai_core::journal::{AiJournal, JournalKind};
+use ai_core::state::ComponentValues;
 use ai_core::{sim, AiId, SimTick};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -85,12 +86,60 @@ pub fn predicts(role: Option<Res<NetRole>>) -> bool {
     role.is_some_and(|r| r.predicts())
 }
 
-/// `FixedUpdate` sets of the network layer.
+/// `FixedUpdate` sets of the network layer, chained in this order before `SimSet::Input`
+/// and run only where [`predicts`]. They are outside every `SimSet`: a client runs no
+/// `SimSet`.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NetSet {
-    /// A client moves its own body ahead of the host's state ([`Predicted`]); runs only
-    /// where [`predicts`]. It is outside every `SimSet`: a client runs no `SimSet`.
+    /// The network layer puts the inputs this machine sent for the tick into the own
+    /// body's `Intent` (the presses the capture took), as the host will have them.
+    PredictInput,
+    /// A client moves its own body ahead of the host's state ([`Predicted`]): the same
+    /// systems the simulation runs, filtered to the body, and the start of its actions.
     Predict,
+    /// The network layer puts back what [`NetSet::PredictInput`] set aside and records
+    /// what was predicted for the tick (to correct it when the host's state comes).
+    PredictEnd,
+}
+
+/// What a client's prediction knows of its host: written by the network layer, read by
+/// the modules that predict (the action machine's start of actions). A client only; a
+/// host or single player never reads it.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct NetPrediction {
+    /// The host tick of the newest state applied.
+    pub host_tick: u64,
+    /// Ticks this machine runs ahead of the host.
+    pub lead: u64,
+    /// The host tick of the forwarded event being shown now (set while the network layer
+    /// triggers it again).
+    pub event_tick: u64,
+    /// Actions started ahead of the host.
+    pub predicted: u64,
+    /// ... the host started too.
+    pub confirmed: u64,
+    /// ... the host refused, or did not start in time.
+    pub mispredicted: u64,
+    /// The own body takes the host's state at the next correction (a death): why.
+    pub snap: Option<String>,
+    /// Times this machine took the host's world (a join, a rebase): what was predicted in
+    /// an older one is dropped.
+    pub epoch: u32,
+}
+
+/// How a client's correction reads and moves its predicted body, from the module that moves
+/// bodies (`shards_motion` inserts it): the network layer knows no motion types.
+#[derive(Resource, Clone, Copy)]
+pub struct PredictedMotion {
+    /// The body's motion mode now, as a number to compare (never to interpret).
+    pub mode: fn(&World, Entity) -> Option<u8>,
+    /// The same number in the host's state of the body (its predicted components' values).
+    pub host_mode: fn(&World, &ComponentValues) -> Option<u8>,
+    /// Moves the body by `by` as if the controller had put it there (no fresh start).
+    pub shift: fn(&mut World, Entity, Vec3),
+    /// Takes the host's motion state and facing for the body (`values`, as `host_mode`
+    /// reads them), its feet put at `feet`.
+    pub adopt: fn(&mut World, Entity, &ComponentValues, Vec3),
 }
 
 /// The body a client predicts: its own. Never on a host or in single player; each machine

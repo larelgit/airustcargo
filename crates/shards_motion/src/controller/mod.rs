@@ -26,13 +26,14 @@ mod params;
 
 use std::collections::HashSet;
 
-use ai_core::{journal, JournalKind, SimSet};
+use ai_core::{journal, AiAppExt, JournalKind, SimSet};
 use bevy::ecs::lifecycle::HookContext;
+use bevy::ecs::query::QueryFilter;
 use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::{ContentAppExt, ContentDb};
-use shards_core::Intent;
+use shards_core::{Intent, NetSet, Predicted};
 
 pub use params::CharacterParams;
 
@@ -210,6 +211,9 @@ pub struct Mantled {
 pub enum ControllerSystems {
     /// Inside `SimSet::Move`: [`move_characters`].
     Move,
+    /// Inside `NetSet::Predict`, last: [`move_characters`] for a client's own body
+    /// ([`Predicted`](shards_core::Predicted)).
+    PredictMove,
 }
 
 /// The character controller (adds [`PhysicsPlugin`] if it is missing).
@@ -227,8 +231,23 @@ impl Plugin for ControllerPlugin {
             .register_type::<MotionMode>()
             .register_type::<Mantle>()
             .register_type::<MotionState>()
+            // A client moves its own body itself and is corrected toward the host's.
+            .net_predicted::<Transform>()
+            .net_predicted::<MotionState>()
+            .net_predicted::<LocomotionInput>()
             .configure_sets(FixedUpdate, ControllerSystems::Move.in_set(SimSet::Move))
-            .add_systems(FixedUpdate, move_characters.in_set(ControllerSystems::Move));
+            .configure_sets(
+                FixedUpdate,
+                ControllerSystems::PredictMove.in_set(NetSet::Predict).after(crate::MotionSystems::PredictIntent),
+            )
+            .add_systems(
+                FixedUpdate,
+                (
+                    move_characters::<()>.in_set(ControllerSystems::Move),
+                    move_characters::<With<Predicted>>.in_set(ControllerSystems::PredictMove),
+                ),
+            );
+        crate::predict::plugin(app);
     }
 }
 
@@ -239,7 +258,7 @@ pub fn character(params: &str, feet: Vec3) -> (CharacterController, Intent, Tran
     (CharacterController::new(params), Intent::default(), Transform::from_translation(feet))
 }
 
-type CharacterQuery<'w, 's> = Query<
+type CharacterQuery<'w, 's, F = ()> = Query<
     'w,
     's,
     (
@@ -252,6 +271,7 @@ type CharacterQuery<'w, 's> = Query<
         &'static mut Transform,
         &'static mut Collider,
     ),
+    F,
 >;
 
 /// Where a character ended up, for the separation pass.
@@ -267,12 +287,15 @@ struct Placed {
 
 /// Moves every character one tick, in [`ColliderId`] order, then pushes overlapping
 /// characters apart.
-pub fn move_characters(
+///
+/// `F` picks the characters: `()` in the simulation, `With<Predicted>` where a client
+/// predicts its own body (it is pushed apart from no one there: the host does that).
+pub fn move_characters<F: QueryFilter + 'static>(
     time: Res<Time>,
     physics: Res<PhysicsWorld>,
     db: Option<Res<ContentDb>>,
     mut commands: Commands,
-    mut characters: CharacterQuery,
+    mut characters: CharacterQuery<F>,
     mut dangling: Local<HashSet<String>>,
 ) {
     let dt = time.delta_secs();
@@ -387,7 +410,7 @@ fn turn(tf: &mut Mut<Transform>, dir: Option<Vec3>, speed_deg: f32, dt: f32) {
 /// Overlapping capsules (sharing some height) are pushed apart on the ground plane,
 /// half each, in a fixed pair order; the pushes go through move-and-slide so nobody
 /// ends up inside a wall.
-fn separate(physics: &PhysicsWorld, characters: &mut CharacterQuery, placed: &[Placed]) {
+fn separate<F: QueryFilter>(physics: &PhysicsWorld, characters: &mut CharacterQuery<F>, placed: &[Placed]) {
     let mut push = vec![Vec3::ZERO; placed.len()];
     for i in 0..placed.len() {
         for j in (i + 1)..placed.len() {
