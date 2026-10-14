@@ -2,7 +2,7 @@
 
 Shards — набор крейтов, на котором отдельный репозиторий собирает игру, не трогая код движка. Игра зависит от
 одного крейта, `shards`, и получает детерминированный тик, физику и контроллер персонажа, ввод и камеру, бой на
-данных, базу контента и слой ИИ. Механизмы лежат в движке, содержание (оружие, враги, числа, сюжет) — в игре; в
+данных, базу контента, уровни из Blender, сгенерированные регионы, навигацию и врагов-NPC и слой ИИ. Механизмы лежат в движке, содержание (оружие, враги, числа, сюжет) — в игре; в
 коде движка нет имён из конкретной игры. Цель — движок под «Осколки Предела»: ТЗ в [docs/engine-tz.md](docs/engine-tz.md),
 сверка с ним (что сделано, что впереди) в [docs/engine-progress.md](docs/engine-progress.md).
 
@@ -28,13 +28,17 @@ Remote Protocol на 127.0.0.1), без MCP-прослоек. Тем же CLI п
 5. [Контент (E4)](#контент-e4)
 6. [Движение (E2)](#движение-e2)
 7. [Действия и бой (E3)](#действия-и-бой-e3)
-8. [Слой ИИ](#слой-ии): [что видит ИИ](#что-видит-ии) · [инструменты](#инструменты) · [время и детерминизм](#время-и-детерминизм) · [транспорты и CLI](#транспорты-и-cli) · [скриншоты](#скриншоты) · [агенты](#агенты)
-9. [Сценарии (E11)](#сценарии-e11)
-10. [Реплеи](#реплеи): [снапшоты](#снапшоты)
-11. [Песочница](#песочница)
-12. [Тесты и CI](#тесты-и-ci)
-13. [Что дальше](#что-дальше)
-14. [Соглашения и сборка](#соглашения-и-сборка)
+8. [Уровни из Blender (E4.2)](#уровни-из-blender-e42)
+9. [Мир и генерация (E5)](#мир-и-генерация-e5)
+10. [Навигация и NPC (E6)](#навигация-и-npc-e6)
+11. [Слой ИИ](#слой-ии): [что видит ИИ](#что-видит-ии) · [инструменты](#инструменты) · [время и детерминизм](#время-и-детерминизм) · [транспорты и CLI](#транспорты-и-cli) · [скриншоты](#скриншоты) · [агенты](#агенты)
+12. [Сценарии (E11)](#сценарии-e11)
+13. [Реплеи](#реплеи)
+14. [Снапшоты (E11.4)](#снапшоты-e114)
+15. [Песочница](#песочница)
+16. [Тесты и CI](#тесты-и-ci)
+17. [Что дальше](#что-дальше)
+18. [Соглашения и сборка](#соглашения-и-сборка)
 
 ## Быстрый старт
 
@@ -53,7 +57,10 @@ cargo shards observe                       # срез мира текстом + 
 cargo shards tools                         # что можно сделать (--json: со схемами аргументов)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # в ответе CHANGES и JOURNAL
-cargo shards content check                 # ok: 38 definitions in 9 files
+cargo shards content check                 # ok: 69 definitions in 22 files
+cargo shards act regen region=wilds seed=42   # сгенерированный регион к югу от арены; игрок у его ворот
+cargo shards act nav_path to='{"x": 24, "z": 140}'   # маршрут к логову по навсетке: path 94.5m, 4 turns: 33.9m SE → …
+cargo shards worldgen --region wilds --seeds 1..1000 --report   # проверка генератора на тысяче зёрен
 cargo shards scenario crates/sandbox/scenarios/*.scenario
 cargo shards save-replay                   # сессия с тика 0 → replays/tick<T>.json
 cargo shards save-snapshot                 # состояние на этом тике → snapshots/tick<T>.json (load-snapshot — назад)
@@ -66,17 +73,23 @@ cargo shards shot
 # 5. Реплей: seed и частота тиков берутся из файла.
 cargo sandbox --replay replays/tick332.json
 cargo sandbox --replay tests/replays/combat_prototype.json --verify
-# replay finished at tick 2325: identical to the recording (39 checks) [2325 ticks in 1.79s]
+# replay finished at tick 2307: identical to the recording (39 checks) [2307 ticks in 3.46s]
 xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify --windowed   # то же в окне
 
-# 6. Контент без игры: читает и проверяет все файлы, код 0 или 1.
+# 6. Контент без игры: читает и проверяет все файлы (в том числе файлы уровней тайлов и запечённую навигацию), код 0 или 1.
 cargo sandbox --check-content
-# ok: 38 definitions in 9 files
+# ok: 69 definitions in 22 files
+
+# 7. Мир без игры: генератор на тысяче зёрен (код 0, если прошли все) и запекание навигации тайлов.
+cargo sandbox --worldgen-report wilds --seeds 1..1000
+# ok: worldgen wilds v1, seeds 1..1000: 1000/1000 passed (42 after a retry), 0 fell back, 0 failed, 0 panicked [1000 seeds in 0.31s, 0.3 ms/seed]
+cargo sandbox --bake-nav               # baked 9 tiles into nav/ (после правки тайла; без правок файлы не меняются)
 ```
 
 `cargo sandbox` — это `cargo run -p sandbox --`, `cargo shards` — `cargo run -q -p shards_cli --` (алиасы в
 `.cargo/config.toml`); все флаги после `--` уходят в `shards::run` или в CLI. Если запустить собранный бинарник
-напрямую (`target/debug/sandbox`), игра ищет `assets/` рядом с исполняемым файлом: укажите `BEVY_ASSET_ROOT=crates/sandbox`.
+напрямую (`target/debug/sandbox`), игра ищет `assets/` рядом с исполняемым файлом: укажите `BEVY_ASSET_ROOT=$PWD/crates/sandbox`
+(абсолютный путь: относительный не принимает наблюдатель за файлами).
 
 **Rust** ставится через rustup, он добавляет `~/.cargo/bin` в PATH; версия берётся из `rust-toolchain.toml`. В уже
 открытых терминалах выполните `source ~/.cargo/env` или откройте новый.
@@ -118,7 +131,8 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
    зависимостей нет: Bevy, serde и schemars приходят через `shards` (`shards::prelude::*`, `shards::serde`,
    `shards::schemars`). CLI ставится той же версии: `cargo install shards_cli --git … --tag v0.2.0`.
 3. **`main` — одна строка.** `shards::run` читает командную строку (`--headless --seed --port --port-file --no-remote
-   --paused --hz --replay --verify --windowed --check-content`), ловит `kill` и закрытый терминал:
+   --paused --hz --replay --verify --windowed --check-content --worldgen-report --seeds --bake-nav`), ловит `kill` и закрытый
+   терминал:
    ```rust
    fn main() -> std::process::ExitCode {
        shards::run(pit::build_app)
@@ -174,17 +188,39 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
     # replay finished at tick 258: identical to the recording (5 checks) [258 ticks in 0.05s]
     ```
 12. **Тесты.** Один бинарник `tests/game`: сценарии на свежей игре, детерминизм (тот же seed — тот же журнал, `step
-    300` равен 5 × `step 60`), реплеи, контент, манифест (единственная зависимость — `shards`). Шаблон проходит 19
-    тестов за секунды.
-13. **CI.** `cargo test --locked`, `cargo run --locked -- --check-content`, `--verify` каждого файла из
-    `tests/replays/` (рабочий `ci.yml` — в «CI игры» шаблона и в `.github/workflows/ci.yml` движка).
+    300` равен 5 × `step 60`), реплеи, контент, регион, манифест (единственная зависимость — `shards`). Шаблон проходит 23
+    теста за секунды.
+13. **CI.** `cargo test --locked`, `cargo run --locked -- --check-content` (читает и файлы уровней тайлов, и запечённую
+    навигацию), `--worldgen-report REGION --seeds 1..1000`, `--verify` каждого файла из `tests/replays/` (рабочий `ci.yml` —
+    в «CI игры» шаблона и в `.github/workflows/ci.yml` движка).
 14. **Новая версия движка.** Поменяйте `tag`, выполните `cargo update -p shards`, прочитайте раздел «Изменено» в
     `CHANGELOG.md`, прогоните тесты и реплеи; реплеи, записанные на старой версии, после изменения геймплея могут
-    разойтись — тогда их записывают заново.
+    разойтись — тогда их записывают заново. Снапшоты другой минорной версии движка не грузятся (`force` пропускает проверку).
+15. **Регион.** Тайлы с сокетами на краях (`*.tile.ron`), правила сокетов (`*.socket_rules.ron`), точки интереса
+    (`*.poi.ron`) и сам регион (`*.region.ron`: размер, фиксированные клетки, точки, проверки, запасная карта `tile_map`,
+    `origin`, `active_radius`): формат и все поля — в «Мир и генерация (E5)». Кода не нужно. Проверка без игры:
+    ```bash
+    cargo run -- --check-content                          # битый сокет, тайл или точка называют файл и поле
+    cargo run -- --worldgen-report valley --seeds 1..1000   # код 0, если прошли все зёрна
+    ```
+    В игре регион появляется по `shards act regen region=valley seed=42` (экран загрузки, игрок у ворот), а
+    `app.start_region("valley")` в плагине игры строит его, пока игра грузится. Меняете результат генератора — поднимите
+    `version` региона.
+16. **Враг-NPC.** Префаб бойца с компонентами `Npc` (поведение, восприятие, план атак) и `Home` (поводок), а поведение, зрение,
+    план атак и директор жетонов — файлы `*.behavior.ron`, `*.perception.ron`, `*.attack_plan.ron`, `*.director.ron` в
+    `assets/content/npc/`; точка интереса с `prefab` ставит его в лагерь региона. Свои условия и состояния поведения —
+    `app.add_npc_condition(..)` и `app.add_npc_state(..)`. Пока нет навсетки, NPC ходят по локальной сетке; чтобы они ходили по
+    навсетке региона, запеките тайлы (`cargo run -- --bake-nav`) и положите `assets/nav/` в репозиторий, а определение `nav`
+    (`*.nav.ron`) заставит `--check-content` называть устаревший файл. Подробно — «Навигация и NPC (E6)».
+17. **Уровень из Blender.** Объекты с custom properties, экспорт glTF с Custom Properties, файл в `assets/`, определение `level`
+    (`*.level.ron`: файл и обязательные маркеры) или тайл с `geometry: Level(path: "tiles/ruin.gltf")`: «Уровни из Blender
+    (E4.2)».
 
 Правила, которые держат игру детерминированной (геймплей в `FixedUpdate` внутри `SimSet`, случайность только через
 `SimRng`, порядок по `AiId`, управление только через `Intent`, `replay_input`/`replay_ignore`/`add_replay_check`), — в
-разделе «Детерминизм: правила игры» [template/README.md](template/README.md).
+разделе «Детерминизм: правила игры» [template/README.md](template/README.md). Мир добавляет своё: генерация — чистая функция
+(seed, версия, контент) на `DetRng`, а не `SimRng`; регион меняют инструментами и `RegionLoading`, не руками; новое состояние
+мира входит в снапшот (`add_snapshot_resource`, `add_snapshot_rebuild`, `add_snapshot_check`).
 
 ## Архитектура
 
@@ -192,8 +228,13 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
             игра (отдельный репозиторий)  ·  песочница (crates/sandbox) — тоже игра на `shards`
                                │ зависит только от
                                ▼
-                     shards (зонтик: EnginePlugins, EngineConfig, run, testing, prelude)
+                     shards (зонтик: EnginePlugins, EngineConfig, run, testing, prelude, TileLevelsPlugin)
                                │
+          ┌────────────────────┼─────────────────────┐
+     shards_npc           shards_world           shards_level
+     враги, навсетка      регионы, генератор,    уровни из Blender
+                          активные зоны
+          └────────────────────┼─────────────────────┘
         ┌────────────┬─────────┴──────┬──────────────┐
    shards_action  shards_motion  shards_content  shards_core
    бой на данных  физика, ввод,  база контента,   конфиг, состояния,
@@ -202,18 +243,24 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
                                │ подключён ко всем модулям
                             ai_core  ──►  CLI `shards`  ◄── агенты · CI · человек
                                │
-           parry3d, ron, … — только внутри модулей, наружу не торчат
+           parry3d, gltf, ron, … — только внутри модулей, наружу не торчат
 ```
+
+`shards_world` и `shards_level` друг друга не знают (их соединяет `shards::TileLevelsPlugin`); `shards_npc` стоит над обоими:
+берёт у мира граф тайлов, активные зоны и событие «регион загружен», у уровней — файлы тайлов для запекания.
 
 ### Крейты
 
 | крейт | что это |
 |---|---|
-| `crates/shards` | **единственная зависимость игры.** `EnginePlugins`, `EngineConfig`, `run` (стандартный `main`), `testing` (тестовые приложения), `prelude`, реэкспорт `bevy`, `serde`, `schemars`, `serde_json` |
+| `crates/shards` | **единственная зависимость игры.** `EnginePlugins`, `EngineConfig`, `run` (стандартный `main`: ещё `--worldgen-report` и `--bake-nav`), `testing` (тестовые приложения), `TileLevelsPlugin` (уровни как тайлы), `prelude`, реэкспорт `bevy`, `serde`, `schemars`, `serde_json` и модулей (`shards::world`, `shards::npc`, …) |
 | `crates/shards_core` | ядро (E1): `EngineConfig`, состояния, шлюз загрузки, `Intent`, `PlayerId`/`LocalPlayer`/`NetRole`, реестр модулей |
 | `crates/shards_content` | контент (E4): `ContentDef`, база, загрузка и горячая перезагрузка, префабы, инструменты контента, `check_dir` |
 | `crates/shards_motion` | движение (E2): физика на parry3d, контроллер, карта ввода, камера, инструменты и запросы движения |
 | `crates/shards_action` | бой (E3): действия, мувсеты, машина, попадания, ресурсы, статусы, телеграфы, анимационный мост, оверлеи |
+| `crates/shards_level` | уровни из Blender (E4.2): glTF с custom properties → коллайдеры, датчики, маркеры, префабы, компоненты; вид `level`, инструменты |
+| `crates/shards_world` | мир (E5): тайлы, регионы и подземелья в контенте, генератор с решателем сокетов и проверками, манифест, пакетные отчёты, загрузка и смена региона, активные зоны, стриминг картинки |
+| `crates/shards_npc` | враги (E6): автомат поведения, восприятие, режиссёр боя (жетоны), планировщик атак, навсетка по тайлам (`nav`: запекание, сшивка, маршруты), агенты и поводок |
 | `crates/ai_core` | слой ИИ, не зависит от конкретной игры: id, срез мира, журнал, инструменты, время, реплеи, транспорт |
 | `crates/shards_script` | без Bevy: формат сценариев, их запуск, разбор условий `--until`; общий для `shards` и тестов |
 | `crates/shards_cli` | бинарник `shards`, тонкий клиент к `ai/*` |
@@ -253,9 +300,16 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 FixedFirst       ai_core: тик +1, применить события реплея и вызовы между тиками
 FixedUpdate
   PhysicsSystems::Sync            коллайдеры, сдвинутые между тиками (`teleport`, `set`)
-  SimSet::Input    CoreSystems::FollowOrders     Order::MoveTo → Intent
+  SimSet::Input    WorldSystems::Zones           ActiveZone / Dormant вокруг игроков (до приказов)
+                   CoreSystems::FollowOrders     Order::MoveTo → Intent
                    ActionSystems::Orders         Order::Attack → Intent (после FollowOrders)
-  SimSet::Think    мозги игры: решают, что делать, и пишут в Intent
+                   NpcSystems::Sense             кто активен; зрение, слух, память (после Orders и Zones)
+                   NpcSystems::Decide            автомат поведения: переход, хук состояния
+                   NpcSystems::Direct            жетоны атаки, роли ждущих
+                   NpcSystems::Plan              планировщик: выбрать атаку, подойти, нажать
+                   NpcSystems::Navigate          маршруты по навсетке, следование, уклонение, поводок
+                   NpcSystems::Drive             что решил NPC → Intent
+  SimSet::Think    мозги игры: решают, что делать, и пишут в Intent (видят NpcBrain и могут её дополнить)
   SimSet::Act      MotionSystems::Intent         Intent → LocomotionInput
                    ActionSystems::Machine        буфер ввода, запуск и ход действий (смещение, i-frames, блок)
                    ActionSystems::Effects        лечение, выносливость, статусы, эффекты игры
@@ -270,8 +324,11 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 ```
 
 Между тиками (`PreUpdate`) клавиатура, мышь и геймпад пишут в `Intent`; камера работает в `PostUpdate` и ничего в
-симуляции не читает. Тест `gameplay_systems_have_a_total_order` ловит системы без явного порядка у песочницы,
-движка с движением и боевого модуля.
+симуляции не читает. Смена региона и навсетка — не часть тика: `regen` и `region_load` — инструменты-действия, они идут между
+тиками и внутри одного вызова делают весь переход `InGame → RegionLoading → InGame` (старый регион уходит, новый строится,
+навсетка сшивается), так что ни один тик не видит полурегион и тик не сдвигается. Картинка тайлов (`stream`) идёт в `Update`.
+
+Тест `gameplay_systems_have_a_total_order` ловит системы без явного порядка у песочницы, движка с движением и боевого модуля.
 
 ### Граница движка и игры
 
@@ -314,12 +371,14 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 `hot_reload` (по умолчанию все три), `audio`, `gamepad`, `wayland`, `dynamic`.
 
 **`shards::run`** — стандартный `main`. Флаги: `--headless --seed N --port N|0 --port-file F --no-remote --paused --hz N
---replay FILE --verify [--windowed] --check-content`. Занятый порт — выход с кодом 3 до того, как собрано хоть что-то.
-`--verify` выходит с кодом 0 (совпало), 1 (разошлось или упала система геймплея) или 2 (реплей не читается);
-`--check-content` — 0 или 1. `kill` и закрытый терминал завершают игру через `AppExit`: токен и файл порта удаляются.
+--replay FILE --verify [--windowed] --check-content --worldgen-report REGION [--seeds S] --bake-nav [TILES]`. Занятый порт —
+выход с кодом 3 до того, как собрано хоть что-то. `--verify` выходит с кодом 0 (совпало), 1 (разошлось или упала система
+геймплея) или 2 (реплей или его снапшот не читаются); `--check-content`, `--worldgen-report` (все зёрна прошли) и `--bake-nav`
+(все тайлы запеклись) — 0 или 1. Эти три режима ничего не запускают (`--bake-nav` грузит игру без окна, но не делает ни тика).
+`kill` и закрытый терминал завершают игру через `AppExit`: токен и файл порта удаляются.
 
 **Состояния** (`EngineState`, Bevy States): `Loading` → `InGame` (или `MainMenu`, если так задал `after_loading`),
-`RegionLoading` — задел под стриминг регионов (E5). Внутри `InGame` — `PauseState::{Running, Paused}`: игровая пауза,
+`RegionLoading` — экран загрузки региона: через него идёт `regen` (см. «Мир и генерация»). Внутри `InGame` — `PauseState::{Running, Paused}`: игровая пауза,
 в одиночной игре она останавливает и симуляцию; `shards pause` и `--paused` — инструмент разработчика и `PauseState` не
 трогают. Игра вешает свои системы на `OnEnter`/`OnExit` этих состояний; переходы пишутся в журнал (`state Loading ->
 InGame`).
@@ -345,8 +404,8 @@ InGame`).
 (`replay_input::<Intent>()` движок делает сам): записываются изменения между тиками. `PlayerId` и `LocalPlayer`
 отмечают игроков, `NetRole` (`Single` по умолчанию) — задел под сеть.
 
-**`ai/status`** показывает версию и модули: `engine: {version: "0.2.0", modules: [core, content, motion, action], state:
-"InGame", pause: "Running"}` и `loading: []`, пока ничего не грузится.
+**`ai/status`** показывает версию и модули: `engine: {version: "0.2.0", modules: [core, content, motion, action, level,
+world, npc], state: "InGame", pause: "Running"}` и `loading: []`, пока ничего не грузится; с регионом в мире ещё поле `world`.
 
 ## Контент (E4)
 
@@ -365,8 +424,9 @@ InGame`).
 
 - Id — непустая строка без пробелов и управляющих символов; уникален внутри вида по всем файлам.
 - Движок регистрирует свои виды: `prefab`, `locomotion`, `action`, `moveset`, `status`, `combat_tuning`, `animset`,
-  `input_map`. Игра добавляет свои: у песочницы `layout`, у шаблона `arena`. `content_list` (инструмент) показывает виды и
-  число определений.
+  `input_map`, уровни `level`, мир `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`, враги `behavior`,
+  `perception`, `director`, `attack_plan`, `npc_tuning` и `nav`. Игра добавляет свои: у песочницы `layout`, у шаблона `arena`.
+  `content_list` (инструмент) показывает виды и число определений.
 - `#[serde(deny_unknown_fields)]` на структуре превращает опечатку в ошибку со строкой; без него опечатка в необязательном
   поле молча оставит значение по умолчанию.
 - `require_content::<T>(&["yard"], "pit")` называет id, которые использует код: без него в контенте будет ошибка,
@@ -431,28 +491,45 @@ reflection, как в сценах Bevy; каждый компонент дол�
 
 ```text
 $ shards act content_list
-content: 38 definitions in 9 files
+content: 69 definitions in 22 files
   action  23
   animset  0
+  attack_plan  3
+  behavior  2
   combat_tuning  1
+  director  2
+  dungeon  0
   input_map  0
-  layout  2
+  layout  3
+  level  1
   locomotion  3
   moveset  4
-  prefab  5
+  nav  1
+  npc_tuning  0
+  perception  3
+  poi  4
+  prefab  7
+  region  1
+  room  0
+  socket_rules  1
   status  0
+  tile  9
+  tile_map  1
 $ shards act spawn_prefab id=skeleton x=5 z=5
-spawned e14 skeleton at (5.0, 5.0)
+spawned e15 skeleton at (5.0, 5.0)
 CHANGES
-  + e14 Skeleton  hp 40/40  poise 20/20  8.6m NE
+  + e15 Skeleton  hp 40/40  poise 20/20  8.6m NE
 ```
 
 **`--check-content` и `shards content check`.** Первый читает файлы без игры (для CI: код 0 или 1; отсутствующая папка
-`content` — тоже ошибка, чтобы проверка не прошла впустую), второй спрашивает запущенную игру: `ok: 38 definitions in 9
-files`.
+`content` — тоже ошибка, чтобы проверка не прошла впустую), второй спрашивает запущенную игру: `ok: 69 definitions in 22
+files`. Модули добавляют к проверке своё: файлы уровней, названные определениями `level` (каждый узел, компонент и
+обязательный маркер), файлы уровней, из которых построены тайлы (должны лежать в папке ассетов), и запечённая навигация
+тайлов (с определением `nav` устаревший или отсутствующий файл — ошибка с командой `--bake-nav`).
 
-Чего в контенте пока нет: конвейера уровней из Blender (маркеры точек появления, сокеты, триггеры; фаза B) и сцен BSN
-вместо RON (когда у Bevy появится загрузчик `.bsn`).
+Чего в контенте пока нет: проверки, что маркеры-сокеты файла уровня совпадают с сокетами тайла в его RON (у `shards_content`
+нет связи между видами), и сцен BSN вместо RON (когда у Bevy появится загрузчик `.bsn`). Уровни из Blender — отдельный
+раздел ниже.
 
 ## Движение (E2)
 
@@ -608,10 +685,10 @@ $ shards act path_to target=e12              # e12 — ориентир «Cliff�
 - `path_to` — локальный сеточный A*: клетка 0.5 м, поиск в ограниченной области вокруг начала и цели (`max` — предел в
   метрах, по умолчанию 80; больше — ошибка с подсказкой `raise max, or go in stages`). Ходит по тому, что умеет
   контроллер: идти, плыть (дороже вдвое), перелезать (дороже), спускаться до безопасной высоты, прыгать в воду сверху.
-  Результат один и тот же на любой машине (целые стоимости, порядок по индексу). Это не навсетка: навигация по тайлам и
-  агенты врагов — E6 (фаза B).
+  Результат один и тот же на любой машине (целые стоимости, порядок по индексу). Это локальный планировщик, не навсетка.
 - `shards act move_to target=e12 path=true` проходит именно этот маршрут; одна и та же функция `plan_path` отвечает и
-  инструменту, и тестам.
+  инструменту, и тестам. В загруженном регионе `move_to path=true` идёт по навсетке, а тот же маршрут в формате `path_to`
+  показывает `nav_path` (см. «Навигация и NPC»); `path_to` и `clearance` остаются запросами к физике.
 
 ## Действия и бой (E3)
 
@@ -745,6 +822,821 @@ error: your moveset `player` has no `parry`; it has: block, dodge, heavy, light,
 Отказы по ресурсам и времени называют причину и срок: `not enough stamina: 10/20 (ready in 0.2s)`, `busy: windup heavy
 0.50s (ready in 0.90s, when a cancel window opens)`; на ошибку делают `step` на названное время и повторяют.
 
+## Уровни из Blender (E4.2)
+
+Крейт `shards_level`. Художник собирает уровень в Blender, вешает на объекты *Custom Properties* и экспортирует glTF;
+движок превращает файл в сущности: коллайдеры и датчики для физики, маркеры (точки появления, сокеты, связи навигации,
+триггеры, лагеря, ориентиры), префабы из базы контента и любые компоненты игры по имени. С `render` тот же файл ещё и
+рисуется. Движок читает только JSON файла (дерево узлов, преобразования, имена, `extras`, границы мешей): ни картинок, ни
+буферов он не грузит, поэтому уровень собирается и проверяется без окна.
+
+```text
+Blender (.blend) ── экспорт glTF ──► tiles/ruin.gltf ──► LevelAsset ──► spawn_level ──► сущности
+  объекты + custom properties        узлы + extras        (без GPU)       верхнего уровня, в мировых
+                                                                           координатах: Collider, Volume,
+                                                                           LevelMarker, префабы, компоненты
+```
+
+**Как сделать уровень в Blender.**
+
+1. Моделируйте в метрах. Экспортёр Blender сам переводит Z-up в +Y-up. Имена объектов любые: ошибки называют узел путём по
+   иерархии (`Ruin/Column`).
+2. Выберите объект, *Object Properties → Custom Properties*, кнопка `+`: имя и значение. Текст, числа и списки чисел
+   экспортируются. Свойства читаются с **объектов**, не с мешей.
+3. *File → Export → glTF 2.0*. В разделе *Include* отметьте **Custom Properties**: без этого все свойства теряются.
+   *Transform → +Y Up* оставьте. Подходят `.gltf`, `.glb` и вариант со встроенными данными.
+4. Положите файл в папку ассетов игры (`assets/tiles/ruin.gltf`), назовите его в контенте (вид `level`, ниже) и выполните
+   `shards content check`.
+
+**Свойства узла** бывают двух видов: свойства уровня (слова в нижнем регистре, их читает движок) и компоненты (имена
+компонентов игры в `CamelCase`).
+
+| свойство | значение | что делает |
+|---|---|---|
+| `marker` | `spawn`, `socket`, `navlink`, `trigger`, `interactable`, `camp`, `landmark`, `custom:<имя>` | узел — маркер этого вида (`LevelMarker`) |
+| `name` | текст | имя маркера (`start`); без него — имя узла |
+| `socket` | текст | сокращение для `marker = socket`: значение — тип сокета (`road`) |
+| `to` | текст | у `navlink`: имя узла, где связь кончается |
+| `collider` | `box`, `sphere`, `capsule`, `cylinder`, `cone`, `auto` | твёрдый `Collider`; `auto` — коробка по мешу |
+| `size`, `radius`, `height`, `offset` | числа и списки | размеры и центр формы; без них берутся границы меша |
+| `layers`, `collides_with` | `world`, `character`, `volume`, `game0`…`game15` (имя или список) | слои коллайдера |
+| `volume` | `water`, `updraft`, `trigger` | датчик `Volume` формы `collider` (по умолчанию `auto`); `accel` и `max_speed` — у потока |
+| `prefab` | текст | заспавнить в узле префаб из контента; свойства-компоненты правят его поля |
+
+Любой другой ключ — **компонент**: короткое имя (`Health`) или полный путь типа, значение — JSON в том виде, как его
+показывают `inspect` и `get`:
+
+```text
+Health  = {"current": 40.0, "max": 40.0}
+Faction = "bandits"
+Locked  = true                           (компонент без полей)
+```
+
+Панель Blender делает только текст, числа и списки, поэтому объект JSON вводят текстом: текст, в котором лежит объект или
+список JSON, читается как он. Компонент должен быть зарегистрирован для reflection (`#[derive(Reflect)]`,
+`#[reflect(Component)]`), как для префабов. У узла с `prefab` свойства-компоненты сливаются с префабом по полям
+(`Health = {"current": 10}` оставляет `max` префаба). Узел без этих свойств (группа, меш без `collider`) ничего не порождает,
+меш остаётся только картинкой. Ключи с `_` игнорируются.
+
+**Маркеры движка** (`marker`). Игра находит их обычным запросом `Query<(&LevelMarker, &Transform)>`.
+
+| `marker` | сущность | что видит ИИ |
+|---|---|---|
+| `spawn` | `LevelMarker` | `SpawnPoint "start"` |
+| `socket` | `LevelMarker` с именем-типом сокета | нет |
+| `navlink` | `LevelMarker`, у него `to` — мировая позиция конца | нет |
+| `trigger` | `LevelMarker`, датчик-`Volume` и его коллайдер | `Trigger "goal"` |
+| `interactable` | `LevelMarker` | `Interactable "door"` |
+| `camp` | `LevelMarker` | `Camp "bandits"` |
+| `landmark` | `LevelMarker`, `AiLandmark`, `AiKind` по имени маркера | в строке LANDMARKS |
+| `custom:<имя>` | `LevelMarker` | нет (нужен `AiKind` — добавьте компонентом) |
+
+Узлы настоящего файла `crates/sandbox/assets/tiles/ruin.gltf` (руина 16 × 16 м; сделан из тестового генератора glTF, как
+файл из Blender): пол `Ground` и стены `Wall.North`, `Wall.West`, `Rubble`, `Column` с `collider = auto`; `Camp`
+(`marker = camp`, `name = ruin_camp`), `Arch` (`marker = landmark`, `name = Ruin`) и четыре `Edge.N/E/S/W` с `socket = grass`.
+
+**Файл в контенте.** Вид `level` (`LevelDef`): путь файла, обязательные маркеры, место по умолчанию.
+
+```ron
+// content/region/ruin.level.ron
+{
+    "ruin": (
+        file: "tiles/ruin.gltf",
+        required_markers: [(kind: "camp", name: "ruin_camp"), (kind: "socket", name: "grass", min: 4), (kind: "landmark")],
+        at: (0.0, 0.0, 0.0),
+    ),
+}
+```
+
+`shards content check`, `--check-content` и каждая перезагрузка контента читают сам файл: нет файла или он не читается,
+узел называет несуществующий компонент или такое значение, которое компонент не принимает, неизвестный префаб, `navlink` без
+конца, нет обязательного маркера. Каждая ошибка называет файл контента, уровень, узел и свойство. Настоящий вывод (в копии
+контента песочницы опечатка в `Helth` и переименован маркер `ruin_camp`):
+
+```text
+$ BEVY_ASSET_ROOT=/tmp/broken target/debug/sandbox --check-content
+content/region/ruin.level.ron: level `ruin`: node `Ruin/Column`: unknown component `Helth` (did you mean `Health`?)
+content/region/ruin.level.ron: level `ruin`: required marker missing: `camp` named `ruin_camp` in `tiles/ruin.gltf` (found 0, need 1); add the custom property marker = "camp" and name = "ruin_camp" to an object in Blender
+…
+```
+
+Шлюз загрузки держит симуляцию, пока файлы не загружены (`LevelLibrary`).
+
+**Инструменты.** Игрок: `level_info`; разработчик: `spawn_level`, `level_reload`.
+
+```text
+$ shards act level_info id=ruin
+level ruin: tiles/ruin.gltf, at (0.0, 0.0)
+13 nodes, 6 markers
+  camp "ruin_camp" at (-2.0, 2.0)  Camp
+  landmark "Ruin" at (1.0, 1.0)  Arch
+  socket "grass" at (0.0, -8.0)  Edge.N
+  …
+checks: ok
+$ shards act spawn_level id=ruin x=60 z=-40
+spawned level `ruin` as instance 31 at (60.0, -40.0): 11 entities (5 solids, 0 volumes, 6 markers)
+  camp "ruin_camp" at (58.0, -38.0)
+  …
+```
+
+**Что получается при спавне.** Сущности по узлам в порядке файла, все **верхнего уровня, с мировым `Transform`** (физика читает
+`Transform`, а внутри тика он не пересчитывается). Масштаб узла уходит в размеры коллайдеров, у сущности масштаб 1. У каждой
+сущности есть `FromLevel` (уровень, номер экземпляра, путь узла). Если у какого-то узла есть проблема, не спавнится ничего.
+Один файл можно поставить несколько раз (каждый раз новый экземпляр). `despawn_level` и `reload_level` работают с
+экземпляром.
+
+**Горячая перезагрузка.** Изменённый на диске файл asset server перечитывает сам, а экземпляры заменяются через
+`level_reload` (он в журнале и в реплее, как любое действие). Файл с проблемами оставляет экземпляры, как они были.
+Сущности, которые игра успела изменить, возвращаются такими, как их описывает файл.
+
+**Уровни как тайлы регионов.** Тайл с `geometry: Level(path: "tiles/ruin.gltf")` строится из файла (см. «Мир и генерация»).
+Крейты `shards_level` и `shards_world` друг друга не знают, их соединяет зонтик: `shards::TileLevelsPlugin` (входит в
+`EnginePlugins`) просит все файлы тайлов, пока игра грузится, и спавнит их на тайл.
+
+- Файл лежит в системе координат тайла: начало — центр тайла, −Z на север, +Y вверх, метр есть метр (тайлу 16 м — пол
+  16 × 16 м). Поворот тайла поворачивает файл на четверти оборота по часовой.
+- Узлы становятся сущностями как в любом уровне, но с метками региона (`TileId`, `RegionPart`): они уходят вместе с регионом
+  и получают одни и те же `AiId` и `ColliderId` в каждом запуске. Узлы-маркеры (`marker`, `socket`) ещё и `Marker` тайла,
+  как маркеры из inline-геометрии.
+- **Решатель читает сокеты из RON тайла, а не из файла**: генерация — чистая функция seed, версии и контента, она работает
+  без ассетов (`--worldgen-report`). Узлы `socket` и слоты в файле ставятся в мире для игры (стыки, декор на краях), назад
+  решатель их не читает. Проверки, что маркеры-сокеты файла совпадают с сокетами тайла в RON, нет (в `shards_content` нет
+  связи между видами).
+- Сломанный изнутри файл тайла (узлы, компоненты, префабы) попадает в журнал ошибкой с именами тайлов, как только
+  загрузится, а смена региона, которая его использует, отказывает, пока ничего не тронуто. `content check` не читает узлы
+  файлов тайлов, если файл не назван ещё и определением `level` (как `ruin.level.ron` песочницы), но отсутствующий файл или
+  путь за пределами папки ассетов проваливает проверку, называя тайл.
+- Перезагруженный файл тайла получает метки региона внутри перезагрузки: реплей идёт без кадров, и метка на кадр позже
+  разошлась бы с записью.
+
+**Детерминизм.** Спавн — чистая функция файла и места, в фиксированном порядке, поэтому `AiId` и `ColliderId` одинаковы в
+каждом запуске. `spawn_level` и `level_reload` — действия, реплей записывает их. Проверка реплея `level` хэширует, где поставлен
+каждый уровень, и дайджест его файла: реплей, записанный на другой версии файла, расходится на первой проверке (после
+правки уровня эталоны записывают заново). Проверка входит в запись с первым уровнем, поэтому у игры без уровней хэши прежние.
+Снапшот проверяет те же поставленные уровни (`levels`).
+
+## Мир и генерация (E5)
+
+Крейт `shards_world`. Регион — сетка макротайлов с сокетами на краях (или подземелье из комнат, стыкующихся дверь в дверь).
+Генератор собирает его из зерна, проверяет, при неудаче повторяет и в конце берёт запасную карту. Результат —
+**манифест**: данные, из которых мир строится заново без генератора. Регион меняется через экран загрузки, а ИИ врагов
+работает только в активных зонах вокруг игроков.
+
+Набор тайлов, правила сокетов и пороги проверок — контент игры; порядок шагов, решатель, повторы и отчёт — движок.
+
+```text
+seed ─► Points ─► Roads ─► Cells ─► Fill (решатель сокетов) ─► Secondary ─► Decorate ─► Checks ─► манифест
+  точки    дороги   клетки    тайлы с поворотами     ещё точки       декор      правила
+              любой шаг или проверка не прошли ─► следующая попытка ─► … ─► запасная карта (tile_map)
+```
+
+### Форматы контента
+
+Семь видов: `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`. Все проверяются вместе с базой, ошибки
+называют файл, поле и ближайший id. Настоящие файлы песочницы — `crates/sandbox/assets/content/region/`.
+
+**Тайл** (`*.tile.ron`): края с сокетами, повороты, вес, слоты для точек интереса, геометрия.
+
+```ron
+// content/region/wilds.tile.ron — тайл 16 м; система координат тайла: центр в начале, север −Z, до поворота
+{
+    "road_bend": (
+        sockets: (n: "grass road grass", e: "grass road grass", s: "grass", w: "grass"),
+        rotations: [0, 90, 180, 270],            // на сколько градусов по часовой генератор может его повернуть
+        weight: 2.0,                             // относительная частота; повороты делят её
+        slots: [(at: (-3.0, 0.0, 3.0), accepts: ["camp", "shrine"])],      // куда может встать точка интереса
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+    ),
+    "ruin": (                                    // геометрия из файла Blender (см. «Уровни из Blender»)
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        rotations: [0, 90, 180, 270], max_count: 4,
+        slots: [(at: (-2.0, 0.0, 2.0), accepts: ["camp"])],
+        geometry: Level(path: "tiles/ruin.gltf"),
+    ),
+}
+```
+
+Остальные поля `TileDef`: `min_count` и `max_count` (сколько таких тайлов в регионе), `tags` (для наборов `#forest` и
+лимитов), `pois` (точки, которые у тайла есть всегда: `(poi: "spawn", at: (0, 0, 0))`), `links` (какие стороны соединены
+внутри тайла: `[[N, S], [E, W]]` — речной брод без моста; по умолчанию любая со всеми), `slope` (класс уклона, 0 — плоско),
+`decor` (префабы для оформления, по одному на тайл), `visual` (id для картинки в окне). Геометрия (`TileGeometry`): `None`,
+`Inline([...])` или `Level(path: …)`. Куски inline-геометрии — `Box`, `Solid` (форма любого вида), `Volume` (вода, поток,
+триггер), `Marker` (именованная точка для игры и модулей), `Prefab`; они спавнятся в порядке списка.
+
+**Сокеты.** Край тайла — текст из сокетов по часовой вокруг тайла: на северном краю с запада на восток, на восточном с севера
+на юг и так далее. Порядок по часовой переживает поворот, а соседи читают общий край в разные стороны, поэтому край
+совпадает с развёрнутым краем соседа. Край из одного слова — весь край; `"grass road grass"` — дорога в средней трети;
+`road@1` — сокет на уровне высоты 1. Что с чем стыкуется — вид `socket_rules`:
+
+```ron
+// content/region/wilds.socket_rules.ron
+{
+    "default": (
+        kinds: ["grass", "road"],        // каждый вид сокета, который встречается в тайлах (опечатка в тайле — ошибка)
+        passable: ["grass", "road"],     // через них можно пройти (проверка достижимости, навсетка)
+        roads: ["road"],                 // эти — дороги (план дорог, проверка «дорога никуда»)
+    ),
+}
+```
+
+Также `pairs` (какие разные виды стыкуются, симметрично), `forbid` (не стыкуются ни с чем: запечатанные стороны, граница
+региона), `any_height` (виды, которым высота безразлична: склон обрыва) и `height_tolerance` (на сколько уровней высоты
+могут различаться стыкуемые сокеты).
+
+**Точка интереса** (`*.poi.ron`): как её называет ИИ и что в ней стоит.
+
+```ron
+{
+    "spawn": (label: Some("Spawn")),
+    "camp":  (label: Some("Camp"), prefab: Some("camp_skeleton")),    // лагерь спавнит скелета при сборке региона
+}
+```
+
+**Регион** (`*.region.ron`).
+
+```ron
+// content/region/wilds.region.ron
+{
+    "wilds": (
+        size: (8, 8),                      // клеток: восток × юг
+        tile_size: 16.0,                   // метров
+        version: 1,                        // версия генератора, см. ниже
+        origin: (-64.0, 48.0),             // где северо-западный угол в мире (x, z); по умолчанию (0, 0)
+        fixed: [(at: (1, 1), tile: "gate", rot: 0), (at: (5, 5), tile: "hall", rot: 0)],
+        pois: [(poi: "spawn", cells: [(1, 1)]), (poi: "den", cells: [(5, 5)]), (poi: "shrine"), (poi: "camp", count: 2)],
+        checks: (isolated_roads: false, distances: [(a: "spawn", b: "camp", min: 40.0), (a: "den", b: "camp", min: 40.0)]),
+        fallback: "wilds_safe",            // tile_map на случай, когда ни одна попытка не прошла
+        active_radius: 40.0,               // NPC дальше этого от всех игроков спят
+    ),
+}
+```
+
+Остальное: `rules` (id `socket_rules`, по умолчанию `default`), `tiles` (id и `#теги`; пусто — все тайлы), `border` (сокет, который
+обязан стоять на каждом краю границы), `limits` (счётчик тайлов по id или `#тегу`: `(of: "#forest", min: 4, max: 20)`),
+`roads: true` (связать обязательные точки дорогами, остовным деревом), `secondary` (точки, которые ставятся в свободные
+слоты после тайлов, сколько поместится), `attempts` (8 попыток по умолчанию), `backtracks` (2000 откатов решателя на
+попытку), `spawn` (точка, где появляются игроки; по умолчанию `spawn`). `checks` — правила, которым регион обязан
+соответствовать:
+
+| правило | что проверяет |
+|---|---|
+| `reachable` (по умолчанию да) | из точки появления можно дойти до каждой точки интереса по проходимым сокетам и `links` тайлов |
+| `max_slope` | ни один тайл не круче |
+| `distances` | каждая `a` не ближе `min` к каждой `b`; у каждой `a` есть `b` не дальше `max` |
+| `isolated_roads` (по умолчанию да) | каждая дорога ведёт к точке интереса |
+| `custom` | имена проверок игры (`add_worldgen_check`) |
+
+Всегда проверяется и то, что точка появления есть. Каждая неудача называет правило и клетки (`check reachable`, `check
+distance`).
+
+**Запасная карта** (`*.tile_map.ron`): регион руками, ряды клеток с севера: `tile` или `tile:90` в клетке.
+
+```ron
+{ "wilds_safe": (rows: ["grass grass grass …", "grass gate grass …", "…"],
+                 pois: [(poi: "spawn", at: (1, 1)), (poi: "den", at: (5, 5)), (poi: "camp", at: (6, 2))]) }
+```
+
+Проверки читают манифест и контент, поэтому судят запасную карту и сохранённый манифест так же. Запасная карта, не
+прошедшая проверки, всё равно берётся, замечание уходит в `remarks`.
+
+**Что ловит `content check`.** Неизвестный сокет, тайл, префаб и точка, регион, чьи обязательные точки некуда поставить,
+точка появления, которой нигде нет, размер запасной карты не по региону. Настоящий вывод (в копии контента песочницы
+опечатки в сокете, точке и запасной карте):
+
+```text
+$ BEVY_ASSET_ROOT=/tmp/broken target/debug/sandbox --check-content
+content/region/wilds.region.ron: region `wilds`: tile `road_t` uses socket kind `gras`, which rules `default` does not list (did you mean `grass`?)
+content/region/wilds.region.ron: region `wilds`: pois[4].poi -> unknown poi `tower`
+content/region/wilds.region.ron: region `wilds`: fallback -> unknown tile_map `wilds_safe2` (did you mean `wilds_safe`?)
+3 content errors in /tmp/broken/assets
+```
+
+### Генератор, решатель, проверки
+
+Генератор — конвейер именованных шагов по стадиям `Points → Roads → Cells → Fill → Secondary → Decorate → Checks`. Движок
+ставит по шагу на стадию (`engine.points`, `engine.roads`, …), так что игра, у которой есть только данные, работает без кода.
+Игра добавляет свой шаг после шагов движка или заменяет стадию целиком, и свои проверки по имени:
+
+```rust
+app.add_plugins(EnginePlugins::new(config))
+    .start_region("wilds")                                  // генерируется с seed мира, пока игра грузится
+    .add_worldgen_step(Stage::Decorate, "flowers", flowers)  // после шагов движка на этой стадии
+    .replace_worldgen_stage(Stage::Roads, "my_roads", my_roads)
+    .add_worldgen_check("river_crossings", crossings);       // имя — в checks.custom региона
+
+fn flowers(ctx: &mut GenContext) -> Result<(), String> {
+    let mut rng = ctx.rng();                // поток шага: ключ (seed, версия, попытка, шаг), не SimRng
+    // ... ctx.pois, ctx.roads, ctx.decor, ctx.filled ...
+    Err("flowers: no meadow tile".into())   // «причина: подробности»; причина группирует отказы в отчёте
+}
+```
+
+**Решатель сокетов** заполняет сетку повёрнутыми тайлами, края которых стыкуются (в духе WFC). Каждая клетка начинает с
+вариантами (тайл × разрешённый поворот), которые оставили предыдущие шаги. Распространение ограничений убирает у соседей то,
+что не стыкуется с оставшимся (AC-3 по сигнатурам краёв), лимиты чисел убирают тайл отовсюду, когда счёт достиг максимума.
+Следующей решается клетка с наименьшим числом вариантов (при равенстве меньший индекс по строкам), вариант берётся по весу
+из `DetRng`; противоречие откатывает последнее решение и запрещает его, не больше `backtracks` раз за попытку. Решают только
+целые числа (веса в тысячных, порядок по числу вариантов), поэтому одно зерно даёт одни и те же тайлы на любой платформе. Все
+изменения доменов пишутся в журнал отката, а не копируются: решение стоит памяти по тому, что изменило, и сетка 64 × 64 с
+откатами укладывается в 8 МиБ.
+
+**Детерминизм.** Генерация — чистая функция зерна, версии генератора региона, номера попытки и контента. Случайные потоки шагов
+берутся из `GenContext::rng()` (`DetRng`, ключ из этих четырёх чисел и имени шага), не из `SimRng` и никогда не зависят от
+порядка `HashMap`. Поле `version` региона входит в каждый ключ: новая версия даёт старым зёрнам новые миры, а уже сохранённые
+манифесты остаются как были. **Меняете результат генератора — поднимите `version`.**
+
+**Попытки и запасная карта.** Попытка не прошла (шаг вернул `Err`, решатель не нашёл тайл, не прошла проверка) — следующая, с
+новым ключом, до `attempts`. Если ни одна не прошла — берётся `fallback`; без него смена региона отказывает и называет
+причины всех попыток. Первая строка журнала говорит, как вышло: `region generated: wilds seed 42 v1 (attempt 1, 64 tiles,
+5 POIs)`; у запасной карты в манифесте `attempt: 0`.
+
+### Манифест
+
+`RegionManifest` — регион как данные, они хранятся вечно (в сохранении их будет держать E8): зерно, версия генератора,
+сработавшая попытка (0 — запасная карта), каждый тайл с поворотом, точки интереса с позициями, дороги или двери между ними и
+хэш контента, из которого регион сделан. Загрузка манифеста **не запускает генератор**, поэтому обновление игры, меняющее
+генератор, не перестраивает старые миры.
+
+Каноническая запись (`to_canonical`, формат `shards-region/1`) побайтно стабильна: ключи по алфавиту, числа не больше чем с
+тремя знаками, один тайл в строке. Одно зерно, версия и контент дают одни и те же байты, `RegionManifest::hash` — FNV-1a
+по ним. Позиции поворачиваются точными перестановками, а не синусами. Настоящий манифест `wilds` с зерном 42 (88 строк):
+
+```json
+{
+  "attempt": 1,
+  "content_hash": "37778bd5b35f5e91",
+  "format": "shards-region/1",
+  "layout": "grid",
+  "links": [],
+  "origin": [-64, 48],
+  "pois": [
+    {"cell": [1, 1], "id": "spawn.0", "poi": "spawn", "pos": [-40, 0, 72]},
+    {"cell": [5, 5], "id": "den.0", "poi": "den", "pos": [24, 0, 140]},
+    …
+  ],
+  "region": "wilds",
+  "seed": 42,
+  "size": [8, 8],
+  "spawn": "spawn.0",
+  "tile_size": 16,
+  "tiles": [
+    {"at": [0, 0], "rot": 0, "tile": "grass"},
+    {"at": [3, 0], "rot": 0, "tile": "pillars"},
+    {"at": [4, 0], "rot": 90, "tile": "ruin"},
+    …
+  ],
+  "version": 1
+}
+```
+
+(`origin` не пишется, когда он `(0, 0)`: манифесты регионов в начале мира остались такими же по байтам и хэшам.) Хэш виден в
+`region_info` (`"manifest_hash": "d9d721509840d909"` для этого региона) и в `ai/status` → `world`; сценарий `region` сравнивает
+его с эталоном.
+
+### Подземелья
+
+Подземелье — комнаты, стыкующиеся дверь в дверь. Вид `room`: размер в клетках, двери на границе его футпринта, повороты, вес,
+точки и слоты, геометрия. Вид `dungeon`: вход, цель, наборы комнат, ручные комнаты и длина пути.
+
+```ron
+// crates/shards_world/tests/world/assets/content/dungeon/crypt.dungeon.ron
+{ "crypt": (version: 1, cell_size: 8.0, entrance: "entry", goal: "throne", rooms: ["#crypt"],
+            fixed: ["vault"],            // ручная комната: фиксированный узел главного пути
+            path: (3, 6),                // комнат между входом и целью, ручные в их числе
+            branches: (1, 3),            // лишних комнат в стороне от пути
+            max_size: (14, 14), secondary: [(poi: "chest", count: 2)],
+            checks: (distances: [(a: "spawn", b: "boss", min: 16.0)])) }
+// …crypt.room.ron
+{ "vault": (size: (2, 1), doors: [(at: (0, 0), side: W), (at: (1, 0), side: E)],
+            pois: [(poi: "vault", at: (0.0, 0.0, 0.0))], slots: [(at: (4.0, 0.0, 0.0), accepts: ["chest"])],
+            geometry: Inline([Box(min: (-8.0, -1.0, -4.0), max: (8.0, 0.0, 4.0))])), … }
+```
+
+Главный путь кладётся первым: вход, `path` комнат (ручные среди них, в случайных местах), цель; каждая следующая комната входит
+в дверь, обращённую к свободной двери предыдущей. Путь ищется поиском в глубину с ограниченным откатом, поэтому подземелье,
+которое получилось, всегда проходимо от входа к цели. Потом на свободные двери вешаются ветки. Все розыгрыши — из `DetRng` с
+ключом из зерна, версии, попытки и стадии, как у сеточных регионов. Подземелье строится так же, как регион (`regen
+region=crypt`), его манифест имеет `layout: rooms`, а связи — `door`. Ручная комната, которую нельзя положить посреди пути
+(у неё меньше двух дверей), — ошибка контента; нижняя граница `path` поднимается до числа ручных комнат.
+
+### Пакетная проверка: `shards worldgen`, `--worldgen-report`
+
+Регион генерируется для многих зёрен без окна, ничего не строя. Первая строка начинается с `ok:` (все прошли) или `failed:`,
+дальше причины неудачных попыток с примерами зёрен, расстояния между точками (мин / медиана / макс) и паники генератора с
+номером зерна.
+
+```text
+$ cargo sandbox --worldgen-report wilds --seeds 1..1000
+ok: worldgen wilds v1, seeds 1..1000: 1000/1000 passed (42 after a retry), 0 fell back, 0 failed, 0 panicked [1000 seeds in 0.31s, 0.3 ms/seed]
+failed attempts (43):
+  43× check distance (e.g. seeds 19, 25, 71)
+distances between points (m, min / median / max):
+  camp–camp  9.5 / 66.0 / 155.7
+  camp–den  40.0 / 65.2 / 93.8
+  camp–shrine  9.5 / 68.7 / 154.8
+  camp–spawn  41.0 / 78.1 / 140.0
+  den–shrine  9.5 / 55.7 / 118.9
+  den–spawn  93.4 / 93.4 / 93.4
+  shrine–spawn  12.0 / 70.3 / 140.0
+```
+
+Код выхода: 0, если прошли все зёрна, иначе 1 (нет такого региона — тоже 1, с подсказкой `unknown region `wild` (did you mean
+`wilds`?)`). Зёрна: `1..1000` (оба конца включены), `7`, `1,5,10..20`; не больше миллиона. Тот же отчёт даёт запущенная игра:
+`shards worldgen --region wilds --seeds 1..1000 --report` (инструмент `worldgen_report`). Подземелье проверяется так же
+(`--worldgen-report crypt`): тысяча зёрен проходит за 0.17 с. CI гоняет этот отчёт для песочницы и шаблона.
+
+### Загрузка региона
+
+Инструменты (разработчик; действия, реплей записывает и повторяет их в тот же тик):
+
+- `regen region=ID seed=N` — сгенерировать регион (или подземелье) и перейти в него; без аргументов — следующее зерно текущего
+  региона;
+- `region_load manifest=…` — построить регион из манифеста, как он был (из `region_info manifest=true`), ничего не генерируя;
+- `goto_tile x y [id]` — телепорт в центр тайла на землю (пол выше плоскости тайла тоже, не внутрь него);
+- запросы: `region_info` (игрок: что за регион, точки, хэш манифеста; `manifest=true` — весь манифест) и
+  `worldgen_report`; с окном ещё `world_overlay` (границы тайлов, сокеты, точки, дороги).
+
+```text
+$ shards act regen region=wilds seed=42
+ok: wilds seed 42 v1 (attempt 1, 64 tiles, 5 POIs, 199 entities), spawn at (-40.0, 72.0)
+CHANGES
+  ~ e5 Player: moved 72.1m SW
+  + e23 Spawn "spawn.0"  72.1m SW
+  + e24 Den "den.0"  130.2m S
+  + e25 Skeleton "Den Guard"  hp 40/40  poise 20/20  130.2m S
+  …
+JOURNAL
+  0 region generated: wilds seed 42 v1 (attempt 1, 64 tiles, 5 POIs)
+  0 region loaded: wilds seed 42 v1 (64 tiles, 199 entities, players at (-40.0, 72.0))
+  0 navmesh: wilds seed 42 v1 (64 tiles, 65012 nodes, 7168 links across edges, 0 navlinks)
+```
+
+Что происходит внутри вызова (`change_region`): все тайлы, префабы и файлы уровней проверяются **до** того, как что-то
+тронуто (опечатка в префабе оставляет старый регион, а не мир без региона); состояние идёт `InGame → RegionLoading → InGame`
+(экран загрузки: тики не идут, `OnExit(InGame)` и `OnEnter(InGame)` для этой поездки не выполняются, игроки остаются);
+сущности старого региона уходят (`region unloaded: …`); новый строится тайл за тайлом по строкам (комнаты — по северо-западной
+клетке), куски геометрии каждого тайла в порядке файла, потом точки интереса (сущность-ориентир с `AiKind` по метке точки и
+префаб точки: лагерь спавнит скелета); игроки переносятся на точку появления; модули, подписавшиеся на `on_region_loaded`
+(навсетка), достраивают свои данные. Все сущности — верхнего уровня, с мировым `Transform`, с `TileId` и `RegionPart`, так что
+тот же манифест даёт те же `AiId` и `ColliderId` в каждом запуске, с окном и без него. Если какой-то другой модуль ещё
+что-то грузит (файл уровня), шлюз загрузки держит тики, пока всё не готово: смена региона не сдвигает ни одного тика.
+
+**Стартовый регион.** `start_region("wilds")` в плагине игры генерирует регион с seed мира, пока игра грузится, и строит его
+до `OnEnter(InGame)`: его `AiId` идут первыми. Игра без этого начинает без региона. Песочница так не делает: её «дебри» вызываются
+`regen`.
+
+**Регион рядом с другими местами.** Поле `origin` ставит северо-западный угол региона где угодно в мире (центры клеток, точки,
+навсетка считаются от него): песочница держит дебри к югу от арены и полосы препятствий, а не вместо них. В `region_info`
+у такого региона есть `north_west_corner`, в `observe` — `TILE outside …`, когда игрок вне его.
+
+### Активные зоны и стриминг
+
+Каждый тик в `SimSet::Input` (до выполнения приказов) каждый персонаж, который не игрок (у него есть `Intent`, нет
+`PlayerId` и `AiPlayer`), получает `ActiveZone` в пределах радиуса от какого-нибудь игрока и `Dormant` дальше. Чтобы персонаж
+на границе не мигал, активный засыпает только на `active_margin` (8 м) дальше. Радиус: `active_radius` региона, иначе
+`WorldSettings::active_radius`, иначе 96 м; без региона и без настройки зон нет, и всё работает. Мозги NPC и навигация
+пропускают `Dormant`; он виден в `observe` (`dormant`). Когда игрок в дебрях, монстры арены спят:
+
+```text
+  ~ e6 Boss "Frost Warden": +dormant
+  ~ e7 Skeleton: +dormant
+```
+
+**Стриминг.** Геометрия региона для игры создаётся вся при загрузке региона. Окно (`render`) ещё показывает тайлы: картинку
+тайла игра делает сама (`set_tile_visual_spawner`, по LOD), а движок создаёт и убирает её по расстоянию до ближайшего игрока
+(`WorldSettings::visual_lods`, по умолчанию 96 и 256 м; дальше последней границы убрано). Это только картинка: без окна
+ничего не стримится, на тики это не влияет. Подгрузки геометрии тайлов для физики по расстоянию нет (весь регион в памяти).
+
+### Регион глазами ИИ
+
+```text
+$ shards observe
+YOU  e5 Player  hp 100/100  stam 100/100  poise 60/60  flask 3/3  god mode  at (-40.0, 72.0) facing N
+TILE (1, 1) gate rot 0 · wilds seed 42 v1
+POI  e23 spawn.0 0.0m here · e26 shrine.0 70.3m SE · e29 camp.1 84.0m S
+```
+
+`TILE` — тайл под субъектом (`TILE outside wilds seed 42 v1 (8×8 tiles of 16m from (-64, 48))`, если он вне региона),
+`POI` — три ближайшие точки с направлением и расстоянием. `ai/status` получает поле `world` (регион, зерно, версия, число
+тайлов, хэши манифеста и контента). Условие `step --until named:near_poi` останавливает шаг, когда игрок в пределах 3 м от
+точки интереса (регистрируется с первым регионом).
+
+## Навигация и NPC (E6)
+
+Крейт `shards_npc`: враги, которых игра описывает данными, и навигация, по которой они ходят. Языковой модели тут нет:
+поведение — таблицы в контенте и обычный код. NPC управляет телом через `Intent`, так же, как игрок и как агент
+(`Order::Attack`), поэтому бьёт и ходит по правилам игрока (выносливость, замах, откат).
+
+- **Поведение**: автомат состояний из контента (`behavior`); логика состояний и условий — именованные функции движка или игры.
+- **Восприятие**: зрение лучами через физику, слух, память о последнем месте цели.
+- **Режиссёр боя** (`director`): жетоны атаки по числу игроков, бюджет столкновения, разрешённые сочетания, роли ждущих.
+- **Планировщик атак** (`attack_plan`): веса, окна дистанции, откаты, запреты последовательностей; для врагов и боссов.
+- **Навсетка**: тайлы запекаются заранее, при загрузке региона сшиваются, маршруты по графу тайлов.
+- **Агенты навигации**: следование по маршруту, уклонение, поводок вокруг дома.
+
+NPC — боец (`Fighter`) с компонентом `Npc` (и необязательными `Home`, `Patrol`); остальное приходит с ним через `#[require]`.
+В префабе это одна строка, кода игры не нужно (`crates/sandbox/assets/content/region/camps.prefab.ron`):
+
+```ron
+"Npc": (behavior: "skeleton", perception: "guard", plan: Some("skeleton"), director: ""),
+"Home": (pos: None, leash: 12.0),          // pos: None — там, где NPC стоит на первом тике
+```
+
+### Поведение
+
+Каждый тик активный NPC (в порядке `AiId`) сначала пробует переходы своего состояния по порядку: берётся первый, у которого
+все условия выполнены (не больше одного за тик), потом хук состояния говорит, чего NPC хочет сейчас: куда идти, куда смотреть,
+нужен ли жетон, бить ли, что нажать. Условия и состояния только читают мир, поэтому порядок обхода NPC ничего не меняет.
+
+```ron
+// content/npc/monsters.behavior.ron
+{
+    "skeleton": (
+        initial: "idle",
+        states: {
+            "idle": (transitions: [(to: "fight", when: ["target_known", ("target_in_leash", {"margin": 2.0})])]),
+            "fight": (kind: "attack", transitions: [
+                (to: "home", when: [("!target_in_leash", {"margin": 2.0})]),    // «!» — отрицание
+                (to: "home", when: ["target_lost"]),
+            ]),
+            "home": (kind: "return_home", params: {"heal": 10.0}, transitions: [
+                (to: "fight", when: ["target_known", "target_in_leash"]),
+                (to: "idle", when: ["at_home"]),
+            ]),
+        },
+    ),
+}
+```
+
+Состояние: `kind` (хук; по умолчанию имя самого состояния), `params` (параметры входа), `duration: (мин, макс)` (таймер на
+входе из `SimRng`; условие `timer_done`) и `transitions`. Условие — `"имя"` или `("имя", {"параметр": число})`. Опечатка в
+состоянии перехода — ошибка контента с подсказкой; неизвестное условие или хук называется в журнале один раз и никогда не
+выполняется.
+
+| хук (`kind`) | что делает | параметры |
+|---|---|---|
+| `idle` | стоит | `face_target` |
+| `hold` | стоит лицом к цели в поводке | |
+| `patrol` | обходит точки `Patrol` по кругу | `speed`, `within`, `wait` |
+| `chase` | бежит к цели, не выходя из поводка | `speed`, `within` |
+| `return_home` | идёт домой и лечится | `speed`, `within`, `heal` (здоровья в секунду) |
+| `wait_token` | ждёт жетон в роли режиссёра | `speed` |
+| `attack` | с жетоном планировщик выбирает атаку, подходит и нажимает; без жетона просит его и ждёт в роли | `speed` |
+| `flee` | убегает от цели | `speed`, `distance` |
+| `investigate` | идёт на звук или запомненную точку | `speed`, `within` |
+
+Условия движка: `target_known`, `target_seen`, `target_heard`, `target_lost`, `target_within {meters}`, `target_in_leash
+{margin}`, `beyond_leash {margin}`, `at_home {within}`, `arrived`, `has_token`, `attack_done`, `resting`, `busy`, `timer_done`,
+`in_state {secs}`, `health_below {fraction}`, `heard_noise`, `chance {p}` (из `SimRng`).
+
+**Своё в игре**: функции с именем, на которое ссылается контент; игровая функция с именем движка заменяет его.
+
+```rust
+app.add_npc_condition("low_morale", |c, p| c.health_fraction() < p.num("below", 0.3))     // fn(&NpcCtx, &Params) -> bool
+   .add_npc_state("rally", |c, p, out| {                                                   // fn(&NpcCtx, &Params, &mut NpcOutput)
+       out.goal = c.home;                      // идти домой; маршрут, уклонение и поводок сделает навигация
+       out.within = 2.0;
+       out.speed = p.num("speed", 1.0);
+   });
+```
+
+`NpcCtx` даёт NPC, его цель (`target`: расстояние, видна ли), поводок, жетон, план, мир на чтение и `rng(salt)` из `SimRng`.
+
+### Восприятие
+
+Параметры — вид `perception`: `sight_range`, `fov_deg`, `eye_height`, `near`, `line_of_sight`, `hearing`, `memory`.
+
+```ron
+// content/npc/monsters.perception.ron
+{
+    "skeleton": (sight_range: 18.0, fov_deg: 360.0, near: 3.0, hearing: 1.0, memory: 6.0),
+    "guard":    (sight_range: 14.0, fov_deg: 360.0, line_of_sight: false, memory: 3.0),    // знает свой зал: колонны не прячут
+}
+```
+
+Зрение: враждебный боец (`Team`) в пределах `sight_range`, в поле зрения (или ближе `near` при любом повороте) и с чистым лучом
+от глаз до тела через слой `WORLD`. Слух: `Noise { position, radius, source }` (игра запускает их сама; движок делает шум на
+каждое попадание и на каждый спринт) доходит до NPC в пределах `radius × hearing` и ждёт в его `Perceived`. Память:
+замеченное остаётся известным `memory` секунд на последнем месте. Цель (фокус) держится за уже известным, пока другой не
+окажется намного ближе. Что NPC знает, лежит в его компонентах (`Perceived`) и входит в хэш реплея и снапшот целиком.
+
+### Режиссёр боя и жетоны
+
+```ron
+// content/npc/monsters.director.ron
+{
+    "default": (tokens: {1: 2, 2: 3, 3: 4},                  // жетонов атаки по числу живых игроков
+                waiting: [(role: Circle, distance: 3.5, orbit: 1.2), (role: Strafe, distance: 3.0, period: 1.5), (role: Hold, distance: 5.0)],
+                patience: 3.0),
+    "boss": (tokens: {1: 1}, waiting: [(role: Hold, distance: 2.6)]),           // босс дерётся один
+}
+```
+
+Атаку начинает только NPC с жетоном, и держит его, пока атака не кончится. Жетонов у режиссёра столько, сколько сказано для
+числа живых игроков (больше игроков, чем в таблице, — последняя запись; меньше — первая). Просящих обслуживают по порядку
+ожидания, потом по `AiId`. Жетон возвращается, когда атака кончилась, когда его не использовали `patience` секунд (`unused`), когда
+держатель умер, уснул (`dormant`), забыл цель (`target gone`), вышел из боя (`left the fight`) или оказался под приказом агента
+(`under orders`). Когда живых игроков стало меньше, жетоны сверх нового предела возвращаются сразу, сначала самые новые
+(`limit lowered`), кроме тех, чья атака уже идёт: она доходит до конца с жетоном. Атака — действие, которое начал нажатый
+вход, а не принудительное (оглушение, вздрагивание, смерть); есть ли у него удары, значения не имеет: каст со снарядом из
+эффекта тоже атака и держит жетон до конца, а планировщик помнит её (откат, запреты последовательностей, счётчик).
+Цель, которую NPC забыл (она вышла из его восприятия), для режиссёра и планировщика исчезла: планировщик нажимает только на
+цель, которую NPC чувствует сейчас. NPC под приказом агента (`move_to`, `attack` инструментом) выпадает из боя: жетонов и мест
+ожидания не берёт, ничего не нажимает и отпускает то, что держал.
+
+Без жетона NPC ждёт в **роли** вокруг цели: ждущие получают места по очереди, место `n` берёт роль `n % число ролей` из
+`waiting` (`Circle` — ходит по кругу, `Strafe` — шагает вбок, меняя сторону каждые `period` секунд, `Hold` — держится на
+расстоянии). Ещё: `budget` — сколько опасности (`cost` атак) может быть в полёте на одну цель; `allowed` — какие пары тегов
+могут бить цель одновременно (`("light", "heavy")`, `"*"` — любой тег); их проверяет планировщик при нажатии. У режиссёра нет
+своего состояния: всё в компонентах NPC (`AttackToken`, `NpcPlan`), реплей и снапшот несут его целиком.
+
+```text
+$ shards scenario crates/sandbox/scenarios/npc_director.scenario   # три скелета на одного игрока
+  123 e7 idle → fight e5
+  123 e8 idle → fight e5
+  123 e14 idle → fight e5
+  123 e7 takes an attack token on e5 (1/2)
+  123 e8 takes an attack token on e5 (2/2)
+  209 e7 -> e5 claw -0 (hp 100, god mode)
+  209 e8 -> e5 claw -0 (hp 100, god mode)
+  252 e7 returns its attack token after light (0/2)
+  252 e8 returns its attack token after light (0/2)
+  252 e14 takes an attack token on e5 (1/2)
+```
+
+### План атак
+
+Вид `attack_plan` — из чего NPC выбирает следующую атаку. Тот же планировщик у скелета и у босса.
+
+```ron
+// content/npc/monsters.attack_plan.ron
+{
+    "skeleton": (options: [(input: "light", tags: ["light"])], rest: (1.4, 1.9)),
+    "warden":   (auto: true, in_range_only: true,                       // любая атака мувсета, что достаёт до цели сейчас
+                 bans: [(after: ["zone"], then: ["zone"], within: 1)],  // никогда две «зоны» подряд
+                 rest: (1.2, 1.8)),
+}
+```
+
+Вариант (`AttackOption`): `input` мувсета или `action`, `name`, `weight`, окно дистанции `min`/`max` (по умолчанию достаёт
+действие, умноженное на `cover`), `cooldown`, `tags`, `cost` (доля бюджета цели). Планировщик оставляет варианты, которые можно
+выбрать (не в откате, не запрещены предыдущими атаками, `can_start` машины действий говорит «сейчас или по ожиданию», влезают
+в бюджет и разрешённые сочетания), берёт по весам тот, окно которого держит дистанцию (иначе из всех, если не `in_range_only`)
+потоком `SimRng`, подходит в его окно и нажимает вход. Пауза `rest` отсчитывается, пока NPC не занят никаким действием (оглушение
+после парирования отдыхом не считается; откаты идут всегда).
+
+### Поводок, дом и зоны
+
+`Home { pos, leash }`: где NPC дома и как далеко он может уйти (метры). Цели NPC держатся внутри поводка (с запасом 0.5 м на
+тело); условия `target_in_leash`, `beyond_leash`, `at_home` дают поведению повернуть домой. Скелеты песочницы на арене — 30 м,
+страж — 26 м, лагерные скелеты дебрей — 12 м, страж логова — 10 м. NPC в `Dormant` (дальше активного радиуса от всех игроков,
+см. «Мир и генерация») не думает и не ходит и просыпается в тот тик, когда игрок подошёл. Условия `step --until`:
+`named:npc_attacking` (чья-то атака идёт), `named:npcs_calm` (ни у кого нет цели), `named:npc_beyond_leash` (активный NPC дальше
+поводка на метр: шаг, который должен держать NPC в зоне, на нём не должен останавливаться), `named:npc_detour` (NPC идёт
+по маршруту из нескольких участков, потому что цель не на виду).
+
+### Навсетка
+
+Каждый тайл (и комната подземелья) **запекается** заранее в сетку проходимых клеток. Геометрия тайла спавнится одна в
+пустом мире тем же спавнером, что и регион, и опрашивается теми же зондом земли и правилом шага движения (`step_onto`), что
+использует `path_to` и контроллер. Поэтому навсетка, локальный планировщик и контроллер согласны, что можно пройти, перелезть,
+спрыгнуть и проплыть. Узел — клетка на одном уровне пола (этажи — разные узлы), связи — ходьба, плавание, перелезание, спуск к
+восьми соседям и прыжки через две клетки у подножия уступа.
+
+```text
+$ cargo sandbox --bake-nav               # все тайлы, которые используют регионы (или --bake-nav grass,ruin; в игре: tool nav_bake)
+baked 9 tiles into nav/
+  gate: gate.navtile.ron (1000 nodes, 3 areas, 4 portals)
+  grass: grass.navtile.ron (1024 nodes, 1 area, 4 portals)
+  hall: hall.navtile.ron (972 nodes, 2 areas, 4 portals)
+  pillars: pillars.navtile.ron (944 nodes, 5 areas, 4 portals)
+  ruin: ruin.navtile.ron (992 nodes, 4 areas, 4 portals)
+  …
+```
+
+Запеканка загружает игру без окна и без тиков, пишет файлы `assets/nav/<тайл>.navtile.ron` (комнаты — `.navroom.ron`) и
+завершается кодом 0 (все запеклись) или 1 (нельзя запечь или нет такого тайла: `no tile or room `grss` to bake (did you
+mean `grass`?)`). Файл — заголовок RON с числами, которые читает человек, и хэш того, из чего он запечён, вокруг
+упакованной сетки в base64. Тот же тайл — те же байты: повторный `--bake-nav` ничего не меняет в git.
+
+Настройки — вид `nav` (id `default`):
+
+```ron
+// content/region/wilds.nav.ron
+{ "default": (cell: 0.5, agent: Some("skeleton"), safe_drop: 2.0) }
+```
+
+`cell` — ребро клетки в метрах (ребро тайла должно делиться на неё), `agent` — id `locomotion` тела, под которое пекутся
+тайлы (радиус, рост, высота ступеньки, склон, перелезание), `safe_drop` — глубже этого спуск считается обрывом, `dir` — папка
+файлов (`nav`), `check_bakes` — проверять ли файлы контентом. **С определением `nav` отсутствующий или устаревший файл — ошибка
+контента**, и `shards content check` / `--check-content` называют его:
+
+```text
+content/region/wilds.nav.ron: nav `default`: the bake of tile `grass` (nav/grass.navtile.ron) is stale: the tile, its prefabs or level file, or the nav settings changed since it was baked; bake it again with `--bake-nav grass`
+```
+
+Хэш файла берёт формат и версию запеканки, определение тайла, префабы его геометрии с теми, что они расширяют (в том числе
+префабы узлов файла уровня), байты файла уровня, размер тайла и настройки с телом. Тайл без свежего файла при загрузке региона
+всё равно запекается на месте, а в журнале предупреждение с именами:
+
+```text
+  0 [warn] navmesh: 5 tiles baked while loading (stale: grass, road_bend, road_end, road_straight, road_t); bake them with `--bake-nav all` (or the nav_bake tool)
+```
+
+**Версия запеканки.** `BAKE_VERSION` в `shards_npc::nav::tile` входит в хэш каждого файла. Если вы меняете то, чем запекается
+тайл (сэмплирование, зонд земли или правило шага в `shards_motion`), поднимите её: все файлы станут устаревшими, и контент
+назовёт каждый. Файлы лежат в репозитории игры.
+
+**Регион собирает навсетку при загрузке** (`NavRegion`, строится внутри вызова, который его грузит, так что ни один тик не видит
+регион без неё):
+
+1. по тайлу манифеста берётся его файл (если свежий) или запекается на месте;
+2. каждый поставленный тайл — экземпляр запеканки, повёрнутый вместе с тайлом;
+3. **вырезание**: твёрдые тела, которых запеканка не видела (декор, реквизит, коллайдеры, появившиеся потом), выключают узлы, где
+   тело больше не помещается. Узел выключен, если сейчас стоит такое тело, и это чистая функция тел, стоящих сейчас: навсетка не
+   зависит от порядка, в котором они появлялись и уходили; изменения замечаются каждый тик, и связи у краёв решаются заново;
+4. **сшивка** по каждому краю, который сокеты оставили открытым (граф региона из `shards_world`): граничный узел получает
+   то же движение, которое сделал бы локальный планировщик, в узел соседнего тайла, в том числе прыжки через две клетки (подъём
+   или спуск), когда уступ лежит прямо на краю тайла; край с непроходимым сокетом закрыт, какой бы ни была геометрия;
+5. **navlink** — маркеры уровня `navlink` с `to` становятся односторонними связями (спуск любой глубины, подъём в пределах
+   высоты перелезания тела, шаг в соседнюю клетку); те, что не по силам телу, не используются, а `nav_info` и журнал говорят
+   почему (прыжка у тел нет);
+6. **граф тайлов**: порталы (на сторону и область каждого тайла), стоимости между ними внутри тайла, связи между тайлами.
+
+Маршрут (`NavRegion::path`): A* по графу тайлов, потом A* по сетке тайлов коридора, потом «натягивание нити» с проверкой по
+сетке и телесным ощупыванием физики. Стоимости целые, ничья — меньший id: тот же регион даёт тот же маршрут, и NPC в реплее
+идут одинаково. Маршруты не требуют окна. Навсетка рассчитана на одно тело (`agent`): ходок, которому движения этого тела не
+под силу (шире или выше, ступенька ниже, перелезает или плавает хуже; `NavRegion::serves`), планирует по локальной сетке,
+поэтому `move_to path=true` не ведёт его через перелезание, которое он не сделает. Страж песочницы шире скелета и ходит так.
+Навсетка, которую не удалось построить, не пробуется заново каждый тик, а только когда сменился регион или контент.
+
+**Запросы и инструменты.**
+
+| инструмент | что делает |
+|---|---|
+| `nav_path` (игрок, запрос) | маршрут, который выбрал бы NPC, в формате `path_to` плюс тайлы, через которые он идёт (`"provider": "navmesh"`) |
+| `nav_info` (разработчик, запрос) | навсетка региона: тайлы, узлы, связи, вырезанное, navlink и какие тайлы запеклись при загрузке |
+| `nav_bake` (разработчик, `control`) | то же, что `--bake-nav`: один тайл, несколько или все |
+| `nav_overlay` (разработчик, окно) | рисует клетки (зелёные; вода синяя, вырезанное красное), связи через края, navlink, маршруты NPC и границы тайлов |
+| `npc_state` (игрок, запрос) | всё об уме NPC: состояние, цель, жетон, план, маршрут, поводок |
+| `npc_set_state` (разработчик) | принудительно перевести NPC в состояние его поведения (в журнале `(npc_set_state)`) |
+| `move_to path=true` | идёт по маршруту навсетки в регионе, а вне региона по локальной сетке |
+
+```text
+$ shards act nav_path from='{"x": 24, "z": 140}' to=e5          # от логова стража к игроку за колоннами
+{
+  "distance": 16.8,
+  "path": "path 16.8m, 3 turns: 6.2m E → 3.5m N → 7.2m NW",
+  "provider": "navmesh",
+  "tiles": ["(5, 5)"],
+  …
+}
+$ shards act nav_info
+{ "agent": {"height": 1.8, "radius": 0.4}, "baked_while_loading": [], "from_files": ["gate", "grass", "hall", …],
+  "region": "wilds seed 42 v1", "summary": "64 tiles, 65012 nodes, 7168 links across edges, 0 navlinks", … }
+```
+
+`path_to` и `clearance` остаются запросами к физике (локальная сетка в 0.5 м), в регионе маршруты по навсетке дают `nav_path` и
+`move_to path=true`. Снапшот навсетку не сохраняет: после загрузки снапшота она строится заново для региона и тел, которые
+снапшот вернул.
+
+### Агенты навигации
+
+Откуда NPC берёт маршрут — `NavPaths` (подмена: `fn(&World, from, to, radius) -> waypoints`): по умолчанию навсетка внутри
+загруженного региона и локальная сетка в остальных местах. Цель на виду (`plain_sight`: на навсетке прямая линия шагов по
+земле, никогда не через обрыв, уступ или вырезанное; вне региона широкий бросок по слою `WORLD` над землёй без дыр и глубоких
+спусков) маршрута не требует. Для другой маршрут строится заново, когда цель сдвинулась или каждые `repath` секунд, поэтому
+запросов мало, как бы много NPC ни бежало. Нет маршрута — NPC стоит на месте до следующего плана и никогда не идёт напрямик
+(`npc_state` → `nav.no_route`). Уклонение: каждый смотрит на `avoid_time` секунд вперёд, куда идут другие, и сворачивает от
+точки наибольшего сближения (вправо, если встреча лоб в лоб), плюс расталкивание вплотную. Числа (`hit_noise`, `sprint_noise`,
+`avoid_time`, `avoid_margin`, `repath`, `waypoint_reach`) — вид `npc_tuning`, id `default`.
+
+### NPC глазами ИИ
+
+В `observe` у NPC строка состояния (`chase e5 · token · leash 12/20m`, `attack e5 · circle`, `idle (dormant)`), в журнале —
+переходы и жетоны:
+
+```text
+  2 e25 idle → fight e5
+  2 e25 takes an attack token on e5 (1/2)
+  183 e25 returns its attack token unused: unused (0/2)
+  332 e25 -> e5 claw -0 (hp 100, god mode)
+```
+
+`npc_state` целиком (фрагмент): `"state": "fight"`, `"target": "e5"`, `"token": {"attack": "light", "started": true, …}`, `"plan":
+{"history": ["light"], "rest": 0.0, …}`, `"nav": {"arrived": true, "direct": true, "waypoints": 0, "no_route": false}`, `"home":
+{"at": "(24.0, 140.0)", "distance": 8.51, "leash": 10.0}`.
+
+### Ограничения
+
+- Навсетка запекается под одно тело; другим планирует локальная сетка (это дольше и с ограничением по области поиска).
+- У тел нет прыжка и лестниц: `navlink` годится для спуска, подъёма в пределах перелезания и шага.
+- Геометрия, которая появляется позже запеканки, вырезается, а не запекается: вырезание умеет только выключать клетки.
+  Ступеньку, которой не было в запеканке, навсетка не узнает, пока тайл не запечён заново.
+- Правка тайла, файла уровня, префаба его геометрии, тела `agent` или настроек `nav` требует `--bake-nav`; без него контент
+  называет устаревший файл, а игра запекает его при загрузке региона.
+- Уклонение между NPC простое: упреждающий поворот и расталкивание, без согласованного планирования.
+
 ## Слой ИИ
 
 Крейт `ai_core`: всё, чем агент смотрит на игру и действует в ней. Он не зависит от конкретной игры.
@@ -803,16 +1695,17 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 
 | scope | инструменты |
 |---|---|
-| **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; движение: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; бой: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack |
-| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load |
+| **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; движение: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; бой: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack; мир: region_info, level_info, nav_path, npc_state |
+| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load; мир: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay |
 
 Игра добавляет свои (в шаблоне `taunt` и условие `arena_cleared`, в песочнице условия `boss_phase_2`, `boss_dead`,
-`player_dead`). У каждого инструмента есть вид (`kind` в `shards tools`):
+`player_dead`, `three_attacking`). Модули добавляют условия для `step --until named:…`: `near_poi` (мир, появляется с первым
+регионом), `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour` (NPC). У каждого инструмента есть вид (`kind` в `shards tools`):
 
 - `query` только читает мир: без записи в журнал и без диффа;
 - `action` меняет мир: пишет в журнал, возвращает `CHANGES` и попадает в реплей;
 - `control` управляет временем или сессией (pause, resume, speed, step, possess, content_reload, rebind, snapshot_save,
-  snapshot_load): журнал и дифф
+  snapshot_load, nav_bake): журнал и дифф
   как у action, но в реплей не попадает. Он меняет, *когда* что-то происходит, а не *что*.
 
 - **Действие возвращает изменения.** Каждый action-инструмент сравнивает срез мира до и после вызова и возвращает
@@ -910,13 +1803,14 @@ cargo build --release -p sandbox --no-default-features --features remote   # т�
 ```
 
 **CLI `shards`:** observe, step, act, scenario, shot, save-replay, save-snapshot, load-snapshot, tools, inspect, nearby, journal, pause, resume, speed,
-status, session, content, raw, wait. Аргументы `act` передаются JSON-объектом или парами `key=value`. Флаги
+status, session, content, worldgen, raw, wait. Аргументы `act` передаются JSON-объектом или парами `key=value`. Флаги
 `--port`/`SHARDS_PORT`, `--port-file`/`SHARDS_PORT_FILE` (порт из файла игры; `--port` важнее), `--token`/`SHARDS_TOKEN`,
 `--agent`/`SHARDS_AGENT`, `--json` (у `tools` — со схемами аргументов). `shards wait` ждёт, пока игра ответит и
 загрузится (контент; пока идёт загрузка, `step` отвечает ошибкой), и печатает, кто ответил: `ready: tick 0 · pid 4242 ·
 seed 1 · port 15711` (ту же строку игра печатает при старте, её же первой строкой выводит `shards status`). `shards
 content check` перечитывает файлы контента запущенной игры и выходит с кодом 1 при ошибках; без запущенной игры —
-`--check-content`.
+`--check-content`. `shards worldgen --region R --seeds 1..1000 --report` печатает пакетный отчёт генератора запущенной игры
+(код 1, пока прошли не все зёрна); без игры — `--worldgen-report R --seeds …` самой игры.
 
 **Параллельные headless-инстансы.** У каждого свой порт:
 
@@ -1089,8 +1983,8 @@ invariant field e5 Health.current > 0      # любое ожидание; про
 - **Ошибки разбора** называют строку: ``obstacle.scenario:12: unknown command `stpe`; expected act, act?, step, …``.
   Показываются сразу все плохие строки, и пока они есть, не запускается ничего.
 - **Мир берётся как есть.** Сценарий не перезапускает игру. Чтобы файл шёл и на свежей игре, и после других, он сам
-  приводит мир в порядок первыми командами (`heal`, `teleport`, `set`): так сделаны `crates/sandbox/scenarios/*.scenario`
-  (кроме `errors.scenario`, который рассчитывает на игрока у старта: после `obstacle_course` он не пройдёт).
+  приводит мир в порядок первыми командами (`heal`, `teleport`, `set`, `npc_set_state … calm`, `regen`): так сделаны все
+  `crates/sandbox/scenarios/*.scenario`, они идут на свежей игре и после других, вперёд и назад (CI проверяет оба порядка).
 
 В тесте:
 
@@ -1104,12 +1998,16 @@ assert!(report.passed, "{report}");   // отчёт — построчный ж�
 
 ```text
 $ shards scenario --quiet crates/sandbox/scenarios/*.scenario
-PASS crates/sandbox/scenarios/boss_fight.scenario (49 commands, 452 ticks)
-PASS crates/sandbox/scenarios/combat_prototype.scenario (214 commands, 2310 ticks)
-PASS crates/sandbox/scenarios/dodge.scenario (72 commands, 591 ticks)
-PASS crates/sandbox/scenarios/errors.scenario (29 commands, 0 ticks)
+PASS crates/sandbox/scenarios/boss_fight.scenario (50 commands, 422 ticks)
+PASS crates/sandbox/scenarios/combat_prototype.scenario (215 commands, 2214 ticks)
+PASS crates/sandbox/scenarios/dodge.scenario (74 commands, 591 ticks)
+PASS crates/sandbox/scenarios/errors.scenario (38 commands, 2 ticks)
+PASS crates/sandbox/scenarios/npc_director.scenario (38 commands, 1923 ticks)
+PASS crates/sandbox/scenarios/npc_navmesh.scenario (31 commands, 1271 ticks)
 PASS crates/sandbox/scenarios/obstacle_course.scenario (86 commands, 1010 ticks)
-5 of 5 scenarios passed
+PASS crates/sandbox/scenarios/region.scenario (40 commands, 353 ticks)
+PASS crates/sandbox/scenarios/snapshot.scenario (51 commands, 357 ticks)
+9 of 9 scenarios passed
 ```
 
 Без `--quiet` каждая команда печатается строкой `ok  39 step 900 --until near:e5:e6:3.2 → ran 129 ticks (150 → 279),
@@ -1124,7 +2022,8 @@ stopped: e5 within 3.2m of e6`. Код выхода: 0 — все прошли, 
   Сохраняется каждое изменение, сделанное *между* тиками (клавиатура, сетевой клиент, инструмент агента), с тиком, к
   которому оно относится. Изменения, которые делают системы геймплея внутри тика, детерминированы и не хранятся.
   Компонент клонируется, только когда он изменился;
-- **action-вызовы** (`teleport`, `set`, `spawn`, `attack`, `content_apply`, …) вместе со scope и «телом» агента. Вызовы,
+- **action-вызовы** (`teleport`, `set`, `spawn`, `attack`, `content_apply`, `regen`, `region_load`, `goto_tile`, `spawn_level`,
+  `level_reload`, `npc_set_state`, …) вместе со scope и «телом» агента. Вызовы,
   сделанные изнутри другого инструмента, не пишутся: их повторит внешний вызов. `control`-инструменты (pause, step,
   possess, content_reload, rebind) не пишутся. Сырые правки через BRP (`world.insert_components`) идут мимо инструментов
   и тоже не пишутся. Правка контента на лету записывается как `content_apply` на своём тике;
@@ -1138,14 +2037,15 @@ shards save-replay replays/boss-fight.json  # своё имя, но только
 cargo sandbox --replay replays/tick332.json # окно, реальное время; seed и частота из файла
 cargo sandbox --replay replays/tick332.json --headless --paused   # дальше шагами через shards step
 cargo sandbox --replay tests/replays/obstacle_course.json --verify
-# replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 0.82s]
+# replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 1.37s]
 xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify --windowed  # в окне, по 60 тиков на кадр
-# replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 2.91s, 21 frames]
+# replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 3.00s, 22 frames]
 ```
 
-**Эталонные реплеи** лежат в `tests/replays/` (папка в git, в отличие от `replays/`): полоса препятствий и бой-прототип,
-сыгранные их сценариями на свежей игре. Тест песочницы проверяет каждый файл самой игрой (`sandbox --replay FILE
---verify`), CI — ещё и в окне под Xvfb. Шаблон хранит свой в `template/tests/replays/`. Если геймплей или контент
+**Эталонные реплеи** лежат в `tests/replays/` (папка в git, в отличие от `replays/`): полоса препятствий, бой-прототип,
+директор жетонов (`npc_director`), страж логова на навсетке (`npc_navmesh`), смена регионов (`region`) и реплей со снапшота
+(`snapshot`), сыгранные их сценариями на свежей игре. Тест песочницы проверяет каждый файл самой игрой (`sandbox --replay FILE
+--verify`), CI — ещё и в окне под Xvfb. Шаблон хранит свои в `template/tests/replays/` (`smoke`, `valley`). Если геймплей или контент
 поменялся намеренно, запишите их заново: `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
 (для шаблона — `cargo test --test game record_reference_replays -- --ignored`).
 
@@ -1175,7 +2075,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
   again`, а `--verify` выходит с кодом 2.
 - Реплей начинается с тика 0 или со снапшота: см. «Снапшоты».
 
-## Снапшоты
+## Снапшоты (E11.4)
 
 Снапшот — состояние симуляции на одном тике, в файле: можно сохранить в любой тик и вернуться к нему в этой игре или в
 свежей, собранной так же. Дальше `step` идёт так, как шла бы исходная сессия.
@@ -1185,18 +2085,21 @@ shards save-snapshot snapshots/boss_phase2.json   # или act snapshot_save pat
 shards load-snapshot snapshots/boss_phase2.json   # или act snapshot_load path=…; --force — даже если игра другая
 ```
 
-«Перейти к фазе босса» — это снапшот, снятый в этой фазе и загруженный по имени (`cargo sandbox --headless --paused --seed
-42`, затем `shards load-snapshot snapshots/boss_phase2.json`; тест `go_to_boss_phase_two_is_a_snapshot_loaded_by_name`
-делает то же). Снятые снапшоты в репозиторий не кладут (`snapshots/` в `.gitignore`), как и `replays/`.
+«Перейти к фазе босса» — это снапшот, снятый в этой фазе и загруженный по имени: сценарий `snapshot.scenario` доводит стража
+до второй фазы, снимает `snapshots/boss_phase2.json`, увозит игру куда угодно и одной командой `snapshot_load` возвращает бой во
+вторую фазу (тест `go_to_boss_phase_two_is_a_snapshot_loaded_by_name` делает то же в процессе). Снятые снапшоты в репозиторий
+не кладут (`snapshots/` в `.gitignore`), как и `replays/`.
 
 **Что в снапшоте.** Каждый элемент состояния симуляции — одно из четырёх:
 
 - **сохраняется**: все сущности с `AiId` под своим id и их отражаемые компоненты (игры и модулей движка, плюс `Transform` и
   `Name`; типы `bevy_*`, которые добавляет окно, не входят); ссылка на сущность внутри компонента пишется как `e12`
   (`AiId`) или `c7` (ключ модуля: коллайдер без id, `add_snapshot_entity_key`); тик; счётчик `AiId` и надгробия;
-  ресурсы, которые модуль зарегистрировал `add_snapshot_resource::<R>()` (`ColliderIds`);
+  ресурсы, которые модуль зарегистрировал `add_snapshot_resource::<R>()` (`ColliderIds`, `RegionBuild` — регион в мире, см.
+  ниже);
 - **пересобирается** после загрузки (`add_snapshot_rebuild`): кэши, выведенные из сохранённого, — `PhysicsWorld`,
-  запомненные значения входов записи реплея;
+  запомненные значения входов записи реплея, **навсетка региона** (`navmesh`: строится заново для региона и твёрдых тел,
+  которые снапшот вернул; NPC игры, загруженной из снапшота, ходят теми же маршрутами, что в исходной);
 - **проверяется** (`add_snapshot_check`): то, вокруг чего построен мир. Снапшот хранит хэши базы контента, коллайдеров без
   `AiId` (геометрия уровня) и размещённых уровней и не грузится там, где они другие: `content differs (snapshot …, this
   game …): the content files differ …`. `force=true` грузит всё равно;
@@ -1204,6 +2107,25 @@ shards load-snapshot snapshots/boss_phase2.json   # или act snapshot_load pat
   показывает только окно. Seed и частота тиков — в заголовке и должны совпасть (`start the game with --seed 7`);
   версия движка в заголовке тоже: другая минорная (`0.2` и `0.3`) — отказ (`force` пропускает), другой патч — только
   предупреждение. `ContentDb` не сохраняется: это файлы.
+
+**Регион в снапшоте.** Мир строится вокруг региона, поэтому он идёт особым путём: `add_snapshot_prepare(name, covers, fn)`
+запускает модуль **до** проверок (после seed, версии, контента и компонентов), чтобы он построил заново то, что делает из
+сохранённого ресурса; проверки из `covers` (`static_colliders`, `levels`) идут после. Мир сохраняет `RegionBuild`: канонический
+манифест региона, первый `ColliderId` и номер экземпляра уровня, с которыми он строился. При загрузке регион снапшота строится
+заново, с теми же id, в игре, где другой регион или никакого; если снапшот снят без региона, регион в мире выгружается;
+манифест, который контент не может построить, отказывает до любых изменений. Настоящий вывод: снапшот, снятый в дебрях в
+разгар боя стража логова, загружен в свежую игру на арене.
+
+```text
+$ shards save-snapshot snapshots/wilds_fight.json                  # игра 1: регион wilds, на 332-м тике страж бьёт игрока
+saved /…/snapshots/wilds_fight.json: tick 332, 30 entities, 2 resources
+$ shards load-snapshot snapshots/wilds_fight.json                  # игра 2: свежая, на арене, региона нет
+loaded /…/snapshots/wilds_fight.json: tick 332, 30 entities, 2 resources; region: wilds seed 42 v1 built again from its manifest (199 entities); the recording now starts at tick 332
+  332 [sim] snapshot loaded: …/snapshots/wilds_fight.json (tick 332, 30 entities, 2 resources; region: wilds seed 42 v1 built again from its manifest (199 entities))
+$ shards step 120                                                  # то же, что в игре 1
+ran 120 ticks (332 → 452)
+  ~ e25 Skeleton "Den Guard": +ground 1.6m/s; fight e5 · token · leash 9/10m → fight e5 · circle · leash 7/10m; -active claw 0.10s (zone cone 1.8m 100°); moved 1.8m S
+```
 
 Состояние вне сущностей с `AiId`, которое не подпадает ни под одно из четырёх, — единственная ловушка. Поэтому загрузка
 кончается проверкой: мир сохраняется снова и сравнивается с файлом, а `state_hash` (с `add_replay_check`-ами) — с хэшем
@@ -1221,20 +2143,34 @@ id, ставятся тик, счётчики и ресурсы, пересоб�
 загрузки игры, до первого тика, и дальше проигрывает события и сверяет проверки как обычно. Снапшот, который эта сборка
 не принимает (другой контент или версия), — код выхода 2 с причиной. Ограничение: то, что произошло до снапшота и меняет
 «то, вокруг чего построен мир» (правка контента, `spawn_level`), в такой реплей не входит; свежая игра должна быть уже
-такой.
+такой. Регион исключение: он идёт в снапшоте. Известная щель: при проигрывании реплея `content_apply`, который добавляет
+файл уровня тайла, и `regen` в тот же тик не успевают загрузить файл.
 
 **Доказательство** (`crates/sandbox/tests/sandbox/snapshots.rs`): сессия идёт до тика N, снапшот, дальше до тика M
 (состояние A); свежая игра загружает снапшот, получает те же входы и идёт до M (состояние B). A и B — одно состояние до
 байта (полный снапшот, `state_hash`), журнал от N до M одинаков. Проверено на середине переката, комбо, телеграфа, планирования (glide),
-плавания, на 9 точках боя с Хранителем, при перемотке в той же игре и на реплее со снапшота (`--verify`).
+плавания, на 9 точках боя с Хранителем, при перемотке в той же игре и на реплее со снапшота (`--verify`); для мира — снимок
+посреди обхода колонн по навсетке дебрей, загруженный в свежую арену (`a_snapshot_in_the_generated_region_goes_on_the_same_in_a_fresh_arena`),
+уровни-тайлы, возвращающиеся под своими номерами, подземелье в игре с другим регионом, жетоны, планы, маршруты и восприятие NPC на десяти тиках боя и сгенерированный
+регион с тремя NPC на навсетке и ящиками, вырезаемыми и возвращаемыми (`shards_npc/tests/npc/snapshot.rs`).
 Почему не `DynamicWorld` Bevy: тот же слой reflection под ним, но сущности названы битами `Entity`, а не `AiId`; порядок
 вставки компонентов зависит от архетипа, а `AiId` должен встать раньше хуков; файл не стабилен по байтам.
 ## Песочница
 
 Песочница (`crates/sandbox`) — тестовая арена движка, на которой проверяется каждый модуль. Она собрана только на
-`shards`, как игра. Своего кода в ней немного: мир по контенту, мозги монстров (пишут `Intent`, как клавиатура), фазы босса,
-останки, условия для `step`, визуал окна. Всё, что числа и определения, — контент в `crates/sandbox/assets/content/` с
-горячей перезагрузкой:
+`shards`, как игра. Своего кода в ней немного: мир арены по контенту, фазы босса, останки, условия для `step`, визуал окна.
+Монстры — NPC движка (`shards_npc`): их поведение, восприятие, директор жетонов и планы атак тоже контент. Три области:
+
+- **арена** (с точки (0, 0)): игрок, три скелета и страж Frost Warden — бой-прототип;
+- **полоса препятствий** от x = 40 (E2);
+- **дебри** (`wilds`): сгенерированный регион 8 × 8 тайлов по 16 м к югу от арены, северо-западный угол в (−64, 48), то есть
+  x −64..64, z 48..176 (южная стена арены на z 21.5). Игрок попадает туда по `regen region=wilds seed=42` (`shards act`), у ворот
+  в клетке (1, 1). Девять тайлов: трава, четыре дороги, колонны, руина из файла Blender (`assets/tiles/ruin.gltf`), ворота и
+  зал с колоннадой и логовом (ворота и зал расставлены регионом, не жребием). Точки интереса: ворота, логово со стражем,
+  святилище, два лагеря скелетов. Тайлы запечены в `assets/nav/` (коммитятся), `ruin.level.ron` заставляет `content check`
+  читать файл руины узел за узлом.
+
+Всё, что числа и определения, — контент в `crates/sandbox/assets/content/` с горячей перезагрузкой:
 
 | файл | что в нём |
 |---|---|
@@ -1245,17 +2181,23 @@ id, ставятся тик, счётчики и ресурсы, пересоб�
 | `combat/player.action.ron` | комбо `light_1`–`light_3`, `heavy`, перекат (i-frames 0.18 с), блок с идеальным блоком, фляга |
 | `combat/warden.action.ron` | четыре атаки стража (`slash`, `slam`, `sweep`, `shockwave`), спокойные и в ярости |
 | `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | коготь скелета, мувсеты, буфер ввода |
+| `npc/monsters.behavior.ron`, `monsters.perception.ron`, `monsters.director.ron`, `monsters.attack_plan.ron` | как монстры думают: автоматы `skeleton` и `warden` (с состоянием `calm`, из которого сценарии не выпускают монстра), зрение, директоры `default` (два жетона на одного игрока) и `boss` (страж бьёт один), планы атак стража |
+| `region/wilds.*.ron` | дебри: тайлы, правила сокетов, точки интереса, регион, запасная карта, настройки навсетки |
+| `region/camps.prefab.ron`, `region/ruin.level.ron` | лагерные скелеты (`Home` 12 м) и страж логова (10 м); файл руины и маркеры, обязательные в нём |
+| `world/watch.layout.ron` | третий скелет арены (`e14`) |
 
 `layout` — вид контента самой песочницы: коробки (`solids`), пандусы, объёмы (вода, поток, триггер), ориентиры для ИИ и
 префабы для спавна. Слои спавнятся по порядку id, внутри — по порядку списков, так что `AiId` и `ColliderId` одинаковы в
 каждом запуске: e1–e4 колонны, e5 игрок, e6 страж, e7–e8 скелеты, e9–e13 ориентиры полосы `Stairs`, `Ledge`, `Pool`,
-`Cliff`, `Goal`. Правка layout на лету перестраивает геометрию на следующем тике; ориентиры сохраняют id, персонажи остаются.
+`Cliff`, `Goal`, e14 третий скелет; регион (`regen`) добавляет свои сущности после них. Правка layout на лету перестраивает геометрию на следующем тике; ориентиры сохраняют id, персонажи остаются.
 
 **Бой — прототип из GDD 39.** У игрока комбо из трёх лёгких ударов через окна отмены, тяжёлый удар с гипербронёй на
 замахе, перекат, блок (держать; первые 0.15 с — идеальный блок, он и есть парирование: урона нет, атакующий шатается),
-фляга (45 HP, 3 заряда). Выносливость тратят удары, перекат, блок и спринт; стойкость есть у всех. Страж выбирает из своих
-атак те, что достают до цели (`SimRng`), и никогда не делает две «зоны» подряд (тег `zone` в контенте); между атаками
-отдыхает. Предупреждение (`e6 winds up slam (0.50s) ⚠ circle 4m`) приходит ровно за 0.50 с до удара. С половины здоровья —
+фляга (45 HP, 3 заряда). Выносливость тратят удары, перекат, блок и спринт; стойкость есть у всех. Страж — NPC: он охраняет
+свой пост и дерётся с игроками в пределах поводка 26 м (скелеты арены — 30 м), без лечения при возврате. План атак
+`warden` выбирает из атак мувсета те, что достают до цели (`SimRng`), и никогда не делает две «зоны» подряд (тег `zone` в
+контенте); пауза после каждой — 1.2–1.8 с, в ярости 1.0–1.4 с, и она отсчитывается, пока страж ничего не делает (оглушение
+после парирования отдыхом не считается). Предупреждение (`e6 winds up slam (0.50s) ⚠ circle 4m`) приходит ровно за 0.50 с до удара. С половины здоровья —
 фаза 2: второй мувсет, короче замахи и отдых. Скелеты: один коготь, вздрагивают от ударов, их тела исчезают через 1.5 с;
 тело стража остаётся (dev `heal` его поднимает).
 
@@ -1270,9 +2212,21 @@ id, ставятся тик, счётчики и ресурсы, пересоб�
 - `combat_prototype.scenario` — страж побеждён за 11 раундов. Каждый раунд читается по предупреждению (`step --until
   "journal:e6 winds up"`), дальше перекат из зоны, блок, идеальный блок с тяжёлым ударом, обмен ударами под гипербронёй,
   фляга, комбо. Тест прогоняет его после шести разных пауз (другие атаки в другом порядке) — победа каждый раз;
-- `boss_fight`, `dodge`, `errors` — переход в фазу 2, перекат против попадания, ошибки, которые учат.
+- `boss_fight`, `dodge`, `errors` — переход в фазу 2, перекат против попадания, ошибки, которые учат;
+- `npc_director.scenario` (E6) — три скелета на одного игрока в режиме бога, 30 с боя: условие песочницы `three_attacking`
+  (трое бьют одновременно) не выполняется ни на одном тике, но каждый скелет получает свою очередь, жетоны ходят по кругу;
+- `npc_navmesh.scenario` (E6) — в дебрях страж логова видит игрока сквозь колоннаду, обходит колонны по навсетке
+  (`npc_detour`; `nav_path` игрока показывает те же 16.8 м вместо прямых 10), бьёт и никогда не выходит за поводок
+  (`npc_beyond_leash`); когда игрок уходит на север, доходит до края зоны и возвращается к логову;
+- `region.scenario` (E5) — `regen region=wilds seed=42` и хэш манифеста `d9d721509840d909`, игрок у ворот, путь на два тайла
+  вперёд и обратно по навсетке (`move_to path=true`, остановка на `near_poi`), другое зерно — другой манифест, то же зерно —
+  тот же, до байта;
+- `snapshot.scenario` (E11.4) — бой со стражем доводится до второй фазы, снимается снапшот, игра уезжает, `snapshot_load`
+  одной командой возвращает бой и его можно продолжить.
 
-Сессии двух первых записаны как эталонные реплеи в `tests/replays/` (см. «Реплеи»).
+Сценарии начинают с `heal`/`teleport`/`set`/`npc_set_state … calm`, поэтому идут на свежей игре и после других, в любом порядке:
+CI гоняет их вперёд и потом назад в одной игре. Сессии шести из них записаны как эталонные реплеи в `tests/replays/`
+(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`; см. «Реплеи»).
 
 ## Тесты и CI
 
@@ -1282,23 +2236,27 @@ cargo test -p sandbox --test sandbox          # песочница: сценар
 cargo test --manifest-path template/Cargo.toml # шаблон отдельно: свой workspace и свой Cargo.lock
 ```
 
-Всего 513 тестов в `cargo test --workspace` (на 14 октября 2026; ещё 14 `#[ignore]`: запись эталонных реплеев, проверка
-окна под Xvfb и примеры в документации) и 19 тестов шаблона:
+Всего 752 теста в `cargo test --workspace` (на 14 октября 2026; ещё 17 `#[ignore]`: запись эталонных реплеев, проверка
+окна под Xvfb и примеры в документации) и 23 теста шаблона (ещё один `#[ignore]`: запись его эталонов):
 
 | крейт | тестов | что проверяют |
 |---|---|---|
-| `ai_core` | 49 | снапшоты (сохранение и загрузка, отказ для чужой игры, ссылки на сущности, реплей со снапшота без загрузки), id (перенумерация, занятый id), журнал, RNG, компас и LOS, схемы, шаги симуляции, пути снимков, реплеев и снапшотов (только `shots/`, `replays/`, `snapshots/`; абсолютные пути, `..`, симлинки), формат реплея и отчёт, запрет BRP-правки `AiId`, занятый порт, `instance` в `ai/status`, файл порта, токен у каждого метода BRP, запуск сценариев в процессе |
+| `ai_core` | 51 | снапшоты (сохранение и загрузка, отказ для чужой игры, ссылки на сущности, реплей со снапшота без загрузки), id (перенумерация, занятый id), журнал, RNG, компас и LOS, схемы, шаги симуляции, пути снимков, реплеев и снапшотов (только `shots/`, `replays/`, `snapshots/`; абсолютные пути, `..`, симлинки), формат реплея и отчёт, запрет BRP-правки `AiId`, занятый порт, `instance` в `ai/status`, файл порта, токен у каждого метода BRP, запуск сценариев в процессе |
 | `shards_script` | 35 | без Bevy: условия и аргументы, слова как в shell, разбор каждой команды сценария и текст каждой ошибки, запуск на поддельной игре (ожидания, `mark`, инварианты, `session`, `seed`, потерянная игра) |
 | `shards_cli` | 8 | порт из `--port-file`, строка `ready`, токен по номеру порта; `shards scenario` против поддельной игры на localhost (коды выхода 0/1/2) |
-| `shards_core` | 10 | загрузка не сдвигает тики, пауза, `after_loading`, нажатия живут один тик, `move_to`, `ai/status` называет модули |
+| `shards_core` | 11 | загрузка не сдвигает тики, пауза, `after_loading`, нажатия живут один тик, `move_to`, `ai/status` называет модули |
 | `shards_content` | 22 | определения и их файлы, повторы и ссылки называют файл и поле, `check_dir`, префабы (`extends`, переопределения), перезагрузка пишется в реплей и проигрывается, сломанная правка отклоняется, правка файла в работающей игре |
 | `shards_motion` | 154 | физика (запросы, слои, порядок по `ColliderId`), контроллер (ступени, перелезание, плавание, планер, прыжок, стены), числа из контента, ввод (режимы, контексты, переназначение, сохранение), камера, `clearance` и `path_to`, инструменты, реплей и независимость от индексов `Entity` |
 | `shards_action` | 136 | действия, буфер, отмены и комбо, `can_start`, попадания и конвейер урона (уклонение, блок, парирование, стойкость, гиперброня), статусы, зоны и подсказка «выйди», анимация (`select_clip`), геометрия телеграфов, инструменты и их ошибки, реплей боя |
-| `shards` | 9 | реплей со снапшота (`--verify`: тот же результат, код 2 для чужого снапшота), режим без окна — те же плагины, тестовое приложение, `testing::ok` на сбое геймплея, анимационный мост на настоящей модели со скином |
-| `sandbox` | 90 | в одном бинарнике `tests/sandbox`: снапшоты (`snapshots.rs`: состояние после загрузки то же, что в исходной сессии, на перекате, комбо, телеграфе, планировании, плавании, флаконе и боях с мозгами), сценарии (`scenario_files`: каждый файл на свежей игре, все подряд в одной игре, бой-прототип после шести разных пауз), эталонные реплеи, действия, контент, полоса препятствий, детерминизм, видимость, права scope, реплеи, `kill` и SIGHUP; отдельно `system_failures` (сбой геймплея, краш-реплей) и `log_capture` (строки лога в `step`): у них свои процессы |
+| `shards_level` | 79 | glTF и узлы, свойства (`collider`, `volume`, `prefab`, компоненты по имени, текстовый JSON), маркеры и их ошибки, коллайдеры нужных размеров и слоёв, вид `level` и его проверка в `content check`, спавн (мировые позиции, порядок, id), горячая перезагрузка, реплей и хэш `level`, картинка уровня |
+| `shards_world` | 71 | формат тайлов, регионов, комнат (ошибки называют файл и ближайший id); решатель, проверки (недоступность, уклон, расстояния, дорога никуда), сотни и тысяча зёрен, манифест байт в байт, запасная карта, паника шага игры с номером зерна; подземелья; смена региона через `RegionLoading`, стартовый регион, `goto_tile`, реплей со сменами регионов, снапшот в регионе; тайлы из файлов уровней во всех четвертях оборота; активные зоны |
+| `shards_npc` | 79 | автомат поведения и его ошибки, зрение/слух/память, жетоны директора (включая смену числа игроков и приказы агента), планировщик (запреты, бюджет, отдых), запекание и сшивка (в том числе ступени на краю тайла), вырезание в любом порядке, маршруты и обход колонн, поводок, `npc_state`, реплей и снапшот на десяти тиках боя и в сгенерированном регионе |
+| `shards` | 12 | реплей со снапшота (`--verify`: тот же результат, код 2 для чужого снапшота), режим без окна — те же плагины, тестовое приложение, `testing::ok` на сбое геймплея, анимационный мост на настоящей модели со скином |
+| `sandbox` | 94 | в одном бинарнике `tests/sandbox`: снапшоты (`snapshots.rs`: состояние после загрузки то же, что в исходной сессии, на перекате, комбо, телеграфе, планировании, плавании, флаконе, боях NPC и в сгенерированном регионе), тайл руины (`tiles.rs`: файл из тестового генератора glTF совпадает с закоммиченным), сценарии (`scenario_files`: каждый файл на свежей игре, все подряд в одной игре, бой-прототип после шести разных пауз), эталонные реплеи, действия, контент, полоса препятствий, детерминизм, видимость, права scope, реплеи, `kill` и SIGHUP; отдельно `system_failures` (сбой геймплея, краш-реплей) и `log_capture` (строки лога в `step`): у них свои процессы |
 
-Тесты шаблона (`template/tests/game`, 19) собираются в одном бинарнике: сценарии, детерминизм, реплеи, контент,
-манифест (единственная зависимость — `shards`).
+Тесты шаблона (`template/tests/game`, 23) собираются в одном бинарнике: сценарии, детерминизм, реплеи, контент, регион
+(тысяча зёрен долины, манифест байт в байт, экран загрузки без окна, колонна руины, рейдер на навсетке), манифест (единственная
+зависимость — `shards`).
 
 **Окно против режима без окна.** Снимки и окно требуют дисплея и GPU, поэтому в `cargo test` их нет. Одинаковость окна и
 режима без окна проверяют реплеи под Xvfb и программным Vulkan (`apt install xvfb mesa-vulkan-drivers
@@ -1306,8 +2264,9 @@ libxkbcommon-x11-0`):
 
 ```bash
 for r in tests/replays/*.json; do xvfb-run -a cargo sandbox --replay $r --verify --windowed; done
-# replay finished at tick 2325: identical to the recording (39 checks) [2325 ticks in 6.50s, 43 frames]
-# replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 2.91s, 21 frames]
+# replay finished at tick 2307: identical to the recording (39 checks) [2307 ticks in 6.69s, 44 frames]
+# replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 3.00s, 22 frames]
+# …и так для каждого файла: npc_director (1923 тика), npc_navmesh (1261), region (353), snapshot (369)
 xvfb-run -a cargo test -p shards --test action_render -- --ignored --nocapture   # телеграфы, оверлей, маркеры: две картинки
 ```
 
@@ -1317,19 +2276,21 @@ xvfb-run -a cargo test -p shards --test action_render -- --ignored --nocapture  
 
 | задание | что делает |
 |---|---|
-| `test` | `cargo test --workspace --locked`: юнит-тесты, сценарии песочницы, эталонные реплеи (`--verify`) |
+| `test` | `cargo test --workspace --locked`: юнит-тесты, сценарии песочницы (в том числе мир и NPC), эталонные реплеи (`--verify`) |
 | `clippy` | `cargo clippy --all-targets --locked -- -D warnings` для движка и для шаблона |
-| `template` | `template/Cargo.lock` не расходится с корневым; `cargo test` шаблона; `cargo run -- --check-content` и `--verify` его реплеев через бинарник игры |
-| `headless-cli` | живая песочница без окна (`--port 0 --port-file`), `shards wait`, `shards scenario crates/sandbox/scenarios/*.scenario`; `kill` в конце |
+| `template` | `template/Cargo.lock` не расходится с корневым; `cargo test` шаблона; `cargo run -- --check-content`, `--verify` его реплеев и `--worldgen-report valley --seeds 1..1000` через бинарник игры |
+| `headless-cli` | `cargo sandbox --check-content` (уровни тайлов и запечённая навигация тоже), `--worldgen-report wilds --seeds 1..1000`; живая песочница без окна (`--port 0 --port-file`), `shards wait`, `shards scenario crates/sandbox/scenarios/*.scenario`, потом те же сценарии в обратном порядке в той же игре; `kill` в конце |
 | `replays-window` | те же реплеи (песочницы и шаблона) в окне под Xvfb: `--verify --windowed`; необязательное (`continue-on-error`), пока не докажет стабильность |
 
 ## Что дальше
 
-Подробно, по пунктам ТЗ, — [docs/engine-progress.md](docs/engine-progress.md). Фаза A (прототип боя: E1–E3 и части E4 и
-E11) собрана и проверена локально. Впереди:
+Подробно, по пунктам ТЗ, — [docs/engine-progress.md](docs/engine-progress.md). Фазы A (прототип боя: E1–E3 и части E4 и
+E11) и B (мир: E5, E6, уровни из Blender, снапшоты) собраны и проверены локально; GitHub Actions для них не запускался.
+Впереди:
 
-1. **Фаза B — мир:** генерация и стриминг регионов (E5), навсетка и ИИ врагов (E6), уровни из Blender (E4), снапшоты в
-   любой тик (реплей начинается со снапшота), `clearance`/`path_to` по навсетке.
+1. **Остатки фазы B:** стриминг геометрии тайлов для физики (сейчас по расстоянию грузится только картинка), проверка, что
+   сокеты файла уровня совпадают с сокетами тайла в RON, `path_to` и `clearance` по навсетке (сейчас по навсетке только
+   `nav_path` и `move_to path=true`), навсетка под несколько тел.
 2. **Фаза C — кооператив:** сеть (E7), сохранения и настройки (E8), агент, привязанный к игроку, стенд «хост + клиенты».
 3. **Фаза D — контент и интерфейс:** виджеты, экраны, звук, локализация (E9); дерево интерфейса в `observe`.
 4. **Фаза E — платформа:** рендер и производительность, Steam, Windows, скриншоты без окна (E10).
@@ -1340,7 +2301,7 @@ E11) собрана и проверена локально. Впереди:
 - В движке нет LLM: ни встроенных агентов, ни вызовов моделей, ни API-ключей (см. [AGENTS.md](AGENTS.md)).
 - Код и комментарии на английском, документация на русском.
 - Версия Bevy закреплена (`0.20.0`). Обновлять её стоит осознанно, отдельным шагом: API Bevy меняется в каждом релизе.
-  Сторонние крейты (сейчас `parry3d =0.31.1`, `ron =0.12.2`) берутся после проверки поддержки Bevy 0.20, закрепляются точной
+  Сторонние крейты (сейчас `parry3d =0.31.1`, `ron =0.12.2`, `gltf =1.4.1` в `shards_level`) берутся после проверки поддержки Bevy 0.20, закрепляются точной
   версией и прячутся за API движка.
 - `.cargo/config.toml` ставит `jobs = 4`, потому что на этой машине мало RAM. Если памяти больше, увеличьте. Зависимости
   собираются с `opt-level = 3`, свой код с `opt-level = 1`.
