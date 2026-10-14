@@ -68,6 +68,11 @@ struct Args {
     /// Default 1..100.
     #[arg(long, requires = "worldgen_report")]
     seeds: Option<String>,
+    /// Bake the navigation of tiles into `<assets>/nav/` (TILES: `all`, the default, or tile
+    /// and room ids separated by commas), print what was baked, exit 0 (all baked) or 1.
+    /// Loads the game headless (content, level files) and runs no tick.
+    #[arg(long, value_name = "TILES", num_args = 0..=1, default_missing_value = "all")]
+    bake_nav: Option<String>,
 }
 
 /// The standard game `main`: parses the command line into an [`EngineConfig`], calls
@@ -94,6 +99,9 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
     }
     if let Some(region) = &args.worldgen_report {
         return worldgen_report(&build, config, region, args.seeds.as_deref().unwrap_or("1..100"));
+    }
+    if let Some(tiles) = &args.bake_nav {
+        return bake_nav(&build, config, tiles);
     }
     if args.verify
         && let Some(r) = recording.take()
@@ -363,6 +371,29 @@ fn worldgen_report(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, 
     }
 }
 
+/// `--bake-nav [TILES]`: the game loaded headless (content, level files), the navigation of
+/// its tiles baked into their bake files, the report printed; exit 0 (every tile baked) or 1.
+fn bake_nav(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, tiles: &str) -> ExitCode {
+    let config = EngineConfig { headless: true, testing: true, port: None, paused: true, crash_replays: false, hot_reload: false, ..config };
+    let mut app = build(&config);
+    app.finish();
+    app.cleanup();
+    if let Err(e) = crate::testing::wait_until_loaded(&mut app, crate::testing::LOAD_TIMEOUT) {
+        println!("error: {e}");
+        return ExitCode::FAILURE;
+    }
+    match shards_npc::bake_files(app.world_mut(), Some(tiles)) {
+        Ok(report) => {
+            println!("{report}");
+            if report.ok() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+        }
+        Err(e) => {
+            println!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// `kill` (SIGTERM) and a closed terminal (SIGHUP) end the game the way Ctrl+C does:
 /// through `AppExit`, so what it wrote at start (the BRP token, `--port-file`) is
 /// removed. A signal the game was started with ignored (`nohup`) stays ignored; a
@@ -508,5 +539,31 @@ mod tests {
         }
         assert_eq!(worldgen_report(&game, config.clone(), "tiny", "1..50"), ExitCode::SUCCESS);
         assert_eq!(worldgen_report(&game, config, "tinny", "1..5"), ExitCode::FAILURE, "an unknown region fails");
+    }
+
+    #[test]
+    fn bake_nav_writes_the_bake_files_content_checks() {
+        let parse = |args: &[&str]| Args::try_parse_from(args.iter().copied());
+        assert_eq!(parse(&["game", "--bake-nav"]).unwrap().bake_nav.as_deref(), Some("all"));
+        assert_eq!(parse(&["game", "--bake-nav", "field,rock"]).unwrap().bake_nav.as_deref(), Some("field,rock"));
+
+        let config = content("bake_nav", "Totem");
+        let dir = std::path::PathBuf::from(&config.asset_dir);
+        let files = [
+            ("w.socket_rules.ron", r#"{ "default": (kinds: ["grass"], passable: ["grass"]) }"#),
+            ("w.tile.ron", r#"{ "field": (sockets: (n: "grass", e: "grass", s: "grass", w: "grass"), slots: [(at: (0.0, 0.0, 0.0), accepts: ["spawn"])], geometry: Inline([Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0))])) }"#),
+            ("w.poi.ron", r#"{ "spawn": () }"#),
+            ("w.region.ron", r#"{ "tiny": (size: (2, 2), tile_size: 8.0, version: 1, pois: [(poi: "spawn")]) }"#),
+            ("w.nav.ron", r#"{ "default": (cell: 0.5) }"#),
+        ];
+        for (name, text) in files {
+            std::fs::write(dir.join("content").join(name), text).unwrap();
+        }
+        assert_eq!(check_content(&game, config.clone()), ExitCode::FAILURE, "a nav definition wants bake files");
+        assert_eq!(bake_nav(&game, config.clone(), "all"), ExitCode::SUCCESS);
+        let baked = std::fs::read_to_string(dir.join("nav/field.navtile.ron")).unwrap();
+        assert!(baked.contains("format: \"shards-navtile/1\""), "{baked}");
+        assert_eq!(check_content(&game, config.clone()), ExitCode::SUCCESS, "fresh bakes are clean content");
+        assert_eq!(bake_nav(&game, config, "feild"), ExitCode::FAILURE, "an unknown tile fails");
     }
 }
