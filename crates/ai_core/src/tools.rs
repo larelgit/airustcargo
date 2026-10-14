@@ -19,6 +19,7 @@
 //! app.add_ai_tool("move_to", Scope::Player, move_to);
 //! ```
 
+use std::any::TypeId;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -109,7 +110,12 @@ where
     O: Serialize + 'static,
     S: IntoSystem<In<Call<A>>, ToolResult<O>, M> + Clone + Send + Sync + 'static,
 {
-    let (description, input_schema) = tool_schema::<A>();
+    let (mut description, input_schema) = tool_schema::<A>();
+    // `NoArgs` is documented for Rust readers only: a tool that takes no arguments gets no
+    // description rather than that sentence.
+    if TypeId::of::<A>() == TypeId::of::<NoArgs>() {
+        description.clear();
+    }
     let signature = signature(name, &input_schema);
     let slot: Mutex<Option<ToolSystemId<A, O>>> = Mutex::new(None);
     let tool_name = name.to_owned();
@@ -460,6 +466,24 @@ mod tests {
         assert_eq!(signature("teleport", &schema), "teleport(id: integer|string, x: number, y?: number, z: number)");
         let (_, empty) = tool_schema::<NoArgs>();
         assert_eq!(empty["type"], "object");
+    }
+
+    #[test]
+    fn a_tool_without_arguments_has_no_description() {
+        fn ping(In(_): In<Call<NoArgs>>) -> ToolResult {
+            Ok("pong".into())
+        }
+        fn teleport(In(_): In<Call<Teleport>>) -> ToolResult {
+            Ok("teleported".into())
+        }
+        let mut world = World::new();
+        register_tool(&mut world, "ping", Scope::Player, ToolKind::Query, ping);
+        register_tool(&mut world, "teleport", Scope::Dev, ToolKind::Action, teleport);
+        let tools = world.resource::<AiTools>();
+        // Empty, not the rustdoc of `NoArgs` ...
+        assert_eq!(tools.get("ping").unwrap().spec.description, "");
+        // ... while a tool with arguments keeps its own.
+        assert_eq!(tools.get("teleport").unwrap().spec.description, "Teleport an entity.");
     }
 
     #[test]
