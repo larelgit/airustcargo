@@ -45,6 +45,9 @@ pub(crate) struct Step<'a, 'w> {
 impl Step<'_, '_> {
     /// Runs the tick and returns the new feet position.
     pub fn run(&mut self, feet: Vec3) -> Vec3 {
+        if self.state.placed.is_some_and(|at| at != feet) {
+            self.restart(feet);
+        }
         if self.input.jump {
             self.state.jump_buffer_left = self.params.jump_buffer;
         }
@@ -67,6 +70,21 @@ impl Step<'_, '_> {
             s.coyote_left = (s.coyote_left - dt).max(0.0);
         }
         feet
+    }
+
+    /// Someone else moved the body (a teleport, a respawn): the speed, the fall and the
+    /// climb belonged to where it was. Standing if there is ground under the feet, else
+    /// falling from here, from rest.
+    fn restart(&mut self, feet: Vec3) {
+        let standing = self.mover.ground(feet, self.params.snap_distance).is_some_and(|g| g.walkable);
+        let s = &mut *self.state;
+        s.velocity = Vec3::ZERO;
+        s.mantle = None;
+        s.fall_from_y = None;
+        s.coyote_left = 0.0;
+        s.grounded = false;
+        s.ground_normal = Vec3::Y;
+        self.set_mode(if standing { MotionMode::Ground } else { MotionMode::Air });
     }
 
     fn set_mode(&mut self, to: MotionMode) {

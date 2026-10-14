@@ -16,7 +16,9 @@
 //! path checked before it starts. Characters never collide with each other through
 //! casts: after all of them moved, a separation pass pushes overlapping capsules apart.
 //!
-//! The transform's translation is the character's feet.
+//! The transform's translation is the character's feet. Writing it from outside (the
+//! `teleport` tool, a respawn) puts the character there afresh: no speed, no fall, no
+//! climb carried over from where it was.
 
 pub(crate) mod locomotion;
 pub(crate) mod mover;
@@ -150,6 +152,9 @@ pub struct MotionState {
     pub updraft: Option<Vec2>,
     /// Volumes the capsule touches, in collider id order.
     pub volumes: Vec<Entity>,
+    /// Where the controller left the feet. A transform found anywhere else was moved by
+    /// someone else, and the next tick starts afresh there.
+    pub placed: Option<Vec3>,
 }
 
 impl Default for MotionState {
@@ -167,6 +172,7 @@ impl Default for MotionState {
             water_surface: None,
             updraft: None,
             volumes: Vec::new(),
+            placed: None,
         }
     }
 }
@@ -319,6 +325,11 @@ pub fn move_characters(
         placed.push(Placed { entity, feet, radius, height, pinned, params: params.clone() });
     }
     separate(&physics, &mut characters, &placed);
+    for body in &placed {
+        if let Ok((.., mut state, tf, _)) = characters.get_mut(body.entity) {
+            state.placed = Some(tf.translation);
+        }
+    }
 }
 
 /// The input with anything non-finite dropped: a NaN direction from a buggy brain must

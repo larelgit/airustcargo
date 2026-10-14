@@ -183,3 +183,40 @@ fn movement_tools_teach_the_fix() {
     ok(&mut app, "move_to", json!({"target": {"x": 3, "z": 4}}));
     assert_eq!(intent(&app, e).orders[0], Order::MoveTo { target: Target::Point(Vec3::new(3.0, 0.0, 4.0)), within: 0.3 });
 }
+
+#[test]
+fn a_teleport_starts_the_motion_afresh_where_it_lands() {
+    // Mid-fall: the landing is measured from where the body was put, falling from rest.
+    let mut app = app();
+    floor(app.world_mut());
+    let e = player(app.world_mut(), Vec3::new(0.0, 30.0, 0.0));
+    let id = app.world().get::<AiId>(e).unwrap().to_string();
+    step(&mut app, 30);
+    assert_eq!(state(&app, e).mode, MotionMode::Air);
+    ok(&mut app, "teleport", json!({"id": id, "x": 0, "y": 0.5, "z": 0}));
+    step(&mut app, 30);
+    let landed = &seen(&app).landed;
+    assert_eq!(landed.len(), 1, "{landed:?}");
+    assert!((landed[0].fall_height - 0.48).abs() < 0.01, "fell from the teleport: {landed:?}");
+    let from_rest = (2.0 * 20.0 * 0.48_f32).sqrt();
+    assert!((landed[0].impact_speed - from_rest).abs() < 0.4, "from rest, not at the old fall's speed: {landed:?}");
+
+    // Mid-climb: the climb stays behind, the body stays where it was put.
+    let mut app = crate::common::app();
+    floor(app.world_mut());
+    block(app.world_mut(), Vec3::new(3.0, 0.0, -5.0), Vec3::new(20.0, 1.2, 5.0));
+    let e = player(app.world_mut(), Vec3::ZERO);
+    let id = app.world().get::<AiId>(e).unwrap().to_string();
+    edit_intent(&mut app, e, |i| i.move_dir = Vec3::X);
+    let ticks = drive(&mut app, 120, |w| w.get::<MotionState>(e).unwrap().mode != MotionMode::Mantle);
+    assert!(ticks < 120, "never started climbing");
+    step(&mut app, 3);
+    edit_intent(&mut app, e, |i| i.move_dir = Vec3::ZERO);
+    ok(&mut app, "teleport", json!({"id": id, "x": -10, "y": 0, "z": 5}));
+    step(&mut app, 30);
+    let s = state(&app, e);
+    assert_eq!((s.mode, s.mantle), (MotionMode::Ground, None), "{s:?}");
+    let at = feet(&app, e);
+    assert!((at - Vec3::new(-10.0, 0.02, 5.0)).length() < 1e-3, "stayed where it was put: {at}");
+    assert!(seen(&app).landed.iter().all(|l| l.fall_height < 0.1), "{:?}", seen(&app).landed);
+}
