@@ -193,6 +193,9 @@ fn with_client(world: &mut World, f: impl FnOnce(&mut World, &mut NetClient, &mu
     world.insert_resource(client);
 }
 
+/// Ticks a client may run beyond the newest host state and its lead before it waits.
+pub const STARVE_AHEAD: u64 = 30;
+
 /// Ticks a stand runs this client for one host tick: 0 until it is connected, then what its
 /// clock says (0, 1 or 2), and 0 while it is far ahead of the newest state (starved).
 pub fn clock_ticks(world: &mut World) -> u32 {
@@ -201,7 +204,7 @@ pub fn clock_ticks(world: &mut World) -> u32 {
     if client.stage != ClientStage::Connected {
         return 0;
     }
-    if tick > client.newest_host_tick + client.lead + 30 {
+    if tick > client.newest_host_tick + client.lead + STARVE_AHEAD {
         return 0;
     }
     client.clock.ticks(tick)
@@ -223,6 +226,10 @@ pub(crate) fn receive(world: &mut World) {
 pub(crate) fn pump(world: &mut World) {
     with_client(world, |world, client, endpoint| {
         io_in(world, client, endpoint);
+        // A starved client in real time is paused: only frames without a tick unpause it.
+        if endpoint.clock.is_wall() {
+            pace(world, client);
+        }
         flush(client, endpoint);
     });
 }
@@ -246,7 +253,7 @@ pub(crate) fn capture(world: &mut World) {
         {
             client.capture.capture(tick, &mut intent, redundancy);
         }
-        let inputs = Inputs { tick, frames: client.capture.unacked.iter().cloned().collect(), state_ack: client.ring.last_applied.unwrap_or(0) };
+        let inputs = Inputs { tick, frames: client.capture.unacked.iter().cloned().collect(), state_ack: client.ring.last_applied.unwrap_or(0), epoch: client.rebases };
         if let Some(link) = client.link.as_mut() {
             let _ = link.send_unreliable(&msg::encode(&inputs));
         }
@@ -295,6 +302,19 @@ pub(crate) fn on_exit(world: &mut World) {
 /// far off.
 fn pace(world: &mut World, client: &mut NetClient) {
     if client.stage != ClientStage::Connected {
+        return;
+    }
+    // Far ahead of the newest state (the host is paused, steps, or hangs): wait for it.
+    let starved = sim::tick(world) > client.newest_host_tick + client.lead + STARVE_AHEAD;
+    let mut time = world.resource_mut::<Time<Virtual>>();
+    if starved != time.is_paused() {
+        if starved {
+            time.pause();
+        } else {
+            time.unpause();
+        }
+    }
+    if starved {
         return;
     }
     let Some(error) = client.clock.error() else { return };
@@ -348,7 +368,8 @@ fn io_in(world: &mut World, client: &mut NetClient, endpoint: &mut NetEndpoint) 
             Delivered::Unreliable(bytes) => match msg::decode::<StateDelta>(&bytes) {
                 Ok(delta) => {
                     client.delta_bytes += bytes.len() as u64;
-                    if delta.tick > client.floor && client.pending.as_ref().is_none_or(|p| delta.tick > p.tick) {
+                    let current = delta.epoch == client.rebases;
+                    if current && delta.tick > client.floor && client.pending.as_ref().is_none_or(|p| delta.tick > p.tick) {
                         client.pending = Some(delta);
                     }
                 }
@@ -428,6 +449,11 @@ fn on_message(world: &mut World, client: &mut NetClient, message: Msg) {
         Msg::Journal { tick, text, .. } => {
             journal::push_remote(world, tick, JournalKind::Event, text);
         }
+        Msg::Event { tick, type_path, value } => {
+            if let Some(mut inbox) = world.get_resource_mut::<crate::events::EventInbox>() {
+                inbox.0.push_back((tick, type_path, value));
+            }
+        }
         Msg::CallReply { id, ok, text, tick } => {
             let tool = client.calls.remove(&id).unwrap_or_else(|| "call".into());
             let verdict = if ok { "ok" } else { "failed" };
@@ -466,7 +492,6 @@ fn end(world: &mut World, client: &mut NetClient, reason: &str) {
 
 /// Puts the host's world in (a join, or the whole world again).
 fn take_world(world: &mut World, client: &mut NetClient, welcome: Welcome, rebase: bool) {
-    let before = sim::tick(world);
     if rebase {
         world.get_resource_or_init::<SimGate>().hold("net", "net: taking the host's world again");
     }
@@ -495,12 +520,18 @@ fn take_world(world: &mut World, client: &mut NetClient, welcome: Welcome, rebas
     journal::set_local_events(world, false);
 
     let (lead, jitter) = lead_ticks(world, client);
-    let tick = if rebase { before.max(welcome.tick + lead) } else { welcome.tick + lead };
+    // A rebase may move the host's tick either way (a snapshot load): inputs and states of
+    // the old world are told apart by the epoch (`rebases`), not by their ticks.
+    let tick = welcome.tick + lead;
     sim::set_tick(world, tick);
     client.lead = lead;
     client.clock.reset(2 + jitter as i64);
     client.ring.clear();
     client.pending = None;
+    // Events of the old world name its entities; the new world's come after it.
+    if rebase && let Some(mut inbox) = world.get_resource_mut::<crate::events::EventInbox>() {
+        inbox.0.retain(|(tick, _, _)| *tick > welcome.tick);
+    }
     client.floor = welcome.tick;
     client.newest_host_tick = welcome.tick;
     client.player = Some(welcome.player);
@@ -560,6 +591,7 @@ fn apply_pending(world: &mut World, client: &mut NetClient) {
     }
     client.newest_host_tick = delta.tick;
     client.host_paused = delta.paused;
+    crate::events::retrigger_due(world, delta.tick);
     client.capture.ack(delta.inputs_ack);
     if let Some(margin) = delta.margin {
         client.clock.report(margin);

@@ -70,6 +70,19 @@ pub fn value_hash(value: &Value) -> u64 {
     h.0
 }
 
+/// Equal as encoded (and hashed): unlike `==` on JSON values, `-0.0` and `0.0` differ.
+pub fn identical(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => match (x.as_f64(), y.as_f64()) {
+            (Some(fx), Some(fy)) if x.is_f64() || y.is_f64() => x == y && fx.to_bits() == fy.to_bits(),
+            _ => x == y,
+        },
+        (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(x, y)| identical(x, y)),
+        (Value::Object(x), Value::Object(y)) => x.len() == y.len() && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| identical(v, w))),
+        _ => a == b,
+    }
+}
+
 /// The desync hash of a view: ids in order, each component `(path, value hash)` in path
 /// order, then the resources by name.
 pub fn view_hash<'a>(
@@ -122,6 +135,8 @@ pub struct EncodedEntity {
     pub values: ComponentValues,
     pub hashes: BTreeMap<String, u64>,
     pub position: Option<Vec3>,
+    /// The `eN` its values mention.
+    pub refs: BTreeSet<u32>,
 }
 
 /// Everything encoded on one send tick, shared by every client's delta.
@@ -172,7 +187,11 @@ impl Encoded {
             }
         }
         let position = world.get::<Transform>(entity).map(|t| t.translation);
-        self.entities.insert(id, Arc::new(EncodedEntity { values, hashes, position }));
+        let mut refs = BTreeSet::new();
+        for value in values.values() {
+            references(value, &mut refs);
+        }
+        self.entities.insert(id, Arc::new(EncodedEntity { values, hashes, position, refs }));
     }
 }
 
@@ -223,11 +242,7 @@ pub fn close_view(world: &World, encoder: &StateEncoder, cache: &mut EncodeCache
     while let Some(id) = work.pop() {
         encoded.ensure(world, encoder, cache, id);
         let Some(entity) = encoded.entities.get(&id).cloned() else { continue };
-        let mut refs = BTreeSet::new();
-        for value in entity.values.values() {
-            references(value, &mut refs);
-        }
-        for r in refs {
+        for &r in &entity.refs {
             if r >= LOCAL_BASE || view.contains(&r) || world.resource::<AiIndex>().get(AiId(r)).is_none() {
                 continue;
             }
@@ -453,7 +468,7 @@ pub fn changes_between(world: &mut World, previous: Option<&ViewState>, state: &
         Some(previous) => {
             for (id, values) in &state.entities {
                 let before = previous.entities.get(id);
-                let set: ComponentValues = values.iter().filter(|(p, v)| before.and_then(|b| b.get(*p)) != Some(*v)).map(|(p, v)| (p.clone(), v.clone())).collect();
+                let set: ComponentValues = values.iter().filter(|(p, v)| !before.and_then(|b| b.get(*p)).is_some_and(|b| identical(b, v))).map(|(p, v)| (p.clone(), v.clone())).collect();
                 if !set.is_empty() {
                     changes.set.push((*id, set));
                 }
@@ -468,7 +483,7 @@ pub fn changes_between(world: &mut World, previous: Option<&ViewState>, state: &
                 changes.despawn.push((*id, "out of view".to_owned()));
             }
             for (name, value) in &state.resources {
-                if previous.resources.get(name) != Some(value) {
+                if !previous.resources.get(name).is_some_and(|before| identical(before, value)) {
                     changes.resources.insert(name.clone(), value.clone());
                 }
             }
@@ -547,7 +562,11 @@ pub fn first_difference(here: &ViewState, host: &ViewState) -> String {
                 let paths: BTreeSet<&String> = a.keys().chain(b.keys()).collect();
                 for path in paths {
                     let (x, y) = (a.get(path), b.get(path));
-                    if x != y {
+                    let same = match (x, y) {
+                        (Some(x), Some(y)) => identical(x, y),
+                        (x, y) => x.is_none() && y.is_none(),
+                    };
+                    if !same {
                         let short = path.rsplit("::").next().unwrap_or(path);
                         let show = |v: Option<&Value>| v.map_or_else(|| "none".to_owned(), clip);
                         return format!("e{id} {short}: here {}, host {}", show(x), show(y));
@@ -585,7 +604,9 @@ mod tests {
         for (id, v) in entities {
             let values: ComponentValues = v.as_object().unwrap().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
             let hashes = values.iter().map(|(k, v)| (k.clone(), value_hash(v))).collect();
-            out.entities.insert(*id, Arc::new(EncodedEntity { values, hashes, position: Some(Vec3::new(*id as f32, 0.0, 0.0)) }));
+            let mut refs = BTreeSet::new();
+            values.values().for_each(|v| references(v, &mut refs));
+            out.entities.insert(*id, Arc::new(EncodedEntity { values, hashes, position: Some(Vec3::new(*id as f32, 0.0, 0.0)), refs }));
         }
         out
     }
@@ -602,6 +623,24 @@ mod tests {
             cap_bytes: cap,
             center: Some(Vec3::ZERO),
         })
+    }
+
+    #[test]
+    fn values_are_the_same_only_when_they_encode_the_same() {
+        assert!(identical(&json!({"v": [1, 2.5, "e3"]}), &json!({"v": [1, 2.5, "e3"]})));
+        // `==` says these are equal; their bytes, and so the desync hash, differ.
+        assert_eq!(json!(-0.0), json!(0.0));
+        assert!(!identical(&json!({"y": -0.0}), &json!({"y": 0.0})));
+        assert!(!identical(&json!(1), &json!(1.0)));
+        assert!(!identical(&json!([1]), &json!([1, 2])));
+
+        let before = ViewState { entities: [(1, [("V".to_owned(), json!([0.0, -1.0]))].into())].into(), ..Default::default() };
+        let after = ViewState { entities: [(1, [("V".to_owned(), json!([-0.0, -1.0]))].into())].into(), ..Default::default() };
+        let mut world = World::new();
+        let changes = changes_between(&mut world, Some(&before), &after, &BTreeSet::new());
+        assert_eq!(changes.set.len(), 1, "the sign of a zero is written too: {:?}", changes.set);
+        assert_ne!(hash_of(&before), hash_of(&after));
+        assert!(first_difference(&before, &after).starts_with("e1 V: here [0.0,-1.0]"), "{}", first_difference(&before, &after));
     }
 
     #[test]

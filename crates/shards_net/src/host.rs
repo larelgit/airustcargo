@@ -24,6 +24,10 @@ use crate::session::{NetEndpoint, NetGame, NetMarks, NetState, Ticked, NET_AGENT
 use crate::transport::PeerId;
 use crate::wire;
 
+/// How long a peer that is gone may stay silent with messages unacknowledged before it is
+/// forgotten, milliseconds.
+const GONE_PATIENCE_MS: u64 = 3000;
+
 /// Where a peer is in the session.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PeerStage {
@@ -137,6 +141,8 @@ pub struct NetHost {
     rebase_all: Option<String>,
     /// Encode time of the last and the slowest send tick, microseconds.
     pub encode_us: (u64, u64),
+    /// Encode time of every send tick, microseconds, and how many there were.
+    pub encode_total: (u64, u64),
     /// Desyncs reported by clients.
     pub desyncs: u32,
     pub ended: Option<String>,
@@ -152,6 +158,7 @@ impl NetHost {
             tasks: Vec::new(),
             rebase_all: None,
             encode_us: (0, 0),
+            encode_total: (0, 0),
             desyncs: 0,
             ended: None,
         }
@@ -416,6 +423,10 @@ fn on_message(world: &mut World, host: &mut NetHost, id: PeerId, message: Msg) {
 fn on_inputs(world: &World, host: &mut NetHost, id: PeerId, inputs: Inputs) {
     let tick = sim::tick(world);
     let Some(peer) = host.peers.get_mut(&id).filter(|p| p.stage == PeerStage::Connected) else { return };
+    if inputs.epoch != peer.resyncs {
+        // Sent before the client took the world again: ticks of another timeline.
+        return;
+    }
     for frame in inputs.frames {
         peer.inputs.receive(frame, tick);
     }
@@ -667,14 +678,18 @@ fn forwarded(world: &mut World, host: &mut NetHost, id: PeerId, call: CallMsg) {
 // --- sending -------------------------------------------------------------------------------
 
 /// Gameplay journal lines since the last send, to every connected peer.
-fn send_journal(world: &World, host: &mut NetHost) {
+/// Then the typed events (`net_event`) of those ticks.
+fn send_journal(world: &mut World, host: &mut NetHost) {
     let journal = world.resource::<AiJournal>();
     let (entries, _) = journal.after(host.journal_seq);
-    let lines: Vec<Msg> = entries
+    let mut lines: Vec<Msg> = entries
         .filter(|e| e.kind == JournalKind::Event)
         .map(|e| Msg::Journal { tick: e.tick, kind: "event".into(), text: e.text.clone() })
         .collect();
     host.journal_seq = journal.last_seq();
+    if let Some(mut outbox) = world.get_resource_mut::<crate::events::EventOutbox>() {
+        lines.extend(outbox.0.drain(..).map(|(tick, type_path, value)| Msg::Event { tick, type_path, value }));
+    }
     if lines.is_empty() {
         return;
     }
@@ -708,6 +723,10 @@ fn send_rebases(world: &World, host: &mut NetHost) {
         peer.send(&Msg::Rebase(welcome));
         peer.resyncs += 1;
         reset_view(peer);
+        // Its inputs start over on the new world's ticks.
+        peer.inputs = InputQueue::default();
+        peer.margin = None;
+        peer.applied_input_tick = 0;
     }
 }
 
@@ -729,15 +748,22 @@ fn send_state(world: &mut World, host: &mut NetHost) {
     };
     let mut encoded = Encoded { resources: Encoded::resources_of(world), ..default() };
     let ids: Vec<PeerId> = host.peers.iter().filter(|(_, p)| p.stage == PeerStage::Connected).map(|(id, _)| *id).collect();
-    for id in ids {
+    // Who sees what (a query: the world mutably), then one encoder for every peer.
+    let views: Vec<(PeerId, Option<Vec3>, BTreeSet<u32>)> = ids
+        .into_iter()
+        .map(|id| {
+            let peer = &host.peers[&id];
+            let center = peer.body.and_then(|b| world.resource::<AiIndex>().get(AiId(b))).and_then(|e| world.get::<Transform>(e)).map(|t| t.translation);
+            (id, center, base_view(world, center, &peer.view, def.interest_radius, def.interest_hysteresis))
+        })
+        .collect();
+    let world = &*world;
+    let encoder = StateEncoder::new(world, ai_core::state::StateRule::Replicated).without_read_back();
+    for (id, center, mut view) in views {
         let peer = host.peers.get_mut(&id).expect("listed above");
-        let center = peer.body.and_then(|b| world.resource::<AiIndex>().get(AiId(b))).and_then(|e| world.get::<Transform>(e)).map(|t| t.translation);
-        let mut view = base_view(world, center, &peer.view, def.interest_radius, def.interest_hysteresis);
-        let encoder = StateEncoder::new(world, ai_core::state::StateRule::Replicated);
         if close_view(world, &encoder, &mut host.cache, &mut encoded, &mut view) {
             peer.closure_capped += 1;
         }
-        drop(encoder);
         // The newest acknowledged view, unless the client has been quiet too long.
         let baseline = peer
             .acked
@@ -758,7 +784,9 @@ fn send_state(world: &mut World, host: &mut NetHost) {
         delta.paused = paused;
         delta.inputs_ack = peer.inputs.newest;
         delta.margin = peer.margin;
-        if let Err(e) = peer.link.send_unreliable(&msg::encode(&delta)) {
+        delta.epoch = peer.resyncs;
+        let bytes = msg::encode(&delta);
+        if let Err(e) = peer.link.send_unreliable(&bytes) {
             warn!("net: state for p{} not sent: {e}", peer.player);
         }
         peer.deltas += 1;
@@ -772,6 +800,7 @@ fn send_state(world: &mut World, host: &mut NetHost) {
     }
     let us = started.elapsed().as_micros() as u64;
     host.encode_us = (us, host.encode_us.1.max(us));
+    host.encode_total = (host.encode_total.0 + us, host.encode_total.1 + 1);
 }
 
 fn flush(host: &mut NetHost, endpoint: &mut NetEndpoint) {
@@ -780,8 +809,14 @@ fn flush(host: &mut NetHost, endpoint: &mut NetEndpoint) {
     for (id, peer) in host.peers.iter_mut() {
         peer.link.flush(now, &mut |datagram| transport.send(*id, datagram));
     }
-    // Gone peers are dropped once nothing of theirs waits (a refusal, a kick).
-    let gone: Vec<PeerId> = host.peers.iter().filter(|(_, p)| p.stage == PeerStage::Gone && p.link.is_idle()).map(|(id, _)| *id).collect();
+    // Gone peers are dropped once nothing of theirs waits (a refusal, a kick), or once they
+    // stopped answering (a timeout, a peer that went before acknowledging).
+    let gone: Vec<PeerId> = host
+        .peers
+        .iter()
+        .filter(|(_, p)| p.stage == PeerStage::Gone && (p.link.is_idle() || p.link.is_timed_out(now, GONE_PATIENCE_MS)))
+        .map(|(id, _)| *id)
+        .collect();
     for id in gone {
         host.peers.remove(&id);
         transport.forget(id);

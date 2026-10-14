@@ -25,6 +25,7 @@
 //!   host's world (a snapshot), then applies [`msg::StateDelta`]s and sends [`inputs::InputFrame`]s.
 //! * [`replicate`]: interest, the delta codec, the desync hash.
 //! * [`inputs`]: input frames, the host's queue per player, the client's capture.
+//! * [`events`]: typed events a client triggers again ([`NetEventAppExt::net_event`]).
 //! * [`hooks`]: what a game decides ([`NetHooks`]: join policy, spawner, characters for co-op saves),
 //!   and the recorded `player_join` / `player_leave`.
 //! * [`def`]: [`NetDef`], the session's numbers as content.
@@ -33,6 +34,7 @@
 pub mod client;
 pub mod conditioner;
 pub mod def;
+pub mod events;
 pub mod hooks;
 pub mod host;
 pub mod hub;
@@ -52,6 +54,7 @@ pub mod wire;
 pub use client::{clock_ticks, ClientStage, NetClient, NetDesync};
 pub use conditioner::{Conditioned, Conditioner, Fate, LinkConditions};
 pub use def::{net_def, NetDef, NetDefaults};
+pub use events::{NetEventAppExt, NetEvents};
 pub use hooks::{JoinDecision, JoinRequest, LeaveRequest, NetHooks, NetLeft, PlayerJoined, PlayerLeft};
 pub use host::{end_session, NetHost};
 pub use hub::{HubEvent, HubEventKind, HubLinkStats, LinkId, MemoryHub, MemoryTransport};

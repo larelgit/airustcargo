@@ -5,7 +5,9 @@ use ai_core::AiAppExt;
 use bevy::prelude::*;
 use serde_json::json;
 use shards_motion::{ColliderId, ColliderIds};
-use shards_net::NetHooks;
+use shards_action::combat::{Blocked, Damaged, Died, Evaded, GuardBroken, Parried, Staggered};
+use shards_action::machine::{ActionRejected, ActionStarted, Healed, Telegraph};
+use shards_net::{NetEventAppExt, NetHooks};
 use shards_npc::{AttackToken, NavAgent, NpcDrive, Perceived};
 use shards_world::ActiveRegion;
 
@@ -17,6 +19,18 @@ impl Plugin for EngineNetPlugin {
         // An NPC's senses, path and steering are the host's working state: a client shows the
         // NPC (its motion, action, health, brain state), it does not think for it.
         app.net_ignore::<Perceived>().net_ignore::<NavAgent>().net_ignore::<NpcDrive>().net_ignore::<AttackToken>();
+        // What a client shows of the host's fight: hits, guards, deaths, warnings.
+        app.net_event::<Damaged>()
+            .net_event::<Blocked>()
+            .net_event::<Parried>()
+            .net_event::<Evaded>()
+            .net_event::<GuardBroken>()
+            .net_event::<Staggered>()
+            .net_event::<Died>()
+            .net_event::<Healed>()
+            .net_event::<ActionStarted>()
+            .net_event::<ActionRejected>()
+            .net_event::<Telegraph>();
         let mut hooks = app.world_mut().get_resource_or_init::<NetHooks>();
         // Colliders a client makes itself are numbered apart from the host's.
         hooks.after_restore = |world| {

@@ -139,6 +139,9 @@ pub struct StateDelta {
     pub inputs_ack: u64,
     /// `(client tick of the newest Inputs packet, its margin in ticks)`: how early it came.
     pub margin: Option<(u64, i64)>,
+    /// Rebases sent to this client before this state: a state of an older world is dropped.
+    #[serde(default)]
+    pub epoch: u32,
 }
 
 /// A client's inputs: every frame the host has not acknowledged.
@@ -149,6 +152,9 @@ pub struct Inputs {
     pub frames: Vec<InputFrame>,
     /// The newest state the client applied.
     pub state_ack: u64,
+    /// Rebases the client has taken: frames of an older world are dropped.
+    #[serde(default)]
+    pub epoch: u32,
 }
 
 pub fn encode<T: Serialize>(value: &T) -> Vec<u8> {

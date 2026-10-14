@@ -21,7 +21,8 @@ use serde_json::Value;
 use shards_core::EngineState;
 
 use crate::client::{self, NetClient};
-use crate::hub::MemoryHub;
+use crate::conditioner::LinkConditions;
+use crate::hub::{LinkId, MemoryHub};
 use crate::session::{NetClock, NetEndpoint};
 use crate::transport::PeerId;
 
@@ -38,6 +39,8 @@ pub fn attach(app: &mut App, hub: &MemoryHub, name: &str, host: Option<PeerId>) 
 pub struct Member {
     pub name: String,
     pub app: App,
+    /// Its link to the host on the hub (a client's).
+    pub link: Option<LinkId>,
     queue: Arc<Mutex<StepQueue>>,
 }
 
@@ -52,7 +55,13 @@ pub struct Stand {
     pub speed: f32,
     /// How long a member may load by itself.
     pub load_timeout: Duration,
+    /// Real time not yet run as ticks, in ticks, and when it was counted ([`Stand::serve`]).
+    owed: f64,
+    counted: Option<Instant>,
 }
+
+/// Ticks [`Stand::serve`] runs at most per frame to catch up with the clock.
+pub const MAX_CATCH_UP: u64 = 8;
 
 impl Stand {
     /// A stand of apps attached to `hub` ([`attach`]), member 0 the host, built and finished.
@@ -65,17 +74,24 @@ impl Stand {
             if i == 0 {
                 tick_ms = app.world().get_resource::<Time<Fixed>>().map_or(tick_ms, |t| t.timestep().as_secs_f64() * 1000.0);
             }
-            members.push(Member { name, app, queue });
+            members.push(Member { name, app, link: None, queue });
         }
-        Self { hub, members, iteration: 0, tick_ms, running: false, speed: 1.0, load_timeout: Duration::from_secs(30) }
+        Self { hub, members, iteration: 0, tick_ms, running: false, speed: 1.0, load_timeout: Duration::from_secs(30), owed: 0.0, counted: None }
     }
 
-    /// Adds a member (a client joining later); returns its index.
-    pub fn add(&mut self, name: &str, mut app: App) -> usize {
+    /// Adds a member (a client joining later, on hub link `link`); returns its index.
+    pub fn add(&mut self, name: &str, mut app: App, link: Option<LinkId>) -> usize {
         let queue = Arc::new(Mutex::new(StepQueue::default()));
         app.insert_resource(StepRoute::Deferred(queue.clone()));
-        self.members.push(Member { name: name.to_owned(), app, queue });
+        self.members.push(Member { name: name.to_owned(), app, link, queue });
         self.members.len() - 1
+    }
+
+    /// Changes the conditions of member `member`'s link to the host, both ways.
+    pub fn set_link(&self, member: usize, conditions: LinkConditions) -> Result<(), String> {
+        let link = self.members[member].link.ok_or_else(|| format!("{} has no link to the host", self.members[member].name))?;
+        self.hub.set_link_conditions(link, conditions, conditions);
+        Ok(())
     }
 
     pub fn world(&self, member: usize) -> &World {
@@ -193,17 +209,18 @@ impl Stand {
         for (i, member) in self.members.iter_mut().enumerate() {
             let world = member.app.world_mut();
             ai_core::activate(world);
-            let ticks = if world.contains_resource::<NetClient>() {
-                let connected = world.get_resource::<NetClient>().is_some_and(|c| c.stage == client::ClientStage::Connected);
-                if !connected {
-                    // Not playing yet: it only talks (the pump runs in a frame without a tick).
-                    member.app.update();
-                    continue;
-                }
-                client::clock_ticks(world)
-            } else {
-                1
+            let ticks = match world.get_resource::<NetClient>().map(|c| c.stage == client::ClientStage::Connected) {
+                // Not playing yet: it only talks (the pump runs in a frame without a tick).
+                Some(false) => 0,
+                Some(true) => client::clock_ticks(world),
+                None => 1,
             };
+            if ticks == 0 {
+                // Held back (joining, or its clock says wait): it still hears the host.
+                member.app.update();
+                continue;
+            }
+            let world = member.app.world_mut();
             for _ in 0..ticks {
                 sim::run_tick(world)?;
             }
@@ -305,6 +322,47 @@ impl Stand {
                 }
             }
         }
+    }
+
+    /// One frame of a stand driven from outside in real time (`--stand N`): every member
+    /// answers its requests, deferred steps and clock changes run, and while the stand runs
+    /// (`resume`) it ticks to keep up with the clock at its speed. A gameplay failure pauses
+    /// it (the failing member journals it), as a game in real time pauses. Returns whether a
+    /// member is exiting.
+    pub fn serve(&mut self) -> bool {
+        self.frame();
+        self.drive();
+        let now = Instant::now();
+        if self.running {
+            let since = self.counted.map_or(Duration::ZERO, |t| now.duration_since(t));
+            self.owed += since.as_secs_f64() * 1000.0 * self.speed as f64 / self.tick_ms;
+            let due = (self.owed.floor() as u64).min(MAX_CATCH_UP);
+            // Behind by more than a frame's catch-up: the rest is dropped, not run later.
+            self.owed = if self.owed >= (MAX_CATCH_UP + 1) as f64 { 0.0 } else { self.owed - due as f64 };
+            for _ in 0..due {
+                match self.tick() {
+                    Ok(failed) if failed.is_empty() => {}
+                    Ok(failed) => {
+                        for (i, failure) in failed {
+                            let member = &mut self.members[i];
+                            let text = format!("stand paused: {}", failure.headline());
+                            ai_core::journal::emit(member.app.world_mut(), ai_core::journal::JournalKind::Error, text);
+                        }
+                        self.running = false;
+                        break;
+                    }
+                    Err(e) => {
+                        warn!("stand: {e}");
+                        self.running = false;
+                        break;
+                    }
+                }
+            }
+        } else {
+            self.owed = 0.0;
+        }
+        self.counted = Some(now);
+        self.members.iter().any(|m| m.app.should_exit().is_some())
     }
 
     /// Member `name`'s index.

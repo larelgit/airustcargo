@@ -192,8 +192,8 @@ pub fn stand_client(
     // The host is the hub's first endpoint.
     let host: PeerId = 0;
     let id = crate::net::stand::attach(&mut app, &stand.hub, name, Some(host));
-    stand.hub.connect_both(host, id, links);
+    let link = stand.hub.connect_both(host, id, links);
     app.finish();
     app.cleanup();
-    stand.add(name, app)
+    stand.add(name, app, Some(link))
 }

@@ -136,7 +136,8 @@ fn net_status(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
             .collect();
         let (encoded, reused) = host.encode_counts();
         out["peers"] = json!(peers);
-        out["encode_us"] = json!({ "last": host.encode_us.0, "max": host.encode_us.1 });
+        let mean = host.encode_total.0.checked_div(host.encode_total.1).unwrap_or(0);
+        out["encode_us"] = json!({ "last": host.encode_us.0, "max": host.encode_us.1, "mean": mean });
         out["encode_cache"] = json!({ "encoded": encoded, "reused": reused });
         let slots: Vec<Value> = host.slots.iter().map(|(n, s)| json!({ "player": n, "name": s.name, "left_at": s.left_at })).collect();
         out["slots"] = json!(slots);

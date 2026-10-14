@@ -144,6 +144,9 @@ impl Plugin for NetPlugin {
             .init_resource::<NetState>()
             .init_resource::<NetMarks>()
             .init_resource::<Ticked>()
+            .init_resource::<crate::events::NetEvents>()
+            .init_resource::<crate::events::EventOutbox>()
+            .init_resource::<crate::events::EventInbox>()
             // A client sends its own intent; the host's copy of it is never sent back.
             .net_predicted::<Intent>()
             .add_systems(FixedUpdate, despawn_left.in_set(SimSet::Cleanup).before(CoreSystems::ClearPresses));
@@ -227,6 +230,9 @@ fn open_endpoint(world: &mut World) {
     match &config.net {
         NetLaunch::Host { port } => match crate::udp::UdpTransport::bind_port(*port) {
             Ok(udp) => {
+                // The port actually bound (`--host 0` picks a free one).
+                let at = udp.socket_addr().map_or_else(|_| format!("port {port}"), |a| a.to_string());
+                journal::emit(world, JournalKind::Sim, format!("net: hosting on UDP {at}"));
                 let transport = crate::conditioner_from(&config, udp);
                 world.insert_resource(NetEndpoint { transport, clock, host: None });
             }
