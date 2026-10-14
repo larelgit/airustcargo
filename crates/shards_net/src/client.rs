@@ -661,9 +661,14 @@ fn take_world(world: &mut World, client: &mut NetClient, welcome: Welcome, rebas
     client.clock.reset(2 + jitter as i64);
     client.ring.clear();
     client.pending = None;
-    // Events of the old world name its entities; the new world's come after it.
+    // The channel is ordered and the host sends its events before the world that replaces
+    // theirs, so every event waiting now is of the old world, whatever its tick: it names
+    // entities that are gone, or that the same ids give to others (a snapshot of an earlier
+    // tick restores the id counter). Its tick can also be above the new world's, and
+    // `retrigger_due` goes by order: it would hold the new world's events back. The new
+    // world's come after this message.
     if rebase && let Some(mut inbox) = world.get_resource_mut::<crate::events::EventInbox>() {
-        inbox.0.retain(|(tick, _, _)| *tick > welcome.tick);
+        inbox.0.clear();
     }
     client.floor = welcome.tick;
     client.newest_host_tick = welcome.tick;

@@ -449,3 +449,50 @@ fn a_clients_order_stays_until_the_host_has_applied_it() {
     let there = entity(&stand, HOST, &me).unwrap();
     assert!(stand.world(HOST).get::<Intent>(there).unwrap().orders.is_empty(), "the stop reached the host");
 }
+
+// --- typed events across a rebuilt world ---------------------------------------------------
+
+/// A typed event of these tests: whoever triggers it or has it triggered shows it.
+#[derive(Event, Reflect, Clone)]
+struct Ping {
+    n: u32,
+}
+
+#[derive(Resource, Default)]
+struct Pings(Vec<u32>);
+
+fn ping_stand() -> shards::net::Stand {
+    use shards::net::NetEventAppExt;
+    shards::testing::stand(1, LinkConditions::NONE, |c| c.seed = 42, |app| {
+        app.add_plugins(sandbox::SandboxPlugin);
+        app.net_event::<Ping>().init_resource::<Pings>();
+        app.add_observer(|ping: On<Ping>, mut seen: ResMut<Pings>| seen.0.push(ping.event().n));
+    })
+}
+
+fn pings(stand: &shards::net::Stand, member: usize) -> Vec<u32> {
+    stand.world(member).resource::<Pings>().0.clone()
+}
+
+#[test]
+fn events_of_the_world_a_snapshot_replaced_are_not_shown_and_do_not_hold_back_the_new_ones() {
+    let mut stand = ping_stand();
+    stand.run(50);
+    let saved = snapshot::capture(stand.world(HOST)).unwrap();
+    stand.run(80);
+    // An event of the host's tick 130, on its way when the host goes back to tick 50: it
+    // reaches c1 just before the world of the earlier tick.
+    stand.world_mut(HOST).trigger(Ping { n: 1 });
+    snapshot::restore(stand.world_mut(HOST), &saved, false).unwrap();
+    run_until(&mut stand, 60, "the snapshot reaches c1", |s| rebases(s, C1) == 1);
+    assert!(sim::tick(stand.world(C1)) < 100, "c1 is on the new timeline");
+    // The new world's own event, at about tick 52: it is shown soon, not when c1 reaches 130.
+    stand.world_mut(HOST).trigger(Ping { n: 2 });
+    stand.run(30);
+    assert_eq!(pings(&stand, C1), [2], "the new world's event is shown at its tick");
+    // The old world's event is not shown later, when c1's ticks pass 130.
+    stand.run(100);
+    assert!(sim::tick(stand.world(C1)) > 140);
+    assert_eq!(pings(&stand, C1), [2], "the old world's event never is");
+    assert_eq!(pings(&stand, HOST), [1, 2]);
+}
