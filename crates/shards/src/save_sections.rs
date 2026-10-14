@@ -83,6 +83,10 @@ impl SaveSection for RegionSave {
     }
 
     fn apply(self, world: &mut World, _: Option<Entity>) -> Result<(), String> {
+        // Saved outside any region: nothing to build, and nothing is unloaded either. A save moves
+        // the world the way play does, through `change_region`, which always goes to a region; only
+        // a snapshot, which replaces the whole world, unloads one. So a world saved in the arena and
+        // loaded after a `regen` keeps the region that is loaded now.
         let Some(saved) = self.active else {
             return Ok(());
         };

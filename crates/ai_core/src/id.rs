@@ -180,7 +180,8 @@ impl AiIndex {
         let base = base.max(1);
         let highest_local = self.live.keys().map(|id| id.0).filter(|&n| n >= base).max();
         self.local_base = Some(base);
-        self.local_next = highest_local.map_or(base, |n| n + 1).max(self.local_next).max(base);
+        // No id follows `u32::MAX`: such a highest id leaves the counter where it was.
+        self.local_next = highest_local.and_then(|n| n.checked_add(1)).unwrap_or(base).max(self.local_next).max(base);
     }
 
     /// The base [`set_local_base`](Self::set_local_base) set, if any.
@@ -211,14 +212,22 @@ impl AiIndex {
         }
     }
 
-    /// An explicit id was kept: the counter it belongs to moves past it.
+    /// An explicit id was kept: the counter it belongs to moves past it. `u32::MAX` has no id
+    /// after it, so it leaves the counter alone (it must not wrap to 0 or saturate onto itself).
     fn keep_explicit(&mut self, id: AiId) {
+        let after = id.0.checked_add(1);
         match self.local_base {
             Some(base) if id.0 >= base => {
                 warn!("{id} is in this game's local id range (from e{base}); ids from the host are below it");
-                self.local_next = self.local_next.max(id.0 + 1);
+                if let Some(after) = after {
+                    self.local_next = self.local_next.max(after);
+                }
             }
-            _ => self.next = self.next.max(id.0 + 1),
+            _ => {
+                if let Some(after) = after {
+                    self.next = self.next.max(after);
+                }
+            }
         }
     }
 
@@ -404,6 +413,30 @@ mod tests {
         assert_eq!(w.resource::<AiIndex>().get(AiId(99)), Some(a));
         w.despawn(a);
         assert!(w.resource::<AiIndex>().resolve(AiId(99)).unwrap_err().contains("Skeleton despawned at tick 0"));
+    }
+
+    #[test]
+    fn the_largest_id_is_kept_and_leaves_the_counter_alone() {
+        let mut w = world();
+        let last = w.spawn((AiVisible, AiId(u32::MAX))).id();
+        assert_eq!(w.get::<AiId>(last), Some(&AiId(u32::MAX)));
+        assert_eq!(w.resource::<AiIndex>().next_id(), 1, "no id comes after it, so the counter stays");
+        let next = w.spawn(AiVisible).id();
+        assert_eq!(w.get::<AiId>(next), Some(&AiId(1)), "the next spawn still gets the next normal id");
+
+        // The same in the local range of a client, and when the base is set after it.
+        let mut w = world();
+        w.resource_mut::<AiIndex>().set_local_base(1000);
+        let last = w.spawn((AiVisible, AiId(u32::MAX))).id();
+        assert_eq!(w.get::<AiId>(last), Some(&AiId(u32::MAX)));
+        let local = w.spawn(AiVisible).id();
+        assert_eq!(w.get::<AiId>(local), Some(&AiId(1000)));
+
+        let mut w = world();
+        w.spawn((AiVisible, AiId(u32::MAX)));
+        w.resource_mut::<AiIndex>().set_local_base(1000);
+        let local = w.spawn(AiVisible).id();
+        assert_eq!(w.get::<AiId>(local), Some(&AiId(1000)));
     }
 
     #[test]

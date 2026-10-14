@@ -122,13 +122,18 @@ fn move_to(
             if entity == me {
                 return Err(format!("{id} is you; give another entity or a point {{x, z}}"));
             }
-            (positions.get(entity).ok().map(|t| t.translation), Target::Entity(id.0), 1.5)
+            // An AI-visible entity need not be in the world (a director, a quest): the order
+            // would be dropped by `follow_orders` on the next tick, which walks to a position.
+            let Ok(there) = positions.get(entity) else {
+                return Err(format!("{id} has no position, so move_to cannot walk to it; pass a point {{x, z}} or another entity"));
+            };
+            (there.translation, Target::Entity(id.0), 1.5)
         }
         TargetArg::Point { x, z } => {
             if !(x.is_finite() && z.is_finite()) {
                 return Err("x and z must be finite numbers".into());
             }
-            (Some(Vec3::new(x, 0.0, z)), Target::Point(Vec3::new(x, 0.0, z)), 0.3)
+            (Vec3::new(x, 0.0, z), Target::Point(Vec3::new(x, 0.0, z)), 0.3)
         }
     };
     let within = within.unwrap_or(default_within).max(0.2);
@@ -160,10 +165,7 @@ fn move_to(
         let order = Order::MoveTo { target: to, within };
         let desc = order.describe();
         intent.orders.push_back(order);
-        return Ok(match goal {
-            Some(g) => format!("ok: {desc}, {} away", relative(here, g)),
-            None => format!("ok: {desc}"),
-        });
+        return Ok(format!("ok: {desc}, {} away", relative(here, goal)));
     };
     // One order per leg end; passing a waypoint needs less precision than arriving. The
     // last leg already ends within `within` of the target: its order heads for the target

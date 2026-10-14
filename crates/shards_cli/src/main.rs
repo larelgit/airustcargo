@@ -12,6 +12,8 @@
 //! shards save-replay               # this session as a replay file (cargo sandbox --replay F)
 //! shards save-snapshot             # the state at this tick as a file (snapshots/tick<T>.json)
 //! shards load-snapshot snapshots/tick120.json   # back to it: the next step continues from there
+//! shards assert add hp 'field:6:Health.current<0'   # halt the game when it breaks
+//! shards fuzz --seed 7 --steps 300 # random inputs until a rule breaks
 //! shards --port-file F wait        # a game started with `--port 0 --port-file F`; waits for loading
 //! shards content check             # every content file parsed and validated
 //! shards worldgen --region meadow --seeds 1..1000 --report   # batch check of the generator
@@ -19,6 +21,10 @@
 //! shards tools
 //! shards raw world.query '{"data":{"components":["sandbox::gameplay::combat::Health"]}}'
 //! ```
+//!
+//! Exit codes: 0 done · 1 the tool refused (the error says why) · 2 `shards` itself
+//! failed (no game at the port, no token, a bad command line) · 3 the game halted: a
+//! `step` stopped at a failed gameplay system or a violated invariant.
 
 use std::io::{self, ErrorKind, Write};
 use std::process::ExitCode;
@@ -33,6 +39,17 @@ mod scenario;
 
 /// Bevy's BRP port, used when neither `--port` nor `--port-file` says otherwise.
 const DEFAULT_PORT: u16 = 15702;
+
+/// Exit codes besides 0. Clap exits with 2 on a bad command line as well.
+mod exit {
+    /// The tool refused: the error says why and how to fix the call.
+    pub const TOOL_ERROR: u8 = 1;
+    /// `shards` itself failed: no game at the port, no token, a bad argument.
+    pub const SHARDS_ERROR: u8 = 2;
+    /// The game halted during the call: a gameplay system failed or an invariant was
+    /// violated, and `step` stopped there.
+    pub const HALTED: u8 = 3;
+}
 
 #[derive(Parser)]
 #[command(name = "shards", version, about = "Drive a running game through its ai/* BRP methods")]
@@ -63,7 +80,8 @@ enum Cmd {
     /// What you see now, plus journal entries since your last look.
     Observe,
     /// Advance the paused simulation. Conditions: journal:TEXT, gone:ID, shows:ID:TEXT,
-    /// near:A:B:METERS, field:ID:Component.path<N (or >N), named:NAME, or raw JSON.
+    /// near:A:B:METERS, field:ID:Component.path<N (or >N), named:NAME, warning, error,
+    /// or raw JSON. Exit code 3 when the game halted (a failed system, a broken rule).
     Step {
         /// Maximum ticks (default 1, or 600 with --until).
         ticks: Option<u64>,
@@ -121,6 +139,27 @@ enum Cmd {
         /// Print only the commands that failed and the verdicts.
         #[arg(long, short)]
         quiet: bool,
+    },
+    /// Rules the game must keep, checked after every tick: the game's own and this
+    /// session's. A broken rule halts the game, and `step` stops there (exit code 3).
+    Assert {
+        #[command(subcommand)]
+        op: AssertCmd,
+    },
+    /// Random player inputs (move, attack, dodge; targets from `observe`) between short
+    /// steps, until the game halts or the steps run out. Prints the replay to reproduce
+    /// it with; exit code 3 if the game halted.
+    Fuzz {
+        /// Seed of the inputs (the game has its own): the same seed against the same
+        /// fresh game makes the same calls.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// Inputs to make, each followed by a step.
+        #[arg(long, default_value_t = 200)]
+        steps: u32,
+        /// Longest step after an input, in ticks.
+        #[arg(long, default_value_t = 30)]
+        max_ticks: u64,
     },
     /// List the tools available to this agent (--json: with argument schemas).
     Tools,
@@ -191,6 +230,19 @@ enum ContentCmd {
     Check,
 }
 
+#[derive(Subcommand)]
+enum AssertCmd {
+    /// Add (or replace) a rule: the game halts when WHEN becomes true. WHEN is a --until
+    /// condition: `shards assert add hp 'field:6:Health.current<0'`, `… quiet error`.
+    Add { name: String, when: String },
+    /// Every rule, armed or fired.
+    List,
+    /// Remove a rule added with `assert add`.
+    Remove { name: String },
+    /// Re-arm every rule that fired.
+    Reset,
+}
+
 struct Client {
     url: String,
     agent: ureq::Agent,
@@ -241,7 +293,7 @@ fn main() -> ExitCode {
         Ok(code) => code,
         Err(e) => {
             eprintln!("error: {e}");
-            ExitCode::from(2)
+            ExitCode::from(exit::SHARDS_ERROR)
         }
     }
 }
@@ -358,6 +410,13 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
         Cmd::SaveSnapshot { path } => act("snapshot_save", json!({"path": path}))?,
         Cmd::LoadSnapshot { path, force } => act("snapshot_load", json!({"path": path, "force": force}))?,
         Cmd::Scenario { files, quiet } => return scenario::run(client, files, *quiet, cli.json),
+        Cmd::Assert { op } => match op {
+            AssertCmd::Add { name, when } => act("assert_add", json!({"name": name, "when": parse_condition(when)?}))?,
+            AssertCmd::List => act("assert_list", json!({}))?,
+            AssertCmd::Remove { name } => act("assert_remove", json!({"name": name}))?,
+            AssertCmd::Reset => act("assert_reset", json!({}))?,
+        },
+        Cmd::Fuzz { seed, steps, max_ticks } => return fuzz(&act, *seed, *steps, *max_ticks),
         Cmd::Shot { no_marks, out, timeout } => {
             let reply = act("shot", json!({"marks": !no_marks, "path": out}))?;
             if reply.get("ok") != Some(&Value::Bool(true)) {
@@ -511,11 +570,23 @@ fn write_line(out: &mut impl Write, line: impl std::fmt::Display) -> io::Result<
     writeln!(out, "{line}")
 }
 
+/// 0, or why not: the tool refused (1), the game halted during the call (3).
+fn outcome_code(out: &Value) -> u8 {
+    if out.get("ok") == Some(&Value::Bool(false)) {
+        exit::TOOL_ERROR
+    } else if out.get("halted").is_some_and(|h| !h.is_null()) {
+        exit::HALTED
+    } else {
+        0
+    }
+}
+
 /// Text for humans and agents: the result, then what changed, then new journal lines.
 fn print_outcome(out: &Value, as_json: bool) -> ExitCode {
+    let code = ExitCode::from(outcome_code(out));
     if as_json {
         say(serde_json::to_string_pretty(out).unwrap_or_default());
-        return if out.get("ok") == Some(&Value::Bool(false)) { ExitCode::FAILURE } else { ExitCode::SUCCESS };
+        return code;
     }
     let ok = out.get("ok").and_then(Value::as_bool).unwrap_or(true);
     let result = out.get("result").cloned().unwrap_or(Value::Null);
@@ -545,12 +616,144 @@ fn print_outcome(out: &Value, as_json: bool) -> ExitCode {
             say(format!("  {j}"));
         }
     }
-    if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    code
+}
+
+const DIRS: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+
+/// SplitMix64: tiny and seedable, plenty to pick inputs with.
+struct SplitMix(u64);
+
+impl SplitMix {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// `0..n`.
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n.max(1)
+    }
+}
+
+/// Ids of the entities an observation lists (not your own, not journal lines).
+fn ids_in(observation: &str) -> Vec<String> {
+    let is_id = |t: &&str| t.len() > 1 && t.starts_with('e') && t[1..].bytes().all(|b| b.is_ascii_digit());
+    observation
+        .lines()
+        .skip(1) // header: tick, pause, seed, you
+        .take_while(|l| !l.starts_with("SINCE"))
+        .filter(|l| !l.starts_with("YOU"))
+        .flat_map(|l| l.split([' ', '·']))
+        .filter(is_id)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// One random player input: a tool and its arguments.
+fn random_input(rng: &mut SplitMix, ids: &[String]) -> (&'static str, Value) {
+    let dir = |rng: &mut SplitMix| DIRS[rng.below(DIRS.len() as u64) as usize];
+    let target = |rng: &mut SplitMix| ids.get(rng.below(ids.len() as u64) as usize).cloned();
+    match rng.below(3) {
+        0 => ("move", json!({"dir": dir(rng), "meters": 1 + rng.below(8)})),
+        1 => match target(rng) {
+            Some(id) if rng.below(2) == 0 => ("attack", json!({"target": id, "repeat": rng.below(2) == 0})),
+            _ => ("attack", json!({})),
+        },
+        _ => match target(rng) {
+            Some(id) if rng.below(2) == 0 => ("dodge", json!({"away_from": id})),
+            _ => ("dodge", json!({"dir": dir(rng)})),
+        },
+    }
+}
+
+/// Random player inputs between short steps until the game halts or `rounds` ran out.
+/// A refused input is part of the game: the next round goes on.
+fn fuzz(act: &dyn Fn(&str, Value) -> Result<Value, String>, seed: u64, rounds: u32, max_ticks: u64) -> Result<ExitCode, String> {
+    let mut rng = SplitMix(seed);
+    let mut from = None;
+    for round in 1..=rounds {
+        let seen = act("observe", json!({}))?;
+        from.get_or_insert(seen["tick"].as_u64().unwrap_or(0));
+        let ids = ids_in(seen["result"].as_str().unwrap_or_default());
+        let (tool, args) = random_input(&mut rng, &ids);
+        act(tool, args)?;
+        let out = act("step", json!({"ticks": 1 + rng.below(max_ticks)}))?;
+        if out.get("ok") == Some(&Value::Bool(false)) {
+            return Ok(print_outcome(&out, false));
+        }
+        if out.get("halted").is_some_and(|h| !h.is_null()) {
+            let tick = out["tick"].as_u64().unwrap_or(0);
+            say(format!("fuzz seed {seed}: the game halted after {round} inputs (ticks {} → {tick})", from.unwrap_or(0)));
+            print_outcome(&out, false);
+            let replay = match out["halted"]["replay"].as_str() {
+                Some(path) => path.to_owned(),
+                None => saved_replay(act, &format!("replays/fuzz-seed{seed}-tick{tick}.json"))?,
+            };
+            say(format!("replay: {replay}"));
+            return Ok(ExitCode::from(exit::HALTED));
+        }
+    }
+    let tick = act("observe", json!({}))?["tick"].as_u64().unwrap_or(0);
+    let replay = saved_replay(act, &format!("replays/fuzz-seed{seed}.json"))?;
+    say(format!("fuzz seed {seed}: {rounds} inputs, nothing broke (ticks {} → {tick})", from.unwrap_or(0)));
+    say(format!("replay: {replay}"));
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Saves the session as a replay; returns the path the game wrote.
+fn saved_replay(act: &dyn Fn(&str, Value) -> Result<Value, String>, path: &str) -> Result<String, String> {
+    let out = act("replay_save", json!({"path": path}))?;
+    match out["result"].as_str() {
+        // "saved PATH: 120 ticks, …"
+        Some(text) if out["ok"] == Value::Bool(true) => {
+            Ok(text.trim_start_matches("saved ").split_once(": ").map_or(path, |(saved, _)| saved).to_owned())
+        }
+        _ => Err(format!("replay_save: {}", out["result"])),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exit_codes_tell_what_happened() {
+        let step = |extra: Value| {
+            let mut out = json!({"tool": "step", "ok": true, "result": "ran 1 ticks (0 → 1)", "tick": 1, "paused": true});
+            out.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            out
+        };
+        assert_eq!(outcome_code(&step(json!({}))), 0);
+        assert_eq!(outcome_code(&step(json!({"ok": false, "result": "unknown condition `x`"}))), exit::TOOL_ERROR);
+        let halted = json!({"halted": {"reason": "invariant hp violated at tick 1", "replay": "replays/invariant-hp-tick1.json"}});
+        assert_eq!(outcome_code(&step(halted)), exit::HALTED);
+        assert_eq!(outcome_code(&step(json!({"halted": {"reason": "system x panicked at tick 50"}}))), exit::HALTED);
+        assert_eq!(outcome_code(&step(json!({"halted": null}))), 0);
+        let codes = [0, exit::TOOL_ERROR, exit::SHARDS_ERROR, exit::HALTED];
+        assert_eq!(codes, [0, 1, 2, 3], "README lists these");
+    }
+
+    #[test]
+    fn fuzz_inputs_come_from_the_seed() {
+        let observation = "tick 0 (0.00s) | paused | speed 1x | seed 42 | you e5\n\
+                           YOU  e5 Player  hp 100/100\n\
+                           SEEN (by threat)\n  e6 Boss \"Frost Warden\"  hp 4000/4000  18.0m N\n  e7 Skeleton  12.6m W\n\
+                           LANDMARKS  e3 Pillar 8.6m W · e4 Pillar 8.6m E\n\
+                           SINCE seq 0\n  0 e5 -> e9 Sword";
+        assert_eq!(ids_in(observation), ["e6", "e7", "e3", "e4"]);
+        let run = |seed| {
+            let mut rng = SplitMix(seed);
+            (0..20).map(|_| random_input(&mut rng, &ids_in(observation))).collect::<Vec<_>>()
+        };
+        assert_eq!(run(7), run(7));
+        assert_ne!(run(7), run(8));
+        let tools: Vec<&str> = run(7).iter().map(|(t, _)| *t).collect();
+        assert!(["move", "attack", "dodge"].iter().all(|t| tools.contains(t)), "{tools:?}");
+    }
 
     #[test]
     fn the_port_comes_from_the_port_file() {

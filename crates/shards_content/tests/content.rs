@@ -408,7 +408,7 @@ fn a_reload_is_recorded_and_its_replay_plays_the_same_game() {
         .iter()
         .filter_map(|e| match e {
             ReplayEvent::Call { tool, .. } => Some(tool.as_str()),
-            ReplayEvent::Input { .. } => None,
+            ReplayEvent::Input { .. } | ReplayEvent::Assert { .. } => None,
         })
         .collect();
     assert_eq!(calls, ["content_apply"], "the reload is recorded as the content it applied");

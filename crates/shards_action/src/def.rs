@@ -138,7 +138,7 @@ impl HitShape {
 /// `circle 4.5m`, `cone 3m 90°`, `line 8m`: what an agent reads about a zone.
 impl fmt::Display for HitShape {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let m = meters;
+        let m = Meters;
         match *self {
             HitShape::Sphere { radius } => write!(f, "sphere {}m", m(radius)),
             HitShape::Capsule { length, .. } => write!(f, "thrust {}m", m(length)),
@@ -150,15 +150,37 @@ impl fmt::Display for HitShape {
     }
 }
 
+/// `2`, `4.5`, `0.25`: meters with no trailing zeros. It formats into a stack buffer, so
+/// showing a zone (or comparing it with what is shown, every tick) builds no `String`.
+struct Meters(f32);
+
+impl fmt::Display for Meters {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use fmt::Write;
+        /// Room for the longest `f32` with two decimals: 39 digits, a sign and the point.
+        struct Stack {
+            buf: [u8; 48],
+            len: usize,
+        }
+        impl Write for Stack {
+            fn write_str(&mut self, s: &str) -> fmt::Result {
+                let end = self.len + s.len();
+                self.buf.get_mut(self.len..end).ok_or(fmt::Error)?.copy_from_slice(s.as_bytes());
+                self.len = end;
+                Ok(())
+            }
+        }
+        let mut stack = Stack { buf: [0; 48], len: 0 };
+        write!(stack, "{:.2}", self.0)?;
+        let s = std::str::from_utf8(&stack.buf[..stack.len]).map_err(|_| fmt::Error)?;
+        let s = s.trim_end_matches('0').trim_end_matches('.');
+        f.write_str(if s == "-0" { "0" } else { s })
+    }
+}
+
 /// `2`, `4.5`, `0.25`: no trailing zeros.
 pub(crate) fn meters(v: f32) -> String {
-    let s = format!("{v:.2}");
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s == "-0" {
-        "0".to_owned()
-    } else {
-        s.to_owned()
-    }
+    Meters(v).to_string()
 }
 
 /// What a hit does beyond damage.
@@ -862,6 +884,25 @@ mod tests {
             cancels: [(span: Secs(0.3, 0.5), into: [Combo("light", "light_2"), Input("dodge")])],
             displacement: [(0.1, 0.0), (0.3, 0.6)],
         )"#)
+    }
+
+    /// The text `meters` made before it stopped building a `String` for each number.
+    fn meters_by_format(v: f32) -> String {
+        let s = format!("{v:.2}");
+        let s = s.trim_end_matches('0').trim_end_matches('.');
+        if s == "-0" { "0".to_owned() } else { s.to_owned() }
+    }
+
+    #[test]
+    fn meters_are_written_without_trailing_zeros() {
+        for v in [
+            0.0, -0.0, 0.001, -0.001, 0.25, 1.0, 2.0, 4.5, 90.0, 100.0, 1000.0, 12.345, -3.5, 1e10, f32::MAX, f32::MIN,
+            f32::MIN_POSITIVE, f32::NAN, f32::INFINITY, f32::NEG_INFINITY,
+        ] {
+            assert_eq!(meters(v), meters_by_format(v), "{v}");
+        }
+        assert_eq!(HitShape::Cone { range: 3.0, angle: 90.0, height: 2.0 }.to_string(), "cone 3m 90°");
+        assert_eq!(HitShape::Line { length: 8.0, width: 0.5, height: 0.5 }.to_string(), "line 8m×0.5m");
     }
 
     #[test]

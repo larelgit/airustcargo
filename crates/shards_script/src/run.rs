@@ -288,11 +288,12 @@ impl StepEnd {
     }
 
     /// A step the game cut short is a failure, though the call succeeded: a gameplay
-    /// system crashed, or the ticks did not fit the wall-clock budget. What the
-    /// scenario expects next would be checked on a world that did not get there.
+    /// system crashed, an invariant broke (the game halted), or the ticks did not fit the
+    /// wall-clock budget. What the scenario expects next would be checked on a world that
+    /// did not get there.
     fn cut_short(&self) -> Result<(), Fail> {
         match &self.stopped {
-            Some(why) if why.starts_with("gameplay ") => Err(Fail::check(format!(
+            Some(why) if why.starts_with("gameplay ") || why.starts_with("invariant ") => Err(Fail::check(format!(
                 "the step {}, stopped: {why} (`act? step …` lets a step crash on purpose)",
                 self.ran
             ))),
@@ -671,6 +672,9 @@ mod tests {
                     if ticks == 666 {
                         self.tick += 50;
                         Outcome::ok("ran 50 ticks (0 → 50), stopped: gameplay system game::ice panicked at tick 50: the ice gave way")
+                    } else if ticks == 555 {
+                        self.tick += 3;
+                        Outcome::ok("ran 3 ticks (0 → 3), stopped: invariant hp violated at tick 3")
                     } else if ticks == 777 {
                         self.tick += 300;
                         Outcome::ok("ran 300 ticks (0 → 300), stopped: 20 s wall-clock budget")
@@ -826,6 +830,14 @@ expect result contains "YOU e5"
         );
         assert_eq!(failure("act step ticks=666").line, 1, "`act step` is a step too");
         let (report, _) = run_text("act? step ticks=666\nexpect stopped \"panicked\"");
+        assert!(report.passed, "{report}");
+        let f = failure("step 555");
+        assert_eq!(
+            f.message,
+            "the step ran 3 ticks (0 → 3), stopped: invariant hp violated at tick 3 \
+             (`act? step …` lets a step crash on purpose)"
+        );
+        let (report, _) = run_text("act? step ticks=555\nexpect stopped \"invariant hp\"");
         assert!(report.passed, "{report}");
         let f = failure("step 777");
         assert_eq!(f.message, "the step ran 300 ticks (0 → 300), stopped: 20 s wall-clock budget; step in smaller pieces");

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use ai_core::replay::{self, Replay};
 use ai_core::sim::{StepEnd, StepReport};
-use ai_core::{call_tool, AiReplay, CallOutcome, ReplayReport, SimGate, SystemFailure};
+use ai_core::{call_tool, AiReplay, CallOutcome, ReplayReport, SimGate, SystemFailure, Violation};
 use bevy::prelude::*;
 use serde_json::Value;
 use shards_core::{EngineConfig, EngineState, SettingsStore};
@@ -22,8 +22,9 @@ use crate::EnginePlugins;
 /// How long [`test_app`] waits for loading.
 pub const LOAD_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// The config of a test app: headless, testing, paused, no BRP server, no crash replay
-/// files, no file watcher.
+/// The config of a test app: headless, testing, paused, no BRP server, no crash or
+/// invariant replay files, no file watcher, no tick timing in replies and the journal (it
+/// differs from run to run; a test that looks at it turns on `AiPerf::report`).
 pub fn config() -> EngineConfig {
     EngineConfig {
         headless: true,
@@ -31,6 +32,7 @@ pub fn config() -> EngineConfig {
         paused: true,
         port: None,
         crash_replays: false,
+        report_perf: false,
         hot_reload: false,
         settings: SettingsStore::Off,
         ..default()
@@ -91,28 +93,48 @@ pub fn loading(world: &World) -> Option<String> {
     }
 }
 
+/// What [`run_to`] met on the way.
+#[derive(Clone, Debug, Default)]
+pub struct RunStops {
+    /// The gameplay failures that stopped it early (none: it got there).
+    pub failures: Vec<SystemFailure>,
+    /// Every invariant violated on the way, in order. A violation halts the game, but a
+    /// rule that fired stays off, so the run goes on past it.
+    pub violations: Vec<Violation>,
+}
+
 /// Runs ticks until tick `end`, waiting out loading on the way: a region change loads
-/// behind the gate, and playback waits for it as the recording did. Returns the gameplay
-/// failures that stopped it early (none: it got there).
-pub fn run_to(app: &mut App, end: u64, load_timeout: Duration) -> Result<Vec<SystemFailure>, String> {
+/// behind the gate, and playback waits for it as the recording did. Stops early at a
+/// failed gameplay system; goes on past violated invariants, collecting them.
+pub fn run_to(app: &mut App, end: u64, load_timeout: Duration) -> Result<RunStops, String> {
+    let mut stops = RunStops::default();
     loop {
         let left = end.saturating_sub(ai_core::sim::tick(app.world()));
         match ai_core::sim::step(app.world_mut(), left, Duration::from_secs(24 * 3600), |_| None)? {
-            StepReport { end: StepEnd::SystemFailed(failures), .. } => return Ok(failures),
+            StepReport { end: StepEnd::SystemFailed(failures), .. } => {
+                stops.failures = failures;
+                return Ok(stops);
+            }
+            StepReport { end: StepEnd::InvariantViolated(violated), .. } => stops.violations.extend(violated),
             report if report.to_tick < end && loading(app.world()).is_some() => wait_until_loaded(app, load_timeout)?,
-            _ => return Ok(Vec::new()),
+            _ => return Ok(stops),
         }
     }
 }
 
 /// Plays `recording` on `app` — the game built fresh with the recording's seed, finished but
-/// not yet loaded — to its end, and returns how it compares (`--verify` in a test).
+/// not yet loaded — to its end, and returns how it compares (`--verify` in a test). A failed
+/// gameplay system or a violated invariant on the way is an error.
 pub fn verify(app: &mut App, recording: Replay) -> Result<ReplayReport, String> {
     let end = recording.end.tick;
     replay::play(app.world_mut(), recording)?;
     wait_until_loaded(app, LOAD_TIMEOUT)?;
-    if let Some(failure) = run_to(app, end, LOAD_TIMEOUT)?.first() {
+    let stops = run_to(app, end, LOAD_TIMEOUT)?;
+    if let Some(failure) = stops.failures.first() {
         return Err(format!("gameplay {}: {}", failure.headline(), failure.message));
+    }
+    if let Some(violation) = stops.violations.first() {
+        return Err(format!("{}: {}", violation.headline(), violation.text));
     }
     app.update();
     app.world().resource::<AiReplay>().report().cloned().ok_or_else(|| "the replay did not finish".to_owned())
@@ -123,14 +145,15 @@ pub fn call(app: &mut App, tool: &str, args: Value) -> CallOutcome {
     call_tool(app.world_mut(), "dev", tool, args)
 }
 
-/// [`call`] that must succeed: panics with the tool's error otherwise, and when a
-/// gameplay system failed during it. (Test apps catch system panics like games do, and
-/// `step` reports one as a successful call that `stopped: gameplay system …`; use
-/// [`call`] in a test that expects it.)
+/// [`call`] that must succeed: panics with the tool's error otherwise, and when the game
+/// halted during it (a gameplay system failed, an invariant was violated). (Test apps catch
+/// system panics like games do, and `step` reports one as a successful call that `stopped:
+/// gameplay system …` or `stopped: invariant …`; use [`call`] in a test that expects it.)
 pub fn ok(app: &mut App, tool: &str, args: Value) -> CallOutcome {
     let out = call(app, tool, args.clone());
     assert!(out.ok, "{tool} {args} failed: {}", out.result);
     let text = out.result.as_str().unwrap_or_default();
     assert!(!text.contains(", stopped: gameplay "), "{tool} {args}: {text}");
+    assert!(out.halted.is_none(), "{tool} {args}: the game halted: {text}");
     out
 }

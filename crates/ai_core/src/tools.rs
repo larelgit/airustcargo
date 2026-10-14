@@ -37,7 +37,7 @@ use crate::id::{AiId, AiIndex};
 use crate::journal::{self, AiJournal, JournalKind};
 use crate::observe::{diff, digest};
 use crate::session::{caller, AgentSessions, Caller, Scope};
-use crate::sim;
+use crate::sim::{self, Halt, Halts};
 
 pub type ToolResult<T = String> = Result<T, String>;
 
@@ -161,9 +161,15 @@ impl AiTools {
     }
 
     /// Changes where tool `name` runs on a client. Refused for a tool that does not exist or
-    /// is running right now.
+    /// is running right now, and for a query routed to the host (a query writes no journal,
+    /// and the hand-over to the host is journaled).
     pub fn set_route(&mut self, name: &str, route: NetRoute) -> Result<(), String> {
-        let tool = self.tools.get_mut(name).ok_or_else(|| format!("no tool `{name}`"))?;
+        let tool = self.tools.get_mut(name).ok_or_else(|| format!("no tool `{name}` (register the tool first)"))?;
+        if route == NetRoute::Host && tool.spec.kind == ToolKind::Query {
+            return Err(format!(
+                "`{name}` is a query, and queries run locally: route it to NetRoute::Local, or NetRoute::HostOnly if only the host can answer"
+            ));
+        }
         let tool = Arc::get_mut(tool).ok_or_else(|| format!("`{name}` is running; set its route at startup"))?;
         tool.spec.net = route;
         Ok(())
@@ -279,6 +285,10 @@ pub struct CallOutcome {
     /// Journal entries written during the call (action tools only).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub journal: Vec<String>,
+    /// The game halted during the call: a `step` stopped at a failed gameplay system or
+    /// a violated invariant.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub halted: Option<Halt>,
 }
 
 const MAX_CHANGES: usize = 60;
@@ -294,7 +304,8 @@ pub(crate) fn clip_changes(mut changes: Vec<String>) -> Vec<String> {
 }
 
 /// The answer of a call to `tool` that ended with `result`, on the world as it is now, with no
-/// changes and no journal lines: for a driver that completes deferred requests.
+/// changes and no journal lines: for a driver that completes deferred requests. It says no
+/// halt; [`StepWatch::finish`](crate::builtin::StepWatch::finish) fills in the one its step met.
 pub fn finished(world: &World, tool: &str, result: ToolResult<Value>) -> CallOutcome {
     let (ok, result) = match result {
         Ok(value) => (true, value),
@@ -308,6 +319,7 @@ pub fn finished(world: &World, tool: &str, result: ToolResult<Value>) -> CallOut
         paused: sim::is_paused(world),
         changes: Vec::new(),
         journal: Vec::new(),
+        halted: None,
     }
 }
 
@@ -329,7 +341,8 @@ fn clip(text: String, max: usize) -> String {
 pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> CallOutcome {
     crate::process::activate(world);
     let caller = caller(world, agent);
-    let outcome = |world: &World, ok: bool, result: Value, changes, journal| CallOutcome {
+    let halts = |world: &World| world.get_resource::<Halts>().map_or(0, |h| h.count);
+    let outcome = |world: &World, ok: bool, result: Value, changes, journal, halts_before: u64| CallOutcome {
         tool: tool.to_owned(),
         ok,
         result,
@@ -337,19 +350,20 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
         paused: sim::is_paused(world),
         changes,
         journal,
+        halted: (halts(world) > halts_before).then(|| world.resource::<Halts>().last.clone()).flatten(),
     };
 
     let Some(entry) = world.get_resource::<AiTools>().and_then(|t| t.get(tool)) else {
         let names = world.get_resource::<AiTools>().map(|t| t.names(caller.scope)).unwrap_or_default();
         let msg = format!("unknown tool `{tool}`; available: {}", names.join(", "));
-        return outcome(world, false, Value::String(msg), Vec::new(), Vec::new());
+        return outcome(world, false, Value::String(msg), Vec::new(), Vec::new(), halts(world));
     };
     if !caller.scope.allows(entry.spec.scope) {
         let msg = format!(
             "`{tool}` needs {} scope; agent `{}` has {} scope",
             entry.spec.scope, caller.agent, caller.scope
         );
-        return outcome(world, false, Value::String(msg), Vec::new(), Vec::new());
+        return outcome(world, false, Value::String(msg), Vec::new(), Vec::new(), halts(world));
     }
 
     // A client: what changes the shared world runs on the host.
@@ -358,7 +372,7 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
             NetRoute::Local => {}
             NetRoute::HostOnly(reason) => {
                 let msg = format!("`{tool}` runs on the host only: {reason} ({})", forwarder.host);
-                return outcome(world, false, Value::String(msg), Vec::new(), Vec::new());
+                return outcome(world, false, Value::String(msg), Vec::new(), Vec::new(), halts(world));
             }
             NetRoute::Host => {
                 let args_text = if args.is_null() { String::new() } else { clip(args.to_string(), MAX_JOURNALED_ARGS) };
@@ -382,7 +396,8 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
                     Ok(v) => (true, v),
                     Err(e) => (false, Value::String(e)),
                 };
-                return outcome(world, ok, value, Vec::new(), journal);
+                // A client runs no rules: a halt is the host's, and its answer says so.
+                return outcome(world, ok, value, Vec::new(), journal, halts(world));
             }
         }
     }
@@ -390,6 +405,7 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
     // What failed before this call is gameplay's (journaled, the game pauses); what
     // fails during it is the tool's.
     crate::failures::collect(world);
+    let halts_before = halts(world);
     if entry.spec.kind == ToolKind::Query {
         let result = (entry.run)(world, caller, args);
         crate::failures::blame_tool(world, tool);
@@ -397,14 +413,14 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
             Ok(v) => (true, v),
             Err(e) => (false, Value::String(teach(e, &entry.spec))),
         };
-        return outcome(world, ok, value, Vec::new(), Vec::new());
+        return outcome(world, ok, value, Vec::new(), Vec::new(), halts_before);
     }
 
     let is_action = entry.spec.kind == ToolKind::Action;
     // An action while loading would run on a world `OnEnter` has not spawned yet, and
     // its replay would run on the spawned one.
     if is_action && let Some(loading) = sim::gate_message(world) {
-        return outcome(world, false, Value::String(loading), Vec::new(), Vec::new());
+        return outcome(world, false, Value::String(loading), Vec::new(), Vec::new(), halts_before);
     }
     if is_action {
         crate::replay::begin_action(world, &caller, tool, &args);
@@ -430,7 +446,7 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
         Ok(v) => (true, v),
         Err(e) => (false, Value::String(teach(e, &entry.spec))),
     };
-    outcome(world, ok, value, changes, journal)
+    outcome(world, ok, value, changes, journal, halts_before)
 }
 
 /// Bad-argument errors get the expected signature appended so the agent can fix the call.
@@ -532,7 +548,7 @@ fn type_summary(v: &Value, depth: usize) -> String {
 // --- argument types shared by tools ----------------------------------------------
 
 /// An entity id: `42` or `"e42"`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct Id(pub AiId);
 
 impl Id {
@@ -673,6 +689,11 @@ mod tests {
         assert_eq!(route(&app, "step"), NetRoute::Local);
         assert_eq!(route(&app, "replay_save"), NetRoute::HostOnly(ON_THE_HOST));
         assert_eq!(route(&app, "snapshot_load"), NetRoute::HostOnly(ON_THE_HOST));
+        for rules in ["assert_add", "assert_remove", "assert_reset"] {
+            assert_eq!(route(&app, rules), NetRoute::Host, "{rules}: the rules are checked on the host");
+        }
+        // A query never goes to the host: the list is asked there.
+        assert_eq!(route(&app, "assert_list"), NetRoute::HostOnly(ON_THE_HOST));
         let teleport = |x: f32| json!({"id": 1, "x": x, "z": 0});
 
         // No forwarder: everything runs here.
@@ -701,5 +722,31 @@ mod tests {
         assert!(call_tool(app.world_mut(), "dev", "teleport", teleport(9.0)).ok);
         assert_eq!(crate_x(&mut app), 9.0);
         assert_eq!(app.world().resource::<Forwarded>().0.len(), 1);
+    }
+
+    #[test]
+    fn a_query_cannot_be_routed_to_the_host() {
+        let mut app = game();
+        let route = |app: &App, name: &str| app.world().resource::<AiTools>().get(name).unwrap().spec.net;
+        // The host arm of `call_tool` journals the hand-over; a query writes no journal.
+        let err = app.world_mut().resource_mut::<AiTools>().set_route("observe", NetRoute::Host).unwrap_err();
+        assert!(err.contains("`observe` is a query") && err.contains("queries run locally"), "{err}");
+        assert_eq!(route(&app, "observe"), NetRoute::Local, "the route stays as it was");
+
+        // The other routes are fine for a query, and an action may still go to the host.
+        {
+            let mut tools = app.world_mut().resource_mut::<AiTools>();
+            tools.set_route("observe", NetRoute::HostOnly(ON_THE_HOST)).unwrap();
+            tools.set_route("observe", NetRoute::Local).unwrap();
+            tools.set_route("teleport", NetRoute::Host).unwrap();
+        }
+        assert_eq!(route(&app, "observe"), NetRoute::Local);
+    }
+
+    #[test]
+    #[should_panic(expected = "queries run locally")]
+    fn the_app_builder_refuses_a_query_routed_to_the_host() {
+        use crate::AiAppExt;
+        game().net_route("observe", NetRoute::Host);
     }
 }

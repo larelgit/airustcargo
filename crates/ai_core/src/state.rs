@@ -145,12 +145,26 @@ impl<'w> StateEncoder<'w> {
     }
 
     pub(crate) fn encode_resources(&self, left_out: &mut BTreeSet<String>) -> BTreeMap<String, Value> {
+        let registry = &*self.registry;
         let encoder = Encoder { world: self.world, keys: &self.modules.keys };
+        let (no_ids, no_keys) = (HashMap::new(), HashMap::new());
         let mut values = BTreeMap::new();
         for resource in self.modules.resources.iter().filter(|r| self.rule.accepts_resource(self.world, r.type_id)) {
-            match (resource.save)(self.world, &self.registry, &encoder) {
+            match (resource.save)(self.world, registry, &encoder) {
                 Some(Ok(json)) => {
-                    values.insert(resource.name.to_owned(), json);
+                    // What is written must read back, as for a component (a NaN is written as null).
+                    let read = registry
+                        .get(resource.type_id)
+                        .ok_or_else(|| "not registered for reflection".to_owned())
+                        .and_then(|registration| from_json(registration, registry, &json, &mut Decoder::dry(&no_ids, &no_keys)));
+                    match read {
+                        Ok(_) => {
+                            values.insert(resource.name.to_owned(), json);
+                        }
+                        Err(why) => {
+                            left_out.insert(format!("{} (does not read back: {why})", resource.name));
+                        }
+                    }
                 }
                 Some(Err(why)) => {
                     left_out.insert(format!("{} (does not serialize: {why})", resource.name));
@@ -176,7 +190,8 @@ pub fn encode_replicated(world: &World, entity: Entity) -> Result<ComponentValue
     Ok(values)
 }
 
-/// The replicated resources: the snapshot resources minus `net_ignore_resource`.
+/// The replicated resources: the snapshot resources minus `net_ignore_resource`. One whose
+/// value does not read back (a NaN) is left out, as a component is.
 pub fn encode_resources(world: &World) -> BTreeMap<String, Value> {
     StateEncoder::new(world, StateRule::Replicated).resources().0
 }
@@ -271,8 +286,9 @@ pub(crate) fn apply(
     let mut spawned: BTreeSet<Entity> = BTreeSet::new();
     let mut targets: Vec<(u32, Entity, &ComponentValues)> = Vec::new();
     for (id, values) in order {
-        if *id == 0 {
-            warnings.push("entity id 0 is not an id".to_owned());
+        // 0 is "not assigned yet"; `u32::MAX` has no id after it for the counter to move to.
+        if *id == 0 || *id == u32::MAX {
+            warnings.push(format!("entity id {id} is not an id"));
             continue;
         }
         let entity = match world.resource::<AiIndex>().get(AiId(*id)) {

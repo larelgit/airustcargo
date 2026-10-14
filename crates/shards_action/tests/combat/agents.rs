@@ -157,6 +157,26 @@ fn an_attack_order_that_cannot_start_by_waiting_says_why() {
 }
 
 #[test]
+fn an_attack_on_something_with_no_position_is_refused() {
+    let mut app = app();
+    let world = app.world_mut();
+    let hero = hero(world, "hero", Vec3::ZERO, N);
+    // The AI sees it, but it stands nowhere: a director, a quest.
+    let director = world.spawn(ai_core::AiKind::new("Director")).id();
+    // A prop with health and a position, but no fighter: attacking it still works.
+    let crate_ = world.spawn((ai_core::AiKind::new("Crate"), Health::new(10.0), Transform::from_xyz(0.0, 0.0, -1.5))).id();
+    let (dir, prop) = (id(&app, director), id(&app, crate_));
+    let err = fails(&mut app, "attack", json!({"target": dir}));
+    assert_eq!(
+        err,
+        format!("{dir} has no position, so there is nothing to walk to and hit; attack a body that stands in the world")
+    );
+    assert!(app.world().get::<Intent>(hero).unwrap().orders.is_empty(), "nothing was queued");
+    assert_eq!(ok(&mut app, "attack", json!({"target": prop})), format!("ok: attacking {prop} with light"));
+    assert_eq!(app.world().get::<Intent>(hero).unwrap().orders.len(), 1);
+}
+
+#[test]
 fn lock_on_picks_the_nearest_enemy_and_attacks_follow_it() {
     let mut app = app();
     let world = app.world_mut();

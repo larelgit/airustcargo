@@ -4,9 +4,9 @@
 use sandbox::gameplay::Player;
 use sandbox::SandboxPlugin;
 use shards::ai_core::replay::{self, Replay, ReplayEvent};
-use shards::ai_core::{call_tool, AiJournal, AiReplay, JournalKind};
+use shards::ai_core::{call_tool, AiJournal, AiReplay, CheckDetail, EntityChange, JournalKind, Scope};
 use shards::prelude::*;
-use shards::serde_json::json;
+use shards::serde_json::{self, json, Value};
 
 use crate::common::{ok, state, BOSS};
 
@@ -60,6 +60,29 @@ fn report(app: &App) -> shards::ai_core::ReplayReport {
     app.world().resource::<AiReplay>().report().cloned().expect("playback has not finished")
 }
 
+/// Plays `replay` to its end in a fresh game, like `--verify`.
+fn played(replay: Replay) -> App {
+    let mut copy = sandbox::test_app(replay.seed);
+    let end = replay.end.tick;
+    replay::play(copy.world_mut(), replay).unwrap();
+    ok(&mut copy, "step", json!({"ticks": end}));
+    copy.update();
+    copy
+}
+
+/// The first recorded call's arguments, to change as a newer build would.
+fn first_call(replay: &mut Replay) -> &mut Value {
+    let first = replay.events.iter_mut().find_map(|e| match e {
+        ReplayEvent::Call { args, .. } => Some(args),
+        _ => None,
+    });
+    first.expect("a recorded call")
+}
+
+fn journal(app: &App, kind: JournalKind) -> Vec<String> {
+    app.world().resource::<AiJournal>().after(0).0.filter(|e| e.kind == kind).map(ToString::to_string).collect()
+}
+
 #[test]
 fn playback_reproduces_the_session() {
     let (mut original, replay) = recorded(42);
@@ -108,15 +131,184 @@ fn a_changed_game_reports_the_first_diverging_tick() {
     let report = report(&copy);
     assert_eq!(report.diverged_at, Some(60), "{report}");
     assert!(report.to_string().contains("DIVERGED at tick 60"), "{report}");
-    let errors: Vec<String> = copy
-        .world()
-        .resource::<AiJournal>()
-        .after(0)
-        .0
-        .filter(|e| e.kind == JournalKind::Error)
-        .map(ToString::to_string)
-        .collect();
+    let errors = journal(&copy, JournalKind::Error);
     assert!(errors.iter().any(|e| e.contains("replay diverged at tick 60")), "{errors:?}");
+}
+
+#[test]
+fn a_divergence_names_the_entity_the_component_and_its_value() {
+    let (_, mut replay) = recorded(42);
+    // Still above half health, so the boss stays in phase 1 and only its health differs.
+    first_call(&mut replay)["value"] = json!(320);
+    let copy = played(replay);
+
+    let report = report(&copy);
+    assert_eq!(report.headline(), "replay finished at tick 357: DIVERGED at tick 60: e6 Boss: Health differs");
+    assert_eq!(report.value_lines(), ["e6 now: Health { current: 320.0, max: 600.0 }"]);
+    let errors = journal(&copy, JournalKind::Error);
+    assert!(errors.iter().any(|e| e.ends_with("replay diverged at tick 60: e6 Boss: Health differs")), "{errors:?}");
+    let values = journal(&copy, JournalKind::Sim);
+    assert!(values.iter().any(|e| e.ends_with("replay: e6 now: Health { current: 320.0, max: 600.0 }")), "{values:?}");
+    // Only the first divergence is explained: later checks follow from it.
+    assert_eq!(errors.iter().filter(|e| e.contains("replay diverged")).count(), 1, "{errors:?}");
+}
+
+#[test]
+fn a_moved_pillar_is_the_only_entity_named() {
+    let mut original = sandbox::test_app(42);
+    ok(&mut original, "teleport", json!({"id": "e1", "x": -19, "z": -19}));
+    ok(&mut original, "attack", json!({"target": BOSS, "repeat": true}));
+    ok(&mut original, "step", json!({"ticks": 180}));
+    let mut replay = replay::save(original.world());
+    // The same corner, a meter off.
+    first_call(&mut replay)["x"] = json!(-18);
+    let copy = played(replay);
+
+    let report = report(&copy);
+    let found = report.divergence.as_ref().unwrap();
+    assert_eq!(found.tick, 60, "{report}");
+    assert_eq!(found.entities.len(), 1, "{report}");
+    assert_eq!(found.entities[0].id, AiId(1));
+    assert!(
+        matches!(&found.entities[0].change, EntityChange::Differs { components, .. } if components == &["Transform"]),
+        "{report}"
+    );
+    assert!(report.headline().ends_with("DIVERGED at tick 60: e1 Pillar: Transform differs"), "{report}");
+    let [value] = report.value_lines().try_into().unwrap();
+    assert!(value.starts_with("e1 now: Transform { translation: Vec3(-18.0, 0.0, -19.0)"), "{value}");
+}
+
+#[test]
+fn checks_every_tick_name_the_exact_tick() {
+    let record = |every: u64| {
+        let mut app = sandbox::test_app_with(|config| config.check_every = every);
+        ok(&mut app, "step", json!({"ticks": 37}));
+        ok(&mut app, "set", json!({"id": BOSS, "component": "Health", "path": "current", "value": 400}));
+        ok(&mut app, "step", json!({"ticks": 83}));
+        let replay = replay::save(app.world());
+        let mut replay: Replay = serde_json::from_str(&serde_json::to_string(&replay).unwrap()).unwrap();
+        first_call(&mut replay)["value"] = json!(390);
+        replay
+    };
+    let every_tick = record(1);
+    assert_eq!(every_tick.check_every, 1);
+    assert_eq!(every_tick.checks.len(), 120, "one at every tick from 1 to 120");
+    // The call came after tick 37: the state differs from tick 38 on.
+    let report_1 = report(&played(every_tick));
+    assert_eq!(report_1.diverged_at, Some(38), "{report_1}");
+    assert!(report_1.headline().ends_with("DIVERGED at tick 38: e6 Boss: Health differs"), "{report_1}");
+    let report_60 = report(&played(record(60)));
+    assert_eq!(report_60.diverged_at, Some(60), "{report_60}");
+}
+
+#[test]
+fn the_check_detail_decides_what_the_report_names() {
+    let reported = |detail: CheckDetail| {
+        let mut app = sandbox::test_app_with(|config| config.check_detail = detail);
+        session(&mut app);
+        let mut replay = replay::save(app.world());
+        assert_eq!(replay.check_detail, detail);
+        first_call(&mut replay)["value"] = json!(320);
+        report(&played(replay))
+    };
+    let entities = reported(CheckDetail::Entities);
+    assert!(entities.headline().ends_with("DIVERGED at tick 60: e6 Boss differs"), "{entities}");
+    assert!(entities.value_lines().is_empty(), "{entities}");
+    let none = reported(CheckDetail::None);
+    assert!(
+        none.headline().ends_with("DIVERGED at tick 60: no details: the recording keeps hashes only (check detail none)"),
+        "{none}"
+    );
+    // Hashes alone keep the file small; the hash itself is the same at every detail.
+    let (_, full) = recorded(42);
+    let mut bare = sandbox::test_app_with(|config| config.check_detail = CheckDetail::None);
+    session(&mut bare);
+    let bare = replay::save(bare.world());
+    assert_eq!(full.checks.iter().map(|c| c.hash).collect::<Vec<_>>(), bare.checks.iter().map(|c| c.hash).collect::<Vec<_>>());
+    assert!(bare.checks.iter().all(|c| c.parts.is_none()));
+    assert!(serde_json::to_string(&bare).unwrap().len() * 4 < serde_json::to_string(&full).unwrap().len());
+}
+
+#[test]
+fn missing_and_extra_entities_are_named_and_the_list_is_capped() {
+    let mut original = sandbox::test_app(42);
+    for i in 0..12 {
+        ok(&mut original, "spawn_prefab", json!({"id": "skeleton", "x": -18 + 3 * i, "z": 18}));
+    }
+    ok(&mut original, "step", json!({"ticks": 60}));
+    let replay = replay::save(original.world());
+
+    // A newer build where those spawns never happen: e15..e26 are missing.
+    let mut fewer = replay.clone();
+    fewer.events.retain(|e| !matches!(e, ReplayEvent::Call { tool, .. } if tool == "spawn_prefab"));
+    let gone = report(&played(fewer));
+    let found = gone.divergence.as_ref().unwrap();
+    assert_eq!(found.entities.len(), 10, "{gone}");
+    assert_eq!(found.more, 2, "{gone}");
+    assert!(found.entities.iter().all(|e| matches!(e.change, EntityChange::Missing { .. })), "{gone}");
+    let listed: Vec<String> = (15..25).map(|id| format!("e{id} missing")).collect();
+    assert!(gone.headline().ends_with(&format!("DIVERGED at tick 60: {}; … and 2 more", listed.join("; "))), "{gone}");
+
+    // And one where a thirteenth one joins them: e27 is extra.
+    let mut more = replay;
+    more.events.push(ReplayEvent::Call {
+        at: 0,
+        agent: "dev".into(),
+        scope: Scope::Dev,
+        subject: None,
+        tool: "spawn_prefab".into(),
+        args: json!({"id": "skeleton", "x": 18, "z": 15}),
+    });
+    let joined = report(&played(more));
+    assert!(joined.headline().ends_with("DIVERGED at tick 60: e27 extra (Skeleton)"), "{joined}");
+}
+
+#[test]
+fn a_despawned_entity_is_missing_with_what_became_of_it() {
+    let mut original = sandbox::test_app(42);
+    ok(&mut original, "step", json!({"ticks": 60}));
+    let mut replay = replay::save(original.world());
+    // A newer build removes the skeleton at tick 30.
+    replay.events.push(ReplayEvent::Call {
+        at: 30,
+        agent: "dev".into(),
+        scope: Scope::Dev,
+        subject: None,
+        tool: "despawn".into(),
+        args: json!({"id": "e7"}),
+    });
+    let report = report(&played(replay));
+    assert!(report.headline().ends_with("DIVERGED at tick 60: e7 missing (Skeleton despawned at tick 30)"), "{report}");
+}
+
+#[test]
+fn a_version_2_replay_verifies_by_its_hashes() {
+    let (_, replay) = recorded(42);
+    // What a build before details wrote: no interval, no detail, no breakdowns.
+    let mut v2 = serde_json::to_value(&replay).unwrap();
+    v2["format"] = json!("shards-replay/2");
+    let file = v2.as_object_mut().unwrap();
+    file.remove("check_every");
+    file.remove("check_detail");
+    file["end"].as_object_mut().unwrap().remove("parts");
+    for check in file["checks"].as_array_mut().unwrap() {
+        check.as_object_mut().unwrap().remove("parts");
+    }
+    assert!(!v2.to_string().contains("parts"));
+    let v2: Replay = serde_json::from_value(v2).unwrap();
+
+    let same = report(&played(v2.clone()));
+    assert!(same.identical(), "{same}");
+    assert_eq!(same.matched as usize, replay.checks.len() + 1);
+
+    let mut changed = v2;
+    first_call(&mut changed)["value"] = json!(320);
+    let copy = played(changed);
+    let report = report(&copy);
+    assert_eq!(report.headline(), "replay finished at tick 357: DIVERGED at tick 60: no details: replay format 2");
+    assert!(report.value_lines().is_empty());
+    let errors = journal(&copy, JournalKind::Error);
+    assert!(errors.iter().any(|e| e.ends_with("replay diverged at tick 60: no details: replay format 2")), "{errors:?}");
 }
 
 #[test]
@@ -407,4 +599,41 @@ fn a_component_that_does_not_serialize_is_left_out_once() {
         .collect();
     assert_eq!(warnings.len(), 1, "once, not at every check: {warnings:?}");
     assert!(warnings[0].contains("replays::Locked: it does not serialize"), "{warnings:?}");
+}
+
+#[test]
+fn verify_prints_what_diverged_and_its_value_now() {
+    let (_, mut replay) = recorded(42);
+    first_call(&mut replay)["value"] = json!(320);
+    let path = replay::write(&replay, &format!("replays/test/diverged-{}.json", std::process::id())).unwrap();
+    let verify = std::process::Command::new(env!("CARGO_BIN_EXE_sandbox")).arg("--replay").arg(&path).arg("--verify").output().unwrap();
+    let _ = std::fs::remove_file(&path);
+    let stdout = String::from_utf8_lossy(&verify.stdout);
+    assert_eq!(verify.status.code(), Some(1), "{stdout}{}", String::from_utf8_lossy(&verify.stderr));
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "{stdout}");
+    assert!(lines[0].starts_with("replay finished at tick 357: DIVERGED at tick 60: e6 Boss: Health differs [357 ticks in "), "{stdout}");
+    assert_eq!(lines[1], "  e6 now: Health { current: 320.0, max: 600.0 }");
+}
+
+#[test]
+fn check_flags_are_for_recording() {
+    // Every call names a replay that does not exist: a flag let through by mistake ends
+    // in an error, never in a game that runs until the test times out.
+    let refused = |flags: &[&str]| {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_sandbox"))
+            .args(["--replay", "replays/test/none.json"])
+            .args(flags)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{flags:?}");
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+    let zero = refused(&["--check-every", "0"]);
+    assert!(zero.contains("invalid value '0' for '--check-every <TICKS>'"), "{zero}");
+    let detail = refused(&["--check-detail", "all"]);
+    assert!(detail.contains("unknown check detail `all`: use components, entities or none"), "{detail}");
+    // A replay checks at its own ticks.
+    let both = refused(&["--check-every", "1"]);
+    assert!(both.contains("the argument '--replay <FILE>' cannot be used with '--check-every <TICKS>'"), "{both}");
 }
