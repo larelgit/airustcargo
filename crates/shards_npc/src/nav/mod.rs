@@ -101,11 +101,12 @@ impl Default for NavPaths {
 pub const NAVMESH: &str = "navmesh";
 
 /// What the navmesh says about a walk of a body of `params`: `None` when it does not cover
-/// it (no region, a goal or start outside it, a bigger body than the baked one, a walker
-/// off the ground), else the route or why there is none.
+/// it (no region, a goal or start outside it, a body bigger than the baked one or one that
+/// steps, climbs or swims less well, a walker off the ground), else the route or why there
+/// is none.
 pub fn navmesh_route(world: &World, from: Vec3, to: Vec3, params: &CharacterParams, goal_level: bool) -> Option<Result<NavPath, String>> {
     let nav = world.get_resource::<NavRegion>()?;
-    if world.get_resource::<ActiveRegion>().map(|r| r.hash) != Some(nav.hash) {
+    if world.get_resource::<ActiveRegion>().map(|r| r.hash) != Some(nav.hash) || !nav.serves(params) {
         return None;
     }
     let physics = world.get_resource::<PhysicsWorld>()?;
@@ -118,10 +119,10 @@ pub fn navmesh_route(world: &World, from: Vec3, to: Vec3, params: &CharacterPara
 }
 
 /// The engine's routes: the navmesh's where it covers the walk, else the local grid's. Only
-/// the radius is known here: the body is taken to be as tall as the baked one.
+/// the radius is known here: the body is taken to be the baked one otherwise.
 pub fn navmesh_path(world: &World, from: Vec3, to: Vec3, radius: f32) -> Option<Vec<Vec3>> {
-    let height = world.get_resource::<NavRegion>().map_or(CharacterParams::default().height, |nav| nav.agent_height);
-    let params = CharacterParams { radius, height, ..default() };
+    let body = world.get_resource::<NavRegion>().map_or_else(CharacterParams::default, |nav| nav.agent.clone());
+    let params = CharacterParams { radius, ..body };
     match navmesh_route(world, from, to, &params, false) {
         Some(Ok(path)) => Some(path.points),
         Some(Err(_)) => None,

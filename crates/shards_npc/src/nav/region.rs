@@ -42,7 +42,7 @@ use shards_content::{asset_root, ContentDb};
 use shards_level::{LevelMarker, MarkerKind};
 use shards_motion::perception::{step_onto, Probe, Stance, StepKind, Terrain};
 use shards_motion::physics::sync_physics;
-use shards_motion::{Body, ColliderId, ColliderInfo, LayerMask, PhysicsWorld, Shape, VolumeKind};
+use shards_motion::{Body, CharacterParams, ColliderId, ColliderInfo, LayerMask, PhysicsWorld, Shape, VolumeKind};
 use shards_world::grid::{rotation, turn, turns_of, Dir};
 use shards_world::manifest::Layout;
 use shards_world::{ActiveRegion, RegionGraph, TileId};
@@ -293,6 +293,9 @@ pub struct NavRegion {
     /// The body the tiles were baked for.
     pub agent_radius: f32,
     pub agent_height: f32,
+    /// All of the body the tiles were baked for: how high it steps and climbs, how steep it
+    /// walks, where it swims.
+    pub agent: CharacterParams,
     pub safe_drop: f32,
     pub instances: Vec<Instance>,
     /// Instance covering each region cell, row-major (`u32::MAX`: none).
@@ -456,9 +459,23 @@ impl NavRegion {
         self.components.get(node as usize).copied().unwrap_or(node)
     }
 
-    /// Whether a body of `params` plans on this navmesh: not bigger than the one baked.
+    /// Whether a body of this radius and height fits wherever the baked one does: not
+    /// bigger.
     pub fn fits(&self, radius: f32, height: f32) -> bool {
         radius <= self.agent_radius + 0.01 && height <= self.agent_height + 0.01
+    }
+
+    /// Whether a walker of `params` makes every move of this navmesh: it [`fits`](Self::fits),
+    /// steps, climbs and walks slopes at least as well as the baked body, and swims where it
+    /// does. Others plan on the local grid, which knows their own limits.
+    pub fn serves(&self, params: &CharacterParams) -> bool {
+        let a = &self.agent;
+        self.fits(params.radius, params.height)
+            && params.step_height + 0.01 >= a.step_height
+            && params.mantle_height + 0.01 >= a.mantle_height
+            && params.max_slope_deg + 0.01 >= a.max_slope_deg
+            && (params.swim_depth - a.swim_depth).abs() < 0.01
+            && (params.float_depth - a.float_depth).abs() < 0.01
     }
 
     /// `64 tiles, 16384 nodes, 896 links across edges, 2 navlinks`.
@@ -639,6 +656,7 @@ fn build(world: &mut World) -> Result<NavRegion, String> {
         size: manifest.size,
         agent_radius: settings.agent.radius,
         agent_height: settings.agent.height,
+        agent: settings.agent.clone(),
         safe_drop: settings.safe_drop,
         instances,
         cell_instance,

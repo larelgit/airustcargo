@@ -580,3 +580,21 @@ fn an_npc_does_not_walk_off_a_cliff_toward_a_target_in_plain_sight() {
     let agent = app.world().get::<NavAgent>(sentry).unwrap();
     assert!(!agent.direct && agent.path.is_empty(), "no straight walk, no route: it holds ({agent:?})");
 }
+
+/// A walker that climbs less than the body the tiles were baked for is not planned on the
+/// navmesh: its route would have a climb it cannot make. The local grid answers for it.
+#[test]
+fn a_walker_that_climbs_less_than_the_baked_body_plans_on_the_local_grid() {
+    let mut app = app();
+    load_region(&mut app, &["floor ledge floor"]);
+    let hero = player(app.world_mut(), 0, Vec3::new(4.0, 0.0, 4.0));
+    let goal = json!({"target": {"x": 14.0, "z": 4.0}, "path": true});
+    // The baked body (the defaults) mantles the 1 m ledge.
+    let out = ok(&mut app, "move_to", goal.clone());
+    assert!(text(&out).contains("(mantle 1.0m)"), "{}", text(&out));
+    app.world_mut().get_mut::<shards_core::Intent>(hero).unwrap().orders.clear();
+    // This one only mantles half a meter.
+    app.world_mut().entity_mut(hero).insert(shards_motion::CharacterParams { mantle_height: 0.5, ..default() });
+    let out = call(&mut app, "move_to", goal);
+    assert!(!text(&out).contains("mantle"), "no climb it cannot make: {}", text(&out));
+}
