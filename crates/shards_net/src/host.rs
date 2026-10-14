@@ -1287,6 +1287,7 @@ fn send_rebases(world: &mut World, host: &mut NetHost) {
     let mut captured: Option<Result<ai_core::Snapshot, String>> = None;
     let mut sent = Vec::new();
     let mut waiting = Vec::new();
+    let mut too_large = Vec::new();
     let mut desync = false;
     for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Connected && p.rebase.is_some()) {
         // Its link would refuse the world now (by count or by bytes, as large as the last
@@ -1317,7 +1318,11 @@ fn send_rebases(world: &mut World, host: &mut NetHost) {
         host.rebase_bytes = bytes.len();
         let kb = bytes.len() as f64 / 1024.0;
         if let Err(e) = peer.send_bytes(&bytes) {
-            waiting.push((peer.player, e.to_string()));
+            match e {
+                // No link carries it, now or later: waiting would capture and encode it every tick.
+                SendError::TooLarge { len, max } => too_large.push((peer.id, peer.player, len, max)),
+                e => waiting.push((peer.player, e.to_string())),
+            }
             continue;
         }
         sent.push(format!("p{} gets the world again ({reason}, {kb:.1} KB)", peer.player));
@@ -1347,6 +1352,13 @@ fn send_rebases(world: &mut World, host: &mut NetHost) {
     if let Some(Err(e)) = captured {
         journal::emit(world, JournalKind::Error, format!("net: the world cannot be sent again: {e}"));
     }
+    for (id, player, len, max) in too_large {
+        // Its size says nothing of the next world: the gate must not remember it.
+        host.rebase_bytes = 0;
+        let (mb, max_mb) = (len as f64 / (1 << 20) as f64, max as f64 / (1 << 20) as f64);
+        journal::emit(world, JournalKind::Error, format!("net: the world is {mb:.1} MB, over the {max_mb:.0} MB a link carries: p{player} cannot be given it and is sent away"));
+        let _ = host.kick_peer(id, &format!("the host's world ({mb:.1} MB) is over the {max_mb:.0} MB a link carries"));
+    }
     for line in sent {
         journal::emit(world, JournalKind::Sim, format!("net: {line}"));
     }
@@ -1355,9 +1367,12 @@ fn send_rebases(world: &mut World, host: &mut NetHost) {
     }
 }
 
-/// Whether a link with `footprint` takes a message of `bytes` now (as `send_reliable` would).
+/// Whether a link with `footprint` has room for a message of `bytes` now (the queue
+/// conditions of `send_reliable`). A message over `max_blob_bytes` is not a question of room:
+/// no link ever carries it, so it is tried (and refused for good, `SendError::TooLarge`) and
+/// not waited for, and a size remembered from an earlier world cannot hold a later one back.
 pub(crate) fn rebase_fits(footprint: &crate::link::Footprint, config: &crate::link::LinkConfig, bytes: usize) -> bool {
-    footprint.reliable_out < config.max_reliable_messages && footprint.reliable_out_bytes + bytes <= config.max_reliable_bytes
+    bytes > config.max_blob_bytes || (footprint.reliable_out < config.max_reliable_messages && footprint.reliable_out_bytes + bytes <= config.max_reliable_bytes)
 }
 
 /// Once a second: a peer's loss over 5 %, its RTT jumping, its inputs coming late, messages
@@ -1562,6 +1577,19 @@ mod tests {
         let heavy = Footprint { reliable_out: 3, reliable_out_bytes: config.max_reliable_bytes - (1 << 20), ..Footprint::default() };
         assert!(!rebase_fits(&heavy, &config, 2 << 20));
         assert!(rebase_fits(&heavy, &config, 1 << 20));
+    }
+
+    #[test]
+    fn a_world_no_link_carries_is_tried_not_waited_for() {
+        let config = LinkConfig::default();
+        // Between what a message may be and what a queue may hold, and beyond: tried at once, so
+        // that the refusal is final (a full link would make it wait, and the size latch).
+        for bytes in [config.max_blob_bytes + 1, config.max_reliable_bytes, config.max_reliable_bytes + 1] {
+            assert!(rebase_fits(&Footprint::default(), &config, bytes), "{bytes}");
+            let full = Footprint { reliable_out: config.max_reliable_messages, reliable_out_bytes: config.max_reliable_bytes, ..Footprint::default() };
+            assert!(rebase_fits(&full, &config, bytes), "{bytes}");
+        }
+        assert!(!rebase_fits(&Footprint { reliable_out: config.max_reliable_messages, ..Footprint::default() }, &config, config.max_blob_bytes));
     }
 
     #[test]

@@ -4,7 +4,7 @@
 use shards::ai_core::journal::{self, JournalKind};
 use shards::ai_core::replay::ReplayEvent;
 use shards::ai_core::{sim, snapshot};
-use shards::net::{LinkConditions, NetClient, NetDef, NetDefaults, NetHost, NetLeft};
+use shards::net::{LinkConditions, NetClient, NetDef, NetDefaults, NetHost, NetLeft, NetState};
 use shards::npc::Home;
 use shards::prelude::*;
 use shards::serde_json::json;
@@ -585,4 +585,39 @@ fn a_region_change_a_guest_forwards_reaches_every_client_as_a_world_again() {
         assert_eq!(rebases(&stand, member), 1);
         assert_eq!(desyncs(&stand, member), 0, "{:#?}", journal(&stand, member));
     }
+}
+
+// --- a world no link carries ---------------------------------------------------------------
+
+/// State a snapshot holds and a client does not: it makes the world too large to send.
+#[derive(Resource, Reflect, Default, Clone)]
+#[reflect(Resource, Default)]
+struct Ballast {
+    data: String,
+}
+
+#[test]
+fn a_world_over_what_a_link_carries_sends_its_player_away_once_instead_of_waiting_every_tick() {
+    let mut stand = shards::testing::stand(1, LinkConditions::NONE, configure, |app| {
+        app.add_plugins(sandbox::SandboxPlugin);
+        app.init_resource::<Ballast>().add_snapshot_resource::<Ballast>().net_ignore_resource::<Ballast>();
+    });
+    stand.run(30);
+    // 17 MB of JSON: over the 16 MB one message may be, under the 32 MB a queue holds.
+    stand.world_mut(HOST).resource_mut::<Ballast>().data = "a".repeat(17 << 20);
+    assert!(stand.call(HOST, "net_resync", json!({})).ok);
+    stand.run(5);
+    let said = |stand: &shards::net::Stand| journal(stand, HOST).into_iter().filter(|l| l.contains("cannot be given it and is sent away")).count();
+    assert_eq!(said(&stand), 1, "{:#?}", journal(&stand, HOST));
+    assert!(has_line(&stand, HOST, "p1 cannot be given it and is sent away"), "{:#?}", journal(&stand, HOST));
+    assert!(matches!(net_state(&stand, C1), NetState::Ended(why) if why.contains("over the 16 MB a link carries")), "{:?}", net_state(&stand, C1));
+    // Not a world captured, encoded and refused again every tick.
+    stand.run(130);
+    assert_eq!(said(&stand), 1);
+    assert!(!has_line(&stand, HOST, "cannot be sent the world now"), "{:#?}", journal(&stand, HOST));
+    assert_eq!(peer_count(&stand), 0);
+}
+
+fn peer_count(stand: &shards::net::Stand) -> usize {
+    stand.world(HOST).resource::<NetHost>().connected().count()
 }

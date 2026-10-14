@@ -277,6 +277,8 @@ Xvfb показывает его вместе с оверлеем навсетк
 (`a_guest_makes_the_host_decode_no_more_than_a_budget_in_one_poll`, `what_a_stranger_sends_after_its_refusal_is_not_read`,
 `a_peer_that_never_says_hello_is_dropped_however_it_keeps_sending`, `a_peer_that_never_acknowledges_its_refusal_is_forgotten_all_the_same`,
 `net_kick_sends_away_a_peer_that_has_no_player_yet`, `a_player_the_game_keeps_waiting_is_not_dropped_for_joining_slowly_and_a_kick_reaches_it`).
+Мир больше того, что берёт канал, отказывается один раз (`a_world_over_what_a_link_carries_sends_its_player_away_once_instead_of_waiting_every_tick`,
+`a_world_no_link_carries_is_tried_not_waited_for`).
 
 ## E8. Сохранения и настройки (фаза C)
 
