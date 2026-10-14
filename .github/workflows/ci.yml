@@ -144,8 +144,9 @@ jobs:
   # and without. Slow and dependent on the runner's graphics stack, so it may fail without
   # failing the run until it has proved stable: then drop `continue-on-error`.
   #
-  # Needs `--windowed` next to `--verify` in `shards::run` (the sandbox's rebuild adds it):
-  # until then this job fails at the flag, which is why it is allowed to.
+  # `--windowed` exists now (crates/shards/src/run.rs). The job stays `continue-on-error`
+  # because software rendering on the CI runners is not yet proven: a failure here may come
+  # from the runner's graphics stack rather than from the engine.
   replays-window:
     name: replays-window
     runs-on: ubuntu-latest
