@@ -1,0 +1,6 @@
+// Points of interest (content kind `poi`): the AI lists them under POI with a direction and a
+// distance; a camp spawns its raider.
+{
+    "spawn": (label: Some("Spawn")),
+    "camp": (label: Some("Camp"), prefab: Some("raider")),
+}

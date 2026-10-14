@@ -15,6 +15,12 @@
 //! All numbers are content in `assets/content/`: how the hero moves, every action's timing
 //! and damage, movesets, fighter stats (prefabs), the level. Edit them while the game runs.
 //!
+//! The engine does more with content alone, no code here: the valley (`content/region/`) is a
+//! region its generator makes from a seed, one of its tiles a level file from Blender
+//! (`assets/tiles/ruin.gltf`); its raiders are NPCs of the engine (`content/npc/`) that walk the
+//! navmesh baked into `assets/nav/` and keep to their camps. A dev goes there with
+//! `shards act regen region=valley seed=42`.
+//!
 //! ```text
 //! cargo game                              # window: WASD, mouse, Space, Ctrl, left click
 //! cargo game --headless --paused &        # no window, time stands still until `shards step`

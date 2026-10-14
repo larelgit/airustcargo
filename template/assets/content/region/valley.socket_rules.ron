@@ -1,0 +1,5 @@
+// Which tile edges may meet (content kind `socket_rules`). The valley's tiles all have grass
+// edges; a game with roads, rivers or cliffs lists those kinds here and which may meet.
+{
+    "default": (kinds: ["grass"], passable: ["grass"]),
+}

@@ -84,17 +84,19 @@ fn reference_replays_still_match() {
     }
 }
 
-/// Not a test: writes the checked-in reference replay (`--ignored`). It records the smoke
-/// scenario, so the replay is the game as a scenario plays it.
+/// Not a test: writes the checked-in reference replays (`--ignored`). It records the
+/// scenarios, so each replay is the game as a scenario plays it.
 #[test]
-#[ignore = "writes tests/replays/smoke.json"]
+#[ignore = "writes tests/replays/smoke.json and valley.json"]
 fn record_reference_replays() {
-    let mut app = my_game::test_app(SEED);
-    let scenario = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scenarios/smoke.scenario");
-    let result = shards::ai_core::scenario::run_file(app.world_mut(), scenario);
-    assert!(result.passed, "{result}");
     std::fs::create_dir_all(replays_dir()).unwrap();
-    let path = replays_dir().join("smoke.json");
-    std::fs::write(&path, shards::serde_json::to_string_pretty(&replay::save(app.world())).unwrap()).unwrap();
-    println!("wrote {}", path.display());
+    for name in ["smoke", "valley"] {
+        let mut app = my_game::test_app(SEED);
+        let scenario = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("scenarios/{name}.scenario"));
+        let result = shards::ai_core::scenario::run_file(app.world_mut(), scenario);
+        assert!(result.passed, "{result}");
+        let path = replays_dir().join(format!("{name}.json"));
+        std::fs::write(&path, shards::serde_json::to_string_pretty(&replay::save(app.world())).unwrap()).unwrap();
+        println!("wrote {}", path.display());
+    }
 }

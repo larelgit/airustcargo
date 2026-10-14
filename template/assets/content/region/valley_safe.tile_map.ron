@@ -1,0 +1,16 @@
+// What the valley falls back to if no attempt of the generator passes its checks.
+{
+    "valley_safe": (
+        rows: [
+            "meadow meadow meadow meadow meadow meadow meadow meadow",
+            "meadow gate meadow meadow meadow meadow meadow meadow",
+            "meadow meadow meadow meadow meadow columns meadow meadow",
+            "meadow meadow meadow meadow meadow meadow meadow meadow",
+            "meadow meadow meadow meadow meadow meadow meadow meadow",
+            "meadow columns meadow meadow meadow meadow meadow meadow",
+            "meadow meadow meadow meadow meadow meadow columns meadow",
+            "meadow meadow meadow meadow meadow meadow meadow meadow",
+        ],
+        pois: [(poi: "spawn", at: (1, 1)), (poi: "camp", at: (5, 2)), (poi: "camp", at: (1, 5)), (poi: "camp", at: (6, 6))],
+    ),
+}

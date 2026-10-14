@@ -1,0 +1,19 @@
+// A generated region (content kind `region`): 8 x 8 tiles of 16 m, made from a seed by the
+// engine's generator and checked (every point reachable, camps away from the gate), the same
+// seed and version giving the same region, byte for byte. Its north-west corner is at
+// (-64, 32), south of the yard (which ends at z 20); a dev goes there with
+// `shards act regen region=valley seed=42` and the hero appears at the gate, cell (1, 1).
+{
+    "valley": (
+        size: (8, 8),
+        tile_size: 16.0,
+        version: 1,
+        origin: (-64.0, 32.0),
+        fixed: [(at: (1, 1), tile: "gate", rot: 0)],
+        pois: [(poi: "spawn", cells: [(1, 1)]), (poi: "camp", count: 3)],
+        checks: (distances: [(a: "spawn", b: "camp", min: 32.0)]),
+        fallback: "valley_safe",
+        // Raiders farther than this from the hero rest.
+        active_radius: 40.0,
+    ),
+}

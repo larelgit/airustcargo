@@ -41,6 +41,23 @@
             "LockOnTarget": (),
         },
     ),
+    // The valley's camps: a grunt's body and moves, but an NPC of the engine (`content/npc/`):
+    // it senses, keeps to its camp (`Home`: 10 m) and walks the navmesh, no code of the game.
+    "raider": (
+        components: {
+            "Name": "Raider",
+            "AiKind": ("Raider"),
+            "AiImportance": (1.0),
+            "Npc": (behavior: "raider", perception: "raider", plan: Some("raider"), director: ""),
+            "Home": (pos: None, leash: 10.0),
+            "CharacterController": (params: "grunt"),
+            "Fighter": (moveset: "grunt"),
+            "Team": ("monsters"),
+            "Health": (current: 60.0, max: 60.0),
+            "Poise": (current: 35.0, max: 35.0, regen: 8.0, delay: 2.0, since_hit: 2.0, broken: 0.0),
+            "LockOnTarget": (),
+        },
+    ),
     // A tougher grunt that starts from the grunt and changes only what differs.
     "grunt_brute": (
         extends: "grunt",

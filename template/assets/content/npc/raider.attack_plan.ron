@@ -1,0 +1,9 @@
+// How the raider chooses its attacks (content kind `attack_plan`): mostly the swipe, the slam
+// now and then (never twice in a row), a short breath after each.
+{
+    "raider": (
+        options: [(input: "light", weight: 3.0, tags: ["light"]), (input: "heavy", weight: 1.0, cooldown: 5.0, tags: ["heavy"])],
+        bans: [(after: ["heavy"], then: ["heavy"], within: 1)],
+        rest: (0.8, 1.4),
+    ),
+}

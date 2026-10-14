@@ -26,7 +26,11 @@ fn check_content_is_clean() {
     let summary = check_dir(&asset_root(app.world()), &kinds).unwrap_or_else(|errors| {
         panic!("content problems:\n{}", errors.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n"))
     });
-    assert_eq!((summary.kinds["arena"], summary.kinds["prefab"]), (1, 3), "{summary:?}");
+    assert_eq!((summary.kinds["arena"], summary.kinds["prefab"]), (1, 4), "{summary:?}");
+    // The valley: its tiles, the level file one of them is (checked node by node), the region,
+    // the navmesh settings (every tile's bake file fresh), the raider's behaviour.
+    let valley = ["tile", "level", "region", "nav", "behavior"].map(|kind| summary.kinds[kind]);
+    assert_eq!(valley, [4, 1, 1, 1, 1], "{summary:?}");
 }
 
 #[test]
@@ -107,12 +111,8 @@ fn editing_a_number_in_content_changes_the_next_hit() {
     // A copy of the assets, so the edit leaves the real files alone.
     let dir = std::env::temp_dir().join(format!("my_game_balance_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
+    copy_dir(std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/assets")), &dir);
     let content = dir.join("content");
-    std::fs::create_dir_all(&content).unwrap();
-    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/content")).unwrap() {
-        let path = entry.unwrap().path();
-        std::fs::copy(&path, content.join(path.file_name().unwrap())).unwrap();
-    }
     let asset_dir = dir.to_string_lossy().into_owned();
     let mut app = shards::testing::test_app(
         |config| {
@@ -137,4 +137,18 @@ fn editing_a_number_in_content_changes_the_next_hit() {
     let hits: Vec<String> = crate::story(&app).into_iter().filter(|l| l.contains("e1 -> e2")).collect();
     assert!(hits.first().is_some_and(|hit| hit.contains("light_1 -50")), "{hits:?}");
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// `from` and everything under it, copied to `to`.
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let path = entry.unwrap().path();
+        let target = to.join(path.file_name().unwrap());
+        if path.is_dir() {
+            copy_dir(&path, &target);
+        } else {
+            std::fs::copy(&path, &target).unwrap();
+        }
+    }
 }

@@ -5,11 +5,14 @@
 //! - `determinism`: same seed and calls, same game; different seed, different fight
 //! - `replays`: a recorded session plays back identically; checked-in replays still do
 //! - `content`: content files are valid; the game's tool and condition behave
+//! - `region`: the generated valley: 1000 seeds pass, the same seed the same bytes, the
+//!   loading screen headless, a raider on the navmesh and its leash
 //! - `manifest`: the game depends on `shards` and nothing else
 
 mod content;
 mod determinism;
 mod manifest;
+mod region;
 mod replays;
 mod scenarios;
 

@@ -1,10 +1,10 @@
 {
-  "format": "shards-replay/2",
+  "format": "shards-replay/3",
   "seed": 42,
   "tick_hz": 59.99999880000003,
   "end": {
     "tick": 258,
-    "hash": "fda6e3285ebf067a"
+    "hash": "d30164e8835b4f7e"
   },
   "events": [
     {
@@ -111,19 +111,19 @@
   "checks": [
     {
       "tick": 60,
-      "hash": "2fea684fa59d1185"
+      "hash": "c1484b9e1d104f4d"
     },
     {
       "tick": 120,
-      "hash": "98b8b7daa79ec33b"
+      "hash": "9d4f02df32ef40ef"
     },
     {
       "tick": 180,
-      "hash": "94491b1708bc407f"
+      "hash": "16791cbeb174249b"
     },
     {
       "tick": 240,
-      "hash": "3b9d82800d428acb"
+      "hash": "09b20541fd23a63f"
     }
   ]
 }
