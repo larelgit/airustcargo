@@ -492,6 +492,25 @@ pub fn kill(world: &mut World, entity: Entity, killer: Option<Entity>, action: O
     }
 }
 
+/// Brings a dead fighter back: [`Dead`] goes, the action it was in (its death) is cut and
+/// its poise is whole again. `false`, and nothing happens, if it was not dead. Health is
+/// the caller's to set first (the `heal` tool makes it full, a loaded game gives back the
+/// saved one), and so is [`Healed`](crate::Healed), which lets a game undo what its `Died`
+/// hooks did (a lock-on target again, no corpse).
+pub fn revive(world: &mut World, entity: Entity) -> bool {
+    if world.get_entity(entity).is_err() || world.get::<Dead>(entity).is_none() {
+        return false;
+    }
+    world.entity_mut(entity).remove::<Dead>();
+    if let Some(mut state) = world.get_mut::<ActionState>(entity) {
+        state.current = None;
+    }
+    if let Some(mut poise) = world.get_mut::<Poise>(entity) {
+        poise.refill();
+    }
+    true
+}
+
 /// `SimSet::Resolve`, last: fighters whose health ran out some other way (a status
 /// hook, a dev `set`) die too.
 pub(crate) fn check_deaths(world: &mut World) {
