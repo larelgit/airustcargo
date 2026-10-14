@@ -5358,6 +5358,7 @@ dependencies = [
  "shards_net",
  "shards_npc",
  "shards_save",
+ "shards_script",
  "shards_settings",
  "shards_world",
 ]

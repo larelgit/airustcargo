@@ -1,0 +1,46 @@
+# Co-op smoke (E7, E11.6): a host and two clients on 150 ms links (300 ms round trip) with 2%
+# loss, each member a game of its own with its own `shards` port. One client walks its body, the
+# other locks on to the warden; the host and both clients must see the same bodies at the same
+# places, and no member may report a desync. The full co-op scenario set is C9's.
+#
+# In process (cargo test) the stand is built from the `stand` line. Against a live one:
+#   cargo sandbox --stand 2 --headless --paused --port 0 --port-file F --net-sim latency=150,loss=0.02 &
+#   SHARDS_PORT_FILE=F cargo shards wait --peer all
+#   SHARDS_PORT_FILE=F cargo shards scenario crates/sandbox/scenarios/coop_smoke.scenario
+stand clients=2 latency=150 loss=0.02
+seed 42
+
+# --- setup (dev, on the host): the arena calm, every body healed at its post. Bodies: e5 is the
+# host's player, e15 c1's, e16 c2's (the join order).
+@host act npc_set_state id=e6 state=calm
+@host act npc_set_state id=e7 state=calm
+@host act npc_set_state id=e8 state=calm
+@host act npc_set_state id=e14 state=calm
+@host act heal id=e5
+@host act heal id=e15
+@host act heal id=e16
+@host act teleport id=e5 x=0 z=12 y=0
+@host act teleport id=e15 x=2 z=12 y=0
+@host act teleport id=e16 x=4 z=12 y=0
+@host act stop
+@c1 act stop
+@c2 act stop
+step 120
+invariant !journal "desync"
+
+# --- c1 walks north, c2 locks on to the warden; the stand runs on
+@c1 act move_to target='{"x":2,"z":4}'
+@c2 act lock_on target=e6
+@c2 expect result contains "ok: locked on e6"
+step 300
+
+# c1 got there: the host decides, c1 and c2 see the same body (the same eN) at the same place
+@host expect field e15 Transform.translation.z < 6
+@c1 expect field e15 Transform.translation.z < 6
+@c2 expect field e15 Transform.translation.z < 6
+@c2 expect field e15 Transform.translation.z > 2
+# the others stayed at their posts
+@c1 expect field e5 Transform.translation.z > 11
+@c1 expect field e16 Transform.translation.x > 3
+@c2 expect field e16 Transform.translation.x < 5
+@host expect field e16 Transform.translation.z > 11

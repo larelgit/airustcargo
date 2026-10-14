@@ -1,16 +1,20 @@
 //! Every file in `scenarios/` runs in-process on a fresh game, the way
 //! `shards scenario FILE` runs it against a live one: the same commands, expectations
-//! and invariants, no window.
+//! and invariants, no window. A file with a `stand` line runs on a stand built from it
+//! (a host and its clients on an in-memory network), the others on a game of their own.
 
 use std::path::{Path, PathBuf};
 
 use shards::ai_core::scenario::run_file;
+use shards::net::Stand;
+use shards::script::Script;
 use shards::serde_json::json;
+use shards::testing::{run_stand_scenario, StandRun};
 
 use crate::common::ok;
 
-/// The sandbox's reference scenarios, in file-name order.
-pub fn scenario_files() -> Vec<PathBuf> {
+/// Every `*.scenario` file of the sandbox, in file-name order.
+fn all_files() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios");
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
@@ -20,6 +24,45 @@ pub fn scenario_files() -> Vec<PathBuf> {
     files.sort();
     assert!(!files.is_empty(), "no *.scenario files in {}", dir.display());
     files
+}
+
+/// Whether the file starts with a `stand` line.
+fn is_stand(file: &Path) -> bool {
+    let text = std::fs::read_to_string(file).unwrap_or_else(|e| panic!("cannot read {}: {e}", file.display()));
+    let name = file.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    Script::parse(&name, &text).unwrap_or_else(|e| panic!("{e}")).stand().is_some()
+}
+
+/// The sandbox's single-game reference scenarios, in file-name order.
+pub fn scenario_files() -> Vec<PathBuf> {
+    all_files().into_iter().filter(|file| !is_stand(file)).collect()
+}
+
+/// The reference scenarios that need a stand (a `stand` line), in file-name order.
+pub fn stand_scenario_files() -> Vec<PathBuf> {
+    let files: Vec<PathBuf> = all_files().into_iter().filter(|file| is_stand(file)).collect();
+    assert!(!files.is_empty(), "the sandbox has no stand scenario");
+    files
+}
+
+/// Runs a stand scenario file on a fresh stand of sandbox games.
+pub fn run_stand_file(file: &Path) -> StandRun {
+    run_stand_scenario(
+        |app| {
+            app.add_plugins(sandbox::SandboxPlugin);
+        },
+        file,
+    )
+}
+
+/// What every member's journal says, host first: the same stand makes the same lines.
+fn journals(stand: &Stand) -> Vec<Vec<String>> {
+    (0..stand.len())
+        .map(|member| {
+            let journal = stand.world(member).resource::<shards::ai_core::AiJournal>();
+            journal.after(0).0.map(|entry| entry.to_string()).collect()
+        })
+        .collect()
 }
 
 pub fn scenario(name: &str) -> PathBuf {
@@ -108,4 +151,118 @@ fn the_combat_prototype_is_won_whatever_the_warden_chooses() {
     assert!(failed.is_empty(), "{} fight(s) lost:\n\n{}", failed.len(), failed.join("\n\n"));
     let distinct: std::collections::HashSet<&Vec<String>> = openings.iter().collect();
     assert!(distinct.len() > 3, "the fights should differ: {openings:#?}");
+}
+
+/// The stand scenarios pass on a fresh stand: a host and its clients on the links the `stand`
+/// line describes.
+#[test]
+fn every_stand_scenario_file_passes_on_a_fresh_stand() {
+    let mut failed = Vec::new();
+    for file in stand_scenario_files() {
+        let run = run_stand_file(&file);
+        if !run.report.passed {
+            failed.push(run.report.to_string());
+        }
+    }
+    assert!(failed.is_empty(), "{} stand scenario(s) failed:\n\n{}", failed.len(), failed.join("\n\n"));
+}
+
+/// A stand is one deterministic game: the same scenario twice gives the same log and, on
+/// every member, the same journal.
+#[test]
+fn a_stand_scenario_run_twice_gives_identical_journals() {
+    for file in stand_scenario_files() {
+        let (first, second) = (run_stand_file(&file), run_stand_file(&file));
+        assert!(first.report.passed, "{}", first.report);
+        assert_eq!(first.report.log, second.report.log, "{}", file.display());
+        let (a, b) = (first.stand.expect("it ran on a stand"), second.stand.expect("it ran on a stand"));
+        let (a, b) = (journals(&a), journals(&b));
+        assert!(a.iter().all(|journal| journal.len() > 5), "the members journaled the run: {a:#?}");
+        assert_eq!(a, b, "{}", file.display());
+    }
+}
+
+/// A game on its own is not a stand: it refuses the file, changing nothing, and says which
+/// stand to start.
+#[test]
+fn a_single_game_refuses_a_stand_scenario() {
+    let mut app = sandbox::test_app(42);
+    for file in stand_scenario_files() {
+        let report = run_file(app.world_mut(), &file);
+        let failure = report.failure.expect("a single game cannot run a stand scenario");
+        assert_eq!((failure.kind, failure.line), (shards::ai_core::scenario::FailureKind::Driver, 0));
+        assert!(
+            failure.message.starts_with("this scenario needs a stand of host + 2 clients: run cargo sandbox --stand 2 --headless --paused --port 0 --port-file F"),
+            "{}",
+            failure.message
+        );
+    }
+    assert_eq!(shards::ai_core::sim::tick(app.world()), 0, "nothing ran");
+}
+
+fn run_stand_text(text: &str) -> StandRun {
+    shards::testing::run_stand_str(
+        |app| {
+            app.add_plugins(sandbox::SandboxPlugin);
+        },
+        "inline.scenario",
+        text,
+    )
+}
+
+/// `@c1 step --until …` watches c1's own view of the world, and the stand's links are the
+/// header's (`net_status` of every member says so).
+#[test]
+fn a_step_condition_watches_the_member_it_names() {
+    let run = run_stand_text(
+        r#"
+stand clients=1 latency=100
+seed 42
+@host act npc_set_state id=e6 state=calm
+@host act teleport id=e15 x=2 z=12 y=0
+step 60
+@c1 act move_to target='{"x":2,"z":4}'
+@c1 step 400 --until field:15:Transform.translation.z<8
+@c1 expect stopped "Transform.translation.z"
+@c1 expect field e15 Transform.translation.z < 8
+@c1 expect field e15 Transform.translation.z > 3
+@host act net_status
+@host expect result contains "\"conditions\": \"latency=100,jitter=0,loss=0,dup=0\""
+@c1 act net_status
+@c1 expect result contains "\"role\": \"client\""
+@c1 expect result contains "\"conditions\": \"latency=100,jitter=0,loss=0,dup=0\""
+"#,
+    );
+    assert!(run.report.passed, "{}", run.report);
+    // The step ended when c1 saw the body there, well before its 400 ticks.
+    assert!(run.report.ticks < 300, "{}", run.report);
+}
+
+/// `session --player N` binds the agent to the body of player N, on the member it names.
+#[test]
+fn a_session_binds_an_agent_to_a_players_body() {
+    let run = run_stand_text(
+        r#"
+stand clients=2
+seed 42
+step 30
+@host session --agent coach --player 2
+@host observe
+@host expect result contains "you e16"
+@host act inspect id=e5
+@c2 session --agent me --player 2
+@c2 observe
+@c2 expect result contains "you e16"
+@c1 expect shows e16 "Player"
+@host session --agent coach --player 7
+"#,
+    );
+    // The binding to a player nobody plays is the game's refusal, and the scenario's failure.
+    assert!(!run.report.passed);
+    let failure = run.report.failure.as_ref().unwrap();
+    assert_eq!(failure.line, 13, "{}", run.report);
+    assert_eq!(
+        failure.message,
+        "session coach on host: there is no player 7 with a body now; players: 0 (e5), 1 (e15), 2 (e16)"
+    );
 }
