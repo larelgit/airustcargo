@@ -12,6 +12,7 @@ default = ["render", "remote", "hot_reload"]
 render = [
     "ai_core/render",
     "shards_motion/render",
+    "shards_action/render",
     "bevy/3d_bevy_render",
     "bevy/ui_bevy_render",
     "bevy/bevy_winit",

@@ -105,6 +105,8 @@ pub mod draw;
 pub mod fighter;
 pub mod machine;
 mod orders;
+#[cfg(feature = "render")]
+pub mod render;
 pub mod status;
 mod tools;
 pub mod zone;
@@ -291,5 +293,7 @@ impl Plugin for ActionPlugin {
         ai::register(app);
         tools::register(app);
         cue::plugin(app);
+        #[cfg(feature = "render")]
+        render::plugin(app);
     }
 }
