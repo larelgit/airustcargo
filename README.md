@@ -399,7 +399,8 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 `--host [PORT] | --join ADDR | --stand N [--stand-udp]` (взаимоисключающие, `--stand` только с `--headless`), `--name`,
 `--net-sim SPEC`, `--save-dir DIR`, `--settings-dir DIR | --no-settings`, `--character SLOT`, `--world SLOT` (слот —
 1–32 символа `a-z0-9_-`), `--exit-with-host`. `--host`, `--join` и `--stand` начинают сессию (раздел «Сессия
-кооператива»); `--stand-udp` пока выходит с кодом 2, опечатка в `--net-sim` — тоже (`latency=15O` не запускает игру без
+кооператива»); `--stand-udp` вместо стенда в одном процессе запускает хост по UDP и N клиентов дочерними процессами (только
+в реальном времени: с `--paused` выход с кодом 2), опечатка в `--net-sim` — тоже код 2 (`latency=15O` не запускает игру без
 задержки). Занятый порт —
 выход с кодом 3 до того, как собрано хоть что-то. `--check-every` и `--check-detail` задают запись реплея, поэтому с `--replay`
 не сочетаются. `--tick-budget-ms` — число миллисекунд, которое помещается в `Duration` и не меньше 1 нс; `inf`, `1e30` и `1e-10`
@@ -1945,6 +1946,37 @@ cargo sandbox --headless --paused --stand 2 --net-sim latency=150,loss=0.02 --po
   (`--exit-with-host`), выходит из сессии, остальные играют дальше. Ctrl+C завершает сессию как выход хоста и ждёт
   (по времени сети), пока клиенты получат конец сессии. Настройки игрока (`--settings-dir`, `--no-settings`) у стенда —
   настройки хоста, клиенты стенда своих не хранят.
+- **Стенд по UDP** (`--stand N --stand-udp`, только с `--headless`, только в реальном времени): процесс — хост на свободном
+  UDP-порту (как `--host 0`), а клиенты — дочерние процессы той же игры: `--join 127.0.0.1:ПОРТ --headless --port 0
+  --port-file F.cK --name cK --no-settings --exit-with-host --save-dir <save-dir>/stand-cK` с теми же `--seed`, `--hz`,
+  `--net-sim` и `--tick-budget-ms`. UDP-игры нельзя шагнуть вместе, поэтому агент «шагает» такой стенд ожиданием (`shards
+  step 120` у хоста гонит 120 тиков подряд, клиенты идут следом), а `--paused` отвергается с этой причиной. Клиенты уходят
+  вместе с хостом (конец сессии, потом SIGTERM тем, кто остался; на Linux ещё PDEATHSIG). Клиент, который не запустился
+  или вышел раньше, чем записал файл порта, останавливает стенд кодом выхода этого клиента и строкой
+  `error: stand: client c2 exited with code 2 before it was ready …`; ушедший позже попадает в журнал хоста.
+- **Стенд из командной строки.** Все участники стенда видны как отдельные игры с отдельным токеном (`.shards/<порт>.token`):
+
+  ```text
+  $ cargo sandbox --stand 2 --headless --paused --port 0 --port-file F --net-sim latency=150,loss=0.02 &
+  $ SHARDS_PORT_FILE=F cargo shards wait --peer all     # строка на участника + проверка, что это одна сессия
+  member=host role=host player=0 body=e5 port=34409 pid=6886 seed=42 tick=0
+  member=c1 role=client player=1 body=e15 port=41881 pid=6886 seed=42 tick=14
+  member=c2 role=client player=2 body=e16 port=42213 pid=6886 seed=42 tick=14
+  stand: host + 2 clients · seed 42 · one session
+  $ cargo shards --peer c1 observe                      # глазами клиента c1 (или SHARDS_PEER=c1); порт читается из F.c1
+  $ cargo shards stand                                  # участники: роль, игрок, тело, порт, пинг, рассинхроны
+  MEMBER  ROLE    PLAYER  BODY  PORT   PING    DESYNCS  TICK
+  host    host    0       e5    34409  -       0        420
+  c1      client  1       e15   41881  300 ms  0        434
+  $ cargo shards stand stop                             # net_end у хоста, потом SIGTERM; ждёт, пока никто не отвечает
+  ```
+
+  `--peer all` годится только для `wait` и `stand`. Токен у каждого участника свой: `--token` (`SHARDS_TOKEN`) — токен
+  хоста, клиентов — `SHARDS_TOKEN_C1`, `SHARDS_TOKEN_C2` (иначе `.shards/<порт>.token` от текущей папки вверх). Клиент, чей
+  файл порта уже убран (он ушёл), `shards stand` показывает строкой `c2: cannot read the port file …`, `stand stop` называет
+  его и всё равно останавливает остальных; код выхода в обоих случаях 1. У стенда `step`, `pause`, `resume` и `speed`
+  отвечают `{"pending": id}`: `shards` опрашивает `ai/step_poll` каждые 20 мс (`--timeout`, по умолчанию 60 с) и печатает
+  отчёт, как у обычного `step`. `session --player N` (BRP `ai/session player=N`) привязывает агента к телу игрока N.
 
 ### Транспорты и CLI
 
@@ -2197,6 +2229,33 @@ invariant field e5 Health.current > 0      # любое ожидание; про
 - **Мир берётся как есть.** Сценарий не перезапускает игру. Чтобы файл шёл и на свежей игре, и после других, он сам
   приводит мир в порядок первыми командами (`heal`, `teleport`, `set`, `npc_set_state … calm`, `regen`): так сделаны все
   `crates/sandbox/scenarios/*.scenario`, они идут на свежей игре и после других, вперёд и назад (CI проверяет оба порядка).
+- **Сценарий для стенда** (E7, E11.6) описывает хост и клиентов (`cargo sandbox --stand 2`). Первой строкой (до или после
+  `seed`) идёт заголовок `stand clients=N [latency=MS] [jitter=MS] [loss=P] [dup=P]` (N — 1 или 2), любая команда может
+  начинаться с участника, на котором она выполняется: `@host` (по умолчанию), `@c1`, `@c2`. Файлы со `stand` лежат в
+  `crates/sandbox/scenarios/stand/`, а не рядом с остальными: одна игра их не выполнит (`this scenario needs a stand of
+  host + 2 clients: run cargo sandbox --stand 2 …`), а `scenarios/*.scenario` идёт на одной игре.
+
+  ```text
+  stand clients=2 latency=150 loss=0.02     # связь 150 мс в одну сторону (300 мс туда и обратно), 2% потерь
+  seed 42
+  @host act heal id=e15                     # инструмент на хосте
+  @c1 act move_to target='{"x":2,"z":4}'    # команда клиента c1 идёт хосту, как у игрока
+  step 300                                  # общий: 300 тиков стенда, у кого бы ни вызвали
+  @c2 step 100 --until journal:swing        # условие читает журнал c2
+  @c2 expect field e15 Transform.translation.z < 6   # expect/invariant идут на том, кого назвали
+  invariant !journal "desync"               # без участника — на каждом
+  @c1 session --agent bot --player 1        # агент bot играет за тело игрока 1, только у c1
+  mark                                      # без участника — у каждого свой журнал считается отсюда
+  ```
+
+  `expect result` и `expect stopped` читают последний ответ (последний `step`) на названном участнике, а без него — последний
+  вообще; агент, который выполняет команды, свой у каждого участника (`session --agent X` без участника задаёт его всем,
+  `@c1 session …` — только c1). Неизвестный участник — ошибка разбора (`@c3: this stand has clients c1, c2`). Живой стенд
+  должен совпадать с заголовком: столько клиентов (иначе `this scenario needs a stand of host + 2 clients, but this one
+  is host + 1 client`) и те же условия связи, что в `--net-sim` (иначе ошибка называет, с чем его запустить). В тесте файл
+  идёт на стенде, построенном по заголовку: `shards::testing::run_stand_scenario(|app| { … }, путь)`; против живого —
+  `SHARDS_PORT_FILE=F shards scenario crates/sandbox/scenarios/stand/*.scenario` (участники ищутся по `F`, `F.c1`, `F.c2`,
+  а `--peer` и `SHARDS_PEER` для такого файла не действуют).
 
 В тесте:
 
@@ -2990,7 +3049,7 @@ xvfb-run -a cargo test -p shards --test action_render -- --ignored --nocapture  
 | `test` | `cargo test --workspace --locked`: юнит-тесты, сценарии песочницы (в том числе мир и NPC), эталонные реплеи (`--verify`) |
 | `clippy` | `cargo clippy --all-targets --locked -- -D warnings` для движка и для шаблона |
 | `template` | `template/Cargo.lock` не расходится с корневым; `cargo test` шаблона; `cargo run -- --check-content`, `--verify` его реплеев и `--worldgen-report valley --seeds 1..1000` через бинарник игры |
-| `headless-cli` | `cargo sandbox --check-content` (уровни тайлов и запечённая навигация тоже), `--worldgen-report wilds --seeds 1..1000`; живая песочница без окна (`--port 0 --port-file`), `shards wait`, `shards scenario crates/sandbox/scenarios/*.scenario`, потом те же сценарии в обратном порядке в той же игре; `kill` в конце |
+| `headless-cli` | `cargo sandbox --check-content` (уровни тайлов и запечённая навигация тоже), `--worldgen-report wilds --seeds 1..1000`; живая песочница без окна (`--port 0 --port-file`), `shards wait`, `shards scenario crates/sandbox/scenarios/*.scenario`, потом те же сценарии в обратном порядке в той же игре; `kill` в конце; живой стенд (`--stand 2 --net-sim latency=150,loss=0.02`): `shards wait --peer all`, `shards scenario crates/sandbox/scenarios/stand/*.scenario`, `shards stand`, `shards stand stop` |
 | `replays-window` | те же реплеи (песочницы и шаблона) в окне под Xvfb: `--verify --windowed`; необязательное (`continue-on-error`), пока не докажет стабильность |
 
 ## Что дальше

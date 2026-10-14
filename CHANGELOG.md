@@ -124,6 +124,28 @@ git push origin v0.1.0
 - Стенд читает и пишет настройки игрока хоста (`--settings-dir`, `--no-settings`; `shards_settings::install` после
   `build`, как у одиночной игры); клиенты стенда настроек не хранят.
 
+**Стенд для агента (E11.6, E11.7): `--peer`, сценарии стенда, `--stand-udp`**:
+
+- `shards`: `--peer host|c1|c2` (`SHARDS_PEER`) читает порт участника из `F`, `F.c1`, `F.c2`; `wait --peer all` ждёт всех, печатает
+  строку на участника (`member=c1 role=client player=1 body=e15 port=… pid=… seed=… tick=…`) и проверяет, что это одна сессия
+  (хост перечисляет игроков и тела клиентов; решает по свежим статусам, поэтому годится и для стенда по UDP); `shards stand`
+  (участники: роль, игрок, тело, порт, пинг, рассинхроны) и `shards stand stop` (`net_end`, SIGTERM, ждёт, пока никто не
+  отвечает; ушедший клиент называется, код выхода 1); `step`, `pause`, `resume` и `speed` стенда (`{"pending": id}`)
+  опрашиваются через `ai/step_poll` каждые 20 мс (`--timeout`, глобальный, по умолчанию 60 с; заменил `--timeout` у
+  `wait` и `shot`); `session --player N`; у каждого участника свой токен (`--token` — хоста, `SHARDS_TOKEN_C1`… — клиентов).
+- `shards_script`: заголовок `stand clients=N [latency=MS] [jitter=MS] [loss=P] [dup=P]`, префикс `@host|@c1|@c2`, результаты,
+  шаги, агент и отметки журнала у каждого участника отдельно, инвариант без участника идёт на каждом; `Driver` получил
+  `peers`, `call_on`, `session_on`, `status_on`, `journal_since_on`, `check_stand` (по умолчанию — одна игра).
+- Сценарии стенда лежат в `crates/sandbox/scenarios/stand/` (`coop_smoke.scenario`): в тесте идут на стенде, построенном по
+  заголовку (`shards::testing::run_stand_scenario`, `run_stand_str`, `run_stand_script`, `StandDriver`), и дважды дают
+  одинаковые журналы; против живого стенда — `shards scenario`; CI гоняет их на `--stand 2`. Одна игра файл со `stand`
+  отвергает с подсказкой, как запустить стенд. `ai_core::scenario` отдаёт `configure_agent`, `world_status`,
+  `world_journal_since`.
+- `--stand N --stand-udp`: хост по UDP и клиенты дочерними процессами (`--join`, свой `--port-file F.cK`, `--exit-with-host`), только
+  в реальном времени (`--paused` — код 2 с причиной); клиент, который не запустился, останавливает стенд своим кодом выхода;
+  `ai/status.net.stand = {clients, udp}`.
+- Файлы порта `F.c1` и `F.c2` пишутся через свои временные файлы (`F.c1.part`): два клиента, стартующие вместе, не делят один.
+
 **Сохранения (E8.1–5, `shards_save`)** — персонаж и мир, слоты, секции вместо дампа мира:
 
 - Секции (`SaveSection`, `save_component`, `save_resource`, `add_save_migration`), реестр (`save_registry`), конверт
