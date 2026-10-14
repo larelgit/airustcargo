@@ -87,8 +87,10 @@ fn the_world_is_spawned_from_its_layout() {
     let world = app.world_mut();
     let pieces = world.query::<&LayoutPiece>().iter(world).count();
     assert_eq!(pieces, 30 + 1 + 2 + 5, "boxes, the ramp, water and updraft, landmarks");
-    let kinds: Vec<String> = world.query::<&Volume>().iter(world).map(|v| format!("{}", v.kind)).collect();
-    assert_eq!(kinds, ["water", "updraft", "trigger \"goal\""]);
+    // Query order follows archetypes, not spawn order: compare as a set.
+    let mut kinds: Vec<String> = world.query::<&Volume>().iter(world).map(|v| format!("{}", v.kind)).collect();
+    kinds.sort();
+    assert_eq!(kinds, ["trigger \"goal\"", "updraft", "water"]);
 }
 
 #[test]
