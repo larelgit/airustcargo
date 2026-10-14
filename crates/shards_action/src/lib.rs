@@ -45,7 +45,7 @@
 //!              displacement: [(0.35, 4.0)], steer: Move),
 //!     "block": (net_id: 5, phases: [("raise", 0.1), ("hold", 0.3), ("lower", 0.1)],
 //!               hold: (input: "block", span: Phase("hold")), move_speed: 0.4,
-//!               guard: (span: Phases("raise", "hold"), perfect: Secs(0.0, 0.12), damage_mult: 0.1)),
+//!               guard: (span: Phases("raise", "hold"), perfect: Phase("raise"), damage_mult: 0.1)),
 //!     "drink": (net_id: 6, phases: [("drink", 1.0)], cost: (charge: "flask"), effects: [(at: 0.6, effect: Heal(40))]),
 //! }
 //! // content/combat/hero.moveset.ron

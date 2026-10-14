@@ -250,7 +250,9 @@ pub struct CancelDef {
     pub into: Vec<Transition>,
 }
 
-/// Hold to loop: while `input` is held, time loops inside `span` (a raised block).
+/// Hold to loop: while `input` is held, time loops inside `span` (a raised block). The
+/// span must last, and a guard, i-frame or hyper-armor window that starts before it
+/// must either end where it starts or cover all of it (else it reopens on each pass).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct HoldDef {
@@ -527,7 +529,8 @@ impl ContentDef for ActionDef {
     const KIND: &'static str = "action";
 
     fn validate(&self, id: &str, refs: &mut Refs) {
-        let mut check = Check { def: self, refs, length: self.length() };
+        let hold = self.hold.as_ref().and_then(|h| self.span(&h.span)).filter(|(a, b)| b - a > EPS);
+        let mut check = Check { def: self, refs, length: self.length(), hold };
         check.phases();
         check.number("cost.stamina", self.cost.stamina);
         check.number("cost.cooldown", self.cost.cooldown);
@@ -556,15 +559,15 @@ impl ContentDef for ActionDef {
             }
         }
         for (i, span) in self.iframes.iter().enumerate() {
-            check.span(&format!("iframes[{i}]"), span);
+            check.window(&format!("iframes[{i}]"), span);
         }
         for (i, span) in self.hyper_armor.iter().enumerate() {
-            check.span(&format!("hyper_armor[{i}]"), span);
+            check.window(&format!("hyper_armor[{i}]"), span);
         }
         if let Some(guard) = &self.guard {
-            check.span("guard.span", &guard.span);
+            check.window("guard.span", &guard.span);
             if let Some(perfect) = &guard.perfect {
-                check.span("guard.perfect", perfect);
+                check.window("guard.perfect", perfect);
             }
             check.number("guard.damage_mult", guard.damage_mult);
             check.number("guard.stamina_per_damage", guard.stamina_per_damage);
@@ -584,6 +587,16 @@ impl ContentDef for ActionDef {
         check.displacement();
         if let Some(hold) = &self.hold {
             check.span("hold.span", &hold.span);
+            if let Some((a, b)) = self.span(&hold.span)
+                && a <= b
+                && b - a <= EPS
+            {
+                check.refs.error(format!(
+                    "hold.span {}..{} is empty; a held action loops inside it, so it must last > 0 s",
+                    meters(a),
+                    meters(b)
+                ));
+            }
         }
         for (i, effect) in self.effects.iter().enumerate() {
             check.time(&format!("effects[{i}].at"), effect.at);
@@ -622,6 +635,8 @@ struct Check<'d, 'r, 'a> {
     def: &'d ActionDef,
     refs: &'r mut Refs<'a>,
     length: f32,
+    /// The hold loop's span, when it has a usable one.
+    hold: Option<(f32, f32)>,
 }
 
 impl Check<'_, '_, '_> {
@@ -684,6 +699,24 @@ impl Check<'_, '_, '_> {
                     ));
                 }
             }
+        }
+    }
+
+    /// [`span`](Self::span) for a defensive window. One that starts before the hold span
+    /// and ends inside it would reopen on every loop pass (the loop replays the part
+    /// of it after the hold's start), so a parry window meant for the raise stays on.
+    fn window(&mut self, field: &str, span: &Span) {
+        self.span(field, span);
+        let (Some((a, b)), Some((from, to))) = (self.hold, self.def.span(span)) else { return };
+        if from < a - EPS && to > a + EPS && to < b - EPS {
+            self.refs.error(format!(
+                "{field} {}..{} starts before the hold span {}..{} and ends inside it: it would reopen on every loop \
+                 pass; end it where the hold starts (e.g. `Phase(\"raise\")`) or cover the whole hold",
+                meters(from),
+                meters(to),
+                meters(a),
+                meters(b)
+            ));
         }
     }
 
@@ -917,6 +950,37 @@ mod tests {
             "content/a.action.ron: action `c`: telegraph has no zone: give it `zone` or the action a hit window",
             "content/a.action.ron: action `c`: net_id 1 is also used by action `a`; net ids name actions on the wire, so each must be unique",
             "content/m.moveset.ron: moveset `m`: inputs.heavy -> unknown action `hevy`",
+        ];
+        assert_eq!(errors, expected);
+    }
+
+    #[test]
+    fn a_hold_loop_must_hold_and_not_reopen_windows() {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<ActionDef>();
+        let actions = r#"{
+            "ok": (net_id: 1, phases: [("raise", 0.1), ("hold", 0.3), ("lower", 0.1)],
+                hold: (input: "block", span: Phase("hold")),
+                guard: (span: Phases("raise", "hold"), perfect: Phase("raise")),
+                iframes: [Secs(0.15, 0.3), Phases("hold", "lower")], hyper_armor: [Phases("raise", "hold")]),
+            "straddles": (net_id: 2, phases: [("raise", 0.1), ("hold", 0.3), ("lower", 0.1)],
+                hold: (input: "block", span: Phase("hold")),
+                guard: (span: Secs(0.0, 0.2), perfect: Secs(0.0, 0.12)),
+                iframes: [Secs(0.05, 0.3)], hyper_armor: [Secs(0.0, 0.15)]),
+            "empty": (net_id: 3, phases: [("raise", 0.2), ("hold", 0.0), ("lower", 0.1)],
+                hold: (input: "block", span: Phase("hold")), guard: (span: Phase("raise"))),
+        }"#;
+        let sources = [shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() }];
+        let db = shards_content::ContentDb::build(&kinds, &sources);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        let hold = "starts before the hold span 0.1..0.4 and ends inside it: it would reopen on every loop pass; \
+                    end it where the hold starts (e.g. `Phase(\"raise\")`) or cover the whole hold";
+        let expected = [
+            "content/a.action.ron: action `empty`: hold.span 0.2..0.2 is empty; a held action loops inside it, so it must last > 0 s".to_owned(),
+            format!("content/a.action.ron: action `straddles`: iframes[0] 0.05..0.3 {hold}"),
+            format!("content/a.action.ron: action `straddles`: hyper_armor[0] 0..0.15 {hold}"),
+            format!("content/a.action.ron: action `straddles`: guard.span 0..0.2 {hold}"),
+            format!("content/a.action.ron: action `straddles`: guard.perfect 0..0.12 {hold}"),
         ];
         assert_eq!(errors, expected);
     }
