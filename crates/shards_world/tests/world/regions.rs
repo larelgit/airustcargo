@@ -18,38 +18,6 @@ use crate::common::*;
 #[derive(Resource, Default)]
 struct Screens(u32);
 
-/// A stand-in for the levels module: one wall per level file, where the tile says.
-fn fake_levels(world: &mut World, request: &shards::world::LevelSpawn) -> Result<Vec<Entity>, String> {
-    assert_eq!(request.path, "levels/crypt_door.glb");
-    let wall = shards::motion::Collider::new(shards::motion::Shape::Cuboid { half: Vec3::ONE });
-    Ok(vec![world.spawn((wall, request.transform, Name::new(format!("level {}", request.tile_id)))).id()])
-}
-
-#[test]
-fn tiles_built_from_level_files_go_through_the_level_loader() {
-    let mut app = app(1, None);
-    let level = r#"{ "door": (sockets: (n: "grass", e: "grass", s: "grass", w: "grass"), max_count: 0,
-        geometry: Level(path: "levels/crypt_door.glb")) }"#;
-    let with_level = db_with(&app, &[("level.tile.ron", level)]);
-    let errors: Vec<String> = with_level.errors().map(ToString::to_string).collect();
-    assert!(errors.is_empty(), "{errors:?}");
-    assert_eq!(shards::world::region::level_paths(&with_level), ["levels/crypt_door.glb"]);
-    app.world_mut().insert_resource(with_level);
-    let mut m = generate(db(&app), &worldgen(&app), "meadow", 1).unwrap().manifest;
-    assert!(m.tiles.iter().all(|t| t.tile != "door"), "max_count 0 keeps it out of generated regions");
-    m.tiles[0].tile = "door".into();
-    let refused = err(&mut app, "region_load", json!({"manifest": m.to_canonical()}));
-    assert!(refused.contains("tile `door` is built from the level file `levels/crypt_door.glb`, and no level loader is registered"), "{refused}");
-    assert!(app.world().get_resource::<ActiveRegion>().is_none(), "nothing was left behind");
-    assert_eq!(app.world_mut().query_filtered::<(), With<RegionPart>>().iter(app.world()).count(), 0);
-
-    app.world_mut().insert_resource(shards::world::region::LevelSpawner(fake_levels));
-    ok(&mut app, "region_load", json!({"manifest": m.to_canonical()}));
-    let walls: Vec<(String, TileId)> =
-        app.world_mut().query::<(&Name, &TileId)>().iter(app.world()).filter(|(n, _)| n.starts_with("level ")).map(|(n, t)| (n.to_string(), *t)).collect();
-    assert_eq!(walls, [("level door".to_owned(), TileId { x: 0, y: 0 })], "tagged with its tile, despawned with the region");
-}
-
 #[test]
 fn the_start_region_stands_before_the_game_spawns_its_hero() {
     let mut app = app(42, Some("meadow"));

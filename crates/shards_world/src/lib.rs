@@ -22,6 +22,13 @@
 //! - [`zones`]: [`ActiveZone`] / [`Dormant`] around players, every tick.
 //! - [`stream`]: tile visuals loaded and unloaded by distance (windows only).
 //!
+//! Tile geometry is inline (boxes, solids, volumes, markers, prefabs in the RON) or a level
+//! file from Blender (`geometry: Level(path: "tiles/ruin.gltf")`), which this crate does not
+//! read: the level loader ([`LevelSpawner`]) does. `shards::EnginePlugins` registers
+//! `shards_level`'s, so a game needs no setup; see `shards::TileLevelsPlugin` for what a
+//! level tile is. The files are requested while the game loads, behind the loading gate, and a
+//! file missing from the asset folder is a content error.
+//!
 //! ```ignore
 //! app.add_plugins(EnginePlugins::new(config))        // WorldPlugin included
 //!     .start_region("meadow")                        // generated with the world seed while loading
@@ -65,8 +72,8 @@ pub use generate::{generate, CheckFn, GenContext, GenError, Generated, Stage, St
 pub use grid::Dir;
 pub use manifest::RegionManifest;
 pub use region::{
-    change_region, despawn_region, spawn_region, ActiveRegion, LevelSpawn, LevelSpawnFn, Marker, Poi, RegionPart, RegionTile,
-    StartRegion, TileId,
+    change_region, despawn_region, level_paths, level_users, spawn_region, ActiveRegion, LevelCheckFn, LevelForgetFn, LevelRequestFn,
+    LevelSpawn, LevelSpawnFn, LevelSpawner, LevelStatusFn, Marker, Poi, RegionPart, RegionTile, StartRegion, TileId,
 };
 pub use report::BatchReport;
 pub use stream::{TileVisual, TileVisualFn, TileVisualSpawn};
@@ -124,8 +131,9 @@ pub trait WorldAppExt {
     /// A check regions run when their `checks.custom` names it.
     fn add_worldgen_check(&mut self, name: &str, check: CheckFn) -> &mut Self;
 
-    /// Spawns the gameplay of tiles built from level files (`TileGeometry::Level`).
-    fn set_level_spawner(&mut self, spawner: LevelSpawnFn) -> &mut Self;
+    /// Registers the loader of tiles built from level files (`TileGeometry::Level`). The
+    /// umbrella crate does it for `shards_level`; a game calls this for a loader of its own.
+    fn set_level_spawner(&mut self, spawner: LevelSpawner) -> &mut Self;
 
     /// Makes what a window draws for a tile, per LOD ([`stream`]).
     fn set_tile_visual_spawner(&mut self, spawner: TileVisualFn) -> &mut Self;
@@ -152,8 +160,8 @@ impl WorldAppExt for App {
         self
     }
 
-    fn set_level_spawner(&mut self, spawner: LevelSpawnFn) -> &mut Self {
-        self.insert_resource(region::LevelSpawner(spawner));
+    fn set_level_spawner(&mut self, spawner: LevelSpawner) -> &mut Self {
+        self.insert_resource(spawner);
         self
     }
 
@@ -187,11 +195,14 @@ impl Plugin for WorldPlugin {
             .init_resource::<WorldSettings>()
             .init_resource::<WorldGen>()
             .init_resource::<StartRegion>()
+            .init_resource::<region::LevelFiles>()
             .require_loaded("region", region::start_status)
+            .require_loaded("tile levels", region::levels_status)
             .add_engine_module("world", VERSION)
             .configure_sets(FixedUpdate, WorldSystems::Zones.in_set(SimSet::Input).before(CoreSystems::FollowOrders))
             .add_systems(FixedUpdate, zones::update_zones.in_set(WorldSystems::Zones))
             .add_systems(PreStartup, queue_start_region)
+            .add_systems(PostUpdate, region::request_level_files)
             .add_systems(Update, (region::build_start_region, stream::stream_tile_visuals.run_if(stream::streaming)).chain());
         ai::plugin(app);
         tools::register(app.world_mut());

@@ -38,6 +38,7 @@
 mod plugins;
 mod run;
 pub mod testing;
+pub mod tile_levels;
 
 pub use ai_core;
 pub use bevy;
@@ -55,6 +56,7 @@ pub use shards_world as world;
 pub use plugins::EnginePlugins;
 pub use run::run;
 pub use shards_core::EngineConfig;
+pub use tile_levels::TileLevelsPlugin;
 
 /// Everything a game module needs in scope.
 pub mod prelude {

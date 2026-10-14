@@ -14,6 +14,8 @@ use shards_motion::MotionPlugin;
 use shards_npc::NpcPlugin;
 use shards_world::WorldPlugin;
 
+use crate::TileLevelsPlugin;
+
 /// Bevy's `DefaultPlugins` (whatever the cargo features compile in), the log capture
 /// that feeds `warn!`/`error!` into the journal, the AI layer, the engine core, content
 /// and motion (physics, characters, input, camera), all configured from one [`EngineConfig`].
@@ -68,6 +70,8 @@ impl PluginGroup for EnginePlugins {
             .add(ActionPlugin)
             .add(LevelPlugin)
             .add(WorldPlugin)
+            // Level files as the geometry of tiles: joins the two above.
+            .add(TileLevelsPlugin)
             .add(NpcPlugin)
     }
 }

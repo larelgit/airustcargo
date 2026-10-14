@@ -7,12 +7,19 @@
 //! [`RegionPart`], so the same manifest gives the same `AiId`s and `ColliderId`s every run,
 //! with a window or without.
 //!
+//! Tiles whose geometry is a level file (`Level { path }`) are spawned by the level loader
+//! ([`LevelSpawner`]): the nodes of the file, at the tile's transform, tagged like the rest.
+//! The loader loads every file the content uses while the game loads, behind the loading
+//! gate, so building a region never waits for a file.
+//!
 //! A region change ([`change_region`], the `regen` and `region_load` tools) is an action:
 //! replays record and repeat it at the same tick. It passes through
 //! `EngineState::RegionLoading` (the loading screen) inside the call: the old region goes,
 //! the new one comes, players move to its spawn, and the state returns to `InGame` without
 //! running `OnEnter(InGame)` again. When another module still loads something, the loading
 //! gate holds the ticks until it is done, so a region change never shifts a tick.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use ai_core::journal::{self, JournalKind};
 use ai_core::{AiId, AiKind, AiLandmark, AiPlayer, SimGate};
@@ -89,27 +96,139 @@ pub struct LevelSpawn<'a> {
 /// in spawn order (the region tags them and despawns them with it).
 pub type LevelSpawnFn = fn(&mut World, &LevelSpawn) -> Result<Vec<Entity>, String>;
 
+/// Starts loading the level file `path` (once; asking again changes nothing).
+pub type LevelRequestFn = fn(&mut World, &str);
+
+/// Whether the level file `path` is loaded, as a loading-gate answer.
+pub type LevelStatusFn = fn(&World, &str) -> LoadStatus;
+
+/// Everything wrong with the loaded level file `path` as the geometry of a tile, found
+/// before anything is spawned; `Ok` when it can be spawned.
+pub type LevelCheckFn = fn(&World, &str) -> Result<(), String>;
+
+/// Called with the entities of a region (or of an attempt to build one that failed) in the
+/// order they are about to be despawned, before they are: the loader drops what it keeps
+/// about them (spawned instances, visual scenes).
+pub type LevelForgetFn = fn(&mut World, &[Entity]);
+
 /// The level loader, if a module registered one
-/// ([`WorldAppExt::set_level_spawner`](crate::WorldAppExt::set_level_spawner)).
-// SEAM(B2): `shards_level` registers its glTF loader here; nothing else spawns `Level` tiles.
-// Regions are built inside the call that changes them, so the loader requests every file of
-// `level_paths` while the game loads (behind the loading gate) and spawns from loaded files.
+/// ([`WorldAppExt::set_level_spawner`](crate::WorldAppExt::set_level_spawner)). The umbrella
+/// crate registers `shards_level`'s (`shards::TileLevelsPlugin`, part of `EnginePlugins`), so
+/// a game needs no setup.
+///
+/// A region is built inside the call that changes it, and that call must never wait for a
+/// file. So the world module asks the loader to [`request`](Self::request) every file the
+/// content can use ([`level_paths`]) as soon as content is built, holds the loading gate and
+/// the start region until each file's [`status`](Self::status) is ready, and refuses a region
+/// change whose files the loader's [`check`](Self::check) rejects, before anything changes.
 #[derive(Resource, Clone, Copy)]
-pub struct LevelSpawner(pub LevelSpawnFn);
+pub struct LevelSpawner {
+    pub spawn: LevelSpawnFn,
+    pub request: LevelRequestFn,
+    pub status: LevelStatusFn,
+    pub check: LevelCheckFn,
+    pub forget: LevelForgetFn,
+}
+
+impl LevelSpawner {
+    /// A loader that only spawns: files need no loading, every file passes, nothing is kept.
+    /// Replace the fields a real loader needs.
+    pub fn new(spawn: LevelSpawnFn) -> Self {
+        Self { spawn, request: |_, _| {}, status: |_, _| LoadStatus::Ready, check: |_, _| Ok(()), forget: |_, _| {} }
+    }
+}
 
 /// Every level file tiles and rooms are built from, sorted, once each: what a level loader
 /// loads while the game loads, so that building a region later never waits for a file.
 pub fn level_paths(db: &ContentDb) -> Vec<String> {
-    let tiles = db.iter::<TileDef>().map(|(_, t)| &t.geometry);
-    let rooms = db.iter::<RoomDef>().map(|(_, r)| &r.geometry);
-    let paths: std::collections::BTreeSet<String> = tiles
-        .chain(rooms)
-        .filter_map(|g| match g {
-            TileGeometry::Level { path } => Some(path.clone()),
-            _ => None,
-        })
-        .collect();
-    paths.into_iter().collect()
+    level_users(db).into_keys().collect()
+}
+
+/// Level file → the tiles and rooms built from it (ids, sorted), for messages that name both.
+pub fn level_users(db: &ContentDb) -> BTreeMap<String, Vec<String>> {
+    let tiles = db.iter::<TileDef>().map(|(id, t)| (id, &t.geometry));
+    let rooms = db.iter::<RoomDef>().map(|(id, r)| (id, &r.geometry));
+    let mut users: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (id, geometry) in tiles.chain(rooms) {
+        if let TileGeometry::Level { path } = geometry {
+            users.entry(path.clone()).or_default().push(id.to_owned());
+        }
+    }
+    for ids in users.values_mut() {
+        ids.sort();
+        ids.dedup();
+    }
+    users
+}
+
+/// The level files the content uses, and which of them the loader has been asked for.
+#[derive(Resource, Default)]
+pub(crate) struct LevelFiles {
+    /// [`level_paths`] of the content as it was last read.
+    paths: Vec<String>,
+    requested: BTreeSet<String>,
+    /// The content was read once since a loader was registered.
+    synced: bool,
+}
+
+/// `PostUpdate`, once content is built or changed (a hot reload that adds a tile too): asks
+/// the loader for the files the content uses. In `PostUpdate`, so that the loading gate of
+/// the next frame already waits for them.
+pub(crate) fn request_level_files(
+    db: Res<ContentDb>,
+    spawner: Option<Res<LevelSpawner>>,
+    mut files: ResMut<LevelFiles>,
+    mut commands: Commands,
+) {
+    let Some(spawner) = spawner else { return };
+    if !db.is_loaded() || (files.synced && !db.is_changed() && !spawner.is_changed()) {
+        return;
+    }
+    let request = spawner.request;
+    files.paths = level_paths(&db);
+    files.synced = true;
+    let fresh: Vec<String> = files.paths.iter().filter(|p| !files.requested.contains(*p)).cloned().collect();
+    for path in fresh {
+        files.requested.insert(path.clone());
+        commands.queue(move |world: &mut World| request(world, &path));
+    }
+}
+
+/// The loading gate's view of the files tiles are built from: ready without a loader, or
+/// when every file the content uses is loaded. A file that cannot be loaded names the tiles
+/// built from it.
+pub(crate) fn levels_status(world: &World) -> LoadStatus {
+    let Some(spawner) = world.get_resource::<LevelSpawner>() else { return LoadStatus::Ready };
+    let Some(db) = world.get_resource::<ContentDb>().filter(|db| db.is_loaded()) else { return LoadStatus::Ready };
+    let files = world.resource::<LevelFiles>();
+    if !files.synced {
+        return LoadStatus::Pending("asking for the level files".into());
+    }
+    let (mut waiting, mut failed) = (0, Vec::new());
+    for path in &files.paths {
+        match (spawner.status)(world, path) {
+            LoadStatus::Ready => {}
+            LoadStatus::Pending(_) => waiting += 1,
+            LoadStatus::Failed(why) => failed.push((path, why)),
+        }
+    }
+    if !failed.is_empty() {
+        let users = level_users(db);
+        let lines: Vec<String> = failed
+            .into_iter()
+            .map(|(path, why)| {
+                let tiles: Vec<String> = users.get(path).into_iter().flatten().map(|t| format!("`{t}`")).collect();
+                let s = if tiles.len() == 1 { "" } else { "s" };
+                format!("tile{s} {}: {why}", tiles.join(", "))
+            })
+            .collect();
+        return LoadStatus::Failed(lines.join("; "));
+    }
+    match waiting {
+        0 => LoadStatus::Ready,
+        1 => LoadStatus::Pending("1 level file left".into()),
+        n => LoadStatus::Pending(format!("{n} level files left")),
+    }
 }
 
 /// The region in the world.
@@ -190,10 +309,12 @@ struct TilePlan {
 }
 
 /// The content of every tile `manifest` names, or what stops it from being built: tiles
-/// content lacks, level files without a level loader. Checked before anything changes.
+/// content lacks, level files without a level loader or that the loader rejects (not loaded,
+/// not loadable, problems in their nodes). Checked before anything changes.
 fn plan(world: &World, manifest: &RegionManifest) -> Result<Vec<TilePlan>, String> {
     let db = world.resource::<ContentDb>();
-    let loader = world.get_resource::<LevelSpawner>().is_some();
+    let loader = world.get_resource::<LevelSpawner>().copied();
+    let mut checked = BTreeSet::new();
     let mut missing = Vec::new();
     let mut plans = Vec::new();
     for t in &manifest.tiles {
@@ -201,14 +322,20 @@ fn plan(world: &World, manifest: &RegionManifest) -> Result<Vec<TilePlan>, Strin
             Layout::Grid => db.get::<TileDef>(&t.tile).map(|d| (d.geometry.clone(), d.visual.clone())),
             Layout::Rooms => db.get::<RoomDef>(&t.tile).map(|d| (d.geometry.clone(), d.visual.clone())),
         };
-        match found {
-            Some((TileGeometry::Level { path }, _)) if !loader => {
+        if let Some((TileGeometry::Level { path }, _)) = &found {
+            let Some(loader) = &loader else {
                 return Err(format!(
                     "tile `{}` is built from the level file `{path}`, and no level loader is registered \
                      (add the levels module, or give the tile Inline geometry)",
                     t.tile
                 ));
+            };
+            // Once per tile: the file is the same for every cell it covers.
+            if checked.insert(t.tile.as_str()) {
+                (loader.check)(world, path).map_err(|e| format!("tile `{}`: level `{path}`: {e}", t.tile))?;
             }
+        }
+        match found {
             Some((geometry, visual)) => plans.push(TilePlan { id: t.tile.clone(), geometry, visual }),
             None => missing.push(t.tile.clone()),
         }
@@ -238,7 +365,9 @@ pub fn spawn_region(world: &mut World, manifest: &RegionManifest) -> Result<Regi
     match spawn_parts(world, manifest, &plans, &mut spawned) {
         Ok(()) => Ok(RegionSpawned { tiles: manifest.tiles.len(), pois: manifest.pois.len(), entities: spawned.len() }),
         Err(e) => {
-            for entity in spawned.into_iter().rev() {
+            let undone: Vec<Entity> = spawned.into_iter().rev().collect();
+            forget_levels(world, &undone);
+            for entity in undone {
                 if let Ok(e) = world.get_entity_mut(entity) {
                     e.despawn();
                 }
@@ -290,7 +419,7 @@ fn spawn_parts(world: &mut World, manifest: &RegionManifest, plans: &[TilePlan],
                 }
             }
             TileGeometry::Level { path } => {
-                let Some(LevelSpawner(spawner)) = world.get_resource::<LevelSpawner>().copied() else {
+                let Some(LevelSpawner { spawn, .. }) = world.get_resource::<LevelSpawner>().copied() else {
                     return Err(format!(
                         "tile `{}` is built from the level file `{path}`, and no level loader is registered \
                          (add the levels module, or give the tile Inline geometry)",
@@ -298,7 +427,7 @@ fn spawn_parts(world: &mut World, manifest: &RegionManifest, plans: &[TilePlan],
                     ));
                 };
                 let request = LevelSpawn { path, transform: root, tile, tile_id: &plan.id };
-                let entities = spawner(world, &request).map_err(|e| format!("tile `{}`: level `{path}`: {e}", plan.id))?;
+                let entities = spawn(world, &request).map_err(|e| format!("tile `{}`: level `{path}`: {e}", plan.id))?;
                 for entity in entities {
                     world.entity_mut(entity).insert((tile, RegionPart));
                     spawned.push(entity);
@@ -338,13 +467,22 @@ pub fn despawn_region(world: &mut World) -> usize {
         .collect();
     parts.sort_unstable();
     let count = parts.len();
-    for (_, _, entity) in parts {
+    let doomed: Vec<Entity> = parts.into_iter().map(|(.., entity)| entity).collect();
+    forget_levels(world, &doomed);
+    for entity in doomed {
         if let Ok(e) = world.get_entity_mut(entity) {
             e.despawn();
         }
     }
     world.remove_resource::<ActiveRegion>();
     count
+}
+
+/// Tells the level loader (if any) that `doomed` are about to be despawned.
+fn forget_levels(world: &mut World, doomed: &[Entity]) {
+    if let Some(LevelSpawner { forget, .. }) = world.get_resource::<LevelSpawner>().copied() {
+        forget(world, doomed);
+    }
 }
 
 /// Players, in `PlayerId` then `AiId` order: entities with `PlayerId` or `AiPlayer`.
@@ -529,6 +667,11 @@ pub(crate) fn build_start_region(world: &mut World) {
         return;
     };
     if state(world) != Some(EngineState::Loading) || !world.resource::<ContentDb>().is_loaded() {
+        return;
+    }
+    // Building spawns synchronously, so the files tiles are made of must be in already (the
+    // loading gate reports a file that cannot load).
+    if levels_status(world) != LoadStatus::Ready {
         return;
     }
     let seed = world.get_resource::<EngineConfig>().map_or(0, |c| c.seed);

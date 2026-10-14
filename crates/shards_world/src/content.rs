@@ -141,8 +141,10 @@ pub enum TileGeometry {
     None,
     /// Pieces in the tile's frame, spawned in this order.
     Inline(Vec<TilePiece>),
-    /// A level file whose nodes become the pieces; needs a level loader
-    /// ([`WorldAppExt::set_level_spawner`](crate::WorldAppExt::set_level_spawner)).
+    /// A level file (glTF from Blender, relative to the asset folder) whose nodes become the
+    /// pieces, in the tile's frame: its origin is the tile's center, -Z is north, +Y is up.
+    /// Needs a level loader ([`LevelSpawner`](crate::LevelSpawner); the engine registers
+    /// `shards_level`'s). The file must exist: content that names a missing one is in error.
     Level { path: String },
 }
 
@@ -302,14 +304,30 @@ fn check_pois(refs: &mut Refs, pois: &[FixedPoi], slots: &[PoiSlot], areas: usiz
     }
 }
 
+/// A tile's level file is a path inside the asset folder, and the file is there (when the
+/// content is checked with an asset folder, as the game and `content check` do).
+fn check_level_file(refs: &mut Refs, path: &str) {
+    if path.trim().is_empty() {
+        return refs.error("geometry: Level path is empty; give the level file, e.g. Level(path: \"levels/ruin.glb\")");
+    }
+    if !std::path::Path::new(path).components().all(|c| matches!(c, std::path::Component::Normal(_))) {
+        return refs.error(format!(
+            "geometry: level file `{path}` must be a path inside the asset folder, like `tiles/ruin.gltf` (relative, no `..`)"
+        ));
+    }
+    if let Some(root) = refs.asset_root()
+        && !root.join(path).is_file()
+    {
+        refs.error(format!(
+            "geometry: level file `{path}` not found in the asset folder; export it from Blender to that path, or fix the path"
+        ));
+    }
+}
+
 fn check_geometry(refs: &mut Refs, geometry: &TileGeometry) {
     match geometry {
         TileGeometry::None => {}
-        TileGeometry::Level { path } => {
-            if path.trim().is_empty() {
-                refs.error("geometry: Level path is empty; give the level file, e.g. Level(path: \"levels/ruin.glb\")");
-            }
-        }
+        TileGeometry::Level { path } => check_level_file(refs, path),
         TileGeometry::Inline(pieces) => {
             for (i, piece) in pieces.iter().enumerate() {
                 match piece {

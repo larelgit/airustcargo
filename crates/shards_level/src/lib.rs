@@ -112,6 +112,12 @@
 //! at the tile's transform (composed with every node's). [`despawn_level`] removes a tile by
 //! its instance number.
 //!
+//! The tiles of `shards_world` regions (`geometry: Level(path: "tiles/ruin.gltf")`) are
+//! exactly this; this crate does not depend on `shards_world` (nor the other way round), so
+//! the umbrella crate joins them: `shards::TileLevelsPlugin`, part of `EnginePlugins`, requests
+//! the files of all tiles while the game loads and spawns them per tile, with the region's
+//! tags and a `shards_world::Marker` on every marker node.
+//!
 //! ## Determinism
 //!
 //! Spawning is a pure function of the file and the placement, in a fixed order, so `AiId`s
