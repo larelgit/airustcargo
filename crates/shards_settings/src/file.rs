@@ -10,7 +10,8 @@
 //! failed write. The last good copy (`settings.toml.bak`, refreshed after every write that
 //! checks out) goes back in its place, the journal says so, and the write is tried again a few
 //! times, a pause apart. While a write has failed and none has checked out since, the exit hook
-//! writes everything once more.
+//! writes everything once more; it looks at the file twice, and the second look writes nothing,
+//! so a disk that stays full leaves the good copy and not an empty file.
 //!
 //! A change of the file nobody asked for is the player's own edit, and is none of a write's
 //! business: a valid one only refreshes the copy, one that does not read is kept aside as
@@ -100,13 +101,24 @@ pub(crate) fn refresh_backup(file: &Path) {
     let _ = fs::copy(file, backup_path(file));
 }
 
+/// Whether the file has nothing but whitespace in it: what a write that went wrong leaves. A file
+/// whose lines are all commented out has text, and is the player's way to ask for the defaults.
+pub(crate) fn is_blank(file: &Path) -> bool {
+    fs::read_to_string(file).is_ok_and(|text| text.trim().is_empty())
+}
+
+/// Whether there is a last good copy of `file` and it holds settings.
+pub(crate) fn has_backup(file: &Path) -> bool {
+    read_written_table(&backup_path(file)).is_ok_and(|t| !t.is_empty())
+}
+
 /// Puts the last good copy in place of `file`, if there is one: written beside it and renamed over
 /// it (over a symlink, too: the link goes, not what it points at).
 pub(crate) fn restore_backup(file: &Path) -> bool {
-    let backup = backup_path(file);
-    if !read_written_table(&backup).is_ok_and(|t| !t.is_empty()) {
+    if !has_backup(file) {
         return false;
     }
+    let backup = backup_path(file);
     let temp = file.with_extension("toml.restore");
     fs::copy(&backup, &temp).and_then(|_| fs::rename(&temp, file)).is_ok()
 }
@@ -195,7 +207,8 @@ pub(crate) enum Look {
     /// does not wait, there is no later frame.
     Exit,
     /// The second look of the exit, at what a retry of the first one made: no waiting, and a file
-    /// that did not change is not judged (the first look did).
+    /// that did not change is not judged (the first look did). The last one: a bad file is put right
+    /// from the last good copy and nothing is written after it.
     Again,
 }
 
@@ -258,6 +271,10 @@ pub(crate) fn check_store(world: &mut World, look: Look) {
             health.requested = Some(now);
         }
         SaveSettingsSync::Always.apply_to(world);
+        if look == Look::Exit && file_state(&file) != state {
+            // No later frame: a bad file is put right now, and tried once more, while the exit can.
+            check_store(world, Look::Exit);
+        }
         return;
     }
 
@@ -285,11 +302,14 @@ pub(crate) fn check_store(world: &mut World, look: Look) {
         );
         return;
     }
-    journal::emit(
-        world,
-        JournalKind::Error,
-        format!("settings: writing {} failed ({why}){kept}; trying again ({attempts}/{MAX_RETRIES})", file.display()),
-    );
+    // The last look of the exit judges what the one before it wrote and writes nothing: a write
+    // that failed again must not be the last thing done to the file, the good copy is.
+    let last = look == Look::Again;
+    let next = if last { "the game is closing, no more tries".to_owned() } else { format!("trying again ({attempts}/{MAX_RETRIES})") };
+    journal::emit(world, JournalKind::Error, format!("settings: writing {} failed ({why}){kept}; {next}", file.display()));
+    if last {
+        return;
+    }
     if damaged && !hurry {
         // A disk that was full a moment ago still is: the good file stays as it is for a while.
         world.resource_mut::<StoreHealth>().retry_at = Some(now);
@@ -433,6 +453,55 @@ mod tests {
         assert_eq!(bad_copy(&file), Some(dir.join("settings.toml.bad")), "an older text finds its copy");
         assert_eq!(fs::read_to_string(dir.join("settings.toml.bad.1")).unwrap(), "two");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Bevy's plugin on `dir` with one group, and the store's health on its file: the store of a
+    /// game without the rest of the engine, so a test can call the looks one by one.
+    #[cfg(target_os = "linux")]
+    fn store_in(dir: &Path) -> App {
+        let mut app = App::new();
+        app.init_resource::<ai_core::AiJournal>().register_type::<crate::AudioSettings>().init_resource::<crate::AudioSettings>();
+        app.add_plugins(bevy::settings::SettingsPlugin::new(dir.to_str().unwrap()));
+        app.insert_resource(StoreHealth::new(dir.join("settings.toml")));
+        app
+    }
+
+    /// The next write of Bevy's fails and its rename puts the half-written file in place.
+    #[cfg(target_os = "linux")]
+    fn fill_the_disk(dir: &Path) {
+        let _ = std::os::unix::fs::symlink("/dev/full", dir.join("settings.toml.new"));
+    }
+
+    /// The exit looks at the file twice, and the second look is the last: on a disk that stays full
+    /// it puts the good copy back and does not write over it, whatever it finds.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_last_look_of_the_exit_leaves_the_good_copy_on_a_disk_that_stays_full() {
+        let dir = temp("last_look");
+        let (file, backup) = (dir.join("settings.toml"), backup_path(&dir.join("settings.toml")));
+        let mut app = store_in(&dir);
+        let world = app.world_mut();
+        let write = |world: &mut World, master: f64| {
+            world.resource_mut::<crate::AudioSettings>().master = master;
+            begin_write(world);
+            SaveSettingsSync::Always.apply_to(world);
+        };
+        write(world, 0.4);
+        check_store(world, Look::Exit);
+        assert!(fs::read_to_string(&backup).unwrap().contains("master = 0.4"), "a write that checked out is the last good copy");
+
+        // The write of the exit failed and so did its retry: the disk is still full.
+        fill_the_disk(&dir);
+        write(world, 0.3);
+        fill_the_disk(&dir);
+        check_store(world, Look::Again);
+        assert!(fs::symlink_metadata(&file).unwrap().file_type().is_file(), "no link, no partial file");
+        assert_eq!(fs::read_to_string(&file).unwrap(), fs::read_to_string(&backup).unwrap(), "the good copy is what is left");
+        assert!(fs::read_to_string(&file).unwrap().contains("master = 0.4"));
+        assert!(world.resource::<StoreHealth>().unsaved, "the change is still in memory only");
+        let journal = world.resource::<ai_core::AiJournal>();
+        let said: Vec<_> = journal.after(0).0.filter(|e| e.kind == JournalKind::Error).map(|e| e.text.clone()).collect();
+        assert!(said.len() == 1 && said[0].contains("no more tries") && !said[0].contains("trying again"), "{said:?}");
     }
 
     #[test]

@@ -225,9 +225,9 @@ fn a_write_that_fails_does_not_cost_the_settings() {
     shards::settings::flush(app.world_mut());
 
     let text = std::fs::read_to_string(dir.file()).unwrap();
-    eprintln!("DEBUG {:?} {:?}", lines(&app, JournalKind::Error, "settings:"), std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name()).collect::<Vec<_>>());
-    assert!(text.contains("master = 0.3"), "the write was tried again and worked:\n{text}");
+    assert!(text.contains("master = 0.3"), "the write was tried again and worked:\n{text}\n{:?}", lines(&app, JournalKind::Error, "settings:"));
     assert!(std::fs::symlink_metadata(dir.file()).unwrap().file_type().is_file(), "no link, no partial file");
+    assert_eq!(std::fs::read_to_string(dir.path().join("settings.toml.bak")).unwrap(), text, "and the copy is what the file holds");
     let failed = lines(&app, JournalKind::Error, "failed");
     assert!(failed.len() == 1 && failed[0].contains("not a regular file") && failed[0].contains("the last good copy"), "{failed:?}");
 }
@@ -292,6 +292,27 @@ fn a_change_given_up_on_is_written_when_the_game_exits() {
 #[cfg(target_os = "linux")]
 fn fill_the_disk(dir: &TempDir) {
     let _ = std::os::unix::fs::symlink("/dev/full", dir.path().join("settings.toml.new"));
+}
+
+/// The way out of a window: the frame with the `AppExit` runs the exit hook and the store's own
+/// look in no set order. Whichever comes first, what is on disk afterwards is a file that read.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_write_that_fails_in_the_exit_frame_leaves_the_last_good_copy_in_place() {
+    let dir = TempDir::new("full_exit_frame");
+    let mut app = game_in(&dir);
+    set(&mut app, "audio", "master", "0.4");
+    shards::settings::flush(app.world_mut());
+    app.update();
+    fill_the_disk(&dir);
+    set(&mut app, "audio", "master", "0.3");
+    app.world_mut().write_message(shards::bevy::app::AppExit::Success);
+    app.update();
+
+    assert!(std::fs::symlink_metadata(dir.file()).unwrap().file_type().is_file(), "no link, no partial file");
+    let text = std::fs::read_to_string(dir.file()).unwrap();
+    assert_eq!(text, std::fs::read_to_string(dir.path().join("settings.toml.bak")).unwrap(), "the file is the last copy that read");
+    assert!(text.contains("master = 0.3"), "and the change was written by the retry:\n{text}\n{:?}", lines(&app, JournalKind::Error, "settings:"));
 }
 
 /// A write that leaves a bad file puts the good one back and waits before the next try, as the
@@ -465,13 +486,62 @@ fn an_empty_file_where_there_was_a_good_copy_is_a_write_that_went_wrong() {
     shards::settings::flush(app.world_mut());
     drop(app);
 
-    // What a write that failed on a full disk, or a process killed half way, leaves.
+    // What a write that failed on a full disk, or a process killed half way, leaves: nothing but,
+    // at most, whitespace.
+    for emptied in ["", " \n\t\n"] {
+        std::fs::write(dir.file(), emptied).unwrap();
+        let app = game_in(&dir);
+        assert!(!app.world().resource::<GraphicsSettings>().vsync, "the last good settings are back");
+        let said = lines(&app, JournalKind::Warn, "the last good copy");
+        assert!(said.len() == 1 && said[0].contains("is empty"), "{said:?}");
+        assert!(std::fs::read_to_string(dir.file()).unwrap().contains("vsync = false"));
+    }
+}
+
+/// Every line commented out is the way to ask for the defaults: text, not a write that went wrong.
+#[test]
+fn a_file_with_only_comments_is_the_defaults_and_stays_as_it_is() {
+    let dir = TempDir::new("commented_out");
+    let mut app = game_in(&dir);
+    set(&mut app, "graphics", "vsync", "false");
+    shards::settings::flush(app.world_mut());
+    let backup = dir.path().join("settings.toml.bak");
+    let good = std::fs::read_to_string(&backup).unwrap();
+    drop(app);
+
+    std::fs::write(dir.file(), "# off\n").unwrap();
+    let mut app = game_in(&dir);
+    assert!(app.world().resource::<GraphicsSettings>().vsync, "the defaults, not the settings of the copy");
+    assert_eq!(std::fs::read_to_string(dir.file()).unwrap(), "# off\n", "the player's text is still there");
+    assert!(lines(&app, JournalKind::Warn, "settings:").is_empty(), "{:?}", lines(&app, JournalKind::Warn, "settings:"));
+    assert!(!dir.path().join("settings.toml.bad").exists());
+    assert_eq!(std::fs::read_to_string(&backup).unwrap(), good, "the copy is not replaced by a file without settings");
+    // A run that changes nothing writes nothing over it.
+    run_exit_hooks(app.world_mut());
+    assert_eq!(std::fs::read_to_string(dir.file()).unwrap(), "# off\n");
+}
+
+/// The copy is written beside the file and renamed over it; a folder in the name of that file stops
+/// it, as a full disk would. The copy stays where it is, and the journal says it did not come back.
+#[test]
+fn an_empty_file_whose_copy_cannot_be_put_back_is_said() {
+    let dir = TempDir::new("emptied_stuck");
+    let mut app = game_in(&dir);
+    set(&mut app, "graphics", "vsync", "false");
+    shards::settings::flush(app.world_mut());
+    drop(app);
+
     std::fs::write(dir.file(), "").unwrap();
+    std::fs::create_dir(dir.path().join("settings.toml.restore")).unwrap();
     let app = game_in(&dir);
-    assert!(!app.world().resource::<GraphicsSettings>().vsync, "the last good settings are back");
-    let said = lines(&app, JournalKind::Warn, "the last good copy");
-    assert!(said.len() == 1 && said[0].contains("is empty"), "{said:?}");
-    assert!(std::fs::read_to_string(dir.file()).unwrap().contains("vsync = false"));
+    assert!(app.world().resource::<GraphicsSettings>().vsync, "the defaults: the copy could not be read in");
+    let said = lines(&app, JournalKind::Warn, "settings:");
+    let (file, backup) = (dir.file().display().to_string(), dir.path().join("settings.toml.bak").display().to_string());
+    assert!(
+        said.len() == 1 && said[0].contains(&format!("{file} is empty")) && said[0].contains(&backup) && said[0].contains("could not be put back") && said[0].contains("kept"),
+        "{said:?}"
+    );
+    assert!(std::fs::read_to_string(&backup).unwrap().contains("vsync = false"), "the copy is untouched");
 }
 
 #[test]

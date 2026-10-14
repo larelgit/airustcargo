@@ -20,7 +20,7 @@ use bevy::settings::{SaveSettingsDeferred, SaveSettingsSync, SettingsPlugin};
 use bevy::tasks::IoTaskPool;
 use shards_core::{EngineConfig, SettingsStore};
 
-use crate::file::{self, backup_path, bad_copy, read_table, refresh_backup, restore_backup, unique_bad_path, ApplyTo, StoreHealth};
+use crate::file::{self, backup_path, bad_copy, has_backup, is_blank, read_table, refresh_backup, restore_backup, unique_bad_path, ApplyTo, StoreHealth};
 use crate::{recover, registry, ControlSettings};
 
 /// The name of this game's settings folder: `<config dir>/<id>/settings.toml`. A game sets it
@@ -89,7 +89,8 @@ pub enum Installed {
 ///   free name: an earlier `.bad` is never overwritten) and the game starts from the last good
 ///   copy (`settings.toml.bak`), or the defaults, instead of the next save replacing the text;
 /// - a file that is a link to a regular file is read through it, as Bevy reads it;
-/// - an empty file where a last good copy exists is a write that went wrong: the copy comes back;
+/// - an empty file where a last good copy exists is a write that went wrong: the copy comes back
+///   (a file with text but no settings, every line commented out, is the defaults and stays as it is);
 /// - a missing file is made empty (an empty file reads as the defaults, and nothing is written
 ///   while nothing changes), so Bevy does not log "not found" on a first run; a file the player
 ///   deleted takes its old copy with it;
@@ -175,17 +176,27 @@ fn prepare_file(file: &Path) -> Vec<String> {
         return Vec::new();
     }
     match read_table(file) {
-        // Bevy never writes less than one table per group, so an empty file where there was a good
-        // copy is a write that went wrong (a full disk, a process killed half way), not defaults.
-        Ok(table) if table.is_empty() => {
+        // Bevy never writes less than one table per group, so a file with nothing in it where there
+        // was a good copy is a write that went wrong (a full disk, a process killed half way), not
+        // defaults. A file with text but no settings (every line commented out) is the player asking
+        // for the defaults, and is left alone, as `outside_change` leaves it while the game runs.
+        Ok(table) if table.is_empty() && is_blank(file) => {
             if restore_backup(file) {
                 vec![format!("settings: {} is empty; the last good copy ({}) is back", file.display(), backup_path(file).display())]
+            } else if has_backup(file) {
+                vec![format!(
+                    "settings: {} is empty and the last good copy ({}) could not be put back; the copy is kept, and the game starts from the defaults",
+                    file.display(),
+                    backup_path(file).display()
+                )]
             } else {
                 Vec::new()
             }
         }
-        Ok(_) => {
-            refresh_backup(file);
+        Ok(table) => {
+            if !table.is_empty() {
+                refresh_backup(file);
+            }
             Vec::new()
         }
         Err(why) => {
