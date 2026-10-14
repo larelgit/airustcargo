@@ -550,6 +550,9 @@ fn io_in_links(host: &mut NetHost, endpoint: &mut NetEndpoint) {
 fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
     let now = endpoint.clock.now();
     host.wall_clock = endpoint.clock.is_wall();
+    // Before the tasks of this frame: a peer admitted in it gets the world as it is after the
+    // jump, and starts with its ticks not moved.
+    note_ticks(world, host);
     let mut datagrams = Vec::new();
     endpoint.transport.recv(now, &mut datagrams);
     for (from, bytes) in datagrams {
@@ -1164,17 +1167,24 @@ fn send_journal(world: &mut World, host: &mut NetHost) {
     }
 }
 
-fn send_rebases(world: &mut World, host: &mut NetHost) {
+/// Not this tick again nor the next: time moved (a snapshot load). Every peer's inputs on
+/// their way are of the old ticks until it gets the world again, however long that waits
+/// (a full link, a loading gate) while the new ticks run on. Called at the start of a frame's
+/// receiving and again before the rebases: a jump is seen before a join of the same frame is
+/// admitted (which clears the flag, its world being the one after the jump), and never again.
+fn note_ticks(world: &World, host: &mut NetHost) {
     let tick = sim::tick(world);
-    // Not this tick again nor the next: time moved (a snapshot load). Every peer's inputs on
-    // their way are of the old ticks until it gets the world again, however long that waits
-    // (a full link, a loading gate) while the new ticks run on.
     if !(host.last_tick..=host.last_tick + 1).contains(&tick) {
         for peer in host.peers.values_mut() {
             peer.ticks_moved = true;
         }
     }
     host.last_tick = tick;
+}
+
+fn send_rebases(world: &mut World, host: &mut NetHost) {
+    let tick = sim::tick(world);
+    note_ticks(world, host);
     if world.get_resource::<SimGate>().is_some_and(SimGate::is_held) {
         return;
     }

@@ -496,3 +496,42 @@ fn events_of_the_world_a_snapshot_replaced_are_not_shown_and_do_not_hold_back_th
     assert_eq!(pings(&stand, C1), [2], "the old world's event never is");
     assert_eq!(pings(&stand, HOST), [1, 2]);
 }
+
+// --- the host's ticks jump while a client joins --------------------------------------------
+
+#[test]
+fn a_client_admitted_in_the_frame_the_hosts_ticks_jump_keeps_its_inputs_through_a_resync() {
+    use shards::net::ClientStage;
+    let configure = |c: &mut shards::EngineConfig| c.seed = 42;
+    let setup = |app: &mut App| {
+        app.add_plugins(sandbox::SandboxPlugin);
+    };
+    let mut stand = shards::testing::stand_host(1, &configure, &setup);
+    stand.run(60);
+    let saved = snapshot::capture(stand.world(HOST)).unwrap();
+    stand.run(60);
+    assert_eq!(shards::testing::stand_client(&mut stand, "c1", LinkConditions::NONE, &configure, &setup), C1);
+    // Frames, not ticks, until c1 has built its world and says it is ready: the host hears it in
+    // its next frame, and goes back to tick 60 right before.
+    let started = std::time::Instant::now();
+    while stand.world(C1).resource::<NetClient>().stage != ClientStage::ReadySent {
+        assert!(started.elapsed() < std::time::Duration::from_secs(60), "c1 never got ready");
+        stand.frame();
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    snapshot::restore(stand.world_mut(HOST), &saved, false).unwrap();
+    stand.frame();
+    run_until(&mut stand, 120, "c1 is admitted", |s| connected(s, C1));
+    stand.run(20);
+    assert!(stand.call(C1, "dodge", json!({"dir": "E"})).ok);
+    stand.run(20);
+    let applied = peer_of(&stand, 1).applied_input_tick;
+    assert!(applied > 0, "the host applied the dodge");
+
+    // The world again, for a reason that does not move time: c1's ticks never moved, so the
+    // inputs on their way and the host's record of the applied ones stay.
+    assert!(stand.call(HOST, "net_resync", json!({})).ok);
+    stand.run(10);
+    assert_eq!(rebases(&stand, C1), 1);
+    assert_eq!(peer_of(&stand, 1).applied_input_tick, applied, "the resync started c1's inputs over");
+}

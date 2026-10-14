@@ -268,6 +268,8 @@ Xvfb показывает его вместе с оверлеем навсетк
 в одном кадре идут по порядку вызовов (`a_step_and_a_resume_asked_in_one_frame_run_in_the_order_they_were_asked`),
 `snapshot_load` с неточным восстановлением возвращает мир (`a_load_that_would_not_be_exact_is_refused_and_puts_the_world_back`,
 `a_load_that_cannot_restore_exactly_fails_and_changes_nothing`).
+Третье ревью C3 (раунд 3): скачок тика хоста замечается до приёма игроков кадра
+(`a_client_admitted_in_the_frame_the_hosts_ticks_jump_keeps_its_inputs_through_a_resync`).
 
 ## E8. Сохранения и настройки (фаза C)
 
