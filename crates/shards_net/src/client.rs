@@ -13,13 +13,14 @@ use bevy::prelude::*;
 use bevy::reflect::{FromReflect, TypePath};
 use serde_json::{json, Value};
 use shards_content::ContentDb;
-use shards_core::{EngineConfig, EngineState, Intent, LocalPlayer, Predicted};
+use shards_core::{EngineConfig, EngineState, Intent, LocalPlayer, NetPrediction, Predicted};
 
 use crate::def::net_def;
 use crate::hooks::{hooks, PlayerLeft};
 use crate::inputs::InputCapture;
 use crate::link::{Delivered, Link, Role};
 use crate::msg::{self, CallMsg, Hello, Inputs, Msg, StateDelta, Welcome, PROTO};
+use crate::predict::NetCorrection;
 use crate::replicate::{apply, changes_between, first_difference, world_hash, ClientRing, Fnv, LOCAL_BASE};
 use crate::session::{NetClock, NetEndpoint, NetGame, NetMarks, NetState, Ticked};
 
@@ -609,6 +610,16 @@ fn take_world(world: &mut World, client: &mut NetClient, welcome: Welcome, rebas
     }
     client.floor = welcome.tick;
     client.newest_host_tick = welcome.tick;
+    // The own body is the host's again: nothing predicted before counts.
+    if let Some(mut prediction) = world.get_resource_mut::<NetPrediction>() {
+        prediction.host_tick = welcome.tick;
+        prediction.lead = lead;
+        prediction.snap = None;
+        prediction.epoch += 1;
+    }
+    if let Some(mut correction) = world.get_resource_mut::<NetCorrection>() {
+        correction.restart();
+    }
     client.player = Some(welcome.player);
     client.body = welcome.body;
     if carry {
@@ -674,6 +685,18 @@ fn apply_pending(world: &mut World, client: &mut NetClient) {
     }
     client.newest_host_tick = delta.tick;
     client.host_paused = delta.paused;
+    // What the own body's prediction needs: the host's tick, how far ahead this runs, and
+    // the host's state of the body (compared in `NetSystems::Correct`).
+    if let Some(mut prediction) = world.get_resource_mut::<NetPrediction>() {
+        prediction.host_tick = delta.tick;
+        prediction.lead = client.lead;
+    }
+    if let Some(own) = &delta.own
+        && client.body == Some(own.body)
+        && let Some(mut correction) = world.get_resource_mut::<NetCorrection>()
+    {
+        correction.host_state(delta.tick, own.components.clone());
+    }
     crate::events::retrigger_due(world, delta.tick);
     client.capture.ack(delta.inputs_ack);
     if let Some(margin) = delta.margin {
