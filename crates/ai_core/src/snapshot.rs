@@ -1592,5 +1592,13 @@ mod tests {
         let changes = StateChanges { set: vec![(9, values)], resources: [("game::Gone".to_owned(), serde_json::json!(0))].into(), ..Default::default() };
         let warnings = state::apply_changes(b.world_mut(), &changes);
         assert_eq!(warnings, ["e9: unknown component `game::Nope`", "unknown resource `game::Gone` (this game does not register it)"]);
+
+        // Ids that are not ids are left out, as a snapshot refuses them: nothing is spawned.
+        let before = encode_all(b.world());
+        let changes = StateChanges { set: vec![(0, Default::default()), (u32::MAX, Default::default())], ..Default::default() };
+        let warnings = state::apply_changes(b.world_mut(), &changes);
+        assert_eq!(warnings, ["entity id 0 is not an id".to_owned(), format!("entity id {} is not an id", u32::MAX)]);
+        assert_eq!(encode_all(b.world()), before);
+        assert_eq!(b.world().resource::<AiIndex>().get(AiId(u32::MAX)), None);
     }
 }

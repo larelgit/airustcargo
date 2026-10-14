@@ -286,8 +286,9 @@ pub(crate) fn apply(
     let mut spawned: BTreeSet<Entity> = BTreeSet::new();
     let mut targets: Vec<(u32, Entity, &ComponentValues)> = Vec::new();
     for (id, values) in order {
-        if *id == 0 {
-            warnings.push("entity id 0 is not an id".to_owned());
+        // 0 is "not assigned yet"; `u32::MAX` has no id after it for the counter to move to.
+        if *id == 0 || *id == u32::MAX {
+            warnings.push(format!("entity id {id} is not an id"));
             continue;
         }
         let entity = match world.resource::<AiIndex>().get(AiId(*id)) {
