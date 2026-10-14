@@ -405,15 +405,19 @@ fn inputs_between_ticks<C: Component<Mutability = Mutable> + Clone + PartialEq +
     if replay.not_recording {
         return;
     }
-    for (entity, id, value) in &q {
-        if !value.last_changed().is_newer_than(memory.since, ticks.this_run()) {
-            continue;
-        }
-        if memory.last.get(&entity) == Some(&*value) {
-            continue;
-        }
-        match serde_json::to_value(&*value) {
-            Ok(v) => replay.events.push(ReplayEvent::Input { at: tick.0, id: *id, component: name.to_owned(), value: v }),
+    // In id order, not query order: the window and other modules change how entities are
+    // grouped, and the same session must record the same file with and without them.
+    let mut changed: Vec<(AiId, &C)> = q
+        .iter()
+        .filter(|(entity, _, value)| {
+            value.last_changed().is_newer_than(memory.since, ticks.this_run()) && memory.last.get(entity) != Some(&**value)
+        })
+        .map(|(_, id, value)| (*id, value.into_inner()))
+        .collect();
+    changed.sort_unstable_by_key(|(id, _)| *id);
+    for (id, value) in changed {
+        match serde_json::to_value(value) {
+            Ok(v) => replay.events.push(ReplayEvent::Input { at: tick.0, id, component: name.to_owned(), value: v }),
             Err(e) => warn!("replay: cannot record {name} of {id}: {e}"),
         }
     }
@@ -1118,5 +1122,38 @@ mod tests {
         let replay = app.world().resource::<AiReplay>();
         assert_eq!(replay.started_from().map(|s| s.tick), Some(CHECK_EVERY * 3));
         assert_eq!(replay.recorded_events(), 0);
+    }
+
+    #[derive(Component)]
+    struct Shiny;
+
+    /// The inputs of one tick are recorded in id order, whatever order a query meets them in
+    /// (a window's render components regroup entities; the file must not change with them).
+    #[test]
+    fn inputs_of_a_tick_are_recorded_in_id_order() {
+        let mut app = game();
+        let second = app.world_mut().spawn((crate::AiKind::new("Dial"), Knob(0), Transform::default())).id();
+        app.update();
+        let first = app.world().resource::<AiIndex>().get(AiId(1)).unwrap();
+        // Out of its table and back in: the first dial now sits after the second.
+        app.world_mut().entity_mut(first).insert(Shiny);
+        app.world_mut().entity_mut(first).remove::<Shiny>();
+        let world = app.world_mut();
+        let met: Vec<AiId> = world.query_filtered::<&AiId, With<Knob>>().iter(world).copied().collect();
+        assert_eq!(met, [AiId(2), AiId(1)], "the test needs query order to differ from id order");
+        app.world_mut().get_mut::<Knob>(second).unwrap().0 = 7;
+        app.world_mut().get_mut::<Knob>(first).unwrap().0 = 5;
+        sim::step(app.world_mut(), 1, std::time::Duration::from_secs(5), |_| None).unwrap();
+        let recorded: Vec<(AiId, serde_json::Value)> = app
+            .world()
+            .resource::<AiReplay>()
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                ReplayEvent::Input { id, value, .. } => Some((*id, value.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(recorded, [(AiId(1), json!(5)), (AiId(2), json!(7))]);
     }
 }
