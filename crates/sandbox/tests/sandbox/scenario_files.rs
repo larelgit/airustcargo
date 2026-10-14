@@ -13,10 +13,9 @@ use shards::testing::{run_stand_scenario, StandRun};
 
 use crate::common::ok;
 
-/// Every `*.scenario` file of the sandbox, in file-name order.
-fn all_files() -> Vec<PathBuf> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios");
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+/// The `*.scenario` files directly in `dir`, in file-name order.
+fn files_in(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
         .filter_map(|entry| Some(entry.ok()?.path()))
         .filter(|path| path.extension().is_some_and(|ext| ext == "scenario"))
@@ -26,6 +25,18 @@ fn all_files() -> Vec<PathBuf> {
     files
 }
 
+/// The folder of the single-game scenarios: what `shards scenario crates/sandbox/scenarios/*.scenario`
+/// (README, CI) feeds to one live game.
+fn single_game_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios")
+}
+
+/// The folder of the stand scenarios (a `stand` line): below the single-game one, so that glob
+/// does not reach them.
+fn stand_dir() -> PathBuf {
+    single_game_dir().join("stand")
+}
+
 /// Whether the file starts with a `stand` line.
 fn is_stand(file: &Path) -> bool {
     let text = std::fs::read_to_string(file).unwrap_or_else(|e| panic!("cannot read {}: {e}", file.display()));
@@ -33,15 +44,25 @@ fn is_stand(file: &Path) -> bool {
     Script::parse(&name, &text).unwrap_or_else(|e| panic!("{e}")).stand().is_some()
 }
 
-/// The sandbox's single-game reference scenarios, in file-name order.
+/// The sandbox's single-game reference scenarios, in file-name order. None may start with a
+/// `stand` line: a single game refuses it, and CI runs this folder's glob against one game.
 pub fn scenario_files() -> Vec<PathBuf> {
-    all_files().into_iter().filter(|file| !is_stand(file)).collect()
+    let files = files_in(&single_game_dir());
+    let stands: Vec<&PathBuf> = files.iter().filter(|file| is_stand(file)).collect();
+    assert!(
+        stands.is_empty(),
+        "{stands:?} start with a `stand` line; stand scenarios belong in {} (a single game cannot run them, and \
+         `shards scenario crates/sandbox/scenarios/*.scenario` runs this folder against one)",
+        stand_dir().display()
+    );
+    files
 }
 
 /// The reference scenarios that need a stand (a `stand` line), in file-name order.
 pub fn stand_scenario_files() -> Vec<PathBuf> {
-    let files: Vec<PathBuf> = all_files().into_iter().filter(|file| is_stand(file)).collect();
-    assert!(!files.is_empty(), "the sandbox has no stand scenario");
+    let files = files_in(&stand_dir());
+    let singles: Vec<&PathBuf> = files.iter().filter(|file| !is_stand(file)).collect();
+    assert!(singles.is_empty(), "{singles:?} have no `stand` line; a file without one belongs in {}", single_game_dir().display());
     files
 }
 

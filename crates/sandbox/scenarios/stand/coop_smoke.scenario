@@ -3,10 +3,13 @@
 # other locks on to the warden; the host and both clients must see the same bodies at the same
 # places, and no member may report a desync. The full co-op scenario set is C9's.
 #
-# In process (cargo test) the stand is built from the `stand` line. Against a live one:
+# Stand files live in scenarios/stand/, so the single-game glob (scenarios/*.scenario) skips
+# them: a single game cannot run a file that names a host and clients. In process (cargo test)
+# the stand is built from the `stand` line. Against a live one (CI does exactly this):
 #   cargo sandbox --stand 2 --headless --paused --port 0 --port-file F --net-sim latency=150,loss=0.02 &
 #   SHARDS_PORT_FILE=F cargo shards wait --peer all
-#   SHARDS_PORT_FILE=F cargo shards scenario crates/sandbox/scenarios/coop_smoke.scenario
+#   SHARDS_PORT_FILE=F cargo shards scenario crates/sandbox/scenarios/stand/*.scenario
+#   SHARDS_PORT_FILE=F cargo shards stand stop
 stand clients=2 latency=150 loss=0.02
 seed 42
 
