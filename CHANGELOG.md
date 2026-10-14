@@ -180,6 +180,8 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
 - Песочница: `SettingsAppId` `shards-sandbox`, `InputSettings::for_game("shards")`, сценарий `settings.scenario`; шаблон:
   `SettingsAppId::new("my_game")` (папка `my-game`; имя записано как у пакета, чтобы его нашёл поиск при переименовании, и у
   игр, сделанных из шаблона, не оказалось одной папки настроек), `InputSettings::for_game("my_game")`.
+- Профайлер Tracy: фича `trace_tracy` у `shards`, `sandbox` и шаблона включает фичу Bevy того же имени, и каждая система —
+  отдельная зона (`cargo run -p sandbox --release --features trace_tracy`, README, «Время тика»).
 
 ### Исправлено
 
@@ -263,8 +265,6 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
 
 - Шаблон игры: сохранение и кооп на двоих (фаза C, модули E7 и E8). В `template/README.md` для них оставлены
   разделы-заглушки.
-- Профайлер Tracy для игры на `shards`: фича `trace_tracy` у `shards`, `sandbox` и шаблона. Сейчас её нет, и
-  `--features bevy/trace_tracy` у песочницы, как в #4, не работает (песочница зависит только от `shards`).
 
 ## [0.3.0] — фаза B: мир, враги и снапшоты (не выпущена)
 

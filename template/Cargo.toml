@@ -30,8 +30,10 @@ hot_reload = ["shards/hot_reload"]
 audio = ["shards/audio"]
 gamepad = ["shards/gamepad"]
 wayland = ["shards/wayland"]
-# Faster incremental builds (`cargo game --features dynamic`).
+# Faster incremental builds (`cargo run --features dynamic`; the `cargo game` alias passes flags to the game).
 dynamic = ["shards/dynamic"]
+# Tracy profiler zones for every system (`cargo run --release --features trace_tracy`).
+trace_tracy = ["shards/trace_tracy"]
 
 [dependencies]
 # The engine is the game's only dependency: Bevy, serde and schemars come through it

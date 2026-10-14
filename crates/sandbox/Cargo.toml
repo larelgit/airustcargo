@@ -17,8 +17,10 @@ hot_reload = ["shards/hot_reload"]
 audio = ["shards/audio"]
 gamepad = ["shards/gamepad"]
 wayland = ["shards/wayland"]
-# Faster incremental builds (`cargo sandbox --features dynamic`).
+# Faster incremental builds (`cargo run -p sandbox --features dynamic`; the `cargo sandbox` alias passes flags to the game).
 dynamic = ["shards/dynamic"]
+# Tracy profiler zones for every system (`cargo run -p sandbox --release --features trace_tracy`).
+trace_tracy = ["shards/trace_tracy"]
 
 [dependencies]
 # Like a game: the engine is one dependency.

@@ -279,7 +279,7 @@ Xvfb показывает его вместе с оверлеем навсетк
 | 1 | стилизованные материалы | ⏳ E |
 | 2 | растительность и инстансинг | ⏳ E |
 | 3 | эффекты и декали (телеграфы на земле из E3 — гизмо, не декали) | ⏳ E |
-| 4 | бюджеты и автотест производительности | 🟡 время тика (задача 11) — ✅: строка `ticks:` у `step`, запись `[perf]` в журнале, `perf` в `ai/status`, `--tick-budget-ms` (`ai_core::perf`, `crates/sandbox/tests/perf.rs`). Время кадра, счётчики сущностей и отрисовок, автотест на эталонной сцене, профайлер Tracy (у `shards` нет фичи `trace_tracy`) — E |
+| 4 | бюджеты и автотест производительности | 🟡 время тика (задача 11) — ✅: строка `ticks:` у `step`, запись `[perf]` в журнале, `perf` в `ai/status`, `--tick-budget-ms` (`ai_core::perf`, `crates/sandbox/tests/perf.rs`), профайлер Tracy (фича `trace_tracy` у `shards`, `sandbox` и шаблона). Время кадра, счётчики сущностей и отрисовок, автотест на эталонной сцене — E |
 | 5 | Steam | ⏳ E (нельзя проверить здесь) |
 | 6 | сборка под Windows | ⏳ E (нельзя проверить здесь) |
 | 7 | обработчик падений в один файл для отчёта | 🟡 краш-реплей `replays/crash-tick<N>.json` есть (E1/ai_core); сведений о системе и общего файла — ⏳ E |
@@ -298,7 +298,7 @@ Xvfb показывает его вместе с оверлеем навсетк
 | 7 | сценарные тесты: файл сценария в CI без окна, свой набор у модуля | ✅ для A и B | `shards_script`, `ai_core::scenario`, `shards scenario`; сценарии песочницы: `obstacle_course` (E2), `combat_prototype`, `boss_fight`, `dodge`, `errors` (E3), `npc_director`, `npc_navmesh` (E6), `region` (E5), `snapshot` (E11), сценарии шаблона `smoke`, `valley`; CI-задания `test` (в процессе, вперёд и назад) и `headless-cli` (против живой игры, вперёд и назад). Сценарии остальных модулей — по мере появления |
 | задача 9 | инварианты: правила, которые останавливают игру | ✅ | `ai_core::invariants`: `add_ai_invariant`, `assert_add`/`assert_list`/`assert_remove`/`assert_reset`, `shards assert`, `shards fuzz`, код выхода 3, реплей нарушения; правила песочницы `health_in_range` и `bodies_in_world`; `tests/sandbox/invariants.rs`, тесты `ai_core::invariants`, `shards_cli` (`fuzz_inputs_come_from_the_seed`), `shards_script` (оборванный шаг) |
 | задача 10 | подробности расхождения реплея | ✅ | `Check.parts`, `--check-every`, `--check-detail`; `--verify` называет сущности и компоненты и печатает их значения; `tests/sandbox/replays.rs`, тесты `ai_core::replay` |
-| задача 11 | время тика | ✅ | `ai_core::perf` (см. E10, п. 4); `crates/sandbox/tests/perf.rs`. Tracy игре на `shards` не включить: фичи `trace_tracy` у `shards` нет (в #4 песочница зависела от `bevy` напрямую, и работало `--features bevy/trace_tracy`); проброс — E10 |
+| задача 11 | время тика | ✅ | `ai_core::perf` (см. E10, п. 4); `crates/sandbox/tests/perf.rs`. Tracy: фича `trace_tracy` у `shards`, `sandbox` и шаблона (README, «Время тика») |
 
 | «Готово, когда» | статус |
 |---|---|
