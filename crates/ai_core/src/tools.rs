@@ -252,6 +252,11 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
     }
 
     let is_action = entry.spec.kind == ToolKind::Action;
+    // An action while loading would run on a world `OnEnter` has not spawned yet, and
+    // its replay would run on the spawned one.
+    if is_action && let Some(loading) = sim::gate_message(world) {
+        return outcome(world, false, Value::String(loading), Vec::new(), Vec::new());
+    }
     if is_action {
         crate::replay::begin_action(world, &caller, tool, &args);
     }

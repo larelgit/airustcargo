@@ -22,7 +22,7 @@ use bevy::prelude::*;
 
 use crate::journal::{self, JournalKind};
 use crate::replay;
-use crate::sim;
+use crate::sim::{self, SimGate};
 
 /// Log target of the handler's own `error!` line. The journal gets the failure from
 /// [`collect`], so the log capture leaves this target out.
@@ -154,7 +154,10 @@ pub fn collect(world: &mut World) -> Vec<SystemFailure> {
     if let Some(mut state) = world.get_resource_mut::<AiFailures>() {
         state.unreported.extend(failures.iter().cloned());
     }
-    if !sim::is_paused(world) {
+    // A failure while loading (an `OnEnter` spawning the world) finds real time paused
+    // by the gate: the pause becomes the failure's, so opening the gate keeps it.
+    let gate_paused = world.get_resource_mut::<SimGate>().is_some_and(|mut gate| gate.forget_pause());
+    if !sim::is_paused(world) || gate_paused {
         sim::pause(world);
         // Real-time play may have more ticks due this frame: not after a failure.
         let mut fixed = world.resource_mut::<Time<Fixed>>();

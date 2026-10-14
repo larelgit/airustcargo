@@ -123,6 +123,30 @@ fn the_crash_replay_reproduces_the_failure() {
 }
 
 #[test]
+fn a_failure_while_loading_keeps_the_game_paused_after_it() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let mut app = App::new();
+    app.add_plugins(EnginePlugins::new(EngineConfig { paused: false, ..shards::testing::config() }))
+        .add_systems(OnEnter(EngineState::InGame), missing_floor);
+    app.finish();
+    app.cleanup();
+    shards::testing::wait_until_loaded(&mut app, std::time::Duration::from_secs(20)).unwrap();
+    app.insert_resource(TimeUpdateStrategy::FixedTimesteps(1)); // one tick per frame, if it runs
+    for _ in 0..5 {
+        app.update();
+    }
+    assert!(shards::ai_core::sim::is_paused(app.world()), "opening the gate must not resume a failed game");
+    assert_eq!(shards::ai_core::sim::tick(app.world()), 0);
+    let paused = journal(&app, JournalKind::Sim);
+    assert!(paused.iter().any(|l| l.contains("paused: system system_failures::missing_floor panicked at tick 0")), "{paused:?}");
+}
+
+/// An `OnEnter` that fails to spawn the world.
+fn missing_floor() {
+    panic!("the floor is missing");
+}
+
+#[test]
 fn a_panicking_tool_is_not_a_gameplay_failure() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let mut app = icy_app();

@@ -105,6 +105,10 @@ fn nothing_ticks_until_loaded_and_loading_never_shifts_a_tick() {
     assert_eq!(refused.result, json!("the game is still loading (assets: 3 files left); wait with `shards wait`"));
     let resume = act(&mut app, "resume", json!({}));
     assert!(!resume.ok && resume.result.as_str().unwrap().starts_with("the game is still loading"), "{}", resume.result);
+    // An action would run on a world not spawned yet, and its replay on a spawned one.
+    let teleport = act(&mut app, "teleport", json!({"id": "e1", "x": 1, "z": 1}));
+    assert_eq!(teleport.result, json!("the game is still loading (assets: 3 files left); wait with `shards wait`"));
+    assert!(ai_core::replay::save(app.world()).events.is_empty(), "and it is not recorded");
 
     app.world_mut().resource_mut::<Loaded>().0 = true;
     app.update();
