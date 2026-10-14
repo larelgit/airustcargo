@@ -154,7 +154,7 @@ impl ContentDef for PrefabDef {
         // Without an app (a bare `check_dir`) there is no registry to check against.
         let Some(registry) = refs.type_registry() else { return };
         for (name, value) in &self.components {
-            let checked = resolve(registry, name).and_then(|reg| read_component(registry, reg, value.get_ron()).map(|_| ()));
+            let checked = resolve_component(registry, name).and_then(|reg| read_component(registry, reg, value.get_ron()).map(|_| ()));
             if let Err(why) = checked {
                 refs.error(why);
             }
@@ -162,8 +162,10 @@ impl ContentDef for PrefabDef {
     }
 }
 
-/// The registration of component `name` (short name or full type path).
-fn resolve<'r>(registry: &'r TypeRegistry, name: &str) -> Result<&'r TypeRegistration, String> {
+/// The registration of component `name` (short name or full type path), or an error that
+/// says what is wrong with the name (unknown, ambiguous, not a reflected component).
+/// Prefabs and level files (`shards_level`) name components this way.
+pub fn resolve_component<'r>(registry: &'r TypeRegistry, name: &str) -> Result<&'r TypeRegistration, String> {
     let found = registry.get_with_type_path(name).or_else(|| registry.get_with_short_type_path(name));
     match found {
         Some(reg) if reg.data::<ReflectComponent>().is_some() => Ok(reg),
@@ -205,8 +207,8 @@ fn read_component(registry: &TypeRegistry, reg: &TypeRegistration, ron: &str) ->
     concrete(reg, value.as_ref())
 }
 
-/// A component value from JSON (the shape the `get` tool shows).
-fn component_from_json(registry: &TypeRegistry, reg: &TypeRegistration, json: &Value) -> Result<Box<dyn Reflect>, String> {
+/// A component value from JSON (the shape the `get` tool shows), as the concrete type.
+pub fn component_from_json(registry: &TypeRegistry, reg: &TypeRegistration, json: &Value) -> Result<Box<dyn Reflect>, String> {
     let value = TypedReflectDeserializer::new(reg, registry).deserialize(json).map_err(|e| format!("{}: {e}", short_name(reg)))?;
     concrete(reg, value.as_ref())
 }
@@ -264,18 +266,17 @@ fn chain<'a>(db: &'a ContentDb, id: &str) -> Result<Vec<&'a PrefabDef>, String> 
     Ok(chain.into_iter().rev().map(|(_, def)| def).collect())
 }
 
-/// Spawns prefab `id` at `transform`. `overrides` patch component fields as JSON
-/// (`{"Health": {"current": 10}}`, merge patch per component; a component the prefab
-/// lacks is added whole). The `transform` given always wins over a `Transform` in the
-/// prefab. Nothing is spawned when any component fails.
-pub fn spawn_prefab(world: &mut World, id: &str, transform: Transform, overrides: Option<&Value>) -> Result<Entity, String> {
-    let app_registry = world.resource::<AppTypeRegistry>().clone();
-    let registry = app_registry.read();
-    let mut components: BTreeMap<&'static str, (&TypeRegistration, Box<dyn Reflect>)> = BTreeMap::new();
-    for def in chain(world.resource::<ContentDb>(), id)? {
+/// The components of a prefab by type path, as built from its files.
+type Built<'r> = BTreeMap<&'static str, (&'r TypeRegistration, Box<dyn Reflect>)>;
+
+/// Reads prefab `id` (its `extends` chain first) and applies `overrides`, without
+/// spawning anything.
+fn build<'r>(db: &ContentDb, registry: &'r TypeRegistry, id: &str, overrides: Option<&Value>) -> Result<Built<'r>, String> {
+    let mut components: Built<'r> = BTreeMap::new();
+    for def in chain(db, id)? {
         for (name, value) in &def.components {
-            let reg = resolve(&registry, name).map_err(|e| format!("prefab `{id}`: {e}"))?;
-            let value = read_component(&registry, reg, value.get_ron()).map_err(|e| format!("prefab `{id}`: {e}"))?;
+            let reg = resolve_component(registry, name).map_err(|e| format!("prefab `{id}`: {e}"))?;
+            let value = read_component(registry, reg, value.get_ron()).map_err(|e| format!("prefab `{id}`: {e}"))?;
             components.insert(reg.type_info().type_path(), (reg, value));
         }
     }
@@ -285,19 +286,36 @@ pub fn spawn_prefab(world: &mut World, id: &str, transform: Transform, overrides
             for (name, patch) in patches {
                 // A short name several types share means the prefab's own component.
                 let own = components.values().map(|(reg, _)| *reg).find(|reg| short_name(reg) == name);
-                let reg = resolve(&registry, name).or_else(|e| own.ok_or(e)).map_err(|e| format!("overrides: {e}"))?;
+                let reg = resolve_component(registry, name).or_else(|e| own.ok_or(e)).map_err(|e| format!("overrides: {e}"))?;
                 let mut json = match components.get(reg.type_info().type_path()) {
-                    Some((_, value)) => serde_json::to_value(TypedReflectSerializer::new(value.as_partial_reflect(), &registry))
+                    Some((_, value)) => serde_json::to_value(TypedReflectSerializer::new(value.as_partial_reflect(), registry))
                         .map_err(|e| format!("overrides: {name}: {e}"))?,
                     None => Value::Null,
                 };
                 merge_patch(&mut json, patch);
-                let value = component_from_json(&registry, reg, &json).map_err(|e| format!("overrides: {e}"))?;
+                let value = component_from_json(registry, reg, &json).map_err(|e| format!("overrides: {e}"))?;
                 components.insert(reg.type_info().type_path(), (reg, value));
             }
         }
         Some(other) => return Err(format!("overrides must be an object of components, e.g. {{\"Health\": {{\"current\": 10}}}}; got {other}")),
     }
+    Ok(components)
+}
+
+/// Whether prefab `id` with `overrides` can be spawned: the same reading
+/// [`spawn_prefab`] does, without the spawn. Level files check their prefab nodes with it.
+pub fn check_prefab(db: &ContentDb, registry: &TypeRegistry, id: &str, overrides: Option<&Value>) -> Result<(), String> {
+    build(db, registry, id, overrides).map(|_| ())
+}
+
+/// Spawns prefab `id` at `transform`. `overrides` patch component fields as JSON
+/// (`{"Health": {"current": 10}}`, merge patch per component; a component the prefab
+/// lacks is added whole). The `transform` given always wins over a `Transform` in the
+/// prefab. Nothing is spawned when any component fails.
+pub fn spawn_prefab(world: &mut World, id: &str, transform: Transform, overrides: Option<&Value>) -> Result<Entity, String> {
+    let app_registry = world.resource::<AppTypeRegistry>().clone();
+    let registry = app_registry.read();
+    let components = build(world.resource::<ContentDb>(), &registry, id, overrides)?;
     let mut entity = world.spawn_empty();
     for (reg, value) in components.values() {
         if let Some(component) = reg.data::<ReflectComponent>() {

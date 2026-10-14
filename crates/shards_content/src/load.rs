@@ -99,6 +99,7 @@ pub(crate) fn start_loading(world: &mut World) {
         let text = format!("content: no content folder at {}: no content ({NO_FOLDER_HINT})", root.join(CONTENT_DIR).display());
         journal::emit(world, JournalKind::Warn, text);
     }
+    world.resource_mut::<ContentKinds>().set_asset_root(root.clone());
     let kinds = world.resource::<ContentKinds>().clone();
     let (paths, listing_error) = match list_files(&root) {
         Ok(paths) => (paths, None),

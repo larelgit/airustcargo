@@ -9,7 +9,7 @@
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bevy::prelude::*;
@@ -151,6 +151,8 @@ pub struct ContentKinds {
     /// (kind, id, who needs it).
     required: Vec<(&'static str, String, String)>,
     registry: Option<AppTypeRegistry>,
+    /// The asset folder, for definitions that name asset files (levels).
+    asset_root: Option<PathBuf>,
 }
 
 impl ContentKinds {
@@ -195,6 +197,13 @@ impl ContentKinds {
     /// The type registry prefabs (and other kinds that need reflection) validate with.
     pub fn set_type_registry(&mut self, registry: AppTypeRegistry) {
         self.registry = Some(registry);
+    }
+
+    /// The asset folder definitions that name asset files are checked against
+    /// ([`Refs::asset_root`]). The content plugin sets it when loading starts and
+    /// [`check_dir`] for its `base`.
+    pub fn set_asset_root(&mut self, root: PathBuf) {
+        self.asset_root = Some(root);
     }
 
     /// The registered kind `kind`.
@@ -417,7 +426,8 @@ impl ContentDb {
         for (kind, table) in &self.tables {
             let Some(info) = kinds.get(kind) else { continue };
             for (id, entry) in table {
-                let mut refs = Refs { db: self, kind, id, file: &entry.file, registry, errors: &mut errors };
+                let asset_root = kinds.asset_root.as_deref();
+                let mut refs = Refs { db: self, kind, id, file: &entry.file, registry, asset_root, errors: &mut errors };
                 (info.fns.validate)(&entry.def, id, &mut refs);
             }
         }
@@ -644,6 +654,7 @@ pub struct Refs<'a> {
     id: &'a str,
     file: &'a str,
     registry: Option<&'a TypeRegistry>,
+    asset_root: Option<&'a Path>,
     errors: &'a mut Vec<ContentError>,
 }
 
@@ -693,6 +704,18 @@ impl<'a> Refs<'a> {
     /// `None` when checking files without an app.
     pub fn type_registry(&self) -> Option<&'a TypeRegistry> {
         self.registry
+    }
+
+    /// The asset folder, for definitions that name asset files (a level's glTF) and
+    /// check them. `None` when the database was built without one.
+    pub fn asset_root(&self) -> Option<&'a Path> {
+        self.asset_root
+    }
+
+    /// The whole database being validated, for checks that need more than [`get`](Self::get)
+    /// (a level file's prefab nodes).
+    pub fn db(&self) -> &'a ContentDb {
+        self.db
     }
 }
 
@@ -781,7 +804,9 @@ pub fn check_dir(base: &Path, kinds: &ContentKinds) -> Result<Summary, Vec<Conte
         return Err(vec![ContentError { file: None, position: None, kind: None, id: None, message }]);
     }
     let sources = read_dir(base).map_err(|e| vec![e])?;
-    let db = ContentDb::build(kinds, &sources);
+    let mut kinds = kinds.clone();
+    kinds.set_asset_root(base.to_owned());
+    let db = ContentDb::build(&kinds, &sources);
     let errors: Vec<ContentError> = db.errors().cloned().collect();
     if errors.is_empty() { Ok(db.summary()) } else { Err(errors) }
 }
