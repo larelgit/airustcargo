@@ -286,6 +286,23 @@ impl StepEnd {
             None => Self { ran: message.trim().to_owned(), stopped: None },
         }
     }
+
+    /// A step the game cut short is a failure, though the call succeeded: a gameplay
+    /// system crashed, or the ticks did not fit the wall-clock budget. What the
+    /// scenario expects next would be checked on a world that did not get there.
+    fn cut_short(&self) -> Result<(), Fail> {
+        match &self.stopped {
+            Some(why) if why.starts_with("gameplay ") => Err(Fail::check(format!(
+                "the step {}, stopped: {why} (`act? step …` lets a step crash on purpose)",
+                self.ran
+            ))),
+            Some(why) if why.contains("wall-clock budget") => Err(Fail::check(format!(
+                "the step {}, stopped: {why}; step in smaller pieces",
+                self.ran
+            ))),
+            _ => Ok(()),
+        }
+    }
 }
 
 struct Run<'d, D: ?Sized> {
@@ -346,7 +363,11 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
             Command::Act { tool, args, may_fail } => {
                 let (out, text) = self.call(tool, args.clone())?;
                 if tool == "step" && out.ok {
-                    self.last_step = Some(StepEnd::parse(&text));
+                    let step = StepEnd::parse(&text);
+                    if !may_fail {
+                        step.cut_short()?;
+                    }
+                    self.last_step = Some(step);
                 }
                 let detail = match (out.ok, may_fail) {
                     (true, _) => out.summary(),
@@ -365,7 +386,9 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                 if !out.ok {
                     return Err(Fail::check(format!("step failed: {text}")));
                 }
-                self.last_step = Some(StepEnd::parse(&text));
+                let step = StepEnd::parse(&text);
+                step.cut_short()?;
+                self.last_step = Some(step);
                 self.check_invariants()?;
                 Ok(out.summary())
             }
@@ -474,6 +497,11 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                 };
                 match (hit, negate) {
                     (Some(line), false) => Ok(line.text.clone()),
+                    (None, true) if read.missed > 0 => Err(Fail::check(format!(
+                        "no journal entry {since} contains {text:?}, but {} older entries left the journal's buffer \
+                         unread, so one of them might; use `mark` more often or step in smaller pieces",
+                        read.missed
+                    ))),
                     (None, true) => Ok(format!("no entry contains {text:?}")),
                     (None, false) => {
                         let newest: Vec<&str> = read.lines.iter().rev().take(4).rev().map(|l| l.text.as_str()).collect();
@@ -609,6 +637,8 @@ mod tests {
         calls: Vec<(String, String, Value)>,
         sessions: Vec<(String, SessionConfig)>,
         gone: bool,
+        /// Journal entries that left the buffer unread.
+        missed: u64,
     }
 
     impl Fake {
@@ -638,7 +668,13 @@ mod tests {
                 "boom" => Outcome::err("bad arguments for boom: missing field `x`. Expected: boom(x: number)"),
                 "step" => {
                     let ticks = args["ticks"].as_u64().unwrap_or(1);
-                    if args["until"].as_array().is_some_and(|u| !u.is_empty()) {
+                    if ticks == 666 {
+                        self.tick += 50;
+                        Outcome::ok("ran 50 ticks (0 → 50), stopped: gameplay system game::ice panicked at tick 50: the ice gave way")
+                    } else if ticks == 777 {
+                        self.tick += 300;
+                        Outcome::ok("ran 300 ticks (0 → 300), stopped: 20 s wall-clock budget")
+                    } else if args["until"].as_array().is_some_and(|u| !u.is_empty()) {
                         self.tick += 5;
                         self.log("e6 phase 1->2");
                         Outcome::ok("ran 5 ticks (0 → 5), stopped: journal: 5 e6 phase 1->2")
@@ -672,7 +708,7 @@ mod tests {
 
         fn journal_since(&mut self, after: u64) -> Result<JournalRead, String> {
             let lines = self.journal.iter().filter(|(seq, _)| *seq > after).map(|(seq, text)| JournalLine { seq: *seq, text: text.clone() });
-            Ok(JournalRead { lines: lines.collect(), missed: 0 })
+            Ok(JournalRead { lines: lines.collect(), missed: self.missed })
         }
     }
 
@@ -777,6 +813,36 @@ expect result contains "YOU e5"
         assert_eq!(f.message, "no journal entry since the scenario started contains \"phase\"; newest entries: 0 e5 hurt");
         let f = failure("act hurt\nexpect !journal \"hurt\"");
         assert_eq!(f.message, "a journal entry since the scenario started contains \"hurt\", which it should not: 0 e5 hurt");
+    }
+
+    #[test]
+    fn a_step_the_game_cut_short_fails_unless_allowed() {
+        let f = failure("step 666\nexpect !journal \"died\"");
+        assert_eq!(f.line, 1);
+        assert_eq!(
+            f.message,
+            "the step ran 50 ticks (0 → 50), stopped: gameplay system game::ice panicked at tick 50: the ice gave way \
+             (`act? step …` lets a step crash on purpose)"
+        );
+        assert_eq!(failure("act step ticks=666").line, 1, "`act step` is a step too");
+        let (report, _) = run_text("act? step ticks=666\nexpect stopped \"panicked\"");
+        assert!(report.passed, "{report}");
+        let f = failure("step 777");
+        assert_eq!(f.message, "the step ran 300 ticks (0 → 300), stopped: 20 s wall-clock budget; step in smaller pieces");
+    }
+
+    #[test]
+    fn a_negated_journal_expectation_fails_when_entries_were_lost() {
+        let script = Script::parse("t.scenario", "act hurt\nexpect journal \"hurt\"\nexpect !journal \"died\"").unwrap();
+        let mut game = Fake::new();
+        game.missed = 3;
+        let f = run(&script, &mut game).failure.unwrap();
+        assert_eq!(f.line, 3, "what is there is still found");
+        assert_eq!(
+            f.message,
+            "no journal entry since the scenario started contains \"died\", but 3 older entries left the journal's buffer \
+             unread, so one of them might; use `mark` more often or step in smaller pieces"
+        );
     }
 
     #[test]
