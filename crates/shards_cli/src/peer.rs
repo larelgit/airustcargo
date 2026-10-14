@@ -391,7 +391,7 @@ fn answers(client: &Client) -> bool {
 
 /// Waits until none of `members` answers any more, or `limit` has passed; returns those that
 /// still do.
-fn wait_gone<'m>(members: &'m [(String, Client)], limit: Duration) -> Vec<&'m str> {
+fn wait_gone(members: &[(String, Client)], limit: Duration) -> Vec<&str> {
     let started = Instant::now();
     loop {
         let alive: Vec<&str> = members.iter().filter(|(_, client)| answers(client)).map(|(name, _)| name.as_str()).collect();

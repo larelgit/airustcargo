@@ -1149,7 +1149,9 @@ expect result contains "YOU e5"
         }
         fn peers(&mut self) -> Result<Vec<String>, String> {
             // The host first, then the clients in name order.
-            Ok(self.members.keys().cloned().filter(|n| n == HOST).chain(self.members.keys().cloned().filter(|n| n != HOST)).collect())
+            let mut names: Vec<String> = self.members.keys().filter(|n| *n != HOST).cloned().collect();
+            names.insert(0, HOST.to_owned());
+            Ok(names)
         }
         fn check_stand(&mut self, header: &StandHeader) -> Result<(), String> {
             header.check_conditions(self.links.as_deref())
