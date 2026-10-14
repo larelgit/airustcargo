@@ -275,7 +275,7 @@ pub(crate) fn plan_attacks(
     let mut inflight = InFlight::collect(npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
     for (id, entity) in order(&npcs) {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
-        if !f.drive.strike || f.dead || !f.brain.active {
+        if !f.drive.strike || f.dead || !f.brain.active || f.under_orders() {
             continue;
         }
         let Some(mut grant) = f.token.held.clone() else { continue };

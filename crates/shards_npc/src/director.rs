@@ -26,7 +26,7 @@ use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use shards_action::{ActionState, Charges, Cooldowns, Dead, Fighter, InputBuffer, Stamina};
 use shards_content::ContentDb;
-use shards_core::{flat, PlayerId};
+use shards_core::{flat, Intent, PlayerId};
 use shards_motion::Collider;
 
 use crate::brain::{clamp_to_leash, salt, Home, Npc, NpcBrain, NpcDrive};
@@ -141,6 +141,15 @@ pub(crate) struct Fighting {
     pub cooldowns: Option<&'static Cooldowns>,
     pub charges: Option<&'static Charges>,
     pub dead: Has<Dead>,
+    /// Orders in it: an agent took the NPC over (`move_to`, `attack`), it is out of the fight.
+    pub intent: Option<&'static Intent>,
+}
+
+impl FightingItem<'_, '_> {
+    /// An agent's orders drive it now: it neither asks for tokens nor presses.
+    pub(crate) fn under_orders(&self) -> bool {
+        self.intent.is_some_and(|i| !i.orders.is_empty())
+    }
 }
 
 /// Where a target stands, its body radius, whether it is alive.
@@ -220,6 +229,8 @@ pub(crate) fn direct(
             Some("dormant")
         } else if target_of(&index, &targets, f.perceived, grant.target).is_none() {
             Some("target gone")
+        } else if f.under_orders() {
+            Some("under orders")
         } else if !f.drive.strike && !f.drive.request_token {
             Some("left the fight")
         } else if grant.age > patience + 1e-4 {
@@ -304,6 +315,7 @@ pub(crate) fn direct(
     for &(id, entity) in &order {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         let wants = f.drive.request_token
+            && !f.under_orders()
             && f.token.held.is_none()
             && f.brain.active
             && !f.dead
@@ -358,7 +370,7 @@ pub(crate) fn direct(
     let mut waiters: Vec<(AiId, Entity)> = Vec::new();
     for &(id, entity) in &order {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
-        let waiting = f.drive.waiting && f.token.held.is_none() && f.brain.active && !f.dead;
+        let waiting = f.drive.waiting && f.token.held.is_none() && f.brain.active && !f.dead && !f.under_orders();
         let target = f.brain.target.filter(|t| waiting && target_of(&index, &targets, f.perceived, *t).is_some());
         let Some(target) = target else {
             if f.brain.slot.is_some() || f.brain.role.is_some() {

@@ -262,6 +262,43 @@ fn tokens_beyond_a_lowered_limit_come_back() {
     let _ = hero;
 }
 
+/// An NPC an agent took over (orders in its `Intent`) is out of the fight: no tokens, no
+/// presses, no held inputs, until its orders are done.
+#[test]
+fn an_npc_under_orders_takes_no_tokens() {
+    use shards_core::{Intent, Order, Target};
+    let mut app = app();
+    let hero = player(app.world_mut(), 0, Vec3::ZERO);
+    let grunt = grunt(app.world_mut(), "grunt", "jabber", "default", Vec3::new(0.0, 0.0, -2.0));
+    step(&mut app, 30);
+    let far = Vec3::new(0.0, 0.0, -40.0);
+    app.world_mut().get_mut::<Intent>(grunt).unwrap().orders.push_back(Order::MoveTo { target: Target::Point(far), within: 0.5 });
+    let me = id(&app, grunt);
+    let given = shards_core::flat(feet(&app, grunt)).length();
+    let mut t = 0;
+    while t < 900 {
+        step(&mut app, 1);
+        t += 1;
+        if app.world().get::<Intent>(grunt).unwrap().orders.is_empty() {
+            break;
+        }
+        if t > 60 {
+            assert!(!has_token(&app, grunt), "tick {t} under orders: it holds a token");
+        }
+    }
+    assert!(t > 120, "the orders lasted: {t} ticks");
+    let taken: Vec<String> = lines(&app, &format!("{me} takes an attack token")).into_iter().filter(|l| (30 + 60..30 + t).contains(&tick_of(l))).collect();
+    assert!(taken.is_empty(), "{taken:#?}");
+    assert!(shards_core::flat(feet(&app, grunt)).length() > given + 10.0, "it walked its orders");
+    assert!(app.world().get::<Intent>(grunt).unwrap().held.is_empty());
+    let _ = hero;
+}
+
+/// The tick of a journal line (`tick text`).
+fn tick_of(line: &str) -> u64 {
+    line.split_whitespace().next().and_then(|t| t.trim_start_matches('[').trim_end_matches(']').parse().ok()).unwrap_or(0)
+}
+
 #[test]
 fn those_without_a_token_wait_in_their_roles() {
     let mut app = app();

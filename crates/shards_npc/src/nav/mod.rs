@@ -419,6 +419,16 @@ fn keep_on_leash(vel: Vec3, here: Vec3, home: Vec3, leash: f32) -> Vec3 {
 pub(crate) fn drive_intents(mut npcs: Query<(&NpcBrain, &NavAgent, &mut NpcDrive, &mut Intent), With<Npc>>) {
     for (brain, agent, mut drive, mut intent) in &mut npcs {
         if !intent.orders.is_empty() {
+            // Its own presses are dropped and what it held is let go (the director and the
+            // planner leave it out of the fight meanwhile).
+            if !drive.press.is_empty() {
+                drive.press.clear();
+            }
+            if !drive.held.is_empty() {
+                for input in std::mem::take(&mut drive.held) {
+                    intent.set_held(&input, false);
+                }
+            }
             continue;
         }
         let (move_dir, aim) = if brain.active { (agent.desired, drive.face) } else { (Vec3::ZERO, None) };
