@@ -170,7 +170,8 @@ pub struct Slot {
 /// What the host does at the next `ApplyCalls`.
 enum Task {
     Admit(PeerId),
-    Leave { player: u8, reason: String },
+    /// Player `player` left through `peer` (its character goes there, not to a newer link).
+    Leave { player: u8, peer: PeerId, reason: String },
     Call { peer: PeerId, call: CallMsg },
 }
 
@@ -269,8 +270,9 @@ impl NetHost {
         let _ = peer.send(&Msg::Bye { reason: reason.to_owned() });
         let connected = peer.stage == PeerStage::Connected;
         peer.stage = PeerStage::Gone;
+        let id = peer.id;
         if connected {
-            self.tasks.push(Task::Leave { player, reason: reason.to_owned() });
+            self.tasks.push(Task::Leave { player, peer: id, reason: reason.to_owned() });
         }
         Ok(())
     }
@@ -513,7 +515,7 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
     for peer in host.peers.values_mut() {
         if peer.stage != PeerStage::Gone && peer.link.is_timed_out(now, timeout_ms) {
             if peer.stage == PeerStage::Connected {
-                host.tasks.push(Task::Leave { player: peer.player, reason: "timeout".into() });
+                host.tasks.push(Task::Leave { player: peer.player, peer: peer.id, reason: "timeout".into() });
                 NetMarks::mark(world, |m| &mut m.disconnected);
             }
             peer.stage = PeerStage::Gone;
@@ -540,7 +542,7 @@ fn on_message(world: &mut World, host: &mut NetHost, id: PeerId, message: Msg) {
         Msg::Bye { reason } => {
             let Some(peer) = host.peers.get_mut(&id) else { return };
             if peer.stage == PeerStage::Connected {
-                host.tasks.push(Task::Leave { player: peer.player, reason: if reason.is_empty() { "quit".into() } else { reason } });
+                host.tasks.push(Task::Leave { player: peer.player, peer: id, reason: if reason.is_empty() { "quit".into() } else { reason } });
             }
             peer.stage = PeerStage::Gone;
         }
@@ -660,9 +662,12 @@ fn on_hello(world: &mut World, host: &mut NetHost, id: PeerId, hello: Hello) {
                 && let Some(peer) = host.peers.get_mut(&old)
                 && peer.stage != PeerStage::Gone
             {
-                // Reconnected before the old link timed out: the old one leaves first.
+                // Back before the old link timed out (a restart), or a second game with the same
+                // token (two clients of one name sharing a save folder): the old one leaves first,
+                // and is told why.
+                let _ = peer.send(&Msg::Bye { reason: "another game joined with your token; give each game its own --name or --save-dir".into() });
                 if peer.stage == PeerStage::Connected {
-                    host.tasks.push(Task::Leave { player: n, reason: "reconnected".into() });
+                    host.tasks.push(Task::Leave { player: n, peer: old, reason: "reconnected".into() });
                 }
                 peer.stage = PeerStage::Gone;
             }
@@ -765,7 +770,7 @@ fn run_tasks(world: &mut World, host: &mut NetHost) {
     for task in std::mem::take(&mut host.tasks) {
         match task {
             Task::Admit(id) => admit(world, host, id),
-            Task::Leave { player, reason } => leave(world, host, player, &reason),
+            Task::Leave { player, peer, reason } => leave(world, host, player, peer, &reason),
             Task::Call { peer, call } => forwarded(world, host, peer, call),
         }
     }
@@ -889,11 +894,11 @@ fn welcome(world: &World, player: u8, body: Option<u32>, reason: &str) -> Result
     })
 }
 
-fn leave(world: &mut World, host: &mut NetHost, player: u8, reason: &str) {
+fn leave(world: &mut World, host: &mut NetHost, player: u8, peer: PeerId, reason: &str) {
     let tick = sim::tick(world);
     if let Some(body) = player_body(world, player).and_then(|id| world.resource::<AiIndex>().get(id)) {
         if let Some(sections) = (hooks(world).capture_character)(world, body)
-            && let Some(peer) = host.peers.values_mut().find(|p| p.player == player)
+            && let Some(peer) = host.peers.get_mut(&peer)
         {
             let _ = peer.send(&Msg::CharacterSave { tick, reason: reason.to_owned(), sections });
         }

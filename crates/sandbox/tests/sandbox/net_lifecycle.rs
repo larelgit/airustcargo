@@ -103,6 +103,26 @@ fn joins_and_leaves_wake_the_hosts_agent() {
 }
 
 #[test]
+fn a_second_game_with_a_players_token_takes_the_slot_and_the_first_is_told() {
+    let mut stand = shards::testing::stand(1, LinkConditions::NONE, configure, with_saves);
+    stand.run(10);
+    let first = body(&stand, C1);
+    // A second game of the same name: the hub keeps c1's token, as one save folder would.
+    let twin = shards::testing::stand_client(&mut stand, "c1", LinkConditions::NONE, &configure, &with_saves);
+    run_until(&mut stand, 300, "the second game joins", |s| connected(s, twin));
+    stand.run(10);
+    assert_eq!(body(&stand, twin), first, "the same slot, the same body");
+    assert!(
+        matches!(net_state(&stand, C1), NetState::Ended(why) if why.contains("another game joined with your token")),
+        "{:?}",
+        net_state(&stand, C1)
+    );
+    assert!(has_line(&stand, HOST, "net: p1 left (reconnected)"), "{:#?}", journal(&stand, HOST));
+    assert_eq!(saves::<CharacterSaves>(&stand, C1, |s| s.0), 1, "the character went to the game that left");
+    assert_eq!(saves::<CharacterSaves>(&stand, twin, |s| s.0), 0);
+}
+
+#[test]
 fn a_client_sent_away_is_disconnected_for_its_agent() {
     let mut stand = stand(1);
     stand.run(10);
