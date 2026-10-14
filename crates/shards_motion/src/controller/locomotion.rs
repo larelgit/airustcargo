@@ -211,8 +211,10 @@ impl Step<'_, '_> {
             v = clip(v, touch.normal);
         }
         self.state.velocity = v;
+        // A lip no higher than a step is no ledge: the fall ends on the tread below it,
+        // and the walk steps up.
         if let Some(wall) = moved.wall()
-            && let Some(feet) = self.try_mantle(moved.feet, &wall, 0.0, true)
+            && let Some(feet) = self.try_mantle(moved.feet, &wall, p.step_height, true)
         {
             return feet;
         }

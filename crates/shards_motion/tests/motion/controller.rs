@@ -212,6 +212,60 @@ fn stairs_are_climbed_from_any_start_at_any_pace_and_angle() {
     assert!(failed.is_empty(), "{} climbs failed:\n{}", failed.len(), failed.join("\n"));
 }
 
+/// Runners in parallel lanes 3 m apart, each pressing jump once at its own tick and
+/// stopping past `goal_x`. Describes every one that mantled, or did not end standing
+/// past `goal_x` at height `top`.
+fn jump_at_every_timing(name: &str, build: impl Fn(&mut World), starts: &[f32], goal_x: f32, top: f32) -> Vec<String> {
+    let mut app = app();
+    floor(app.world_mut());
+    build(app.world_mut());
+    let mut runners = Vec::new();
+    for (lane, &start) in starts.iter().enumerate() {
+        for timing in 0..10 {
+            let z = -60.0 + 3.0 * (lane * 10 + timing) as f32;
+            let e = hero(app.world_mut(), Vec3::new(start, 0.0, z));
+            walk(app.world_mut(), e, Vec3::X);
+            runners.push((e, timing as u64 * 2, format!("{name}, start x={start}, jump at tick {}", timing * 2)));
+        }
+    }
+    for tick in 0..300 {
+        for (e, at, _) in &runners {
+            if *at == tick {
+                press_jump(app.world_mut(), *e);
+            }
+            if feet(&app, *e).x > goal_x {
+                walk(app.world_mut(), *e, Vec3::ZERO);
+            }
+        }
+        step(&mut app, 1);
+    }
+    let seen = seen(&app);
+    let mut failed = Vec::new();
+    for (e, _, run) in runners {
+        let at = feet(&app, e);
+        let climbs: Vec<f32> = seen.mantled.iter().filter(|m| m.entity == e).map(|m| m.height).collect();
+        if !climbs.is_empty() {
+            failed.push(format!("{run}: mantled {climbs:?}"));
+        }
+        if at.x < goal_x || (at.y - top - SKIN).abs() > 1e-3 {
+            failed.push(format!("{run}: stopped at {at}"));
+        }
+    }
+    failed
+}
+
+#[test]
+fn jumping_onto_low_steps_never_climbs_them() {
+    // Lips under step_height are stepped onto, in the air as on the ground: no 0.4 s
+    // climb, and no getting stuck where the jump comes down against a riser.
+    let mut failed = jump_at_every_timing("stairs", |w| wide_stairs(w, 0.25, 8), &[0.0, 0.25, 0.5, 1.0], 6.5, 2.0);
+    let curb = |w: &mut World| {
+        block(w, Vec3::new(3.0, 0.0, -80.0), Vec3::new(80.0, 0.3, 80.0));
+    };
+    failed.extend(jump_at_every_timing("curb", curb, &[0.0, 0.5, 1.0, 1.5], 4.5, 0.3));
+    assert!(failed.is_empty(), "{} runs failed:\n{}", failed.len(), failed.join("\n"));
+}
+
 #[test]
 fn a_ledge_within_reach_is_mantled() {
     let mut app = app();
