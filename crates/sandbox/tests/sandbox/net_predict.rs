@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use shards::action::{ActionStarted, PredictedAction};
+use shards::action::{ActionStarted, ActionState, PredictedAction};
 use shards::ai_core::net_rules::NetRules;
 use shards::ai_core::state::{StateEncoder, StateRule};
 use shards::ai_core::{sim, SimTick};
@@ -148,9 +148,79 @@ fn a_pillar_stops_the_predicted_body_where_it_stops_the_hosts() {
     assert!(there.z > 8.0 && here.z > 8.0, "the pillar (z 6..8) held both: {here} / {there}");
     let (mean, max, n) = track.error(from);
     println!("pillar: prediction error mean {mean:.4} m, max {max:.4} m over {n} ticks");
+    assert!(n > 100, "{n}");
     assert!(max < 0.1, "the contact is predicted as the host has it: max error {max}");
     assert!(here.distance(there) < 0.05, "{here} vs {there}");
     assert_eq!(correction(&stand, C1).snaps, snaps);
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+}
+
+#[test]
+fn a_path_of_legs_is_walked_without_a_stop_at_each_waypoint() {
+    let mut stand = stand_with(1, lossy());
+    calm(&mut stand);
+    let id = body(&stand, C1);
+    put(&mut stand, &id, 30.0, 0.0, 0.0);
+    let snaps = correction(&stand, C1).snaps;
+    let from = sim::tick(stand.world(C1));
+    // A zigzag down the corridor (z -4..4), one order per leg.
+    for (n, (x, z)) in [(33.0, 2.0), (36.0, -2.0), (39.0, 2.0), (36.0, 0.0)].into_iter().enumerate() {
+        let out = stand.call(C1, "move_to", json!({"target": {"x": x, "z": z}, "queue": n > 0}));
+        assert!(out.ok, "{}", out.result);
+    }
+    assert_eq!(stand.world(C1).get::<Intent>(own(&stand, C1)).unwrap().orders.len(), 4);
+    let mut track = Track::default();
+    track.run(&mut stand, C1, &id, 300);
+    let there = position(&stand, HOST, &id);
+    assert!((there.x - 36.0).abs() < 0.5 && there.z.abs() < 0.5, "walked every leg: {there}");
+    let (mean, max, n) = track.error(from);
+    println!("legs: prediction error mean {mean:.4} m, max {max:.4} m over {n} ticks");
+    assert!(n > 200, "{n}");
+    assert!(max < 0.05, "the turns are predicted as the host makes them: max error {max} (mean {mean})");
+    assert_eq!(correction(&stand, C1).snaps, snaps, "{:#?}", journal(&stand, C1));
+    let mine = stand.world(C1).get::<Intent>(own(&stand, C1)).unwrap();
+    assert!(mine.orders.is_empty(), "the host's end of the path came back: {:?}", mine.orders);
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+    verify_host(&stand);
+}
+
+#[test]
+fn a_world_taken_again_while_walking_puts_the_body_back_on_the_hosts_time() {
+    let mut stand = stand_with(1, lossy());
+    calm(&mut stand);
+    let id = body(&stand, C1);
+    put(&mut stand, &id, 25.0, 0.0, 0.0);
+    let out = stand.call(C1, "move", json!({"dir": "E", "meters": 16}));
+    assert!(out.ok, "{}", out.result);
+    stand.run(30);
+    let snaps = correction(&stand, C1).snaps;
+    assert!(stand.call(HOST, "net_resync", json!({})).ok);
+    // The body comes back where the host had it at its tick, which this clock is ahead of:
+    // the first comparison puts it on the host's time at once.
+    let mut track = Track::default();
+    run_until(&mut stand, 120, "the world again", |s| has_line(s, C1, "net: the host's world again (asked)"));
+    let mut fixed_at = None;
+    for _ in 0..120 {
+        track.run(&mut stand, C1, &id, 1);
+        if correction(&stand, C1).snaps > snaps {
+            fixed_at = Some(sim::tick(stand.world(C1)));
+            break;
+        }
+    }
+    let fixed_at = fixed_at.unwrap_or_else(|| panic!("a snap: {:#?}", journal(&stand, C1)));
+    let line = correction(&stand, C1).last_snap.clone().unwrap().1;
+    assert!(line.ends_with("(snap: world taken)"), "{line}");
+    track.run(&mut stand, C1, &id, 90);
+    let (mean, max, n) = track.error(fixed_at);
+    println!("after the world again: prediction error mean {mean:.4} m, max {max:.4} m over {n} ticks");
+    assert!(n > 60, "{n}");
+    assert!(max < 0.05, "no rubber band after it: max error {max} (mean {mean})");
+    // To the end of the walk (x 41): where the host stops it.
+    stand.run(150);
+    let (here, there) = (position(&stand, C1, &id), position(&stand, HOST, &id));
+    assert!((there.x - 41.0).abs() < 0.5, "walked on: {there}");
+    assert!(here.distance(there) < 0.05, "{here} vs {there}");
+    assert_eq!(correction(&stand, C1).snaps, snaps + 1, "{:#?}", journal(&stand, C1));
     assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
 }
 
@@ -215,6 +285,25 @@ fn a_dodge_without_the_stamina_is_refused_at_once() {
     stand.run(30);
     assert_eq!(prediction(&stand, C1).predicted, 0, "nothing predicted");
     assert!(stand.world(C1).get::<PredictedAction>(own(&stand, C1)).is_none());
+}
+
+/// An order the raised guard holds off for as long as it is held (the flask: no cancel from
+/// the block into it) is refused as in a single game, by the block shown here.
+#[test]
+fn an_attack_order_a_raised_guard_cannot_start_is_refused_at_once() {
+    let mut stand = stand_with(1, lossy());
+    calm(&mut stand);
+    stand.run(40);
+    let me = own(&stand, C1);
+    assert!(stand.call(C1, "block", json!({})).ok);
+    // Raised here (0.15 s), not yet in the host's state that came back.
+    stand.run(14);
+    let shown = stand.world(C1).get::<PredictedAction>(me).cloned().expect("the block is shown");
+    assert_eq!(shown.action, "block");
+    assert!(stand.world(C1).get::<ActionState>(me).unwrap().current.is_none(), "the host's state is older");
+    let out = stand.call(C1, "attack", json!({"target": BOSS, "input": "use_item"}));
+    assert!(!out.ok, "{}", out.result);
+    assert!(text(&out).contains("while `block` is held; release it first"), "{}", text(&out));
 }
 
 #[test]
