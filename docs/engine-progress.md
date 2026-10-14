@@ -279,6 +279,7 @@ Xvfb показывает его вместе с оверлеем навсетк
 `net_kick_sends_away_a_peer_that_has_no_player_yet`, `a_player_the_game_keeps_waiting_is_not_dropped_for_joining_slowly_and_a_kick_reaches_it`).
 Мир больше того, что берёт канал, отказывается один раз (`a_world_over_what_a_link_carries_sends_its_player_away_once_instead_of_waiting_every_tick`,
 `a_world_no_link_carries_is_tried_not_waited_for`).
+Отказанная загрузка снапшота не вытесняет старые строки журнала (`a_refused_load_does_not_push_the_oldest_journal_lines_out`).
 
 ## E8. Сохранения и настройки (фаза C)
 

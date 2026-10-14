@@ -529,8 +529,9 @@ struct Before {
     world: Snapshot,
     /// Which entity each id was: the replay recorder's input memories follow them.
     entities: Vec<(AiId, Entity)>,
-    /// The journal's last line then.
-    journal: Option<u64>,
+    /// The journal then: the lines the attempt writes are taken back, and the oldest it pushed
+    /// out of a full ring brought back.
+    journal: Option<journal::JournalMark>,
 }
 
 impl Before {
@@ -540,7 +541,7 @@ impl Before {
         Ok(Before {
             world: capture(world)?,
             entities: world.resource::<AiIndex>().live(),
-            journal: world.get_resource::<journal::AiJournal>().map(journal::AiJournal::last_seq),
+            journal: world.get_resource::<journal::AiJournal>().map(journal::AiJournal::mark),
         })
     }
 
@@ -568,10 +569,10 @@ impl Before {
         // The lines of the attempt and of its undoing told of regions that came and went
         // again: one line says what happened instead.
         journal::drain_logs(world);
-        if let Some(seen) = self.journal
+        if let Some(mark) = self.journal
             && let Some(mut lines) = world.get_resource_mut::<journal::AiJournal>()
         {
-            lines.discard_after(seen);
+            lines.rewind(mark);
             let outcome = if failed.is_empty() { "the world is as it was before the load" } else { "the world could not be put back entirely" };
             journal::log(world, JournalKind::Warn, format!("snapshot of tick {tick} not loaded ({reason}): {outcome}"));
         }
@@ -1487,6 +1488,35 @@ mod tests {
         seeded.seed = 9;
         assert!(restore(other.world_mut(), &seeded, false).unwrap_err().contains("seed 9"));
         assert_eq!(hills_hash(other.world()), 2);
+    }
+
+    #[test]
+    fn a_refused_load_does_not_push_the_oldest_journal_lines_out() {
+        let mut original = hilly(3, true);
+        step(&mut original, 2);
+        let mut snapshot = capture(original.world()).unwrap();
+        // Refused after the prepare built the snapshot's hills, by a check it covers.
+        snapshot.checks.insert("hills".into(), format!("{:016x}", 7));
+
+        let mut app = hilly(1, true);
+        // A full ring of 20 lines: whatever the attempt writes pushes the oldest out.
+        app.world_mut().insert_resource(journal::AiJournal::with_capacity(20));
+        for i in 0..30 {
+            journal::log(app.world_mut(), JournalKind::Sim, format!("line {i}"));
+        }
+        let lines = |app: &App| -> Vec<String> { app.world().resource::<journal::AiJournal>().after(0).0.map(|e| e.text.clone()).collect() };
+        let before = lines(&app);
+        assert_eq!((before.len(), before[0].as_str()), (20, "line 10"));
+        let err = restore(app.world_mut(), &snapshot, false).unwrap_err();
+        assert!(err.contains("hills differs"), "{err}");
+        let after = lines(&app);
+        // The attempt wrote lines (the hills raised, and raised back) and they are gone; the one
+        // line that says what happened pushes out one old line, as any line would.
+        assert_eq!(after.len(), 20);
+        assert_eq!(after[..19], before[1..], "the lines before the load are still there");
+        assert!(after[19].starts_with("snapshot of tick 2 not loaded"), "{}", after[19]);
+        // The journal still counts every line that was written.
+        assert!(app.world().resource::<journal::AiJournal>().last_seq() > 31);
     }
 
     #[test]
