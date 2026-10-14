@@ -72,6 +72,17 @@ impl LevelInstances {
         self.list.iter().find(|i| i.id == id)
     }
 
+    /// The number the next instance gets.
+    pub fn peek_next(&self) -> u32 {
+        self.last + 1
+    }
+
+    /// Makes `next` the number the next instance gets: a module that places files again as
+    /// they were placed before (a region a snapshot puts back) gives them their numbers.
+    pub fn restart_at(&mut self, next: u32) {
+        self.last = next.saturating_sub(1);
+    }
+
     fn next_id(&mut self) -> u32 {
         self.last += 1;
         self.last

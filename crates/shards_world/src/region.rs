@@ -18,16 +18,21 @@
 //! the new one comes, players move to its spawn, and the state returns to `InGame` without
 //! running `OnEnter(InGame)` again. When another module still loads something, the loading
 //! gate holds the ticks until it is done, so a region change never shifts a tick.
+//!
+//! Snapshots keep the region by its [`RegionBuild`]: the manifest and the first collider id
+//! and level instance its tiles took. A snapshot taken in a region builds that region again
+//! where it is loaded, before it is checked ([`snapshot_prepare`]), down to the same ids; one
+//! taken without a region unloads the one in the world.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use ai_core::journal::{self, JournalKind};
-use ai_core::{AiId, AiKind, AiLandmark, AiPlayer, SimGate};
+use ai_core::{AiId, AiKind, AiLandmark, AiPlayer, SimGate, Snapshot};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::{spawn_prefab, ContentDb};
 use shards_core::{loading_statuses, EngineConfig, EngineState, Intent, LoadStatus, PlayerId};
-use shards_motion::{Collider, ColliderId, CollisionLayers, LayerMask, PhysicsWorld, QueryFilter, Shape, Volume};
+use shards_motion::{Collider, ColliderId, ColliderIds, CollisionLayers, LayerMask, PhysicsWorld, QueryFilter, Shape, Volume};
 
 use crate::checks::RegionGraph;
 use crate::content::{PoiDef, RoomDef, TileDef, TileGeometry, TilePiece};
@@ -111,6 +116,12 @@ pub type LevelCheckFn = fn(&World, &str) -> Result<(), String>;
 /// about them (spawned instances, visual scenes).
 pub type LevelForgetFn = fn(&mut World, &[Entity]);
 
+/// The number the loader gives the next file it places (loaders number their instances).
+pub type LevelNextFn = fn(&World) -> u32;
+
+/// Makes that number `n`: a region a snapshot puts back gets the numbers it had.
+pub type LevelRestartFn = fn(&mut World, u32);
+
 /// The level loader, if a module registered one
 /// ([`WorldAppExt::set_level_spawner`](crate::WorldAppExt::set_level_spawner)). The umbrella
 /// crate registers `shards_level`'s (`shards::TileLevelsPlugin`, part of `EnginePlugins`), so
@@ -128,14 +139,39 @@ pub struct LevelSpawner {
     pub status: LevelStatusFn,
     pub check: LevelCheckFn,
     pub forget: LevelForgetFn,
+    pub next_instance: LevelNextFn,
+    pub restart_instances: LevelRestartFn,
 }
 
 impl LevelSpawner {
-    /// A loader that only spawns: files need no loading, every file passes, nothing is kept.
-    /// Replace the fields a real loader needs.
+    /// A loader that only spawns: files need no loading, every file passes, nothing is kept
+    /// or numbered. Replace the fields a real loader needs.
     pub fn new(spawn: LevelSpawnFn) -> Self {
-        Self { spawn, request: |_, _| {}, status: |_, _| LoadStatus::Ready, check: |_, _| Ok(()), forget: |_, _| {} }
+        Self {
+            spawn,
+            request: |_, _| {},
+            status: |_, _| LoadStatus::Ready,
+            check: |_, _| Ok(()),
+            forget: |_, _| {},
+            next_instance: |_| 0,
+            restart_instances: |_, _| {},
+        }
     }
+}
+
+/// How the region in the world was built: its manifest and the first collider id and level
+/// instance number its tiles took (in a world with no region: none). Saved in snapshots, so
+/// a snapshot taken in a region builds it again, the same down to the ids, where it is
+/// loaded ([`snapshot_prepare`]).
+#[derive(Resource, Reflect, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[reflect(Resource, Default)]
+pub struct RegionBuild {
+    /// [`RegionManifest::to_canonical`].
+    pub manifest: String,
+    /// [`ColliderIds`] when it was built.
+    pub first_collider: u32,
+    /// The level loader's next instance number when it was built.
+    pub first_level: u32,
 }
 
 /// Run after a region is built, inside the call that builds it (behind the loading screen,
@@ -482,6 +518,7 @@ pub fn despawn_region(world: &mut World) -> usize {
         }
     }
     world.remove_resource::<ActiveRegion>();
+    world.remove_resource::<RegionBuild>();
     count
 }
 
@@ -590,7 +627,10 @@ pub fn change_region(world: &mut World, manifest: RegionManifest) -> Result<Regi
 
 /// Spawns `manifest`, makes it the active region and moves the players there.
 fn install(world: &mut World, manifest: RegionManifest) -> Result<RegionSpawned, String> {
+    let first_collider = world.get_resource::<ColliderIds>().map_or(0, |ids| ids.peek().0);
+    let first_level = world.get_resource::<LevelSpawner>().copied().map_or(0, |l| (l.next_instance)(world));
     let spawned = spawn_region(world, &manifest)?;
+    world.insert_resource(RegionBuild { manifest: manifest.to_canonical(), first_collider, first_level });
     let (graph, radius) = {
         let db = world.resource::<ContentDb>();
         let radius = match manifest.layout {
@@ -614,6 +654,44 @@ fn install(world: &mut World, manifest: RegionManifest) -> Result<RegionSpawned,
         }
     }
     Ok(spawned)
+}
+
+/// Snapshot prepare (registered by [`WorldPlugin`](crate::WorldPlugin)): the region of the
+/// snapshot (its [`RegionBuild`]) is built again when the world has another one, or the same
+/// one built with other ids; the region in the world goes when the snapshot was taken
+/// without one. Inside the load, with no loading screen: the snapshot puts back players and
+/// characters right after. Refuses, changing nothing, a manifest content cannot build.
+pub fn snapshot_prepare(world: &mut World, snapshot: &Snapshot) -> Result<Option<String>, String> {
+    let saved = match snapshot.resources.get(<RegionBuild as TypePath>::type_path()) {
+        Some(value) => Some(serde_json::from_value::<RegionBuild>(value.clone()).map_err(|e| format!("its region record does not read: {e}"))?),
+        None => None,
+    };
+    let current = world.get_resource::<RegionBuild>().cloned();
+    if saved == current {
+        return Ok(None);
+    }
+    let Some(build) = saved else {
+        let title = world.get_resource::<ActiveRegion>().map(|r| r.manifest.title()).unwrap_or_default();
+        let removed = despawn_region(world);
+        journal::emit(world, JournalKind::Event, format!("region unloaded: {title} ({removed} entities)"));
+        return Ok(Some(format!("region {title} unloaded: the snapshot was taken without one")));
+    };
+    let manifest = RegionManifest::from_json(&build.manifest)?;
+    plan(world, &manifest)?;
+    if let Some(old) = world.get_resource::<ActiveRegion>().map(|r| r.manifest.title()) {
+        let removed = despawn_region(world);
+        journal::emit(world, JournalKind::Event, format!("region unloaded: {old} ({removed} entities)"));
+    }
+    // The ids the tiles had: the snapshot sets the counters to its own right after.
+    if let Some(mut ids) = world.get_resource_mut::<ColliderIds>() {
+        ids.restart_at(ColliderId(build.first_collider));
+    }
+    if let Some(LevelSpawner { restart_instances, .. }) = world.get_resource::<LevelSpawner>().copied() {
+        restart_instances(world, build.first_level);
+    }
+    let title = manifest.title();
+    let spawned = install(world, manifest)?;
+    Ok(Some(format!("{title} built again from its manifest ({} entities)", spawned.entities)))
 }
 
 /// Back to `InGame` now if nothing else loads; else the gate holds the ticks under each

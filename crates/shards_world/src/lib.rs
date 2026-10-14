@@ -59,7 +59,7 @@ mod ai;
 mod overlay;
 mod tools;
 
-use ai_core::SimSet;
+use ai_core::{AiAppExt, SimSet};
 use bevy::prelude::*;
 use shards_content::ContentAppExt;
 use shards_core::{CoreSystems, EngineAppExt};
@@ -74,9 +74,9 @@ pub use manifest::RegionManifest;
 #[cfg(feature = "render")]
 pub use overlay::TileOverlay;
 pub use region::{
-    change_region, despawn_region, level_paths, level_users, spawn_region, ActiveRegion, LevelCheckFn, LevelForgetFn, LevelRequestFn,
-    LevelSpawn, LevelSpawnFn, LevelSpawner, LevelStatusFn, Marker, Poi, RegionLoadedHooks, RegionPart, RegionTile, StartRegion,
-    TileId,
+    change_region, despawn_region, level_paths, level_users, spawn_region, ActiveRegion, LevelCheckFn, LevelForgetFn, LevelNextFn,
+    LevelRequestFn, LevelRestartFn, LevelSpawn, LevelSpawnFn, LevelSpawner, LevelStatusFn, Marker, Poi, RegionBuild, RegionLoadedHooks,
+    RegionPart, RegionTile, StartRegion, TileId,
 };
 pub use report::BatchReport;
 pub use stream::{TileVisual, TileVisualFn, TileVisualSpawn};
@@ -204,6 +204,11 @@ impl Plugin for WorldPlugin {
             .register_type::<Marker>()
             .register_type::<ActiveZone>()
             .register_type::<Dormant>()
+            // Snapshots: the region in the world is saved as its manifest (and the ids it took)
+            // and built again before a load is checked, so its static colliders and level
+            // files compare with the snapshot's.
+            .add_snapshot_resource::<RegionBuild>()
+            .add_snapshot_prepare("region", &["static_colliders", "levels"], region::snapshot_prepare)
             .init_resource::<WorldSettings>()
             .init_resource::<WorldGen>()
             .init_resource::<StartRegion>()

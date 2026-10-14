@@ -187,3 +187,60 @@ fn worldgen_report_runs_in_a_live_game() {
     let none = err(&mut app, "goto_tile", json!({"x": 0, "y": 0}));
     assert!(none.contains("no region in the world"), "{none}");
 }
+
+#[test]
+fn a_snapshot_taken_in_a_region_builds_it_again_where_it_is_loaded() {
+    use shards::ai_core::snapshot::{capture, restore};
+    // A session that changes region, walks the navmesh and is saved on the way.
+    let mut original = app(5, Some("meadow"));
+    ok(&mut original, "step", json!({"ticks": 10}));
+    ok(&mut original, "regen", json!({"region": "crypt", "seed": 2}));
+    let boss = region(&original).manifest.pois.iter().find(|p| p.poi == "boss").unwrap().position();
+    ok(&mut original, "move_to", json!({"target": {"x": boss.x, "z": boss.z}, "path": true}));
+    ok(&mut original, "step", json!({"ticks": 40}));
+    let snapshot = capture(original.world()).unwrap();
+    ok(&mut original, "step", json!({"ticks": 60}));
+
+    // A fresh game stands in its start meadow: the crypt is built again, with the same ids,
+    // before the load compares static colliders.
+    let mut copy = app(5, Some("meadow"));
+    let report = restore(copy.world_mut(), &snapshot, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert!(report.warnings.iter().any(|w| w.starts_with("region: crypt seed 2 v1 built again from its manifest")), "{:?}", report.warnings);
+    assert_eq!(region(&copy).manifest, region(&original).manifest);
+    assert!(copy.world().get_resource::<shards::npc::NavRegion>().is_some_and(|nav| nav.hash == region(&copy).hash));
+    ok(&mut copy, "step", json!({"ticks": 60}));
+    assert_eq!(state_hash(copy.world()), state_hash(original.world()));
+    assert_eq!(capture(copy.world()).unwrap().entities, capture(original.world()).unwrap().entities);
+    let hero = hero(&mut copy);
+    assert!(pos(&copy, hero).distance(snapshot_pos(&snapshot)) > 1.0, "the hero walked on");
+
+    // Loaded where it was taken: the region is already the one, nothing is built.
+    let again = restore(copy.world_mut(), &snapshot, false).unwrap();
+    assert!(again.exact() && again.warnings.iter().all(|w| !w.starts_with("region:")), "{:?}", again.warnings);
+
+    // A snapshot of a game without a region unloads the region of the game it goes into.
+    let bare = capture(app(5, None).world()).unwrap();
+    let report = restore(copy.world_mut(), &bare, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert!(copy.world().get_resource::<ActiveRegion>().is_none());
+    assert!(report.warnings.iter().any(|w| w.contains("unloaded: the snapshot was taken without one")), "{:?}", report.warnings);
+
+    // A manifest content cannot build is refused before anything changes.
+    let mut foreign = snapshot.clone();
+    let key = "shards_world::region::RegionBuild";
+    let mut record: serde_json::Value = foreign.resources[key].clone();
+    record["manifest"] = json!(record["manifest"].as_str().unwrap().replace("\"tile\": \"", "\"tile\": \"lost_"));
+    foreign.resources.insert(key.into(), record);
+    let mut third = app(5, Some("meadow"));
+    let err = restore(third.world_mut(), &foreign, false).unwrap_err();
+    assert!(err.starts_with("cannot put back the region the snapshot was taken in: the manifest of crypt seed 2 v1 names rooms content does not have: lost_"), "{err}");
+    assert_eq!(region(&third).manifest.region, "meadow", "the meadow stays");
+}
+
+/// Where the snapshot's player stood.
+fn snapshot_pos(snapshot: &shards::ai_core::Snapshot) -> Vec3 {
+    let hero = snapshot.entities.iter().find(|e| e.components.contains_key("world::common::Hero")).expect("the hero");
+    let t = &hero.components["bevy_transform::components::transform::Transform"]["translation"];
+    Vec3::new(t[0].as_f64().unwrap() as f32, t[1].as_f64().unwrap() as f32, t[2].as_f64().unwrap() as f32)
+}

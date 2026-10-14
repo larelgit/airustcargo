@@ -20,7 +20,10 @@
 //!   tick, the `AiId` counter and the tombstones.
 //! - **Rebuilt.** Caches derived from the above (`PhysicsWorld`, the remembered input values
 //!   of the replay recorder) are made again after a load
-//!   ([`add_snapshot_rebuild`](crate::AiAppExt::add_snapshot_rebuild)).
+//!   ([`add_snapshot_rebuild`](crate::AiAppExt::add_snapshot_rebuild)). Parts of the world a
+//!   module builds from a saved resource (a generated region from its manifest) are put back
+//!   *before* the checks below ([`add_snapshot_prepare`](crate::AiAppExt::add_snapshot_prepare)),
+//!   so a snapshot taken in a region loads into a game that has another region, or none.
 //! - **Checked.** What the world is built *around*, not what it holds: the content database,
 //!   the static colliders. A snapshot records a hash of each
 //!   ([`add_snapshot_check`](crate::AiAppExt::add_snapshot_check)) and refuses to load
@@ -193,6 +196,22 @@ struct SnapshotResource {
 /// Runs after a load: a name for the journal and the code.
 type Rebuild = (&'static str, fn(&mut World));
 
+/// What a [`SnapshotPrepare`] does: `Ok(Some(note))` when it changed the world (the note goes
+/// into the load's report), `Ok(None)` when the world already was what the snapshot needs,
+/// `Err` (the world left as it was) when it cannot be.
+pub type PrepareFn = fn(&mut World, &Snapshot) -> Result<Option<String>, String>;
+
+/// Runs before a snapshot is checked against the game: brings a part of the world that a
+/// module builds from one of its saved resources to what the snapshot holds (a generated
+/// region from its manifest), so that the checks it `covers` compare like with like.
+#[derive(Clone, Copy)]
+struct SnapshotPrepare {
+    name: &'static str,
+    /// Registered checks that only mean something once this ran (`static_colliders`).
+    covers: &'static [&'static str],
+    run: PrepareFn,
+}
+
 #[derive(Clone, Copy)]
 struct SnapshotCheck {
     name: &'static str,
@@ -205,6 +224,7 @@ struct SnapshotCheck {
 pub struct SnapshotRegistry {
     resources: Vec<SnapshotResource>,
     checks: Vec<SnapshotCheck>,
+    prepares: Vec<SnapshotPrepare>,
     rebuilds: Vec<Rebuild>,
     keys: Vec<EntityKey>,
 }
@@ -222,6 +242,11 @@ impl SnapshotRegistry {
     pub(crate) fn add_check(&mut self, name: &'static str, hint: &'static str, check: fn(&World) -> u64) {
         self.checks.retain(|c| c.name != name);
         self.checks.push(SnapshotCheck { name, hint, check });
+    }
+
+    pub(crate) fn add_prepare(&mut self, name: &'static str, covers: &'static [&'static str], run: PrepareFn) {
+        self.prepares.retain(|p| p.name != name);
+        self.prepares.push(SnapshotPrepare { name, covers, run });
     }
 
     pub(crate) fn add_rebuild(&mut self, name: &'static str, rebuild: fn(&mut World)) {
@@ -553,14 +578,34 @@ impl LoadReport {
 /// snapshot; playback does the same for a replay's own start).
 pub fn restore(world: &mut World, snapshot: &Snapshot, force: bool) -> Result<LoadReport, String> {
     let mut warnings = Vec::new();
-    let forced = check_compatible(world, snapshot, force, &mut warnings)?;
     let modules = world.get_resource::<SnapshotRegistry>().cloned().unwrap_or_default();
+    let covered: BTreeSet<&str> = modules.prepares.iter().flat_map(|p| p.covers.iter().copied()).collect();
+    let mut forced = check_compatible(world, snapshot, force, &mut warnings, &|name| !covered.contains(name))?;
     let app_registry = world.resource::<AppTypeRegistry>().clone();
 
     let skipped = {
         let registry = app_registry.read();
         check_fits(&registry, &modules, snapshot, force, &mut warnings)?
     };
+
+    // What modules build from their saved resources (a region from its manifest) comes
+    // first: the checks it covers compare the world built so with the snapshot's.
+    for prepare in &modules.prepares {
+        match (prepare.run)(world, snapshot) {
+            Ok(Some(note)) => warnings.push(format!("{}: {note}", prepare.name)),
+            Ok(None) => {}
+            Err(why) => return Err(format!("cannot put back the {} the snapshot was taken in: {why}", prepare.name)),
+        }
+    }
+    if !covered.is_empty() {
+        let mut later = Vec::new();
+        forced |= check_compatible(world, snapshot, force, &mut later, &|name| covered.contains(name))?;
+        for warning in later {
+            if !warnings.contains(&warning) {
+                warnings.push(warning);
+            }
+        }
+    }
 
     {
         let registry = app_registry.read();
@@ -603,9 +648,15 @@ struct Skipped {
     resources: BTreeSet<String>,
 }
 
-/// Format, tick rate, seed, engine version and the registered checks against this game.
-/// Returns whether a mismatch was forced past.
-fn check_compatible(world: &World, snapshot: &Snapshot, force: bool, warnings: &mut Vec<String>) -> Result<bool, String> {
+/// Format, tick rate, seed, engine version and the registered checks `checked` names against
+/// this game. Returns whether a mismatch was forced past.
+fn check_compatible(
+    world: &World,
+    snapshot: &Snapshot,
+    force: bool,
+    warnings: &mut Vec<String>,
+    checked: &dyn Fn(&str) -> bool,
+) -> Result<bool, String> {
     if let Some(loading) = sim::gate_message(world) {
         return Err(loading);
     }
@@ -642,7 +693,7 @@ fn check_compatible(world: &World, snapshot: &Snapshot, force: bool, warnings: &
     }
     let modules = world.get_resource::<SnapshotRegistry>();
     let checks: &[SnapshotCheck] = modules.map_or(&[], |m| &m.checks);
-    for check in checks {
+    for check in checks.iter().filter(|c| checked(c.name)) {
         let now = format!("{:016x}", (check.check)(world));
         match snapshot.checks.get(check.name) {
             Some(saved) if *saved != now => problems.push(format!(
@@ -653,7 +704,7 @@ fn check_compatible(world: &World, snapshot: &Snapshot, force: bool, warnings: &
             None => warnings.push(format!("the snapshot has no `{}` check, so it was not compared", check.name)),
         }
     }
-    for name in snapshot.checks.keys() {
+    for name in snapshot.checks.keys().filter(|n| checked(n)) {
         if !checks.iter().any(|c| c.name == name) {
             warnings.push(format!("the snapshot has a `{name}` check this game does not register, so it was not compared"));
         }
@@ -1233,6 +1284,89 @@ mod tests {
         assert!(!report.exact());
         let text = report.explain_differences();
         assert!(text.contains("the state hash is") && text.contains("add_snapshot_resource"), "{text}");
+    }
+
+    /// Ground a module builds from a saved resource: entities without ids, checked by a hash.
+    #[derive(Resource, Reflect, Default, Clone, PartialEq, Debug, Serialize, Deserialize)]
+    #[reflect(Resource, Default)]
+    struct Terrain {
+        hills: u32,
+    }
+
+    #[derive(Component)]
+    struct Hill;
+
+    fn hills_hash(world: &World) -> u64 {
+        world.iter_entities().filter(|e| e.contains::<Hill>()).count() as u64
+    }
+
+    fn build_hills(world: &mut World, n: u32) {
+        let old: Vec<Entity> = world.iter_entities().filter(|e| e.contains::<Hill>()).map(|e| e.id()).collect();
+        for e in old {
+            world.despawn(e);
+        }
+        for _ in 0..n {
+            world.spawn(Hill);
+        }
+        world.insert_resource(Terrain { hills: n });
+    }
+
+    fn prepare_hills(world: &mut World, snapshot: &Snapshot) -> Result<Option<String>, String> {
+        let saved = snapshot.resources.get(Terrain::type_path()).ok_or("no terrain saved")?;
+        let saved: Terrain = serde_json::from_value(saved.clone()).map_err(|e| e.to_string())?;
+        if world.resource::<Terrain>().hills == saved.hills {
+            return Ok(None);
+        }
+        if saved.hills > 9 {
+            return Err(format!("{} hills do not fit", saved.hills));
+        }
+        build_hills(world, saved.hills);
+        Ok(Some(format!("{} hills built", saved.hills)))
+    }
+
+    fn hilly(hills: u32, prepare: bool) -> App {
+        let mut app = game();
+        app.add_snapshot_resource::<Terrain>().add_snapshot_check("hills", "build the same hills first", hills_hash);
+        if prepare {
+            app.add_snapshot_prepare("terrain", &["hills"], prepare_hills);
+        }
+        build_hills(app.world_mut(), hills);
+        app
+    }
+
+    #[test]
+    fn a_prepare_builds_what_the_checks_it_covers_compare() {
+        let mut original = hilly(3, true);
+        step(&mut original, 4);
+        let snapshot = capture(original.world()).unwrap();
+
+        // Without the module's prepare the ground differs, and the load is refused.
+        let mut plain = hilly(1, false);
+        let err = restore(plain.world_mut(), &snapshot, false).unwrap_err();
+        assert!(err.contains("hills differs") && err.contains("build the same hills first"), "{err}");
+
+        let mut copy = hilly(1, true);
+        let report = restore(copy.world_mut(), &snapshot, false).unwrap();
+        assert!(report.exact(), "{:?}", report.differences);
+        assert_eq!(report.warnings, ["terrain: 3 hills built"]);
+        assert_eq!((hills_hash(copy.world()), sim::tick(copy.world())), (3, 4));
+        // Already the snapshot's ground: nothing to do, nothing said.
+        assert!(restore(copy.world_mut(), &snapshot, false).unwrap().warnings.is_empty());
+
+        // A ground the module cannot build: refused, and the world is as it was.
+        let mut big = snapshot.clone();
+        big.resources.insert(Terrain::type_path().into(), serde_json::json!({"hills": 12}));
+        let mut other = hilly(2, true);
+        step(&mut other, 2);
+        let before = capture(other.world()).unwrap();
+        let err = restore(other.world_mut(), &big, false).unwrap_err();
+        assert_eq!(err, "cannot put back the terrain the snapshot was taken in: 12 hills do not fit");
+        assert_eq!((capture(other.world()).unwrap(), hills_hash(other.world())), (before, 2));
+        // Another seed is refused before the module builds anything.
+        let mut seeded = snapshot.clone();
+        seeded.seed = 9;
+        assert!(restore(other.world_mut(), &seeded, false).unwrap_err().contains("seed 9"));
+        assert_eq!(hills_hash(other.world()), 2);
     }
 
     #[test]

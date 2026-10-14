@@ -287,6 +287,14 @@ pub trait AiAppExt {
     /// replaces the first.
     fn add_snapshot_rebuild(&mut self, name: &'static str, rebuild: fn(&mut World)) -> &mut Self;
 
+    /// Runs before a snapshot is checked against this game, to build again the part of the
+    /// world the module makes from one of its saved resources when it is not what the
+    /// snapshot holds (a generated region, from the manifest it saved): the registered checks
+    /// named in `covers` (`static_colliders`, `levels`) run after it. `prepare` returns a note
+    /// when it changed the world, and leaves the world as it was when it returns an error. A
+    /// second one with the same name replaces the first.
+    fn add_snapshot_prepare(&mut self, name: &'static str, covers: &'static [&'static str], prepare: snapshot::PrepareFn) -> &mut Self;
+
     /// How references to entities without an `AiId` are written in snapshots (see
     /// [`EntityKey`]).
     fn add_snapshot_entity_key(&mut self, key: EntityKey) -> &mut Self;
@@ -383,6 +391,11 @@ impl AiAppExt for App {
 
     fn add_snapshot_rebuild(&mut self, name: &'static str, rebuild: fn(&mut World)) -> &mut Self {
         self.world_mut().get_resource_or_init::<SnapshotRegistry>().add_rebuild(name, rebuild);
+        self
+    }
+
+    fn add_snapshot_prepare(&mut self, name: &'static str, covers: &'static [&'static str], prepare: snapshot::PrepareFn) -> &mut Self {
+        self.world_mut().get_resource_or_init::<SnapshotRegistry>().add_prepare(name, covers, prepare);
         self
     }
 

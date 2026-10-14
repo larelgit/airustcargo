@@ -445,6 +445,31 @@ fn a_session_with_level_tiles_changing_regions_replays_identically() {
 }
 
 #[test]
+fn a_snapshot_taken_among_level_tiles_builds_them_again_with_their_numbers() {
+    use shards::ai_core::snapshot::{capture, restore};
+    let dir = site("snapshot", &[]);
+    let mut original = app_in(&dir, 7, Some("lawns"));
+    ok(&mut original, "step", json!({"ticks": 12}));
+    ok(&mut original, "regen", json!({"region": "ruins", "seed": 3}));
+    ok(&mut original, "regen", json!({"region": "mixed", "seed": 4}));
+    ok(&mut original, "move", json!({"dir": "E", "meters": 6}));
+    ok(&mut original, "step", json!({"ticks": 20}));
+    let snapshot = capture(original.world()).unwrap();
+    ok(&mut original, "step", json!({"ticks": 30}));
+    let numbers = |app: &App| app.world().resource::<LevelInstances>().iter().map(|i| i.id).collect::<Vec<u32>>();
+    assert!(numbers(&original).iter().all(|n| *n > 4), "the ruins took the first numbers: {:?}", numbers(&original));
+
+    // A fresh game in its lawns: the level tiles come back under the numbers they had, so the
+    // levels and the static colliders compare equal.
+    let mut copy = app_in(&dir, 7, Some("lawns"));
+    let report = restore(copy.world_mut(), &snapshot, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert_eq!(numbers(&copy), numbers(&original));
+    ok(&mut copy, "step", json!({"ticks": 30}));
+    assert_eq!(state_hash(copy.world()), state_hash(original.world()));
+}
+
+#[test]
 fn the_first_level_tiles_of_a_session_join_its_recording_where_they_were_made() {
     // The replay check of levels joins with the first level that is spawned: here in the
     // middle of a session that began in a region without any.

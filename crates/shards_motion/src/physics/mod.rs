@@ -329,6 +329,14 @@ impl ColliderIds {
     pub fn peek(&self) -> ColliderId {
         ColliderId(self.next)
     }
+
+    /// Makes `next` the id the next collider gets: a module that builds again what it built
+    /// before (a region a snapshot puts back) gives the colliders the ids they had. Ids must
+    /// stay unique: only for a world where no collider has `next` or a later one, or whose
+    /// counter a snapshot sets again right after.
+    pub fn restart_at(&mut self, next: ColliderId) {
+        self.next = next.0.max(1);
+    }
 }
 
 fn assign_collider_id(mut world: DeferredWorld, ctx: HookContext) {
