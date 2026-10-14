@@ -6,7 +6,9 @@
 //!   ([`DirectorDef::tokens`]), so at most that many of its NPCs attack at once. NPCs that
 //!   ask are served longest-waiting first, then in `AiId` order; a token comes back when its
 //!   attack ends, when it was not used within `patience`, or when its holder dies, falls
-//!   dormant, loses its target or leaves the fight.
+//!   dormant, loses its target or leaves the fight; when a player dies or leaves, tokens
+//!   beyond the lowered limit come back at once (the newest first) unless their attack is
+//!   under way.
 //! - **Collision budget and allowed combinations** are checked by the planner when it
 //!   presses: the attacks in flight on one target may cost at most `budget` together, and
 //!   only tag pairs in `allowed` may overlap. A token holder whose attack does not fit
@@ -243,6 +245,35 @@ pub(crate) fn direct(
         }
     }
 
+    // 1b. Fewer living players than when the tokens went out: those beyond the limit come
+    // back, the newest grants first, unless their attack is in flight (it keeps its token to
+    // its end, and the count falls as those end).
+    let mut spare: Vec<(String, u64, AiId, Entity)> = Vec::new();
+    let mut out = Pools::default();
+    for &(id, entity) in &order {
+        if let Ok(f) = npcs.get(entity)
+            && let Some(grant) = &f.token.held
+        {
+            out.add(&grant.director);
+            if !grant.in_flight() {
+                spare.push((grant.director.clone(), grant.since, id, entity));
+            }
+        }
+    }
+    spare.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)).then(b.2.cmp(&a.2)));
+    for (director, _, _, entity) in spare {
+        if out.get(&director) <= limit_of(&director) {
+            continue;
+        }
+        let Ok(mut f) = npcs.get_mut(entity) else { continue };
+        let Some(grant) = f.token.held.take() else { continue };
+        f.token.asking_since = None;
+        let rest = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)).map_or(0.0, |p| p.rest.0);
+        f.plan.rest = f.plan.rest.max(rest);
+        out.remove(&director);
+        returned.push((entity, grant, "limit lowered"));
+    }
+
     // 2. Tokens held per director.
     let mut held = Pools::default();
     for &(_, entity) in &order {
@@ -383,6 +414,12 @@ impl Pools {
         match self.0.iter_mut().find(|(d, _)| d == director) {
             Some((_, n)) => *n += 1,
             None => self.0.push((director.to_owned(), 1)),
+        }
+    }
+
+    fn remove(&mut self, director: &str) {
+        if let Some((_, n)) = self.0.iter_mut().find(|(d, _)| d == director) {
+            *n = n.saturating_sub(1);
         }
     }
 }

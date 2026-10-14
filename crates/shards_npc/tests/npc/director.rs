@@ -222,6 +222,46 @@ fn a_token_on_a_forgotten_target_comes_back() {
     assert!(goal.is_none_or(|g| g.z < 0.0), "it does not walk to where the forgotten one stands: {goal:?}");
 }
 
+/// One of two players leaves: the limit falls from three tokens to two, and a token beyond
+/// it comes back at once unless its attack is under way.
+#[test]
+fn tokens_beyond_a_lowered_limit_come_back() {
+    let mut app = app();
+    record_starts(&mut app);
+    let hero = player(app.world_mut(), 0, Vec3::ZERO);
+    // Far away, unseen: it only counts as a living player (three tokens).
+    let other = player(app.world_mut(), 1, Vec3::new(50.0, 0.0, 50.0));
+    let grunts = ring(&mut app, 5, Vec3::ZERO, "grunt", "jabber", "default");
+    let grants = |app: &App| -> Vec<shards_npc::Grant> {
+        grunts.iter().filter_map(|e| app.world().get::<AttackToken>(*e).unwrap().held.clone()).collect()
+    };
+    let mut ready = false;
+    for _ in 0..2400 {
+        step(&mut app, 1);
+        let held = grants(&app);
+        if held.len() == 3 && held.iter().any(|g| !g.in_flight()) {
+            ready = true;
+            break;
+        }
+    }
+    assert!(ready, "three tokens out, one of them not pressed yet");
+    app.world_mut().despawn(other);
+    step(&mut app, 1);
+    let held = grants(&app);
+    assert!(held.len() <= 2 || held.iter().all(|g| g.in_flight()), "the limit is two now: {held:#?}");
+    assert!(!lines(&app, "returns its attack token unused: limit lowered").is_empty(), "{:#?}", journal(&app));
+    for t in 0..600 {
+        step(&mut app, 1);
+        let held = grants(&app).len();
+        if t > 60 {
+            assert!(held <= 2, "tick {t} after: {held} tokens with one player");
+        }
+        let attacking = grunts.iter().filter(|e| attacking(&app, **e)).count();
+        assert!(attacking <= 2, "tick {t} after: {attacking} attacking one player");
+    }
+    let _ = hero;
+}
+
 #[test]
 fn those_without_a_token_wait_in_their_roles() {
     let mut app = app();
