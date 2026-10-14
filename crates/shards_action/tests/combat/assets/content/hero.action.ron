@@ -1,0 +1,78 @@
+// A small player kit: a three-hit combo, a heavy attack, a roll, a block with a
+// perfect block, a parry, a healing flask and a lunge technique.
+{
+    "light_1": (
+        net_id: 1,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)],
+        cost: (stamina: 10),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 100), damage: 20, poise: 10)],
+        cancels: [(span: Secs(0.3, 0.55), into: [Combo("light", "light_2"), Input("dodge")])],
+        anim: "light_1",
+    ),
+    "light_2": (
+        net_id: 2,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)],
+        cost: (stamina: 10),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 100), damage: 20, poise: 10)],
+        cancels: [(span: Secs(0.3, 0.55), into: [Combo("light", "light_3"), Input("dodge")])],
+        anim: "light_2",
+    ),
+    "light_3": (
+        net_id: 3,
+        phases: [("windup", 0.25), ("active", 0.1), ("recovery", 0.45)],
+        cost: (stamina: 15),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 100), damage: 30, poise: 25)],
+        cancels: [(span: Secs(0.5, 0.8), into: [Input("dodge")])],
+        anim: "light_3",
+    ),
+    "heavy": (
+        net_id: 4,
+        phases: [("windup", 0.5), ("active", 0.15), ("recovery", 0.5)],
+        cost: (stamina: 40),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.5, angle: 120), damage: 45, poise: 40)],
+        hyper_armor: [Phase("windup")],
+    ),
+    "roll": (
+        net_id: 5,
+        phases: [("roll", 0.4), ("recover", 0.1)],
+        cost: (stamina: 25),
+        iframes: [Secs(0.0, 0.18)],
+        displacement: [(0.35, 4.0)],
+        steer: Move,
+    ),
+    "sidestep": (
+        net_id: 13,
+        phases: [("step", 0.4)],
+        cost: (stamina: 25),
+        iframes: [Secs(0.0, 0.18)],
+        steer: Move,
+    ),
+    "block": (
+        net_id: 6,
+        phases: [("raise", 0.1), ("hold", 0.3), ("lower", 0.1)],
+        hold: (input: "block", span: Phase("hold")),
+        guard: (span: Phases("raise", "hold"), perfect: Phase("raise"), damage_mult: 0.1),
+        move_speed: 0.4,
+    ),
+    "parry": (
+        net_id: 7,
+        phases: [("parry", 0.15), ("recover", 0.35)],
+        cost: (stamina: 10),
+        guard: (span: Phase("parry"), perfect: Phase("parry")),
+    ),
+    "drink": (
+        net_id: 8,
+        phases: [("drink", 0.8), ("recover", 0.2)],
+        cost: (charge: "flask"),
+        effects: [(at: 0.5, effect: Heal(40))],
+        move_speed: 0.3,
+    ),
+    "lunge": (
+        net_id: 9,
+        phases: [("windup", 0.1), ("active", 0.3), ("recovery", 0.2)],
+        displacement: [(0.1, 0.0), (0.4, 6.0)],
+        hits: [(span: Phase("active"), shape: Sphere(radius: 0.8), at: (forward: 1.0, up: 1.0), damage: 10)],
+    ),
+    "stagger": (net_id: 10, phases: [("stagger", 0.8)]),
+    "death": (net_id: 12, phases: [("fall", 1.0)]),
+}

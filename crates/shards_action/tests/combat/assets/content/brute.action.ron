@@ -1,0 +1,49 @@
+// An enemy with four telegraphed attacks: a quick swipe, a slam (ground circle, breaks
+// guards, bleeds), a charge (unblockable, hyper-armor) and a shockwave (cannot be
+// parried).
+{
+    "swipe": (
+        net_id: 20,
+        phases: [("windup", 0.5), ("active", 0.15), ("recovery", 0.5)],
+        track_until: 0.3,
+        hits: [(span: Phase("active"), shape: Cone(range: 2.5, angle: 120), damage: 15, poise: 20)],
+        telegraph: (symbol: "!", sound: "brute_swipe"),
+    ),
+    "slam": (
+        net_id: 21,
+        phases: [("windup", 0.8), ("active", 0.1), ("recovery", 0.8)],
+        hits: [(
+            span: Phase("active"),
+            shape: Circle(radius: 4.5),
+            damage: 40,
+            poise: 60,
+            flags: [GuardBreak],
+            status: [("bleed", 60)],
+        )],
+        hyper_armor: [Phases("windup", "active")],
+        telegraph: (symbol: "⚠", sound: "brute_slam"),
+    ),
+    "charge": (
+        net_id: 22,
+        phases: [("windup", 0.6), ("active", 0.5), ("recovery", 0.6)],
+        displacement: [(0.6, 0.0), (1.1, 6.0)],
+        hits: [(
+            span: Phase("active"),
+            shape: Box(width: 1.6, height: 2.0, depth: 1.2),
+            at: (forward: 0.8, up: 1.0),
+            damage: 25,
+            poise: 40,
+            flags: [Unblockable],
+        )],
+        hyper_armor: [Phase("active")],
+        telegraph: (symbol: "↯", zone: Line(length: 7.0, width: 1.6)),
+    ),
+    "shockwave": (
+        net_id: 23,
+        phases: [("windup", 0.7), ("active", 0.2), ("recovery", 0.6)],
+        hits: [(span: Phase("active"), shape: Line(length: 8.0, width: 1.2), damage: 20, flags: [NoParry])],
+        telegraph: (symbol: "~"),
+    ),
+    "brute_stagger": (net_id: 24, phases: [("stagger", 1.0)]),
+    "brute_flinch": (net_id: 25, phases: [("flinch", 0.2)]),
+}
