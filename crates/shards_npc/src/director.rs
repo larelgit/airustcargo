@@ -22,7 +22,7 @@
 use ai_core::{AiId, AiIndex, SimRng, SimTick};
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
-use shards_action::{ActionDef, ActionState, Charges, Cooldowns, Dead, Fighter, InputBuffer, Stamina};
+use shards_action::{ActionState, Charges, Cooldowns, Dead, Fighter, InputBuffer, Stamina};
 use shards_content::ContentDb;
 use shards_core::{flat, PlayerId};
 use shards_motion::Collider;
@@ -160,11 +160,14 @@ pub(crate) fn order(npcs: &Query<Fighting>) -> Vec<(AiId, Entity)> {
     all
 }
 
-/// Whether the attack this grant pressed is running: an action with hits, started by the
-/// press or after it (a combo the planner chained).
-pub(crate) fn running_attack(db: &ContentDb, state: &ActionState, grant: &Grant) -> bool {
+/// Whether the attack this grant pressed is running: an action started by an input (not one
+/// the engine forced: a stagger, a flinch, a death) at the press or after it. Until it is
+/// seen to start, only the pressed input's action counts; once started, what follows it by
+/// input (a combo) is the same attack. Whether the action has hits does not matter: a cast
+/// that throws a projectile from an effect is an attack too.
+pub(crate) fn running_attack(state: &ActionState, grant: &Grant) -> bool {
     state.current.as_ref().is_some_and(|r| {
-        r.instance >= grant.instance && db.get::<ActionDef>(&r.action).is_some_and(|d| !d.hits.is_empty())
+        !r.forced && r.instance >= grant.instance && (grant.started || r.input.is_some() && r.input == grant.input)
     })
 }
 
@@ -195,7 +198,7 @@ pub(crate) fn direct(
         f.plan.tick(dt);
         let Some(mut grant) = f.token.held.clone() else { continue };
         grant.age += dt;
-        let running = running_attack(&db, f.state, &grant);
+        let running = running_attack(f.state, &grant);
         if grant.in_flight() && !grant.started && running {
             grant.started = true;
             if let Some(name) = &grant.attack {

@@ -1,5 +1,6 @@
 {
     "hero": (inputs: {"light": "hero_swing", "dodge": "hero_roll"}),
     "grunt": (inputs: {"light": "jab", "heavy": "smash"}, stagger: "grunt_stagger"),
+    "caster": (inputs: {"light": "cast"}, stagger: "grunt_stagger"),
     "warden": (inputs: {"light": "slash", "heavy": "slam", "technique.1": "sweep", "technique.2": "shockwave"}),
 }

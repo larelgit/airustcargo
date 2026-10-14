@@ -144,6 +144,44 @@ fn only_allowed_combinations_overlap() {
     assert!(light_heavy > 0 && light_light > 0, "allowed overlaps happen: {light_heavy} light+heavy, {light_light} light+light");
 }
 
+/// Bolts the casters' `spawn_bolt` effect threw (a game's projectile, here only counted).
+static BOLTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// An attack without hits of its own (a cast whose projectile is an effect) holds its token
+/// to its end like any other: one token, one caster at a time.
+#[test]
+fn a_cast_without_hits_holds_its_token_to_the_end() {
+    use shards_action::ActionAppExt;
+    let mut app = app_with(|app| {
+        app.add_action_effect("spawn_bolt", |_, _| {
+            BOLTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+    });
+    let hero = player(app.world_mut(), 0, Vec3::ZERO);
+    let casters: Vec<Entity> = (0..3)
+        .map(|i| {
+            let angle = i as f32 / 3.0 * std::f32::consts::TAU + 0.3;
+            let at = Vec3::new(angle.cos(), 0.0, angle.sin()) * 6.0;
+            let npc = Npc::new("grunt", "grunt").with_plan("caster").with_director("single");
+            crate::common::npc(app.world_mut(), "caster", npc, at, (-at).normalize())
+        })
+        .collect();
+    let before = BOLTS.load(std::sync::atomic::Ordering::SeqCst);
+    let mut most = 0;
+    for t in 0..1200 {
+        step(&mut app, 1);
+        let casting = casters.iter().filter(|e| action(&app, **e).as_deref() == Some("cast")).count();
+        assert!(casting <= 1, "tick {t}: {casting} casting with one token");
+        most = most.max(casting);
+    }
+    assert_eq!(most, 1);
+    assert!(BOLTS.load(std::sync::atomic::Ordering::SeqCst) - before >= 5, "the casts threw their bolts");
+    let story = journal(&app);
+    assert!(story.iter().any(|l| l.contains("returns its attack token after light (0/1)")), "{story:#?}");
+    assert!(!story.iter().any(|l| l.contains("attack never started")), "{story:#?}");
+    let _ = hero;
+}
+
 #[test]
 fn those_without_a_token_wait_in_their_roles() {
     let mut app = app();
