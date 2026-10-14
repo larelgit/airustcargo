@@ -12,8 +12,10 @@ use shards_core::{CorePlugin, EngineConfig};
 use shards_level::LevelPlugin;
 use shards_motion::MotionPlugin;
 use shards_npc::NpcPlugin;
+use shards_save::SavePlugin;
 use shards_world::WorldPlugin;
 
+use crate::save_sections::EngineSavePlugin;
 use crate::TileLevelsPlugin;
 
 /// Bevy's `DefaultPlugins` (whatever the cargo features compile in), the log capture
@@ -73,6 +75,9 @@ impl PluginGroup for EnginePlugins {
             // Level files as the geometry of tiles: joins the two above.
             .add(TileLevelsPlugin)
             .add(NpcPlugin)
+            // Saves: the registry and tools, then what the engine itself saves.
+            .add(SavePlugin)
+            .add(EngineSavePlugin)
     }
 }
 
