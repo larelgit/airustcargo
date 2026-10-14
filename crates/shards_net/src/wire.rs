@@ -15,6 +15,11 @@
 //! serializes its own messages). A body over 256 bytes is deflated when that makes it smaller;
 //! messages too big for a datagram are deflated once, before they are fragmented (see `link`).
 //! A datagram with a foreign magic, protocol or session is dropped and counted by the link.
+//!
+//! Inflating is budgeted ([`Budget`]): a datagram may make the receiver produce [`INFLATE_BUDGET`] bytes
+//! in all, its body and its inline messages together. A sender never gets near that: a body is at most
+//! [`MAX_BODY`] bytes before it is deflated, and deflate expands a byte at most 1032-fold, so the most an
+//! honest datagram inflates to is about 1.2 MB.
 
 use std::io::{Read, Write};
 
@@ -32,8 +37,9 @@ pub const HEADER_LEN: usize = 20;
 pub const MAX_BODY: usize = MTU - HEADER_LEN;
 /// Bodies above this size are deflated (when it helps).
 pub const DEFLATE_MIN: usize = 256;
-/// A body is at most one datagram; this bounds what inflating one may produce.
-const MAX_INFLATED_BODY: usize = 16 * 1024;
+/// What inflating one datagram may produce in total, body and inline messages together. The most an
+/// honest datagram can need is `MAX_BODY × 1032` (deflate's best ratio) = 1.2 MB.
+pub(crate) const INFLATE_BUDGET: usize = 2 << 20;
 
 /// Header flag bits.
 pub mod flag {
@@ -105,6 +111,26 @@ pub fn peek(datagram: &[u8]) -> Result<Header, Reject> {
 /// The session a datagram claims, `None` for a datagram that is not ours.
 pub fn peek_session(datagram: &[u8]) -> Option<u32> {
     peek(datagram).ok().map(|h| h.session)
+}
+
+/// What is left of the inflate budget of one datagram: [`decode_with`] takes the body's share, the link
+/// takes each deflated inline message's.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Budget {
+    left: usize,
+}
+
+impl Budget {
+    pub fn new() -> Self {
+        Self { left: INFLATE_BUDGET }
+    }
+
+    /// Inflate `data`, at most `max` bytes and at most what is left; `None` over either.
+    pub fn inflate(&mut self, data: &[u8], max: usize) -> Option<Vec<u8>> {
+        let out = inflate(data, max.min(self.left))?;
+        self.left -= out.len();
+        Some(out)
+    }
 }
 
 /// One message inside a datagram: its bytes, possibly deflated by the link.
@@ -265,13 +291,20 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// Parse a whole datagram. Magic and protocol are checked; the session is the link's business.
+/// Parse a whole datagram with a fresh [`Budget`].
+#[cfg(test)]
 pub(crate) fn decode(datagram: &[u8]) -> Result<(Header, Body), Reject> {
+    decode_with(datagram, &mut Budget::new())
+}
+
+/// Parse a whole datagram. Magic and protocol are checked; the session is the link's business. Inflating
+/// the body takes from `budget`, and a body inflates to at most [`MAX_BODY`] bytes.
+pub(crate) fn decode_with(datagram: &[u8], budget: &mut Budget) -> Result<(Header, Body), Reject> {
     let header = peek(datagram)?;
     let raw = &datagram[HEADER_LEN..];
     let inflated;
     let payload = if header.flags & flag::DEFLATED != 0 {
-        inflated = inflate(raw, MAX_INFLATED_BODY).ok_or(Reject::Malformed)?;
+        inflated = budget.inflate(raw, MAX_BODY).ok_or(Reject::Malformed)?;
         &inflated[..]
     } else {
         raw
@@ -463,6 +496,39 @@ mod tests {
         assert!(z.len() < 500);
         assert_eq!(inflate(&z, 100_000).unwrap(), data);
         assert_eq!(inflate(&z, 99_999), None, "refuses to inflate beyond the cap");
+    }
+
+    #[test]
+    fn the_inflate_budget_is_shared_and_runs_out() {
+        let zeros = |n: usize| deflate(&vec![0u8; n], Compression::default()).unwrap();
+        let mut budget = Budget::new();
+        let a = budget.inflate(&zeros(1 << 20), 1 << 20).unwrap();
+        assert_eq!(a.len(), 1 << 20);
+        let b = budget.inflate(&zeros(1 << 20), 1 << 20).unwrap();
+        assert_eq!(b.len(), 1 << 20);
+        assert_eq!(budget.left, INFLATE_BUDGET - (2 << 20));
+        assert!(budget.inflate(&zeros(10), 1 << 20).is_none(), "a third megabyte, and even ten bytes, are over");
+        assert!(Budget::new().inflate(&zeros(1 << 20), 1000).is_none(), "the per-message cap holds too");
+        // The body takes its share: a body that inflates to 1 KB leaves the messages 1 KB less.
+        let body = Body { unreliable: vec![Msg { data: vec![1; 30], deflated: false }; 30], ..Body::default() };
+        let bytes = encode(&header(), &body);
+        assert_ne!(bytes[3] & flag::DEFLATED, 0, "{} bytes", bytes.len());
+        let mut budget = Budget::new();
+        let (_, back) = decode_with(&bytes, &mut budget).unwrap();
+        assert_eq!(back, body);
+        assert!(budget.left < INFLATE_BUDGET, "the body's inflated bytes were charged");
+        let mut tiny = Budget { left: 100 };
+        assert_eq!(decode_with(&bytes, &mut tiny).unwrap_err(), Reject::Malformed);
+    }
+
+    #[test]
+    fn a_body_that_inflates_past_one_datagram_is_malformed() {
+        // 15 KB of body is what the old 16 KB cap let through; no honest body is over MAX_BODY.
+        let streams = deflate(&vec![0u8; 1 << 20], Compression::default()).unwrap();
+        let body = Body { unreliable: vec![Msg { data: streams, deflated: true }; 15], ..Body::default() };
+        let bytes = encode(&header(), &body);
+        assert!(bytes.len() < 300, "{}", bytes.len());
+        assert_eq!(decode(&bytes).unwrap_err(), Reject::Malformed);
     }
 
     #[test]
