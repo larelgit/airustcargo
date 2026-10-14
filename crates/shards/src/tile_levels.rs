@@ -135,15 +135,20 @@ fn forget(world: &mut World, doomed: &[Entity]) {
 
 /// `Update`: entities of a tile's level that came back from a reload (`level_reload` replaces
 /// them without the region's tags) are tagged again.
-fn retag_reloaded(world: &mut World) {
-    if world.resource::<TileLevels>().instances.is_empty() {
+fn retag_reloaded(
+    untagged: Query<(Entity, &FromLevel, Option<&LevelMarker>), Without<RegionPart>>,
+    tiles: Res<TileLevels>,
+    mut commands: Commands,
+) {
+    if tiles.instances.is_empty() {
         return;
     }
-    let mut untagged = world.query_filtered::<(Entity, &FromLevel), Without<RegionPart>>();
-    let found: Vec<(Entity, u32)> = untagged.iter(world).map(|(entity, from)| (entity, from.instance)).collect();
-    for (entity, instance) in found {
-        let Some(tile) = world.resource::<TileLevels>().instances.get(&instance).copied() else { continue };
-        world.entity_mut(entity).insert((tile, RegionPart));
-        mark(world, entity);
+    for (entity, from, marker) in &untagged {
+        let Some(tile) = tiles.instances.get(&from.instance) else { continue };
+        let mut tagged = commands.entity(entity);
+        tagged.insert((*tile, RegionPart));
+        if let Some(marker) = marker {
+            tagged.insert(Marker { name: marker.name.clone() });
+        }
     }
 }

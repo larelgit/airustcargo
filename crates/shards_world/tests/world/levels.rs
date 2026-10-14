@@ -41,6 +41,12 @@ const TILES: &str = r#"
         slots: [(at: (0.0, 0.0, 0.0), accepts: ["spawn"])],
         geometry: Level(path: "tiles/cracked.gltf"),
     ),
+    // Inline ground with the spawn slot of the one region without level files.
+    "lawn_spawn": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        slots: [(at: (3.0, 0.0, -3.0), accepts: ["spawn"])],
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+    ),
 }
 "#;
 
@@ -66,6 +72,14 @@ const REGIONS: &str = r#"
         tile_size: 16.0,
         version: 1,
         tiles: ["yard", "lawn"],
+        pois: [(poi: "spawn")],
+    ),
+    // No level files at all.
+    "lawns": (
+        size: (2, 2),
+        tile_size: 16.0,
+        version: 1,
+        tiles: ["lawn", "lawn_spawn"],
         pois: [(poi: "spawn")],
     ),
     // Its only tile has a level file with a component that does not exist.
@@ -428,6 +442,28 @@ fn a_session_with_level_tiles_changing_regions_replays_identically() {
     assert!(report.identical(), "{report}");
     assert_eq!(region(&again).manifest.seed, 8);
     assert_eq!(again.world().resource::<LevelInstances>().iter().count(), 6);
+}
+
+#[test]
+fn the_first_level_tiles_of_a_session_join_its_recording_where_they_were_made() {
+    // The replay check of levels joins with the first level that is spawned: here in the
+    // middle of a session that began in a region without any.
+    let dir = site("late", &[]);
+    let mut app = app_in(&dir, 3, Some("lawns"));
+    assert!(app.world().get_resource::<LevelInstances>().is_none_or(|i| i.iter().count() == 0));
+    ok(&mut app, "step", json!({"ticks": 20}));
+    let before = state_hash(app.world());
+    ok(&mut app, "regen", json!({"region": "ruins", "seed": 2}));
+    ok(&mut app, "step", json!({"ticks": 30}));
+    ok(&mut app, "regen", json!({"region": "lawns", "seed": 6}));
+    ok(&mut app, "step", json!({"ticks": 15}));
+    assert_ne!(before, state_hash(app.world()));
+    let recording = shards::ai_core::replay::save(app.world());
+
+    let mut again = fresh_in(&dir, 3, Some("lawns"));
+    let report = testing::verify(&mut again, recording).expect("plays");
+    assert!(report.identical(), "{report}");
+    assert_eq!(again.world().resource::<LevelInstances>().iter().count(), 0, "the level tiles went with their region");
 }
 
 #[test]
