@@ -152,6 +152,9 @@ fn navlinks_join_what_the_ground_does_not() {
     // One way: the ground does not reach the plateau by it.
     let err = route(&app, below, top).unwrap_err();
     assert!(err.contains("only reached the other way"), "{err}");
+    // The query tool, from a point on the plateau (it stands on top of what is there).
+    let out = ok(&mut app, "nav_path", json!({"from": {"x": 14.0, "z": 4.0}, "to": {"x": 4.0, "z": 4.0}}));
+    assert!(out.result["path"].as_str().unwrap().contains("(drop 4.0m)"), "{}", out.result);
     let info = ok(&mut app, "nav_info", json!({}));
     assert_eq!(info.result["navlinks"][0]["name"], "rope");
     assert_eq!(info.result["navlinks"][0]["used"], true);

@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use shards_core::flat;
 use shards_motion::perception::{Leg, PathPlan, StepKind};
-use shards_motion::{physics::sync_physics, CharacterController, CharacterParams, TargetArg};
+use shards_motion::{physics::sync_physics, CharacterController, CharacterParams, LayerMask, PhysicsWorld, QueryFilter, TargetArg};
 
 use crate::brain::{force_state, Home, Npc, NpcBrain, NpcDrive, NpcStateChanged};
 use crate::director::{AttackToken, TokenGranted, TokenReturned};
@@ -201,6 +201,15 @@ fn nav_path(In(call): In<Call<NavPathArgs>>, world: &mut World) -> ToolResult<Va
         }
     };
     let (from, walker) = match &call.args.from {
+        // A point: standing on top of whatever is there (a plateau, a bridge).
+        Some(arg @ TargetArg::Point { .. }) => {
+            let (mut at, _) = place(arg)?;
+            let filter = QueryFilter::new(LayerMask::WORLD);
+            if let Some(hit) = world.resource::<PhysicsWorld>().raycast(at + Vec3::Y * 500.0, Dir3::NEG_Y, 1000.0, &filter) {
+                at.y = hit.point.y;
+            }
+            (at, None)
+        }
         Some(arg) => place(arg)?,
         None => {
             let me = call.caller.require_subject().map_err(|e| format!("{e}; give `from`"))?;
