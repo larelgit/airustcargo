@@ -74,7 +74,9 @@ impl ThirdPersonCamera {
     }
 }
 
-/// How the camera feels; the player's accessibility choices (E8 saves them).
+/// How the camera feels. `fov_deg`, `shake`, `shake_intensity`, `sensitivity` and `invert_y`
+/// are the player's choices: they follow the accessibility and control settings (E8.6, saved
+/// in `settings.toml`) whenever those change. The rest is the game's.
 #[derive(Resource, Reflect, Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[reflect(Resource, Default)]
 #[serde(default)]

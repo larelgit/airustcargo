@@ -70,6 +70,22 @@ fn every_group_survives_a_restart() {
 }
 
 #[test]
+fn a_rebinding_is_kept_and_the_next_run_starts_with_it() {
+    use shards::motion::{Binding, InputMap};
+    let dir = TempDir::new("rebind");
+    let mut app = game_in(&dir);
+    let out = ok(&mut app, "rebind", serde_json::json!({"action": "jump", "binding": "Key(KeyJ)"}));
+    assert!(out.contains("saved to") && out.contains("settings.toml"), "{out}");
+    run_exit_hooks(app.world_mut());
+    drop(app);
+
+    let again = game_in(&dir);
+    let map = again.world().resource::<InputMap>();
+    assert_eq!(map.action("gameplay", "jump").unwrap().bindings[0], Binding::Key(shards::bevy::prelude::KeyCode::KeyJ));
+    assert_eq!(map.action("gameplay", "dodge"), InputMap::standard().action("gameplay", "dodge"), "the rest is the defaults");
+}
+
+#[test]
 fn a_run_that_changed_nothing_writes_nothing() {
     let dir = TempDir::new("quiet");
     let mut app = game_in(&dir);
