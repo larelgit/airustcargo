@@ -485,7 +485,7 @@ mod tests {
         // A state from before tick 10's frame ran on the host: its queue is the old one.
         capture.adopt_orders(9, &mut intent, &host(&[]));
         assert_eq!(intent.orders.len(), 1, "ours is not applied there yet: kept");
-        capture.adopt_orders(10, &mut intent, &host(&[order.clone()]));
+        capture.adopt_orders(10, &mut intent, &host(std::slice::from_ref(&order)));
         assert_eq!(intent.orders.len(), 1);
         // The order finished on the host.
         capture.adopt_orders(12, &mut intent, &host(&[]));
