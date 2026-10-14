@@ -1,0 +1,22 @@
+// The monsters of the generated region: skeletons on a short leash, spawned with the region
+// at its camps and its den (`wilds.poi.ron`).
+{
+    "camp_skeleton": (
+        extends: "skeleton",
+        components: {
+            "Name": "Camp Skeleton",
+            // Stays within 12 m of its camp.
+            "Home": (pos: None, leash: 12.0),
+        },
+    ),
+    "den_guard": (
+        extends: "skeleton",
+        components: {
+            "Name": "Den Guard",
+            // Knows its hall: sees through the pillars (perception `guard`), stays within 10 m
+            // of the den.
+            "Npc": (behavior: "skeleton", perception: "guard", plan: Some("skeleton"), director: ""),
+            "Home": (pos: None, leash: 10.0),
+        },
+    ),
+}

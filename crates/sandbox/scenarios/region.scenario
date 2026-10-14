@@ -1,0 +1,56 @@
+# The generated region (E5): the wilds south of the arena, made from a seed by the world
+# module (8 x 8 tiles of 16 m from `content/region/`, one of them a level file from Blender),
+# loaded behind the loading screen while the game is paused (headless, no tick goes by),
+# walked over its navmesh, and made again: another seed gives another manifest, the same seed
+# and generator version the same one, byte for byte (its hash).
+#
+# The gate (the spawn point) is fixed by content at cell (1, 1): (-40, 72).
+
+seed 42
+
+# --- 1. to the wilds: the region of seed 42 replaces whatever region there was, the player
+# goes to its gate
+act regen region=wilds seed=42
+expect result contains "ok: wilds seed 42 v1"
+expect result contains "spawn at (-40.0, 72.0)"
+expect journal "region generated: wilds seed 42 v1 (attempt "
+expect journal "region loaded: wilds seed 42 v1 (64 tiles"
+expect journal "navmesh: wilds seed 42 v1 (64 tiles"
+act region_info
+expect result contains "\"manifest_hash\": \"d9d721509840d909\""
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god
+observe
+expect result contains "TILE (1, 1) gate rot 0 · wilds seed 42 v1"
+expect result contains "spawn.0 0.0m here"
+
+# --- 2. two tiles south, and back to the gate over the navmesh, as a player plans a walk
+act goto_tile x=1 y=3
+expect result contains "at tile (1, 3)"
+session --agent walker --scope player
+act nav_path to='{"x": -40, "z": 72}'
+expect result contains "\"provider\": \"navmesh\""
+act move_to target='{"x": -40, "z": 72}' path=true within=1
+expect result contains "ok: following path"
+session --agent scenario
+step 120
+step 1800 --until named:near_poi
+expect stopped "near_poi"
+observe
+expect result contains "spawn.0"
+expect result contains "TILE (1, 1) gate"
+
+# --- 3. another seed is another region: another manifest
+act regen region=wilds seed=43
+expect result contains "ok: wilds seed 43 v1"
+expect journal "region unloaded: wilds seed 42 v1"
+act region_info
+expect result !contains "d9d721509840d909"
+# the same seed and version again: the same manifest, to the byte
+act regen region=wilds seed=42
+act region_info
+expect result contains "\"manifest_hash\": \"d9d721509840d909\""
+act god on=false

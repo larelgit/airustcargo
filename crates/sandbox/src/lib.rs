@@ -4,6 +4,13 @@
 //!   with four telegraphed attacks and an enraged second phase.
 //! - **Obstacle course** east of it: stairs, a ledge to mantle, a pool to swim, a cliff
 //!   and a gap only a glide (with an updraft) crosses, to a goal pad.
+//! - **The wilds** south of it: a region the engine generates from a seed (8 × 8 tiles of
+//!   16 m, one of them a level file from Blender, `assets/tiles/ruin.gltf`), with skeleton
+//!   camps and a den in a pillar hall, walked over its navmesh. A dev goes there with
+//!   `regen region=wilds seed=42`; the bake files of its tiles are in `assets/nav/`.
+//!
+//! The monsters are the engine's NPCs: their behaviours, perception, the combat director
+//! and attack plans are content (`content/npc/`).
 //!
 //! Everything that is numbers or definitions is content in `assets/content/`: the world
 //! layout, the characters (prefabs), how they move (locomotion), what they can do (actions,

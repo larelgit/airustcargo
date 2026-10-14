@@ -26,8 +26,18 @@ pub fn scenario(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios").join(name)
 }
 
+/// `snapshot.scenario` saves and loads `snapshots/boss_phase2.json`: tests that run it take
+/// turns, or one would load the other's file.
+pub static SNAPSHOT_FILE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Waits for [`SNAPSHOT_FILE`] (a test that failed holding it does not block the others).
+pub fn snapshot_file_turn() -> std::sync::MutexGuard<'static, ()> {
+    SNAPSHOT_FILE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[test]
 fn every_scenario_file_passes_on_a_fresh_game() {
+    let _turn = snapshot_file_turn();
     let mut failed = Vec::new();
     for file in scenario_files() {
         let mut app = sandbox::test_app(42);
@@ -44,6 +54,7 @@ fn every_scenario_file_passes_on_a_fresh_game() {
 /// each puts the world back before it starts.
 #[test]
 fn the_scenarios_also_pass_in_one_game_after_another() {
+    let _turn = snapshot_file_turn();
     let mut app = sandbox::test_app(42);
     let mut failed = Vec::new();
     for file in scenario_files() {
@@ -53,6 +64,22 @@ fn the_scenarios_also_pass_in_one_game_after_another() {
         }
     }
     assert!(failed.is_empty(), "{} scenario(s) failed in a shared game:\n\n{}", failed.len(), failed.join("\n\n"));
+}
+
+/// And in the other order: what the region and snapshot scenarios leave behind (a region
+/// in the world, a tick taken back) is no trouble for the arena's.
+#[test]
+fn the_scenarios_also_pass_one_after_another_backwards() {
+    let _turn = snapshot_file_turn();
+    let mut app = sandbox::test_app(42);
+    let mut failed = Vec::new();
+    for file in scenario_files().into_iter().rev() {
+        let report = run_file(app.world_mut(), &file);
+        if !report.passed {
+            failed.push(report.to_string());
+        }
+    }
+    assert!(failed.is_empty(), "{} scenario(s) failed in a shared game, backwards:\n\n{}", failed.len(), failed.join("\n\n"));
 }
 
 /// The warden chooses its attacks with `SimRng`, which draws from the tick: a game that

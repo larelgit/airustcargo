@@ -3,8 +3,8 @@
   "seed": 42,
   "tick_hz": 59.99999880000003,
   "end": {
-    "tick": 2292,
-    "hash": "bc158a45b20cb2ba"
+    "tick": 2307,
+    "hash": "b7aa14fd98655ee8"
   },
   "events": [
     {
@@ -762,7 +762,7 @@
     },
     {
       "call": {
-        "at": 799,
+        "at": 894,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -772,7 +772,7 @@
     },
     {
       "call": {
-        "at": 824,
+        "at": 919,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -782,7 +782,7 @@
     },
     {
       "input": {
-        "at": 824,
+        "at": 919,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -803,7 +803,7 @@
     },
     {
       "call": {
-        "at": 829,
+        "at": 924,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -815,7 +815,7 @@
     },
     {
       "call": {
-        "at": 829,
+        "at": 924,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -828,7 +828,7 @@
     },
     {
       "input": {
-        "at": 829,
+        "at": 924,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -855,7 +855,7 @@
     },
     {
       "call": {
-        "at": 884,
+        "at": 979,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -868,7 +868,7 @@
     },
     {
       "input": {
-        "at": 884,
+        "at": 979,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -899,7 +899,7 @@
     },
     {
       "call": {
-        "at": 959,
+        "at": 1054,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -909,7 +909,7 @@
     },
     {
       "input": {
-        "at": 959,
+        "at": 1054,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -928,7 +928,7 @@
     },
     {
       "call": {
-        "at": 1123,
+        "at": 1126,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -938,7 +938,7 @@
     },
     {
       "call": {
-        "at": 1123,
+        "at": 1126,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -948,7 +948,7 @@
     },
     {
       "input": {
-        "at": 1123,
+        "at": 1126,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -972,7 +972,7 @@
     },
     {
       "call": {
-        "at": 1271,
+        "at": 1329,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -982,7 +982,7 @@
     },
     {
       "call": {
-        "at": 1271,
+        "at": 1329,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -992,7 +992,7 @@
     },
     {
       "input": {
-        "at": 1271,
+        "at": 1329,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -1020,7 +1020,7 @@
     },
     {
       "call": {
-        "at": 1309,
+        "at": 1367,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1032,7 +1032,7 @@
     },
     {
       "input": {
-        "at": 1309,
+        "at": 1367,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -1056,7 +1056,7 @@
     },
     {
       "call": {
-        "at": 1439,
+        "at": 1483,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1066,7 +1066,7 @@
     },
     {
       "call": {
-        "at": 1439,
+        "at": 1483,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1076,7 +1076,7 @@
     },
     {
       "input": {
-        "at": 1439,
+        "at": 1483,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -1091,7 +1091,7 @@
           "pressed": [
             {
               "dir": [
-                -0.40373194217681885,
+                -0.4037320911884308,
                 0.0,
                 0.9148772954940796
               ],
@@ -1104,7 +1104,7 @@
     },
     {
       "call": {
-        "at": 1478,
+        "at": 1522,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1117,7 +1117,7 @@
     },
     {
       "input": {
-        "at": 1478,
+        "at": 1522,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -1144,7 +1144,7 @@
     },
     {
       "call": {
-        "at": 1560,
+        "at": 1604,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1154,7 +1154,7 @@
     },
     {
       "input": {
-        "at": 1560,
+        "at": 1604,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -1173,7 +1173,7 @@
     },
     {
       "call": {
-        "at": 1605,
+        "at": 1654,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1183,7 +1183,7 @@
     },
     {
       "call": {
-        "at": 1605,
+        "at": 1654,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1193,7 +1193,7 @@
     },
     {
       "input": {
-        "at": 1605,
+        "at": 1654,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -1208,7 +1208,7 @@
           "pressed": [
             {
               "dir": [
-                -0.4037321209907532,
+                -0.40373191237449646,
                 0.0,
                 0.9148772954940796
               ],
@@ -1221,7 +1221,7 @@
     },
     {
       "call": {
-        "at": 1643,
+        "at": 1692,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1234,7 +1234,7 @@
     },
     {
       "input": {
-        "at": 1643,
+        "at": 1692,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -1261,7 +1261,7 @@
     },
     {
       "call": {
-        "at": 1709,
+        "at": 1758,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1271,7 +1271,7 @@
     },
     {
       "input": {
-        "at": 1709,
+        "at": 1758,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -1290,7 +1290,7 @@
     },
     {
       "call": {
-        "at": 1753,
+        "at": 1796,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1300,7 +1300,7 @@
     },
     {
       "call": {
-        "at": 1753,
+        "at": 1796,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1310,7 +1310,7 @@
     },
     {
       "input": {
-        "at": 1753,
+        "at": 1796,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -1325,9 +1325,9 @@
           "pressed": [
             {
               "dir": [
-                -0.4037320017814636,
+                0.15318681299686432,
                 0.0,
-                0.9148773550987244
+                -0.9881972670555115
               ],
               "input": "dodge"
             }
@@ -1338,7 +1338,7 @@
     },
     {
       "call": {
-        "at": 1791,
+        "at": 1838,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1351,7 +1351,7 @@
     },
     {
       "input": {
-        "at": 1791,
+        "at": 1838,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -1378,7 +1378,7 @@
     },
     {
       "call": {
-        "at": 1857,
+        "at": 1868,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1388,7 +1388,7 @@
     },
     {
       "input": {
-        "at": 1857,
+        "at": 1868,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -1407,7 +1407,7 @@
     },
     {
       "call": {
-        "at": 1921,
+        "at": 1969,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1417,7 +1417,7 @@
     },
     {
       "call": {
-        "at": 1921,
+        "at": 1969,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1427,7 +1427,7 @@
     },
     {
       "input": {
-        "at": 1921,
+        "at": 1969,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -1442,9 +1442,9 @@
           "pressed": [
             {
               "dir": [
-                -0.40373149514198303,
-                0.0,
-                0.9148775339126587
+                -0.17730528116226196,
+                -0.0,
+                0.9841558337211609
               ],
               "input": "dodge"
             }
@@ -1455,7 +1455,7 @@
     },
     {
       "call": {
-        "at": 1960,
+        "at": 2007,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1468,7 +1468,7 @@
     },
     {
       "input": {
-        "at": 1960,
+        "at": 2007,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -1495,7 +1495,7 @@
     },
     {
       "call": {
-        "at": 2031,
+        "at": 2048,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1505,7 +1505,7 @@
     },
     {
       "input": {
-        "at": 2031,
+        "at": 2048,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -1524,7 +1524,7 @@
     },
     {
       "call": {
-        "at": 2128,
+        "at": 2137,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1534,7 +1534,7 @@
     },
     {
       "call": {
-        "at": 2128,
+        "at": 2137,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1544,7 +1544,7 @@
     },
     {
       "input": {
-        "at": 2128,
+        "at": 2137,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -1559,9 +1559,9 @@
           "pressed": [
             {
               "dir": [
-                -0.4037315547466278,
+                -0.4316202402114868,
                 0.0,
-                0.9148775935173035
+                0.9020553827285767
               ],
               "input": "dodge"
             }
@@ -1572,7 +1572,7 @@
     },
     {
       "call": {
-        "at": 2166,
+        "at": 2176,
         "agent": "hero",
         "scope": "player",
         "subject": 5,
@@ -1585,7 +1585,7 @@
     },
     {
       "input": {
-        "at": 2166,
+        "at": 2176,
         "id": 5,
         "component": "Intent",
         "value": {
@@ -1614,155 +1614,155 @@
   "checks": [
     {
       "tick": 60,
-      "hash": "8dec3b5ba1c93ba4"
+      "hash": "08c50516d66132a2"
     },
     {
       "tick": 120,
-      "hash": "db0482edd19c406c"
+      "hash": "34f9502af71cc71a"
     },
     {
       "tick": 180,
-      "hash": "76a175692fa8b44d"
+      "hash": "d80eddde78e6eddf"
     },
     {
       "tick": 240,
-      "hash": "094b166a243f9971"
+      "hash": "745d1a70d3e6bf4b"
     },
     {
       "tick": 300,
-      "hash": "1d0934021b7ddcab"
+      "hash": "1b486caccc99ee09"
     },
     {
       "tick": 360,
-      "hash": "a70d3c05f5fd435e"
+      "hash": "de62ac28c6a0f488"
     },
     {
       "tick": 420,
-      "hash": "5d6c0c8d3e600b64"
+      "hash": "e65430bdce5b1662"
     },
     {
       "tick": 480,
-      "hash": "921e4d4b1cfffd7a"
+      "hash": "45a5affa878f714c"
     },
     {
       "tick": 540,
-      "hash": "2e6630a141c5dabe"
+      "hash": "a9c47f6bbae8b5a8"
     },
     {
       "tick": 600,
-      "hash": "a503f8fb304d37db"
+      "hash": "360353c82dc4eb79"
     },
     {
       "tick": 660,
-      "hash": "f52fb5e277c8ade8"
+      "hash": "66c669478b2b6b8e"
     },
     {
       "tick": 720,
-      "hash": "4fe7ad998c0dea53"
+      "hash": "7dc0d2587eac674c"
     },
     {
       "tick": 780,
-      "hash": "dbd4c37c9df48fc4"
+      "hash": "253821f0120e9894"
     },
     {
       "tick": 840,
-      "hash": "e208335f3c7dde08"
+      "hash": "084e91680c2930d6"
     },
     {
       "tick": 900,
-      "hash": "74443a3b616d5da2"
+      "hash": "74c6b9bdfb1586a7"
     },
     {
       "tick": 960,
-      "hash": "68948f09dea252f1"
+      "hash": "e0ba902cb56bb4e9"
     },
     {
       "tick": 1020,
-      "hash": "6d9751c398bed620"
+      "hash": "8705fbffa86c5e97"
     },
     {
       "tick": 1080,
-      "hash": "93ce09d4deb65896"
+      "hash": "104aba25c869c051"
     },
     {
       "tick": 1140,
-      "hash": "a008a59df22b1cf6"
+      "hash": "4b6c505bacde8eb3"
     },
     {
       "tick": 1200,
-      "hash": "1fe76e937924dcbe"
+      "hash": "f764c7bd06361ede"
     },
     {
       "tick": 1260,
-      "hash": "d8e0e76e74370b3c"
+      "hash": "eab2670ab3fed264"
     },
     {
       "tick": 1320,
-      "hash": "d42ab33bba4cb5d3"
+      "hash": "223cfe3ca722006e"
     },
     {
       "tick": 1380,
-      "hash": "52a5b17763c1335c"
+      "hash": "8f76f6423d652b1e"
     },
     {
       "tick": 1440,
-      "hash": "6c85aac0ee846e49"
+      "hash": "70fbdc9c5d159402"
     },
     {
       "tick": 1500,
-      "hash": "36e5814d267e0e53"
+      "hash": "d1e2ec39b6a1c36c"
     },
     {
       "tick": 1560,
-      "hash": "fc3279856578c72a"
+      "hash": "cf0313ccf9ded6b8"
     },
     {
       "tick": 1620,
-      "hash": "0a5c35b7e1b5d2e9"
+      "hash": "91bff834a1fe0805"
     },
     {
       "tick": 1680,
-      "hash": "4871c66d493aa22a"
+      "hash": "36cc00706fe139c0"
     },
     {
       "tick": 1740,
-      "hash": "88e0cda97df03a4e"
+      "hash": "b02130ccb387d91a"
     },
     {
       "tick": 1800,
-      "hash": "897001fd92abda2f"
+      "hash": "3cf0c0620cec18cc"
     },
     {
       "tick": 1860,
-      "hash": "009d152d964e95bf"
+      "hash": "50f3f4af2ffae3f9"
     },
     {
       "tick": 1920,
-      "hash": "7e78ba2ddee78cec"
+      "hash": "7dc332b3959c7e4b"
     },
     {
       "tick": 1980,
-      "hash": "7fe5e86b0e68bfa6"
+      "hash": "f6c237a26349c9cb"
     },
     {
       "tick": 2040,
-      "hash": "3ec0d00095bdf311"
+      "hash": "662d738a9b71044b"
     },
     {
       "tick": 2100,
-      "hash": "4507b66507be0dfc"
+      "hash": "26106b0c8b42a349"
     },
     {
       "tick": 2160,
-      "hash": "39d6bdb167e3c37e"
+      "hash": "ee3f5e9c3ab9ec44"
     },
     {
       "tick": 2220,
-      "hash": "ccf35a42fc856802"
+      "hash": "52ffb5d816ce95dc"
     },
     {
       "tick": 2280,
-      "hash": "90dbba8eb1c66754"
+      "hash": "7af44e2d0ae23931"
     }
   ]
 }

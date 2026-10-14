@@ -3,6 +3,8 @@
 {
     // All around, 18 m, not through walls or pillars; a hit or a sprint nearby is heard.
     "skeleton": (sight_range: 18.0, fov_deg: 360.0, near: 3.0, hearing: 1.0, memory: 6.0),
+    // A den's guard knows its hall: 14 m all around, pillars do not hide anyone from it.
+    "guard": (sight_range: 14.0, fov_deg: 360.0, line_of_sight: false, memory: 3.0),
     // A boss knows its arena: 40 m, walls do not hide anyone from it.
     "boss": (sight_range: 40.0, fov_deg: 360.0, line_of_sight: false, memory: 2.0),
 }

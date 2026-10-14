@@ -1,0 +1,91 @@
+// The tiles of the wilds: 16 m squares whose top is y = 0, each standing on a ground box.
+// The generator fits them by their edge sockets (`wilds.socket_rules.ron`), turns them when
+// `rotations` allows, and puts points of interest in their `slots`. Positions are in the
+// tile's frame: its center at the origin, -Z north, before it turns.
+//
+// `ruin` is a level file from Blender (`tiles/ruin.gltf`: floor, broken walls, a column, a
+// camp marker); the others are inline. `gate` and `hall` are placed by the region itself
+// (`fixed`), never by chance (weight 0).
+{
+    "grass": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        weight: 6.0,
+        slots: [(at: (3.0, 0.0, -3.0), accepts: ["camp", "shrine"])],
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+    ),
+    "road_straight": (
+        sockets: (n: "grass road grass", e: "grass", s: "grass road grass", w: "grass"),
+        rotations: [0, 90],
+        weight: 2.0,
+        slots: [(at: (4.0, 0.0, 0.0), accepts: ["camp", "shrine"])],
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+    ),
+    "road_bend": (
+        sockets: (n: "grass road grass", e: "grass road grass", s: "grass", w: "grass"),
+        rotations: [0, 90, 180, 270],
+        slots: [(at: (-3.0, 0.0, 3.0), accepts: ["camp", "shrine"])],
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+    ),
+    "road_end": (
+        sockets: (n: "grass road grass", e: "grass", s: "grass", w: "grass"),
+        rotations: [0, 90, 180, 270],
+        slots: [(at: (0.0, 0.0, 2.0), accepts: ["camp", "shrine"])],
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+    ),
+    "road_t": (
+        sockets: (n: "grass road grass", e: "grass road grass", s: "grass road grass", w: "grass"),
+        rotations: [0, 90, 180, 270],
+        weight: 0.5,
+        slots: [(at: (-4.0, 0.0, 0.0), accepts: ["camp", "shrine"])],
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+    ),
+    // Four stone columns (2 x 4 x 2 m), a camp in their middle.
+    "pillars": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        weight: 1.5,
+        max_count: 6,
+        slots: [(at: (0.0, 0.0, 0.0), accepts: ["camp"])],
+        geometry: Inline([
+            Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0)),
+            Solid(shape: Cuboid(half: (1.0, 2.0, 1.0)), at: (-4.0, 2.0, -4.0)),
+            Solid(shape: Cuboid(half: (1.0, 2.0, 1.0)), at: (4.0, 2.0, -4.0)),
+            Solid(shape: Cuboid(half: (1.0, 2.0, 1.0)), at: (-4.0, 2.0, 4.0)),
+            Solid(shape: Cuboid(half: (1.0, 2.0, 1.0)), at: (4.0, 2.0, 4.0)),
+        ]),
+    ),
+    // A ruin from Blender: its camp marker is where the camp slot is.
+    "ruin": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        rotations: [0, 90, 180, 270],
+        weight: 1.0,
+        max_count: 4,
+        slots: [(at: (-2.0, 0.0, 2.0), accepts: ["camp"])],
+        geometry: Level(path: "tiles/ruin.gltf"),
+    ),
+    // The region's gate: where players appear, between two posts.
+    "gate": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        weight: 0.0,
+        slots: [(at: (0.0, 0.0, 0.0), accepts: ["spawn"])],
+        geometry: Inline([
+            Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0)),
+            Solid(shape: Cuboid(half: (0.5, 2.0, 0.5)), at: (-3.0, 2.0, -2.0)),
+            Solid(shape: Cuboid(half: (0.5, 2.0, 0.5)), at: (3.0, 2.0, -2.0)),
+        ]),
+    ),
+    // The pillar hall: a colonnade of five columns across its middle (x -5..5, z -1..1) with
+    // a way round at both ends; the den is south of it, 4 m from the columns.
+    "hall": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        weight: 0.0,
+        slots: [(at: (0.0, 0.0, 4.0), accepts: ["den"])],
+        geometry: Inline([
+            Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0)),
+            Solid(shape: Cuboid(half: (1.0, 2.0, 1.0)), at: (-4.0, 2.0, 0.0)),
+            Solid(shape: Cuboid(half: (1.0, 2.0, 1.0)), at: (-2.0, 2.0, 0.0)),
+            Solid(shape: Cuboid(half: (1.0, 2.0, 1.0)), at: (0.0, 2.0, 0.0)),
+            Solid(shape: Cuboid(half: (1.0, 2.0, 1.0)), at: (2.0, 2.0, 0.0)),
+            Solid(shape: Cuboid(half: (1.0, 2.0, 1.0)), at: (4.0, 2.0, 0.0)),
+        ]),
+    ),
+}

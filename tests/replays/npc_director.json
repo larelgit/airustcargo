@@ -1,0 +1,545 @@
+{
+  "format": "shards-replay/3",
+  "seed": 42,
+  "tick_hz": 59.99999880000003,
+  "end": {
+    "tick": 1923,
+    "hash": "aadd639ef8082f9b"
+  },
+  "events": [
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "npc_set_state",
+        "args": {
+          "id": "e7",
+          "state": "calm"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "npc_set_state",
+        "args": {
+          "id": "e8",
+          "state": "calm"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "npc_set_state",
+        "args": {
+          "id": "e14",
+          "state": "calm"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "npc_set_state",
+        "args": {
+          "id": "e6",
+          "state": "calm"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "heal",
+        "args": {
+          "id": "e5"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "block",
+        "args": {
+          "on": false
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "lock_on",
+        "args": {
+          "off": true
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 7,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 8,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 14,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 6,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 120,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "teleport",
+        "args": {
+          "id": "e6",
+          "x": 0,
+          "y": 0,
+          "z": -6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 120,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "teleport",
+        "args": {
+          "id": "e5",
+          "x": 0,
+          "y": 0,
+          "z": 8
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 120,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "teleport",
+        "args": {
+          "id": "e7",
+          "x": -5,
+          "y": 0,
+          "z": 8
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 120,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "teleport",
+        "args": {
+          "id": "e8",
+          "x": 5,
+          "y": 0,
+          "z": 8
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 120,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "teleport",
+        "args": {
+          "id": "e14",
+          "x": 0,
+          "y": 0,
+          "z": 13
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 120,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "heal",
+        "args": {
+          "id": "e7"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 120,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "heal",
+        "args": {
+          "id": "e8"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 120,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "heal",
+        "args": {
+          "id": "e14"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 120,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "god",
+        "args": {}
+      }
+    },
+    {
+      "call": {
+        "at": 122,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "npc_set_state",
+        "args": {
+          "id": "e7",
+          "state": "idle"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 122,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "npc_set_state",
+        "args": {
+          "id": "e8",
+          "state": "idle"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 122,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "npc_set_state",
+        "args": {
+          "id": "e14",
+          "state": "idle"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1923,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "npc_set_state",
+        "args": {
+          "id": "e7",
+          "state": "calm"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1923,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "npc_set_state",
+        "args": {
+          "id": "e8",
+          "state": "calm"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1923,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "npc_set_state",
+        "args": {
+          "id": "e14",
+          "state": "calm"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1923,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "god",
+        "args": {
+          "on": false
+        }
+      }
+    }
+  ],
+  "checks": [
+    {
+      "tick": 60,
+      "hash": "08c50516d66132a2"
+    },
+    {
+      "tick": 120,
+      "hash": "34f9502af71cc71a"
+    },
+    {
+      "tick": 180,
+      "hash": "23b27f2e71b0100c"
+    },
+    {
+      "tick": 240,
+      "hash": "9efa3b6d6ed9ea85"
+    },
+    {
+      "tick": 300,
+      "hash": "f8fd57747a2603d2"
+    },
+    {
+      "tick": 360,
+      "hash": "d173afaaf8c97357"
+    },
+    {
+      "tick": 420,
+      "hash": "35fa4bec34ba5b5b"
+    },
+    {
+      "tick": 480,
+      "hash": "841f7e5374718350"
+    },
+    {
+      "tick": 540,
+      "hash": "a3ce72d640ac81f0"
+    },
+    {
+      "tick": 600,
+      "hash": "72f448466e8ce09a"
+    },
+    {
+      "tick": 660,
+      "hash": "e12d88f474a156d0"
+    },
+    {
+      "tick": 720,
+      "hash": "1f52e45c2c7a4566"
+    },
+    {
+      "tick": 780,
+      "hash": "d65337ff57bbbcc4"
+    },
+    {
+      "tick": 840,
+      "hash": "1b9452d260c124cd"
+    },
+    {
+      "tick": 900,
+      "hash": "207e9a07574771c2"
+    },
+    {
+      "tick": 960,
+      "hash": "f2a2e73bd363f1cf"
+    },
+    {
+      "tick": 1020,
+      "hash": "d838fe0df8993111"
+    },
+    {
+      "tick": 1080,
+      "hash": "3aac57cfebc6fe16"
+    },
+    {
+      "tick": 1140,
+      "hash": "e7fff1cc3a00f1a3"
+    },
+    {
+      "tick": 1200,
+      "hash": "9ddd5bb55f22b68f"
+    },
+    {
+      "tick": 1260,
+      "hash": "73322204f5550d76"
+    },
+    {
+      "tick": 1320,
+      "hash": "fd3680539033d90a"
+    },
+    {
+      "tick": 1380,
+      "hash": "8ca3925fa4143463"
+    },
+    {
+      "tick": 1440,
+      "hash": "393df2a5fcbed746"
+    },
+    {
+      "tick": 1500,
+      "hash": "538c7b7769c7b0f6"
+    },
+    {
+      "tick": 1560,
+      "hash": "051cc6659e1b001b"
+    },
+    {
+      "tick": 1620,
+      "hash": "6d6832e94866146a"
+    },
+    {
+      "tick": 1680,
+      "hash": "a321ece5530cce67"
+    },
+    {
+      "tick": 1740,
+      "hash": "eb6a6e7f63d2d2e6"
+    },
+    {
+      "tick": 1800,
+      "hash": "fb1ddd7fac587718"
+    },
+    {
+      "tick": 1860,
+      "hash": "a1e7aa8b10fdf1d5"
+    },
+    {
+      "tick": 1920,
+      "hash": "c8bf0d773667c0aa"
+    }
+  ]
+}

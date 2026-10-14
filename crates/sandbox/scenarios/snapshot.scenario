@@ -1,0 +1,67 @@
+# Snapshots (E11): "go to boss phase" is a snapshot loaded by name. The scenario brings the
+# Frost Warden to its second phase once and saves the state there (`snapshot_save`: every
+# entity with its id and components, the tick, what the modules keep), lets anything happen
+# after, then loads it back in one call (`snapshot_load`) and fights phase 2 a bit. The file
+# goes to snapshots/ of the game's working directory (not committed: made here).
+
+seed 42
+
+# --- the arena: the skeletons stand down, the warden first in phase 1 at its post
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god on=false
+step 120
+act heal id=e5
+act heal id=e6
+act set id=e6 component=Boss path=phase value=1
+act set id=e6 component=NpcPlan value='{"history": [], "cooldowns": [], "rest": 0.5, "attacks": 0}'
+act teleport id=e5 x=0 z=12 y=0
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e7 x=-18 z=18 y=0
+act teleport id=e8 x=18 z=18 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+act npc_set_state id=e6 state=guard
+invariant field e5 Health.current > 0
+
+# --- setup (dev): the fight at half health once, kept as a snapshot
+act set id=e6 component=Health path=current value=295
+step 300 --until named:boss_phase_2
+expect stopped "boss_phase_2"
+act snapshot_save path=snapshots/boss_phase2.json
+expect result contains "snapshots/boss_phase2.json: tick"
+
+# --- later, anything: the player elsewhere, the warden healed and back in phase 1
+act teleport id=e5 x=40 z=0 y=0
+act heal id=e6
+act set id=e6 component=Boss path=phase value=1
+step 120
+expect shows e6 "phase 1"
+
+# --- "go to boss phase 2": one call, and the fight is where it was saved
+mark
+act snapshot_load path=snapshots/boss_phase2.json
+expect result contains "boss_phase2.json: tick"
+expect shows e6 "phase 2"
+expect field e6 Boss.phase == 2
+expect field e6 Health.current <= 295
+expect field e5 Transform.translation.x < 20
+
+# --- and fight it a bit, as a player: lock on, attack; the warden swings its enraged moveset
+session --agent hero --scope player
+act lock_on target=e6
+act attack target=e6 repeat=true
+session --agent scenario
+step 600 --until "journal:e5 -> e6"
+expect stopped "e5 -> e6 light_1"
+step 600 --until "journal:e6 winds up"
+expect stopped "_enraged"
+session --agent hero
+act stop
+act lock_on off=true
+session --agent scenario

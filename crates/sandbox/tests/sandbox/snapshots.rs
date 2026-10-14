@@ -6,7 +6,7 @@
 //! the journal from N to M reads the same.
 
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::MutexGuard;
 
 use shards::action::InputBuffer;
 use shards::ai_core::snapshot::{self, Snapshot};
@@ -491,15 +491,16 @@ fn another_seed_or_engine_version_is_refused_with_the_fix() {
 
 // --- through the tools and the files -------------------------------------------------------
 
-/// Tests that write into `snapshots/` take turns: the last one out removes the folder.
-static FOLDER: Mutex<()> = Mutex::new(());
+// Tests that write into `snapshots/` take turns (`snapshot_file_turn`, shared with the
+// scenarios): the last one out removes the folder.
 
 /// A file in `snapshots/` (of the working directory) that goes away with the test.
 struct Scratch(PathBuf, String, #[allow(dead_code, reason = "held until the test is over")] MutexGuard<'static, ()>);
 
 impl Scratch {
     fn new(name: &str) -> Scratch {
-        let turn = FOLDER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // The scenarios' own snapshot (`snapshot.scenario`) is in the same folder.
+        let turn = crate::scenario_files::snapshot_file_turn();
         let relative = format!("snapshots/sandbox_test_{}_{name}.json", std::process::id());
         Scratch(PathBuf::from(&relative), relative, turn)
     }
@@ -692,4 +693,45 @@ fn loading_a_snapshot_ends_a_playback_and_starts_a_new_recording() {
     let now = replay::save(app.world());
     assert_eq!(now.start.as_ref().map(|s| s.tick), Some(tick(&app)));
     assert!(now.events.is_empty());
+}
+
+/// The region of the given seed, the player (unhurtable) in the pillar hall north of the
+/// colonnade, the den guard on its way around the columns to it.
+fn in_the_hall() -> App {
+    let mut app = sandbox::test_app(42);
+    ok(&mut app, "regen", json!({"region": "wilds", "seed": 42}));
+    ok(&mut app, "god", json!({}));
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 24, "z": 130}));
+    let out = ok(&mut app, "step", json!({"ticks": 600, "until": [{"named": "npc_detour"}]}));
+    assert!(text(&out).contains("stopped: condition npc_detour"), "{}", text(&out));
+    ok(&mut app, "step", json!({"ticks": 45}));
+    app
+}
+
+#[test]
+fn a_snapshot_in_the_generated_region_goes_on_the_same_in_a_fresh_arena() {
+    // Taken mid-walk around the columns (a navmesh route in its nav agent), loaded into a game
+    // that has no region: the wilds are built again from the snapshot's manifest, with the
+    // same ids, and the fight goes on as it did.
+    let a = in_the_hall();
+    assert!(story_after(&a, 0).iter().any(|l| l.contains("idle → fight e5")), "{:#?}", story_after(&a, 0));
+    assert_continues_alike("in the region", a, |app| {
+        ok(app, "step", json!({"ticks": 240}));
+        ok(app, "move_to", json!({"target": {"x": 24, "z": 112}, "within": 0.5}));
+        ok(app, "step", json!({"ticks": 300}));
+    });
+
+    // The snapshot tool on the same: the region comes back where the player went home to the
+    // arena (another region loaded, then none).
+    let file = Scratch::new("wilds");
+    let mut app = in_the_hall();
+    ok(&mut app, "snapshot_save", json!({"path": file.1}));
+    let before = tick(&app);
+    ok(&mut app, "regen", json!({"region": "wilds", "seed": 7}));
+    ok(&mut app, "step", json!({"ticks": 30}));
+    let loaded = text(&ok(&mut app, "snapshot_load", json!({"path": file.1}))).to_owned();
+    assert!(loaded.contains("region: wilds seed 42 v1 built again from its manifest"), "{loaded}");
+    assert_eq!(tick(&app), before);
+    let region = app.world().resource::<ActiveRegion>();
+    assert_eq!((region.manifest.seed, region.manifest.region.as_str()), (42, "wilds"));
 }

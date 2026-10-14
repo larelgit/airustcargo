@@ -1,0 +1,347 @@
+{
+  "format": "shards-replay/3",
+  "seed": 42,
+  "tick_hz": 59.99999880000003,
+  "end": {
+    "tick": 353,
+    "hash": "595ebde8f019b166"
+  },
+  "events": [
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "regen",
+        "args": {
+          "region": "wilds",
+          "seed": 42
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "heal",
+        "args": {
+          "id": "e5"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "block",
+        "args": {
+          "on": false
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "lock_on",
+        "args": {
+          "off": true
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "god",
+        "args": {}
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "goto_tile",
+        "args": {
+          "x": 1,
+          "y": 3
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "walker",
+        "scope": "player",
+        "subject": 5,
+        "tool": "move_to",
+        "args": {
+          "path": true,
+          "target": {
+            "x": -40,
+            "z": 72
+          },
+          "within": 1
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 25,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 28,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 30,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 7,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 8,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 14,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 6,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [
+            {
+              "MoveTo": {
+                "target": {
+                  "Point": [
+                    -39.75,
+                    0.0,
+                    79.75
+                  ]
+                },
+                "within": 0.44999998807907104
+              }
+            },
+            {
+              "MoveTo": {
+                "target": {
+                  "Point": [
+                    -40.0,
+                    0.0,
+                    72.0
+                  ]
+                },
+                "within": 1.0
+              }
+            }
+          ],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 353,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "regen",
+        "args": {
+          "region": "wilds",
+          "seed": 43
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 353,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "regen",
+        "args": {
+          "region": "wilds",
+          "seed": 42
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 353,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "god",
+        "args": {
+          "on": false
+        }
+      }
+    }
+  ],
+  "checks": [
+    {
+      "tick": 60,
+      "hash": "a7a04bc6c561a0ad"
+    },
+    {
+      "tick": 120,
+      "hash": "0201e70365d4737b"
+    },
+    {
+      "tick": 180,
+      "hash": "98a142733f163c41"
+    },
+    {
+      "tick": 240,
+      "hash": "8f189aab2d507dd4"
+    },
+    {
+      "tick": 300,
+      "hash": "f2fc8c047864e4b8"
+    }
+  ]
+}

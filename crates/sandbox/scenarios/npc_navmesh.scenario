@@ -1,0 +1,52 @@
+# An enemy on the navmesh (E6): in the generated region (`content/region/`), the den guard
+# sees the player through the pillar hall's colonnade, walks around the columns by the
+# navmesh to strike, and turns back at its leash (10 m from its den) when the player walks
+# off. The region's monsters come with the region, after whatever was spawned before it, so
+# they have no fixed ids: the scenario follows them by the journal and the engine's NPC stop
+# conditions, `npc_detour` (an NPC walks a planned route around something in its way) and
+# `npc_beyond_leash` (an NPC stands outside its zone), which must never hold.
+#
+# The hall is fixed by the region's content at cell (5, 5): its colonnade runs x 19..29 at
+# z 135..137, the den is at (24, 140), south of it.
+
+seed 42
+
+# --- setup (dev): the wilds of seed 42, the player unhurtable in the hall north of the columns
+act regen region=wilds seed=42
+expect result contains "ok: wilds seed 42 v1"
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god
+act teleport id=e5 x=24 z=130 y=0
+mark
+
+# --- 1. the guard sees the player through the columns; the straight way is blocked: around
+step 600 --until named:npc_detour
+expect stopped "npc_detour"
+expect journal "idle → fight e5"
+session --agent scout --scope player
+# what the navmesh says of that walk (the player's own query): around the columns, with
+# turns, longer than the 10 m straight through them
+act nav_path from='{"x": 24, "z": 140}' to=e5
+expect result contains "\"provider\": \"navmesh\""
+expect result contains " turns: "
+expect result !contains "path 10.0m"
+session --agent scenario
+# around the columns to the player, and a claw; never out of its zone on the way
+step 900 --until "journal:-> e5 claw" --until named:npc_beyond_leash
+expect stopped "-> e5 claw"
+
+# --- 2. the player walks off north, out of the guard's leash: it follows to the edge of its
+# zone, no farther, and turns back to its den
+session --agent scout
+act move_to target='{"x": 24, "z": 112}' within=0.5
+expect result contains "ok: move_to"
+session --agent scenario
+step 600 --until "journal:fight → home e5" --until named:npc_beyond_leash
+expect stopped "fight → home e5"
+step 900 --until named:npc_beyond_leash
+expect result contains "no condition met"
+expect journal "home → idle"
+act god on=false

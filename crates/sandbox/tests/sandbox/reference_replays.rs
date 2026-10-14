@@ -1,5 +1,7 @@
-//! The reference replays in `tests/replays/` (repository root): the obstacle course and the
-//! combat prototype, played by their scenarios on a fresh game. Each one is verified the
+//! The reference replays in `tests/replays/` (repository root): the obstacle course, the
+//! combat prototype, the combat director, an enemy on the navmesh, the generated region and
+//! "go to boss phase" by snapshot (that one starts from its snapshot), played by their
+//! scenarios on a fresh game. Each one is verified the
 //! way CI and a person do it, by the game itself: `sandbox --replay FILE --verify` must say
 //! `identical` and exit 0. A change that alters gameplay makes them diverge; record them
 //! again on purpose:
@@ -20,8 +22,14 @@ use shards::ai_core::scenario::run_file;
 use crate::scenario_files::scenario;
 
 /// The scenarios recorded as reference replays, by the replay's file name.
-const RECORDED: [(&str, &str); 2] =
-    [("obstacle_course.json", "obstacle_course.scenario"), ("combat_prototype.json", "combat_prototype.scenario")];
+const RECORDED: [(&str, &str); 6] = [
+    ("obstacle_course.json", "obstacle_course.scenario"),
+    ("combat_prototype.json", "combat_prototype.scenario"),
+    ("npc_director.json", "npc_director.scenario"),
+    ("npc_navmesh.json", "npc_navmesh.scenario"),
+    ("region.json", "region.scenario"),
+    ("snapshot.json", "snapshot.scenario"),
+];
 
 fn replays_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/replays")
@@ -66,6 +74,7 @@ fn every_reference_replay_verifies_headless() {
 #[test]
 #[ignore = "rewrites tests/replays/: run it when gameplay changed on purpose"]
 fn record_reference_replays() {
+    let _turn = crate::scenario_files::snapshot_file_turn();
     std::fs::create_dir_all(replays_dir()).unwrap();
     for (name, file) in RECORDED {
         let mut app = sandbox::test_app(42);

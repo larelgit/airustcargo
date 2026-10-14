@@ -5129,6 +5129,7 @@ name = "sandbox"
 version = "0.2.0"
 dependencies = [
  "libc",
+ "serde_json",
  "shards",
 ]
 

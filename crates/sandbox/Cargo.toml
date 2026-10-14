@@ -24,6 +24,11 @@ dynamic = ["shards/dynamic"]
 # Like a game: the engine is one dependency.
 shards.workspace = true
 
+[dev-dependencies]
+# The writer of the region's level files (`tests/sandbox/tiles.rs`, shared with shards_level's
+# tests) builds glTF JSON.
+serde_json.workspace = true
+
 [target.'cfg(unix)'.dev-dependencies]
 # The shutdown test sends signals to a running game.
 libc.workspace = true

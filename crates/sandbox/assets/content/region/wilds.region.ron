@@ -1,0 +1,34 @@
+// Area 3: the wilds, a generated region south of the arena: 8 x 8 tiles of 16 m, its
+// north-west corner at x -64, z 48 (the arena's south wall is at z 21.5), so it spans x
+// -64..64, z 48..176. A dev loads it from anywhere (`regen region=wilds seed=42`, or
+// `region_load` with a saved manifest); players go to its gate.
+//
+// Fixed: the gate (the spawn) at cell (1, 1), centered at (-40, 72); the pillar hall with the
+// den at cell (5, 5), centered at (24, 136), its den at (24, 140). Everything else comes from
+// the seed: the shrine and two camps (at least 40 m from the gate and the den), the tiles.
+{
+    "wilds": (
+        size: (8, 8),
+        tile_size: 16.0,
+        version: 1,
+        origin: (-64.0, 48.0),
+        fixed: [(at: (1, 1), tile: "gate", rot: 0), (at: (5, 5), tile: "hall", rot: 0)],
+        pois: [
+            (poi: "spawn", cells: [(1, 1)]),
+            (poi: "den", cells: [(5, 5)]),
+            (poi: "shrine"),
+            (poi: "camp", count: 2),
+        ],
+        checks: (
+            // Roads here are scenery: they need not lead anywhere.
+            isolated_roads: false,
+            distances: [
+                (a: "spawn", b: "camp", min: 40.0),
+                (a: "den", b: "camp", min: 40.0),
+            ],
+        ),
+        fallback: "wilds_safe",
+        // Monsters farther than this from every player rest (dormant).
+        active_radius: 40.0,
+    ),
+}
