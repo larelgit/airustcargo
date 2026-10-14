@@ -29,7 +29,7 @@ fn a_telegraph_journals_its_zone_and_the_advice_leads_out_of_it() {
 
     let seen = observe(app.world(), &ObserveOptions::default());
     let alert = seen.lines().nth(2).unwrap();
-    assert_eq!(alert, format!("ALERT in hit zone of {b} slam (lands in 0.78s): move 2.9m S to leave it"), "{seen}");
+    assert_eq!(alert, format!("ALERT in hit zone of {b} slam (lands in 0.78s): move 3.0m S to leave it"), "{seen}");
     assert!(
         seen.contains(&format!(
             "{b} Brute  hp 100/100  stam 100/100  poise 30/30  windup slam 0.78s (zone circle 4.5m) hyper-armor"
@@ -51,6 +51,30 @@ fn a_telegraph_journals_its_zone_and_the_advice_leads_out_of_it() {
     assert!(lines(&app, &format!("{b} -> {h}")).is_empty(), "the slam missed");
     assert!(feet(&app, hero).z > 2.9, "{}", feet(&app, hero));
     assert!(!observe(app.world(), &ObserveOptions::default()).contains("ALERT"));
+}
+
+#[test]
+fn the_advice_gets_a_subject_out_of_the_zone_when_followed_to_the_letter() {
+    // Off the compass axes: the shortest way out (3.1 m) is not along any of the 8
+    // directions, so a rounded "3.1m SE" would end a hair inside the circle.
+    let mut app = app();
+    let world = app.world_mut();
+    let hero = hero(world, "hero", Vec3::new(1.5, 0.0, -1.0), N);
+    let brute = brute(world, Vec3::new(0.0, 0.0, -2.0), S);
+    let b = id(&app, brute);
+    press(&mut app, brute, "heavy");
+    step(&mut app, 1);
+    let advice = shards_action::ai::advice(app.world(), hero);
+    assert_eq!(advice.len(), 1, "{advice:?}");
+    let words: Vec<&str> = advice[0].split_whitespace().collect();
+    let at = words.iter().position(|w| *w == "move").unwrap();
+    let meters: f32 = words[at + 1].trim_end_matches('m').parse().unwrap();
+    let dir = ai_core::spatial::compass_vector(words[at + 2]).unwrap();
+    let there = feet(&app, hero) + dir * meters;
+    app.world_mut().get_mut::<Transform>(hero).unwrap().translation = there;
+    assert!(shards_action::ai::advice(app.world(), hero).is_empty(), "still in the zone after: {}", advice[0]);
+    step(&mut app, 50);
+    assert!(lines(&app, &format!("{b} -> ")).is_empty(), "the slam missed: {:#?}", journal(&app));
 }
 
 #[test]

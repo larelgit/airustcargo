@@ -8,6 +8,7 @@
 //! zone's footprint. Footprints are 2D: a sphere counts as its widest disc, a cone
 //! as a flat sector; good enough to step out of an attack, which is what it is for.
 
+use ai_core::spatial::compass_vector;
 use ai_core::AiId;
 use bevy::prelude::*;
 use serde::Serialize;
@@ -110,6 +111,37 @@ impl WorldShape {
             }
             HitShape::Cone { range, angle, .. } => sector_exit(p, f, range, angle.to_radians() * 0.5, radius),
         }
+    }
+
+    /// How far a body of `radius` at `point` must walk along the unit vector `dir` to be
+    /// out of the footprint (0 when it is); `None` if it never gets out.
+    pub fn exit_along(&self, point: Vec3, radius: f32, dir: Vec3) -> Option<f32> {
+        if !self.contains(point, radius) {
+            return Some(0.0);
+        }
+        let (mut near, mut far) = (0.0, 1.0);
+        while self.contains(point + dir * far, radius) {
+            (near, far) = (far, far * 2.0);
+            if far > 4096.0 {
+                return None;
+            }
+        }
+        for _ in 0..24 {
+            let mid = (near + far) * 0.5;
+            *(if self.contains(point + dir * mid, radius) { &mut near } else { &mut far }) = mid;
+        }
+        Some(far)
+    }
+
+    /// The shortest walk along one of the 8 compass directions (the ones an agent can
+    /// name) that takes a body of `radius` at `point` out of the footprint. Unlike
+    /// [`exit`](Self::exit), a body that does what this says is out.
+    pub fn exit_by_compass(&self, point: Vec3, radius: f32) -> Option<(&'static str, f32)> {
+        const NAMES: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+        NAMES
+            .into_iter()
+            .filter_map(|name| Some((name, self.exit_along(point, radius, compass_vector(name)?)?)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
     }
 
     /// Its center on the ground: where an indicator points.

@@ -92,12 +92,14 @@ pub(crate) fn register(app: &mut App) {
 }
 
 /// The hostile hit zones the subject stands in, soonest first, one per attacker and
-/// action, with the shortest way out.
+/// action, with the shortest way out along a compass direction, rounded up so that
+/// doing exactly what it says leaves the zone.
 pub fn advice(world: &World, me: Entity) -> Vec<String> {
     let Some(here) = world.get::<Transform>(me).map(|t| t.translation) else { return Vec::new() };
+    let radius = body_radius(world, me);
     let mut seen: Vec<(Entity, String)> = Vec::new();
     let mut lines = Vec::new();
-    for (zone, out) in zones_threatening(world, me, here, body_radius(world, me)) {
+    for (zone, out) in zones_threatening(world, me, here, radius) {
         if seen.contains(&(zone.attacker, zone.action.clone())) {
             continue;
         }
@@ -107,12 +109,15 @@ pub fn advice(world: &World, me: Entity) -> Vec<String> {
         } else {
             format!("active, {:.2}s left", zone.active_for)
         };
+        // The exact way out is rarely along a compass direction; say one that works.
+        let (dir, meters) = match zone.shape.exit_by_compass(here, radius) {
+            Some((dir, meters)) => (dir, ((meters + 0.02) * 10.0).ceil() / 10.0),
+            None => (compass(out), out.length()),
+        };
         lines.push(format!(
-            "in hit zone of {} {} ({when}): move {:.1}m {} to leave it",
+            "in hit zone of {} {} ({when}): move {meters:.1}m {dir} to leave it",
             label(world, zone.attacker),
             zone.action,
-            out.length(),
-            compass(out)
         ));
     }
     lines
