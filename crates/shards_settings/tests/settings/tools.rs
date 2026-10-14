@@ -59,6 +59,17 @@ fn a_value_is_read_by_the_type_of_the_setting() {
     // The same value again is nothing to do.
     let again = set(&mut app, "accessibility", "camera_shake", "0.3");
     assert!(again.contains("nothing changed"), "{again}");
+
+    // `shards act settings_set ... value=0.3` sends a number, `value=true` a boolean: the same as their text.
+    let number = ok(&mut app, "settings_set", json!({"group": "accessibility", "key": "fov_deg", "value": 95}));
+    assert!(number.contains("accessibility.fov_deg 70 → 95"), "{number}");
+    ok(&mut app, "settings_set", json!({"group": "accessibility", "key": "text_scale", "value": 1.25}));
+    ok(&mut app, "settings_set", json!({"group": "controls", "key": "invert_y", "value": true}));
+    ok(&mut app, "settings_set", json!({"group": "controls", "key": "bindings.gameplay.parry", "value": ["Key(KeyP)"]}));
+    let w = app.world();
+    assert_eq!(w.resource::<AccessibilitySettings>().text_scale, 1.25);
+    assert!(w.resource::<shards::settings::ControlSettings>().invert_y);
+    assert_eq!(w.resource::<shards::settings::ControlSettings>().bindings["gameplay.parry"], ["Key(KeyP)"]);
 }
 
 #[test]

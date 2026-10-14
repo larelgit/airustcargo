@@ -1,0 +1,77 @@
+# Player settings (E8.6): graphics, audio, controls and accessibility, read and changed the way
+# a settings screen does it. A value is read by the type of the setting and refused with what is
+# allowed; a change is journaled (`settings: group.key old → new`) and is not part of the game
+# (no replay records it, no snapshot holds it). Whether a run keeps its settings in a file is its
+# own business (`--settings-dir`, `--no-settings`; this scenario works in both): `settings` says.
+
+seed 42
+
+# --- every group back to its defaults, whatever an earlier run left
+act settings_set group=graphics reset=true
+act settings_set group=audio reset=true
+act settings_set group=controls reset=true
+act settings_set group=accessibility reset=true
+
+act settings group=accessibility
+expect result contains "accessibility.camera_shake = 1"
+expect result contains "accessibility.flashes = \"full\""
+expect result contains "accessibility.fov_deg = 70"
+expect result contains "accessibility.hold_to_toggle = false"
+
+# --- a change: shown as it was and is, and journaled
+mark
+act settings_set group=accessibility key=camera_shake value=0.3
+expect result contains "accessibility.camera_shake 1 → 0.3"
+expect journal "settings: accessibility.camera_shake 1 → 0.3"
+act settings_set group=accessibility key=flashes value=reduced
+act settings_set group=accessibility key=hold_to_toggle value=yes
+act settings group=accessibility
+expect result contains "accessibility.camera_shake = 0.3"
+expect result contains "accessibility.flashes = \"reduced\""
+expect result contains "accessibility.hold_to_toggle = true"
+
+# --- the same value again is nothing to do
+act settings_set group=accessibility key=camera_shake value=0.3
+expect result contains "nothing changed"
+
+# --- a value that does not fit is refused and says what does; nothing moves
+act? settings_set group=accessibility key=fov_deg value=200
+expect result contains "30 to 120"
+act? settings_set group=accessibility key=flashes value=blink
+expect result contains "full, reduced, off"
+act? settings_set group=accessibility key=hold_to_toggle value=maybe
+expect result contains "true or false"
+act? settings_set group=accessibility key=fov value=90
+expect result contains "did you mean `fov_deg`"
+act? settings_set group=sound key=master value=1
+expect result contains "groups: graphics, audio, controls, accessibility"
+act settings group=accessibility
+expect result contains "accessibility.fov_deg = 70"
+
+# --- audio and graphics
+act settings_set group=audio key=music value=0.25
+act settings_set group=graphics key=resolution value=1600x900
+act? settings_set group=audio key=music value=2
+expect result contains "0 to 1"
+act settings group=audio
+expect result contains "audio.music = 0.25"
+act settings group=graphics
+expect result contains "graphics.resolution = \"1600x900\""
+
+# --- controls: rebinding is a setting; only what differs from the defaults is kept
+act rebind action=jump binding="Key(KeyJ)"
+act settings group=controls
+expect result contains "controls.bindings.gameplay.jump = [\"Key(KeyJ)\",\"GamepadButton(South)\"]"
+act settings_set group=controls key=bindings.gameplay.jump reset=true
+act settings group=controls
+expect result !contains "gameplay.jump"
+
+# --- and back to the defaults
+act settings_set group=accessibility reset=true
+act settings_set group=audio reset=true
+act settings_set group=graphics reset=true
+act settings_set group=controls reset=true
+act settings
+expect result !contains "reduced"
+expect result !contains "0.25"
+expect result !contains "1600x900"

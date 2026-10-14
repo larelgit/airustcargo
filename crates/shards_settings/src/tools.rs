@@ -76,11 +76,23 @@ pub struct SettingsSetArgs {
     pub group: String,
     /// The setting inside the group. Leave out with `reset` to reset the group.
     pub key: Option<String>,
-    /// The new value as text.
+    /// The new value as text (a number or `true` is as good as its text).
+    #[serde(default, deserialize_with = "text_or_scalar")]
+    #[schemars(with = "Option<String>")]
     pub value: Option<String>,
     /// Back to the default.
     #[serde(default)]
     pub reset: bool,
+}
+
+/// `value=0.3` reaches the tool as the number 0.3, `value=true` as a boolean, `value=["a"]` as a
+/// list: all of them are the text they were typed as.
+fn text_or_scalar<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    Ok(match Option::<Value>::deserialize(deserializer)? {
+        None | Some(Value::Null) => None,
+        Some(Value::String(text)) => Some(text),
+        Some(other) => Some(other.to_string()),
+    })
 }
 
 fn settings_set(In(call): In<Call<SettingsSetArgs>>, world: &mut World) -> ToolResult {
@@ -175,7 +187,8 @@ fn set(world: &mut World, registry: &SettingsRegistry, args: SettingsSetArgs) ->
             }
         }
     }
-    owner.replace(world, &json).map_err(|why| format!("{label}: {why}"))?;
+    // A group's own checks name the setting already; an error of the deserializer does not.
+    owner.replace(world, &json).map_err(|why| if why.contains(&label) { why } else { format!("{label}: {why}") })?;
     Ok((before, snapshot(world)))
 }
 

@@ -90,7 +90,7 @@ pub struct GraphicsSettings {
     pub resolution: String,
     /// The window's scale factor: 1 keeps the display's own, 0.5 to 2 overrides it (Bevy's
     /// `scale_factor_override`: the window gets logical size times this many pixels).
-    pub render_scale: f32,
+    pub render_scale: f64,
     /// `off`, `low`, `medium` or `high`. The game's lights read it ([`GraphicsSettings::shadow_quality`]).
     pub shadows: String,
 }
@@ -112,7 +112,7 @@ impl GraphicsSettings {
 
     /// `render_scale` within 0.5 to 2 (a NaN or a hand-edited 40 does no harm).
     pub fn scale(&self) -> f32 {
-        if self.render_scale.is_finite() { self.render_scale.clamp(0.5, 2.0) } else { 1.0 }
+        if self.render_scale.is_finite() { self.render_scale.clamp(0.5, 2.0) as f32 } else { 1.0 }
     }
 
     /// `shadows`, the default (`high`) when the file says something else.
@@ -141,10 +141,10 @@ impl GraphicsSettings {
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "audio")]
 pub struct AudioSettings {
-    pub master: f32,
-    pub music: f32,
-    pub sfx: f32,
-    pub voice: f32,
+    pub master: f64,
+    pub music: f64,
+    pub sfx: f64,
+    pub voice: f64,
 }
 
 impl Default for AudioSettings {
@@ -157,7 +157,7 @@ impl AudioSettings {
     /// The volume of `channel` (`music`, `sfx`, `voice`; anything else is the master
     /// alone) with the master applied, each clamped to 0..1.
     pub fn volume(&self, channel: &str) -> f32 {
-        let unit = |v: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
+        let unit = |v: f64| if v.is_finite() { v.clamp(0.0, 1.0) as f32 } else { 0.0 };
         let part = match channel {
             "music" => self.music,
             "sfx" => self.sfx,
@@ -191,7 +191,7 @@ pub struct ControlSettings {
     /// `"context.action"` to `press`, `hold` or `toggle`.
     pub hold_or_toggle: std::collections::BTreeMap<String, String>,
     /// Look speed multiplier (0.05 to 5).
-    pub mouse_sensitivity: f32,
+    pub mouse_sensitivity: f64,
     /// Looking up moves the camera up instead of down.
     pub invert_y: bool,
 }
@@ -205,7 +205,7 @@ impl Default for ControlSettings {
 impl ControlSettings {
     /// The look speed multiplier within 0.05 to 5.
     pub fn sensitivity(&self) -> f32 {
-        if self.mouse_sensitivity.is_finite() { self.mouse_sensitivity.clamp(0.05, 5.0) } else { 1.0 }
+        if self.mouse_sensitivity.is_finite() { self.mouse_sensitivity.clamp(0.05, 5.0) as f32 } else { 1.0 }
     }
 
     /// Why these values are not allowed, if they are not.
@@ -231,15 +231,15 @@ impl ControlSettings {
 #[settings_group(group = "accessibility")]
 pub struct AccessibilitySettings {
     /// How hard hits shake the camera, 0 (never) to 1 (as designed).
-    pub camera_shake: f32,
+    pub camera_shake: f64,
     /// Motion blur strength, 0 (none) to 1. Applied to cameras that carry Bevy's `MotionBlur`.
-    pub motion_blur: f32,
+    pub motion_blur: f64,
     /// Flashing and flickering: `full`, `reduced` or `off` ([`FlashLevel`]).
     pub flashes: String,
     /// Text size multiplier (0.5 to 3), for the game's UI.
-    pub text_scale: f32,
+    pub text_scale: f64,
     /// Vertical field of view in degrees (30 to 120).
-    pub fov_deg: f32,
+    pub fov_deg: f64,
     /// Every held button (`block`, `sprint`, ...) works as a toggle: press once to hold, again
     /// to let go.
     pub hold_to_toggle: bool,
@@ -269,12 +269,12 @@ impl AccessibilitySettings {
 
     /// `text_scale` within 0.5 to 3.
     pub fn text(&self) -> f32 {
-        if self.text_scale.is_finite() { self.text_scale.clamp(0.5, 3.0) } else { 1.0 }
+        if self.text_scale.is_finite() { self.text_scale.clamp(0.5, 3.0) as f32 } else { 1.0 }
     }
 
     /// `fov_deg` within 30 to 120.
     pub fn fov(&self) -> f32 {
-        if self.fov_deg.is_finite() { self.fov_deg.clamp(30.0, 120.0) } else { 70.0 }
+        if self.fov_deg.is_finite() { self.fov_deg.clamp(30.0, 120.0) as f32 } else { 70.0 }
     }
 
     /// Why these values are not allowed, if they are not.
@@ -290,12 +290,12 @@ impl AccessibilitySettings {
     }
 }
 
-fn unit(value: f32, fallback: f32) -> f32 {
-    if value.is_finite() { value.clamp(0.0, 1.0) } else { fallback }
+fn unit(value: f64, fallback: f32) -> f32 {
+    if value.is_finite() { value.clamp(0.0, 1.0) as f32 } else { fallback }
 }
 
 /// `Ok` when `value` is a number within `lo..=hi`.
-fn range(name: &str, value: f32, lo: f32, hi: f32) -> Result<(), String> {
+fn range(name: &str, value: f64, lo: f64, hi: f64) -> Result<(), String> {
     if value.is_finite() && (lo..=hi).contains(&value) {
         Ok(())
     } else {
@@ -315,7 +315,7 @@ mod tests {
         assert_eq!(g.shadow_quality(), ShadowQuality::High, "an unknown word is the default");
         assert_eq!(GraphicsSettings { resolution: "10x10".into(), ..default() }.window_size(), None);
         assert_eq!(GraphicsSettings { resolution: "auto".into(), ..default() }.window_size(), None);
-        let a = AccessibilitySettings { camera_shake: f32::NAN, fov_deg: 400.0, flashes: "strobe".into(), ..default() };
+        let a = AccessibilitySettings { camera_shake: f64::NAN, fov_deg: 400.0, flashes: "strobe".into(), ..default() };
         assert_eq!((a.shake(), a.fov(), a.flash_level()), (1.0, 120.0, FlashLevel::Full));
         let audio = AudioSettings { master: 0.5, music: 0.5, ..default() };
         assert_eq!(audio.volume("music"), 0.25);
