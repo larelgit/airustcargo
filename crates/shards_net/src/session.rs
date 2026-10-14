@@ -158,6 +158,9 @@ impl Plugin for NetPlugin {
         app.world_mut().get_resource_or_init::<NetGame>();
         hooks::register(app);
         crate::tools::register(app);
+        crate::overlay::plugin(app);
+        #[cfg(feature = "render")]
+        crate::interp::plugin(app);
 
         app.configure_sets(
             FixedFirst,

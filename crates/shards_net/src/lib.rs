@@ -30,6 +30,10 @@
 //!   and the recorded `player_join` / `player_leave`.
 //! * [`predict`]: a client's own body between the host's states: the inputs it predicts with,
 //!   its history, the correction ([`NetCorrection`]).
+//! * [`interp`]: others' entities on a client's screen, blended between the host's states
+//!   (`render` feature; the buffer math always).
+//! * [`overlay`]: the net overlay ([`NetOverlay`], `net_overlay`, F6): links, margin, desyncs,
+//!   prediction.
 //! * [`def`]: [`NetDef`], the session's numbers as content.
 //! * [`stand`]: [`Stand`], a host and its clients in one process, deterministic.
 
@@ -41,8 +45,10 @@ pub mod hooks;
 pub mod host;
 pub mod hub;
 pub mod inputs;
+pub mod interp;
 pub mod link;
 pub mod msg;
+pub mod overlay;
 pub mod predict;
 pub mod replicate;
 pub mod session;
@@ -62,6 +68,7 @@ pub use hooks::{JoinDecision, JoinRequest, LeaveRequest, NetHooks, NetLeft, Play
 pub use host::{end_session, NetHost};
 pub use hub::{HubEvent, HubEventKind, HubLinkStats, LinkId, MemoryHub, MemoryTransport};
 pub use link::{Delivered, Footprint, Link, LinkConfig, Role, SendError, Verdict};
+pub use overlay::NetOverlay;
 pub use predict::NetCorrection;
 pub use replicate::NetAlways;
 pub use session::{NetClock, NetEndpoint, NetGame, NetMarks, NetPlugin, NetState, NetSystems};
