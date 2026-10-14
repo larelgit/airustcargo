@@ -1,0 +1,93 @@
+// The Frost Warden's four attacks, calm (phase 1) and enraged (phase 2, from half health:
+// shorter windups and recoveries, harder hits).
+//
+// Every attack warns 0.50 s before it lands: the telegraph (journaled as `e6 winds up slam
+// (0.50s) ⚠ circle 4m`) shows when the warden stops turning toward its target, so a dodge
+// that starts then rolls out of the zone, and a guard raised 0.1 s before the hit is a
+// perfect block. Attacks tagged "zone" cover an area; the warden never does two of them in a
+// row.
+//
+//   slash      quick cone in front                       !
+//   slam       delayed circle all around (hyper-armor)   ⚠
+//   sweep      wide cone                                  ⟲
+//   shockwave  a line along the ground (low: jump it)     ≈
+{
+    "slash": (
+        net_id: 30,
+        phases: [("windup", 0.6), ("active", 0.15), ("recovery", 0.8)],
+        track_until: 0.1,
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 100), damage: 18, poise: 25)],
+        displacement: [(0.6, 0.0), (0.75, 0.5)],
+        telegraph: (at: 0.1, symbol: "!", sound: "warden_slash"),
+        anim: "slash",
+    ),
+    "slam": (
+        net_id: 31,
+        phases: [("windup", 1.0), ("active", 0.15), ("recovery", 1.2)],
+        track_until: 0.5,
+        hits: [(span: Phase("active"), shape: Circle(radius: 4.0), damage: 34, poise: 50)],
+        hyper_armor: [Phases("windup", "active")],
+        telegraph: (at: 0.5, symbol: "⚠", sound: "warden_slam"),
+        anim: "slam",
+        tags: ["zone"],
+    ),
+    "sweep": (
+        net_id: 32,
+        phases: [("windup", 0.8), ("active", 0.2), ("recovery", 1.0)],
+        track_until: 0.3,
+        hits: [(span: Phase("active"), shape: Cone(range: 4.2, angle: 150), damage: 26, poise: 35)],
+        telegraph: (at: 0.3, symbol: "⟲", sound: "warden_sweep"),
+        anim: "sweep",
+        tags: ["zone"],
+    ),
+    "shockwave": (
+        net_id: 33,
+        phases: [("windup", 0.8), ("active", 0.25), ("recovery", 1.0)],
+        track_until: 0.3,
+        hits: [(span: Phase("active"), shape: Line(length: 9.0, width: 1.6, height: 0.6), damage: 24, poise: 30)],
+        telegraph: (at: 0.3, symbol: "≈", sound: "warden_shockwave"),
+        anim: "shockwave",
+        tags: ["zone"],
+    ),
+
+    // Phase 2: the same warnings, less time before them and after.
+    "slash_enraged": (
+        net_id: 34,
+        phases: [("windup", 0.5), ("active", 0.15), ("recovery", 0.6)],
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 100), damage: 22, poise: 30)],
+        displacement: [(0.5, 0.0), (0.65, 0.5)],
+        telegraph: (at: 0.0, symbol: "!", sound: "warden_slash"),
+        anim: "slash",
+    ),
+    "slam_enraged": (
+        net_id: 35,
+        phases: [("windup", 0.75), ("active", 0.15), ("recovery", 0.9)],
+        track_until: 0.25,
+        hits: [(span: Phase("active"), shape: Circle(radius: 4.0), damage: 40, poise: 55)],
+        hyper_armor: [Phases("windup", "active")],
+        telegraph: (at: 0.25, symbol: "⚠", sound: "warden_slam"),
+        anim: "slam",
+        tags: ["zone"],
+    ),
+    "sweep_enraged": (
+        net_id: 36,
+        phases: [("windup", 0.6), ("active", 0.2), ("recovery", 0.8)],
+        track_until: 0.1,
+        hits: [(span: Phase("active"), shape: Cone(range: 4.2, angle: 150), damage: 30, poise: 40)],
+        telegraph: (at: 0.1, symbol: "⟲", sound: "warden_sweep"),
+        anim: "sweep",
+        tags: ["zone"],
+    ),
+    "shockwave_enraged": (
+        net_id: 37,
+        phases: [("windup", 0.6), ("active", 0.25), ("recovery", 0.8)],
+        track_until: 0.1,
+        hits: [(span: Phase("active"), shape: Line(length: 11.0, width: 1.6, height: 0.6), damage: 28, poise: 35)],
+        telegraph: (at: 0.1, symbol: "≈", sound: "warden_shockwave"),
+        anim: "shockwave",
+        tags: ["zone"],
+    ),
+
+    "warden_stagger": (net_id: 38, phases: [("stagger", 1.6)], anim: "stagger"),
+    "warden_death": (net_id: 39, phases: [("fall", 2.0)], anim: "death"),
+}

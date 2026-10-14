@@ -1,52 +1,19 @@
 //! End-to-end scenarios through `shards::ai_core::call_tool`, the entry point behind BRP and
 //! `shards`: what an agent sees, does and gets back.
 
-use sandbox::gameplay::combat::{Action, Health};
-use shards::ai_core::{call_tool, AgentSessions, AiJournal, CallOutcome, JournalKind};
+use shards::ai_core::{call_tool, AgentSessions, AiJournal, JournalKind};
 use shards::bevy::ecs::schedule::{LogLevel, ScheduleBuildSettings};
 use shards::prelude::*;
 use shards::serde_json::{json, Value};
 
-const PLAYER: &str = "e5";
-const BOSS: &str = "e6";
-
-fn act(app: &mut App, tool: &str, args: Value) -> CallOutcome {
-    call_tool(app.world_mut(), "dev", tool, args)
-}
-
-fn ok(app: &mut App, tool: &str, args: Value) -> CallOutcome {
-    let out = act(app, tool, args.clone());
-    assert!(out.ok, "{tool} {args} failed: {}", out.result);
-    out
-}
-
-fn text(out: &CallOutcome) -> &str {
-    out.result.as_str().unwrap_or_default()
-}
-
-/// Every AI-visible entity, bit-exact: position, rotation, health, action.
-fn state(app: &mut App) -> Vec<String> {
-    let world = app.world_mut();
-    let mut q = world.query::<(&AiId, &Transform, Option<&Health>, Option<&Action>)>();
-    let mut lines: Vec<String> = q
-        .iter(world)
-        .map(|(id, tf, hp, action)| format!("{id} {:?} {:?} {hp:?} {action:?}", tf.translation, tf.rotation))
-        .collect();
-    lines.sort();
-    lines
-}
-
-/// The gameplay journal. Agent lines are left out: they only echo the calls.
-fn story(app: &App) -> Vec<String> {
-    let journal = app.world().resource::<AiJournal>();
-    journal.after(0).0.filter(|e| e.kind != JournalKind::Agent).map(ToString::to_string).collect()
-}
+use crate::common::*;
 
 /// The same fight, scripted the way an agent would play it.
 fn fight(app: &mut App) {
     ok(app, "attack", json!({"target": BOSS, "repeat": true}));
     ok(app, "step", json!({"ticks": 240}));
-    ok(app, "dodge", json!({"away_from": BOSS}));
+    // Whatever the fight left the player able to do: refused or not, the same in both games.
+    act(app, "dodge", json!({"away_from": BOSS}));
     ok(app, "step", json!({"ticks": 360}));
 }
 
@@ -59,7 +26,11 @@ fn same_seed_same_fight() {
     assert_eq!(story(&a), story(&b));
     let seen = |app: &mut App| text(&ok(app, "observe", json!({}))).to_owned();
     assert_eq!(seen(&mut a), seen(&mut b));
-    assert!(story(&a).iter().any(|l| l.contains("e5 -> e6 Sword")), "the player never hit the boss: {:#?}", story(&a));
+    assert!(
+        story(&a).iter().any(|l| l.contains("e5 -> e6 light_1")),
+        "the player never hit the boss: {:#?}",
+        story(&a)
+    );
 }
 
 #[test]
@@ -116,13 +87,14 @@ fn order_check_catches_an_unordered_system() {
 #[test]
 fn boss_phase_two_on_demand() {
     let mut app = sandbox::test_app(42);
-    let set = ok(&mut app, "set", json!({"id": BOSS, "component": "Health", "path": "current", "value": 1900}));
-    assert!(set.changes.iter().any(|c| c.contains("hp 4000/4000 → hp 1900/4000")), "{:?}", set.changes);
+    let set = ok(&mut app, "set", json!({"id": BOSS, "component": "Health", "path": "current", "value": 290}));
+    assert!(set.changes.iter().any(|c| c.contains("hp 600/600 → hp 290/600")), "{:?}", set.changes);
 
     let run = ok(&mut app, "step", json!({"until": [{"named": "boss_phase_2"}]}));
     assert!(text(&run).contains("ran 1 ticks (0 → 1), stopped: condition boss_phase_2"), "{}", text(&run));
     assert!(run.journal.iter().any(|l| l.contains("e6 phase 1->2")), "{:?}", run.journal);
     assert!(run.changes.iter().any(|c| c.contains("phase 1 → phase 2")), "{:?}", run.changes);
+    assert_eq!(get::<Fighter>(&app, BOSS).moveset, "warden_enraged", "enraged: the second moveset");
 }
 
 #[test]
@@ -144,14 +116,21 @@ fn errors_teach_the_fix() {
     assert!(nobody.contains("e99 does not exist") && nobody.contains("live: e1, e2"), "{nobody}");
 
     let component = fail("set", json!({"id": PLAYER, "component": "Mana", "value": 5}));
-    assert!(component.contains("unknown component `Mana`; this entity has:") && component.contains("Health"), "{component}");
+    assert!(
+        component.contains("unknown component `Mana`; this entity has:") && component.contains("Health"),
+        "{component}"
+    );
 
     let condition = fail("step", json!({"until": [{"named": "nope"}]}));
-    assert!(condition.contains("unknown condition `nope`; known: boss_phase_2, player_dead"), "{condition}");
+    assert!(condition.contains("unknown condition `nope`; known: boss_dead, boss_phase_2, player_dead"), "{condition}");
 
     ok(&mut app, "despawn", json!({"id": "e7"}));
     let gone = act(&mut app, "inspect", json!({"id": "e7"}));
-    assert!(text(&gone).contains("e7 no longer exists") && text(&gone).contains("despawned at tick 0"), "{}", text(&gone));
+    assert!(
+        text(&gone).contains("e7 no longer exists") && text(&gone).contains("despawned at tick 0"),
+        "{}",
+        text(&gone)
+    );
 }
 
 /// Ids listed in the entity sections of an observation (YOU, SEEN, NOT IN VIEW,
@@ -182,7 +161,11 @@ fn ai_ids_are_managed_by_the_engine() {
     let moved = ok(&mut app, "inspect", json!({"id": "e99"}));
     assert!(text(&moved).starts_with("e99 Skeleton"), "{}", text(&moved));
     let old = act(&mut app, "inspect", json!({"id": "e7"}));
-    assert!(!old.ok && text(&old).contains("e7 no longer exists (Skeleton renumbered to e99 at tick 0)"), "{}", old.result);
+    assert!(
+        !old.ok && text(&old).contains("e7 no longer exists (Skeleton renumbered to e99 at tick 0)"),
+        "{}",
+        old.result
+    );
 
     let after = listed_ids(text(&ok(&mut app, "observe", json!({}))));
     let expected: Vec<String> = before.iter().map(|id| if id == "e7" { "e99".into() } else { id.clone() }).collect();
@@ -257,7 +240,9 @@ fn a_field_of_view_puts_what_is_behind_out_of_view() {
 
 /// A window's camera, set up the way the sandbox's follows the player: high behind it.
 fn window_camera(app: &mut App) {
-    use shards::bevy::camera::{Camera, CameraProjection, ComputedCameraValues, PerspectiveProjection, RenderTargetInfo};
+    use shards::bevy::camera::{
+        Camera, CameraProjection, ComputedCameraValues, PerspectiveProjection, RenderTargetInfo,
+    };
     let size = UVec2::new(1280, 720);
     let computed = ComputedCameraValues {
         clip_from_view: PerspectiveProjection { aspect_ratio: 1280.0 / 720.0, ..default() }.get_clip_from_view(),
@@ -265,13 +250,15 @@ fn window_camera(app: &mut App) {
         ..default()
     };
     let player = Vec3::new(-7.0, 0.0, -9.5);
-    let at = Transform::from_translation(player + Vec3::new(0.0, 20.0, 12.0)).looking_at(player + Vec3::new(0.0, 0.0, -5.0), Vec3::Y);
+    let at = Transform::from_translation(player + Vec3::new(0.0, 20.0, 12.0))
+        .looking_at(player + Vec3::new(0.0, 0.0, -5.0), Vec3::Y);
     app.world_mut().spawn((Camera { computed, ..default() }, GlobalTransform::from(at), at, shards::ai_core::AiCamera));
 }
 
 #[test]
 fn observe_reads_the_same_with_a_window_camera_or_without() {
-    let observe = |app: &App| shards::ai_core::observe::observe(app.world(), &shards::ai_core::ObserveOptions::default());
+    let observe =
+        |app: &App| shards::ai_core::observe::observe(app.world(), &shards::ai_core::ObserveOptions::default());
     let mut app = sandbox::test_app(42);
     pillar_between(&mut app);
     let headless = observe(&app);
@@ -280,11 +267,8 @@ fn observe_reads_the_same_with_a_window_camera_or_without() {
     window_camera(&mut app);
     let windowed = observe(&app);
     assert!(line_of(&windowed, BOSS).contains("  occluded  scr("), "the camera projects: {windowed}");
-    let without_scr: String = windowed
-        .lines()
-        .map(|l| l.split("  scr(").next().unwrap_or(l))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let without_scr: String =
+        windowed.lines().map(|l| l.split("  scr(").next().unwrap_or(l)).collect::<Vec<_>>().join("\n");
     assert_eq!(without_scr.trim_end(), headless.trim_end());
 }
 
@@ -305,7 +289,9 @@ fn player_scope_plays_fair() {
     assert!(walk.ok, "{}", walk.result);
     ok(&mut app, "step", json!({"ticks": 60}));
     let me = call_tool(app.world_mut(), "bot", "inspect", json!({"id": PLAYER}));
-    assert!(text(&me).contains("at (0.0, 9."), "{}", text(&me));
+    assert!(text(&me).contains(", 9.0)  facing N"), "{}", text(&me));
+    let at = get::<Transform>(&app, PLAYER).translation;
+    assert!(at.x.abs() < 0.01 && (at.z - 9.0).abs() < 0.31, "3 m north of z = 12: {at}");
 }
 
 #[test]
@@ -326,7 +312,10 @@ fn a_panicking_tool_does_not_take_the_game_down() {
         .collect();
     assert_eq!(errors.len(), 2, "{errors:?}");
     let schedules = app.world().resource::<Schedules>();
-    assert!(schedules.contains(shards::bevy::app::FixedMain) && schedules.contains(FixedUpdate), "schedules survive a tool panic");
+    assert!(
+        schedules.contains(shards::bevy::app::FixedMain) && schedules.contains(FixedUpdate),
+        "schedules survive a tool panic"
+    );
     ok(&mut app, "step", json!({"ticks": 30}));
     assert_eq!(shards::ai_core::sim::tick(app.world()), 30);
 }

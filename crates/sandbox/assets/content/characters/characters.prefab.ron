@@ -1,0 +1,88 @@
+// The sandbox's characters and props, as data. The world layout spawns them
+// (`world/*.layout.ron`); `shards act spawn_prefab id=skeleton_captain x=3 z=-4` spawns more.
+// Components by short name, values as in Bevy scenes; `extends` starts from another prefab.
+//
+// A character is a `CharacterController` (moves by its `locomotion` numbers; its capsule is
+// its body and, on a `Fighter`, its hurtbox) and a `Fighter` (acts by its `moveset`), with
+// fighter resources: Health, Stamina (spent by actions, back `regen`/s after `delay` s),
+// Poise (breaks into a stagger), Charges (flasks). Monsters carry a brain that writes their
+// `Intent`, like the player's keyboard does.
+{
+    "player": (
+        components: {
+            "Name": "Player",
+            "Player": (),
+            "AiPlayer": (),
+            "LocalPlayer": (),
+            "PlayerId": (0),
+            "AiKind": ("Player"),
+            "Team": ("heroes"),
+            "Fighter": (moveset: "player"),
+            "Health": (current: 100.0, max: 100.0),
+            "Stamina": (current: 100.0, max: 100.0, regen: 45.0, delay: 0.5, since_use: 0.5),
+            "Poise": (current: 60.0, max: 60.0, regen: 20.0, delay: 2.0, since_hit: 2.0, broken: 0.0),
+            "Charges": ([(name: "flask", current: 3, max: 3)]),
+            "CharacterController": (params: "player"),
+        },
+    ),
+    "skeleton": (
+        components: {
+            "Name": "Skeleton",
+            "Skeleton": (),
+            "AiKind": ("Skeleton"),
+            "AiImportance": (1.0),
+            "Team": ("monsters"),
+            "Fighter": (moveset: "skeleton"),
+            "Health": (current: 40.0, max: 40.0),
+            "Poise": (current: 20.0, max: 20.0, regen: 10.0, delay: 2.0, since_hit: 2.0, broken: 0.0),
+            "CharacterController": (params: "skeleton"),
+            "SkeletonBrain": (aggro: 18.0, cooldown: 0.0),
+            "LockOnTarget": (),
+            // The corpse is gone 1.5 s after death.
+            "Remains": (despawn_after: 1.5),
+        },
+    ),
+    "skeleton_captain": (
+        extends: "skeleton",
+        components: {
+            "Name": "Skeleton Captain",
+            "AiImportance": (3.0),
+            "Health": (current: 90.0, max: 90.0),
+            "Poise": (current: 45.0, max: 45.0, regen: 10.0, delay: 2.0, since_hit: 2.0, broken: 0.0),
+        },
+    ),
+    // The arena's boss: four telegraphed attacks, an enraged second phase from half health
+    // (the second moveset), poise that breaks after a few combos. Its body stays where it
+    // falls (no `Remains`).
+    "frost_warden": (
+        components: {
+            "Name": "Frost Warden",
+            "Boss": (phase: 1, movesets: ["warden", "warden_enraged"]),
+            "AiKind": ("Boss"),
+            "AiImportance": (10.0),
+            "Team": ("monsters"),
+            "Fighter": (moveset: "warden"),
+            "Health": (current: 600.0, max: 600.0),
+            "Poise": (current: 140.0, max: 140.0, regen: 25.0, delay: 3.0, since_hit: 3.0, broken: 0.0),
+            "CharacterController": (params: "warden"),
+            // Fights players within 26 m of where it stands guard; rests 1.2-1.8 s between
+            // attacks (1.0-1.4 s enraged).
+            "WardenBrain": (leash: 26.0, rest: 0.5, rest_after: [(1.2, 1.8), (1.0, 1.4)], last_zone: false),
+            "LockOnTarget": (),
+        },
+    ),
+    // A 2 x 4 x 2 m stone column standing on its origin: blocks movement and sight.
+    "pillar": (
+        components: {
+            "Name": "Pillar",
+            "Pillar": (),
+            "AiKind": ("Pillar"),
+            "AiLandmark": (),
+            "Collider": (
+                shape: Cuboid(half: (1.0, 2.0, 1.0)),
+                offset: (0.0, 2.0, 0.0),
+                layers: (memberships: (1), filters: (4294967295)),
+            ),
+        },
+    ),
+}

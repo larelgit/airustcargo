@@ -1,47 +1,92 @@
-# Dodging: an attack that lands hurts, the same attack met with a dodge does not.
+# Dodging: an attack that lands hurts, the same attack met with a roll does not.
 #
-# The boss's windup is forced with `set` so the timing is the same in every game; left to
-# its brain, the boss would pick its attacks at random. The dodge is played by a
-# player-scope agent, through the same controls a human has.
-#
-# Written for the CURRENT sandbox (e5 player, e6 boss, e7 and e8 skeletons).
+# The warden's attacks are pressed by a dev agent possessing it (`session --subject e6`, its
+# brain kept at its post), so the timing is the same in every game; left to its brain, the
+# warden picks its attacks at random. The dodges are played by a player-scope agent,
+# through the same controls a human has.
 
 seed 42
 
 # --- the arena as the game spawns it, whatever was played in it before
+act set id=e7 component=SkeletonBrain path=aggro value=0
+act set id=e8 component=SkeletonBrain path=aggro value=0
+act set id=e6 component=WardenBrain path=leash value=0
+# (a dead player is brought back first: its own controls refuse a dead body)
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god on=false
+step 150
 act heal id=e5
 act heal id=e6
-act set id=e5 component=Health value='{"current":100,"max":100}'
-act set id=e5 component=Stamina path=current value=80
-act set id=e5 component=Action value=Idle
-act stop
-act teleport id=e5 x=0 z=-2
-act teleport id=e6 x=0 z=-6
-act teleport id=e7 x=-19 z=-19
-act teleport id=e8 x=19 z=-19
+act set id=e6 component=Boss path=phase value=1
+act teleport id=e5 x=0 z=-3 y=0
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e7 x=-18 z=18 y=0
+act teleport id=e8 x=18 z=18 y=0
+step 2
 invariant field e5 Health.current > 0
 
-# --- 1. not dodged: an IceSlam 4 m away lands for 30
-act set id=e6 component=Action value='{"Windup":{"attack":"IceSlam","left":0.1}}'
-expect shows e6 "windup IceSlam"
-expect field e5 Health.current == 100
-step 20
-expect journal "e6 -> e5 IceSlam -30"
-expect field e5 Health.current == 70
-
-# --- 2. dodged: the same windup, and the player rolls sideways as a player-scope agent
-mark
-act set id=e5 component=Action value=Idle
-act teleport id=e5 x=0 z=-2
-act set id=e6 component=Action value='{"Windup":{"attack":"IceSlam","left":0.1}}'
+session --agent warden --scope dev --subject e6
+act lock_on target=e5
+expect result contains "ok: locked on e5"
 session --agent bot --scope player
 act? teleport id=e5 x=0 z=0
 expect result contains "needs dev scope"
-act dodge dir=E
-expect result contains "ok: dodging E"
-session --agent scenario      # time is the dev agent's to control
-step 20
-expect journal "e5 dodged IceSlam from e6"
+session --agent scenario
+
+# --- 1. not dodged: the slam, a circle of 4 m all around the warden, lands for 34
+session --agent warden
+act heavy_attack
+expect result contains "ok: slam"
+session --agent scenario
+step 90 --until "journal:e6 -> e5"
+expect journal "e6 -> e5 slam -34 (hp 66)"
+expect field e5 Health.current == 66
+
+# --- 2. dodged: the same slam; the warning comes 0.50 s before it lands, the roll takes
+# the player out of the circle (the way out the ALERT line names)
+mark
+act heal id=e5
+act teleport id=e5 x=0 z=-3 y=0
+step 120
+session --agent warden
+act heavy_attack
+session --agent scenario
+step 90 --until "journal:e6 winds up slam"
+observe
+expect result contains "ALERT in hit zone of e6 slam (lands in 0.50s)"
+session --agent bot
+act dodge
+expect result contains "ok: roll (S)"
+session --agent scenario
+step 45
 expect !journal "e6 -> e5"
-expect field e5 Health.current == 70
-expect field e5 Stamina.current < 80
+expect field e5 Health.current == 100
+expect field e5 Stamina.current < 100
+
+# --- 3. through it: a roll into the slash right as it lands; its i-frames (the first
+# 0.18 s) take the hit
+mark
+act heal id=e5
+act teleport id=e5 x=0 z=-3 y=0
+step 120
+session --agent warden
+act light_attack
+session --agent scenario
+step 60 --until "journal:e6 winds up slash"
+step 28
+session --agent bot
+act dodge dir=N
+expect result contains "ok: roll (N)"
+session --agent scenario
+step 30
+expect journal "e5 evaded e6 slash"
+expect !journal "e6 -> e5"
+expect field e5 Health.current == 100
+
+session --agent warden
+act lock_on off=true
+session --agent scenario
+act set id=e6 component=WardenBrain path=leash value=26

@@ -1,0 +1,108 @@
+// The player's kit (the combat prototype): a three-hit light combo, a heavy attack, a dodge
+// roll, a block with a perfect-block window, and a healing flask. Times in seconds; a span is
+// a whole phase, phase to phase, or Secs(from, to). Edit while the game runs: the next action
+// uses the new numbers.
+//
+// The combo is a chain of cancel windows: `light` pressed in light_1's recovery starts
+// light_2, in light_2's recovery light_3. Light windups and recoveries can be cut short by a
+// dodge or a block; the heavy attack cannot (hyper-armor while it winds up: hits do not
+// stagger it).
+{
+    "light_1": (
+        net_id: 1,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)],
+        cost: (stamina: 8),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.2, angle: 110), damage: 20, poise: 12)],
+        cancels: [
+            (span: Phase("windup"), into: [Input("dodge"), Input("block")]),
+            (span: Phase("recovery"), into: [Combo("light", "light_2"), Input("heavy"), Input("dodge"), Input("block")]),
+        ],
+        displacement: [(0.2, 0.0), (0.3, 0.3)],
+        track_until: 0.15,
+        anim: "light_1",
+    ),
+    "light_2": (
+        net_id: 2,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)],
+        cost: (stamina: 8),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.2, angle: 110), damage: 22, poise: 14)],
+        cancels: [
+            (span: Phase("windup"), into: [Input("dodge"), Input("block")]),
+            (span: Phase("recovery"), into: [Combo("light", "light_3"), Input("heavy"), Input("dodge"), Input("block")]),
+        ],
+        displacement: [(0.2, 0.0), (0.3, 0.3)],
+        track_until: 0.15,
+        anim: "light_2",
+    ),
+    "light_3": (
+        net_id: 3,
+        phases: [("windup", 0.25), ("active", 0.1), ("recovery", 0.45)],
+        cost: (stamina: 12),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.4, angle: 120), damage: 30, poise: 24)],
+        cancels: [
+            (span: Phase("windup"), into: [Input("dodge"), Input("block")]),
+            (span: Secs(0.5, 0.8), into: [Input("light"), Input("dodge"), Input("block")]),
+        ],
+        displacement: [(0.25, 0.0), (0.35, 0.4)],
+        track_until: 0.2,
+        anim: "light_3",
+    ),
+    // Slow, costly and hard to stop: more damage and much more poise damage.
+    "heavy": (
+        net_id: 4,
+        phases: [("windup", 0.55), ("active", 0.15), ("recovery", 0.6)],
+        cost: (stamina: 30),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.6, angle: 120), damage: 55, poise: 45)],
+        hyper_armor: [Phase("windup")],
+        cancels: [(span: Secs(0.95, 1.3), into: [Input("dodge"), Input("block"), Input("light")])],
+        displacement: [(0.5, 0.0), (0.7, 0.6)],
+        track_until: 0.3,
+        anim: "heavy",
+    ),
+    // ~0.18 s of i-frames and 4 m of distance; the direction is the press's (or the
+    // movement's), never pulled toward a lock-on target.
+    "roll": (
+        net_id: 5,
+        phases: [("roll", 0.4), ("recover", 0.1)],
+        cost: (stamina: 20),
+        iframes: [Secs(0.0, 0.18)],
+        displacement: [(0.35, 4.0)],
+        steer: Move,
+        cancels: [(span: Phase("recover"), into: [Input("light"), Input("heavy"), Input("block")])],
+        anim: "roll",
+    ),
+    // Held: the guard stays up while `block` is held. Blocked hits cost stamina (1 per point
+    // of damage) and let a quarter of the damage through; with too little stamina the guard
+    // breaks. Raised just in time (its first 0.15 s) it is a perfect block: no damage, no
+    // stamina, and the attacker staggers.
+    "block": (
+        net_id: 6,
+        phases: [("raise", 0.15), ("hold", 0.3), ("lower", 0.1)],
+        hold: (input: "block", span: Phase("hold")),
+        guard: (
+            span: Phases("raise", "hold"),
+            perfect: Phase("raise"),
+            damage_mult: 0.25,
+            stamina_per_damage: 1.0,
+            poise_mult: 0.3,
+            arc: 160,
+        ),
+        cancels: [
+            (span: Phase("hold"), into: [Input("dodge")]),
+            (span: Phase("lower"), into: [Input("dodge"), Input("light"), Input("heavy")]),
+        ],
+        move_speed: 0.4,
+        anim: "block",
+    ),
+    // A healing flask: one charge, a short animation lock (walking slowly), 45 health at 0.7 s.
+    "drink": (
+        net_id: 7,
+        phases: [("drink", 1.0), ("recover", 0.3)],
+        cost: (charge: "flask"),
+        effects: [(at: 0.7, effect: Heal(45))],
+        move_speed: 0.3,
+        anim: "drink",
+    ),
+    "player_stagger": (net_id: 8, phases: [("stagger", 0.8)], anim: "stagger"),
+    "player_death": (net_id: 9, phases: [("fall", 1.2)], anim: "death"),
+}

@@ -1,0 +1,59 @@
+// Area 2: the obstacle course, east of the arena (start at x = 40, end of the corridor).
+// A lane 8 m wide (z -4..4) between walls:
+//
+//   stairs   eight 0.25 m steps up to 2 m
+//   ledge    1.3 m up to the deck (a mantle: a plain jump reaches 1.2 m)
+//   pool     10 m of water 2.7 m deep; climb out onto the far deck
+//   ramp     up to the cliff top at 8 m
+//   cliff    18 m above the canyon floor; the goal pad is 32 m across the gap, on a rock
+//            2 m lower: only a glide gets there, and only with the lift of the updraft half
+//            way across
+//
+// Landmarks for the AI: Stairs e9, Ledge e10, Pool e11, Cliff e12, and the goal pad Goal e13
+// (a trigger volume: entering it journals `e5 reached goal`).
+{
+    "course": (
+        solids: [
+            // Stairs: each step a block from its front edge to the plateau's end.
+            (min: (44.0, 0.0, -4.0), max: (52.0, 0.25, 4.0)),
+            (min: (44.5, 0.0, -4.0), max: (52.0, 0.5, 4.0)),
+            (min: (45.0, 0.0, -4.0), max: (52.0, 0.75, 4.0)),
+            (min: (45.5, 0.0, -4.0), max: (52.0, 1.0, 4.0)),
+            (min: (46.0, 0.0, -4.0), max: (52.0, 1.25, 4.0)),
+            (min: (46.5, 0.0, -4.0), max: (52.0, 1.5, 4.0)),
+            (min: (47.0, 0.0, -4.0), max: (52.0, 1.75, 4.0)),
+            (min: (47.5, 0.0, -4.0), max: (52.0, 2.0, 4.0)),
+            // The ledge and the deck on top.
+            (min: (52.0, 0.0, -4.0), max: (56.0, 3.3, 4.0)),
+            // The pool's bottom, and the far deck.
+            (min: (56.0, 0.0, -4.0), max: (66.0, 0.4, 4.0), look: Sand),
+            (min: (66.0, 0.0, -4.0), max: (70.0, 3.3, 4.0)),
+            // The cliff, from the canyon floor up.
+            (min: (82.0, -10.0, -4.0), max: (86.0, 8.0, 4.0)),
+            // The lane's walls.
+            (min: (44.0, 0.0, -5.5), max: (70.0, 6.0, -4.0), look: Wall),
+            (min: (44.0, 0.0, 4.0), max: (70.0, 6.0, 5.5), look: Wall),
+            (min: (70.0, 0.0, -5.5), max: (86.0, 10.5, -4.0), look: Wall),
+            (min: (70.0, 0.0, 4.0), max: (86.0, 10.5, 5.5), look: Wall),
+            // The canyon, walled in, and the goal's rock.
+            (min: (86.0, -11.0, -17.5), max: (141.5, -10.0, 17.5), look: Sand),
+            (min: (86.0, -10.0, -17.5), max: (140.0, 2.0, -16.0), look: Wall),
+            (min: (86.0, -10.0, 16.0), max: (140.0, 2.0, 17.5), look: Wall),
+            (min: (140.0, -10.0, -17.5), max: (141.5, 2.0, 17.5), look: Wall),
+            (min: (118.0, -10.0, -6.0), max: (136.0, 6.0, 6.0)),
+        ],
+        // From the far deck (3.3 m) up to the cliff top (8 m): 21 degrees, walked, not climbed.
+        ramps: [(from: (70.0, 3.3, 0.0), to: (82.0, 8.0, 0.0), width: 8.0)],
+        landmarks: [
+            (name: "Stairs", at: (44.0, 0.0, 0.0)),
+            (name: "Ledge", at: (52.0, 2.0, 0.0)),
+            (name: "Pool", at: (56.0, 3.3, 0.0)),
+            (name: "Cliff", at: (86.0, 8.0, 0.0)),
+        ],
+        volumes: [
+            (min: (56.0, 0.4, -4.0), max: (66.0, 3.1, 4.0), kind: Water),
+            (min: (96.0, -10.0, -6.0), max: (106.0, 10.0, 6.0), kind: Updraft(accel: 20.0, max_speed: 5.0)),
+            (min: (120.0, 6.0, -3.5), max: (130.0, 9.0, 3.5), kind: Trigger(name: "goal"), landmark: "Goal"),
+        ],
+    ),
+}

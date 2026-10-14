@@ -1,10 +1,16 @@
-//! Sandbox arena for the Shards engine: a player, two skeletons and the Frost Warden
-//! boss. Built only on the `shards` crate, the way a game is.
+//! Sandbox for the Shards engine, built only on the `shards` crate, the way a game is.
+//!
+//! - **Arena** (the combat prototype): the player, two skeletons and the Frost Warden, a boss
+//!   with four telegraphed attacks and an enraged second phase.
+//! - **Obstacle course** east of it: stairs, a ledge to mantle, a pool to swim, a cliff
+//!   and a gap only a glide (with an updraft) crosses, to a goal pad.
+//!
+//! Everything that is numbers or definitions is content in `assets/content/`: the world
+//! layout, the characters (prefabs), how they move (locomotion), what they can do (actions,
+//! movesets). Edit it while the game runs.
 //!
 //! Run windowed: `cargo sandbox` · headless: `cargo sandbox --headless --paused`
 //! Then drive it from another terminal: `cargo shards observe`, `cargo shards step 60`.
-//! Attack numbers live in `assets/content/combat/attacks.attack.ron`; edit them while
-//! the game runs.
 
 // Bevy queries name every component they touch.
 #![allow(clippy::type_complexity)]
@@ -40,10 +46,13 @@ pub fn build_app(config: &EngineConfig) -> App {
     app
 }
 
-/// Paused at tick 0 with the arena spawned, headless, no logging, no HTTP and no
+/// Paused at tick 0 with the world spawned, headless, no logging, no HTTP and no
 /// crash replay files: drive it with `shards::ai_core::call_tool`.
 pub fn test_app(seed: u64) -> App {
-    shards::testing::test_app(|config| config.seed = seed, |app| {
-        app.add_plugins(SandboxPlugin);
-    })
+    shards::testing::test_app(
+        |config| config.seed = seed,
+        |app| {
+            app.add_plugins(SandboxPlugin);
+        },
+    )
 }

@@ -24,7 +24,7 @@ expect result contains "Health"
 
 # a stop condition that does not exist
 act? step until='[{"named":"nope"}]'
-expect result contains "unknown condition `nope`; known: boss_phase_2, player_dead"
+expect result contains "unknown condition `nope`; known: boss_dead, boss_phase_2, player_dead"
 
 # a player-scope agent plays fair: no cheats, no control over time
 session --agent bot --scope player
@@ -33,7 +33,14 @@ expect result contains "`teleport` needs dev scope; agent `bot` has player scope
 act? step ticks=10
 expect result contains "needs dev scope"
 act? dodge dir=sideways
-expect result contains "unknown direction `sideways`"
+expect result contains "unknown direction `sideways`; use N, NE, E, SE, S, SW, W or NW"
+# the moveset says what the player has: the perfect block is its parry
+act? parry
+expect result contains "your moveset `player` has no `parry`; it has: block, dodge, heavy, light"
+act? use_item item=bomb
+expect result contains "no item `bomb`; you have: flask"
+act? path_to target='{"x": 120, "z": 0}'
+expect result contains "farther than max 80m"
 session --agent scenario
 
 # none of this was worth a warning or an error in the journal

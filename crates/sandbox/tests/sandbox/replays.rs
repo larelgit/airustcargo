@@ -1,21 +1,14 @@
 //! Replays end to end: record a session, play it back in a fresh world, and get the
 //! same game — or a report of the first tick where it stops being the same.
 
-use sandbox::gameplay::combat::{Action, Health};
-use sandbox::gameplay::intent::Intent;
 use sandbox::gameplay::Player;
+use sandbox::SandboxPlugin;
 use shards::ai_core::replay::{self, Replay, ReplayEvent};
-use shards::ai_core::{call_tool, AiJournal, AiReplay, CallOutcome, JournalKind};
+use shards::ai_core::{call_tool, AiJournal, AiReplay, JournalKind};
 use shards::prelude::*;
-use shards::serde_json::{json, Value};
+use shards::serde_json::json;
 
-const BOSS: &str = "e6";
-
-fn ok(app: &mut App, tool: &str, args: Value) -> CallOutcome {
-    let out = call_tool(app.world_mut(), "dev", tool, args.clone());
-    assert!(out.ok, "{tool} {args} failed: {}", out.result);
-    out
-}
+use crate::common::{ok, state, BOSS};
 
 /// What the keyboard does: straight into the player's `Intent`, between ticks.
 fn press(app: &mut App, dir: Vec3) {
@@ -24,18 +17,6 @@ fn press(app: &mut App, dir: Vec3) {
     let mut intent = q.single_mut(world).unwrap();
     intent.orders.clear();
     intent.move_dir = dir;
-}
-
-/// Every AI-visible entity, bit-exact: position, rotation, health, action.
-fn state(app: &mut App) -> Vec<String> {
-    let world = app.world_mut();
-    let mut q = world.query::<(&AiId, &Transform, Option<&Health>, Option<&Action>)>();
-    let mut lines: Vec<String> = q
-        .iter(world)
-        .map(|(id, tf, hp, action)| format!("{id} {:?} {:?} {hp:?} {action:?}", tf.translation, tf.rotation))
-        .collect();
-    lines.sort();
-    lines
 }
 
 /// Gameplay events only: agent, sim and log lines differ between a recording and
@@ -48,20 +29,20 @@ fn story(app: &App) -> Vec<String> {
 /// A session with every kind of input a replay has to capture: dev edits, player
 /// tools, keyboard, a spawn, possession, and a call after the last tick.
 fn session(app: &mut App) {
-    ok(app, "set", json!({"id": BOSS, "component": "Health", "path": "current", "value": 2100}));
+    ok(app, "set", json!({"id": BOSS, "component": "Health", "path": "current", "value": 310}));
     ok(app, "attack", json!({"target": BOSS, "repeat": true}));
     ok(app, "step", json!({"ticks": 100}));
     press(app, Vec3::X);
     ok(app, "step", json!({"ticks": 20}));
     press(app, Vec3::ZERO);
-    ok(app, "spawn", json!({"kind": "skeleton", "x": 4, "z": 6}));
+    ok(app, "spawn_prefab", json!({"id": "skeleton", "x": 4, "z": 6}));
     ok(app, "possess", json!({"id": "e7"}));
     ok(app, "set", json!({"id": "e7", "component": "Health", "path": "current", "value": 5}));
     ok(app, "heal", json!({})); // heals "you": e7
     ok(app, "possess", json!({}));
     ok(app, "dodge", json!({"away_from": BOSS}));
     ok(app, "step", json!({"ticks": 200}));
-    ok(app, "teleport", json!({"id": "e9", "x": -3, "z": 0}));
+    ok(app, "teleport", json!({"id": "e14", "x": -3, "z": 0}));
     ok(app, "step", json!({"ticks": 37}));
     ok(app, "move", json!({"dir": "W", "meters": 2}));
 }
@@ -83,9 +64,15 @@ fn report(app: &App) -> shards::ai_core::ReplayReport {
 fn playback_reproduces_the_session() {
     let (mut original, replay) = recorded(42);
     assert_eq!(replay.end.tick, 357);
-    assert!(replay.events.iter().any(|e| matches!(e, ReplayEvent::Input { at: 100, .. })), "keyboard input not recorded");
     assert!(
-        !replay.events.iter().any(|e| matches!(e, ReplayEvent::Call { tool, .. } if tool == "step" || tool == "possess")),
+        replay.events.iter().any(|e| matches!(e, ReplayEvent::Input { at: 100, .. })),
+        "keyboard input not recorded"
+    );
+    assert!(
+        !replay
+            .events
+            .iter()
+            .any(|e| matches!(e, ReplayEvent::Call { tool, .. } if tool == "step" || tool == "possess")),
         "control tools must not be recorded"
     );
 
@@ -103,7 +90,7 @@ fn playback_reproduces_the_session() {
     assert_eq!(state(&mut original), state(&mut copy));
     assert_eq!(story(&original), story(&copy));
     // The skeleton spawned mid-session exists in the copy too, and fights.
-    assert!(story(&copy).iter().any(|l| l.contains("e9 -> e5 Claw")), "{:#?}", story(&copy));
+    assert!(story(&copy).iter().any(|l| l.contains("e14 -> e5 claw")), "{:#?}", story(&copy));
 }
 
 #[test]
@@ -111,7 +98,7 @@ fn a_changed_game_reports_the_first_diverging_tick() {
     let (_, mut replay) = recorded(42);
     // As if the boss had spawned with less health in a newer build.
     let ReplayEvent::Call { args, .. } = &mut replay.events[0] else { panic!("first event is the set call") };
-    args["value"] = json!(2000);
+    args["value"] = json!(299);
 
     let mut copy = sandbox::test_app(42);
     replay::play(copy.world_mut(), replay).unwrap();
@@ -176,7 +163,7 @@ fn calls_made_inside_a_tool_are_recorded_once() {
     /// A game tool built from other tools: spawns a pair of skeletons.
     fn pair(In(call): In<Call<NoArgs>>, world: &mut World) -> ToolResult {
         for x in [-2, 2] {
-            let out = call_tool(world, &call.caller.agent, "spawn", json!({"kind": "skeleton", "x": x, "z": 8}));
+            let out = call_tool(world, &call.caller.agent, "spawn_prefab", json!({"id": "skeleton", "x": x, "z": 8}));
             if !out.ok {
                 return Err(out.result.to_string());
             }
@@ -253,7 +240,11 @@ fn replay_save_writes_only_inside_replays() {
         let err = out.result.as_str().unwrap();
         assert!(err.starts_with("path must be inside replays/, e.g. replays/boss-fight.json"), "{err}");
     }
-    assert!(!outside.exists() && !std::path::Path::new("escaped.json").exists() && !std::path::Path::new("boss.json").exists());
+    assert!(
+        !outside.exists()
+            && !std::path::Path::new("escaped.json").exists()
+            && !std::path::Path::new("boss.json").exists()
+    );
 }
 
 #[test]
@@ -292,7 +283,9 @@ struct Weather(u64);
 /// part of the build, the same for the recording and its playback.
 fn sparkling_app(ignore_sparkle: bool) -> App {
     let mut app = sandbox::test_app(42);
-    app.register_type::<Sparkle>().init_resource::<Weather>().add_replay_check("weather", |w| w.resource::<Weather>().0);
+    app.register_type::<Sparkle>()
+        .init_resource::<Weather>()
+        .add_replay_check("weather", |w| w.resource::<Weather>().0);
     if ignore_sparkle {
         app.replay_ignore::<Sparkle>();
     }
@@ -368,16 +361,15 @@ fn an_entity_in_a_component_hashes_as_its_id() {
         boss
     };
     let mut a = sandbox::test_app(42);
-    let mut b = sandbox::test_app(42);
-    // In b the boss is the same boss, but another `Entity`.
-    b.world_mut().spawn_batch((0..5).map(|_| Transform::default()));
-    let old_boss = b.world().resource::<shards::ai_core::AiIndex>().get(AiId(6)).unwrap();
-    b.world_mut().despawn(old_boss);
-    let mut queue = shards::bevy::ecs::world::CommandQueue::default();
-    let new_boss = sandbox::gameplay::spawn_boss(&mut Commands::new(&mut queue, b.world()), Vec3::new(0.0, 0.0, -6.0));
-    queue.apply(b.world_mut());
-    b.world_mut().entity_mut(new_boss).insert(AiId(6));
-
+    // In b five more entities come before the world: the same boss, another `Entity`.
+    let mut b = shards::testing::test_app(
+        |config| config.seed = 42,
+        |app| {
+            app.add_plugins(SandboxPlugin).add_systems(Startup, |mut commands: Commands| {
+                commands.spawn_batch((0..5).map(|_| Transform::default()));
+            });
+        },
+    );
     let (boss_a, boss_b) = (grudge(&mut a), grudge(&mut b));
     assert_ne!(boss_a, boss_b);
     assert_eq!(replay::state_hash(a.world()), replay::state_hash(b.world()));

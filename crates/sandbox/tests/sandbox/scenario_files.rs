@@ -6,8 +6,9 @@ use std::path::{Path, PathBuf};
 
 use shards::ai_core::scenario::run_file;
 
+
 /// The sandbox's reference scenarios, in file-name order.
-fn scenario_files() -> Vec<PathBuf> {
+pub fn scenario_files() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios");
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
@@ -34,7 +35,7 @@ fn every_scenario_file_passes_on_a_fresh_game() {
 
 /// The scenarios also pass one after the other in the same game, the way
 /// `shards scenario crates/sandbox/scenarios/*.scenario` runs them against one live game:
-/// each puts the arena back before it starts.
+/// each puts the world back before it starts.
 #[test]
 fn the_scenarios_also_pass_in_one_game_after_another() {
     let mut app = sandbox::test_app(42);

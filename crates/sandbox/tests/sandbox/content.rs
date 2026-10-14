@@ -1,0 +1,176 @@
+//! The sandbox is data: its world layout, characters, movement and combat numbers live in
+//! `assets/content/`. Editing a file while the game runs changes the next hit (or the next
+//! tick's geometry), the edit is recorded, and the replay plays the same game.
+
+use std::path::{Path, PathBuf};
+
+use sandbox::gameplay::LayoutPiece;
+use sandbox::SandboxPlugin;
+use shards::ai_core::replay;
+use shards::ai_core::AiReplay;
+use shards::motion::{Volume, VolumeKind};
+use shards::prelude::*;
+use shards::serde_json::json;
+
+use crate::common::*;
+
+const LIGHT_1: &str = "hits: [(span: Phase(\"active\"), shape: Cone(range: 2.2, angle: 110), damage: 20, poise: 12)],";
+
+/// A copy of the sandbox's assets, to edit without touching the repository.
+fn assets_copy(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("sandbox_content_{name}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    copy_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("assets"), &dir);
+    dir
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+fn app_on(dir: &Path) -> App {
+    let asset_dir = dir.to_string_lossy().into_owned();
+    shards::testing::test_app(
+        move |config| config.asset_dir = asset_dir,
+        |app| {
+            app.add_plugins(SandboxPlugin);
+        },
+    )
+}
+
+#[test]
+fn the_sandbox_content_is_clean() {
+    let mut app = sandbox::test_app(42);
+    assert_eq!(text(&ok(&mut app, "content_check", json!({}))), "ok: 38 definitions in 9 files");
+    let light = ok(&mut app, "content_get", json!({"kind": "action", "id": "light_1"})).result;
+    assert_eq!(light["def"]["hits"][0]["damage"], json!(20.0));
+    assert_eq!(light["file"], "content/combat/player.action.ron");
+    let kinds = text(&ok(&mut app, "content_list", json!({}))).to_owned();
+    for kind in ["action", "moveset", "prefab", "locomotion", "layout", "combat_tuning"] {
+        assert!(kinds.contains(kind), "{kind} missing: {kinds}");
+    }
+    assert!(events(&app).contains(&"0 content loaded: 38 definitions in 9 files".to_owned()), "{:?}", events(&app));
+}
+
+#[test]
+fn the_world_is_spawned_from_its_layout() {
+    let mut app = sandbox::test_app(42);
+    let seen = text(&ok(&mut app, "observe", json!({}))).to_owned();
+    assert!(seen.contains("YOU  e5 Player"), "{seen}");
+    assert!(seen.contains("e6 Boss \"Frost Warden\"  hp 600/600"), "{seen}");
+    assert!(seen.contains("LANDMARKS  e3 Pillar"), "{seen}");
+    for (id, name) in [("e9", "Stairs"), ("e10", "Ledge"), ("e11", "Pool"), ("e12", "Cliff"), ("e13", "Goal")] {
+        let line = text(&ok(&mut app, "inspect", json!({"id": id}))).to_owned();
+        assert!(line.starts_with(&format!("{id} {name}")), "{line}");
+    }
+    let world = app.world_mut();
+    let pieces = world.query::<&LayoutPiece>().iter(world).count();
+    assert_eq!(pieces, 30 + 1 + 2 + 5, "boxes, the ramp, water and updraft, landmarks");
+    let kinds: Vec<String> = world.query::<&Volume>().iter(world).map(|v| format!("{}", v.kind)).collect();
+    assert_eq!(kinds, ["water", "updraft", "trigger \"goal\""]);
+}
+
+#[test]
+fn an_edited_number_changes_the_next_hit_and_replays_the_same() {
+    let dir = assets_copy("edit");
+    let file = dir.join("content/combat/player.action.ron");
+    let mut app = app_on(&dir);
+    calm_skeletons(&mut app);
+    calm_warden(&mut app);
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 0, "z": -3}));
+    ok(&mut app, "attack", json!({"target": BOSS, "repeat": true}));
+    step(&mut app, 30);
+    assert!(events(&app).iter().any(|l| l.contains("e5 -> e6 light_1 -20")), "{:?}", events(&app));
+
+    let original = std::fs::read_to_string(&file).unwrap();
+    assert!(original.contains(LIGHT_1), "the test edits this line: {LIGHT_1}");
+    std::fs::write(&file, original.replacen(LIGHT_1, &LIGHT_1.replace("damage: 20", "damage: 40"), 1)).unwrap();
+    let reload = ok(&mut app, "content_reload", json!({}));
+    assert_eq!(text(&reload), "content reloaded: combat/player.action.ron (1 definition changed)");
+    let out = ok(&mut app, "step", json!({"ticks": 120, "until": [{"journal": "light_1 -40"}]}));
+    assert!(text(&out).contains("stopped: journal:"), "the next combo opens for 40: {}", text(&out));
+    step(&mut app, 90);
+    let recording = replay::save(app.world());
+
+    // The file keeps the new number; the replay still begins with the old one.
+    let mut again = app_on(&dir);
+    replay::play(again.world_mut(), recording.clone()).unwrap();
+    step(&mut again, recording.end.tick);
+    again.update();
+    let report = again.world().resource::<AiReplay>().report().cloned().unwrap();
+    assert!(report.identical(), "{report}");
+    let hits = |app: &App| events(app).into_iter().filter(|l| l.contains(" -> ")).collect::<Vec<_>>();
+    assert_eq!(hits(&app), hits(&again));
+}
+
+#[test]
+fn an_edited_layout_rebuilds_the_course_on_the_next_tick() {
+    let dir = assets_copy("layout");
+    let file = dir.join("content/world/course.layout.ron");
+    let mut app = app_on(&dir);
+    let updraft = |app: &mut App| {
+        let world = app.world_mut();
+        let found: Vec<(f32, f32)> = world
+            .query::<&Volume>()
+            .iter(world)
+            .filter_map(|v| match v.kind {
+                VolumeKind::Updraft { accel, max_speed } => Some((accel, max_speed)),
+                _ => None,
+            })
+            .collect();
+        found
+    };
+    assert_eq!(updraft(&mut app), [(20.0, 5.0)]);
+    let before = text(&ok(&mut app, "inspect", json!({"id": "e13"}))).lines().nth(1).unwrap().to_owned();
+
+    let original = std::fs::read_to_string(&file).unwrap();
+    let edited = original.replace("Updraft(accel: 20.0, max_speed: 5.0)", "Updraft(accel: 30.0, max_speed: 8.0)");
+    assert_ne!(edited, original);
+    std::fs::write(&file, edited).unwrap();
+    ok(&mut app, "content_reload", json!({}));
+    step(&mut app, 1);
+    assert_eq!(updraft(&mut app), [(30.0, 8.0)], "the volume was rebuilt");
+    // Landmarks keep their ids and places.
+    let after = text(&ok(&mut app, "inspect", json!({"id": "e13"}))).lines().nth(1).unwrap().to_owned();
+    assert_eq!(before, after);
+    assert!(text(&ok(&mut app, "inspect", json!({"id": "e9"}))).starts_with("e9 Stairs"));
+}
+
+#[test]
+fn prefabs_spawn_the_sandbox_characters() {
+    let mut app = sandbox::test_app(42);
+    calm_skeletons(&mut app);
+    let spawned = text(&ok(&mut app, "spawn_prefab", json!({"id": "skeleton", "x": 2, "z": 8}))).to_owned();
+    assert_eq!(spawned, "spawned e14 skeleton at (2.0, 8.0)");
+    let line = text(&ok(&mut app, "inspect", json!({"id": "e14"}))).to_owned();
+    assert!(line.starts_with("e14 Skeleton") && line.contains("hp 40/40"), "{line}");
+
+    let captain = ok(
+        &mut app,
+        "spawn_prefab",
+        json!({"id": "skeleton_captain", "x": -4, "z": 6, "overrides": {"Health": {"current": 50}}}),
+    );
+    assert_eq!(text(&captain), "spawned e15 skeleton_captain at (-4.0, 6.0)");
+    let line = text(&ok(&mut app, "inspect", json!({"id": "e15"}))).to_owned();
+    assert!(line.starts_with("e15 Skeleton \"Skeleton Captain\"") && line.contains("Health: hp 50/90"), "{line}");
+
+    // The new skeleton fights: it walks up to the player (12 m away... within its 18 m) and claws.
+    ok(&mut app, "god", json!({}));
+    step(&mut app, 240);
+    assert!(events(&app).iter().any(|l| l.contains("e14 -> e5 claw")), "{:?}", events(&app));
+    let refused = act(&mut app, "spawn_prefab", json!({"id": "lich", "x": 0, "z": 0}));
+    assert!(
+        text(&refused).starts_with("unknown prefab `lich`; known: frost_warden, pillar, player, skeleton"),
+        "{}",
+        text(&refused)
+    );
+}
