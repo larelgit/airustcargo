@@ -775,9 +775,11 @@ fn run_tasks(world: &mut World, host: &mut NetHost) {
 }
 
 /// After the world was rebuilt (a snapshot load, a region change): every connected player has
-/// a body in it, and no one else's body plays on. A snapshot from before a player joined has
-/// none for them: they join again (recorded). One from after a player left has their body
-/// without `NetLeft`: it leaves again, and waits for their rejoin.
+/// a body in it, and no other player of the session's plays on. A snapshot from before a
+/// player joined has none for them: they join again (recorded). One from after a player left
+/// has their body without `NetLeft`: it leaves again, and waits for their rejoin. A body the
+/// host joined itself (`player_join` without a peer: co-op on this machine) is no peer's
+/// and stays.
 fn reconcile_players(world: &mut World, host: &mut NetHost) {
     let connected: BTreeMap<u8, PeerId> = host.peers.iter().filter(|(_, p)| p.stage == PeerStage::Connected).map(|(id, p)| (p.player, *id)).collect();
     for (&player, id) in &connected {
@@ -797,7 +799,7 @@ fn reconcile_players(world: &mut World, host: &mut NetHost) {
     }
     let others: BTreeSet<u8> = {
         let mut q = world.query_filtered::<&PlayerId, Without<NetLeft>>();
-        q.iter(world).map(|p| p.0).filter(|n| *n != 0 && !connected.contains_key(n)).collect()
+        q.iter(world).map(|p| p.0).filter(|n| *n != 0 && !connected.contains_key(n) && host.slots.contains_key(n)).collect()
     };
     for player in others {
         let out = call_tool(world, NET_AGENT, "player_leave", json!({ "player": player, "reason": "not in the session" }));

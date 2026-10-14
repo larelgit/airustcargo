@@ -180,6 +180,24 @@ fn a_snapshot_with_a_departed_players_body_keeps_it_waiting_for_them() {
 }
 
 #[test]
+fn a_body_the_host_joined_itself_stays_through_a_rebuilt_world() {
+    let mut stand = stand(1);
+    // Co-op on the host's own machine: a player of its own, no peer.
+    let joined = stand.call(HOST, "player_join", json!({"player": 2, "name": "couch"}));
+    assert!(joined.ok, "{}", joined.result);
+    stand.run(10);
+    let saved = snapshot::capture(stand.world(HOST)).unwrap();
+    snapshot::restore(stand.world_mut(HOST), &saved, false).unwrap();
+    stand.run(30);
+    assert!(has_line(&stand, C1, "net: the host's world again"), "{:#?}", journal(&stand, C1));
+    let couch = shards::core::player_body(stand.world(HOST), 2).expect("p2's body").to_string();
+    let couch = entity(&stand, HOST, &couch).unwrap();
+    assert!(stand.world(HOST).get::<NetLeft>(couch).is_none(), "no peer's body: it plays on");
+    assert!(host_calls(&stand, "player_leave").is_empty(), "{:?}", host_calls(&stand, "player_leave"));
+    assert_eq!(host_calls(&stand, "player_join").len(), 2, "c1's and the host's own; none again");
+}
+
+#[test]
 fn a_respawned_body_gets_its_players_inputs() {
     let mut stand = stand(1);
     let old = body(&stand, C1);
