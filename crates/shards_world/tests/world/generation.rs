@@ -142,6 +142,37 @@ fn when_no_attempt_passes_the_fallback_is_used() {
     assert!(err.message.contains("no attempt of 2 passed") && err.message.contains("give it a `fallback`"), "{err}");
 }
 
+#[test]
+fn a_seed_that_fails_with_no_attempt_to_blame_says_why_in_the_report() {
+    let app = app(1, None);
+    // The attempts fail (the spawn must sit in a grass cell, which has no slot), and the
+    // fallback breaks too: two points on a tile with one slot, which content check cannot see.
+    let region = r#"{ "clash": (size: (2, 1), tile_size: 16.0, version: 1, tiles: ["grass", "road_end"],
+        fixed: [(at: (0, 0), tile: "grass")], pois: [(poi: "spawn", cells: [(0, 0)])], attempts: 2, fallback: "clash_safe") }"#;
+    let map = r#"{ "clash_safe": (rows: ["road_end road_end"], pois: [(poi: "spawn", at: (0, 0)), (poi: "camp", at: (0, 0))]) }"#;
+    let db = db_with(&app, &[("clash.region.ron", region), ("clash.tile_map.ron", map)]);
+    assert_eq!(db.errors().count(), 0, "{:?}", db.errors().map(ToString::to_string).collect::<Vec<_>>());
+    let broken = "fallback `clash_safe`: no slot: `camp` at (0, 0) found no free slot in tile `road_end`";
+    let failed = generate(&db, &worldgen(&app), "clash", 1).unwrap_err();
+    assert_eq!(failed.message, broken);
+
+    let report = report::run(&db, &worldgen(&app), "clash", "1..3").unwrap();
+    assert_eq!(report.failed, [1, 2, 3]);
+    assert_eq!(report.reasons["points: no cell"].count, 6, "two attempts a seed");
+    assert_eq!(report.errors[broken].count, 3, "{report}");
+    assert_eq!(report.errors[broken].examples, [1, 2, 3]);
+    let text = report.to_string();
+    assert!(text.contains(&format!("errors (3):\n  3× {broken} (e.g. seeds 1, 2, 3)")), "{text}");
+
+    // A region that runs out of attempts has its attempts to show, and no error line for them.
+    let hopeless = r#"{ "hopeless": (size: (4, 4), tile_size: 16.0, version: 1, tiles: ["grass", "road_end"],
+        fixed: [(at: (0, 0), tile: "grass")], pois: [(poi: "spawn", cells: [(0, 0)])], attempts: 2) }"#;
+    let db = db_with(&app, &[("hopeless.region.ron", hopeless)]);
+    let report = report::run(&db, &worldgen(&app), "hopeless", "1..3").unwrap();
+    assert!(report.errors.is_empty(), "{report}");
+    assert_eq!(report.reasons["points: no cell"].count, 6, "{report}");
+}
+
 /// A game step that panics for seed 7 and a game check that fails the first attempt of
 /// even seeds.
 fn picky(ctx: &mut GenContext) -> Result<(), String> {

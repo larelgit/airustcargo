@@ -3,7 +3,8 @@
 //! The `worldgen_report` tool, the game binary's `--worldgen-report REGION --seeds 1..1000`
 //! and `shards worldgen --region R --seeds 1..1000 --report` all print this: how many seeds
 //! passed (and how many needed another attempt), how many fell back or failed, failed
-//! attempts grouped by reason with example seeds, distances between points of interest
+//! attempts grouped by reason with example seeds, errors that stopped a seed with no attempt to
+//! blame (a broken fallback), distances between points of interest
 //! (min / median / max per pair of types), and generator panics with their seed.
 //!
 //! ```text
@@ -86,6 +87,9 @@ pub struct BatchReport {
     pub panics: Vec<(u64, String)>,
     /// Failed attempts by reason (`check reachable`, `fill: no tile fits`).
     pub reasons: BTreeMap<String, Reason>,
+    /// Why seeds got no region when their attempts do not say: the fallback broke, content
+    /// names a room it lacks. The error's first line, with example seeds.
+    pub errors: BTreeMap<String, Reason>,
     /// Distance (m) from each point of interest to the nearest of another type (or another
     /// of its own type), per pair `a–b`, over the passing regions.
     pub distances: BTreeMap<String, Vec<f32>>,
@@ -144,6 +148,13 @@ impl fmt::Display for BatchReport {
                 writeln!(f, "  {}× {rule} (e.g. seeds {})", reason.count, seeds(&reason.examples))?;
             }
         }
+        if !self.errors.is_empty() {
+            let total: u32 = self.errors.values().map(|r| r.count).sum();
+            writeln!(f, "errors ({total}):")?;
+            for (message, reason) in &self.errors {
+                writeln!(f, "  {}× {message} (e.g. seeds {})", reason.count, seeds(&reason.examples))?;
+            }
+        }
         if !self.distances.is_empty() {
             writeln!(f, "distances between points (m, min / median / max):")?;
             for pair in self.distances.keys() {
@@ -188,6 +199,7 @@ pub fn run(db: &ContentDb, worldgen: &WorldGen, region: &str, seeds_text: &str) 
         failed: Vec::new(),
         panics: Vec::new(),
         reasons: BTreeMap::new(),
+        errors: BTreeMap::new(),
         distances: BTreeMap::new(),
         elapsed: Duration::ZERO,
     };
@@ -199,11 +211,7 @@ pub fn run(db: &ContentDb, worldgen: &WorldGen, region: &str, seeds_text: &str) 
         match outcome {
             Ok(Ok(Generated { manifest, failures, .. })) => {
                 for failure in &failures {
-                    let reason = report.reasons.entry(failure.rule.clone()).or_default();
-                    reason.count += 1;
-                    if reason.examples.len() < 3 && !reason.examples.contains(&seed) {
-                        reason.examples.push(seed);
-                    }
+                    tally(&mut report.reasons, &failure.rule, seed);
                 }
                 if manifest.fallback.is_some() {
                     report.fell_back.push(seed);
@@ -213,13 +221,14 @@ pub fn run(db: &ContentDb, worldgen: &WorldGen, region: &str, seeds_text: &str) 
                     add_distances(&mut report.distances, &manifest);
                 }
             }
-            Ok(Err(GenError { failures, .. })) => {
+            Ok(Err(GenError { message, failures })) => {
                 for failure in &failures {
-                    let reason = report.reasons.entry(failure.rule.clone()).or_default();
-                    reason.count += 1;
-                    if reason.examples.len() < 3 && !reason.examples.contains(&seed) {
-                        reason.examples.push(seed);
-                    }
+                    tally(&mut report.reasons, &failure.rule, seed);
+                }
+                // "No attempt passed" quotes the last attempt, which is counted above; any
+                // other error (the fallback broke, a room is unknown) has no attempt to show.
+                if !failures.last().is_some_and(|last| message.contains(&last.message)) {
+                    tally(&mut report.errors, message.lines().next().unwrap_or_default(), seed);
                 }
                 report.failed.push(seed);
             }
@@ -236,6 +245,15 @@ pub fn run(db: &ContentDb, worldgen: &WorldGen, region: &str, seeds_text: &str) 
     }
     report.elapsed = started.elapsed();
     Ok(report)
+}
+
+/// Counts `seed` under `key`, keeping up to three example seeds.
+fn tally(into: &mut BTreeMap<String, Reason>, key: &str, seed: u64) {
+    let reason = into.entry(key.to_owned()).or_default();
+    reason.count += 1;
+    if reason.examples.len() < 3 && !reason.examples.contains(&seed) {
+        reason.examples.push(seed);
+    }
 }
 
 /// For every pair of point types `a–b` (sorted), each `a`'s distance to the nearest other
