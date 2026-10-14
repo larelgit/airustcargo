@@ -188,8 +188,9 @@ cargo game --replay tests/replays/smoke.json --verify           # без окн�
 ```
 
 Расхождение называет первый тик (`DIVERGED at tick 60`). После правки геймплея
-это регрессия, после правки чисел в контенте это ожидаемо: запишите эталон заново.
-`tests/replays/*.json` проверяются тестом `reference_replays_still_match` и в CI через `--verify`; перезапись:
+это регрессия, после правки чисел в контенте это ожидаемо: запишите эталон заново. Чтобы сделать удачный
+сеанс эталоном, положите его файл в `tests/replays/`. Эти файлы проверяются тестом
+`reference_replays_still_match` и в CI через `--verify`; перезапись эталона шаблона:
 
 ```bash
 cargo test --test game record_reference_replays -- --ignored
