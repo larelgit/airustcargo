@@ -3,7 +3,7 @@
 //! decided on were written here.
 
 use shards::ai_core::WorldRebuilt;
-use shards::save::{SaveKind, SaveReport, SaveRequests, SaveRouting, SaveWhat, save_now};
+use shards::save::{save_now, Routed, SaveKind, SaveReport, SaveRequests, SaveRouting, SaveWhat};
 use shards::serde_json::json;
 
 use shards::prelude::*;
@@ -19,7 +19,7 @@ struct Asked(Vec<String>);
 struct Saved(Vec<String>);
 
 /// Every character save goes to "elsewhere" (a remote player's machine), the world is written here.
-fn elsewhere(world: &mut World, kind: SaveKind, _: Option<Entity>, reason: &str) -> Option<Result<SaveReport, String>> {
+fn elsewhere(world: &mut World, kind: SaveKind, _: Option<Entity>, reason: &str) -> Routed {
     world.get_resource_or_init::<Asked>().0.push(format!("{kind}:{reason}"));
     (kind == SaveKind::Character).then(|| {
         Ok(SaveReport { kind, slot: "p1".into(), tick: 7, bytes: 10, sections: 1, reason: reason.to_owned(), written: true, target: Some("elsewhere".into()) })

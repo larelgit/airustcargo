@@ -43,7 +43,7 @@ use shards_net::host::PeerStage;
 use shards_net::{JoinRequest, NetClient, NetHooks, NetHost};
 use shards_save::{
     apply_sections, canon, capture_sections, load_launch_slots, prepare, read_file, replay_playing, save_parts, write_sections, LaunchLoaded,
-    SaveConfig, SaveKind, SaveRegistry, SaveReport, SaveRouting, SaveSlots, SaveWhat, SectionSet,
+    Routed, SaveConfig, SaveKind, SaveRegistry, SaveReport, SaveRouting, SaveSlots, SaveWhat, SectionSet,
 };
 
 /// Why a client's `load_game` is refused (`NetRoute::HostOnly`).
@@ -260,7 +260,7 @@ fn remote_players(world: &World) -> Vec<(u8, Entity)> {
 
 /// `SaveRouting::route`: a client writes no world and no character of its own; the host sends
 /// a remote player's character to their machine instead of writing it into its own slot.
-fn route(world: &mut World, kind: SaveKind, body: Option<Entity>, reason: &str) -> Option<Result<SaveReport, String>> {
+fn route(world: &mut World, kind: SaveKind, body: Option<Entity>, reason: &str) -> Routed {
     match world.get_resource::<NetRole>().copied().unwrap_or_default() {
         NetRole::Single => None,
         NetRole::Client => {

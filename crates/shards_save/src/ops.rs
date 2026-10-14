@@ -117,6 +117,10 @@ impl SaveSlots {
     }
 }
 
+/// What [`SaveRouting::route`] answers for a save it takes over: the report of where it went, or
+/// why it cannot.
+pub type Routed = Option<Result<SaveReport, String>>;
+
 /// Where a save goes when it is not this machine's own file to write. Co-op sets it
 /// (`shards::coop`): the host keeps the world and a client never writes one; a remote
 /// player's character is captured on the host and written on that player's machine. Without
@@ -125,7 +129,7 @@ impl SaveSlots {
 pub struct SaveRouting {
     /// Asked first by every save of `kind` (for a character, of the `body` it is about).
     /// `Some(answer)` is the save's whole answer: nothing is written here.
-    pub route: fn(&mut World, SaveKind, Option<Entity>, &str) -> Option<Result<SaveReport, String>>,
+    pub route: fn(&mut World, SaveKind, Option<Entity>, &str) -> Routed,
     /// The game decided to save (`save_now`, an autosave) and the `kind` it named was written
     /// here, for `reason`: whoever else it concerns gets theirs too (a co-op host sends
     /// every remote player's character).
