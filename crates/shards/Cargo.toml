@@ -13,6 +13,7 @@ render = [
     "ai_core/render",
     "shards_motion/render",
     "shards_action/render",
+    "shards_level/render",
     "bevy/3d_bevy_render",
     "bevy/ui_bevy_render",
     "bevy/bevy_winit",
@@ -38,7 +39,8 @@ shards_core.workspace = true
 shards_content.workspace = true
 shards_motion.workspace = true
 shards_action.workspace = true
-bevy = { workspace = true, features = ["default_app", "std", "multi_threaded", "serialize"] }
+shards_level.workspace = true
+bevy ={ workspace = true, features = ["default_app", "std", "multi_threaded", "serialize"] }
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true

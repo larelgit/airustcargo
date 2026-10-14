@@ -9,6 +9,7 @@ use bevy::window::ExitCondition;
 use shards_action::ActionPlugin;
 use shards_content::ContentPlugin;
 use shards_core::{CorePlugin, EngineConfig};
+use shards_level::LevelPlugin;
 use shards_motion::MotionPlugin;
 
 /// Bevy's `DefaultPlugins` (whatever the cargo features compile in), the log capture
@@ -63,6 +64,7 @@ impl PluginGroup for EnginePlugins {
             .add(ContentPlugin)
             .add(MotionPlugin)
             .add(ActionPlugin)
+            .add(LevelPlugin)
     }
 }
 
