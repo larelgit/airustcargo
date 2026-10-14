@@ -126,7 +126,7 @@ fn cracked() -> Gltf {
 
 /// A fresh asset folder: the shared test content, the level tiles' content and their files;
 /// `extra` (path → bytes) is written last, over anything of the same name.
-fn site(name: &str, extra: &[(&str, &[u8])]) -> PathBuf {
+pub(crate) fn site(name: &str, extra: &[(&str, &[u8])]) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("shards_world_{}_{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let write = |path: &str, bytes: &[u8]| {
@@ -152,7 +152,7 @@ fn config_in(dir: &Path, seed: u64) -> EngineConfig {
 }
 
 /// The test game on `dir`, loaded and paused at tick 0, with `start` generated while it loaded.
-fn app_in(dir: &Path, seed: u64, start: Option<&str>) -> App {
+pub(crate) fn app_in(dir: &Path, seed: u64, start: Option<&str>) -> App {
     let app = testing::test_app(
         |c| *c = config_in(dir, seed),
         |app| {
@@ -168,7 +168,7 @@ fn app_in(dir: &Path, seed: u64, start: Option<&str>) -> App {
 }
 
 /// The same game built but not loaded.
-fn fresh_in(dir: &Path, seed: u64, start: Option<&str>) -> App {
+pub(crate) fn fresh_in(dir: &Path, seed: u64, start: Option<&str>) -> App {
     let mut app = App::new();
     app.add_plugins(EnginePlugins::new(config_in(dir, seed)));
     if let Some(region) = start {
@@ -492,23 +492,67 @@ fn the_first_level_tiles_of_a_session_join_its_recording_where_they_were_made() 
 }
 
 #[test]
-fn a_reloaded_level_keeps_its_tags_and_a_later_region_change_leaves_nothing() {
+fn a_reloaded_level_is_tagged_as_it_comes_back_and_a_later_region_change_leaves_nothing() {
     let dir = site("reload", &[]);
     let mut app = app_in(&dir, 2, Some("ruins"));
     let before = level_entities(&mut app).len();
     assert_eq!(before, 6 * YARD_NODES.len());
     let out = ok(&mut app, "level_reload", json!({"file": "tiles/yard.gltf"}));
     assert!(out.contains("level reloaded"), "{out}");
+    // No frame in between: a replay plays without frames, and a scenario changes the region
+    // right after the reload.
     let loose = |app: &mut App| app.world_mut().query_filtered::<&FromLevel, Without<RegionPart>>().iter(app.world()).count();
-    assert_eq!(loose(&mut app), before, "the replacements come without the region's tags");
-    app.update();
-    assert_eq!(loose(&mut app), 0, "and get them within a frame");
+    assert_eq!(loose(&mut app), 0, "the replacements come with the region's tags");
     assert_eq!(level_entities(&mut app).len(), before);
     let named = app.world_mut().query_filtered::<&Marker, With<FromLevel>>().iter(app.world()).count();
     assert_eq!(named, 6 * 5, "markers too");
 
     ok(&mut app, "regen", json!({"region": "mixed", "seed": 1}));
     assert_eq!(app.world_mut().query::<&FromLevel>().iter(app.world()).count(), yards(&app).len() * YARD_NODES.len());
+    assert_eq!(app.world().resource::<LevelInstances>().iter().count(), yards(&app).len(), "no instance of the old region is left");
+}
+
+#[test]
+fn a_session_that_reloads_a_level_replays_identically() {
+    let dir = site("reload_replay", &[]);
+    let mut app = app_in(&dir, 7, Some("ruins"));
+    ok(&mut app, "step", json!({"ticks": 10}));
+    ok(&mut app, "level_reload", json!({"file": "tiles/yard.gltf"}));
+    // A frame between the calls, as in a live session (playback has none), and a state check
+    // after it (every 60 ticks).
+    app.update();
+    ok(&mut app, "step", json!({"ticks": 70}));
+    let recording = shards::ai_core::replay::save(app.world());
+
+    let mut again = fresh_in(&dir, 7, Some("ruins"));
+    let report = testing::verify(&mut again, recording).expect("plays");
+    assert!(report.identical(), "{report}");
+}
+
+#[test]
+fn a_tile_whose_file_spawns_nothing_is_dropped_with_its_region_too() {
+    // Only a mesh: no gameplay node, so the instance has no entity to find it by.
+    let mut vista = Gltf::new();
+    let cube = vista.cube();
+    vista.root(NodeSpec::new("Backdrop").at([0.0, 4.0, 0.0]).scale([16.0, 8.0, 1.0]).mesh(cube));
+    let tile = r#"{ "vista": (sockets: (n: "grass", e: "grass", s: "grass", w: "grass"), geometry: Level(path: "tiles/vista.gltf")) }"#;
+    let region = r#"{ "vistas": (size: (2, 1), tile_size: 16.0, version: 1, tiles: ["vista", "lawn_spawn"],
+        fixed: [(at: (0, 0), tile: "vista")], pois: [(poi: "spawn")]) }"#;
+    let dir = site(
+        "vista",
+        &[
+            ("content/ruins/vista.tile.ron", tile.as_bytes()),
+            ("content/ruins/vista.region.ron", region.as_bytes()),
+            ("tiles/vista.gltf", vista.gltf().as_bytes()),
+        ],
+    );
+    let mut app = app_in(&dir, 1, Some("vistas"));
+    let instances = |app: &App| app.world().resource::<LevelInstances>().iter().map(|i| i.path.clone()).collect::<Vec<_>>();
+    assert_eq!(instances(&app), ["tiles/vista.gltf"]);
+    assert!(level_entities(&mut app).is_empty());
+
+    ok(&mut app, "regen", json!({"region": "lawns", "seed": 2}));
+    assert!(instances(&app).is_empty(), "the instance went with its region: {:?}", instances(&app));
 }
 
 #[test]
@@ -553,6 +597,21 @@ fn a_level_file_that_cannot_load_holds_the_game_and_names_its_tiles() {
     assert!(app.world().get_resource::<shards::world::ActiveRegion>().is_none(), "no region was built from a file that is not there");
     let log: Vec<String> = app.world().resource::<AiJournal>().after(0).0.map(ToString::to_string).collect();
     assert!(log.iter().any(|l| l.contains("loading tile levels failed: tile `yard`")), "{log:?}");
+}
+
+#[test]
+fn a_tile_file_with_problems_is_reported_once_when_it_loads_not_when_a_seed_picks_it() {
+    let dir = site("report", &[]);
+    let mut app = app_in(&dir, 1, None);
+    let broken = |app: &App| -> Vec<String> { journal(app).into_iter().filter(|l| l.contains("tile levels:")).collect() };
+    let lines = broken(&app);
+    assert_eq!(lines.len(), 1, "only cracked.gltf is wrong: {lines:#?}");
+    assert!(lines[0].contains("tile levels: tile `cracked`: level `tiles/cracked.gltf`: 1 problem:"), "{}", lines[0]);
+    assert!(lines[0].contains("unknown component `Helth`"), "{}", lines[0]);
+    for _ in 0..5 {
+        app.update();
+    }
+    assert_eq!(broken(&app).len(), 1, "once");
 }
 
 #[test]
