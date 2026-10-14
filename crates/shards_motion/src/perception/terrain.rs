@@ -68,34 +68,41 @@ impl<'a> Terrain<'a> {
     /// The first thing a step to `(x, z)` finds, looking from a walker whose feet are at
     /// `from_y`: floors from `mantle_height` above it down to the probe range.
     pub fn probe(&self, x: f32, z: f32, from_y: f32) -> Probe {
+        self.survey(x, z, from_y).0
+    }
+
+    /// The top of the tallest solid that makes `(x, z)` [`Block::Tight`] for a walker whose
+    /// feet are at `from_y` (`None`: the spot is not tight): how high the thing is that the
+    /// body would stand against.
+    pub fn blocker_top(&self, x: f32, z: f32, from_y: f32) -> Option<f32> {
+        let blockers = self.survey(x, z, from_y).1;
+        blockers.into_iter().filter_map(|e| self.physics.collider(e)).map(|c| c.aabb_max.y).reduce(f32::max)
+    }
+
+    /// [`probe`](Self::probe), and the solids in the way of a [`Block::Tight`] spot.
+    fn survey(&self, x: f32, z: f32, from_y: f32) -> (Probe, Vec<Entity>) {
         let p = self.params;
         let reach = p.mantle_height + 0.1;
         let Some(hit) = self.physics.raycast(Vec3::new(x, from_y + reach, z), Dir3::NEG_Y, reach + FALL_PROBE, &self.filter)
         else {
-            return Probe::Void;
+            return (Probe::Void, Vec::new());
         };
         if hit.distance <= 1e-4 {
-            return Probe::Blocked(Block::Wall);
+            return (Probe::Blocked(Block::Wall), Vec::new());
         }
         let (floor, normal) = (hit.point.y, hit.normal);
         // Deep water first: a swimmer does not care how steep the bottom is.
         if let Some(surface) = self.water_at(x, floor, z)
             && surface - floor > p.swim_depth
         {
-            return if self.cramped(x, z, self.swim_height(surface), 1.0, 0.0) {
-                Probe::Blocked(Block::Tight)
-            } else {
-                Probe::Water { surface }
-            };
+            let blockers = self.in_the_way(x, z, self.swim_height(surface), 1.0, 0.0);
+            return if blockers.is_empty() { (Probe::Water { surface }, blockers) } else { (Probe::Blocked(Block::Tight), blockers) };
         }
         if normal.y < self.min_ground_y {
-            return Probe::Blocked(Block::Steep(normal.y.clamp(-1.0, 1.0).acos().to_degrees()));
+            return (Probe::Blocked(Block::Steep(normal.y.clamp(-1.0, 1.0).acos().to_degrees())), Vec::new());
         }
-        if self.cramped(x, z, floor, normal.y, p.step_height) {
-            Probe::Blocked(Block::Tight)
-        } else {
-            Probe::Floor { y: floor, normal }
-        }
+        let blockers = self.in_the_way(x, z, floor, normal.y, p.step_height);
+        if blockers.is_empty() { (Probe::Floor { y: floor, normal }, blockers) } else { (Probe::Blocked(Block::Tight), blockers) }
     }
 
     /// How much higher than a step a floor `dist` meters away may be and still be walked
@@ -122,21 +129,21 @@ impl<'a> Terrain<'a> {
             .reduce(f32::max)
     }
 
-    /// Whether the capsule standing at `feet_y` overlaps solid geometry. It is lifted by
-    /// `climb` (what the controller steps over) and by the tilt of the floor (a capsule on a
-    /// slope sits higher than the ray point), and shortened to keep its top where it was.
-    fn cramped(&self, x: f32, z: f32, feet_y: f32, normal_y: f32, climb: f32) -> bool {
+    /// The solids the capsule standing at `feet_y` overlaps. It is lifted by `climb` (what
+    /// the controller steps over) and by the tilt of the floor (a capsule on a slope sits
+    /// higher than the ray point), and shortened to keep its top where it was.
+    fn in_the_way(&self, x: f32, z: f32, feet_y: f32, normal_y: f32, climb: f32) -> Vec<Entity> {
         let p = self.params;
         let radius = p.radius.max(0.01);
         let lift = climb + radius * (1.0 / normal_y.max(0.1) - 1.0);
         let height = (p.height - lift).max(2.0 * radius);
         let center = Vec3::new(x, feet_y + p.skin_width + GRAZE + lift + height * 0.5, z);
-        !self.physics.overlaps(&Shape::capsule(radius, height), center, Quat::IDENTITY, &self.filter).is_empty()
+        self.physics.overlaps(&Shape::capsule(radius, height), center, Quat::IDENTITY, &self.filter)
     }
 
     /// Whether a standing capsule fits with its feet at `feet_y` (no lift for steps).
     pub fn room_for(&self, x: f32, z: f32, feet_y: f32) -> bool {
-        !self.cramped(x, z, feet_y, 1.0, 0.0)
+        self.in_the_way(x, z, feet_y, 1.0, 0.0).is_empty()
     }
 
     /// Top of the solid at `(x, z)` that a probe from `from_y` found in the way, if any is

@@ -6,7 +6,7 @@
 use ai_core::spatial::compass_vector;
 use bevy::prelude::*;
 
-use super::terrain::{Probe, Terrain};
+use super::terrain::{Block, Probe, Terrain};
 use crate::controller::CharacterParams;
 use crate::physics::PhysicsWorld;
 
@@ -64,8 +64,9 @@ enum Sample {
     /// Walkable: the walker is now at height `y`.
     Pass { y: f32, up: f32, swim: bool },
     Stop(Hazard),
-    /// Blocked or tight: the next probes say whether it is a wall, a ledge or the edge of a drop.
-    Blocked,
+    /// Blocked or tight: for a tight spot the next probes say whether it is a wall, a ledge or
+    /// the edge of a drop.
+    Blocked(Block),
 }
 
 /// What a character of `params` at `origin` (feet) finds in the eight directions, up to
@@ -162,7 +163,7 @@ impl<'a> Marcher<'a> {
             Probe::Water { surface } if from.swim => Sample::Pass { y: self.terrain.swim_height(surface), up: 1.0, swim: true },
             Probe::Water { .. } => Sample::Stop(Hazard::Water),
             Probe::Void => Sample::Stop(Hazard::Cliff { drop: None }),
-            Probe::Blocked(_) => Sample::Blocked,
+            Probe::Blocked(block) => Sample::Blocked(block),
         }
     }
 
@@ -181,7 +182,7 @@ impl<'a> Marcher<'a> {
                     continue;
                 }
                 Sample::Stop(hazard) => hazard,
-                Sample::Blocked => self.beyond_blocked(at(s), dir, state),
+                Sample::Blocked(block) => self.beyond_blocked(at(s), dir, state, block),
             };
             // The stop lies between the last pass and `s`: narrow it down.
             let (mut lo, mut hi) = (passed, s);
@@ -197,11 +198,19 @@ impl<'a> Marcher<'a> {
         (self.range, Hazard::Free)
     }
 
-    /// A blocked probe is a wall, unless just past it there is a ledge to climb (the cell
-    /// beside a ledge face is within the body's reach of it) or the ground drops away (the
-    /// cell beside a cliff edge is within reach of the cliff's face).
-    fn beyond_blocked(&self, at: Vec3, dir: Vec3, state: State) -> Hazard {
+    /// A blocked probe is a wall, unless it is only a tight spot (floor, but the body does
+    /// not fit) and just past it there is a ledge to climb (the cell beside a ledge face is
+    /// within the body's reach of it) or the ground drops away (the cell beside a cliff edge
+    /// is within reach of the cliff's face). What lies past a solid taller than a climb says
+    /// nothing about it: behind a wall there may be anything.
+    fn beyond_blocked(&self, at: Vec3, dir: Vec3, state: State, block: Block) -> Hazard {
         let p = self.terrain.params;
+        if block != Block::Tight {
+            return Hazard::Wall;
+        }
+        if self.terrain.blocker_top(at.x, at.z, state.y).is_some_and(|top| !p.can_climb(top - state.y, state.swim)) {
+            return Hazard::Wall;
+        }
         for k in 1..=2 {
             let ahead = at + dir * (STEP * k as f32);
             match self.terrain.probe(ahead.x, ahead.z, state.y) {

@@ -114,6 +114,55 @@ fn clearance_sees_a_ledge_it_could_climb() {
     assert_eq!(reach(&reaches, "E").hazard, Hazard::Wall);
 }
 
+/// A 3 m high wall 0.4 m thick at x = 3 across the whole way east, and what lies behind it.
+fn thin_wall_with_something_behind(world: &mut World, behind: &str) {
+    block(world, Vec3::new(-200.0, -1.0, -200.0), Vec3::new(3.0, 0.0, 200.0));
+    block(world, Vec3::new(3.0, -6.0, -200.0), Vec3::new(3.4, 3.0, 200.0));
+    match behind {
+        "moat" => {
+            block(world, Vec3::new(3.4, -6.0, -200.0), Vec3::new(200.0, -4.0, 200.0));
+            volume(world, Vec3::new(3.4, -4.0, -200.0), Vec3::new(200.0, -0.5, 200.0), VolumeKind::Water);
+        }
+        "terrace" => {
+            block(world, Vec3::new(3.4, -1.0, -200.0), Vec3::new(200.0, 1.0, 200.0));
+        }
+        "cliff" => {
+            block(world, Vec3::new(3.4, -14.0, -200.0), Vec3::new(200.0, -12.0, 200.0));
+        }
+        other => panic!("nothing like {other}"),
+    }
+}
+
+#[test]
+fn a_tall_thin_wall_is_a_wall_whatever_lies_behind_it() {
+    for behind in ["moat", "terrace", "cliff"] {
+        let mut app = app();
+        thin_wall_with_something_behind(app.world_mut(), behind);
+        settle(&mut app);
+        // However the 0.5 m probes fall against the wall's face.
+        for offset in [0.0, 0.1, 0.2, 0.3, 0.4] {
+            let reaches = clearance(physics(&app), &params(), Vec3::new(offset, 0.0, 0.0), None, 15.0, 2.0, None);
+            let e = reach(&reaches, "E");
+            assert_eq!(e.hazard, Hazard::Wall, "behind it: {behind}, from x = {offset}: {e:?}");
+            assert!((e.distance - (2.6 - offset)).abs() < 0.05, "{behind}: {e:?}");
+        }
+    }
+}
+
+#[test]
+fn the_planner_does_not_hop_a_tall_thin_wall_onto_what_is_behind_it() {
+    for behind in ["moat", "terrace", "cliff"] {
+        let mut app = app();
+        thin_wall_with_something_behind(app.world_mut(), behind);
+        settle(&mut app);
+        for offset in [0.0, 0.1, 0.2, 0.3, 0.4] {
+            let request = PathRequest { max_length: 400.0, ..request(Vec3::new(offset, 0.0, 0.0), Vec3::new(8.0, 0.0, 0.0)) };
+            let plan = plan_path(physics(&app), &params(), &request);
+            assert!(plan.is_err(), "behind it: {behind}, from x = {offset}: {:?}", plan.map(|p| p.summary()));
+        }
+    }
+}
+
 #[test]
 fn line_of_sight_goes_through_physics_and_still_honours_occluder_boxes() {
     let mut app = app();
