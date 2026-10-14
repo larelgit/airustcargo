@@ -248,13 +248,14 @@ pub fn action_zones(def: &ActionDef, t: f32, feet: Vec3, facing: Vec3) -> Vec<Hi
         symbol: symbol.clone(),
         flags,
     };
-    let windows: Vec<(usize, (f32, f32))> = def
+    let mut windows: Vec<(usize, (f32, f32))> = def
         .hits
         .iter()
         .enumerate()
         .filter_map(|(i, h)| Some((i, def.span(&h.span)?)))
         .filter(|(_, w)| w.1 > t + EPS)
         .collect();
+    windows.sort_by(|a, b| a.1.0.total_cmp(&b.1.0).then(a.0.cmp(&b.0)));
     if let Some(tg) = &def.telegraph
         && let Some(shape) = tg.zone
     {

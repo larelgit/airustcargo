@@ -17,8 +17,9 @@
 //! apply            → health, statuses, death; poise: a break staggers, else a flinch
 //! ```
 //!
-//! A hit whose attacker was interrupted earlier in the same tick (parried, killed)
-//! no longer lands; a target killed earlier in the tick takes no more hits.
+//! A guarded hit (blocked or guard-breaking) carries no status buildup. A hit whose
+//! attacker was interrupted earlier in the same tick (parried, killed) no longer
+//! lands; a target killed earlier in the tick takes no more hits.
 
 use ai_core::AiId;
 use bevy::prelude::*;
