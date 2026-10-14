@@ -24,6 +24,12 @@
         tags: ["heavy"],
     ),
     "grunt_stagger": (net_id: 12, phases: [("stagger", 0.6)]),
+    // A caster's attack: no hits of its own, the bolt is an effect (a projectile the game spawns).
+    "cast": (
+        net_id: 13,
+        phases: [("windup", 0.5), ("release", 0.2), ("recovery", 0.5)],
+        effects: [(at: 0.5, effect: Custom("spawn_bolt"))],
+    ),
 
     "slash": (
         net_id: 20,

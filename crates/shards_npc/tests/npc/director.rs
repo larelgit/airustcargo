@@ -144,6 +144,161 @@ fn only_allowed_combinations_overlap() {
     assert!(light_heavy > 0 && light_light > 0, "allowed overlaps happen: {light_heavy} light+heavy, {light_light} light+light");
 }
 
+/// Bolts the casters' `spawn_bolt` effect threw (a game's projectile, here only counted).
+static BOLTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// An attack without hits of its own (a cast whose projectile is an effect) holds its token
+/// to its end like any other: one token, one caster at a time.
+#[test]
+fn a_cast_without_hits_holds_its_token_to_the_end() {
+    use shards_action::ActionAppExt;
+    let mut app = app_with(|app| {
+        app.add_action_effect("spawn_bolt", |_, _| {
+            BOLTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+    });
+    let hero = player(app.world_mut(), 0, Vec3::ZERO);
+    let casters: Vec<Entity> = (0..3)
+        .map(|i| {
+            let angle = i as f32 / 3.0 * std::f32::consts::TAU + 0.3;
+            let at = Vec3::new(angle.cos(), 0.0, angle.sin()) * 6.0;
+            let npc = Npc::new("grunt", "grunt").with_plan("caster").with_director("single");
+            crate::common::npc(app.world_mut(), "caster", npc, at, (-at).normalize())
+        })
+        .collect();
+    let before = BOLTS.load(std::sync::atomic::Ordering::SeqCst);
+    let mut most = 0;
+    for t in 0..1200 {
+        step(&mut app, 1);
+        let casting = casters.iter().filter(|e| action(&app, **e).as_deref() == Some("cast")).count();
+        assert!(casting <= 1, "tick {t}: {casting} casting with one token");
+        most = most.max(casting);
+    }
+    assert_eq!(most, 1);
+    assert!(BOLTS.load(std::sync::atomic::Ordering::SeqCst) - before >= 5, "the casts threw their bolts");
+    let story = journal(&app);
+    assert!(story.iter().any(|l| l.contains("returns its attack token after light (0/1)")), "{story:#?}");
+    assert!(!story.iter().any(|l| l.contains("attack never started")), "{story:#?}");
+    let _ = hero;
+}
+
+/// A token on a target the NPC no longer perceives comes back ("target gone"): the NPC never
+/// steers or strikes at where that target really is.
+#[test]
+fn a_token_on_a_forgotten_target_comes_back() {
+    use shards_npc::Grant;
+    let mut app = app();
+    // It looks north (fov 120°): one player in front of it, one behind it, out of sight.
+    let grunt = npc(app.world_mut(), "grunt", Npc::new("grunt", "eyes").with_plan("jabber"), Vec3::ZERO, N);
+    let behind = player(app.world_mut(), 0, Vec3::new(0.0, 0.0, 5.0));
+    let ahead = player(app.world_mut(), 1, Vec3::new(0.0, 0.0, -6.0));
+    step(&mut app, 10);
+    let (behind_id, ahead_id) = (aid(&app, behind), aid(&app, ahead));
+    let perceived = app.world().get::<Perceived>(grunt).unwrap().clone();
+    assert!(perceived.get(behind_id).is_none(), "the one behind is not perceived: {perceived:?}");
+    assert_eq!(perceived.focus, Some(ahead_id));
+    // A token held on the one behind (as after a regrant on a target forgotten since).
+    let grant = Grant {
+        target: behind_id,
+        director: "default".into(),
+        since: 0,
+        age: 0.0,
+        attack: None,
+        input: None,
+        cost: 0.0,
+        tags: Vec::new(),
+        cooldown: 0.0,
+        pressed: None,
+        instance: 0,
+        started: false,
+    };
+    app.world_mut().get_mut::<AttackToken>(grunt).unwrap().held = Some(grant);
+    step(&mut app, 1);
+    let held = app.world().get::<AttackToken>(grunt).unwrap().held.clone();
+    assert_ne!(held.map(|g| g.target), Some(behind_id), "the token on the forgotten target came back");
+    let me = id(&app, grunt);
+    assert!(lines(&app, &format!("{me} returns its attack token unused: target gone")).len() == 1, "{:#?}", journal(&app));
+    let goal = app.world().get::<shards_npc::NpcDrive>(grunt).unwrap().goal;
+    assert!(goal.is_none_or(|g| g.z < 0.0), "it does not walk to where the forgotten one stands: {goal:?}");
+}
+
+/// One of two players leaves: the limit falls from three tokens to two, and a token beyond
+/// it comes back at once unless its attack is under way.
+#[test]
+fn tokens_beyond_a_lowered_limit_come_back() {
+    let mut app = app();
+    record_starts(&mut app);
+    let hero = player(app.world_mut(), 0, Vec3::ZERO);
+    // Far away, unseen: it only counts as a living player (three tokens).
+    let other = player(app.world_mut(), 1, Vec3::new(50.0, 0.0, 50.0));
+    let grunts = ring(&mut app, 5, Vec3::ZERO, "grunt", "jabber", "default");
+    let grants = |app: &App| -> Vec<shards_npc::Grant> {
+        grunts.iter().filter_map(|e| app.world().get::<AttackToken>(*e).unwrap().held.clone()).collect()
+    };
+    let mut ready = false;
+    for _ in 0..2400 {
+        step(&mut app, 1);
+        let held = grants(&app);
+        if held.len() == 3 && held.iter().any(|g| !g.in_flight()) {
+            ready = true;
+            break;
+        }
+    }
+    assert!(ready, "three tokens out, one of them not pressed yet");
+    app.world_mut().despawn(other);
+    step(&mut app, 1);
+    let held = grants(&app);
+    assert!(held.len() <= 2 || held.iter().all(|g| g.in_flight()), "the limit is two now: {held:#?}");
+    assert!(!lines(&app, "returns its attack token unused: limit lowered").is_empty(), "{:#?}", journal(&app));
+    for t in 0..600 {
+        step(&mut app, 1);
+        let held = grants(&app).len();
+        if t > 60 {
+            assert!(held <= 2, "tick {t} after: {held} tokens with one player");
+        }
+        let attacking = grunts.iter().filter(|e| attacking(&app, **e)).count();
+        assert!(attacking <= 2, "tick {t} after: {attacking} attacking one player");
+    }
+    let _ = hero;
+}
+
+/// An NPC an agent took over (orders in its `Intent`) is out of the fight: no tokens, no
+/// presses, no held inputs, until its orders are done.
+#[test]
+fn an_npc_under_orders_takes_no_tokens() {
+    use shards_core::{Intent, Order, Target};
+    let mut app = app();
+    let hero = player(app.world_mut(), 0, Vec3::ZERO);
+    let grunt = grunt(app.world_mut(), "grunt", "jabber", "default", Vec3::new(0.0, 0.0, -2.0));
+    step(&mut app, 30);
+    let far = Vec3::new(0.0, 0.0, -40.0);
+    app.world_mut().get_mut::<Intent>(grunt).unwrap().orders.push_back(Order::MoveTo { target: Target::Point(far), within: 0.5 });
+    let me = id(&app, grunt);
+    let given = shards_core::flat(feet(&app, grunt)).length();
+    let mut t = 0;
+    while t < 900 {
+        step(&mut app, 1);
+        t += 1;
+        if app.world().get::<Intent>(grunt).unwrap().orders.is_empty() {
+            break;
+        }
+        if t > 60 {
+            assert!(!has_token(&app, grunt), "tick {t} under orders: it holds a token");
+        }
+    }
+    assert!(t > 120, "the orders lasted: {t} ticks");
+    let taken: Vec<String> = lines(&app, &format!("{me} takes an attack token")).into_iter().filter(|l| (30 + 60..30 + t).contains(&tick_of(l))).collect();
+    assert!(taken.is_empty(), "{taken:#?}");
+    assert!(shards_core::flat(feet(&app, grunt)).length() > given + 10.0, "it walked its orders");
+    assert!(app.world().get::<Intent>(grunt).unwrap().held.is_empty());
+    let _ = hero;
+}
+
+/// The tick of a journal line (`tick text`).
+fn tick_of(line: &str) -> u64 {
+    line.split_whitespace().next().and_then(|t| t.trim_start_matches('[').trim_end_matches(']').parse().ok()).unwrap_or(0)
+}
+
 #[test]
 fn those_without_a_token_wait_in_their_roles() {
     let mut app = app();

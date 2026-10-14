@@ -6,7 +6,9 @@
 //!   ([`DirectorDef::tokens`]), so at most that many of its NPCs attack at once. NPCs that
 //!   ask are served longest-waiting first, then in `AiId` order; a token comes back when its
 //!   attack ends, when it was not used within `patience`, or when its holder dies, falls
-//!   dormant, loses its target or leaves the fight.
+//!   dormant, loses its target or leaves the fight; when a player dies or leaves, tokens
+//!   beyond the lowered limit come back at once (the newest first) unless their attack is
+//!   under way.
 //! - **Collision budget and allowed combinations** are checked by the planner when it
 //!   presses: the attacks in flight on one target may cost at most `budget` together, and
 //!   only tag pairs in `allowed` may overlap. A token holder whose attack does not fit
@@ -22,9 +24,9 @@
 use ai_core::{AiId, AiIndex, SimRng, SimTick};
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
-use shards_action::{ActionDef, ActionState, Charges, Cooldowns, Dead, Fighter, InputBuffer, Stamina};
+use shards_action::{ActionState, Charges, Cooldowns, Dead, Fighter, InputBuffer, Stamina};
 use shards_content::ContentDb;
-use shards_core::{flat, PlayerId};
+use shards_core::{flat, Intent, PlayerId};
 use shards_motion::Collider;
 
 use crate::brain::{clamp_to_leash, salt, Home, Npc, NpcBrain, NpcDrive};
@@ -139,18 +141,27 @@ pub(crate) struct Fighting {
     pub cooldowns: Option<&'static Cooldowns>,
     pub charges: Option<&'static Charges>,
     pub dead: Has<Dead>,
+    /// Orders in it: an agent took the NPC over (`move_to`, `attack`), it is out of the fight.
+    pub intent: Option<&'static Intent>,
+}
+
+impl FightingItem<'_, '_> {
+    /// An agent's orders drive it now: it neither asks for tokens nor presses.
+    pub(crate) fn under_orders(&self) -> bool {
+        self.intent.is_some_and(|i| !i.orders.is_empty())
+    }
 }
 
 /// Where a target stands, its body radius, whether it is alive.
 pub(crate) type Targets<'w, 's> = Query<'w, 's, (&'static Transform, Has<Dead>, Option<&'static Collider>)>;
 
 /// A live target as an NPC knows it: where it perceives it (seen this tick: where it is;
-/// else where it was last seen or heard) and its body radius. NPCs do not cheat: what they
-/// steer and strike at is what they perceive.
+/// else where it was last seen or heard) and its body radius; `None` once it is dead, gone
+/// or forgotten. NPCs do not cheat: what they steer and strike at is what they perceive.
 pub(crate) fn target_of(index: &AiIndex, targets: &Targets, perceived: &Perceived, id: AiId) -> Option<(Vec3, f32)> {
-    let (tf, dead, collider) = targets.get(index.get(id)?).ok()?;
-    let at = perceived.get(id).map_or(tf.translation, |k| k.pos);
-    (!dead).then(|| (at, collider.map_or(0.4, |c| c.shape.half_extents().x)))
+    let known = perceived.get(id)?;
+    let (_, dead, collider) = targets.get(index.get(id)?).ok()?;
+    (!dead).then(|| (known.pos, collider.map_or(0.4, |c| c.shape.half_extents().x)))
 }
 
 /// NPCs by `AiId`.
@@ -160,11 +171,14 @@ pub(crate) fn order(npcs: &Query<Fighting>) -> Vec<(AiId, Entity)> {
     all
 }
 
-/// Whether the attack this grant pressed is running: an action with hits, started by the
-/// press or after it (a combo the planner chained).
-pub(crate) fn running_attack(db: &ContentDb, state: &ActionState, grant: &Grant) -> bool {
+/// Whether the attack this grant pressed is running: an action started by an input (not one
+/// the engine forced: a stagger, a flinch, a death) at the press or after it. Until it is
+/// seen to start, only the pressed input's action counts; once started, what follows it by
+/// input (a combo) is the same attack. Whether the action has hits does not matter: a cast
+/// that throws a projectile from an effect is an attack too.
+pub(crate) fn running_attack(state: &ActionState, grant: &Grant) -> bool {
     state.current.as_ref().is_some_and(|r| {
-        r.instance >= grant.instance && db.get::<ActionDef>(&r.action).is_some_and(|d| !d.hits.is_empty())
+        !r.forced && r.instance >= grant.instance && (grant.started || r.input.is_some() && r.input == grant.input)
     })
 }
 
@@ -195,7 +209,7 @@ pub(crate) fn direct(
         f.plan.tick(dt, f.state.current.is_none());
         let Some(mut grant) = f.token.held.clone() else { continue };
         grant.age += dt;
-        let running = running_attack(&db, f.state, &grant);
+        let running = running_attack(f.state, &grant);
         if grant.in_flight() && !grant.started && running {
             grant.started = true;
             if let Some(name) = &grant.attack {
@@ -215,6 +229,8 @@ pub(crate) fn direct(
             Some("dormant")
         } else if target_of(&index, &targets, f.perceived, grant.target).is_none() {
             Some("target gone")
+        } else if f.under_orders() {
+            Some("under orders")
         } else if !f.drive.strike && !f.drive.request_token {
             Some("left the fight")
         } else if grant.age > patience + 1e-4 {
@@ -238,6 +254,35 @@ pub(crate) fn direct(
             }
             None => f.token.held = Some(grant),
         }
+    }
+
+    // 1b. Fewer living players than when the tokens went out: those beyond the limit come
+    // back, the newest grants first, unless their attack is in flight (it keeps its token to
+    // its end, and the count falls as those end).
+    let mut spare: Vec<(String, u64, AiId, Entity)> = Vec::new();
+    let mut out = Pools::default();
+    for &(id, entity) in &order {
+        if let Ok(f) = npcs.get(entity)
+            && let Some(grant) = &f.token.held
+        {
+            out.add(&grant.director);
+            if !grant.in_flight() {
+                spare.push((grant.director.clone(), grant.since, id, entity));
+            }
+        }
+    }
+    spare.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)).then(b.2.cmp(&a.2)));
+    for (director, _, _, entity) in spare {
+        if out.get(&director) <= limit_of(&director) {
+            continue;
+        }
+        let Ok(mut f) = npcs.get_mut(entity) else { continue };
+        let Some(grant) = f.token.held.take() else { continue };
+        f.token.asking_since = None;
+        let rest = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)).map_or(0.0, |p| p.rest.0);
+        f.plan.rest = f.plan.rest.max(rest);
+        out.remove(&director);
+        returned.push((entity, grant, "limit lowered"));
     }
 
     // 2. Tokens held per director.
@@ -270,6 +315,7 @@ pub(crate) fn direct(
     for &(id, entity) in &order {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         let wants = f.drive.request_token
+            && !f.under_orders()
             && f.token.held.is_none()
             && f.brain.active
             && !f.dead
@@ -324,7 +370,7 @@ pub(crate) fn direct(
     let mut waiters: Vec<(AiId, Entity)> = Vec::new();
     for &(id, entity) in &order {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
-        let waiting = f.drive.waiting && f.token.held.is_none() && f.brain.active && !f.dead;
+        let waiting = f.drive.waiting && f.token.held.is_none() && f.brain.active && !f.dead && !f.under_orders();
         let target = f.brain.target.filter(|t| waiting && target_of(&index, &targets, f.perceived, *t).is_some());
         let Some(target) = target else {
             if f.brain.slot.is_some() || f.brain.role.is_some() {
@@ -380,6 +426,12 @@ impl Pools {
         match self.0.iter_mut().find(|(d, _)| d == director) {
             Some((_, n)) => *n += 1,
             None => self.0.push((director.to_owned(), 1)),
+        }
+    }
+
+    fn remove(&mut self, director: &str) {
+        if let Some((_, n)) = self.0.iter_mut().find(|(d, _)| d == director) {
+            *n = n.saturating_sub(1);
         }
     }
 }

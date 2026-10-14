@@ -221,6 +221,13 @@ fn sense(
     }
     for sound in sounds {
         match sound.source.and_then(|s| hostiles.clone().find(|c| c.id == s)) {
+            // Seen this tick: where it is seen beats where a sound came from (a hit's noise
+            // comes from the one hit, not from the attacker).
+            Some(c) if next.known.iter().any(|k| k.id == c.id && k.seen) => {
+                if let Some(k) = next.known.iter_mut().find(|k| k.id == c.id) {
+                    k.heard = true;
+                }
+            }
             Some(c) => sensed(c.id, sound.pos, false, true, &mut next.known),
             None if sound.source != Some(me) => next.noise = Some(HeardAt { pos: sound.pos, age: 0.0 }),
             None => {}

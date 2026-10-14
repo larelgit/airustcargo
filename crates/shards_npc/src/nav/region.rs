@@ -16,13 +16,22 @@
 //!    module's [`RegionGraph`](shards_world::RegionGraph)), each boundary node gets the move
 //!    the motion planner would make into the facing column; edges whose sockets are not
 //!    passable stay closed, whatever the geometry.
-//! 5. **Navlinks**: level markers `navlink` with a `to` are one-way links (a drop, a
-//!    climb, a jump) from the node at the marker to the node at `to`.
+//! 5. **Navlinks**: level markers `navlink` with a `to` are one-way links from the node at
+//!    the marker to the node at `to`, for the moves the body makes: a drop of any depth, a
+//!    climb within its mantle height, a step to the next column (`nav_info` says why
+//!    another is not used: the body has no jump).
 //! 6. **The tile graph**: portals (one per side and area of each tile), the costs between
-//!    them inside each tile, the links between tiles; and which areas reach which at all.
+//!    them inside each tile, the links between tiles; and which nodes reach which at all.
 //!
-//! Everything is a pure function of the manifest, content and the physics world, built in
-//! a fixed order: the same region gives the same navmesh, so NPC routes replay.
+//! Afterwards, every tick (and in tools), solids that spawned, went or moved since are
+//! carved out or back in, and the links across tile edges near them made again: a node
+//! is off when some solid its bake never saw stands in the body's way there **now**, so the
+//! navmesh never depends on the order solids came and went in.
+//!
+//! Everything is a pure function of the manifest, content and the static solids standing
+//! in the physics world, built in a fixed order: the same region gives the same navmesh, so
+//! NPC routes replay, and a game loaded from a snapshot (which builds it again) goes on
+//! with the navmesh the saved game had.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -31,12 +40,12 @@ use ai_core::journal::{self, JournalKind};
 use bevy::prelude::*;
 use shards_content::{asset_root, ContentDb};
 use shards_level::{LevelMarker, MarkerKind};
-use shards_motion::perception::{step_onto, Probe, Stance, StepKind, Terrain};
+use shards_motion::perception::{hop_allowed, step_onto, Block, Probe, Stance, StepKind, Terrain};
 use shards_motion::physics::sync_physics;
-use shards_motion::{ColliderId, ColliderIds, PhysicsWorld};
+use shards_motion::{Body, CharacterParams, ColliderId, ColliderInfo, LayerMask, PhysicsWorld, Shape, VolumeKind};
 use shards_world::grid::{rotation, turn, turns_of, Dir};
 use shards_world::manifest::Layout;
-use shards_world::{ActiveRegion, TileId};
+use shards_world::{ActiveRegion, RegionGraph, TileId};
 
 use super::bake::{bake, dijkstra, solid};
 use super::settings::{whole_cells, NavSettings};
@@ -143,8 +152,11 @@ pub struct NavLinkUse {
     pub name: String,
     pub from: Vec3,
     pub to: Vec3,
-    /// The nodes it joins, when both ends are on walkable ground.
+    /// The nodes it joins, when both ends are on walkable ground and the body can make the
+    /// move.
     pub nodes: Option<(NodeId, NodeId)>,
+    /// Why it is not used, when it is not.
+    pub unused: Option<String>,
 }
 
 /// A node of the tile graph: a portal of an instance, or a navlink's end.
@@ -187,12 +199,111 @@ pub struct NavReport {
     pub carved: usize,
 }
 
-/// Solids the bakes did not have, and the nodes each switched off.
+/// What carving and the links across tile edges were last made against: every static solid
+/// and water volume of the world, by id, and how many solids may switch off each node.
+///
+/// A node is switched off when the zone of some solid its tile's bake never saw holds it
+/// (near the solid, at a height the body would meet it) and the baked body no longer stands
+/// there in the world as it is: a pure function of the solids standing now, whatever order
+/// they came and went in. A change (a solid spawned, gone or moved) is found by comparing
+/// with what was seen, and the nodes and edge links near it are decided again.
 #[derive(Clone, Debug, Default)]
 struct Carve {
-    /// The next collider id at the last look: newer ones have not been carved yet.
-    next_id: u32,
-    records: Vec<(ColliderId, Vec<NodeId>)>,
+    /// By id.
+    seen: Vec<Seen>,
+    /// Per node: the solids whose zone holds it.
+    held: Vec<u32>,
+}
+
+/// A static solid or water volume as carving last saw it.
+#[derive(Clone, Debug)]
+struct Seen {
+    id: ColliderId,
+    shape: Shape,
+    position: Vec3,
+    rotation: Quat,
+    water: bool,
+    aabb_min: Vec3,
+    aabb_max: Vec3,
+    /// The nodes it may switch off (none for water, or for a tile's own solids in that tile).
+    zone: Vec<NodeId>,
+}
+
+impl Carve {
+    /// Whether the static solids and water in `physics` are not the ones last seen.
+    fn differs(&self, physics: &PhysicsWorld) -> bool {
+        let mut now = physics.colliders().filter(|c| tracked(c));
+        self.seen.iter().any(|s| now.next().is_none_or(|c| !s.is(c))) || now.next().is_some()
+    }
+}
+
+impl Seen {
+    /// Whether `c` is this one, where it was.
+    fn is(&self, c: &ColliderInfo) -> bool {
+        self.id == c.id && self.shape == c.shape && self.position == c.position && self.rotation == c.rotation && self.water == is_water(c)
+    }
+}
+
+fn is_water(c: &ColliderInfo) -> bool {
+    matches!(c.volume, Some(VolumeKind::Water))
+}
+
+/// What the navmesh is made against: static solids (the terrain probe's floors and walls) and
+/// water (where it swims).
+fn tracked(c: &ColliderInfo) -> bool {
+    solid(c) || is_water(c)
+}
+
+/// Colliders on the `WORLD` layer that move (kinematic platforms): the navmesh is made of what
+/// stands still, so its probes leave them out.
+fn movers(physics: &PhysicsWorld) -> Vec<Entity> {
+    physics
+        .colliders()
+        .filter(|c| c.volume.is_none() && c.body != Body::Static && c.layers.memberships.intersects(LayerMask::WORLD))
+        .map(|c| c.entity)
+        .collect()
+}
+
+/// The terrain probe carving and stitching use: the baked body, what stands still.
+fn terrain<'a>(physics: &'a PhysicsWorld, settings: &'a NavSettings) -> Terrain<'a> {
+    Terrain::new(physics, &settings.agent, &movers(physics))
+}
+
+/// A move across a tile edge: `(from, over, to)` columns, `over` for a two-cell hop.
+type EdgeMove = ([i32; 2], Option<[i32; 2]>, [i32; 2]);
+
+/// One row across a tile edge: column `a` (west or north of the edge) faces column `b`.
+#[derive(Clone, Copy, Debug)]
+struct EdgeRow {
+    a: [i32; 2],
+    b: [i32; 2],
+    /// From `a` to `b`.
+    step: [i32; 2],
+    open: bool,
+    edge: usize,
+}
+
+impl EdgeRow {
+    /// The four columns its moves touch: one more on either side.
+    fn columns(&self) -> [[i32; 2]; 4] {
+        let [dx, dz] = self.step;
+        [[self.a[0] - dx, self.a[1] - dz], self.a, self.b, [self.b[0] + dx, self.b[1] + dz]]
+    }
+
+    /// The moves across it, `(from, over, to)`: into the facing column both ways, and the
+    /// two-cell hops over either edge column both ways.
+    fn moves(&self) -> [EdgeMove; 6] {
+        let [before, a, b, after] = self.columns();
+        [(a, None, b), (b, None, a), (before, Some(a), b), (a, Some(b), after), (after, Some(b), a), (b, Some(a), before)]
+    }
+}
+
+/// A region whose navmesh could not be built, and the content it was tried with: not tried
+/// again every tick, only when the region or content changes.
+#[derive(Resource, Clone, Copy, Debug)]
+struct NavFailed {
+    region: u64,
+    content: bevy::ecs::change_detection::Tick,
 }
 
 /// The navmesh of the region in the world (see the module docs).
@@ -214,6 +325,9 @@ pub struct NavRegion {
     /// The body the tiles were baked for.
     pub agent_radius: f32,
     pub agent_height: f32,
+    /// All of the body the tiles were baked for: how high it steps and climbs, how steep it
+    /// walks, where it swims.
+    pub agent: CharacterParams,
     pub safe_drop: f32,
     pub instances: Vec<Instance>,
     /// Instance covering each region cell, row-major (`u32::MAX`: none).
@@ -224,9 +338,8 @@ pub struct NavRegion {
     pub(crate) extras: Vec<Extra>,
     pub navlinks: Vec<NavLinkUse>,
     pub(crate) graph: TileGraph,
-    /// First label of each instance's areas.
-    area_base: Vec<u32>,
-    /// Which areas reach which (links taken both ways): a label per area.
+    /// Which nodes reach which (links taken both ways, switched-off nodes left out): a label
+    /// per node.
     components: Vec<u32>,
     pub report: NavReport,
     carve: Carve,
@@ -377,17 +490,29 @@ impl NavRegion {
             .map(|e| e.to)
     }
 
-    /// The area label of a node across the region: two nodes with different labels never
-    /// reach each other.
+    /// The area label of a node across the region, carving included: two nodes with
+    /// different labels never reach each other.
     pub fn component(&self, node: NodeId) -> u32 {
-        let (inst, n) = self.split(node);
-        let area = self.instances[inst as usize].nav.nodes[n as usize].area as u32;
-        self.components[(self.area_base[inst as usize] + area) as usize]
+        self.components.get(node as usize).copied().unwrap_or(node)
     }
 
-    /// Whether a body of `params` plans on this navmesh: not bigger than the one baked.
+    /// Whether a body of this radius and height fits wherever the baked one does: not
+    /// bigger.
     pub fn fits(&self, radius: f32, height: f32) -> bool {
         radius <= self.agent_radius + 0.01 && height <= self.agent_height + 0.01
+    }
+
+    /// Whether a walker of `params` makes every move of this navmesh: it [`fits`](Self::fits),
+    /// steps, climbs and walks slopes at least as well as the baked body, and swims where it
+    /// does. Others plan on the local grid, which knows their own limits.
+    pub fn serves(&self, params: &CharacterParams) -> bool {
+        let a = &self.agent;
+        self.fits(params.radius, params.height)
+            && params.step_height + 0.01 >= a.step_height
+            && params.mantle_height + 0.01 >= a.mantle_height
+            && params.max_slope_deg + 0.01 >= a.max_slope_deg
+            && (params.swim_depth - a.swim_depth).abs() < 0.01
+            && (params.float_depth - a.float_depth).abs() < 0.01
     }
 
     /// `64 tiles, 16384 nodes, 896 links across edges, 2 navlinks`.
@@ -409,15 +534,19 @@ pub(crate) fn region_loaded(world: &mut World) {
 }
 
 /// Builds the navmesh of the region in the world now (or removes a stale one when there
-/// is no region, or it cannot be built), and journals what it did.
+/// is no region, or it cannot be built), and journals what it did. Also what a snapshot load
+/// runs: the navmesh is a pure function of the region, content and the solids standing, so
+/// the one made again is the one the saved game had.
 pub fn rebuild(world: &mut World) {
     world.remove_resource::<NavRegion>();
-    if world.get_resource::<ActiveRegion>().is_none() {
+    world.remove_resource::<NavFailed>();
+    let Some(region) = world.get_resource::<ActiveRegion>().map(|r| r.hash) else {
         return;
-    }
+    };
     match build(world) {
         Ok(nav) => {
             let report = nav.report.clone();
+            let unused: Vec<(String, String)> = nav.navlinks.iter().filter_map(|l| Some((l.name.clone(), l.unused.clone()?))).collect();
             let line = format!("navmesh: {} ({})", nav.title, nav.summary());
             world.insert_resource(nav);
             journal::emit(world, JournalKind::Event, line);
@@ -440,34 +569,50 @@ pub fn rebuild(world: &mut World) {
             for (tile, why) in report.failed {
                 journal::emit(world, JournalKind::Warn, format!("navmesh: tile `{tile}` cannot be baked ({why}); NPCs plan on the local grid there"));
             }
+            for (name, why) in unused {
+                journal::emit(world, JournalKind::Warn, format!("navmesh: navlink `{name}` is not used: {why}"));
+            }
         }
         Err(why) => {
+            let content = content_changed(world);
+            world.insert_resource(NavFailed { region, content });
             journal::emit(world, JournalKind::Warn, format!("navmesh: none for this region: {why}; NPCs plan on the local grid"));
         }
     }
 }
 
-/// The navmesh is the region's: built for it and up to date with the colliders spawned since
-/// (carved). Inside ticks and in tools; a pure function of the world, so playback agrees.
+/// When content last changed (a hot reload).
+fn content_changed(world: &World) -> bevy::ecs::change_detection::Tick {
+    world.get_resource_ref::<ContentDb>().map_or_else(Default::default, |db| db.last_changed())
+}
+
+/// The navmesh is the region's: built for it and up to date with the solids standing now
+/// (carved). Inside ticks and in tools; a pure function of the world, so playback and a game
+/// loaded from a snapshot agree.
 pub fn refresh(world: &mut World) {
     let Some(region) = world.get_resource::<ActiveRegion>().map(|r| r.hash) else { return };
     if world.get_resource::<NavRegion>().is_none_or(|nav| nav.hash != region) {
+        let failed = world.get_resource::<NavFailed>().copied();
+        if failed.is_some_and(|f| f.region == region && f.content == content_changed(world)) {
+            return;
+        }
         rebuild(world);
         return;
     }
-    let next = world.get_resource::<ColliderIds>().map_or(0, |ids| ids.peek().0);
-    let stale = world.resource::<NavRegion>().carve.next_id != next
-        || world.resource::<NavRegion>().carve.records.iter().any(|(id, _)| world.resource::<PhysicsWorld>().by_id(*id).is_none());
-    if !stale {
+    let changed = match (world.get_resource::<NavRegion>(), world.get_resource::<PhysicsWorld>()) {
+        (Some(nav), Some(physics)) => nav.carve.differs(physics),
+        _ => false,
+    };
+    if !changed {
         return;
     }
     let _ = world.run_system_cached(sync_physics);
-    let mut nav = world.remove_resource::<NavRegion>().expect("checked above");
     let tiles = tile_ids(world);
+    let mut nav = world.remove_resource::<NavRegion>().expect("checked above");
     let settings = NavSettings::of(world.resource::<ContentDb>());
     let physics = world.resource::<PhysicsWorld>();
-    let changed = nav.recarve(physics, &settings, &tiles, next);
-    if changed {
+    let edges = world.get_resource::<ActiveRegion>().and_then(|r| r.graph.as_ref());
+    if nav.update(physics, &settings, &tiles, edges) {
         nav.build_graph();
     }
     world.insert_resource(nav);
@@ -511,7 +656,6 @@ fn build(world: &mut World) -> Result<NavRegion, String> {
     // Instances in manifest order.
     let mut instances = Vec::with_capacity(manifest.tiles.len());
     let mut base = vec![0u32];
-    let mut area_base = vec![0u32];
     let mut cell_instance = vec![u32::MAX; (manifest.size[0] * manifest.size[1]) as usize];
     for (index, placed) in manifest.tiles.iter().enumerate() {
         let nav = bakes[&placed.tile].clone();
@@ -524,7 +668,6 @@ fn build(world: &mut World) -> Result<NavRegion, String> {
             }
         }
         base.push(base[index] + nav.nodes.len() as u32);
-        area_base.push(area_base[index] + nav.areas as u32);
         instances.push(Instance {
             cell: placed.at,
             tile: placed.tile.clone(),
@@ -539,8 +682,8 @@ fn build(world: &mut World) -> Result<NavRegion, String> {
     }
     let _ = world.run_system_cached(sync_physics);
     let tiles = tile_ids(world);
+    let markers = navlink_markers(world);
     let physics = world.resource::<PhysicsWorld>();
-    let next_id = world.get_resource::<ColliderIds>().map_or(0, |ids| ids.peek().0);
     let mut nav = NavRegion {
         hash: region.hash,
         title: manifest.title(),
@@ -551,6 +694,7 @@ fn build(world: &mut World) -> Result<NavRegion, String> {
         size: manifest.size,
         agent_radius: settings.agent.radius,
         agent_height: settings.agent.height,
+        agent: settings.agent.clone(),
         safe_drop: settings.safe_drop,
         instances,
         cell_instance,
@@ -558,14 +702,12 @@ fn build(world: &mut World) -> Result<NavRegion, String> {
         extras: Vec::new(),
         navlinks: Vec::new(),
         graph: TileGraph::default(),
-        area_base,
         components: Vec::new(),
         report,
         carve: Carve::default(),
     };
-    nav.recarve(physics, &settings, &tiles, next_id);
-    nav.stitch(physics, &settings, &graph);
-    let markers = navlink_markers(world);
+    nav.update(physics, &settings, &tiles, None);
+    nav.stitch(&terrain(physics, &settings), &settings, &graph);
     nav.add_navlinks(&settings, markers);
     nav.build_graph();
     Ok(nav)
@@ -700,90 +842,170 @@ impl NavRegion {
         }
     }
 
-    /// Carves solids the bakes never saw: colliders spawned since the last look, and those
-    /// gone since (their nodes are checked again). Whether anything changed.
-    fn recarve(&mut self, physics: &PhysicsWorld, settings: &NavSettings, tiles: &BTreeMap<ColliderId, TileId>, next_id: u32) -> bool {
-        let terrain = Terrain::new(physics, &settings.agent, &[]);
-        let mut changed = false;
-        // Gone: their nodes may be free again.
-        let (gone, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.carve.records).into_iter().partition(|(id, _)| physics.by_id(*id).is_none());
-        self.carve.records = kept;
-        let mut again: Vec<NodeId> = gone.into_iter().flat_map(|(_, nodes)| nodes).collect();
-        again.sort_unstable();
-        again.dedup();
-        for node in again {
-            let still_carved = self.carve.records.iter().any(|(_, nodes)| nodes.contains(&node));
-            if !still_carved && self.still_stands(&terrain, node) {
-                let (inst, n) = self.split(node);
-                self.instances[inst as usize].disabled[n as usize] = false;
-                self.report.carved = self.report.carved.saturating_sub(1);
-                changed = true;
+    /// The nodes collider `c` may switch off: in the instances near it whose bakes did not
+    /// have it, in the columns within reach of its box (clipped to each instance), at
+    /// heights where it would be in the baked body's way (above its step, below its head).
+    fn zone_of(&self, c: &ColliderInfo, tiles: &BTreeMap<ColliderId, TileId>, settings: &NavSettings, reach: f32) -> Vec<NodeId> {
+        let owner = tiles.get(&c.id).and_then(|t| {
+            let cell = [t.x, t.y];
+            self.instances.iter().position(|i| i.cell == cell).map(|i| i as u32)
+        });
+        let (height, step) = (settings.agent.height, settings.agent.step_height);
+        let lo = self.column_of(c.aabb_min - Vec3::new(reach, 0.0, reach));
+        let hi = self.column_of(c.aabb_max + Vec3::new(reach, 0.0, reach));
+        let mut zone = Vec::new();
+        for inst in self.instances_near(c.aabb_min, c.aabb_max, reach) {
+            if Some(inst) == owner && self.baked_with(inst, c) {
+                continue;
             }
-        }
-        // New: every static solid from the first id not looked at yet.
-        let from = self.carve.next_id;
-        self.carve.next_id = next_id;
-        let r = settings.agent.radius + self.cell * 0.5 + 0.05;
-        let height = settings.agent.height;
-        let step = settings.agent.step_height;
-        let new: Vec<&shards_motion::ColliderInfo> = physics.colliders().filter(|c| c.id.0 >= from && solid(c)).collect();
-        for c in new {
-            let owner = tiles.get(&c.id).and_then(|t| {
-                let cell = [t.x, t.y];
-                self.instances.iter().position(|i| i.cell == cell).map(|i| i as u32)
-            });
-            let mut carved = Vec::new();
-            for inst in self.instances_near(c.aabb_min, c.aabb_max, r) {
-                if Some(inst) == owner && self.baked_with(inst, c) {
-                    continue;
-                }
-                let instance = &self.instances[inst as usize];
-                let lo = self.column_of(c.aabb_min - Vec3::new(r, 0.0, r));
-                let hi = self.column_of(c.aabb_max + Vec3::new(r, 0.0, r));
-                for gz in lo[1]..=hi[1] {
-                    for gx in lo[0]..=hi[0] {
-                        if self.instance_at([gx, gz]) != Some(inst) {
-                            continue;
-                        }
-                        let (i, j) = instance.to_local([gx, gz]);
-                        for n in instance.nav.column(i, j) {
-                            let node = self.global(inst, n);
-                            let y = instance.nav.nodes[n as usize].y();
-                            // Below the step it could not be in the body's way; far above, neither.
-                            if c.aabb_max.y <= y + step || c.aabb_min.y > y + height + 0.1 || self.is_disabled(node) {
-                                continue;
-                            }
-                            if !self.still_stands(&terrain, node) {
-                                carved.push(node);
-                            }
+            let instance = &self.instances[inst as usize];
+            let end = [instance.origin[0] + instance.grid[0] as i32 - 1, instance.origin[1] + instance.grid[1] as i32 - 1];
+            for gz in lo[1].max(instance.origin[1])..=hi[1].min(end[1]) {
+                for gx in lo[0].max(instance.origin[0])..=hi[0].min(end[0]) {
+                    if self.instance_at([gx, gz]) != Some(inst) {
+                        continue;
+                    }
+                    let (i, j) = instance.to_local([gx, gz]);
+                    for n in instance.nav.column(i, j) {
+                        let y = instance.nav.nodes[n as usize].y();
+                        // Below the step it is never in the body's way; far above, neither.
+                        if c.aabb_max.y > y + step && c.aabb_min.y <= y + height + 0.1 {
+                            zone.push(self.global(inst, n));
                         }
                     }
                 }
             }
-            if carved.is_empty() {
-                continue;
+        }
+        zone
+    }
+
+    /// The global grid columns (row-major flags) within `reach` of any of `boxes`, clipped
+    /// to the region.
+    fn mark_columns(&self, boxes: &[(Vec3, Vec3)], reach: f32) -> Vec<bool> {
+        let (w, h) = ((self.per * self.size[0]) as i32, (self.per * self.size[1]) as i32);
+        let mut marked = vec![false; (w * h) as usize];
+        for (min, max) in boxes {
+            let lo = self.column_of(*min - Vec3::new(reach, 0.0, reach));
+            let hi = self.column_of(*max + Vec3::new(reach, 0.0, reach));
+            for gz in lo[1].max(0)..=hi[1].min(h - 1) {
+                for gx in lo[0].max(0)..=hi[0].min(w - 1) {
+                    marked[(gz * w + gx) as usize] = true;
+                }
             }
-            for &node in &carved {
+        }
+        marked
+    }
+
+    /// Brings carving (and, given the region's tile graph, the links across tile edges) up
+    /// to date with the static solids and water in `physics`: what spawned, went or moved
+    /// since the last look leaves its zone or enters it, and every node and edge link near
+    /// such a change is decided again from the world as it is (see [`Carve`]). Whether
+    /// anything changed.
+    fn update(&mut self, physics: &PhysicsWorld, settings: &NavSettings, tiles: &BTreeMap<ColliderId, TileId>, edges: Option<&RegionGraph>) -> bool {
+        let count = self.node_count() as usize;
+        if self.carve.held.len() != count {
+            self.carve.held = vec![0; count];
+        }
+        // What changed, by id: both lists are in id order.
+        let mut before = std::mem::take(&mut self.carve.seen).into_iter().peekable();
+        let mut seen: Vec<Seen> = Vec::new();
+        let mut gone: Vec<Seen> = Vec::new();
+        let mut came: Vec<&ColliderInfo> = Vec::new();
+        for c in physics.colliders().filter(|c| tracked(c)) {
+            while let Some(old) = before.next_if(|s| s.id < c.id) {
+                gone.push(old);
+            }
+            match before.next_if(|s| s.id == c.id) {
+                Some(old) if old.is(c) => seen.push(old),
+                Some(old) => {
+                    gone.push(old);
+                    came.push(c);
+                }
+                None => came.push(c),
+            }
+        }
+        gone.extend(before);
+        if gone.is_empty() && came.is_empty() {
+            self.carve.seen = seen;
+            return false;
+        }
+        let reach = settings.agent.radius + self.cell * 0.5 + 0.05;
+        let mut boxes: Vec<(Vec3, Vec3)> = Vec::with_capacity(gone.len() + came.len());
+        for old in &gone {
+            for &n in &old.zone {
+                self.carve.held[n as usize] -= 1;
+            }
+            boxes.push((old.aabb_min, old.aabb_max));
+        }
+        for c in came {
+            let zone = if solid(c) { self.zone_of(c, tiles, settings, reach) } else { Vec::new() };
+            for &n in &zone {
+                self.carve.held[n as usize] += 1;
+            }
+            boxes.push((c.aabb_min, c.aabb_max));
+            seen.push(Seen {
+                id: c.id,
+                shape: c.shape,
+                position: c.position,
+                rotation: c.rotation,
+                water: is_water(c),
+                aabb_min: c.aabb_min,
+                aabb_max: c.aabb_max,
+                zone,
+            });
+        }
+        seen.sort_by_key(|s| s.id);
+        self.carve.seen = seen;
+
+        // Every node near a change: switched off when a zone holds it and the body no longer
+        // stands there.
+        let marked = self.mark_columns(&boxes, reach);
+        let terrain = terrain(physics, settings);
+        let width = (self.per * self.size[0]) as i32;
+        let mut changed = false;
+        let mut touched: Vec<u32> = Vec::new();
+        for (k, _) in marked.iter().enumerate().filter(|(_, m)| **m) {
+            let col = [k as i32 % width, k as i32 / width];
+            for node in self.nodes_at(col) {
+                let off = self.carve.held[node as usize] > 0 && !self.still_stands(&terrain, node);
+                if off == self.is_disabled(node) {
+                    continue;
+                }
                 let (inst, n) = self.split(node);
                 let instance = &mut self.instances[inst as usize];
                 if instance.disabled.is_empty() {
                     instance.disabled = vec![false; instance.nav.nodes.len()];
                 }
-                instance.disabled[n as usize] = true;
+                instance.disabled[n as usize] = off;
+                touched.push(inst);
+                changed = true;
             }
-            self.report.carved += carved.len();
-            self.carve.records.push((c.id, carved));
-            changed = true;
+        }
+        touched.sort_unstable();
+        touched.dedup();
+        for inst in touched {
+            // None switched off: the bake's own numbers serve again.
+            let instance = &mut self.instances[inst as usize];
+            if !instance.disabled.contains(&true) {
+                instance.disabled.clear();
+            }
+        }
+        if changed {
+            self.report.carved = self.instances.iter().map(|i| i.disabled.iter().filter(|d| **d).count()).sum();
+        }
+        if let Some(graph) = edges {
+            changed |= self.restitch(&terrain, settings, graph, &marked);
         }
         changed
     }
 
-    /// Links across every tile edge the sockets leave open: each boundary node gets the move
-    /// the motion planner would make into the facing column, both ways.
-    fn stitch(&mut self, physics: &PhysicsWorld, settings: &NavSettings, graph: &shards_world::RegionGraph) {
-        let terrain = Terrain::new(physics, &settings.agent, &[]);
+    /// Every row across the region's tile edges: the facing columns (west/north side first),
+    /// the step from the first to the second, whether the sockets leave that edge open, and
+    /// which edge it is.
+    fn edge_rows(&self, graph: &RegionGraph) -> Vec<EdgeRow> {
         let per = self.per as i32;
-        let mut extras = Vec::new();
+        let mut out = Vec::new();
+        let mut edge = 0;
         for y in 0..self.size[1] as i32 {
             for x in 0..self.size[0] as i32 {
                 for dir in [Dir::E, Dir::S] {
@@ -798,33 +1020,80 @@ impl NavRegion {
                         continue;
                     }
                     let open = graph.open([x, y], dir);
-                    let mut linked = 0;
                     for k in 0..per {
                         let ca = if dir == Dir::E { [(x + 1) * per - 1, y * per + k] } else { [x * per + k, (y + 1) * per - 1] };
-                        let cb = [ca[0] + dx, ca[1] + dz];
-                        if !open {
-                            // Counted, for the report: both sides have ground, the sockets close it.
-                            if !self.nodes_at(ca).is_empty() && !self.nodes_at(cb).is_empty() {
-                                linked += 1;
-                            }
-                            continue;
-                        }
-                        linked += self.link_columns(&terrain, settings, ca, cb, &mut extras);
-                        linked += self.link_columns(&terrain, settings, cb, ca, &mut extras);
+                        out.push(EdgeRow { a: ca, b: [ca[0] + dx, ca[1] + dz], step: [dx, dz], open, edge });
                     }
-                    if !open && linked > 0 {
-                        self.report.closed_edges += 1;
-                    }
+                    edge += 1;
                 }
             }
         }
-        self.report.stitched = extras.len();
-        self.extras.extend(extras);
-        self.extras.sort_by_key(|e| (e.from, e.to));
+        out
     }
 
-    /// The moves from the nodes of column `from` into column `to`; how many.
-    fn link_columns(&self, terrain: &Terrain, settings: &NavSettings, from: [i32; 2], to: [i32; 2], out: &mut Vec<Extra>) -> usize {
+    /// Links across every tile edge the sockets leave open, made in the world as it is: each
+    /// boundary node gets the move the motion planner would make into the facing column, and
+    /// the two-cell hop over it where the body does not fit there (a ledge or a drop whose
+    /// face lies on the edge), both ways. A link to or from a switched-off node stays, unused
+    /// while it is off.
+    fn stitch(&mut self, terrain: &Terrain, settings: &NavSettings, graph: &RegionGraph) {
+        let mut extras = Vec::new();
+        let mut closed: Vec<usize> = Vec::new();
+        for row in self.edge_rows(graph) {
+            if !row.open {
+                // Counted, for the report: both sides have ground, the sockets close it.
+                if !self.nodes_at(row.a).is_empty() && !self.nodes_at(row.b).is_empty() && closed.last() != Some(&row.edge) {
+                    closed.push(row.edge);
+                }
+                continue;
+            }
+            for (from, over, to) in row.moves() {
+                self.link_columns(terrain, settings, from, over, to, &mut extras);
+            }
+        }
+        self.report.closed_edges = closed.len();
+        self.extras.extend(extras);
+        self.extras.sort_by_key(|e| (e.from, e.to));
+        self.report.stitched = self.extras.iter().filter(|e| !e.navlink).count();
+    }
+
+    /// The links across open tile edges near `marked` columns, made again in the world as it
+    /// is; whether any changed.
+    fn restitch(&mut self, terrain: &Terrain, settings: &NavSettings, graph: &RegionGraph, marked: &[bool]) -> bool {
+        let width = (self.per * self.size[0]) as i32;
+        let height = (self.per * self.size[1]) as i32;
+        let is_marked = |[x, z]: [i32; 2]| (0..width).contains(&x) && (0..height).contains(&z) && marked[(z * width + x) as usize];
+        let rows: Vec<EdgeRow> = self.edge_rows(graph).into_iter().filter(|r| r.open && r.columns().into_iter().any(is_marked)).collect();
+        if rows.is_empty() {
+            return false;
+        }
+        let mut made = Vec::new();
+        let mut pairs: Vec<([i32; 2], [i32; 2])> = Vec::new();
+        for row in &rows {
+            for (from, over, to) in row.moves() {
+                self.link_columns(terrain, settings, from, over, to, &mut made);
+                pairs.push((from, to));
+            }
+        }
+        made.sort_by_key(|e| (e.from, e.to));
+        pairs.sort_unstable();
+        let in_rows = |nav: &NavRegion, e: &Extra| !e.navlink && pairs.binary_search(&(nav.node_column(e.from), nav.node_column(e.to))).is_ok();
+        let old: Vec<Extra> = self.extras.iter().filter(|e| in_rows(self, e)).copied().collect();
+        if old == made {
+            return false;
+        }
+        let kept: Vec<Extra> = self.extras.iter().filter(|e| !in_rows(self, e)).copied().collect();
+        self.extras = kept;
+        self.extras.extend(made);
+        self.extras.sort_by_key(|e| (e.from, e.to));
+        self.report.stitched = self.extras.iter().filter(|e| !e.navlink).count();
+        true
+    }
+
+    /// The moves from the nodes of column `from` onto column `to`: the next column, or with
+    /// `over`, a two-cell hop over a column where the body does not fit (only a climb, a drop
+    /// or a jump into water, as the bake hops). How many.
+    fn link_columns(&self, terrain: &Terrain, settings: &NavSettings, from: [i32; 2], over: Option<[i32; 2]>, to: [i32; 2], out: &mut Vec<Extra>) -> usize {
         let targets = self.nodes_at(to);
         if targets.is_empty() {
             return 0;
@@ -832,18 +1101,28 @@ impl NavRegion {
         let c = self.column_center(to);
         let mut made = 0;
         for a in self.nodes_at(from) {
-            if self.is_disabled(a) {
-                continue;
-            }
             let (inst, n) = self.split(a);
             let local = self.instances[inst as usize].nav.nodes[n as usize];
             let pos = self.node_pos(a);
             let stance = Stance { pos, swimming: local.swim, up: local.up() };
+            let dist = match over {
+                None => self.cell,
+                Some(o) => {
+                    let o = self.column_center(o);
+                    if !matches!(terrain.probe(o.x, o.z, pos.y), Probe::Blocked(Block::Tight)) {
+                        continue;
+                    }
+                    2.0 * self.cell
+                }
+            };
             let probe = terrain.probe(c.x, c.z, pos.y);
-            let Some(step) = step_onto(terrain, stance, (c.x, c.z), probe, self.cell, settings.safe_drop) else { continue };
+            let Some(step) = step_onto(terrain, stance, (c.x, c.z), probe, dist, settings.safe_drop) else { continue };
+            if over.is_some() && !hop_allowed(step.kind, stance.swimming) {
+                continue;
+            }
             let found = targets
                 .clone()
-                .filter(|b| !self.is_disabled(*b) && self.is_swim(*b) == step.swimming)
+                .filter(|b| self.is_swim(*b) == step.swimming)
                 .map(|b| (b, (self.node_pos(b).y - step.pos.y).abs()))
                 .filter(|(_, dy)| *dy < 0.13)
                 .min_by(|x, y| x.1.total_cmp(&y.1).then(x.0.cmp(&y.0)));
@@ -855,16 +1134,27 @@ impl NavRegion {
         made
     }
 
-    /// The node nearest `pos` within `reach` meters (flat), preferring its own height:
-    /// `(node, flat distance)`.
+    /// Whether `e` is a two-cell hop across a tile edge (not a step into the facing column).
+    fn is_hop(&self, e: &Extra) -> bool {
+        let (a, b) = (self.node_column(e.from), self.node_column(e.to));
+        !e.navlink && (a[0] - b[0]).abs() + (a[1] - b[1]).abs() == 2
+    }
+
+    /// The node nearest `pos` within `reach` meters (flat), preferring its own height
+    /// (within `band` meters of it); switched-off nodes left out.
     pub fn nearest_node(&self, pos: Vec3, reach: f32, band: f32) -> Option<NodeId> {
+        self.nearest(pos, reach, band, false)
+    }
+
+    /// [`nearest_node`](Self::nearest_node), switched-off nodes too with `any`.
+    fn nearest(&self, pos: Vec3, reach: f32, band: f32, any: bool) -> Option<NodeId> {
         let col = self.column_of(pos);
         let rings = (reach / self.cell).ceil() as i32 + 1;
         let mut best: Option<(f32, NodeId)> = None;
         for dz in -rings..=rings {
             for dx in -rings..=rings {
                 for node in self.nodes_at([col[0] + dx, col[1] + dz]) {
-                    if self.is_disabled(node) {
+                    if !any && self.is_disabled(node) {
                         continue;
                     }
                     let at = self.node_pos(node);
@@ -883,30 +1173,47 @@ impl NavRegion {
         best.map(|(_, n)| n)
     }
 
-    /// Navlink markers as one-way links between the nodes at their two ends.
+    /// Navlink markers as one-way links between the nodes at their two ends (carved or not:
+    /// a switched-off end is left out while it is off), when the body can make the move: a
+    /// drop of any depth, a climb within its mantle height onto a ledge next to it, a walk
+    /// to the next column. The others are reported unused, with why.
     fn add_navlinks(&mut self, settings: &NavSettings, markers: Vec<(String, Vec3, Vec3)>) {
         let reach = (settings.agent.radius * 2.0 + self.cell).max(1.0);
+        let step = settings.agent.step_height;
         for (name, from, to) in markers {
-            let ends = self.nearest_node(from, reach, 1.5).zip(self.nearest_node(to, reach, 1.5));
-            if let Some((a, b)) = ends
-                && a != b
-            {
-                let (pa, pb) = (self.node_pos(a), self.node_pos(b));
-                let dy = pb.y - pa.y;
-                let step = settings.agent.step_height;
-                let kind = if dy > step {
-                    StepKind::Mantle
-                } else if dy < -step {
-                    StepKind::Drop
+            let ends = self.nearest(from, reach, 1.5, true).zip(self.nearest(to, reach, 1.5, true)).filter(|(a, b)| a != b);
+            let Some((a, b)) = ends else {
+                let why = "an end is not on walkable ground (within reach of a node of the navmesh)".to_owned();
+                self.navlinks.push(NavLinkUse { name, from, to, nodes: None, unused: Some(why) });
+                continue;
+            };
+            let (pa, pb) = (self.node_pos(a), self.node_pos(b));
+            let dy = pb.y - pa.y;
+            let flat = Vec2::new(pb.x - pa.x, pb.z - pa.z).length();
+            let (kind, unused) = if dy < -step {
+                (StepKind::Drop, None)
+            } else if dy > step {
+                let why = if !settings.agent.can_climb(dy, false) {
+                    Some(format!("a climb of {dy:.1} m is more than the body's mantle height ({:.1} m)", settings.agent.mantle_height))
+                } else if flat > reach {
+                    Some(format!("a climb onto a ledge {flat:.1} m away: the body only mantles what is in front of it"))
                 } else {
-                    StepKind::Walk
+                    None
                 };
-                let flat = Vec2::new(pb.x - pa.x, pb.z - pa.z).length();
+                (StepKind::Mantle, why)
+            } else if flat > self.cell * 1.5 + 1e-3 {
+                let why = format!("a level jump of {flat:.1} m: the body has no jump; make it a drop or a climb, or leave it out");
+                (StepKind::Walk, Some(why))
+            } else {
+                (StepKind::Walk, None)
+            };
+            if unused.is_none() {
                 let rise = if kind == StepKind::Walk { 0.0 } else { dy.abs() };
                 let cost = link_cost(kind, flat.max(self.cell), rise);
                 self.extras.push(Extra { from: a, to: b, kind, cost, rise, navlink: true });
             }
-            self.navlinks.push(NavLinkUse { name, from, to, nodes: ends.filter(|(a, b)| a != b) });
+            let nodes = unused.is_none().then_some((a, b));
+            self.navlinks.push(NavLinkUse { name, from, to, nodes, unused });
         }
         self.extras.sort_by_key(|e| (e.from, e.to));
     }
@@ -937,8 +1244,8 @@ impl NavRegion {
                 graph.nodes.push(GraphNode { inst: inst as u32, node: node.map(|n| self.base[inst] + n), portal: Some(p as u32) });
             }
         }
-        // Navlink ends.
-        let mut ends: Vec<NodeId> = self.extras.iter().filter(|e| e.navlink).flat_map(|e| [e.from, e.to]).collect();
+        // Ends of navlinks and of hops across tile edges (they start or land off the edge).
+        let mut ends: Vec<NodeId> = self.extras.iter().filter(|e| e.navlink || self.is_hop(e)).flat_map(|e| [e.from, e.to]).collect();
         ends.sort_unstable();
         ends.dedup();
         let mut end_index: BTreeMap<NodeId, u32> = BTreeMap::new();
@@ -949,7 +1256,8 @@ impl NavRegion {
             graph.nodes.push(GraphNode { inst, node: Some(node), portal: None });
         }
         let mut edges: Vec<(u32, u32, u32)> = Vec::new();
-        // Inside each instance: the bake's costs, or measured again where it is carved or has navlink ends.
+        // Inside each instance: the bake's costs, or measured again where it is carved or has
+        // navlink or hop ends.
         for (inst, instance) in self.instances.iter().enumerate() {
             let keys = &graph.of_instance[inst];
             let plain = instance.disabled.is_empty() && keys.len() == instance.nav.portals.len();
@@ -969,9 +1277,10 @@ impl NavRegion {
                 }
             }
         }
-        // Across tiles: a stitch joins the portals of the two sides; a navlink its two ends.
+        // Across tiles: a stitch joins the portals of the two sides; a navlink or a hop its
+        // two ends.
         for extra in &self.extras {
-            let pair = if extra.navlink {
+            let pair = if extra.navlink || self.is_hop(extra) {
                 end_index.get(&extra.from).copied().zip(end_index.get(&extra.to).copied())
             } else {
                 self.portal_node(&graph, extra.from, extra.to).zip(self.portal_node(&graph, extra.to, extra.from))
@@ -1011,9 +1320,10 @@ impl NavRegion {
         graph.of_instance[inst as usize].get(p).copied()
     }
 
-    /// Labels areas that reach each other (links taken both ways).
+    /// Labels nodes that reach each other (links taken both ways, switched-off nodes left
+    /// out): an uncarved tile by its bake's areas, a carved one link by link.
     fn find_components(&mut self) {
-        let total = *self.area_base.last().unwrap_or(&0) as usize;
+        let total = self.node_count() as usize;
         let mut parent: Vec<u32> = (0..total as u32).collect();
         fn find(parent: &mut [u32], mut n: u32) -> u32 {
             while parent[n as usize] != n {
@@ -1022,18 +1332,42 @@ impl NavRegion {
             }
             n
         }
-        let area_of = |nav: &NavRegion, node: NodeId| {
-            let (inst, n) = nav.split(node);
-            nav.area_base[inst as usize] + nav.instances[inst as usize].nav.nodes[n as usize].area as u32
-        };
-        for extra in &self.extras {
-            let (a, b) = (area_of(self, extra.from), area_of(self, extra.to));
-            let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+        fn union(parent: &mut [u32], a: u32, b: u32) {
+            let (ra, rb) = (find(parent, a), find(parent, b));
             if ra != rb {
                 parent[ra.max(rb) as usize] = ra.min(rb);
             }
         }
-        self.components = (0..total as u32).map(|a| find(&mut parent, a)).collect();
+        for (inst, instance) in self.instances.iter().enumerate() {
+            let base = self.base[inst];
+            if instance.disabled.is_empty() {
+                let mut first = vec![u32::MAX; instance.nav.areas as usize];
+                for (n, node) in instance.nav.nodes.iter().enumerate() {
+                    match first.get(node.area as usize).copied() {
+                        Some(u32::MAX) => first[node.area as usize] = base + n as u32,
+                        Some(f) => union(&mut parent, f, base + n as u32),
+                        None => {}
+                    }
+                }
+                continue;
+            }
+            for n in 0..instance.nav.nodes.len() as u32 {
+                if instance.is_disabled(n) {
+                    continue;
+                }
+                for link in instance.nav.links_of(n) {
+                    if !instance.is_disabled(link.to) {
+                        union(&mut parent, base + n, base + link.to);
+                    }
+                }
+            }
+        }
+        for extra in &self.extras {
+            if !self.is_disabled(extra.from) && !self.is_disabled(extra.to) {
+                union(&mut parent, extra.from, extra.to);
+            }
+        }
+        self.components = (0..total as u32).map(|n| find(&mut parent, n)).collect();
     }
 }
 

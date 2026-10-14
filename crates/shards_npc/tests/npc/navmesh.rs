@@ -430,3 +430,242 @@ fn solids_the_bakes_never_saw_are_carved_out_and_back_in() {
     assert_eq!(carved(&app), 0);
     assert!(route(&app, from, to).unwrap().length < 4.01, "straight across again");
 }
+
+/// The nodes switched off now, in node order.
+fn disabled(app: &App) -> Vec<u32> {
+    let nav = app.world().resource::<NavRegion>();
+    (0..nav.node_count()).filter(|n| nav.is_disabled(*n)).collect()
+}
+
+/// The disabled nodes of a region built now around the solids `solids` (fresh: no history).
+fn fresh_disabled(rows: &[&str], solids: &[(Vec3, Vec3)]) -> Vec<u32> {
+    let mut app = app();
+    for (min, max) in solids {
+        wall(app.world_mut(), *min, *max);
+    }
+    load_region(&mut app, rows);
+    disabled(&app)
+}
+
+/// Two solids carving the same ground, spawned and taken away one at a time in either
+/// order: after every change the navmesh is what a region built around the solids standing
+/// then would be, and the ground comes back whole at the end.
+#[test]
+fn carving_is_the_solids_standing_now_not_their_history() {
+    let rows = ["floor floor floor"];
+    let a = (Vec3::new(11.0, 0.0, 2.0), Vec3::new(12.0, 2.5, 6.0));
+    let b = (Vec3::new(11.6, 0.0, 3.0), Vec3::new(12.6, 2.5, 7.0));
+    let (from, to) = (Vec3::new(10.0, 0.0, 4.0), Vec3::new(14.0, 0.0, 4.0));
+    for gone_first in [0, 1] {
+        let mut app = app();
+        load_region(&mut app, &rows);
+        let wa = wall(app.world_mut(), a.0, a.1);
+        step(&mut app, 1);
+        let wb = wall(app.world_mut(), b.0, b.1);
+        step(&mut app, 1);
+        assert_eq!(disabled(&app), fresh_disabled(&rows, &[a, b]), "both standing");
+        let (first, rest) = if gone_first == 0 { (wa, b) } else { (wb, a) };
+        app.world_mut().despawn(first);
+        step(&mut app, 1);
+        assert_eq!(disabled(&app), fresh_disabled(&rows, &[rest]), "one gone (gone first: {gone_first})");
+        let second = if gone_first == 0 { wb } else { wa };
+        app.world_mut().despawn(second);
+        step(&mut app, 1);
+        assert_eq!(disabled(&app), Vec::<u32>::new(), "both gone (gone first: {gone_first})");
+        assert!(route(&app, from, to).unwrap().length < 4.01, "straight across again");
+    }
+}
+
+/// A solid that moves (it keeps its collider id) is carved where it stands now.
+#[test]
+fn a_solid_that_moves_is_carved_where_it_stands() {
+    let rows = ["floor floor floor"];
+    let mut app = app();
+    load_region(&mut app, &rows);
+    let block = wall(app.world_mut(), Vec3::new(11.0, 0.0, 2.0), Vec3::new(12.0, 2.5, 3.0));
+    step(&mut app, 1);
+    app.world_mut().get_mut::<Transform>(block).unwrap().translation += Vec3::new(0.0, 0.0, 3.0);
+    step(&mut app, 1);
+    assert_eq!(disabled(&app), fresh_disabled(&rows, &[(Vec3::new(11.0, 0.0, 5.0), Vec3::new(12.0, 2.5, 6.0))]));
+}
+
+/// A solid standing on a tile edge when the region loads seals that edge only while it
+/// stands: once it goes, the tiles are joined again.
+#[test]
+fn a_solid_on_a_tile_edge_at_load_seals_it_only_while_it_stands() {
+    let mut app = app();
+    let blocker = wall(app.world_mut(), Vec3::new(7.75, 0.0, -0.5), Vec3::new(8.25, 3.0, 8.5));
+    load_region(&mut app, &["floor floor"]);
+    let (from, to) = (Vec3::new(4.0, 0.0, 4.0), Vec3::new(12.0, 0.0, 4.0));
+    let err = route(&app, from, to).unwrap_err();
+    assert!(err.contains("cannot reach at all"), "{err}");
+    app.world_mut().despawn(blocker);
+    step(&mut app, 1);
+    let path = route(&app, from, to).unwrap_or_else(|e| panic!("joined again: {e}"));
+    assert!(path.length < 8.01, "straight across: {:?}", path.points);
+}
+
+/// Ground a solid seals off is known to be cut off at once (no search over the region).
+#[test]
+fn ground_sealed_by_a_solid_is_cut_off_at_once() {
+    let mut app = app();
+    load_region(&mut app, &["floor floor floor"]);
+    wall(app.world_mut(), Vec3::new(11.0, 0.0, -1.0), Vec3::new(13.0, 3.0, 9.0));
+    step(&mut app, 1);
+    let err = route(&app, Vec3::new(4.0, 0.0, 4.0), Vec3::new(20.0, 0.0, 4.0)).unwrap_err();
+    assert!(err.contains("cannot reach at all"), "{err}");
+}
+
+/// A huge solid near the region (a ground plane kilometers wide) is carved in no time.
+#[test]
+fn a_huge_solid_is_carved_in_no_time() {
+    let mut app = app();
+    load_region(&mut app, &["floor pillar floor"]);
+    let started = Instant::now();
+    wall(app.world_mut(), Vec3::new(-20000.0, -2.0, -20000.0), Vec3::new(20000.0, -0.5, 20000.0));
+    step(&mut app, 1);
+    let took = started.elapsed();
+    assert!(took.as_secs_f32() < 2.0, "carving took {took:?}");
+    assert_eq!(app.world().resource::<NavRegion>().report.carved, 0, "below the ground: nothing carved");
+}
+
+/// A region whose navmesh cannot be built says so once, not every tick.
+#[test]
+fn a_navmesh_that_cannot_be_built_is_said_once() {
+    let dir = assets_with_nav("odd_cell");
+    std::fs::write(dir.join("content/world/default.nav.ron"), "{ \"default\": (cell: 0.3, check_bakes: false) }\n").unwrap();
+    let mut app = app_in(dir.to_str().unwrap(), 7, |_| {});
+    floor(app.world_mut());
+    load_region(&mut app, &["floor floor"]);
+    step(&mut app, 30);
+    let said: Vec<String> = warnings(&app).into_iter().filter(|w| w.contains("navmesh: none for this region")).collect();
+    assert_eq!(said.len(), 1, "{said:#?}");
+    assert!(app.world().get_resource::<NavRegion>().is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Navlinks the body cannot make (a climb higher than its mantle, a walk over no ground: it
+/// has no jump) are not used, and `nav_info` says why.
+#[test]
+fn navlinks_the_body_cannot_make_are_not_used() {
+    let mut app = app();
+    let world = app.world_mut();
+    // Up the 4 m cliff face: too high to climb.
+    world.spawn((
+        LevelMarker { kind: MarkerKind::NavLink, name: "ladder".into(), to: Some(Vec3::new(12.6, 4.0, 2.0)) },
+        Transform::from_xyz(11.0, 0.0, 2.0),
+    ));
+    // Across the spire's tile at one level: a jump, and the body has none.
+    world.spawn((
+        LevelMarker { kind: MarkerKind::NavLink, name: "leap".into(), to: Some(Vec3::new(20.0, 0.0, 12.0)) },
+        Transform::from_xyz(4.0, 0.0, 12.0),
+    ));
+    // A step down onto the ground: fine.
+    world.spawn((
+        LevelMarker { kind: MarkerKind::NavLink, name: "rope".into(), to: Some(Vec3::new(11.0, 0.0, 4.0)) },
+        Transform::from_xyz(12.6, 4.0, 4.0),
+    ));
+    load_region(&mut app, &["floor cliff floor", "floor spire floor"]);
+    let info = ok(&mut app, "nav_info", json!({}));
+    let link = |name: &str| info.result["navlinks"].as_array().unwrap().iter().find(|l| l["name"] == name).cloned().unwrap();
+    let ladder = link("ladder");
+    assert_eq!(ladder["used"], false, "{ladder}");
+    assert!(ladder["why"].as_str().unwrap().contains("more than the body's mantle height"), "{ladder}");
+    let leap = link("leap");
+    assert_eq!(leap["used"], false, "{leap}");
+    assert!(leap["why"].as_str().unwrap().contains("has no jump"), "{leap}");
+    assert_eq!(link("rope")["used"], true);
+    let err = route(&app, Vec3::new(4.0, 0.0, 2.0), Vec3::new(14.0, 4.0, 2.0)).unwrap_err();
+    assert!(err.contains("only reached the other way") || err.contains("cannot reach"), "no way up: {err}");
+}
+
+/// An NPC on the cliff's plateau chasing a player on the ground below: in plain sight, but
+/// the only way down is a 4 m fall. The navmesh has no walk there and no route: it stays up.
+#[test]
+fn an_npc_does_not_walk_off_a_cliff_toward_a_target_in_plain_sight() {
+    let mut app = app();
+    load_region(&mut app, &["floor cliff floor"]);
+    let world = app.world_mut();
+    let top = Vec3::new(14.0, 4.0, 4.0);
+    let sentry = npc(world, "grunt", Npc::new("sentry", "boss"), top, W);
+    player(world, 0, Vec3::new(4.0, 0.0, 4.0));
+    for t in 0..240 {
+        step(&mut app, 1);
+        let at = feet(&app, sentry);
+        assert!(at.y > 3.9 && at.x > 12.0, "tick {t}: it went over the edge: {at}");
+    }
+    assert_eq!(state(&app, sentry), "chase");
+    let agent = app.world().get::<NavAgent>(sentry).unwrap();
+    assert!(!agent.direct && agent.path.is_empty(), "no straight walk, no route: it holds ({agent:?})");
+    let me = id(&app, sentry);
+    let out = ok(&mut app, "npc_state", json!({"id": me}));
+    assert_eq!(out.result["nav"]["no_route"], true, "{}", out.result);
+}
+
+/// A walker that climbs less than the body the tiles were baked for is not planned on the
+/// navmesh: its route would have a climb it cannot make. The local grid answers for it.
+#[test]
+fn a_walker_that_climbs_less_than_the_baked_body_plans_on_the_local_grid() {
+    let mut app = app();
+    load_region(&mut app, &["floor ledge floor"]);
+    let hero = player(app.world_mut(), 0, Vec3::new(4.0, 0.0, 4.0));
+    let goal = json!({"target": {"x": 14.0, "z": 4.0}, "path": true});
+    // The baked body (the defaults) mantles the 1 m ledge.
+    let out = ok(&mut app, "move_to", goal.clone());
+    assert!(text(&out).contains("(mantle 1.0m)"), "{}", text(&out));
+    app.world_mut().get_mut::<shards_core::Intent>(hero).unwrap().orders.clear();
+    // This one only mantles half a meter.
+    app.world_mut().entity_mut(hero).insert(shards_motion::CharacterParams { mantle_height: 0.5, ..default() });
+    let out = call(&mut app, "move_to", goal);
+    assert!(!text(&out).contains("mantle"), "no climb it cannot make: {}", text(&out));
+}
+
+/// A bake is made from the prefabs its tile spawns, the ones they extend and the ones its
+/// level file's nodes name: a change anywhere down those chains makes it stale.
+#[test]
+fn a_bake_goes_stale_when_any_prefab_down_its_chains_changes() {
+    use shards_npc::nav::settings::bake_hash;
+    let hashes = |stone: &str, tag: &str| -> (String, String) {
+        let dir = assets_with_nav(tag);
+        let prefabs = format!("{{ \"stone\": (components: {{\"Name\": \"{stone}\"}}), \"big_stone\": (extends: \"stone\", components: {{}}) }}\n");
+        std::fs::write(dir.join("content/world/stones.prefab.ron"), prefabs).unwrap();
+        let tiles = r#"{
+            "rocky": (sockets: (n: "open", e: "open", s: "open", w: "open"), geometry: Inline([Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0)), Prefab(id: "big_stone", at: (1.0, 0.0, 1.0))])),
+            "rocky_level": (sockets: (n: "open", e: "open", s: "open", w: "open"), geometry: Level(path: "levels/rocks.gltf")),
+        }"#;
+        std::fs::write(dir.join("content/world/rocks.tile.ron"), tiles).unwrap();
+        std::fs::create_dir_all(dir.join("levels")).unwrap();
+        let gltf = r#"{"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"name": "Rock", "translation": [1.0, 0.0, 1.0], "extras": {"prefab": "big_stone"}}]}"#;
+        std::fs::write(dir.join("levels/rocks.gltf"), gltf).unwrap();
+        let app = app_in(dir.to_str().unwrap(), 7, |_| {});
+        let db = app.world().resource::<ContentDb>();
+        let settings = NavSettings::of(db);
+        let hash = |tile: &str| bake_hash(db, Some(&dir), TileKind::Tile, tile, 8.0, &settings).unwrap();
+        let out = (hash("rocky"), hash("rocky_level"));
+        let _ = std::fs::remove_dir_all(&dir);
+        out
+    };
+    let (inline, level) = hashes("Stone", "chain_a");
+    assert_eq!(hashes("Stone", "chain_b"), (inline.clone(), level.clone()), "the same content, the same hashes");
+    let (inline2, level2) = hashes("Pebble", "chain_c");
+    assert_ne!(inline, inline2, "a tile's prefab extends one that changed");
+    assert_ne!(level, level2, "a tile's level file spawns a prefab whose parent changed");
+}
+
+/// A ledge whose face lies on a tile edge: the floor tile's last column is too close to the
+/// face to stand in, so the way up is the bake's own two-cell hop (a mantle over the foot of
+/// the ledge), across the edge; and down is a drop the same way.
+#[test]
+fn a_ledge_on_a_tile_edge_is_climbed_and_dropped_across_it() {
+    let dir = assets_with_nav("edge_ledge");
+    let block = r#"{ "block": (sockets: (n: "open", e: "open", s: "open", w: "open"), geometry: Inline([Box(min: (-4.0, -1.0, -4.0), max: (4.0, 1.0, 4.0))])) }"#;
+    std::fs::write(dir.join("content/world/edge.tile.ron"), block).unwrap();
+    let mut app = app_in(dir.to_str().unwrap(), 7, |_| {});
+    load_region(&mut app, &["floor block"]);
+    let (low, high) = (Vec3::new(4.0, 0.0, 4.0), Vec3::new(12.0, 1.0, 4.0));
+    let up = route(&app, low, high).unwrap_or_else(|e| panic!("up: {e}"));
+    assert!(up.legs.iter().any(|l| l.kind == StepKind::Mantle), "{}", up.to_plan().summary());
+    let down = route(&app, high, low).unwrap_or_else(|e| panic!("down: {e}"));
+    assert!(down.legs.iter().any(|l| l.kind == StepKind::Drop), "{}", down.to_plan().summary());
+    let _ = std::fs::remove_dir_all(&dir);
+}

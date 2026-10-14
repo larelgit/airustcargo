@@ -148,6 +148,8 @@ fn npc_state(In(call): In<Call<NpcStateArgs>>, world: &World) -> ToolResult<Valu
             "next": a.path.get(a.index as usize).map(|p| fmt_pos(*p)),
             "direct": a.direct,
             "arrived": a.arrived,
+            // A goal with no way there: it holds until it plans again.
+            "no_route": a.goal.is_some() && a.path.is_empty(),
         })
     });
     let home = e.get::<Home>().map(|h| {
@@ -238,12 +240,18 @@ fn nav_path(In(call): In<Call<NavPathArgs>>, world: &mut World) -> ToolResult<Va
     if target.is_none() {
         to.y = from.y;
     }
-    let mut params = walker
-        .and_then(|w| {
-            let own = world.get::<CharacterParams>(w);
-            world.get::<CharacterController>(w).map(|c| c.resolve(own, world.get_resource()).clone()).or(own.cloned())
-        })
-        .unwrap_or_default();
+    // A point, or an NPC (its routes know only its radius: `navmesh_path`), is taken to have
+    // the body the navmesh was baked for; anyone else (`move_to path=true`) its own.
+    let baked = world.get_resource::<crate::nav::NavRegion>().map_or_else(CharacterParams::default, |nav| nav.agent.clone());
+    let own = |w: Entity| {
+        let own = world.get::<CharacterParams>(w);
+        world.get::<CharacterController>(w).map(|c| c.resolve(own, world.get_resource()).clone()).or(own.cloned())
+    };
+    let mut params = match walker {
+        Some(w) if world.get::<crate::Npc>(w).is_some() => CharacterParams { radius: own(w).unwrap_or_default().radius, ..baked },
+        Some(w) => own(w).unwrap_or_default(),
+        None => baked,
+    };
     if let Some(radius) = call.args.radius {
         params.radius = radius;
     }
