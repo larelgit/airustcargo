@@ -353,9 +353,14 @@ fn attack(In(call): In<Call<AttackArgs>>, world: &mut World) -> ToolResult {
     }
     let input = call.args.input.unwrap_or_else(|| LIGHT.to_owned());
     // An order that waiting cannot start (no such input, a raised guard, no charges)
-    // would sit there for ever: refuse it now, with the reason.
+    // would sit there for ever: refuse it now, with the reason. On a client's own body, by
+    // the action shown there.
     let dt = world.resource::<Time<Fixed>>().timestep().as_secs_f32();
-    let view = FighterView::of(world, me).ok_or("your body is not a complete fighter")?;
+    let shown = shown_state(world, me);
+    let mut view = FighterView::of(world, me).ok_or("your body is not a complete fighter")?;
+    if let Some(state) = &shown {
+        view.state = state;
+    }
     if let Err(blocker) = can_start(&view, &input, dt)
         && blocker.ready_in().is_none()
     {
