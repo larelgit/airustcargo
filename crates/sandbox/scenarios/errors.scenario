@@ -24,9 +24,9 @@ act? teleport id=e5
 expect result contains "missing field `x`"
 expect result contains "Expected: teleport(id: integer|string"
 
-# an entity that does not exist
-act? inspect id=99
-expect result contains "e99 does not exist"
+# an entity that does not exist (an id far beyond any a session hands out: regions spawn many)
+act? inspect id=99999
+expect result contains "e99999 does not exist"
 
 # a component the entity does not have
 act? set id=e5 component=Mana value=5
