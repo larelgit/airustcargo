@@ -190,6 +190,8 @@ pub struct AiReplay {
     action_depth: u32,
     /// Where the running outermost action call is recorded, for [`forget_call`].
     current_call: Option<usize>,
+    /// This game does not record its session ([`set_recording`]).
+    not_recording: bool,
 }
 
 impl AiReplay {
@@ -216,6 +218,40 @@ impl AiReplay {
     pub fn started_from(&self) -> Option<&Snapshot> {
         self.start.as_ref()
     }
+
+    /// Whether this game records its session (see [`set_recording`]).
+    pub fn is_recording(&self) -> bool {
+        !self.not_recording
+    }
+}
+
+/// Why `replay_save` refuses in a game that does not record.
+pub const NOT_RECORDING: &str =
+    "this game does not record its session: the host records every player's; save the replay there";
+
+/// Turns the recording of this session on or off. Off (a client of a networked game, whose
+/// session the host records): no calls, inputs or checks are recorded, `replay_save` refuses
+/// and says why, no crash replay is written. Playback is not affected.
+pub fn set_recording(world: &mut World, on: bool) {
+    let mut replay = world.resource_mut::<AiReplay>();
+    replay.not_recording = !on;
+    if !on {
+        replay.events.clear();
+        replay.checks.clear();
+        replay.current_call = None;
+    }
+}
+
+/// The recording starts from the world as it is now: what [`snapshot_load`](crate::snapshot)
+/// does after a load, for whoever else rebuilds the world (loading a saved game, a client
+/// taking the host's world). A playback in progress ends, with `reason`. Returns how many
+/// recorded events were dropped.
+pub fn restart_from_current(world: &mut World, reason: &str) -> Result<usize, String> {
+    let start = crate::snapshot::capture(world)?;
+    if world.resource::<AiReplay>().playback.is_some() {
+        interrupt(world, reason.to_owned());
+    }
+    Ok(restart_from(world, start, false))
 }
 
 /// A snapshot was loaded: the recording starts here now. What was recorded before is
@@ -248,6 +284,9 @@ pub(crate) fn begin_action(world: &mut World, caller: &Caller, tool: &str, args:
     let mut replay = world.resource_mut::<AiReplay>();
     replay.action_depth += 1;
     if replay.action_depth > 1 {
+        return;
+    }
+    if replay.not_recording {
         return;
     }
     replay.current_call = Some(replay.events.len());
@@ -360,6 +399,9 @@ fn inputs_between_ticks<C: Component<Mutability = Mutable> + Clone + PartialEq +
         }
     }
 
+    if replay.not_recording {
+        return;
+    }
     for (entity, id, value) in &q {
         if !value.last_changed().is_newer_than(memory.since, ticks.this_run()) {
             continue;
@@ -565,9 +607,15 @@ fn check_state(world: &mut World) {
     if tick == 0 || !tick.is_multiple_of(CHECK_EVERY) {
         return;
     }
+    let replay = world.resource::<AiReplay>();
+    if replay.not_recording && replay.playback.is_none() {
+        return;
+    }
     let hash = checked_hash(world);
     let mut replay = world.resource_mut::<AiReplay>();
-    replay.checks.push(Check { tick, hash });
+    if !replay.not_recording {
+        replay.checks.push(Check { tick, hash });
+    }
     let Some(playback) = &mut replay.playback else {
         return;
     };
@@ -871,6 +919,9 @@ pub fn write(replay: &Replay, requested: &str) -> Result<std::path::PathBuf, Str
 }
 
 fn replay_save_tool(In(call): In<Call<ReplaySaveArgs>>, world: &mut World) -> ToolResult {
+    if !world.resource::<AiReplay>().is_recording() {
+        return Err(NOT_RECORDING.to_owned());
+    }
     let replay = save(world);
     let requested = call.args.path.unwrap_or_else(|| format!("{REPLAYS_DIR}/tick{}.json", replay.end.tick));
     let path = write(&replay, &requested)?;
@@ -958,5 +1009,56 @@ mod tests {
             r.to_string(),
             "replay interrupted at tick 300 of 600: dev took over (teleport) (it had diverged at tick 240)"
         );
+    }
+    #[derive(Component, Clone, PartialEq, Serialize, Deserialize, Default)]
+    struct Knob(u32);
+
+    fn game() -> App {
+        use crate::AiAppExt;
+        let mut app = App::new();
+        app.add_plugins(bevy::time::TimePlugin)
+            .add_plugins(crate::AiCorePlugin {
+                remote_port: None,
+                crash_replays: false,
+                sim: crate::SimConfig { start_paused: true, ..Default::default() },
+                ..Default::default()
+            })
+            .replay_input::<Knob>();
+        app.world_mut().spawn((crate::AiKind::new("Dial"), Knob(0), Transform::default()));
+        app.finish();
+        app.cleanup();
+        app.update();
+        app
+    }
+
+    fn turn_and_run(app: &mut App, to: u32, ticks: u64) {
+        let dial = app.world().resource::<AiIndex>().get(AiId(1)).unwrap();
+        app.world_mut().get_mut::<Knob>(dial).unwrap().0 = to;
+        let out = crate::call_tool(app.world_mut(), "dev", "teleport", json!({"id": 1, "x": to, "z": 0}));
+        assert!(out.ok, "{}", out.result);
+        sim::step(app.world_mut(), ticks, std::time::Duration::from_secs(5), |_| None).unwrap();
+    }
+
+    #[test]
+    fn a_game_that_does_not_record_records_nothing_and_says_why() {
+        let mut app = game();
+        set_recording(app.world_mut(), false);
+        turn_and_run(&mut app, 3, CHECK_EVERY * 2);
+        let replay = app.world().resource::<AiReplay>();
+        assert!(!replay.is_recording());
+        assert_eq!((replay.recorded_events(), replay.checks.len()), (0, 0));
+        let out = crate::call_tool(app.world_mut(), "dev", "replay_save", json!({}));
+        assert!(!out.ok && out.result.as_str().unwrap().contains("the host records"), "{}", out.result);
+
+        set_recording(app.world_mut(), true);
+        turn_and_run(&mut app, 4, CHECK_EVERY);
+        let replay = app.world().resource::<AiReplay>();
+        assert_eq!((replay.recorded_events(), replay.checks.len()), (2, 1), "a call and an input, one check");
+
+        let dropped = restart_from_current(app.world_mut(), "a saved game was loaded").unwrap();
+        assert_eq!(dropped, 2);
+        let replay = app.world().resource::<AiReplay>();
+        assert_eq!(replay.started_from().map(|s| s.tick), Some(CHECK_EVERY * 3));
+        assert_eq!(replay.recorded_events(), 0);
     }
 }

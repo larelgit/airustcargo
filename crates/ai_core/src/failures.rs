@@ -260,6 +260,9 @@ pub(crate) fn blame_tool(world: &mut World, tool: &str) {
 
 fn save_crash_replay(world: &mut World, failure: &SystemFailure) -> Option<String> {
     let key = format!("{} {}", failure.kind, failure.name);
+    if !world.get_resource::<replay::AiReplay>().is_some_and(replay::AiReplay::is_recording) {
+        return None;
+    }
     let mut state = world.get_resource_mut::<AiFailures>()?;
     if !state.crash_replays || !state.saved.insert(key) {
         return None;
