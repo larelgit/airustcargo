@@ -153,7 +153,8 @@ impl<'a> Marcher<'a> {
                 if dy < -self.safe_drop {
                     Sample::Stop(Hazard::Cliff { drop: Some(-dy) })
                 } else if dy > p.step_height + allowance {
-                    Sample::Stop(Hazard::Ledge { rise: dy })
+                    // Up to what the controller climbs it is a ledge, above that a wall.
+                    Sample::Stop(if p.can_climb(dy, from.swim) { Hazard::Ledge { rise: dy } } else { Hazard::Wall })
                 } else {
                     Sample::Pass { y, flat, swim: false }
                 }
@@ -204,7 +205,7 @@ impl<'a> Marcher<'a> {
         for k in 1..=2 {
             let ahead = at + dir * (STEP * k as f32);
             match self.terrain.probe(ahead.x, ahead.z, state.y) {
-                Probe::Floor { y, .. } if y - state.y > p.step_height && y - state.y <= p.mantle_height => {
+                Probe::Floor { y, .. } if y - state.y > p.step_height && p.can_climb(y - state.y, state.swim) => {
                     return Hazard::Ledge { rise: y - state.y };
                 }
                 Probe::Floor { y, .. } if y - state.y < -self.safe_drop => return Hazard::Cliff { drop: Some(state.y - y) },

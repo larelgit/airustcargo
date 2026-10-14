@@ -264,6 +264,64 @@ fn a_ledge_in_the_way_is_a_mantle_in_the_path() {
     assert!(plan.legs.iter().any(|l| l.kind == StepKind::Drop), "{}", plan.summary());
 }
 
+/// A ledge `height` m high and 2 m deep across the whole way, 5 m north of the origin.
+fn ledge_across_the_way(world: &mut World, height: f32) {
+    floor(world);
+    block(world, Vec3::new(-60.0, 0.0, -7.0), Vec3::new(60.0, height, -5.0));
+}
+
+#[test]
+fn the_planner_climbs_what_the_controller_climbs_and_nothing_higher() {
+    // Mantle height is 1.6 m. The controller refuses anything above it (to a thousandth),
+    // so a route over a 1.62 m ledge would be a walker standing at its foot for good.
+    let goal = Vec3::new(0.0, 0.0, -10.0);
+    for (height, climbs) in [(1.58, true), (1.62, false)] {
+        let mut app = bare_engine("climb_rule");
+        ledge_across_the_way(app.world_mut(), height);
+        let e = player(app.world_mut(), Vec3::ZERO);
+        step(&mut app, 2);
+        let plan = plan_path(physics(&app), &params(), &request(Vec3::ZERO, goal));
+        match plan {
+            Ok(plan) => assert!(climbs && plan.summary().contains("(mantle "), "{height} m: planned {}", plan.summary()),
+            Err(err) => assert!(!climbs && err.contains(&format!("{height:.2}m high (a character climbs at most 1.60m)")), "{height} m: {err}"),
+        }
+        // What the walker does, straight at it.
+        ok(&mut app, "move_to", json!({"target": {"x": 0, "z": -10}}));
+        step(&mut app, 300);
+        assert_eq!(seen(&app).mantled.len(), usize::from(climbs), "{height} m: the controller {:?}", feet(&app, e));
+    }
+}
+
+/// A pool whose bank is a ledge with its top `top` m above the surface (y = 0).
+fn pool_with_a_bank(world: &mut World, top: f32) {
+    block(world, Vec3::new(-20.0, -6.0, -20.0), Vec3::new(20.0, -5.0, 20.0));
+    block(world, Vec3::new(4.0, -6.0, -20.0), Vec3::new(8.0, top, 20.0));
+    volume(world, Vec3::new(-20.0, -5.0, -20.0), Vec3::new(4.0, 0.0, 20.0), VolumeKind::Water);
+}
+
+#[test]
+fn a_swimmer_climbs_out_where_the_planner_and_the_jump_tool_say_it_can() {
+    // A swimmer floats 1.1 m below the surface and the controller adds its skin to the
+    // rise: a bank 0.5 m over the water is 1.62 m up, 0.45 m is 1.57 m.
+    for (top, climbs) in [(0.45, true), (0.5, false)] {
+        let mut app = app();
+        pool_with_a_bank(app.world_mut(), top);
+        let e = player(app.world_mut(), Vec3::new(3.4, -1.1, 0.0));
+        app.world_mut().get_mut::<Transform>(e).unwrap().look_to(Vec3::X, Vec3::Y);
+        step(&mut app, 30);
+        assert_eq!(state(&app, e).mode, MotionMode::Water);
+        let start = Vec3::new(3.0, -1.1, 0.0);
+        let request = PathRequest { swimming_at: Some(0.0), ..request(start, Vec3::new(7.0, 0.0, 0.0)) };
+        let plan = plan_path(physics(&app), &params(), &request);
+        let jump = call(&mut app, "jump", json!({}));
+        step(&mut app, 60);
+        let climbed = !seen(&app).mantled.is_empty();
+        assert_eq!(climbed, climbs, "bank {top} m over the water: the controller");
+        assert_eq!(plan.is_ok(), climbs, "bank {top} m over the water: the planner said {plan:?}");
+        assert_eq!(jump.ok, climbs, "bank {top} m over the water: the jump tool said {}", jump.result);
+    }
+}
+
 /// Ground, a 16.7° ramp up 3 m over 10 m, and a platform on top.
 fn ramp_course(world: &mut World) {
     block(world, Vec3::new(-30.0, -1.0, -6.0), Vec3::new(0.0, 0.0, 6.0));

@@ -204,6 +204,13 @@ fn flat_distance(a: Vec3, b: Vec3) -> f32 {
     Vec2::new(a.x - b.x, a.z - b.z).length()
 }
 
+/// `1.7m high (a character climbs at most 1.6m)`; a hair over the limit gets the second
+/// decimal, or it would read as no more than the limit.
+fn too_high(height: f32, limit: f32) -> String {
+    let places = if format!("{height:.1}") == format!("{limit:.1}") { 2 } else { 1 };
+    format!("{height:.places$}m high (a character climbs at most {limit:.places$}m)")
+}
+
 /// Plans a route for a character of `params`. `Err` says why there is none and what stops
 /// it, in words an agent can act on.
 pub fn plan_path(physics: &PhysicsWorld, params: &CharacterParams, request: &PathRequest) -> Result<PathPlan, String> {
@@ -430,12 +437,10 @@ impl<'a> Planner<'a> {
                 let walkable_up = p.step_height + allowance;
                 let pos = Vec3::new(x, y, z);
                 let base = (dist * UNIT) as u32;
-                if dy > p.mantle_height + 0.05 {
-                    None
-                } else if dy > walkable_up {
-                    // Room to go up the face first.
-                    let head = self.terrain.room_for(from.0.x, from.0.z, from.0.y + dy);
-                    head.then(|| Move { pos, cell: Cell::Floor, flat, kind: StepKind::Mantle, cost: base + ((MANTLE_COST + dy * 0.5) * UNIT) as u32, rise: dy })
+                if dy > walkable_up {
+                    // Only what the controller climbs, and with room to go up the face first.
+                    let climbable = p.can_climb(dy, from.1 == Cell::Swim) && self.terrain.room_for(from.0.x, from.0.z, from.0.y + dy);
+                    climbable.then(|| Move { pos, cell: Cell::Floor, flat, kind: StepKind::Mantle, cost: base + ((MANTLE_COST + dy * 0.5) * UNIT) as u32, rise: dy })
                 } else if dy < -self.request.safe_drop {
                     None
                 } else if dy < -(p.step_height + allowance) {
@@ -562,7 +567,7 @@ impl<'a> Planner<'a> {
         let req = self.request;
         let p = self.terrain.params;
         let node = &self.nodes[closest];
-        let (here, gap) = (node.pos, flat_distance(node.pos, req.goal));
+        let (here, gap, swimming) = (node.pos, flat_distance(node.pos, req.goal), node.cell == Cell::Swim);
         let to_goal = Vec3::new(req.goal.x - here.x, 0.0, req.goal.z - here.z).normalize_or_zero();
         let (ci, cj) = (cell_of(here.x), cell_of(here.z));
         let (di, dj) = *DIRS
@@ -581,7 +586,7 @@ impl<'a> Planner<'a> {
                     .map(|top| top - here.y)
                     .find(|h| *h > 0.3);
                 match high {
-                    Some(h) => format!("a wall {h:.1}m high (a character climbs at most {:.1}m)", p.mantle_height),
+                    Some(h) => format!("a wall {}", too_high(h, p.mantle_height)),
                     None => format!("a gap too narrow for the {:.1}m wide body", 2.0 * p.radius),
                 }
             }
@@ -590,7 +595,9 @@ impl<'a> Planner<'a> {
             Probe::Floor { y, .. } if y - here.y < -req.safe_drop => {
                 format!("a cliff {:.1}m deep (the limit for a drop is {:.1}m)", here.y - y, req.safe_drop)
             }
-            Probe::Floor { y, .. } if y - here.y > p.mantle_height => format!("a ledge {:.1}m high (a character climbs at most {:.1}m)", y - here.y, p.mantle_height),
+            Probe::Floor { y, .. } if !p.can_climb(y - here.y, swimming) => {
+                format!("a ledge {}", too_high(y - here.y, p.mantle_height))
+            }
             Probe::Floor { .. } | Probe::Water { .. } => "the edge of the search area".to_owned(),
         };
         let place = if gap <= within + CELL {
