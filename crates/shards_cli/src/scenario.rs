@@ -3,24 +3,84 @@
 //! The format and every rule of it live in `shards_script`; this is only the BRP side
 //! of its `Driver`: `ai/act`, `ai/session`, `ai/status` and `ai/journal`. The same
 //! files run in-process under `cargo test` through `ai_core::scenario`.
+//!
+//! A file with a `stand` line runs against a stand (`cargo sandbox --stand 2 --port-file F`):
+//! the members are found by their port files (`F`, `F.c1`, `F.c2`) and each command goes to
+//! the member it names. The stand's link conditions must be the line's.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use serde_json::{json, Value};
 use shards_script::{
-    parse_journal_text, run_with, AgentScope, Driver, FailureKind, JournalRead, Outcome, Script, SessionConfig, Status, CHECK_AGENT,
+    parse_journal_text, run_with, AgentScope, Driver, FailureKind, JournalRead, Outcome, Script, SessionConfig, StandHeader, Status,
+    CHECK_AGENT, HOST,
 };
 
-use crate::{say, Client};
+use crate::peer::{client_files, Peer};
+use crate::{say, Cli, Client};
 
 struct ClientDriver<'a> {
-    client: &'a Client,
+    cli: &'a Cli,
+    /// The game `--port`/`--port-file` names: a single game, or a stand's host.
+    host: &'a Client,
+    /// The stand's clients, found by their port files when a command first names them.
+    clients: BTreeMap<String, Client>,
+}
+
+impl<'a> ClientDriver<'a> {
+    fn new(cli: &'a Cli, host: &'a Client) -> Self {
+        Self { cli, host, clients: BTreeMap::new() }
+    }
+
+    fn client(&mut self, peer: &str) -> Result<&Client, String> {
+        if peer == HOST {
+            return Ok(self.host);
+        }
+        if !self.clients.contains_key(peer) {
+            let which: Peer = peer.parse()?;
+            self.clients.insert(peer.to_owned(), self.cli.client_for(which)?);
+        }
+        Ok(&self.clients[peer])
+    }
 }
 
 impl Driver for ClientDriver<'_> {
     fn call(&mut self, agent: &str, tool: &str, args: Value) -> Result<Outcome, String> {
-        let reply = self.client.call("ai/act", json!({"agent": agent, "tool": tool, "args": args}))?;
+        self.call_on(HOST, agent, tool, args)
+    }
+
+    fn session(&mut self, agent: &str, config: &SessionConfig) -> Result<Outcome, String> {
+        self.session_on(HOST, agent, config)
+    }
+
+    fn status(&mut self) -> Result<Status, String> {
+        self.status_on(HOST)
+    }
+
+    fn journal_since(&mut self, after: u64) -> Result<JournalRead, String> {
+        self.journal_since_on(HOST, after)
+    }
+
+    /// The host, and the clients that have a port file beside the host's.
+    fn peers(&mut self) -> Result<Vec<String>, String> {
+        let clients = self.cli.port_file.as_deref().map(client_files).unwrap_or_default();
+        Ok(std::iter::once(HOST.to_owned()).chain(clients.into_iter().map(Peer::name)).collect())
+    }
+
+    /// The links of the running stand are the header's: `net_status` says how its host was
+    /// started (`--net-sim`).
+    fn check_stand(&mut self, header: &StandHeader) -> Result<(), String> {
+        let status = self.call_on(HOST, CHECK_AGENT, "net_status", json!({}))?;
+        if !status.ok {
+            return Err(format!("cannot read the stand's links: {}", status.text()));
+        }
+        header.check_conditions(status.result["conditions"].as_str())
+    }
+
+    fn call_on(&mut self, peer: &str, agent: &str, tool: &str, args: Value) -> Result<Outcome, String> {
+        let reply = self.client(peer)?.act(agent, tool, args)?;
         Ok(Outcome {
             ok: reply.get("ok").and_then(Value::as_bool).unwrap_or(true),
             result: reply.get("result").cloned().unwrap_or(Value::Null),
@@ -28,14 +88,15 @@ impl Driver for ClientDriver<'_> {
         })
     }
 
-    fn session(&mut self, agent: &str, config: &SessionConfig) -> Result<Outcome, String> {
+    fn session_on(&mut self, peer: &str, agent: &str, config: &SessionConfig) -> Result<Outcome, String> {
         let params = json!({
             "agent": agent,
             "scope": config.scope.map(AgentScope::as_str),
             "subject": config.subject,
+            "player": config.player,
             "clear_subject": config.clear_subject,
         });
-        match self.client.call("ai/session", params) {
+        match self.client(peer)?.call("ai/session", params) {
             Ok(session) => Ok(Outcome::ok(session)),
             // The game answered and refused (an unknown subject): the scenario is wrong,
             // not the connection. `Client::call` prefixes such errors with the method.
@@ -46,8 +107,8 @@ impl Driver for ClientDriver<'_> {
         }
     }
 
-    fn status(&mut self) -> Result<Status, String> {
-        let status = self.client.call("ai/status", Value::Null)?;
+    fn status_on(&mut self, peer: &str) -> Result<Status, String> {
+        let status = self.client(peer)?.call("ai/status", Value::Null)?;
         Ok(Status {
             tick: status["tick"].as_u64().unwrap_or(0),
             seed: status["seed"].as_u64(),
@@ -55,8 +116,8 @@ impl Driver for ClientDriver<'_> {
         })
     }
 
-    fn journal_since(&mut self, after: u64) -> Result<JournalRead, String> {
-        let reply = self.client.call("ai/journal", json!({"agent": CHECK_AGENT, "since_seq": after, "last": 1_000_000}))?;
+    fn journal_since_on(&mut self, peer: &str, after: u64) -> Result<JournalRead, String> {
+        let reply = self.client(peer)?.call("ai/journal", json!({"agent": CHECK_AGENT, "since_seq": after, "last": 1_000_000}))?;
         match (reply.get("ok").and_then(Value::as_bool), reply.get("result").and_then(Value::as_str)) {
             (Some(true) | None, Some(text)) => Ok(parse_journal_text(text)),
             _ => Err(format!("ai/journal: unexpected reply {reply}")),
@@ -66,7 +127,7 @@ impl Driver for ClientDriver<'_> {
 
 /// Reads and parses every file first (a typo in the third file should not show up
 /// after the first two ran), then runs them in order against the game.
-pub fn run(client: &Client, files: &[PathBuf], quiet: bool, as_json: bool) -> Result<ExitCode, String> {
+pub fn run(cli: &Cli, client: &Client, files: &[PathBuf], quiet: bool, as_json: bool) -> Result<ExitCode, String> {
     let mut scripts = Vec::new();
     let mut unreadable = false;
     for path in files {
@@ -89,7 +150,7 @@ pub fn run(client: &Client, files: &[PathBuf], quiet: bool, as_json: bool) -> Re
         return Err("no scenario ran; fix the files above".into());
     }
 
-    let mut driver = ClientDriver { client };
+    let mut driver = ClientDriver::new(cli, client);
     let mut reports = Vec::new();
     for script in &scripts {
         let report = run_with(script, &mut driver, &mut |line| {
@@ -126,74 +187,39 @@ pub fn run(client: &Client, files: &[PathBuf], quiet: bool, as_json: bool) -> Re
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use clap::Parser;
 
     use super::*;
+    use crate::fake::{error, reply, serve};
 
     /// A pretend game on localhost that speaks the four `ai/*` methods the driver uses.
     /// Returns its port; the thread ends with the test process.
     fn fake_game() -> u16 {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        std::thread::spawn(move || {
-            let mut tick = 0u64;
-            for stream in listener.incoming().flatten() {
-                let mut reader = BufReader::new(stream);
-                let mut length = 0usize;
-                loop {
-                    let mut header = String::new();
-                    reader.read_line(&mut header).unwrap();
-                    if header.trim().is_empty() {
-                        break;
+        let tick = AtomicU64::new(0);
+        serve(move |method, params| {
+            let outcome = |ok: bool, result: Value, tick: u64| json!({"tool": "t", "ok": ok, "result": result, "tick": tick, "paused": true});
+            let now = tick.load(Ordering::SeqCst);
+            Some(match method {
+                "ai/status" => reply(json!({"tick": now, "seed": 42, "journal_seq": 0})),
+                "ai/session" if params["subject"] == "e99" => error("e99 does not exist"),
+                "ai/session" => reply(json!({"agent": params["agent"], "scope": params["scope"].as_str().unwrap_or("dev"), "subject": null})),
+                "ai/act" => reply(match params["tool"].as_str().unwrap() {
+                    "step" => {
+                        let to = tick.fetch_add(params["args"]["ticks"].as_u64().unwrap_or(1), Ordering::SeqCst) + params["args"]["ticks"].as_u64().unwrap_or(1);
+                        outcome(true, json!(format!("ran 1 ticks (0 → {to})")), to)
                     }
-                    if let Some(n) = header.to_lowercase().strip_prefix("content-length:") {
-                        length = n.trim().parse().unwrap();
-                    }
-                }
-                let mut body = vec![0u8; length];
-                reader.read_exact(&mut body).unwrap();
-                let request: Value = serde_json::from_slice(&body).unwrap();
-                let params = &request["params"];
-                let outcome = |ok: bool, result: Value, tick: u64| json!({"tool": "t", "ok": ok, "result": result, "tick": tick, "paused": true});
-                let result = match request["method"].as_str().unwrap() {
-                    "ai/status" => json!({"tick": tick, "seed": 42, "journal_seq": 0}),
-                    "ai/session" if params["subject"] == "e99" => {
-                        let reply = json!({"jsonrpc": "2.0", "id": 1, "error": {"code": -32602, "message": "e99 does not exist"}});
-                        respond(reader.into_inner(), &reply);
-                        continue;
-                    }
-                    "ai/session" => json!({"agent": params["agent"], "scope": params["scope"].as_str().unwrap_or("dev"), "subject": null}),
-                    "ai/act" => match params["tool"].as_str().unwrap() {
-                        "step" => {
-                            tick += params["args"]["ticks"].as_u64().unwrap_or(1);
-                            outcome(true, json!(format!("ran 1 ticks (0 → {tick})")), tick)
-                        }
-                        "ping" => outcome(true, json!("pong"), tick),
-                        "get" => outcome(true, json!(70.0), tick),
-                        _ => outcome(false, json!("nope: no such tool"), tick),
-                    },
-                    "ai/journal" => outcome(
-                        true,
-                        json!("journal (newest seq 2)\n  #1 0 [agent] scenario: ping\n  #2 3 e6 phase 1->2"),
-                        tick,
-                    ),
-                    other => panic!("unexpected method {other}"),
-                };
-                respond(reader.into_inner(), &json!({"jsonrpc": "2.0", "id": 1, "result": result}));
-            }
-        });
-        port
-    }
-
-    fn respond(mut stream: std::net::TcpStream, reply: &Value) {
-        let body = reply.to_string();
-        let head = format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-            body.len()
-        );
-        stream.write_all(head.as_bytes()).unwrap();
-        stream.write_all(body.as_bytes()).unwrap();
+                    "ping" => outcome(true, json!("pong"), now),
+                    "get" => outcome(true, json!(70.0), now),
+                    _ => outcome(false, json!("nope: no such tool"), now),
+                }),
+                "ai/journal" => reply(outcome(true, json!("journal (newest seq 2)\n  #1 0 [agent] scenario: ping\n  #2 3 e6 phase 1->2"), now)),
+                other => panic!("unexpected method {other}"),
+            })
+        })
     }
 
     fn scenario_file(name: &str, text: &str) -> PathBuf {
@@ -209,6 +235,10 @@ mod tests {
         format!("{:?}", ExitCode::from(n))
     }
 
+    fn cli(args: &[&str]) -> Cli {
+        Cli::try_parse_from([&["shards"], args, &["status"]].concat()).unwrap_or_else(|e| panic!("{e}"))
+    }
+
     #[test]
     fn scenarios_run_against_a_game_over_brp() {
         let client = Client::new(fake_game(), None);
@@ -219,7 +249,7 @@ mod tests {
              session --agent bot --scope player\nact ping\n",
         );
         let bad = scenario_file("bad.scenario", "act ping\nexpect result contains \"ping\"\n");
-        let exit = |files: Vec<PathBuf>| format!("{:?}", run(&client, &files, true, false).unwrap());
+        let exit = |files: Vec<PathBuf>| format!("{:?}", run(&cli(&[]), &client, &files, true, false).unwrap());
         assert_eq!(exit(vec![good.clone()]), code(0));
         assert_eq!(exit(vec![good, bad]), code(1));
     }
@@ -227,7 +257,8 @@ mod tests {
     #[test]
     fn a_session_the_game_refuses_fails_the_scenario_not_the_connection() {
         let client = Client::new(fake_game(), None);
-        let mut driver = ClientDriver { client: &client };
+        let cli = cli(&[]);
+        let mut driver = ClientDriver::new(&cli, &client);
         let config = SessionConfig { subject: Some("e99".into()), ..Default::default() };
         let out = driver.session("scenario", &config).unwrap();
         assert!(!out.ok);
@@ -239,7 +270,8 @@ mod tests {
     #[test]
     fn the_journal_comes_back_without_agent_echoes() {
         let client = Client::new(fake_game(), None);
-        let read = ClientDriver { client: &client }.journal_since(0).unwrap();
+        let cli = cli(&[]);
+        let read = ClientDriver::new(&cli, &client).journal_since(0).unwrap();
         assert_eq!(read.lines.len(), 1);
         assert_eq!(read.lines[0].text, "3 e6 phase 1->2");
     }
@@ -249,12 +281,117 @@ mod tests {
         let free = TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
         let client = Client::new(free, None);
         let file = scenario_file("any.scenario", "observe\n");
-        assert_eq!(format!("{:?}", run(&client, &[file], true, false).unwrap()), code(2));
+        assert_eq!(format!("{:?}", run(&cli(&[]), &client, &[file], true, false).unwrap()), code(2));
 
         let typo = scenario_file("typo.scenario", "observe\nstpe 5\n");
-        let err = run(&client, &[typo], true, false).unwrap_err();
+        let err = run(&cli(&[]), &client, &[typo], true, false).unwrap_err();
         assert_eq!(err, "no scenario ran; fix the files above");
-        let err = run(&client, &[PathBuf::from("no/such.scenario")], true, false).unwrap_err();
+        let err = run(&cli(&[]), &client, &[PathBuf::from("no/such.scenario")], true, false).unwrap_err();
         assert_eq!(err, "no scenario ran; fix the files above");
+    }
+
+    /// What a pretend stand's member did: `(member, method, tool)`.
+    type Calls = Arc<Mutex<Vec<(String, String, String)>>>;
+
+    /// A pretend stand of a host and two clients, each its own server, port files beside `base`.
+    /// A `step` on any of them is deferred: it answers `{"pending": 1}` and `ai/step_poll` says
+    /// pending twice before the report. `links` is what the host's `net_status` reports.
+    fn pretend_stand(base: &std::path::Path, links: &'static str) -> Calls {
+        let calls = Calls::default();
+        for (i, name) in ["host", "c1", "c2"].into_iter().enumerate() {
+            let calls = calls.clone();
+            let polls = AtomicU64::new(0);
+            let port = serve(move |method, params| {
+                let tool = params["tool"].as_str().unwrap_or("").to_owned();
+                calls.lock().unwrap().push((name.to_owned(), method.to_owned(), tool.clone()));
+                let outcome = |tool: &str, result: Value| json!({"tool": tool, "ok": true, "result": result, "tick": 7, "paused": true});
+                Some(match (method, tool.as_str()) {
+                    ("ai/status", _) => reply(json!({"tick": 5, "seed": 42, "journal_seq": 0})),
+                    ("ai/session", _) => reply(json!({"agent": params["agent"], "scope": "dev", "subject": null, "player": params["player"]})),
+                    ("ai/act", "step") => reply(outcome("step", json!({"pending": 1}))),
+                    ("ai/step_poll", _) if polls.fetch_add(1, Ordering::SeqCst) < 2 => reply(outcome("step_poll", json!({"pending": 1}))),
+                    ("ai/step_poll", _) => reply(outcome("step", json!("ran 3 ticks (5 → 8)"))),
+                    ("ai/act", "net_status") => reply(outcome("net_status", json!({"conditions": links}))),
+                    ("ai/act", "get") => reply(outcome("get", json!(if name == "c1" { 4.0 } else { 9.0 }))),
+                    ("ai/act", _) => reply(outcome(&tool, json!("ok"))),
+                    ("ai/journal", _) => reply(outcome("journal", json!("journal (newest seq 0)"))),
+                    other => panic!("unexpected {other:?}"),
+                })
+            });
+            let file = if i == 0 { base.to_owned() } else { crate::peer::member_file(base, Peer::Client(i as u8)) };
+            std::fs::write(file, format!("{port}\n")).unwrap();
+        }
+        calls
+    }
+
+    fn stand_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("shards_stand_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_stand_scenario_goes_to_the_members_it_names() {
+        let dir = stand_dir("run");
+        let base = dir.join("g.port");
+        let calls = pretend_stand(&base, "latency=150,jitter=0,loss=0.02,dup=0");
+        let path = base.display().to_string();
+        let cli = cli(&["--port-file", &path]);
+        let host = cli.client_for(Peer::Host).unwrap();
+        let file = scenario_file(
+            "stand.scenario",
+            "stand clients=2 latency=150 loss=0.02\nseed 42\n@c1 act ping\n@c2 step 3\n@c1 expect field e5 Transform.translation.x < 5\n\
+             @c2 expect field e5 Transform.translation.x > 5\n@c1 session --player 1\n",
+        );
+        let exit = run(&cli, &host, &[file], true, false).unwrap();
+        assert_eq!(format!("{exit:?}"), code(0));
+        let log = calls.lock().unwrap();
+        let on = |member: &str, method: &str, tool: &str| log.iter().filter(|(m, me, t)| m == member && me == method && t == tool).count();
+        assert_eq!(on("c1", "ai/act", "ping"), 1);
+        assert_eq!(on("host", "ai/act", "ping"), 0, "the ping went to c1 alone");
+        assert_eq!(on("c2", "ai/act", "step"), 1);
+        assert_eq!(on("c2", "ai/step_poll", ""), 3, "pending twice, then the report");
+        assert_eq!(on("c1", "ai/act", "get") + on("c2", "ai/act", "get"), 2);
+        assert_eq!(on("host", "ai/act", "net_status"), 1, "the links were checked on the host");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_stand_scenario_wants_the_links_of_its_header() {
+        let dir = stand_dir("links");
+        let base = dir.join("g.port");
+        pretend_stand(&base, "latency=0,jitter=0,loss=0,dup=0");
+        let path = base.display().to_string();
+        let cli = cli(&["--port-file", &path]);
+        let host = cli.client_for(Peer::Host).unwrap();
+        let file = scenario_file("links.scenario", "stand clients=2 latency=150 loss=0.02\n@c1 act ping\n");
+        let exit = run(&cli, &host, &[file], false, true).unwrap();
+        assert_eq!(format!("{exit:?}"), code(2), "a stand that cannot run the file is a driver failure");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_game_on_its_own_is_not_a_stand() {
+        let client = Client::new(fake_game(), None);
+        let file = scenario_file("alone.scenario", "stand clients=2\nobserve\n");
+        // No port file: the host is all there is.
+        let exit = run(&cli(&[]), &client, &[file], true, false).unwrap();
+        assert_eq!(format!("{exit:?}"), code(2));
+    }
+
+    #[test]
+    fn the_members_of_a_stand_are_the_clients_with_port_files() {
+        let dir = stand_dir("peers");
+        let base = dir.join("g.port");
+        pretend_stand(&base, "");
+        let path = base.display().to_string();
+        let cli_with = cli(&["--port-file", &path]);
+        let host = cli_with.client_for(Peer::Host).unwrap();
+        assert_eq!(ClientDriver::new(&cli_with, &host).peers().unwrap(), ["host", "c1", "c2"]);
+        std::fs::remove_file(crate::peer::member_file(&base, Peer::Client(2))).unwrap();
+        assert_eq!(ClientDriver::new(&cli_with, &host).peers().unwrap(), ["host", "c1"]);
+        assert_eq!(ClientDriver::new(&cli(&[]), &host).peers().unwrap(), ["host"]);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

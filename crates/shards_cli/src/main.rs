@@ -15,6 +15,10 @@
 //! shards assert add hp 'field:6:Health.current<0'   # halt the game when it breaks
 //! shards fuzz --seed 7 --steps 300 # random inputs until a rule breaks
 //! shards --port-file F wait        # a game started with `--port 0 --port-file F`; waits for loading
+//! shards --port-file F wait --peer all   # a stand (`--stand 2`): its host and every client
+//! shards --peer c1 observe         # one member of a stand, found by F.c1
+//! shards stand                     # the stand's members: role, player, body, port, ping
+//! shards stand stop                # the host ends the session, then the stand's process ends
 //! shards content check             # every content file parsed and validated
 //! shards worldgen --region meadow --seeds 1..1000 --report   # batch check of the generator
 //! shards scenario a.scenario b.scenario   # commands, expectations, invariants: exit 0 / 1 failed / 2 error
@@ -35,10 +39,22 @@ use clap::{Parser, Subcommand};
 use serde_json::{json, Map, Value};
 use shards_script::{parse_args, parse_condition};
 
+#[cfg(test)]
+mod fake;
+mod peer;
 mod scenario;
+
+use peer::Peer;
 
 /// Bevy's BRP port, used when neither `--port` nor `--port-file` says otherwise.
 const DEFAULT_PORT: u16 = 15702;
+
+/// How often a deferred `step` is asked whether it is done.
+const POLL_EVERY: Duration = Duration::from_millis(20);
+
+/// How long `shards` waits for a deferred `step` (and for `wait`, `shot` and `stand stop` to
+/// finish) unless `--timeout` says otherwise.
+const DEFAULT_TIMEOUT_SECS: u64 = 60;
 
 /// Exit codes besides 0. Clap exits with 2 on a bad command line as well.
 mod exit {
@@ -65,6 +81,16 @@ struct Cli {
     /// folder upwards (the game writes it into its working directory at start).
     #[arg(long, global = true, env = "SHARDS_TOKEN", hide_env_values = true)]
     token: Option<String>,
+    /// Which game of a stand (`cargo sandbox --stand 2 --port-file F`) a command talks to:
+    /// `host` (the default), `c1`, `c2`. Its port is read from F, F.c1, F.c2. `all` is for
+    /// `wait` (every member) and `stand`.
+    #[arg(long, global = true, env = "SHARDS_PEER", value_name = "MEMBER")]
+    peer: Option<Peer>,
+    /// Seconds to wait for something that takes a while: a deferred `step` of a stand (default
+    /// 60), `wait` (60), `shot` (10), `stand stop` (15). The `SHARDS_TIMEOUT` environment
+    /// variable works too.
+    #[arg(long, global = true, env = "SHARDS_TIMEOUT", value_name = "SECONDS")]
+    timeout: Option<u64>,
     /// Agent name: each agent has its own journal cursor, scope and body.
     #[arg(long, short, global = true, env = "SHARDS_AGENT", default_value = "dev")]
     agent: String,
@@ -102,9 +128,6 @@ enum Cmd {
         /// Where to save the PNG (default: shots/tick<T>-<N>.png next to the game).
         #[arg(long, short)]
         out: Option<String>,
-        /// Seconds to wait for the file.
-        #[arg(long, default_value_t = 10)]
-        timeout: u64,
     },
     /// Save the session so far as a replay: seed, inputs, action calls, state checks.
     /// Play it with `cargo sandbox --replay FILE` (add `--verify` to check a build).
@@ -190,10 +213,21 @@ enum Cmd {
     Session {
         #[arg(long)]
         scope: Option<String>,
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["player", "clear_subject"])]
         subject: Option<String>,
+        /// Play as the body of this player (0 is the host's), found again on every call: it
+        /// survives a respawn.
+        #[arg(long, conflicts_with = "clear_subject")]
+        player: Option<u8>,
         #[arg(long)]
         clear_subject: bool,
+    },
+    /// The members of a stand (`cargo sandbox --stand 2 --port-file F`): role, player, body,
+    /// port, ping and desyncs of the host and every client. `stand stop` has the host end the
+    /// session (the clients are told and keep their characters), then ends the stand's process.
+    Stand {
+        #[command(subcommand)]
+        op: Option<StandCmd>,
     },
     /// Content files: `check` reads every file from disk and validates it (exit 1 on
     /// problems). Without a running game: `cargo sandbox --check-content`.
@@ -217,11 +251,16 @@ enum Cmd {
     },
     /// Any BRP method (world.query, world.get_components, rpc.discover, ...).
     Raw { method: String, params: Option<String> },
-    /// Wait until the game answers and has finished loading (for scripts).
-    Wait {
-        #[arg(long, default_value_t = 60)]
-        timeout: u64,
-    },
+    /// Wait until the game answers and has finished loading (for scripts). With `--peer all`:
+    /// the host and every client of a stand, one line each, and a check that they are one
+    /// session. Gives up after --timeout seconds (60).
+    Wait,
+}
+
+#[derive(Subcommand)]
+enum StandCmd {
+    /// End the stand: the host ends the session, then gets SIGTERM; waits until no member answers.
+    Stop,
 }
 
 #[derive(Subcommand)]
@@ -248,6 +287,8 @@ struct Client {
     agent: ureq::Agent,
     port: u16,
     token: Option<String>,
+    /// How long `act` waits for a deferred `step`.
+    timeout: Duration,
 }
 
 impl Client {
@@ -257,7 +298,42 @@ impl Client {
             .http_status_as_error(false)
             .build()
             .new_agent();
-        Self { url: format!("http://127.0.0.1:{port}"), agent, port, token }
+        Self { url: format!("http://127.0.0.1:{port}"), agent, port, token, timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS) }
+    }
+
+    fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// `ai/act`. A game that cannot run ticks by itself (a member of a stand: one tick is a tick
+    /// of every member) answers `step`, `pause`, `resume` and `speed` with `{"pending": id}`;
+    /// this polls `ai/step_poll` every 20 ms until the request is done and returns what the call
+    /// would have answered, `halted` and journal lines included. Any other game answers right
+    /// away and nothing is polled.
+    fn act(&self, agent: &str, tool: &str, args: Value) -> Result<Value, String> {
+        let reply = self.call("ai/act", json!({"agent": agent, "tool": tool, "args": args}))?;
+        match pending_id(tool, &reply) {
+            Some(id) => self.poll(agent, id),
+            None => Ok(reply),
+        }
+    }
+
+    fn poll(&self, agent: &str, id: u64) -> Result<Value, String> {
+        let started = Instant::now();
+        loop {
+            let reply = self.call("ai/step_poll", json!({"agent": agent, "id": id}))?;
+            if pending_id("step_poll", &reply) != Some(id) {
+                return Ok(reply);
+            }
+            if started.elapsed() >= self.timeout {
+                return Err(format!(
+                    "request {id} is still running after {}s; it goes on in the game: ask again with `shards act step_poll id={id}`, or wait longer with --timeout",
+                    self.timeout.as_secs()
+                ));
+            }
+            std::thread::sleep(POLL_EVERY);
+        }
     }
 
     fn call(&self, method: &str, params: Value) -> Result<Value, String> {
@@ -282,11 +358,27 @@ impl Client {
     }
 }
 
+/// The id a deferred request answered with: `step`, `pause`, `resume`, `speed` (and the poll
+/// itself) say `{"pending": 3}` as their result while it runs.
+fn pending_id(tool: &str, reply: &Value) -> Option<u64> {
+    if !matches!(tool, "step" | "pause" | "resume" | "speed" | "step_poll") || reply.get("ok") == Some(&Value::Bool(false)) {
+        return None;
+    }
+    let result = reply.get("result")?.as_object()?;
+    if result.len() != 1 {
+        return None;
+    }
+    result.get("pending")?.as_u64()
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let result = match &cli.cmd {
+    let result = match (&cli.cmd, cli.peer) {
         // The game may still be starting: its port file may not exist yet.
-        Cmd::Wait { timeout } => wait(&cli, Duration::from_secs(*timeout)),
+        (Cmd::Wait, Some(Peer::All)) => peer::wait_all(&cli, cli.timeout_or(DEFAULT_TIMEOUT_SECS)).map(|()| ExitCode::SUCCESS),
+        (Cmd::Wait, _) => wait(&cli, cli.timeout_or(DEFAULT_TIMEOUT_SECS)),
+        (Cmd::Stand { op }, _) => stand(&cli, op.as_ref()),
+        (_, Some(Peer::All)) => Err("--peer all is for `wait` and `stand`; name one member: host, c1, c2".to_owned()),
         _ => cli.client().and_then(|client| run(&cli, &client)),
     };
     match result {
@@ -298,20 +390,34 @@ fn main() -> ExitCode {
     }
 }
 
+/// `shards stand` and `shards stand stop`.
+fn stand(cli: &Cli, op: Option<&StandCmd>) -> Result<ExitCode, String> {
+    match op {
+        None => peer::show(cli),
+        Some(StandCmd::Stop) => peer::stop(cli, &peer::terminate),
+    }
+    .map(|()| ExitCode::SUCCESS)
+}
+
 impl Cli {
-    /// `--port`, else the number in `--port-file`, else the default.
+    /// The BRP port of the game a command talks to: `--port`, else the number in `--port-file`
+    /// (the file of the member `--peer` names), else the default.
     fn port(&self) -> Result<u16, String> {
-        match (self.port, &self.port_file) {
-            (Some(port), _) => Ok(port),
-            (None, Some(file)) => read_port_file(file),
-            (None, None) => Ok(DEFAULT_PORT),
-        }
+        self.port_of(self.peer.unwrap_or(Peer::Host))
     }
 
     fn client(&self) -> Result<Client, String> {
-        let port = self.port()?;
-        let token = self.token.clone().or_else(|| find_token(port, &std::env::current_dir().ok()?));
-        Ok(Client::new(port, token))
+        Ok(self.client_at(self.port()?))
+    }
+
+    /// `--timeout` or `default` seconds.
+    fn timeout_or(&self, default: u64) -> Duration {
+        Duration::from_secs(self.timeout.unwrap_or(default))
+    }
+
+    /// How long to wait for a deferred `step`.
+    fn poll_timeout(&self) -> Duration {
+        self.timeout_or(DEFAULT_TIMEOUT_SECS)
     }
 }
 
@@ -345,22 +451,10 @@ fn read_port_file(path: &std::path::Path) -> Result<u16, String> {
 /// Polls `ai/status` until the game answers and has finished loading, then prints who
 /// answered.
 fn wait(cli: &Cli, timeout: Duration) -> Result<ExitCode, String> {
-    let start = Instant::now();
-    loop {
-        let answer = cli.client().and_then(|client| client.call("ai/status", Value::Null));
-        match answer {
-            Ok(status) if still_loading(&status).is_empty() => {
-                say(ready_line(&status));
-                return Ok(ExitCode::SUCCESS);
-            }
-            Ok(status) if start.elapsed() >= timeout => {
-                return Err(format!("the game answers but is still loading: {}", still_loading(&status).join(", ")));
-            }
-            Ok(_) => std::thread::sleep(Duration::from_millis(100)),
-            Err(_) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(250)),
-            Err(e) => return Err(e),
-        }
-    }
+    // The game may still be starting: its port file may not exist yet.
+    let status = peer::wait_member(|| cli.client(), Instant::now() + timeout)?;
+    say(ready_line(&status));
+    Ok(ExitCode::SUCCESS)
 }
 
 /// What holds the game's simulation (`content: 2 files left`); empty once it can
@@ -407,7 +501,7 @@ fn ready_line(status: &Value) -> String {
 
 fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
     let agent = cli.agent.as_str();
-    let act = |tool: &str, args: Value| client.call("ai/act", json!({"agent": agent, "tool": tool, "args": args}));
+    let act = |tool: &str, args: Value| client.act(agent, tool, args);
     let outcome = match &cli.cmd {
         Cmd::Observe => act("observe", json!({}))?,
         Cmd::Step { ticks, until, observe } => {
@@ -428,7 +522,7 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
         Cmd::SaveReplay { path } => act("replay_save", json!({"path": path}))?,
         Cmd::SaveSnapshot { path } => act("snapshot_save", json!({"path": path}))?,
         Cmd::LoadSnapshot { path, force } => act("snapshot_load", json!({"path": path, "force": force}))?,
-        Cmd::Scenario { files, quiet } => return scenario::run(client, files, *quiet, cli.json),
+        Cmd::Scenario { files, quiet } => return scenario::run(cli, client, files, *quiet, cli.json),
         Cmd::Assert { op } => match op {
             AssertCmd::Add { name, when } => act("assert_add", json!({"name": name, "when": parse_condition(when)?}))?,
             AssertCmd::List => act("assert_list", json!({}))?,
@@ -436,7 +530,7 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             AssertCmd::Reset => act("assert_reset", json!({}))?,
         },
         Cmd::Fuzz { seed, steps, max_ticks } => return fuzz(&act, *seed, *steps, *max_ticks),
-        Cmd::Shot { no_marks, out, timeout } => {
+        Cmd::Shot { no_marks, out } => {
             let reply = act("shot", json!({"marks": !no_marks, "path": out}))?;
             if reply.get("ok") != Some(&Value::Bool(true)) {
                 return Ok(print_outcome(&reply, cli.json));
@@ -444,7 +538,7 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             let ticket = reply.get("result").cloned().unwrap_or_default();
             let path = |k: &str| ticket.get(k).and_then(Value::as_str).map(str::to_owned);
             let (png, legend) = path("path").zip(path("legend_path")).ok_or("shot: unexpected reply")?;
-            wait_for_file(&png, Duration::from_secs(*timeout))?;
+            wait_for_file(&png, cli.timeout_or(10))?;
             // Written before the PNG is renamed into place, so it is there now.
             let info: Value = std::fs::read_to_string(&legend)
                 .ok()
@@ -498,10 +592,10 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             say(serde_json::to_string_pretty(&s).unwrap_or_default());
             return Ok(ExitCode::SUCCESS);
         }
-        Cmd::Session { scope, subject, clear_subject } => {
+        Cmd::Session { scope, subject, player, clear_subject } => {
             let s = client.call(
                 "ai/session",
-                json!({"agent": agent, "scope": scope, "subject": subject, "clear_subject": clear_subject}),
+                json!({"agent": agent, "scope": scope, "subject": subject, "player": player, "clear_subject": clear_subject}),
             )?;
             say(serde_json::to_string_pretty(&s).unwrap_or_default());
             return Ok(ExitCode::SUCCESS);
@@ -526,7 +620,8 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             say(serde_json::to_string_pretty(&client.call(method, params)?).unwrap_or_default());
             return Ok(ExitCode::SUCCESS);
         }
-        Cmd::Wait { timeout } => return wait(cli, Duration::from_secs(*timeout)),
+        Cmd::Wait => return wait(cli, cli.timeout_or(DEFAULT_TIMEOUT_SECS)),
+        Cmd::Stand { op } => return stand(cli, op.as_ref()),
     };
     Ok(print_outcome(&outcome, cli.json))
 }
@@ -840,6 +935,104 @@ mod tests {
         let host = json!({"tick": 0, "seed": 1, "instance": {"pid": 4242, "port": 15711},
             "net": {"role": "host", "member": "host", "player": 0, "body": "e5", "udp": "0.0.0.0:54321"}});
         assert_eq!(ready_line(&host), "ready: tick 0 · pid 4242 · seed 1 · port 15711 · member host · role host · player 0 · body e5 · udp 0.0.0.0:54321");
+    }
+
+    #[test]
+    fn a_deferred_step_is_polled_until_it_is_done() {
+        use crate::fake::{reply, serve};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        let asked: Arc<Mutex<Vec<(String, Value)>>> = Arc::default();
+        let log = asked.clone();
+        let polls = AtomicU64::new(0);
+        let done = json!({"tool": "step", "ok": true, "result": "ran 120 ticks (0 → 120)", "tick": 120, "paused": true,
+            "changes": ["e5 moved"], "journal": ["60 e6 winds up slam"], "halted": null});
+        let finished = done.clone();
+        let port = serve(move |method, params| {
+            log.lock().unwrap().push((method.to_owned(), params.clone()));
+            Some(match method {
+                "ai/act" if params["tool"] == "step" || params["tool"] == "speed" => {
+                    reply(json!({"tool": params["tool"], "ok": true, "result": {"pending": 4}, "tick": 0, "paused": true}))
+                }
+                "ai/act" => reply(json!({"tool": params["tool"], "ok": true, "result": {"pending": 9}, "tick": 0, "paused": true})),
+                "ai/step_poll" if polls.fetch_add(1, Ordering::SeqCst) < 2 => {
+                    reply(json!({"tool": "step_poll", "ok": true, "result": {"pending": 4}, "tick": 0, "paused": true}))
+                }
+                "ai/step_poll" => reply(finished.clone()),
+                other => panic!("unexpected {other}"),
+            })
+        });
+        let client = Client::new(port, None).with_timeout(Duration::from_secs(5));
+        // `step` answers pending twice, and the report comes from the third poll: the whole outcome, as a local step.
+        let out = client.act("dev", "step", json!({"ticks": 120})).unwrap();
+        assert_eq!(out, done);
+        assert_eq!(outcome_code(&out), 0);
+        let methods: Vec<String> = asked.lock().unwrap().iter().map(|(m, _)| m.clone()).collect();
+        assert_eq!(methods, ["ai/act", "ai/step_poll", "ai/step_poll", "ai/step_poll"]);
+        assert_eq!(asked.lock().unwrap()[1].1, json!({"agent": "dev", "id": 4}), "the poll carries the id and the agent");
+
+        // A tool that is not a clock tool is not polled, whatever it answers.
+        asked.lock().unwrap().clear();
+        let out = client.act("dev", "mystery", json!({})).unwrap();
+        assert_eq!(out["result"], json!({"pending": 9}));
+        assert_eq!(asked.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_game_that_runs_steps_at_once_is_never_polled() {
+        use crate::fake::{reply, serve};
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let port = serve(move |method, _| {
+            log.lock().unwrap().push(method.to_owned());
+            Some(reply(json!({"tool": "step", "ok": true, "result": "ran 1 ticks (0 → 1)", "tick": 1, "paused": true})))
+        });
+        let client = Client::new(port, None);
+        let out = client.act("dev", "step", json!({})).unwrap();
+        assert_eq!(out["result"], "ran 1 ticks (0 → 1)");
+        assert_eq!(*seen.lock().unwrap(), ["ai/act"], "no step_poll for a game that answers right away");
+    }
+
+    #[test]
+    fn a_step_that_takes_too_long_says_how_to_ask_again() {
+        use crate::fake::{reply, serve};
+        let port = serve(|method, _| {
+            Some(reply(json!({"tool": method, "ok": true, "result": {"pending": 7}, "tick": 0, "paused": true})))
+        });
+        let client = Client::new(port, None).with_timeout(Duration::from_millis(100));
+        let started = Instant::now();
+        let e = client.act("dev", "step", json!({"ticks": 99999})).unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(
+            e,
+            "request 7 is still running after 0s; it goes on in the game: ask again with `shards act step_poll id=7`, or wait longer with --timeout"
+        );
+    }
+
+    #[test]
+    fn a_refused_or_unknown_request_is_an_answer_not_a_wait() {
+        assert_eq!(pending_id("step", &json!({"ok": true, "result": {"pending": 3}})), Some(3));
+        assert_eq!(pending_id("pause", &json!({"ok": true, "result": {"pending": 3}})), Some(3));
+        assert_eq!(pending_id("step", &json!({"ok": false, "result": "no request 3"})), None);
+        assert_eq!(pending_id("step", &json!({"ok": true, "result": "ran 1 ticks"})), None);
+        assert_eq!(pending_id("step", &json!({"ok": true, "result": {"pending": 3, "more": 1}})), None);
+        assert_eq!(pending_id("observe", &json!({"ok": true, "result": {"pending": 3}})), None);
+    }
+
+    #[test]
+    fn peer_timeout_and_player_are_global_or_per_command() {
+        let parse = |args: &[&str]| Cli::try_parse_from(["shards"].iter().chain(args)).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(parse(&["--timeout", "5", "wait"]).timeout, Some(5));
+        assert_eq!(parse(&["wait", "--timeout", "5"]).timeout, Some(5), "a global option may follow the command");
+        assert_eq!(parse(&["shot", "--timeout", "3"]).timeout_or(10), Duration::from_secs(3));
+        assert_eq!(parse(&["shot"]).timeout_or(10), Duration::from_secs(10));
+        assert_eq!(parse(&["wait"]).poll_timeout(), Duration::from_secs(60));
+        assert_eq!(parse(&["--peer", "c1", "session", "--player", "2"]).peer, Some(Peer::Client(1)));
+        let both = Cli::try_parse_from(["shards", "session", "--player", "1", "--subject", "e6"]).err().unwrap().to_string();
+        assert!(both.contains("cannot be used with"), "{both}");
+        assert!(matches!(parse(&["stand"]).cmd, Cmd::Stand { op: None }));
+        assert!(matches!(parse(&["stand", "stop"]).cmd, Cmd::Stand { op: Some(StandCmd::Stop) }));
     }
 
     #[test]
