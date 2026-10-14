@@ -201,7 +201,9 @@ fn write_one(world: &mut World, p: Pending, tick: u64) {
     let slot = world.resource::<SaveSlots>().get(p.kind).to_owned();
     let body = resolve_body(world, p.body);
     // The failure is in the journal (Error) already; a request is not retried.
-    let _ = ops::save_part(world, p.kind, body, &slot, "", &p.reason);
+    if let Ok(report) = ops::save_part(world, p.kind, body, &slot, "", &p.reason) {
+        ops::notify_saved(world, std::slice::from_ref(&report), &p.reason);
+    }
 }
 
 #[cfg(test)]
