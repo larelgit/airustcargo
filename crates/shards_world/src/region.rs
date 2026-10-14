@@ -175,6 +175,8 @@ pub(crate) struct LevelFiles {
     /// [`level_paths`] of the content as it was last read.
     paths: Vec<String>,
     requested: BTreeSet<String>,
+    /// Files whose contents were checked once they were loaded ([`report_level_files`]).
+    checked: BTreeSet<String>,
     /// The content was read once since a loader was registered.
     synced: bool,
 }
@@ -201,6 +203,36 @@ pub(crate) fn request_level_files(
     for path in fresh {
         files.requested.insert(path.clone());
         commands.queue(move |world: &mut World| request(world, &path));
+    }
+}
+
+/// `PostUpdate`: once a level file is loaded, journals what the loader finds wrong inside it
+/// (once per file), naming the tiles built from it. A tile whose file is broken shows when
+/// the game loads, not when a seed first picks it; the region change that uses it is refused
+/// all the same.
+pub(crate) fn report_level_files(world: &mut World) {
+    let Some(spawner) = world.get_resource::<LevelSpawner>().copied() else { return };
+    let Some(db) = world.get_resource::<ContentDb>().filter(|db| db.is_loaded()) else { return };
+    let files = world.resource::<LevelFiles>();
+    let waiting: Vec<String> = files.paths.iter().filter(|p| !files.checked.contains(*p) && level_path_problem(p).is_none()).cloned().collect();
+    if waiting.is_empty() {
+        return;
+    }
+    let users = level_users(db);
+    let mut lines = Vec::new();
+    for path in waiting {
+        if (spawner.status)(world, &path) != LoadStatus::Ready {
+            continue;
+        }
+        world.resource_mut::<LevelFiles>().checked.insert(path.clone());
+        if let Err(why) = (spawner.check)(world, &path) {
+            let tiles: Vec<String> = users.get(&path).into_iter().flatten().map(|t| format!("`{t}`")).collect();
+            let s = if tiles.len() == 1 { "" } else { "s" };
+            lines.push(format!("tile levels: tile{s} {}: level `{path}`: {why}", tiles.join(", ")));
+        }
+    }
+    for line in lines {
+        journal::emit(world, JournalKind::Error, line);
     }
 }
 

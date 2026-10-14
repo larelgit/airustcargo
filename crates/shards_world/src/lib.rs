@@ -214,7 +214,7 @@ impl Plugin for WorldPlugin {
             .configure_sets(FixedUpdate, WorldSystems::Zones.in_set(SimSet::Input).before(CoreSystems::FollowOrders))
             .add_systems(FixedUpdate, zones::update_zones.in_set(WorldSystems::Zones))
             .add_systems(PreStartup, queue_start_region)
-            .add_systems(PostUpdate, region::request_level_files)
+            .add_systems(PostUpdate, (region::request_level_files, region::report_level_files).chain())
             .add_systems(Update, (region::build_start_region, stream::stream_tile_visuals.run_if(stream::streaming)).chain());
         ai::plugin(app);
         tools::register(app.world_mut());

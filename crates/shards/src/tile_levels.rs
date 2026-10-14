@@ -46,7 +46,10 @@
 //! tiles are built from it. Before a region changes anything, every level file it uses is
 //! checked (nodes, components, prefabs): a problem refuses the change and names the tile and
 //! the file, and the old region stays. Content that names a file the asset folder lacks is
-//! an error at `content check`, naming the tile and the path.
+//! an error at `content check`, naming the tile and the path. What is wrong *inside* a file
+//! is no content error (`content check` does not read the nodes of tile files; list a file
+//! as a content `level` too and it does): the journal gets an error line for it, naming
+//! the tiles, as soon as the file loads.
 //!
 //! When a file changes on disk (hot reload) `shards_level` replaces its instances; the
 //! entities that come back are tagged again as they are made, inside the reload (a replay

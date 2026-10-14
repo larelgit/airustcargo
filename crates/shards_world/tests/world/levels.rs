@@ -575,6 +575,21 @@ fn a_level_file_that_cannot_load_holds_the_game_and_names_its_tiles() {
 }
 
 #[test]
+fn a_tile_file_with_problems_is_reported_once_when_it_loads_not_when_a_seed_picks_it() {
+    let dir = site("report", &[]);
+    let mut app = app_in(&dir, 1, None);
+    let broken = |app: &App| -> Vec<String> { journal(app).into_iter().filter(|l| l.contains("tile levels:")).collect() };
+    let lines = broken(&app);
+    assert_eq!(lines.len(), 1, "only cracked.gltf is wrong: {lines:#?}");
+    assert!(lines[0].contains("tile levels: tile `cracked`: level `tiles/cracked.gltf`: 1 problem:"), "{}", lines[0]);
+    assert!(lines[0].contains("unknown component `Helth`"), "{}", lines[0]);
+    for _ in 0..5 {
+        app.update();
+    }
+    assert_eq!(broken(&app).len(), 1, "once");
+}
+
+#[test]
 fn a_level_with_problems_refuses_the_change_before_anything_is_touched() {
     let dir = site("problems", &[]);
     let mut app = app_in(&dir, 1, Some("ruins"));
