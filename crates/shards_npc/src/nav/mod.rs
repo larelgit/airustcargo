@@ -114,9 +114,11 @@ pub fn navmesh_route(world: &World, from: Vec3, to: Vec3, params: &CharacterPara
     }
 }
 
-/// The engine's routes: the navmesh's where it covers the walk, else the local grid's.
+/// The engine's routes: the navmesh's where it covers the walk, else the local grid's. Only
+/// the radius is known here: the body is taken to be as tall as the baked one.
 pub fn navmesh_path(world: &World, from: Vec3, to: Vec3, radius: f32) -> Option<Vec<Vec3>> {
-    let params = CharacterParams { radius, ..default() };
+    let height = world.get_resource::<NavRegion>().map_or(CharacterParams::default().height, |nav| nav.agent_height);
+    let params = CharacterParams { radius, height, ..default() };
     match navmesh_route(world, from, to, &params, false) {
         Some(Ok(path)) => Some(path.points),
         Some(Err(_)) => None,

@@ -29,7 +29,8 @@ use shards_world::grid::Dir;
 pub const FORMAT: &str = "shards-navtile/1";
 
 /// Version of the sampling: part of every bake hash, so files baked by another version read
-/// as stale.
+/// as stale. Bump it whenever the bake, or the motion module's terrain probe or move rule it
+/// samples with, changes what a tile bakes to.
 pub const BAKE_VERSION: u32 = 1;
 
 /// Moves to the eight neighbours, clockwise from north (N = -Z, E = +X), then the four
