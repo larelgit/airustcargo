@@ -1,7 +1,8 @@
 //! The reference replays in `tests/replays/` (repository root): the obstacle course, the
 //! combat prototype, the combat director, an enemy on the navmesh, the generated region and
-//! "go to boss phase" by snapshot (that one starts from its snapshot), played by their
-//! scenarios on a fresh game. Each one is verified the
+//! "go to boss phase" by snapshot (that one starts from its snapshot) and saves (save, get
+//! hurt, load, die, load again, play on: the replay starts from the state after the last
+//! load), played by their scenarios on a fresh game. Each one is verified the
 //! way CI and a person do it, by the game itself: `sandbox --replay FILE --verify` must say
 //! `identical` and exit 0. A change that alters gameplay makes them diverge; record them
 //! again on purpose:
@@ -22,13 +23,14 @@ use shards::ai_core::scenario::run_file;
 use crate::scenario_files::scenario;
 
 /// The scenarios recorded as reference replays, by the replay's file name.
-const RECORDED: [(&str, &str); 6] = [
+const RECORDED: [(&str, &str); 7] = [
     ("obstacle_course.json", "obstacle_course.scenario"),
     ("combat_prototype.json", "combat_prototype.scenario"),
     ("npc_director.json", "npc_director.scenario"),
     ("npc_navmesh.json", "npc_navmesh.scenario"),
     ("region.json", "region.scenario"),
     ("snapshot.json", "snapshot.scenario"),
+    ("saves.json", "saves.scenario"),
 ];
 
 fn replays_dir() -> PathBuf {
