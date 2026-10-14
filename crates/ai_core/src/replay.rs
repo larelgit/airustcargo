@@ -8,7 +8,8 @@
 //!   with the tick it took effect at. Changes made by gameplay systems inside a
 //!   tick are deterministic and not stored.
 //! - **calls**: every action tool call (`teleport`, `set`, `spawn`, `attack`, …) with
-//!   the caller's scope and body. Control tools (`pause`, `step`, `possess`) change
+//!   the caller's scope and body (a tool may take back one it refused,
+//!   [`forget_call`]). Control tools (`pause`, `step`, `possess`) change
 //!   *when* things happen, not what, and are left out. Raw BRP edits
 //!   (`world.insert_components`) bypass the tools and are not recorded.
 //! - **checks**: a hash of the game state every [`CHECK_EVERY`] ticks: every AI-visible
@@ -165,6 +166,8 @@ pub struct AiReplay {
     /// Action calls running right now. Calls made from inside another action are
     /// not recorded: replaying the outer one makes them again.
     action_depth: u32,
+    /// Where the running outermost action call is recorded, for [`forget_call`].
+    current_call: Option<usize>,
 }
 
 impl AiReplay {
@@ -199,6 +202,7 @@ pub(crate) fn begin_action(world: &mut World, caller: &Caller, tool: &str, args:
     if replay.action_depth > 1 {
         return;
     }
+    replay.current_call = Some(replay.events.len());
     replay.events.push(ReplayEvent::Call {
         at,
         agent: caller.agent.clone(),
@@ -217,6 +221,23 @@ pub(crate) fn begin_action(world: &mut World, caller: &Caller, tool: &str, args:
 pub(crate) fn end_action(world: &mut World) {
     let mut replay = world.resource_mut::<AiReplay>();
     replay.action_depth = replay.action_depth.saturating_sub(1);
+    if replay.action_depth == 0 {
+        replay.current_call = None;
+    }
+}
+
+/// Takes the running action call out of the recording: for a tool that refused before
+/// it changed anything, so what playback reads from recorded calls comes only from
+/// calls that applied (content restores a replay's starting definitions from the
+/// `before` of its `content_apply` calls). A call made inside another action is not
+/// recorded, so there is nothing to take.
+pub fn forget_call(world: &mut World) {
+    let mut replay = world.resource_mut::<AiReplay>();
+    if replay.action_depth == 1
+        && let Some(index) = replay.current_call.take()
+    {
+        replay.events.remove(index);
+    }
 }
 
 /// Values of an input component at the end of the last tick, and when that was.
@@ -503,7 +524,9 @@ fn check_state(world: &mut World) {
 
 /// Starts playing `replay` back. The world must be fresh (tick 0, nothing recorded
 /// yet) and built with the replay's seed and tick rate. Events are applied as ticks
-/// run; step or resume the game to play it.
+/// run; step or resume the game to play it. Start it before the game loads when you
+/// can (right after building the app): modules then prepare the world before it is
+/// spawned (content restores the definitions the recording started from).
 pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
     if replay.format == FORMAT_V1 {
         return Err(format!(
@@ -562,14 +585,15 @@ pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
 
 /// Applies the calls due after the current tick and queues its inputs; at the end
 /// of the recording, compares the final state and finishes. Runs before every tick
-/// and once per frame (so a paused game finishes right at the last tick).
+/// and once per frame (so a paused game finishes right at the last tick), but not
+/// while the game loads: a recording that ends at tick 0 finishes on the spawned world.
 fn advance_playback(world: &mut World, at_tick_start: bool) {
     let tick = sim::tick(world);
     let end = match &world.resource::<AiReplay>().playback {
         Some(p) => p.replay.end.tick,
         None => return,
     };
-    if !at_tick_start && tick != end {
+    if !at_tick_start && (tick != end || sim::gate_message(world).is_some()) {
         return;
     }
     loop {

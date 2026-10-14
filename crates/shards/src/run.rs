@@ -163,11 +163,13 @@ fn verify(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, recording
     let mut app = build(&config);
     app.finish();
     app.cleanup();
-    if let Err(e) = crate::testing::wait_until_loaded(&mut app, Duration::from_secs(60)) {
+    // Before loading, as a live `--replay` does: the world is spawned from the content
+    // the recording started with.
+    if let Err(e) = replay::play(app.world_mut(), recording) {
         eprintln!("error: {e}");
         return ExitCode::from(2);
     }
-    if let Err(e) = replay::play(app.world_mut(), recording) {
+    if let Err(e) = crate::testing::wait_until_loaded(&mut app, Duration::from_secs(60)) {
         eprintln!("error: {e}");
         return ExitCode::from(2);
     }
@@ -272,5 +274,69 @@ mod termination {
         if signal != 0 {
             exit.write(AppExit::from_code((128 + signal) as u8));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{self, ok};
+    use crate::EnginePlugins;
+    use serde_json::json;
+    use shards_core::EngineState;
+
+    /// A game that spawns its one totem from content, like games are told to.
+    fn game(config: &EngineConfig) -> App {
+        let mut app = App::new();
+        app.add_plugins(EnginePlugins::new(config.clone())).add_systems(OnEnter(EngineState::InGame), |world: &mut World| {
+            shards_content::spawn_prefab(world, "totem", Transform::default(), None).unwrap();
+        });
+        app
+    }
+
+    fn content(name: &str, totem: &str) -> EngineConfig {
+        let dir = std::env::temp_dir().join(format!("shards_verify_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("content")).unwrap();
+        write_totem(&dir, totem);
+        EngineConfig { asset_dir: dir.to_string_lossy().into_owned(), ..testing::config() }
+    }
+
+    fn write_totem(dir: &std::path::Path, name: &str) {
+        let prefab = format!(r#"{{ "totem": (components: {{ "AiKind": ("Totem"), "Name": "{name}" }}) }}"#);
+        std::fs::write(dir.join("content/totem.prefab.ron"), prefab).unwrap();
+    }
+
+    fn record(config: &EngineConfig, session: impl FnOnce(&mut App)) -> Replay {
+        let mut app = game(config);
+        app.finish();
+        app.cleanup();
+        testing::wait_until_loaded(&mut app, testing::LOAD_TIMEOUT).unwrap();
+        session(&mut app);
+        replay::save(app.world())
+    }
+
+    #[test]
+    fn verify_spawns_the_world_from_the_content_the_replay_started_with() {
+        let config = content("edited", "Totem");
+        let dir = std::path::PathBuf::from(&config.asset_dir);
+        let recording = record(&config, |app| {
+            ok(app, "step", json!({"ticks": 10}));
+            write_totem(&dir, "Idol");
+            ok(app, "content_reload", json!({}));
+            ok(app, "step", json!({"ticks": 60}));
+        });
+        // The file says Idol now; the recording spawned a Totem.
+        assert_eq!(verify(&game, config, recording), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn verify_plays_a_replay_that_ends_at_tick_zero_on_the_spawned_world() {
+        let config = content("zero", "Totem");
+        let recording = record(&config, |app| {
+            ok(app, "teleport", json!({"id": "e1", "x": 3, "z": 0}));
+        });
+        assert_eq!(recording.end.tick, 0);
+        assert_eq!(verify(&game, config, recording), ExitCode::SUCCESS);
     }
 }

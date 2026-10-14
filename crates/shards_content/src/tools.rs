@@ -100,9 +100,10 @@ fn content_check(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult {
 }
 
 /// Re-read content from disk now and apply it, as hot reload does when a file
-/// changes: everything, one `file` ("combat/attacks.attack.ron"), or one `kind`. A
-/// version with new problems is refused and the previous one kept. What changed is
-/// applied (and recorded for replays) through `content_apply`.
+/// changes: everything, one `file` ("combat/attacks.attack.ron"), or one `kind`. Every
+/// definition that differs from the files is applied, also one `content_apply` or a
+/// replay changed. A version with new problems is refused and the previous one kept.
+/// What changed is applied (and recorded for replays) through `content_apply`.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct ContentReloadArgs {
     /// One file, relative to content/ (or the full asset path).
@@ -124,7 +125,8 @@ fn content_reload(In(call): In<Call<ContentReloadArgs>>, world: &mut World) -> T
     if let Some(kind) = &call.args.kind {
         known_kind(db, kind)?;
     }
-    let changed: Vec<_> = on_disk.iter().filter(|s| wanted(&s.path) && db.file_text(&s.path) != Some(s.text.as_str())).cloned().collect();
+    // Definitions are compared, not texts: what is applied may differ from its file.
+    let changed: Vec<_> = on_disk.iter().filter(|s| wanted(&s.path)).cloned().collect();
     let removed: Vec<String> =
         db.files().filter(|f| wanted(f) && !on_disk.iter().any(|s| s.path == *f)).map(str::to_owned).collect();
     if let Some(file) = &call.args.file
@@ -135,15 +137,13 @@ fn content_reload(In(call): In<Call<ContentReloadArgs>>, world: &mut World) -> T
         let hint = closest(shown(file), all.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
         return Err(format!("no content file `{file}`{hint}; files: {}", all.join(", ")));
     }
-    if changed.is_empty() && removed.is_empty() {
-        return Ok("content: nothing changed on disk".into());
-    }
     reload(world, changed, removed)
 }
 
 /// Apply content definitions given as JSON: what hot reload and `content_reload` do
 /// with a checked edit, and what replays record and play back. Prefer
-/// `content_reload`.
+/// `content_reload`. Each change names the definition it replaces as `before`
+/// (`content_get` shows it): a replay starts from it.
 #[derive(Deserialize, JsonSchema)]
 pub struct ContentApplyArgs {
     /// Files the change comes from, e.g. ["content/combat/attacks.attack.ron"].
@@ -154,10 +154,35 @@ pub struct ContentApplyArgs {
 }
 
 fn content_apply(In(call): In<Call<ContentApplyArgs>>, world: &mut World) -> ToolResult {
-    let ContentApplyArgs { files, changes } = call.args;
+    let applied = apply(world, call.args);
+    if applied.is_err() {
+        // Refused before anything changed: a replay must not start from its `before`.
+        ai_core::replay::forget_call(world);
+    }
+    applied
+}
+
+/// Refuses a change whose `before` is not the definition as it is now: it is what a
+/// replay of the session starts from.
+fn check_before(kinds: &ContentKinds, db: &ContentDb, change: &DefChange) -> Result<(), String> {
+    let what = format!("{} `{}`", change.kind, change.id);
+    match (db.get_json(&change.kind, &change.id), &change.before) {
+        (None, None) => Ok(()),
+        (Some(now), None) => Err(format!("{what} exists: give its current definition as `before`: {now}")),
+        (None, Some(_)) => Err(format!("{what} does not exist: leave `before` out for a new definition")),
+        (Some(now), Some(before)) if kinds.normalize(&change.kind, before).as_ref() == Some(now) => Ok(()),
+        (Some(now), Some(_)) => Err(format!("{what} is not what `before` says; it is now {now}")),
+    }
+}
+
+fn apply(world: &mut World, args: ContentApplyArgs) -> ToolResult {
+    let ContentApplyArgs { files, changes } = args;
     let kinds = world.resource::<ContentKinds>().clone();
     let current = world.resource::<ContentDb>();
     let next = current.with_changes(&kinds, &files, &changes)?;
+    for change in &changes {
+        check_before(&kinds, current, change)?;
+    }
     let problems: Vec<String> = next.new_errors(current).into_iter().map(ToString::to_string).collect();
     if !problems.is_empty() {
         return Err(format!("refused, it would break content: {}", problems.join("; ")));

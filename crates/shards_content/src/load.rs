@@ -127,7 +127,8 @@ pub(crate) fn content_status(world: &World) -> LoadStatus {
 }
 
 /// `Update`: once every file is in, builds and validates the database. Problems go to
-/// the journal; definitions that parsed are used anyway.
+/// the journal; definitions that parsed are used anyway. A replay playing already
+/// gets its starting content now, before `OnEnter` spawns the world from it.
 pub(crate) fn finish_loading(world: &mut World) {
     let loading = world.resource::<ContentLoading>();
     if world.resource::<ContentDb>().is_loaded() || !loading.started {
@@ -162,6 +163,7 @@ pub(crate) fn finish_loading(world: &mut World) {
         text.push_str(&format!(", {} with errors (content_check lists them)", errors.len()));
     }
     journal::emit(world, JournalKind::Event, text);
+    restore_for_playback(world);
 }
 
 /// `Update`: content files the asset server reloaded (the file watcher saw them
@@ -201,25 +203,34 @@ pub(crate) fn shown(path: &str) -> &str {
     path.strip_prefix(CONTENT_DIR).and_then(|p| p.strip_prefix('/')).unwrap_or(path)
 }
 
-/// Checks the database with `changed` files replaced and `removed` ones gone; applies
-/// it through `content_apply` when no new problem appears. The one path for hot reload
-/// and `content_reload`. Returns what happened, for the journal or the caller.
+/// Checks the database built from the applied files with `changed` files replaced and
+/// `removed` ones gone; applies every definition that differs (also one `content_apply`
+/// or a replay changed apart from its file) through `content_apply` when no new
+/// problem appears. The one path for hot reload and `content_reload`. Returns what
+/// happened, for the journal or the caller.
 pub(crate) fn reload(world: &mut World, changed: Vec<Source>, removed: Vec<String>) -> Result<String, String> {
     let kinds = world.resource::<ContentKinds>().clone();
     let current = world.resource::<ContentDb>();
     let mut texts = current.sources();
-    for path in &removed {
-        texts.remove(path);
+    // Files whose text changes, then every file a changed definition is in.
+    let mut files: Vec<String> = Vec::new();
+    for path in removed {
+        if texts.remove(&path).is_some() {
+            files.push(path);
+        }
     }
-    let mut files: Vec<String> = removed;
     for source in changed {
-        files.push(source.path.clone());
+        if texts.get(&source.path) != Some(&source.text) {
+            files.push(source.path.clone());
+        }
         texts.insert(source.path, source.text);
     }
-    files.sort();
-    files.dedup();
     let sources: Vec<Source> = texts.into_iter().map(|(path, text)| Source { path, text }).collect();
     let candidate = ContentDb::build(&kinds, &sources);
+    let changes = current.changes_to(&candidate);
+    files.extend(changes.iter().filter_map(|c| c.file.clone()));
+    files.sort();
+    files.dedup();
     let problems: Vec<String> = candidate.new_errors(current).into_iter().map(ToString::to_string).collect();
     let names: Vec<&str> = files.iter().map(|f| shown(f)).collect();
     if !problems.is_empty() {
@@ -228,9 +239,11 @@ pub(crate) fn reload(world: &mut World, changed: Vec<Source>, removed: Vec<Strin
         }
         return Err(format!("{}; kept the previous version of {}", problems.join("; "), names.join(", ")));
     }
-    let changes = current.changes_to(&candidate);
     if changes.is_empty() {
         world.resource_mut::<ContentDb>().adopt_files(&candidate);
+        if names.is_empty() {
+            return Ok("content: nothing changed on disk".into());
+        }
         return Ok(format!("content: no definitions changed in {}", names.join(", ")));
     }
     let outcome = call_tool(world, "content", "content_apply", json!({"files": files, "changes": changes}));
@@ -243,13 +256,20 @@ pub(crate) fn reload(world: &mut World, changed: Vec<Source>, removed: Vec<Strin
     Ok(text)
 }
 
-/// `FixedFirst` of the first tick of a playback: definitions the recording changed
-/// with `content_apply` go back to the versions it started from, so the replay plays
-/// the session it recorded even after the files changed on disk.
+/// `FixedFirst` of the first tick: a playback started after loading starts from its
+/// recorded content too (later than one started before: `OnEnter` has spawned the
+/// world from the content on disk).
 pub(crate) fn prepare_playback(world: &mut World) {
-    if sim::tick(world) != 0 {
-        return;
+    if sim::tick(world) == 0 {
+        restore_for_playback(world);
     }
+}
+
+/// Definitions the playing recording changed with `content_apply` go back to the
+/// versions it started from (the `before` of the first change to each, which
+/// `content_apply` checked), so the replay plays the session it recorded even after the
+/// files changed on disk.
+fn restore_for_playback(world: &mut World) {
     let Some(replay) = world.get_resource::<AiReplay>().and_then(AiReplay::playing) else { return };
     let mut first: Vec<DefChange> = Vec::new();
     for event in &replay.events {
@@ -266,8 +286,10 @@ pub(crate) fn prepare_playback(world: &mut World) {
     }
     let kinds = world.resource::<ContentKinds>().clone();
     let current = world.resource::<ContentDb>();
-    let restore: Vec<DefChange> =
-        first.into_iter().filter(|c| current.get_json(&c.kind, &c.id) != c.def.as_ref()).collect();
+    let restore: Vec<DefChange> = first
+        .into_iter()
+        .filter(|c| current.get_json(&c.kind, &c.id) != c.def.as_ref().and_then(|d| kinds.normalize(&c.kind, d)).as_ref())
+        .collect();
     if restore.is_empty() {
         return;
     }

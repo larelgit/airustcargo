@@ -13,7 +13,7 @@ use bevy::state::app::StatesPlugin;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use shards_content::prelude::*;
-use shards_content::{check_dir, ContentKinds};
+use shards_content::{check_dir, spawn_prefab, ContentKinds};
 use shards_core::{CorePlugin, EngineConfig, EngineState};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -190,6 +190,16 @@ fn load(app: &mut App) {
         app.update();
         std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+/// `OnEnter(InGame)`, after the dummy: a game that spawns its world from content.
+fn spawn_skeleton(world: &mut World) {
+    spawn_prefab(world, "skeleton", Transform::default(), None).unwrap();
+}
+
+fn health(app: &App, id: u32) -> Health {
+    let entity = app.world().resource::<ai_core::AiIndex>().get(AiId(id)).unwrap();
+    app.world().get::<Health>(entity).unwrap().clone()
 }
 
 fn act(app: &mut App, tool: &str, args: Value) -> CallOutcome {
@@ -404,6 +414,73 @@ fn a_reload_is_recorded_and_its_replay_plays_the_same_game() {
     let report = again.world().resource::<AiReplay>().report().cloned().unwrap();
     assert!(report.identical(), "{report}");
     assert_eq!(again.world().get::<SwordDamage>(dummy).unwrap().0, 40.0);
+}
+
+#[test]
+fn a_replay_started_before_loading_spawns_from_its_recorded_content() {
+    let prefab = r#"{ "skeleton": (components: { "AiKind": ("Skeleton"), "Health": (current: 40.0, max: 40.0) }) }"#;
+    let dir = assets("replay_spawn", &[("content/monsters.prefab.ron", prefab)]);
+    let game = |app: &mut App| {
+        app.add_systems(OnEnter(EngineState::InGame), spawn_skeleton.after(spawn_dummy));
+    };
+    let mut app = unloaded(&dir, false, game);
+    load(&mut app);
+    assert_eq!(health(&app, 2).max, 40.0);
+    ok(&mut app, "step", json!({"ticks": 10}));
+    write(&dir, "content/monsters.prefab.ron", &prefab.replace("40.0", "60.0"));
+    ok(&mut app, "content_reload", json!({}));
+    ok(&mut app, "step", json!({"ticks": 60}));
+    let recording = replay::save(app.world());
+
+    // The file says 60 now; the replay, started before loading, spawns what it recorded.
+    let mut again = unloaded(&dir, false, game);
+    replay::play(again.world_mut(), recording.clone()).unwrap();
+    load(&mut again);
+    assert_eq!(health(&again, 2).max, 40.0, "spawned from the recorded content");
+    ok(&mut again, "step", json!({"ticks": recording.end.tick}));
+    again.update();
+    let report = again.world().resource::<AiReplay>().report().cloned().unwrap();
+    assert!(report.identical(), "{report}");
+}
+
+#[test]
+fn content_apply_checks_before_and_a_refused_call_stays_out_of_the_replay() {
+    let dir = assets("before", &[("content/combat/attacks.attack.ron", ATTACKS)]);
+    let mut app = app(&dir);
+    let sword = |before: Option<Value>| {
+        let mut change = json!({"kind": "attack", "id": "sword", "def": {"damage": 30.0}});
+        if let Some(before) = before {
+            change["before"] = before;
+        }
+        json!({"files": ["content/combat/attacks.attack.ron"], "changes": [change]})
+    };
+    let now = r#"{"damage":25.0,"windup":0.15}"#;
+    let missing = act(&mut app, "content_apply", sword(None));
+    assert_eq!(text(&missing), format!("attack `sword` exists: give its current definition as `before`: {now}"));
+    let stale = act(&mut app, "content_apply", sword(Some(json!({"damage": 1.0}))));
+    assert_eq!(text(&stale), format!("attack `sword` is not what `before` says; it is now {now}"));
+    let axe = json!({"changes": [{"kind": "attack", "id": "axe", "def": {"damage": 5.0}, "before": {"damage": 5.0}}]});
+    assert_eq!(text(&act(&mut app, "content_apply", axe)), "attack `axe` does not exist: leave `before` out for a new definition");
+    assert!(replay::save(app.world()).events.is_empty(), "refused calls are not recorded");
+
+    ok(&mut app, "step", json!({"ticks": 30}));
+    ok(&mut app, "content_apply", sword(Some(json!({"damage": 25, "windup": 0.15})))); // 25 is 25.0
+    assert_eq!(app.world().resource::<ContentDb>().get::<AttackDef>("sword").unwrap().damage, 30.0);
+    ok(&mut app, "step", json!({"ticks": 40}));
+    let recording = replay::save(app.world());
+    assert_eq!(recording.events.len(), 1);
+    let mut again = unloaded(&dir, false, |_| {});
+    replay::play(again.world_mut(), recording.clone()).unwrap();
+    load(&mut again);
+    ok(&mut again, "step", json!({"ticks": recording.end.tick}));
+    again.update();
+    let report = again.world().resource::<AiReplay>().report().cloned().unwrap();
+    assert!(report.identical(), "{report}");
+
+    // A reload compares definitions, not texts: the file never changed, the sword did.
+    let reload = ok(&mut app, "content_reload", json!({}));
+    assert_eq!(text(&reload), "content reloaded: combat/attacks.attack.ron (1 definition changed)");
+    assert_eq!(app.world().resource::<ContentDb>().get::<AttackDef>("sword").unwrap().damage, 25.0);
 }
 
 #[test]

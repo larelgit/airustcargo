@@ -185,6 +185,13 @@ impl ContentKinds {
         }
     }
 
+    /// `json` as kind `kind` writes it, so `25` and `25.0` compare equal; `None` when it
+    /// is not a definition of that kind.
+    pub(crate) fn normalize(&self, kind: &str, json: &Value) -> Option<Value> {
+        let info = self.get(kind)?;
+        (info.fns.from_json)(json).ok().and_then(|def| (info.fns.to_json)(&def).ok())
+    }
+
     /// The type registry prefabs (and other kinds that need reflection) validate with.
     pub fn set_type_registry(&mut self, registry: AppTypeRegistry) {
         self.registry = Some(registry);
