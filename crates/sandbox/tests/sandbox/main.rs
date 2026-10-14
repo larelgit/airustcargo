@@ -14,6 +14,7 @@ mod invariants;
 mod net;
 mod net_guards;
 mod net_lifecycle;
+mod net_predict;
 mod net_sync;
 mod net_seams;
 mod reference_replays;

@@ -7,7 +7,8 @@ use shards::ai_core::state::{StateEncoder, StateRule};
 use shards::ai_core::replay::ReplayEvent;
 use shards::ai_core::journal::JournalKind;
 use shards::ai_core::{sim, snapshot, AiIndex, AiJournal};
-use shards::net::{LinkConditions, NetClient, NetDesync, NetHost, NetState, Stand};
+use shards::core::NetPrediction;
+use shards::net::{LinkConditions, NetClient, NetCorrection, NetDesync, NetHost, NetState, Stand};
 use shards::prelude::*;
 use shards::serde_json::{json, Value};
 
@@ -646,6 +647,8 @@ fn a_three_minute_session_stays_in_sync() {
     let mut rng = DetRng::new(7);
     let ticks = 10_800u64;
     let mut done = 0;
+    // Per client: the sum of the windowed mean errors, the largest error, the samples.
+    let mut errors = [(0.0f64, 0.0f32, 0u32); 2];
     while done < ticks {
         for (i, member) in [C1, C2].into_iter().enumerate() {
             let call = match rng.below(6) {
@@ -668,6 +671,29 @@ fn a_three_minute_session_stays_in_sync() {
         let gap = 20 + rng.below(40) as u64;
         stand.run(gap);
         done += gap;
+        for (i, member) in [C1, C2].into_iter().enumerate() {
+            let (mean, max) = stand.world(member).resource::<NetCorrection>().error();
+            errors[i].0 += mean as f64;
+            errors[i].1 = errors[i].1.max(max);
+            errors[i].2 += 1;
+        }
+    }
+    for (i, member) in [C1, C2].into_iter().enumerate() {
+        let c = stand.world(member).resource::<NetCorrection>();
+        let p = stand.world(member).resource::<NetPrediction>();
+        println!(
+            "soak c{}: prediction error mean {:.4} m, max {:.3} m; compared {}, blends {}, snaps {} ({:?}); actions predicted {}, confirmed {}, mispredicted {}",
+            i + 1,
+            errors[i].0 / errors[i].2.max(1) as f64,
+            errors[i].1,
+            c.compared,
+            c.blends,
+            c.snaps,
+            c.last_snap,
+            p.predicted,
+            p.confirmed,
+            p.mispredicted
+        );
     }
     for member in [C1, C2] {
         assert!(connected(&stand, member), "{:?}", net_state(&stand, member));
