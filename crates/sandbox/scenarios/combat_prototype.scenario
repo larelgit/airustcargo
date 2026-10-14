@@ -1,0 +1,260 @@
+# The combat prototype: the player beats the Frost Warden with what a player has. The
+# agent `hero` plays with player scope, through the same controls a human has (light
+# combo, heavy attack, block and perfect block, dodge roll, flask); the scenario's own agent
+# only sets the arena up and advances time.
+#
+# The warden chooses its attacks at random (SimRng: they differ from one start tick to
+# another), so every round is played the same way whatever comes, the way a player reads
+# the fight:
+#
+#   wait for its warning   step --until "journal:e6 winds up"   (it lands 0.50 s later)
+#   defend                 dodge: rolls out of the zone (the ALERT line) · block · or a
+#                          guard raised 0.1 s before the hit (a perfect block: it staggers)
+#   punish its recovery    attack e6 (walk in, light combo through the cancel windows),
+#                          stop when the last hit lands, before its next warning
+#
+# Each light combo deals 72 (20 + 22 + 30), two hits 42, the heavy 55. Phase 2 (enraged:
+# shorter windups and rests) starts at half health, 300; from then on the agent punishes
+# with two hits.
+
+seed 42
+
+# --- the arena as the game spawns it, whatever was played in it before: the skeletons stand
+# aside, everyone finishes what they were doing, the warden back at its post
+act set id=e7 component=SkeletonBrain path=aggro value=0
+act set id=e8 component=SkeletonBrain path=aggro value=0
+act set id=e6 component=WardenBrain path=leash value=0
+# (a dead player is brought back first: its own controls refuse a dead body)
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god on=false
+step 150
+act heal id=e5
+act heal id=e6
+act set id=e5 component=Charges path=0[0].current value=3
+act set id=e6 component=Boss path=phase value=1
+act set id=e6 component=WardenBrain path=leash value=26
+act set id=e6 component=WardenBrain path=rest value=0.5
+act set id=e6 component=WardenBrain path=last_zone value=false
+act teleport id=e5 x=0 z=2 y=0
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e7 x=-18 z=18 y=0
+act teleport id=e8 x=18 z=18 y=0
+expect field e6 Health.current == 600
+expect shows e6 "phase 1"
+invariant field e5 Health.current > 0
+invariant !journal "rejected"
+
+session --agent hero --scope player
+act lock_on target=e6
+expect result contains "ok: locked on e6"
+session --agent scenario
+
+# --- round 1: it opens from afar with its shockwave; roll out of the line, combo
+mark
+step 600 --until "journal:e6 winds up"
+expect stopped "e6 winds up shockwave"
+session --agent hero
+act stop
+act dodge
+expect result contains "ok: roll"
+session --agent scenario
+step 90 --until shows:e6:recovery
+expect !journal "e6 -> e5"
+session --agent hero
+act attack target=e6 repeat=true
+session --agent scenario
+step 300 --until "journal:e5 -> e6 light_3"
+expect journal "e5 -> e6 light_1 -20"
+expect journal "e5 -> e6 light_2 -22"
+expect journal "e5 -> e6 light_3 -30 (hp 528)"
+session --agent hero
+act stop
+session --agent scenario
+
+# --- round 2: block it; the guard takes the hit for stamina and a quarter of the damage
+mark
+step 600 --until "journal:e6 winds up"
+session --agent hero
+act stop
+act block
+expect result contains "block"
+session --agent scenario
+step 60 --until "journal:e5 blocked e6"
+expect field e5 Stamina.current < 90
+session --agent hero
+act block on=false
+act attack target=e6 repeat=true
+session --agent scenario
+step 300 --until "journal:e5 -> e6 light_3"
+expect journal "e5 -> e6 light_3 -30 (hp 456)"
+session --agent hero
+act stop
+session --agent scenario
+
+# --- round 3: dodge, combo
+mark
+step 600 --until "journal:e6 winds up"
+session --agent hero
+act stop
+act dodge
+session --agent scenario
+step 90 --until shows:e6:recovery
+expect !journal "e6 -> e5"
+session --agent hero
+act attack target=e6 repeat=true
+session --agent scenario
+step 300 --until "journal:e5 -> e6 light_3"
+expect journal "(hp 384)"
+session --agent hero
+act stop
+session --agent scenario
+
+# --- round 4: a perfect block. The warning said it lands in 0.50 s (30 ticks): raise the
+# guard 0.07 s before; its first 0.15 s parry the hit and the warden staggers. Then the
+# heavy attack and a combo while it reels; half health on the way: phase 2.
+mark
+step 600 --until "journal:e6 winds up"
+session --agent hero
+act stop
+session --agent scenario
+step 25
+session --agent hero
+act block
+session --agent scenario
+step 30 --until "journal:e5 parried e6"
+expect journal "e6 staggered (parried)"
+expect !journal "e6 -> e5"
+session --agent hero
+act block on=false
+act attack target=e6 input=heavy
+expect result contains "with heavy"
+session --agent scenario
+step 120 --until "journal:e5 -> e6 heavy"
+expect journal "e5 -> e6 heavy -55 (hp 329)"
+session --agent hero
+act attack target=e6 repeat=true
+session --agent scenario
+step 300 --until "journal:e5 -> e6 light_3"
+expect journal "e6 phase 1->2"
+expect shows e6 "phase 2"
+expect field e6 Health.current == 257
+session --agent hero
+act stop
+session --agent scenario
+
+# --- round 5: trade with the heavy attack: hyper-armor holds through the warden's hit
+mark
+step 600 --until "journal:e6 winds up"
+session --agent hero
+act stop
+act heavy_attack
+expect result contains "ok: heavy"
+session --agent scenario
+step 90 --until "journal:e5 -> e6 heavy"
+expect journal "e6 -> e5"
+expect !journal "e5 staggered"
+expect field e6 Health.current == 202
+
+# --- round 6: hurt: roll out, and drink a flask while it recovers
+mark
+step 600 --until "journal:e6 winds up"
+session --agent hero
+act stop
+act dodge
+session --agent scenario
+step 90 --until shows:e6:recovery
+expect field e5 Health.current < 85
+session --agent hero
+act use_item item=flask
+expect result contains "ok: drink"
+session --agent scenario
+step 90 --until "journal:e5 healed"
+expect shows e5 "flask 2/3"
+
+# --- rounds 7-11: enraged; dodge and two hits, until it falls
+mark
+step 600 --until "journal:e6 winds up"
+session --agent hero
+act stop
+act dodge
+session --agent scenario
+step 90 --until shows:e6:recovery
+session --agent hero
+act attack target=e6 repeat=true
+session --agent scenario
+step 300 --until "journal:e5 -> e6 light_2"
+session --agent hero
+act stop
+session --agent scenario
+expect field e6 Health.current == 160
+
+mark
+step 600 --until "journal:e6 winds up"
+session --agent hero
+act stop
+act dodge
+session --agent scenario
+step 90 --until shows:e6:recovery
+session --agent hero
+act attack target=e6 repeat=true
+session --agent scenario
+step 300 --until "journal:e5 -> e6 light_2"
+session --agent hero
+act stop
+session --agent scenario
+expect field e6 Health.current == 118
+
+mark
+step 600 --until "journal:e6 winds up"
+session --agent hero
+act stop
+act dodge
+session --agent scenario
+step 90 --until shows:e6:recovery
+session --agent hero
+act attack target=e6 repeat=true
+session --agent scenario
+step 300 --until "journal:e5 -> e6 light_2"
+session --agent hero
+act stop
+session --agent scenario
+expect field e6 Health.current == 76
+
+mark
+step 600 --until "journal:e6 winds up"
+session --agent hero
+act stop
+act dodge
+session --agent scenario
+step 90 --until shows:e6:recovery
+session --agent hero
+act attack target=e6 repeat=true
+session --agent scenario
+step 300 --until "journal:e5 -> e6 light_2"
+session --agent hero
+act stop
+session --agent scenario
+expect field e6 Health.current == 34
+
+mark
+step 600 --until "journal:e6 winds up"
+session --agent hero
+act stop
+act dodge
+session --agent scenario
+step 90 --until shows:e6:recovery
+session --agent hero
+act attack target=e6 repeat=true
+session --agent scenario
+step 300 --until named:boss_dead
+expect stopped "boss_dead"
+expect journal "e6 died (killed by e5"
+
+# --- the fight is over: the warden lies where it fell, the player stands
+step 60
+expect shows e6 "dead"
+expect !journal "e5 died"
+expect field e5 Health.current > 0

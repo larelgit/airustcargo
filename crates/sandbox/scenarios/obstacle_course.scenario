@@ -1,0 +1,112 @@
+# The obstacle course (E2): stairs, a ledge, a pool, a ramp up to a cliff, and a gap only a
+# glide crosses, with an updraft half way, to the goal pad. The agent `runner` plays with
+# player scope: it plans with `path_to` and `clearance`, walks with `move_to`, climbs out of
+# the water with `jump`, and glides; the scenario's own agent only puts it at the start and
+# advances time. Landmarks: Stairs e9, Ledge e10, Pool e11, Cliff e12, Goal e13.
+
+seed 42
+
+# --- at the start of the course (x = 40, the end of the corridor), whatever came before
+act heal id=e5
+act stop
+act block on=false
+act glide on=false
+act sprint on=false
+act lock_on off=true
+act teleport id=e5 x=40 z=0 y=0
+step 2
+expect shows e9 "Stairs"
+invariant field e5 Health.current > 0
+# Never into the canyon (its floor is 10 m below the start).
+invariant field e5 Transform.translation.y > -1
+
+session --agent runner --scope player
+observe
+expect result contains "e9 Stairs 4.0m E"
+# The whole way to the cliff top, planned: stairs, a mantle, a swim, a mantle out, the ramp.
+act path_to target=e12
+expect result contains "(mantle 1.3m)"
+expect result contains "(swim)"
+# The ledge is straight ahead.
+act clearance
+expect result contains "E ledge"
+expect result contains "(+1.3m)"
+
+# --- 1. to the stairs, and up them onto the plateau at the foot of the ledge
+act move_to target=e9 within=0.5
+session --agent scenario
+step 300 --until near:e5:e9:0.6
+expect stopped "within"
+session --agent runner
+act move_to target=e10 within=0.6
+session --agent scenario
+step 300 --until near:e5:e10:0.7
+expect field e5 Transform.translation.y > 1.9
+expect !journal "climbs"
+
+# --- 2. the ledge: 1.3 m, more than a jump; walking into it climbs it
+session --agent runner
+act move_to target=e11 within=0.6
+session --agent scenario
+step 300 --until "journal:e5 climbs a"
+expect journal "e5 climbs a 1.3m ledge"
+step 300 --until near:e5:e11:0.7
+expect field e5 Transform.translation.y > 3.2
+
+# --- 3. the pool: in, across, and out with a jump at the far wall
+session --agent runner
+act clearance
+expect result contains "E water"
+# Swim to just short of the far wall (it is at x = 66; the body is 0.4 m wide).
+act move_to target='{"x": 65.5, "z": 0}' within=0.1
+session --agent scenario
+step 300 --until "journal:→ water"
+expect journal "e5 air → water"
+step 600 --until field:e5:Transform.translation.x>65.35
+expect shows e5 "water"
+session --agent runner
+act jump
+expect result contains "jumping out of the water onto the ledge"
+session --agent scenario
+step 120 --until "journal:e5 climbs a"
+expect journal "e5 water → climbing"
+step 60
+expect field e5 Transform.translation.y > 3.2
+expect field e5 Transform.translation.x > 66
+
+# --- 4. up the ramp to the cliff edge (planned again from here)
+session --agent runner
+act move_to target=e12 path=true
+expect result contains "ok: following path"
+session --agent scenario
+step 900 --until near:e5:e12:1.6
+expect stopped "within"
+expect field e5 Transform.translation.y > 7.9
+session --agent runner
+act clearance
+expect result contains "E cliff"
+expect result contains "(drop 18.0m)"
+
+# --- 5. the gap: arm the glide, head for the goal and jump off; the updraft lifts the
+# glider (`glide ↑`), and it comes down on the goal's rock
+act glide
+expect result contains "glide armed"
+act move_to target=e13
+act jump
+session --agent scenario
+step 120 --until "journal:e5 air → glide"
+expect journal "e5 air → glide"
+step 300 --until "shows:e5:glide ↑"
+expect stopped "glide ↑"
+step 600 --until "journal:e5 glide → ground"
+expect field e5 Transform.translation.y > 5.9
+expect field e5 Transform.translation.x > 118
+
+# --- 6. onto the pad's middle
+session --agent runner
+act move_to target=e13 within=0.5
+session --agent scenario
+step 300 --until near:e5:e13:0.6
+expect journal "e5 reached goal"
+expect journal "entered trigger \"goal\" e13"
+expect !journal "e5 died"

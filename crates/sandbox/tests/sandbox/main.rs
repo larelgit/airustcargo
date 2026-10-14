@@ -7,6 +7,7 @@ mod actions;
 mod common;
 mod content;
 mod course;
+mod reference_replays;
 mod replays;
 mod scenario_files;
 mod scenarios;

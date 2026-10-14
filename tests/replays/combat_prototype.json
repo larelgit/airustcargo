@@ -1,0 +1,1740 @@
+{
+  "format": "shards-replay/2",
+  "seed": 42,
+  "tick_hz": 59.99999880000003,
+  "end": {
+    "tick": 2325,
+    "hash": "a95369420f8b61e1"
+  },
+  "events": [
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "SkeletonBrain",
+          "id": "e7",
+          "path": "aggro",
+          "value": 0
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "SkeletonBrain",
+          "id": "e8",
+          "path": "aggro",
+          "value": 0
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "WardenBrain",
+          "id": "e6",
+          "path": "leash",
+          "value": 0
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "heal",
+        "args": {
+          "id": "e5"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "block",
+        "args": {
+          "on": false
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "lock_on",
+        "args": {
+          "off": true
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 0,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "god",
+        "args": {
+          "on": false
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 7,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 8,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 6,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 150,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "heal",
+        "args": {
+          "id": "e5"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 150,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "heal",
+        "args": {
+          "id": "e6"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 150,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "Charges",
+          "id": "e5",
+          "path": "0[0].current",
+          "value": 3
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 150,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "Boss",
+          "id": "e6",
+          "path": "phase",
+          "value": 1
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 150,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "WardenBrain",
+          "id": "e6",
+          "path": "leash",
+          "value": 26
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 150,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "WardenBrain",
+          "id": "e6",
+          "path": "rest",
+          "value": 0.5
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 150,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "WardenBrain",
+          "id": "e6",
+          "path": "last_zone",
+          "value": false
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 150,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "teleport",
+        "args": {
+          "id": "e5",
+          "x": 0,
+          "y": 0,
+          "z": 2
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 150,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "teleport",
+        "args": {
+          "id": "e6",
+          "x": 0,
+          "y": 0,
+          "z": -6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 150,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "teleport",
+        "args": {
+          "id": "e7",
+          "x": -18,
+          "y": 0,
+          "z": 18
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 150,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "teleport",
+        "args": {
+          "id": "e8",
+          "x": 18,
+          "y": 0,
+          "z": 18
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 150,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "lock_on",
+        "args": {
+          "target": "e6"
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 150,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 197,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "call": {
+        "at": 197,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "dodge",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 197,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [
+            {
+              "dir": [
+                -1.0,
+                0.0,
+                -1.4955021665485901e-9
+              ],
+              "input": "dodge"
+            }
+          ],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 242,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "attack",
+        "args": {
+          "repeat": true,
+          "target": "e6"
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 242,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [
+            {
+              "Attack": {
+                "input": "light",
+                "repeat": true,
+                "target": 6
+              }
+            }
+          ],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 355,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 355,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 402,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "call": {
+        "at": 402,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "block",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 402,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [
+            "block"
+          ],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 432,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "block",
+        "args": {
+          "on": false
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 432,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "attack",
+        "args": {
+          "repeat": true,
+          "target": "e6"
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 432,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [
+            {
+              "Attack": {
+                "input": "light",
+                "repeat": true,
+                "target": 6
+              }
+            }
+          ],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 498,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 498,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 594,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "call": {
+        "at": 594,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "dodge",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 594,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [
+            {
+              "dir": [
+                -0.14272800087928772,
+                0.0,
+                -0.989762008190155
+              ],
+              "input": "dodge"
+            }
+          ],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 633,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "attack",
+        "args": {
+          "repeat": true,
+          "target": "e6"
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 633,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [
+            {
+              "Attack": {
+                "input": "light",
+                "repeat": true,
+                "target": 6
+              }
+            }
+          ],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 695,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 695,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 901,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "call": {
+        "at": 926,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "block",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 926,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [
+            "block"
+          ],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 931,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "block",
+        "args": {
+          "on": false
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 931,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "attack",
+        "args": {
+          "input": "heavy",
+          "target": "e6"
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 931,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [
+            {
+              "Attack": {
+                "input": "heavy",
+                "repeat": false,
+                "target": 6
+              }
+            }
+          ],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 986,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "attack",
+        "args": {
+          "repeat": true,
+          "target": "e6"
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 986,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": [
+            -0.018784161657094955,
+            0.01999937742948532,
+            -4.262834072113037
+          ],
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [
+            {
+              "Attack": {
+                "input": "light",
+                "repeat": true,
+                "target": 6
+              }
+            }
+          ],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1061,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 1061,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1115,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "call": {
+        "at": 1115,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "heavy_attack",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 1115,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [
+            {
+              "dir": null,
+              "input": "heavy"
+            }
+          ],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1321,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "call": {
+        "at": 1321,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "dodge",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 1321,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [
+            {
+              "dir": [
+                -0.3985327482223511,
+                0.0,
+                -0.9171541929244995
+              ],
+              "input": "dodge"
+            }
+          ],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1360,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "use_item",
+        "args": {
+          "item": "flask"
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 1360,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [
+            {
+              "dir": null,
+              "input": "use_item.flask"
+            }
+          ],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1489,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "call": {
+        "at": 1489,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "dodge",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 1489,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [
+            {
+              "dir": [
+                -0.39853227138519287,
+                0.0,
+                -0.9171543121337891
+              ],
+              "input": "dodge"
+            }
+          ],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1527,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "attack",
+        "args": {
+          "repeat": true,
+          "target": "e6"
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 1527,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [
+            {
+              "Attack": {
+                "input": "light",
+                "repeat": true,
+                "target": 6
+              }
+            }
+          ],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1600,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 1600,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1647,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "call": {
+        "at": 1647,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "dodge",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 1647,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [
+            {
+              "dir": [
+                -0.39853182435035706,
+                0.0,
+                -0.9171544909477234
+              ],
+              "input": "dodge"
+            }
+          ],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1685,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "attack",
+        "args": {
+          "repeat": true,
+          "target": "e6"
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 1685,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [
+            {
+              "Attack": {
+                "input": "light",
+                "repeat": true,
+                "target": 6
+              }
+            }
+          ],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1749,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 1749,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1819,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "call": {
+        "at": 1819,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "dodge",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 1819,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [
+            {
+              "dir": [
+                -0.39853134751319885,
+                0.0,
+                -0.9171546697616577
+              ],
+              "input": "dodge"
+            }
+          ],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1858,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "attack",
+        "args": {
+          "repeat": true,
+          "target": "e6"
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 1858,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [
+            {
+              "Attack": {
+                "input": "light",
+                "repeat": true,
+                "target": 6
+              }
+            }
+          ],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1930,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 1930,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1991,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "call": {
+        "at": 1991,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "dodge",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 1991,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [
+            {
+              "dir": [
+                -0.3985307216644287,
+                0.0,
+                -0.9171549081802368
+              ],
+              "input": "dodge"
+            }
+          ],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 2029,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "attack",
+        "args": {
+          "repeat": true,
+          "target": "e6"
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 2029,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [
+            {
+              "Attack": {
+                "input": "light",
+                "repeat": true,
+                "target": 6
+              }
+            }
+          ],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 2095,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 2095,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 2155,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "stop",
+        "args": {}
+      }
+    },
+    {
+      "call": {
+        "at": 2155,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "dodge",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 2155,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [
+            {
+              "dir": [
+                -0.39853009581565857,
+                0.0,
+                -0.9171552062034607
+              ],
+              "input": "dodge"
+            }
+          ],
+          "target": 6
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 2194,
+        "agent": "hero",
+        "scope": "player",
+        "subject": 5,
+        "tool": "attack",
+        "args": {
+          "repeat": true,
+          "target": "e6"
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 2194,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [
+            {
+              "Attack": {
+                "input": "light",
+                "repeat": true,
+                "target": 6
+              }
+            }
+          ],
+          "pressed": [],
+          "target": 6
+        }
+      }
+    }
+  ],
+  "checks": [
+    {
+      "tick": 60,
+      "hash": "7452f4da650d4d09"
+    },
+    {
+      "tick": 120,
+      "hash": "db12fb2cf1fafc35"
+    },
+    {
+      "tick": 180,
+      "hash": "2e748758bccd88bc"
+    },
+    {
+      "tick": 240,
+      "hash": "aa399b80dda42a67"
+    },
+    {
+      "tick": 300,
+      "hash": "0e8ad808ebf5aeb6"
+    },
+    {
+      "tick": 360,
+      "hash": "4082543e232da15e"
+    },
+    {
+      "tick": 420,
+      "hash": "65e5dae3b41d7966"
+    },
+    {
+      "tick": 480,
+      "hash": "677ab58c1fe4e964"
+    },
+    {
+      "tick": 540,
+      "hash": "057bfd98db95e640"
+    },
+    {
+      "tick": 600,
+      "hash": "8f13ffea1f57a82d"
+    },
+    {
+      "tick": 660,
+      "hash": "cee37928e88057ec"
+    },
+    {
+      "tick": 720,
+      "hash": "0a3dbdd7a6969b1f"
+    },
+    {
+      "tick": 780,
+      "hash": "a64f3337906996f2"
+    },
+    {
+      "tick": 840,
+      "hash": "3956c3157ac47580"
+    },
+    {
+      "tick": 900,
+      "hash": "7dbd2eba030efd9e"
+    },
+    {
+      "tick": 960,
+      "hash": "c498278e458d4279"
+    },
+    {
+      "tick": 1020,
+      "hash": "11b77b27f0f46448"
+    },
+    {
+      "tick": 1080,
+      "hash": "e7fc254f4776dd53"
+    },
+    {
+      "tick": 1140,
+      "hash": "b728546d6639c366"
+    },
+    {
+      "tick": 1200,
+      "hash": "644bcdbda29be7dc"
+    },
+    {
+      "tick": 1260,
+      "hash": "c30c339a016e3914"
+    },
+    {
+      "tick": 1320,
+      "hash": "5b9b1372a928436e"
+    },
+    {
+      "tick": 1380,
+      "hash": "039d423eef9b9da5"
+    },
+    {
+      "tick": 1440,
+      "hash": "3c4a9d3db37fa217"
+    },
+    {
+      "tick": 1500,
+      "hash": "3ba62c2b5286df0b"
+    },
+    {
+      "tick": 1560,
+      "hash": "f12735bdc3e2e24c"
+    },
+    {
+      "tick": 1620,
+      "hash": "9ca618ac4bc7554d"
+    },
+    {
+      "tick": 1680,
+      "hash": "f9f0c1782231467e"
+    },
+    {
+      "tick": 1740,
+      "hash": "f708f0a20043995c"
+    },
+    {
+      "tick": 1800,
+      "hash": "b93f0b840f7a7933"
+    },
+    {
+      "tick": 1860,
+      "hash": "40bed7ab5170a594"
+    },
+    {
+      "tick": 1920,
+      "hash": "d6696a9eeefbfa4e"
+    },
+    {
+      "tick": 1980,
+      "hash": "ed586e7dcbc2d0ac"
+    },
+    {
+      "tick": 2040,
+      "hash": "cb20a245faa0f8d8"
+    },
+    {
+      "tick": 2100,
+      "hash": "fdb81f86b81e0b85"
+    },
+    {
+      "tick": 2160,
+      "hash": "fa236fbef7c3b5bb"
+    },
+    {
+      "tick": 2220,
+      "hash": "fb5e989177e0ed82"
+    },
+    {
+      "tick": 2280,
+      "hash": "30ed014c850b1df4"
+    }
+  ]
+}
