@@ -1,8 +1,9 @@
 //! # shards — the Shards engine as one dependency
 //!
 //! A game depends on this crate alone and gets a deterministic fixed-tick core with
-//! the AI layer ([`ai_core`]), engine states and the loading gate ([`core`]), and the
-//! content database ([`content`]); Bevy and serde come re-exported.
+//! the AI layer ([`ai_core`]), engine states and the loading gate ([`core`]), the
+//! content database ([`content`]), and physics, the character controller, input and
+//! camera ([`motion`]); Bevy and serde come re-exported.
 //!
 //! ```ignore
 //! use shards::prelude::*;
@@ -43,6 +44,7 @@ pub use serde;
 pub use serde_json;
 pub use shards_content as content;
 pub use shards_core as core;
+pub use shards_motion as motion;
 
 pub use plugins::EnginePlugins;
 pub use run::run;
@@ -56,6 +58,7 @@ pub mod prelude {
     pub use serde::{Deserialize, Serialize};
     pub use shards_content::prelude::*;
     pub use shards_core::prelude::*;
+    pub use shards_motion::prelude::*;
 
     pub use crate::EnginePlugins;
 

@@ -29,6 +29,7 @@ fn headless_is_the_same_plugins_minus_display() {
     let headless = EnginePlugins::new(EngineConfig { headless: true, ..default() }).build();
     for group in [&windowed, &headless] {
         assert!(group.enabled::<AiCorePlugin>() && group.enabled::<CorePlugin>() && group.enabled::<ContentPlugin>());
+        assert!(group.enabled::<shards::motion::MotionPlugin>());
         assert!(group.enabled::<TransformPlugin>() && group.enabled::<AssetPlugin>() && group.enabled::<bevy::state::app::StatesPlugin>());
     }
     assert!(headless.enabled::<ScheduleRunnerPlugin>() && !windowed.contains::<ScheduleRunnerPlugin>());
@@ -52,7 +53,7 @@ fn a_test_app_comes_back_loaded_and_paused_at_tick_zero() {
     let seen = ok(&mut app, "observe", json!({}));
     assert!(seen.result.as_str().unwrap().contains("e1 Totem"), "{}", seen.result);
     let modules: Vec<String> = app.world().resource::<EngineModules>().iter().map(|m| m.name.clone()).collect();
-    assert_eq!(modules, ["core", "content"]);
+    assert_eq!(modules, ["core", "content", "motion"]);
     // This crate has no assets folder: no content, and the journal says where it looked.
     let warned = app.world().resource::<AiJournal>().after(0).0.any(|e| e.kind == JournalKind::Warn && e.text.contains("no content folder"));
     assert!(warned);

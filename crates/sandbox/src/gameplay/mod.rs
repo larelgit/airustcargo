@@ -8,6 +8,7 @@ pub mod combat;
 pub mod intent;
 
 use shards::core::{flat, CoreSystems, Intent};
+use shards::motion::{ControllerSystems, MotionSystems};
 use shards::prelude::*;
 
 use brains::{BossBrain, SkeletonBrain};
@@ -48,8 +49,10 @@ impl Plugin for GameplayPlugin {
             (
                 intent::attack_orders.in_set(SimSet::Input).after(CoreSystems::FollowOrders),
                 (brains::skeleton_brains, brains::boss_brains).chain().in_set(SimSet::Think),
-                (combat::start_actions, combat::tick_actions).chain().in_set(SimSet::Act),
-                movement.in_set(SimSet::Move),
+                // Until the sandbox moves onto the engine's motion module, its actions and
+                // movement just keep clear of the engine's own systems (which skip its bodies).
+                (combat::start_actions, combat::tick_actions).chain().in_set(SimSet::Act).after(MotionSystems::Intent),
+                movement.in_set(SimSet::Move).after(ControllerSystems::Move),
                 (combat::apply_hits, combat::boss_phases, combat::regen_stamina).chain().in_set(SimSet::Resolve),
                 combat::remove_corpses.in_set(SimSet::Cleanup),
             ),

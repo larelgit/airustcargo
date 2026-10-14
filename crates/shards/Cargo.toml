@@ -11,6 +11,7 @@ default = ["render", "remote", "hot_reload"]
 # Window, 3D rendering, UI, keyboard and mouse. Without it a game only runs headless.
 render = [
     "ai_core/render",
+    "shards_motion/render",
     "bevy/3d_bevy_render",
     "bevy/ui_bevy_render",
     "bevy/bevy_winit",
@@ -25,7 +26,7 @@ remote = ["ai_core/remote"]
 hot_reload = ["shards_content/hot_reload"]
 # Need system packages: libasound2-dev / libudev-dev / libwayland-dev libxkbcommon-dev.
 audio = ["bevy/audio"]
-gamepad = ["bevy/bevy_gilrs"]
+gamepad = ["bevy/bevy_gilrs", "shards_motion/gamepad"]
 wayland = ["bevy/wayland"]
 # Faster incremental builds (`--features dynamic`).
 dynamic = ["bevy/dynamic_linking"]
@@ -34,7 +35,8 @@ dynamic = ["bevy/dynamic_linking"]
 ai_core.workspace = true
 shards_core.workspace = true
 shards_content.workspace = true
-bevy = { workspace = true, features = ["default_app", "std", "multi_threaded", "serialize"] }
+shards_motion.workspace = true
+bevy ={ workspace = true, features = ["default_app", "std", "multi_threaded", "serialize"] }
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true

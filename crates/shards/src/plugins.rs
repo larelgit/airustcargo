@@ -8,10 +8,11 @@ use bevy::prelude::*;
 use bevy::window::ExitCondition;
 use shards_content::ContentPlugin;
 use shards_core::{CorePlugin, EngineConfig};
+use shards_motion::MotionPlugin;
 
 /// Bevy's `DefaultPlugins` (whatever the cargo features compile in), the log capture
-/// that feeds `warn!`/`error!` into the journal, the AI layer, the engine core and
-/// content, all configured from one [`EngineConfig`].
+/// that feeds `warn!`/`error!` into the journal, the AI layer, the engine core, content
+/// and motion (physics, characters, input, camera), all configured from one [`EngineConfig`].
 ///
 /// One plugin set for both modes: headless is the same plugins minus window, GPU and
 /// audio (`WindowPlugin` without a window, no winit, `RenderPlugin` without a backend so
@@ -55,7 +56,7 @@ impl PluginGroup for EnginePlugins {
         };
         group = if headless { without_display(group, config.testing) } else { with_window(group, &config) };
         // The engine's modules, in dependency order. A new module is one more line.
-        group.add(config.ai_core_plugin()).add(CorePlugin { config: config.clone() }).add(ContentPlugin)
+        group.add(config.ai_core_plugin()).add(CorePlugin { config: config.clone() }).add(ContentPlugin).add(MotionPlugin)
     }
 }
 
