@@ -76,9 +76,7 @@ impl<'a> Terrain<'a> {
             return Probe::Blocked(Block::Wall);
         }
         let (floor, normal) = (hit.point.y, hit.normal);
-        if normal.y < self.min_ground_y {
-            return Probe::Blocked(Block::Steep(normal.y.clamp(-1.0, 1.0).acos().to_degrees()));
-        }
+        // Deep water first: a swimmer does not care how steep the bottom is.
         if let Some(surface) = self.water_at(x, floor, z)
             && surface - floor > p.swim_depth
         {
@@ -87,6 +85,9 @@ impl<'a> Terrain<'a> {
             } else {
                 Probe::Water { surface }
             };
+        }
+        if normal.y < self.min_ground_y {
+            return Probe::Blocked(Block::Steep(normal.y.clamp(-1.0, 1.0).acos().to_degrees()));
         }
         if self.cramped(x, z, floor, normal.y, p.step_height) {
             Probe::Blocked(Block::Tight)

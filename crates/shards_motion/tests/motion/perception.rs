@@ -220,6 +220,48 @@ fn a_ledge_in_the_way_is_a_mantle_in_the_path() {
     assert!(plan.legs.iter().any(|l| l.kind == StepKind::Drop), "{}", plan.summary());
 }
 
+/// Ground, a 16.7° ramp up 3 m over 10 m, and a platform on top.
+fn ramp_course(world: &mut World) {
+    block(world, Vec3::new(-30.0, -1.0, -6.0), Vec3::new(0.0, 0.0, 6.0));
+    let angle = 0.3f32.atan();
+    let normal = Vec3::new(-angle.sin(), angle.cos(), 0.0);
+    let middle = Vec3::new(5.0, 1.5, 0.0) - normal * 0.25;
+    turned_block(world, middle, Vec3::new(5.22, 0.25, 6.0), Quat::from_rotation_z(angle));
+    block(world, Vec3::new(10.0, -1.0, -6.0), Vec3::new(30.0, 3.0, 6.0));
+}
+
+#[test]
+fn a_ramp_is_walked_not_climbed() {
+    let mut app = bare_engine("ramp");
+    ramp_course(app.world_mut());
+    let e = player(app.world_mut(), Vec3::new(-5.0, 0.0, 0.0));
+    app.update();
+    let plan = plan_path(physics(&app), &params(), &request(Vec3::new(-5.0, 0.0, 0.0), Vec3::new(18.0, 3.0, 0.0))).unwrap();
+    assert!(plan.legs.iter().all(|l| l.kind == StepKind::Walk), "a slope under the limit is ground: {}", plan.summary());
+    assert!(plan.length > 22.9 && plan.length < 25.0, "{}", plan.summary());
+
+    ok(&mut app, "move_to", json!({"target": {"x": 18, "z": 0}, "path": true}));
+    walk_until_there(&mut app, e, Vec3::new(18.0, 3.0, 0.0), 0.6, 1200);
+    assert!((feet(&app, e).y - 3.0).abs() < 0.1, "up on the platform: {}", feet(&app, e));
+    assert!(seen(&app).mantled.is_empty() && seen(&app).jumped.is_empty());
+}
+
+#[test]
+fn deep_water_over_a_steep_bottom_still_swims() {
+    let mut app = app();
+    // A pool whose floor is a 60° ramp: no ground to walk on, 3 m of water at the deep end.
+    block(app.world_mut(), Vec3::new(-20.0, -10.0, -10.0), Vec3::new(0.0, 0.0, 10.0));
+    let angle = 60f32.to_radians();
+    turned_block(app.world_mut(), Vec3::new(2.5, -2.0, 0.0), Vec3::new(3.0, 0.2, 10.0), Quat::from_rotation_z(-angle));
+    volume(app.world_mut(), Vec3::new(0.0, -6.0, -10.0), Vec3::new(10.0, 0.0, 10.0), VolumeKind::Water);
+    settle(&mut app);
+    let params = CharacterParams::default();
+    let terrain = shards_motion::perception::Terrain::new(physics(&app), &params, None);
+    // Over the ramp where the water is deeper than a character can stand in.
+    let probed = terrain.probe(4.0, 0.0, 0.0);
+    assert!(matches!(probed, shards_motion::perception::Probe::Water { .. }), "{probed:?}");
+}
+
 #[test]
 fn the_path_over_a_pool_swims() {
     let mut app = app();
