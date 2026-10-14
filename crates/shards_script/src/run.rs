@@ -372,12 +372,18 @@ struct Mark {
 
 struct Run<'d, D: ?Sized> {
     driver: &'d mut D,
-    agent: String,
+    /// The agent that runs the commands on each member (`session --agent` changes it for the
+    /// members it names): sessions are per member, so is the name.
+    agents: BTreeMap<String, String>,
     seed: Option<u64>,
     /// Tick after the newest call on the host.
     tick: u64,
-    last_result: Option<String>,
-    last_step: Option<StepEnd>,
+    /// The last result of a command on each member, and the member that ran the last command.
+    results: BTreeMap<String, String>,
+    last_member: String,
+    /// The last `step` called on each member, and the member that called the last one.
+    steps: BTreeMap<String, StepEnd>,
+    last_stepper: Option<String>,
     /// Journal expectations of a member look at entries after its sequence number here.
     marks: BTreeMap<String, Mark>,
     invariants: Vec<Invariant>,
@@ -391,11 +397,13 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
     fn new(driver: &'d mut D, stand: Option<StandHeader>) -> Self {
         Self {
             driver,
-            agent: DEFAULT_AGENT.to_owned(),
+            agents: BTreeMap::new(),
             seed: None,
             tick: 0,
-            last_result: None,
-            last_step: None,
+            results: BTreeMap::new(),
+            last_member: HOST.to_owned(),
+            steps: BTreeMap::new(),
+            last_stepper: None,
             marks: BTreeMap::new(),
             invariants: Vec::new(),
             members: vec![HOST.to_owned()],
@@ -433,6 +441,7 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
         for member in self.members.clone() {
             let seq = if member == HOST { status.journal_seq } else { self.driver.status_on(&member).map_err(Fail::lost)?.journal_seq };
             self.marks.insert(member.clone(), Mark { seq, line: None });
+            self.agents.insert(member.clone(), DEFAULT_AGENT.to_owned());
             for agent in [DEFAULT_AGENT, CHECK_AGENT] {
                 let out = self.driver.session_on(&member, agent, &default).map_err(Fail::lost)?;
                 if !out.ok {
@@ -447,6 +456,11 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
     /// single game.
     fn at(&self, member: &str) -> String {
         if self.stand.is_some() { format!(" on {member}") } else { String::new() }
+    }
+
+    /// The agent that runs the commands on `member`.
+    fn agent_of(&self, member: &str) -> String {
+        self.agents.get(member).cloned().unwrap_or_else(|| DEFAULT_AGENT.to_owned())
     }
 
     fn execute(&mut self, line: &ScriptLine) -> Result<String, Fail> {
@@ -467,7 +481,8 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                     if !may_fail {
                         step.cut_short()?;
                     }
-                    self.last_step = Some(step);
+                    self.steps.insert(peer.to_owned(), step);
+                    self.last_stepper = Some(peer.to_owned());
                 }
                 let detail = match (out.ok, may_fail) {
                     (true, _) => out.summary(),
@@ -488,7 +503,8 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                 }
                 let step = StepEnd::parse(&text);
                 step.cut_short()?;
-                self.last_step = Some(step);
+                self.steps.insert(peer.to_owned(), step);
+                self.last_stepper = Some(peer.to_owned());
                 self.check_invariants()?;
                 Ok(out.summary())
             }
@@ -517,25 +533,26 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                 })
             }
             Command::Session { agent, config } => {
-                let name = agent.clone().unwrap_or_else(|| self.agent.clone());
                 // Without a member, the agent is set up on every member, so the following
-                // commands act as the same agent wherever they run.
+                // commands act as the same agent wherever they run; with one, only that
+                // member's agent changes (its session is the only one that was set up).
                 let targets: Vec<String> = match &line.peer {
                     Some(peer) => vec![peer.clone()],
                     None => self.members.clone(),
                 };
                 let mut last = None;
                 for member in &targets {
+                    let name = agent.clone().unwrap_or_else(|| self.agent_of(member));
                     let out = self.driver.session_on(member, &name, config).map_err(Fail::lost)?;
                     if !out.ok {
                         return Err(Fail::check(format!("session {name}{}: {}", self.at(member), out.text())));
                     }
-                    last = Some(out);
+                    self.agents.insert(member.clone(), name.clone());
+                    last = Some((name, out));
                 }
-                let out = last.expect("a scenario has at least the host");
-                self.agent = name;
+                let (name, out) = last.expect("a scenario has at least the host");
                 let word = |key: &str| out.result.get(key).and_then(Value::as_str).map(str::to_owned);
-                let mut detail = format!("acting as {}", self.agent);
+                let mut detail = format!("acting as {name}");
                 if let Some(scope) = word("scope") {
                     detail.push_str(&format!(", {scope} scope"));
                 }
@@ -547,7 +564,7 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                 }
                 Ok(detail)
             }
-            Command::Expect(expect) => self.eval(expect, peer),
+            Command::Expect(expect) => self.eval(expect, peer, line.peer.as_deref()),
             Command::Invariant(expect) => {
                 self.invariants.push(Invariant { line: line.number, expect: expect.clone(), peer: line.peer.clone() });
                 let on = match &line.peer {
@@ -560,16 +577,17 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
         }
     }
 
-    /// Calls a tool on member `peer` as the current agent; remembers the host's tick and the
-    /// result text.
+    /// Calls a tool on member `peer` as its acting agent; remembers the host's tick and the
+    /// member's result text.
     fn call(&mut self, peer: &str, tool: &str, args: Value) -> Result<(Outcome, String), Fail> {
-        let agent = self.agent.clone();
+        let agent = self.agent_of(peer);
         let out = self.driver.call_on(peer, &agent, tool, args).map_err(Fail::lost)?;
         if let Some(tick) = out.tick.filter(|_| peer == HOST) {
             self.tick = tick;
         }
         let text = out.text();
-        self.last_result = Some(text.clone());
+        self.results.insert(peer.to_owned(), text.clone());
+        self.last_member = peer.to_owned();
         Ok((out, text))
     }
 
@@ -577,12 +595,12 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
         for index in 0..self.invariants.len() {
             let (line, expect, peer) =
                 (self.invariants[index].line, self.invariants[index].expect.clone(), self.invariants[index].peer.clone());
-            let members = match peer {
-                Some(peer) => vec![peer],
+            let members = match &peer {
+                Some(peer) => vec![peer.clone()],
                 None => self.members.clone(),
             };
             for member in members {
-                if let Err(fail) = self.eval(&expect, &member) {
+                if let Err(fail) = self.eval(&expect, &member, peer.as_deref()) {
                     let on = self.at(&member);
                     return Err(match fail.kind {
                         FailureKind::Scenario => Fail::check(format!("invariant `{expect}` (line {line}) broke{on}: {}", fail.message)),
@@ -594,32 +612,50 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
         Ok(())
     }
 
-    /// Checks one expectation. `Ok` carries what was found, for the log.
-    fn eval(&mut self, expect: &Expect, member: &str) -> Result<String, Fail> {
+    /// Checks one expectation on `member`. `Ok` carries what was found, for the log. `view` is the
+    /// member a `@peer` prefix named: `result` and `stopped` look at the last command, or step,
+    /// on it (without one, at the last command, or step, wherever it ran).
+    fn eval(&mut self, expect: &Expect, member: &str, view: Option<&str>) -> Result<String, Fail> {
         let place = self.at(member);
         match expect {
             Expect::Result { text, negate } => {
-                let Some(result) = &self.last_result else {
-                    return Err(Fail::check("there is no result to look at yet; run act, step or observe first"));
+                let seen = view.map_or_else(|| self.last_member.clone(), str::to_owned);
+                let there = self.at(&seen);
+                let Some(result) = self.results.get(&seen) else {
+                    return Err(Fail::check(if self.stand.is_some() {
+                        format!("no command has run on {seen} yet, so there is no result to look at; run act, step or observe there first")
+                    } else {
+                        "there is no result to look at yet; run act, step or observe first".to_owned()
+                    }));
                 };
                 match (result.contains(text.as_str()), negate) {
-                    (true, false) => Ok(format!("result contains {text:?}")),
-                    (false, true) => Ok(format!("result lacks {text:?}")),
-                    (false, false) => {
-                        Err(Fail::check(format!("the result does not contain {text:?} (exact case); it is: {}", clip(result, 300))))
+                    (true, false) => Ok(format!("result{there} contains {text:?}")),
+                    (false, true) => Ok(format!("result{there} lacks {text:?}")),
+                    (false, false) => Err(Fail::check(format!(
+                        "the result{there} does not contain {text:?} (exact case); it is: {}",
+                        clip(result, 300)
+                    ))),
+                    (true, true) => {
+                        Err(Fail::check(format!("the result{there} contains {text:?}, which it should not: {}", clip(result, 300))))
                     }
-                    (true, true) => Err(Fail::check(format!("the result contains {text:?}, which it should not: {}", clip(result, 300)))),
                 }
             }
             Expect::Stopped(text) => {
-                let Some(step) = &self.last_step else {
-                    return Err(Fail::check("no `step` has run yet, so nothing can have stopped"));
+                let seen = view.map(str::to_owned).or_else(|| self.last_stepper.clone());
+                let there = seen.as_deref().map_or_else(String::new, |m| self.at(m));
+                let Some(step) = seen.as_ref().and_then(|m| self.steps.get(m)) else {
+                    return Err(Fail::check(match (&seen, view) {
+                        (Some(member), Some(_)) if self.stand.is_some() => {
+                            format!("no `step` has run on {member} yet, so nothing can have stopped there")
+                        }
+                        _ => "no `step` has run yet, so nothing can have stopped".to_owned(),
+                    }));
                 };
                 match &step.stopped {
                     Some(why) if contains_ci(why, text) => Ok(why.clone()),
-                    Some(why) => Err(Fail::check(format!("the last step stopped on `{why}`, which does not contain {text:?}"))),
+                    Some(why) => Err(Fail::check(format!("the last step{there} stopped on `{why}`, which does not contain {text:?}"))),
                     None => Err(Fail::check(format!(
-                        "the last step ran to completion ({}); no condition stopped it, so {text:?} never happened",
+                        "the last step{there} ran to completion ({}); no condition stopped it, so {text:?} never happened",
                         step.ran
                     ))),
                 }
@@ -1300,6 +1336,57 @@ expect result contains "YOU e5"
         assert!(stand.members["c2"].sessions.iter().all(|(_, c)| c.player.is_none()));
         let who: Vec<(&str, &str)> = stand.calls.iter().map(|(m, a, _)| (m.as_str(), a.as_str())).collect();
         assert_eq!(who, [("c1", "bot"), ("host", "bot")]);
+    }
+
+    /// `@c1 expect result` is c1's answer, whatever ran on the other members since; so is `stopped`.
+    #[test]
+    fn expect_result_and_stopped_look_at_the_member_they_name() {
+        // c1's attack answered, then c2's hurt: c1's answer is still c1's.
+        let (report, _) = run_stand(&format!(
+            "{STAND}@c1 act attack\n@c2 act hurt amount=5\n@c1 expect result contains \"ok: attacking\"\n@c2 expect result contains \"hp 95\"\n\
+             @c1 expect result !contains \"hp\"\n@c2 expect result !contains \"attacking\"\nexpect result contains \"hp 95\"\n"
+        ));
+        assert!(report.passed, "{report}");
+        // Without a member: the last command wherever it ran (c2's), as documented.
+        let f = failure_on_stand(&format!("{STAND}@c1 act attack\n@c2 act hurt amount=5\nexpect result contains \"attacking\""));
+        assert!(f.message.starts_with("the result on c2 does not contain \"attacking\" (exact case); it is: hp 95"), "{}", f.message);
+        // A named member that ran nothing has no result.
+        let f = failure_on_stand(&format!("{STAND}@c1 act attack\n@c2 expect result contains \"x\""));
+        assert_eq!(f.message, "no command has run on c2 yet, so there is no result to look at; run act, step or observe there first");
+        // Steps: c2 stopped on the journal line, then c1 stepped on: each keeps its own.
+        let (report, _) = run_stand(&format!(
+            "{STAND}@c2 step 10 --until journal:phase\n@c1 step 5\n@c2 expect stopped \"phase 1->2\"\nexpect stopped \"phase\"\n"
+        ));
+        // Unprefixed: the last step wherever it ran is c1's, which ran to completion.
+        let f = report.failure.clone().expect("c1's step stopped on nothing");
+        assert_eq!(f.line, 5, "{report}");
+        assert!(f.message.starts_with("the last step on c1 ran to completion (ran 5 ticks"), "{}", f.message);
+        let f = failure_on_stand(&format!("{STAND}@c1 step 5\n@c2 expect stopped \"x\""));
+        assert_eq!(f.message, "no `step` has run on c2 yet, so nothing can have stopped there");
+    }
+
+    /// Sessions are per member, so is the acting agent: `@c1 session --agent p1` leaves c2's agent alone.
+    #[test]
+    fn the_acting_agent_is_per_member() {
+        let (report, stand) = run_stand(&format!(
+            "{STAND}@c1 session --agent p1 --scope player --player 1\n@c2 session --agent p2 --scope player --player 2\n\
+             @c1 act attack\n@c2 act attack\nact attack\n"
+        ));
+        assert!(report.passed, "{report}");
+        let who: Vec<(&str, &str)> = stand.calls.iter().map(|(m, a, _)| (m.as_str(), a.as_str())).collect();
+        assert_eq!(who, [("c1", "p1"), ("c2", "p2"), ("host", DEFAULT_AGENT)], "each member's own agent");
+        // p1 was set up on c1 alone, p2 on c2 alone.
+        for (member, agent, others) in [("c1", "p1", "p2"), ("c2", "p2", "p1")] {
+            let sessions = &stand.members[member].sessions;
+            assert!(sessions.iter().any(|(a, c)| a == agent && c.player.is_some()), "{member} has {agent}");
+            assert!(!sessions.iter().any(|(a, _)| a == others), "{member} never heard of {others}");
+        }
+        // Without a member the name is everywhere again, and a bare `session` keeps each member's own.
+        let (report, stand) =
+            run_stand(&format!("{STAND}@c1 session --agent p1\nsession --agent bot\n@c1 session --scope player\n@c1 act attack\n@c2 act attack\n"));
+        assert!(report.passed, "{report}");
+        let who: Vec<(&str, &str)> = stand.calls.iter().map(|(m, a, _)| (m.as_str(), a.as_str())).collect();
+        assert_eq!(who, [("c1", "bot"), ("c2", "bot")]);
     }
 
     #[test]

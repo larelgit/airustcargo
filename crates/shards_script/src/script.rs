@@ -418,7 +418,7 @@ fn check_peer(peer: &str, stand: Option<&StandHeader>) -> Result<(), String> {
     let noun = if stand.clients == 1 { "client" } else { "clients" };
     let client = peer.strip_prefix('c').and_then(|n| n.parse::<u8>().ok()).filter(|n| format!("c{n}") == peer);
     match client {
-        Some(n) if n <= stand.clients => Ok(()),
+        Some(n) if (1..=stand.clients).contains(&n) => Ok(()),
         Some(_) => Err(format!("@{peer}: this stand has {noun} {clients}")),
         None => Err(format!("@{peer}: a member is `host` or one of the {noun} {clients}")),
     }
@@ -957,6 +957,7 @@ invariant field e5 Health.current > 0
         // The peer must be a member of the stand.
         assert_eq!(error("stand clients=2\n@c3 act ping"), "t.scenario:2: @c3: this stand has clients c1, c2");
         assert_eq!(error("stand clients=1\n@c2 act ping"), "t.scenario:2: @c2: this stand has client c1");
+        assert_eq!(error("stand clients=2\n@c0 act ping"), "t.scenario:2: @c0: this stand has clients c1, c2");
         assert_eq!(error("stand clients=2\n@bob act ping"), "t.scenario:2: @bob: a member is `host` or one of the clients c1, c2");
         assert_eq!(error("stand clients=2\n@c01 act ping"), "t.scenario:2: @c01: a member is `host` or one of the clients c1, c2");
         assert!(error("@c1 act ping").contains("`@c1`: this scenario has no stand; start the file with `stand clients=N`"));

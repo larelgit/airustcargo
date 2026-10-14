@@ -48,8 +48,11 @@
 //! mark                                    # without a member: every member's journal counts from here
 //! ```
 //!
-//! `expect result` and `expect stopped` look at the last command, wherever it ran; `expect
-//! journal`, `field` and `shows` look at the member they name (the host by default). A
+//! `expect result` and `expect stopped` look at the last command, or `step`, on the member
+//! they name (`@c1 expect result …` is c1's answer, whatever ran on the others since); without a
+//! member they look at the last one wherever it ran. `expect journal`, `field` and `shows`
+//! look at the member they name (the host by default). The acting agent is per member:
+//! `session --agent bot` names it on every member, `@c1 session --agent bot` on c1 alone. A
 //! driver that cannot run the stand the header describes refuses the scenario and says how to
 //! start one.
 //!
