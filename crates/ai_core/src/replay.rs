@@ -435,6 +435,12 @@ impl ReplayHashing {
         self.ignored.insert(component);
     }
 
+    /// Whether component `component` is left out of replay checks
+    /// ([`replay_ignore`](crate::AiAppExt::replay_ignore)).
+    pub fn is_ignored(&self, component: TypeId) -> bool {
+        self.ignored.contains(&component)
+    }
+
     pub fn add_check(&mut self, name: &str, check: ReplayCheck) {
         self.checks.retain(|(n, _)| n != name);
         self.checks.push((name.to_owned(), check));
@@ -532,10 +538,10 @@ impl ReflectSerializerProcessor for EntitiesAsIds<'_> {
     }
 }
 
-struct Fnv(u64);
+pub(crate) struct Fnv(pub(crate) u64);
 
 impl Fnv {
-    fn bytes(&mut self, bytes: &[u8]) {
+    pub(crate) fn bytes(&mut self, bytes: &[u8]) {
         for b in bytes {
             self.0 = (self.0 ^ *b as u64).wrapping_mul(0x0100_0000_01b3);
         }
@@ -543,7 +549,7 @@ impl Fnv {
         self.u64_raw(bytes.len() as u64);
     }
 
-    fn u64(&mut self, v: u64) {
+    pub(crate) fn u64(&mut self, v: u64) {
         self.u64_raw(v);
     }
 

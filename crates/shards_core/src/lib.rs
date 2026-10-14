@@ -200,6 +200,8 @@ impl Plugin for CorePlugin {
             .init_state::<EngineState>()
             .add_sub_state::<PauseState>()
             .replay_input::<Intent>()
+            // "My body" is each machine's own.
+            .net_ignore::<LocalPlayer>()
             .add_engine_module("core", VERSION)
             .add_ai_status("engine", engine_status)
             .configure_sets(

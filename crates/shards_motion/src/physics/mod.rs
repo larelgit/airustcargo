@@ -440,6 +440,8 @@ impl Plugin for PhysicsPlugin {
             // (they are checked) and can be named in references (`c7`); `PhysicsWorld` is a
             // cache and is made again.
             .add_snapshot_resource::<ColliderIds>()
+            // Each machine counts its own colliders; replicated ones carry their id verbatim.
+            .net_ignore_resource::<ColliderIds>()
             .add_snapshot_check(
                 "static_colliders",
                 "the colliders of entities without an AiId (level geometry) differ: spawn the same levels first, \

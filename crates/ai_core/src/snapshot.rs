@@ -189,6 +189,7 @@ pub struct EntityKey {
 #[derive(Clone, Copy)]
 struct SnapshotResource {
     name: &'static str,
+    type_id: TypeId,
     save: fn(&World, &TypeRegistry, &Encoder) -> Option<Result<Value, String>>,
     load: fn(&mut World, &TypeRegistry, &Value, &mut Decoder) -> Result<(), String>,
 }
@@ -236,7 +237,12 @@ impl SnapshotRegistry {
     {
         let name = R::type_path();
         self.resources.retain(|r| r.name != name);
-        self.resources.push(SnapshotResource { name, save: save_resource::<R>, load: load_resource::<R> });
+        self.resources.push(SnapshotResource { name, type_id: TypeId::of::<R>(), save: save_resource::<R>, load: load_resource::<R> });
+    }
+
+    /// The saved resources, by type and type path, in registration order.
+    pub fn resource_types(&self) -> impl Iterator<Item = (TypeId, &'static str)> + '_ {
+        self.resources.iter().map(|r| (r.type_id, r.name))
     }
 
     pub(crate) fn add_check(&mut self, name: &'static str, hint: &'static str, check: fn(&World) -> u64) {
