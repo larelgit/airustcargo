@@ -89,6 +89,50 @@ fn an_attack_order_walks_up_and_combos_until_the_target_dies() {
 }
 
 #[test]
+fn an_attack_order_beats_a_lock_on_to_another_enemy_and_leaves_nothing_behind() {
+    let mut app = app();
+    let world = app.world_mut();
+    let hero = hero(world, "hero", Vec3::ZERO, N);
+    let near = fighter(world, "Dummy", "dummy", "monsters", Vec3::new(0.0, 0.0, -1.5), S);
+    let far = fighter(world, "Dummy", "dummy", "monsters", Vec3::new(7.0, 0.0, 0.0), S);
+    let (n, f) = (id(&app, near), id(&app, far));
+    ok(&mut app, "lock_on", json!({"target": f}));
+    ok(&mut app, "attack", json!({"target": n, "repeat": true}));
+    step(&mut app, 240);
+    assert!(app.world().get::<Dead>(near).is_some(), "the order hit what it was told to: {:#?}", journal(&app));
+    assert_eq!(hp(&app, far), 100.0);
+    let intent = app.world().get::<Intent>(hero).unwrap();
+    assert!(intent.orders.is_empty());
+    assert_eq!(intent.aim, None, "the finished order leaves no aim point behind");
+    assert_eq!(intent.target, None, "nor a lock-on to the corpse");
+}
+
+#[test]
+fn an_attack_order_that_cannot_start_by_waiting_says_why() {
+    let mut app = app();
+    let world = app.world_mut();
+    let hero = hero(world, "hero", Vec3::ZERO, N);
+    let dummy = fighter(world, "Dummy", "dummy", "monsters", Vec3::new(0.0, 0.0, -1.5), S);
+    let (h, d) = (id(&app, hero), id(&app, dummy));
+    ok(&mut app, "block", json!({}));
+    step(&mut app, 10);
+    // A raised guard keeps the swing from ever starting: the tool says so at once...
+    let err = fails(&mut app, "attack", json!({"target": d}));
+    assert_eq!(err, "busy: hold block while `block` is held; release it first");
+    // ...and an order that got in some other way is dropped with the same reason.
+    let order = Order::Attack { target: ai_core::AiId(2), input: "light".into(), repeat: true };
+    app.world_mut().get_mut::<Intent>(hero).unwrap().orders.push_back(order);
+    step(&mut app, 1);
+    assert!(app.world().get::<Intent>(hero).unwrap().orders.is_empty());
+    assert_eq!(
+        lines(&app, "rejected"),
+        [format!(
+            "11 {h} light rejected: order attack {d} (repeat) dropped: busy: hold block while `block` is held; release it first"
+        )]
+    );
+}
+
+#[test]
 fn lock_on_picks_the_nearest_enemy_and_attacks_follow_it() {
     let mut app = app();
     let world = app.world_mut();

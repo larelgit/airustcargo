@@ -288,9 +288,11 @@ fn nearest_enemy(world: &World, me: Entity, here: Vec3, range: f32) -> Option<Ai
         .map(|(_, id)| id)
 }
 
-/// Attack a target: walk into reach, face it and use `input` (default "light") when it
-/// can start; with `repeat`, keep at it (combos included) until it dies. Replaces your
-/// orders. Check progress with `observe` or `step`.
+/// Attack a target: walk into reach, face it (a lock-on to another enemy moves to it)
+/// and use `input` (default "light") when it can start; with `repeat`, keep at it
+/// (combos included) until it dies. Replaces your orders. Refused when waiting cannot
+/// start the attack (a raised guard); dropped, with the reason in the journal, if that
+/// happens later. Check progress with `observe` or `step`.
 #[derive(Deserialize, JsonSchema)]
 pub struct AttackArgs {
     pub target: Id,
@@ -311,14 +313,14 @@ fn attack(In(call): In<Call<AttackArgs>>, world: &mut World) -> ToolResult {
         return Err(format!("{} is already dead", call.args.target));
     }
     let input = call.args.input.unwrap_or_else(|| LIGHT.to_owned());
-    let db = world.resource::<ContentDb>();
-    let fighter = world.get::<Fighter>(me).ok_or("not a fighter")?;
-    let moveset = db
-        .get::<crate::MovesetDef>(&fighter.moveset)
-        .ok_or_else(|| format!("your moveset `{}` is not in content", fighter.moveset))?;
-    if moveset.action(&input).is_none() {
-        let known: Vec<&str> = moveset.inputs.keys().map(String::as_str).collect();
-        return Err(format!("your moveset `{}` has no `{input}`; it has: {}", fighter.moveset, known.join(", ")));
+    // An order that waiting cannot start (no such input, a raised guard, no charges)
+    // would sit there for ever: refuse it now, with the reason.
+    let dt = world.resource::<Time<Fixed>>().timestep().as_secs_f32();
+    let view = FighterView::of(world, me).ok_or("your body is not a complete fighter")?;
+    if let Err(blocker) = can_start(&view, &input, dt)
+        && blocker.ready_in().is_none()
+    {
+        return Err(blocker.message());
     }
     let mut intent = world.get_mut::<Intent>(me).ok_or("no Intent")?;
     intent.orders.clear();
