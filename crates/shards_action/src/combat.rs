@@ -17,9 +17,9 @@
 //! apply            → health, statuses, death; poise: a break staggers, else a flinch
 //! ```
 //!
-//! A guarded hit (blocked or guard-breaking) carries no status buildup. A hit whose
-//! attacker was interrupted earlier in the same tick (parried, killed) no longer
-//! lands; a target killed earlier in the tick takes no more hits.
+//! A guarded hit (blocked or guard-breaking) carries no status buildup, nor does a
+//! killing one. A hit whose attacker was interrupted earlier in the same tick (parried,
+//! killed) no longer lands; a target killed earlier in the tick takes no more hits.
 
 use ai_core::AiId;
 use bevy::prelude::*;
@@ -348,8 +348,8 @@ fn apply(world: &mut World, ctx: DamageCtx) {
                 amount: ctx.damage,
                 hp_left,
             });
-            apply_statuses(world, target, &ctx.status);
             if !finish_if_dead(world, target, attacker, &action) {
+                apply_statuses(world, target, &ctx.status);
                 stagger(world, target, StaggerCause::GuardBroken);
             }
         }
@@ -364,10 +364,10 @@ fn apply(world: &mut World, ctx: DamageCtx) {
                 hp_left,
                 invulnerable: false,
             });
-            apply_statuses(world, target, &ctx.status);
             if finish_if_dead(world, target, attacker, &action) {
                 return;
             }
+            apply_statuses(world, target, &ctx.status);
             if !take_poise(world, target, ctx.poise) && (ctx.damage > 0.0 || ctx.poise > 0.0) {
                 flinch(world, target);
             }

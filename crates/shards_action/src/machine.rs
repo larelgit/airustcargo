@@ -10,13 +10,15 @@
 //!
 //! Timing: everything is decided between ticks. An action started in tick `N` runs
 //! during tick `N` (its time goes from 0 to `dt`); it ends in the tick its time
-//! reaches its length, and the next action can start in the tick after. A window is
-//! open in a tick when it touches the time that tick covered.
+//! reaches its length (that tick still counts: hits and defensive windows see it, the
+//! state clears at the end of the tick), and the next action can start in the tick
+//! after. A window is open in a tick when it touches the time that tick covered.
 
 use ai_core::{AiId, AiIndex};
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use shards_content::ContentDb;
+use shards_core::input_names::SPRINT;
 use shards_core::{flat, Intent};
 use shards_motion::LocomotionInput;
 
@@ -581,7 +583,7 @@ pub(crate) fn run_machines(
 
         // The running action (perhaps the one just started) takes this tick.
         let mut external = Vec3::ZERO;
-        let mut ended = false;
+        let mut gone = false;
         if let Some(run) = f.state.current.as_mut() {
             match db.get::<ActionDef>(&run.action) {
                 Some(def) => {
@@ -604,14 +606,13 @@ pub(crate) fn run_machines(
                             commands.trigger(telegraph(entity, def, run, here));
                         }
                     }
-                    ended = run.t >= run.length - EPS;
                     run.refresh(def);
                 }
                 // Its definition left content (a hot reload): it stops.
-                None => ended = true,
+                None => gone = true,
             }
         }
-        if ended {
+        if gone {
             f.state.current = None;
         }
 
@@ -766,7 +767,9 @@ pub(crate) fn advance(run: &mut Running, def: &ActionDef, dt: f32, holding: bool
     let loop_span = def.hold.as_ref().filter(|_| holding).and_then(|h| def.span(&h.span)).filter(|(a, b)| b - a > EPS);
     match loop_span {
         Some((a, b)) if prev < b - EPS && next >= b - EPS => {
-            let t = a + (next - b).rem_euclid(b - a);
+            // `next` may sit a hair short of `b` (sums of tick lengths): a negative
+            // remainder would wrap to the end of the span and the loop would drop out.
+            let t = a + (next - b).max(0.0).rem_euclid(b - a);
             run.prev = a;
             run.t = t;
             vec![(prev, b), (a, t)]
@@ -817,9 +820,16 @@ fn telegraph(attacker: Entity, def: &ActionDef, run: &Running, feet: Vec3) -> Te
 }
 
 /// Tells the controller what the action wants: its displacement this tick, whether it
-/// owns the body, where to face; no sprinting without stamina.
+/// owns the body, where to face; no sprinting without stamina, nor after sprinting it
+/// dry until the button is let go.
 fn steer_body(f: &mut FighterDataItem, db: &ContentDb, external: Vec3) {
-    let out_of_stamina = f.stamina.as_ref().is_some_and(|s| s.current <= EPS);
+    if let Some(s) = f.stamina.as_mut()
+        && s.exhausted
+        && !f.intent.is_held(SPRINT)
+    {
+        s.exhausted = false;
+    }
+    let out_of_stamina = f.stamina.as_ref().is_some_and(|s| s.current <= EPS || s.exhausted);
     let Some(loco) = f.loco.as_mut() else { return };
     let run = f.state.current.as_ref();
     let def = run.and_then(|r| db.get::<ActionDef>(&r.action));
@@ -834,6 +844,17 @@ fn steer_body(f: &mut FighterDataItem, db: &ContentDb, external: Vec3) {
     }
     if owns || out_of_stamina {
         loco.sprint = false;
+    }
+}
+
+/// `SimSet::Resolve`, after hits: actions whose time ran out in this tick end now. The
+/// machine leaves them in place so the tick that ends an action still hits and
+/// defends (hit windows, i-frames, guards), as the timing rules say.
+pub(crate) fn finish_actions(mut fighters: Query<&mut ActionState>) {
+    for mut state in &mut fighters {
+        if state.current.as_ref().is_some_and(|r| r.t >= r.length - EPS) {
+            state.current = None;
+        }
     }
 }
 
@@ -1054,6 +1075,35 @@ mod tests {
             ticks += 1;
         }
         assert!(ticks <= 18, "released, it runs out: {ticks}");
+    }
+
+    #[test]
+    fn a_held_loop_never_drops_out_whatever_the_tick_rate() {
+        // Sums of tick lengths land a hair before the end of the hold span; the wrap
+        // must not read that as "a whole span over".
+        for (hz, raise, hold, lower) in
+            [(60, 0.1, 0.6, 0.1), (30, 0.1, 0.3, 0.1), (64, 0.1, 0.3, 0.1), (120, 0.1, 0.3, 0.1), (50, 0.1, 0.2, 0.1)]
+        {
+            let def: ActionDef = ron::Options::default()
+                .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+                .from_str(&format!(
+                    r#"(net_id: 1, phases: [("raise", {raise}), ("hold", {hold}), ("lower", {lower})],
+                        hold: (input: "block", span: Phase("hold")), guard: (span: Phases("raise", "hold")))"#
+                ))
+                .unwrap();
+            let (a, b) = def.span(&crate::def::Span::Phase("hold".into())).unwrap();
+            let dt = std::time::Duration::from_secs_f64(1.0 / f64::from(hz)).as_secs_f32();
+            let mut run = Running::new("block", &def, 0, Vec3::NEG_Z, None, Some("block".into()));
+            let mut inside = false;
+            for tick in 1..=hz * 8 {
+                let spans = advance(&mut run, &def, dt, true);
+                run.refresh(&def);
+                inside |= run.t >= a - EPS;
+                assert!(run.t < b - EPS, "{hz} Hz tick {tick}: t {} ran past the hold {a}..{b}", run.t);
+                assert!(!inside || run.t >= a - EPS, "{hz} Hz tick {tick}: t {} fell out of the hold {a}..{b}", run.t);
+                assert!(spans.len() <= 2 && spans.iter().all(|s| s.1 - s.0 <= dt + EPS), "{hz} Hz tick {tick}: {spans:?}");
+            }
+        }
     }
 
     #[test]

@@ -174,6 +174,36 @@ fn sprinting_drains_stamina_and_stops_at_zero() {
 }
 
 #[test]
+fn an_exhausted_sprint_stays_off_until_the_button_is_let_go() {
+    let mut app = app();
+    let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    app.world_mut().get_mut::<Stamina>(hero).unwrap().current = 15.0;
+    let mut intent = app.world_mut().get_mut::<Intent>(hero).unwrap();
+    intent.move_dir = N;
+    intent.set_held("sprint", true);
+    let mut sprinting = 0;
+    for _ in 0..330 {
+        step(&mut app, 1);
+        sprinting += usize::from(app.world().get::<MotionState>(hero).unwrap().sprinting);
+    }
+    // 15 stamina at 30 per second last half a second; after that, with the button still
+    // down, the stamina recovers instead of pulsing back to zero.
+    assert!((25..=32).contains(&sprinting), "sprinted {sprinting} ticks");
+    assert!(stamina(&app, hero) > 80.0, "recovering: {}", stamina(&app, hero));
+    assert_eq!(ok(&mut app, "dodge", json!({"dir": "N"})), "ok: roll (N)");
+    let seen = ai_core::observe::observe(app.world(), &ai_core::observe::ObserveOptions::default());
+    assert!(seen.contains("exhausted (release sprint)"), "{seen}");
+
+    // Let go and press again: sprinting is back.
+    step(&mut app, 30);
+    app.world_mut().get_mut::<Intent>(hero).unwrap().set_held("sprint", false);
+    step(&mut app, 2);
+    app.world_mut().get_mut::<Intent>(hero).unwrap().set_held("sprint", true);
+    step(&mut app, 5);
+    assert!(app.world().get::<MotionState>(hero).unwrap().sprinting);
+}
+
+#[test]
 fn errors_teach_the_fix() {
     let mut app = app();
     let world = app.world_mut();

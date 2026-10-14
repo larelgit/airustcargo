@@ -45,7 +45,7 @@
 //!              displacement: [(0.35, 4.0)], steer: Move),
 //!     "block": (net_id: 5, phases: [("raise", 0.1), ("hold", 0.3), ("lower", 0.1)],
 //!               hold: (input: "block", span: Phase("hold")), move_speed: 0.4,
-//!               guard: (span: Phases("raise", "hold"), perfect: Secs(0.0, 0.12), damage_mult: 0.1)),
+//!               guard: (span: Phases("raise", "hold"), perfect: Phase("raise"), damage_mult: 0.1)),
 //!     "drink": (net_id: 6, phases: [("drink", 1.0)], cost: (charge: "flask"), effects: [(at: 0.6, effect: Heal(40))]),
 //! }
 //! // content/combat/hero.moveset.ron
@@ -63,7 +63,7 @@
 //!                  ActionSystems::Effects   heal, stamina, statuses, game effects
 //! SimSet::Move     (controller)             integrates LocomotionInput, external included
 //! SimSet::Resolve  ActionSystems::Hits      overlaps → damage pipeline → events
-//!                  ActionSystems::Fighters  sprint drain, regeneration, cooldowns
+//!                  ActionSystems::Fighters  sprint drain, regeneration, cooldowns, finished actions end
 //!                  ActionSystems::Statuses  status ticks and expiry
 //!                  ActionSystems::Deaths    fighters at 0 health die
 //! ```
@@ -130,7 +130,7 @@ pub enum ActionSystems {
     Effects,
     /// `SimSet::Resolve`: hit detection and the damage pipeline.
     Hits,
-    /// `SimSet::Resolve`: sprint drain, regeneration, cooldowns.
+    /// `SimSet::Resolve`: sprint drain, regeneration, cooldowns; actions that ran out end.
     Fighters,
     /// `SimSet::Resolve`: statuses tick and expire.
     Statuses,
@@ -246,6 +246,7 @@ impl Plugin for ActionPlugin {
                     machine::apply_effects.in_set(ActionSystems::Effects),
                     combat::resolve_hits.in_set(ActionSystems::Hits),
                     fighter::update_fighters.in_set(ActionSystems::Fighters),
+                    machine::finish_actions.in_set(ActionSystems::Fighters),
                     status::update_statuses.in_set(ActionSystems::Statuses),
                     combat::check_deaths.in_set(ActionSystems::Deaths),
                 ),

@@ -29,7 +29,7 @@ fn a_telegraph_journals_its_zone_and_the_advice_leads_out_of_it() {
 
     let seen = observe(app.world(), &ObserveOptions::default());
     let alert = seen.lines().nth(2).unwrap();
-    assert_eq!(alert, format!("ALERT in hit zone of {b} slam (lands in 0.78s): move 2.9m S to leave it"), "{seen}");
+    assert_eq!(alert, format!("ALERT in hit zone of {b} slam (lands in 0.78s): move 3.0m S to leave it"), "{seen}");
     assert!(
         seen.contains(&format!(
             "{b} Brute  hp 100/100  stam 100/100  poise 30/30  windup slam 0.78s (zone circle 4.5m) hyper-armor"
@@ -51,6 +51,30 @@ fn a_telegraph_journals_its_zone_and_the_advice_leads_out_of_it() {
     assert!(lines(&app, &format!("{b} -> {h}")).is_empty(), "the slam missed");
     assert!(feet(&app, hero).z > 2.9, "{}", feet(&app, hero));
     assert!(!observe(app.world(), &ObserveOptions::default()).contains("ALERT"));
+}
+
+#[test]
+fn the_advice_gets_a_subject_out_of_the_zone_when_followed_to_the_letter() {
+    // Off the compass axes: the shortest way out (3.1 m) is not along any of the 8
+    // directions, so a rounded "3.1m SE" would end a hair inside the circle.
+    let mut app = app();
+    let world = app.world_mut();
+    let hero = hero(world, "hero", Vec3::new(1.5, 0.0, -1.0), N);
+    let brute = brute(world, Vec3::new(0.0, 0.0, -2.0), S);
+    let b = id(&app, brute);
+    press(&mut app, brute, "heavy");
+    step(&mut app, 1);
+    let advice = shards_action::ai::advice(app.world(), hero);
+    assert_eq!(advice.len(), 1, "{advice:?}");
+    let words: Vec<&str> = advice[0].split_whitespace().collect();
+    let at = words.iter().position(|w| *w == "move").unwrap();
+    let meters: f32 = words[at + 1].trim_end_matches('m').parse().unwrap();
+    let dir = ai_core::spatial::compass_vector(words[at + 2]).unwrap();
+    let there = feet(&app, hero) + dir * meters;
+    app.world_mut().get_mut::<Transform>(hero).unwrap().translation = there;
+    assert!(shards_action::ai::advice(app.world(), hero).is_empty(), "still in the zone after: {}", advice[0]);
+    step(&mut app, 50);
+    assert!(lines(&app, &format!("{b} -> ")).is_empty(), "the slam missed: {:#?}", journal(&app));
 }
 
 #[test]
@@ -86,6 +110,50 @@ fn an_attack_order_walks_up_and_combos_until_the_target_dies() {
     assert!(lines(&app, &format!("{d} died (killed by {h}")).len() == 1);
     assert!(app.world().get::<Intent>(hero).unwrap().orders.is_empty(), "the order ends with the target");
     assert!(lines(&app, "rejected").is_empty(), "orders press only what starts: {:#?}", journal(&app));
+}
+
+#[test]
+fn an_attack_order_beats_a_lock_on_to_another_enemy_and_leaves_nothing_behind() {
+    let mut app = app();
+    let world = app.world_mut();
+    let hero = hero(world, "hero", Vec3::ZERO, N);
+    let near = fighter(world, "Dummy", "dummy", "monsters", Vec3::new(0.0, 0.0, -1.5), S);
+    let far = fighter(world, "Dummy", "dummy", "monsters", Vec3::new(7.0, 0.0, 0.0), S);
+    let (n, f) = (id(&app, near), id(&app, far));
+    ok(&mut app, "lock_on", json!({"target": f}));
+    ok(&mut app, "attack", json!({"target": n, "repeat": true}));
+    step(&mut app, 240);
+    assert!(app.world().get::<Dead>(near).is_some(), "the order hit what it was told to: {:#?}", journal(&app));
+    assert_eq!(hp(&app, far), 100.0);
+    let intent = app.world().get::<Intent>(hero).unwrap();
+    assert!(intent.orders.is_empty());
+    assert_eq!(intent.aim, None, "the finished order leaves no aim point behind");
+    assert_eq!(intent.target, None, "nor a lock-on to the corpse");
+}
+
+#[test]
+fn an_attack_order_that_cannot_start_by_waiting_says_why() {
+    let mut app = app();
+    let world = app.world_mut();
+    let hero = hero(world, "hero", Vec3::ZERO, N);
+    let dummy = fighter(world, "Dummy", "dummy", "monsters", Vec3::new(0.0, 0.0, -1.5), S);
+    let (h, d) = (id(&app, hero), id(&app, dummy));
+    ok(&mut app, "block", json!({}));
+    step(&mut app, 10);
+    // A raised guard keeps the swing from ever starting: the tool says so at once...
+    let err = fails(&mut app, "attack", json!({"target": d}));
+    assert_eq!(err, "busy: hold block while `block` is held; release it first");
+    // ...and an order that got in some other way is dropped with the same reason.
+    let order = Order::Attack { target: ai_core::AiId(2), input: "light".into(), repeat: true };
+    app.world_mut().get_mut::<Intent>(hero).unwrap().orders.push_back(order);
+    step(&mut app, 1);
+    assert!(app.world().get::<Intent>(hero).unwrap().orders.is_empty());
+    assert_eq!(
+        lines(&app, "rejected"),
+        [format!(
+            "11 {h} light rejected: order attack {d} (repeat) dropped: busy: hold block while `block` is held; release it first"
+        )]
+    );
 }
 
 #[test]
@@ -136,6 +204,41 @@ fn the_block_tool_holds_and_waits_for_a_busy_fighter() {
     assert_eq!(ok(&mut app, "block", json!({"on": false})), "ok: block lowered");
     step(&mut app, 30);
     assert_eq!(action(&app, hero), "idle", "lowered, the block runs out");
+}
+
+#[test]
+fn the_block_tool_does_not_call_a_lowering_block_up() {
+    let mut app = app();
+    let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    ok(&mut app, "block", json!({}));
+    step(&mut app, 20);
+    ok(&mut app, "block", json!({"on": false}));
+    let phase = |app: &App| app.world().get::<ActionState>(hero).unwrap().current.as_ref().map(|r| r.phase.clone());
+    while phase(&app).as_deref() != Some("lower") {
+        step(&mut app, 1);
+    }
+    // Hits land in full until it is up again: the answer says when that is.
+    let again = ok(&mut app, "block", json!({}));
+    let secs = again.strip_prefix("ok: holding block; it rises in ").and_then(|s| s.strip_suffix('s')).expect(&again);
+    let ticks = (secs.parse::<f32>().unwrap() / DT).round() as u64;
+    step(&mut app, ticks);
+    assert_eq!(action(&app, hero), "idle", "the lowering block runs out");
+    step(&mut app, 1);
+    assert_eq!(phase(&app).as_deref(), Some("raise"), "and the held block rises right after");
+}
+
+#[test]
+fn dodge_names_the_way_the_roll_goes() {
+    let mut app = app();
+    let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    assert_eq!(ok(&mut app, "dodge", json!({})), "ok: roll (forward)", "nothing to go by");
+    step(&mut app, 60);
+    // Walking east while facing north: the roll follows the movement input.
+    app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = Vec3::X;
+    assert_eq!(ok(&mut app, "dodge", json!({})), "ok: roll (E)");
+    let x = feet(&app, hero).x;
+    step(&mut app, 30);
+    assert!(feet(&app, hero).x - x > 3.0, "rolled east: {}", feet(&app, hero));
 }
 
 #[test]
