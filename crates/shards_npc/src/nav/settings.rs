@@ -222,9 +222,9 @@ pub fn geometry_of(db: &ContentDb, kind: TileKind, id: &str) -> Option<(TileGeom
 }
 
 /// Hex FNV-1a over everything a bake of `id` at `tile_size` is made from: the bake format
-/// and version, the definition, the prefabs its geometry spawns, its level file's bytes
-/// (read under `root`), the tile size and the nav settings with the body. A bake file whose
-/// hash differs is stale.
+/// and version, the definition, the prefabs its geometry spawns (a level file's nodes
+/// included) with every prefab they extend, its level file's bytes (read under `root`), the
+/// tile size and the nav settings with the body. A bake file whose hash differs is stale.
 pub fn bake_hash(db: &ContentDb, root: Option<&Path>, kind: TileKind, id: &str, tile_size: f32, settings: &NavSettings) -> Result<String, String> {
     let what = kind.content_kind();
     let def = db.get_json(what, id).ok_or_else(|| format!("no {what} `{id}` in content"))?;
@@ -237,25 +237,50 @@ pub fn bake_hash(db: &ContentDb, root: Option<&Path>, kind: TileKind, id: &str, 
         match geometry {
             TileGeometry::None => {}
             TileGeometry::Inline(pieces) => {
-                let mut prefabs: Vec<&str> =
-                    pieces.iter().filter_map(|p| if let TilePiece::Prefab { id, .. } = p { Some(id.as_str()) } else { None }).collect();
-                prefabs.sort_unstable();
-                prefabs.dedup();
-                for prefab in prefabs {
-                    text.push_str(&format!("\nprefab {prefab} "));
-                    match db.get_json(PrefabDef::KIND, prefab) {
-                        Some(json) => compact(json, &mut text),
-                        None => text.push_str("missing"),
-                    }
-                }
+                let prefabs: Vec<String> =
+                    pieces.iter().filter_map(|p| if let TilePiece::Prefab { id, .. } = p { Some(id.clone()) } else { None }).collect();
+                hash_prefabs(db, prefabs, &mut text);
             }
             TileGeometry::Level { path } => {
-                let digest = root.and_then(|r| std::fs::read(r.join(&path)).ok()).map_or_else(|| "unreadable".to_owned(), |b| hex(fnv(&b)));
+                let bytes = root.and_then(|r| std::fs::read(r.join(&path)).ok());
+                let digest = bytes.as_deref().map_or_else(|| "unreadable".to_owned(), |b| hex(fnv(b)));
                 text.push_str(&format!("\nlevel {path} {digest}"));
+                // The prefabs its nodes spawn are part of its geometry too.
+                if let Some(level) = bytes.and_then(|b| shards_level::LevelAsset::from_slice(&path, &b).ok()) {
+                    let prefabs: Vec<String> =
+                        level.nodes.iter().filter_map(|n| n.extras.get("prefab").and_then(|p| p.as_str()).map(str::to_owned)).collect();
+                    hash_prefabs(db, prefabs, &mut text);
+                }
             }
         }
     }
     Ok(hex(fnv(text.as_bytes())))
+}
+
+/// Appends each of `prefabs` (sorted, once) to a bake hash's text, then every prefab it
+/// extends: a change down a chain changes the hash.
+fn hash_prefabs(db: &ContentDb, mut prefabs: Vec<String>, text: &mut String) {
+    prefabs.sort_unstable();
+    prefabs.dedup();
+    for prefab in prefabs {
+        text.push_str(&format!("\nprefab {prefab} "));
+        match db.get_json(PrefabDef::KIND, &prefab) {
+            Some(json) => compact(json, text),
+            None => text.push_str("missing"),
+        }
+        // Its parents, nearest first (a circle stops where it closes).
+        let mut seen = vec![prefab.clone()];
+        let mut next = db.get::<PrefabDef>(&prefab).and_then(|p| p.extends.clone());
+        while let Some(parent) = next.filter(|p| !seen.contains(p)) {
+            text.push_str(&format!("\nextends {parent} "));
+            match db.get_json(PrefabDef::KIND, &parent) {
+                Some(json) => compact(json, text),
+                None => text.push_str("missing"),
+            }
+            next = db.get::<PrefabDef>(&parent).and_then(|p| p.extends.clone());
+            seen.push(parent);
+        }
+    }
 }
 
 #[cfg(test)]

@@ -598,3 +598,35 @@ fn a_walker_that_climbs_less_than_the_baked_body_plans_on_the_local_grid() {
     let out = call(&mut app, "move_to", goal);
     assert!(!text(&out).contains("mantle"), "no climb it cannot make: {}", text(&out));
 }
+
+/// A bake is made from the prefabs its tile spawns, the ones they extend and the ones its
+/// level file's nodes name: a change anywhere down those chains makes it stale.
+#[test]
+fn a_bake_goes_stale_when_any_prefab_down_its_chains_changes() {
+    use shards_npc::nav::settings::bake_hash;
+    let hashes = |stone: &str, tag: &str| -> (String, String) {
+        let dir = assets_with_nav(tag);
+        let prefabs = format!("{{ \"stone\": (components: {{\"Name\": \"{stone}\"}}), \"big_stone\": (extends: \"stone\", components: {{}}) }}\n");
+        std::fs::write(dir.join("content/world/stones.prefab.ron"), prefabs).unwrap();
+        let tiles = r#"{
+            "rocky": (sockets: (n: "open", e: "open", s: "open", w: "open"), geometry: Inline([Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0)), Prefab(id: "big_stone", at: (1.0, 0.0, 1.0))])),
+            "rocky_level": (sockets: (n: "open", e: "open", s: "open", w: "open"), geometry: Level(path: "levels/rocks.gltf")),
+        }"#;
+        std::fs::write(dir.join("content/world/rocks.tile.ron"), tiles).unwrap();
+        std::fs::create_dir_all(dir.join("levels")).unwrap();
+        let gltf = r#"{"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"name": "Rock", "translation": [1.0, 0.0, 1.0], "extras": {"prefab": "big_stone"}}]}"#;
+        std::fs::write(dir.join("levels/rocks.gltf"), gltf).unwrap();
+        let app = app_in(dir.to_str().unwrap(), 7, |_| {});
+        let db = app.world().resource::<ContentDb>();
+        let settings = NavSettings::of(db);
+        let hash = |tile: &str| bake_hash(db, Some(&dir), TileKind::Tile, tile, 8.0, &settings).unwrap();
+        let out = (hash("rocky"), hash("rocky_level"));
+        let _ = std::fs::remove_dir_all(&dir);
+        out
+    };
+    let (inline, level) = hashes("Stone", "chain_a");
+    assert_eq!(hashes("Stone", "chain_b"), (inline.clone(), level.clone()), "the same content, the same hashes");
+    let (inline2, level2) = hashes("Pebble", "chain_c");
+    assert_ne!(inline, inline2, "a tile's prefab extends one that changed");
+    assert_ne!(level, level2, "a tile's level file spawns a prefab whose parent changed");
+}
