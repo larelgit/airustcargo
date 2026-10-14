@@ -242,6 +242,17 @@ impl PhysicsWorld {
         let rotation = tf.rotation.normalize();
         let position = tf.translation + rotation * collider.offset;
         let (aabb_min, aabb_max) = geom.aabb(&Pose::from_parts(position, rotation));
+        // A NaN or infinite pose would answer every ray in the world (a hit at distance
+        // 0): left out until its transform is real again.
+        if !(position.is_finite() && rotation.is_finite() && aabb_min.is_finite() && aabb_max.is_finite()) {
+            warn!(
+                "{entity}: collider at {} (rotation {}, offset {}) is not finite, so physics ignores it; \
+                 give it a real transform",
+                tf.translation, tf.rotation, collider.offset
+            );
+            self.remove(entity);
+            return;
+        }
         let info = ColliderInfo {
             entity,
             id: *id,
