@@ -292,7 +292,7 @@ Xvfb показывает его вместе с оверлеем навсетк
 | 1 | меню разработчика и консоль через `call_tool` | 🟡 | единая точка входа `ai_core::call_tool` есть, ею пользуются тесты, реплеи и клавиши разработчика в окне песочницы (P, N, F1–F4, F12). Самого внутриигрового меню и консоли нет — D |
 | 2 | оверлеи: хитбоксы, хёртбоксы, зоны атак; навсетка; состояние NPC; сеть; границы тайлов | 🟡 | `combat_overlay`, `physics_overlay`, `overlay` (id) — ✅ (`shards_action::render`, `shards_motion::overlay`); навсетка и маршруты NPC — `nav_overlay` (`shards_npc::nav::overlay`), границы тайлов, сокеты, точки и дороги — `world_overlay` (`shards_world::overlay`): ✅ глазами (`shards shot` под Xvfb), тестов на них нет. Состояние NPC — строка в `observe` и `npc_state`, отдельного оверлея нет; сеть — C |
 | 3 | инструменты: бессмертие, телепорт к тайлу или точке, фаза босса, спавн префаба, замедление | ✅ | `god`, `teleport` (в точку), `goto_tile` (к тайлу; тест `goto_tile_lands_on_the_ground_of_a_tile`), `spawn_prefab`, `spawn_level`, `speed`; переход к фазе босса через снапшот (`snapshot_load`, тест `go_to_boss_phase_two_is_a_snapshot_loaded_by_name`, сценарий `snapshot`) |
-| 4 | снапшоты в любой тик | ✅ | `ai_core::snapshot`: `snapshot_save`/`snapshot_load`, `shards save-snapshot`/`load-snapshot`, реплей `shards-replay/3` со снапшота; регион, его уровни-тайлы и навсетка возвращаются со снапшотом (`add_snapshot_prepare`, `RegionBuild`, `add_snapshot_rebuild("navmesh")`); `tests/sandbox/snapshots.rs` (24), `ai_core::snapshot` (13), `shards::run` (2), `shards_npc/tests/npc/snapshot.rs` (4), тесты регионов и уровней `shards_world`. Не входит: правка контента и `spawn_level` до снапшота в реплей со снапшота (свежая игра должна быть уже такой); в реплее `content_apply`, который добавляет файл уровня тайла, и `regen` в тот же тик файл не успевают загрузить |
+| 4 | снапшоты в любой тик | ✅ | `ai_core::snapshot`: `snapshot_save`/`snapshot_load`, `shards save-snapshot`/`load-snapshot`, реплей `shards-replay/3` со снапшота; регион, его уровни-тайлы и навсетка возвращаются со снапшотом (`add_snapshot_prepare`, `RegionBuild`, `add_snapshot_rebuild("navmesh")`), загрузка, которой отказали после подготовки, возвращает мир, каким он был, номера уровней (`LevelCounter`) — состояние снапшота; `tests/sandbox/snapshots.rs` (27), `ai_core::snapshot` (14), `shards::run` (2), `shards_npc/tests/npc/snapshot.rs` (4), тесты регионов и уровней `shards_world`. Не входит: правка контента и `spawn_level` до снапшота в реплей со снапшота (свежая игра должна быть уже такой); в реплее `content_apply`, который добавляет файл уровня тайла, и `regen` в тот же тик файл не успевают загрузить |
 | 5 | `clearance`, `path_to`, видимость лучами физики | 🟡 | по физике — ✅ (`src/perception/`, `physics_line_of_sight`; `tests/motion/perception.rs` (29)). По навсетке — `nav_path` (формат `path_to`, плюс тайлы маршрута; `tools::nav_path_answers_with_the_route_around_a_wall`) и `move_to path=true` (`move_to_path_follows_the_navmesh_beyond_the_local_planners_reach`); сами `path_to` и `clearance` остались запросами к физике |
 | 6 | связать слой ИИ с модулями | 🟡 | модули фазы A и B — ✅ (генератор: `regen`, `region_load`, `goto_tile`, `worldgen_report`; уровни и NPC — инструменты и строки в `observe`). Дерево интерфейса (D), агент-игрок и стенд «хост + клиенты» (C), инструменты сохранений (C) — впереди |
 | 7 | сценарные тесты: файл сценария в CI без окна, свой набор у модуля | ✅ для A и B | `shards_script`, `ai_core::scenario`, `shards scenario`; сценарии песочницы: `obstacle_course` (E2), `combat_prototype`, `boss_fight`, `dodge`, `errors` (E3), `npc_director`, `npc_navmesh` (E6), `region` (E5), `snapshot` (E11), сценарии шаблона `smoke`, `valley`; CI-задания `test` (в процессе, вперёд и назад) и `headless-cli` (против живой игры, вперёд и назад). Сценарии остальных модулей — по мере появления |
@@ -306,13 +306,13 @@ Xvfb показывает его вместе с оверлеем навсетк
 
 `cargo test --workspace` на 14 октября 2026:
 
-Всего 752 теста проходят, 0 падают, 17 помечены `#[ignore]` (запись эталонных реплеев, проверка окна под Xvfb, примеры в
+Всего 756 тестов проходят, 0 падают, 17 помечены `#[ignore]` (запись эталонных реплеев, проверка окна под Xvfb, примеры в
 документации); у шаблона отдельно 23 проходят (и один `#[ignore]`: запись его эталонов). Запускать нужно из обычной оболочки:
 под `nohup` игнорируется SIGHUP, и тест `kill_and_hangup_remove_the_token_and_the_port_file` падает на `signal 1`.
 
 | крейт | тестов | где |
 |---|---|---|
-| `ai_core` | 51 | `crates/ai_core/src/*` (снапшоты 13) |
+| `ai_core` | 52 | `crates/ai_core/src/*` (снапшоты 14) |
 | `shards_script` | 35 | `crates/shards_script/src/*` |
 | `shards_cli` | 8 | `crates/shards_cli/src/*` |
 | `shards_core` | 11 | `src/` и `tests/core.rs` |
@@ -323,7 +323,7 @@ Xvfb показывает его вместе с оверлеем навсетк
 | `shards_world` | 71 | `src/` (17) и `tests/world/` (54: генерация, проверки, подземелья, регионы, смена региона, уровни-тайлы, зоны, навсетка региона) |
 | `shards_npc` | 79 | `src/` (19) и `tests/npc/` (60: поведение, восприятие, директор, навсетка, реплей, снапшот, инструменты, страж данными) |
 | `shards` | 12 | `src/`, `tests/engine.rs`, `tests/failures.rs`, `tests/level_render.rs`, `tests/action_render/` |
-| `sandbox` | 94 | `tests/sandbox/` (81, из них `snapshots.rs` 24; ещё `#[ignore]` запись эталонных реплеев), `tests/system_failures.rs` (7), `tests/log_capture.rs` (4), `src/` (2) |
+| `sandbox` | 97 | `tests/sandbox/` (84, из них `snapshots.rs` 27; ещё `#[ignore]` запись эталонных реплеев), `tests/system_failures.rs` (7), `tests/log_capture.rs` (4), `src/` (2) |
 | шаблон | 23 | `template/tests/game/` (содержание, детерминизм, реплеи, сценарии, регион, манифест) |
 
 ## Известные ограничения и отложенное

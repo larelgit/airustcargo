@@ -753,7 +753,9 @@ fn install(world: &mut World, manifest: RegionManifest) -> Result<RegionSpawned,
 /// snapshot (its [`RegionBuild`]) is built again when the world has another one, or the same
 /// one built with other ids; the region in the world goes when the snapshot was taken
 /// without one. Inside the load, with no loading screen: the snapshot puts back players and
-/// characters right after. Refuses, changing nothing, a manifest content cannot build.
+/// characters, and the collider and level counters, right after. Refuses, changing nothing,
+/// a manifest content cannot build; a load refused later (or a build that fails half way)
+/// runs this again with the world as it was, which builds the old region back.
 pub fn snapshot_prepare(world: &mut World, snapshot: &Snapshot) -> Result<Option<String>, String> {
     let saved = match snapshot.resources.get(<RegionBuild as TypePath>::type_path()) {
         Some(value) => Some(serde_json::from_value::<RegionBuild>(value.clone()).map_err(|e| format!("its region record does not read: {e}"))?),
@@ -767,7 +769,7 @@ pub fn snapshot_prepare(world: &mut World, snapshot: &Snapshot) -> Result<Option
         let title = world.get_resource::<ActiveRegion>().map(|r| r.manifest.title()).unwrap_or_default();
         let removed = despawn_region(world);
         journal::emit(world, JournalKind::Event, format!("region unloaded: {title} ({removed} entities)"));
-        return Ok(Some(format!("region {title} unloaded: the snapshot was taken without one")));
+        return Ok(Some(format!("{title} unloaded: the snapshot was taken without one")));
     };
     let manifest = RegionManifest::from_json(&build.manifest)?;
     plan(world, &manifest)?;

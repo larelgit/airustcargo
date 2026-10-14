@@ -996,8 +996,10 @@ spawned level `ruin` as instance 1 at (60.0, -40.0): 11 entities (5 solids, 0 vo
 **Детерминизм.** Спавн — чистая функция файла и места, в фиксированном порядке, поэтому `AiId` и `ColliderId` одинаковы в
 каждом запуске. `spawn_level` и `level_reload` — действия, реплей записывает их. Проверка реплея `level` хэширует, где поставлен
 каждый уровень, и дайджест его файла: реплей, записанный на другой версии файла, расходится на первой проверке (после
-правки уровня эталоны записывают заново). Проверка входит в запись с первым уровнем, поэтому у игры без уровней хэши прежние.
-Снапшот проверяет те же поставленные уровни (`levels`).
+правки уровня эталоны записывают заново). Пока не стоит ни один уровень, проверка ничего не добавляет в хэш
+(`add_optional_replay_check`): у игры без уровней хэши прежние, и хэш не помнит уровней, которые были и ушли (снапшот, снятый
+до первого уровня, грузится точно и после региона с тайлами-уровнями). Снапшот проверяет те же поставленные уровни
+(`levels`) и хранит счётчик номеров экземпляров (`LevelCounter`).
 
 ## Мир и генерация (E5)
 
@@ -1817,7 +1819,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
   `encode_resources`, `apply_changes(world, &StateChanges)` (недостающие id создаются по порядку, значения пишутся
   дважды, удаления, despawn с пометкой надгробия: `e7 is out of view since tick 180`).
 - **Снапшоты и id:** `sim::set_tick`, `snapshot::restore_releasing(world, &snap, gate)` (грузит под удержанным
-  `SimGate`), `AiIndex::set_local_base(base)` (свои id клиента — со второго счётчика, id хоста их не сдвигают).
+  `SimGate`; отказ возвращает мир, как и у `restore`), `AiIndex::set_local_base(base)` (свои id клиента — со второго счётчика, id хоста их не сдвигают).
 - **Реплей и журнал:** `replay::set_recording(world, false)` (клиент не пишет реплей; `replay_save` говорит почему),
   `replay::restart_from_current`, `journal::set_local_events(world, false)` (события пишет хост),
   `journal::push_remote(world, host_tick, kind, text)` — строка хоста, которую видят `journal`, `observe` и
@@ -2121,8 +2123,11 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
   меняют, а `Entity` внутри компонента хэшируется как `AiId`. Подписи и describe-фрагменты — это текст для ИИ, в хэш они не
   входят: новая формулировка или новый describer не ломают старые реплеи.
 - Состав хэша задаёт игра: `replay_ignore::<C>()` исключает компонент (косметика, кэши), `add_replay_check(name, fn(&World)
-  -> u64)` добавляет данные вне `AiVisible`-сущностей (снаряды без id, ресурсы). Компонент, который не сериализуется, один
-  раз попадает в журнал (`replay checks leave out …`) и дальше пропускается.
+  -> u64)` добавляет данные вне `AiVisible`-сущностей (снаряды без id, ресурсы). Для состояния, которого может не быть, —
+  `add_optional_replay_check(name, fn(&World) -> Option<u64>)`: пока функция возвращает `None`, хэш такой же, как без
+  проверки (так модуль уровней хэширует `level`: игра без уровней хэширует как раньше, и хэш не зависит от того, были ли
+  уровни прежде). Компонент, который не сериализуется, один раз попадает в журнал (`replay checks leave out …`) и дальше
+  пропускается.
 - `replay_save` пишет только внутрь `replays/` рабочей папки игры (вложенные папки можно). Абсолютный путь, `..` и симлинк,
   который ведёт наружу, — ошибка с подсказкой: `path must be inside replays/, e.g. replays/boss-fight.json`.
 - Проигрывание требует свежего мира: тик 0, тот же seed и та же частота тиков. События применяются между тиками, ровно там,
@@ -2162,8 +2167,8 @@ shards load-snapshot snapshots/boss_phase2.json   # или act snapshot_load pat
 - **сохраняется**: все сущности с `AiId` под своим id и их отражаемые компоненты (игры и модулей движка, плюс `Transform` и
   `Name`; типы `bevy_*`, которые добавляет окно, не входят); ссылка на сущность внутри компонента пишется как `e12`
   (`AiId`) или `c7` (ключ модуля: коллайдер без id, `add_snapshot_entity_key`); тик; счётчик `AiId` и надгробия;
-  ресурсы, которые модуль зарегистрировал `add_snapshot_resource::<R>()` (`ColliderIds`, `RegionBuild` — регион в мире, см.
-  ниже);
+  ресурсы, которые модуль зарегистрировал `add_snapshot_resource::<R>()` (`ColliderIds`, `LevelCounter` — номера
+  экземпляров уровней, `RegionBuild` — регион в мире, см. ниже);
 - **пересобирается** после загрузки (`add_snapshot_rebuild`): кэши, выведенные из сохранённого, — `PhysicsWorld`,
   запомненные значения входов записи реплея, **навсетка региона** (`navmesh`: строится заново для региона и твёрдых тел,
   которые снапшот вернул; NPC игры, загруженной из снапшота, ходят теми же маршрутами, что в исходной);
@@ -2180,15 +2185,21 @@ shards load-snapshot snapshots/boss_phase2.json   # или act snapshot_load pat
 сохранённого ресурса; проверки из `covers` (`static_colliders`, `levels`) идут после. Мир сохраняет `RegionBuild`: канонический
 манифест региона, первый `ColliderId` и номер экземпляра уровня, с которыми он строился. При загрузке регион снапшота строится
 заново, с теми же id, в игре, где другой регион или никакого; если снапшот снят без региона, регион в мире выгружается;
-манифест, который контент не может построить, отказывает до любых изменений. Настоящий вывод: снапшот, снятый в дебрях в
+манифест, который контент не может построить, отказывает до любых изменений. Счётчики коллайдеров и экземпляров уровней
+снапшот ставит свои сразу после этого: уровень, поставленный после загрузки, получает номер исходной сессии, и тайл региона
+не займёт номер уровня, который поставил агент. Проверки из `covers` могут отказать, когда регион уже построен заново (агент
+поставил `spawn_level` другие уровни): тогда загрузка возвращает мир, каким он был до неё (тот же регион, сущности под теми
+же id, счётчики, ресурсы), строки попытки уходят из журнала, и одна строка говорит, что случилось:
+`snapshot of tick 332 not loaded (this game is not the one the snapshot was taken in): the world is as it was before the load`.
+Запись реплея идёт дальше, как будто загрузки не было. Настоящий вывод: снапшот, снятый в дебрях в
 разгар боя стража логова, загружен в свежую игру на арене.
 
 ```text
 $ shards save-snapshot snapshots/wilds_fight.json                  # игра 1: регион wilds, на 332-м тике страж бьёт игрока
-saved /…/snapshots/wilds_fight.json: tick 332, 30 entities, 2 resources
+saved /…/snapshots/wilds_fight.json: tick 332, 30 entities, 3 resources
 $ shards load-snapshot snapshots/wilds_fight.json                  # игра 2: свежая, на арене, региона нет
-loaded /…/snapshots/wilds_fight.json: tick 332, 30 entities, 2 resources; region: wilds seed 42 v1 built again from its manifest (199 entities); the recording now starts at tick 332
-  332 [sim] snapshot loaded: …/snapshots/wilds_fight.json (tick 332, 30 entities, 2 resources; region: wilds seed 42 v1 built again from its manifest (199 entities))
+loaded /…/snapshots/wilds_fight.json: tick 332, 30 entities, 3 resources; region: wilds seed 42 v1 built again from its manifest (199 entities); the recording now starts at tick 332
+  332 [sim] snapshot loaded: …/snapshots/wilds_fight.json (tick 332, 30 entities, 3 resources; region: wilds seed 42 v1 built again from its manifest (199 entities))
 $ shards step 120                                                  # то же, что в игре 1
 ran 120 ticks (332 → 452)
   ~ e25 Skeleton "Den Guard": +ground 1.6m/s; fight e5 · token · leash 9/10m → fight e5 · circle · leash 7/10m; -active claw 0.10s (zone cone 1.8m 100°); moved 1.8m S
@@ -2203,7 +2214,7 @@ ran 120 ticks (332 → 452)
 
 **Загрузка** (`snapshot_load`, control-инструмент, Dev): все сущности с `AiId` заменяются сущностями снапшота под теми же
 id, ставятся тик, счётчики и ресурсы, пересобираются кэши. Ошибка (другой seed, контент, неизвестный компонент) возвращается
-до любых изменений. Запись реплея после загрузки начинается с этого снапшота, всё записанное раньше отбрасывается
+до любых изменений; отказ после подготовки региона возвращает мир, каким он был (см. выше). Запись реплея после загрузки начинается с этого снапшота, всё записанное раньше отбрасывается
 (`save-replay` до загрузки, если оно нужно). Загрузка во время проигрывания реплея заканчивает проигрывание.
 
 **Реплей со снапшота** (`shards-replay/3`, поле `start`): `cargo sandbox --replay FILE --verify` загружает снапшот сразу после

@@ -278,6 +278,12 @@ pub trait AiAppExt {
     /// name replaces the first.
     fn add_replay_check(&mut self, name: &str, check: fn(&World) -> u64) -> &mut Self;
 
+    /// [`add_replay_check`](Self::add_replay_check) for state that may be absent: while
+    /// `check` returns `None` it adds nothing to the hash, not even its name, so a game hashes
+    /// the same whether or not that state ever existed (the level module's `level`: a game
+    /// without placed levels hashes as one without the module).
+    fn add_optional_replay_check(&mut self, name: &str, check: fn(&World) -> Option<u64>) -> &mut Self;
+
     /// Adds field `key` to `ai/status` (`shards status`), computed on every call, e.g.
     /// the engine's version and modules. A second field with the same key replaces
     /// the first.
@@ -305,8 +311,11 @@ pub trait AiAppExt {
     /// world the module makes from one of its saved resources when it is not what the
     /// snapshot holds (a generated region, from the manifest it saved): the registered checks
     /// named in `covers` (`static_colliders`, `levels`) run after it. `prepare` returns a note
-    /// when it changed the world, and leaves the world as it was when it returns an error. A
-    /// second one with the same name replaces the first.
+    /// when it changed the world, `None` when it did not need to. A load refused after the
+    /// prepares ran, or by one that returned an error half way, puts the world back as it was
+    /// (it runs the prepares again with the world taken before them, so `prepare` must also
+    /// build what that world had, or take away what it did not have). A second one with the
+    /// same name replaces the first.
     fn add_snapshot_prepare(&mut self, name: &'static str, covers: &'static [&'static str], prepare: snapshot::PrepareFn) -> &mut Self;
 
     /// How references to entities without an `AiId` are written in snapshots (see
@@ -398,6 +407,11 @@ impl AiAppExt for App {
 
     fn add_replay_check(&mut self, name: &str, check: fn(&World) -> u64) -> &mut Self {
         self.world_mut().get_resource_or_init::<replay::ReplayHashing>().add_check(name, check);
+        self
+    }
+
+    fn add_optional_replay_check(&mut self, name: &str, check: fn(&World) -> Option<u64>) -> &mut Self {
+        self.world_mut().get_resource_or_init::<replay::ReplayHashing>().add_optional_check(name, check);
         self
     }
 

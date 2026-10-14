@@ -23,7 +23,8 @@
 //!   ([`add_snapshot_rebuild`](crate::AiAppExt::add_snapshot_rebuild)). Parts of the world a
 //!   module builds from a saved resource (a generated region from its manifest) are put back
 //!   *before* the checks below ([`add_snapshot_prepare`](crate::AiAppExt::add_snapshot_prepare)),
-//!   so a snapshot taken in a region loads into a game that has another region, or none.
+//!   so a snapshot taken in a region loads into a game that has another region, or none. A
+//!   load refused after that puts the world back as it was ([`restore`]).
 //! - **Checked.** What the world is built *around*, not what it holds: the content database,
 //!   the static colliders. A snapshot records a hash of each
 //!   ([`add_snapshot_check`](crate::AiAppExt::add_snapshot_check)) and refuses to load
@@ -190,7 +191,7 @@ type Rebuild = (&'static str, fn(&mut World));
 
 /// What a [`SnapshotPrepare`] does: `Ok(Some(note))` when it changed the world (the note goes
 /// into the load's report), `Ok(None)` when the world already was what the snapshot needs,
-/// `Err` (the world left as it was) when it cannot be.
+/// `Err` when it cannot be (whatever it changed before it failed, [`restore`] puts back).
 pub type PrepareFn = fn(&mut World, &Snapshot) -> Result<Option<String>, String>;
 
 /// Runs before a snapshot is checked against the game: brings a part of the world that a
@@ -389,6 +390,13 @@ impl LoadReport {
 /// rate (then the entities are the snapshot's, the rest is this game's, and the continuation
 /// is not the original's).
 ///
+/// The checks a prepare covers (`static_colliders` after the region is built again) can only
+/// refuse once the prepare has changed the world. So the world is taken first, and a load
+/// refused after a prepare ran (or by a prepare that failed half way) puts it back: the same
+/// entities under the same ids, the same region, counters and resources, the journal without
+/// the lines of the attempt and with one that says the load was refused. No [`WorldRebuilt`]
+/// follows: id for id, nothing changed.
+///
 /// The caller handles the replay recorder (`snapshot_load` restarts the recording from the
 /// snapshot; playback does the same for a replay's own start).
 pub fn restore(world: &mut World, snapshot: &Snapshot, force: bool) -> Result<LoadReport, String> {
@@ -404,21 +412,16 @@ pub fn restore(world: &mut World, snapshot: &Snapshot, force: bool) -> Result<Lo
     };
 
     // What modules build from their saved resources (a region from its manifest) comes
-    // first: the checks it covers compare the world built so with the snapshot's.
-    for prepare in &modules.prepares {
-        match (prepare.run)(world, snapshot) {
-            Ok(Some(note)) => warnings.push(format!("{}: {note}", prepare.name)),
-            Ok(None) => {}
-            Err(why) => return Err(format!("cannot put back the {} the snapshot was taken in: {why}", prepare.name)),
-        }
-    }
-    if !covered.is_empty() {
-        let mut later = Vec::new();
-        forced |= check_compatible(world, snapshot, force, &mut later, &|name| covered.contains(name))?;
-        for warning in later {
-            if !warnings.contains(&warning) {
-                warnings.push(warning);
-            }
+    // first: the checks it covers compare the world built so with the snapshot's. Both may
+    // still refuse, after the world changed: then it is put back as it was before.
+    let before = if modules.prepares.is_empty() { None } else { Some(Before::take(world)?) };
+    match prepare_and_check(world, snapshot, force, &modules, &covered, &mut warnings) {
+        Ok(late) => forced |= late,
+        Err(why) => {
+            return Err(match before {
+                Some(before) => before.put_back(world, &modules, snapshot.tick, why),
+                None => why,
+            });
         }
     }
 
@@ -428,22 +431,9 @@ pub fn restore(world: &mut World, snapshot: &Snapshot, force: bool) -> Result<Lo
         rebuild(world);
     }
 
-    // Save it again: the restored world must say what the file says.
-    let mut differences = Vec::new();
-    match capture(world) {
-        Ok(again) => {
-            differences = differences_between(snapshot, &again, &skipped);
-            // A forced load past a mismatch is not meant to reproduce the original's hash.
-            if differences.is_empty() && !forced && again.state_hash != snapshot.state_hash {
-                differences.push(format!(
-                    "the state hash is {:016x}, the snapshot's {:016x}: a replay check covers state that is not \
-                     on an entity with an AiId",
-                    again.state_hash, snapshot.state_hash
-                ));
-            }
-        }
-        Err(why) => differences.push(format!("cannot save the restored world again: {why}")),
-    }
+    // Save it again: the restored world must say what the file says. A forced load past a
+    // mismatch is not meant to reproduce the original's hash.
+    let differences = compare_with(world, snapshot, &skipped, !forced);
     world_rebuilt(world, format!("snapshot of tick {}", snapshot.tick));
     Ok(LoadReport {
         tick: snapshot.tick,
@@ -452,6 +442,112 @@ pub fn restore(world: &mut World, snapshot: &Snapshot, force: bool) -> Result<Lo
         warnings,
         differences,
     })
+}
+
+/// The prepares, then the checks they cover. Returns whether a mismatch was forced past.
+fn prepare_and_check(
+    world: &mut World,
+    snapshot: &Snapshot,
+    force: bool,
+    modules: &SnapshotRegistry,
+    covered: &BTreeSet<&str>,
+    warnings: &mut Vec<String>,
+) -> Result<bool, String> {
+    for prepare in &modules.prepares {
+        match (prepare.run)(world, snapshot) {
+            Ok(Some(note)) => warnings.push(format!("{}: {note}", prepare.name)),
+            Ok(None) => {}
+            Err(why) => return Err(format!("cannot put back the {} the snapshot was taken in: {why}", prepare.name)),
+        }
+    }
+    if covered.is_empty() {
+        return Ok(false);
+    }
+    let mut later = Vec::new();
+    let forced = check_compatible(world, snapshot, force, &mut later, &|name| covered.contains(name))?;
+    for warning in later {
+        if !warnings.contains(&warning) {
+            warnings.push(warning);
+        }
+    }
+    Ok(forced)
+}
+
+/// Where the world, saved again, differs from `wanted` (with the state hash when `hash`).
+fn compare_with(world: &World, wanted: &Snapshot, skipped: &Skipped, hash: bool) -> Vec<String> {
+    match capture(world) {
+        Ok(again) => {
+            let mut differences = differences_between(wanted, &again, skipped);
+            if differences.is_empty() && hash && again.state_hash != wanted.state_hash {
+                differences.push(format!(
+                    "the state hash is {:016x}, the snapshot's {:016x}: a replay check covers state that is not \
+                     on an entity with an AiId",
+                    again.state_hash, wanted.state_hash
+                ));
+            }
+            differences
+        }
+        Err(why) => vec![format!("cannot save the restored world again: {why}")],
+    }
+}
+
+/// The world before a load's prepares ran, to put back when the load is refused after them.
+struct Before {
+    world: Snapshot,
+    /// Which entity each id was: the replay recorder's input memories follow them.
+    entities: Vec<(AiId, Entity)>,
+    /// The journal's last line then.
+    journal: Option<u64>,
+}
+
+impl Before {
+    fn take(world: &mut World) -> Result<Before, String> {
+        // Lines logged before the load belong before it.
+        journal::drain_logs(world);
+        Ok(Before {
+            world: capture(world)?,
+            entities: world.resource::<AiIndex>().live(),
+            journal: world.get_resource::<journal::AiJournal>().map(journal::AiJournal::last_seq),
+        })
+    }
+
+    /// Puts the world back (the prepares undo what they built, from the saved world's own
+    /// resources: the region it had, or none), says so once in the journal, and returns the
+    /// load's error `why`, with what could not be put back if anything.
+    fn put_back(self, world: &mut World, modules: &SnapshotRegistry, tick: u64, why: String) -> String {
+        let mut failed = Vec::new();
+        for prepare in &modules.prepares {
+            if let Err(e) = (prepare.run)(world, &self.world) {
+                failed.push(format!("{}: {e}", prepare.name));
+            }
+        }
+        replace_world(world, &self.world, &Skipped::default(), &mut Vec::new());
+        for (_, rebuild) in &modules.rebuilds {
+            rebuild(world);
+        }
+        let index = world.resource::<AiIndex>();
+        let moved: bevy::platform::collections::HashMap<Entity, Entity> =
+            self.entities.iter().filter_map(|(id, old)| Some((*old, index.get(*id)?))).collect();
+        replay::follow_entities(world, &moved);
+        failed.extend(compare_with(world, &self.world, &Skipped::default(), true));
+
+        // The lines of the attempt and of its undoing told of regions that came and went
+        // again: one line says what happened instead.
+        journal::drain_logs(world);
+        if let Some(seen) = self.journal
+            && let Some(mut lines) = world.get_resource_mut::<journal::AiJournal>()
+        {
+            lines.discard_after(seen);
+            let reason = why.lines().next().unwrap_or_default().trim_end_matches(':');
+            let outcome = if failed.is_empty() { "the world is as it was before the load" } else { "the world could not be put back entirely" };
+            journal::log(world, JournalKind::Warn, format!("snapshot of tick {tick} not loaded ({reason}): {outcome}"));
+        }
+        if failed.is_empty() {
+            return why;
+        }
+        let shown: Vec<&str> = failed.iter().take(5).map(String::as_str).collect();
+        format!("{why}\nPutting the world back as it was before the load failed too: {}", shown.join("; "))
+    }
 }
 
 /// [`restore`] while hold `gate` of the [`SimGate`] keeps the world from ticking (a client
@@ -890,6 +986,11 @@ mod tests {
     }
 
     fn game() -> App {
+        game_with(|_| {})
+    }
+
+    /// [`game`] with `setup` before it is finished.
+    fn game_with(setup: impl FnOnce(&mut App)) -> App {
         let mut app = App::new();
         app.add_plugins(bevy::time::TimePlugin)
             .add_plugins(crate::AiCorePlugin {
@@ -906,6 +1007,7 @@ mod tests {
         let a = app.world_mut().spawn((AiKind::new("Hero"), AiPlayer, Hp { current: 10.0, max: 10.0 }, Transform::default())).id();
         let b = app.world_mut().spawn((AiKind::new("Imp"), Hp { current: 3.0, max: 3.0 }, Transform::from_xyz(1.0, 0.0, 2.0))).id();
         app.world_mut().entity_mut(b).insert(Grudge { against: a, others: vec![a, b] });
+        setup(&mut app);
         app.finish();
         app.cleanup();
         app.update();
@@ -1087,7 +1189,77 @@ mod tests {
             return Err(format!("{} hills do not fit", saved.hills));
         }
         build_hills(world, saved.hills);
+        journal::emit(world, JournalKind::Event, format!("{} hills raised", saved.hills));
+        if saved.hills == 8 {
+            return Err("the eighth hill slid down".into());
+        }
         Ok(Some(format!("{} hills built", saved.hills)))
+    }
+
+    /// An input the replay records, as a keyboard would set it.
+    #[derive(Component, Reflect, Default, Clone, PartialEq, Debug, Serialize, Deserialize)]
+    #[reflect(Component, Default)]
+    struct Stance(u8);
+
+    #[test]
+    fn a_load_refused_after_a_prepare_ran_puts_the_world_back() {
+        let mut app = game_with(|app| {
+            app.add_snapshot_resource::<Terrain>()
+                .add_snapshot_check("hills", "build the same hills first", hills_hash)
+                .add_snapshot_prepare("terrain", &["hills"], prepare_hills)
+                .register_type::<Stance>()
+                .replay_input::<Stance>();
+        });
+        for id in [AiId(1), AiId(2)] {
+            let entity = app.world().resource::<AiIndex>().get(id).unwrap();
+            app.world_mut().entity_mut(entity).insert(Stance(0));
+        }
+        build_hills(app.world_mut(), 3);
+        step(&mut app, 4);
+        // The prepare builds the snapshot's 3 hills, and only then does the check it covers
+        // find another ground than the snapshot's.
+        let mut snapshot = capture(app.world()).unwrap();
+        snapshot.checks.insert("hills".into(), format!("{:016x}", 7));
+        build_hills(app.world_mut(), 1);
+        step(&mut app, 2);
+        // Pressed after the last tick: an input the next tick records.
+        let hero = app.world().resource::<AiIndex>().get(AiId(1)).unwrap();
+        app.world_mut().entity_mut(hero).insert(Stance(2));
+
+        let before = capture(app.world()).unwrap();
+        let seen = app.world().resource::<journal::AiJournal>().last_seq();
+        let recorded = app.world().resource::<crate::AiReplay>().recorded_events();
+        let err = restore(app.world_mut(), &snapshot, false).unwrap_err();
+        assert!(err.contains("hills differs"), "{err}");
+        assert_eq!((capture(app.world()).unwrap(), hills_hash(app.world())), (before.clone(), 1), "put back");
+        let lines: Vec<String> = app.world().resource::<journal::AiJournal>().after(seen).0.map(|e| e.text.clone()).collect();
+        assert_eq!(lines, ["snapshot of tick 4 not loaded (this game is not the one the snapshot was taken in): the world is as it was before the load"]);
+
+        // The recording goes on as if nothing happened: the press, and no other input.
+        step(&mut app, 1);
+        let inputs: Vec<(AiId, Value)> = crate::replay::save(app.world())
+            .events
+            .into_iter()
+            .skip(recorded)
+            .filter_map(|e| match e {
+                crate::replay::ReplayEvent::Input { id, value, .. } => Some((id, value)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(inputs, [(AiId(1), serde_json::json!(2))]);
+
+        // A prepare that fails half way is undone the same.
+        let mut slid = snapshot.clone();
+        slid.resources.insert(Terrain::type_path().into(), serde_json::json!({"hills": 8}));
+        let before = capture(app.world()).unwrap();
+        let err = restore(app.world_mut(), &slid, false).unwrap_err();
+        assert_eq!(err, "cannot put back the terrain the snapshot was taken in: the eighth hill slid down");
+        assert_eq!((capture(app.world()).unwrap(), hills_hash(app.world())), (before, 1));
+
+        // Forced, the same snapshot loads.
+        let report = restore(app.world_mut(), &snapshot, true).unwrap();
+        assert!(report.warnings.iter().any(|w| w.starts_with("loaded anyway: hills differs")), "{:?}", report.warnings);
+        assert_eq!((hills_hash(app.world()), sim::tick(app.world())), (3, 4));
     }
 
     fn hilly(hills: u32, prepare: bool) -> App {

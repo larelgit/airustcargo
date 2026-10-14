@@ -181,6 +181,9 @@ pub struct AiReplay {
     /// Per registered input component: learn the values it has now (after a snapshot
     /// replaced the entities, the remembered ones belong to entities that are gone).
     memory_resets: Vec<fn(&mut World)>,
+    /// Per registered input component: move what is remembered of an entity to the one
+    /// that stands for it now (a refused load put the same entities back as new ones).
+    memory_follows: Vec<FollowMemory>,
     playback: Option<Playback>,
     report: Option<ReplayReport>,
     /// Set while playback itself calls tools, so its calls do not count as a takeover.
@@ -416,6 +419,26 @@ fn inputs_between_ticks<C: Component<Mutability = Mutable> + Clone + PartialEq +
     }
 }
 
+/// Moves what an input component remembers from old entities to the ones that stand for them.
+type FollowMemory = fn(&mut World, &HashMap<Entity, Entity>);
+
+/// The entities were put back as they were, as new ones (`moved`: old → new): a refused
+/// snapshot load undid what it had built. The input memories follow them, so an input
+/// changed since the last tick is still recorded as one, and an input that is what it was
+/// is not.
+pub(crate) fn follow_entities(world: &mut World, moved: &HashMap<Entity, Entity>) {
+    let follows = world.get_resource::<AiReplay>().map(|r| r.memory_follows.clone()).unwrap_or_default();
+    for follow in follows {
+        follow(world, moved);
+    }
+}
+
+fn follow_memory<C: Component + Clone>(world: &mut World, moved: &HashMap<Entity, Entity>) {
+    let mut memory = world.resource_mut::<InputMemory<C>>();
+    let last = std::mem::take(&mut memory.last);
+    memory.last = last.into_iter().map(|(entity, value)| (moved.get(&entity).copied().unwrap_or(entity), value)).collect();
+}
+
 /// After a snapshot replaced the entities: remember what the new ones hold, as of now.
 fn reset_memory<C: Component + Clone>(world: &mut World) {
     let last: HashMap<Entity, C> = world.query::<(Entity, &C)>().iter(world).map(|(e, c)| (e, c.clone())).collect();
@@ -435,6 +458,7 @@ where
         let mut replay = app.world_mut().get_resource_or_init::<AiReplay>();
         replay.inputs.push(crate::short_type_name::<C>());
         replay.memory_resets.push(reset_memory::<C>);
+        replay.memory_follows.push(follow_memory::<C>);
     }
     app.init_resource::<InputMemory<C>>()
         .add_systems(PostStartup, remember_inputs::<C>)
@@ -460,6 +484,16 @@ pub enum ReplaySystems {
 /// A game's own contribution to every replay check.
 pub type ReplayCheck = fn(&World) -> u64;
 
+/// A contribution to every replay check for state that may be absent: `None` adds nothing,
+/// not even the check's name.
+pub type OptionalReplayCheck = fn(&World) -> Option<u64>;
+
+#[derive(Clone, Copy)]
+enum HashedCheck {
+    Always(ReplayCheck),
+    WhenSome(OptionalReplayCheck),
+}
+
 /// What goes into [`state_hash`] besides AI-visible entities, and what stays out.
 #[derive(Resource, Default)]
 pub struct ReplayHashing {
@@ -467,7 +501,7 @@ pub struct ReplayHashing {
     ignored: HashSet<TypeId>,
     /// Game data outside AI-visible entities
     /// ([`AiAppExt::add_replay_check`](crate::AiAppExt::add_replay_check)), by name.
-    checks: Vec<(String, ReplayCheck)>,
+    checks: Vec<(String, HashedCheck)>,
     /// Components already reported as not serializable.
     reported: HashSet<&'static str>,
 }
@@ -484,6 +518,18 @@ impl ReplayHashing {
     }
 
     pub fn add_check(&mut self, name: &str, check: ReplayCheck) {
+        self.push_check(name, HashedCheck::Always(check));
+    }
+
+    /// [`add_check`](Self::add_check) for state that may be absent (no level placed): while
+    /// `check` returns `None` the hash is what it would be without the check. So the hash
+    /// depends on the state only, never on whether the state existed before (a snapshot taken
+    /// before the first level loads exactly after one came and went).
+    pub fn add_optional_check(&mut self, name: &str, check: OptionalReplayCheck) {
+        self.push_check(name, HashedCheck::WhenSome(check));
+    }
+
+    fn push_check(&mut self, name: &str, check: HashedCheck) {
         self.checks.retain(|(n, _)| n != name);
         self.checks.push((name.to_owned(), check));
     }
@@ -537,8 +583,15 @@ fn hash_state(world: &World) -> (u64, Vec<&'static str>) {
         }
     }
     for (name, check) in hashing.map(|c| c.checks.as_slice()).unwrap_or_default() {
+        let value = match check {
+            HashedCheck::Always(check) => check(world),
+            HashedCheck::WhenSome(check) => match check(world) {
+                Some(value) => value,
+                None => continue,
+            },
+        };
         h.bytes(name.as_bytes());
-        h.u64(check(world));
+        h.u64(value);
     }
     failed.sort_unstable();
     failed.dedup();
