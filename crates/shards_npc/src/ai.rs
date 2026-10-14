@@ -130,6 +130,8 @@ fn npc_state(In(call): In<Call<NpcStateArgs>>, world: &World) -> ToolResult<Valu
             "next": a.path.get(a.index as usize).map(|p| fmt_pos(*p)),
             "direct": a.direct,
             "arrived": a.arrived,
+            // A goal with no way there: it holds until it plans again.
+            "no_route": a.goal.is_some() && a.path.is_empty(),
         })
     });
     let home = e.get::<Home>().map(|h| {

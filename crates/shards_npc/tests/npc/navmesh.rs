@@ -579,6 +579,9 @@ fn an_npc_does_not_walk_off_a_cliff_toward_a_target_in_plain_sight() {
     assert_eq!(state(&app, sentry), "chase");
     let agent = app.world().get::<NavAgent>(sentry).unwrap();
     assert!(!agent.direct && agent.path.is_empty(), "no straight walk, no route: it holds ({agent:?})");
+    let me = id(&app, sentry);
+    let out = ok(&mut app, "npc_state", json!({"id": me}));
+    assert_eq!(out.result["nav"]["no_route"], true, "{}", out.result);
 }
 
 /// A walker that climbs less than the body the tiles were baked for is not planned on the
