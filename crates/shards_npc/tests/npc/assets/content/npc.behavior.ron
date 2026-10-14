@@ -1,0 +1,59 @@
+// Behaviours of the test NPCs: the logic behind every name is the engine's (or, for `flag_on`
+// and `goto`, the test's own hooks).
+{
+    // Fights what it sees: the director's tokens decide who strikes, the others wait in roles.
+    "grunt": (
+        initial: "idle",
+        states: {
+            "idle": (transitions: [(to: "fight", when: ["target_known"])]),
+            "fight": (kind: "attack", transitions: [(to: "idle", when: ["target_lost"])]),
+        },
+    ),
+    // The same fight written as two states: wait for a token, then strike with it.
+    "patient": (
+        initial: "idle",
+        states: {
+            "idle": (transitions: [(to: "wait", when: ["target_known"])]),
+            "wait": (kind: "wait_token", transitions: [(to: "strike", when: ["has_token"]), (to: "idle", when: ["target_lost"])]),
+            "strike": (kind: "attack", transitions: [(to: "wait", when: ["attack_done"]), (to: "wait", when: ["!has_token", ("in_state", {"secs": 0.5})])]),
+        },
+    ),
+    // Chases within its leash and goes home (healing) when the target leaves it.
+    "sentry": (
+        initial: "idle",
+        states: {
+            "idle": (transitions: [(to: "chase", when: ["target_known", ("target_in_leash", {"margin": 4.0})])]),
+            "chase": (params: {"within": 1.5}, transitions: [
+                (to: "home", when: [("!target_in_leash", {"margin": 4.0})]),
+                (to: "home", when: ["target_lost"]),
+            ]),
+            "home": (kind: "return_home", params: {"heal": 40.0}, transitions: [(to: "idle", when: ["at_home"])]),
+        },
+    ),
+    // Stands and looks.
+    "watcher": (initial: "idle", states: {"idle": ()}),
+    // Walks its patrol.
+    "walker": (initial: "walk", states: {"walk": (kind: "patrol", params: {"speed": 1.0})}),
+    // The test's own condition and state.
+    "flagged": (
+        initial: "idle",
+        states: {
+            "idle": (transitions: [(to: "dance", when: ["flag_on"])]),
+            "dance": (kind: "goto", params: {"x": 3.0, "z": 0.0}, transitions: [(to: "pause", when: ["!flag_on"])]),
+            "pause": (kind: "idle", duration: (0.5, 0.5), transitions: [(to: "idle", when: ["timer_done"])]),
+        },
+    ),
+    "typo": (initial: "idle", states: {"idle": (transitions: [(to: "idle", when: ["flg_on"])])}),
+    // The sandbox's warden as data: guards its post, fights within its leash, home otherwise.
+    "warden": (
+        initial: "guard",
+        states: {
+            "guard": (kind: "idle", transitions: [(to: "fight", when: ["target_known", "target_in_leash"])]),
+            "fight": (kind: "attack", transitions: [(to: "home", when: ["!target_in_leash"]), (to: "home", when: ["target_lost"])]),
+            "home": (kind: "return_home", transitions: [
+                (to: "fight", when: ["target_known", "target_in_leash"]),
+                (to: "guard", when: ["at_home"]),
+            ]),
+        },
+    ),
+}

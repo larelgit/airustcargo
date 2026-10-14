@@ -11,6 +11,7 @@ use shards_content::ContentPlugin;
 use shards_core::{CorePlugin, EngineConfig};
 use shards_level::LevelPlugin;
 use shards_motion::MotionPlugin;
+use shards_npc::NpcPlugin;
 
 /// Bevy's `DefaultPlugins` (whatever the cargo features compile in), the log capture
 /// that feeds `warn!`/`error!` into the journal, the AI layer, the engine core, content
@@ -65,6 +66,7 @@ impl PluginGroup for EnginePlugins {
             .add(MotionPlugin)
             .add(ActionPlugin)
             .add(LevelPlugin)
+            .add(NpcPlugin)
     }
 }
 

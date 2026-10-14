@@ -3,8 +3,8 @@
 //! A game depends on this crate alone and gets a deterministic fixed-tick core with
 //! the AI layer ([`ai_core`]), engine states and the loading gate ([`core`]), the
 //! content database ([`content`]), physics, the character controller, input and
-//! camera ([`motion`]), data-driven combat ([`action`]) and levels from Blender
-//! ([`level`]); Bevy and serde come re-exported.
+//! camera ([`motion`]), data-driven combat ([`action`]), levels from Blender ([`level`])
+//! and enemy AI ([`npc`]); Bevy and serde come re-exported.
 //!
 //! ```ignore
 //! use shards::prelude::*;
@@ -48,6 +48,7 @@ pub use shards_content as content;
 pub use shards_core as core;
 pub use shards_level as level;
 pub use shards_motion as motion;
+pub use shards_npc as npc;
 
 pub use plugins::EnginePlugins;
 pub use run::run;
@@ -64,6 +65,7 @@ pub mod prelude {
     pub use shards_core::prelude::*;
     pub use shards_level::prelude::*;
     pub use shards_motion::prelude::*;
+    pub use shards_npc::prelude::*;
 
     pub use crate::EnginePlugins;
 

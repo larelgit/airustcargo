@@ -1,0 +1,23 @@
+[package]
+name = "shards_npc"
+description = "Shards NPC AI: behaviour state machines in content, perception, combat director with attack tokens, attack planner, nav agents."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+shards_motion.workspace = true
+shards_action.workspace = true
+bevy = { workspace = true, features = ["std", "serialize"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+# Test apps load their content through the asset server, like a game.
+bevy = { workspace = true, features = ["std", "serialize", "bevy_asset", "bevy_state", "multi_threaded"] }
+ron.workspace = true

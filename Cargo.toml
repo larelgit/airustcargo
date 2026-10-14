@@ -8,6 +8,7 @@ members = [
     "crates/shards_motion",
     "crates/shards_action",
     "crates/shards_level",
+    "crates/shards_npc",
     "crates/shards",
     "crates/sandbox",
     "crates/shards_cli",
@@ -52,6 +53,7 @@ shards_content = { path = "crates/shards_content", default-features = false }
 shards_motion = { path = "crates/shards_motion" }
 shards_action = { path = "crates/shards_action" }
 shards_level = { path = "crates/shards_level" }
+shards_npc = { path = "crates/shards_npc" }
 shards = { path = "crates/shards", default-features = false }
 
 # Bevy's recommended dev setup: optimise dependencies, keep our own code fast to compile.

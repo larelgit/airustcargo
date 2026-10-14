@@ -122,7 +122,9 @@ fn errors_teach_the_fix() {
     );
 
     let condition = fail("step", json!({"until": [{"named": "nope"}]}));
-    assert!(condition.contains("unknown condition `nope`; known: boss_dead, boss_phase_2, player_dead"), "{condition}");
+    // The sandbox's own conditions, among the engine modules' (`npc_attacking`, ...).
+    assert!(condition.contains("unknown condition `nope`; known: boss_dead, boss_phase_2, "), "{condition}");
+    assert!(condition.contains("npc_attacking") && condition.contains("player_dead"), "{condition}");
 
     ok(&mut app, "despawn", json!({"id": "e7"}));
     let gone = act(&mut app, "inspect", json!({"id": "e7"}));

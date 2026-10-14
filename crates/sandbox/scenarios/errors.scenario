@@ -35,7 +35,9 @@ expect result contains "Health"
 
 # a stop condition that does not exist
 act? step until='[{"named":"nope"}]'
-expect result contains "unknown condition `nope`; known: boss_dead, boss_phase_2, player_dead"
+# The known ones: the sandbox's, among the engine modules' own (npc_attacking, ...).
+expect result contains "unknown condition `nope`; known: boss_dead, boss_phase_2, "
+expect result contains "player_dead"
 
 # a player-scope agent plays fair: no cheats, no control over time
 session --agent bot --scope player
