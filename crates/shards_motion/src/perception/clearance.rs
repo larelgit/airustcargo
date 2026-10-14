@@ -70,7 +70,8 @@ enum Sample {
 }
 
 /// What a character of `params` at `origin` (feet) finds in the eight directions, up to
-/// `range` meters. `swimming_at`: the water surface, when the character swims.
+/// `range` meters. `swimming_at`: the water surface, when the character swims. `exclude`:
+/// entities whose colliders never count (the character, and whatever it looks around).
 pub fn clearance(
     physics: &PhysicsWorld,
     params: &CharacterParams,
@@ -78,7 +79,7 @@ pub fn clearance(
     swimming_at: Option<f32>,
     range: f32,
     safe_drop: f32,
-    exclude: Option<Entity>,
+    exclude: &[Entity],
 ) -> Vec<Reach> {
     let (marcher, start) = Marcher::at(physics, params, origin, swimming_at, range, safe_drop, exclude);
     COMPASS
@@ -103,7 +104,7 @@ pub fn reach_toward(
     safe_drop: f32,
     exclude: Option<Entity>,
 ) -> (f32, Hazard) {
-    let (marcher, start) = Marcher::at(physics, params, origin, swimming_at, range, safe_drop, exclude);
+    let (marcher, start) = Marcher::at(physics, params, origin, swimming_at, range, safe_drop, exclude.as_slice());
     marcher.march(origin, dir.normalize_or(Vec3::NEG_Z), start)
 }
 
@@ -132,7 +133,7 @@ impl<'a> Marcher<'a> {
         swimming_at: Option<f32>,
         range: f32,
         safe_drop: f32,
-        exclude: Option<Entity>,
+        exclude: &[Entity],
     ) -> (Self, (f32, bool)) {
         let marcher = Marcher { terrain: Terrain::new(physics, params, exclude), safe_drop, range };
         let start = match swimming_at {

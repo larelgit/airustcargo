@@ -89,10 +89,11 @@ fn clearance_tool(
         None => call.caller.require_subject()?,
     };
     let (tf, _, _, state) = bodies.get(subject).map_err(|_| "that entity has no position".to_owned())?;
-    // Another entity is looked at with the caller's body: its width decides the gaps.
+    // Another entity is looked at with the caller's body: its width decides the gaps. Neither
+    // the body nor the subject (a crate on the world layer) stands in its own way.
     let body = me.unwrap_or(subject);
     let params = params_of(&bodies, db.as_deref(), body);
-    let reaches = clearance(&physics, &params, tf.translation, swimming_at(state), ai.clearance_range, ai.safe_drop, Some(body));
+    let reaches = clearance(&physics, &params, tf.translation, swimming_at(state), ai.clearance_range, ai.safe_drop, &[body, subject]);
     let line = reaches.iter().map(|r| r.describe()).collect::<Vec<_>>().join(" · ");
     Ok(match call.args.around {
         Some(id) => format!("around {} at {}: {line}", id, fmt_pos(tf.translation)),

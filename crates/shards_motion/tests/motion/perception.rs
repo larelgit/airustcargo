@@ -42,7 +42,7 @@ fn clearance_names_the_wall_the_cliff_the_water_and_the_open_way() {
     let mut app = app();
     lay_out_the_surroundings(app.world_mut());
     settle(&mut app);
-    let reaches = clearance(physics(&app), &params(), Vec3::ZERO, None, 15.0, 2.0, None);
+    let reaches = clearance(physics(&app), &params(), Vec3::ZERO, None, 15.0, 2.0, &[]);
     assert_eq!(reaches.len(), 8);
     let dirs: Vec<&str> = reaches.iter().map(|r| r.dir).collect();
     assert_eq!(dirs, ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]);
@@ -98,6 +98,23 @@ fn clearance_reads_like_the_example_in_the_docs() {
 }
 
 #[test]
+fn clearance_around_a_prop_does_not_see_the_prop_as_a_wall() {
+    let mut app = app();
+    floor(app.world_mut());
+    player(app.world_mut(), Vec3::new(-8.0, 0.0, 0.0));
+    // A crate is on the world layer, like the walls: it must not wall in its own surroundings.
+    let crate_ = app
+        .world_mut()
+        .spawn((ai_core::AiKind::new("Crate"), Collider::standing_box(Vec3::splat(0.5)), Transform::from_xyz(5.0, 0.0, 0.0)))
+        .id();
+    let id = app.world().get::<ai_core::AiId>(crate_).unwrap().to_string();
+    step(&mut app, 2);
+    let around = ok(&mut app, "clearance", json!({"around": id}));
+    let line = around.split(": ").nth(1).unwrap();
+    assert!(line.split(" · ").all(|part| part.ends_with("free 15.0m")), "{around}");
+}
+
+#[test]
 fn clearance_sees_a_ledge_it_could_climb() {
     let mut app = app();
     floor(app.world_mut());
@@ -106,7 +123,7 @@ fn clearance_sees_a_ledge_it_could_climb() {
     // And a tall one to the east.
     block(app.world_mut(), Vec3::new(4.0, 0.0, -4.0), Vec3::new(6.0, 3.0, 4.0));
     settle(&mut app);
-    let reaches = clearance(physics(&app), &params(), Vec3::ZERO, None, 15.0, 2.0, None);
+    let reaches = clearance(physics(&app), &params(), Vec3::ZERO, None, 15.0, 2.0, &[]);
     let w = reach(&reaches, "W");
     assert!(matches!(w.hazard, Hazard::Ledge { rise } if (rise - 1.1).abs() < 0.05), "{w:?}");
     assert!((w.distance - 3.6).abs() < 0.05, "{w:?}");
@@ -141,7 +158,7 @@ fn a_tall_thin_wall_is_a_wall_whatever_lies_behind_it() {
         settle(&mut app);
         // However the 0.5 m probes fall against the wall's face.
         for offset in [0.0, 0.1, 0.2, 0.3, 0.4] {
-            let reaches = clearance(physics(&app), &params(), Vec3::new(offset, 0.0, 0.0), None, 15.0, 2.0, None);
+            let reaches = clearance(physics(&app), &params(), Vec3::new(offset, 0.0, 0.0), None, 15.0, 2.0, &[]);
             let e = reach(&reaches, "E");
             assert_eq!(e.hazard, Hazard::Wall, "behind it: {behind}, from x = {offset}: {e:?}");
             assert!((e.distance - (2.6 - offset)).abs() < 0.05, "{behind}: {e:?}");
@@ -386,7 +403,7 @@ fn a_gentle_slope_does_not_make_a_ledge_walkable() {
     tilted_ground_with_a_ledge(app.world_mut());
     let e = player(app.world_mut(), Vec3::ZERO);
     step(&mut app, 2);
-    let reaches = clearance(physics(&app), &params(), feet(&app, e), None, 15.0, 2.0, None);
+    let reaches = clearance(physics(&app), &params(), feet(&app, e), None, 15.0, 2.0, &[]);
     let east = reach(&reaches, "E");
     assert!(matches!(east.hazard, Hazard::Ledge { rise } if (rise - 0.8).abs() < 0.05), "{east:?}");
     let plan = plan_path(physics(&app), &params(), &request(feet(&app, e), Vec3::new(10.0, 0.0, 0.0))).unwrap();
@@ -433,7 +450,7 @@ fn deep_water_over_a_steep_bottom_still_swims() {
     volume(app.world_mut(), Vec3::new(0.0, -6.0, -10.0), Vec3::new(10.0, 0.0, 10.0), VolumeKind::Water);
     settle(&mut app);
     let params = CharacterParams::default();
-    let terrain = shards_motion::perception::Terrain::new(physics(&app), &params, None);
+    let terrain = shards_motion::perception::Terrain::new(physics(&app), &params, &[]);
     // Over the ramp where the water is deeper than a character can stand in.
     let probed = terrain.probe(4.0, 0.0, 0.0);
     assert!(matches!(probed, shards_motion::perception::Probe::Water { .. }), "{probed:?}");

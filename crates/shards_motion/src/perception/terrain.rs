@@ -51,12 +51,10 @@ pub struct Terrain<'a> {
 }
 
 impl<'a> Terrain<'a> {
-    /// `exclude`: an entity whose colliders never count (the walker itself).
-    pub fn new(physics: &'a PhysicsWorld, params: &'a CharacterParams, exclude: Option<Entity>) -> Self {
-        let mut filter = QueryFilter::new(LayerMask::WORLD);
-        if let Some(entity) = exclude {
-            filter = filter.excluding(entity);
-        }
+    /// `exclude`: entities whose colliders never count (the walker itself, and the prop it
+    /// is asked to look around).
+    pub fn new(physics: &'a PhysicsWorld, params: &'a CharacterParams, exclude: &[Entity]) -> Self {
+        let filter = exclude.iter().fold(QueryFilter::new(LayerMask::WORLD), |filter, &entity| filter.excluding(entity));
         Self { physics, params, filter, min_ground_y: params.max_slope_deg.clamp(0.0, 89.9).to_radians().cos() }
     }
 
@@ -176,8 +174,8 @@ mod tests {
     #[test]
     fn a_slope_lifts_a_floor_by_its_tilt() {
         let (physics, params) = (PhysicsWorld::default(), CharacterParams::default());
-        let terrain = Terrain::new(&physics, &params, None);
-        let up = |degrees: f32| degrees.to_radians().cos();
+        let terrain = Terrain::new(&physics, &params, &[]);
+        let up =|degrees: f32| degrees.to_radians().cos();
         assert_eq!(terrain.slope_rise(0.5, 1.0, up(1.0)), 0.0, "flat enough to be a step");
         let gentle = terrain.slope_rise(0.5, up(3.6), 1.0);
         assert!((gentle - 0.5 * 3.6f32.to_radians().tan()).abs() < 1e-4, "{gentle}");
@@ -193,7 +191,7 @@ mod tests {
             (Vec3::new(5.0, 0.0, -2.0), Vec3::new(6.0, 3.0, 2.0)),
         ]);
         let params = CharacterParams::default();
-        let terrain = Terrain::new(&physics, &params, None);
+        let terrain = Terrain::new(&physics, &params, &[]);
         assert!(matches!(terrain.probe(-3.0, 0.0, 0.0), Probe::Floor { y, .. } if y.abs() < 1e-4));
         assert_eq!(terrain.probe(1.0, 0.0, 0.0), Probe::Void, "the gap between the slabs has no floor");
         assert_eq!(terrain.probe(5.5, 0.0, 0.0), Probe::Blocked(Block::Wall));

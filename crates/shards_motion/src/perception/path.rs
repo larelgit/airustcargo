@@ -243,7 +243,7 @@ impl<'a> Planner<'a> {
             cell_of(a.z.max(b.z) + margin),
         );
         Self {
-            terrain: Terrain::new(physics, params, request.exclude),
+            terrain: Terrain::new(physics, params, request.exclude.as_slice()),
             request,
             probes: HashMap::new(),
             nodes: Vec::new(),
