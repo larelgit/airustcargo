@@ -17,18 +17,19 @@ struct WorldSaves(u32);
 #[derive(Resource, Default)]
 struct CharacterSaves(u32);
 
-fn character(_: &World, _: Entity) -> Option<Value> {
+fn character(_: &mut World, _: Entity) -> Option<Value> {
     Some(json!({"level": 3}))
 }
 
-fn keep_character(world: &mut World, sections: &Value) {
+fn keep_character(world: &mut World, _tick: u64, _reason: &str, sections: &Value) {
     if sections["level"] == 3 {
         world.get_resource_or_init::<CharacterSaves>().0 += 1;
     }
 }
 
-fn save_world(world: &mut World) {
+fn save_world(world: &mut World) -> Option<String> {
     world.get_resource_or_init::<WorldSaves>().0 += 1;
+    None
 }
 
 /// The sandbox with co-op saves: characters go to their players, the host saves the world.

@@ -277,6 +277,16 @@ impl NetHost {
         Ok(())
     }
 
+    /// Sends player `player`'s machine its character (co-op saves: `sections` as the game
+    /// captured it on the host, at host tick `tick`, saved for `reason`). Reliable and in order
+    /// with everything else the host says. `false`: that player is not connected.
+    pub fn send_character(&mut self, player: u8, tick: u64, reason: &str, sections: Value) -> bool {
+        let Some(peer) = self.peers.values_mut().find(|p| p.player == player && p.stage == PeerStage::Connected) else {
+            return false;
+        };
+        peer.send(&Msg::CharacterSave { tick, reason: reason.to_owned(), sections }).is_ok()
+    }
+
     /// Sends `peer` the whole world again at the next send.
     pub fn resync(&mut self, player: Option<u8>, reason: &str) -> usize {
         let mut n = 0;
@@ -432,7 +442,7 @@ pub fn end_session(world: &mut World, reason: &str) {
         return;
     }
     let on_end = hooks(world).on_session_end;
-    on_end(world);
+    let saved_slot = on_end(world);
     with_host(world, |world, host, endpoint| {
         let tick = sim::tick(world);
         let capture = hooks(world).capture_character;
@@ -442,7 +452,7 @@ pub fn end_session(world: &mut World, reason: &str) {
             {
                 let _ = peer.send(&Msg::CharacterSave { tick, reason: "session ended".into(), sections });
             }
-            let _ = peer.send(&Msg::SessionEnd { reason: reason.to_owned(), saved_slot: None });
+            let _ = peer.send(&Msg::SessionEnd { reason: reason.to_owned(), saved_slot: saved_slot.clone() });
         }
         host.ended = Some(reason.to_owned());
         flush(host, endpoint);
@@ -792,14 +802,13 @@ fn reconcile_players(world: &mut World, host: &mut NetHost) {
             continue;
         }
         let Some(hello) = host.peers.get(id).and_then(|p| p.hello.clone()) else { continue };
-        let mut args = json!({ "player": player, "name": hello.name });
-        if let Some(character) = &hello.character {
-            args["character"] = character.clone();
-        }
+        let (args, overrode) = join_call(world, host, player, &hello);
         let joined = call_tool(world, NET_AGENT, "player_join", args);
         if !joined.ok {
             let why = joined.result.as_str().map_or_else(|| joined.result.to_string(), str::to_owned);
             let _ = host.kick(player, &format!("the host's world has no body for you ({why})"));
+        } else if overrode {
+            send_character(world, host, player, body_of(&joined.result), "rejoined");
         }
     }
     let others: BTreeSet<u8> = {
@@ -832,11 +841,7 @@ fn admit(world: &mut World, host: &mut NetHost, id: PeerId) {
     let Some(peer) = host.peers.get(&id).filter(|p| p.stage == PeerStage::Ready) else { return };
     let Some(hello) = peer.hello.clone() else { return };
     let player = peer.player;
-    // The token stays out of the recorded call: replays are shared, a token says who you are.
-    let mut args = json!({ "player": player, "name": hello.name });
-    if let Some(character) = &hello.character {
-        args["character"] = character.clone();
-    }
+    let (args, overrode) = join_call(world, host, player, &hello);
     let joined = call_tool(world, NET_AGENT, "player_join", args);
     if !joined.ok {
         let reason = format!("cannot spawn your body: {}", joined.result.as_str().unwrap_or_default());
@@ -872,6 +877,31 @@ fn admit(world: &mut World, host: &mut NetHost, id: PeerId) {
     }
     NetMarks::mark(world, |m| &mut m.joined);
     journal::emit(world, JournalKind::Sim, format!("net: p{player} ({}) joined at tick {tick} (world {kb:.1} KB)", hello.name));
+    if overrode {
+        // The host has a newer character for them than the one they brought.
+        send_character(world, host, player, body, "rejoined");
+    }
+}
+
+/// The recorded `player_join` of `player` and whether the host chose another character than
+/// the one they brought (`NetHooks::join_character`). The token stays out of the call:
+/// replays are shared, and a token says who you are.
+fn join_call(world: &mut World, host: &NetHost, player: u8, hello: &Hello) -> (Value, bool) {
+    let token = host.slots.get(&player).map(|s| s.token.clone()).unwrap_or_default();
+    let request = JoinRequest { player, name: hello.name.clone(), token, character: hello.character.clone() };
+    let chosen = (hooks(world).join_character)(world, &request);
+    let mut args = json!({ "player": player, "name": hello.name });
+    if let Some(character) = &chosen {
+        args["character"] = character.clone();
+    }
+    (args, chosen != hello.character)
+}
+
+/// Sends `player` their character as the host has it now.
+fn send_character(world: &mut World, host: &mut NetHost, player: u8, body: Option<u32>, reason: &str) {
+    let Some(entity) = body.and_then(|id| world.resource::<AiIndex>().get(AiId(id))) else { return };
+    let Some(sections) = (hooks(world).capture_character)(world, entity) else { return };
+    host.send_character(player, sim::tick(world), reason, sections);
 }
 
 fn reset_view(peer: &mut Peer) {

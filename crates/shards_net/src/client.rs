@@ -291,22 +291,36 @@ fn watch_link(world: &mut World, client: &mut NetClient) {
 
 /// Exit hook: the host is told.
 pub(crate) fn on_exit(world: &mut World) {
-    with_client(world, |_, client, endpoint| {
+    with_client(world, |world, client, endpoint| {
         if matches!(client.stage, ClientStage::Ended(_)) || client.link.is_none() {
             return;
         }
         client.send(&Msg::Bye { reason: "quit".into() });
         flush(client, endpoint);
+        // Over UDP, give the `Bye` 300 ms to get out and be acknowledged, and the host's last
+        // word to us, our character as it leaves (`CharacterSave`), to arrive: it is final.
         if endpoint.clock.is_wall() {
             let started = std::time::Instant::now();
-            while started.elapsed() < std::time::Duration::from_millis(300) && client.link.as_ref().is_some_and(|l| !l.is_idle()) {
+            let mut final_save = false;
+            while started.elapsed() < std::time::Duration::from_millis(300) && (!final_save || client.link.as_ref().is_some_and(|l| !l.is_idle())) {
                 std::thread::sleep(std::time::Duration::from_millis(5));
                 let mut datagrams = Vec::new();
                 let now = endpoint.clock.now();
                 endpoint.transport.recv(now, &mut datagrams);
+                let mut delivered = Vec::new();
                 if let Some(link) = client.link.as_mut() {
                     for (_, bytes) in datagrams {
                         link.on_datagram(now, &bytes);
+                    }
+                    delivered = link.poll(now);
+                }
+                for message in delivered {
+                    if let Delivered::Reliable(bytes) = message
+                        && let Ok(Msg::CharacterSave { tick, reason, sections }) = msg::decode::<Msg>(&bytes)
+                    {
+                        let save = hooks(world).on_character_save;
+                        save(world, tick, &reason, &sections);
+                        final_save = true;
                     }
                 }
                 flush(client, endpoint);
@@ -525,12 +539,13 @@ fn on_message(world: &mut World, client: &mut NetClient, clock: &NetClock, messa
             let verdict = if ok { "ok" } else { "failed" };
             journal::log(world, JournalKind::Agent, format!("host: {tool} {verdict} at host tick {tick}: {text}"));
         }
-        Msg::CharacterSave { sections, .. } => {
+        Msg::CharacterSave { tick, reason, sections } => {
             let save = hooks(world).on_character_save;
-            save(world, &sections);
+            save(world, tick, &reason, &sections);
         }
-        Msg::SessionEnd { reason, .. } => {
-            journal::emit(world, JournalKind::Warn, format!("net: session ended by host ({reason})"));
+        Msg::SessionEnd { reason, saved_slot } => {
+            let saved = saved_slot.map(|slot| format!(", world saved: {}", crate::host::clip(&slot, 40))).unwrap_or_default();
+            journal::emit(world, JournalKind::Warn, format!("net: session ended by host ({reason}){saved}"));
             let body = client.body.and_then(|id| world.resource::<AiIndex>().get(AiId(id)));
             if let (Some(player), Some(body)) = (client.player, body) {
                 world.trigger(PlayerLeft { player, body, reason: "session ended".into() });
