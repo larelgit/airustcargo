@@ -33,3 +33,6 @@ pub use stats::{DirStats, LinkStats};
 pub use transport::{MTU, PeerId, Transport};
 pub use udp::{UdpTransport, WallClock};
 pub use wire::Reject;
+
+#[cfg(test)]
+mod tests;
