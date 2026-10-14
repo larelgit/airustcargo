@@ -79,9 +79,14 @@ pub fn call(app: &mut App, tool: &str, args: Value) -> CallOutcome {
     call_tool(app.world_mut(), "dev", tool, args)
 }
 
-/// [`call`] that must succeed: panics with the tool's error otherwise.
+/// [`call`] that must succeed: panics with the tool's error otherwise, and when a
+/// gameplay system failed during it. (Test apps catch system panics like games do, and
+/// `step` reports one as a successful call that `stopped: gameplay system …`; use
+/// [`call`] in a test that expects it.)
 pub fn ok(app: &mut App, tool: &str, args: Value) -> CallOutcome {
     let out = call(app, tool, args.clone());
     assert!(out.ok, "{tool} {args} failed: {}", out.result);
+    let text = out.result.as_str().unwrap_or_default();
+    assert!(!text.contains(", stopped: gameplay "), "{tool} {args}: {text}");
     out
 }
