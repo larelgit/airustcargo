@@ -169,7 +169,7 @@ fn net_status(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
                     "inputs": { "late": p.inputs.late, "early": p.inputs.early, "dropped": p.inputs.dropped, "duplicates": p.inputs.duplicates, "waiting": p.inputs.waiting() },
                     "margin": p.margin.map(|m| m.1),
                     "deltas": p.deltas,
-                    "delta_bytes_avg": if p.deltas > 0 { p.delta_bytes / p.deltas } else { 0 },
+                    "delta_bytes_avg": p.delta_bytes.checked_div(p.deltas).unwrap_or(0),
                     "held_back": p.held_back,
                     "view": p.view.len(),
                     "desyncs": p.desyncs,

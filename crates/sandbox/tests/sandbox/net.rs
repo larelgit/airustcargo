@@ -48,7 +48,7 @@ struct Cost {
 fn measure(app: &mut App, ticks: u64, send_every: u64, cost: &mut Cost, last: &mut BTreeMap<u32, BTreeMap<String, Value>>) {
     for _ in 0..ticks {
         step(app, 1);
-        if shards::ai_core::sim::tick(app.world()) % send_every != 0 {
+        if !shards::ai_core::sim::tick(app.world()).is_multiple_of(send_every) {
             continue;
         }
         let world = app.world_mut();
