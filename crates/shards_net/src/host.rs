@@ -1298,7 +1298,7 @@ mod tests {
         host.retire(first.clone());
         host.retire(first.clone());
         host.retire(String::new());
-        assert_eq!(host.retired, [first.clone()], "once, and an empty token is no one's");
+        assert_eq!(host.retired, std::slice::from_ref(&first), "once, and an empty token is no one's");
         // Issuing the same inputs again would give the same token (a stand repeats): it is skipped.
         host.issued = 0;
         assert_ne!(host.issue_token(7, 1, "player"), first);

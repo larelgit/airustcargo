@@ -688,7 +688,7 @@ fn a_host_and_a_client_started_from_one_folder_keep_their_own_characters() {
     give(&mut stand, &me, 3);
     stand.world_mut(HOST).trigger(Camp);
     stand.run(60);
-    assert_eq!(stand.call(HOST, "net_end", json!({})).ok, true);
+    assert!(stand.call(HOST, "net_end", json!({})).ok);
     stand.run(120);
     let host = read_file(&shared, SaveKind::Character, "slot1");
     assert_eq!(host.label, "session ended", "the host's own file");
