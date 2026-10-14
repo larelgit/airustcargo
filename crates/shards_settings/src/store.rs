@@ -70,11 +70,11 @@ pub enum Installed {
 /// Starts the settings store for `app` as `config.settings` says. Call it once, after the
 /// game's builder returned (every group is registered by then) and before the app runs.
 ///
-/// - [`SettingsStore::Off`]: nothing.
-/// - [`SettingsStore::Default`]: the platform's settings folder for [`SettingsAppId`]. A
+/// - `SettingsStore::Off`: nothing.
+/// - `SettingsStore::Default`: the platform's settings folder for [`SettingsAppId`]. A
 ///   headless game gets no store (an agent's playtest must neither read nor change the
 ///   player's own settings; `--settings-dir` opts in).
-/// - [`SettingsStore::Dir`]: `<dir>/settings.toml`, the folder made absolute against the
+/// - `SettingsStore::Dir`: `<dir>/settings.toml`, the folder made absolute against the
 ///   working directory.
 ///
 /// An unreadable file is a warning in the journal and the defaults; the next save replaces it.

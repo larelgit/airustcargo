@@ -54,29 +54,6 @@ fn apply_flashes(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use shards_settings::FlashLevel;
-
-    use super::*;
-
-    #[test]
-    fn the_flash_setting_reaches_the_warnings() {
-        let mut app = App::new();
-        app.init_resource::<TelegraphSettings>().init_resource::<ThreatHud>().init_resource::<AccessibilitySettings>().add_systems(Update, apply_flashes);
-        app.update();
-        assert_eq!(app.world().resource::<ThreatHud>().flashes, FlashLevel::Full);
-        app.world_mut().resource_mut::<AccessibilitySettings>().flashes = "reduced".into();
-        app.update();
-        assert_eq!(app.world().resource::<ThreatHud>().flashes, FlashLevel::Reduced);
-        assert_eq!(app.world().resource::<TelegraphSettings>().style.flashes, FlashLevel::Reduced);
-        // A hand-edited word nobody knows is the default, not a crash.
-        app.world_mut().resource_mut::<AccessibilitySettings>().flashes = "strobe".into();
-        app.update();
-        assert_eq!(app.world().resource::<ThreatHud>().flashes, FlashLevel::Full);
-    }
-}
-
 /// The camera the player looks through: the first active 3D camera, the AI's own
 /// (`AiCamera`) before any other.
 pub(crate) fn active_camera(world: &mut World) -> Option<Entity> {
@@ -96,4 +73,30 @@ pub(crate) fn billboard(world: &mut World) -> Quat {
 /// The character this machine's player controls.
 pub(crate) fn local_player(world: &mut World) -> Option<Entity> {
     world.query_filtered::<Entity, With<LocalPlayer>>().iter(world).next()
+}
+
+#[cfg(test)]
+mod tests {
+    use shards_settings::FlashLevel;
+
+    use super::*;
+
+    #[test]
+    fn the_flash_setting_reaches_the_warnings() {
+        let mut app = App::new();
+        app.init_resource::<TelegraphSettings>()
+            .init_resource::<ThreatHud>()
+            .init_resource::<AccessibilitySettings>()
+            .add_systems(Update, apply_flashes);
+        app.update();
+        assert_eq!(app.world().resource::<ThreatHud>().flashes, FlashLevel::Full);
+        app.world_mut().resource_mut::<AccessibilitySettings>().flashes = "reduced".into();
+        app.update();
+        assert_eq!(app.world().resource::<ThreatHud>().flashes, FlashLevel::Reduced);
+        assert_eq!(app.world().resource::<TelegraphSettings>().style.flashes, FlashLevel::Reduced);
+        // A hand-edited word nobody knows is the default, not a crash.
+        app.world_mut().resource_mut::<AccessibilitySettings>().flashes = "strobe".into();
+        app.update();
+        assert_eq!(app.world().resource::<ThreatHud>().flashes, FlashLevel::Full);
+    }
 }

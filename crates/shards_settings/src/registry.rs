@@ -40,9 +40,12 @@ pub(crate) trait GroupAccess: Send + Sync {
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
+/// A rule a group's values must follow: why they do not, if they do not.
+type Check<G> = fn(&G) -> Result<(), String>;
+
 struct Group<G: SettingsGroup> {
     name: &'static str,
-    checks: Vec<fn(&G) -> Result<(), String>>,
+    checks: Vec<Check<G>>,
 }
 
 pub(crate) fn to_json(value: &dyn PartialReflect, registry: &TypeRegistry) -> Option<Value> {
@@ -142,7 +145,7 @@ impl SettingsRegistry {
         }
     }
 
-    fn add_check<G>(&mut self, check: fn(&G) -> Result<(), String>)
+    fn add_check<G>(&mut self, check: Check<G>)
     where
         G: SettingsGroup + Reflect + FromReflect + GetTypeRegistration + Typed,
     {
