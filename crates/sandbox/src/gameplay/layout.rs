@@ -135,16 +135,18 @@ impl ContentDef for LayoutDef {
 }
 
 impl LayoutDef {
-    /// What its solids, ramps and volumes cover on the ground plane (x, z); `None` without
-    /// any (a layout of spawns only).
-    pub fn footprint(&self) -> Option<Rect> {
+    /// What each of its solids, ramps and volumes covers on the ground plane (x, z), one
+    /// rectangle per piece: empty for a layout of spawns only. Not their union: the voids
+    /// between the pieces (beside the arena's corridor, beside the course's lane) are not in
+    /// the world.
+    pub fn footprint(&self) -> Vec<Rect> {
         let solids = self.solids.iter().map(|s| (s.min, s.max));
         let volumes = self.volumes.iter().map(|v| (v.min, v.max));
         let ramps = self.ramps.iter().map(|r| {
             let half = r.width * 0.5;
             (r.from.min(r.to) - Vec3::splat(half), r.from.max(r.to) + Vec3::splat(half))
         });
-        solids.chain(volumes).chain(ramps).map(|(min, max)| Rect::from_corners(min.xz(), max.xz())).reduce(|a, b| a.union(b))
+        solids.chain(volumes).chain(ramps).map(|(min, max)| Rect::from_corners(min.xz(), max.xz())).collect()
     }
 }
 

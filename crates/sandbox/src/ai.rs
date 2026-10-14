@@ -69,11 +69,13 @@ pub fn health_in_range(world: &World) -> Option<String> {
 
 /// Every character stays over the world ([`BoundsDef`] `world`): what the built layouts
 /// (the arena, its corridor, the obstacle course) and the loaded region cover on the
-/// ground, `margin` wider, and above `fall_below`. Movement and collisions keep it there.
+/// ground, `margin` wider, and above `fall_below`. Each solid, ramp and volume counts by
+/// its own rectangle, not the layout's bounding box: the void beside the corridor is not
+/// the world. Movement and collisions keep bodies there.
 pub fn bodies_in_world(world: &World) -> Option<String> {
     let bounds = world.get_resource::<ContentDb>()?.get::<BoundsDef>("world")?;
     let layouts = world.get_resource::<BuiltLayouts>().map(|b| &b.0[..]).unwrap_or_default();
-    let mut areas: Vec<Rect> = layouts.iter().filter_map(|(_, def)| def.footprint()).collect();
+    let mut areas: Vec<Rect> = layouts.iter().flat_map(|(_, def)| def.footprint()).collect();
     if let Some(region) = world.get_resource::<ActiveRegion>() {
         let m = &region.manifest;
         let corner = m.corner().xz();
