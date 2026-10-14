@@ -181,6 +181,9 @@ pub struct AiReplay {
     /// Per registered input component: learn the values it has now (after a snapshot
     /// replaced the entities, the remembered ones belong to entities that are gone).
     memory_resets: Vec<fn(&mut World)>,
+    /// Per registered input component: move what is remembered of an entity to the one
+    /// that stands for it now (a refused load put the same entities back as new ones).
+    memory_follows: Vec<FollowMemory>,
     playback: Option<Playback>,
     report: Option<ReplayReport>,
     /// Set while playback itself calls tools, so its calls do not count as a takeover.
@@ -416,6 +419,26 @@ fn inputs_between_ticks<C: Component<Mutability = Mutable> + Clone + PartialEq +
     }
 }
 
+/// Moves what an input component remembers from old entities to the ones that stand for them.
+type FollowMemory = fn(&mut World, &HashMap<Entity, Entity>);
+
+/// The entities were put back as they were, as new ones (`moved`: old → new): a refused
+/// snapshot load undid what it had built. The input memories follow them, so an input
+/// changed since the last tick is still recorded as one, and an input that is what it was
+/// is not.
+pub(crate) fn follow_entities(world: &mut World, moved: &HashMap<Entity, Entity>) {
+    let follows = world.get_resource::<AiReplay>().map(|r| r.memory_follows.clone()).unwrap_or_default();
+    for follow in follows {
+        follow(world, moved);
+    }
+}
+
+fn follow_memory<C: Component + Clone>(world: &mut World, moved: &HashMap<Entity, Entity>) {
+    let mut memory = world.resource_mut::<InputMemory<C>>();
+    let last = std::mem::take(&mut memory.last);
+    memory.last = last.into_iter().map(|(entity, value)| (moved.get(&entity).copied().unwrap_or(entity), value)).collect();
+}
+
 /// After a snapshot replaced the entities: remember what the new ones hold, as of now.
 fn reset_memory<C: Component + Clone>(world: &mut World) {
     let last: HashMap<Entity, C> = world.query::<(Entity, &C)>().iter(world).map(|(e, c)| (e, c.clone())).collect();
@@ -435,6 +458,7 @@ where
         let mut replay = app.world_mut().get_resource_or_init::<AiReplay>();
         replay.inputs.push(crate::short_type_name::<C>());
         replay.memory_resets.push(reset_memory::<C>);
+        replay.memory_follows.push(follow_memory::<C>);
     }
     app.init_resource::<InputMemory<C>>()
         .add_systems(PostStartup, remember_inputs::<C>)

@@ -305,8 +305,11 @@ pub trait AiAppExt {
     /// world the module makes from one of its saved resources when it is not what the
     /// snapshot holds (a generated region, from the manifest it saved): the registered checks
     /// named in `covers` (`static_colliders`, `levels`) run after it. `prepare` returns a note
-    /// when it changed the world, and leaves the world as it was when it returns an error. A
-    /// second one with the same name replaces the first.
+    /// when it changed the world, `None` when it did not need to. A load refused after the
+    /// prepares ran, or by one that returned an error half way, puts the world back as it was
+    /// (it runs the prepares again with the world taken before them, so `prepare` must also
+    /// build what that world had, or take away what it did not have). A second one with the
+    /// same name replaces the first.
     fn add_snapshot_prepare(&mut self, name: &'static str, covers: &'static [&'static str], prepare: snapshot::PrepareFn) -> &mut Self;
 
     /// How references to entities without an `AiId` are written in snapshots (see
