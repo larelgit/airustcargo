@@ -15,7 +15,7 @@ use ai_core::sim::{StepEnd, StepReport};
 use ai_core::{call_tool, AiReplay, CallOutcome, ReplayReport, SimGate, SystemFailure};
 use bevy::prelude::*;
 use serde_json::Value;
-use shards_core::{EngineConfig, EngineState};
+use shards_core::{EngineConfig, EngineState, SettingsStore};
 
 use crate::EnginePlugins;
 
@@ -32,8 +32,16 @@ pub fn config() -> EngineConfig {
         port: None,
         crash_replays: false,
         hot_reload: false,
+        settings: SettingsStore::Off,
         ..default()
     }
+}
+
+/// The config of a game embedded beside another in one process (a stand's client): like
+/// [`config`] (headless, paused, no logger, no run loop, no Ctrl+C handler), but with BRP
+/// port `port`, and its log lines in its own journal.
+pub fn embedded_config(port: Option<u16>) -> EngineConfig {
+    EngineConfig { testing: false, embedded: true, port, ..config() }
 }
 
 /// Builds a headless test app: [`config`] changed by `configure`, the engine, then the

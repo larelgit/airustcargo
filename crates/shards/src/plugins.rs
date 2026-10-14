@@ -26,6 +26,8 @@ use crate::TileLevelsPlugin;
 /// Transforms, assets and states work the same, so gameplay is the same.
 /// [`EngineConfig::testing`] also drops the logger (one per process) and the Ctrl+C
 /// handler, and runs no loop: tests drive the app with `update()`.
+/// [`EngineConfig::embedded`] does the same for a game beside another in one process, but
+/// keeps its BRP port, and its log lines go to its own journal.
 ///
 /// A plugin group: a game can still `.set(...)` or `.disable::<...>()` single plugins.
 pub struct EnginePlugins {
@@ -42,14 +44,16 @@ impl EnginePlugins {
 impl PluginGroup for EnginePlugins {
     fn build(self) -> PluginGroupBuilder {
         let config = self.config;
-        let headless = config.headless || config.testing;
+        // Driven from outside (a test, a stand's driver), beside other apps in the process.
+        let driven = config.testing || config.embedded;
+        let headless = config.headless || driven;
         let assets = AssetPlugin {
             file_path: config.asset_dir.clone(),
-            watch_for_changes_override: Some(config.hot_reload && !config.testing && cfg!(feature = "hot_reload")),
+            watch_for_changes_override: Some(config.hot_reload && !driven && cfg!(feature = "hot_reload")),
             ..default()
         };
         let mut group = DefaultPlugins.build().set(assets);
-        group = if config.testing {
+        group = if driven {
             group.disable::<LogPlugin>().disable::<TerminalCtrlCHandlerPlugin>()
         } else {
             let mut filter = bevy::log::DEFAULT_FILTER.to_owned();
@@ -60,7 +64,10 @@ impl PluginGroup for EnginePlugins {
             }
             group.set(LogPlugin { filter, custom_layer: ai_core::capture_log_layer, ..default() })
         };
-        group = if headless { without_display(group, config.testing) } else { with_window(group, &config) };
+        group = if headless { without_display(group, driven) } else { with_window(group, &config) };
+        if config.embedded {
+            group = group.add(EmbeddedLogCapture);
+        }
         // The engine's modules, in dependency order. A new module is one more line.
         group
             .add(config.ai_core_plugin())
@@ -73,6 +80,16 @@ impl PluginGroup for EnginePlugins {
             // Level files as the geometry of tiles: joins the two above.
             .add(TileLevelsPlugin)
             .add(NpcPlugin)
+    }
+}
+
+/// An embedded game's log lines: the process's capture layer (installed by the first game's
+/// `LogPlugin`) writes them into this game's journal while it is the active one.
+struct EmbeddedLogCapture;
+
+impl Plugin for EmbeddedLogCapture {
+    fn build(&self, app: &mut App) {
+        ai_core::journal::register_capture(app);
     }
 }
 
@@ -95,7 +112,7 @@ impl Plugin for NoGpu {
     }
 }
 
-fn without_display(mut group: PluginGroupBuilder, testing: bool) -> PluginGroupBuilder {
+fn without_display(mut group: PluginGroupBuilder, driven: bool) -> PluginGroupBuilder {
     group = group.set(WindowPlugin {
         primary_window: None,
         exit_condition: ExitCondition::DontExit,
@@ -121,7 +138,7 @@ fn without_display(mut group: PluginGroupBuilder, testing: bool) -> PluginGroupB
     {
         group = group.disable::<bevy::gilrs::GilrsPlugin>();
     }
-    let runner = if testing {
+    let runner = if driven {
         ScheduleRunnerPlugin::run_once()
     } else {
         ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0))

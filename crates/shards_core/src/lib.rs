@@ -76,6 +76,57 @@ pub struct EngineConfig {
     /// A test app: headless, no logger (a process has only one), no Ctrl+C handler and
     /// no run loop; tests drive it with `app.update()` and tools.
     pub testing: bool,
+    /// A game beside another in one process (a stand's clients): like [`testing`](Self::testing)
+    /// (headless, no logger, no Ctrl+C handler, no run loop: a driver updates it), but with
+    /// its own BRP port, and its log lines go to its own journal.
+    pub embedded: bool,
+    /// Taking part in a networked game (`--host`, `--join`, `--stand`).
+    pub net: NetLaunch,
+    /// The name other players see (`--name`).
+    pub player_name: String,
+    /// Network conditions this game's links simulate (`--net-sim latency=150,loss=0.02`).
+    pub net_sim: Option<String>,
+    /// Where saves are written, relative to the game's folder (`--save-dir`).
+    pub save_dir: String,
+    /// Where player settings are kept (`--settings-dir`, `--no-settings`).
+    pub settings: SettingsStore,
+    /// The character to play (`--character SLOT`): a save slot.
+    pub character_slot: Option<String>,
+    /// The world to load (`--world SLOT`): a save slot.
+    pub world_slot: Option<String>,
+    /// A client exits when its host ends the session, instead of going back to the menu
+    /// (`--exit-with-host`).
+    pub exit_with_host: bool,
+}
+
+/// The UDP port of a hosted game unless `--host PORT` says otherwise.
+pub const DEFAULT_NET_PORT: u16 = 7777;
+
+/// How a game takes part in a networked session.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum NetLaunch {
+    /// Single player: no network.
+    #[default]
+    Off,
+    /// Hosts a session on this UDP port (`--host [PORT]`).
+    Host { port: u16 },
+    /// Joins the host at `addr` (`--join 127.0.0.1:7777`).
+    Join { addr: String },
+    /// A host and `clients` clients from one command (`--stand N`): in this process, or
+    /// child processes over UDP loopback (`udp`, `--stand-udp`).
+    Stand { clients: u8, udp: bool },
+}
+
+/// Where player settings (graphics, audio, controls) are kept.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum SettingsStore {
+    /// Defaults, no files (`--no-settings`, tests, a stand's clients).
+    Off,
+    /// The platform's settings folder for this game.
+    #[default]
+    Default,
+    /// This folder (`--settings-dir DIR`).
+    Dir(String),
 }
 
 impl Default for EngineConfig {
@@ -93,6 +144,15 @@ impl Default for EngineConfig {
             hot_reload: true,
             asset_dir: "assets".into(),
             testing: false,
+            embedded: false,
+            net: NetLaunch::Off,
+            player_name: "player".into(),
+            net_sim: None,
+            save_dir: "saves".into(),
+            settings: SettingsStore::Default,
+            character_slot: None,
+            world_slot: None,
+            exit_with_host: false,
         }
     }
 }
