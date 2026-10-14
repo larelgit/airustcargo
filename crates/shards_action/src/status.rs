@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use shards_content::{ContentDb, ContentDef, Refs};
 
 use crate::def::{CombatTuning, EPS};
-use crate::fighter::report_once;
+use crate::fighter::{report_once, Dead};
 
 /// A status (content kind `status`).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -297,7 +297,8 @@ fn run_changes(world: &mut World, entity: Entity, changes: Vec<StatusChange>) {
     }
 }
 
-/// `SimSet::Resolve`, after hits: every entity's statuses tick, in `AiId` order.
+/// `SimSet::Resolve`, after hits: every living entity's statuses tick, in `AiId` order.
+/// The dead's are frozen (no hooks run on a corpse); a revive resumes them.
 pub fn update_statuses(world: &mut World) {
     let dt = world.resource::<Time>().delta_secs();
     let db = world.resource::<ContentDb>();
@@ -305,7 +306,7 @@ pub fn update_statuses(world: &mut World) {
     let defs: Vec<(String, StatusDef)> = db.iter::<StatusDef>().map(|(id, d)| (id.to_owned(), d.clone())).collect();
     let def = |id: &str| defs.iter().find(|(d, _)| d == id).map(|(_, d)| d);
     let mut order: Vec<(u32, Entity)> = world
-        .query::<(Entity, Option<&AiId>, &Statuses)>()
+        .query_filtered::<(Entity, Option<&AiId>, &Statuses), Without<Dead>>()
         .iter(world)
         .filter(|(_, _, s)| !s.0.is_empty())
         .map(|(e, id, _)| (id.map_or(u32::MAX, |i| i.0), e))

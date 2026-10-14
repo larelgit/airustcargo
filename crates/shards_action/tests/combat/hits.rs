@@ -4,6 +4,7 @@
 use bevy::prelude::*;
 use serde_json::json;
 use shards_action::prelude::*;
+use shards_action::status::StatusEntry;
 use shards_action::{ActionAppExt, DamageCtx, Outcome};
 use shards_motion::{CharacterParams, Collider, ColliderId};
 
@@ -294,6 +295,39 @@ fn statuses_build_up_from_hits_and_run_the_game_hooks() {
     assert_eq!(app.world().get::<Health>(hero).unwrap().max, 500.0, "on_expire ran");
     // 60 ticks of on_tick in all (1 s), the first one before `before`.
     assert!((before - hp(&app, hero) - 0.5 * 59.0).abs() < 1e-3, "on_tick ran every tick: {}", before - hp(&app, hero));
+}
+
+fn bleeding(buildup: f32, active: f32) -> Statuses {
+    Statuses(vec![StatusEntry { id: "bleed".into(), buildup, threshold: 100.0, active, stacks: u32::from(active > 0.0) }])
+}
+
+#[test]
+fn a_killing_hit_applies_no_status() {
+    let (mut app, hero, brute) = duel_with("hero", |app| {
+        app.add_status_effect("bleed", bleed_applied, bleed_tick, bleed_expired);
+    });
+    let (h, b) = (id(&app, hero), id(&app, brute));
+    // 30 hp, bleed at 50%: the slam (40 damage, 60 bleed) would tip it over, but kills first.
+    app.world_mut().entity_mut(hero).insert((Health::new(30.0), bleeding(50.0, 0.0)));
+    press(&mut app, brute, "heavy");
+    step(&mut app, 50);
+    assert_eq!(lines(&app, "died"), [format!("48 {h} died (killed by {b} with slam)")]);
+    assert!(lines(&app, "bleed").is_empty(), "no status for the dead: {:#?}", journal(&app));
+    assert_eq!(app.world().get::<Health>(hero).unwrap().max, 30.0, "on_apply never ran");
+}
+
+#[test]
+fn a_corpse_runs_no_status_hooks() {
+    let (mut app, hero, brute) = duel_with("hero", |app| {
+        app.add_status_effect("bleed", bleed_applied, bleed_tick, bleed_expired);
+    });
+    app.world_mut().entity_mut(hero).insert((Health::new(30.0), bleeding(0.0, 5.0)));
+    press(&mut app, brute, "heavy");
+    step(&mut app, 48);
+    assert!(app.world().get::<Dead>(hero).is_some());
+    assert_eq!(hp(&app, hero), 0.0);
+    step(&mut app, 20);
+    assert_eq!(hp(&app, hero), 0.0, "its bleeding stopped with it");
 }
 
 fn double_backstabs(ctx: &mut DamageCtx, world: &World) {
