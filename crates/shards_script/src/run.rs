@@ -315,6 +315,12 @@ impl Fail {
         Self { kind: FailureKind::Driver, message }
     }
 
+    /// The driver lost `member`. In a stand the message names it: what the driver says alone
+    /// (`cannot reach the game at http://127.0.0.1:41235`) is only a port.
+    fn lost_on(stand: bool, member: &str) -> impl Fn(String) -> Fail + '_ {
+        move |message| Fail::lost(if stand { format!("{member}: {message}") } else { message })
+    }
+
     fn at(self, line: usize, command: &str) -> Failure {
         Failure { kind: self.kind, line, command: command.to_owned(), message: self.message }
     }
@@ -415,7 +421,7 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
     /// member. A scenario with a `stand` line needs a driver that has exactly that stand.
     fn start(&mut self) -> Result<u64, Fail> {
         if let Some(header) = self.stand {
-            let peers = self.driver.peers().map_err(Fail::lost)?;
+            let peers = self.driver.peers().map_err(Fail::lost_on(true, HOST))?;
             let wanted = header.members();
             if peers != wanted {
                 let has = match peers.len() {
@@ -430,20 +436,25 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                     header.clients
                 )));
             }
-            self.driver.check_stand(&header).map_err(Fail::lost)?;
+            self.driver.check_stand(&header).map_err(Fail::lost_on(true, HOST))?;
             self.members = wanted;
         }
-        let status = self.driver.status_on(HOST).map_err(Fail::lost)?;
+        let in_stand = self.stand.is_some();
+        let status = self.driver.status_on(HOST).map_err(Fail::lost_on(in_stand, HOST))?;
         self.seed = status.seed;
         self.tick = status.tick;
         // A fresh body each time: an earlier scenario may have left the agent possessing someone.
         let default = SessionConfig { scope: Some(crate::AgentScope::Dev), clear_subject: true, ..Default::default() };
         for member in self.members.clone() {
-            let seq = if member == HOST { status.journal_seq } else { self.driver.status_on(&member).map_err(Fail::lost)?.journal_seq };
+            let seq = if member == HOST {
+                status.journal_seq
+            } else {
+                self.driver.status_on(&member).map_err(Fail::lost_on(in_stand, &member))?.journal_seq
+            };
             self.marks.insert(member.clone(), Mark { seq, line: None });
             self.agents.insert(member.clone(), DEFAULT_AGENT.to_owned());
             for agent in [DEFAULT_AGENT, CHECK_AGENT] {
-                let out = self.driver.session_on(&member, agent, &default).map_err(Fail::lost)?;
+                let out = self.driver.session_on(&member, agent, &default).map_err(Fail::lost_on(in_stand, &member))?;
                 if !out.ok {
                     return Err(Fail::lost(format!("cannot set up agent `{agent}`{}: {}", self.at(&member), out.text())));
                 }
@@ -521,8 +532,9 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                     Some(peer) => vec![peer.clone()],
                     None => self.members.clone(),
                 };
+                let in_stand = self.stand.is_some();
                 for member in &marked {
-                    let seq = self.driver.status_on(member).map_err(Fail::lost)?.journal_seq;
+                    let seq = self.driver.status_on(member).map_err(Fail::lost_on(in_stand, member))?.journal_seq;
                     self.marks.insert(member.clone(), Mark { seq, line: Some(line.number) });
                 }
                 Ok(if self.stand.is_some() {
@@ -541,9 +553,10 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                     None => self.members.clone(),
                 };
                 let mut last = None;
+                let in_stand = self.stand.is_some();
                 for member in &targets {
                     let name = agent.clone().unwrap_or_else(|| self.agent_of(member));
-                    let out = self.driver.session_on(member, &name, config).map_err(Fail::lost)?;
+                    let out = self.driver.session_on(member, &name, config).map_err(Fail::lost_on(in_stand, member))?;
                     if !out.ok {
                         return Err(Fail::check(format!("session {name}{}: {}", self.at(member), out.text())));
                     }
@@ -604,7 +617,9 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                     let on = self.at(&member);
                     return Err(match fail.kind {
                         FailureKind::Scenario => Fail::check(format!("invariant `{expect}` (line {line}) broke{on}: {}", fail.message)),
-                        _ => fail,
+                        // The driver lost the member while the invariant was read: say which
+                        // invariant it was (the message already names the member).
+                        _ => Fail::lost(format!("invariant `{expect}` (line {line}): {}", fail.message)),
                     });
                 }
             }
@@ -662,7 +677,7 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
             }
             Expect::Journal { text, negate } => {
                 let mark = self.marks.get(member).copied().unwrap_or(Mark { seq: 0, line: None });
-                let read = self.driver.journal_since_on(member, mark.seq).map_err(Fail::lost)?;
+                let read = self.driver.journal_since_on(member, mark.seq).map_err(Fail::lost_on(self.stand.is_some(), member))?;
                 let hit = read.lines.iter().find(|l| contains_ci(&l.text, text));
                 let since = match mark.line {
                     Some(line) => format!("since `mark` on line {line}"),
@@ -705,7 +720,7 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                 if let Some(path) = path {
                     args["path"] = json!(path);
                 }
-                let out = self.driver.call_on(member, CHECK_AGENT, "get", args).map_err(Fail::lost)?;
+                let out = self.driver.call_on(member, CHECK_AGENT, "get", args).map_err(Fail::lost_on(self.stand.is_some(), member))?;
                 if !out.ok {
                     return Err(Fail::check(format!("cannot read {name}: {}", out.text())));
                 }
@@ -722,7 +737,10 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                 }
             }
             Expect::Shows { id, text } => {
-                let out = self.driver.call_on(member, CHECK_AGENT, "inspect", json!({"id": id_value(id)})).map_err(Fail::lost)?;
+                let out = self
+                    .driver
+                    .call_on(member, CHECK_AGENT, "inspect", json!({"id": id_value(id)}))
+                    .map_err(Fail::lost_on(self.stand.is_some(), member))?;
                 if !out.ok {
                     return Err(Fail::check(format!("cannot inspect {id}{place}: {}", out.text())));
                 }
@@ -816,6 +834,11 @@ mod tests {
         calls: Vec<(String, String, Value)>,
         sessions: Vec<(String, SessionConfig)>,
         gone: bool,
+        /// Answers `call` but not `session`, `status` or `journal_since`: the game ended between
+        /// two commands.
+        deaf: bool,
+        /// Goes `deaf` after its next `step`.
+        deaf_after_step: bool,
         /// Journal entries that left the buffer unread.
         missed: u64,
     }
@@ -872,11 +895,17 @@ mod tests {
                 _ => Outcome::err(format!("unknown tool `{tool}`")),
             };
             out.tick = Some(self.tick);
+            if tool == "step" && self.deaf_after_step {
+                self.deaf = true;
+            }
             Ok(out)
         }
 
         fn session(&mut self, agent: &str, config: &SessionConfig) -> Result<Outcome, String> {
             self.sessions.push((agent.to_owned(), config.clone()));
+            if self.deaf {
+                return Err("cannot reach the game at http://127.0.0.1:15702".into());
+            }
             if config.subject.as_deref() == Some("e99") {
                 return Ok(Outcome::err("e99 does not exist"));
             }
@@ -885,10 +914,16 @@ mod tests {
         }
 
         fn status(&mut self) -> Result<Status, String> {
+            if self.deaf {
+                return Err("cannot reach the game at http://127.0.0.1:15702".into());
+            }
             Ok(Status { tick: self.tick, seed: Some(self.seed), journal_seq: self.journal.len() as u64 })
         }
 
         fn journal_since(&mut self, after: u64) -> Result<JournalRead, String> {
+            if self.deaf {
+                return Err("cannot reach the game at http://127.0.0.1:15702".into());
+            }
             let lines = self.journal.iter().filter(|(seq, _)| *seq > after).map(|(seq, text)| JournalLine { seq: *seq, text: text.clone() });
             Ok(JournalRead { lines: lines.collect(), missed: self.missed })
         }
@@ -1396,5 +1431,39 @@ expect result contains "YOU e5"
         stand.members.get_mut("c2").unwrap().gone = true;
         let f = run(&script, &mut stand).failure.unwrap();
         assert_eq!((f.kind, f.line), (FailureKind::Driver, 2), "{f:?}");
+    }
+
+    /// What the driver says about a lost game is a transport message: only a URL. In a stand the
+    /// report names the member, at start-up and in an invariant check, which has no command of its own.
+    #[test]
+    fn a_member_the_driver_loses_is_named_in_a_stand() {
+        // c2 ends right after the first step; the invariant (no member named: every member) reads its journal.
+        let script = Script::parse("s.scenario", &format!("{STAND}invariant !journal \"desync\"\nstep 3\nstep 3")).unwrap();
+        let mut stand = FakeStand::new(2);
+        stand.members.get_mut("c2").unwrap().deaf_after_step = true;
+        let f = run(&script, &mut stand).failure.expect("c2 cannot be read");
+        assert_eq!(f.kind, FailureKind::Driver);
+        assert_eq!(f.command, "step 3");
+        assert_eq!(f.message, "invariant `!journal \"desync\"` (line 2): c2: cannot reach the game at http://127.0.0.1:15702");
+
+        // A client that is gone before the scenario starts: no line, no command, so the message names it.
+        let script = Script::parse("s.scenario", &format!("{STAND}step 3")).unwrap();
+        let mut stand = FakeStand::new(2);
+        stand.members.get_mut("c2").unwrap().deaf = true;
+        let f = run(&script, &mut stand).failure.expect("c2 cannot be set up");
+        assert_eq!((f.kind, f.line), (FailureKind::Driver, 0));
+        assert_eq!(f.message, "c2: cannot reach the game at http://127.0.0.1:15702");
+
+        // `expect field` and `expect journal` on a lost member name it too; a single game keeps the bare message.
+        let script = Script::parse("s.scenario", &format!("{STAND}step 3\n@c2 expect journal \"x\"")).unwrap();
+        let mut stand = FakeStand::new(2);
+        stand.members.get_mut("c2").unwrap().deaf_after_step = true;
+        let f = run(&script, &mut stand).failure.unwrap();
+        assert_eq!((f.kind, f.line), (FailureKind::Driver, 3));
+        assert_eq!(f.message, "c2: cannot reach the game at http://127.0.0.1:15702");
+        let mut game = Fake::new();
+        game.deaf = true;
+        let f = run(&Script::parse("t.scenario", "step 3").unwrap(), &mut game).failure.unwrap();
+        assert_eq!(f.message, "cannot reach the game at http://127.0.0.1:15702", "a single game has one game to lose");
     }
 }
