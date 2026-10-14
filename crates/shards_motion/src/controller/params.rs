@@ -1,16 +1,31 @@
-//! [`CharacterParams`]: every number the controller uses. Plain data on purpose: the
-//! next step loads it from content files with hot reload.
+//! [`CharacterParams`]: every number the controller uses, as content (kind `locomotion`,
+//! hot-reloadable) that a [`CharacterController`] names.
+
+use std::sync::LazyLock;
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use shards_content::{ContentDb, ContentDef, Refs};
 
+use super::CharacterController;
 use crate::physics::{Collider, CollisionLayers, Shape};
 
 /// How a character moves. Distances in meters, times in seconds, speeds in m/s.
-/// Missing fields in a file take the defaults.
-#[derive(Reflect, Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[reflect(Default)]
-#[serde(default)]
+/// Missing fields in a file take the defaults; unknown ones are an error, so a typo
+/// (`walk_spead`) is reported with its file and line instead of silently doing nothing.
+///
+/// Content: `<assets>/content/**/*.locomotion.ron`, one map of ids to definitions
+/// (`CharacterController { params: "hero" }` picks `"hero"`):
+///
+/// ```ron
+/// { "hero": (walk_speed: 2.0, run_speed: 5.5, jump_height: 1.3) }
+/// ```
+///
+/// The same struct is also a component: one on a character wins over the content id
+/// (tests, one-off creatures).
+#[derive(Component, Reflect, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[reflect(Component, Default)]
+#[serde(default, deny_unknown_fields)]
 pub struct CharacterParams {
     /// Capsule radius.
     pub radius: f32,
@@ -104,6 +119,36 @@ impl Default for CharacterParams {
     }
 }
 
+impl ContentDef for CharacterParams {
+    const KIND: &'static str = "locomotion";
+
+    fn validate(&self, _: &str, refs: &mut Refs) {
+        if let Err(problems) = self.check() {
+            refs.error(problems);
+        }
+    }
+}
+
+/// What a character without content moves by: the code defaults.
+static DEFAULTS: LazyLock<CharacterParams> = LazyLock::new(CharacterParams::default);
+
+impl CharacterController {
+    /// The numbers this character moves by: its own [`CharacterParams`] component, else the
+    /// `locomotion` definition named by [`params`](Self::params) (read from the live
+    /// database, so a hot reload applies on the next tick), else the code defaults.
+    pub fn resolve<'a>(&self, own: Option<&'a CharacterParams>, db: Option<&'a ContentDb>) -> &'a CharacterParams {
+        own.or_else(|| db.and_then(|db| db.get::<CharacterParams>(&self.params))).unwrap_or(&DEFAULTS)
+    }
+
+    /// A named definition the database does not have: the character runs on the code
+    /// defaults, which is worth saying once.
+    pub(super) fn is_dangling(&self, own: Option<&CharacterParams>, db: Option<&ContentDb>) -> bool {
+        own.is_none()
+            && !self.params.is_empty()
+            && db.is_some_and(|db| db.is_loaded() && db.get::<CharacterParams>(&self.params).is_none())
+    }
+}
+
 impl CharacterParams {
     /// The body these params describe: a capsule standing on the entity's origin.
     pub fn collider(&self) -> Collider {
@@ -130,7 +175,7 @@ impl CharacterParams {
     }
 
     /// Everything wrong with these numbers, so content errors name the field.
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn check(&self) -> Result<(), String> {
         let mut errors = Vec::new();
         let positive = [
             ("radius", self.radius),
@@ -173,13 +218,13 @@ mod tests {
 
     #[test]
     fn defaults_are_valid() {
-        CharacterParams::default().validate().unwrap();
+        CharacterParams::default().check().unwrap();
     }
 
     #[test]
     fn validation_names_the_field() {
         let p = CharacterParams { float_depth: 2.0, radius: -1.0, ..default() };
-        let err = p.validate().unwrap_err();
+        let err = p.check().unwrap_err();
         assert!(err.contains("radius must be > 0") && err.contains("float_depth"), "{err}");
     }
 

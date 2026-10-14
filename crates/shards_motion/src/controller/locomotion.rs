@@ -45,6 +45,9 @@ pub(crate) struct Step<'a, 'w> {
 impl Step<'_, '_> {
     /// Runs the tick and returns the new feet position.
     pub fn run(&mut self, feet: Vec3) -> Vec3 {
+        if self.state.placed.is_some_and(|at| at != feet) {
+            self.restart(feet);
+        }
         if self.input.jump {
             self.state.jump_buffer_left = self.params.jump_buffer;
         }
@@ -67,6 +70,21 @@ impl Step<'_, '_> {
             s.coyote_left = (s.coyote_left - dt).max(0.0);
         }
         feet
+    }
+
+    /// Someone else moved the body (a teleport, a respawn): the speed, the fall and the
+    /// climb belonged to where it was. Standing if there is ground under the feet, else
+    /// falling from here, from rest.
+    fn restart(&mut self, feet: Vec3) {
+        let standing = self.mover.ground(feet, self.params.snap_distance).is_some_and(|g| g.walkable);
+        let s = &mut *self.state;
+        s.velocity = Vec3::ZERO;
+        s.mantle = None;
+        s.fall_from_y = None;
+        s.coyote_left = 0.0;
+        s.grounded = false;
+        s.ground_normal = Vec3::Y;
+        self.set_mode(if standing { MotionMode::Ground } else { MotionMode::Air });
     }
 
     fn set_mode(&mut self, to: MotionMode) {
@@ -211,8 +229,10 @@ impl Step<'_, '_> {
             v = clip(v, touch.normal);
         }
         self.state.velocity = v;
+        // A lip no higher than a step is no ledge: the fall ends on the tread below it,
+        // and the walk steps up.
         if let Some(wall) = moved.wall()
-            && let Some(feet) = self.try_mantle(moved.feet, &wall, 0.0, true)
+            && let Some(feet) = self.try_mantle(moved.feet, &wall, p.step_height, true)
         {
             return feet;
         }
@@ -224,7 +244,14 @@ impl Step<'_, '_> {
             && let Some(ground) = self.mover.ground(feet, LAND_PROBE)
             && ground.walkable
         {
+            // The bottom of water deep enough to swim in: a fast fall can pass the whole
+            // float depth in one tick. That is a swim, not a landing.
+            if self.mover.water(feet).is_some_and(|surface| self.depth(feet, surface) > p.swim_depth) {
+                self.enter_water();
+                return feet;
+            }
             let feet = feet - Vec3::Y * ground.drop;
+            let s = &mut *self.state;
             let fall_height = s.fall_from_y.take().map_or(0.0, |top| (top - feet.y).max(0.0));
             s.velocity.y = 0.0;
             s.grounded = true;
@@ -294,7 +321,7 @@ impl Step<'_, '_> {
         self.state.water_surface = around.water;
         self.state.updraft = around.updraft.map(|(accel, max)| Vec2::new(accel, max));
 
-        let deep = |feet: Vec3, surface: f32| self.mover.depth(feet, surface, p.swim_depth + 1.0);
+        let deep = |feet: Vec3, surface: f32| self.depth(feet, surface);
         match (self.state.mode, around.water) {
             (MotionMode::Ground, Some(surface)) if deep(feet, surface) > p.swim_depth => self.enter_water(),
             (MotionMode::Air | MotionMode::Glide, Some(surface))
@@ -327,6 +354,12 @@ impl Step<'_, '_> {
             _ => {}
         }
         feet
+    }
+
+    /// How deep the water with this surface is at the feet; anything a meter past
+    /// `swim_depth` counts as that.
+    fn depth(&self, feet: Vec3, surface: f32) -> f32 {
+        self.mover.depth(feet, surface, self.params.swim_depth + 1.0)
     }
 
     fn enter_water(&mut self) {

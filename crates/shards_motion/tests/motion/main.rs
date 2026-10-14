@@ -3,5 +3,13 @@
 mod common;
 mod controller;
 mod course;
+mod drive;
 mod edge_cases;
+mod engine;
+mod input;
+mod perception;
 mod physics;
+mod replays;
+mod tools;
+#[cfg(feature = "render")]
+mod camera;

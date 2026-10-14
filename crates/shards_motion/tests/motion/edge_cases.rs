@@ -115,6 +115,29 @@ fn falling_into_shallow_water_lands_on_the_bottom() {
 }
 
 #[test]
+fn a_fall_into_water_deep_enough_to_swim_never_lands() {
+    // However fast the fall, it may pass the whole float depth in one tick and touch the
+    // bottom: that is a swim, not a landing.
+    let mut failed = Vec::new();
+    for depth in [1.35_f32, 1.4, 1.5, 2.0, 4.0] {
+        for height in [3.0, 10.0, 20.0, 60.0] {
+            let mut app = app();
+            block(app.world_mut(), Vec3::new(-20.0, -depth - 1.0, -20.0), Vec3::new(20.0, -depth, 20.0));
+            volume(app.world_mut(), Vec3::new(-3.0, -depth, -3.0), Vec3::new(3.0, 0.0, 3.0), VolumeKind::Water);
+            let e = hero(app.world_mut(), Vec3::new(0.0, height, 0.0));
+            step(&mut app, 240);
+            let seen = seen(&app);
+            let modes: Vec<MotionMode> = seen.modes.iter().map(|m| m.to).collect();
+            let floats = (feet(&app, e).y + 1.1).abs() < 0.01;
+            if !seen.landed.is_empty() || modes != [MotionMode::Air, MotionMode::Water] || !floats {
+                failed.push(format!("{depth} m deep, from {height} m: {:?}, modes {modes:?} at {}", seen.landed, feet(&app, e)));
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+#[test]
 fn a_pool_wall_too_high_keeps_the_swimmer_in() {
     let mut app = app();
     block(app.world_mut(), Vec3::new(-20.0, -6.0, -20.0), Vec3::new(20.0, -5.0, 20.0));
@@ -210,4 +233,28 @@ fn crowd() -> Vec<[u32; 3]> {
 #[test]
 fn a_crowd_settles_apart_and_deterministically() {
     assert_eq!(crowd(), crowd());
+}
+
+#[test]
+fn resting_against_a_turned_wall_stays_on_the_ground() {
+    // Whatever the gap the body happens to rest at, sliding down along a wall is not
+    // landing on it.
+    let mut lifted = Vec::new();
+    for (x, turn) in [(3.0_f32, 0.0_f32), (3.0, 0.3), (12.9, 1.1), (55.55, 0.7)] {
+        for k in -10..=10 {
+            let gap = SKIN * 0.5 + k as f32 * 2e-6;
+            let mut app = app();
+            floor(app.world_mut());
+            let rot = Quat::from_rotation_y(turn);
+            let face = Vec3::new(x, 0.0, 0.0);
+            turned_block(app.world_mut(), face + Vec3::Y * 1.5 + rot * Vec3::X * 0.5, Vec3::new(0.5, 1.5, 5.0), rot);
+            let e = hero(app.world_mut(), face + rot * Vec3::NEG_X * (RADIUS + gap) + Vec3::Y * SKIN);
+            step(&mut app, 3);
+            let s = state(&app, e);
+            if s.mode != MotionMode::Ground || !s.grounded {
+                lifted.push(format!("wall at {x} turned {turn}, gap {gap}: {:?} at {}", s.mode, feet(&app, e)));
+            }
+        }
+    }
+    assert!(lifted.is_empty(), "{}", lifted.join("\n"));
 }

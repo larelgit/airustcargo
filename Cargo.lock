@@ -5339,9 +5339,12 @@ dependencies = [
  "ai_core",
  "bevy",
  "parry3d",
+ "ron",
  "schemars",
  "serde",
  "serde_json",
+ "shards_content",
+ "shards_core",
 ]
 
 [[package]]

@@ -262,3 +262,35 @@ fn kinematic_bodies_refresh_every_tick() {
         assert_eq!(c.body, Body::Kinematic);
     }
 }
+
+#[test]
+fn a_collider_without_a_real_transform_is_left_out_until_it_has_one() {
+    // A NaN pose would make every ray in the world "hit" it at distance 0.
+    let mut app = app();
+    let ground = floor(app.world_mut());
+    let nan = Vec3::splat(f32::NAN);
+    let shapes = [
+        Shape::cuboid(Vec3::ONE),
+        Shape::Cylinder { half_height: 1.0, radius: 0.5 },
+        Shape::sphere(1.0),
+        Shape::capsule(0.5, 2.0),
+    ];
+    let mut broken: Vec<Entity> = shapes.iter().map(|s| spawn(&mut app, *s, nan)).collect();
+    let turned = Transform::from_rotation(Quat::from_xyzw(f32::NAN, 0.0, 0.0, 1.0));
+    broken.push(app.world_mut().spawn((Collider::new(Shape::cuboid(Vec3::ONE)), turned)).id());
+    let off = Collider::new(Shape::cuboid(Vec3::ONE)).with_offset(Vec3::splat(f32::INFINITY));
+    broken.push(app.world_mut().spawn((off, Transform::default())).id());
+    sync(&mut app);
+    let from = Vec3::new(50.0, 5.0, -30.0);
+    let down = physics(&app).raycast(from, DOWN, 10.0, &ANY()).unwrap();
+    assert_eq!((down.entity, down.distance), (ground, 5.0));
+    assert_eq!(physics(&app).raycast(from, Dir3::X, 10.0, &ANY()), None);
+    assert!(broken.iter().all(|e| physics(&app).collider(*e).is_none()));
+
+    // Put somewhere real, it is back.
+    app.world_mut().get_mut::<Transform>(broken[0]).unwrap().translation = Vec3::new(50.0, 2.0, -30.0);
+    sync(&mut app);
+    let hit = physics(&app).raycast(from, DOWN, 10.0, &ANY()).unwrap();
+    assert_eq!(hit.entity, broken[0]);
+    assert!((hit.distance - 2.0).abs() < 1e-4, "{hit:?}");
+}

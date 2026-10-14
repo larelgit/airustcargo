@@ -179,13 +179,19 @@ fn refine(geom: &Geom, pose: &Pose, dir: Vec3, max: f32, c: &ColliderInfo, hit: 
     Some(best)
 }
 
+/// Whether moving along `dir` takes `geom` nearer to `c`, by more than rounding. By
+/// convexity a shape that does not draw nearer at the start never meets it.
+fn approaches(geom: &Geom, pose: &Pose, dir: Vec3, c: &ColliderInfo) -> bool {
+    separation(pose, geom, &c.pose(), &c.geom, REFINE_SLACK).is_none_or(|(_, normal, _)| dir.dot(normal) > 1e-4)
+}
+
 /// How a cast treats a shape that already overlaps something at its start.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StartOverlap {
     /// Report it as a hit at distance 0 (public queries).
     Hit,
-    /// Ignore it if the motion leads out of the overlap, so a body that ended up inside
-    /// a wall can still walk away from it (the character controller).
+    /// Ignore it if the motion leads out of the overlap (or along it), so a body that
+    /// ended up inside a wall can still walk away from it (the character controller).
     LetOut,
 }
 
@@ -236,6 +242,17 @@ impl PhysicsWorld {
         let rotation = tf.rotation.normalize();
         let position = tf.translation + rotation * collider.offset;
         let (aabb_min, aabb_max) = geom.aabb(&Pose::from_parts(position, rotation));
+        // A NaN or infinite pose would answer every ray in the world (a hit at distance
+        // 0): left out until its transform is real again.
+        if !(position.is_finite() && rotation.is_finite() && aabb_min.is_finite() && aabb_max.is_finite()) {
+            warn!(
+                "{entity}: collider at {} (rotation {}, offset {}) is not finite, so physics ignores it; \
+                 give it a real transform",
+                tf.translation, tf.rotation, collider.offset
+            );
+            self.remove(entity);
+            return;
+        }
         let info = ColliderInfo {
             entity,
             id: *id,
@@ -363,6 +380,12 @@ impl PhysicsWorld {
                 point: other * hit.witness2,
                 normal: -(pose.rotation * hit.normal1).normalize_or(Vec3::Y),
             };
+            // Touching at the start and sliding along (a body resting against a wall) is
+            // no hit. Parry tells that from GJK's normal, which is noise for shapes that
+            // touch and reports a hit just past the start; the cores' normal is clean.
+            if start == StartOverlap::LetOut && rough.distance < REFINE_SLACK && !approaches(geom, pose, dir, c) {
+                continue;
+            }
             let Some(hit) = refine(geom, pose, dir, max, c, rough) else {
                 continue;
             };

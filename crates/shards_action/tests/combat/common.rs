@@ -9,15 +9,15 @@ use std::time::{Duration, Instant};
 
 use ai_core::journal::JournalKind;
 use ai_core::sim::StepEnd;
-use ai_core::{call_tool, AiJournal, AiKind, AiPlayer, CallOutcome, SimGate, SimSet};
+use ai_core::{call_tool, AiJournal, AiKind, AiPlayer, CallOutcome, SimGate};
 use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
 use serde_json::Value;
 use shards_action::prelude::*;
-use shards_action::{ActionSystems, Charges};
+use shards_action::Charges;
 use shards_content::ContentPlugin;
-use shards_core::{flat, CorePlugin, EngineConfig, EngineState, Intent};
-use shards_motion::{character, CharacterParams, Collider, LocomotionInput, Shape};
+use shards_core::{CorePlugin, EngineConfig, EngineState, Intent};
+use shards_motion::{character, Collider, Shape};
 
 pub const DT: f32 = 1.0 / 60.0;
 
@@ -51,9 +51,7 @@ pub fn app_with(setup: impl FnOnce(&mut App)) -> App {
         .add_plugins(config.ai_core_plugin())
         .add_plugins(CorePlugin { config })
         .add_plugins(ContentPlugin)
-        .add_plugins(ActionPlugin)
-        // SEAM: `shards_motion`'s `MotionSystems::Intent` does this in a game.
-        .add_systems(FixedUpdate, intent_to_locomotion.in_set(SimSet::Act).before(ActionSystems::Machine));
+        .add_plugins(ActionPlugin);
     setup(&mut app);
     app.finish();
     app.cleanup();
@@ -76,20 +74,6 @@ pub fn app_with(setup: impl FnOnce(&mut App)) -> App {
     app
 }
 
-/// What the motion module's `Intent → LocomotionInput` step does before the action
-/// machine: a fresh input every tick.
-fn intent_to_locomotion(mut q: Query<(&mut Intent, &mut LocomotionInput)>) {
-    for (mut intent, mut loco) in &mut q {
-        let jump = intent.pressed.iter().any(|p| p.input == "jump") && intent.take_press("jump").is_some();
-        *loco = LocomotionInput {
-            move_dir: flat(intent.move_dir).clamp_length_max(1.0),
-            sprint: intent.is_held("sprint"),
-            jump,
-            ..default()
-        };
-    }
-}
-
 pub fn floor(world: &mut World) -> Entity {
     world.spawn((Collider::new(Shape::cuboid(Vec3::new(60.0, 0.5, 60.0))), Transform::from_xyz(0.0, -0.5, 0.0))).id()
 }
@@ -103,7 +87,8 @@ pub fn wall(world: &mut World, min: Vec3, max: Vec3) -> Entity {
 /// A fighter of `kind` with `moveset` on `team`, standing at `at` facing `facing`:
 /// 100 hp, 100 stamina (30/s after 0.8 s), 30 poise.
 pub fn fighter(world: &mut World, kind: &str, moveset: &str, team: &str, at: Vec3, facing: Vec3) -> Entity {
-    let (controller, tf) = character(CharacterParams::default(), at);
+    // No `locomotion` id: the controller's code defaults.
+    let (controller, intent, tf) = character("", at);
     world
         .spawn((
             Name::new(kind.to_owned()),
@@ -114,6 +99,7 @@ pub fn fighter(world: &mut World, kind: &str, moveset: &str, team: &str, at: Vec
             Poise::new(30.0, 10.0, 2.0),
             Team::new(team),
             controller,
+            intent,
             tf.looking_to(facing, Vec3::Y),
         ))
         .id()

@@ -2,8 +2,8 @@
 //!
 //! A game depends on this crate alone and gets a deterministic fixed-tick core with
 //! the AI layer ([`ai_core`]), engine states and the loading gate ([`core`]), the
-//! content database ([`content`]) and data-driven combat ([`action`]); Bevy and serde
-//! come re-exported.
+//! content database ([`content`]), physics, the character controller, input and
+//! camera ([`motion`]) and data-driven combat ([`action`]); Bevy and serde come re-exported.
 //!
 //! ```ignore
 //! use shards::prelude::*;
@@ -60,6 +60,7 @@ pub mod prelude {
     pub use shards_action::prelude::*;
     pub use shards_content::prelude::*;
     pub use shards_core::prelude::*;
+    pub use shards_motion::prelude::*;
 
     pub use crate::EnginePlugins;
 

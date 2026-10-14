@@ -85,7 +85,7 @@ use ai_core::SimSet;
 use bevy::prelude::*;
 use shards_content::ContentAppExt;
 use shards_core::{CoreSystems, EngineAppExt};
-use shards_motion::MotionPlugin;
+use shards_motion::{MotionPlugin, MotionSystems};
 
 pub use combat::{
     kill, stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died, Evaded, GuardBroken, Outcome, Parried,
@@ -226,14 +226,13 @@ impl Plugin for ActionPlugin {
             .init_resource::<ActionEffects>()
             .init_resource::<machine::PendingEffects>()
             .add_engine_module("action", VERSION)
-            // SEAM: once `shards_motion` has `MotionSystems::Intent` (Intent →
-            // LocomotionInput), the machine goes `.after(MotionSystems::Intent)`: it
-            // overrides what that system wrote (external, locked, face, sprint).
+            // The machine runs after motion's `Intent → LocomotionInput` step: it
+            // overrides what that step wrote (external, locked, face, sprint).
             .configure_sets(
                 FixedUpdate,
                 (
                     ActionSystems::Orders.in_set(SimSet::Input).after(CoreSystems::FollowOrders),
-                    (ActionSystems::Machine, ActionSystems::Effects).chain().in_set(SimSet::Act),
+                    (ActionSystems::Machine, ActionSystems::Effects).chain().in_set(SimSet::Act).after(MotionSystems::Intent),
                     (ActionSystems::Hits, ActionSystems::Fighters, ActionSystems::Statuses, ActionSystems::Deaths)
                         .chain()
                         .in_set(SimSet::Resolve),

@@ -1,21 +1,39 @@
-//! # shards_motion — physics layer and character controller
+//! # shards_motion — physics, character, input, camera
 //!
 //! - [`physics`]: colliders with deterministic ids, collision layers, sensor volumes
 //!   (water, updrafts, triggers) and queries (`raycast`, `shapecast`, `overlaps`,
 //!   `volumes_at`) on [`PhysicsWorld`], usable from systems and from `&World` (AI tools).
 //! - [`controller`]: the kinematic character controller — walk, run, sprint, slopes,
-//!   stairs, jump, mantle, swim, glide — driven by [`LocomotionInput`].
+//!   stairs, jump, mantle, swim, glide — driven by [`LocomotionInput`]. Its numbers are
+//!   content (`locomotion`, hot-reloadable).
+//! - [`intent`](MotionSystems): `Intent` → [`LocomotionInput`], the one way characters are
+//!   steered.
+//! - [`input`]: the input action map: keyboard, mouse and gamepad become `Intent`;
+//!   contexts, press/hold/toggle, rebinding saved in the user's config folder.
+//! - [`camera`]: the third-person camera (orbit, wall collision, lock-on, aim assist,
+//!   shake) — presentation only.
+//! - AI tools for agents: `move_to` (with `path`), `move`, `stop`, `jump`, `sprint`,
+//!   `glide`, and the perception queries `clearance` and `path_to` ([`perception`]);
+//!   `input_bindings` and `rebind`; `physics_overlay` with a window.
 //!
-//! Everything runs in `FixedUpdate`:
+//! Everything that matters for gameplay runs in `FixedUpdate`:
 //!
 //! ```text
 //! PhysicsSystems::Sync          start of the tick: colliders moved between ticks
-//! SimSet::Input … Act           gameplay fills LocomotionInput
+//! SimSet::Input … Think         orders walk, brains decide
+//! SimSet::Act
+//!   MotionSystems::Intent       intent_to_locomotion: Intent → LocomotionInput
+//!   …                           the action machine (shards_action) adds external, locked, face
 //! SimSet::Move
 //!   ControllerSystems::Move     move_characters: casts against PhysicsWorld
 //! PhysicsSystems::SyncAfterMove characters' new positions
 //! SimSet::Resolve …             hit detection sees post-move positions
 //! ```
+//!
+//! Keyboard, mouse and gamepad are read between ticks (`PreUpdate`) and written to
+//! `Intent`, which replays record; the camera runs in `PostUpdate` and nothing in the
+//! simulation or the AI's `observe` reads it. The one thing it writes is the lock-on
+//! target, into `Intent.target`.
 //!
 //! Collision math comes from parry3d, which stays an implementation detail: the API
 //! speaks glam (`Vec3`, `Quat`, `Dir3`) and our own [`Shape`].
@@ -23,25 +41,55 @@
 //! ```ignore
 //! app.add_plugins(MotionPlugin);
 //! commands.spawn((Collider::standing_box(Vec3::new(5.0, 0.5, 5.0)), Transform::default()));
-//! commands.spawn(character(CharacterParams::default(), Vec3::new(0.0, 1.0, 0.0)));
+//! commands.spawn(character("hero", Vec3::new(0.0, 1.0, 0.0)));
 //! ```
 
+pub mod ai;
+pub mod camera;
 pub mod controller;
+pub mod input;
+mod intent;
+#[cfg(feature = "render")]
+mod overlay;
+pub mod perception;
 pub mod physics;
+mod tools;
 
 use bevy::prelude::*;
+use shards_core::EngineAppExt;
 
+pub use ai::{describe_motion, physics_line_of_sight, MotionAi};
+pub use camera::{CameraSettings, LockOnTarget, ThirdPersonCamera};
 pub use controller::{
     character, CharacterController, CharacterParams, ControllerPlugin, ControllerSystems, Jumped, Landed,
     LocomotionInput, Mantle, Mantled, ModeChanged, MotionMode, MotionState,
 };
+pub use input::{BindMode, Binding, ControlState, ControlSystems, InputContext, InputContexts, InputMap, InputSettings};
+pub use intent::{intent_to_locomotion, GlideUntilLanded, MotionSystems};
 pub use physics::{
     Body, Collider, ColliderId, ColliderIds, ColliderInfo, CollisionLayers, LayerMask, Penetration, PhysicsPlugin,
     PhysicsSystems, PhysicsWorld, QueryFilter, RayHit, Shape, ShapeHit, SpatialQuery, Volume, VolumeEntered,
     VolumeExited, VolumeKind,
 };
+pub use tools::TargetArg;
 
-/// Physics and the character controller.
+/// Version of the engine crates (they share one).
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The types a game module uses most (`Shape`, `Body` and `Volume` stay out: games name
+/// their own, import them from the crate root).
+pub mod prelude {
+    pub use crate::{
+        character, CameraSettings, CharacterController, CharacterParams, Collider, CollisionLayers, ControlState,
+        InputContexts, InputMap, LayerMask, LocomotionInput, LockOnTarget, MotionAi, MotionMode, MotionPlugin,
+        MotionState, MotionSystems, PhysicsWorld, QueryFilter, SpatialQuery, ThirdPersonCamera,
+    };
+}
+
+/// Physics, the character controller, `Intent` steering, the input map, the camera (with
+/// the `render` feature) and the motion tools. Needs `AiCorePlugin` and `CorePlugin`
+/// (`shards::EnginePlugins` adds all three); content kinds register with the content
+/// database whether or not it is there.
 pub struct MotionPlugin;
 
 impl Plugin for MotionPlugin {
@@ -52,5 +100,14 @@ impl Plugin for MotionPlugin {
         if !app.is_plugin_added::<ControllerPlugin>() {
             app.add_plugins(ControllerPlugin);
         }
+        app.add_engine_module("motion", VERSION);
+        ai::plugin(app);
+        intent::plugin(app);
+        tools::plugin(app);
+        perception::plugin(app);
+        input::plugin(app);
+        camera::plugin(app);
+        #[cfg(feature = "render")]
+        overlay::plugin(app);
     }
 }
