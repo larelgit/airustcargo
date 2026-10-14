@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 
 use shards::action::Health;
 use shards::ai_core::{sim, snapshot, AiIndex, AiJournal, NoArgs, Scope, ToolResult};
-use shards::net::{LinkConditions, NetClient, NetDef, NetDefaults, NetHooks, NetLeft, NetState, Stand};
+use shards::net::host::{MAX_CHARACTER_BYTES, MAX_JOINING_MESSAGE};
+use shards::net::msg::{Hello, Msg, PROTO};
+use shards::net::{LinkConditions, NetClient, NetDef, NetDefaults, NetHooks, NetLeft, NetSeat, NetState, Stand};
 use shards::prelude::*;
 use shards::save::{
     save_now, Damage, GameInfo, LaunchLoaded, SaveConfig, SaveFile, SaveKey, SaveKind, SaveWhat, SectionData, SectionSet, Store, Which,
@@ -369,6 +371,69 @@ fn a_join_that_fails_after_its_body_was_made_takes_the_body_back() {
     // The body the failed join made is not live: it waits as a leaver's does, instead of holding the slot for good.
     let orphan = shards::core::player_body(stand.world(HOST), 1).and_then(|id| entity(&stand, HOST, &id.to_string())).expect("the body is there");
     assert!(stand.world(HOST).get::<NetLeft>(orphan).is_some(), "a live body nobody plays holds the slot");
+    // It keeps the seat the join gave it, as a leaver's body does: the session's, waiting.
+    assert!(stand.world(HOST).get::<NetSeat>(orphan).is_some());
+}
+
+#[test]
+fn a_rejoin_that_fails_leaves_the_body_waiting_for_the_player_again() {
+    let folders = Folders::new("orphan_back");
+    write_character(&folders.of("c1"), "c1", 61.5, 5, 900);
+    let (mut stand, c1, me) = joined(&folders, &NetDef::default());
+    stand.run(20);
+    shards::core::run_exit_hooks(stand.world_mut(c1));
+    run_until(&mut stand, 90, "the host hears it", |s| has_line(s, HOST, "net: p1 left (quit)"));
+    stand.run(30);
+    let waiting = entity(&stand, HOST, &me).expect("the body waits");
+    assert!(stand.world(HOST).get::<NetLeft>(waiting).is_some());
+    // c1 comes back with a file the host never saw, and the game's section code panics on it: the join
+    // takes the body off its wait before it fails, and must put it back.
+    write_character(&folders.of("c1"), "c1", 20.0, 40, 5);
+    stand.world_mut(HOST).resource_mut::<NetHooks>().on_join_character = |_, _, _| panic!("a section of this game panics");
+    let again = add_client(&mut stand, &folders, "c1", &NetDef::default(), lossy());
+    run_until(&mut stand, 400, "the join is refused", |s| matches!(net_state(s, again), NetState::Ended(_)));
+    assert!(matches!(net_state(&stand, again), NetState::Ended(why) if why.contains("cannot spawn your body")), "{:?}", net_state(&stand, again));
+    assert!(stand.world(HOST).get::<NetLeft>(waiting).is_some(), "a body nobody plays is live and holds the slot");
+    assert!(stand.world(HOST).get::<NetSeat>(waiting).is_some());
+}
+
+#[test]
+fn the_largest_character_a_host_takes_joins_under_the_pre_play_cap_and_one_byte_more_is_refused() {
+    let folders = Folders::new("largest");
+    // A character whose text, as the host measures it (the JSON of the string it travels as), is
+    // exactly the cap: `pad` fills the `bag` section up to it.
+    let sections = |pad: usize| vec![("vitals", 1, vitals(61.5)), ("bag", 2, json!({"coins": 5, "pad": "x".repeat(pad)}))];
+    let measured = |pad: usize| {
+        let set = SectionSet(sections(pad).into_iter().map(|(n, v, d)| (n.to_owned(), SectionData { version: v, data: d })).collect());
+        serde_json::to_string(&shards::coop::character_value(&set)).unwrap().len()
+    };
+    let pad = MAX_CHARACTER_BYTES - measured(0);
+    assert_eq!(measured(pad), MAX_CHARACTER_BYTES);
+    // That character in a `Hello` with every other field as long as the host takes it: under what the host reads before play.
+    let hello = Msg::Hello(Hello {
+        proto: PROTO,
+        engine: "0.2.0-with-a-long-suffix".repeat(3),
+        game: "g".repeat(200),
+        content_hash: u64::MAX,
+        net_rules_hash: u64::MAX,
+        name: "n".repeat(32),
+        token: "t".repeat(64),
+        character: Some(shards::serde_json::from_str(&format!("\"{}\"", "x".repeat(MAX_CHARACTER_BYTES - 2))).unwrap()),
+        tick_hz: 60.0,
+    });
+    let size = shards::net::msg::encode(&hello).len();
+    assert!(size < MAX_JOINING_MESSAGE, "a Hello with the largest character is {size} bytes, over the {MAX_JOINING_MESSAGE} the host reads before play");
+
+    let def = NetDef::default();
+    let mut stand = host_stand(&folders, &def);
+    let big = "c".repeat(32);
+    write_sections(&folders.of(&big), &big, 900, sections(pad));
+    write_sections(&folders.of("c2"), "c2", 900, sections(pad + 1));
+    let (c1, c2) = (add_client(&mut stand, &folders, &big, &def, lossy()), add_client(&mut stand, &folders, "c2", &def, lossy()));
+    run_until(&mut stand, 400, "both are answered", |s| connected(s, c1) && matches!(net_state(s, c2), NetState::Ended(_)));
+    let me = body(&stand, c1);
+    assert_eq!(bag(&stand, HOST, &me), Some(5), "the largest character is applied");
+    assert!(matches!(net_state(&stand, c2), NetState::Ended(why) if why.contains("the character is over 64 KB")), "one byte more: {:?}", net_state(&stand, c2));
 }
 
 // --- progress goes back to its player -------------------------------------------------------
@@ -730,7 +795,15 @@ fn the_hosts_end_saves_the_world_and_every_character() {
     }
     // The journals of all three members say what happened.
     assert!(has_line(&stand, HOST, "save: world/slot1 saved (session ended"), "{:#?}", journal(&stand, HOST));
+    // Nothing twice: the world once, the host's character once, a character to each player once (with `SessionEnd`,
+    // not again by the fan-out of a save the game decides on), and a player's leave sends none of its own.
+    let count = |member: usize, needle: &str| journal(&stand, member).iter().filter(|l| l.contains(needle)).count();
+    assert_eq!(count(HOST, "save: world/slot1 saved (session ended"), 1);
+    assert_eq!(count(HOST, "save: character/slot1 saved (session ended"), 1);
+    assert_eq!(count(HOST, "sent to"), 0, "{:#?}", journal(&stand, HOST));
+    assert_eq!(count(HOST, "net: session ended ("), 1);
     for (member, name) in [(c1, "c1"), (c2, "c2")] {
+        assert_eq!(count(member, &format!("save: character/{name} saved (")), 1, "{:#?}", journal(&stand, member));
         assert!(has_line(&stand, member, &format!("save: character/{name} saved (session ended")), "{:#?}", journal(&stand, member));
         assert!(
             has_line(&stand, member, "net: session ended by host (the raid is over), world saved: slot1"),
@@ -952,6 +1025,8 @@ fn over_udp_a_quitting_client_waits_for_the_character_its_host_sends_as_it_leave
 fn over_udp_the_hosts_exit_reaches_the_client_with_its_character_and_the_world_slot() {
     let gone = Gone::new("exit");
     let (mut host, mut client) = udp_session(&gone);
+    // A game started with `--exit-with-host`: a session the host ended is exit code 0.
+    client.world_mut().resource_mut::<shards::EngineConfig>().exit_with_host = true;
     let stop = AtomicBool::new(false);
     let client_world = client.world_mut();
     std::thread::scope(|scope| {
@@ -972,4 +1047,5 @@ fn over_udp_the_hosts_exit_reaches_the_client_with_its_character_and_the_world_s
     assert!(read_file(Path::new(&gone.0[0]), SaveKind::World, "slot1").label == "session ended");
     let said: Vec<String> = client.world().resource::<AiJournal>().after(0).0.map(ToString::to_string).collect();
     assert!(said.iter().any(|l| l.contains("net: session ended by host (the host quit), world saved: slot1")), "{said:#?}");
+    assert_eq!(client.should_exit(), Some(AppExit::Success), "the host ended the session: exit code 0");
 }

@@ -129,6 +129,15 @@ pub struct NetLeft {
     pub until: u64,
 }
 
+/// A body the session holds for a remote player: joined for a peer (`player_join` called by
+/// the host's session), or that player's new body. A world rebuilt (a snapshot load, also in
+/// a new host process) while no peer of that player is connected sends it through
+/// `player_leave`. A body the host joined itself (co-op on its own machine) has none and
+/// stays, whichever number a guest held before.
+#[derive(Component, Reflect, Clone, Copy, Debug, Default)]
+#[reflect(Component, Default)]
+pub struct NetSeat;
+
 /// Spawns `NetDef.player_prefab` for the player at their spawn point (or beside player 0).
 pub fn default_spawner(world: &mut World, request: &JoinRequest) -> Result<Entity, String> {
     let def = net_def(world);
@@ -202,6 +211,12 @@ fn player_join_tool(In(call): In<Call<PlayerJoinArgs>>, world: &mut World) -> To
     if world.get::<PlayerId>(body).is_none() {
         world.entity_mut(body).insert(PlayerId(player));
     }
+    // Who holds the player now: the session for a peer, or the host itself.
+    if call.caller.agent == crate::session::NET_AGENT {
+        world.entity_mut(body).insert(NetSeat);
+    } else {
+        world.entity_mut(body).remove::<NetSeat>();
+    }
     if let Some(character) = &request.character {
         (hooks(world).on_join_character)(world, body, character);
     }
@@ -241,6 +256,10 @@ fn player_leave_tool(In(call): In<Call<PlayerLeaveArgs>>, world: &mut World) -> 
 pub(crate) fn register(app: &mut App) {
     use ai_core::AiAppExt;
     app.register_type::<NetLeft>()
+        .register_type::<NetSeat>()
+        // Session bookkeeping (a respawned guest body gets it outside any call): a replay in
+        // single player has no session to hold it.
+        .replay_ignore::<NetSeat>()
         .register_type::<PlayerJoined>()
         .register_type::<PlayerLeft>()
         .journal_event::<PlayerJoined>(|e, w| {

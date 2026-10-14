@@ -29,6 +29,11 @@ pub const MAX_ORDERS: usize = 16;
 pub const MAX_INPUT_NAME: usize = 64;
 /// Presses a host tick takes from one player, however many of their frames are due at once.
 pub const MAX_PRESSES_PER_TICK: usize = 32;
+/// Largest frame within the limits above, as JSON bytes (with room to spare).
+pub const MAX_FRAME_BYTES: usize = 8 * 1024;
+/// Largest `Inputs` packet a host reads, in bytes: one larger is over the limits whatever it
+/// holds, and is dropped undecoded.
+pub const MAX_INPUTS_BYTES: usize = MAX_FRAMES_PER_PACKET * MAX_FRAME_BYTES;
 
 /// Why `inputs` is over the limits a client keeps to, if it is.
 pub fn check(inputs: &crate::msg::Inputs) -> Result<(), String> {
@@ -261,9 +266,13 @@ impl InputCapture {
 
     /// Puts what this machine holds (the held state, the order queue) into `intent`: the
     /// body as the host's world gave it again, while frames after that world's tick still
-    /// come to the host.
-    pub fn hold(&self, intent: &mut Intent) {
-        self.state.write(intent);
+    /// come to the host. The held state is compared from then on with what the host's body
+    /// holds: where the host changed it itself (a region change stops every player, a new
+    /// body stands still), the next capture sends it again. The orders are not: the host
+    /// cleared them on purpose, and [`InputCapture::adopt_orders`] takes its queue over.
+    pub fn hold(&mut self, intent: &mut Intent) {
+        let mine = std::mem::replace(&mut self.state, IntentState::of(intent));
+        mine.write(intent);
         intent.orders = self.orders.clone();
     }
 
@@ -387,6 +396,25 @@ mod tests {
     }
 
     #[test]
+    fn a_held_state_the_host_reset_is_sent_again_after_its_world() {
+        let mut intent = Intent::default();
+        let mut capture = InputCapture::starting_from(&intent);
+        intent.move_dir = Vec3::X;
+        intent.set_held("block", true);
+        assert!(capture.capture(1, &mut intent, 32).is_some());
+        // The host's world again, its body stopped there (a region change).
+        let mut restored = Intent::default();
+        capture.hold(&mut restored);
+        assert_eq!((restored.move_dir, restored.held.clone()), (Vec3::X, vec!["block".to_owned()]), "still held here");
+        let again = capture.capture(2, &mut restored, 32).expect("the host hears it again");
+        assert_eq!(again.state.map(|s| (s.move_dir, s.held)), Some((Vec3::X, vec!["block".to_owned()])));
+        // A world the host did not change (a resync): nothing to send.
+        let mut same = restored.clone();
+        capture.hold(&mut same);
+        assert_eq!(capture.capture(3, &mut same, 32), None);
+    }
+
+    #[test]
     fn frames_stay_within_the_limits_the_host_checks() {
         let mut intent = Intent::default();
         let mut capture = InputCapture::starting_from(&intent);
@@ -409,6 +437,23 @@ mod tests {
         assert!(err.contains("17 held"), "{err}");
         let long = press(&"x".repeat(MAX_INPUT_NAME + 1));
         assert!(check(&crate::msg::Inputs { frames: vec![InputFrame { tick: 5, presses: vec![long], ..default() }], ..default() }).is_err());
+    }
+
+    #[test]
+    fn the_largest_packet_within_the_limits_is_under_the_bytes_a_host_reads() {
+        // Every name at its longest, every character one JSON escapes.
+        let name = "\"".repeat(MAX_INPUT_NAME);
+        let far = Vec3::splat(-1.234_567_9e-38);
+        let frame = InputFrame {
+            tick: u64::MAX,
+            state: Some(IntentState { move_dir: far, aim: Some(far), target: Some(AiId(u32::MAX)), held: vec![name.clone(); MAX_HELD] }),
+            presses: vec![Press { input: name.clone(), dir: Some(far) }; MAX_PRESSES_PER_FRAME],
+            orders: Some(vec![Order::Attack { target: AiId(u32::MAX), input: name, repeat: false }; MAX_ORDERS]),
+        };
+        assert!(crate::msg::encode(&frame).len() <= MAX_FRAME_BYTES, "{} bytes", crate::msg::encode(&frame).len());
+        let packet = crate::msg::Inputs { tick: u64::MAX, frames: vec![frame; MAX_FRAMES_PER_PACKET], state_ack: u64::MAX, epoch: u32::MAX };
+        assert_eq!(check(&packet), Ok(()));
+        assert!(crate::msg::encode(&packet).len() <= MAX_INPUTS_BYTES);
     }
 
     #[test]
