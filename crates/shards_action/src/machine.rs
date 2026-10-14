@@ -450,7 +450,7 @@ fn stamina_ready_in(s: &Stamina, need: f32, dt: f32) -> Option<f32> {
 // --- events --------------------------------------------------------------------------
 
 /// An action started (`input`: `None` when the engine forced it).
-#[derive(Event, Clone, Debug, PartialEq)]
+#[derive(Event, Reflect, Clone, Debug, PartialEq)]
 pub struct ActionStarted {
     pub entity: Entity,
     pub action: String,
@@ -458,7 +458,7 @@ pub struct ActionStarted {
 }
 
 /// A buffered press never got to start.
-#[derive(Event, Clone, Debug, PartialEq)]
+#[derive(Event, Reflect, Clone, Debug, PartialEq)]
 pub struct ActionRejected {
     pub entity: Entity,
     pub input: String,
@@ -468,7 +468,7 @@ pub struct ActionRejected {
 
 /// An attack's warning: where it lands and when, with the symbol and sound cue from
 /// its content.
-#[derive(Event, Clone, Debug, PartialEq)]
+#[derive(Event, Reflect, Clone, Debug, PartialEq)]
 pub struct Telegraph {
     pub attacker: Entity,
     pub action: String,
@@ -480,7 +480,7 @@ pub struct Telegraph {
 }
 
 /// Health came back (an action's `Heal` effect, the `heal` tool).
-#[derive(Event, Clone, Debug, PartialEq)]
+#[derive(Event, Reflect, Clone, Debug, PartialEq)]
 pub struct Healed {
     pub entity: Entity,
     pub amount: f32,
