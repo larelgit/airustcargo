@@ -79,8 +79,9 @@ struct Cli {
     port_file: Option<std::path::PathBuf>,
     /// The game's access token. Default: `.shards/<port>.token`, looked up from this
     /// folder upwards (the game writes it into its working directory at start). Every game of
-    /// a stand has its own token: in `wait --peer all`, `stand` and `scenario` this one is the
-    /// host's, and a client's comes from `SHARDS_TOKEN_C1`, `SHARDS_TOKEN_C2` … (or its file).
+    /// a stand has its own token: this one is the host's. A client's (`--peer c1`, and the
+    /// clients of `wait --peer all`, `stand` and `scenario`) comes from `SHARDS_TOKEN_C1`,
+    /// `SHARDS_TOKEN_C2` … or its file; this one is sent to a client only when neither is found.
     #[arg(long, global = true, env = "SHARDS_TOKEN", hide_env_values = true)]
     token: Option<String>,
     /// Which game of a stand (`cargo sandbox --stand 2 --port-file F`) a command talks to:
@@ -290,8 +291,30 @@ struct Client {
     agent: ureq::Agent,
     port: u16,
     token: Option<String>,
+    /// The member of a stand this is the game of: it decides what an `unauthorized` answer tells
+    /// the user to set.
+    member: Peer,
     /// How long `act` waits for a deferred `step`.
     timeout: Duration,
+}
+
+/// Why a call to the game failed, for the callers that act on the kind of failure (`wait`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CallError {
+    /// No game answers at the port: it has not started yet, or it is gone.
+    Unreachable(String),
+    /// The game answered `unauthorized`: the token sent is not its own.
+    Unauthorized(String),
+    /// Anything else: the game refused the call, or its answer makes no sense.
+    Other(String),
+}
+
+impl CallError {
+    fn into_message(self) -> String {
+        match self {
+            CallError::Unreachable(m) | CallError::Unauthorized(m) | CallError::Other(m) => m,
+        }
+    }
 }
 
 impl Client {
@@ -301,7 +324,13 @@ impl Client {
             .http_status_as_error(false)
             .build()
             .new_agent();
-        Self { url: format!("http://127.0.0.1:{port}"), agent, port, token, timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS) }
+        Self { url: format!("http://127.0.0.1:{port}"), agent, port, token, member: Peer::Host, timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS) }
+    }
+
+    /// Marks this as the game of `member` of a stand (the host by default).
+    fn of(mut self, member: Peer) -> Self {
+        self.member = member;
+        self
     }
 
     fn with_timeout(mut self, timeout: Duration) -> Self {
@@ -340,32 +369,49 @@ impl Client {
     }
 
     fn call(&self, method: &str, params: Value) -> Result<Value, String> {
-        let params = with_token(params, self.token.as_deref())?;
+        self.try_call(method, params).map_err(CallError::into_message)
+    }
+
+    /// [`Client::call`] that says what kind of failure it was.
+    fn try_call(&self, method: &str, params: Value) -> Result<Value, CallError> {
+        let params = with_token(params, self.token.as_deref()).map_err(CallError::Other)?;
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
         let mut resp = self.agent.post(&self.url).send_json(&body).map_err(|e| match e {
             ureq::Error::Io(_) | ureq::Error::ConnectionFailed | ureq::Error::HostNotFound => {
-                format!("cannot reach the game at {} ({e}). Is it running? Try `cargo sandbox`.", self.url)
+                CallError::Unreachable(format!("cannot reach the game at {} ({e}). Is it running? Try `cargo sandbox`.", self.url))
             }
-            e => format!("request failed: {e}"),
+            e => CallError::Other(format!("request failed: {e}")),
         })?;
-        let reply: Value = resp.body_mut().read_json().map_err(|e| format!("bad response: {e}"))?;
+        let reply: Value = resp.body_mut().read_json().map_err(|e| CallError::Other(format!("bad response: {e}")))?;
         if let Some(err) = reply.get("error") {
             let msg = err.get("message").and_then(Value::as_str).unwrap_or("unknown error");
-            if self.token.is_none() && msg.starts_with("unauthorized") {
-                let here = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
-                return Err(format!("{method}: {msg} (no .shards/{}.token in {here} or above)", self.port));
-            }
             if msg.starts_with("unauthorized") {
-                // A stand has a token for every member: one token cannot open them all.
-                return Err(format!(
-                    "{method}: {msg} (the token given is not this game's, the one of port {}: every game of a stand has its own, \
-                     in .shards/{}.token; for a client of a stand, SHARDS_TOKEN_C1, SHARDS_TOKEN_C2 …)",
-                    self.port, self.port
-                ));
+                return Err(CallError::Unauthorized(format!("{method}: {msg} ({})", self.unauthorized_hint())));
             }
-            return Err(format!("{method}: {msg}"));
+            return Err(CallError::Other(format!("{method}: {msg}")));
         }
         Ok(reply.get("result").cloned().unwrap_or(Value::Null))
+    }
+
+    /// What to do about an `unauthorized` answer. Every game of a stand has a token of its own:
+    /// `--token` is the host's, a client's is `SHARDS_TOKEN_C1`, `SHARDS_TOKEN_C2` … or its file.
+    fn unauthorized_hint(&self) -> String {
+        let port = self.port;
+        let here = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
+        match (self.member, self.token.is_some()) {
+            (Peer::Client(n), false) => {
+                format!("no SHARDS_TOKEN_C{n} set and no .shards/{port}.token in {here} or above: c{n} has a token of its own")
+            }
+            (Peer::Client(n), true) => format!(
+                "the token sent is not c{n}'s, the one of port {port}: set SHARDS_TOKEN_C{n} to the token in c{n}'s .shards/{port}.token; \
+                 --token / SHARDS_TOKEN is the host's and is sent to a client only when neither is found"
+            ),
+            (_, false) => format!("no .shards/{port}.token in {here} or above"),
+            (_, true) => format!(
+                "the token given is not this game's, the one of port {port}: every game of a stand has its own, in .shards/{port}.token; \
+                 for a client of a stand, SHARDS_TOKEN_C1, SHARDS_TOKEN_C2 …"
+            ),
+        }
     }
 }
 
@@ -416,10 +462,6 @@ impl Cli {
     /// (the file of the member `--peer` names), else the default.
     fn port(&self) -> Result<u16, String> {
         self.port_of(self.peer.unwrap_or(Peer::Host))
-    }
-
-    fn client(&self) -> Result<Client, String> {
-        Ok(self.client_at(self.port()?))
     }
 
     /// `--timeout` or `default` seconds.

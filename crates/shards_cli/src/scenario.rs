@@ -18,7 +18,7 @@ use shards_script::{
     CHECK_AGENT, HOST,
 };
 
-use crate::peer::{client_files, Peer};
+use crate::peer::{expected_clients, Peer};
 use crate::{say, Cli, Client};
 
 struct ClientDriver<'a> {
@@ -63,10 +63,14 @@ impl Driver for ClientDriver<'_> {
         self.journal_since_on(HOST, after)
     }
 
-    /// The host, and the clients that have a port file beside the host's.
+    /// The host, and the clients it says the stand has (`net.stand.clients`, as `wait --peer all`
+    /// and `stand` count them). The port files are not the stand: one left from an earlier stand
+    /// is not a member. Only a host that does not say (it was not started with `--stand`) has
+    /// the clients whose files there are.
     fn peers(&mut self) -> Result<Vec<String>, String> {
-        let clients = self.cli.port_file.as_deref().map(client_files).unwrap_or_default();
-        Ok(std::iter::once(HOST.to_owned()).chain(clients.into_iter().map(Peer::name)).collect())
+        let host = self.client(HOST)?.call("ai/status", Value::Null)?;
+        let clients = expected_clients(&host, self.cli.port_file.as_deref());
+        Ok(std::iter::once(HOST.to_owned()).chain((1..=clients).map(|n| Peer::Client(n).name())).collect())
     }
 
     /// The links of the running stand are the header's: `net_status` says how its host was
@@ -318,6 +322,11 @@ mod tests {
     /// A `step` on any of them is deferred: it answers `{"pending": 1}` and `ai/step_poll` says
     /// pending twice before the report. `links` is what the host's `net_status` reports.
     fn pretend_stand(base: &std::path::Path, links: &'static str) -> Calls {
+        pretend_stand_of(base, links, Some(2))
+    }
+
+    /// [`pretend_stand`] whose host says it was started with `reported` clients (`None`: it says nothing).
+    fn pretend_stand_of(base: &std::path::Path, links: &'static str, reported: Option<u8>) -> Calls {
         let calls = Calls::default();
         for (i, name) in ["host", "c1", "c2"].into_iter().enumerate() {
             let calls = calls.clone();
@@ -327,6 +336,9 @@ mod tests {
                 calls.lock().unwrap().push(Asked { member: name.to_owned(), method: method.to_owned(), params: params.clone() });
                 let outcome = |tool: &str, result: Value| json!({"tool": tool, "ok": true, "result": result, "tick": 7, "paused": true});
                 Some(match (method, tool.as_str()) {
+                    ("ai/status", _) if name == "host" && reported.is_some() => {
+                        reply(json!({"tick": 5, "seed": 42, "journal_seq": 0, "net": {"role": "host", "stand": {"clients": reported, "udp": false}}}))
+                    }
                     ("ai/status", _) => reply(json!({"tick": 5, "seed": 42, "journal_seq": 0})),
                     ("ai/session", _) => reply(json!({"agent": params["agent"], "scope": "dev", "subject": null, "player": params["player"]})),
                     ("ai/act", "step") => reply(outcome("step", json!({"pending": 1}))),
@@ -454,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    fn the_members_of_a_stand_are_the_clients_with_port_files() {
+    fn the_members_of_a_stand_are_the_clients_its_host_names() {
         let dir = stand_dir("peers");
         let base = dir.join("g.port");
         pretend_stand(&base, "");
@@ -462,9 +474,53 @@ mod tests {
         let cli_with = cli(&["--port-file", &path]);
         let host = cli_with.client_for(Peer::Host).unwrap();
         assert_eq!(ClientDriver::new(&cli_with, &host).peers().unwrap(), ["host", "c1", "c2"]);
+        // A client that has left is still a member of this stand: asking it fails with its own
+        // message (no port file), not with a stand of another size.
         std::fs::remove_file(crate::peer::member_file(&base, Peer::Client(2))).unwrap();
+        assert_eq!(ClientDriver::new(&cli_with, &host).peers().unwrap(), ["host", "c1", "c2"]);
+        let e = ClientDriver::new(&cli_with, &host).status_on("c2").unwrap_err();
+        assert!(e.contains("g.port.c2") && e.contains("is the game running with --port-file?"), "{e}");
+        // No port file given: the host still says what its stand is, and the clients cannot be found.
+        let no_file = cli(&[]);
+        let mut lost = ClientDriver::new(&no_file, &host);
+        assert_eq!(lost.peers().unwrap(), ["host", "c1", "c2"]);
+        let e = lost.status_on("c1").unwrap_err();
+        assert!(e.starts_with("a stand's members are found by their port files: pass --port-file F"), "{e}");
+        // A host that says nothing about a stand (not started with `--stand`) has the clients
+        // whose files there are.
+        let bare = stand_dir("peers_bare");
+        let base = bare.join("g.port");
+        pretend_stand_of(&base, "", None);
+        std::fs::remove_file(crate::peer::member_file(&base, Peer::Client(2))).unwrap();
+        let path = base.display().to_string();
+        let cli_bare = cli(&["--port-file", &path]);
+        let host = cli_bare.client_for(Peer::Host).unwrap();
+        assert_eq!(ClientDriver::new(&cli_bare, &host).peers().unwrap(), ["host", "c1"]);
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(bare);
+    }
+
+    /// A port file left by an earlier, bigger stand (`kill -9` leaves them) is not a member of
+    /// this one: a scenario for the stand that runs now still runs.
+    #[test]
+    fn a_stale_port_file_does_not_make_the_stand_bigger() {
+        let dir = stand_dir("stale");
+        let base = dir.join("g.port");
+        // The host was started with one client; F.c2 is the leftover of a stand of two.
+        let calls = pretend_stand_of(&base, "latency=0,jitter=0,loss=0,dup=0", Some(1));
+        let path = base.display().to_string();
+        let cli_with = cli(&["--port-file", &path]);
+        let host = cli_with.client_for(Peer::Host).unwrap();
         assert_eq!(ClientDriver::new(&cli_with, &host).peers().unwrap(), ["host", "c1"]);
-        assert_eq!(ClientDriver::new(&cli(&[]), &host).peers().unwrap(), ["host"]);
+        let file = scenario_file("stale.scenario", "stand clients=1\n@c1 act ping\n");
+        let exit = run(&cli_with, &host, &[file], true, false).unwrap();
+        assert_eq!(format!("{exit:?}"), code(0));
+        assert_eq!(asked(&calls, "c1", "ai/act", "ping"), 1);
+        assert_eq!(asked(&calls, "c2", "ai/status", ""), 0, "the leftover was never asked");
+        // The header that does not match the host's stand is refused as before, with both sizes.
+        let wrong = Script::parse("two.scenario", "stand clients=2\n@c1 act ping\n").unwrap();
+        let failure = shards_script::run(&wrong, &mut ClientDriver::new(&cli_with, &host)).failure.unwrap();
+        assert!(failure.message.contains("host + 2 clients") && failure.message.contains("host + 1 client"), "{}", failure.message);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

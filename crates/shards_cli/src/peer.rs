@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::{find_token, read_port_file, say, still_loading, Cli, Client};
+use crate::{find_token, read_port_file, say, still_loading, CallError, Cli, Client};
 
 /// The member of a stand a command talks to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,31 +87,44 @@ impl Cli {
     }
 
     /// A client for one member of the stand, found by the stand's port files (a stand-wide
-    /// command ignores `--port`: it names one game). Every member has a token of its own: the
-    /// explicit `--token` is the host's, a client's is `SHARDS_TOKEN_C1`, `SHARDS_TOKEN_C2` …, and
-    /// without them each is looked up by its port in `.shards/` from here upwards.
+    /// command ignores `--port`: it names one game). See [`Cli::member_token`] for its token.
     pub fn client_for(&self, peer: Peer) -> Result<Client, String> {
         let port = read_port_file(&member_file(self.stand_base()?, peer))?;
-        let here = std::env::current_dir().ok();
-        let token = self.member_token(port, peer, |name| std::env::var(name).ok(), here.as_deref());
-        Ok(Client::new(port, token).with_timeout(self.poll_timeout()))
+        Ok(self.client_in(port, peer, &|name| std::env::var(name).ok(), std::env::current_dir().ok().as_deref()))
     }
 
-    /// The token for `peer` at `port`: see [`Cli::client_for`]. `env` reads an environment
-    /// variable; token files are looked for from `from` upwards.
+    /// The client a single command talks to: the game `--port`, else the port file of the member
+    /// `--peer` names, else the default port. A member gets its own token (see
+    /// [`Cli::member_token`]), so `--peer c1 observe` works with `SHARDS_TOKEN_C1` or from the
+    /// game's folder, whatever `--token` or `SHARDS_TOKEN` says about the host.
+    pub fn client(&self) -> Result<Client, String> {
+        self.client_with(&|name| std::env::var(name).ok(), std::env::current_dir().ok().as_deref())
+    }
+
+    /// [`Cli::client`] with the environment and the folder to look for token files from given.
+    pub fn client_with(&self, env: &dyn Fn(&str) -> Option<String>, from: Option<&Path>) -> Result<Client, String> {
+        // `--port` names a game, not a member: its token is the one given, else its file.
+        let peer = if self.port.is_some() { Peer::Host } else { self.peer.unwrap_or(Peer::Host) };
+        Ok(self.client_in(self.port()?, peer, env, from))
+    }
+
+    fn client_in(&self, port: u16, peer: Peer, env: &dyn Fn(&str) -> Option<String>, from: Option<&Path>) -> Client {
+        Client::new(port, self.member_token(port, peer, env, from)).of(peer).with_timeout(self.poll_timeout())
+    }
+
+    /// The token for `peer` at `port`. Every member of a stand has a token of its own. The
+    /// host's is the explicit `--token` (`SHARDS_TOKEN`), else `.shards/<port>.token`, looked up
+    /// from `from` upwards. A client's is `SHARDS_TOKEN_C1`, `SHARDS_TOKEN_C2` …, else its file,
+    /// and the explicit `--token` only as the last resort (it is the host's, so it works for a
+    /// client only when the user gave the client's on purpose). `env` reads an environment
+    /// variable.
     pub fn member_token(&self, port: u16, peer: Peer, env: impl Fn(&str) -> Option<String>, from: Option<&Path>) -> Option<String> {
-        let explicit = match peer {
-            Peer::Client(n) => env(&format!("SHARDS_TOKEN_C{n}")),
-            Peer::Host | Peer::All => self.token.clone(),
-        };
-        explicit.filter(|t| !t.is_empty()).or_else(|| find_token(port, from?))
-    }
-
-    /// A client for the game at `port` that a single command talks to, with this command line's
-    /// token (`--token` names that game) and timeout.
-    pub fn client_at(&self, port: u16) -> Client {
-        let token = self.token.clone().or_else(|| find_token(port, &std::env::current_dir().ok()?));
-        Client::new(port, token).with_timeout(self.poll_timeout())
+        let given = |token: Option<String>| token.filter(|t| !t.is_empty());
+        let file = || find_token(port, from?);
+        match peer {
+            Peer::Client(n) => given(env(&format!("SHARDS_TOKEN_C{n}"))).or_else(file).or_else(|| given(self.token.clone())),
+            Peer::Host | Peer::All => given(self.token.clone()).or_else(file),
+        }
     }
 
     /// The BRP port a single-game command talks to: `--port`, else the number in the port file
@@ -138,30 +151,77 @@ fn not_ready(status: &Value) -> Vec<String> {
     reasons
 }
 
+/// How one poll of a member went.
+enum Look {
+    /// It answers and has finished loading.
+    Ready(Value),
+    /// Not yet (no port file, no answer, still loading, joining): asking again may help.
+    Waiting(String),
+    /// It was there and is not any more: waiting does not bring it back.
+    Gone(String),
+    /// It refused the token twice in a row: polling does not mend that.
+    Refused(String),
+}
+
+/// What polling remembers of one member: that it answered once (so a silence after that is its
+/// end, not its start) and that it refused the token (once is allowed to be a token file that is
+/// not written yet).
+#[derive(Default)]
+struct Watch {
+    seen: bool,
+    refused: bool,
+}
+
+impl Watch {
+    /// Asks `ai/status` of the game `connect` finds (its port file may not exist yet).
+    fn look(&mut self, connect: &dyn Fn() -> Result<Client, String>) -> Look {
+        let answer = match connect() {
+            Ok(client) => client.try_call("ai/status", Value::Null),
+            Err(e) => Err(CallError::Unreachable(e)),
+        };
+        match answer {
+            Ok(status) => {
+                self.seen = true;
+                self.refused = false;
+                let reasons = not_ready(&status);
+                if reasons.is_empty() {
+                    Look::Ready(status)
+                } else {
+                    Look::Waiting(format!("the game answers but is still loading: {}", reasons.join(", ")))
+                }
+            }
+            Err(CallError::Unauthorized(e)) if std::mem::replace(&mut self.refused, true) => Look::Refused(e),
+            Err(CallError::Unreachable(e)) if self.seen => Look::Gone(format!("the game was there and is gone ({e}); its own output says why")),
+            Err(CallError::Unauthorized(e) | CallError::Unreachable(e) | CallError::Other(e)) => Look::Waiting(e),
+        }
+    }
+}
+
+/// How long to wait between two polls.
+const WAIT_EVERY: Duration = Duration::from_millis(100);
+
 /// Polls `ai/status` of the game `connect` finds (its port file may not exist yet) until it
 /// answers and has finished loading; returns that status. Gives up at `deadline` with what is
-/// wrong (no game at the port, still loading, …).
+/// wrong (no game at the port, still loading, …), and at once when waiting cannot help: the
+/// game answered and is gone, or refuses the token.
 pub fn wait_member(connect: impl Fn() -> Result<Client, String>, deadline: Instant) -> Result<Value, String> {
+    let mut watch = Watch::default();
     loop {
-        let answer = connect().and_then(|client| client.call("ai/status", Value::Null));
-        match answer {
-            Ok(status) if not_ready(&status).is_empty() => return Ok(status),
-            Ok(status) if Instant::now() >= deadline => {
-                return Err(format!("the game answers but is still loading: {}", not_ready(&status).join(", ")));
-            }
-            Ok(_) => std::thread::sleep(Duration::from_millis(100)),
-            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(250)),
-            Err(e) => return Err(e),
+        match watch.look(&connect) {
+            Look::Ready(status) => return Ok(status),
+            Look::Gone(why) | Look::Refused(why) => return Err(why),
+            Look::Waiting(why) if Instant::now() >= deadline => return Err(why),
+            Look::Waiting(_) => std::thread::sleep(WAIT_EVERY),
         }
     }
 }
 
 /// How many clients the stand has: what its host says it was started with, else the port files
-/// there are.
-fn expected_clients(host: &Value, base: &Path) -> u8 {
+/// there are beside `base` (a host that was not started as a stand knows no clients).
+pub fn expected_clients(host: &Value, base: Option<&Path>) -> u8 {
     match host["net"]["stand"]["clients"].as_u64() {
         Some(n) => n.min(u64::from(u8::MAX)) as u8,
-        None => client_files(base).len() as u8,
+        None => base.map_or(0, |base| client_files(base).len() as u8),
     }
 }
 
@@ -194,19 +254,37 @@ pub fn member_line(name: &str, status: &Value) -> String {
     line
 }
 
+/// Why the members do not report one stand.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Mismatch {
+    /// The stand is still forming: a client has not joined, the host does not list it yet.
+    /// Asking again may help.
+    Forming(String),
+    /// These are not one stand, or a game is not what its place in the stand says (a role, a
+    /// seed, a player number). Asking again does not change that.
+    Wrong(String),
+}
+
+impl fmt::Display for Mismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (Mismatch::Forming(why) | Mismatch::Wrong(why)) = self;
+        f.write_str(why)
+    }
+}
+
 /// The members report one stand: the same seed, a host and clients with their own player
 /// numbers, and the host lists each client as the player and body it says it is.
-pub fn check_same_stand(members: &[(String, Value)]) -> Result<(), String> {
-    let Some(((_, host), clients)) = members.split_first() else { return Err("no member answered".into()) };
+pub fn check_same_stand(members: &[(String, Value)]) -> Result<(), Mismatch> {
+    let Some(((_, host), clients)) = members.split_first() else { return Err(Mismatch::Forming("no member answered".into())) };
     if host["net"]["role"] != "host" {
-        return Err(format!("the first member is not a host: it reports role {}", host["net"]["role"]));
+        return Err(Mismatch::Wrong(format!("the first member is not a host: it reports role {}", host["net"]["role"])));
     }
     for (name, status) in members {
         if status["seed"] != host["seed"] {
-            return Err(format!(
+            return Err(Mismatch::Wrong(format!(
                 "{name} plays seed {} but the host seed {}: these games are not one stand",
                 status["seed"], host["seed"]
-            ));
+            )));
         }
     }
     let listed: Vec<(Option<u64>, Option<&str>)> = host["net"]["peers"]
@@ -217,53 +295,104 @@ pub fn check_same_stand(members: &[(String, Value)]) -> Result<(), String> {
     for (name, status) in clients {
         let net = &status["net"];
         if net["role"] != "client" {
-            return Err(format!("{name} is not a client: it reports role {}", net["role"]));
+            return Err(Mismatch::Wrong(format!("{name} is not a client: it reports role {}", net["role"])));
         }
         let (Some(player), body) = (net["player"].as_u64(), net["body"].as_str()) else {
-            return Err(format!("{name} has not joined a session yet: it reports no player ({})", net["session"]));
+            return Err(Mismatch::Forming(format!("{name} has not joined a session yet: it reports no player ({})", net["session"])));
         };
         if players.contains(&player) {
-            return Err(format!("{name} reports player {player}, which another member has too"));
+            return Err(Mismatch::Wrong(format!("{name} reports player {player}, which another member has too")));
         }
         players.push(player);
         if !listed.iter().any(|(p, b)| *p == Some(player) && *b == body) {
             let shown: Vec<String> = listed.iter().map(|(p, b)| format!("p{} {}", p.unwrap_or(0), b.unwrap_or("?"))).collect();
-            return Err(format!(
+            return Err(Mismatch::Forming(format!(
                 "{name} reports player {player} (body {}) but the host lists: {}: they are not in one session",
                 body.unwrap_or("?"),
                 if shown.is_empty() { "no players".to_owned() } else { shown.join(", ") }
-            ));
+            )));
         }
     }
     Ok(())
+}
+
+/// How one round of [`settle`] went.
+enum Round {
+    /// Every member answered, loaded: their statuses (host first), judged next.
+    Answered(Vec<(String, Value)>),
+    /// Not all there yet.
+    Waiting(String),
+    /// Waiting cannot help: a member refuses the token, or the stand is over.
+    Failed(String),
+}
+
+/// Asks the host, then each client the host says the stand has. The host comes first: when it
+/// was there and is gone, the stand is over, whatever the clients still answer.
+fn round(cli: &Cli, base: &Path, host: &mut Watch, clients: &mut Vec<Watch>) -> Round {
+    let status = match host.look(&|| cli.client_for(Peer::Host)) {
+        Look::Ready(status) => status,
+        Look::Waiting(why) => return Round::Waiting(why),
+        Look::Gone(why) => return Round::Failed(format!("the host ended the stand: {why}")),
+        Look::Refused(why) => return Round::Failed(why),
+    };
+    clients.resize_with(usize::from(expected_clients(&status, Some(base))), Watch::default);
+    let mut members = vec![("host".to_owned(), status)];
+    let mut waiting = None;
+    for (i, watch) in clients.iter_mut().enumerate() {
+        let n = (i + 1) as u8;
+        match watch.look(&|| cli.client_for(Peer::Client(n))) {
+            Look::Ready(status) => members.push((format!("c{n}"), status)),
+            Look::Waiting(why) => {
+                waiting.get_or_insert(format!("c{n}: {why}"));
+            }
+            Look::Gone(why) | Look::Refused(why) => return Round::Failed(format!("c{n}: {why}")),
+        }
+    }
+    match waiting {
+        Some(why) => Round::Waiting(why),
+        None => Round::Answered(members),
+    }
 }
 
 /// Waits for the host and every client to be ready, then until they are one stand, and returns
 /// their statuses (host first). A UDP stand's host is ready long before its clients (processes
 /// of their own) have joined and lists no players then, so the verdict is on fresh statuses of
 /// all members, asked again until the host lists every client or `deadline` passes.
+///
+/// It gives up before the deadline when waiting cannot help: the host or a client was there and
+/// is gone (the host ended the stand), a member refuses its token, or the members are
+/// not one stand and say so twice in a row (a game started without `--stand`, another stand's
+/// leftover port file).
 pub fn settle(cli: &Cli, deadline: Instant) -> Result<Vec<(String, Value)>, String> {
     let base = cli.stand_base()?;
-    let host = wait_member(|| cli.client_for(Peer::Host), deadline)?;
-    let clients = expected_clients(&host, base);
-    for n in 1..=clients {
-        wait_member(|| cli.client_for(Peer::Client(n)), deadline).map_err(|e| format!("c{n}: {e}"))?;
-    }
+    let (mut host, mut clients) = (Watch::default(), Vec::new());
+    let mut wrong: Option<String> = None;
     loop {
-        let read = || -> Result<Vec<(String, Value)>, String> {
-            let mut members = vec![("host".to_owned(), cli.client_for(Peer::Host)?.call("ai/status", Value::Null)?)];
-            for n in 1..=clients {
-                let status = cli.client_for(Peer::Client(n)).and_then(|c| c.call("ai/status", Value::Null)).map_err(|e| format!("c{n}: {e}"))?;
-                members.push((format!("c{n}"), status));
+        let why = match round(cli, base, &mut host, &mut clients) {
+            Round::Failed(why) => return Err(why),
+            Round::Waiting(why) => {
+                wrong = None;
+                why
             }
-            Ok(members)
+            Round::Answered(members) => match check_same_stand(&members) {
+                Ok(()) => return Ok(members),
+                Err(Mismatch::Forming(why)) => {
+                    wrong = None;
+                    why
+                }
+                Err(Mismatch::Wrong(why)) => {
+                    if wrong.as_ref() == Some(&why) {
+                        return Err(why);
+                    }
+                    wrong = Some(why.clone());
+                    why
+                }
+            },
         };
-        let verdict = read().and_then(|members| check_same_stand(&members).map(|()| members));
-        match verdict {
-            Ok(members) => return Ok(members),
-            Err(e) if Instant::now() >= deadline => return Err(e),
-            Err(_) => std::thread::sleep(Duration::from_millis(100)),
+        if Instant::now() >= deadline {
+            return Err(why);
         }
+        std::thread::sleep(WAIT_EVERY);
     }
 }
 
@@ -386,7 +515,7 @@ fn members_of(cli: &Cli) -> Result<(Vec<Member>, Value), String> {
     let base = cli.stand_base()?;
     let host = cli.client_for(Peer::Host)?;
     let status = host.call("ai/status", Value::Null)?;
-    let clients = expected_clients(&status, base);
+    let clients = expected_clients(&status, Some(base));
     let mut members = vec![Member { name: "host".to_owned(), client: Ok(host) }];
     for n in 1..=clients {
         members.push(Member { name: format!("c{n}"), client: cli.client_for(Peer::Client(n)) });
@@ -543,7 +672,7 @@ pub fn stop(cli: &Cli, kill: &dyn Fn(u32) -> Result<(), String>) -> Result<bool,
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     use super::*;
     use crate::fake::{parse as cli, reply, serve};
@@ -692,31 +821,45 @@ mod tests {
     fn the_members_must_report_one_stand() {
         let members = stand_of_two();
         assert_eq!(check_same_stand(&members), Ok(()));
+        // What can change as the stand forms, and what never will.
+        let forming = |m: &[(String, Value)]| match check_same_stand(m).unwrap_err() {
+            Mismatch::Forming(why) => why,
+            Mismatch::Wrong(why) => panic!("expected a stand that is still forming: {why}"),
+        };
+        let wrong = |m: &[(String, Value)]| match check_same_stand(m).unwrap_err() {
+            Mismatch::Wrong(why) => why,
+            Mismatch::Forming(why) => panic!("expected a stand that is wrong: {why}"),
+        };
 
         let mut other_seed = members.clone();
         other_seed[2].1["seed"] = json!(7);
-        assert_eq!(check_same_stand(&other_seed).unwrap_err(), "c2 plays seed 7 but the host seed 42: these games are not one stand");
+        assert_eq!(wrong(&other_seed), "c2 plays seed 7 but the host seed 42: these games are not one stand");
 
         let mut wrong_body = members.clone();
         wrong_body[1].1["net"]["body"] = json!("e99");
-        let e = check_same_stand(&wrong_body).unwrap_err();
+        let e = forming(&wrong_body);
         assert!(e.starts_with("c1 reports player 1 (body e99) but the host lists: p1 e15, p2 e16"), "{e}");
 
         let mut same_player = members.clone();
         same_player[2].1["net"]["player"] = json!(1);
-        assert_eq!(check_same_stand(&same_player).unwrap_err(), "c2 reports player 1, which another member has too");
+        assert_eq!(wrong(&same_player), "c2 reports player 1, which another member has too");
 
         let mut joining = members.clone();
         joining[1].1["net"] = json!({"role": "client", "session": "joining: connecting to host"});
-        assert!(check_same_stand(&joining).unwrap_err().starts_with("c1 has not joined a session yet"));
+        assert!(forming(&joining).starts_with("c1 has not joined a session yet"));
+
+        let mut unlisted = members.clone();
+        unlisted[0].1["net"]["peers"] = json!([]);
+        assert!(forming(&unlisted).contains("but the host lists: no players"));
 
         let mut not_a_host = members.clone();
         not_a_host[0].1["net"]["role"] = json!("single");
-        assert!(check_same_stand(&not_a_host).unwrap_err().starts_with("the first member is not a host"));
+        assert!(wrong(&not_a_host).starts_with("the first member is not a host"));
         let mut not_a_client = members.clone();
         not_a_client[1].1["net"]["role"] = json!("host");
-        assert!(check_same_stand(&not_a_client).unwrap_err().starts_with("c1 is not a client"));
-        assert_eq!(check_same_stand(&[]).unwrap_err(), "no member answered");
+        assert!(wrong(&not_a_client).starts_with("c1 is not a client"));
+        assert_eq!(forming(&[]), "no member answered");
+        assert_eq!(Mismatch::Wrong("x".into()).to_string(), "x");
     }
 
     #[test]
@@ -857,6 +1000,206 @@ mod tests {
         let e = wait_all(&cli(&["--port-file", &path, "--peer", "all", "wait"]), Duration::from_millis(600)).unwrap_err();
         assert!(e.starts_with("c2: cannot read the port file"), "{e}");
         assert!(started.elapsed() < Duration::from_secs(5));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    type Tokens = Arc<Mutex<Vec<Option<String>>>>;
+
+    /// A pretend game that answers `ai/status` with `status` `answers` times, then goes away (it
+    /// drops every connection). It records the token of each call it gets.
+    fn pretend_member(status: Value, answers: usize, tokens: Tokens) -> u16 {
+        let asked = AtomicUsize::new(0);
+        serve(move |method, params| {
+            tokens.lock().unwrap().push(params["token"].as_str().map(str::to_owned));
+            if method != "ai/status" {
+                return Some(crate::fake::error(&format!("unexpected {method}")));
+            }
+            (asked.fetch_add(1, Ordering::SeqCst) < answers).then(|| reply(status.clone()))
+        })
+    }
+
+    /// The port files of a stand: `g.port` for the first of `members`, `g.port.cN` for the rest.
+    /// Each is a status and how often that game answers before it goes away.
+    fn lay_out(dir: &Path, members: Vec<(Value, usize)>) {
+        for (i, (status, answers)) in members.into_iter().enumerate() {
+            let port = pretend_member(status, answers, Tokens::default());
+            let file = if i == 0 { dir.join("g.port") } else { dir.join(format!("g.port.c{i}")) };
+            std::fs::write(file, format!("{port}\n")).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_single_command_to_a_client_carries_that_clients_token() {
+        let dir = scratch("single_tokens");
+        let elsewhere = scratch("single_tokens_elsewhere");
+        let seen: [Tokens; 2] = Default::default();
+        let members = stand_of_two();
+        let ports = [0, 1].map(|i| pretend_member(members[i].1.clone(), usize::MAX, seen[i].clone()));
+        std::fs::write(dir.join("g.port"), format!("{}\n", ports[0])).unwrap();
+        std::fs::write(dir.join("g.port.c1"), format!("{}\n", ports[1])).unwrap();
+        std::fs::create_dir_all(dir.join(".shards")).unwrap();
+        std::fs::write(dir.join(format!(".shards/{}.token", ports[0])), "host-file\n").unwrap();
+        std::fs::write(dir.join(format!(".shards/{}.token", ports[1])), "c1-file\n").unwrap();
+        let file = dir.join("g.port").display().to_string();
+        let c1_port = ports[1].to_string();
+        let env = |name: &str| (name == "SHARDS_TOKEN_C1").then(|| "c1-env".to_owned());
+        let no_env = |_: &str| None;
+        // The token the game `which` received from `shards <args>` (`Cli::client`, what every
+        // single command and `wait --peer c1` go through).
+        let sent = |args: &[String], env: &dyn Fn(&str) -> Option<String>, from: &Path, which: usize| -> Option<String> {
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            cli(&args).client_with(env, Some(from)).unwrap().call("ai/status", Value::Null).unwrap();
+            seen[which].lock().unwrap().last().cloned().expect("the game was asked")
+        };
+        let c1 = |extra: &[&str]| -> Vec<String> { ["--port-file", &file, "--peer", "c1"].iter().chain(extra).chain(&["status"]).map(|s| s.to_string()).collect() };
+        let host_token = c1(&["--token", "host-explicit"]);
+        // A client's own variable first, then its own file; the host's token only as a last resort.
+        assert_eq!(sent(&host_token, &env, &dir, 1).as_deref(), Some("c1-env"));
+        assert_eq!(sent(&host_token, &no_env, &dir, 1).as_deref(), Some("c1-file"), "not the host's token");
+        assert_eq!(sent(&host_token, &no_env, &elsewhere, 1).as_deref(), Some("host-explicit"));
+        assert_eq!(sent(&c1(&[]), &no_env, &elsewhere, 1), None, "nothing found: no token");
+        assert_eq!(sent(&c1(&[]), &env, &elsewhere, 1).as_deref(), Some("c1-env"));
+        // The host: `--token` first, then its file; `SHARDS_TOKEN_C1` is not its.
+        let host = |extra: &[&str]| -> Vec<String> { ["--port-file", &file].iter().chain(extra).chain(&["status"]).map(|s| s.to_string()).collect() };
+        assert_eq!(sent(&host(&["--token", "host-explicit"]), &env, &dir, 0).as_deref(), Some("host-explicit"));
+        assert_eq!(sent(&host(&[]), &env, &dir, 0).as_deref(), Some("host-file"));
+        assert_eq!(sent(&host(&["--peer", "host"]), &env, &dir, 0).as_deref(), Some("host-file"));
+        // `--port` names a game, not a member: the token is the one given, else that game's file.
+        let port = |extra: &[&str]| -> Vec<String> { ["--port", &c1_port, "--peer", "c1"].iter().chain(extra).chain(&["status"]).map(|s| s.to_string()).collect() };
+        assert_eq!(sent(&port(&["--token", "given"]), &env, &dir, 1).as_deref(), Some("given"));
+        assert_eq!(sent(&port(&[]), &env, &dir, 1).as_deref(), Some("c1-file"));
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(elsewhere);
+    }
+
+    #[test]
+    fn an_unauthorized_answer_says_which_token_to_set() {
+        let port = serve(|_, _| Some(crate::fake::error("unauthorized: bad token")));
+        let say = |client: Client| client.call("ai/status", Value::Null).unwrap_err();
+        let host = say(Client::new(port, None));
+        assert!(host.contains(&format!("no .shards/{port}.token in")) && !host.contains("SHARDS_TOKEN_C"), "{host}");
+        let given = say(Client::new(port, Some("x".into())));
+        assert!(given.contains("the token given is not this game's") && given.contains("SHARDS_TOKEN_C1"), "{given}");
+        let c2_without = say(Client::new(port, None).of(Peer::Client(2)));
+        assert!(c2_without.contains("no SHARDS_TOKEN_C2 set and no .shards/"), "{c2_without}");
+        let c2_with = say(Client::new(port, Some("x".into())).of(Peer::Client(2)));
+        assert!(c2_with.contains("the token sent is not c2's") && c2_with.contains("set SHARDS_TOKEN_C2"), "{c2_with}");
+    }
+
+    /// Waiting cannot help a game that refuses the token, nor one that answered and went away; a
+    /// game that was never there is waited for until the deadline.
+    #[test]
+    fn wait_stops_at_once_when_waiting_cannot_help() {
+        let long = || Instant::now() + Duration::from_secs(30);
+        let started = Instant::now();
+        let refusing = serve(|_, _| Some(crate::fake::error("unauthorized: bad token")));
+        let e = wait_member(|| Ok(Client::new(refusing, None)), long()).unwrap_err();
+        assert!(e.starts_with("ai/status: unauthorized: bad token"), "{e}");
+
+        let mut loading = status(1, 1, json!({"role": "single"}));
+        loading["loading"] = json!(["content: 2 files left"]);
+        let leaving = pretend_member(loading, 2, Tokens::default());
+        let e = wait_member(|| Ok(Client::new(leaving, None)), long()).unwrap_err();
+        assert!(e.starts_with("the game was there and is gone (cannot reach the game at"), "{e}");
+        assert!(started.elapsed() < Duration::from_secs(10), "neither waited for the deadline");
+
+        let begun = Instant::now();
+        let e = wait_member(|| Err("cannot read the port file g.port".to_owned()), Instant::now() + Duration::from_millis(300)).unwrap_err();
+        assert_eq!(e, "cannot read the port file g.port");
+        assert!(begun.elapsed() >= Duration::from_millis(300), "a game that never was there is waited for");
+    }
+
+    /// `wait --peer all` fails at once on what waiting cannot mend, with the mismatch.
+    #[test]
+    fn wait_all_stops_at_once_on_members_that_are_not_one_stand() {
+        let started = Instant::now();
+        let settle_fast = |dir: &PathBuf| {
+            let path = dir.join("g.port").display().to_string();
+            settle(&cli(&["--port-file", &path, "--peer", "all", "wait"]), Instant::now() + Duration::from_secs(30)).unwrap_err()
+        };
+        // A game that was not started as a stand.
+        let alone = scratch("fast_alone");
+        lay_out(&alone, vec![(status(15711, 42, json!({"role": "single"})), usize::MAX)]);
+        let e = settle_fast(&alone);
+        assert_eq!(e, "the first member is not a host: it reports role \"single\"");
+        // A port file left by another stand: its client plays another seed.
+        let stale = scratch("fast_seed");
+        let mut members = stand_of_two();
+        members[2].1["seed"] = json!(7);
+        lay_out(&stale, members.into_iter().map(|(_, status)| (status, usize::MAX)).collect());
+        assert_eq!(settle_fast(&stale), "c2 plays seed 7 but the host seed 42: these games are not one stand");
+        // Two clients that claim the same player.
+        let twins = scratch("fast_twins");
+        let mut members = stand_of_two();
+        members[2].1["net"]["player"] = json!(1);
+        lay_out(&twins, members.into_iter().map(|(_, status)| (status, usize::MAX)).collect());
+        assert_eq!(settle_fast(&twins), "c2 reports player 1, which another member has too");
+        assert!(started.elapsed() < Duration::from_secs(10), "no wait for the 30 s deadline");
+        for dir in [alone, stale, twins] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    /// A host that answered and is gone has ended the stand: `wait --peer all` says so at once
+    /// instead of waiting for a client that will never come.
+    #[test]
+    fn wait_all_stops_at_once_when_the_host_has_ended_the_stand() {
+        let started = Instant::now();
+        let dir = scratch("fast_ended");
+        let members = stand_of_two();
+        // c2 never starts; the host goes away after a few rounds.
+        lay_out(&dir, vec![(members[0].1.clone(), 3), (members[1].1.clone(), usize::MAX)]);
+        let path = dir.join("g.port").display().to_string();
+        let e = settle(&cli(&["--port-file", &path, "--peer", "all", "wait"]), Instant::now() + Duration::from_secs(30)).unwrap_err();
+        assert!(e.starts_with("the host ended the stand: the game was there and is gone (cannot reach the game at"), "{e}");
+        assert!(started.elapsed() < Duration::from_secs(10));
+        // A client that went away the same way is named.
+        let lost = scratch("fast_lost");
+        lay_out(&lost, vec![(members[0].1.clone(), usize::MAX), (members[1].1.clone(), 3)]);
+        let path = lost.join("g.port").display().to_string();
+        let e = settle(&cli(&["--port-file", &path, "--peer", "all", "wait"]), Instant::now() + Duration::from_secs(30)).unwrap_err();
+        assert!(e.starts_with("c1: the game was there and is gone"), "{e}");
+        // A client that refuses its token twice in a row is named, with the variable to set.
+        let refused = scratch("fast_refused");
+        lay_out(&refused, vec![(members[0].1.clone(), usize::MAX)]);
+        let port = serve(|_, _| Some(crate::fake::error("unauthorized: bad token")));
+        std::fs::write(refused.join("g.port.c1"), format!("{port}\n")).unwrap();
+        let path = refused.join("g.port").display().to_string();
+        let e = settle(&cli(&["--port-file", &path, "--peer", "all", "wait"]), Instant::now() + Duration::from_secs(30)).unwrap_err();
+        assert!(e.starts_with("c1: ai/status: unauthorized: bad token") && e.contains("SHARDS_TOKEN_C1"), "{e}");
+        assert!(started.elapsed() < Duration::from_secs(10));
+        for dir in [dir, lost, refused] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    /// A client's port file left by an earlier stand points nowhere: the wait goes on until the
+    /// new client rewrites it. A file past the host's count is not a member at all.
+    #[test]
+    fn a_stale_port_file_is_neither_a_member_nor_a_reason_to_give_up() {
+        let dir = scratch("stale");
+        pretend_stand(&dir, Arc::new(AtomicBool::new(false)), Arc::default());
+        // c1's file was left by a client that is gone; c3's by a bigger stand.
+        let real = std::fs::read_to_string(dir.join("g.port.c1")).unwrap();
+        let free = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        std::fs::write(dir.join("g.port.c1"), format!("{free}\n")).unwrap();
+        std::fs::write(dir.join("g.port.c3"), format!("{free}\n")).unwrap();
+        let path = dir.join("g.port").display().to_string();
+        let c = cli(&["--port-file", &path, "--peer", "all", "wait"]);
+        let rewrite = std::thread::spawn({
+            let file = dir.join("g.port.c1");
+            move || {
+                std::thread::sleep(Duration::from_millis(400));
+                std::fs::write(file, real).unwrap();
+            }
+        });
+        let members = settle(&c, Instant::now() + Duration::from_secs(20)).expect("the new c1 replaces the stale file");
+        rewrite.join().unwrap();
+        assert_eq!(members.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["host", "c1", "c2"], "c3 is not in this stand");
+        // Without the client, the wait runs to its deadline and says what it cannot reach.
+        std::fs::write(dir.join("g.port.c1"), format!("{free}\n")).unwrap();
+        let e = settle(&c, Instant::now() + Duration::from_millis(400)).unwrap_err();
+        assert!(e.starts_with("c1: cannot reach the game at"), "{e}");
         let _ = std::fs::remove_dir_all(dir);
     }
 
