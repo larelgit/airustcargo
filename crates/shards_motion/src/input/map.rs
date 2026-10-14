@@ -3,7 +3,7 @@
 //! changed by an agent, and be saved as the player's overrides.
 
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -375,33 +375,15 @@ impl InputMap {
         ron::from_str(text).map_err(|e| e.to_string())
     }
 
-    /// Reads overrides from `path`; a missing file is no overrides.
+    /// Reads overrides from `path`; a missing file is no overrides. The format of the
+    /// `input.ron` that earlier versions kept the player's controls in, which the first run on
+    /// the settings imports (`controls` settings are the controls now).
     pub fn load_overrides(path: &Path) -> Result<InputMap, String> {
         match std::fs::read_to_string(path) {
             Ok(text) => InputMap::from_text(&text).map_err(|e| format!("{}: {e}", path.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(InputMap::default()),
             Err(e) => Err(format!("cannot read {}: {e}", path.display())),
         }
-    }
-
-    /// Writes what differs from `defaults` to `path`: a temporary file, then a rename, so a
-    /// crash never leaves half a file. A file there that cannot be read (a hand edit with a
-    /// typo: the game ran on the defaults, so this save holds none of it) is moved to
-    /// `<path>.bad` first, never overwritten; its new path is returned.
-    pub fn save_overrides(&self, defaults: &InputMap, path: &Path) -> Result<Option<PathBuf>, String> {
-        let text = self.overrides_from(defaults).to_text()?;
-        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-            std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-        }
-        let unreadable = path.exists() && InputMap::load_overrides(path).is_err();
-        let kept = unreadable.then(|| path.with_extension("ron.bad"));
-        if let Some(bad) = &kept {
-            std::fs::rename(path, bad).map_err(|e| format!("cannot keep the unreadable {} as {}: {e}", path.display(), bad.display()))?;
-        }
-        let temp = path.with_extension("ron.tmp");
-        std::fs::write(&temp, text).map_err(|e| format!("cannot write {}: {e}", temp.display()))?;
-        std::fs::rename(&temp, path).map_err(|e| format!("cannot replace {}: {e}", path.display()))?;
-        Ok(kept)
     }
 
     /// The action names of a context, for messages.

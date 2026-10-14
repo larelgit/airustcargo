@@ -13,9 +13,10 @@
 //! ```
 //!
 //! Defaults come from content (`input_map`, id `default`, hot-reloadable) or the built-in
-//! [`InputMap::standard`]; the player's changes are saved as overrides in
-//! `$XDG_CONFIG_HOME/<game>/input.ron` (`~/.config/<game>/input.ron`; `%APPDATA%` on
-//! Windows), so new default actions still reach old files.
+//! [`InputMap::standard`]; the player's changes are the `controls` settings
+//! ([`ControlSettings`], saved by Bevy's settings framework in `settings.toml`), only what
+//! differs from the defaults, so new default actions still reach old files (see [`controls`]).
+//! The overrides file of earlier versions (`input.ron`, see [`InputSettings`]) is imported once.
 //!
 //! A content file:
 //!
@@ -31,6 +32,7 @@
 //! ]) }
 //! ```
 
+pub mod controls;
 mod map;
 mod tools;
 
@@ -42,8 +44,10 @@ use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::input::InputSystems;
 use bevy::prelude::*;
 use shards_content::{ContentAppExt, ContentDb};
-use shards_core::{EngineConfig, Intent, LocalPlayer, Press};
+use shards_core::{Intent, LocalPlayer, Press};
+use shards_settings::{AccessibilitySettings, ControlSettings, SettingsAppExt, SettingsStorage};
 
+pub use controls::ControlSync;
 pub use map::{ActionBinding, BindMode, Binding, InputContext, InputMap, RebindError, Stick};
 
 use crate::camera::ThirdPersonCamera;
@@ -96,22 +100,22 @@ impl InputContexts {
     }
 }
 
-/// Where the player's changes to the controls live.
+/// Where the player's controls were kept before they became settings (E8.6): the overrides
+/// file `input.ron`. A game that shipped with it names its folder here so the first run on the
+/// new version imports the player's changes into the `controls` settings, once: the file is
+/// renamed to `input.ron.imported` when the settings file has them. Nothing is written to the old
+/// file any more. A new game has nothing to set here.
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub struct InputSettings {
     /// The game's folder name in the user's config directory.
     pub app_name: String,
     /// The overrides file. `None`: `input.ron` in the config folder of `app_name`.
     pub file: Option<PathBuf>,
-    /// Read the overrides file at start and save changes made by the `rebind` tool. On for
-    /// a windowed game, off for headless and test runs, which must not touch the player's
-    /// files; an explicit `file` is always read.
-    pub persist: bool,
 }
 
 impl Default for InputSettings {
     fn default() -> Self {
-        Self { app_name: "shards".to_owned(), file: None, persist: false }
+        Self { app_name: "shards".to_owned(), file: None }
     }
 }
 
@@ -179,15 +183,17 @@ struct Applied {
 }
 
 pub(crate) fn plugin(app: &mut App) {
-    let persist = app.world().get_resource::<EngineConfig>().is_some_and(|c| !c.headless && !c.testing);
     app.register_type::<InputMap>()
         .add_content::<InputMap>()
         .init_resource::<InputContexts>()
-        .insert_resource(InputSettings { persist, ..default() })
+        .init_resource::<InputSettings>()
         .insert_resource(InputMap::standard())
         .insert_resource(InputDefaults(InputMap::standard()))
         .init_resource::<ControlState>()
+        .init_resource::<ControlSync>()
         .init_resource::<Applied>()
+        // `settings_set` refuses a binding that does not read.
+        .add_settings_check::<ControlSettings>(controls::check)
         .configure_sets(PreUpdate, ControlSystems::Read.after(InputSystems))
         .add_systems(PreUpdate, (resolve_defaults, read_input).chain().in_set(ControlSystems::Read));
     tools::register(app.world_mut());
@@ -198,50 +204,110 @@ pub(crate) fn plugin(app: &mut App) {
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub struct InputDefaults(pub InputMap);
 
-/// Makes the map the defaults from content (`input_map` `default`; the built-in when the
-/// game has none) plus the player's changes, and again whenever that content is edited.
+/// Keeps the map the defaults from content (`input_map` `default`; the built-in when the game
+/// has none) plus the player's changes from the `controls` settings: it is built once content
+/// is there, again when the content is edited or the settings change, and a change made to
+/// the map itself (`rebind`, a game's system) is written back into the settings.
+#[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
 fn resolve_defaults(
     mut commands: Commands,
     db: Option<Res<ContentDb>>,
-    settings: Res<InputSettings>,
+    legacy: Res<InputSettings>,
+    storage: Option<Res<SettingsStorage>>,
+    mut controls: ResMut<ControlSettings>,
     mut defaults: ResMut<InputDefaults>,
     mut map: ResMut<InputMap>,
     mut applied: ResMut<Applied>,
+    mut sync: ResMut<ControlSync>,
 ) {
     let first = !applied.resolved;
-    let changed = db.as_ref().is_some_and(|db| db.is_changed());
-    if !first && !changed {
-        return;
-    }
     // Content that is not loaded yet changes nothing; the engine holds the simulation until it is.
     if db.as_ref().is_some_and(|db| !db.is_loaded()) {
         return;
     }
-    let wanted = db.as_ref().and_then(|db| db.get::<InputMap>("default").cloned()).unwrap_or_else(InputMap::standard);
-    // What the player changed, kept across a change of defaults.
-    let mine = if first {
-        match settings.path().filter(|_| settings.persist || settings.file.is_some()) {
-            Some(path) => InputMap::load_overrides(&path).unwrap_or_else(|why| {
-                let text = format!("input: {why}; using the default controls");
-                commands.queue(move |world: &mut World| {
-                    journal::emit(world, JournalKind::Warn, text);
-                });
-                InputMap::default()
-            }),
-            None => InputMap::default(),
-        }
-    } else {
-        map.overrides_from(&defaults.0)
-    };
-    applied.resolved = true;
-    if first || wanted != defaults.0 {
-        let mut next = wanted.clone();
-        next.apply(&mine);
-        defaults.0 = wanted;
-        if *map != next {
-            *map = next;
+    let mut defaults_changed = false;
+    if first || db.as_ref().is_some_and(|db| db.is_changed()) {
+        let wanted = db.as_ref().and_then(|db| db.get::<InputMap>("default").cloned()).unwrap_or_else(InputMap::standard);
+        if first || wanted != defaults.0 {
+            defaults.0 = wanted;
+            defaults_changed = true;
         }
     }
+
+    if first {
+        applied.resolved = true;
+        if let Some(imported) = import_legacy_file(&mut commands, &legacy, storage.is_some(), &defaults.0, &controls) {
+            *controls = imported;
+        }
+        let (desired, problems) = controls::decode(&defaults.0, &controls);
+        for problem in problems {
+            let text = format!("settings: {problem}; using the default control");
+            commands.queue(move |world: &mut World| {
+                journal::emit(world, JournalKind::Warn, text);
+            });
+        }
+        if *map != desired {
+            *map = desired;
+        }
+        sync.agree(&map);
+        return;
+    }
+
+    if map.is_changed() && sync.agreed.as_ref() != Some(&*map) {
+        // Someone edited the map: what differs from the defaults is the player's, so it is a setting.
+        let mut next = controls.clone();
+        if controls::encode(&map, &defaults.0, &mut next) {
+            *controls = next;
+            shards_settings::save_soon(&mut commands);
+        }
+        sync.agree(&map);
+    } else if defaults_changed || controls.is_changed() {
+        let (desired, _) = controls::decode(&defaults.0, &controls);
+        if *map != desired {
+            *map = desired;
+        }
+        sync.agree(&map);
+    }
+}
+
+/// The controls of the overrides file earlier versions kept (`input.ron`) as the settings they
+/// are now, once: only when the settings hold no controls yet and a file is there (an explicit
+/// `InputSettings::file` always, the config folder's only when settings are kept on disk, so a
+/// test or a headless run never reads the player's own files). The settings file is written
+/// right away and the old file renamed to `input.ron.imported`. `None`: nothing to import.
+fn import_legacy_file(
+    commands: &mut Commands,
+    legacy: &InputSettings,
+    persistent: bool,
+    defaults: &InputMap,
+    controls: &ControlSettings,
+) -> Option<ControlSettings> {
+    let pristine = controls.bindings.is_empty() && controls.hold_or_toggle.is_empty();
+    let path = legacy.path().filter(|p| pristine && (persistent || legacy.file.is_some()) && p.is_file())?;
+    let overrides = match InputMap::load_overrides(&path) {
+        Ok(overrides) => overrides,
+        Err(why) => {
+            let text = format!("input: {why}; using the default controls");
+            commands.queue(move |world: &mut World| {
+                journal::emit(world, JournalKind::Warn, text);
+            });
+            return None;
+        }
+    };
+    let mut mine = defaults.clone();
+    mine.apply(&overrides);
+    let mut imported = controls.clone();
+    controls::encode(&mine, defaults, &mut imported);
+    let text = format!("settings: imported the controls from {} into controls.bindings", path.display());
+    commands.queue(move |world: &mut World| {
+        journal::emit(world, JournalKind::Event, text);
+        // The old file goes aside only once the settings file has what was in it.
+        if world.contains_resource::<SettingsStorage>() {
+            shards_settings::flush(world);
+            let _ = std::fs::rename(&path, path.with_extension("ron.imported"));
+        }
+    });
+    Some(imported)
 }
 
 /// The controls at this moment, from the devices.
@@ -331,11 +397,13 @@ fn read_input(
     cameras: Query<&ThirdPersonCamera>,
     map: Res<InputMap>,
     contexts: Res<InputContexts>,
+    accessibility: Option<Res<AccessibilitySettings>>,
     mut state: ResMut<ControlState>,
     mut applied: ResMut<Applied>,
     mut players: Query<(Entity, &mut Intent), With<LocalPlayer>>,
     mut others: Query<&mut Intent, Without<LocalPlayer>>,
 ) {
+    let hold_to_toggle = accessibility.is_some_and(|a| a.hold_to_toggle);
     let mut pads: Vec<(Entity, &Gamepad)> = gamepads.iter().collect();
     pads.sort_by_key(|(e, _)| *e);
     let devices = Devices {
@@ -367,7 +435,12 @@ fn read_input(
             if action.action == "move" {
                 move_axis = axis.clamp_length_max(1.0);
             }
-            match action.mode {
+            // "Hold to toggle" (accessibility): a held button is pressed once to hold, again to let go.
+            let mode = if hold_to_toggle && action.mode == BindMode::Hold { BindMode::Toggle } else { action.mode };
+            if mode != BindMode::Toggle {
+                applied.toggled.remove(&action.action);
+            }
+            match mode {
                 BindMode::Press => {
                     if just {
                         frame.pressed.insert(action.action.clone());

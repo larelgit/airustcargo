@@ -24,6 +24,7 @@ mod systems;
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use shards_settings::{AccessibilitySettings, ControlSettings};
 
 pub use math::{
     aim_assist, damp, lock_holds, next_lock_target, orbit_angles, orbit_offset, orbit_position, pick_lock_target,
@@ -144,7 +145,36 @@ pub(crate) fn plugin(app: &mut App) {
             if settings.shake {
                 shake.add_trauma(trigger.event().0 * settings.shake_intensity.clamp(0.0, 1.0));
             }
-        });
+        })
+        .add_systems(PreUpdate, apply_player_settings);
     #[cfg(feature = "render")]
     systems::plugin(app);
+}
+
+/// `PreUpdate`: what the player set (E8.6) becomes how the camera feels. The field of view and
+/// the shake come from the accessibility settings (`camera_shake` 0 is no shake at all, anything
+/// above it is how hard), the look speed and its inversion from the controls. A game that wants
+/// other defaults inserts its own settings resources before the settings store starts.
+/// Presentation only: nothing the simulation reads.
+fn apply_player_settings(
+    accessibility: Option<Res<AccessibilitySettings>>,
+    controls: Option<Res<ControlSettings>>,
+    mut camera: ResMut<CameraSettings>,
+) {
+    let (Some(accessibility), Some(controls)) = (accessibility, controls) else { return };
+    if !accessibility.is_changed() && !controls.is_changed() {
+        return;
+    }
+    let shake = accessibility.shake();
+    let next = CameraSettings {
+        fov_deg: accessibility.fov(),
+        shake: shake > 0.0,
+        shake_intensity: shake,
+        sensitivity: controls.sensitivity(),
+        invert_y: controls.invert_y,
+        ..camera.clone()
+    };
+    if *camera != next {
+        *camera = next;
+    }
 }

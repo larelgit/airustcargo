@@ -7,8 +7,11 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use shards_settings::{AccessibilitySettings, ControlSettings, SettingsStorage};
+
+use super::controls::{self, ControlSync};
 use super::map::{BindMode, Binding, InputMap, RebindError};
-use super::{InputContexts, InputDefaults, InputSettings};
+use super::{InputContexts, InputDefaults};
 
 pub(super) fn register(world: &mut World) {
     register_tool(world, "input_bindings", Scope::Player, ToolKind::Query, input_bindings);
@@ -24,7 +27,12 @@ pub struct InputBindingsArgs {
     pub context: Option<String>,
 }
 
-fn input_bindings(In(call): In<Call<InputBindingsArgs>>, map: Res<InputMap>, contexts: Res<InputContexts>) -> ToolResult {
+fn input_bindings(
+    In(call): In<Call<InputBindingsArgs>>,
+    map: Res<InputMap>,
+    contexts: Res<InputContexts>,
+    accessibility: Option<Res<AccessibilitySettings>>,
+) -> ToolResult {
     let name = call.args.context.unwrap_or_else(|| contexts.top().to_owned());
     let Some(context) = map.context(&name) else {
         let names: Vec<&str> = map.contexts.iter().map(|c| c.name.as_str()).collect();
@@ -40,6 +48,9 @@ fn input_bindings(In(call): In<Call<InputBindingsArgs>>, map: Res<InputMap>, con
         };
         let bindings: Vec<String> = action.bindings.iter().map(Binding::text).collect();
         out.push_str(&format!("\n  {:<width$}  {mode}{}", action.action, bindings.join(" · ")));
+    }
+    if accessibility.is_some_and(|a| a.hold_to_toggle) {
+        out.push_str("\naccessibility.hold_to_toggle is on: [hold] actions work as toggles (a press holds, the next lets go)");
     }
     let others: Vec<&str> = map.contexts.iter().map(|c| c.name.as_str()).filter(|n| *n != name).collect();
     if !others.is_empty() {
@@ -71,19 +82,20 @@ pub struct RebindArgs {
     /// Take the input from the action that uses it.
     #[serde(default)]
     pub force: bool,
-    /// Write the change to the player's controls file. Default: yes in a windowed game, no headless.
-    pub save: Option<bool>,
 }
 
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
 fn rebind(
     In(call): In<Call<RebindArgs>>,
+    mut commands: Commands,
     contexts: Res<InputContexts>,
     defaults: Res<InputDefaults>,
-    settings: Res<InputSettings>,
+    storage: Option<Res<SettingsStorage>>,
+    mut controls: ResMut<ControlSettings>,
+    mut sync: ResMut<ControlSync>,
     mut map: ResMut<InputMap>,
 ) -> ToolResult {
-    let RebindArgs { context, action, binding, slot, mode, unbind, force, save } = call.args;
+    let RebindArgs { context, action, binding, slot, mode, unbind, force } = call.args;
     let context = context.unwrap_or_else(|| contexts.top().to_owned());
     let names: Vec<String> = map.action_names(&context).iter().map(|n| (*n).to_owned()).collect();
     if map.context(&context).is_some() && !names.contains(&action) {
@@ -131,18 +143,17 @@ fn rebind(
         done.push(format!("mode {mode:?}").to_lowercase());
     }
     let mut message = format!("ok: {context}/{action}: {}", done.join(", "));
-    if save.unwrap_or(settings.persist) {
-        let path = settings.path().ok_or("cannot save: no config folder (set HOME or XDG_CONFIG_HOME, or InputSettings::file)")?;
-        let kept = next.save_overrides(&defaults.0, &path)?;
-        message.push_str(&format!("; saved to {}", path.display()));
-        if let Some(bad) = kept {
-            message.push_str(&format!(
-                " (the file there could not be read, so the game ran on the default controls and it holds none of \
-                 your edits; it is kept as {}: fix it and merge it back)",
-                bad.display()
-            ));
-        }
+    // The player's controls are settings: what differs from the defaults goes into
+    // `controls.bindings` / `controls.hold_or_toggle`, written a second later.
+    let mut changed = controls.clone();
+    if controls::encode(&next, &defaults.0, &mut changed) {
+        *controls = changed;
+        shards_settings::save_soon(&mut commands);
     }
+    if let Some(SettingsStorage { file: Some(file) }) = storage.as_deref() {
+        message.push_str(&format!("; saved to {} in a second", file.display()));
+    }
+    sync.agree(&next);
     *map = next;
     Ok(message)
 }

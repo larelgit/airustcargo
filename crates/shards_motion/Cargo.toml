@@ -9,7 +9,7 @@ publish.workspace = true
 [features]
 # The third-person camera systems and the collider overlay (they need a window to be seen;
 # the pure camera math and the data types are always built).
-render = ["ai_core/render"]
+render = ["ai_core/render", "bevy/bevy_post_process"]
 # Real gamepads through gilrs (needs libudev). Without it `Gamepad` entities still work,
 # a game or a test just has to spawn them.
 gamepad = ["bevy/bevy_gilrs"]
@@ -18,6 +18,7 @@ gamepad = ["bevy/bevy_gilrs"]
 ai_core.workspace = true
 shards_core.workspace = true
 shards_content.workspace = true
+shards_settings.workspace = true
 # `keyboard`, `mouse`, `gamepad` only switch on bevy_input's types: the input map names them.
 bevy = { workspace = true, features = ["std", "serialize", "keyboard", "mouse", "gamepad"] }
 serde.workspace = true

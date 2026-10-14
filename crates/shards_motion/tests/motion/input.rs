@@ -1,18 +1,23 @@
 //! The input action map: devices (fed to the `ButtonInput` resources and `Gamepad`
 //! components by hand, as Bevy's input plugin would) become `Intent`.
 
+use std::path::Path;
+
 use ai_core::{AiCorePlugin, AiJournal, AiKind, JournalKind, SimConfig};
 use bevy::input::gamepad::GamepadInput;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 use serde_json::json;
 use shards_core::input_names::{DODGE, GLIDE, JUMP, SPRINT};
-use shards_core::{Intent, LocalPlayer, Order, Target};
+use shards_core::{EngineConfig, Intent, LocalPlayer, Order, SettingsStore, Target};
 use shards_motion::*;
+use shards_settings::{AccessibilitySettings, ControlSettings};
 
 use crate::engine::*;
 
-fn input_app_with(settings: Option<InputSettings>) -> App {
+/// The input map on a bare app. `legacy` says where the pre-settings `input.ron` is; `store`
+/// keeps the settings in that folder (`<dir>/settings.toml`), as `shards::run` would.
+fn input_app_in(store: Option<&Path>, legacy: Option<InputSettings>) -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
         .add_plugins(AiCorePlugin {
@@ -24,8 +29,12 @@ fn input_app_with(settings: Option<InputSettings>) -> App {
         .add_plugins(MotionPlugin)
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<ButtonInput<MouseButton>>();
-    if let Some(settings) = settings {
-        app.insert_resource(settings);
+    if let Some(legacy) = legacy {
+        app.insert_resource(legacy);
+    }
+    if let Some(dir) = store {
+        let config = EngineConfig { settings: SettingsStore::Dir(dir.display().to_string()), ..default() };
+        shards_settings::install(&mut app, &config).unwrap();
     }
     app.finish();
     app.cleanup();
@@ -33,8 +42,16 @@ fn input_app_with(settings: Option<InputSettings>) -> App {
     app
 }
 
+fn input_app_with(legacy: Option<InputSettings>) -> App {
+    input_app_in(None, legacy)
+}
+
 fn input_app() -> App {
     input_app_with(None)
+}
+
+fn journal_has(app: &App, kind: JournalKind, needle: &str) -> bool {
+    app.world().resource::<AiJournal>().after(0).0.any(|e| e.kind == kind && e.text.contains(needle))
 }
 
 fn local_player(app: &mut App) -> Entity {
@@ -350,23 +367,28 @@ fn input_bindings_lists_the_controls() {
 }
 
 #[test]
-fn the_players_changes_are_saved_and_loaded_again() {
+fn the_players_changes_are_kept_in_the_controls_settings_and_read_back() {
     let dir = temp_dir("input_save");
-    let file = dir.join("config/input.ron");
-    let settings = || InputSettings { file: Some(file.clone()), ..default() };
+    let file = dir.join("settings.toml");
 
-    let mut app = input_app_with(Some(settings()));
-    assert!(!file.exists());
-    let out = ok(&mut app, "rebind", json!({"action": "jump", "binding": "Key(KeyJ)", "save": true}));
-    assert!(out.contains("saved to") && file.exists(), "{out}");
-    ok(&mut app, "rebind", json!({"action": "sprint", "mode": "toggle", "save": true}));
+    let mut app = input_app_in(Some(&dir), None);
+    let out = ok(&mut app, "rebind", json!({"action": "jump", "binding": "Key(KeyJ)"}));
+    assert!(out.contains("saved to") && out.contains("settings.toml"), "{out}");
+    ok(&mut app, "rebind", json!({"action": "sprint", "mode": "toggle"}));
+    {
+        let controls = app.world().resource::<ControlSettings>();
+        assert_eq!(controls.bindings["gameplay.jump"], ["Key(KeyJ)", "GamepadButton(South)"], "the slots of the action, the gamepad one as it was");
+        assert_eq!(controls.hold_or_toggle["gameplay.sprint"], "toggle");
+        assert_eq!(controls.bindings.len(), 1, "only what changed");
+    }
+    // Written a second after the last change (here: when the game exits).
+    shards_settings::flush(app.world_mut());
     let text = std::fs::read_to_string(&file).unwrap();
-    assert!(text.contains("KeyJ") && text.contains("Toggle"), "{text}");
+    assert!(text.contains("[controls") && text.contains("gameplay.jump") && text.contains("KeyJ") && text.contains("toggle"), "{text}");
     assert!(!text.contains("dodge"), "only what changed is saved, so new default actions still reach old files:\n{text}");
-    assert!(!file.with_extension("ron.tmp").exists(), "written through a temporary file");
 
     // A new run reads them back.
-    let mut next = input_app_with(Some(settings()));
+    let mut next = input_app_in(Some(&dir), None);
     let map = next.world().resource::<InputMap>().clone();
     assert_eq!(map.action("gameplay", "jump").unwrap().bindings[0], Binding::Key(KeyCode::KeyJ));
     assert_eq!(map.action("gameplay", "sprint").unwrap().mode, BindMode::Toggle);
@@ -376,34 +398,162 @@ fn the_players_changes_are_saved_and_loaded_again() {
     tap(&mut next, KeyCode::KeyJ);
     assert_eq!(pressed_names(&next, e), [JUMP]);
 
-    // A file nobody can read does not stop the game: the defaults, and a warning.
-    std::fs::write(&file, "(contexts: [oops").unwrap();
-    let broken = input_app_with(Some(settings()));
-    assert_eq!(*broken.world().resource::<InputMap>(), InputMap::standard());
-    let said = broken.world().resource::<AiJournal>().after(0).0.any(|e| e.kind == JournalKind::Warn && e.text.contains("using the default controls"));
-    assert!(said);
+    // Nothing changed in that run: it writes nothing (the file stays as it was).
+    let before = std::fs::metadata(&file).unwrap().modified().unwrap();
+    shards_settings::flush(next.world_mut());
+    assert_eq!(std::fs::metadata(&file).unwrap().modified().unwrap(), before);
 }
 
 #[test]
-fn a_rebind_does_not_destroy_a_controls_file_that_could_not_be_read() {
-    let dir = temp_dir("input_bad_file");
-    let file = dir.join("input.ron");
-    let hand_edited = "(contexts: [ (name: \"gameplay\", actions: [ (action: \"jump\", bindings: [Key(KeyJ)]), oops";
-    std::fs::write(&file, hand_edited).unwrap();
-    let mut app = input_app_with(Some(InputSettings { file: Some(file.clone()), ..default() }));
-    assert_eq!(*app.world().resource::<InputMap>(), InputMap::standard(), "the defaults, and a warning");
+fn a_settings_file_that_does_not_read_or_does_not_fit_is_the_defaults_and_a_warning() {
+    // Not TOML at all: Bevy logs it and starts from the defaults.
+    let dir = temp_dir("input_broken");
+    std::fs::write(dir.join("settings.toml"), "[controls\nthis is not toml").unwrap();
+    let app = input_app_in(Some(&dir), None);
+    assert_eq!(*app.world().resource::<InputMap>(), InputMap::standard());
 
-    // The first save says the old file is kept, and keeps it.
-    let out = ok(&mut app, "rebind", json!({"action": "sprint", "binding": "Key(KeyV)", "save": true}));
-    let backup = file.with_extension("ron.bad");
-    assert!(out.contains("saved to") && out.contains("could not be read") && out.contains("input.ron.bad"), "{out}");
-    assert_eq!(std::fs::read_to_string(&backup).unwrap(), hand_edited, "everything the player had written is still there");
-    assert!(InputMap::load_overrides(&file).is_ok(), "and the new file reads");
+    // TOML that names things the controls do not have: each is named, the rest applies.
+    let dir = temp_dir("input_stale");
+    std::fs::write(
+        dir.join("settings.toml"),
+        "[controls.bindings]\n\"gameplay.fly\" = [\"Key(KeyF)\"]\n\"gameplay.jump\" = [\"Space\"]\n\"gameplay.light\" = [\"Key(KeyL)\"]\n",
+    )
+    .unwrap();
+    let mut app = input_app_in(Some(&dir), None);
+    let map = app.world().resource::<InputMap>().clone();
+    assert_eq!(map.action("gameplay", "light").unwrap().bindings, [Binding::Key(KeyCode::KeyL)], "the entry that fits applies");
+    assert_eq!(map.action("gameplay", "jump"), InputMap::standard().action("gameplay", "jump"));
+    assert!(journal_has(&app, JournalKind::Warn, "controls.bindings.gameplay.fly") && journal_has(&app, JournalKind::Warn, "controls.bindings.gameplay.jump"));
+    // Saving something else keeps what this version cannot read.
+    ok(&mut app, "rebind", json!({"action": "dodge", "binding": "Key(KeyV)"}));
+    assert!(app.world().resource::<ControlSettings>().bindings.contains_key("gameplay.fly"));
+}
 
-    // Later saves are on a file that reads: the copy of the broken one stays as it was.
-    let again = ok(&mut app, "rebind", json!({"action": "jump", "binding": "Key(KeyU)", "save": true}));
-    assert!(!again.contains("could not be read"), "{again}");
-    assert_eq!(std::fs::read_to_string(&backup).unwrap(), hand_edited);
+#[test]
+fn the_overrides_file_of_earlier_versions_is_imported_once() {
+    let dir = temp_dir("input_legacy");
+    let old = dir.join("config/input.ron");
+    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+    std::fs::write(&old, r#"(contexts: [(name: "gameplay", actions: [(action: "jump", bindings: [Key(KeyJ)]), (action: "sprint", bindings: [Key(ShiftLeft)], mode: Toggle)])])"#).unwrap();
+    let legacy = || InputSettings { file: Some(old.clone()), ..default() };
+    let settings = dir.join("settings.toml");
+
+    let app = input_app_in(Some(&dir), Some(legacy()));
+    let map = app.world().resource::<InputMap>().clone();
+    assert_eq!(map.action("gameplay", "jump").unwrap().bindings, [Binding::Key(KeyCode::KeyJ)]);
+    assert_eq!(map.action("gameplay", "sprint").unwrap().mode, BindMode::Toggle);
+    let text = std::fs::read_to_string(&settings).unwrap();
+    assert!(text.contains("gameplay.jump") && text.contains("KeyJ"), "the settings file has them already:\n{text}");
+    assert!(!old.exists() && old.with_extension("ron.imported").exists(), "the old file goes aside");
+    assert!(journal_has(&app, JournalKind::Event, "imported the controls"));
+
+    // The next run reads the settings, and the old file is not looked for again.
+    std::fs::write(&old, r#"(contexts: [(name: "gameplay", actions: [(action: "jump", bindings: [Key(KeyZ)])])])"#).unwrap();
+    let next = input_app_in(Some(&dir), Some(legacy()));
+    assert_eq!(next.world().resource::<InputMap>().action("gameplay", "jump").unwrap().bindings, [Binding::Key(KeyCode::KeyJ)]);
+    assert!(old.exists(), "settings that hold controls already are not overwritten by an old file");
+}
+
+#[test]
+fn an_explicit_old_file_is_read_without_a_settings_store_and_left_alone() {
+    let dir = temp_dir("input_legacy_memory");
+    let old = dir.join("input.ron");
+    let text = r#"(contexts: [(name: "gameplay", actions: [(action: "jump", bindings: [Key(KeyJ)])])])"#;
+    std::fs::write(&old, text).unwrap();
+    let app = input_app_with(Some(InputSettings { file: Some(old.clone()), ..default() }));
+    assert_eq!(app.world().resource::<InputMap>().action("gameplay", "jump").unwrap().bindings, [Binding::Key(KeyCode::KeyJ)]);
+    assert_eq!(std::fs::read_to_string(&old).unwrap(), text, "nowhere to put it: the file stays");
+
+    // One that cannot be read is a warning and the defaults, and stays too.
+    let broken = dir.join("broken.ron");
+    std::fs::write(&broken, "(contexts: [oops").unwrap();
+    let app = input_app_in(Some(&dir), Some(InputSettings { file: Some(broken.clone()), ..default() }));
+    assert_eq!(*app.world().resource::<InputMap>(), InputMap::standard());
+    assert!(journal_has(&app, JournalKind::Warn, "using the default controls"));
+    assert!(broken.exists());
+}
+
+#[test]
+fn settings_and_the_map_follow_each_other() {
+    let mut app = input_app();
+    let e = local_player(&mut app);
+    frame(&mut app);
+
+    // The map edited directly (a game's own menu) becomes a setting...
+    app.world_mut().resource_mut::<InputMap>().rebind("gameplay", "jump", 0, Binding::Key(KeyCode::KeyJ)).unwrap();
+    frame(&mut app);
+    assert_eq!(app.world().resource::<ControlSettings>().bindings["gameplay.jump"], ["Key(KeyJ)", "GamepadButton(South)"]);
+
+    // ...and a setting changed (`settings_set`, a hand edit) becomes the map.
+    ok(&mut app, "settings_set", json!({"group": "controls", "key": "bindings.gameplay.heavy", "value": "[\"Key(KeyH)\"]"}));
+    frame(&mut app);
+    assert_eq!(app.world().resource::<InputMap>().action("gameplay", "heavy").unwrap().bindings, [Binding::Key(KeyCode::KeyH)]);
+    tap(&mut app, KeyCode::KeyH);
+    assert_eq!(pressed_names(&app, e), [shards_core::input_names::HEAVY]);
+    // A binding that does not read is refused, naming it.
+    let bad = fails(&mut app, "settings_set", json!({"group": "controls", "key": "bindings.gameplay.heavy", "value": "[\"Hh\"]"}));
+    assert!(bad.contains("controls.bindings.gameplay.heavy") && bad.contains("not a binding"), "{bad}");
+
+    // Resetting a setting puts the default control back.
+    ok(&mut app, "settings_set", json!({"group": "controls", "key": "bindings.gameplay.heavy", "reset": true}));
+    frame(&mut app);
+    assert_eq!(app.world().resource::<InputMap>().action("gameplay", "heavy"), InputMap::standard().action("gameplay", "heavy"));
+    // The echo of one side is never written back by the other: nothing flips on later frames.
+    let settings = app.world().resource::<ControlSettings>().clone();
+    for _ in 0..3 {
+        frame(&mut app);
+    }
+    assert_eq!(*app.world().resource::<ControlSettings>(), settings);
+}
+
+#[test]
+fn hold_to_toggle_turns_held_buttons_into_toggles() {
+    let mut app = input_app();
+    let e = local_player(&mut app);
+    frame(&mut app);
+    // As designed: sprint is held while Shift is down.
+    press(&mut app, KeyCode::ShiftLeft);
+    frame(&mut app);
+    assert!(intent(&app, e).is_held(SPRINT));
+    release(&mut app, KeyCode::ShiftLeft);
+    frame(&mut app);
+    assert!(!intent(&app, e).is_held(SPRINT));
+
+    // The accessibility setting: one press holds it, the next lets go.
+    app.world_mut().resource_mut::<AccessibilitySettings>().hold_to_toggle = true;
+    tap(&mut app, KeyCode::ShiftLeft);
+    assert!(intent(&app, e).is_held(SPRINT), "still held after the key came up");
+    assert!(ok(&mut app, "input_bindings", json!({})).contains("hold_to_toggle is on"));
+    tap(&mut app, KeyCode::ShiftLeft);
+    assert!(!intent(&app, e).is_held(SPRINT), "the second press lets go");
+
+    // Off again: back to holding.
+    app.world_mut().resource_mut::<AccessibilitySettings>().hold_to_toggle = false;
+    press(&mut app, KeyCode::ShiftLeft);
+    frame(&mut app);
+    assert!(intent(&app, e).is_held(SPRINT));
+    release(&mut app, KeyCode::ShiftLeft);
+    frame(&mut app);
+    assert!(!intent(&app, e).is_held(SPRINT));
+}
+
+#[test]
+fn the_look_and_accessibility_settings_reach_the_camera() {
+    let mut app = input_app();
+    assert_eq!(*app.world().resource::<CameraSettings>(), CameraSettings::default(), "the defaults agree");
+    ok(&mut app, "settings_set", json!({"group": "accessibility", "key": "fov_deg", "value": "95"}));
+    ok(&mut app, "settings_set", json!({"group": "accessibility", "key": "camera_shake", "value": "0.3"}));
+    ok(&mut app, "settings_set", json!({"group": "controls", "key": "mouse_sensitivity", "value": "2"}));
+    ok(&mut app, "settings_set", json!({"group": "controls", "key": "invert_y", "value": "true"}));
+    app.update();
+    let camera = app.world().resource::<CameraSettings>().clone();
+    assert_eq!((camera.fov_deg, camera.shake, camera.shake_intensity, camera.sensitivity, camera.invert_y), (95.0, true, 0.3, 2.0, true));
+    // No shake at all is off, not "very little".
+    ok(&mut app, "settings_set", json!({"group": "accessibility", "key": "camera_shake", "value": "0"}));
+    app.update();
+    assert!(!app.world().resource::<CameraSettings>().shake);
+    // What the camera has beyond the player's choices is not touched.
+    assert_eq!(app.world().resource::<CameraSettings>().lock_range, CameraSettings::default().lock_range);
 }
 
 #[test]
