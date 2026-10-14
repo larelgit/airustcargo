@@ -4,7 +4,8 @@
 #   clippy         warnings are errors, engine and template
 #   template       the template game builds and passes its tests apart from the workspace
 #   headless-cli   a live sandbox without a window, driven by the `shards` CLI; content and
-#                  1000-seed worldgen checks through the game's binary
+#                  1000-seed worldgen checks through the game's binary; a live stand (host and
+#                  two clients, `--stand 2`) running the stand scenarios
 #   replays-window the same replays verified with a window (Xvfb + software Vulkan); optional
 #
 # What the jobs run you can run by hand: the commands are the same.
@@ -47,8 +48,9 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cache-key: dev
-      # Includes the sandbox's scenario files (crates/sandbox/scenarios/*.scenario) and the
-      # checked-in replays (--verify), which are cargo tests there.
+      # Includes the sandbox's scenario files (crates/sandbox/scenarios/*.scenario, and the stand
+      # scenarios in scenarios/stand/ on in-process stands) and the checked-in replays (--verify),
+      # which are cargo tests there.
       - name: cargo test --workspace
         run: cargo test --workspace --locked
 
@@ -161,6 +163,26 @@ jobs:
           # Then backwards, in the same game: each scenario sets up what it needs, whatever
           # ran before (a region loaded, a snapshot's tick).
           cargo shards --port-file "$port_file" scenario $(ls crates/sandbox/scenarios/*.scenario | sort -r)
+      # E7 / E11.6: the stand scenarios (crates/sandbox/scenarios/stand/, outside the glob above:
+      # a single game cannot run a file that names a host and clients) against a live stand: a
+      # host and two clients, each a game of its own with its own `shards` port, on simulated
+      # links (150 ms one way, 2% loss). `wait --peer all` checks that the three are one session.
+      - name: Stand scenarios against a live stand
+        run: |
+          port_file="$RUNNER_TEMP/stand.port"
+          log="$RUNNER_TEMP/stand.log"
+          stand_pid=
+          # `stand stop` ends it the polite way; the signal is only for a stand that never came up.
+          trap 'status=$?; if [ -n "$stand_pid" ]; then kill "$stand_pid" || true; fi; if [ "$status" -ne 0 ]; then cat "$log"; fi' EXIT
+          cargo sandbox --stand 2 --headless --paused --port 0 --port-file "$port_file" --net-sim latency=150,loss=0.02 > "$log" 2>&1 &
+          # One line per member: "member=c1 role=client player=1 body=e15 port=… pid=… seed=42 tick=14".
+          ready=$(cargo shards --port-file "$port_file" wait --peer all --timeout 180)
+          echo "$ready"
+          stand_pid=$(sed -n 's/^member=host .* pid=\([0-9][0-9]*\).*/\1/p' <<<"$ready")
+          cargo shards --port-file "$port_file" scenario crates/sandbox/scenarios/stand/*.scenario
+          cargo shards --port-file "$port_file" stand
+          cargo shards --port-file "$port_file" stand stop
+          stand_pid=
 
   # ---------------------------------------------------------------------------------------
   # E1: the same replay matches with a window (under Xvfb, drawn by a software Vulkan driver)
