@@ -275,6 +275,24 @@ fn an_npc_walks_around_pillars_by_navmesh_and_stays_on_its_leash() {
     let _ = hero;
     let out = ok(&mut app, "nav_path", json!({"from": {"x": 4.0, "z": 4.0}, "to": {"x": 13.5, "z": 4.0}}));
     assert_eq!(out.result["provider"], "navmesh");
+
+    // What a scenario sees of the same: `npc_detour` while it goes around, never
+    // `npc_beyond_leash`.
+    let mut app = crate::common::app();
+    load_region(&mut app, &["floor pillar floor"]);
+    let world = app.world_mut();
+    let sentry = npc(world, "grunt", Npc::new("sentry", "boss"), home_at, Vec3::X);
+    home(world, sentry, home_at, 10.0);
+    player(world, 0, Vec3::new(14.6, 0.0, 4.0));
+    let out = ok(&mut app, "step", json!({"ticks": 480, "until": [{"named": "npc_detour"}]}));
+    assert!(text(&out).contains("stopped: condition npc_detour"), "{}", text(&out));
+    let out = ok(&mut app, "step", json!({"ticks": 480, "until": [{"named": "npc_beyond_leash"}]}));
+    assert!(text(&out).contains("no condition met"), "{}", text(&out));
+    // Put out of its zone by hand: the condition says so.
+    let sentry_id = id(&app, sentry);
+    ok(&mut app, "teleport", json!({"id": sentry_id, "x": 4.0, "z": 16.0}));
+    let out = ok(&mut app, "step", json!({"ticks": 1, "until": [{"named": "npc_beyond_leash"}]}));
+    assert!(text(&out).contains("stopped: condition npc_beyond_leash"), "{}", text(&out));
 }
 
 #[test]

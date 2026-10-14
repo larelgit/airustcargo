@@ -75,7 +75,8 @@
 //! default every NPC the world module has not marked [`Dormant`](shards_world::Dormant)).
 //!
 //! Tools: `npc_state {id}`, `nav_path {from?, to, radius?}` and `nav_info` (queries),
-//! `npc_set_state {id, state}`, `nav_bake {tile?}` and `nav_overlay {on?}` (dev). Journal: `e7 idle → chase e5`, `e7 takes an attack token on e5 (2/2)`, `e7
+//! `npc_set_state {id, state}`, `nav_bake {tile?}` and `nav_overlay {on?}` (dev). Stop
+//! conditions: `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`. Journal: `e7 idle → chase e5`, `e7 takes an attack token on e5 (2/2)`, `e7
 //! returns its attack token after swipe (1/2)`. The NPC's line: `attack e5 · token · leash
 //! 6/15m`.
 
@@ -87,7 +88,7 @@ pub mod nav;
 pub mod perception;
 pub mod planner;
 
-use ai_core::{AiAppExt, SimSet};
+use ai_core::SimSet;
 use bevy::prelude::*;
 use shards_action::{ActionPlugin, ActionSystems};
 use shards_content::ContentAppExt;
@@ -209,10 +210,8 @@ impl Plugin for NpcPlugin {
             .init_resource::<NavPaths>()
             .init_resource::<NpcActivity>()
             .init_resource::<nav::NavBakes>()
-            // The navmesh of each region, stitched as it loads; after a snapshot load it is
-            // made again for the region and the solids the snapshot put back.
+            // The navmesh of each region, stitched as it loads.
             .on_region_loaded(nav::region::region_loaded)
-            .add_snapshot_rebuild("navmesh", nav::rebuild)
             .add_engine_module("npc", VERSION)
             .configure_sets(
                 FixedUpdate,

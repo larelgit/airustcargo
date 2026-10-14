@@ -46,8 +46,26 @@ pub(crate) fn register(app: &mut App) {
         // `step --until named:npcs_calm`: until no active NPC has a target.
         .add_ai_condition("npcs_calm", |w| {
             w.try_query::<&NpcBrain>().is_none_or(|mut q| q.iter(w).all(|b| !b.active || b.target.is_none()))
+        })
+        // `step --until named:npc_beyond_leash`: an active NPC stands farther from its home than
+        // its leash, give or take a meter (its goals stay half a meter inside; the rest is a
+        // body pushed by others). A step that should keep NPCs in their zones must not stop on it.
+        .add_ai_condition("npc_beyond_leash", |w| {
+            w.try_query::<(&NpcBrain, &Home, &Transform)>().is_some_and(|mut q| {
+                q.iter(w).any(|(b, h, tf)| b.active && h.pos.is_some_and(|at| flat(tf.translation - at).length() > h.leash + LEASH_SLACK))
+            })
+        })
+        // `step --until named:npc_detour`: an active NPC walks a planned route of several legs:
+        // its goal is not in plain sight (a wall, pillars), so it goes around.
+        .add_ai_condition("npc_detour", |w| {
+            w.try_query::<(&NpcBrain, &NavAgent)>().is_some_and(|mut q| {
+                q.iter(w).any(|(b, a)| b.active && a.goal.is_some() && !a.direct && !a.arrived && a.path.len() >= 2)
+            })
         });
 }
+
+/// How far past its leash an NPC may stand before `npc_beyond_leash` holds (m).
+pub const LEASH_SLACK: f32 = 1.0;
 
 /// `chase e5 · token · leash 12/20m`, `attack e5 · circle`, `idle (dormant)`.
 pub fn describe_npc(e: EntityRef) -> Option<String> {
