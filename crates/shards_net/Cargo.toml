@@ -1,16 +1,17 @@
 [package]
 name = "shards_net"
-description = "Shards networking, lower half: transports (in-memory hub, UDP), link conditioner and the reliable link layer. No Bevy App, no ECS."
+description = "Shards networking: transports (in-memory hub, UDP), the link layer, and the co-op session on top (join, inputs, state replication, desync check, the in-process stand)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-# `DetRng` only: the hub and the conditioner draw loss and jitter from it.
 ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+bevy = { workspace = true, features = ["std", "serialize", "bevy_state"] }
 serde.workspace = true
-flate2.workspace = true
-
-[dev-dependencies]
 serde_json.workspace = true
+schemars.workspace = true
+flate2.workspace = true

@@ -10,6 +10,7 @@ mod course;
 // The glTF writer of shards_level's tests: the region's level files are made with it.
 #[path = "../../../shards_level/tests/level/gltf.rs"]
 mod gltf;
+mod net;
 mod net_seams;
 mod reference_replays;
 mod replays;

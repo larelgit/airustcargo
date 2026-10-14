@@ -1,0 +1,623 @@
+//! The client's side of a session: the join handshake, taking the host's world, applying its
+//! state, sending the own body's inputs, the desync check and the tick clock.
+
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+use ai_core::journal::{self, JournalKind};
+use ai_core::net_rules::{self, NetRules};
+use ai_core::snapshot::{self, ENGINE_VERSION};
+use ai_core::state::decode_value;
+use ai_core::tools::{ForwardedCall, Forwarder};
+use ai_core::{sim, AiId, AiIndex, AiPlayer, AiTools, SimGate, ToolResult};
+use bevy::prelude::*;
+use bevy::reflect::{FromReflect, TypePath};
+use serde_json::{json, Value};
+use shards_content::ContentDb;
+use shards_core::{EngineConfig, EngineState, Intent, LocalPlayer, Predicted};
+
+use crate::def::net_def;
+use crate::hooks::{hooks, PlayerLeft};
+use crate::inputs::InputCapture;
+use crate::link::{Delivered, Link, Role};
+use crate::msg::{self, CallMsg, Hello, Inputs, Msg, StateDelta, Welcome, PROTO};
+use crate::replicate::{apply, changes_between, first_difference, world_hash, ClientRing, Fnv, LOCAL_BASE};
+use crate::session::{NetEndpoint, NetGame, NetMarks, NetState, Ticked};
+
+/// Where a client is in the session.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClientStage {
+    /// Loading content before saying hello.
+    Connecting,
+    /// Said hello; waits for the host's answer.
+    HelloSent,
+    /// The host's game said "not now".
+    Waiting(String),
+    /// Has the seed: builds the world from it.
+    Accepted,
+    /// Built the world; waits for the host's.
+    ReadySent,
+    Connected,
+    Ended(String),
+}
+
+impl ClientStage {
+    /// Whether the client waits for the network (and not for its own loading).
+    pub fn waits_on_network(&self) -> bool {
+        matches!(self, ClientStage::HelloSent | ClientStage::Waiting(_) | ClientStage::ReadySent | ClientStage::Connected | ClientStage::Ended(_))
+    }
+}
+
+/// How many ticks a client runs per host tick to keep its inputs arriving `target` ticks
+/// early: the host reports each input packet's margin; adjustments made since that packet
+/// count on top.
+#[derive(Clone, Debug, Default)]
+pub struct ClockSync {
+    adjustments: VecDeque<(u64, i64)>,
+    report: Option<(u64, i64)>,
+    /// Ticks early the inputs should arrive.
+    pub target: i64,
+    /// Ticks run besides one per host tick (+) or skipped (−), all told.
+    pub adjusted: i64,
+}
+
+impl ClockSync {
+    pub fn report(&mut self, margin: (u64, i64)) {
+        if self.report.is_none_or(|(at, _)| margin.0 >= at) {
+            self.report = Some(margin);
+            self.adjustments.retain(|(t, _)| *t > margin.0);
+        }
+    }
+
+    /// How far the inputs are from arriving `target` ticks early (+: too early).
+    pub fn error(&self) -> Option<i64> {
+        let (at, margin) = self.report?;
+        let since: i64 = self.adjustments.iter().filter(|(t, _)| *t > at).map(|(_, d)| d).sum();
+        Some(margin + since - self.target)
+    }
+
+    /// Ticks to run now, at client tick `now`: 2 when late, 0 when too early, else 1.
+    pub fn ticks(&mut self, now: u64) -> u32 {
+        let k: i64 = match self.error() {
+            Some(e) if e < -1 => 2,
+            Some(e) if e > 1 => 0,
+            _ => 1,
+        };
+        if k != 1 {
+            self.adjustments.push_back((now, k - 1));
+            self.adjusted += k - 1;
+        }
+        k as u32
+    }
+
+    pub fn reset(&mut self, target: i64) {
+        *self = ClockSync { target, adjusted: self.adjusted, ..default() };
+    }
+}
+
+/// The last desync this client found.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct NetDesync {
+    pub count: u32,
+    /// Host tick, client tick, the first difference (`e12 Health: here …, host …`).
+    pub last: Option<(u64, u64, String)>,
+}
+
+/// The client's session.
+#[derive(Resource)]
+pub struct NetClient {
+    pub address: String,
+    pub stage: ClientStage,
+    pub(crate) link: Option<Link>,
+    session: u32,
+    /// Who this player is across reconnects.
+    pub token: String,
+    pub name: String,
+    /// The character to bring (save sections); co-op saves set it before the join.
+    pub character: Option<Value>,
+    pub player: Option<u8>,
+    pub body: Option<u32>,
+    pub ring: ClientRing,
+    pending: Option<StateDelta>,
+    pub capture: InputCapture,
+    pub clock: ClockSync,
+    /// The newest host tick a state came from.
+    pub newest_host_tick: u64,
+    /// States from at or before this host tick belong to a world replaced since.
+    floor: u64,
+    pub lead: u64,
+    pub rebases: u32,
+    next_call: u64,
+    calls: BTreeMap<u64, String>,
+    pub host_paused: bool,
+    /// Deltas applied and skipped, and their bytes.
+    pub deltas: u64,
+    pub skipped: u64,
+    pub delta_bytes: u64,
+}
+
+impl NetClient {
+    pub fn new(address: &str, config: &EngineConfig) -> Self {
+        let name = config.player_name.clone();
+        // A stand's clients are the same in every run; a real one is this process.
+        let token = if config.embedded || config.testing { name.clone() } else { format!("{name}-{}", std::process::id()) };
+        let mut h = Fnv::default();
+        h.eat(token.as_bytes());
+        Self {
+            address: address.to_owned(),
+            stage: ClientStage::Connecting,
+            link: None,
+            session: (h.0 as u32) | 1,
+            token,
+            name,
+            character: None,
+            player: None,
+            body: None,
+            ring: ClientRing::default(),
+            pending: None,
+            capture: InputCapture::default(),
+            clock: ClockSync::default(),
+            newest_host_tick: 0,
+            floor: 0,
+            lead: 0,
+            rebases: 0,
+            next_call: 0,
+            calls: BTreeMap::new(),
+            host_paused: false,
+            deltas: 0,
+            skipped: 0,
+            delta_bytes: 0,
+        }
+    }
+
+    pub fn link(&self) -> Option<&Link> {
+        self.link.as_ref()
+    }
+
+    fn send(&mut self, message: &Msg) {
+        if let Some(link) = self.link.as_mut()
+            && let Err(e) = link.send_reliable(&msg::encode(message))
+        {
+            warn!("net: cannot send to the host: {e}");
+        }
+    }
+}
+
+fn with_client(world: &mut World, f: impl FnOnce(&mut World, &mut NetClient, &mut NetEndpoint)) {
+    let Some(mut client) = world.remove_resource::<NetClient>() else { return };
+    let Some(mut endpoint) = world.remove_resource::<NetEndpoint>() else {
+        world.insert_resource(client);
+        return;
+    };
+    f(world, &mut client, &mut endpoint);
+    world.insert_resource(endpoint);
+    world.insert_resource(client);
+}
+
+/// Ticks a stand runs this client for one host tick: 0 until it is connected, then what its
+/// clock says (0, 1 or 2), and 0 while it is far ahead of the newest state (starved).
+pub fn clock_ticks(world: &mut World) -> u32 {
+    let tick = sim::tick(world);
+    let Some(mut client) = world.get_resource_mut::<NetClient>() else { return 1 };
+    if client.stage != ClientStage::Connected {
+        return 0;
+    }
+    if tick > client.newest_host_tick + client.lead + 30 {
+        return 0;
+    }
+    client.clock.ticks(tick)
+}
+
+/// Whether the client is busy with its own loading (the stand waits for it, the hub's clock
+/// stands still meanwhile).
+pub fn loading_locally(world: &World) -> bool {
+    world.get_resource::<NetClient>().is_some_and(|c| !c.stage.waits_on_network())
+}
+
+// --- systems -----------------------------------------------------------------------------
+
+pub(crate) fn receive(world: &mut World) {
+    world.resource_mut::<Ticked>().0 = true;
+    with_client(world, io_in);
+}
+
+pub(crate) fn pump(world: &mut World) {
+    with_client(world, |world, client, endpoint| {
+        io_in(world, client, endpoint);
+        flush(client, endpoint);
+    });
+}
+
+/// `NetSystems::ApplyState`: the newest state into the world, then the desync check.
+pub(crate) fn apply_state(world: &mut World) {
+    let Some(mut client) = world.remove_resource::<NetClient>() else { return };
+    apply_pending(world, &mut client);
+    world.insert_resource(client);
+}
+
+/// `NetSystems::Capture`: the own body's intent as an input frame, and every frame the host
+/// has not acknowledged.
+pub(crate) fn capture(world: &mut World) {
+    let Some(mut client) = world.remove_resource::<NetClient>() else { return };
+    if client.stage == ClientStage::Connected {
+        let tick = sim::tick(world);
+        let redundancy = net_def(world).input_redundancy as usize;
+        if let Some(body) = client.body.and_then(|id| world.resource::<AiIndex>().get(AiId(id)))
+            && let Some(mut intent) = world.get_mut::<Intent>(body)
+        {
+            client.capture.capture(tick, &mut intent, redundancy);
+        }
+        let inputs = Inputs { tick, frames: client.capture.unacked.iter().cloned().collect(), state_ack: client.ring.last_applied.unwrap_or(0) };
+        if let Some(link) = client.link.as_mut() {
+            let _ = link.send_unreliable(&msg::encode(&inputs));
+        }
+    }
+    world.insert_resource(client);
+}
+
+/// `NetSystems::Send`.
+pub(crate) fn send(world: &mut World) {
+    with_client(world, |world, client, endpoint| {
+        if endpoint.clock.is_wall() {
+            pace(world, client);
+        }
+        flush(client, endpoint);
+    });
+}
+
+/// Exit hook: the host is told.
+pub(crate) fn on_exit(world: &mut World) {
+    with_client(world, |_, client, endpoint| {
+        if matches!(client.stage, ClientStage::Ended(_)) || client.link.is_none() {
+            return;
+        }
+        client.send(&Msg::Bye { reason: "quit".into() });
+        flush(client, endpoint);
+        if endpoint.clock.is_wall() {
+            let started = std::time::Instant::now();
+            while started.elapsed() < std::time::Duration::from_millis(300) && client.link.as_ref().is_some_and(|l| !l.is_idle()) {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                let mut datagrams = Vec::new();
+                let now = endpoint.clock.now();
+                endpoint.transport.recv(now, &mut datagrams);
+                if let Some(link) = client.link.as_mut() {
+                    for (_, bytes) in datagrams {
+                        link.on_datagram(now, &bytes);
+                    }
+                }
+                flush(client, endpoint);
+            }
+        }
+        client.stage = ClientStage::Ended("quit".into());
+    });
+}
+
+/// Real time over UDP: run slightly faster or slower to keep the inputs early, and jump when
+/// far off.
+fn pace(world: &mut World, client: &mut NetClient) {
+    if client.stage != ClientStage::Connected {
+        return;
+    }
+    let Some(error) = client.clock.error() else { return };
+    if error.abs() > 30 {
+        let tick = client.newest_host_tick + client.lead;
+        sim::set_tick(world, tick);
+        client.clock.reset(client.clock.target);
+        crate::hooks::net_line(world, "clock", JournalKind::Warn, format!("clock resync to tick {tick} (was {error:+} ticks off)"));
+        return;
+    }
+    let speed = (1.0 - error as f32 * 0.02).clamp(0.9, 1.1);
+    world.resource_mut::<Time<Virtual>>().set_relative_speed(speed);
+}
+
+fn flush(client: &mut NetClient, endpoint: &mut NetEndpoint) {
+    let (Some(link), Some(host)) = (client.link.as_mut(), endpoint.host) else { return };
+    let now = endpoint.clock.now();
+    let transport = &mut endpoint.transport;
+    link.flush(now, &mut |datagram| transport.send(host, datagram));
+}
+
+// --- receiving -----------------------------------------------------------------------------
+
+fn set_state(world: &mut World, state: NetState) {
+    world.insert_resource(state);
+}
+
+fn io_in(world: &mut World, client: &mut NetClient, endpoint: &mut NetEndpoint) {
+    let now = endpoint.clock.now();
+    let Some(host) = endpoint.host else { return };
+    if client.stage == ClientStage::Connecting && world.get_resource::<ContentDb>().is_some_and(ContentDb::is_loaded) {
+        hello(world, client);
+        set_state(world, NetState::Joining(format!("waiting for the host {}", client.address)));
+        shards_core::seed::hold_seed(world, &format!("net: waiting for the host {}", client.address));
+    }
+    let mut datagrams = Vec::new();
+    endpoint.transport.recv(now, &mut datagrams);
+    let Some(link) = client.link.as_mut() else { return };
+    for (from, bytes) in datagrams {
+        if from == host {
+            link.on_datagram(now, &bytes);
+        }
+    }
+    let delivered = link.poll(now);
+    for message in delivered {
+        match message {
+            Delivered::Reliable(bytes) => match msg::decode::<Msg>(&bytes) {
+                Ok(m) => on_message(world, client, m),
+                Err(e) => crate::hooks::net_line(world, "undecodable", JournalKind::Warn, format!("from the host: {e}")),
+            },
+            Delivered::Unreliable(bytes) => match msg::decode::<StateDelta>(&bytes) {
+                Ok(delta) => {
+                    client.delta_bytes += bytes.len() as u64;
+                    if delta.tick > client.floor && client.pending.as_ref().is_none_or(|p| delta.tick > p.tick) {
+                        client.pending = Some(delta);
+                    }
+                }
+                Err(e) => crate::hooks::net_line(world, "undecodable", JournalKind::Warn, format!("from the host: {e}")),
+            },
+        }
+    }
+    let timeout_ms = (net_def(world).timeout_secs * 1000.0) as u64;
+    let live = !matches!(client.stage, ClientStage::Ended(_));
+    if live && client.link.as_ref().is_some_and(|l| l.is_timed_out(now, timeout_ms)) {
+        let secs = net_def(world).timeout_secs;
+        end(world, client, &format!("lost the host {} (no answer for {secs:.0} s)", client.address));
+        NetMarks::mark(world, |m| &mut m.disconnected);
+    }
+    // The world is built from the seed: ask for the host's.
+    if client.stage == ClientStage::Accepted && world_built(world) {
+        let checks = snapshot::capture(world).map(|s| s.checks).unwrap_or_default();
+        client.send(&Msg::Ready { checks });
+        client.stage = ClientStage::ReadySent;
+        set_state(world, NetState::Joining("waiting for the host's world".into()));
+    }
+}
+
+/// In game, and nothing but the session holds the simulation.
+fn world_built(world: &World) -> bool {
+    let in_game = world.get_resource::<State<EngineState>>().is_some_and(|s| *s.get() == EngineState::InGame);
+    let gate = world.get_resource::<SimGate>();
+    in_game && gate.is_some_and(|g| g.reasons().len() == 1 && g.reason("net").is_some())
+}
+
+fn hello(world: &mut World, client: &mut NetClient) {
+    client.link = Some(Link::new(client.session, Role::Client));
+    let hello = Hello {
+        proto: PROTO,
+        engine: ENGINE_VERSION.to_owned(),
+        game: world.get_resource::<NetGame>().cloned().unwrap_or_default().0,
+        content_hash: world.get_resource::<ContentDb>().map_or(0, ContentDb::hash),
+        net_rules_hash: net_rules::rules_hash(world),
+        name: client.name.clone(),
+        token: client.token.clone(),
+        character: client.character.clone(),
+        tick_hz: 1.0 / sim::tick_seconds(world) as f64,
+    };
+    client.send(&Msg::Hello(hello));
+    client.stage = ClientStage::HelloSent;
+}
+
+fn on_message(world: &mut World, client: &mut NetClient, message: Msg) {
+    match message {
+        Msg::Accept(accept) => {
+            if client.stage != ClientStage::HelloSent && !matches!(client.stage, ClientStage::Waiting(_)) {
+                return;
+            }
+            client.player = Some(accept.player);
+            world.get_resource_or_init::<SimGate>().hold("net", "net: waiting for the host's world");
+            shards_core::seed::adopt_seed(world, accept.seed);
+            client.stage = ClientStage::Accepted;
+            set_state(world, NetState::Joining(format!("building the world (seed {})", accept.seed)));
+            journal::emit(world, JournalKind::Sim, format!("net: accepted as p{} by {} (seed {})", accept.player, client.address, accept.seed));
+        }
+        Msg::Wait { reason } => {
+            client.stage = ClientStage::Waiting(reason.clone());
+            shards_core::seed::hold_seed(world, &format!("net: waiting to join: {reason}"));
+            set_state(world, NetState::Joining(format!("waiting to join: {reason}")));
+            crate::hooks::net_line(world, "wait", JournalKind::Sim, format!("waiting to join: {reason}"));
+        }
+        Msg::Refused { reason } => {
+            journal::emit(world, JournalKind::Error, format!("net: refused by the host {}: {reason}", client.address));
+            end(world, client, &format!("refused: {reason}"));
+        }
+        Msg::Welcome(welcome) => take_world(world, client, welcome, false),
+        Msg::Rebase(welcome) => {
+            if client.stage == ClientStage::Connected {
+                take_world(world, client, welcome, true);
+            }
+        }
+        Msg::Journal { tick, text, .. } => {
+            journal::push_remote(world, tick, JournalKind::Event, text);
+        }
+        Msg::CallReply { id, ok, text, tick } => {
+            let tool = client.calls.remove(&id).unwrap_or_else(|| "call".into());
+            let verdict = if ok { "ok" } else { "failed" };
+            journal::log(world, JournalKind::Agent, format!("host: {tool} {verdict} at host tick {tick}: {text}"));
+        }
+        Msg::CharacterSave { sections, .. } => {
+            let save = hooks(world).on_character_save;
+            save(world, &sections);
+        }
+        Msg::SessionEnd { reason, .. } => {
+            journal::emit(world, JournalKind::Warn, format!("net: session ended by host ({reason})"));
+            let body = client.body.and_then(|id| world.resource::<AiIndex>().get(AiId(id)));
+            if let (Some(player), Some(body)) = (client.player, body) {
+                world.trigger(PlayerLeft { player, body, reason: "session ended".into() });
+            }
+            end(world, client, &format!("session ended by host ({reason})"));
+        }
+        Msg::Bye { reason } => {
+            journal::emit(world, JournalKind::Warn, format!("net: the host sent us away ({reason})"));
+            end(world, client, &reason);
+        }
+        Msg::Paused(paused) => client.host_paused = paused,
+        _ => {}
+    }
+}
+
+/// The session is over for this client.
+fn end(world: &mut World, client: &mut NetClient, reason: &str) {
+    client.stage = ClientStage::Ended(reason.to_owned());
+    world.get_resource_or_init::<SimGate>().hold("net", format!("net: {reason}"));
+    set_state(world, NetState::Ended(reason.to_owned()));
+    if world.get_resource::<EngineConfig>().is_some_and(|c| c.exit_with_host) {
+        world.write_message(AppExit::Success);
+    }
+}
+
+/// Puts the host's world in (a join, or the whole world again).
+fn take_world(world: &mut World, client: &mut NetClient, welcome: Welcome, rebase: bool) {
+    let before = sim::tick(world);
+    if rebase {
+        world.get_resource_or_init::<SimGate>().hold("net", "net: taking the host's world again");
+    }
+    if let Err(e) = snapshot::restore_releasing(world, &welcome.snapshot, "net") {
+        journal::emit(world, JournalKind::Error, format!("net: cannot take the host's world: {e}"));
+        client.send(&Msg::Bye { reason: format!("cannot take the world: {e}") });
+        end(world, client, &format!("cannot take the host's world: {e}"));
+        return;
+    }
+    // Whose body is whose: this machine's keyboard, camera and agents drive its own.
+    let marked: Vec<Entity> = {
+        let mut q = world.query_filtered::<Entity, Or<(With<AiPlayer>, With<LocalPlayer>, With<Predicted>)>>();
+        q.iter(world).collect()
+    };
+    for entity in marked {
+        world.entity_mut(entity).remove::<(AiPlayer, LocalPlayer, Predicted)>();
+    }
+    let body = welcome.body.and_then(|id| world.resource::<AiIndex>().get(AiId(id)));
+    if let Some(body) = body {
+        world.entity_mut(body).insert((AiPlayer, LocalPlayer, Predicted));
+    }
+    let after = hooks(world).after_restore;
+    after(world);
+    world.resource_mut::<AiIndex>().set_local_base(LOCAL_BASE);
+    ai_core::replay::set_recording(world, false);
+    journal::set_local_events(world, false);
+
+    let (lead, jitter) = lead_ticks(world, client);
+    let tick = if rebase { before.max(welcome.tick + lead) } else { welcome.tick + lead };
+    sim::set_tick(world, tick);
+    client.lead = lead;
+    client.clock.reset(2 + jitter as i64);
+    client.ring.clear();
+    client.pending = None;
+    client.floor = welcome.tick;
+    client.newest_host_tick = welcome.tick;
+    client.player = Some(welcome.player);
+    client.body = welcome.body;
+    client.capture = body.and_then(|b| world.get::<Intent>(b)).map(InputCapture::starting_from).unwrap_or_default();
+    client.stage = ClientStage::Connected;
+    if let Some(mut gate) = world.get_resource_mut::<SimGate>() {
+        gate.release("net");
+    }
+    set_state(world, NetState::Connected { player: welcome.player, body: welcome.body });
+    let id = welcome.body.map_or_else(|| "no body".to_owned(), |b| format!("e{b}"));
+    if rebase {
+        client.rebases += 1;
+        journal::emit(world, JournalKind::Sim, format!("net: the host's world again ({}) at host tick {}", welcome.reason, welcome.tick));
+    } else {
+        NetMarks::mark(world, |m| &mut m.joined);
+        journal::emit(world, JournalKind::Sim, format!("net: joined {} as p{} ({id}) at host tick {}, {lead} ticks ahead", client.address, welcome.player, welcome.tick));
+    }
+    if let Some(region) = &welcome.region {
+        journal::emit(world, JournalKind::Sim, format!("net: host region {region}"));
+    }
+}
+
+/// How far ahead of the host to run: one way in ticks, the jitter, two ticks of margin.
+fn lead_ticks(world: &World, client: &NetClient) -> (u64, u64) {
+    let tick_ms = (sim::tick_seconds(world) * 1000.0).max(1.0);
+    let stats = client.link.as_ref().map(Link::stats);
+    let one_way = stats.as_ref().map_or(0.0, |s| s.srtt_ms / 2.0);
+    let jitter = stats.as_ref().map_or(0.0, |s| s.rttvar_ms);
+    let one_way = (one_way / tick_ms).ceil() as u64;
+    let jitter = (jitter / tick_ms).ceil() as u64;
+    (one_way + jitter + 2, jitter)
+}
+
+fn apply_pending(world: &mut World, client: &mut NetClient) {
+    if client.stage != ClientStage::Connected {
+        return;
+    }
+    let Some(delta) = client.pending.take() else { return };
+    let (state, previous) = match client.ring.accept(&delta) {
+        Ok(accepted) => accepted,
+        Err(_) => {
+            client.skipped += 1;
+            return;
+        }
+    };
+    client.deltas += 1;
+    let predicted: BTreeSet<String> = {
+        let rules = world.resource::<NetRules>();
+        let registry = world.resource::<AppTypeRegistry>().read();
+        rules.predicted().filter_map(|t| registry.get(t).map(|r| r.type_info().type_path().to_owned())).collect()
+    };
+    let keep: BTreeSet<(u32, String)> = client.body.map(|b| predicted.iter().map(|p| (b, p.clone())).collect()).unwrap_or_default();
+    let changes = changes_between(world, previous.as_deref(), &state, &keep);
+    for warning in apply(world, &changes) {
+        crate::hooks::net_line(world, "apply", JournalKind::Warn, warning);
+    }
+    client.newest_host_tick = delta.tick;
+    client.host_paused = delta.paused;
+    client.capture.ack(delta.inputs_ack);
+    if let Some(margin) = delta.margin {
+        client.clock.report(margin);
+    }
+    // The host's order queue for the body (orders finish there), unless ours is on its way.
+    if let Some(own) = &delta.own
+        && let Some(value) = own.components.get(Intent::type_path())
+        && let Ok(reflected) = decode_value(world, Intent::type_path(), value)
+        && let Some(host_intent) = Intent::from_reflect(reflected.as_ref())
+        && let Some(body) = client.body.and_then(|id| world.resource::<AiIndex>().get(AiId(id)))
+        && let Some(mut intent) = world.get_mut::<Intent>(body)
+    {
+        client.capture.adopt_orders(delta.inputs_ack, &mut intent, &host_intent.orders);
+    }
+    // The desync check: what this world holds of the host's, against the host's hash.
+    if let Some(host_hash) = delta.hash {
+        let own = client.body.map(|b| (b, &predicted));
+        let (here, held) = world_hash(world, own);
+        if here != host_hash {
+            let first = first_difference(&held, &state);
+            let tick = sim::tick(world);
+            let mut desync = world.get_resource_or_init::<NetDesync>();
+            desync.count += 1;
+            desync.last = Some((delta.tick, tick, first.clone()));
+            NetMarks::mark(world, |m| &mut m.desync);
+            journal::emit(world, JournalKind::Error, format!("net: desync at host tick {}: {first}", delta.tick));
+            client.send(&Msg::Desync { tick: delta.tick, here, host: host_hash, first });
+        }
+    }
+}
+
+// --- forwarded calls -----------------------------------------------------------------------
+
+/// The client's forwarder: dev actions go to the host.
+pub(crate) fn forwarder(address: &str) -> Forwarder {
+    Forwarder { forward, host: address.to_owned() }
+}
+
+fn forward(world: &mut World, call: ForwardedCall) -> ToolResult<Value> {
+    let Some(mut client) = world.get_resource_mut::<NetClient>() else {
+        return Err("this game is not a client of a host".into());
+    };
+    if client.stage != ClientStage::Connected {
+        return Err(format!("not connected to the host yet ({:?}); wait for `net_joined`", client.stage));
+    }
+    client.next_call += 1;
+    let id = client.next_call;
+    client.calls.insert(id, call.tool.clone());
+    let at = client.newest_host_tick + client.lead;
+    let message = Msg::Call(CallMsg { id, agent: call.agent, scope: call.scope, subject: call.subject.map(|a| a.0), tool: call.tool, args: call.args });
+    client.send(&message);
+    Ok(json!(format!("sent to the host; applies at host tick ~{at}")))
+}
+
+/// Installs the forwarder (a client's `Startup`).
+pub(crate) fn install_forwarder(world: &mut World) {
+    let Some(address) = world.get_resource::<NetClient>().map(|c| c.address.clone()) else { return };
+    if let Some(mut tools) = world.get_resource_mut::<AiTools>() {
+        tools.set_forwarder(Some(forwarder(&address)));
+    }
+}

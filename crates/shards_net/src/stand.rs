@@ -1,0 +1,314 @@
+//! The in-process stand: a host and its clients as apps of one process, on a [`MemoryHub`],
+//! driven tick by tick so that a run is the same every time.
+//!
+//! One stand tick is one host tick: the host runs one, each connected client as many as its
+//! clock says (0, 1 or 2), then the hub's clock moves one tick on. While any member loads by
+//! itself (a client building the world from the seed, a host changing region) the hub's clock
+//! stands still and nobody ticks: how long loading takes on this machine changes nothing.
+//!
+//! `step`, `pause`, `resume` and `speed` on a member are deferred ([`StepRoute::Deferred`]):
+//! [`Stand::call`] runs them as stand ticks and answers like the tool would.
+
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use ai_core::builtin::{apply_clock, StepWatch};
+use ai_core::sim::{self, ClockAction, StepEnd, StepPoll, StepReport};
+use ai_core::tools::finished;
+use ai_core::{call_tool, CallOutcome, SimGate, StepQueue, StepRoute, SystemFailure};
+use bevy::prelude::*;
+use serde_json::Value;
+use shards_core::EngineState;
+
+use crate::client::{self, NetClient};
+use crate::hub::MemoryHub;
+use crate::session::{NetClock, NetEndpoint};
+use crate::transport::PeerId;
+
+/// Gives `app` an endpoint on `hub` named `name` (a client: `host` is its host's peer).
+/// Call it after building the app and before its first update. Returns its peer id.
+pub fn attach(app: &mut App, hub: &MemoryHub, name: &str, host: Option<PeerId>) -> PeerId {
+    let transport = hub.endpoint(name);
+    let id = transport.id();
+    app.insert_resource(NetEndpoint { transport: Box::new(transport), clock: NetClock::Hub(hub.clone()), host });
+    id
+}
+
+/// One app of a stand.
+pub struct Member {
+    pub name: String,
+    pub app: App,
+    queue: Arc<Mutex<StepQueue>>,
+}
+
+pub struct Stand {
+    pub hub: MemoryHub,
+    pub members: Vec<Member>,
+    /// Stand ticks run (the hub's clock is this many ticks).
+    pub iteration: u64,
+    tick_ms: f64,
+    /// Running in real time (`resume`), at `speed`: for a driver with a clock (`--stand`).
+    pub running: bool,
+    pub speed: f32,
+    /// How long a member may load by itself.
+    pub load_timeout: Duration,
+}
+
+impl Stand {
+    /// A stand of apps attached to `hub` ([`attach`]), member 0 the host, built and finished.
+    pub fn new(hub: MemoryHub, apps: Vec<(String, App)>) -> Self {
+        let mut members = Vec::new();
+        let mut tick_ms = 1000.0 / 60.0;
+        for (i, (name, mut app)) in apps.into_iter().enumerate() {
+            let queue = Arc::new(Mutex::new(StepQueue::default()));
+            app.insert_resource(StepRoute::Deferred(queue.clone()));
+            if i == 0 {
+                tick_ms = app.world().get_resource::<Time<Fixed>>().map_or(tick_ms, |t| t.timestep().as_secs_f64() * 1000.0);
+            }
+            members.push(Member { name, app, queue });
+        }
+        Self { hub, members, iteration: 0, tick_ms, running: false, speed: 1.0, load_timeout: Duration::from_secs(30) }
+    }
+
+    /// Adds a member (a client joining later); returns its index.
+    pub fn add(&mut self, name: &str, mut app: App) -> usize {
+        let queue = Arc::new(Mutex::new(StepQueue::default()));
+        app.insert_resource(StepRoute::Deferred(queue.clone()));
+        self.members.push(Member { name: name.to_owned(), app, queue });
+        self.members.len() - 1
+    }
+
+    pub fn world(&self, member: usize) -> &World {
+        self.members[member].app.world()
+    }
+
+    pub fn world_mut(&mut self, member: usize) -> &mut World {
+        self.members[member].app.world_mut()
+    }
+
+    pub fn app(&mut self, member: usize) -> &mut App {
+        &mut self.members[member].app
+    }
+
+    pub fn len(&self) -> usize {
+        self.members.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.members.is_empty()
+    }
+
+    fn advance_hub(&mut self) {
+        self.iteration += 1;
+        self.hub.set_time((self.iteration as f64 * self.tick_ms).round() as u64);
+    }
+
+    /// Whether member `i` is loading by itself.
+    fn loading(&self, i: usize) -> bool {
+        let world = self.world(i);
+        if world.contains_resource::<NetClient>() {
+            return client::loading_locally(world);
+        }
+        let state = world.get_resource::<State<EngineState>>().map(|s| *s.get());
+        state != Some(EngineState::InGame) || world.get_resource::<SimGate>().is_some_and(SimGate::is_held)
+    }
+
+    /// One frame of every member (`update`): loading goes on, the session talks.
+    pub fn frame(&mut self) {
+        for member in &mut self.members {
+            ai_core::activate(member.app.world());
+            member.app.update();
+        }
+    }
+
+    /// Frames until the host has loaded and every client is connected (or refused): the hub's
+    /// clock moves only in frames where nobody loads by itself.
+    pub fn settle(&mut self) -> Result<(), String> {
+        let started = Instant::now();
+        loop {
+            // While anyone loads by itself only they get frames: what the others would receive
+            // meanwhile depends on how fast this machine loads.
+            let loading: Vec<usize> = (0..self.len()).filter(|i| self.loading(*i)).collect();
+            if loading.is_empty() {
+                self.frame();
+            } else {
+                for i in &loading {
+                    let app = &mut self.members[*i].app;
+                    ai_core::activate(app.world());
+                    app.update();
+                }
+            }
+            let local = (0..self.len()).any(|i| self.loading(i));
+            let joined = self.members.iter().skip(1).all(|m| {
+                let stage = m.app.world().get_resource::<NetClient>().map(|c| c.stage.clone());
+                matches!(stage, None | Some(client::ClientStage::Connected | client::ClientStage::Ended(_)))
+            });
+            if !local && joined {
+                return Ok(());
+            }
+            if local {
+                std::thread::sleep(Duration::from_millis(1));
+            } else {
+                self.advance_hub();
+            }
+            if started.elapsed() > self.load_timeout {
+                let waiting: Vec<String> = self
+                    .members
+                    .iter()
+                    .map(|m| {
+                        let stage = m.app.world().get_resource::<NetClient>().map(|c| format!("{:?}", c.stage)).unwrap_or_else(|| "host".into());
+                        format!("{} {stage} ({})", m.name, ai_core::sim::gate_message(m.app.world()).unwrap_or_default())
+                    })
+                    .collect();
+                return Err(format!("the stand did not settle within {:?}: {}", self.load_timeout, waiting.join("; ")));
+            }
+        }
+    }
+
+    /// Waits (frames, no ticks, the hub's clock still) while any member loads by itself.
+    fn wait_local(&mut self) -> Result<(), String> {
+        let started = Instant::now();
+        loop {
+            let loading: Vec<usize> = (0..self.len()).filter(|i| self.loading(*i)).collect();
+            if loading.is_empty() {
+                return Ok(());
+            }
+            for i in &loading {
+                let app = &mut self.members[*i].app;
+                ai_core::activate(app.world());
+                app.update();
+            }
+            std::thread::sleep(Duration::from_millis(1));
+            if started.elapsed() > self.load_timeout {
+                let names: Vec<String> = loading.iter().map(|i| self.members[*i].name.clone()).collect();
+                return Err(format!("{} still loading after {:?}", names.join(", "), self.load_timeout));
+            }
+        }
+    }
+
+    /// One stand tick. Returns the gameplay failures it caused, by member.
+    pub fn tick(&mut self) -> Result<Vec<(usize, SystemFailure)>, String> {
+        self.wait_local()?;
+        let mut failed = Vec::new();
+        for (i, member) in self.members.iter_mut().enumerate() {
+            let world = member.app.world_mut();
+            ai_core::activate(world);
+            let ticks = if world.contains_resource::<NetClient>() {
+                let connected = world.get_resource::<NetClient>().is_some_and(|c| c.stage == client::ClientStage::Connected);
+                if !connected {
+                    // Not playing yet: it only talks (the pump runs in a frame without a tick).
+                    member.app.update();
+                    continue;
+                }
+                client::clock_ticks(world)
+            } else {
+                1
+            };
+            for _ in 0..ticks {
+                sim::run_tick(world)?;
+            }
+            ai_core::failures::collect(world);
+            failed.extend(ai_core::failures::take_unreported(world).into_iter().map(|f| (i, f)));
+        }
+        self.advance_hub();
+        Ok(failed)
+    }
+
+    /// `ticks` stand ticks; panics on a gameplay failure.
+    pub fn run(&mut self, ticks: u64) {
+        for _ in 0..ticks {
+            match self.tick() {
+                Ok(failed) if failed.is_empty() => {}
+                Ok(failed) => panic!("gameplay failed: {:?}", failed.iter().map(|(i, f)| format!("{}: {}", self.members[*i].name, f.headline())).collect::<Vec<_>>()),
+                Err(e) => panic!("{e}"),
+            }
+        }
+    }
+
+    /// Calls `tool` on member `member` as agent `dev`; a deferred `step` or clock change runs
+    /// here and its answer comes back as the call's.
+    pub fn call(&mut self, member: usize, tool: &str, args: Value) -> CallOutcome {
+        self.call_as(member, "dev", tool, args)
+    }
+
+    pub fn call_as(&mut self, member: usize, agent: &str, tool: &str, args: Value) -> CallOutcome {
+        let out = call_tool(self.world_mut(member), agent, tool, args);
+        let Some(id) = out.result.get("pending").and_then(Value::as_u64) else { return out };
+        self.drive();
+        let queue = self.members[member].queue.clone();
+        let polled = queue.lock().map(|q| q.poll(id)).unwrap_or(StepPoll::Unknown);
+        match polled {
+            StepPoll::Done(outcome) => outcome,
+            _ => out,
+        }
+    }
+
+    /// Runs every deferred request of every member.
+    pub fn drive(&mut self) {
+        for m in 0..self.len() {
+            let queue = self.members[m].queue.clone();
+            let clock = queue.lock().map(|mut q| q.take_clock()).unwrap_or_default();
+            for request in clock {
+                let result = match request.action {
+                    ClockAction::Pause => {
+                        self.running = false;
+                        Ok(format!("paused at tick {}", sim::tick(self.world(m))))
+                    }
+                    ClockAction::Resume => {
+                        self.running = true;
+                        Ok(format!("running from tick {}", sim::tick(self.world(m))))
+                    }
+                    ClockAction::Speed(x) => {
+                        self.speed = x;
+                        apply_clock(self.world_mut(m), ClockAction::Speed(x))
+                    }
+                };
+                let outcome = finished(self.world(m), request.action.tool(), result.map(Value::String));
+                if let Ok(mut q) = queue.lock() {
+                    q.complete(request.id, outcome);
+                }
+            }
+            let steps = queue.lock().map(|mut q| q.take_steps()).unwrap_or_default();
+            for request in steps {
+                let started = Instant::now();
+                let from_tick = sim::tick(self.world(m));
+                let watch = StepWatch::begin(self.world_mut(m), &request);
+                let mut end = StepEnd::Completed;
+                for _ in 0..request.ticks {
+                    match self.tick() {
+                        Ok(failed) if failed.is_empty() => {}
+                        Ok(failed) => {
+                            end = StepEnd::SystemFailed(failed.into_iter().map(|(_, f)| f).collect());
+                            break;
+                        }
+                        Err(e) => {
+                            end = StepEnd::Condition(e);
+                            break;
+                        }
+                    }
+                    let world = self.world_mut(m);
+                    ai_core::activate(world);
+                    if let Some(reason) = watch.check(world) {
+                        end = StepEnd::Condition(reason);
+                        break;
+                    }
+                    if started.elapsed() > Duration::from_secs(ai_core::builtin::STEP_WALL_SECS) {
+                        end = StepEnd::WallClock;
+                        break;
+                    }
+                }
+                let world = self.world_mut(m);
+                let report = StepReport { from_tick, to_tick: sim::tick(world), end, wall: started.elapsed() };
+                let outcome = watch.finish(world, &report);
+                if let Ok(mut q) = queue.lock() {
+                    q.complete(request.id, outcome);
+                }
+            }
+        }
+    }
+
+    /// Member `name`'s index.
+    pub fn index(&self, name: &str) -> Option<usize> {
+        self.members.iter().position(|m| m.name == name)
+    }
+}
