@@ -65,6 +65,17 @@ fn clearance_names_the_wall_the_cliff_the_water_and_the_open_way() {
 }
 
 #[test]
+fn without_colliders_the_queries_say_so_instead_of_seeing_cliffs_everywhere() {
+    let mut app = app();
+    player(app.world_mut(), Vec3::ZERO);
+    step(&mut app, 1);
+    for (tool, args) in [("clearance", json!({})), ("path_to", json!({"target": {"x": 3, "z": 3}}))] {
+        let err = fails(&mut app, tool, args);
+        assert!(err.contains("no colliders to measure against") && err.contains("`Collider`"), "{tool}: {err}");
+    }
+}
+
+#[test]
 fn clearance_reads_like_the_example_in_the_docs() {
     let mut app = app();
     lay_out_the_surroundings(app.world_mut());

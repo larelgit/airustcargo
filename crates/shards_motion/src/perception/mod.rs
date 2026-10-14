@@ -25,7 +25,7 @@ pub use terrain::{Block, Probe, Terrain};
 
 use crate::ai::MotionAi;
 use crate::controller::{CharacterController, CharacterParams, MotionMode, MotionState};
-use crate::physics::PhysicsWorld;
+use crate::physics::{LayerMask, PhysicsWorld};
 use crate::tools::TargetArg;
 
 pub(crate) fn plugin(app: &mut App) {
@@ -54,6 +54,17 @@ pub(crate) fn swimming_at(state: Option<&MotionState>) -> Option<f32> {
     state.filter(|s| s.mode == MotionMode::Water).and_then(|s| s.water_surface)
 }
 
+/// Both queries measure against colliders; a world without any would answer "cliff" everywhere.
+fn no_physics(physics: &PhysicsWorld) -> Result<(), String> {
+    let ground = physics.colliders().any(|c| c.volume.is_none() && c.layers.memberships.intersects(LayerMask::WORLD));
+    if !ground {
+        return Err("this world has no colliders to measure against: give the ground and the walls a `Collider` \
+                    (shards_motion), or use `observe` and `nearby`, which work from positions"
+            .into());
+    }
+    Ok(())
+}
+
 /// How far you can go in each of the eight compass directions and what stops you there:
 /// a wall, a cliff (with how deep it drops), water, or a ledge you could climb. Looks
 /// 15 m by default. Read-only.
@@ -71,6 +82,7 @@ fn clearance_tool(
     db: Option<Res<ContentDb>>,
     bodies: Bodies,
 ) -> ToolResult {
+    no_physics(&physics)?;
     let me = call.caller.subject;
     let subject = match call.args.around {
         Some(id) => index.resolve(id.0)?,
@@ -127,6 +139,7 @@ pub(crate) fn plan_for(
     db: Option<&ContentDb>,
     bodies: &Bodies,
 ) -> Result<PathPlan, String> {
+    no_physics(physics)?;
     let (tf, _, _, state) = bodies.get(me).map_err(|_| "your body has no position".to_owned())?;
     let (goal, goal_level) = match *target {
         TargetArg::Entity(id) => {
