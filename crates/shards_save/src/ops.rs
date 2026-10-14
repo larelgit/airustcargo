@@ -12,7 +12,7 @@ use ai_core::journal::{self, JournalKind};
 use ai_core::{sim, AiReplay};
 use bevy::prelude::*;
 use serde_json::Value;
-use shards_core::{EngineConfig, PlayerId};
+use shards_core::{EngineConfig, NetLaunch, PlayerId};
 
 use crate::canon;
 use crate::file::{Fault, GameInfo, SaveFile, SectionData, SectionSet};
@@ -91,8 +91,15 @@ impl Default for SaveSlots {
 impl SaveSlots {
     /// The slots a launch names (`--world SLOT`, `--character SLOT`: `EngineConfig::world_slot`
     /// and `character_slot`), else the defaults. A name that is not a slot is an error.
+    ///
+    /// A client (`--join`) that names no character plays the slot named after its player
+    /// (`--name`, [`slot_from_name`]), not `slot1`: a host and a client started from one game
+    /// folder would otherwise write one file, each the other's character.
     pub fn from_engine(engine: &EngineConfig) -> Result<Self, String> {
         let mut slots = Self::default();
+        if engine.character_slot.is_none() && matches!(engine.net, NetLaunch::Join { .. }) {
+            slots.character = slot_from_name(&engine.player_name);
+        }
         for (kind, slot) in [(SaveKind::World, &engine.world_slot), (SaveKind::Character, &engine.character_slot)] {
             if let Some(slot) = slot {
                 valid_slot(slot)?;
@@ -115,6 +122,14 @@ impl SaveSlots {
             SaveKind::Character => self.character = slot.to_owned(),
         }
     }
+}
+
+/// A slot named after a player: lowercase, anything but `a-z`, `0-9`, `_` and `-` becomes `_`,
+/// at most 32 characters, `player` for no name at all. The same name gives the same slot in
+/// every run.
+pub fn slot_from_name(name: &str) -> String {
+    let slot: String = name.to_lowercase().chars().map(|c| if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-' { c } else { '_' }).take(32).collect();
+    if slot.is_empty() { "player".to_owned() } else { slot }
 }
 
 /// What [`SaveRouting::route`] answers for a save it takes over: the report of where it went, or
@@ -454,18 +469,28 @@ pub fn save_slot(world: &mut World, what: SaveWhat, slot: &str, label: &str, rea
 /// is debounced. `reason` is journaled (`camp`, `found the ford`).
 pub fn save_now(world: &mut World, what: SaveWhat, reason: &str) -> Result<Vec<SaveReport>, String> {
     let slots = world.get_resource::<SaveSlots>().cloned().unwrap_or_default();
-    let reports = save_parts(world, &what.parts(), &slots, "", reason)?;
-    notify_saved(world, &reports, reason);
-    Ok(reports)
+    let (reports, failures) = save_parts_each(world, &what.parts(), &slots, "", reason);
+    // The game decided to save: the routing hears of each kind it asked for, whether or not this
+    // machine's own part could be written (a co-op host still sends its players theirs).
+    let mut asked: Vec<SaveKind> = reports.iter().filter(|r| r.written && r.target.is_none()).map(|r| r.kind).collect();
+    asked.extend(failures.iter().filter(|(_, body, _)| body.is_none()).map(|(kind, _, _)| *kind));
+    notify_kinds(world, &asked, reason);
+    parts_result(reports, failures)
 }
 
 /// Tells [`SaveRouting::saved`] about the saves the game decided on that were written here
 /// (`save_now`, an autosave), so that a co-op host can save the other players' characters
 /// with its own.
 pub(crate) fn notify_saved(world: &mut World, reports: &[SaveReport], reason: &str) {
+    let kinds: Vec<SaveKind> = reports.iter().filter(|r| r.written && r.target.is_none()).map(|r| r.kind).collect();
+    notify_kinds(world, &kinds, reason);
+}
+
+/// Tells [`SaveRouting::saved`] that the game decided to save these kinds of this machine's own.
+pub(crate) fn notify_kinds(world: &mut World, kinds: &[SaveKind], reason: &str) {
     let Some(routing) = world.get_resource::<SaveRouting>().copied() else { return };
-    for report in reports.iter().filter(|r| r.written && r.target.is_none()) {
-        (routing.saved)(world, report.kind, reason);
+    for &kind in kinds {
+        (routing.saved)(world, kind, reason);
     }
 }
 
@@ -479,6 +504,21 @@ pub fn save_parts(
     label: &str,
     reason: &str,
 ) -> Result<Vec<SaveReport>, String> {
+    let (reports, failures) = save_parts_each(world, parts, slots, label, reason);
+    parts_result(reports, failures)
+}
+
+/// A part that could not be saved: its kind, the body it named, why.
+type PartFailure = (SaveKind, Option<Entity>, String);
+
+/// [`save_parts`] with what each part came to, not one answer.
+fn save_parts_each(
+    world: &mut World,
+    parts: &[(SaveKind, Option<Entity>)],
+    slots: &SaveSlots,
+    label: &str,
+    reason: &str,
+) -> (Vec<SaveReport>, Vec<PartFailure>) {
     let (mut reports, mut failures) = (Vec::new(), Vec::new());
     for &(kind, body) in parts {
         match save_part(world, kind, body, slots.get(kind), label, reason) {
@@ -488,15 +528,20 @@ pub fn save_parts(
                 }
                 reports.push(report);
             }
-            Err(e) => failures.push(format!("{kind}: {e}")),
+            Err(e) => failures.push((kind, body, e)),
         }
     }
+    (reports, failures)
+}
+
+fn parts_result(reports: Vec<SaveReport>, failures: Vec<PartFailure>) -> Result<Vec<SaveReport>, String> {
     if failures.is_empty() {
         return Ok(reports);
     }
+    let failed: Vec<String> = failures.iter().map(|(kind, _, e)| format!("{kind}: {e}")).collect();
     let saved: Vec<String> = reports.iter().map(ToString::to_string).collect();
     let also = if saved.is_empty() { String::new() } else { format!(" (saved: {})", saved.join(", ")) };
-    Err(format!("{}{also}", failures.join("; ")))
+    Err(format!("{}{also}", failed.join("; ")))
 }
 
 // --- reading -----------------------------------------------------------------------------
@@ -771,6 +816,22 @@ mod tests {
         assert!(SaveSlots::from_engine(&bad).unwrap_err().contains("is not allowed"));
         let bad = EngineConfig { save_dir: "/abs".into(), ..EngineConfig::default() };
         assert!(SaveConfig::from_engine(&bad).unwrap_err().contains("is absolute"));
+    }
+
+    #[test]
+    fn a_client_without_a_character_plays_the_slot_named_after_it() {
+        assert_eq!(slot_from_name("Ann"), "ann");
+        assert_eq!(slot_from_name("Bob the 2nd!"), "bob_the_2nd_");
+        assert_eq!(slot_from_name(""), "player");
+        assert_eq!(slot_from_name(&"x".repeat(50)).len(), 32);
+        assert!(valid_slot(&slot_from_name("Ünïcode ✓")).is_ok());
+        let join = EngineConfig { net: NetLaunch::Join { addr: "h:1".into() }, player_name: "Ann".into(), ..EngineConfig::default() };
+        assert_eq!(SaveSlots::from_engine(&join).unwrap().character, "ann");
+        // Named, it is what was named; a host or a single game keeps `slot1`.
+        let named = EngineConfig { character_slot: Some("hero".into()), ..join.clone() };
+        assert_eq!(SaveSlots::from_engine(&named).unwrap().character, "hero");
+        let host = EngineConfig { net: NetLaunch::Host { port: 0 }, player_name: "Ann".into(), ..EngineConfig::default() };
+        assert_eq!(SaveSlots::from_engine(&host).unwrap().character, "slot1");
     }
 
     #[test]

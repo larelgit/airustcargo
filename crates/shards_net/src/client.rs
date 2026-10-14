@@ -289,13 +289,17 @@ fn watch_link(world: &mut World, client: &mut NetClient) {
     client.watched_rtt = stats.srtt_ms;
 }
 
+/// Why a client leaves when its player quits: the `Bye`'s reason, and the reason of the character
+/// the host sends back as the player leaves.
+const QUIT: &str = "quit";
+
 /// Exit hook: the host is told.
 pub(crate) fn on_exit(world: &mut World) {
     with_client(world, |world, client, endpoint| {
         if matches!(client.stage, ClientStage::Ended(_)) || client.link.is_none() {
             return;
         }
-        client.send(&Msg::Bye { reason: "quit".into() });
+        client.send(&Msg::Bye { reason: QUIT.into() });
         flush(client, endpoint);
         // Over UDP, give the `Bye` 300 ms to get out and be acknowledged, and the host's last
         // word to us, our character as it leaves (`CharacterSave`), to arrive: it is final.
@@ -320,13 +324,15 @@ pub(crate) fn on_exit(world: &mut World) {
                     {
                         let save = hooks(world).on_character_save;
                         save(world, tick, &reason, &sections);
-                        final_save = true;
+                        // The answer to our `Bye` (the host leaves with the reason we gave), not
+                        // a save that was on its way when we quit.
+                        final_save |= reason == QUIT;
                     }
                 }
                 flush(client, endpoint);
             }
         }
-        client.stage = ClientStage::Ended("quit".into());
+        client.stage = ClientStage::Ended(QUIT.into());
     });
 }
 

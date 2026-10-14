@@ -201,8 +201,11 @@ fn write_one(world: &mut World, p: Pending, tick: u64) {
     let slot = world.resource::<SaveSlots>().get(p.kind).to_owned();
     let body = resolve_body(world, p.body);
     // The failure is in the journal (Error) already; a request is not retried.
-    if let Ok(report) = ops::save_part(world, p.kind, body, &slot, "", &p.reason) {
-        ops::notify_saved(world, std::slice::from_ref(&report), &p.reason);
+    match ops::save_part(world, p.kind, body, &slot, "", &p.reason) {
+        Ok(report) => ops::notify_saved(world, std::slice::from_ref(&report), &p.reason),
+        // The game decided to save this machine's own: whoever else it concerns is told even so.
+        Err(_) if p.body.is_none() => ops::notify_kinds(world, &[p.kind], &p.reason),
+        Err(_) => {}
     }
 }
 
