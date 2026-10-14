@@ -25,12 +25,12 @@ pub use terrain::{Block, Probe, Terrain};
 
 use crate::ai::MotionAi;
 use crate::controller::{CharacterController, CharacterParams, MotionMode, MotionState};
-use crate::physics::{LayerMask, PhysicsWorld};
+use crate::physics::{fresh, LayerMask, PhysicsWorld};
 use crate::tools::TargetArg;
 
 pub(crate) fn plugin(app: &mut App) {
-    register_tool(app.world_mut(), "clearance", Scope::Player, ToolKind::Query, clearance_tool);
-    register_tool(app.world_mut(), "path_to", Scope::Player, ToolKind::Query, path_to_tool);
+    register_tool(app.world_mut(), "clearance", Scope::Player, ToolKind::Query, fresh::<ClearanceArgs>.pipe(clearance_tool));
+    register_tool(app.world_mut(), "path_to", Scope::Player, ToolKind::Query, fresh::<PathToArgs>.pipe(path_to_tool));
 }
 
 /// The parts of a body the perception tools read.

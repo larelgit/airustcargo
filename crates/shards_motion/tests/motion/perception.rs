@@ -98,6 +98,33 @@ fn clearance_reads_like_the_example_in_the_docs() {
 }
 
 #[test]
+fn the_tools_see_colliders_spawned_or_moved_in_the_same_breath() {
+    // Scenario runners call tools back to back, with no frame in between to sync physics.
+    let mut app = bare_engine("fresh_physics");
+    floor(app.world_mut());
+    let e = player(app.world_mut(), Vec3::ZERO);
+    step(&mut app, 2);
+
+    let wall = block(app.world_mut(), Vec3::new(-2.0, 0.0, -4.0), Vec3::new(2.0, 3.0, -3.0));
+    let out = ok(&mut app, "clearance", json!({}));
+    assert!(out.starts_with("N wall 2.6m"), "a wall that was just spawned: {out}");
+    app.world_mut().get_mut::<Transform>(wall).unwrap().translation.z = -9.5;
+    let out = ok(&mut app, "clearance", json!({}));
+    assert!(out.starts_with("N wall 8.6m") || out.starts_with("N wall 8.5m"), "a wall that was just moved: {out}");
+
+    // A pen of walls round the goal, just built: no route, instead of a straight line through them.
+    block(app.world_mut(), Vec3::new(-6.0, 0.0, -8.0), Vec3::new(6.0, 3.0, -7.0));
+    block(app.world_mut(), Vec3::new(-6.0, 0.0, -15.0), Vec3::new(6.0, 3.0, -14.0));
+    block(app.world_mut(), Vec3::new(-7.0, 0.0, -15.0), Vec3::new(-6.0, 3.0, -7.0));
+    block(app.world_mut(), Vec3::new(6.0, 0.0, -15.0), Vec3::new(7.0, 3.0, -7.0));
+    let err = fails(&mut app, "path_to", json!({"target": {"x": 0, "z": -11}}));
+    assert!(err.starts_with("no walkable route"), "{err}");
+    let err = fails(&mut app, "move_to", json!({"target": {"x": 0, "z": -11}, "path": true}));
+    assert!(err.starts_with("no walkable route"), "{err}");
+    let _ = e;
+}
+
+#[test]
 fn clearance_around_a_prop_does_not_see_the_prop_as_a_wall() {
     let mut app = app();
     floor(app.world_mut());

@@ -18,15 +18,15 @@ use crate::ai::MotionAi;
 use crate::controller::{CharacterController, CharacterParams, LocomotionInput, MotionMode, MotionState};
 use crate::intent::GlideUntilLanded;
 use crate::perception::{self, reach_toward, Bodies, Hazard};
-use crate::physics::PhysicsWorld;
+use crate::physics::{fresh, PhysicsWorld};
 
 pub(crate) fn plugin(app: &mut App) {
     use ToolKind::Action;
     let world = app.world_mut();
-    register_tool(world, "move_to", Scope::Player, Action, move_to);
+    register_tool(world, "move_to", Scope::Player, Action, fresh::<MoveToArgs>.pipe(move_to));
     register_tool(world, "move", Scope::Player, Action, move_dir);
     register_tool(world, "stop", Scope::Player, Action, stop);
-    register_tool(world, "jump", Scope::Player, Action, jump);
+    register_tool(world, "jump", Scope::Player, Action, fresh::<NoArgs>.pipe(jump));
     register_tool(world, "sprint", Scope::Player, Action, sprint);
     register_tool(world, "glide", Scope::Player, Action, glide);
 }

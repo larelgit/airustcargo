@@ -436,8 +436,10 @@ impl Plugin for PhysicsPlugin {
                 FixedUpdate,
                 (sync_physics.in_set(PhysicsSystems::Sync), sync_physics.in_set(PhysicsSystems::SyncAfterMove)),
             )
-            // Between ticks too, so queries from tools see what tools just moved. The
-            // result depends only on the ECS, so this never changes a tick's outcome.
+            // Between ticks too, so queries from tools see what tools just moved (and the
+            // motion tools that ask `PhysicsWorld` sync it themselves, `fresh`, for runners
+            // that call tools with no frame between). The result depends only on the ECS,
+            // so this never changes a tick's outcome.
             .add_systems(Last, sync_physics);
     }
 }
@@ -460,6 +462,21 @@ pub fn sync_physics(
         physics.upsert(data);
     }
     physics.refresh_kinematic(|entity| colliders.get(entity).ok());
+}
+
+/// The first half of a tool that asks [`PhysicsWorld`] something (`fresh::<Args>.pipe(tool)`):
+/// brings it up to date, then hands the call on. A tool runs between frames, and runners
+/// that call tools back to back (scenarios, tests) give the `Last` sync no frame to run in,
+/// so a collider spawned or moved by the call before would not be there yet. The sync is
+/// the same pure function of the ECS the ticks run, so this never changes a tick's outcome.
+pub(crate) fn fresh<A: Send + Sync + 'static>(
+    In(call): In<ai_core::prelude::Call<A>>,
+    physics: ResMut<PhysicsWorld>,
+    changed: Query<ColliderData, ColliderChanged>,
+    colliders: Query<ColliderData>,
+) -> ai_core::prelude::Call<A> {
+    sync_physics(physics, changed, colliders);
+    call
 }
 
 #[cfg(test)]
