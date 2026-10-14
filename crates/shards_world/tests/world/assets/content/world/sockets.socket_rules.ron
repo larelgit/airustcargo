@@ -1,0 +1,9 @@
+// What meets along tile edges in the test regions.
+{
+    "default": (
+        kinds: ["grass", "road", "water", "void"],
+        forbid: ["void"],
+        passable: ["grass", "road"],
+        roads: ["road"],
+    ),
+}

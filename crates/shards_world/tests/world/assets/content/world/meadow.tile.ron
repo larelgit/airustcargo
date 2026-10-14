@@ -1,0 +1,83 @@
+// 16 m test tiles: grass, roads (the middle third of an edge), a river without and with a
+// bridge, a pond and a ruin. Every tile stands on a ground box whose top is y = 0.
+{
+    "grass": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        weight: 6.0,
+        slots: [(at: (3.0, 0.0, -3.0), accepts: ["chest"])],
+        decor: ["rocks"],
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+        visual: "grass",
+    ),
+    "road_straight": (
+        sockets: (n: "grass road grass", e: "grass", s: "grass road grass", w: "grass"),
+        rotations: [0, 90],
+        weight: 2.0,
+        slots: [(at: (4.0, 0.0, 0.0), accepts: ["spawn", "camp", "shrine"])],
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+    ),
+    "road_bend": (
+        sockets: (n: "grass road grass", e: "grass road grass", s: "grass", w: "grass"),
+        rotations: [0, 90, 180, 270],
+        slots: [(at: (-3.0, 0.0, 3.0), accepts: ["spawn", "camp", "shrine"])],
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+    ),
+    "road_t": (
+        sockets: (n: "grass road grass", e: "grass road grass", s: "grass road grass", w: "grass"),
+        rotations: [0, 90, 180, 270],
+        weight: 0.5,
+        slots: [(at: (-4.0, 0.0, 0.0), accepts: ["spawn", "camp", "shrine"])],
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+    ),
+    "road_cross": (
+        sockets: (n: "grass road grass", e: "grass road grass", s: "grass road grass", w: "grass road grass"),
+        weight: 0.25,
+        slots: [(at: (4.0, 0.0, 4.0), accepts: ["spawn", "camp", "shrine"])],
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+    ),
+    "road_end": (
+        sockets: (n: "grass road grass", e: "grass", s: "grass", w: "grass"),
+        rotations: [0, 90, 180, 270],
+        slots: [(at: (0.0, 0.0, 2.0), accepts: ["spawn", "camp", "shrine"])],
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+    ),
+    // Water runs east-west through the middle: north and south do not meet inside.
+    "river": (
+        sockets: (n: "grass", e: "grass water grass", s: "grass", w: "grass water grass"),
+        rotations: [0, 90],
+        weight: 0.4,
+        links: [[N], [S]],
+        geometry: Inline([
+            Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, -2.0)),
+            Box(min: (-8.0, -1.0, 2.0), max: (8.0, 0.0, 8.0)),
+            Volume(kind: Water, shape: Cuboid(half: (8.0, 1.0, 2.0)), at: (0.0, -1.0, 0.0)),
+        ]),
+    ),
+    "bridge": (
+        sockets: (n: "grass road grass", e: "grass water grass", s: "grass road grass", w: "grass water grass"),
+        rotations: [0, 90],
+        weight: 0.3,
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+    ),
+    "pond": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        max_count: 3,
+        geometry: Inline([
+            Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0)),
+            Volume(kind: Water, shape: Cuboid(half: (4.0, 1.0, 4.0)), at: (0.0, 0.0, 0.0)),
+        ]),
+    ),
+    "ruin": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        max_count: 2,
+        tags: ["old"],
+        slope: 1,
+        pois: [(poi: "ruin", at: (0.0, 0.0, 0.0))],
+        geometry: Inline([
+            Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0)),
+            Box(min: (-6.0, 0.0, -6.0), max: (-4.0, 3.0, 6.0)),
+            Marker(name: "guard_post", at: (2.0, 0.0, 2.0)),
+            Prefab(id: "guard", at: (-2.0, 0.0, 3.0), yaw: 90.0),
+        ]),
+    ),
+}

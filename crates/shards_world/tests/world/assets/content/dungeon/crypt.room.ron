@@ -1,0 +1,48 @@
+// Rooms of the test crypt, on 8 m cells. Doors sit on a footprint cell's side.
+{
+    "entry": (
+        doors: [(at: (0, 0), side: S), (at: (0, 0), side: E)],
+        rotations: [0],
+        pois: [(poi: "spawn", at: (0.0, 0.0, 0.0))],
+        geometry: Inline([Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0))]),
+    ),
+    "throne": (
+        size: (2, 2),
+        doors: [(at: (0, 0), side: N), (at: (1, 1), side: S)],
+        pois: [(poi: "boss", at: (0.0, 0.0, 0.0))],
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+    ),
+    // The hand-made room the crypt must lead through.
+    "vault": (
+        size: (2, 1),
+        doors: [(at: (0, 0), side: W), (at: (1, 0), side: E)],
+        pois: [(poi: "vault", at: (0.0, 0.0, 0.0))],
+        slots: [(at: (4.0, 0.0, 0.0), accepts: ["chest"])],
+        geometry: Inline([Box(min: (-8.0, -1.0, -4.0), max: (8.0, 0.0, 4.0))]),
+    ),
+    "corridor": (
+        doors: [(at: (0, 0), side: N), (at: (0, 0), side: S)],
+        rotations: [0, 90],
+        weight: 2.0,
+        tags: ["crypt"],
+        geometry: Inline([Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0))]),
+    ),
+    "corner": (
+        doors: [(at: (0, 0), side: N), (at: (0, 0), side: E)],
+        tags: ["crypt"],
+        geometry: Inline([Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0))]),
+    ),
+    "junction": (
+        doors: [(at: (0, 0), side: N), (at: (0, 0), side: E), (at: (0, 0), side: S), (at: (0, 0), side: W)],
+        rotations: [0],
+        tags: ["crypt"],
+        slots: [(at: (2.0, 0.0, 2.0), accepts: ["chest"])],
+        geometry: Inline([Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0))]),
+    ),
+    "cell": (
+        doors: [(at: (0, 0), side: S)],
+        tags: ["crypt"],
+        slots: [(at: (0.0, 0.0, -2.0), accepts: ["chest"])],
+        geometry: Inline([Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0))]),
+    ),
+}

@@ -1,0 +1,48 @@
+// An 8×8 region of 16 m tiles: a spawn, two camps and a shrine joined by roads, chests in
+// free grass slots, the river and its bridges where the solver puts them.
+{
+    "meadow": (
+        size: (8, 8),
+        tile_size: 16.0,
+        version: 1,
+        pois: [(poi: "spawn"), (poi: "camp", count: 2), (poi: "shrine")],
+        roads: true,
+        secondary: [(poi: "chest", count: 3)],
+        checks: (
+            max_slope: 1,
+            distances: [
+                (a: "spawn", b: "camp", min: 32.0),
+                (a: "camp", b: "camp", min: 32.0),
+                (a: "spawn", b: "shrine", max: 160.0),
+            ],
+        ),
+        fallback: "meadow_safe",
+        active_radius: 40.0,
+    ),
+    // Fixed cells, a border and tag limits: a gate in the north-west corner.
+    "walled": (
+        size: (6, 4),
+        tile_size: 16.0,
+        version: 1,
+        tiles: ["grass", "road_straight", "road_bend", "road_end", "road_t", "#old"],
+        border: "grass",
+        fixed: [(at: (0, 0), tile: "road_end", rot: 90)],
+        limits: [(of: "#old", min: 1, max: 1)],
+        pois: [(poi: "spawn", cells: [(0, 0)]), (poi: "camp", cells: [(5, 3)])],
+        roads: true,
+        checks: (max_slope: 1),
+    ),
+    // Cannot be made: the spawn must sit in a cell fixed to grass, which has no slot for it.
+    // Falls back.
+    "impossible": (
+        size: (8, 8),
+        tile_size: 16.0,
+        version: 1,
+        tiles: ["grass", "road_end", "road_straight"],
+        fixed: [(at: (0, 0), tile: "grass")],
+        pois: [(poi: "spawn", cells: [(0, 0)]), (poi: "camp")],
+        roads: true,
+        attempts: 3,
+        fallback: "meadow_safe",
+    ),
+}
