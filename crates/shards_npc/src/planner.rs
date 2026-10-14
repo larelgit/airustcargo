@@ -357,7 +357,7 @@ pub(crate) fn plan_attacks(
             let fits = budget.is_none_or(|left| o.cost <= left + 1e-4)
                 && overlapping.iter().all(|tags| director.may_overlap(&o.tags, tags));
             // It swings at what it perceives now, not at a memory.
-            let sensed = f.perceived.get(grant.target).is_none_or(|k| k.age <= 1e-4);
+            let sensed = f.perceived.get(grant.target).is_some_and(|k| k.age <= 1e-4);
             if starts && fits && sensed {
                 grant.pressed = Some(tick.0);
                 grant.instance = f.state.started;

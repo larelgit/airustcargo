@@ -182,6 +182,46 @@ fn a_cast_without_hits_holds_its_token_to_the_end() {
     let _ = hero;
 }
 
+/// A token on a target the NPC no longer perceives comes back ("target gone"): the NPC never
+/// steers or strikes at where that target really is.
+#[test]
+fn a_token_on_a_forgotten_target_comes_back() {
+    use shards_npc::Grant;
+    let mut app = app();
+    // It looks north (fov 120°): one player in front of it, one behind it, out of sight.
+    let grunt = npc(app.world_mut(), "grunt", Npc::new("grunt", "eyes").with_plan("jabber"), Vec3::ZERO, N);
+    let behind = player(app.world_mut(), 0, Vec3::new(0.0, 0.0, 5.0));
+    let ahead = player(app.world_mut(), 1, Vec3::new(0.0, 0.0, -6.0));
+    step(&mut app, 10);
+    let (behind_id, ahead_id) = (aid(&app, behind), aid(&app, ahead));
+    let perceived = app.world().get::<Perceived>(grunt).unwrap().clone();
+    assert!(perceived.get(behind_id).is_none(), "the one behind is not perceived: {perceived:?}");
+    assert_eq!(perceived.focus, Some(ahead_id));
+    // A token held on the one behind (as after a regrant on a target forgotten since).
+    let grant = Grant {
+        target: behind_id,
+        director: "default".into(),
+        since: 0,
+        age: 0.0,
+        attack: None,
+        input: None,
+        cost: 0.0,
+        tags: Vec::new(),
+        cooldown: 0.0,
+        pressed: None,
+        instance: 0,
+        started: false,
+    };
+    app.world_mut().get_mut::<AttackToken>(grunt).unwrap().held = Some(grant);
+    step(&mut app, 1);
+    let held = app.world().get::<AttackToken>(grunt).unwrap().held.clone();
+    assert_ne!(held.map(|g| g.target), Some(behind_id), "the token on the forgotten target came back");
+    let me = id(&app, grunt);
+    assert!(lines(&app, &format!("{me} returns its attack token unused: target gone")).len() == 1, "{:#?}", journal(&app));
+    let goal = app.world().get::<shards_npc::NpcDrive>(grunt).unwrap().goal;
+    assert!(goal.is_none_or(|g| g.z < 0.0), "it does not walk to where the forgotten one stands: {goal:?}");
+}
+
 #[test]
 fn those_without_a_token_wait_in_their_roles() {
     let mut app = app();

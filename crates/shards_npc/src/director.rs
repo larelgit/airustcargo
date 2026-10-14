@@ -145,12 +145,12 @@ pub(crate) struct Fighting {
 pub(crate) type Targets<'w, 's> = Query<'w, 's, (&'static Transform, Has<Dead>, Option<&'static Collider>)>;
 
 /// A live target as an NPC knows it: where it perceives it (seen this tick: where it is;
-/// else where it was last seen or heard) and its body radius. NPCs do not cheat: what they
-/// steer and strike at is what they perceive.
+/// else where it was last seen or heard) and its body radius; `None` once it is dead, gone
+/// or forgotten. NPCs do not cheat: what they steer and strike at is what they perceive.
 pub(crate) fn target_of(index: &AiIndex, targets: &Targets, perceived: &Perceived, id: AiId) -> Option<(Vec3, f32)> {
-    let (tf, dead, collider) = targets.get(index.get(id)?).ok()?;
-    let at = perceived.get(id).map_or(tf.translation, |k| k.pos);
-    (!dead).then(|| (at, collider.map_or(0.4, |c| c.shape.half_extents().x)))
+    let known = perceived.get(id)?;
+    let (_, dead, collider) = targets.get(index.get(id)?).ok()?;
+    (!dead).then(|| (known.pos, collider.map_or(0.4, |c| c.shape.half_extents().x)))
 }
 
 /// NPCs by `AiId`.
