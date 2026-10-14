@@ -183,7 +183,8 @@ fn shl256(bits: &mut [u64; 4], n: u32) {
 const METER_SLOTS: usize = 10;
 const METER_SLOT_MS: u64 = 100;
 
-/// Bytes per second over the last second, in ten 100 ms slots.
+/// Bytes per second over the last second, in ten 100 ms slots: the nine before the current one and the
+/// current one up to `now`, so the window is 901..=1000 ms long and the sum is scaled to a full second.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RateMeter {
     slots: [(u64, u64, u64); METER_SLOTS],
@@ -212,7 +213,8 @@ impl RateMeter {
         e.2 += bytes as u64;
     }
 
-    /// `(in, out)` bytes per second as of `now`.
+    /// `(in, out)` bytes per second as of `now`: the bytes of the window divided by the window's real
+    /// length (the current slot is only as long as `now` has got into it).
     pub fn rates(&self, now: u64) -> (u32, u32) {
         let cur = Self::slot(now);
         let (mut i, mut o) = (0u64, 0u64);
@@ -222,7 +224,9 @@ impl RateMeter {
                 o += b;
             }
         }
-        (i.min(u32::MAX as u64) as u32, o.min(u32::MAX as u64) as u32)
+        let span = (METER_SLOTS as u128 - 1) * METER_SLOT_MS as u128 + (now % METER_SLOT_MS) as u128 + 1;
+        let per_s = |bytes: u64| ((bytes as u128 * 1000 + span / 2) / span).min(u32::MAX as u128) as u32;
+        (per_s(i), per_s(o))
     }
 }
 
@@ -298,10 +302,36 @@ mod tests {
         let mut m = RateMeter::default();
         m.add_in(0, 1000);
         m.add_out(50, 500);
-        assert_eq!(m.rates(60), (1000, 500));
+        // At 999 ms the window is exactly the first second.
+        assert_eq!(m.rates(999), (1000, 500));
         m.add_in(900, 100);
-        assert_eq!(m.rates(950), (1100, 500));
+        assert_eq!(m.rates(999), (1100, 500));
         assert_eq!(m.rates(2000), (0, 0));
+        // A link that is only 60 ms old reads low, never as a spike: the window is a full second long.
+        let mut young = RateMeter::default();
+        young.add_in(0, 1000);
+        let (i, _) = young.rates(60);
+        assert!((900..=1100).contains(&i), "{i}");
+    }
+
+    #[test]
+    fn a_steady_rate_reads_the_same_wherever_in_a_slot_it_is_asked() {
+        // 1 byte in and 2 bytes out per millisecond is 1000 and 2000 bytes per second, at any instant.
+        let mut m = RateMeter::default();
+        let mut worst = (0i64, 0i64);
+        for now in 0..5000u64 {
+            m.add_in(now, 1);
+            m.add_out(now, 2);
+            if now >= 1000 {
+                let (i, o) = m.rates(now);
+                worst.0 = worst.0.max((i as i64 - 1000).abs());
+                worst.1 = worst.1.max((o as i64 - 2000).abs());
+                if matches!(now, 1000 | 1050 | 1099 | 1100 | 2999) {
+                    assert!((i as i64 - 1000).abs() <= 1 && (o as i64 - 2000).abs() <= 2, "at {now}: {i} in, {o} out");
+                }
+            }
+        }
+        assert!(worst.0 <= 1 && worst.1 <= 2, "off by up to {worst:?} bytes per second");
     }
 
     #[test]

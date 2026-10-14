@@ -18,7 +18,16 @@
 //! caller (hub and stand: `tick × tick_ms`; UDP: [`WallClock`](crate::udp::WallClock)). Memory is bounded:
 //! the reliable queue refuses (an error, not growth) past [`LinkConfig::max_reliable_messages`] or
 //! [`LinkConfig::max_reliable_bytes`], messages above [`LinkConfig::max_blob_bytes`] (16 MB) are
-//! refused, the unreliable queue drops its oldest, and receive buffers have fixed windows.
+//! refused, the unreliable queue drops its oldest, and receive buffers have fixed windows. A receiver
+//! never acknowledges what it did not keep: reliable content that does not fit is **refused**
+//! ([`Verdict::Refused`], the datagram stays unacknowledged) and the sender sends it again. The message
+//! the receiver waits for next is always taken, so a full buffer drains.
+//!
+//! Nothing a peer sends can make the link inflate without bound: one datagram inflates to at most
+//! [`wire::INFLATE_BUDGET`](crate::wire) bytes in all (its body and its inline messages share the
+//! budget), an inline reliable message to at most [`INLINE_RELIABLE_INFLATED_MAX`] (more travels as a
+//! blob), and once [`LinkConfig::max_undelivered_bytes`] of delivered messages wait for [`Link::poll`] the
+//! link refuses payload until the host polls.
 //!
 //! Sessions are not the link's business beyond one number: a datagram with another session id is
 //! dropped and counted. A host that sees a datagram from an unknown peer reads the session the client
@@ -40,12 +49,16 @@ use flate2::Compression;
 
 use crate::stats::LinkStats;
 use crate::track::{Classify, RateMeter, RecvWindow, Rtt, seq_gt, seq_lt};
-use crate::wire::{self, Body, Fragment, Header, MAX_BODY, Msg, Reject};
+use crate::wire::{self, Body, Budget, Fragment, Header, MAX_BODY, Msg, Reject};
 
 /// Reliable messages up to this size travel inline; larger ones become blobs.
 pub const INLINE_RELIABLE_MAX: usize = 900;
 /// Unreliable messages up to this size travel inline in one datagram; larger ones are fragmented.
 pub const INLINE_UNRELIABLE_MAX: usize = 1100;
+/// An inline reliable message inflates to at most this much; a message that is bigger travels as a blob
+/// however well it deflates. (900 bytes of deflate expand to 0.93 MB at the very most, so the limit only
+/// ever refuses a lie.)
+pub const INLINE_RELIABLE_INFLATED_MAX: usize = 1 << 20;
 /// Payload bytes of one fragment.
 pub const FRAG_SIZE: usize = 1024;
 /// Hard ceiling of [`LinkConfig::max_reliable_messages`]: half the receiver's reorder window.
@@ -93,6 +106,10 @@ pub enum Verdict {
     Stale,
     /// Foreign magic, protocol or session, or undecodable: dropped and counted.
     Rejected(Reject),
+    /// A valid datagram whose content did not fit the receive buffers (reliable bytes over
+    /// [`LinkConfig::max_reliable_bytes`], too many partial blobs, ...): **not acknowledged**, so the
+    /// peer sends what it carried again. Nothing in it was delivered except reliable messages that fit.
+    Refused,
 }
 
 /// Why a message was not queued.
@@ -133,11 +150,18 @@ pub struct LinkConfig {
     pub blob_window: usize,
     /// Unacknowledged reliable messages (hard ceiling [`MAX_RELIABLE_MESSAGES`]).
     pub max_reliable_messages: usize,
+    /// Reliable bytes: queued and unacknowledged on the sending side (counted before deflate, as the peer
+    /// will hold them), buffered ahead of the next message in order on the receiving side. Keep it equal on
+    /// both ends; a receiver with less refuses what does not fit (unacknowledged, the sender tries again).
     pub max_reliable_bytes: usize,
     /// Largest reliable message (a blob), bytes before deflate.
     pub max_blob_bytes: usize,
     pub max_unreliable_queue: usize,
     pub max_unreliable_bytes: usize,
+    /// Bytes of delivered messages that may wait for [`Link::poll`]. Once that many are waiting, the link
+    /// refuses further payload ([`Verdict::Refused`], unacknowledged) until the host polls: a peer cannot
+    /// make a host that is slow to poll allocate without bound. One poll per tick never gets near it.
+    pub max_undelivered_bytes: usize,
     /// Datagrams one `flush` may build.
     pub max_datagrams_per_flush: usize,
 }
@@ -156,6 +180,7 @@ impl Default for LinkConfig {
             max_blob_bytes: 16 << 20,
             max_unreliable_queue: 256,
             max_unreliable_bytes: 1 << 20,
+            max_undelivered_bytes: 24 << 20,
             max_datagrams_per_flush: 32,
         }
     }
@@ -173,6 +198,8 @@ pub struct Footprint {
     pub unreliable_out: usize,
     pub unreliable_assemblies: usize,
     pub undelivered: usize,
+    /// Bytes of those messages.
+    pub undelivered_bytes: usize,
 }
 
 // ---- outgoing reliable state -------------------------------------------------------------------
@@ -320,6 +347,30 @@ struct BlobIn {
     deflated: bool,
     parts: BTreeMap<u16, Vec<u8>>,
     bytes: usize,
+    /// Size of the whole blob once inflated, learnt when the last piece first completed it and the
+    /// buffer had no room: the piece is refused again without inflating the blob a second time.
+    inflated: Option<usize>,
+}
+
+/// What receiving reliable content came to, worst last. A datagram is acknowledged only when everything
+/// reliable in it was `Kept`: what was refused must come again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Take {
+    /// Taken, or already had: safe to acknowledge.
+    Kept,
+    /// No room right now: not acknowledged, the sender sends it again.
+    Refused,
+    /// Cannot be used at all (does not inflate, impossible numbers).
+    Malformed,
+}
+
+/// What [`Link::wants_reliable`] found out about a reliable sequence number.
+enum Want {
+    Yes,
+    /// Delivered or buffered already.
+    Have,
+    /// Outside the reorder window.
+    Refuse,
 }
 
 struct UnAsm {
@@ -345,6 +396,7 @@ struct Counters {
     rejected_session: u64,
     malformed: u64,
     reliable_overflow: u64,
+    refused: u64,
     reliable_delivered: u64,
     unreliable_delivered: u64,
     unreliable_stale: u64,
@@ -399,6 +451,8 @@ pub struct Link {
     un_last_key: Option<u32>,
     un_asm: BTreeMap<u32, UnAsm>,
     delivered: Vec<Delivered>,
+    /// Bytes in `delivered`.
+    delivered_bytes: usize,
     // statistics
     c: Counters,
     meter: RateMeter,
@@ -413,8 +467,14 @@ fn compress_message(bytes: &[u8], level: Compression) -> (Vec<u8>, bool) {
     }
 }
 
+/// Inflate a message that was reassembled from fragments: only its own cap applies.
 fn open_message(data: Vec<u8>, deflated: bool, max: usize) -> Option<Vec<u8>> {
     if deflated { wire::inflate(&data, max) } else { Some(data) }
+}
+
+/// Inflate a message that arrived inline in a datagram: its cap, and what is left of the datagram's budget.
+fn open_inline(data: Vec<u8>, deflated: bool, max: usize, budget: &mut Budget) -> Option<Vec<u8>> {
+    if deflated { budget.inflate(&data, max) } else { Some(data) }
 }
 
 impl Link {
@@ -427,6 +487,7 @@ impl Link {
         cfg.blob_window = cfg.blob_window.clamp(1, 256);
         cfg.max_datagrams_per_flush = cfg.max_datagrams_per_flush.max(1);
         cfg.max_unreliable_queue = cfg.max_unreliable_queue.max(1);
+        cfg.max_undelivered_bytes = cfg.max_undelivered_bytes.max(1);
         Self {
             session,
             role,
@@ -455,6 +516,7 @@ impl Link {
             un_last_key: None,
             un_asm: BTreeMap::new(),
             delivered: Vec::new(),
+            delivered_bytes: 0,
             c: Counters::default(),
             meter: RateMeter::default(),
         }
@@ -529,14 +591,16 @@ impl Link {
         let size = data.len();
         let rseq = self.rel_next;
         self.rel_next = self.rel_next.wrapping_add(1);
-        let body = if size <= INLINE_RELIABLE_MAX {
+        let body = if size <= INLINE_RELIABLE_MAX && bytes.len() <= INLINE_RELIABLE_INFLATED_MAX {
             RelBody::Inline { data, deflated }
         } else {
             self.blobs_queued += 1;
             RelBody::Blob(Box::new(BlobOut::new(data, deflated)))
         };
-        self.rel_out_bytes += size;
-        self.rel_out.push_back(RelOut { rseq, body, acked: false, sent_at: None, tx: 0, resend_now: false, bytes: size });
+        // Counted as the receiver will hold it, inflated: a few hundred bytes of deflate can stand for
+        // megabytes in its buffer, and the cap exists to keep that buffer from overflowing.
+        self.rel_out_bytes += bytes.len();
+        self.rel_out.push_back(RelOut { rseq, body, acked: false, sent_at: None, tx: 0, resend_now: false, bytes: bytes.len() });
         Ok(())
     }
 
@@ -736,14 +800,23 @@ impl Link {
             }
             Classify::New => {}
         }
-        let (header, body) = match wire::decode(datagram) {
+        if self.delivered_bytes >= self.cfg.max_undelivered_bytes {
+            // The host has not polled: no more payload until it does. Not marked, so not acknowledged, and
+            // what it carried comes again. The header's acknowledgements are still good, and the peer is
+            // alive; the body is not even inflated.
+            self.last_recv = Some(now);
+            self.process_acks(header.ack, header.ack_bits);
+            self.c.refused += 1;
+            return Verdict::Refused;
+        }
+        let mut budget = Budget::new();
+        let (header, body) = match wire::decode_with(datagram, &mut budget) {
             Ok(x) => x,
             Err(r) => {
                 self.c.malformed += 1;
                 return Verdict::Rejected(r);
             }
         };
-        self.window.mark(header.seq);
         self.last_recv = Some(now);
         if let Some(echo) = body.time_echo {
             let sample = (now as u32).wrapping_sub(echo);
@@ -760,21 +833,49 @@ impl Link {
         if body.has_payload() {
             self.ack_pending = true;
         }
+        // The datagram counts as received (and is acknowledged) only when its content was taken: what the
+        // receive buffers refused has to come again, and a datagram the peer believes delivered never does.
         let seq = header.seq;
-        if let Some(f) = body.frag {
-            if f.reliable {
-                self.recv_blob_piece(f);
-            } else {
-                self.recv_unreliable_piece(seq, f);
+        match self.accept(seq, body, &mut budget) {
+            Take::Kept => {
+                self.window.mark(seq);
+                Verdict::Accepted
             }
+            Take::Refused => {
+                self.c.refused += 1;
+                Verdict::Refused
+            }
+            Take::Malformed => Verdict::Rejected(Reject::Malformed),
         }
-        for m in body.unreliable {
-            self.recv_unreliable(seq, m);
+    }
+
+    /// Take the content of a datagram. Reliable content comes first: if any of it is refused, nothing
+    /// else in the datagram is delivered, because the datagram stays unacknowledged and may arrive again
+    /// (a network duplicate, or the same sequence number again) and its unreliable messages would be
+    /// delivered twice.
+    fn accept(&mut self, seq: u32, body: Body, budget: &mut Budget) -> Take {
+        let Body { unreliable, reliable, frag, .. } = body;
+        let (blob_piece, unreliable_piece) = match frag {
+            Some(f) if f.reliable => (Some(f), None),
+            other => (None, other),
+        };
+        let mut worst = Take::Kept;
+        if let Some(f) = blob_piece {
+            worst = worst.max(self.recv_blob_piece(f));
         }
-        for (rseq, m) in body.reliable {
-            self.recv_reliable(rseq, m);
+        for (rseq, m) in reliable {
+            worst = worst.max(self.recv_reliable(rseq, m, budget));
         }
-        Verdict::Accepted
+        if worst != Take::Kept {
+            return worst;
+        }
+        if let Some(f) = unreliable_piece {
+            self.recv_unreliable_piece(seq, f);
+        }
+        for m in unreliable {
+            self.recv_unreliable(seq, m, budget);
+        }
+        Take::Kept
     }
 
     /// Messages delivered since the last call, in the order they became deliverable. Reliable ones are
@@ -784,21 +885,21 @@ impl Link {
         // A partial unreliable message whose datagrams left the window can never complete.
         let hi = self.window.highest();
         self.un_asm.retain(|_, a| hi.wrapping_sub(a.max_seq) < 256 || seq_lt(hi, a.max_seq));
+        self.delivered_bytes = 0;
         std::mem::take(&mut self.delivered)
     }
 
-    fn recv_unreliable(&mut self, seq: u32, m: Msg) {
+    fn recv_unreliable(&mut self, seq: u32, m: Msg, budget: &mut Budget) {
         if self.un_last_key.is_some_and(|last| seq_lt(seq, last)) {
             self.c.unreliable_stale += 1;
             return;
         }
-        let Some(data) = open_message(m.data, m.deflated, self.cfg.max_unreliable_bytes) else {
+        let Some(data) = open_inline(m.data, m.deflated, self.cfg.max_unreliable_bytes, budget) else {
             self.c.malformed += 1;
             return;
         };
         self.un_last_key = Some(seq);
-        self.c.unreliable_delivered += 1;
-        self.delivered.push(Delivered::Unreliable(data));
+        self.deliver_unreliable(data);
     }
 
     fn recv_unreliable_piece(&mut self, seq: u32, f: Fragment) {
@@ -837,78 +938,133 @@ impl Link {
             return;
         };
         self.un_last_key = Some(asm.max_seq);
-        self.c.unreliable_delivered += 1;
-        self.delivered.push(Delivered::Unreliable(data));
+        self.deliver_unreliable(data);
     }
 
     /// Whether a reliable message numbered `rseq` is worth buffering: not delivered yet, not buffered,
     /// inside the reorder window.
-    fn wants_reliable(&mut self, rseq: u32) -> bool {
+    fn wants_reliable(&mut self, rseq: u32) -> Want {
         let d = rseq.wrapping_sub(self.rin_next);
         if (d as i32) < 0 || self.rin_buf.contains_key(&rseq) {
             self.c.duplicates += 1;
-            return false;
+            return Want::Have;
         }
         if d >= RELIABLE_WINDOW {
             self.c.reliable_overflow += 1;
-            return false;
+            return Want::Refuse;
         }
-        true
+        Want::Yes
     }
 
-    fn recv_reliable(&mut self, rseq: u32, m: Msg) {
-        if !self.wants_reliable(rseq) {
-            return;
+    /// The message the receiver waits for is always taken, whatever the buffer holds: it is delivered at
+    /// once and lets everything buffered behind it go too. Refusing it would deadlock the stream. Anything
+    /// further ahead is taken only while the reliable buffer has room, and refused (unacknowledged, so the
+    /// sender keeps it) otherwise.
+    fn has_room(&self, rseq: u32, bytes: usize) -> bool {
+        rseq == self.rin_next || self.rin_bytes + bytes <= self.cfg.max_reliable_bytes
+    }
+
+    fn recv_reliable(&mut self, rseq: u32, m: Msg, budget: &mut Budget) -> Take {
+        match self.wants_reliable(rseq) {
+            Want::Have => return Take::Kept,
+            Want::Refuse => return Take::Refused,
+            Want::Yes => {}
         }
-        let Some(data) = open_message(m.data, m.deflated, self.cfg.max_blob_bytes) else {
+        // Inline, so at most what 900 bytes of deflate can be; anything bigger travels as a blob.
+        let cap = INLINE_RELIABLE_INFLATED_MAX.min(self.cfg.max_blob_bytes);
+        let Some(data) = open_inline(m.data, m.deflated, cap, budget) else {
             self.c.malformed += 1;
-            return;
+            return Take::Malformed;
         };
-        if self.rin_bytes + data.len() > self.cfg.max_reliable_bytes {
-            // A sender that respects its own caps never gets here; the datagram is acknowledged all the same.
+        if !self.has_room(rseq, data.len()) {
             self.c.reliable_overflow += 1;
-            return;
+            return Take::Refused;
         }
         self.rin_bytes += data.len();
         self.rin_buf.insert(rseq, data);
         self.deliver_ready();
+        Take::Kept
     }
 
-    fn recv_blob_piece(&mut self, f: Fragment) {
+    fn recv_blob_piece(&mut self, f: Fragment) -> Take {
         let rseq = f.msg;
-        if !self.wants_reliable(rseq) || f.count as usize > MAX_BLOB_PIECES || f.bytes.len() > FRAG_SIZE {
-            return;
+        match self.wants_reliable(rseq) {
+            Want::Have => return Take::Kept,
+            Want::Refuse => return Take::Refused,
+            Want::Yes => {}
         }
-        if (!self.rin_blobs.contains_key(&rseq) && self.rin_blobs.len() >= MAX_PARTIAL_BLOBS)
-            || self.rin_bytes + f.bytes.len() > self.cfg.max_reliable_bytes
-        {
-            self.c.reliable_overflow += 1;
-            return;
-        }
-        let blob = self.rin_blobs.entry(rseq).or_insert_with(|| BlobIn { count: f.count as usize, deflated: f.deflated, parts: BTreeMap::new(), bytes: 0 });
-        if blob.count != f.count as usize || blob.deflated != f.deflated {
+        if f.count as usize > MAX_BLOB_PIECES || f.bytes.len() > FRAG_SIZE {
             self.c.malformed += 1;
-            return;
+            return Take::Malformed;
         }
-        if blob.parts.contains_key(&f.index) {
-            return;
+        match self.rin_blobs.get(&rseq) {
+            Some(blob) if blob.count != f.count as usize || blob.deflated != f.deflated => {
+                self.c.malformed += 1;
+                return Take::Malformed;
+            }
+            Some(blob) if blob.parts.contains_key(&f.index) => return Take::Kept,
+            None if rseq != self.rin_next && self.rin_blobs.len() >= MAX_PARTIAL_BLOBS => {
+                self.c.reliable_overflow += 1;
+                return Take::Refused;
+            }
+            _ => {}
         }
-        blob.bytes += f.bytes.len();
-        self.rin_bytes += f.bytes.len();
+        if !self.has_room(rseq, f.bytes.len()) {
+            self.c.reliable_overflow += 1;
+            return Take::Refused;
+        }
+        let mut blob = self.rin_blobs.remove(&rseq).unwrap_or_else(|| BlobIn {
+            count: f.count as usize,
+            deflated: f.deflated,
+            parts: BTreeMap::new(),
+            bytes: 0,
+            inflated: None,
+        });
+        let piece_len = f.bytes.len();
         blob.parts.insert(f.index, f.bytes);
         if blob.parts.len() < blob.count {
-            return;
+            blob.bytes += piece_len;
+            self.rin_bytes += piece_len;
+            self.rin_blobs.insert(rseq, blob);
+            return Take::Kept;
         }
-        let Some(blob) = self.rin_blobs.remove(&rseq) else { return };
-        self.rin_bytes -= blob.bytes;
-        let joined: Vec<u8> = blob.parts.into_values().flatten().collect();
-        let Some(data) = open_message(joined, blob.deflated, self.cfg.max_blob_bytes) else {
-            self.c.malformed += 1;
-            return;
+        // This piece completes the blob. Inflated, the blob takes more room than its pieces did, and the
+        // earlier pieces were acknowledged long ago: if the whole does not fit, this last piece is the one
+        // to refuse (it stays unacknowledged and comes again), never the blob.
+        let others = self.rin_bytes - blob.bytes;
+        let fits = |n: usize| rseq == self.rin_next || others + n <= self.cfg.max_reliable_bytes;
+        let data = match blob.inflated {
+            Some(n) if !fits(n) => None,
+            _ => {
+                let joined: Vec<u8> = blob.parts.values().flatten().copied().collect();
+                let Some(data) = open_message(joined, blob.deflated, self.cfg.max_blob_bytes) else {
+                    // Unusable as a whole: forget it.
+                    self.rin_bytes = others;
+                    self.c.malformed += 1;
+                    return Take::Malformed;
+                };
+                blob.inflated = Some(data.len());
+                fits(data.len()).then_some(data)
+            }
         };
-        self.rin_bytes += data.len();
+        let Some(data) = data else {
+            blob.parts.remove(&f.index);
+            if !blob.parts.is_empty() {
+                self.rin_blobs.insert(rseq, blob);
+            }
+            self.c.reliable_overflow += 1;
+            return Take::Refused;
+        };
+        self.rin_bytes = others + data.len();
         self.rin_buf.insert(rseq, data);
         self.deliver_ready();
+        Take::Kept
+    }
+
+    fn deliver_unreliable(&mut self, data: Vec<u8>) {
+        self.c.unreliable_delivered += 1;
+        self.delivered_bytes += data.len();
+        self.delivered.push(Delivered::Unreliable(data));
     }
 
     fn deliver_ready(&mut self) {
@@ -916,6 +1072,7 @@ impl Link {
             self.rin_bytes -= data.len();
             self.rin_next = self.rin_next.wrapping_add(1);
             self.c.reliable_delivered += 1;
+            self.delivered_bytes += data.len();
             self.delivered.push(Delivered::Reliable(data));
         }
     }
@@ -1105,6 +1262,7 @@ impl Link {
             rejected_session: self.c.rejected_session,
             malformed: self.c.malformed,
             reliable_overflow: self.c.reliable_overflow,
+            refused_datagrams: self.c.refused,
             silence_ms: self.last_recv.map_or(0, |t| self.now.saturating_sub(t)),
         }
     }
@@ -1121,6 +1279,7 @@ impl Link {
             unreliable_out: self.un_out.len(),
             unreliable_assemblies: self.un_asm.len(),
             undelivered: self.delivered.len(),
+            undelivered_bytes: self.delivered_bytes,
         }
     }
 }

@@ -54,7 +54,7 @@ pub struct LinkStats {
     pub reliable_in_flight: u32,
     /// Blobs among them.
     pub blobs_in_flight: u32,
-    /// Bytes held by the reliable queue.
+    /// Bytes held by the reliable queue, counted as the peer will hold them: before deflate.
     pub reliable_queued_bytes: u64,
     pub reliable_delivered: u64,
     pub unreliable_delivered: u64,
@@ -62,7 +62,9 @@ pub struct LinkStats {
     pub unreliable_stale: u64,
     /// Unreliable messages dropped by the sender's queue cap.
     pub unreliable_dropped: u64,
-    /// Datagrams dropped as already seen.
+    /// Datagrams dropped as already seen, plus reliable messages and blob pieces that arrived again in a
+    /// new datagram (the sender's resends of what was delivered already). A resend datagram can carry many
+    /// messages, so this can exceed `datagrams_in`; it is resend noise, not a count of datagrams.
     pub duplicates: u64,
     /// Datagrams dropped as older than the 256-datagram window.
     pub stale_datagrams: u64,
@@ -71,9 +73,13 @@ pub struct LinkStats {
     pub rejected_proto: u64,
     pub rejected_session: u64,
     pub malformed: u64,
-    /// Reliable messages the receive buffers had no room for. A sender that keeps to its caps never
-    /// causes this; the datagram was acknowledged anyway, so a nonzero count means a broken peer.
+    /// Reliable messages and blob pieces the receive buffers had no room for (or that were numbered beyond
+    /// the reorder window). They were refused unacknowledged, so the sender sends them again: a nonzero
+    /// count is a receiver that fell behind, or a peer that does not keep to the caps.
     pub reliable_overflow: u64,
+    /// Valid datagrams refused unacknowledged because their content did not fit (see
+    /// [`Verdict::Refused`](crate::link::Verdict::Refused)).
+    pub refused_datagrams: u64,
     /// ms since the last valid datagram arrived (0 before the first).
     pub silence_ms: u64,
 }
