@@ -125,8 +125,9 @@
 //! actions, so replays record them. The replay check `level` hashes where each level was
 //! placed and the digest of its file: a recording made against another version of a file
 //! diverges at its first check (record the reference again after editing a level). The
-//! check joins with the first level that is spawned, so a game without levels has the
-//! replay hashes it had before it had this module. When a
+//! check adds nothing while no level stands, so a game without levels has the replay hashes
+//! it had before it had this module, and the hash never remembers levels that came and went.
+//! Instance numbers ([`LevelCounter`]) are snapshot state. When a
 //! file changes on disk (hot reload) the asset server reloads it and the instances are
 //! replaced through `level_reload`, which is journaled and recorded like any action.
 //!
@@ -157,7 +158,8 @@ pub use marker::{LevelMarker, MarkerKind, RequiredMarker};
 pub use props::{check_level, LevelProblem, PROPERTIES};
 pub use render::LevelVisual;
 pub use spawn::{
-    despawn_level, reload_level, spawn_level, spawn_level_as, FromLevel, LevelInstance, LevelInstances, SpawnedLevel,
+    despawn_level, reload_level, spawn_level, spawn_level_as, FromLevel, LevelCounter, LevelInstance, LevelInstances,
+    SpawnedLevel,
 };
 pub use tools::{spawn_level_by_id, spawn_level_file, LevelInfoArgs, LevelReloadArgs, SpawnLevelArgs};
 
@@ -198,6 +200,12 @@ impl Plugin for LevelPlugin {
                  first",
                 spawn::level_hash,
             )
+            // The numbers are: a level placed after a load gets the original session's.
+            // Each machine of a networked game numbers its own (like collider ids).
+            .init_resource::<LevelCounter>()
+            .add_snapshot_resource::<LevelCounter>()
+            .net_ignore_resource::<LevelCounter>()
+            .add_optional_replay_check("level", spawn::level_check)
             .require_loaded("levels", library::level_status)
             .add_engine_module("level", VERSION)
             .register_ai_describer("marker", tools::describe_marker)
