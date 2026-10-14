@@ -13,8 +13,10 @@
 //! Gameplay runs in `FixedUpdate`, in `SimSet` order: the engine's own systems are in
 //! [`CoreSystems`] so a game can order its systems against them.
 
+pub mod exit;
 pub mod intent;
 pub mod loading;
+pub mod seed;
 pub mod state;
 
 use ai_core::{AiAppExt, AiCorePlugin, SimConfig, SimSet};
@@ -24,8 +26,10 @@ use bevy::state::state::StateTransitionSystems;
 use serde::Serialize;
 use serde_json::{json, Value};
 
+pub use exit::{run_exit_hooks, ExitHook, ExitHooks};
 pub use intent::{flat, follow_orders, input_names, Intent, Order, Press, Target};
 pub use loading::{statuses as loading_statuses, LoadCheck, LoadStatus, LoadingGate};
+pub use seed::{adopt_seed, hold_seed, seed_ready, SeedLock};
 pub use state::{player_body, predicts, simulates, EngineState, LocalPlayer, NetRole, NetSet, PauseState, PlayerId, Predicted};
 
 /// Version of the engine crates (they share one).
@@ -155,6 +159,10 @@ pub trait EngineAppExt {
     /// Holds the simulation until `check` reports [`LoadStatus::Ready`] (see
     /// [`LoadingGate`]).
     fn require_loaded(&mut self, label: &str, check: LoadCheck) -> &mut Self;
+
+    /// Runs `hook` when the game ends: once, after the hooks added before it, when an
+    /// `AppExit` is written or a termination signal arrives (see [`exit`]).
+    fn add_exit_hook(&mut self, name: &str, hook: ExitHook) -> &mut Self;
 }
 
 impl EngineAppExt for App {
@@ -165,6 +173,11 @@ impl EngineAppExt for App {
 
     fn require_loaded(&mut self, label: &str, check: LoadCheck) -> &mut Self {
         self.world_mut().get_resource_or_init::<LoadingGate>().require(label, check);
+        self
+    }
+
+    fn add_exit_hook(&mut self, name: &str, hook: ExitHook) -> &mut Self {
+        self.world_mut().get_resource_or_init::<ExitHooks>().add(name, hook);
         self
     }
 }
@@ -200,6 +213,8 @@ impl Plugin for CorePlugin {
             .init_resource::<LoadingGate>()
             .init_resource::<state::MenuPaused>()
             .init_resource::<state::RegionTrip>()
+            .init_resource::<ExitHooks>()
+            .init_resource::<SeedLock>()
             .init_state::<EngineState>()
             .add_sub_state::<PauseState>()
             .replay_input::<Intent>()
@@ -207,6 +222,8 @@ impl Plugin for CorePlugin {
             .net_ignore::<LocalPlayer>()
             .net_ignore::<Predicted>()
             .replay_ignore::<Predicted>()
+            // A joining client learns the seed from its host.
+            .require_loaded("seed", seed::seed_status)
             .add_engine_module("core", VERSION)
             .add_ai_status("engine", engine_status)
             // A client is fed the world by its host: it runs no gameplay, only its prediction.
@@ -229,6 +246,7 @@ impl Plugin for CorePlugin {
             )
             .add_systems(First, loading::update_loading.before(ai_core::sim::apply_gate))
             .add_systems(PreUpdate, state::close_pause_when_resumed)
+            .add_systems(Last, run_exit_hooks.run_if(exit::exiting))
             .add_systems(
                 StateTransition,
                 (

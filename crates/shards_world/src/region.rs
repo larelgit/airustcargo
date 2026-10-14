@@ -27,12 +27,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use ai_core::journal::{self, JournalKind};
-use ai_core::{AiId, AiKind, AiLandmark, AiPlayer, SimGate, Snapshot};
+use ai_core::{AiId, AiKind, AiLandmark, AiPlayer, SimGate, SimSeed, Snapshot};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::prefab::check_prefab;
 use shards_content::{spawn_prefab, ContentDb};
-use shards_core::{loading_statuses, EngineConfig, EngineState, Intent, LoadStatus, PlayerId};
+use shards_core::{loading_statuses, seed_ready, EngineState, Intent, LoadStatus, PlayerId};
 use shards_motion::{Collider, ColliderId, ColliderIds, CollisionLayers, LayerMask, PhysicsWorld, QueryFilter, Shape, Volume};
 
 use crate::checks::RegionGraph;
@@ -706,9 +706,14 @@ pub fn change_region(world: &mut World, manifest: RegionManifest) -> Result<Regi
         let removed = despawn_region(world);
         journal::emit(world, JournalKind::Event, format!("region unloaded: {old} ({removed} entities)"));
     }
+    let id = manifest.region.clone();
     let result = install(world, manifest);
     if trip {
         finish_loading(world);
+    }
+    if result.is_ok() {
+        // A host sends its clients the new world (a rebase).
+        ai_core::world_rebuilt(world, format!("region {id}"));
     }
     result
 }
@@ -852,7 +857,11 @@ pub(crate) fn build_start_region(world: &mut World) {
     if levels_status(world) != LoadStatus::Ready {
         return;
     }
-    let seed = world.get_resource::<EngineConfig>().map_or(0, |c| c.seed);
+    // A joining client generates the host's region: it waits for the host's seed.
+    if !seed_ready(world) {
+        return;
+    }
+    let seed = world.get_resource::<SimSeed>().map_or(0, |s| s.0);
     let outcome = regen(world, &region, seed);
     let next = match outcome {
         Ok(_) => StartRegion::Done,

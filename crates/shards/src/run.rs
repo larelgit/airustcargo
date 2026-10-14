@@ -416,7 +416,7 @@ mod termination {
     use std::sync::atomic::{AtomicI32, Ordering};
 
     use bevy::app::AppExit;
-    use bevy::ecs::message::MessageWriter;
+    use bevy::ecs::world::World;
 
     /// The first termination signal received; 0: none yet.
     static RECEIVED: AtomicI32 = AtomicI32::new(0);
@@ -452,11 +452,13 @@ mod termination {
         }
     }
 
-    /// Exit code 128 + signal, as a shell reports a process the signal killed.
-    pub fn exit_when_signalled(mut exit: MessageWriter<AppExit>) {
+    /// Exit code 128 + signal, as a shell reports a process the signal killed. The exit
+    /// hooks run right away (once: the `Last` system that sees this `AppExit` skips them).
+    pub fn exit_when_signalled(world: &mut World) {
         let signal = RECEIVED.load(Ordering::SeqCst);
         if signal != 0 {
-            exit.write(AppExit::from_code((128 + signal) as u8));
+            world.write_message(AppExit::from_code((128 + signal) as u8));
+            shards_core::run_exit_hooks(world);
         }
     }
 }

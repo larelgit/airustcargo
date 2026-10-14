@@ -335,3 +335,29 @@ fn an_agent_bound_to_a_player_finds_its_body_after_a_respawn() {
     let dev = call_tool(app.world_mut(), "dev", "observe", json!({}));
     assert!(dev.result.as_str().unwrap().contains("YOU  e1 Hero"), "other agents keep the AiPlayer body");
 }
+
+/// What the exit hooks did, in order.
+#[derive(Resource, Default)]
+struct Exited(Vec<&'static str>);
+
+#[test]
+fn exit_hooks_run_once_in_order_when_the_game_ends() {
+    let mut app = app(test_config());
+    app.add_exit_hook("save", |w| w.get_resource_or_init::<Exited>().0.push("save"))
+        .add_exit_hook("say goodbye", |w| w.get_resource_or_init::<Exited>().0.push("bye"));
+    load(&mut app);
+    ok(&mut app, "step", json!({"ticks": 2}));
+    assert!(app.world().get_resource::<Exited>().is_none(), "nothing ends while the game runs");
+    let names: Vec<&str> = app.world().resource::<shards_core::ExitHooks>().names().collect();
+    assert_eq!(names, ["save", "say goodbye"]);
+
+    app.world_mut().write_message(AppExit::Success);
+    app.update();
+    assert_eq!(app.world().resource::<Exited>().0, ["save", "bye"]);
+    assert!(app.should_exit().is_some());
+    app.update();
+    app.world_mut().write_message(AppExit::from_code(3));
+    app.update();
+    shards_core::run_exit_hooks(app.world_mut());
+    assert_eq!(app.world().resource::<Exited>().0, ["save", "bye"], "once, however often the game ends");
+}
