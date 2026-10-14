@@ -12,7 +12,7 @@ use shards_script::{
     parse_journal_text, run_with, AgentScope, Driver, FailureKind, JournalRead, Outcome, Script, SessionConfig, Status, CHECK_AGENT,
 };
 
-use crate::Client;
+use crate::{say, Client};
 
 struct ClientDriver<'a> {
     client: &'a Client,
@@ -94,11 +94,11 @@ pub fn run(client: &Client, files: &[PathBuf], quiet: bool, as_json: bool) -> Re
     for script in &scripts {
         let report = run_with(script, &mut driver, &mut |line| {
             if !as_json && (!quiet || !line.ok) {
-                println!("{line}");
+                say(line);
             }
         });
         if !as_json {
-            println!("{}", report.summary());
+            say(report.summary());
         }
         let lost = report.failure.as_ref().is_some_and(|f| f.kind == FailureKind::Driver);
         reports.push(report);
@@ -109,10 +109,10 @@ pub fn run(client: &Client, files: &[PathBuf], quiet: bool, as_json: bool) -> Re
     }
 
     if as_json {
-        println!("{}", serde_json::to_string_pretty(&reports).unwrap_or_default());
+        say(serde_json::to_string_pretty(&reports).unwrap_or_default());
     } else if scripts.len() > 1 {
         let passed = reports.iter().filter(|r| r.passed).count();
-        println!("{passed} of {} scenarios passed", scripts.len());
+        say(format!("{passed} of {} scenarios passed", scripts.len()));
     }
     let failure = reports.iter().filter_map(|r| r.failure.as_ref()).map(|f| f.kind);
     Ok(if failure.clone().any(|k| k == FailureKind::Driver) {
