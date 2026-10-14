@@ -103,6 +103,11 @@ impl SimGate {
         self.holds.remove(name);
     }
 
+    /// What hold `name` waits for, if it is held.
+    pub fn reason(&self, name: &str) -> Option<&str> {
+        self.holds.get(name).map(String::as_str)
+    }
+
     /// Whether anything holds the simulation.
     pub fn is_held(&self) -> bool {
         !self.holds.is_empty()
@@ -176,6 +181,26 @@ pub fn speed(world: &World) -> f32 {
 
 pub fn tick(world: &World) -> u64 {
     world.resource::<SimTick>().0
+}
+
+/// The simulation clock goes to `tick`: the counter, the log's copy of it and the fixed
+/// time (a system that reads `Res<Time>` in a tick sees the same elapsed time as in the
+/// original session).
+pub fn set_tick(world: &mut World, tick: u64) {
+    let before = self::tick(world);
+    world.resource_mut::<SimTick>().0 = tick;
+    if let Some(clock) = world.get_resource::<TickClock>() {
+        clock.set(tick);
+    }
+    let fixed = world.resource::<Time<Fixed>>();
+    let step = fixed.timestep();
+    let of = |n: u64| Duration::from_nanos((step.as_nanos() * n as u128) as u64);
+    // Called from inside a tick (a replay's start, before the tick counter moves), the
+    // fixed time is one step ahead of the counter: it stays so.
+    let ahead = if fixed.elapsed().saturating_sub(of(before)) >= step { step } else { Duration::ZERO };
+    let mut time = Time::<Fixed>::from_duration(step);
+    time.advance_by(of(tick) + ahead);
+    *world.resource_mut::<Time<Fixed>>() = time;
 }
 
 /// Seconds of simulated time per tick.

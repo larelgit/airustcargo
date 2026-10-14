@@ -58,6 +58,7 @@ pub mod shot;
 pub mod sim;
 pub mod snapshot;
 pub mod spatial;
+pub mod state;
 pub mod status;
 pub mod tools;
 
@@ -82,7 +83,7 @@ pub use replay::{AiReplay, Replay, ReplayHashing, ReplayReport};
 pub use rng::{DetRng, SimRng, SimSeed};
 pub use session::{AgentSession, AgentSessions, Caller, Scope};
 pub use sim::{SimConfig, SimGate, SimSet, SimTick, TickClock};
-pub use snapshot::{EntityKey, Snapshot, SnapshotRegistry};
+pub use snapshot::{world_rebuilt, EntityKey, Snapshot, SnapshotRegistry, WorldRebuilt};
 pub use spatial::{AiLineOfSight, AiOccluder};
 pub use status::AiStatusFields;
 pub use tools::{call_tool, AiTools, Call, CallOutcome, Id, NoArgs, ToolKind, ToolResult, ToolSpec};
