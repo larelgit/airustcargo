@@ -244,7 +244,14 @@ impl Step<'_, '_> {
             && let Some(ground) = self.mover.ground(feet, LAND_PROBE)
             && ground.walkable
         {
+            // The bottom of water deep enough to swim in: a fast fall can pass the whole
+            // float depth in one tick. That is a swim, not a landing.
+            if self.mover.water(feet).is_some_and(|surface| self.depth(feet, surface) > p.swim_depth) {
+                self.enter_water();
+                return feet;
+            }
             let feet = feet - Vec3::Y * ground.drop;
+            let s = &mut *self.state;
             let fall_height = s.fall_from_y.take().map_or(0.0, |top| (top - feet.y).max(0.0));
             s.velocity.y = 0.0;
             s.grounded = true;
@@ -314,7 +321,7 @@ impl Step<'_, '_> {
         self.state.water_surface = around.water;
         self.state.updraft = around.updraft.map(|(accel, max)| Vec2::new(accel, max));
 
-        let deep = |feet: Vec3, surface: f32| self.mover.depth(feet, surface, p.swim_depth + 1.0);
+        let deep = |feet: Vec3, surface: f32| self.depth(feet, surface);
         match (self.state.mode, around.water) {
             (MotionMode::Ground, Some(surface)) if deep(feet, surface) > p.swim_depth => self.enter_water(),
             (MotionMode::Air | MotionMode::Glide, Some(surface))
@@ -347,6 +354,12 @@ impl Step<'_, '_> {
             _ => {}
         }
         feet
+    }
+
+    /// How deep the water with this surface is at the feet; anything a meter past
+    /// `swim_depth` counts as that.
+    fn depth(&self, feet: Vec3, surface: f32) -> f32 {
+        self.mover.depth(feet, surface, self.params.swim_depth + 1.0)
     }
 
     fn enter_water(&mut self) {

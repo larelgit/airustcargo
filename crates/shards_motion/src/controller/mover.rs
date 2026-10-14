@@ -289,14 +289,18 @@ impl<'a> Mover<'a> {
                 out.updraft = Some((accel, max_speed));
             }
         }
-        let wet = feet + Vec3::Y * 0.05;
-        for volume in self.physics.volumes_containing(wet, None) {
-            if matches!(volume.volume, Some(VolumeKind::Water)) {
-                let surface = volume.aabb_max.y;
-                out.water = Some(out.water.map_or(surface, |s: f32| s.max(surface)));
-            }
-        }
+        out.water = self.water(feet);
         out
+    }
+
+    /// Surface of the water the feet are in (the highest one).
+    pub fn water(&self, feet: Vec3) -> Option<f32> {
+        let wet = feet + Vec3::Y * 0.05;
+        self.physics
+            .volumes_containing(wet, None)
+            .filter(|volume| matches!(volume.volume, Some(VolumeKind::Water)))
+            .map(|volume| volume.aabb_max.y)
+            .reduce(f32::max)
     }
 
     /// Height of the feet resting position below the water surface: how deep the water

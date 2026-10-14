@@ -115,6 +115,29 @@ fn falling_into_shallow_water_lands_on_the_bottom() {
 }
 
 #[test]
+fn a_fall_into_water_deep_enough_to_swim_never_lands() {
+    // However fast the fall, it may pass the whole float depth in one tick and touch the
+    // bottom: that is a swim, not a landing.
+    let mut failed = Vec::new();
+    for depth in [1.35_f32, 1.4, 1.5, 2.0, 4.0] {
+        for height in [3.0, 10.0, 20.0, 60.0] {
+            let mut app = app();
+            block(app.world_mut(), Vec3::new(-20.0, -depth - 1.0, -20.0), Vec3::new(20.0, -depth, 20.0));
+            volume(app.world_mut(), Vec3::new(-3.0, -depth, -3.0), Vec3::new(3.0, 0.0, 3.0), VolumeKind::Water);
+            let e = hero(app.world_mut(), Vec3::new(0.0, height, 0.0));
+            step(&mut app, 240);
+            let seen = seen(&app);
+            let modes: Vec<MotionMode> = seen.modes.iter().map(|m| m.to).collect();
+            let floats = (feet(&app, e).y + 1.1).abs() < 0.01;
+            if !seen.landed.is_empty() || modes != [MotionMode::Air, MotionMode::Water] || !floats {
+                failed.push(format!("{depth} m deep, from {height} m: {:?}, modes {modes:?} at {}", seen.landed, feet(&app, e)));
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+#[test]
 fn a_pool_wall_too_high_keeps_the_swimmer_in() {
     let mut app = app();
     block(app.world_mut(), Vec3::new(-20.0, -6.0, -20.0), Vec3::new(20.0, -5.0, 20.0));
