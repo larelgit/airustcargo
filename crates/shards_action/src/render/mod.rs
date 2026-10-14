@@ -7,10 +7,11 @@
 //!   `combat_overlay` tool, F2), drawn with gizmos from the lists of [`crate::draw`].
 //! - [`hud`]: **off-screen warnings**, Bevy UI markers on the screen edge.
 //!
-//! The plugin adds only what the app can show: the bridge needs Bevy's `AnimationPlugin`,
-//! the overlays the `GizmoPlugin`, the markers the `UiPlugin` (all in `DefaultPlugins`; a
-//! headless engine run has them too, but no window, and then nothing here runs). All of it is
-//! presentation: nothing in the simulation reads it, replays ignore it.
+//! The plugin adds only what the app can show: the bridge needs Bevy's `AnimationPlugin`, the
+//! overlays the `GizmoPlugin` (both in `DefaultPlugins`). The overlays and the markers draw only
+//! while a `Window` exists, so a headless engine run, which has the plugins but no window,
+//! does nothing here. All of it is presentation: nothing in the simulation reads it, replays
+//! ignore it.
 //!
 //! The pure logic (which clip, what geometry, where on the edge) is in [`crate::anim`] and
 //! [`crate::draw`], tested without a window.
@@ -28,11 +29,9 @@ pub use overlay::{CombatOverlay, CombatOverlayGizmos, TelegraphGizmos, Telegraph
 
 pub(crate) fn plugin(app: &mut App) {
     overlay::plugin(app);
+    hud::plugin(app);
     if app.is_plugin_added::<bevy::animation::AnimationPlugin>() {
         bridge::plugin(app);
-    }
-    if app.is_plugin_added::<bevy::ui::UiPlugin>() {
-        hud::plugin(app);
     }
 }
 

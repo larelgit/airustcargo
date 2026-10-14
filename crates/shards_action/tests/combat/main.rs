@@ -6,4 +6,6 @@ mod agents;
 mod common;
 mod hits;
 mod replay;
+#[cfg(feature = "render")]
+mod render;
 mod visuals;

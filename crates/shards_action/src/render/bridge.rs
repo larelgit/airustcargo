@@ -260,8 +260,10 @@ pub struct Driven {
 }
 
 /// `Update`: the clip each character shows, applied to its player. See the module docs.
+#[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
 pub fn drive(
     mut commands: Commands,
+    time: Res<Time>,
     fixed: Res<Time<Fixed>>,
     db: Option<Res<ContentDb>>,
     graphs: Res<AnimGraphs>,
@@ -271,6 +273,7 @@ pub fn drive(
 ) {
     let Some(db) = db else { return };
     let overstep = fixed.overstep().as_secs_f32();
+    let frozen = time.delta_secs() <= 0.0;
     let standing = MotionState::default();
     for DrivenItem { entity, animated: set_ref, mut bound, state, motion, fighter, dead } in &mut animated {
         let (Some(set), Some(built)) = (db.get::<AnimSet>(&set_ref.animset), graphs.built(&set_ref.animset)) else {
@@ -301,10 +304,17 @@ pub fn drive(
         let duration = clips.get(handle).map_or(0.0, |c| c.duration());
 
         if bound.clip.as_deref() != Some(clip) {
-            // The first clip snaps in; later ones blend from what plays (`.max`: a zero
-            // duration would divide by zero in Bevy's fade).
-            let blend = if bound.clip.is_none() { 0.0 } else { choice.blend };
-            transitions.play(&mut player, *node, Duration::from_secs_f32(blend.max(0.01)));
+            if bound.clip.is_none() || frozen {
+                // Nothing to blend from, or the clock is stopped (a paused simulation, an agent
+                // stepping tick by tick): a fade would never advance and leave the old pose
+                // standing, so the new clip snaps in.
+                player.stop_all();
+                *transitions = AnimationTransitions::new();
+                transitions.play(&mut player, *node, Duration::ZERO);
+            } else {
+                // `.max`: a zero duration would divide by zero in Bevy's fade.
+                transitions.play(&mut player, *node, Duration::from_secs_f32(choice.blend.max(0.01)));
+            }
             bound.clip = Some(clip.to_owned());
             bound.last_time = None;
         }
@@ -338,8 +348,8 @@ pub fn drive(
 /// A model of an [`Animated`] character that brings no animations of its own (the clips are in
 /// the set's library file) cannot be animated by Bevy as it is: there is no `AnimationPlayer`
 /// and its bones have no animation targets. This gives them both, the way the glTF loader
-/// would have: the player on the skeleton's root (the top-level node of the scene with the
-/// most nodes below it), and every named node below it the target id of its path of names
+/// would have: the player on the skeleton's root (the top-level node of the glTF scene with
+/// the most nodes below it), and every named node below it the target id of its path of names
 /// from that root. Clips of another file then find their bones if the **names match**.
 pub fn retarget_on_ready(
     ready: On<WorldInstanceReady>,
@@ -357,10 +367,13 @@ pub fn retarget_on_ready(
     if std::iter::once(root).chain(children.iter_descendants(root)).any(|e| players.contains(e)) {
         return;
     }
+    // A glTF scene spawns as `root > SceneN > top-level nodes`: the nodes are what the
+    // animations of a glTF file treat as their roots.
     let Some(skeleton) = children
         .get(root)
         .into_iter()
-        .flat_map(|c| c.iter())
+        .flat_map(|scenes| scenes.iter())
+        .flat_map(|scene| children.get(scene).into_iter().flat_map(|nodes| nodes.iter()))
         .filter(|e| names.contains(*e))
         .max_by_key(|e| children.iter_descendants(*e).count())
     else {
@@ -399,7 +412,7 @@ mod tests {
     const ANIMSETS: &str = r#"{ "humanoid": (
         source: "models/humanoid.glb",
         clips: {
-            "idle": (), "walk": (), "run": (),
+            "idle": (cues: [(at: 0.5, cue: "breath")]), "walk": (), "run": (),
             "swing_1": (name: "Armature|Slash", cues: [(at: 0.5, cue: "swoosh")]),
             "hit": (),
         },
@@ -562,6 +575,9 @@ mod tests {
         assert_eq!(idle.len(), 1, "{idle:?}");
         assert!((idle[0].3 - 1.0).abs() < 1e-5, "full weight, no fade-in: {idle:?}");
 
+        // The clock runs: idle fades out while walk fades in.
+        rig.app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(10)));
+        rig.app.update();
         rig.velocity(2.0);
         rig.app.update();
         assert_eq!(rig.main_clip().as_deref(), Some("walk"));
@@ -577,6 +593,25 @@ mod tests {
         assert_eq!(rig.main_clip().as_deref(), Some("run"));
         let run = rig.playing().into_iter().find(|p| p.0 == "run").unwrap();
         assert!((run.2 - 1.2).abs() < 1e-4, "{run:?}");
+    }
+
+    #[test]
+    fn with_the_clock_stopped_a_new_clip_snaps_in() {
+        // A paused simulation (an agent stepping tick by tick) stops Bevy's clock, and a fade
+        // that cannot advance would leave the old pose standing.
+        let mut rig = rig();
+        rig.app.update();
+        rig.velocity(2.0);
+        rig.app.update();
+        assert_eq!(rig.main_clip().as_deref(), Some("walk"));
+        let playing = rig.playing();
+        assert_eq!(playing.len(), 1, "no idle left fading: {playing:?}");
+        assert!((playing[0].3 - 1.0).abs() < 1e-5, "{playing:?}");
+        rig.run_action("light_1", 0.3, Some("swing_1"));
+        rig.app.update();
+        let playing = rig.playing();
+        assert_eq!((playing.len(), playing[0].0), (1, "swing_1"), "{playing:?}");
+        assert!((playing[0].3 - 1.0).abs() < 1e-5, "{playing:?}");
     }
 
     #[test]
@@ -694,6 +729,34 @@ mod tests {
         rig.run_action("light_1", 0.5, Some("swing_1"));
         rig.app.update();
         assert_eq!(rig.app.world().resource::<Heard>().0.len(), 1, "once");
+    }
+
+    #[test]
+    fn a_looping_clip_fires_its_cues_on_every_pass() {
+        #[derive(Resource, Default)]
+        struct Heard(Vec<AnimationCue>);
+        let mut rig = rig();
+        rig.app.init_resource::<Heard>();
+        rig.app.add_observer(|cue: On<AnimationCue>, mut heard: ResMut<Heard>| heard.0.push(cue.event().clone()));
+        // The idle clip is 2 s long with a cue at 0.5 s; frames of 0.25 s.
+        rig.app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(250)));
+        let breaths = |rig: &Rig| rig.app.world().resource::<Heard>().0.iter().filter(|c| c.cue == "breath").count();
+        for _ in 0..2 {
+            rig.app.update();
+        }
+        assert_eq!(breaths(&rig), 0, "0.25 s in");
+        for _ in 0..2 {
+            rig.app.update();
+        }
+        assert_eq!(breaths(&rig), 1, "passed 0.5 s");
+        for _ in 0..4 {
+            rig.app.update();
+        }
+        assert_eq!(breaths(&rig), 1, "the clip wrapped round only just");
+        for _ in 0..4 {
+            rig.app.update();
+        }
+        assert_eq!(breaths(&rig), 2, "and again on the next pass");
     }
 
     #[test]
