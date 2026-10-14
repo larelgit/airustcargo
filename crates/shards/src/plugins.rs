@@ -1,5 +1,6 @@
 //! `EnginePlugins`: the whole engine from one [`EngineConfig`].
 
+use std::path::Path;
 use std::time::Duration;
 
 use bevy::app::{PluginGroupBuilder, ScheduleRunnerPlugin, TerminalCtrlCHandlerPlugin};
@@ -41,7 +42,12 @@ impl EnginePlugins {
 
 impl PluginGroup for EnginePlugins {
     fn build(self) -> PluginGroupBuilder {
-        let config = self.config;
+        let mut config = self.config;
+        // Resolved once, before anything reads it: the asset plugin, the `EngineConfig`
+        // resource that `asset_root` (content loading, `--check-content`) reads, all see it.
+        if let Ok(cwd) = std::env::current_dir() {
+            config.asset_dir = resolve_asset_path(&config.asset_dir, std::env::var("BEVY_ASSET_ROOT").ok().as_deref(), &cwd);
+        }
         let headless = config.headless || config.testing;
         let assets = AssetPlugin {
             file_path: config.asset_dir.clone(),
@@ -73,6 +79,19 @@ impl PluginGroup for EnginePlugins {
             // Level files as the geometry of tiles: joins the two above.
             .add(TileLevelsPlugin)
             .add(NpcPlugin)
+    }
+}
+
+/// The asset folder as the engine hands it to Bevy. Bevy joins it onto `BEVY_ASSET_ROOT`
+/// (else the manifest dir, else the executable's folder) and starts a file watcher on the
+/// result, which fails for a relative path (`PathNotFound`). So a relative `asset_dir`
+/// under a relative root becomes absolute, against `cwd`; `Path::join` with an absolute
+/// path keeps it as it is. Anything else is returned unchanged.
+fn resolve_asset_path(asset_dir: &str, asset_root: Option<&str>, cwd: &Path) -> String {
+    let dir = Path::new(asset_dir);
+    match asset_root.map(Path::new) {
+        Some(root) if dir.is_relative() && root.is_relative() => cwd.join(root).join(dir).display().to_string(),
+        _ => asset_dir.to_owned(),
     }
 }
 
@@ -127,4 +146,33 @@ fn without_display(mut group: PluginGroupBuilder, testing: bool) -> PluginGroupB
         ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0))
     };
     group.add(runner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_relative_root_makes_the_asset_folder_absolute() {
+        let cwd = std::env::current_dir().unwrap();
+        let resolved = resolve_asset_path("assets", Some("crates/sandbox"), &cwd);
+        assert_eq!(resolved, cwd.join("crates/sandbox/assets").display().to_string());
+        // What Bevy does next: it joins its base onto the path, and the absolute one wins.
+        assert_eq!(Path::new("crates/sandbox").join(&resolved), Path::new(&resolved));
+    }
+
+    #[test]
+    fn an_absolute_root_or_no_root_keeps_the_asset_folder() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(resolve_asset_path("assets", cwd.to_str(), &cwd), "assets");
+        assert_eq!(resolve_asset_path("assets", None, &cwd), "assets");
+    }
+
+    #[test]
+    fn an_absolute_asset_folder_is_kept_whatever_the_root() {
+        let cwd = std::env::current_dir().unwrap();
+        let absolute = cwd.join("elsewhere").display().to_string();
+        assert_eq!(resolve_asset_path(&absolute, Some("crates/sandbox"), &cwd), absolute);
+        assert_eq!(resolve_asset_path(&absolute, None, &cwd), absolute);
+    }
 }
