@@ -947,6 +947,11 @@ pub(crate) fn plugin(app: &mut App) {
         .add_systems(FixedLast, check_state.in_set(ReplaySystems::Check))
         .add_systems(Last, |w: &mut World| advance_playback(w, false));
     register_tool(app.world_mut(), "replay_save", Scope::Dev, ToolKind::Query, replay_save_tool);
+    // The host records every player's session.
+    let _ = app
+        .world_mut()
+        .resource_mut::<crate::AiTools>()
+        .set_route("replay_save", crate::tools::NetRoute::HostOnly(crate::tools::ON_THE_HOST));
 }
 
 pub(crate) mod hex_u64 {

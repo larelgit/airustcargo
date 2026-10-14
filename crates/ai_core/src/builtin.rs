@@ -14,7 +14,7 @@ use crate::describe::facts;
 use crate::id::{AiId, AI_ID_IS_MANAGED};
 use crate::journal::{self, AiJournal, JournalKind};
 use crate::observe::{self, entity_line, ObserveOptions};
-use crate::session::{AgentSessions, Scope};
+use crate::session::{configure_session, AgentSessions, Scope, SessionChange};
 use crate::sim::{self, SimGate, StepEnd};
 use crate::spatial::{self, relative, EYE_HEIGHT};
 use crate::tools::{register_tool, AiTools, Call, Id, NoArgs, ToolKind, ToolResult};
@@ -337,6 +337,9 @@ fn check(world: &World, until: &[StopWhen], journal_mark: u64) -> Option<String>
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct PossessArgs {
     pub id: Option<Id>,
+    /// Play as this player's body instead (a networked game's players: 0 is the host's),
+    /// found again on every call, so a respawned body is still yours.
+    pub player: Option<u8>,
 }
 
 fn possess_tool(In(call): In<Call<PossessArgs>>, world: &mut World) -> ToolResult {
@@ -344,11 +347,17 @@ fn possess_tool(In(call): In<Call<PossessArgs>>, world: &mut World) -> ToolResul
         id.entity(world)?;
     }
     let subject = call.args.id.map(|i| i.0);
-    let session = world.resource_mut::<AgentSessions>().get_or_create(&call.caller.agent).clone();
-    world.resource_mut::<AgentSessions>().configure(&call.caller.agent, session.scope, subject);
-    Ok(match subject {
-        Some(id) => format!("you are now {id}"),
-        None => "you are the player character again".to_owned(),
+    let change = SessionChange {
+        subject,
+        player: call.args.player,
+        clear_subject: subject.is_none() && call.args.player.is_none(),
+        ..Default::default()
+    };
+    let session = configure_session(world, &call.caller.agent, &change)?;
+    Ok(match (session.subject, session.player) {
+        (Some(id), _) => format!("you are now {id}"),
+        (_, Some(n)) => format!("you are now player {n}'s body, whichever entity that is"),
+        _ => "you are the player character again".to_owned(),
     })
 }
 

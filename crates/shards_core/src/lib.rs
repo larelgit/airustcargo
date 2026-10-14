@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 
 pub use intent::{flat, follow_orders, input_names, Intent, Order, Press, Target};
 pub use loading::{statuses as loading_statuses, LoadCheck, LoadStatus, LoadingGate};
-pub use state::{EngineState, LocalPlayer, NetRole, PauseState, PlayerId};
+pub use state::{player_body, EngineState, LocalPlayer, NetRole, PauseState, PlayerId};
 
 /// Version of the engine crates (they share one).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -192,6 +192,8 @@ impl Plugin for CorePlugin {
             .register_type::<PlayerId>()
             .register_type::<LocalPlayer>()
             .register_type::<NetRole>();
+        // `ai/session {player: N}`, `possess player=N`: the body with `PlayerId(N)`.
+        app.world_mut().get_resource_or_init::<ai_core::AgentSessions>().set_player_resolver(state::player_body);
         app.insert_resource(self.config.clone())
             .init_resource::<NetRole>()
             .init_resource::<LoadingGate>()

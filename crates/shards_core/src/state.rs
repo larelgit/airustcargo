@@ -15,7 +15,7 @@
 //! leaves `PauseState` alone, so stepping a game never pops a menu up.
 
 use ai_core::journal::{AiJournal, JournalKind};
-use ai_core::{sim, SimTick};
+use ai_core::{sim, AiId, SimTick};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -65,6 +65,13 @@ pub enum NetRole {
 #[derive(Component, Reflect, Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Serialize, Deserialize)]
 #[reflect(Component, Default)]
 pub struct PlayerId(pub u8);
+
+/// The body of player `n` now: the entity with `PlayerId(n)` and an id (the newest, if a
+/// corpse kept its `PlayerId`). Agent sessions bound to a player find their body with it.
+pub fn player_body(world: &World, n: u8) -> Option<AiId> {
+    let mut bodies = world.try_query::<(&PlayerId, &AiId)>()?;
+    bodies.iter(world).filter(|(player, _)| player.0 == n).map(|(_, id)| *id).max()
+}
 
 /// The character this machine's keyboard and camera drive.
 #[derive(Component, Reflect, Clone, Copy, Debug, Default)]

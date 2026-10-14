@@ -81,12 +81,14 @@ pub use observe::{AiCamera, AiPerception, ObserveOptions};
 pub use process::AppToken;
 pub use replay::{AiReplay, Replay, ReplayHashing, ReplayReport};
 pub use rng::{DetRng, SimRng, SimSeed};
-pub use session::{AgentSession, AgentSessions, Caller, Scope};
+pub use session::{configure_session, AgentSession, AgentSessions, Caller, PlayerResolver, Scope, SessionChange};
 pub use sim::{SimConfig, SimGate, SimSet, SimTick, TickClock};
 pub use snapshot::{world_rebuilt, EntityKey, Snapshot, SnapshotRegistry, WorldRebuilt};
 pub use spatial::{AiLineOfSight, AiOccluder};
 pub use status::AiStatusFields;
-pub use tools::{call_tool, AiTools, Call, CallOutcome, Id, NoArgs, ToolKind, ToolResult, ToolSpec};
+pub use tools::{
+    call_tool, AiTools, Call, CallOutcome, ForwardedCall, Forwarder, Id, NetRoute, NoArgs, ToolKind, ToolResult, ToolSpec,
+};
 
 pub mod prelude {
     pub use crate::{
@@ -322,6 +324,10 @@ pub trait AiAppExt {
     /// A client predicts component `C` for its own body: it travels with the input
     /// acknowledgement and is corrected from there, not overwritten with the rest.
     fn net_predicted<C: Component>(&mut self) -> &mut Self;
+
+    /// Where tool `name` (registered already) runs on a client of a networked game; the
+    /// default is [`NetRoute::default_for`] its kind and scope.
+    fn net_route(&mut self, name: &str, route: NetRoute) -> &mut Self;
 }
 
 impl AiAppExt for App {
@@ -441,6 +447,13 @@ impl AiAppExt for App {
 
     fn net_predicted<C: Component>(&mut self) -> &mut Self {
         self.world_mut().get_resource_or_init::<NetRules>().predict(std::any::TypeId::of::<C>(), std::any::type_name::<C>());
+        self
+    }
+
+    fn net_route(&mut self, name: &str, route: NetRoute) -> &mut Self {
+        if let Err(why) = self.world_mut().get_resource_or_init::<AiTools>().set_route(name, route) {
+            panic!("net_route: {why} (register the tool first)");
+        }
         self
     }
 }

@@ -18,7 +18,7 @@
 use std::path::Path;
 
 use bevy::prelude::*;
-use serde_json::{json, Value};
+use serde_json::Value;
 use shards_script::{AgentScope, Driver, JournalLine, JournalRead, Outcome, Script, SessionConfig, Status};
 
 pub use shards_script::{Failure, FailureKind, LogLine, Report};
@@ -26,7 +26,7 @@ pub use shards_script::{Failure, FailureKind, LogLine, Report};
 use crate::id::{AiId, AiIndex};
 use crate::journal::{self, AiJournal, JournalKind};
 use crate::rng::SimSeed;
-use crate::session::{AgentSessions, Scope};
+use crate::session::{configure_session, session_json, Scope, SessionChange};
 use crate::sim;
 use crate::tools::call_tool;
 
@@ -73,20 +73,15 @@ impl Driver for WorldDriver<'_> {
             }
             None => None,
         };
-        let mut sessions = self.world.resource_mut::<AgentSessions>();
-        let current = sessions.get_or_create(agent).clone();
-        let subject = if config.clear_subject { None } else { subject.or(current.subject) };
-        let scope = config.scope.map_or(current.scope, |s| match s {
+        let scope = config.scope.map(|s| match s {
             AgentScope::Player => Scope::Player,
             AgentScope::Dev => Scope::Dev,
         });
-        let now = sessions.configure(agent, scope, subject).clone();
-        Ok(Outcome::ok(json!({
-            "agent": now.name,
-            "scope": now.scope,
-            "subject": now.subject.map(|i| i.to_string()),
-            "seen_seq": now.seen_seq,
-        })))
+        let change = SessionChange { scope, subject, player: None, clear_subject: config.clear_subject };
+        match configure_session(self.world, agent, &change) {
+            Ok(now) => Ok(Outcome::ok(session_json(&now))),
+            Err(message) => Ok(Outcome::err(message)),
+        }
     }
 
     fn status(&mut self) -> Result<Status, String> {

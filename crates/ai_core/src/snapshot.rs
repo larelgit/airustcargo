@@ -51,7 +51,6 @@
 use std::any::TypeId;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
-use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy::reflect::{FromReflect, GetTypeRegistration, Reflect, TypePath, TypeRegistry};
@@ -836,6 +835,11 @@ pub(crate) fn plugin(app: &mut App) {
         .register_type::<Name>();
     register_tool(app.world_mut(), "snapshot_save", Scope::Dev, ToolKind::Control, snapshot_save_tool);
     register_tool(app.world_mut(), "snapshot_load", Scope::Dev, ToolKind::Control, snapshot_load_tool);
+    // The world a snapshot holds is the host's; a client holds a view of it.
+    let mut tools = app.world_mut().resource_mut::<crate::AiTools>();
+    for name in ["snapshot_save", "snapshot_load"] {
+        let _ = tools.set_route(name, crate::tools::NetRoute::HostOnly(crate::tools::ON_THE_HOST));
+    }
 }
 
 /// Registration for [`AiAppExt::add_snapshot_resource`](crate::AiAppExt::add_snapshot_resource).
@@ -852,6 +856,7 @@ mod tests {
     use super::*;
     use crate::prelude::*;
     use crate::sim::TickClock;
+    use std::time::Duration;
     use crate::AiAppExt;
 
     #[derive(Component, Reflect, Default, Clone, PartialEq, Debug)]

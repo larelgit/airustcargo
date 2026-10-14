@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 
 use crate::id::{AiId, AI_ID_IS_MANAGED};
 use crate::rng::SimSeed;
-use crate::session::{AgentSessions, Scope};
+use crate::session::{configure_session, session_json, AgentSessions, Scope, SessionChange};
 use crate::tools::{call_tool, AiTools, Id};
 
 pub const DEFAULT_AGENT: &str = "dev";
@@ -117,18 +117,16 @@ struct SessionParams {
     /// Reset `subject` to the player character.
     #[serde(default)]
     clear_subject: bool,
+    /// Play as this player's body (`PlayerId`), found again on every call.
+    player: Option<u8>,
 }
 
 fn ai_session(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
     let p: SessionParams = parse(params)?;
-    if let Some(id) = p.subject {
-        id.entity(world).map_err(|m| BrpError { code: bevy_remote::error_codes::INVALID_PARAMS, message: m, data: None })?;
-    }
-    let mut sessions = world.resource_mut::<AgentSessions>();
-    let current = sessions.get_or_create(&p.agent).clone();
-    let subject = if p.clear_subject { None } else { p.subject.map(|i| i.0).or(current.subject) };
-    let s = sessions.configure(&p.agent, p.scope.unwrap_or(current.scope), subject).clone();
-    to_brp(json!({"agent": s.name, "scope": s.scope, "subject": s.subject.map(|i| i.to_string()), "seen_seq": s.seen_seq}))
+    let change = SessionChange { scope: p.scope, subject: p.subject.map(|i| i.0), player: p.player, clear_subject: p.clear_subject };
+    let session = configure_session(world, &p.agent, &change)
+        .map_err(|message| BrpError { code: bevy_remote::error_codes::INVALID_PARAMS, message, data: None })?;
+    to_brp(session_json(&session))
 }
 
 fn ai_status(In(_): In<Option<Value>>, world: &mut World) -> BrpResult {
