@@ -38,6 +38,7 @@ shards_core.workspace = true
 shards_content.workspace = true
 shards_motion.workspace = true
 shards_action.workspace = true
+shards_npc.workspace = true
 bevy = { workspace = true, features = ["default_app", "std", "multi_threaded", "serialize"] }
 serde.workspace = true
 serde_json.workspace = true
