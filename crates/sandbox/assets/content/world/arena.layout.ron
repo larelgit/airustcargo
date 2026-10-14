@@ -1,6 +1,7 @@
 // Area 1: the arena (the combat prototype). Layouts spawn in id order when the game starts:
 // solids, ramps, volumes, landmarks, then the prefabs under `spawns` (so the pillars are
-// e1-e4, the player e5, the Frost Warden e6, the skeletons e7 and e8). Boxes by their `min`
+// e1-e4, the player e5, the Frost Warden e6, the skeletons e7 and e8; a third skeleton, e14,
+// comes with `watch.layout.ron`, after the course's landmarks). Boxes by their `min`
 // and `max` corners; +Y is up, -Z is north. Edit while the game runs: the geometry is rebuilt
 // on the next tick (spawns stay: they are the game's characters).
 //

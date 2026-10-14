@@ -561,9 +561,7 @@ fn go_to_boss_phase_two_is_a_snapshot_loaded_by_name() {
     // when the fight stands where you want it): the warden at half health, in its second phase.
     let file = Scratch::new("boss_phase2");
     let mut recorder = sandbox::test_app(42);
-    for id in ["e7", "e8"] {
-        ok(&mut recorder, "set", json!({"id": id, "component": "SkeletonBrain", "path": "aggro", "value": 0}));
-    }
+    calm_skeletons(&mut recorder);
     ok(&mut recorder, "god", json!({}));
     ok(&mut recorder, "teleport", json!({"id": PLAYER, "x": 0, "z": 12}));
     ok(&mut recorder, "teleport", json!({"id": BOSS, "x": 0, "z": -6}));

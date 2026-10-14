@@ -1,0 +1,17 @@
+// Who may attack at once (content kind `director`). Only a monster holding one of its
+// director's attack tokens starts an attack, and it keeps the token until the attack is over.
+{
+    // The skeletons: two attackers on one player, three on two, four on three. The others
+    // circle, strafe or hold off until a token comes back.
+    "default": (
+        tokens: {1: 2, 2: 3, 3: 4},
+        waiting: [
+            (role: Circle, distance: 3.5, orbit: 1.2),
+            (role: Strafe, distance: 3.0, orbit: 1.0, period: 1.5),
+            (role: Hold, distance: 5.0),
+        ],
+        patience: 3.0,
+    ),
+    // The warden fights alone; between attacks it keeps within reach of its quickest one.
+    "boss": (tokens: {1: 1}, waiting: [(role: Hold, distance: 2.6)]),
+}

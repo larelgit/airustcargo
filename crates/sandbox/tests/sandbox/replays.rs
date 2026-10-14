@@ -42,7 +42,7 @@ fn session(app: &mut App) {
     ok(app, "possess", json!({}));
     ok(app, "dodge", json!({"away_from": BOSS}));
     ok(app, "step", json!({"ticks": 200}));
-    ok(app, "teleport", json!({"id": "e14", "x": -3, "z": 0}));
+    ok(app, "teleport", json!({"id": "e15", "x": -3, "z": 0}));
     ok(app, "step", json!({"ticks": 37}));
     ok(app, "move", json!({"dir": "W", "meters": 2}));
 }
@@ -90,7 +90,7 @@ fn playback_reproduces_the_session() {
     assert_eq!(state(&mut original), state(&mut copy));
     assert_eq!(story(&original), story(&copy));
     // The skeleton spawned mid-session exists in the copy too, and fights.
-    assert!(story(&copy).iter().any(|l| l.contains("e14 -> e5 claw")), "{:#?}", story(&copy));
+    assert!(story(&copy).iter().any(|l| l.contains("e15 -> e5 claw")), "{:#?}", story(&copy));
 }
 
 #[test]

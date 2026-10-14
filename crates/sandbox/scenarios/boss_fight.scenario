@@ -7,10 +7,12 @@
 
 seed 42
 
-# --- the arena as the game spawns it, whatever was played in it before
-act set id=e7 component=SkeletonBrain path=aggro value=0
-act set id=e8 component=SkeletonBrain path=aggro value=0
-act set id=e6 component=WardenBrain path=leash value=0
+# --- the arena as the game spawns it, whatever was played in it before: the skeletons stand
+# down (their behaviour's `calm` state), and so does the warden until the fight begins
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
 # (a dead player is brought back first: its own controls refuse a dead body)
 act heal id=e5
 act stop
@@ -21,13 +23,13 @@ step 150
 act heal id=e5
 act heal id=e6
 act set id=e6 component=Boss path=phase value=1
-act set id=e6 component=WardenBrain path=leash value=26
-act set id=e6 component=WardenBrain path=rest value=0.5
-act set id=e6 component=WardenBrain path=last_zone value=false
+act set id=e6 component=NpcPlan value='{"history": [], "cooldowns": [], "rest": 0.5, "attacks": 0}'
 act teleport id=e5 x=0 z=12 y=0
 act teleport id=e6 x=0 z=-6 y=0
 act teleport id=e7 x=-18 z=18 y=0
 act teleport id=e8 x=18 z=18 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+act npc_set_state id=e6 state=guard
 act god
 invariant field e5 Health.current > 0
 

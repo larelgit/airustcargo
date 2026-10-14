@@ -2,12 +2,13 @@
 //! Rendering attaches itself to these entities from `visuals` when a window exists.
 //!
 //! The engine does the rest: characters move with its controller, fight with its action
-//! machine, collide through its physics layer. What is the sandbox's own: the world it
-//! spawns from content ([`layout`]) when the engine enters `InGame` (content exists only
-//! after loading), the monsters' brains ([`brains`]), the boss's phases and what is left
-//! of the dead ([`fate`]).
+//! machine, collide through its physics layer; the monsters are its NPCs (behaviours,
+//! perception, the combat director and attack plans are content in `content/npc/`); the
+//! generated region south of the arena is its world module's (`content/region/`). What is the
+//! sandbox's own: the world it spawns from content ([`layout`]) when the engine enters
+//! `InGame` (content exists only after loading), the boss's phases and what is left of the
+//! dead ([`fate`]).
 
-pub mod brains;
 pub mod fate;
 pub mod layout;
 
@@ -27,7 +28,7 @@ pub struct Player;
 #[reflect(Component, Default)]
 pub struct Skeleton;
 
-/// A boss: its phase, and the moveset it fights with in each phase.
+/// A boss: its phase, and the moveset and attack plan it fights with in each phase.
 #[derive(Component, Reflect, Default, Clone, Debug)]
 #[reflect(Component, Default)]
 pub struct Boss {
@@ -35,6 +36,8 @@ pub struct Boss {
     pub phase: u8,
     /// Moveset content ids, first phase first.
     pub movesets: Vec<String>,
+    /// `attack_plan` content ids, first phase first (its `Npc` fights by it).
+    pub plans: Vec<String>,
 }
 
 #[derive(Component, Reflect, Default, Clone, Copy, Debug)]
@@ -52,13 +55,12 @@ impl Plugin for GameplayPlugin {
             .register_type::<LayoutPiece>()
             .add_content::<LayoutDef>()
             .add_systems(OnEnter(EngineState::InGame), layout::spawn_world)
-            .add_plugins((brains::plugin, fate::plugin));
-        // The engine's systems move, fight and resolve; the sandbox's decide (brains,
-        // `Think`), react (phases, after deaths) and tidy up.
+            .add_plugins(fate::plugin);
+        // The engine's systems decide (NPCs), move, fight and resolve; the sandbox's react
+        // (phases, after deaths) and tidy up.
         app.add_systems(
             FixedUpdate,
             (
-                (brains::skeleton_brains, brains::warden_brains).chain().in_set(SimSet::Think),
                 fate::boss_phases.in_set(SimSet::Resolve).after(ActionSystems::Deaths),
                 (fate::remove_corpses, layout::rebuild_changed_layouts)
                     .chain()

@@ -1,10 +1,10 @@
 {
-  "format": "shards-replay/2",
+  "format": "shards-replay/3",
   "seed": 42,
   "tick_hz": 59.99999880000003,
   "end": {
     "tick": 1010,
-    "hash": "ec6c67d26392e0ff"
+    "hash": "6ae10dac5bb8a45c"
   },
   "events": [
     {
@@ -95,44 +95,6 @@
     {
       "input": {
         "at": 0,
-        "id": 5,
-        "component": "Intent",
-        "value": {
-          "aim": null,
-          "held": [],
-          "move_dir": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "orders": [],
-          "pressed": [],
-          "target": null
-        }
-      }
-    },
-    {
-      "input": {
-        "at": 0,
-        "id": 6,
-        "component": "Intent",
-        "value": {
-          "aim": null,
-          "held": [],
-          "move_dir": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "orders": [],
-          "pressed": [],
-          "target": null
-        }
-      }
-    },
-    {
-      "input": {
-        "at": 0,
         "id": 7,
         "component": "Intent",
         "value": {
@@ -153,6 +115,63 @@
       "input": {
         "at": 0,
         "id": 8,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 14,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 0,
+        "id": 6,
         "component": "Intent",
         "value": {
           "aim": null,
@@ -528,67 +547,67 @@
   "checks": [
     {
       "tick": 60,
-      "hash": "1a3adf067a969f70"
+      "hash": "0b2489ed173acf43"
     },
     {
       "tick": 120,
-      "hash": "324c40a81793a812"
+      "hash": "ae6148fa44455f13"
     },
     {
       "tick": 180,
-      "hash": "9c448ac98e1ceaa7"
+      "hash": "2956dadddc8c7694"
     },
     {
       "tick": 240,
-      "hash": "343af600a1900158"
+      "hash": "6c51450905219da1"
     },
     {
       "tick": 300,
-      "hash": "73db104249b0559f"
+      "hash": "0db2ca3d67478ca6"
     },
     {
       "tick": 360,
-      "hash": "961d5cb4e40cbdc2"
+      "hash": "d1f3dfba095c9a7d"
     },
     {
       "tick": 420,
-      "hash": "81f0cfcba448b488"
+      "hash": "803a99e9d8f63b67"
     },
     {
       "tick": 480,
-      "hash": "dedc9a51adacfc8b"
+      "hash": "81fadcedb6485024"
     },
     {
       "tick": 540,
-      "hash": "01ac1d0ee00fdfad"
+      "hash": "b7009acb50262506"
     },
     {
       "tick": 600,
-      "hash": "5fdfea0507e1457c"
+      "hash": "09997827a1a2a94b"
     },
     {
       "tick": 660,
-      "hash": "c29ce8720ae27b5d"
+      "hash": "433c43247f99dddc"
     },
     {
       "tick": 720,
-      "hash": "2ad9070509be3cdb"
+      "hash": "997119486bd48888"
     },
     {
       "tick": 780,
-      "hash": "849bf71c3dbe789d"
+      "hash": "62fff74f7085014a"
     },
     {
       "tick": 840,
-      "hash": "0bf6fe19332636c3"
+      "hash": "ff85b3daa2ccb4d0"
     },
     {
       "tick": 900,
-      "hash": "23291d03f40af3d3"
+      "hash": "395b5c6cbbc6315a"
     },
     {
       "tick": 960,
-      "hash": "b131c023cd2f3247"
+      "hash": "5872605ba9bf4a24"
     }
   ]
 }

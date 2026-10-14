@@ -85,14 +85,18 @@ pub fn state(app: &mut App) -> Vec<String> {
     out
 }
 
-/// The skeletons stand still: a test fights only what it means to.
+/// The arena's skeletons.
+pub const SKELETONS: [&str; 3] = ["e7", "e8", "e14"];
+
+/// The skeletons stand still (their behaviour's `calm` state): a test fights only what it
+/// means to.
 pub fn calm_skeletons(app: &mut App) {
-    for id in ["e7", "e8"] {
-        ok(app, "set", json!({"id": id, "component": "SkeletonBrain", "path": "aggro", "value": 0}));
+    for id in SKELETONS {
+        ok(app, "npc_set_state", json!({"id": id, "state": "calm"}));
     }
 }
 
-/// The warden stays at its post and never attacks by itself (its leash reaches nobody).
+/// The warden stands where it is and never attacks by itself (`calm`).
 pub fn calm_warden(app: &mut App) {
-    ok(app, "set", json!({"id": BOSS, "component": "WardenBrain", "path": "leash", "value": 0}));
+    ok(app, "npc_set_state", json!({"id": BOSS, "state": "calm"}));
 }

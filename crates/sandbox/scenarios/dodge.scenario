@@ -1,16 +1,18 @@
 # Dodging: an attack that lands hurts, the same attack met with a roll does not.
 #
 # The warden's attacks are pressed by a dev agent possessing it (`session --subject e6`, its
-# brain kept at its post), so the timing is the same in every game; left to its brain, the
-# warden picks its attacks at random. The dodges are played by a player-scope agent,
+# behaviour kept `calm`), so the timing is the same in every game; left to its attack plan,
+# the warden picks its attacks at random. The dodges are played by a player-scope agent,
 # through the same controls a human has.
 
 seed 42
 
-# --- the arena as the game spawns it, whatever was played in it before
-act set id=e7 component=SkeletonBrain path=aggro value=0
-act set id=e8 component=SkeletonBrain path=aggro value=0
-act set id=e6 component=WardenBrain path=leash value=0
+# --- the arena as the game spawns it, whatever was played in it before: the skeletons stand
+# down (their behaviour's `calm` state), and so does the warden until the fight begins
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
 # (a dead player is brought back first: its own controls refuse a dead body)
 act heal id=e5
 act stop
@@ -25,6 +27,7 @@ act teleport id=e5 x=0 z=-3 y=0
 act teleport id=e6 x=0 z=-6 y=0
 act teleport id=e7 x=-18 z=18 y=0
 act teleport id=e8 x=18 z=18 y=0
+act teleport id=e14 x=-18 z=-18 y=0
 step 2
 invariant field e5 Health.current > 0
 
@@ -89,4 +92,4 @@ expect field e5 Health.current == 100
 session --agent warden
 act lock_on off=true
 session --agent scenario
-act set id=e6 component=WardenBrain path=leash value=26
+act npc_set_state id=e6 state=guard

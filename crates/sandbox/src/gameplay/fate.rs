@@ -49,9 +49,10 @@ pub struct Corpse {
 }
 
 /// `SimSet::Resolve`, after deaths: phase 2 at half health, however the health got there
-/// (hits or a dev `set`); each phase fights with its own moveset (`Boss::movesets`).
-pub fn boss_phases(mut commands: Commands, mut q: Query<(Entity, &mut Boss, &Health, &mut Fighter, Has<Dead>)>) {
-    for (entity, mut boss, health, mut fighter, dead) in &mut q {
+/// (hits or a dev `set`); each phase fights with its own moveset and attack plan
+/// (`Boss::movesets`, `Boss::plans`).
+pub fn boss_phases(mut commands: Commands, mut q: Query<(Entity, &mut Boss, &Health, &mut Fighter, Option<&mut Npc>, Has<Dead>)>) {
+    for (entity, mut boss, health, mut fighter, npc, dead) in &mut q {
         if boss.phase == 1 && !dead && health.current <= health.max * 0.5 {
             boss.phase = 2;
             commands.trigger(PhaseChanged { boss: entity, from: 1, to: 2 });
@@ -61,6 +62,11 @@ pub fn boss_phases(mut commands: Commands, mut q: Query<(Entity, &mut Boss, &Hea
             && fighter.moveset != *moveset
         {
             fighter.moveset = moveset.clone();
+        }
+        if let (Some(mut npc), Some(plan)) = (npc, boss.plans.get(phase - 1).or(boss.plans.last()))
+            && npc.plan.as_ref() != Some(plan)
+        {
+            npc.plan = Some(plan.clone());
         }
     }
 }

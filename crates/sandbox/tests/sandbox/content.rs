@@ -62,15 +62,15 @@ fn the_player_is_the_local_player() {
 #[test]
 fn the_sandbox_content_is_clean() {
     let mut app = sandbox::test_app(42);
-    assert_eq!(text(&ok(&mut app, "content_check", json!({}))), "ok: 38 definitions in 9 files");
+    assert_eq!(text(&ok(&mut app, "content_check", json!({}))), "ok: 48 definitions in 14 files");
     let light = ok(&mut app, "content_get", json!({"kind": "action", "id": "light_1"})).result;
     assert_eq!(light["def"]["hits"][0]["damage"], json!(20.0));
     assert_eq!(light["file"], "content/combat/player.action.ron");
     let kinds = text(&ok(&mut app, "content_list", json!({}))).to_owned();
-    for kind in ["action", "moveset", "prefab", "locomotion", "layout", "combat_tuning"] {
+    for kind in ["action", "moveset", "prefab", "locomotion", "layout", "combat_tuning", "behavior", "perception", "director", "attack_plan"] {
         assert!(kinds.contains(kind), "{kind} missing: {kinds}");
     }
-    assert!(events(&app).contains(&"0 content loaded: 38 definitions in 9 files".to_owned()), "{:?}", events(&app));
+    assert!(events(&app).contains(&"0 content loaded: 48 definitions in 14 files".to_owned()), "{:?}", events(&app));
 }
 
 #[test]
@@ -166,23 +166,24 @@ fn prefabs_spawn_the_sandbox_characters() {
     let mut app = sandbox::test_app(42);
     calm_skeletons(&mut app);
     let spawned = text(&ok(&mut app, "spawn_prefab", json!({"id": "skeleton", "x": 2, "z": 8}))).to_owned();
-    assert_eq!(spawned, "spawned e14 skeleton at (2.0, 8.0)");
-    let line = text(&ok(&mut app, "inspect", json!({"id": "e14"}))).to_owned();
-    assert!(line.starts_with("e14 Skeleton") && line.contains("hp 40/40"), "{line}");
+    // e14 is the arena's third skeleton (`watch.layout.ron`).
+    assert_eq!(spawned, "spawned e15 skeleton at (2.0, 8.0)");
+    let line = text(&ok(&mut app, "inspect", json!({"id": "e15"}))).to_owned();
+    assert!(line.starts_with("e15 Skeleton") && line.contains("hp 40/40"), "{line}");
 
     let captain = ok(
         &mut app,
         "spawn_prefab",
         json!({"id": "skeleton_captain", "x": -4, "z": 6, "overrides": {"Health": {"current": 50}}}),
     );
-    assert_eq!(text(&captain), "spawned e15 skeleton_captain at (-4.0, 6.0)");
-    let line = text(&ok(&mut app, "inspect", json!({"id": "e15"}))).to_owned();
-    assert!(line.starts_with("e15 Skeleton \"Skeleton Captain\"") && line.contains("Health: hp 50/90"), "{line}");
+    assert_eq!(text(&captain), "spawned e16 skeleton_captain at (-4.0, 6.0)");
+    let line = text(&ok(&mut app, "inspect", json!({"id": "e16"}))).to_owned();
+    assert!(line.starts_with("e16 Skeleton \"Skeleton Captain\"") && line.contains("Health: hp 50/90"), "{line}");
 
     // The new skeleton fights: it walks up to the player (12 m away... within its 18 m) and claws.
     ok(&mut app, "god", json!({}));
     step(&mut app, 240);
-    assert!(events(&app).iter().any(|l| l.contains("e14 -> e5 claw")), "{:?}", events(&app));
+    assert!(events(&app).iter().any(|l| l.contains("e15 -> e5 claw")), "{:?}", events(&app));
     let refused = act(&mut app, "spawn_prefab", json!({"id": "lich", "x": 0, "z": 0}));
     assert!(
         text(&refused).starts_with("unknown prefab `lich`; known: frost_warden, pillar, player, skeleton"),
