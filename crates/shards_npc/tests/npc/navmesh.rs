@@ -620,6 +620,30 @@ fn a_walker_that_climbs_less_than_the_baked_body_plans_on_the_local_grid() {
     assert!(!text(&out).contains("mantle"), "no climb it cannot make: {}", text(&out));
 }
 
+/// `nav_path` for a walker the navmesh does not serve plans on the local grid with the
+/// walker's own body, as `move_to path=true` does: the preview and the walk agree on what
+/// it can climb.
+#[test]
+fn nav_path_for_a_walker_the_navmesh_does_not_serve_plans_with_its_own_body() {
+    let mut app = app();
+    load_region(&mut app, &["floor ledge floor"]);
+    let hero = player(app.world_mut(), 0, Vec3::new(4.0, 0.0, 4.0));
+    let me = id(&app, hero);
+    let goal = json!({"x": 14.0, "z": 4.0});
+    // The baked body (the defaults) mantles the 1 m ledge: both tools find the way up.
+    let out = ok(&mut app, "nav_path", json!({"from": me, "to": goal}));
+    assert_eq!(out.result["provider"], "navmesh", "{}", out.result);
+    let out = ok(&mut app, "move_to", json!({"target": goal, "path": true}));
+    assert!(text(&out).contains("(mantle 1.0m)"), "{}", text(&out));
+    app.world_mut().get_mut::<shards_core::Intent>(hero).unwrap().orders.clear();
+    // This one only mantles half a meter: the 1 m ledge spans the area, so there is no way.
+    app.world_mut().entity_mut(hero).insert(shards_motion::CharacterParams { mantle_height: 0.5, ..default() });
+    let walk = call(&mut app, "move_to", json!({"target": goal, "path": true}));
+    assert!(!text(&walk).contains("mantle"), "no climb it cannot make: {}", text(&walk));
+    let preview = fails(&mut app, "nav_path", json!({"from": me, "to": goal}));
+    assert!(preview.contains("no route"), "the preview plans for its mantle height too: {preview}");
+}
+
 /// A bake is made from the prefabs its tile spawns, the ones they extend and the ones its
 /// level file's nodes name: a change anywhere down those chains makes it stale.
 #[test]
