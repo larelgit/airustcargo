@@ -999,3 +999,135 @@ fn udp_loopback_smoke_with_five_percent_loss() {
     assert!(dropped > 0, "the simulation did drop datagrams");
     assert!(a.stats().resends > 0, "and the link resent what they carried: {:?}", a.stats());
 }
+
+// ---- review fixes: receive budgets, refusal without acknowledgement ---------------------------------
+
+/// Two links wired back to back: what one flushes reaches the other at once, unless `lose_to_b` says the
+/// datagram is lost on the way to `b`.
+fn step_direct(a: &mut Link, b: &mut Link, now: u64, lose_to_b: &dyn Fn(&[u8]) -> bool, got: &mut [Vec<Delivered>; 2]) {
+    let mut to_b = Vec::new();
+    a.flush(now, &mut |d| to_b.push(d.to_vec()));
+    let mut to_a = Vec::new();
+    b.flush(now, &mut |d| to_a.push(d.to_vec()));
+    for d in to_b {
+        if !lose_to_b(&d) {
+            b.on_datagram(now, &d);
+        }
+    }
+    for d in to_a {
+        a.on_datagram(now, &d);
+    }
+    got[0].extend(a.poll(now));
+    got[1].extend(b.poll(now));
+}
+
+/// Whether a datagram carries reliable message 0 (inline or as the piece of a blob).
+fn carries_head(d: &[u8]) -> bool {
+    let Ok((_, body)) = wire::decode(d) else { return false };
+    body.reliable.iter().any(|(rseq, _)| *rseq == 0) || body.frag.is_some_and(|f| f.reliable && f.msg == 0)
+}
+
+#[test]
+fn a_full_receiver_refuses_inline_messages_unacknowledged_and_the_stream_recovers() {
+    // b's buffer holds five of the messages. Message 0 is lost for a second, so everything behind it waits
+    // in b's buffer; the ones that do not fit must be refused (not acknowledged), and message 0 must get in
+    // although the buffer is full, or nothing ever drains.
+    let mut a = Link::new(7, Role::Client);
+    let mut b = Link::with_config(7, Role::Host, LinkConfig { max_reliable_bytes: 100_000, ..LinkConfig::default() });
+    a.send_reliable(b"head").unwrap();
+    for i in 0..100u8 {
+        let mut m = vec![0u8; 20_000]; // deflates to a few dozen bytes: inline
+        m[0] = i;
+        a.send_reliable(&m).unwrap();
+    }
+    let mut got = [Vec::new(), Vec::new()];
+    let mut now = 0;
+    while now < 40_000 && got[1].len() < 101 {
+        let hold = now < 1000;
+        step_direct(&mut a, &mut b, now, &|d| hold && carries_head(d), &mut got);
+        now += 4;
+    }
+    for _ in 0..100 {
+        // Let the last acknowledgements arrive.
+        step_direct(&mut a, &mut b, now, &|_| false, &mut got);
+        now += 4;
+    }
+    let s = b.stats();
+    assert_eq!(got[1].len(), 101, "every message arrives after the hole is repaired ({s:?}, a: {:?})", a.stats());
+    assert_eq!(got[1][0], Delivered::Reliable(b"head".to_vec()));
+    for (k, d) in got[1].iter().skip(1).enumerate() {
+        let Delivered::Reliable(m) = d else { panic!("reliable only") };
+        assert_eq!((m.len(), m[0]), (20_000, k as u8), "in order, intact");
+    }
+    assert!(s.reliable_overflow > 0, "the refusal path was exercised: {s:?}");
+    assert!(a.is_idle(), "everything was acknowledged in the end");
+    assert!(b.footprint().reliable_in_bytes <= 100_000 + 20_000, "{:?}", b.footprint());
+}
+
+#[test]
+fn a_full_receiver_refuses_blob_pieces_unacknowledged_and_the_stream_recovers() {
+    let mut a = Link::new(7, Role::Client);
+    let mut b = Link::with_config(7, Role::Host, LinkConfig { max_reliable_bytes: 300_000, ..LinkConfig::default() });
+    let mut got = [Vec::new(), Vec::new()];
+    // The head goes out alone and is lost; the blobs follow in datagrams of their own.
+    a.send_reliable(b"head").unwrap();
+    step_direct(&mut a, &mut b, 0, &|_| true, &mut got);
+    for k in 0..3u64 {
+        a.send_reliable(&payload(k, 200_000)).unwrap(); // incompressible: a blob of 196 pieces
+    }
+    let mut now = 4;
+    while now < 60_000 && got[1].len() < 4 {
+        let hold = now < 1000;
+        step_direct(&mut a, &mut b, now, &|d| hold && carries_head(d), &mut got);
+        now += 4;
+    }
+    for _ in 0..100 {
+        // Let the last acknowledgements arrive.
+        step_direct(&mut a, &mut b, now, &|_| false, &mut got);
+        now += 4;
+    }
+    let s = b.stats();
+    assert_eq!(got[1].len(), 4, "head and three blobs arrive ({s:?}, a: {:?})", a.stats());
+    for k in 0..3u64 {
+        assert!(got[1][k as usize + 1] == Delivered::Reliable(payload(k, 200_000)), "blob {k} intact and in order");
+    }
+    assert!(s.reliable_overflow > 0, "the blob pieces did not fit while the head was missing: {s:?}");
+    assert!(a.is_idle());
+}
+
+#[test]
+fn the_message_the_receiver_waits_for_is_taken_even_when_it_is_over_the_cap() {
+    // A single message bigger than the receiver's whole buffer: only possible with unequal configs, but it
+    // must not deadlock the stream.
+    let mut a = Link::new(7, Role::Client);
+    let mut b = Link::with_config(7, Role::Host, LinkConfig { max_reliable_bytes: 100_000, ..LinkConfig::default() });
+    a.send_reliable(&payload(1, 250_000)).unwrap(); // a blob, incompressible
+    a.send_reliable(&vec![7u8; 150_000]).unwrap(); // inline once deflated
+    let mut got = [Vec::new(), Vec::new()];
+    let mut now = 0;
+    while now < 20_000 && got[1].len() < 2 {
+        step_direct(&mut a, &mut b, now, &|_| false, &mut got);
+        now += 4;
+    }
+    assert_eq!(got[1].len(), 2, "{:?}", b.stats());
+    assert!(got[1][0] == Delivered::Reliable(payload(1, 250_000)) && got[1][1] == Delivered::Reliable(vec![7u8; 150_000]));
+}
+
+#[test]
+fn the_senders_byte_cap_counts_the_bytes_the_receiver_will_hold() {
+    // 600 KB of zeros deflate to under 1 KB, but the receiver buffers all 600 KB: that is what counts.
+    let mut a = Link::with_config(1, Role::Client, LinkConfig { max_reliable_bytes: 1_000_000, ..LinkConfig::default() });
+    a.send_reliable(&vec![0u8; 600_000]).unwrap();
+    assert!(matches!(a.send_reliable(&vec![0u8; 600_000]), Err(SendError::QueueFull { queued_messages: 1, queued_bytes: 600_000 })));
+    assert_eq!(a.stats().reliable_queued_bytes, 600_000);
+    assert_eq!(a.footprint().reliable_out_bytes, 600_000);
+    // Acknowledged messages free their bytes again.
+    let mut b = Link::new(1, Role::Host);
+    let mut got = [Vec::new(), Vec::new()];
+    for step in 0..50u64 {
+        step_direct(&mut a, &mut b, step * 4, &|_| false, &mut got);
+    }
+    assert!(a.is_idle());
+    assert_eq!(a.footprint().reliable_out_bytes, 0);
+    a.send_reliable(&vec![0u8; 600_000]).unwrap();
+}
