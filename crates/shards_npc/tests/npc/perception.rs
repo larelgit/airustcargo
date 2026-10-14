@@ -126,3 +126,32 @@ fn hits_and_sprints_make_noise() {
     }
     assert!(heard, "a sprint 6 m behind it is heard");
 }
+
+/// A hit heard by the one it hit does not move what it sees: the attacker stays where it
+/// stands, not at the victim's own feet.
+#[test]
+fn a_hit_heard_does_not_move_an_attacker_in_sight() {
+    let mut app = app();
+    let (watcher, hero) = watcher_and_hero(&mut app, Vec3::new(0.0, 0.0, -3.0));
+    step(&mut app, 1);
+    assert!(sees(&app, watcher, hero));
+    let hit = Damaged {
+        attacker: hero,
+        target: watcher,
+        action: "hero_swing".into(),
+        amount: 5.0,
+        poise: 0.0,
+        hp_left: 95.0,
+        invulnerable: false,
+    };
+    app.world_mut().trigger(hit);
+    let mut heard = false;
+    for _ in 0..3 {
+        step(&mut app, 1);
+        let k = knows(&app, watcher, hero).expect("in sight");
+        assert!(k.seen, "{k:?}");
+        assert!((k.pos - feet(&app, hero)).length() < 0.05, "where it stands, not at the victim's feet: {k:?}");
+        heard |= k.heard;
+    }
+    assert!(heard, "the hit was heard all the same");
+}
