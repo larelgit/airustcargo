@@ -495,6 +495,10 @@ pub struct ActionStarted {
     pub entity: Entity,
     pub action: String,
     pub input: Option<String>,
+    /// A client started it for its own body ahead of the host
+    /// ([`PredictedAction`](crate::PredictedAction)); the host's own `ActionStarted` for it
+    /// comes later (forwarded, `false`), so presentation of a predicted body plays the first.
+    pub predicted: bool,
 }
 
 /// A buffered press never got to start.
@@ -558,12 +562,12 @@ pub(crate) struct FighterData {
 }
 
 /// What the machine decided for one fighter this tick.
-struct Choice {
-    start: Start,
-    input: String,
-    dir: Option<Vec3>,
+pub(crate) struct Choice {
+    pub start: Start,
+    pub input: String,
+    pub dir: Option<Vec3>,
     /// Index in the buffer; `None` for a held input.
-    queued: Option<usize>,
+    pub queued: Option<usize>,
 }
 
 /// `SimSet::Act`: every fighter's machine, in `AiId` order: presses into the buffer,
@@ -616,7 +620,12 @@ pub(crate) fn run_machines(
                 let run =
                     Running::new(&choice.start.action, def, instance, facing, choice.dir, Some(choice.input.clone()));
                 begin(entity, def, &run, here, &mut pending.0, &mut |e| commands.trigger(e));
-                commands.trigger(ActionStarted { entity, action: run.action.clone(), input: run.input.clone() });
+                commands.trigger(ActionStarted {
+                    entity,
+                    action: run.action.clone(),
+                    input: run.input.clone(),
+                    predicted: false,
+                });
                 f.state.current = Some(run);
             }
         }
@@ -627,15 +636,8 @@ pub(crate) fn run_machines(
         if let Some(run) = f.state.current.as_mut() {
             match db.get::<ActionDef>(&run.action) {
                 Some(def) => {
-                    let holding = def.hold.as_ref().is_some_and(|h| f.intent.is_held(&h.input));
-                    let spans = advance(run, def, dt, holding);
-                    if run.t <= def.track_until + EPS
-                        && let Some(dir) = track(def, &f.intent, here, target)
-                    {
-                        run.facing = dir;
-                    }
-                    external = run.facing
-                        * (spans.iter().map(|&(a, b)| def.displacement_at(b) - def.displacement_at(a)).sum::<f32>());
+                    let spans;
+                    (spans, external) = step_run(run, def, &f.intent, here, target, dt);
                     for &(lo, hi) in &spans {
                         for e in def.effects.iter().filter(|e| crosses(e.at, lo, hi)) {
                             pending.0.push((entity, run.action.clone(), e.effect.clone()));
@@ -699,20 +701,25 @@ fn choose(f: &FighterDataItem, db: &ContentDb, dt: f32) -> Option<Choice> {
     if f.dead {
         return None;
     }
-    let view = view(f, db);
-    for (i, q) in f.buffer.queued.iter().enumerate() {
-        if let Ok(start) = can_start(&view, &q.input, dt) {
+    choose_in(&view(f, db), &f.buffer.queued, dt)
+}
+
+/// [`choose`] over a view: the first of `queued` that can start, else a held input (the
+/// view's `held`) whose action starts held and is not running yet.
+pub(crate) fn choose_in(view: &FighterView, queued: &[Queued], dt: f32) -> Option<Choice> {
+    for (i, q) in queued.iter().enumerate() {
+        if let Ok(start) = can_start(view, &q.input, dt) {
             return Some(Choice { start, input: q.input.clone(), dir: q.dir, queued: Some(i) });
         }
     }
     let moveset = view.moveset_def()?;
-    for held in &f.intent.held {
-        let Some(def) = moveset.action(held).and_then(|a| db.get::<ActionDef>(a)) else { continue };
+    for held in view.held {
+        let Some(def) = moveset.action(held).and_then(|a| view.db.get::<ActionDef>(a)) else { continue };
         let starts_held = def.hold.as_ref().is_some_and(|h| h.input == *held);
-        if !starts_held || moveset.action(held).is_some_and(|a| f.state.is(a)) {
+        if !starts_held || moveset.action(held).is_some_and(|a| view.state.is(a)) {
             continue;
         }
-        if let Ok(start) = can_start(&view, held, dt) {
+        if let Ok(start) = can_start(view, held, dt) {
             return Some(Choice { start, input: held.clone(), dir: None, queued: None });
         }
     }
@@ -728,14 +735,7 @@ fn take_presses(
     running: Option<&ActionDef>,
     ttl: f32,
 ) {
-    let known = |input: &str| {
-        moveset.is_some_and(|m| m.inputs.contains_key(input))
-            || running.is_some_and(|d| {
-                d.cancels
-                    .iter()
-                    .any(|c| c.into.iter().any(|t| matches!(t, crate::def::Transition::Combo(i, _) if i == input)))
-            })
-    };
+    let known = |input: &str| understands(input, moveset, running);
     if !intent.pressed.iter().any(|p| known(&p.input)) {
         return;
     }
@@ -749,6 +749,17 @@ fn take_presses(
             i += 1;
         }
     }
+}
+
+/// Whether a fighter with `moveset`, running `running`, has a use for a press of `input`:
+/// its moveset maps it, or the running action combos into something with it.
+pub(crate) fn understands(input: &str, moveset: Option<&MovesetDef>, running: Option<&ActionDef>) -> bool {
+    moveset.is_some_and(|m| m.inputs.contains_key(input))
+        || running.is_some_and(|d| {
+            d.cancels
+                .iter()
+                .any(|c| c.into.iter().any(|t| matches!(t, crate::def::Transition::Combo(i, _) if i == input)))
+        })
 }
 
 /// Takes what starting `action` costs.
@@ -792,6 +803,30 @@ fn track(def: &ActionDef, intent: &Intent, here: Vec3, target: Option<Vec3>) -> 
     }
     let toward = |p: Vec3| flat(p - here).try_normalize();
     target.and_then(toward).or_else(|| intent.aim.and_then(toward))
+}
+
+/// One tick of a running action: its time moves on (looping a held span while its input
+/// is held), it turns while it tracks, and it moves the body. Returns the stretches of the
+/// timeline the tick covered and the displacement it makes (the machine's and a client's
+/// prediction's).
+pub(crate) fn step_run(
+    run: &mut Running,
+    def: &ActionDef,
+    intent: &Intent,
+    here: Vec3,
+    target: Option<Vec3>,
+    dt: f32,
+) -> (Vec<(f32, f32)>, Vec3) {
+    let holding = def.hold.as_ref().is_some_and(|h| intent.is_held(&h.input));
+    let spans = advance(run, def, dt, holding);
+    if run.t <= def.track_until + EPS
+        && let Some(dir) = track(def, intent, here, target)
+    {
+        run.facing = dir;
+    }
+    let external =
+        run.facing * (spans.iter().map(|&(a, b)| def.displacement_at(b) - def.displacement_at(a)).sum::<f32>());
+    (spans, external)
 }
 
 /// Whether instant `at` lies in the tick span `(lo, hi]`.
@@ -871,9 +906,22 @@ fn steer_body(f: &mut FighterDataItem, db: &ContentDb, external: Vec3) {
     }
     let out_of_stamina = f.stamina.as_ref().is_some_and(|s| s.current <= EPS || s.exhausted);
     let Some(loco) = f.loco.as_mut() else { return };
-    let run = f.state.current.as_ref();
+    steer_locomotion(loco, f.state.current.as_ref(), db, f.dead, out_of_stamina, external);
+}
+
+/// What `run` (the body's action, if any) wants of the controller this tick: the
+/// displacement `external`, whether it owns the body (no walking), where to face, a slower
+/// walk, no sprint. The machine's [`steer_body`] and a client's prediction both use it.
+pub(crate) fn steer_locomotion(
+    loco: &mut LocomotionInput,
+    run: Option<&Running>,
+    db: &ContentDb,
+    dead: bool,
+    out_of_stamina: bool,
+    external: Vec3,
+) {
     let def = run.and_then(|r| db.get::<ActionDef>(&r.action));
-    let owns = f.dead || (run.is_some() && def.is_none_or(|d| d.move_speed.is_none()));
+    let owns = dead || (run.is_some() && def.is_none_or(|d| d.move_speed.is_none()));
     loco.external = external;
     loco.locked = owns;
     if let Some(r) = run {
@@ -958,7 +1006,7 @@ pub fn force_action(world: &mut World, entity: Entity, action: &str) -> bool {
     let mut telegraphs = Vec::new();
     begin(entity, &def, &run, feet.0, &mut effects, &mut |t| telegraphs.push(t));
     state.current = Some(run);
-    world.trigger(ActionStarted { entity, action: action.to_owned(), input: None });
+    world.trigger(ActionStarted { entity, action: action.to_owned(), input: None, predicted: false });
     for t in telegraphs {
         world.trigger(t);
     }

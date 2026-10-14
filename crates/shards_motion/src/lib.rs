@@ -54,6 +54,7 @@ mod intent;
 mod overlay;
 pub mod perception;
 pub mod physics;
+mod predict;
 mod tools;
 
 use bevy::prelude::*;

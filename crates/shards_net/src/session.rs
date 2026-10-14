@@ -23,7 +23,7 @@ use ai_core::tools::NetRoute;
 use ai_core::{AgentSessions, AiAppExt, AiTools, Scope};
 use bevy::prelude::*;
 use shards_content::ContentAppExt;
-use shards_core::{CoreSystems, EngineAppExt, EngineConfig, Intent, NetLaunch, NetRole};
+use shards_core::{CoreSystems, EngineAppExt, EngineConfig, Intent, NetLaunch, NetRole, NetSet};
 
 use crate::client::{self, NetClient};
 use crate::def::NetDef;
@@ -150,6 +150,7 @@ impl Plugin for NetPlugin {
             .init_resource::<crate::events::NetEvents>()
             .init_resource::<crate::events::EventOutbox>()
             .init_resource::<crate::events::EventInbox>()
+            .init_resource::<crate::predict::NetCorrection>()
             // A client sends its own intent; the host's copy of it is never sent back.
             .net_predicted::<Intent>()
             .add_systems(FixedUpdate, despawn_left.in_set(SimSet::Cleanup).before(CoreSystems::ClearPresses));
@@ -157,6 +158,9 @@ impl Plugin for NetPlugin {
         app.world_mut().get_resource_or_init::<NetGame>();
         hooks::register(app);
         crate::tools::register(app);
+        crate::overlay::plugin(app);
+        #[cfg(feature = "render")]
+        crate::interp::plugin(app);
 
         app.configure_sets(
             FixedFirst,
@@ -180,6 +184,7 @@ impl Plugin for NetPlugin {
                 host::apply_inputs.in_set(NetSystems::ApplyInputs).run_if(resource_exists::<NetHost>),
                 client::receive.in_set(NetSystems::Receive).run_if(resource_exists::<NetClient>),
                 client::apply_state.in_set(NetSystems::ApplyState).run_if(resource_exists::<NetClient>),
+                crate::predict::correct.in_set(NetSystems::Correct).run_if(resource_exists::<NetClient>),
                 client::capture.in_set(NetSystems::Capture).run_if(resource_exists::<NetClient>),
             ),
         )
@@ -188,6 +193,14 @@ impl Plugin for NetPlugin {
             (
                 host::send.in_set(NetSystems::Send).run_if(resource_exists::<NetHost>),
                 client::send.in_set(NetSystems::Send).run_if(resource_exists::<NetClient>),
+            ),
+        )
+        // A client's own body: the inputs it sent for the tick in, and the tick recorded.
+        .add_systems(
+            FixedUpdate,
+            (
+                crate::predict::predict_input.in_set(NetSet::PredictInput),
+                crate::predict::predict_end.in_set(NetSet::PredictEnd),
             ),
         )
         .add_systems(Last, pump.in_set(NetSystems::Pump))
