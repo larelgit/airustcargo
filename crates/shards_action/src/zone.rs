@@ -154,8 +154,9 @@ fn rect_exit(p: Vec3, f: Vec3, r: Vec3, hx: f32, hz: f32) -> Option<Vec3> {
 }
 
 /// Out of a sector (apex at the origin, axis `f`, `half` angle) inflated by `radius`:
-/// back out of its range, or sideways past its nearer edge, whichever is shorter.
-/// Past ±90° the sides are approximated by their lines.
+/// back out of its range, or sideways past its nearer edge, whichever is shorter. Wider
+/// than a half disc (`half` > 90°) it is not convex and crossing an edge line stays
+/// inside it: the way out is the notch behind the apex instead.
 fn sector_exit(p: Vec3, f: Vec3, range: f32, half: f32, radius: f32) -> Option<Vec3> {
     let d = p.length();
     let side = Vec3::new(-f.z, 0.0, f.x);
@@ -172,11 +173,21 @@ fn sector_exit(p: Vec3, f: Vec3, range: f32, half: f32, radius: f32) -> Option<V
         return None;
     }
     let mut options: Vec<(f32, Vec3)> = vec![(range + radius - d, if d > 1e-4 { p / d } else { f })];
-    if half < std::f32::consts::PI - EPS {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    if half <= FRAC_PI_2 {
         for edge in [half, -half] {
             // Outward normal of the edge line: crossing it takes `radius - p·normal`.
-            let normal = edge_dir(edge + edge.signum() * std::f32::consts::FRAC_PI_2);
+            let normal = edge_dir(edge + edge.signum() * FRAC_PI_2);
             options.push((radius - p.dot(normal), normal));
+        }
+    } else if half < PI - EPS {
+        // The notch clears the sector by `radius` from this apex back along the axis; its
+        // edges run the sector's way. The nearest point of the notch is on one of them.
+        let apex = -f * (radius / (PI - half).sin());
+        for edge in [half, -half] {
+            let dir = edge_dir(edge);
+            let to = apex + dir * (p - apex).dot(dir).max(0.0) - p;
+            options.push((to.length(), to.normalize_or_zero()));
         }
     }
     options.into_iter().filter(|(dist, _)| *dist > 0.0).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(dist, dir)| dir * dist)
@@ -403,6 +414,34 @@ mod tests {
         assert!(!z.contains(p + out * 1.01, 0.0));
         assert_eq!(z.exit(Vec3::new(0.0, 0.0, 1.0), 0.0), None, "behind the apex");
         assert_eq!(z.exit(Vec3::new(2.5, 0.0, -0.5), 0.0), None, "outside the angle");
+    }
+
+    #[test]
+    fn a_wide_cone_is_left_through_the_notch_behind_it() {
+        let z = at(HitShape::Cone { range: 3.0, angle: 240.0, height: 2.0 });
+        // 1 m ahead of the apex: crossing an edge line stays inside a sector this wide;
+        // the way out is straight back, into the notch deep enough to clear the edges.
+        let out = z.exit(Vec3::new(0.0, 0.0, -1.0), 0.4).unwrap();
+        let behind = 0.4 / 60f32.to_radians().sin();
+        assert!(close(out, Vec3::new(0.0, 0.0, 1.0 + behind)), "{out}");
+        // Whatever the angle, doing what `exit` says leaves the zone (or its edge, to
+        // within a centimeter).
+        for angle in [60.0, 90.0, 120.0, 180.0, 181.0, 200.0, 240.0, 300.0, 350.0] {
+            let z = at(HitShape::Cone { range: 3.0, angle, height: 2.0 });
+            for radius in [0.1, 0.4] {
+                for i in -22..=22 {
+                    for j in -22..=22 {
+                        let p = Vec3::new(i as f32 * 0.17, 0.0, j as f32 * 0.17);
+                        let Some(out) = z.exit(p, radius) else { continue };
+                        let left = z.exit(p + out * 1.001, radius);
+                        assert!(
+                            left.is_none_or(|rest| rest.length() < 1e-2),
+                            "cone {angle}° radius {radius}: from {p} by {out} still {left:?} inside"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
