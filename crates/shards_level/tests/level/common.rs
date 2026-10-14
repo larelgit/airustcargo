@@ -88,6 +88,11 @@ pub fn app_with(dir: &Path, setup: impl FnOnce(&mut App)) -> App {
         .add_plugins(ContentPlugin)
         .add_plugins(MotionPlugin)
         .add_plugins(LevelPlugin)
+        // Prefabs and level files name these by reflection; without Bevy's
+        // `reflect_auto_register` (a build without render) they must be registered by hand.
+        .register_type::<Name>()
+        .register_type::<Transform>()
+        .register_type::<ai_core::AiKind>()
         .register_type::<Health>()
         .register_type::<Team>()
         .register_type::<Loot>()

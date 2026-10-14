@@ -3,8 +3,8 @@
 use ai_core::AiId;
 use bevy::prelude::*;
 use serde_json::json;
-use shards_level::{despawn_level, level_asset, spawn_level, FromLevel, LevelAsset, LevelInstances};
-use shards_motion::{ColliderId, PhysicsWorld};
+use shards_level::{despawn_level, level_asset, spawn_level, FromLevel, LevelAsset, LevelInstances, LevelMarker};
+use shards_motion::{Collider, ColliderId, PhysicsWorld};
 
 use crate::asset::close;
 use crate::common::*;
@@ -14,14 +14,37 @@ use crate::gltf::NodeSpec;
 fn fingerprint(app: &mut App) -> Vec<String> {
     let world = app.world_mut();
     let mut found: Vec<(u32, String)> = world
-        .query::<(&FromLevel, &Transform, Option<&AiId>, Option<&ColliderId>)>()
+        .query::<(&FromLevel, &Transform, Option<&AiId>, Option<&ColliderId>, Option<&Collider>, Option<&LevelMarker>)>()
         .iter(world)
-        .map(|(from, t, id, collider)| {
-            (from.index, format!("{} {:?} {:?} {:?} {:?}", from.node, id, collider, t.translation.to_array(), t.rotation.to_array()))
+        .map(|(from, t, id, collider_id, collider, marker)| {
+            let pose = (t.translation.to_array(), t.rotation.to_array(), t.scale.to_array());
+            (from.index, format!("{} {id:?} {collider_id:?} {pose:?} {collider:?} {marker:?}", from.node))
         })
         .collect();
     found.sort();
     found.into_iter().map(|(_, line)| line).collect()
+}
+
+/// FNV-1a over the lines of [`fingerprint`].
+fn fingerprint_hash(app: &mut App) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in fingerprint(app).join("\n").bytes() {
+        h = (h ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+    }
+    h
+}
+
+/// What the arena spawns, as a number. It depends on nothing but the file, the engine's
+/// numbering and the physics shapes, so it is the same in a headless build
+/// (`cargo test -p shards_level`) and with the `render` feature (`cargo test --workspace`):
+/// both check this value. (Update it when the arena or the numbering changes on purpose.)
+const ARENA_FINGERPRINT: u64 = 11462270193469146411;
+
+#[test]
+fn the_arena_spawns_the_same_world_in_every_build() {
+    let mut app = app();
+    spawn_arena(&mut app);
+    assert_eq!(fingerprint_hash(&mut app), ARENA_FINGERPRINT, "{:#?}", fingerprint(&mut app));
 }
 
 #[test]
