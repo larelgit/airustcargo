@@ -20,6 +20,7 @@
 //! shards raw world.query '{"data":{"components":["sandbox::gameplay::combat::Health"]}}'
 //! ```
 
+use std::io::{self, ErrorKind, Write};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -296,7 +297,7 @@ fn wait(cli: &Cli, timeout: Duration) -> Result<ExitCode, String> {
         let answer = cli.client().and_then(|client| client.call("ai/status", Value::Null));
         match answer {
             Ok(status) if still_loading(&status).is_empty() => {
-                println!("{}", ready_line(&status));
+                say(ready_line(&status));
                 return Ok(ExitCode::SUCCESS);
             }
             Ok(status) if start.elapsed() >= timeout => {
@@ -346,7 +347,7 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             let out = act("step", args)?;
             let code = print_outcome(&out, cli.json);
             if *observe && !cli.json {
-                println!();
+                say("");
                 print_outcome(&act("observe", json!({}))?, false);
             }
             return Ok(code);
@@ -371,7 +372,7 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
                 .and_then(|t| serde_json::from_str(&t).ok())
                 .ok_or_else(|| format!("{png} is saved, but its legend {legend} is not readable"))?;
             if cli.json {
-                println!("{}", serde_json::to_string_pretty(&info).unwrap_or_default());
+                say(serde_json::to_string_pretty(&info).unwrap_or_default());
             } else {
                 print_shot(&info);
             }
@@ -380,13 +381,13 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
         Cmd::Tools => {
             let tools = client.call("ai/tools", json!({"agent": agent}))?;
             if cli.json {
-                println!("{}", serde_json::to_string_pretty(&tools).unwrap_or_default());
+                say(serde_json::to_string_pretty(&tools).unwrap_or_default());
             } else {
                 for t in tools.as_array().into_iter().flatten() {
                     let s = |k: &str| t.get(k).and_then(Value::as_str).unwrap_or("");
-                    println!("{}  [{} {}]", s("signature"), s("scope"), s("kind"));
+                    say(format!("{}  [{} {}]", s("signature"), s("scope"), s("kind")));
                     for line in s("description").lines() {
-                        println!("    {line}");
+                        say(format!("    {line}"));
                     }
                 }
             }
@@ -413,9 +414,9 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
         Cmd::Status => {
             let s = client.call("ai/status", Value::Null)?;
             if !cli.json {
-                println!("{}", ready_line(&s));
+                say(ready_line(&s));
             }
-            println!("{}", serde_json::to_string_pretty(&s).unwrap_or_default());
+            say(serde_json::to_string_pretty(&s).unwrap_or_default());
             return Ok(ExitCode::SUCCESS);
         }
         Cmd::Session { scope, subject, clear_subject } => {
@@ -423,7 +424,7 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
                 "ai/session",
                 json!({"agent": agent, "scope": scope, "subject": subject, "clear_subject": clear_subject}),
             )?;
-            println!("{}", serde_json::to_string_pretty(&s).unwrap_or_default());
+            say(serde_json::to_string_pretty(&s).unwrap_or_default());
             return Ok(ExitCode::SUCCESS);
         }
         Cmd::Content { cmd: ContentCmd::Check } => {
@@ -443,7 +444,7 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
                 Some(p) => serde_json::from_str(p).map_err(|e| format!("params must be JSON: {e}"))?,
                 None => Value::Null,
             };
-            println!("{}", serde_json::to_string_pretty(&client.call(method, params)?).unwrap_or_default());
+            say(serde_json::to_string_pretty(&client.call(method, params)?).unwrap_or_default());
             return Ok(ExitCode::SUCCESS);
         }
         Cmd::Wait { timeout } => return wait(cli, Duration::from_secs(*timeout)),
@@ -471,23 +472,41 @@ fn print_shot(info: &Value) {
     let n = |k: &str| info.get(k).and_then(Value::as_u64).unwrap_or(0);
     let marks = if info.get("marks") == Some(&Value::Bool(true)) { "marks on" } else { "no marks" };
     let path = info.get("path").and_then(Value::as_str).unwrap_or("");
-    println!("saved {path} ({}x{}, tick {}, {marks})", n("width"), n("height"), n("tick"));
+    say(format!("saved {path} ({}x{}, tick {}, {marks})", n("width"), n("height"), n("tick")));
     let legend: Vec<&str> =
         info.get("legend").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
     if legend.is_empty() {
-        println!("LEGEND  nothing AI-visible in the picture");
+        say("LEGEND  nothing AI-visible in the picture");
     } else {
-        println!("LEGEND (image pixels)");
+        say("LEGEND (image pixels)");
         for line in legend {
-            println!("  {line}");
+            say(format!("  {line}"));
         }
     }
+}
+
+/// Prints one line of command output, as `println!` does. A reader that has gone away
+/// (`shards observe | head -1`) is the end of the output, not an error: exit 0 quietly
+/// instead of panicking. Any other write error ends the process with code 2.
+fn say(line: impl std::fmt::Display) {
+    if let Err(e) = write_line(&mut io::stdout().lock(), line) {
+        if e.kind() == ErrorKind::BrokenPipe {
+            std::process::exit(0);
+        }
+        let _ = writeln!(io::stderr(), "error: cannot write to stdout: {e}");
+        std::process::exit(2);
+    }
+}
+
+/// `line` and a newline written to `out`: the bytes `println!` writes.
+fn write_line(out: &mut impl Write, line: impl std::fmt::Display) -> io::Result<()> {
+    writeln!(out, "{line}")
 }
 
 /// Text for humans and agents: the result, then what changed, then new journal lines.
 fn print_outcome(out: &Value, as_json: bool) -> ExitCode {
     if as_json {
-        println!("{}", serde_json::to_string_pretty(out).unwrap_or_default());
+        say(serde_json::to_string_pretty(out).unwrap_or_default());
         return if out.get("ok") == Some(&Value::Bool(false)) { ExitCode::FAILURE } else { ExitCode::SUCCESS };
     }
     let ok = out.get("ok").and_then(Value::as_bool).unwrap_or(true);
@@ -497,7 +516,7 @@ fn print_outcome(out: &Value, as_json: bool) -> ExitCode {
         other => serde_json::to_string_pretty(other).unwrap_or_default(),
     };
     if ok {
-        println!("{}", text.trim_end());
+        say(text.trim_end());
     } else {
         eprintln!("error: {text}");
     }
@@ -506,16 +525,16 @@ fn print_outcome(out: &Value, as_json: bool) -> ExitCode {
     };
     let changes = list("changes");
     if !changes.is_empty() {
-        println!("CHANGES");
+        say("CHANGES");
         for c in changes {
-            println!("  {c}");
+            say(format!("  {c}"));
         }
     }
     let journal = list("journal");
     if !journal.is_empty() {
-        println!("JOURNAL");
+        say("JOURNAL");
         for j in journal {
-            println!("  {j}");
+            say(format!("  {j}"));
         }
     }
     if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE }
@@ -575,5 +594,31 @@ mod tests {
     fn the_ready_line_names_the_instance() {
         let status = json!({"tick": 0, "seed": 1, "instance": {"pid": 4242, "seed": 1, "port": 15711}});
         assert_eq!(ready_line(&status), "ready: tick 0 · pid 4242 · seed 1 · port 15711");
+    }
+
+    #[test]
+    fn output_lines_are_written_as_println_writes_them() {
+        let mut out: Vec<u8> = Vec::new();
+        write_line(&mut out, "CHANGES").unwrap();
+        write_line(&mut out, "  e5 moved").unwrap();
+        assert_eq!(out, b"CHANGES\n  e5 moved\n");
+    }
+
+    /// A reader that has gone away: every write fails the way a closed pipe does.
+    struct ClosedPipe;
+
+    impl Write for ClosedPipe {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Err(ErrorKind::BrokenPipe.into())
+        }
+    }
+
+    #[test]
+    fn a_closed_pipe_is_a_broken_pipe_error_that_say_ends_quietly() {
+        let err = write_line(&mut ClosedPipe, "observe").unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::BrokenPipe);
     }
 }
