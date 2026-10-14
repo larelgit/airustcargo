@@ -114,7 +114,7 @@
 | 1 | физика в `FixedUpdate`, детерминированная; слои, триггер-объёмы, raycast и shapecast | ✅ | `crates/shards_motion/src/physics/`; тесты `tests/motion/physics.rs`. Кандидата avian3d нет смысла брать: он для Bevy 0.19. Своя кинематическая физика на parry3d: коллайдеры с `ColliderId`, слои, объёмы (вода, поток, триггер), `raycast`/`shapecast`/`overlaps`/`volumes_at`. Широкая фаза — линейный перебор с AABB (BVH — потом) |
 | 2 | контроллер: ходьба, бег, спринт, прыжок, ступени, перелезание, склоны, плавание, планер; событие падения | ✅ | `src/controller/`; `tests/motion/controller.rs` (28), `edge_cases.rs`, `course.rs`; `Landed { fall_height }` |
 | 3 | параметры контроллера — ассет с горячей перезагрузкой | ✅ | вид `locomotion` (`CharacterParams`); тест `locomotion_content_sets_the_numbers_and_a_reload_changes_them_on_the_next_tick` |
-| 4 | ввод: карта действий в `Intent`, клавиатура, мышь, геймпад, переназначение с сохранением, удержание/нажатие, контексты | 🟡 | `src/input/`; `tests/motion/input.rs` (27). `bevy_enhanced_input` для Bevy 0.20 нет, карта своя. Переназначение сохраняется в настройках `controls` (E8.6, `settings.toml`; старый `input.ron` переносится один раз и только если игра попросила: `InputSettings::for_game`), `accessibility.hold_to_toggle` делает удержание переключателем. Геймпад проверен тестами на сущностях `Gamepad`, настоящим устройством не пробовали |
+| 4 | ввод: карта действий в `Intent`, клавиатура, мышь, геймпад, переназначение с сохранением, удержание/нажатие, контексты | 🟡 | `src/input/`; `tests/motion/input.rs` (30). `bevy_enhanced_input` для Bevy 0.20 нет, карта своя. Переназначение сохраняется в настройках `controls` (E8.6, `settings.toml`; старый `input.ron` переносится один раз и только если игра попросила: `InputSettings::for_game`), `accessibility.hold_to_toggle` делает удержание переключателем. Геймпад проверен тестами на сущностях `Gamepad`, настоящим устройством не пробовали |
 | 5 | камера: орбита, стены, захват цели и переключение, помощь прицеливания, тряска, поле зрения | ✅ | `src/camera/` (математика без окна: `math.rs`; системы: `systems.rs`, feature `render`); `tests/motion/camera.rs`. Камера — только представление, геймплей и `observe` её не читают |
 | 6 | API предупреждения об атаках за кадром | ✅ | `threat_indicators(world, viewer, forward)` в `shards_action::zone`; маркеры на краю экрана — `shards_action::render::hud` |
 
@@ -309,8 +309,8 @@ Xvfb показывает его вместе с оверлеем навсетк
 
 `cargo test --workspace` на 14 октября 2026:
 
-Всего 1028 тестов проходят, 0 падают, 22 помечены `#[ignore]` (запись эталонных реплеев, проверка окна под Xvfb, примеры в
-документации); у шаблона отдельно 23 проходят (и один `#[ignore]`: запись его эталонов). Запускать нужно из обычной оболочки:
+Всего 1109 тестов проходят, 0 падают, 23 помечены `#[ignore]` (запись эталонных реплеев, проверка окна под Xvfb, примеры в
+документации); у шаблона отдельно 24 проходят (и один `#[ignore]`: запись его эталонов). Запускать нужно из обычной оболочки:
 под `nohup` игнорируется SIGHUP, и тест `kill_and_hangup_remove_the_token_and_the_port_file` падает на `signal 1`.
 
 | крейт | тестов | где |
@@ -320,8 +320,8 @@ Xvfb показывает его вместе с оверлеем навсетк
 | `shards_cli` | 12 | `crates/shards_cli/src/*` |
 | `shards_core` | 14 | `src/` и `tests/core.rs` |
 | `shards_content` | 22 | `src/` и `tests/content.rs` |
-| `shards_motion` | 172 | `src/` и `tests/motion/` (контроллер 28, перцепция 29, ввод 27, физика 11, …) |
-| `shards_settings` | 45 | `src/` (14) и `tests/settings/` (31: хранилище, файл и его порча, группы, инструменты, изоляция от снапшота, хэша и репликации) |
+| `shards_motion` | 175 | `src/` и `tests/motion/` (контроллер 28, перцепция 29, ввод 30, физика 11, …) |
+| `shards_settings` | 57 | `src/` (16) и `tests/settings/` (41: хранилище, файл и его порча, правка файла руками в работающей игре, повтор записи и запись при выходе, группы, инструменты, изоляция от снапшота, хэша и репликации) |
 | `shards_action` | 145 | `src/` и `tests/combat/` |
 | `shards_level` | 80 | `src/` (3) и `tests/level/` (77: файл и узлы, свойства, коллайдеры, маркеры, спавн, `level` в контенте, реплей, картинка) |
 | `shards_world` | 72 | `src/` (17) и `tests/world/` (55: генерация, проверки, подземелья, регионы, смена региона, уровни-тайлы, зоны, навсетка региона) |
@@ -329,8 +329,8 @@ Xvfb показывает его вместе с оверлеем навсетк
 | `shards_save` | 87 | `src/` (32) и `tests/save/` (55) |
 | `shards_net` | 80 | `src/` |
 | `shards` | 21 | `src/`, `tests/engine.rs`, `tests/failures.rs`, `tests/level_render.rs`, `tests/run_to.rs` (3), `tests/action_render/` |
-| `sandbox` | 139 | `tests/sandbox/` (118, из них `snapshots.rs` 28, `replays.rs` 23, `invariants.rs` 12; ещё `#[ignore]` запись эталонных реплеев), `tests/system_failures.rs` (8), `tests/perf.rs` (6), `tests/log_capture.rs` (5), `src/` (2) |
-| шаблон | 23 | `template/tests/game/` (содержание, детерминизм, реплеи, сценарии, регион, манифест) |
+| `sandbox` | 141 | `tests/sandbox/` (120, из них `snapshots.rs` 28, `replays.rs` 23, `invariants.rs` 12; ещё `#[ignore]` запись эталонных реплеев), `tests/system_failures.rs` (8), `tests/perf.rs` (6), `tests/log_capture.rs` (5), `src/` (2) |
+| шаблон | 24 | `template/tests/game/` (содержание, детерминизм, реплеи, сценарии, регион, манифест) |
 
 ## Известные ограничения и отложенное
 
