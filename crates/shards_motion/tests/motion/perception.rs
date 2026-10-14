@@ -369,6 +369,23 @@ fn move_to_with_path_follows_the_route_around_the_wall() {
 }
 
 #[test]
+fn move_to_with_path_stops_within_the_distance_asked_not_twice_that() {
+    let mut app = bare_engine("move_to_path_within");
+    wall_with_a_gap(app.world_mut());
+    let e = player(app.world_mut(), Vec3::ZERO);
+    let marker = app.world_mut().spawn((ai_core::AiKind::new("Marker"), Transform::from_xyz(0.0, 0.0, -12.0))).id();
+    let id = app.world().get::<ai_core::AiId>(marker).unwrap().to_string();
+    step(&mut app, 2);
+    // An entity: within 1.5 m by default. The plan's last leg already ends that close; the
+    // walk must not stop another 1.5 m short of where that leg ends.
+    ok(&mut app, "move_to", json!({"target": id, "path": true}));
+    step(&mut app, 900);
+    assert!(intent(&app, e).orders.is_empty(), "the orders are done: {:?}", intent(&app, e).orders);
+    let left = Vec2::new(feet(&app, e).x, feet(&app, e).z + 12.0).length();
+    assert!(left <= 1.5 + 0.05 && left > 0.9, "stops 1.5 m from the marker, not 3 m: {left}");
+}
+
+#[test]
 fn move_to_with_path_climbs_and_swims_where_the_route_does() {
     let mut app = bare_engine("move_to_path_pool");
     pool_course(app.world_mut());

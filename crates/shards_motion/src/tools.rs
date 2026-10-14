@@ -116,14 +116,20 @@ fn move_to(
             None => format!("ok: {desc}"),
         });
     };
-    // One order per leg end; passing a waypoint needs less precision than arriving.
+    // One order per leg end; passing a waypoint needs less precision than arriving. The
+    // last leg already ends within `within` of the target: its order heads for the target
+    // itself, so the walk stops `within` from the target, not `within` short of a point
+    // that is itself that far short.
     let legs = plan.waypoints();
     if legs.is_empty() {
         return Ok(format!("ok: already within {within:.1}m"));
     }
     let last = legs.len() - 1;
     for (n, (at, _)) in legs.into_iter().enumerate() {
-        let order = Order::MoveTo { target: Target::Point(at), within: if n == last { within } else { WAYPOINT_WITHIN } };
+        let order = match n == last {
+            true => Order::MoveTo { target: to, within },
+            false => Order::MoveTo { target: Target::Point(at), within: WAYPOINT_WITHIN },
+        };
         intent.orders.push_back(order);
     }
     Ok(format!("ok: following {}", plan.summary()))
