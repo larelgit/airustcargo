@@ -6,5 +6,6 @@ mod checks;
 mod common;
 mod dungeon;
 mod generation;
+mod nav;
 mod regions;
 mod zones;

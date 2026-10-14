@@ -21,7 +21,7 @@ pub(crate) fn register(world: &mut World) {
     world.init_resource::<NavOverlay>();
     register_tool(world, "nav_bake", Scope::Dev, ToolKind::Control, nav_bake);
     register_tool(world, "nav_overlay", Scope::Dev, ToolKind::Query, nav_overlay);
-    register_tool(world, "nav_info", Scope::Player, ToolKind::Query, nav_info);
+    register_tool(world, "nav_info", Scope::Dev, ToolKind::Query, nav_info);
 }
 
 /// What [`bake_files`] did.

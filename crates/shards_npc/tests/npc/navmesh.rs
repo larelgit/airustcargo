@@ -237,7 +237,7 @@ fn bakes_are_checked_against_their_tiles_and_baked_again_when_stale() {
     std::fs::write(dir.join("nav/floor.navtile.ron"), &first).unwrap();
     load_region(&mut app, &["floor pillar floor"]);
     let warned = warnings(&app);
-    assert!(warned.iter().any(|w| w.contains("navmesh: 1 tiles baked while loading (stale: floor)") && w.contains("--bake-nav all")), "{warned:#?}");
+    assert!(warned.iter().any(|w| w.contains("navmesh: 1 tile baked while loading (stale: floor)") && w.contains("--bake-nav all")), "{warned:#?}");
     route(&app, Vec3::new(4.0, 0.0, 4.0), Vec3::new(20.0, 0.0, 4.0)).expect("it works anyway");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -384,4 +384,28 @@ fn a_recorded_npc_walk_on_the_navmesh_plays_back_identically() {
     copy.update();
     let report = copy.world().resource::<AiReplay>().report().cloned().expect("playback finished");
     assert!(report.identical(), "{report}");
+}
+
+#[test]
+fn solids_the_bakes_never_saw_are_carved_out_and_back_in() {
+    let mut app = app();
+    load_region(&mut app, &["floor pillar floor"]);
+    let carved = |app: &App| app.world().resource::<NavRegion>().report.carved;
+    assert_eq!(carved(&app), 0, "the tiles' own solids are their bakes', the arena's floor lies below the ground");
+    let (from, to) = (Vec3::new(2.0, 0.0, 4.0), Vec3::new(6.0, 0.0, 4.0));
+    assert!(route(&app, from, to).unwrap().length < 4.01, "straight across");
+    // The game puts a wall in the way after the region loaded: the next tick carves it out.
+    let blocker = wall(app.world_mut(), Vec3::new(3.5, 0.0, 2.0), Vec3::new(4.5, 2.5, 6.0));
+    step(&mut app, 1);
+    assert!(carved(&app) > 0);
+    let around = route(&app, from, to).unwrap();
+    assert!(around.length > 5.0, "around the wall: {:?}", around.points);
+    for (a, b) in segments(&around) {
+        assert!(!touches(a, b, Vec2::new(3.5, 2.0), Vec2::new(4.5, 6.0), 0.3), "{a} → {b} cuts the wall");
+    }
+    // It goes again: the cells are walkable again.
+    app.world_mut().despawn(blocker);
+    step(&mut app, 1);
+    assert_eq!(carved(&app), 0);
+    assert!(route(&app, from, to).unwrap().length < 4.01, "straight across again");
 }

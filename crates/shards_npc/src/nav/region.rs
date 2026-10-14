@@ -68,27 +68,26 @@ pub struct Instance {
 impl Instance {
     /// Local column `(i, j)` → global column.
     pub fn to_global(&self, i: i32, j: i32) -> [i32; 2] {
+        // One clockwise turn takes (x, y) of a w×h grid to (h - 1 - y, x) of an h×w one.
         let [mut w, mut h] = [self.nav.size[0] as i32, self.nav.size[1] as i32];
         let (mut x, mut y) = (i, j);
         for _ in 0..self.turns {
             (x, y) = (h - 1 - y, x);
-            (w, h) = (h, w);
+            std::mem::swap(&mut w, &mut h);
         }
-        let _ = w;
         [self.origin[0] + x, self.origin[1] + y]
     }
 
     /// Global column → local column (it may be outside the bake's grid).
     pub fn to_local(&self, [gx, gz]: [i32; 2]) -> (i32, i32) {
         let (mut x, mut y) = (gx - self.origin[0], gz - self.origin[1]);
-        // The grid turned `turns` times is `grid`; undo one turn at a time.
+        // Undo one turn at a time, from the turned grid (`grid`, w×h) back: (x, y) of the
+        // turned one came from (y, w - 1 - x) of the h×w one before.
         let [mut w, mut h] = [self.grid[0] as i32, self.grid[1] as i32];
         for _ in 0..self.turns {
-            // One clockwise turn took (x, y) of an h'×w' grid to (h' - 1 - y, x) of a w×h one.
             (x, y) = (y, w - 1 - x);
-            (w, h) = (h, w);
+            std::mem::swap(&mut w, &mut h);
         }
-        let _ = h;
         (x, y)
     }
 
@@ -423,10 +422,11 @@ pub fn rebuild(world: &mut World) {
             }
             if !baked.is_empty() {
                 let n = report.missing.len() + report.stale.len();
+                let tiles = if n == 1 { "tile" } else { "tiles" };
                 journal::emit(
                     world,
                     JournalKind::Warn,
-                    format!("navmesh: {n} tiles baked while loading ({}); bake them with `--bake-nav all` (or the nav_bake tool)", baked.join("; ")),
+                    format!("navmesh: {n} {tiles} baked while loading ({}); bake them with `--bake-nav all` (or the nav_bake tool)", baked.join("; ")),
                 );
             }
             for (tile, why) in report.failed {
@@ -670,12 +670,11 @@ impl NavRegion {
     /// Whether collider `c` is one the bake of instance `inst` was made with.
     fn baked_with(&self, inst: u32, c: &shards_motion::ColliderInfo) -> bool {
         let instance = &self.instances[inst as usize];
-        let half = Vec3::new(instance.grid[0] as f32, 0.0, instance.grid[1] as f32) * self.cell * 0.5;
-        // The bake's frame is not turned: its own half extents.
-        let half_bake = if instance.turns % 2 == 1 { Vec3::new(half.z, 0.0, half.x) } else { half };
+        // The bake's frame has its north-west corner at the origin; the tile's, its center.
+        let half = Vec3::new(instance.nav.size[0] as f32, 0.0, instance.nav.size[1] as f32) * self.cell * 0.5;
         let turned = rotation(instance.turns);
         instance.nav.colliders.iter().any(|b| {
-            let pos = instance.center + turn(b.pos - half_bake, instance.turns);
+            let pos = instance.center + turn(b.pos - half, instance.turns);
             let rot = turned * b.rot;
             same_shape(&b.shape, &c.shape) && pos.distance(c.position) < 2e-3 && rot.dot(c.rotation).abs() > 0.99999
         })
