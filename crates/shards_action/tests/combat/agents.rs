@@ -183,6 +183,41 @@ fn the_block_tool_holds_and_waits_for_a_busy_fighter() {
 }
 
 #[test]
+fn the_block_tool_does_not_call_a_lowering_block_up() {
+    let mut app = app();
+    let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    ok(&mut app, "block", json!({}));
+    step(&mut app, 20);
+    ok(&mut app, "block", json!({"on": false}));
+    let phase = |app: &App| app.world().get::<ActionState>(hero).unwrap().current.as_ref().map(|r| r.phase.clone());
+    while phase(&app).as_deref() != Some("lower") {
+        step(&mut app, 1);
+    }
+    // Hits land in full until it is up again: the answer says when that is.
+    let again = ok(&mut app, "block", json!({}));
+    let secs = again.strip_prefix("ok: holding block; it rises in ").and_then(|s| s.strip_suffix('s')).expect(&again);
+    let ticks = (secs.parse::<f32>().unwrap() / DT).round() as u64;
+    step(&mut app, ticks);
+    assert_eq!(action(&app, hero), "idle", "the lowering block runs out");
+    step(&mut app, 1);
+    assert_eq!(phase(&app).as_deref(), Some("raise"), "and the held block rises right after");
+}
+
+#[test]
+fn dodge_names_the_way_the_roll_goes() {
+    let mut app = app();
+    let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    assert_eq!(ok(&mut app, "dodge", json!({})), "ok: roll (forward)", "nothing to go by");
+    step(&mut app, 60);
+    // Walking east while facing north: the roll follows the movement input.
+    app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = Vec3::X;
+    assert_eq!(ok(&mut app, "dodge", json!({})), "ok: roll (E)");
+    let x = feet(&app, hero).x;
+    step(&mut app, 30);
+    assert!(feet(&app, hero).x - x > 3.0, "rolled east: {}", feet(&app, hero));
+}
+
+#[test]
 fn describe_lines_read_like_a_status_bar() {
     let mut app = app();
     let world = app.world_mut();

@@ -14,7 +14,7 @@ use shards_core::input_names::{BLOCK, DODGE, HEAVY, LIGHT, PARRY, TECHNIQUE, USE
 use shards_core::{flat, Intent, Order};
 
 use crate::combat::{stagger, StaggerCause};
-use crate::def::{ActionDef, CombatTuning};
+use crate::def::{ActionDef, CombatTuning, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team};
 use crate::machine::{can_start, fits_buffer, ActionState, FighterView, Healed};
 use crate::zone::{body_radius, zones_threatening};
@@ -130,7 +130,7 @@ fn block(In(call): In<Call<BlockArgs>>, world: &mut World) -> ToolResult {
         // A block without a hold loop is a timed press.
         return press(world, &call.caller, BLOCK, None);
     }
-    if action.as_deref().is_some_and(|a| world.get::<ActionState>(me).is_some_and(|s| s.is(a))) {
+    if action.as_deref().is_some_and(|a| holding_up(world, me, a)) {
         world.get_mut::<Intent>(me).ok_or("no Intent")?.set_held(BLOCK, true);
         return Ok("ok: already blocking".into());
     }
@@ -146,6 +146,15 @@ fn block(In(call): In<Call<BlockArgs>>, world: &mut World) -> ToolResult {
     };
     world.get_mut::<Intent>(me).ok_or("no Intent")?.set_held(BLOCK, true);
     Ok(answer)
+}
+
+/// Whether `action` is running and still inside its hold span, i.e. a held input keeps
+/// it up. A block that is lowering is not: it ends, and only then rises again.
+fn holding_up(world: &World, me: Entity, action: &str) -> bool {
+    let run = world.get::<ActionState>(me).and_then(|s| s.current.as_ref()).filter(|r| r.action == action);
+    let def = world.resource::<ContentDb>().get::<ActionDef>(action);
+    let end = def.and_then(|d| d.span(&d.hold.as_ref()?.span)).map(|(_, end)| end);
+    run.zip(end).is_some_and(|(run, end)| run.t < end - EPS)
 }
 
 /// Dodge roll: a burst of movement with invulnerable frames, for stamina. Default
@@ -174,7 +183,9 @@ fn dodge(In(call): In<Call<DodgeArgs>>, world: &mut World) -> ToolResult {
             zones_threatening(world, me, here, body_radius(world, me)).first().and_then(|(_, out)| out.try_normalize())
         }
     };
-    let towards = dir.map_or_else(|| "forward".to_owned(), |d| compass(d).to_owned());
+    // The roll goes where the press says, else along the movement input (as `steer` does).
+    let moving = world.get::<Intent>(me).and_then(|i| flat(i.move_dir).try_normalize());
+    let towards = dir.or(moving).map_or("forward", compass);
     let answer = press(world, &call.caller, DODGE, dir)?;
     Ok(format!("{answer} ({towards})"))
 }
