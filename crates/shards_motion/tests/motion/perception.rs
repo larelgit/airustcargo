@@ -187,6 +187,50 @@ fn a_path_goes_around_a_wall_through_the_gap() {
     assert_eq!(plan, plan_path(physics(&app), &params(), &request(Vec3::ZERO, goal)).unwrap());
 }
 
+/// A 1 m pillar in the open, 5 m north of the origin.
+fn pillar_in_the_open(world: &mut World) {
+    floor(world);
+    block(world, Vec3::new(-0.5, 0.0, -5.5), Vec3::new(0.5, 3.0, -4.5));
+}
+
+/// Whether the straight lines between `points` come nearer than `gap` to the pillar of
+/// [`pillar_in_the_open`].
+fn cuts_the_pillar(points: &[Vec3], gap: f32) -> Option<Vec3> {
+    points.windows(2).find_map(|w| {
+        let len = Vec2::new(w[1].x - w[0].x, w[1].z - w[0].z).length();
+        (0..=(len / 0.05).ceil() as usize)
+            .map(|k| w[0].lerp(w[1], k as f32 * 0.05 / len.max(1e-3)))
+            .find(|p| p.x.abs() < 0.5 + gap && p.z > -5.5 - gap && p.z < -4.5 + gap)
+    })
+}
+
+#[test]
+fn a_path_around_a_pillar_keeps_every_bend_of_the_route() {
+    let mut app = app();
+    pillar_in_the_open(app.world_mut());
+    settle(&mut app);
+    let goal = Vec3::new(0.0, 0.0, -10.0);
+    let plan = plan_path(physics(&app), &params(), &request(Vec3::ZERO, goal)).unwrap();
+    assert!(plan.length > 10.1 && plan.length < 11.5, "round the pillar, not through it: {}", plan.summary());
+    let mut points = vec![Vec3::ZERO];
+    points.extend(plan.legs.iter().map(|l| l.end));
+    assert_eq!(cuts_the_pillar(&points, 0.3), None, "the legs' ends are the route: {}", plan.summary());
+    // Both legs head "N" (45° octants) but they are not one line: the bend is the way round.
+    assert!(plan.legs.len() >= 2, "out to the side of the pillar and back in: {}", plan.summary());
+}
+
+#[test]
+fn move_to_with_path_walks_round_a_pillar() {
+    let mut app = bare_engine("move_to_path_pillar");
+    pillar_in_the_open(app.world_mut());
+    let e = player(app.world_mut(), Vec3::ZERO);
+    step(&mut app, 2);
+    ok(&mut app, "move_to", json!({"target": {"x": 0, "z": -10}, "path": true}));
+    walk_until_there(&mut app, e, Vec3::new(0.0, 0.0, -10.0), 0.5, 1200);
+    step(&mut app, 30);
+    assert!(intent(&app, e).orders.is_empty(), "the orders are done: {:?}", intent(&app, e).orders);
+}
+
 #[test]
 fn path_to_answers_with_a_summary_and_the_waypoints() {
     let mut app = app();

@@ -41,6 +41,8 @@ const DROP_COST: f32 = 0.4;
 const WATER_DROP: f32 = 20.0;
 /// The goal's floor must be within this height of the target's feet (m).
 const GOAL_BAND: f32 = 2.5;
+/// Two steps whose headings have a dot product above this are one straight run (under 1°).
+const STRAIGHT: f32 = 0.9999;
 /// Nodes the search may expand before it gives up.
 const MAX_EXPANSIONS: usize = 40_000;
 /// Neighbour offsets, clockwise from north (N = -Z, E = +X).
@@ -465,6 +467,7 @@ impl<'a> Planner<'a> {
         let steps = self.straighten(self.nodes[chain[0]].pos, steps);
         let mut legs: Vec<Leg> = Vec::new();
         let mut at = req.start;
+        let mut heading = Vec3::ZERO;
         let mut length = 0.0;
         for (pos, kind, rise) in steps {
             let delta = Vec3::new(pos.x - at.x, 0.0, pos.z - at.z);
@@ -479,14 +482,18 @@ impl<'a> Planner<'a> {
             if legs.is_empty() && len < 0.3 && kind == StepKind::Walk && rise == 0.0 {
                 continue;
             }
-            let dir = compass(delta);
+            let (dir, way) = (compass(delta), delta / len);
             match legs.last_mut() {
-                Some(leg) if leg.dir == dir && leg.kind == kind && matches!(kind, StepKind::Walk | StepKind::Swim) => {
+                // Only a straight continuation is the same leg. The compass name covers 45°,
+                // so steps that merely share it are bends, and a leg that skipped one would
+                // cut across what the route goes round.
+                Some(leg) if leg.kind == kind && matches!(kind, StepKind::Walk | StepKind::Swim) && heading.dot(way) > STRAIGHT => {
                     leg.length += len;
                     leg.end = pos;
                 }
                 _ => legs.push(Leg { dir, length: len, kind, rise, end: pos }),
             }
+            heading = way;
         }
         if length > req.max_length {
             return Err(format!(
