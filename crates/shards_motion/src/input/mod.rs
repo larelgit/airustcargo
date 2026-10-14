@@ -165,6 +165,9 @@ impl ControlState {
 /// What this module has written into `Intent`, to write only differences.
 #[derive(Resource, Default)]
 struct Applied {
+    /// The body it was written to: the controls are the player's, not a body's, and a new
+    /// body has been given none of it.
+    player: Option<Entity>,
     /// The movement written last.
     move_dir: Vec3,
     /// Held buttons switched on by the controls.
@@ -302,6 +305,20 @@ impl Devices<'_> {
     }
 }
 
+/// Lets a body that is no longer the local player go of what the controls made it do: its
+/// walk and its held buttons, as far as they are still what was written (an agent's own
+/// steering of it is left alone).
+fn let_go(intent: &mut Mut<Intent>, applied: &Applied) {
+    if applied.move_dir != Vec3::ZERO && intent.move_dir == applied.move_dir {
+        intent.move_dir = Vec3::ZERO;
+    }
+    for name in &applied.held {
+        if intent.is_held(name) {
+            intent.set_held(name, false);
+        }
+    }
+}
+
 /// `PreUpdate`: reads the devices through the top context of the map and writes what
 /// changed into the local player's `Intent`.
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
@@ -316,7 +333,8 @@ fn read_input(
     contexts: Res<InputContexts>,
     mut state: ResMut<ControlState>,
     mut applied: ResMut<Applied>,
-    mut players: Query<&mut Intent, With<LocalPlayer>>,
+    mut players: Query<(Entity, &mut Intent), With<LocalPlayer>>,
+    mut others: Query<&mut Intent, Without<LocalPlayer>>,
 ) {
     let mut pads: Vec<(Entity, &Gamepad)> = gamepads.iter().collect();
     pads.sort_by_key(|(e, _)| *e);
@@ -393,6 +411,21 @@ fn read_input(
         move_axis = Vec2::ZERO;
     }
 
+    // Nobody to hear it: nothing counts as written, so a body that appears later (or
+    // takes over the marker) gets everything that is down.
+    let Ok((player, mut intent)) = players.single_mut() else {
+        return;
+    };
+    if applied.player != Some(player) {
+        if let Some(old) = applied.player.replace(player)
+            && let Ok(mut old) = others.get_mut(old)
+        {
+            let_go(&mut old, &applied);
+        }
+        applied.move_dir = Vec3::ZERO;
+        applied.held.clear();
+    }
+
     // Menu closes, an action removed from the map: whatever we held and no longer should.
     let release: Vec<String> = applied.held.difference(&desired_held).cloned().collect();
     let hold: Vec<String> = desired_held.difference(&applied.held).cloned().collect();
@@ -404,9 +437,6 @@ fn read_input(
     }
     applied.move_dir = world_move;
     applied.held = desired_held;
-    let Ok(mut intent) = players.single_mut() else {
-        return;
-    };
     if moved {
         if world_move != Vec3::ZERO {
             // The human takes over: drop whatever an agent ordered.
