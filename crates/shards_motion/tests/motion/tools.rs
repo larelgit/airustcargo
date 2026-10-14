@@ -66,6 +66,16 @@ fn jump_in_water_next_to_a_ledge_climbs_out() {
 }
 
 #[test]
+fn glide_and_sprint_each_describe_themselves() {
+    let app = app();
+    let tools = app.world().resource::<ai_core::AiTools>();
+    let glide = &tools.get("glide").unwrap().spec.description;
+    assert!(glide.starts_with("Glide (or stop with `on=false`)"), "{glide}");
+    let sprint = &tools.get("sprint").unwrap().spec.description;
+    assert!(sprint.starts_with("Hold sprint"), "{sprint}");
+}
+
+#[test]
 fn sprint_toggles_the_held_button() {
     let mut app = app();
     floor(app.world_mut());

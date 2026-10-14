@@ -287,7 +287,13 @@ fn sprint(In(call): In<Call<OnArgs>>, mut bodies: Query<(&Transform, &mut Intent
 /// Glide (or stop with `on=false`): while you fall, drop slowly and steer, and ride
 /// updrafts. Glide is held until you land or ask to stop; asking on the ground arms it
 /// for your next fall.
-fn glide(In(call): In<Call<OnArgs>>, mut commands: Commands, db: Option<Res<ContentDb>>, mut bodies: Characters) -> ToolResult {
+#[derive(Deserialize, JsonSchema)]
+pub struct GlideArgs {
+    /// Default true.
+    pub on: Option<bool>,
+}
+
+fn glide(In(call): In<Call<GlideArgs>>, mut commands: Commands, db: Option<Res<ContentDb>>, mut bodies: Characters) -> ToolResult {
     let on = call.args.on.unwrap_or(true);
     let Me { entity, mut intent, state, .. } = my_character(&call.caller, &mut bodies, db.as_deref(), "glide")?;
     if !on {
