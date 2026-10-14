@@ -312,8 +312,10 @@ pub fn drive(
                 *transitions = AnimationTransitions::new();
                 transitions.play(&mut player, *node, Duration::ZERO);
             } else {
-                // `.max`: a zero duration would divide by zero in Bevy's fade.
-                transitions.play(&mut player, *node, Duration::from_secs_f32(choice.blend.max(0.01)));
+                // Not zero (Bevy's fade divides by it), not absurd (a typo in content must not
+                // overflow a `Duration`).
+                let blend = choice.blend.clamp(0.01, 10.0);
+                transitions.play(&mut player, *node, Duration::from_secs_f32(blend));
             }
             bound.clip = Some(clip.to_owned());
             bound.last_time = None;

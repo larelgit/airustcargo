@@ -825,6 +825,18 @@ mod tests {
     }
 
     #[test]
+    fn the_example_in_the_docs_is_valid_content() {
+        // The RON of the module docs, with the actions it names.
+        let docs = include_str!("anim.rs");
+        let start = docs.find("//!     \"humanoid\": (").expect("the example");
+        let end = docs[start..].find("//! }\n").expect("its end") + start;
+        let body: String = docs[start..end].lines().map(|l| l.trim_start_matches("//!").to_owned() + "\n").collect();
+        let errors = build(&format!("{{\n{body}}}"));
+        // The example names `light_1` and `roll`, which the helper's content has too.
+        assert!(errors.is_empty(), "{errors:#?}");
+    }
+
+    #[test]
     fn a_good_animset_validates() {
         let errors = build(
             r#"{ "h": (source: "models/h.glb", clips: {"idle": (), "slash": (name: "Slash", cues: [(at: 0.2, cue: "x")])},
