@@ -23,6 +23,14 @@
 //! - **Telegraphs and zones** ([`zone`]): enemies' warnings ([`Telegraph`] events with a
 //!   symbol and a sound cue), [`hit_zones`] for decals and the AI, [`threat_indicators`]
 //!   for off-screen warnings.
+//! - **Animation** ([`anim`]): content kind `animset` (a glTF's clips, which one shows which
+//!   locomotion state or action, blends, cues) and [`select_clip`], the pure choice of the
+//!   clip a character shows: gameplay leads, the animation is seeked to the action's
+//!   progress. [`Animated`] characters are driven by the bridge of the `render` feature.
+//! - **Drawing** ([`draw`]): the geometry of what the `render` feature puts on screen, as
+//!   plain data: ground telegraphs with symbols, the combat overlay, edge markers for
+//!   attacks off screen.
+//! - **Cues** ([`cue`]): [`SoundCue`] for the audio module, [`AnimationCue`] for effects.
 //!
 //! The controller stays the only thing that moves a body: an action's displacement
 //! curve goes into `LocomotionInput::external`, so a wall stops a lunge.
@@ -69,28 +77,56 @@
 //! ```
 //!
 //! Tools: `light_attack`, `heavy_attack`, `block`, `parry`, `dodge`, `use_technique`,
-//! `use_item`, `lock_on`, `attack` (player); `god`, `heal`, `stagger` (dev).
+//! `use_item`, `lock_on`, `attack` (player); `god`, `heal`, `stagger` (dev);
+//! `combat_overlay` (dev, with the `render` feature).
+//!
+//! ## The render feature
+//!
+//! With `render` the plugin also draws what the machine decides, in a window (a headless run
+//! with the feature builds the same systems; nothing shows):
+//!
+//! - **Animation bridge** (`render::bridge`): one `AnimationGraph` per animset, built from
+//!   its glTF, shared by every [`Animated`] character; each frame the clip of
+//!   [`select_clip`] is blended in with `AnimationTransitions`, seeked to the action's
+//!   progress while an action runs.
+//! - **Telegraphs** (`render::overlay`): every [`HitZone`] that has a telegraph, and every one
+//!   hostile to the local player, is drawn on the ground (outline, hatch, a filling ring, its
+//!   symbol as a billboard) in any case.
+//! - **Combat overlay** (`combat_overlay`, F2 in a window): hitboxes, hurtboxes, guard arcs,
+//!   i-frames, every zone with its time left.
+//! - **Off-screen warnings** (`render::hud`): a marker on the screen edge toward an attack
+//!   about to land where the camera does not look, for the `LocalPlayer`.
 
 pub mod ai;
+pub mod anim;
 pub mod combat;
+pub mod cue;
 pub mod def;
+pub mod draw;
 pub mod fighter;
 pub mod machine;
 mod orders;
+#[cfg(feature = "render")]
+pub mod render;
 pub mod status;
 mod tools;
 pub mod zone;
 
-use ai_core::SimSet;
+use ai_core::{AiAppExt, SimSet};
 use bevy::prelude::*;
 use shards_content::ContentAppExt;
 use shards_core::{CoreSystems, EngineAppExt};
 use shards_motion::{MotionPlugin, MotionSystems};
 
+pub use anim::{
+    crossed_cues, locomotion_state, select_clip, select_clip_for, AnimSet, Animated, AnimationCue, BodyStatus,
+    ClipChoice, ClipDef, CueDef, GroundSpeeds, Locomotion,
+};
 pub use combat::{
-    kill, stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died, Evaded, GuardBroken, Outcome, Parried,
+    kill,stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died, Evaded, GuardBroken, Outcome, Parried,
     StaggerCause, Staggered,
 };
+pub use cue::SoundCue;
 pub use def::{
     ActionDef, CancelDef, CombatTuning, Cost, Effect, GuardDef, HitDef, HitFlag, HitShape, HoldDef, Local, MovesetDef,
     Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
@@ -114,8 +150,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The types a game uses most.
 pub mod prelude {
     pub use crate::{
-        ActionAppExt, ActionDef, ActionPlugin, ActionState, ActionSystems, Armor, Charges, CombatTuning, Dead, Fighter,
-        Health, Invulnerable, MovesetDef, Poise, Stamina, StatusDef, StatusResist, Statuses, Team,
+        ActionAppExt, ActionDef, ActionPlugin, ActionState, ActionSystems, AnimSet, Animated, Armor, Charges, CombatTuning,
+        Dead, Fighter, Health, Invulnerable, MovesetDef, Poise, Stamina, StatusDef, StatusResist, Statuses, Team,
     };
 }
 
@@ -208,7 +244,8 @@ impl Plugin for ActionPlugin {
             .register_type::<Dead>()
             .register_type::<Invulnerable>()
             .register_type::<Statuses>()
-            .register_type::<StatusResist>();
+            .register_type::<StatusResist>()
+            .register_type::<Animated>();
         // Known to the world from the start, so `&World` queries (tools, zones) work
         // before the first tick or the first death.
         let world = app.world_mut();
@@ -221,6 +258,7 @@ impl Plugin for ActionPlugin {
             .add_content::<MovesetDef>()
             .add_content::<StatusDef>()
             .add_content::<CombatTuning>()
+            .add_content::<AnimSet>()
             .init_resource::<DamageHooks>()
             .init_resource::<StatusEffects>()
             .init_resource::<ActionEffects>()
@@ -251,8 +289,13 @@ impl Plugin for ActionPlugin {
                     combat::check_deaths.in_set(ActionSystems::Deaths),
                 ),
             )
-            .add_observer(fighter::hurtbox_on_collider);
+            .add_observer(fighter::hurtbox_on_collider)
+            // Cosmetic: a game may add it in a window only, and replays must not care.
+            .replay_ignore::<Animated>();
         ai::register(app);
         tools::register(app);
+        cue::plugin(app);
+        #[cfg(feature = "render")]
+        render::plugin(app);
     }
 }

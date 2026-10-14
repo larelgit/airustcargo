@@ -33,6 +33,11 @@ pub fn app() -> App {
 
 /// [`app`] with the game's own setup (hooks, systems) before it finishes.
 pub fn app_with(setup: impl FnOnce(&mut App)) -> App {
+    app_with_plugins(|_| {}, setup)
+}
+
+/// [`app_with`] with plugins added before the action module's (a window's gizmos, say).
+pub fn app_with_plugins(before: impl FnOnce(&mut App), setup: impl FnOnce(&mut App)) -> App {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/combat/assets").to_owned();
     let config = EngineConfig {
         headless: true,
@@ -47,8 +52,9 @@ pub fn app_with(setup: impl FnOnce(&mut App)) -> App {
     };
     let mut app = App::new();
     let assets = AssetPlugin { file_path: dir, watch_for_changes_override: Some(false), ..default() };
-    app.add_plugins((MinimalPlugins, assets, StatesPlugin))
-        .add_plugins(config.ai_core_plugin())
+    app.add_plugins((MinimalPlugins, assets, StatesPlugin));
+    before(&mut app);
+    app.add_plugins(config.ai_core_plugin())
         .add_plugins(CorePlugin { config })
         .add_plugins(ContentPlugin)
         .add_plugins(ActionPlugin);
