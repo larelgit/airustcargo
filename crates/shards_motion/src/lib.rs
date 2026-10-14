@@ -45,8 +45,12 @@
 //! ```
 
 pub mod ai;
+pub mod camera;
 pub mod controller;
+pub mod input;
 mod intent;
+#[cfg(feature = "render")]
+mod overlay;
 pub mod perception;
 pub mod physics;
 mod tools;
@@ -55,10 +59,12 @@ use bevy::prelude::*;
 use shards_core::EngineAppExt;
 
 pub use ai::{describe_motion, physics_line_of_sight, MotionAi};
+pub use camera::{CameraSettings, LockOnTarget, ThirdPersonCamera};
 pub use controller::{
     character, CharacterController, CharacterParams, ControllerPlugin, ControllerSystems, Jumped, Landed,
     LocomotionInput, Mantle, Mantled, ModeChanged, MotionMode, MotionState,
 };
+pub use input::{BindMode, Binding, ControlState, ControlSystems, InputContext, InputContexts, InputMap, InputSettings};
 pub use intent::{intent_to_locomotion, GlideUntilLanded, MotionSystems};
 pub use physics::{
     Body, Collider, ColliderId, ColliderIds, ColliderInfo, CollisionLayers, LayerMask, Penetration, PhysicsPlugin,
@@ -74,9 +80,9 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// their own, import them from the crate root).
 pub mod prelude {
     pub use crate::{
-        character, CharacterController, CharacterParams, Collider, CollisionLayers,
-        LayerMask, LocomotionInput, MotionAi, MotionMode, MotionPlugin,
-        MotionState, MotionSystems, PhysicsWorld, QueryFilter, SpatialQuery,
+        character, CameraSettings, CharacterController, CharacterParams, Collider, CollisionLayers, ControlState,
+        InputContexts, InputMap, LayerMask, LocomotionInput, LockOnTarget, MotionAi, MotionMode, MotionPlugin,
+        MotionState, MotionSystems, PhysicsWorld, QueryFilter, SpatialQuery, ThirdPersonCamera,
     };
 }
 
@@ -99,5 +105,9 @@ impl Plugin for MotionPlugin {
         intent::plugin(app);
         tools::plugin(app);
         perception::plugin(app);
+        input::plugin(app);
+        camera::plugin(app);
+        #[cfg(feature = "render")]
+        overlay::plugin(app);
     }
 }
