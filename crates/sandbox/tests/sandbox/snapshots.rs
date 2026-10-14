@@ -556,6 +556,40 @@ fn the_tools_tell_what_does_not_fit() {
     assert!(text(&forced).contains("loaded anyway: content differs"), "{}", text(&forced));
 }
 
+/// State outside the entities that no snapshot brings back: a load cannot be exact.
+#[derive(Resource, Default)]
+struct Weather(u64);
+
+#[test]
+fn a_load_that_cannot_restore_exactly_fails_and_changes_nothing() {
+    let file = Scratch::new("inexact");
+    let mut app = face_to_face();
+    app.init_resource::<Weather>().add_replay_check("weather", |w| w.resource::<Weather>().0);
+    ok(&mut app, "attack", json!({"target": BOSS, "repeat": true}));
+    step(&mut app, 30);
+    let saved_at = tick(&app);
+    ok(&mut app, "snapshot_save", json!({"path": file.1}));
+    app.world_mut().resource_mut::<Weather>().0 = 7;
+    step(&mut app, 40);
+
+    let (state, tick_then, recorded) = (snapshot::capture(app.world()).unwrap(), tick(&app), replay::save(app.world()));
+    let err = fails(&mut app, "snapshot_load", json!({"path": file.1}));
+    assert!(err.contains("the restored state differs from the snapshot") && err.contains("add_snapshot_resource"), "{err}");
+    // Failed means unchanged: the world, the tick, the recording that would have restarted.
+    let diff = differences(&state, &snapshot::capture(app.world()).unwrap());
+    assert!(diff.is_empty(), "{}", diff.join("\n"));
+    assert_eq!(tick(&app), tick_then);
+    let after = replay::save(app.world());
+    assert_eq!((after.start.clone(), after.events.len()), (recorded.start.clone(), recorded.events.len()), "the recording goes on");
+    let journal: Vec<String> = app.world().resource::<AiJournal>().after(0).0.map(|e| e.text.clone()).collect();
+    assert!(!journal.iter().any(|l| l.starts_with("snapshot loaded:")), "{journal:#?}");
+    assert!(journal.iter().any(|l| l.starts_with(&format!("snapshot of tick {saved_at} not loaded (the restored state differs"))), "{journal:#?}");
+
+    // The game plays on from where it was.
+    step(&mut app, 10);
+    assert_eq!(tick(&app), tick_then + 10);
+}
+
 #[test]
 fn go_to_boss_phase_two_is_a_snapshot_loaded_by_name() {
     // Recorded once (here by a test; by hand with `shards save-snapshot snapshots/boss_phase2.json`

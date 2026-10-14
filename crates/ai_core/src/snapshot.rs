@@ -399,7 +399,25 @@ impl LoadReport {
 ///
 /// The caller handles the replay recorder (`snapshot_load` restarts the recording from the
 /// snapshot; playback does the same for a replay's own start).
+///
+/// A restore that is not exact (the world, saved again, differs from the snapshot) is still
+/// a load: [`LoadReport::differences`] says where, and the caller decides what that means (a
+/// replay's start reports the divergence and plays on). [`restore_exact`] is the one that
+/// refuses it.
 pub fn restore(world: &mut World, snapshot: &Snapshot, force: bool) -> Result<LoadReport, String> {
+    restore_with(world, snapshot, force, false)
+}
+
+/// [`restore`] that loads the snapshot exactly or not at all: where the restored world would
+/// differ from the snapshot, the world is put back as it was before (as for a load refused
+/// after a prepare, including the tick), no [`WorldRebuilt`] follows, and the error says where
+/// it differed and what to register. For a caller that goes on only with the state it asked
+/// for (`snapshot_load`).
+pub fn restore_exact(world: &mut World, snapshot: &Snapshot, force: bool) -> Result<LoadReport, String> {
+    restore_with(world, snapshot, force, true)
+}
+
+fn restore_with(world: &mut World, snapshot: &Snapshot, force: bool, exact: bool) -> Result<LoadReport, String> {
     let mut warnings = Vec::new();
     let modules = world.get_resource::<SnapshotRegistry>().cloned().unwrap_or_default();
     let covered: BTreeSet<&str> = modules.prepares.iter().flat_map(|p| p.covers.iter().copied()).collect();
@@ -413,13 +431,17 @@ pub fn restore(world: &mut World, snapshot: &Snapshot, force: bool) -> Result<Lo
 
     // What modules build from their saved resources (a region from its manifest) comes
     // first: the checks it covers compare the world built so with the snapshot's. Both may
-    // still refuse, after the world changed: then it is put back as it was before.
-    let before = if modules.prepares.is_empty() { None } else { Some(Before::take(world)?) };
+    // still refuse, after the world changed: then it is put back as it was before. So is a
+    // restore that turns out not to be exact, when the caller wants it exact.
+    let before = if modules.prepares.is_empty() && !exact { None } else { Some(Before::take(world)?) };
     match prepare_and_check(world, snapshot, force, &modules, &covered, &mut warnings) {
         Ok(late) => forced |= late,
         Err(why) => {
             return Err(match before {
-                Some(before) => before.put_back(world, &modules, snapshot.tick, why),
+                Some(before) => {
+                    let reason = first_line(&why).to_owned();
+                    before.put_back(world, &modules, snapshot.tick, &reason, why)
+                }
                 None => why,
             });
         }
@@ -434,6 +456,17 @@ pub fn restore(world: &mut World, snapshot: &Snapshot, force: bool) -> Result<Lo
     // Save it again: the restored world must say what the file says. A forced load past a
     // mismatch is not meant to reproduce the original's hash.
     let differences = compare_with(world, snapshot, &skipped, !forced);
+    if exact && !differences.is_empty() {
+        let reason = format!("the restored state differs from the snapshot in {} place(s)", differences.len());
+        let why = LoadReport { differences, ..Default::default() }.explain_differences();
+        // Taken above whenever `exact`.
+        let Some(before) = before else { return Err(why) };
+        // The restore moved the clock too.
+        sim::set_tick(world, before.world.tick);
+        let refused = before.put_back(world, &modules, snapshot.tick, &reason, why);
+        journal::log(world, JournalKind::Error, format!("snapshot of tick {}: {refused}", snapshot.tick));
+        return Err(refused);
+    }
     world_rebuilt(world, format!("snapshot of tick {}", snapshot.tick));
     Ok(LoadReport {
         tick: snapshot.tick,
@@ -512,9 +545,10 @@ impl Before {
     }
 
     /// Puts the world back (the prepares undo what they built, from the saved world's own
-    /// resources: the region it had, or none), says so once in the journal, and returns the
-    /// load's error `why`, with what could not be put back if anything.
-    fn put_back(self, world: &mut World, modules: &SnapshotRegistry, tick: u64, why: String) -> String {
+    /// resources: the region it had, or none), says so once in the journal (`reason` is why
+    /// the load was refused, in a few words), and returns the load's error `why`, with what
+    /// could not be put back if anything.
+    fn put_back(self, world: &mut World, modules: &SnapshotRegistry, tick: u64, reason: &str, why: String) -> String {
         let mut failed = Vec::new();
         for prepare in &modules.prepares {
             if let Err(e) = (prepare.run)(world, &self.world) {
@@ -538,7 +572,6 @@ impl Before {
             && let Some(mut lines) = world.get_resource_mut::<journal::AiJournal>()
         {
             lines.discard_after(seen);
-            let reason = why.lines().next().unwrap_or_default().trim_end_matches(':');
             let outcome = if failed.is_empty() { "the world is as it was before the load" } else { "the world could not be put back entirely" };
             journal::log(world, JournalKind::Warn, format!("snapshot of tick {tick} not loaded ({reason}): {outcome}"));
         }
@@ -548,6 +581,11 @@ impl Before {
         let shown: Vec<&str> = failed.iter().take(5).map(String::as_str).collect();
         format!("{why}\nPutting the world back as it was before the load failed too: {}", shown.join("; "))
     }
+}
+
+/// The first line of an error, without a closing colon.
+fn first_line(text: &str) -> &str {
+    text.lines().next().unwrap_or_default().trim_end_matches(':')
 }
 
 /// [`restore`] while hold `gate` of the [`SimGate`] keeps the world from ticking (a client
@@ -908,7 +946,7 @@ pub struct SnapshotSaveArgs {
 /// continues exactly as the original session did. The recording starts from the snapshot
 /// from now on: save the replay first if you want what came before. Refused, changing
 /// nothing, when this game is not the one it was taken in (other seed, engine version or
-/// content files): the error says what differs. "Go to boss phase" is a snapshot
+/// content files) or would not come back exactly as saved: the error says what differs. "Go to boss phase" is a snapshot
 /// taken there, loaded by name.
 #[derive(Deserialize, JsonSchema)]
 pub struct SnapshotLoadArgs {
@@ -941,15 +979,12 @@ fn snapshot_load_tool(In(call): In<Call<SnapshotLoadArgs>>, world: &mut World) -
     let SnapshotLoadArgs { path: requested, force } = call.args;
     let path = crate::paths::inside(SNAPSHOTS_DIR, &requested, SNAPSHOT_PATH_EXAMPLE)?;
     let snapshot = Snapshot::read(&path)?;
-    let report = restore(world, &snapshot, force)?;
+    // Exactly or not at all: a load that reports failure leaves the world, the tick and the
+    // recording as they were.
+    let report = restore_exact(world, &snapshot, force)?;
     let tick = snapshot.tick;
     let dropped = replay::restart_from(world, snapshot, true);
     journal::log(world, JournalKind::Sim, format!("snapshot loaded: {} ({report})", path.display()));
-    if !report.exact() {
-        let why = report.explain_differences();
-        journal::log(world, JournalKind::Error, format!("snapshot {}: {why}", path.display()));
-        return Err(format!("loaded {} ({report}), but {why}", path.display()));
-    }
     let earlier = match dropped {
         0 => String::new(),
         n => format!(" ({n} earlier events dropped: `replay_save` first to keep them)"),
@@ -1258,6 +1293,47 @@ mod tests {
         assert!(!report.exact());
         let text = report.explain_differences();
         assert!(text.contains("the state hash is") && text.contains("add_snapshot_resource"), "{text}");
+    }
+
+    #[test]
+    fn a_load_that_would_not_be_exact_is_refused_and_puts_the_world_back() {
+        #[derive(Resource, Default)]
+        struct Weather(u64);
+        #[derive(Resource, Default)]
+        struct Rebuilt(u32);
+        let mut app = game();
+        app.init_resource::<Weather>().init_resource::<Rebuilt>().add_replay_check("weather", |w| w.resource::<Weather>().0);
+        app.add_observer(|_: On<WorldRebuilt>, mut n: ResMut<Rebuilt>| n.0 += 1);
+        app.world_mut().resource_mut::<Weather>().0 = 4;
+        step(&mut app, 3);
+        let snapshot = capture(app.world()).unwrap();
+        // The weather is state no one saves: the load cannot bring it back.
+        app.world_mut().resource_mut::<Weather>().0 = 9;
+        step(&mut app, 5);
+
+        let before = capture(app.world()).unwrap();
+        let seen = app.world().resource::<journal::AiJournal>().last_seq();
+        let err = restore_exact(app.world_mut(), &snapshot, false).unwrap_err();
+        assert!(err.contains("the restored state differs from the snapshot") && err.contains("add_snapshot_resource"), "{err}");
+        assert_eq!(capture(app.world()).unwrap(), before, "the entities, the counters and the tick are as they were");
+        assert_eq!(sim::tick(app.world()), 8);
+        assert_eq!(app.world().resource::<Weather>().0, 9);
+        assert_eq!(app.world().resource::<Rebuilt>().0, 0, "nothing was rebuilt for anyone to follow");
+        let lines: Vec<(JournalKind, String)> =
+            app.world().resource::<journal::AiJournal>().after(seen).0.map(|e| (e.kind, e.text.clone())).collect();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(
+            lines[0],
+            (JournalKind::Warn, "snapshot of tick 3 not loaded (the restored state differs from the snapshot in 1 place(s)): the world is as it was before the load".into())
+        );
+        assert!(lines[1].0 == JournalKind::Error && lines[1].1.starts_with("snapshot of tick 3: the restored state differs"), "{lines:?}");
+
+        // The game goes on from where it was, and a plain restore still loads what it can.
+        step(&mut app, 2);
+        assert_eq!(sim::tick(app.world()), 10);
+        let report = restore(app.world_mut(), &snapshot, false).unwrap();
+        assert!(!report.exact());
+        assert_eq!((sim::tick(app.world()), app.world().resource::<Rebuilt>().0), (3, 1));
     }
 
     /// Ground a module builds from a saved resource: entities without ids, checked by a hash.
