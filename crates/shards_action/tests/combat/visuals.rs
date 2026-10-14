@@ -78,14 +78,23 @@ fn a_telegraph_shows_on_the_ground_until_the_hit_is_over() {
 }
 
 #[test]
-fn attacks_without_a_telegraph_are_left_to_the_overlay() {
-    let (mut app, hero, _brute) = duel();
+fn the_players_own_swings_are_no_warning_but_a_zone_to_the_overlay() {
+    let (mut app, hero, brute) = duel();
+    app.world_mut().entity_mut(hero).insert(LocalPlayer);
     press(&mut app, hero, "light");
     step(&mut app, 4);
     assert!(telegraphs(app.world(), &TelegraphStyle::default(), 0.0, Quat::IDENTITY).is_empty());
     let (list, counts) = overlay(app.world(), OverlayParts::default(), Quat::IDENTITY);
     assert_eq!(counts.zones, 1, "the hero's swing is a zone to the overlay");
     assert!(texts(&list).iter().any(|t| t.starts_with("light_1 0.")), "{:?}", texts(&list));
+
+    // Seen from the brute's side, the same swing is aimed at the local player: it is drawn
+    // on the ground even though the action has no telegraph, with a bang.
+    app.world_mut().entity_mut(hero).remove::<LocalPlayer>();
+    app.world_mut().entity_mut(brute).insert(LocalPlayer);
+    let warned = telegraphs(app.world(), &TelegraphStyle::default(), 0.0, Quat::IDENTITY);
+    assert!(warned.counts().0 >= 2 + 4, "outline, fill ring and the bang: {:?}", warned.counts());
+    assert!(warned.counts().1 > 2, "hatch: {:?}", warned.counts());
 }
 
 #[test]

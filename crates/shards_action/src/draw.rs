@@ -5,9 +5,10 @@
 //! a gizmo or a window, so the geometry is tested headless; the systems of the `render`
 //! feature only hand the lists to Bevy's gizmos.
 //!
-//! - [`telegraphs`]: the warning on the ground for every attack that has one: the zone's
-//!   outline and hatch, a ring that fills as the hit nears, and the zone's **symbol** drawn
-//!   as a billboard, so danger reads without colour (GDD 13.7).
+//! - [`telegraphs`]: the warning on the ground for every attack that has a telegraph and
+//!   every one aimed at the player: the zone's outline and hatch, a ring that fills as the hit
+//!   nears, and the zone's **symbol** drawn as a billboard, so danger reads without colour
+//!   (GDD 13.7).
 //! - [`overlay`]: the combat overlay for developers: hitboxes of open windows (red),
 //!   hurtboxes (green), guard arcs (blue), i-frames (outline), every zone with its time.
 //! - [`edge_marker`]: where a marker for an attack off screen sits on the screen's edge.
@@ -480,13 +481,14 @@ pub fn telegraph(
     } else {
         out.strip(closed(&scaled(&outline, middle, 0.98)), rgba(base, flicker));
     }
-    if let Some(sym) = &zone.symbol {
-        let size = style.symbol_size * (0.8 + 0.4 * k);
-        let at = Vec3::new(middle.x, ground_y + style.symbol_lift, middle.z);
-        out.extend(symbol(sym, at, billboard, size, rgba(base, 0.6 + 0.4 * k)));
-        // A stem from the zone to its symbol.
-        out.line(Vec3::new(middle.x, y, middle.z), at - Vec3::Y * (size * 0.6), rgba(base, 0.3 + 0.3 * k));
-    }
+    // The symbol: the telegraph's, or a bang for an attack that gives no warning of its own
+    // (what `threat_indicators` and the agent's ALERT say too).
+    let sym = zone.symbol.as_deref().unwrap_or("!");
+    let size = style.symbol_size * (0.8 + 0.4 * k);
+    let at = Vec3::new(middle.x, ground_y + style.symbol_lift, middle.z);
+    out.extend(symbol(sym, at, billboard, size, rgba(base, 0.6 + 0.4 * k)));
+    // A stem from the zone to its symbol.
+    out.line(Vec3::new(middle.x, y, middle.z), at - Vec3::Y * (size * 0.6), rgba(base, 0.3 + 0.3 * k));
     out
 }
 
@@ -495,25 +497,27 @@ fn ground_of(world: &World, attacker: Entity, fallback: f32) -> f32 {
     world.get::<Transform>(attacker).map_or(fallback, |t| t.translation.y)
 }
 
-/// The team of the local player, if there is one.
-fn local_team(world: &World) -> Option<Option<Team>> {
-    let mut q = world.try_query_filtered::<Option<&Team>, With<LocalPlayer>>()?;
-    q.iter(world).next().map(|t| t.cloned())
+/// The local player and its team, if there is one.
+fn local_player(world: &World) -> Option<(Entity, Option<Team>)> {
+    let mut q = world.try_query_filtered::<(Entity, Option<&Team>), With<LocalPlayer>>()?;
+    q.iter(world).next().map(|(e, t)| (e, t.cloned()))
 }
 
-/// The ground telegraphs of every attack that has one (a zone with a symbol), for the
-/// local player's eyes: zones of its enemies are drawn in the warm palette. Attacks without
-/// a telegraph are not drawn here (the combat overlay shows them).
+/// The ground telegraphs, for the local player's eyes: every zone of an attack that has a
+/// telegraph, and every zone hostile to the player even without one (drawn with a bang).
+/// Enemies' zones are warm, the others cool; the player's own swings are no warning and stay
+/// off the ground (the combat overlay shows them). With no local player every zone is hostile.
 pub fn telegraphs(world: &World, style: &TelegraphStyle, time: f32, billboard: Quat) -> DrawList {
-    let me = local_team(world);
+    let me = local_player(world);
     let mut out = DrawList::default();
-    for zone in hit_zones(world).iter().filter(|z| z.symbol.is_some()) {
-        let hostile = match &me {
-            Some(team) => hostile(zone.team.as_ref(), team.as_ref()),
-            None => true,
-        };
+    for zone in hit_zones(world) {
+        let mine = me.as_ref().is_some_and(|(e, _)| *e == zone.attacker);
+        let hostile = !mine && me.as_ref().is_none_or(|(_, team)| hostile(zone.team.as_ref(), team.as_ref()));
+        if zone.symbol.is_none() && !hostile {
+            continue;
+        }
         let ground = ground_of(world, zone.attacker, zone.shape.origin.y);
-        out.extend(telegraph(zone, ground, hostile, style, time, billboard));
+        out.extend(telegraph(&zone, ground, hostile, style, time, billboard));
     }
     out
 }

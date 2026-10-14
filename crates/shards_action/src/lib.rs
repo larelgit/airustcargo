@@ -89,8 +89,9 @@
 //!   its glTF, shared by every [`Animated`] character; each frame the clip of
 //!   [`select_clip`] is blended in with `AnimationTransitions`, seeked to the action's
 //!   progress while an action runs.
-//! - **Telegraphs** (`render::overlay`): every [`HitZone`] that has a telegraph is drawn on
-//!   the ground (outline, hatch, a filling ring, its symbol as a billboard) in any case.
+//! - **Telegraphs** (`render::overlay`): every [`HitZone`] that has a telegraph, and every one
+//!   hostile to the local player, is drawn on the ground (outline, hatch, a filling ring, its
+//!   symbol as a billboard) in any case.
 //! - **Combat overlay** (`combat_overlay`, F2 in a window): hitboxes, hurtboxes, guard arcs,
 //!   i-frames, every zone with its time left.
 //! - **Off-screen warnings** (`render::hud`): a marker on the screen edge toward an attack
@@ -149,8 +150,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The types a game uses most.
 pub mod prelude {
     pub use crate::{
-        ActionAppExt, ActionDef, ActionPlugin, ActionState, ActionSystems, Armor, Charges, CombatTuning, Dead, Fighter,
-        Health, Invulnerable, MovesetDef, Poise, Stamina, StatusDef, StatusResist, Statuses, Team,
+        ActionAppExt, ActionDef, ActionPlugin, ActionState, ActionSystems, AnimSet, Animated, Armor, Charges, CombatTuning,
+        Dead, Fighter, Health, Invulnerable, MovesetDef, Poise, Stamina, StatusDef, StatusResist, Statuses, Team,
     };
 }
 
