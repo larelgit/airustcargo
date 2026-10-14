@@ -96,9 +96,13 @@ pub(crate) fn bad_copy(file: &Path) -> Option<PathBuf> {
     fs::write(&name, &bytes).ok().map(|()| name)
 }
 
-/// Keeps a copy of a file that is good.
+/// Keeps a copy of a file that is good. The copy is written beside the old one and renamed over it
+/// only once it is whole, so the old copy stays if the new one cannot be written (a full disk).
 pub(crate) fn refresh_backup(file: &Path) {
-    let _ = fs::copy(file, backup_path(file));
+    let temp = file.with_extension("toml.bak.new");
+    if fs::copy(file, &temp).and_then(|_| fs::rename(&temp, backup_path(file))).is_err() {
+        let _ = fs::remove_file(&temp);
+    }
 }
 
 /// Whether the file has nothing but whitespace in it: what a write that went wrong leaves. A file
@@ -502,6 +506,32 @@ mod tests {
         let journal = world.resource::<ai_core::AiJournal>();
         let said: Vec<_> = journal.after(0).0.filter(|e| e.kind == JournalKind::Error).map(|e| e.text.clone()).collect();
         assert!(said.len() == 1 && said[0].contains("no more tries") && !said[0].contains("trying again"), "{said:?}");
+    }
+
+    /// A copy that cannot be written whole does not take the place of the one that is: the old
+    /// `.bak` stays good and the half-written file is not left beside it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_copy_that_cannot_be_written_leaves_the_old_one() {
+        let dir = temp("refresh");
+        let file = dir.join("settings.toml");
+        let (backup, temp_copy) = (backup_path(&file), dir.join("settings.toml.bak.new"));
+        fs::write(&file, "[audio]\nmaster = 0.4\n").unwrap();
+        refresh_backup(&file);
+        assert!(fs::read_to_string(&backup).unwrap().contains("master = 0.4"));
+
+        // The disk is full: the copy of the new file fails in the middle of its write.
+        fs::write(&file, "[audio]\nmaster = 0.3\n").unwrap();
+        std::os::unix::fs::symlink("/dev/full", &temp_copy).unwrap();
+        refresh_backup(&file);
+        assert!(fs::read_to_string(&backup).unwrap().contains("master = 0.4"), "the old copy is what is left");
+        assert!(has_backup(&file), "and it still holds settings");
+        assert!(fs::symlink_metadata(&temp_copy).is_err(), "the temporary file is gone");
+
+        refresh_backup(&file);
+        assert!(fs::read_to_string(&backup).unwrap().contains("master = 0.3"), "a copy that is written takes its place");
+        assert!(fs::symlink_metadata(&temp_copy).is_err());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
