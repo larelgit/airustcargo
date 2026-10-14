@@ -20,7 +20,7 @@ use ai_core::journal::{self, JournalKind};
 use ai_core::replay::ReplaySystems;
 use ai_core::sim::SimSet;
 use ai_core::tools::NetRoute;
-use ai_core::{AgentSessions, AiAppExt, Scope};
+use ai_core::{AgentSessions, AiAppExt, AiTools, Scope};
 use bevy::prelude::*;
 use shards_content::ContentAppExt;
 use shards_core::{CoreSystems, EngineAppExt, EngineConfig, Intent, NetLaunch, NetRole};
@@ -131,6 +131,9 @@ pub(crate) struct Ticked(pub bool);
 /// The agent the session runs its own calls as (`player_join`, `player_leave`).
 pub const NET_AGENT: &str = "net";
 
+/// Why a client over UDP cannot `pause`, `resume` or `speed`.
+pub const HOST_OWNS_TIME: &str = "the host owns time; call it on the host";
+
 /// The session: roles from `EngineConfig::net`, join, inputs, replication, desync check, the
 /// `net_*` tools. Without `--host`, `--join` or `--stand` it only adds `player_join` and
 /// `player_leave` (co-op logic on one machine) and stays out of the way.
@@ -207,12 +210,6 @@ impl Plugin for NetPlugin {
                 world.insert_resource(NetState::Joining(format!("connecting to {addr}")));
                 world.insert_resource(NetClient::new(addr, &config));
                 app.add_exit_hook("net", client::on_exit);
-                // Over a real network the host owns time (a stand's driver runs every member's).
-                if !config.embedded && !config.testing {
-                    for tool in ["pause", "resume", "speed"] {
-                        app.net_route(tool, NetRoute::HostOnly("the host owns time; call it on the host"));
-                    }
-                }
             }
         }
     }
@@ -250,6 +247,14 @@ fn open_endpoint(world: &mut World) {
                 Ok((udp, host)) => {
                     let transport = crate::conditioner_from(&config, udp);
                     world.insert_resource(NetEndpoint { transport, clock, host: Some(host) });
+                    // Over a real network the host owns time (in a stand, its driver runs every
+                    // member's: a stand's client keeps them).
+                    let mut tools = world.resource_mut::<AiTools>();
+                    for tool in ["pause", "resume", "speed"] {
+                        if let Err(e) = tools.set_route(tool, NetRoute::HostOnly(HOST_OWNS_TIME)) {
+                            warn!("net: {e}");
+                        }
+                    }
                 }
                 Err(e) => {
                     journal::emit(world, JournalKind::Error, format!("net: cannot reach {addr}: {e}; give it as HOST:PORT"));

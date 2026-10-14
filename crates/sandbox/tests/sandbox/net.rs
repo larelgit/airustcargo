@@ -756,6 +756,12 @@ fn a_client_joins_a_host_over_udp_loopback() {
     assert!(lines(&host).iter().any(|l| l.contains("net: p1 (udp) joined at tick")), "{:#?}", lines(&host));
     assert!(lines(&host).iter().any(|l| l.contains(&format!("net: hosting on UDP 0.0.0.0:{port}"))), "{:#?}", lines(&host));
     let NetState::Connected { player: 1, body: Some(body) } = client.world().resource::<NetState>().clone() else { panic!("not p1") };
+    // Over a real network the host owns time.
+    for tool in ["pause", "resume", "speed"] {
+        let args = if tool == "speed" { json!({"x": 2.0}) } else { json!({}) };
+        let out = shards::testing::call(&mut client, tool, args);
+        assert!(!out.ok && out.result.as_str().is_some_and(|t| t.contains("the host owns time")), "{tool}: {}", out.result);
+    }
 
     // The host's token: random (nothing of the name or the process), kept beside the saves.
     let token = host.world().resource::<NetHost>().slots[&1].token.clone();
