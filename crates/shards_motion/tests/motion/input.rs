@@ -10,14 +10,20 @@ use bevy::prelude::*;
 use serde_json::json;
 use shards_core::input_names::{DODGE, GLIDE, JUMP, SPRINT};
 use shards_core::{EngineConfig, Intent, LocalPlayer, Order, SettingsStore, Target};
+use shards_motion::input::ActionBinding;
 use shards_motion::*;
-use shards_settings::{AccessibilitySettings, ControlSettings};
+use shards_settings::{AccessibilitySettings, ControlSettings, SettingsStorage};
 
 use crate::engine::*;
 
 /// The input map on a bare app. `legacy` says where the pre-settings `input.ron` is; `store`
 /// keeps the settings in that folder (`<dir>/settings.toml`), as `shards::run` would.
 fn input_app_in(store: Option<&Path>, legacy: Option<InputSettings>) -> App {
+    input_app_full(store, legacy, |_| {})
+}
+
+/// [`input_app_in`], and `after_install` gets the app between the store starting and the first frame.
+fn input_app_full(store: Option<&Path>, legacy: Option<InputSettings>, after_install: impl FnOnce(&mut App)) -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
         .add_plugins(AiCorePlugin {
@@ -36,6 +42,7 @@ fn input_app_in(store: Option<&Path>, legacy: Option<InputSettings>) -> App {
         let config = EngineConfig { settings: SettingsStore::Dir(dir.display().to_string()), ..default() };
         shards_settings::install(&mut app, &config).unwrap();
     }
+    after_install(&mut app);
     app.finish();
     app.cleanup();
     app.update();
@@ -427,6 +434,11 @@ fn a_settings_file_that_does_not_read_or_does_not_fit_is_the_defaults_and_a_warn
     // Saving something else keeps what this version cannot read.
     ok(&mut app, "rebind", json!({"action": "dodge", "binding": "Key(KeyV)"}));
     assert!(app.world().resource::<ControlSettings>().bindings.contains_key("gameplay.fly"));
+    // ...and a binding the player wrote that does not parse is still what they wrote, not erased.
+    assert_eq!(app.world().resource::<ControlSettings>().bindings["gameplay.jump"], ["Space"]);
+    shards_settings::flush(app.world_mut());
+    let saved = std::fs::read_to_string(dir.join("settings.toml")).unwrap();
+    assert!(saved.contains("\"Space\"") && saved.contains("KeyV"), "{saved}");
 }
 
 #[test]
@@ -471,6 +483,180 @@ fn an_explicit_old_file_is_read_without_a_settings_store_and_left_alone() {
     assert_eq!(*app.world().resource::<InputMap>(), InputMap::standard());
     assert!(journal_has(&app, JournalKind::Warn, "using the default controls"));
     assert!(broken.exists());
+}
+
+const OLD_JUMP: &str = r#"(contexts: [(name: "gameplay", actions: [(action: "jump", bindings: [Key(KeyJ)])])])"#;
+
+#[test]
+fn a_game_that_did_not_ask_never_touches_the_shared_config_folder() {
+    // `shards/input.ron` is the sandbox's: a game with the default `InputSettings` leaves it, with a
+    // store of the platform's or of a folder somebody named.
+    let dir = temp_dir("input_shared");
+    let shared = dir.join("config/shards/input.ron");
+    std::fs::create_dir_all(shared.parent().unwrap()).unwrap();
+    std::fs::write(&shared, OLD_JUMP).unwrap();
+    for platform in [false, true] {
+        let legacy = InputSettings { config_dir: Some(dir.join("config")), ..default() };
+        let app = input_app_full(Some(&dir.join("store")), Some(legacy), |app| {
+            app.world_mut().resource_mut::<SettingsStorage>().platform_default = platform;
+        });
+        assert_eq!(*app.world().resource::<InputMap>(), InputMap::standard(), "platform folder: {platform}");
+        assert!(shared.exists() && !shared.with_extension("ron.imported").exists(), "not renamed");
+        assert!(!journal_has(&app, JournalKind::Event, "imported"));
+    }
+}
+
+#[test]
+fn a_game_that_asked_imports_from_its_own_folder_in_the_platforms_settings_only() {
+    let dir = temp_dir("input_asked");
+    let old = dir.join("config/my-game/input.ron");
+    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+    std::fs::write(&old, OLD_JUMP).unwrap();
+    let asked = || InputSettings { config_dir: Some(dir.join("config")), ..InputSettings::for_game("my-game") };
+
+    // `--settings-dir`, a test, a headless run: not the user's folder, so not read.
+    let app = input_app_in(Some(&dir.join("named")), Some(asked()));
+    assert_eq!(*app.world().resource::<InputMap>(), InputMap::standard());
+    assert!(old.exists());
+
+    // The platform's own settings folder: read, written, and only then renamed.
+    let app = input_app_full(Some(&dir.join("platform")), Some(asked()), |app| {
+        app.world_mut().resource_mut::<SettingsStorage>().platform_default = true;
+    });
+    assert_eq!(app.world().resource::<InputMap>().action("gameplay", "jump").unwrap().bindings, [Binding::Key(KeyCode::KeyJ)]);
+    assert!(std::fs::read_to_string(dir.join("platform/settings.toml")).unwrap().contains("gameplay.jump"));
+    assert!(!old.exists() && old.with_extension("ron.imported").exists());
+}
+
+#[test]
+fn the_old_file_stays_when_the_settings_could_not_be_written() {
+    let dir = temp_dir("input_unwritable");
+    let old = dir.join("input.ron");
+    std::fs::write(&old, OLD_JUMP).unwrap();
+    // A settings folder below a regular file cannot be made, even by root.
+    let blocker = dir.join("not_a_folder");
+    std::fs::write(&blocker, "file").unwrap();
+    let legacy = || InputSettings { file: Some(old.clone()), ..default() };
+
+    let app = input_app_in(Some(&blocker.join("settings")), Some(legacy()));
+    assert_eq!(app.world().resource::<InputMap>().action("gameplay", "jump").unwrap().bindings, [Binding::Key(KeyCode::KeyJ)], "this session has them");
+    assert!(old.exists() && !old.with_extension("ron.imported").exists(), "but the old file did not go aside");
+    assert!(journal_has(&app, JournalKind::Warn, "could not write the imported controls"));
+    assert!(!journal_has(&app, JournalKind::Event, "imported the controls"));
+
+    // A run that can write finds it again.
+    let next = input_app_in(Some(&dir.join("writable")), Some(legacy()));
+    assert_eq!(next.world().resource::<InputMap>().action("gameplay", "jump").unwrap().bindings, [Binding::Key(KeyCode::KeyJ)]);
+    assert!(!old.exists() && old.with_extension("ron.imported").exists());
+    assert!(std::fs::read_to_string(dir.join("writable/settings.toml")).unwrap().contains("gameplay.jump"));
+}
+
+#[test]
+fn a_change_of_the_look_speed_does_not_touch_what_a_game_added_to_the_map() {
+    let mut app = input_app();
+    local_player(&mut app);
+    frame(&mut app);
+    // A game's own context and action, added by code after the first resolve.
+    {
+        let mut map = app.world_mut().resource_mut::<InputMap>();
+        map.contexts.push(InputContext { name: "aim".into(), actions: vec![ActionBinding::new("fire", [Binding::Key(KeyCode::KeyG)])], drives_intent: true });
+        map.contexts[0].actions.push(ActionBinding::new("emote", [Binding::Key(KeyCode::KeyB)]));
+    }
+    frame(&mut app);
+    // The settings change: not the controls (the look speed), then the controls.
+    set_control(&mut app, "mouse_sensitivity", "2");
+    frame(&mut app);
+    ok(&mut app, "rebind", json!({"action": "jump", "binding": "Key(KeyJ)"}));
+    set_control(&mut app, "bindings.gameplay.dodge", "[\"Key(KeyV)\"]");
+    frame(&mut app);
+    let map = app.world().resource::<InputMap>();
+    assert_eq!(map.action("aim", "fire").unwrap().bindings, [Binding::Key(KeyCode::KeyG)], "the game's context is still there");
+    assert!(map.action("gameplay", "emote").is_some(), "and its action");
+    assert_eq!(map.action("gameplay", "dodge").unwrap().bindings, [Binding::Key(KeyCode::KeyV)], "the new binding applied");
+
+    // `rebind` on what is not a default control says it lasts until the game ends, and writes nothing.
+    let dir = temp_dir("input_extras");
+    let mut kept = input_app_in(Some(&dir), None);
+    kept.world_mut().resource_mut::<InputMap>().contexts[0].actions.push(ActionBinding::new("emote", [Binding::Key(KeyCode::KeyB)]));
+    frame(&mut kept);
+    let out = ok(&mut kept, "rebind", json!({"action": "emote", "binding": "Key(KeyN)"}));
+    assert!(out.contains("not saved") && out.contains("gameplay.emote"), "{out}");
+    assert!(kept.world().resource::<ControlSettings>().bindings.is_empty());
+    assert!(ok(&mut kept, "rebind", json!({"action": "jump", "binding": "Key(KeyJ)"})).contains("saved to"));
+}
+
+fn set_control(app: &mut App, key: &str, value: &str) -> String {
+    ok(app, "settings_set", json!({"group": "controls", "key": key, "value": value}))
+}
+
+#[test]
+fn settings_set_refuses_what_rebind_refuses() {
+    let mut app = input_app();
+    local_player(&mut app);
+    frame(&mut app);
+    let refuses = |app: &mut App, key: &str, value: &str, needles: &[&str]| {
+        let err = fails(app, "settings_set", json!({"group": "controls", "key": key, "value": value}));
+        for needle in needles {
+            assert!(err.contains(needle), "`{needle}` in `{err}` ({key}={value})");
+        }
+    };
+    // An action that does not exist, a context that does not, a typo in the mode's action.
+    refuses(&mut app, "bindings.gameplay.jmp", "[\"Key(KeyJ)\"]", &["controls.bindings.gameplay.jmp", "no action `jmp` in context `gameplay`", "did you mean `jump`", "actions: "]);
+    refuses(&mut app, "bindings.Gameplay.jump", "[\"Key(KeyJ)\"]", &["no input context `Gameplay`", "did you mean `gameplay`", "contexts: gameplay, menu"]);
+    refuses(&mut app, "hold_or_toggle.gameplay.sprnt", "toggle", &["controls.hold_or_toggle.gameplay.sprnt", "no action `sprnt`", "did you mean `sprint`"]);
+    // An input another action of the context reads: W is inside the move binding, E is `interact`.
+    refuses(&mut app, "bindings.gameplay.jump", "[\"Key(KeyW)\"]", &["already bound to `move` in `gameplay`", "rebind `move` first", "force=true"]);
+    refuses(&mut app, "bindings.gameplay.jump", "[\"Key(KeyE)\"]", &["already bound to `interact`"]);
+    assert_eq!(*app.world().resource::<ControlSettings>(), ControlSettings::default(), "nothing of it got in");
+    frame(&mut app);
+    assert_eq!(*app.world().resource::<InputMap>(), InputMap::standard());
+
+    // What is free works, and so does taking an input by freeing it first.
+    set_control(&mut app, "bindings.gameplay.interact", "[\"Key(KeyG)\"]");
+    set_control(&mut app, "bindings.gameplay.jump", "[\"Key(KeyE)\"]");
+    frame(&mut app);
+    assert_eq!(app.world().resource::<InputMap>().action("gameplay", "jump").unwrap().bindings, [Binding::Key(KeyCode::KeyE)]);
+}
+
+#[test]
+fn what_a_file_left_behind_does_not_stop_settings_set() {
+    // Stale entries (an action this version lacks, a binding that does not read) are named at the start,
+    // kept in the file, and no reason to refuse an unrelated change.
+    let dir = temp_dir("input_stale_set");
+    std::fs::write(
+        dir.join("settings.toml"),
+        "[controls.bindings]\n\"gameplay.fly\" = [\"Key(KeyF)\"]\n\"gameplay.jump\" = [\"Key(Spce)\", \"GamepadButton(South)\"]\n\
+         [controls.hold_or_toggle]\n\"gameplay.block\" = \"tap\"\n",
+    )
+    .unwrap();
+    let mut app = input_app_in(Some(&dir), None);
+    local_player(&mut app);
+    frame(&mut app);
+    assert!(journal_has(&app, JournalKind::Warn, "controls.bindings.gameplay.jump") && journal_has(&app, JournalKind::Warn, "controls.hold_or_toggle.gameplay.block"));
+    set_control(&mut app, "bindings.gameplay.light", "[\"Key(KeyL)\"]");
+    ok(&mut app, "rebind", json!({"action": "dodge", "binding": "Key(KeyV)"}));
+    // The entries that never applied are still there, so a save does not erase what the player wrote.
+    let c = app.world().resource::<ControlSettings>();
+    assert_eq!(c.bindings["gameplay.jump"], ["Key(Spce)", "GamepadButton(South)"]);
+    assert_eq!(c.bindings["gameplay.fly"], ["Key(KeyF)"]);
+    assert_eq!(c.hold_or_toggle["gameplay.block"], "tap");
+    // Fixing one is setting it; the check judges that alone.
+    set_control(&mut app, "bindings.gameplay.jump", "[\"Key(KeyJ)\"]");
+    frame(&mut app);
+    assert_eq!(app.world().resource::<InputMap>().action("gameplay", "jump").unwrap().bindings, [Binding::Key(KeyCode::KeyJ)]);
+}
+
+#[test]
+fn a_clash_in_a_file_is_said() {
+    let dir = temp_dir("input_clash");
+    std::fs::write(dir.join("settings.toml"), "[controls.bindings]\n\"gameplay.jump\" = [\"Key(KeyW)\"]\n").unwrap();
+    let app = input_app_in(Some(&dir), None);
+    let said = app.world().resource::<AiJournal>().after(0).0.filter(|e| e.kind == JournalKind::Warn && e.text.contains("both read")).count();
+    assert_eq!(said, 1, "named once");
+    let text = app.world().resource::<AiJournal>().after(0).0.find(|e| e.text.contains("both read")).map(|e| e.text.clone()).unwrap();
+    assert!(text.contains("`jump`") && text.contains("`move`") && text.contains("both read") && text.contains("KeyW"), "{text}");
+    // It is the player's choice and applies; the engine only says so.
+    assert_eq!(app.world().resource::<InputMap>().action("gameplay", "jump").unwrap().bindings, [Binding::Key(KeyCode::KeyW)]);
 }
 
 #[test]

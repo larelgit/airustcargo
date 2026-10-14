@@ -52,7 +52,7 @@ fn settings(In(call): In<Call<SettingsArgs>>, world: &World) -> ToolResult {
 
 fn storage_line(world: &World) -> String {
     match world.get_resource::<SettingsStorage>() {
-        Some(SettingsStorage { file: Some(file) }) => {
+        Some(SettingsStorage { file: Some(file), .. }) => {
             format!("# kept in {}; a change is written a second after the last one, and when the game exits", file.display())
         }
         Some(_) => "# the platform has no settings folder: nothing is written".to_owned(),
@@ -68,8 +68,8 @@ fn unknown_group(names: &[&str], wanted: &str) -> String {
 /// Change a setting the way the settings screen does, and save it. `key` is a field
 /// (`fov_deg`) or an entry of a table field (`bindings.gameplay.jump`); `value` is text: a
 /// number, `true`/`false`, one of an enum's words (`reduced`), `1920x1080`, or JSON for a list
-/// (`["Key(KeyJ)"]`). `reset` puts a setting (or, without `key`, the whole group) back to its
-/// default. A value that does not fit is refused with what is allowed.
+/// (`["Key(KeyJ)"]`). `reset` puts a setting (or, without `key`, the whole group) back to the
+/// default the game started with. A value that does not fit is refused with what is allowed.
 #[derive(Deserialize, JsonSchema)]
 pub struct SettingsSetArgs {
     /// The group, as `settings` lists it.
@@ -80,7 +80,7 @@ pub struct SettingsSetArgs {
     #[serde(default, deserialize_with = "text_or_scalar")]
     #[schemars(with = "Option<String>")]
     pub value: Option<String>,
-    /// Back to the default.
+    /// Back to the default the game started with.
     #[serde(default)]
     pub reset: bool,
 }
@@ -134,7 +134,7 @@ fn set(world: &mut World, registry: &SettingsRegistry, args: SettingsSetArgs) ->
     // The whole group back to its defaults.
     if reset && key.is_none() {
         for owner in &owners {
-            let defaults = owner.defaults(world).ok_or("cannot read the defaults")?;
+            let defaults = registry.defaults(*owner, world).ok_or("cannot read the defaults")?;
             owner.replace(world, &defaults)?;
         }
         return Ok((before, snapshot(world)));
@@ -157,11 +157,14 @@ fn set(world: &mut World, registry: &SettingsRegistry, args: SettingsSetArgs) ->
     let label = format!("{}.{key}", owner.name());
 
     if reset {
-        let defaults = owner.defaults(world).ok_or("cannot read the defaults")?;
+        let defaults = registry.defaults(owner, world).ok_or("cannot read the defaults")?;
         let object = json.as_object_mut().ok_or("the group is not a table")?;
         match entry {
-            // A table entry has no default: it is removed.
+            // A table entry has no default: it is removed (one that is not there is already so).
             Some(entry) => {
+                if !matches!(field_info, TypeInfo::Map(_)) {
+                    return Err(format!("{}.{field} is not a table, so it has no entries: reset it as `key={field}`", owner.name()));
+                }
                 if let Some(table) = object.get_mut(field).and_then(Value::as_object_mut) {
                     table.remove(entry);
                 }

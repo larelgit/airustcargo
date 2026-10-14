@@ -101,33 +101,52 @@ impl InputContexts {
 }
 
 /// Where the player's controls were kept before they became settings (E8.6): the overrides
-/// file `input.ron`. A game that shipped with it names its folder here so the first run on the
-/// new version imports the player's changes into the `controls` settings, once: the file is
-/// renamed to `input.ron.imported` when the settings file has them. Nothing is written to the old
-/// file any more. A new game has nothing to set here.
+/// file `input.ron`. A game that shipped with it turns [`import`](Self::import) on and names
+/// its folder, and the first run on the new version imports the player's changes into the
+/// `controls` settings, once: the file is renamed to `input.ron.imported` when the settings
+/// file really has them. Nothing is written to the old file any more.
+///
+/// **Off by default, so a new game never reaches into a shared folder.** The default
+/// `app_name` is `shards`, the folder the engine's own sandbox used: a game that left it must not
+/// take the sandbox's file (and rename it away from the sandbox). Only the platform's own
+/// config folder is searched, and only when the settings are kept in the platform's own folder
+/// too (never for `--settings-dir`, tests, or a headless run): an explicit [`file`](Self::file)
+/// is always read.
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub struct InputSettings {
     /// The game's folder name in the user's config directory.
     pub app_name: String,
-    /// The overrides file. `None`: `input.ron` in the config folder of `app_name`.
+    /// The overrides file. `None`: `input.ron` in the config folder of `app_name` when
+    /// [`import`](Self::import) is on.
     pub file: Option<PathBuf>,
+    /// Look for `input.ron` in the user's config folder of `app_name` (see the type's docs).
+    pub import: bool,
+    /// Where the user's config folder is, for tests and tools that must not touch the real one.
+    /// `None`: `$XDG_CONFIG_HOME`, `~/.config`, or `%APPDATA%` on Windows.
+    pub config_dir: Option<PathBuf>,
 }
 
 impl Default for InputSettings {
     fn default() -> Self {
-        Self { app_name: "shards".to_owned(), file: None }
+        Self { app_name: "shards".to_owned(), file: None, import: false, config_dir: None }
     }
 }
 
 impl InputSettings {
-    /// Settings for the game folder `app_name`.
+    /// A game that shipped with `input.ron` in the config folder `app_name`: it is imported.
     pub fn for_game(app_name: &str) -> Self {
-        Self { app_name: app_name.to_owned(), ..default() }
+        Self { app_name: app_name.to_owned(), import: true, ..default() }
     }
 
-    /// The overrides file: `file`, or `input.ron` in the user's config folder.
-    pub fn path(&self) -> Option<PathBuf> {
-        self.file.clone().or_else(|| config_dir().map(|dir| dir.join(&self.app_name).join("input.ron")))
+    /// The file to import from: `file` when there is one (always), else `input.ron` in the
+    /// config folder of `app_name` when `import` is on and `platform_store` (the settings are in
+    /// the platform's own folder, so this is the same user's own game).
+    pub fn path(&self, platform_store: bool) -> Option<PathBuf> {
+        if let Some(file) = &self.file {
+            return Some(file.clone());
+        }
+        let folder = self.config_dir.clone().or_else(config_dir)?;
+        (self.import && platform_store).then(|| folder.join(&self.app_name).join("input.ron"))
     }
 }
 
@@ -192,8 +211,10 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<ControlState>()
         .init_resource::<ControlSync>()
         .init_resource::<Applied>()
-        // `settings_set` refuses a binding that does not read.
+        // `settings_set` refuses what `rebind` refuses: a binding that does not read, an action that
+        // does not exist, an input another action has.
         .add_settings_check::<ControlSettings>(controls::check)
+        .add_settings_world_check::<ControlSettings>(controls::check_known)
         .configure_sets(PreUpdate, ControlSystems::Read.after(InputSystems))
         .add_systems(PreUpdate, (resolve_defaults, read_input).chain().in_set(ControlSystems::Read));
     tools::register(app.world_mut());
@@ -206,8 +227,10 @@ pub struct InputDefaults(pub InputMap);
 
 /// Keeps the map the defaults from content (`input_map` `default`; the built-in when the game
 /// has none) plus the player's changes from the `controls` settings: it is built once content
-/// is there, again when the content is edited or the settings change, and a change made to
-/// the map itself (`rebind`, a game's system) is written back into the settings.
+/// is there, again when the content is edited or the bindings and modes in the settings change,
+/// and a change made to the map itself (`rebind`, a game's system) is written back into the
+/// settings. What a game added to the map beyond the defaults (a context, an action) survives a
+/// rebuild; the settings keep only differences on default actions.
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
 fn resolve_defaults(
     mut commands: Commands,
@@ -236,20 +259,17 @@ fn resolve_defaults(
 
     if first {
         applied.resolved = true;
-        if let Some(imported) = import_legacy_file(&mut commands, &legacy, storage.is_some(), &defaults.0, &controls) {
+        if let Some(imported) = import_legacy_file(&mut commands, &legacy, storage.as_deref(), &defaults.0, &controls) {
             *controls = imported;
         }
-        let (desired, problems) = controls::decode(&defaults.0, &controls);
-        for problem in problems {
-            let text = format!("settings: {problem}; using the default control");
-            commands.queue(move |world: &mut World| {
-                journal::emit(world, JournalKind::Warn, text);
-            });
-        }
+        let (desired, mut lines) = controls::decode(&defaults.0, &controls);
+        lines = lines.into_iter().map(|problem| format!("settings: {problem}; using the default control")).collect();
+        lines.extend(controls::new_clashes(&desired, &defaults.0));
+        say(&mut commands, sync.unsaid(lines));
         if *map != desired {
             *map = desired;
         }
-        sync.agree(&map);
+        sync.agree(&map, &defaults.0, &controls);
         return;
     }
 
@@ -260,37 +280,48 @@ fn resolve_defaults(
             *controls = next;
             shards_settings::save_soon(&mut commands);
         }
-        sync.agree(&map);
-    } else if defaults_changed || controls.is_changed() {
-        let (desired, _) = controls::decode(&defaults.0, &controls);
+        sync.agree(&map, &defaults.0, &controls);
+    } else if defaults_changed || (controls.is_changed() && sync.settings_moved(&controls)) {
+        let (mut desired, problems) = controls::decode(&defaults.0, &controls);
+        desired.apply(&sync.extras(&map, &defaults.0));
+        let mut lines: Vec<String> = problems.into_iter().map(|problem| format!("settings: {problem}; using the default control")).collect();
+        lines.extend(controls::new_clashes(&desired, &defaults.0));
+        say(&mut commands, sync.unsaid(lines));
         if *map != desired {
             *map = desired;
         }
-        sync.agree(&map);
+        sync.agree(&map, &defaults.0, &controls);
+    }
+}
+
+/// Journals `lines` as warnings.
+fn say(commands: &mut Commands, lines: Vec<String>) {
+    for text in lines {
+        commands.queue(move |world: &mut World| {
+            journal::emit(world, JournalKind::Warn, text);
+        });
     }
 }
 
 /// The controls of the overrides file earlier versions kept (`input.ron`) as the settings they
-/// are now, once: only when the settings hold no controls yet and a file is there (an explicit
-/// `InputSettings::file` always, the config folder's only when settings are kept on disk, so a
-/// test or a headless run never reads the player's own files). The settings file is written
-/// right away and the old file renamed to `input.ron.imported`. `None`: nothing to import.
+/// are now, once: only when the settings hold no controls yet and [`InputSettings::path`] finds a
+/// file. Settings kept in a file get the controls written right away; the old file is renamed to
+/// `input.ron.imported` only when the settings file is read back and holds every imported entry,
+/// otherwise it stays where it is to be imported again, and the journal says so. `None`: nothing
+/// to import.
 fn import_legacy_file(
     commands: &mut Commands,
     legacy: &InputSettings,
-    persistent: bool,
+    storage: Option<&SettingsStorage>,
     defaults: &InputMap,
     controls: &ControlSettings,
 ) -> Option<ControlSettings> {
     let pristine = controls.bindings.is_empty() && controls.hold_or_toggle.is_empty();
-    let path = legacy.path().filter(|p| pristine && (persistent || legacy.file.is_some()) && p.is_file())?;
+    let path = legacy.path(storage.is_some_and(|s| s.platform_default)).filter(|p| pristine && p.is_file())?;
     let overrides = match InputMap::load_overrides(&path) {
         Ok(overrides) => overrides,
         Err(why) => {
-            let text = format!("input: {why}; using the default controls");
-            commands.queue(move |world: &mut World| {
-                journal::emit(world, JournalKind::Warn, text);
-            });
+            say(commands, vec![format!("input: {why}; using the default controls")]);
             return None;
         }
     };
@@ -298,16 +329,41 @@ fn import_legacy_file(
     mine.apply(&overrides);
     let mut imported = controls.clone();
     controls::encode(&mine, defaults, &mut imported);
-    let text = format!("settings: imported the controls from {} into controls.bindings", path.display());
+    let keeps_file = storage.is_some_and(|s| s.file.is_some());
+    let (bindings, modes): (Vec<String>, Vec<String>) = (imported.bindings.keys().cloned().collect(), imported.hold_or_toggle.keys().cloned().collect());
     commands.queue(move |world: &mut World| {
-        journal::emit(world, JournalKind::Event, text);
-        // The old file goes aside only once the settings file has what was in it.
-        if world.contains_resource::<SettingsStorage>() {
-            shards_settings::flush(world);
-            let _ = std::fs::rename(&path, path.with_extension("ron.imported"));
+        let from = path.display();
+        if !keeps_file {
+            let text = format!("settings: imported the controls from {from} into controls.bindings (not saved: this run keeps no settings file; {from} stays)");
+            journal::emit(world, JournalKind::Event, text);
+            return;
+        }
+        // The old file goes aside only once the settings file is read back with what was in it.
+        match written(world, &bindings, &modes) {
+            Ok(()) => {
+                let _ = std::fs::rename(&path, path.with_extension("ron.imported"));
+                journal::emit(world, JournalKind::Event, format!("settings: imported the controls from {from} into controls.bindings ({from} is now input.ron.imported)"));
+            }
+            Err(why) => {
+                let text = format!("settings: could not write the imported controls ({why}); {from} stays where it is and is imported again next time");
+                journal::emit(world, JournalKind::Warn, text);
+            }
         }
     });
     Some(imported)
+}
+
+/// Writes the settings now and reads the file back: `Ok` when it holds every entry of the
+/// imported `bindings` and `modes` (nothing imported needs no file).
+fn written(world: &mut World, bindings: &[String], modes: &[String]) -> Result<(), String> {
+    if bindings.is_empty() && modes.is_empty() {
+        return Ok(());
+    }
+    shards_settings::flush_checked(world)?;
+    let holds = |field: &str, wanted: &[String]| {
+        wanted.is_empty() || shards_settings::stored_entries(world, "controls", field).is_some_and(|have| wanted.iter().all(|k| have.contains(k)))
+    };
+    if holds("bindings", bindings) && holds("hold_or_toggle", modes) { Ok(()) } else { Err("the file has not got the controls".to_owned()) }
 }
 
 /// The controls at this moment, from the devices.
@@ -546,10 +602,17 @@ mod tests {
     }
 
     #[test]
-    fn the_overrides_file_is_in_the_game_folder() {
-        let settings = InputSettings { file: Some("/tmp/x/input.ron".into()), ..default() };
-        assert_eq!(settings.path(), Some(PathBuf::from("/tmp/x/input.ron")));
-        let named = InputSettings::for_game("my-game").path();
-        assert!(named.is_none_or(|p| p.ends_with("my-game/input.ron")));
+    fn the_old_overrides_file_is_looked_for_only_where_a_game_asked() {
+        let folder = PathBuf::from("/tmp/c");
+        // A file somebody named is always the one.
+        let named = InputSettings { file: Some("/tmp/x/input.ron".into()), ..default() };
+        assert_eq!((named.path(false), named.path(true)), (Some("/tmp/x/input.ron".into()), Some("/tmp/x/input.ron".into())));
+        // A new game: nothing is looked for in the shared `shards` folder, whatever is in it.
+        let new_game = InputSettings { config_dir: Some(folder.clone()), ..default() };
+        assert_eq!((new_game.path(true), new_game.path(false)), (None, None));
+        // A game that shipped with `input.ron` asks, and only the platform's own settings folder is its own.
+        let shipped = InputSettings { config_dir: Some(folder.clone()), ..InputSettings::for_game("my-game") };
+        assert_eq!(shipped.path(true), Some(folder.join("my-game/input.ron")));
+        assert_eq!(shipped.path(false), None, "a folder given with --settings-dir, a test, a headless run: not the user's");
     }
 }

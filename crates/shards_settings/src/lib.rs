@@ -40,7 +40,9 @@
 //!   given. Changes are written a second after the last one ([`save_soon`]) and when the game
 //!   exits.
 
+mod file;
 pub mod groups;
+mod recover;
 mod registry;
 pub mod store;
 mod tools;
@@ -55,7 +57,8 @@ use shards_core::EngineAppExt;
 pub use bevy::settings::SettingsGroup;
 pub use groups::{AccessibilitySettings, AudioSettings, ControlSettings, FlashLevel, GraphicsSettings, ShadowQuality};
 pub use registry::{watch_settings, SettingsAppExt, SettingsRegistry};
-pub use store::{flush, install, save_soon, save_soon_in, Installed, SettingsAppId, SettingsStorage};
+pub use file::{stored_entries, watch_store};
+pub use store::{flush, flush_checked, install, save_soon, save_soon_in, Installed, SettingsAppId, SettingsStorage};
 pub use tools::{SettingsArgs, SettingsSetArgs};
 pub use toml_safe::check_toml_safe;
 pub use window::apply_graphics;
@@ -101,8 +104,14 @@ impl Plugin for ShardsSettingsPlugin {
             // The last thing a game does: what the player changed is on disk.
             .add_exit_hook("settings", flush)
             .add_systems(Update, apply_graphics)
-            .add_systems(Last, watch_settings);
+            .add_systems(Last, (watch_settings, watch_store).chain());
         tools::register(app.world_mut());
+    }
+
+    fn finish(&self, app: &mut App) {
+        // For an app that never starts a store (a test): what the game built is what a reset goes
+        // back to. `install` took them already where there is one, before the file was read.
+        registry::capture_defaults(app.world_mut());
     }
 }
 

@@ -51,6 +51,9 @@ parry3d = { version = "=0.31.1", default-features = false, features = ["std", "a
 # The JSON alone is enough (node tree, transforms, names, extras, POSITION bounds): no `import`
 # feature, so no image decoders. Bevy's own glTF loader uses the same crate for the visuals.
 gltf = { version = "=1.4.1", default-features = false, features = ["names", "extras"] }
+# Reads `settings.toml` inside shards_settings only (Bevy's settings framework reads it with the
+# same crate, so nothing new is built); never part of a public API.
+toml = { version = "=1.1.8", default-features = false, features = ["std", "serde", "parse", "display"] }
 # Deflate of link bodies and blobs inside shards_net only; never part of a public API. Pure Rust
 # (miniz_oxide), raw deflate streams: no zlib header, no C or SIMD backends.
 flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }

@@ -5455,6 +5455,7 @@ dependencies = [
  "serde_json",
  "shards",
  "shards_core",
+ "toml",
 ]
 
 [[package]]

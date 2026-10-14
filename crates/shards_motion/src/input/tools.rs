@@ -150,10 +150,16 @@ fn rebind(
         *controls = changed;
         shards_settings::save_soon(&mut commands);
     }
-    if let Some(SettingsStorage { file: Some(file) }) = storage.as_deref() {
-        message.push_str(&format!("; saved to {} in a second", file.display()));
+    if let Some(SettingsStorage { file: Some(file), .. }) = storage.as_deref() {
+        // Settings keep differences on the default controls only; an action a game added to the map by
+        // itself is the game's to set up each time.
+        if defaults.0.action(&context, &action).is_some() {
+            message.push_str(&format!("; saved to {} in a second", file.display()));
+        } else {
+            message.push_str(&format!("; not saved: `{context}.{action}` is not one of the default controls, so it lasts until the game ends"));
+        }
     }
-    sync.agree(&next);
+    sync.agree(&next, &defaults.0, &controls);
     *map = next;
     Ok(message)
 }

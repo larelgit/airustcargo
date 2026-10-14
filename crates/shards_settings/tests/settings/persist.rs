@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use bevy::time::TimeUpdateStrategy;
+use shards::ai_core::JournalKind;
 use shards::core::{run_exit_hooks, EngineConfig, ExitHooks, SettingsStore};
 use shards::settings::{AccessibilitySettings, AudioSettings, ControlSettings, FlashLevel, GraphicsSettings, Installed, SettingsStorage};
 use shards::testing;
@@ -168,15 +169,122 @@ fn a_headless_game_with_a_settings_folder_works_without_a_window() {
 }
 
 #[test]
-fn a_file_that_is_not_toml_is_the_defaults_and_the_next_save_replaces_it() {
+fn a_file_that_is_not_toml_is_kept_aside_before_the_next_save() {
     let dir = TempDir::new("broken");
-    std::fs::write(dir.file(), "[graphics\nthis = is not toml").unwrap();
+    let broken = "[graphics\nthis = is not toml";
+    std::fs::write(dir.file(), broken).unwrap();
     let mut app = game_in(&dir);
-    assert_eq!(*app.world().resource::<GraphicsSettings>(), GraphicsSettings::default());
+    assert_eq!(*app.world().resource::<GraphicsSettings>(), GraphicsSettings::default(), "no good copy: the defaults");
+    let bad = dir.path().join("settings.toml.bad");
+    assert_eq!(std::fs::read_to_string(&bad).unwrap(), broken, "the player's text is kept");
+    let said = lines(&app, JournalKind::Warn, "did not read");
+    assert!(said.len() == 1 && said[0].contains("settings.toml.bad") && said[0].contains("starting from the defaults"), "{said:?}");
+
     set(&mut app, "graphics", "vsync", "false");
     shards::settings::flush(app.world_mut());
     let text = std::fs::read_to_string(dir.file()).unwrap();
     assert!(text.contains("vsync = false") && !text.contains("not toml"), "{text}");
+    assert_eq!(std::fs::read_to_string(&bad).unwrap(), broken, "the save did not touch the copy");
+    drop(app);
+
+    // Broken again: the first copy is never overwritten.
+    let again = "[audio\nmaster = ";
+    std::fs::write(dir.file(), again).unwrap();
+    let _app = game_in(&dir);
+    assert_eq!(std::fs::read_to_string(&bad).unwrap(), broken);
+    assert_eq!(std::fs::read_to_string(dir.path().join("settings.toml.bad.1")).unwrap(), again);
+}
+
+#[test]
+fn a_broken_file_starts_the_game_from_the_last_good_copy() {
+    let dir = TempDir::new("backup");
+    let mut app = game_in(&dir);
+    set(&mut app, "graphics", "vsync", "false");
+    shards::settings::flush(app.world_mut());
+    assert!(dir.path().join("settings.toml.bak").exists(), "a write that checked out leaves a copy");
+    drop(app);
+
+    std::fs::write(dir.file(), "[graphics\noops").unwrap();
+    let app = game_in(&dir);
+    assert!(!app.world().resource::<GraphicsSettings>().vsync, "the last good settings are back");
+    assert_eq!(std::fs::read_to_string(dir.path().join("settings.toml.bad")).unwrap(), "[graphics\noops");
+    assert!(lines(&app, JournalKind::Warn, "the last good copy").len() == 1);
+}
+
+/// A full disk: Bevy's write fails, and it renames the half-written file over the good one all the same.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_write_that_fails_does_not_cost_the_settings() {
+    let dir = TempDir::new("full");
+    let mut app = game_in(&dir);
+    set(&mut app, "audio", "master", "0.4");
+    shards::settings::flush(app.world_mut());
+    // From here on the temporary file is a device that is always full.
+    std::os::unix::fs::symlink("/dev/full", dir.path().join("settings.toml.new")).unwrap();
+    set(&mut app, "audio", "master", "0.3");
+    shards::settings::flush(app.world_mut());
+
+    let text = std::fs::read_to_string(dir.file()).unwrap();
+    assert!(text.contains("master = 0.3"), "the write was tried again and worked:\n{text}");
+    assert!(std::fs::symlink_metadata(dir.file()).unwrap().file_type().is_file(), "no link, no partial file");
+    let failed = lines(&app, JournalKind::Error, "failed");
+    assert!(failed.len() == 1 && failed[0].contains("not a regular file") && failed[0].contains("the last good copy"), "{failed:?}");
+}
+
+/// The temporary file cannot be made at all: the good file stays, the journal reports, and it gives up.
+#[test]
+fn a_write_that_cannot_happen_is_reported_and_given_up() {
+    let dir = TempDir::new("blocked");
+    let mut app = game_in(&dir);
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(4)));
+    set(&mut app, "audio", "master", "0.4");
+    shards::settings::flush(app.world_mut());
+    std::fs::create_dir(dir.path().join("settings.toml.new")).unwrap();
+
+    set(&mut app, "audio", "master", "0.3");
+    for _ in 0..8 {
+        app.update();
+    }
+    assert!(std::fs::read_to_string(dir.file()).unwrap().contains("master = 0.4"), "the good file stayed");
+    assert!(lines(&app, JournalKind::Error, "was not written").len() >= 3, "each try is reported: {:?}", lines(&app, JournalKind::Error, "settings:"));
+    assert_eq!(lines(&app, JournalKind::Error, "giving up").len(), 1);
+    let updates = |app: &mut shards::bevy::prelude::App| (0..4).for_each(|_| app.update());
+    updates(&mut app);
+    assert_eq!(lines(&app, JournalKind::Error, "giving up").len(), 1, "and it stops");
+
+    // The obstacle goes, and the next change is written again.
+    std::fs::remove_dir(dir.path().join("settings.toml.new")).unwrap();
+    set(&mut app, "audio", "master", "0.2");
+    updates(&mut app);
+    assert!(std::fs::read_to_string(dir.file()).unwrap().contains("master = 0.2"));
+}
+
+#[test]
+fn a_change_a_game_makes_to_a_group_is_written_without_anyone_asking() {
+    use shards::prelude::*;
+
+    #[derive(Resource, Reflect, SettingsGroup, Default)]
+    #[reflect(Resource, SettingsGroup, Default)]
+    #[settings_group(group = "hints")]
+    struct Hints {
+        shown: u32,
+    }
+
+    let dir = TempDir::new("autosave");
+    let mut app = game_with(SettingsStore::Dir(dir.path().display().to_string()), |app| {
+        app.add_settings_group::<Hints>();
+    });
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(1200)));
+    app.update();
+    // A settings screen of the game: no tool, no flush, no exit hook.
+    app.world_mut().resource_mut::<AudioSettings>().master = 0.4;
+    app.world_mut().resource_mut::<Hints>().shown = 7;
+    assert_eq!(std::fs::read_to_string(dir.file()).unwrap(), "");
+    app.update();
+    app.update();
+    let text = std::fs::read_to_string(dir.file()).unwrap();
+    assert!(text.contains("master = 0.4") && text.contains("shown = 7"), "{text}");
+    assert_eq!(lines(&app, JournalKind::Event, "settings: audio.master 1 → 0.4").len(), 1);
 }
 
 #[test]
@@ -213,4 +321,122 @@ render_scale = 40.0
     app.update();
     let camera = app.world().resource::<shards::motion::CameraSettings>();
     assert_eq!(camera.fov_deg, 120.0, "the camera gets the clamped one");
+}
+
+#[test]
+fn bad_values_a_hand_edit_left_do_not_stop_other_settings() {
+    let dir = TempDir::new("two_bad");
+    std::fs::write(dir.file(), "[graphics]\nresolution = \"huge\"\nrender_scale = 40.0\n[accessibility]\nfov_deg = 400.0\nflashes = \"strobe\"\n").unwrap();
+    let mut app = game_in(&dir);
+    // Fixing one of two bad values, or setting an unrelated one, is that call's business alone.
+    let out = set(&mut app, "graphics", "resolution", "auto");
+    assert!(out.contains("graphics.resolution \"huge\" → \"auto\""), "{out}");
+    assert_eq!(app.world().resource::<GraphicsSettings>().render_scale, 40.0, "the other one is still there, still its owner's to fix");
+    set(&mut app, "graphics", "render_scale", "1");
+    set(&mut app, "accessibility", "text_scale", "1.2");
+    set(&mut app, "graphics", "vsync", "false");
+    // What a call sets is still checked.
+    let too_big = fails(&mut app, "settings_set", serde_json::json!({"group": "graphics", "key": "render_scale", "value": 50}));
+    assert!(too_big.contains("graphics.render_scale 50 is out of range"), "{too_big}");
+    let bad_word = fails(&mut app, "settings_set", serde_json::json!({"group": "accessibility", "key": "flashes", "value": "blink"}));
+    assert!(bad_word.contains("full, reduced, off"), "{bad_word}");
+    // And a bad value that was there is fixed by setting it right, or by a reset of its key.
+    set(&mut app, "accessibility", "fov_deg", "90");
+    ok(&mut app, "settings_set", serde_json::json!({"group": "accessibility", "key": "flashes", "reset": true}));
+    assert_eq!(app.world().resource::<AccessibilitySettings>().check(), Ok(()));
+}
+
+#[test]
+fn nan_in_a_file_is_the_default_and_is_said() {
+    let dir = TempDir::new("nan");
+    std::fs::write(dir.file(), "[accessibility]\ncamera_shake = nan\nfov_deg = inf\ntext_scale = 2.0\n").unwrap();
+    let mut app = game_in(&dir);
+    let a = app.world().resource::<AccessibilitySettings>();
+    assert_eq!((a.camera_shake, a.fov_deg, a.text_scale), (1.0, 70.0, 2.0), "the defaults where it was not a number, the rest as it was");
+    assert_eq!(lines(&app, JournalKind::Warn, "was not a number").len(), 2);
+    let listed = ok(&mut app, "settings", serde_json::json!({"group": "accessibility"}));
+    assert!(!listed.contains("null"), "{listed}");
+    set(&mut app, "accessibility", "motion_blur", "0.1");
+}
+
+#[test]
+fn one_bad_entry_in_the_controls_does_not_cost_the_others() {
+    let dir = TempDir::new("controls_entries");
+    // Unquoted, `gameplay.parry` is a nested table in TOML, which is not a list: Bevy skips the whole table.
+    std::fs::write(dir.file(), "[controls.bindings]\n\"gameplay.jump\" = [\"Key(KeyJ)\"]\ngameplay.parry = [\"Key(KeyP)\"]\n").unwrap();
+    let mut app = game_in(&dir);
+    {
+        let c = app.world().resource::<ControlSettings>();
+        assert_eq!(c.bindings["gameplay.jump"], ["Key(KeyJ)"]);
+        assert_eq!(c.bindings["gameplay.parry"], ["Key(KeyP)"], "read as the dotted key it was meant to be");
+    }
+    let said = lines(&app, JournalKind::Warn, "controls.bindings.gameplay.parry");
+    assert!(said.len() == 1 && said[0].contains("without quotes"), "{said:?}");
+    // The next save has all of it, quoted.
+    set(&mut app, "audio", "master", "0.5");
+    shards::settings::flush(app.world_mut());
+    let text = std::fs::read_to_string(dir.file()).unwrap();
+    assert!(text.contains("\"gameplay.jump\"") && text.contains("\"gameplay.parry\""), "{text}");
+}
+
+#[test]
+fn an_entry_that_cannot_be_used_is_named_and_the_file_as_it_was_is_kept() {
+    let dir = TempDir::new("controls_dropped");
+    let written = "[controls.bindings]\n\"gameplay.jump\" = [\"Key(KeyJ)\"]\n\"gameplay.heavy\" = 7\n";
+    std::fs::write(dir.file(), written).unwrap();
+    let mut app = game_in(&dir);
+    let c = app.world().resource::<ControlSettings>();
+    assert_eq!(c.bindings.keys().map(String::as_str).collect::<Vec<_>>(), ["gameplay.jump"]);
+    let said = lines(&app, JournalKind::Warn, "controls.bindings.gameplay.heavy");
+    assert!(said.len() == 1 && said[0].contains("expected a list of binding texts, found integer"), "{said:?}");
+    assert_eq!(std::fs::read_to_string(dir.path().join("settings.toml.bad")).unwrap(), written);
+    set(&mut app, "audio", "master", "0.5");
+    shards::settings::flush(app.world_mut());
+    assert!(std::fs::read_to_string(dir.file()).unwrap().contains("gameplay.jump"));
+}
+
+#[test]
+fn a_reset_goes_back_to_what_the_game_started_with() {
+    let own = || AccessibilitySettings { fov_deg: 90.0, camera_shake: 0.5, ..Default::default() };
+    // No store, and a store whose file lays another number over the game's.
+    let dir = TempDir::new("game_defaults");
+    std::fs::write(dir.file(), "[accessibility]\nfov_deg = 100.0\n").unwrap();
+    for (name, mut app) in [
+        ("no store", game_with(SettingsStore::Off, |app| {
+            app.insert_resource(own());
+        })),
+        ("a store", game_with(SettingsStore::Dir(dir.path().display().to_string()), |app| {
+            app.insert_resource(own());
+        })),
+    ] {
+        let fov = |app: &shards::bevy::prelude::App| app.world().resource::<AccessibilitySettings>().fov_deg;
+        assert_eq!(fov(&app), if name == "a store" { 100.0 } else { 90.0 }, "{name}: the file is laid over the game's value");
+        set(&mut app, "accessibility", "fov_deg", "110");
+        ok(&mut app, "settings_set", serde_json::json!({"group": "accessibility", "key": "fov_deg", "reset": true}));
+        assert_eq!(fov(&app), 90.0, "{name}: the key goes back to the game's number, not the engine's 70");
+        set(&mut app, "accessibility", "fov_deg", "110");
+        set(&mut app, "accessibility", "text_scale", "2");
+        ok(&mut app, "settings_set", serde_json::json!({"group": "accessibility", "reset": true}));
+        assert_eq!(*app.world().resource::<AccessibilitySettings>(), own(), "{name}: the whole group too");
+    }
+}
+
+#[test]
+fn a_game_that_asked_for_nothing_never_reads_the_shared_controls_folder() {
+    use shards::motion::{InputMap, InputSettings};
+
+    // `shards/input.ron` in a config folder is the sandbox's: a game that did not ask for an import leaves it alone.
+    let dir = TempDir::new("shared_folder");
+    let shared = dir.path().join("config/shards");
+    std::fs::create_dir_all(&shared).unwrap();
+    let old = r#"(contexts: [(name: "gameplay", actions: [(action: "jump", bindings: [Key(KeyJ)])])])"#;
+    std::fs::write(shared.join("input.ron"), old).unwrap();
+    let store = SettingsStore::Dir(dir.path().join("settings").display().to_string());
+    let app = game_with(store, |app| {
+        app.insert_resource(InputSettings { config_dir: Some(dir.path().join("config")), ..Default::default() });
+    });
+    assert_eq!(app.world().resource::<InputMap>().action("gameplay", "jump"), InputMap::standard().action("gameplay", "jump"));
+    assert_eq!(std::fs::read_to_string(shared.join("input.ron")).unwrap(), old, "not renamed either");
+    assert!(lines(&app, JournalKind::Event, "imported").is_empty());
+    assert!(app.world().resource::<ControlSettings>().bindings.is_empty());
 }

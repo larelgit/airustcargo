@@ -10,25 +10,90 @@
 //! (and the new defaults) into a new map. [`ControlSync`] remembers the last state both agree
 //! on to tell which side moved, so neither writes the other's echo back.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::prelude::*;
 use shards_settings::ControlSettings;
 
-use super::map::{ActionBinding, BindMode, Binding, InputMap};
+use super::map::{ActionBinding, BindMode, Binding, InputContext, InputMap};
+use super::InputDefaults;
 
-/// The map both sides last agreed on.
+/// `ControlSettings.bindings` and `.hold_or_toggle` as they were.
+type Stored = (BTreeMap<String, Vec<String>>, BTreeMap<String, String>);
+
+/// The map both sides last agreed on, and what it was built from.
 #[derive(Resource, Default)]
 pub struct ControlSync {
     /// `None` until the first resolve.
     pub(super) agreed: Option<InputMap>,
+    /// The defaults the agreed map was built on: what is in the map beyond them (a context or an
+    /// action a game's system added) is the game's, and a rebuild keeps it.
+    base: Option<InputMap>,
+    /// The bindings and modes the agreed map was built from: a settings change that leaves them
+    /// as they are (the look speed) is none of the map's business.
+    stored: Option<Stored>,
+    /// Warnings already journaled, so a rebuild does not say the same thing again.
+    warned: BTreeSet<String>,
 }
 
 impl ControlSync {
-    /// Says the map and the settings match now (after a tool wrote both).
-    pub(super) fn agree(&mut self, map: &InputMap) {
+    /// Says the map and the settings match now (the first resolve, a rebuild, a tool that wrote both).
+    pub(super) fn agree(&mut self, map: &InputMap, defaults: &InputMap, settings: &ControlSettings) {
         self.agreed = Some(map.clone());
+        self.base = Some(defaults.clone());
+        self.stored = Some((settings.bindings.clone(), settings.hold_or_toggle.clone()));
     }
+
+    /// Whether the bindings or modes in `settings` are not what the agreed map was built from.
+    pub(super) fn settings_moved(&self, settings: &ControlSettings) -> bool {
+        self.stored.as_ref().is_none_or(|(bindings, modes)| *bindings != settings.bindings || *modes != settings.hold_or_toggle)
+    }
+
+    /// What the map holds beyond the defaults it was built on.
+    pub(super) fn extras(&self, map: &InputMap, defaults: &InputMap) -> InputMap {
+        extras(map, self.base.as_ref().unwrap_or(defaults))
+    }
+
+    /// The lines of `lines` not said before.
+    pub(super) fn unsaid(&mut self, lines: Vec<String>) -> Vec<String> {
+        lines.into_iter().filter(|line| self.warned.insert(line.clone())).collect()
+    }
+}
+
+/// The contexts and actions of `map` that `base` does not have.
+pub fn extras(map: &InputMap, base: &InputMap) -> InputMap {
+    let contexts = map
+        .contexts
+        .iter()
+        .filter_map(|ctx| match base.context(&ctx.name) {
+            None => Some(ctx.clone()),
+            Some(known) => {
+                let actions: Vec<ActionBinding> = ctx.actions.iter().filter(|a| known.action(&a.action).is_none()).cloned().collect();
+                (!actions.is_empty()).then(|| InputContext { name: ctx.name.clone(), actions, drives_intent: ctx.drives_intent })
+            }
+        })
+        .collect();
+    InputMap { contexts }
+}
+
+/// Inputs that two actions of one context both read in `map` and did not in `defaults`: what
+/// `rebind` refuses without `force`, found in a map a file or a tool made. One line each.
+pub fn new_clashes(map: &InputMap, defaults: &InputMap) -> Vec<String> {
+    let mut lines = Vec::new();
+    for ctx in &map.contexts {
+        let shared = |a: &ActionBinding, b: &ActionBinding| a.bindings.iter().find(|x| b.bindings.iter().any(|y| x.overlaps(y))).cloned();
+        for (i, a) in ctx.actions.iter().enumerate() {
+            for b in &ctx.actions[i + 1..] {
+                let Some(input) = shared(a, b) else { continue };
+                let before = defaults.context(&ctx.name).and_then(|c| Some((c.action(&a.action)?, c.action(&b.action)?)));
+                if before.is_some_and(|(x, y)| shared(x, y).is_some()) {
+                    continue;
+                }
+                lines.push(format!("settings: in `{}`, `{}` and `{}` both read {input}", ctx.name, a.action, b.action));
+            }
+        }
+    }
+    lines
 }
 
 fn mode_name(mode: BindMode) -> &'static str {
@@ -53,12 +118,18 @@ fn split(key: &str) -> Option<(&str, &str)> {
     key.split_once('.')
 }
 
-/// Writes what `map` changes from `defaults` into `settings`, keeping entries for actions the
-/// defaults do not know (a file written by another version). Returns whether anything changed.
+/// Writes what `map` changes from `defaults` into `settings`. Entries that do not apply stay: for
+/// actions the defaults do not know (a file written by another version), and the ones that do not
+/// read (a binding with a typo): the next save must not erase what a player wrote and was told
+/// about. Returns whether anything changed.
 pub fn encode(map: &InputMap, defaults: &InputMap, settings: &mut ControlSettings) -> bool {
     let known = |key: &str| split(key).is_some_and(|(context, action)| defaults.action(context, action).is_some());
-    let mut bindings: BTreeMap<String, Vec<String>> = settings.bindings.iter().filter(|(k, _)| !known(k)).map(|(k, v)| (k.clone(), v.clone())).collect();
-    let mut modes: BTreeMap<String, String> = settings.hold_or_toggle.iter().filter(|(k, _)| !known(k)).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let keep_bindings = |k: &str, v: &[String]| !known(k) || v.iter().any(|text| Binding::parse(text).is_err());
+    let keep_mode = |k: &str, v: &str| !known(k) || parse_mode(v).is_none();
+    let mut bindings: BTreeMap<String, Vec<String>> =
+        settings.bindings.iter().filter(|(k, v)| keep_bindings(k, v)).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut modes: BTreeMap<String, String> =
+        settings.hold_or_toggle.iter().filter(|(k, v)| keep_mode(k, v)).map(|(k, v)| (k.clone(), v.clone())).collect();
     for context in &map.contexts {
         for action in &context.actions {
             let Some(base) = defaults.action(&context.name, &action.action) else { continue };
@@ -114,11 +185,57 @@ fn with_action<R>(map: &mut InputMap, key: &str, f: impl FnOnce(&mut ActionBindi
     Ok(f(found))
 }
 
-/// What `settings_set` refuses: a binding text that does not read, a mode that does not exist.
+/// What `settings_set` refuses: a binding text that does not read.
 pub fn check(settings: &ControlSettings) -> Result<(), String> {
     for (key, texts) in &settings.bindings {
         for text in texts {
             Binding::parse(text).map_err(|why| format!("controls.bindings.{key}: {why}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// What `settings_set` refuses beyond that, as `rebind` does: an entry it adds or changes must name
+/// a context and an action that exist (with a hint at the nearest name), and must not take an
+/// input another action of its context already reads. Only what the call changes is judged, so
+/// entries a file written for another version left behind do not stop anything. Before the first
+/// resolve, when the defaults are not known, nothing is judged.
+pub fn check_known(current: &ControlSettings, next: &ControlSettings, world: &World) -> Result<(), String> {
+    let (Some(sync), Some(InputDefaults(defaults))) = (world.get_resource::<ControlSync>(), world.get_resource::<InputDefaults>()) else {
+        return Ok(());
+    };
+    if sync.agreed.is_none() {
+        return Ok(());
+    }
+    let bindings: Vec<(&String, &Vec<String>)> = next.bindings.iter().filter(|(k, v)| current.bindings.get(*k) != Some(*v)).collect();
+    let modes: Vec<&String> = next.hold_or_toggle.iter().filter(|(k, v)| current.hold_or_toggle.get(*k) != Some(*v)).map(|(k, _)| k).collect();
+    for (field, key) in bindings.iter().map(|(k, _)| ("bindings", *k)).chain(modes.iter().map(|k| ("hold_or_toggle", *k))) {
+        let label = format!("controls.{field}.{key}");
+        let (context, action) = split(key).ok_or_else(|| format!("{label}: `{key}` is not `context.action` (for example `gameplay.jump`)"))?;
+        let Some(ctx) = defaults.context(context) else {
+            let all: Vec<&str> = defaults.contexts.iter().map(|c| c.name.as_str()).collect();
+            return Err(format!("{label}: no input context `{context}`{}; contexts: {}", InputMap::suggest(context, all.iter().copied()), all.join(", ")));
+        };
+        if ctx.action(action).is_none() {
+            let names = defaults.action_names(context);
+            return Err(format!(
+                "{label}: no action `{action}` in context `{context}`{}; actions: {}",
+                InputMap::suggest(action, names.iter().copied()),
+                names.join(", ")
+            ));
+        }
+    }
+    // The map the new settings would make: an input some other action reads is a clash.
+    let (map, _) = decode(defaults, next);
+    for (key, texts) in bindings {
+        let Some((context, action)) = split(key) else { continue };
+        for binding in texts.iter().filter_map(|t| Binding::parse(t).ok()) {
+            if let Some(other) = map.used_by(context, &binding, action) {
+                return Err(format!(
+                    "controls.bindings.{key}: {binding} is already bound to `{other}` in `{context}`; rebind `{other}` first, \
+                     or take the input over with the rebind tool and force=true"
+                ));
+            }
         }
     }
     Ok(())
@@ -175,5 +292,7 @@ mod tests {
         mine.rebind("gameplay", "dodge", 0, Binding::Key(KeyCode::KeyV)).unwrap();
         encode(&mine, &defaults, &mut settings);
         assert!(settings.bindings.contains_key("gameplay.fly") && settings.bindings.contains_key("gameplay.dodge"));
+        assert_eq!(settings.bindings["gameplay.jump"], ["Space"], "a binding that does not parse is kept as the player wrote it");
+        assert_eq!(settings.hold_or_toggle["gameplay.block"], "tap");
     }
 }

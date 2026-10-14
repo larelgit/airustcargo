@@ -129,6 +129,25 @@ fn reset_puts_back_the_default() {
 }
 
 #[test]
+fn reset_reads_its_key_as_carefully_as_set_does() {
+    let mut app = game();
+    set(&mut app, "graphics", "resolution", "1600x900");
+    let before = ok(&mut app, "settings", json!({}));
+    for (group, key, needle) in [
+        ("audio", "master.x", "audio.master is not a table"),
+        ("graphics", "resolution.width", "graphics.resolution is not a table"),
+        ("accessibility", "fov", "did you mean `fov_deg`"),
+    ] {
+        let err = fails(&mut app, "settings_set", json!({"group": group, "key": key, "reset": true}));
+        assert!(err.contains(needle), "{group}.{key}: {err}");
+    }
+    assert_eq!(ok(&mut app, "settings", json!({})), before, "nothing moved");
+    // An entry of a real table that is not there is already so, as the README says.
+    let out = ok(&mut app, "settings_set", json!({"group": "controls", "key": "bindings.gameplay.nope", "reset": true}));
+    assert!(out.contains("nothing changed"), "{out}");
+}
+
+#[test]
 fn a_change_of_settings_is_not_part_of_the_game() {
     let mut app = game();
     let recorded = app.world().resource::<AiReplay>().recorded_events();

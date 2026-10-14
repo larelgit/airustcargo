@@ -6,19 +6,19 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
-[features]
-# Applies the graphics group to the primary window. Without it (headless) the values are only kept.
-render = ["ai_core/render"]
-
 [dependencies]
 ai_core.workspace = true
 shards_core.workspace = true
-# `bevy_settings` is Bevy's own settings framework (`bevy-settings`, the only crate this adds);
-# `bevy_window` is for the graphics group's window.
+# `bevy_settings` is Bevy's own settings framework (`bevy-settings`, the only crate this adds).
+# `bevy_window` is always compiled in: a headless game has no window, so the graphics group's
+# system finds none and does nothing (there is no feature to gate it).
 bevy = { workspace = true, features = ["std", "serialize", "bevy_settings", "bevy_window"] }
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
+# The settings file, read by this crate too (broken files, the controls table entry by entry):
+# the same crate Bevy's settings framework reads it with.
+toml.workspace = true
 
 [dev-dependencies]
 # Integration tests build apps the way a game does: the whole engine (`shards::testing`).
