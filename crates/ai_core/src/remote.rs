@@ -602,17 +602,28 @@ mod tests {
         let distinct: std::collections::BTreeSet<&std::path::PathBuf> = parts.iter().collect();
         assert_eq!(distinct.len(), parts.len(), "{parts:?}");
         assert_eq!(parts[1], std::path::Path::new("/tmp/stand/g.port.c1.part"));
-        // And they are the paths `write` uses: the files appear, whole, and no temporary is left.
+        // And `write` goes through them. The host's `g.port.part` is the host's temporary file,
+        // in flight: a sibling's write must not touch it (the old name, `g.port.part` for
+        // `g.port.c1` too, would have renamed it away as the client's own).
         let dir = std::env::temp_dir().join(format!("ai_core_port_files_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let files: Vec<PortFile> = ["g.port", "g.port.c1", "g.port.c2"]
-            .iter()
-            .enumerate()
-            .map(|(i, name)| PortFile::write(&dir.join(name), 15700 + i as u16).unwrap())
-            .collect();
-        for (i, name) in ["g.port", "g.port.c1", "g.port.c2"].iter().enumerate() {
-            assert_eq!(std::fs::read_to_string(dir.join(name)).unwrap(), format!("{}\n", 15700 + i));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("g.port.part"), "the host is still writing\n").unwrap();
+        let mut files = Vec::new();
+        for (i, name) in ["g.port.c1", "g.port.c2"].iter().enumerate() {
+            files.push(PortFile::write(&dir.join(name), 15701 + i as u16).unwrap());
+            assert_eq!(
+                std::fs::read_to_string(dir.join("g.port.part")).unwrap(),
+                "the host is still writing\n",
+                "{name} left the host's temporary file alone"
+            );
+            assert_eq!(std::fs::read_to_string(dir.join(name)).unwrap(), format!("{}\n", 15701 + i), "{name} is whole");
+            assert!(!dir.join(format!("{name}.part")).exists(), "{name}'s own temporary file is renamed away");
         }
+        // The host's file, last: written whole through its own, and no temporary of any is left.
+        std::fs::remove_file(dir.join("g.port.part")).unwrap();
+        files.push(PortFile::write(&dir.join("g.port"), 15700).unwrap());
+        assert_eq!(std::fs::read_to_string(dir.join("g.port")).unwrap(), "15700\n");
         let mut left: Vec<String> = std::fs::read_dir(&dir).unwrap().filter_map(|e| Some(e.ok()?.file_name().to_string_lossy().into_owned())).collect();
         left.sort();
         assert_eq!(left, ["g.port", "g.port.c1", "g.port.c2"], "no .part file is left behind");
