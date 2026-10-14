@@ -148,8 +148,14 @@ pub fn find_path(world: &World, from: Vec3, to: Vec3, radius: f32) -> Option<Vec
 /// The default route: `shards_motion`'s grid A* (0.5 m cells) for a body of `radius` and the
 /// controller's default numbers, searching up to twice the straight distance (plus 20 m).
 pub fn local_grid_path(world: &World, from: Vec3, to: Vec3, radius: f32) -> Option<Vec<Vec3>> {
+    local_grid_route(world, from, to, &CharacterParams { radius, ..default() }, None)
+}
+
+/// [`local_grid_path`] for a body of its own numbers (its step height, mantle height, slope,
+/// swim depth), as `move_to path=true` plans for the walker; `exclude` is the walker's own
+/// body, which does not stand in its way.
+pub fn local_grid_route(world: &World, from: Vec3, to: Vec3, params: &CharacterParams, exclude: Option<Entity>) -> Option<Vec<Vec3>> {
     let physics = world.get_resource::<PhysicsWorld>()?;
-    let params = CharacterParams { radius, ..default() };
     let straight = flat(to - from).length();
     let request = PathRequest {
         start: from,
@@ -159,9 +165,9 @@ pub fn local_grid_path(world: &World, from: Vec3, to: Vec3, radius: f32) -> Opti
         within: 0.3,
         max_length: (straight * 2.0 + 20.0).min(300.0),
         safe_drop: world.get_resource::<MotionAi>().map_or(2.0, |m| m.safe_drop),
-        exclude: None,
+        exclude,
     };
-    let plan = plan_path(physics, &params, &request).ok()?;
+    let plan = plan_path(physics, params, &request).ok()?;
     let mut points: Vec<Vec3> = plan.waypoints().into_iter().map(|(p, _)| p).collect();
     match points.last_mut() {
         Some(last) => *last = Vec3::new(to.x, last.y, to.z),

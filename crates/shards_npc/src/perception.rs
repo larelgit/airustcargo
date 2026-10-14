@@ -7,7 +7,9 @@
 //!   hit, around the one hit, and every sprinting character is heard within
 //!   [`NpcTuning::sprint_noise`]) reaches the NPCs within its radius times their `hearing`
 //!   at once: it waits in their [`Perceived::sounds`] until their next perception pass. A
-//!   noise from a hostile fighter tells where it is; any other leaves a point to investigate.
+//!   noise from a hostile fighter tells where it is (at its [`Noise::origin`], else where
+//!   the noise is: a hit gives its attacker's place, not the victim's); any other leaves a
+//!   point to investigate.
 //! - **Memory**: what was sensed stays known for `memory` seconds at its last known place.
 //!
 //! The **focus** (the NPC's target) sticks to what it has while it is known, unless another
@@ -30,19 +32,25 @@ use crate::def::{NpcTuning, PerceptionDef};
 /// A sound in the world, heard by NPCs within `radius` (times their hearing).
 ///
 /// ```ignore
-/// commands.trigger(Noise { position: door, radius: 12.0, source: Some(player) });
+/// commands.trigger(Noise { position: door, radius: 12.0, source: Some(player), origin: None });
 /// ```
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct Noise {
+    /// Where the sound is: the radius is measured from here.
     pub position: Vec3,
     pub radius: f32,
     /// Who made it; `None` for the world's own sounds.
     pub source: Option<Entity>,
+    /// Where the source stands, when that is not where the sound is (a hit sounds where it
+    /// lands, its attacker stands elsewhere): what the NPCs that take the source for a
+    /// hostile fighter learn of it. `None`: at `position`.
+    pub origin: Option<Vec3>,
 }
 
 /// A sound an NPC heard and has not taken in yet.
 #[derive(Reflect, Clone, Copy, Debug, PartialEq)]
 pub struct Sound {
+    /// Where it came from: for a hostile `source`, where that stands ([`Noise::origin`]).
     pub pos: Vec3,
     pub source: Option<AiId>,
 }
@@ -258,30 +266,38 @@ fn focus(known: &[Sensed], current: Option<AiId>, feet: Vec3) -> Option<AiId> {
         .map(|k| k.id)
 }
 
-/// A [`Noise`] reaches every active NPC within its radius times their hearing, at once.
+/// A [`Noise`] reaches every active NPC within its radius (from its `position`) times their
+/// hearing, at once. An NPC that takes its source for a hostile fighter hears it from its
+/// `origin`: that is where the source is known to be, whatever the noise sounded.
 pub(crate) fn hear_noise(
     noise: On<Noise>,
     db: Res<ContentDb>,
-    ids: Query<&AiId>,
-    mut npcs: Query<(&Npc, &NpcBrain, &Transform, &mut Perceived)>,
+    sources: Query<(&AiId, Option<&Team>)>,
+    mut npcs: Query<(&Npc, &NpcBrain, &Transform, Option<&Team>, &mut Perceived)>,
 ) {
     let n = noise.event();
     if !(n.radius > 0.0 && n.position.is_finite()) {
         return;
     }
-    let source = n.source.and_then(|e| ids.get(e).ok().copied());
-    for (npc, brain, tf, mut perceived) in &mut npcs {
+    let source = n.source.and_then(|e| sources.get(e).ok());
+    let origin = n.origin.filter(|o| o.is_finite());
+    for (npc, brain, tf, team, mut perceived) in &mut npcs {
         if !brain.active {
             continue;
         }
         let hearing = db.get::<PerceptionDef>(&npc.perception).map_or(PerceptionDef::default().hearing, |d| d.hearing);
         if (n.position - tf.translation).length() <= n.radius * hearing {
-            perceived.sounds.push(Sound { pos: n.position, source });
+            let pos = match (origin, source) {
+                (Some(origin), Some((_, source_team))) if hostile(team, source_team) => origin,
+                _ => n.position,
+            };
+            perceived.sounds.push(Sound { pos, source: source.map(|(id, _)| *id) });
         }
     }
 }
 
-/// A hit is loud: a noise around the one hit, made by the attacker.
+/// A hit is loud: a noise around the one hit, made by the attacker, who stands where it
+/// stands (a shot from behind does not put the attacker at the victim's feet).
 pub(crate) fn hit_noise(hit: On<Damaged>, db: Res<ContentDb>, positions: Query<&Transform>, mut commands: Commands) {
     let radius = NpcTuning::of(&db).hit_noise;
     let hit = hit.event();
@@ -289,7 +305,8 @@ pub(crate) fn hit_noise(hit: On<Damaged>, db: Res<ContentDb>, positions: Query<&
         return;
     }
     let Ok(at) = positions.get(hit.target) else { return };
-    commands.trigger(Noise { position: at.translation, radius, source: Some(hit.attacker) });
+    let origin = positions.get(hit.attacker).ok().map(|t| t.translation);
+    commands.trigger(Noise { position: at.translation, radius, source: Some(hit.attacker), origin });
 }
 
 #[cfg(test)]

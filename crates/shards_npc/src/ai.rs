@@ -15,7 +15,7 @@ use shards_motion::{physics::sync_physics, CharacterController, CharacterParams,
 
 use crate::brain::{force_state, Home, Npc, NpcBrain, NpcDrive, NpcStateChanged};
 use crate::director::{AttackToken, TokenGranted, TokenReturned};
-use crate::nav::{local_grid_path, navmesh_route, NavAgent, NavPaths, NAVMESH};
+use crate::nav::{local_grid_path, local_grid_route, navmesh_route, NavAgent, NavPaths, NAVMESH};
 use crate::perception::Perceived;
 use crate::planner::NpcPlan;
 
@@ -263,6 +263,8 @@ fn nav_path(In(call): In<Call<NavPathArgs>>, world: &mut World) -> ToolResult<Va
     let paths = world.get_resource::<NavPaths>().copied().unwrap_or_default();
     let mut provider = paths.name;
     let mut find = paths.find;
+    // Off the navmesh, a walker that is no NPC plans on the local grid with its own body.
+    let mut own_body = None;
     if provider == NAVMESH {
         match navmesh_route(world, from, to, &params, target.is_some()) {
             Some(Ok(path)) => {
@@ -280,10 +282,15 @@ fn nav_path(In(call): In<Call<NavPathArgs>>, world: &mut World) -> ToolResult<Va
             None => {
                 provider = "local grid";
                 find = local_grid_path;
+                own_body = walker.filter(|w| world.get::<crate::Npc>(*w).is_none());
             }
         }
     }
-    let Some(path) = find(world, from, to, radius) else {
+    let path = match own_body {
+        Some(w) => local_grid_route(world, from, to, &params, Some(w)),
+        None => find(world, from, to, radius),
+    };
+    let Some(path) = path else {
         return Err(format!(
             "no route from {} to {} for a body of {radius:.2}m ({provider} paths); something blocks it all round, \
              or the goal is not on walkable ground",

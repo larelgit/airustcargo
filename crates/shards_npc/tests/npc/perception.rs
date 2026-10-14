@@ -75,18 +75,18 @@ fn noises_are_heard_within_their_radius() {
     assert!(knows(&app, watcher, hero).is_none(), "behind it, unseen");
 
     let at = feet(&app, hero);
-    app.world_mut().trigger(Noise { position: at, radius: 4.0, source: Some(hero) });
+    app.world_mut().trigger(Noise { position: at, radius: 4.0, source: Some(hero), origin: None });
     step(&mut app, 1);
     assert!(knows(&app, watcher, hero).is_none(), "a 4 m noise 6 m away is not heard");
 
-    app.world_mut().trigger(Noise { position: at, radius: 8.0, source: Some(hero) });
+    app.world_mut().trigger(Noise { position: at, radius: 8.0, source: Some(hero), origin: None });
     step(&mut app, 1);
     let k = knows(&app, watcher, hero).expect("an 8 m noise is");
     assert!(k.heard && !k.seen, "{k:?}");
 
     // A sound with no hostile source: something to investigate.
     let door = Vec3::new(3.0, 0.0, 3.0);
-    app.world_mut().trigger(Noise { position: door, radius: 10.0, source: None });
+    app.world_mut().trigger(Noise { position: door, radius: 10.0, source: None, origin: None });
     step(&mut app, 1);
     assert_eq!(app.world().get::<Perceived>(watcher).unwrap().noise.map(|n| n.pos), Some(door));
 }
@@ -154,4 +154,57 @@ fn a_hit_heard_does_not_move_an_attacker_in_sight() {
         heard |= k.heard;
     }
     assert!(heard, "the hit was heard all the same");
+}
+
+/// A hit heard by the one it hit, from an attacker it does not see (behind it, or beyond its
+/// sight), tells where the attacker stands, not the victim's own feet. The noise is still
+/// heard around the one hit: a shot from 14 m away reaches a victim the 10 m noise would
+/// not reach from the attacker.
+#[test]
+fn a_hit_from_an_attacker_out_of_sight_tells_where_it_stands() {
+    for hero_at in [Vec3::new(0.0, 0.0, 6.0), Vec3::new(0.0, 0.0, 14.0)] {
+        let mut app = app();
+        let (watcher, hero) = watcher_and_hero(&mut app, hero_at);
+        step(&mut app, 1);
+        assert!(knows(&app, watcher, hero).is_none(), "{hero_at}: unseen");
+        let hit = Damaged {
+            attacker: hero,
+            target: watcher,
+            action: "hero_shot".into(),
+            amount: 5.0,
+            poise: 0.0,
+            hp_left: 95.0,
+            invulnerable: false,
+        };
+        app.world_mut().trigger(hit);
+        step(&mut app, 2);
+        let k = knows(&app, watcher, hero).unwrap_or_else(|| panic!("{hero_at}: the hit gives the attacker away"));
+        assert!(!k.seen, "{hero_at}: {k:?}");
+        assert!((k.pos - feet(&app, hero)).length() < 0.05, "{hero_at}: where the attacker stands, not at the victim's feet: {k:?}");
+        assert_eq!(app.world().get::<Perceived>(watcher).unwrap().focus, Some(aid(&app, hero)), "{hero_at}: it takes the attacker for its target");
+    }
+}
+
+/// The attacker's place is for those who take it for a hostile fighter: a hit by one of its
+/// own side is still somewhere to investigate, the place of the hit.
+#[test]
+fn a_hit_by_a_friend_is_a_place_to_look_at_not_the_friends_position() {
+    let mut app = app();
+    let (watcher, hero) = watcher_and_hero(&mut app, Vec3::new(0.0, 0.0, 6.0));
+    let friend = fighter(app.world_mut(), "Grunt", "grunt", "monsters", Vec3::new(0.0, 0.0, 12.0), N);
+    step(&mut app, 1);
+    let hit = Damaged {
+        attacker: friend,
+        target: hero,
+        action: "grunt_swing".into(),
+        amount: 5.0,
+        poise: 0.0,
+        hp_left: 95.0,
+        invulnerable: false,
+    };
+    app.world_mut().trigger(hit);
+    step(&mut app, 2);
+    assert!(knows(&app, watcher, friend).is_none(), "no hostile to know of");
+    let noise = app.world().get::<Perceived>(watcher).unwrap().noise.expect("the hit is something to look at");
+    assert!((noise.pos - feet(&app, hero)).length() < 0.05, "at the hit, not at the attacker: {noise:?}");
 }
