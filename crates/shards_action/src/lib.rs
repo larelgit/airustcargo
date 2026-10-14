@@ -123,7 +123,7 @@ pub use anim::{
     ClipChoice, ClipDef, CueDef, GroundSpeeds, Locomotion,
 };
 pub use combat::{
-    kill,stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died, Evaded, GuardBroken, Outcome, Parried,
+    kill, revive, stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died, Evaded, GuardBroken, Outcome, Parried,
     StaggerCause, Staggered,
 };
 pub use cue::SoundCue;

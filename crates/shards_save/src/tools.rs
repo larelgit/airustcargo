@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use shards_core::PlayerId;
 
-use crate::ops::{self, default_body, size_text, SaveSlots};
+use crate::ops::{self, default_body, replay_playing, size_text, SaveSlots, NOT_WRITTEN_DURING_PLAYBACK};
 use crate::section::{plural, SaveKind, SaveRegistry};
 use crate::store::{valid_slot, Damage, FileState, Which};
 
@@ -68,7 +68,7 @@ fn slot_for(world: &World, slot: Option<&str>, kind: SaveKind) -> String {
 /// last used). Files go to the game's save folder (`saves/world/<slot>.save`,
 /// `saves/character/<slot>.save`) with a checksum, and the three previous saves of the slot
 /// are kept as backups. Saving never changes the game. The world is the host's, so it needs
-/// dev scope; a character is yours to save.
+/// dev scope; a character is yours to save. While a replay is played back nothing is written.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct SaveGameArgs {
     /// `world`, `character` or `all` (default).
@@ -94,6 +94,11 @@ fn save_game(In(call): In<Call<SaveGameArgs>>, world: &mut World) -> ToolResult 
     };
     let parts = parts(world, &call.caller, what);
     let reports = ops::save_parts(world, &parts, &slots, label.as_deref().unwrap_or(""), "save_game")?;
+    if reports.iter().any(|r| !r.written) {
+        // The files are as they were; a played-back replay must not look like it saved.
+        let skipped: Vec<String> = reports.iter().map(ToString::to_string).collect();
+        return Err(format!("{NOT_WRITTEN_DURING_PLAYBACK}: {}. Stop the replay (or let it finish) to save", skipped.join("; ")));
+    }
     Ok(format!("ok: {}", reports.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")))
 }
 
@@ -202,7 +207,7 @@ fn save_list(In(_): In<Call<SaveListArgs>>, world: &mut World) -> ToolResult<Val
     let mut lines = Vec::new();
     for kind in SaveKind::ALL {
         for slot in store.slots(kind) {
-            let info = store.inspect(kind, &slot);
+            let info = store.inspect_with(kind, &slot, &ops::newer_check(world, kind));
             let mut files = Vec::new();
             let mut parts = Vec::new();
             for file in &info.files {
@@ -213,6 +218,7 @@ fn save_list(In(_): In<Call<SaveListArgs>>, world: &mut World) -> ToolResult<Val
                         format!("ok (tick {tick}, {}{})", size_text(*size), if label.is_empty() { String::new() } else { format!(", \"{label}\"") }),
                     ),
                     FileState::Damaged(problem) => (json!({"state": "damaged", "problem": problem}), format!("damaged ({problem})")),
+                    FileState::Newer(what) => (json!({"state": "newer", "problem": what}), format!("from a newer version of the game ({what}); left alone")),
                 };
                 let mut entry = state;
                 entry["file"] = json!(file.name);
@@ -275,8 +281,8 @@ pub enum SlotFile {
 }
 
 /// Damage a save file on purpose, to watch the recovery (QA of the save path). Only files in
-/// the save folder can be touched. Load the slot afterwards: a damaged save is restored from
-/// the newest good backup and the journal says so.
+/// the save folder can be touched, and not while a replay is played back. Load the slot
+/// afterwards: a damaged save is restored from the newest good backup and the journal says so.
 #[derive(Deserialize, JsonSchema)]
 pub struct SaveDamageArgs {
     /// `world`, `character` or `all`.
@@ -294,6 +300,9 @@ fn save_damage(In(call): In<Call<SaveDamageArgs>>, world: &mut World) -> ToolRes
     let SaveDamageArgs { what, how, slot, copy } = call.args;
     if let Some(slot) = &slot {
         valid_slot(slot)?;
+    }
+    if replay_playing(world) {
+        return Err(format!("{NOT_WRITTEN_DURING_PLAYBACK}: save_damage changes files on disk, and a played-back replay touches none"));
     }
     let store = world.get_resource::<crate::SaveConfig>().ok_or("the save module is not installed")?.store();
     let which = match copy {

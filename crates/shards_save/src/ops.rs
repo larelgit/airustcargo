@@ -6,16 +6,16 @@
 //! [`capture_sections`], [`apply_sections`].
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use ai_core::journal::{self, JournalKind};
-use ai_core::sim;
+use ai_core::{sim, AiReplay};
 use bevy::prelude::*;
 use serde_json::Value;
 use shards_core::{EngineConfig, PlayerId};
 
 use crate::canon;
-use crate::file::{GameInfo, SaveFile, SectionData, SectionSet};
+use crate::file::{Fault, GameInfo, SaveFile, SectionData, SectionSet};
 use crate::section::{plural, SaveKind, SaveRegistry};
 use crate::store::{valid_slot, Recovery, Store, Which};
 
@@ -42,6 +42,36 @@ impl SaveConfig {
     pub fn store(&self) -> Store {
         Store { root: self.dir.clone(), sync: self.sync }
     }
+
+    /// The config `engine` describes: the save folder is `EngineConfig::save_dir`
+    /// (`--save-dir`), checked by [`check_save_dir`].
+    pub fn from_engine(engine: &EngineConfig) -> Result<Self, String> {
+        check_save_dir(&engine.save_dir)?;
+        Ok(Self { dir: PathBuf::from(&engine.save_dir), ..Self::default() })
+    }
+}
+
+/// The save folder must be inside the game's folder, like `replays/`: relative, no `..`.
+/// A game's launch flags (`--save-dir`) go through this, so that a saved game, and
+/// `save_damage`, can only touch files below the folder the game was started in.
+pub fn check_save_dir(dir: &str) -> Result<(), String> {
+    let refuse = |why: &str| {
+        Err(format!("the save folder `{dir}` {why}: it must be a path inside the game's folder, like `saves` (the default) or `saves/test-run`"))
+    };
+    if dir.trim().is_empty() {
+        return refuse("is empty");
+    }
+    for part in Path::new(dir).components() {
+        match part {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::ParentDir => return refuse("goes up with `..`"),
+            Component::RootDir | Component::Prefix(_) => return refuse("is absolute"),
+        }
+    }
+    if Path::new(dir).components().all(|c| c == Component::CurDir) {
+        return refuse("is the game's folder itself");
+    }
+    Ok(())
 }
 
 /// The slot each kind is in now: what [`save_now`] and autosaves write, and what a load or
@@ -59,6 +89,19 @@ impl Default for SaveSlots {
 }
 
 impl SaveSlots {
+    /// The slots a launch names (`--world SLOT`, `--character SLOT`: `EngineConfig::world_slot`
+    /// and `character_slot`), else the defaults. A name that is not a slot is an error.
+    pub fn from_engine(engine: &EngineConfig) -> Result<Self, String> {
+        let mut slots = Self::default();
+        for (kind, slot) in [(SaveKind::World, &engine.world_slot), (SaveKind::Character, &engine.character_slot)] {
+            if let Some(slot) = slot {
+                valid_slot(slot)?;
+                slots.set(kind, slot);
+            }
+        }
+        Ok(slots)
+    }
+
     pub fn get(&self, kind: SaveKind) -> &str {
         match kind {
             SaveKind::World => &self.world,
@@ -117,6 +160,16 @@ fn journal_warn(world: &mut World, text: String) {
     journal::emit(world, JournalKind::Warn, text);
 }
 
+/// Whether a replay is being played back (to verify it, or to watch it). Its states are not
+/// the player's progress: nothing is written to disk meanwhile, whatever asks (a recorded
+/// call, an exclusive system, an autosave).
+pub fn replay_playing(world: &World) -> bool {
+    world.get_resource::<AiReplay>().is_some_and(AiReplay::is_playing)
+}
+
+/// What a save answers, and journals, while a replay plays.
+pub const NOT_WRITTEN_DURING_PLAYBACK: &str = "save: not written during replay playback";
+
 /// `812 B`, `14 KB`.
 pub fn size_text(bytes: u64) -> String {
     if bytes < 1024 { format!("{bytes} B") } else { format!("{} KB", bytes.div_ceil(1024)) }
@@ -148,26 +201,50 @@ pub struct Prepared {
     pub unknown: Vec<String>,
 }
 
-/// Migrates `set` to the current versions and checks each section reads. Refuses a section
-/// saved by a newer version (`section inventory was saved by a newer version: 7 > 5`), a
-/// missing migration and a failed one.
-pub fn prepare(registry: &SaveRegistry, kind: SaveKind, set: &SectionSet) -> Result<Prepared, String> {
+/// The sections of `set` saved by a newer version than this build's, as `section
+/// inventory v7 > v5`, in name order. A section this game does not register is not newer, it
+/// is unknown.
+pub fn newer_sections(registry: &SaveRegistry, kind: SaveKind, set: &SectionSet) -> Vec<String> {
+    set.0
+        .iter()
+        .filter_map(|(name, saved)| {
+            let entry = registry.get(name).filter(|e| e.kind == kind)?;
+            (saved.version > entry.version).then(|| format!("section {name} v{} > v{}", saved.version, entry.version))
+        })
+        .collect()
+}
+
+/// For [`Store::write_guarded`] and [`Store::inspect_with`]: says what in a file is from a
+/// newer version than this build's sections (`section inventory v7 > v5`), `None` if nothing.
+pub fn newer_check(world: &World, kind: SaveKind) -> impl Fn(&SaveFile) -> Option<String> + '_ {
+    let registry = world.get_resource::<SaveRegistry>();
+    move |file| {
+        let newer = newer_sections(registry?, kind, &file.sections);
+        (!newer.is_empty()).then(|| newer.join(", "))
+    }
+}
+
+/// Migrates `set` to the current versions and checks each section reads. Refuses a set with a
+/// section saved by a newer version ([`Fault::Newer`]: it is not damage, and a backup must
+/// not stand in for it), a missing migration and a failed one ([`Fault::Damaged`]).
+pub fn prepare(registry: &SaveRegistry, kind: SaveKind, set: &SectionSet) -> Result<Prepared, Fault> {
+    let newer = newer_sections(registry, kind, set);
+    if !newer.is_empty() {
+        return Err(Fault::Newer(newer.join(", ")));
+    }
     let mut prepared = Prepared::default();
     for (name, saved) in &set.0 {
         let Some(entry) = registry.get(name).filter(|e| e.kind == kind) else {
             prepared.unknown.push(name.clone());
             continue;
         };
-        if saved.version > entry.version {
-            return Err(format!("section {name} was saved by a newer version: {} > {}", saved.version, entry.version));
-        }
         if saved.version == 0 {
-            return Err(format!("section {name} has version 0; versions start at 1"));
+            return Err(format!("section {name} has version 0; versions start at 1").into());
         }
         let (mut data, mut version) = (saved.data.clone(), saved.version);
         while version < entry.version {
             let Some(migrate) = registry.migration(name, version) else {
-                return Err(format!("section {name}: no migration from version {version} (this build is at {})", entry.version));
+                return Err(format!("section {name}: no migration from version {version} (this build is at {})", entry.version).into());
             };
             data = migrate(data).map_err(|e| format!("section {name}: migration from version {version} failed: {e}"))?;
             version += 1;
@@ -225,7 +302,7 @@ pub fn apply_sections(world: &mut World, kind: SaveKind, body: Option<Entity>, s
             applied: Vec::new(),
             message: "the save module is not installed (add SavePlugin)".to_owned(),
         })?;
-        prepare(registry, kind, set).map_err(|message| ApplyError { applied: Vec::new(), message })?
+        prepare(registry, kind, set).map_err(|fault| ApplyError { applied: Vec::new(), message: format!("the save was {fault}") })?
     };
     for name in &prepared.unknown {
         journal_warn(world, format!("save: unknown {kind} section {name} skipped (this game does not save it)"));
@@ -245,10 +322,16 @@ pub struct SaveReport {
     pub bytes: usize,
     pub sections: usize,
     pub reason: String,
+    /// `false`: nothing was written because a replay is being played back
+    /// ([`replay_playing`]); the files are as they were.
+    pub written: bool,
 }
 
 impl std::fmt::Display for SaveReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.written {
+            return write!(f, "{}/{} not written during replay playback ({})", self.kind, self.slot, self.reason);
+        }
         write!(f, "{}/{} saved ({}, {}, tick {})", self.kind, self.slot, self.reason, size_text(self.bytes as u64), self.tick)
     }
 }
@@ -278,8 +361,19 @@ pub fn save_part(world: &mut World, kind: SaveKind, body: Option<Entity>, slot: 
 /// Writes `sections` as the save of `kind/slot`, atomically, shifting the older ones into
 /// the backups. For a character captured elsewhere (co-op: the host captures a remote player's
 /// body and the player's machine writes the file): `tick` is the one it was captured at.
+///
+/// While a replay is played back nothing is written: the report says `written: false` and
+/// the journal `save: not written during replay playback (...)`. The call still succeeds,
+/// so a game's own code gets the same answer on a recording and on its playback.
+///
+/// A slot with a copy from a newer version of the game is refused ([`Store::write_guarded`]).
 pub fn write_sections(world: &mut World, kind: SaveKind, slot: &str, label: &str, reason: &str, tick: u64, sections: SectionSet) -> Result<SaveReport, String> {
     valid_slot(slot)?;
+    if replay_playing(world) {
+        let report = SaveReport { kind, slot: slot.to_owned(), tick, bytes: 0, sections: sections.len(), reason: reason.to_owned(), written: false };
+        journal::log(world, JournalKind::Sim, format!("{NOT_WRITTEN_DURING_PLAYBACK} ({kind}/{slot}, {reason})"));
+        return Ok(report);
+    }
     let store = store(world)?;
     let file = SaveFile {
         kind,
@@ -291,10 +385,12 @@ pub fn write_sections(world: &mut World, kind: SaveKind, slot: &str, label: &str
         sections,
     };
     let bytes = file.encode();
-    store.write(kind, slot, &bytes).inspect_err(|e| {
+    // Sections the old file has at a version above this build's: not ours to overwrite.
+    let written = store.write_guarded(kind, slot, &bytes, &newer_check(world, kind));
+    written.inspect_err(|e| {
         journal::emit(world, JournalKind::Error, format!("save: {kind}/{slot} not saved: {e}"));
     })?;
-    let report = SaveReport { kind, slot: slot.to_owned(), tick, bytes: bytes.len(), sections: file.sections.len(), reason: reason.to_owned() };
+    let report = SaveReport { kind, slot: slot.to_owned(), tick, bytes: bytes.len(), sections: file.sections.len(), reason: reason.to_owned(), written: true };
     journal::log(world, JournalKind::Sim, format!("save: {report}"));
     Ok(report)
 }
@@ -337,7 +433,7 @@ pub fn save_parts(
     for &(kind, body) in parts {
         match save_part(world, kind, body, slots.get(kind), label, reason) {
             Ok(report) => {
-                if let Some(mut current) = world.get_resource_mut::<SaveSlots>() {
+                if report.written && let Some(mut current) = world.get_resource_mut::<SaveSlots>() {
                     current.set(kind, &report.slot);
                 }
                 reports.push(report);
@@ -368,6 +464,8 @@ struct Read {
 /// read. `repair` rewrites a primary that was not usable.
 fn read_slot(world: &mut World, kind: SaveKind, slot: &str, repair: bool) -> Result<Read, String> {
     valid_slot(slot)?;
+    // A primary is rewritten from a backup only in a real game: a played-back replay writes no file.
+    let repair = repair && !replay_playing(world);
     let store = store(world)?;
     let registry = world.get_resource::<SaveRegistry>().cloned().ok_or("the save module is not installed (add SavePlugin)")?;
     let read = store.read(kind, slot, repair, |file| prepare(&registry, kind, &file.sections))?;
@@ -484,21 +582,14 @@ pub fn load_parts(world: &mut World, parts: &[(SaveKind, Option<Entity>)], slots
 }
 
 /// The recording starts again from the state just loaded, so a replay saved after a load
-/// verifies (a load is not something playback could redo: it reads a file).
-///
-/// SEAM(C1): once `ai_core::replay::restart_from_current(world, reason)` exists, this
-/// function is that call and nothing else. Until then the call that made the load is taken
-/// out of the recording (it must not play back) and the journal says the recording is not
-/// restarted.
+/// verifies (a load is not something playback could redo: it reads a file). If the state
+/// cannot be captured the call that made the load is taken out of the recording instead (it
+/// must not play back) and the journal says why a replay saved now will not verify.
 fn restart_recording(world: &mut World, reason: &str) {
-    ai_core::replay::forget_call(world);
-    journal_warn(
-        world,
-        format!(
-            "save: the recording was not restarted after {reason} (SEAM(C1): ai_core::replay::restart_from_current is not \
-             there yet), so a replay saved now will not verify"
-        ),
-    );
+    if let Err(why) = ai_core::replay::restart_from_current(world, reason) {
+        ai_core::replay::forget_call(world);
+        journal_warn(world, format!("save: the recording was not restarted after {reason} ({why}), so a replay saved now will not verify"));
+    }
 }
 
 // --- checking ----------------------------------------------------------------------------
@@ -581,4 +672,52 @@ fn compare(world: &World, kind: SaveKind, current: &SectionSet, read: Read) -> F
         }
     }
     check
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_save_folder_stays_inside_the_games_folder() {
+        for good in ["saves", "saves/qa-run", "./saves", "my_saves/a/b", "saves/"] {
+            assert!(check_save_dir(good).is_ok(), "{good}");
+        }
+        for (bad, why) in [
+            ("", "is empty"),
+            ("  ", "is empty"),
+            ("/var/saves", "is absolute"),
+            ("../saves", "goes up with `..`"),
+            ("saves/../../x", "goes up with `..`"),
+            ("a/../b", "goes up with `..`"),
+            (".", "is the game's folder itself"),
+            ("./", "is the game's folder itself"),
+        ] {
+            let err = check_save_dir(bad).unwrap_err();
+            assert!(err.contains(why) && err.contains("like `saves`"), "{bad:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn the_launch_sets_the_folder_and_the_current_slots() {
+        let engine = EngineConfig { save_dir: "saves/qa".into(), world_slot: Some("camp".into()), ..EngineConfig::default() };
+        assert_eq!(SaveConfig::from_engine(&engine).unwrap().dir, PathBuf::from("saves/qa"));
+        let slots = SaveSlots::from_engine(&engine).unwrap();
+        assert_eq!((slots.world.as_str(), slots.character.as_str()), ("camp", "slot1"), "what the launch does not name stays the default");
+        assert_eq!(SaveSlots::from_engine(&EngineConfig::default()).unwrap(), SaveSlots::default());
+        assert_eq!(SaveConfig::from_engine(&EngineConfig::default()).unwrap().dir, SaveConfig::default().dir);
+
+        let bad = EngineConfig { character_slot: Some("../x".into()), ..EngineConfig::default() };
+        assert!(SaveSlots::from_engine(&bad).unwrap_err().contains("is not allowed"));
+        let bad = EngineConfig { save_dir: "/abs".into(), ..EngineConfig::default() };
+        assert!(SaveConfig::from_engine(&bad).unwrap_err().contains("is absolute"));
+    }
+
+    #[test]
+    fn a_report_that_was_not_written_says_so() {
+        let report = SaveReport { kind: SaveKind::World, slot: "slot1".into(), tick: 9, bytes: 0, sections: 3, reason: "camp".into(), written: false };
+        assert_eq!(report.to_string(), "world/slot1 not written during replay playback (camp)");
+        let report = SaveReport { written: true, bytes: 2048, ..report };
+        assert_eq!(report.to_string(), "world/slot1 saved (camp, 2 KB, tick 9)");
+    }
 }

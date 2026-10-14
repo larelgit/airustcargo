@@ -4,6 +4,9 @@
 mod autosave;
 mod common;
 mod damage;
+mod launch;
 mod migrate;
+mod newer;
+mod playback;
 mod roundtrip;
 mod tools;

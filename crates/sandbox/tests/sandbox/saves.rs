@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use shards::action::{Charges, Health, Stamina};
+use shards::action::{ActionState, Charges, Dead, Health, Stamina};
 use shards::ai_core::{AiIndex, JournalKind};
 use shards::prelude::*;
 use shards::save::{SaveConfig, SaveFile};
@@ -217,4 +217,77 @@ fn a_region_that_no_longer_comes_out_the_same_is_refused_and_nothing_is_built() 
     // An apply failure is not a damaged file: it does not look for a backup, and does not touch the file.
     assert_eq!(fs::read(&path).unwrap(), file.encode());
     assert!(warns(&fresh, "restored from backup").is_empty());
+}
+
+fn dead(app: &App) -> bool {
+    app.world().get::<Dead>(player_entity(app)).is_some()
+}
+
+fn health(app: &App) -> f32 {
+    app.world().get::<Health>(player_entity(app)).unwrap().current
+}
+
+/// The player's health runs out; the next tick's `check_deaths` kills.
+fn die(app: &mut App) {
+    ok(app, "set", json!({"id": PLAYER, "component": "Health", "path": "current", "value": 0}));
+    step(app, 2);
+    assert!(dead(app));
+}
+
+#[test]
+fn a_body_that_died_since_the_save_lives_again_when_it_is_loaded() {
+    let saves = Saves::new("revive");
+    let mut app = saves.game();
+    step(&mut app, 5);
+    ok(&mut app, "save_game", json!({"what": "character", "slot": "alive"}));
+    let saved = health(&app);
+    assert!(saved > 0.0);
+
+    die(&mut app);
+    assert_eq!(health(&app), 0.0);
+    let refused = fails(&mut app, "light_attack", json!({}));
+    assert!(refused.contains("dead"), "a dead body cannot attack: {refused}");
+
+    let out = text(&ok(&mut app, "load_game", json!({"what": "character", "slot": "alive"}))).to_owned();
+    assert!(out.starts_with("ok: character/alive loaded"), "{out}");
+    assert!(!dead(&app), "the saved health is above zero: the body is revived, as the dev `heal` does");
+    assert_eq!(health(&app), saved);
+    assert!(app.world().get::<ActionState>(player_entity(&app)).unwrap().current.is_none(), "the death action is cut");
+    assert!(!lines(&app, &format!("{PLAYER} healed +")).is_empty(), "{:?}", events(&app));
+
+    // It fights again.
+    let attack = text(&ok(&mut app, "light_attack", json!({}))).to_owned();
+    assert!(attack.starts_with("ok"), "{attack}");
+    step(&mut app, 60);
+    assert!(!dead(&app));
+
+    // The recording that follows verifies: it starts from the state right after the load.
+    let recording = shards::ai_core::replay::save(app.world());
+    let start = recording.start.as_ref().expect("a load restarts the recording").tick;
+    assert!(recording.events.iter().all(|e| e.at() >= start));
+    let mut fresh = sandbox::test_app(42);
+    let report = shards::testing::verify(&mut fresh, recording).unwrap();
+    assert!(report.identical(), "{report}");
+}
+
+#[test]
+fn a_save_made_at_zero_health_leaves_the_body_dead() {
+    let saves = Saves::new("stays_dead");
+    let mut app = saves.game();
+    die(&mut app);
+    ok(&mut app, "save_game", json!({"what": "character", "slot": "grave"}));
+
+    // A living body loading it has no health left and dies on the next tick, as any body does.
+    ok(&mut app, "heal", json!({"id": PLAYER}));
+    assert!(!dead(&app));
+    ok(&mut app, "load_game", json!({"what": "character", "slot": "grave"}));
+    assert!(!dead(&app), "nothing kills during the load itself");
+    step(&mut app, 1);
+    assert!(dead(&app));
+    assert!(!lines(&app, &format!("{PLAYER} died")).is_empty());
+
+    // A dead body loading it stays dead.
+    ok(&mut app, "load_game", json!({"what": "character", "slot": "grave"}));
+    assert!(dead(&app));
+    assert_eq!(health(&app), 0.0);
 }
