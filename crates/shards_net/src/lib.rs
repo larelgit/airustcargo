@@ -19,12 +19,17 @@
 
 pub mod conditioner;
 pub mod hub;
+pub mod link;
 pub mod stats;
+mod track;
 pub mod transport;
 pub mod udp;
+pub mod wire;
 
 pub use conditioner::{Conditioned, Conditioner, Fate, LinkConditions};
 pub use hub::{HubEvent, HubEventKind, HubLinkStats, LinkId, MemoryHub, MemoryTransport};
+pub use link::{Delivered, Footprint, Link, LinkConfig, Role, SendError, Verdict};
 pub use stats::{DirStats, LinkStats};
 pub use transport::{MTU, PeerId, Transport};
 pub use udp::{UdpTransport, WallClock};
+pub use wire::Reject;
