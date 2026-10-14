@@ -150,6 +150,8 @@ pub fn reload_level(world: &mut World, instance: u32) -> Result<usize, String> {
     };
     let level = level_asset(world, &old.path)?.clone();
     let plans = prepare(world, &level)?;
+    // Before anything goes: a pose no node can be placed at is a problem of the file too.
+    check_poses(&level, &plans, old.at)?;
     despawn_level(world, instance);
     place(world, &level, &plans, old.at, &old.label, instance).map(|spawned| spawned.entities.len())
 }
@@ -168,6 +170,28 @@ fn prepare(world: &World, level: &LevelAsset) -> Result<Vec<NodePlan>, String> {
     let registry = app_registry.read();
     let (plans, problems) = analyze(level, &registry, world.get_resource::<ContentDb>());
     if problems.is_empty() { Ok(plans) } else { Err(describe_problems(level, &problems)) }
+}
+
+/// The scale, rotation and translation of a node's world matrix, or why it has no usable
+/// pose (a zero scale, say: the rotation comes out as NaN).
+fn node_pose(world_matrix: Mat4, path: &str) -> Result<(Vec3, Quat, Vec3), String> {
+    let (scale, rotation, translation) = world_matrix.to_scale_rotation_translation();
+    if translation.is_finite() && rotation.is_finite() && scale.is_finite() {
+        Ok((scale, rotation, translation))
+    } else {
+        Err(format!("node `{path}`: its transform is not a valid pose"))
+    }
+}
+
+/// Every node that will spawn has a usable pose; checked before a reload despawns the
+/// level it replaces.
+fn check_poses(level: &LevelAsset, plans: &[NodePlan], at: Transform) -> Result<(), String> {
+    let at_matrix = at.to_matrix();
+    for plan in plans.iter().filter(|p| p.spawns()) {
+        let node = &level.nodes[plan.node];
+        node_pose(at_matrix * node.world, &node.path)?;
+    }
+    Ok(())
 }
 
 fn place(world: &mut World, level: &LevelAsset, plans: &[NodePlan], at: Transform, label: &str, instance: u32) -> Result<SpawnedLevel, String> {
@@ -202,10 +226,7 @@ fn spawn_node(
     instance: u32,
 ) -> Result<Entity, String> {
     let node = &level.nodes[plan.node];
-    let (scale, rotation, translation) = worlds[plan.node].to_scale_rotation_translation();
-    if !(translation.is_finite() && rotation.is_finite() && scale.is_finite()) {
-        return Err(format!("node `{}`: its transform is not a valid pose", node.path));
-    }
+    let (scale, rotation, translation) = node_pose(worlds[plan.node], &node.path)?;
     // Scale is in the collider's size; the entity itself is unscaled.
     let transform = Transform { translation, rotation, scale: Vec3::ONE };
 

@@ -38,8 +38,11 @@ dynamic = ["shards/dynamic"]
 # (`shards::prelude`, `shards::serde`, `shards::schemars`).
 #
 # Here the template sits inside the engine repository, so it points at the folder. In
-# your own repository pin a release instead (see CHANGELOG.md of the engine):
-#   shards = { git = "https://github.com/larelgit/airustcargo", tag = "v0.2.0", default-features = false }
+# your own repository pin the engine instead (see CHANGELOG.md of the engine). The template
+# needs the world, NPCs and navmesh of phase B (0.3.0), so not the phase A tag v0.2.0; until
+# the maintainer tags v0.3.0 pin a commit, afterwards a tag:
+#   shards = { git = "https://github.com/larelgit/airustcargo", rev = "<commit>", default-features = false }
+#   shards = { git = "https://github.com/larelgit/airustcargo", tag = "v0.3.0", default-features = false }
 shards = { path = "../crates/shards", default-features = false }
 
 # A workspace of its own: the engine repository's workspace must not swallow the template,

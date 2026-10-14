@@ -1383,11 +1383,12 @@ fn apply_start(world: &mut World) {
 /// live session is restored afterwards.
 fn replay_call(world: &mut World, agent: &str, scope: Scope, subject: Option<AiId>, tool: &str, args: Value) {
     let saved = world.resource_mut::<AgentSessions>().get_or_create(agent).clone();
-    world.resource_mut::<AgentSessions>().configure(agent, scope, subject);
+    // The recorded call ran as `subject`, never as a player body the live session is bound to.
+    world.resource_mut::<AgentSessions>().configure(agent, scope, subject).player = None;
     world.resource_mut::<AiReplay>().replaying = true;
     call_tool(world, agent, tool, args);
     world.resource_mut::<AiReplay>().replaying = false;
-    world.resource_mut::<AgentSessions>().configure(agent, saved.scope, saved.subject);
+    world.resource_mut::<AgentSessions>().configure(agent, saved.scope, saved.subject).player = saved.player;
 }
 
 fn finish(world: &mut World) {
@@ -1939,5 +1940,52 @@ mod tests {
         let v2 = Divergence { entities: vec![], more: 0, checks: vec![], no_details: Some("replay format 2".into()), ..d };
         r.divergence = Some(v2);
         assert_eq!(r.to_string(), "replay finished at tick 600: DIVERGED at tick 60: no details: replay format 2");
+    }
+
+    /// Who a tool saw as the caller's body.
+    #[derive(Resource, Default)]
+    struct SeenBodies(Vec<Option<AiId>>);
+
+    fn who(In(call): In<Call<crate::tools::NoArgs>>, world: &mut World) -> ToolResult {
+        world.resource_mut::<SeenBodies>().0.push(call.caller.subject_id);
+        Ok("ok".into())
+    }
+
+    /// Player 1 plays the first dial.
+    fn first_dial_is_player_one(world: &World, n: u8) -> Option<AiId> {
+        (n == 1).then(|| world.resource::<AiIndex>().get(AiId(1)).map(|_| AiId(1))).flatten()
+    }
+
+    /// A replayed call runs as its recorded body, and the live session, a player binding
+    /// included, is exactly what it was before it.
+    #[test]
+    fn a_replayed_call_restores_a_player_bound_session() {
+        let mut app = game();
+        let world = app.world_mut();
+        world.spawn((crate::AiKind::new("Hero"), crate::AiPlayer));
+        world.init_resource::<SeenBodies>();
+        register_tool(world, "who", Scope::Player, ToolKind::Query, who);
+        world.resource_mut::<AgentSessions>().set_player_resolver(first_dial_is_player_one);
+
+        let out = call_tool(world, "p1", "possess", json!({"player": 1}));
+        assert!(out.ok, "{}", out.result);
+        let session = |world: &World| {
+            let s = world.resource::<AgentSessions>().get("p1").unwrap();
+            (s.scope, s.subject, s.player)
+        };
+        let bound = (Scope::Dev, None, Some(1));
+        assert_eq!(session(world), bound);
+
+        // Recorded with the hero (e2) as the body: the player binding must not decide it ...
+        replay_call(world, "p1", Scope::Dev, Some(AiId(2)), "who", json!({}));
+        assert_eq!(session(world), bound, "the binding to player 1 survives a replayed call");
+        // ... nor when the recording had the default body (the AiPlayer entity, e2).
+        replay_call(world, "p1", Scope::Dev, None, "who", json!({}));
+        assert_eq!(session(world), bound);
+        assert_eq!(world.resource::<SeenBodies>().0, [Some(AiId(2)), Some(AiId(2))], "never player 1's body e1");
+
+        // The live binding itself still resolves to its body afterwards.
+        call_tool(world, "p1", "who", json!({}));
+        assert_eq!(world.resource::<SeenBodies>().0[2], Some(AiId(1)));
     }
 }
