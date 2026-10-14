@@ -891,8 +891,8 @@ Locked  = true                           (компонент без полей)
 | `landmark` | `LevelMarker`, `AiLandmark`, `AiKind` по имени маркера | в строке LANDMARKS |
 | `custom:<имя>` | `LevelMarker` | нет (нужен `AiKind` — добавьте компонентом) |
 
-Узлы настоящего файла `crates/sandbox/assets/tiles/ruin.gltf` (руина 16 × 16 м; сделан из тестового генератора glTF, как
-файл из Blender): пол `Ground` и стены `Wall.North`, `Wall.West`, `Rubble`, `Column` с `collider = auto`; `Camp`
+Узлы файла `crates/sandbox/assets/tiles/ruin.gltf` (руина 16 × 16 м; в репозитории его пишет тест
+`crates/sandbox/tests/sandbox/tiles.rs` вместо экспортёра Blender, настоящий экспорт мы не пробовали): пол `Ground` и стены `Wall.North`, `Wall.West`, `Rubble`, `Column` с `collider = auto`; `Camp`
 (`marker = camp`, `name = ruin_camp`), `Arch` (`marker = landmark`, `name = Ruin`) и четыре `Edge.N/E/S/W` с `socket = grass`.
 
 **Файл в контенте.** Вид `level` (`LevelDef`): путь файла, обязательные маркеры, место по умолчанию.
@@ -934,7 +934,7 @@ level ruin: tiles/ruin.gltf, at (0.0, 0.0)
   …
 checks: ok
 $ shards act spawn_level id=ruin x=60 z=-40
-spawned level `ruin` as instance 31 at (60.0, -40.0): 11 entities (5 solids, 0 volumes, 6 markers)
+spawned level `ruin` as instance 1 at (60.0, -40.0): 11 entities (5 solids, 0 volumes, 6 markers)
   camp "ruin_camp" at (58.0, -38.0)
   …
 ```
@@ -1269,6 +1269,16 @@ JOURNAL
   0 region generated: wilds seed 42 v1 (attempt 1, 64 tiles, 5 POIs)
   0 region loaded: wilds seed 42 v1 (64 tiles, 199 entities, players at (-40.0, 72.0))
   0 navmesh: wilds seed 42 v1 (64 tiles, 65012 nodes, 7168 links across edges, 0 navlinks)
+```
+
+Манифест из `region_info manifest=true` возвращает регион таким, каким он был, ничего не генерируя (хэш тот же):
+
+```text
+$ shards act regen region=wilds seed=7                 # другой регион…
+$ shards act region_load manifest='{"attempt": 1, "content_hash": "37778bd5b35f5e91", "format": "shards-region/1", …}'
+ok: wilds seed 42 v1 loaded from its manifest (64 tiles, 199 entities)
+$ shards act region_info | grep manifest_hash
+  "manifest_hash": "d9d721509840d909",
 ```
 
 Что происходит внутри вызова (`change_region`): все тайлы, префабы и файлы уровней проверяются **до** того, как что-то
