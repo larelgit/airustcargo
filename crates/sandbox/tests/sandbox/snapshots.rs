@@ -735,3 +735,131 @@ fn a_snapshot_in_the_generated_region_goes_on_the_same_in_a_fresh_arena() {
     let region = app.world().resource::<ActiveRegion>();
     assert_eq!((region.manifest.seed, region.manifest.region.as_str()), (42, "wilds"));
 }
+
+// --- loads across regions and placed levels ----------------------------------------------
+
+/// The instance number in `spawn_level`'s answer (`spawned level `ruin` as instance 5 at …`).
+fn instance_of(out: &shards::ai_core::CallOutcome) -> u32 {
+    let text = text(out);
+    let after = text.split("as instance ").nth(1).unwrap_or_else(|| panic!("no instance in: {text}"));
+    after.split_whitespace().next().and_then(|n| n.parse().ok()).unwrap_or_else(|| panic!("no instance in: {text}"))
+}
+
+/// The ruin of the content as an agent places it (not a tile of the region), east of everything.
+fn place_ruin(app: &mut App, z: f32) -> u32 {
+    instance_of(&ok(app, "spawn_level", json!({"id": "ruin", "x": 300, "z": z})))
+}
+
+/// The instances of the levels agents placed (by id; tiles go by their file).
+fn agent_levels(app: &App) -> Vec<u32> {
+    let instances = app.world().resource::<shards::level::LevelInstances>();
+    instances.iter().filter(|i| i.label == "ruin").map(|i| i.id).collect()
+}
+
+/// Entities of the agent's level instance `n`.
+fn level_entities(app: &mut App, n: u32) -> usize {
+    let world = app.world_mut();
+    world.query::<&FromLevel>().iter(world).filter(|f| f.instance == n && f.level == "ruin").count()
+}
+
+#[test]
+fn a_load_refused_after_its_region_was_built_leaves_the_world_as_it_was() {
+    // Taken in wilds 42 with a ruin an agent placed; loaded where the game went on to wilds 43
+    // and placed another ruin. The region is built again first, and only then do the static
+    // colliders and the levels compare: they differ, the load is refused, and the world must
+    // be what it was before the call (region, ids, counters, hash, journal), so the session's
+    // recording still plays back.
+    let file = Scratch::new("refused_late");
+    let mut app = sandbox::test_app(42);
+    ok(&mut app, "regen", json!({"region": "wilds", "seed": 42}));
+    place_ruin(&mut app, 0.0);
+    step(&mut app, 10);
+    ok(&mut app, "snapshot_save", json!({"path": file.1}));
+    ok(&mut app, "regen", json!({"region": "wilds", "seed": 43}));
+    place_ruin(&mut app, 40.0);
+    ok(&mut app, "move", json!({"dir": "N", "meters": 3}));
+    step(&mut app, 20);
+
+    let before = snapshot::capture(app.world()).unwrap();
+    let seen = app.world().resource::<AiJournal>().last_seq();
+    let err = fails(&mut app, "snapshot_load", json!({"path": file.1}));
+    assert!(err.contains("static_colliders differs") && err.contains("levels differs"), "{err}");
+    let after = snapshot::capture(app.world()).unwrap();
+    let diff = differences(&before, &after);
+    assert!(diff.is_empty(), "the refused load changed the world:\n{}", diff.join("\n"));
+    assert_eq!(app.world().resource::<ActiveRegion>().manifest.seed, 43);
+
+    // One line says what happened: no region came and went as far as the journal tells.
+    let journal = app.world().resource::<AiJournal>();
+    let lines: Vec<String> =
+        journal.after(seen).0.filter(|e| e.kind != JournalKind::Agent).map(ToString::to_string).collect();
+    assert_eq!(lines.len(), 1, "{lines:#?}");
+    assert!(lines[0].contains("snapshot of tick 10 not loaded") && lines[0].contains("as it was"), "{}", lines[0]);
+
+    // The session goes on, and its recording (never restarted: the load did not happen) plays.
+    ok(&mut app, "move", json!({"dir": "E", "meters": 4}));
+    step(&mut app, 70);
+    let recording = replay::save(app.world());
+    assert!(recording.start.is_none());
+    let report = shards::testing::verify(&mut sandbox::test_app(42), recording).expect("plays");
+    assert!(report.identical(), "{report}");
+}
+
+#[test]
+fn a_level_placed_after_a_load_gets_the_number_it_got_in_the_original_session() {
+    // The original session: wilds 42, a ruin placed (after the tiles' instances), then another.
+    let mut original = sandbox::test_app(42);
+    ok(&mut original, "regen", json!({"region": "wilds", "seed": 42}));
+    let first = place_ruin(&mut original, 0.0);
+    let snapshot = snapshot::capture(original.world()).unwrap();
+    let second = place_ruin(&mut original, 40.0);
+    assert_eq!(second, first + 1);
+
+    // The same session that went to wilds 43 before loading the snapshot: the region's tiles
+    // are numbered again from where they were, and the next level still gets `second`.
+    let mut app = sandbox::test_app(42);
+    ok(&mut app, "regen", json!({"region": "wilds", "seed": 42}));
+    assert_eq!(place_ruin(&mut app, 0.0), first);
+    ok(&mut app, "regen", json!({"region": "wilds", "seed": 43}));
+    let report = snapshot::restore(app.world_mut(), &snapshot, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert_eq!(place_ruin(&mut app, 40.0), second, "the number the original session gave");
+
+    // Tiles never take an agent's number, so later region changes leave the ruins standing.
+    let entities = (level_entities(&mut app, first), level_entities(&mut app, second));
+    assert!(entities.0 > 0 && entities.0 == entities.1, "{entities:?}");
+    ok(&mut app, "regen", json!({"region": "wilds", "seed": 44}));
+    ok(&mut app, "regen", json!({"region": "wilds", "seed": 45}));
+    assert_eq!(agent_levels(&app), [first, second]);
+    assert_eq!((level_entities(&mut app, first), level_entities(&mut app, second)), entities);
+}
+
+#[test]
+fn a_snapshot_from_before_any_level_loads_exactly_after_one_and_back() {
+    // Taken in the arena before any level was placed; loaded after a visit to the wilds,
+    // whose ruin tiles are level files. The state hash may not remember the visit.
+    let file = Scratch::new("before_levels");
+    let mut app = sandbox::test_app(42);
+    step(&mut app, 5);
+    ok(&mut app, "snapshot_save", json!({"path": file.1}));
+    let arena = snapshot::capture(app.world()).unwrap();
+    ok(&mut app, "regen", json!({"region": "wilds", "seed": 42}));
+    step(&mut app, 10);
+    let loaded = ok(&mut app, "snapshot_load", json!({"path": file.1}));
+    assert!(text(&loaded).contains("region: wilds seed 42 v1 unloaded"), "{}", text(&loaded));
+    assert_eq!(replay::state_hash(app.world()), arena.state_hash);
+    assert!(app.world().get_resource::<ActiveRegion>().is_none());
+
+    // A recording restarted from the load plays in a fresh game, which never had a level.
+    ok(&mut app, "move", json!({"dir": "S", "meters": 4}));
+    step(&mut app, 70);
+    let report = shards::testing::verify(&mut sandbox::test_app(42), replay::save(app.world())).expect("plays");
+    assert!(report.identical(), "{report}");
+
+    // The other way: taken in the arena after the visit, loaded into a fresh game.
+    let back = snapshot::capture(app.world()).unwrap();
+    let mut fresh = sandbox::test_app(42);
+    let report = snapshot::restore(fresh.world_mut(), &back, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert_eq!(replay::state_hash(fresh.world()), back.state_hash);
+}

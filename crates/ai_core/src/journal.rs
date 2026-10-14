@@ -100,6 +100,14 @@ impl AiJournal {
         self.next_seq - 1
     }
 
+    /// Takes back the entries after `seq`: what a change that was undone inside the same call
+    /// wrote (a refused snapshot load). Their numbers are not handed out again.
+    pub(crate) fn discard_after(&mut self, seq: u64) {
+        while self.entries.back().is_some_and(|e| e.seq > seq) {
+            self.entries.pop_back();
+        }
+    }
+
     /// Entries with `seq > after`, oldest first. The second value counts entries
     /// that were already evicted from the ring buffer (the agent missed them).
     pub fn after(&self, after: u64) -> (impl Iterator<Item = &JournalEntry>, u64) {

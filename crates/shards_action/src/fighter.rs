@@ -132,6 +132,11 @@ impl Poise {
     pub fn is_broken(&self) -> bool {
         self.broken > 0.0
     }
+
+    /// Whole again: full poise, no break running (the `heal` tool, a revival).
+    pub fn refill(&mut self) {
+        (self.current, self.broken) = (self.max, 0.0);
+    }
 }
 
 impl Default for Poise {

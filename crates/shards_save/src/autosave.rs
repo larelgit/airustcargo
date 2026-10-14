@@ -10,7 +10,12 @@
 //! A request waits while its kind is inside its debounce window: `debounce_secs` of the
 //! `character` or `world` definition in `*.save.ron` content (default
 //! [`DEFAULT_DEBOUNCE_SECS`]) counted in ticks since that kind was last autosaved. It is
-//! deferred, not dropped, so the state that is written is the newest.
+//! deferred, not dropped, so the state that is written is the newest. When the game ends
+//! the requests still waiting are written at once, whatever the window says ([`flush_saves`],
+//! registered as an exit hook), so the last camp is not lost to a debounce.
+//!
+//! Nothing is written while a replay is played back: the played game asks, as the recorded
+//! one did, and the journal says the request was skipped.
 //!
 //! ```ron
 //! // assets/content/saves.save.ron
@@ -23,7 +28,7 @@
 use std::collections::BTreeMap;
 
 use ai_core::journal::{self, JournalKind};
-use ai_core::{sim, AiReplay, SimConfig};
+use ai_core::{sim, SimConfig};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::{ContentDb, ContentDef, Refs};
@@ -130,11 +135,8 @@ pub(crate) fn write_requests(world: &mut World) {
     let tick = sim::tick(world);
     // A replay is being played back (to verify it, or to watch it): its states are not the
     // player's progress and must not overwrite it.
-    if world.get_resource::<AiReplay>().is_some_and(AiReplay::is_playing) {
-        let skipped = std::mem::take(&mut world.resource_mut::<SaveRequests>().pending);
-        for p in skipped {
-            journal::log(world, JournalKind::Sim, format!("save: {} autosave ({}) skipped while a replay plays", p.kind, p.reason));
-        }
+    if ops::replay_playing(world) {
+        drop_pending(world);
         return;
     }
     let hz = world.get_resource::<SimConfig>().map_or(60.0, |c| c.tick_hz);
@@ -149,13 +151,57 @@ pub(crate) fn write_requests(world: &mut World) {
             waiting.push(p);
             continue;
         }
-        world.resource_mut::<SaveRequests>().last.insert(p.kind, tick);
-        let slot = world.resource::<SaveSlots>().get(p.kind).to_owned();
-        let body = resolve_body(world, p.body);
-        // The failure is in the journal (Error) already; a request is not retried.
-        let _ = ops::save_part(world, p.kind, body, &slot, "", &p.reason);
+        write_one(world, p, tick);
     }
     world.resource_mut::<SaveRequests>().pending.extend(waiting);
+}
+
+/// Writes every request still waiting, now, whatever the debounce window says: the game is
+/// ending, and a request deferred a moment ago must not be lost with it. Registered as an
+/// exit hook by [`SavePlugin`](crate::SavePlugin); a game with its own way out (a quit menu
+/// that does not end the app) calls it itself. Nothing is written while a replay plays.
+/// Returns how many requests were carried out.
+pub fn flush_saves(world: &mut World) -> usize {
+    let Some(requests) = world.get_resource::<SaveRequests>() else {
+        return 0;
+    };
+    if !requests.is_pending() {
+        return 0;
+    }
+    if ops::replay_playing(world) {
+        drop_pending(world);
+        return 0;
+    }
+    let tick = sim::tick(world);
+    let pending = std::mem::take(&mut world.resource_mut::<SaveRequests>().pending);
+    let count = pending.len();
+    for p in pending {
+        write_one(world, p, tick);
+    }
+    count
+}
+
+/// The exit hook: [`flush_saves`].
+pub(crate) fn flush_on_exit(world: &mut World) {
+    flush_saves(world);
+}
+
+/// A played-back replay asks for saves too (its game does what the recorded one did); none
+/// are carried out, and the journal says so.
+fn drop_pending(world: &mut World) {
+    let skipped = std::mem::take(&mut world.resource_mut::<SaveRequests>().pending);
+    for p in skipped {
+        journal::log(world, JournalKind::Sim, format!("save: {} autosave ({}) skipped while a replay plays", p.kind, p.reason));
+    }
+}
+
+/// Carries out one request: the kind's current slot, the end-of-tick state.
+fn write_one(world: &mut World, p: Pending, tick: u64) {
+    world.resource_mut::<SaveRequests>().last.insert(p.kind, tick);
+    let slot = world.resource::<SaveSlots>().get(p.kind).to_owned();
+    let body = resolve_body(world, p.body);
+    // The failure is in the journal (Error) already; a request is not retried.
+    let _ = ops::save_part(world, p.kind, body, &slot, "", &p.reason);
 }
 
 #[cfg(test)]

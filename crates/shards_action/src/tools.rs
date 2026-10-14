@@ -13,7 +13,7 @@ use shards_content::ContentDb;
 use shards_core::input_names::{BLOCK, DODGE, HEAVY, LIGHT, PARRY, TECHNIQUE, USE_ITEM};
 use shards_core::{flat, Intent, Order};
 
-use crate::combat::{stagger, StaggerCause};
+use crate::combat::{revive, stagger, StaggerCause};
 use crate::def::{ActionDef, CombatTuning, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team};
 use crate::machine::{can_start, fits_buffer, ActionState, FighterView, Healed};
@@ -389,15 +389,9 @@ fn heal(In(call): In<Call<HealArgs>>, world: &mut World) -> ToolResult {
         s.current = s.max;
     }
     if let Some(mut p) = world.get_mut::<Poise>(e) {
-        (p.current, p.broken) = (p.max, 0.0);
+        p.refill();
     }
-    let revived = world.get::<Dead>(e).is_some();
-    if revived {
-        world.entity_mut(e).remove::<Dead>();
-        if let Some(mut state) = world.get_mut::<ActionState>(e) {
-            state.current = None;
-        }
-    }
+    let revived = revive(world, e);
     world.trigger(Healed { entity: e, amount: gained, hp });
     Ok(format!("healed {who} to {hp:.0}{}", if revived { ", revived" } else { "" }))
 }

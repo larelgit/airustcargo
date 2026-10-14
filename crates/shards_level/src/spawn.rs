@@ -14,7 +14,6 @@
 //!   entities.
 
 use ai_core::prelude::*;
-use ai_core::replay::ReplayHashing;
 use bevy::prelude::*;
 use serde_json::Value;
 use shards_content::{spawn_prefab, ContentDb};
@@ -54,13 +53,10 @@ pub struct LevelInstance {
     pub visual: Option<Entity>,
 }
 
-/// The levels spawned so far. Instance numbers count up from 1 and are never reused.
+/// The levels spawned and still standing, in spawn order (numbered by [`LevelCounter`]).
 #[derive(Resource, Default, Debug)]
 pub struct LevelInstances {
-    last: u32,
     list: Vec<LevelInstance>,
-    /// The replay check `level` is registered (by the first spawn).
-    checked: bool,
 }
 
 impl LevelInstances {
@@ -71,7 +67,19 @@ impl LevelInstances {
     pub fn get(&self, id: u32) -> Option<&LevelInstance> {
         self.list.iter().find(|i| i.id == id)
     }
+}
 
+/// The instance numbers handed out so far: they count up from 1 and are never reused.
+/// Snapshot state (`add_snapshot_resource`): a load sets it to the snapshot's after the
+/// region is built again, so a level placed after the load gets the number it got in the
+/// session the snapshot was taken in, and no tile takes the number of a level an agent placed.
+#[derive(Resource, Reflect, Default, Clone, Copy, Debug, PartialEq, Eq)]
+#[reflect(Resource, Default)]
+pub struct LevelCounter {
+    last: u32,
+}
+
+impl LevelCounter {
     /// The number the next instance gets.
     pub fn peek_next(&self) -> u32 {
         self.last + 1
@@ -110,7 +118,7 @@ pub fn spawn_level(world: &mut World, level: &LevelAsset, at: Transform) -> Resu
 /// the instance number and the visual root too.
 pub fn spawn_level_as(world: &mut World, level: &LevelAsset, at: Transform, label: &str) -> Result<SpawnedLevel, String> {
     let plans = prepare(world, level)?;
-    let instance = world.get_resource_or_init::<LevelInstances>().next_id();
+    let instance = world.get_resource_or_init::<LevelCounter>().next_id();
     place(world, level, &plans, at, label, instance)
 }
 
@@ -142,6 +150,8 @@ pub fn reload_level(world: &mut World, instance: u32) -> Result<usize, String> {
     };
     let level = level_asset(world, &old.path)?.clone();
     let plans = prepare(world, &level)?;
+    // Before anything goes: a pose no node can be placed at is a problem of the file too.
+    check_poses(&level, &plans, old.at)?;
     despawn_level(world, instance);
     place(world, &level, &plans, old.at, &old.label, instance).map(|spawned| spawned.entities.len())
 }
@@ -160,6 +170,28 @@ fn prepare(world: &World, level: &LevelAsset) -> Result<Vec<NodePlan>, String> {
     let registry = app_registry.read();
     let (plans, problems) = analyze(level, &registry, world.get_resource::<ContentDb>());
     if problems.is_empty() { Ok(plans) } else { Err(describe_problems(level, &problems)) }
+}
+
+/// The scale, rotation and translation of a node's world matrix, or why it has no usable
+/// pose (a zero scale, say: the rotation comes out as NaN).
+fn node_pose(world_matrix: Mat4, path: &str) -> Result<(Vec3, Quat, Vec3), String> {
+    let (scale, rotation, translation) = world_matrix.to_scale_rotation_translation();
+    if translation.is_finite() && rotation.is_finite() && scale.is_finite() {
+        Ok((scale, rotation, translation))
+    } else {
+        Err(format!("node `{path}`: its transform is not a valid pose"))
+    }
+}
+
+/// Every node that will spawn has a usable pose; checked before a reload despawns the
+/// level it replaces.
+fn check_poses(level: &LevelAsset, plans: &[NodePlan], at: Transform) -> Result<(), String> {
+    let at_matrix = at.to_matrix();
+    for plan in plans.iter().filter(|p| p.spawns()) {
+        let node = &level.nodes[plan.node];
+        node_pose(at_matrix * node.world, &node.path)?;
+    }
+    Ok(())
 }
 
 fn place(world: &mut World, level: &LevelAsset, plans: &[NodePlan], at: Transform, label: &str, instance: u32) -> Result<SpawnedLevel, String> {
@@ -181,12 +213,6 @@ fn place(world: &mut World, level: &LevelAsset, plans: &[NodePlan], at: Transfor
     let visual = crate::render::spawn_visual(world, &level.path, at, instance);
     let mut instances = world.get_resource_or_init::<LevelInstances>();
     instances.list.push(LevelInstance { id: instance, label: label.to_owned(), path: level.path.clone(), at, visual });
-    // Every replay check adds its name to the state hash, so a check registered at start would
-    // change the hash of games that never spawn a level (and invalidate their recordings): it
-    // joins with the first level instead, at the same tick in a recording and its playback.
-    if !std::mem::replace(&mut instances.checked, true) {
-        world.get_resource_or_init::<ReplayHashing>().add_check("level", level_hash);
-    }
     Ok(SpawnedLevel { instance, entities, visual })
 }
 
@@ -200,10 +226,7 @@ fn spawn_node(
     instance: u32,
 ) -> Result<Entity, String> {
     let node = &level.nodes[plan.node];
-    let (scale, rotation, translation) = worlds[plan.node].to_scale_rotation_translation();
-    if !(translation.is_finite() && rotation.is_finite() && scale.is_finite()) {
-        return Err(format!("node `{}`: its transform is not a valid pose", node.path));
-    }
+    let (scale, rotation, translation) = node_pose(worlds[plan.node], &node.path)?;
     // Scale is in the collider's size; the entity itself is unscaled.
     let transform = Transform { translation, rotation, scale: Vec3::ONE };
 
@@ -286,8 +309,16 @@ pub(crate) fn collider_from(spec: &ColliderSpec, bounds: Option<Bounds>, scale: 
     Collider { shape, offset: center * scale, layers: spec.layers }
 }
 
-/// Replay check: which levels are placed where, and which version of each file (so a
-/// recording made against another version of a file diverges at its first check).
+/// Replay check `level`: [`level_hash`] while a level stands, nothing while none does. A game
+/// without levels hashes as it did before it had this module, and the hash never remembers
+/// levels that came and went (a snapshot taken before the first level loads exactly after one).
+pub(crate) fn level_check(world: &World) -> Option<u64> {
+    world.get_resource::<LevelInstances>().filter(|i| !i.list.is_empty()).map(|_| level_hash(world))
+}
+
+/// Which levels are placed where, and which version of each file (so a recording made
+/// against another version of a file diverges at its first check). The snapshot check
+/// `levels`, and the replay check `level` while a level stands ([`level_check`]).
 pub(crate) fn level_hash(world: &World) -> u64 {
     let mut h = Fnv::new();
     let Some(instances) = world.get_resource::<LevelInstances>() else { return h.0 };

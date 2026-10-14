@@ -7,7 +7,7 @@
 //! |---|---|---|
 //! | `region` | world | the region in the world: its id, seed, generator version and manifest hash. Applying it generates the region again and changes to it through the world module's region change (when it differs from the one there), and refuses, changing nothing, if it no longer comes out the same |
 //! | `position` | character | the body's feet, its rotation (characters turn about Y: that is their facing) and the region it stood in. Applied onto a body in the same region only; in another one the body stays where it is and the journal says why |
-//! | `vitals` | character | health, stamina and charges. Applied to the components the body already has (a fresh body has what its prefab gives it); a charge the body lacks is added |
+//! | `vitals` | character | health, stamina and charges. Applied to the components the body already has (a fresh body has what its prefab gives it); a charge the body lacks is added. A body that died since the save is revived (`shards_action::revive`, as the dev `heal` does, and `Healed` follows); a save made at zero health leaves it dead |
 //!
 //! A game replaces one with a section of the same name (`position` as "restore at the last
 //! camp"): the new one takes its place in the order sections are applied.
@@ -15,7 +15,7 @@
 use ai_core::journal::{self, JournalKind};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
-use shards_action::{Charge, Charges, Health, Stamina};
+use shards_action::{revive, Charge, Charges, Health, Healed, Stamina};
 use shards_content::ContentDb;
 use shards_save::{SaveAppExt, SaveKind, SaveSection};
 use shards_world::{generate, region, ActiveRegion, WorldGen};
@@ -205,9 +205,11 @@ impl SaveSection for VitalsSave {
     fn apply(self, world: &mut World, body: Option<Entity>) -> Result<(), String> {
         let body = body.ok_or("there is no body")?;
         let mut entity = world.get_entity_mut(body).map_err(|e| e.to_string())?;
+        let mut hp = None;
         if let (Some(saved), Some(mut health)) = (self.health, entity.get_mut::<Health>()) {
             health.max = saved.max;
             health.current = saved.current.clamp(0.0, saved.max);
+            hp = Some(health.current);
         }
         if let (Some(saved), Some(mut stamina)) = (self.stamina, entity.get_mut::<Stamina>()) {
             stamina.max = saved.max;
@@ -232,6 +234,13 @@ impl SaveSection for VitalsSave {
                 }
             }
             charges.0.sort_by(|a, b| a.name.cmp(&b.name));
+        }
+        // A body that died since the save lives again, the way the dev `heal` brings it back.
+        // A save made at zero health stays dead: `check_deaths` kills what has no health left.
+        if let Some(hp) = hp.filter(|hp| *hp > 0.0)
+            && revive(world, body)
+        {
+            world.trigger(Healed { entity: body, amount: hp, hp });
         }
         Ok(())
     }

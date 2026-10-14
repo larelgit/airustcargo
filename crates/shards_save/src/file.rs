@@ -34,6 +34,52 @@ pub const FORMAT: &str = "shards-save/1";
 
 const FORMAT_PREFIX: &str = "shards-save/";
 
+/// The number in [`FORMAT`]: a header with a higher one is from a newer engine.
+const FORMAT_NUMBER: u32 = 1;
+
+/// Why a file cannot be used. Damage and a newer version are told apart on purpose: damage
+/// is repaired from a backup, a newer save is not damaged and is never touched (see
+/// [`store`](crate::store)).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Fault {
+    /// The file is damaged; the text says how, short enough to sit in parentheses
+    /// (`checksum mismatch: ...`).
+    Damaged(String),
+    /// A newer version of the game or engine wrote it: the format number of the envelope or
+    /// a section's version is above what this build reads. The text names which
+    /// (`section inventory v7 > v5`).
+    Newer(String),
+}
+
+impl Fault {
+    /// Whether this is a newer version, not damage.
+    pub fn is_newer(&self) -> bool {
+        matches!(self, Fault::Newer(_))
+    }
+
+    /// The damage text, or what is newer (`section inventory v7 > v5`).
+    pub fn detail(&self) -> &str {
+        match self {
+            Fault::Damaged(text) | Fault::Newer(text) => text,
+        }
+    }
+}
+
+impl std::fmt::Display for Fault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Fault::Damaged(text) => f.write_str(text),
+            Fault::Newer(detail) => write!(f, "saved by a newer version of the game ({detail})"),
+        }
+    }
+}
+
+impl From<String> for Fault {
+    fn from(text: String) -> Self {
+        Fault::Damaged(text)
+    }
+}
+
 /// One section as it is in a file: the version of its schema and its data.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SectionData {
@@ -151,16 +197,19 @@ impl SaveFile {
     /// Reads a file's bytes: the header, the length, the checksum, the JSON and its shape.
     /// The error names the first thing wrong, short enough to sit in parentheses:
     /// `checksum mismatch: the header says 1a2b3c4d, the content is 99aa0011`.
-    pub fn decode(bytes: &[u8]) -> Result<SaveFile, String> {
+    ///
+    /// A format number above this build's (`shards-save/2`) is [`Fault::Newer`], told before
+    /// anything else is checked: a newer layout of the rest is not this build's to judge.
+    pub fn decode(bytes: &[u8]) -> Result<SaveFile, Fault> {
         let (header, body) = split(bytes)?;
         let (stated_len, stated_crc) = parse_header(header)?;
         if body.len() as u64 != stated_len {
             let relation = if (body.len() as u64) < stated_len { "so it is truncated" } else { "so it is longer than written" };
-            return Err(format!("length mismatch: the header says {stated_len} bytes, the file has {}, {relation}", body.len()));
+            return Err(format!("length mismatch: the header says {stated_len} bytes, the file has {}, {relation}", body.len()).into());
         }
         let crc = crc32fast::hash(body);
         if crc != stated_crc {
-            return Err(format!("checksum mismatch: the header says {stated_crc:08x}, the content is {crc:08x}"));
+            return Err(format!("checksum mismatch: the header says {stated_crc:08x}, the content is {crc:08x}").into());
         }
         let text = std::str::from_utf8(body).map_err(|e| format!("the content is not UTF-8 at byte {}", e.valid_up_to()))?;
         let value = canon::parse(text)?;
@@ -178,26 +227,27 @@ impl SaveFile {
 }
 
 /// Header line and the bytes after it.
-fn split(bytes: &[u8]) -> Result<(&str, &[u8]), String> {
+fn split(bytes: &[u8]) -> Result<(&str, &[u8]), Fault> {
     if bytes.is_empty() {
-        return Err("file is empty".to_owned());
+        return Err("file is empty".to_owned().into());
     }
     let end = bytes.iter().position(|b| *b == b'\n').filter(|end| *end <= 256);
     let Some(end) = end else {
-        return Err(format!("no header: the first line must read `{FORMAT} crc32=<hex> len=<bytes>`"));
+        return Err(format!("no header: the first line must read `{FORMAT} crc32=<hex> len=<bytes>`").into());
     };
     let header = std::str::from_utf8(&bytes[..end]).map_err(|_| format!("no header: the first line must read `{FORMAT} crc32=<hex> len=<bytes>`"))?;
     Ok((header, &bytes[end + 1..]))
 }
 
 /// `(len, crc32)` from `shards-save/1 crc32=1a2b3c4d len=812`.
-fn parse_header(header: &str) -> Result<(u64, u32), String> {
+fn parse_header(header: &str) -> Result<(u64, u32), Fault> {
     let mut parts = header.split(' ');
     let format = parts.next().unwrap_or_default();
     if format != FORMAT {
-        return match format.strip_prefix(FORMAT_PREFIX).and_then(|n| n.parse::<u32>().ok()) {
-            Some(_) => Err(format!("format {format} is newer than this build reads, which is {FORMAT}: it came from a newer engine")),
-            None => Err(format!("no header: the first line must read `{FORMAT} crc32=<hex> len=<bytes>`")),
+        let number = format.strip_prefix(FORMAT_PREFIX).and_then(|n| n.parse::<u32>().ok());
+        return match number {
+            Some(n) if n > FORMAT_NUMBER => Err(Fault::Newer(format!("save format {format} > {FORMAT}"))),
+            _ => Err(format!("no header: the first line must read `{FORMAT} crc32=<hex> len=<bytes>`").into()),
         };
     }
     let (mut crc, mut len) = (None, None);
@@ -210,7 +260,7 @@ fn parse_header(header: &str) -> Result<(u64, u32), String> {
     }
     match (len, crc) {
         (Some(len), Some(crc)) => Ok((len, crc)),
-        _ => Err(format!("the header is incomplete: it must read `{FORMAT} crc32=<hex> len=<bytes>`")),
+        _ => Err(format!("the header is incomplete: it must read `{FORMAT} crc32=<hex> len=<bytes>`").into()),
     }
 }
 
@@ -265,44 +315,51 @@ mod tests {
         let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
         let body_at = good.iter().position(|b| *b == b'\n').unwrap() + 1;
 
-        assert_eq!(SaveFile::decode(&[]).unwrap_err(), "file is empty");
-        assert!(SaveFile::decode(b"garbage without any line break").unwrap_err().starts_with("no header"));
-        assert!(SaveFile::decode(b"{\"kind\":\"world\"}\n{}").unwrap_err().starts_with("no header"));
+        assert_eq!(SaveFile::decode(&[]).unwrap_err().to_string(), "file is empty");
+        assert!(SaveFile::decode(b"garbage without any line break").unwrap_err().to_string().starts_with("no header"));
+        assert!(SaveFile::decode(b"{\"kind\":\"world\"}\n{}").unwrap_err().to_string().starts_with("no header"));
 
         let mut flipped = good.clone();
         flipped[body_at + 20] ^= 0x01;
-        assert!(SaveFile::decode(&flipped).unwrap_err().starts_with("checksum mismatch: the header says "), "{}", SaveFile::decode(&flipped).unwrap_err());
+        assert!(SaveFile::decode(&flipped).unwrap_err().to_string().starts_with("checksum mismatch: the header says "), "{}", SaveFile::decode(&flipped).unwrap_err().to_string());
 
         let truncated = &good[..good.len() - 7];
-        let err = SaveFile::decode(truncated).unwrap_err();
+        let err = SaveFile::decode(truncated).unwrap_err().to_string();
         assert!(err.starts_with("length mismatch") && err.contains("so it is truncated"), "{err}");
 
         let mut longer = good.clone();
         longer.extend_from_slice(b"\n\n");
-        assert!(SaveFile::decode(&longer).unwrap_err().contains("longer than written"));
+        assert!(SaveFile::decode(&longer).unwrap_err().to_string().contains("longer than written"));
 
         let wrong_len = text(&good).replacen("len=", "len=1", 1);
-        assert!(SaveFile::decode(wrong_len.as_bytes()).unwrap_err().starts_with("length mismatch"));
+        assert!(SaveFile::decode(wrong_len.as_bytes()).unwrap_err().to_string().starts_with("length mismatch"));
 
         let newer = text(&good).replacen("shards-save/1", "shards-save/2", 1);
-        assert!(SaveFile::decode(newer.as_bytes()).unwrap_err().contains("newer than this build reads"));
+        let fault = SaveFile::decode(newer.as_bytes()).unwrap_err();
+        assert_eq!(fault, Fault::Newer("save format shards-save/2 > shards-save/1".to_owned()));
+        assert!(fault.is_newer() && fault.to_string() == "saved by a newer version of the game (save format shards-save/2 > shards-save/1)");
+        // Not a number, or not above: no header, which is damage.
+        for odd in ["shards-save/x", "shards-save/0", "shards-save/-1", "other/2"] {
+            let text = text(&good).replacen("shards-save/1", odd, 1);
+            assert!(!SaveFile::decode(text.as_bytes()).unwrap_err().is_newer(), "{odd}");
+        }
 
         let partial = text(&good).replacen(" len=", " lenx=", 1);
-        assert!(SaveFile::decode(partial.as_bytes()).unwrap_err().starts_with("the header is incomplete"));
+        assert!(SaveFile::decode(partial.as_bytes()).unwrap_err().to_string().starts_with("the header is incomplete"));
 
         // A checksum that is right about garbage: the JSON is what fails.
         let forge = |body: &str| format!("{FORMAT} crc32={:08x} len={}\n{body}", crc32fast::hash(body.as_bytes()), body.len()).into_bytes();
-        assert!(SaveFile::decode(&forge("{\"kind\": ")).unwrap_err().starts_with("bad JSON at byte"));
-        assert!(SaveFile::decode(&forge("{\"kind\": \"world\"}")).unwrap_err().starts_with("not a save: "));
-        assert!(SaveFile::decode(&forge("{\"kind\": \"boss\", \"tick\": 1, \"sections\": {}}")).unwrap_err().starts_with("not a save: "));
-        assert!(SaveFile::decode(&forge("\u{0}\u{0}")).unwrap_err().starts_with("bad JSON"));
+        assert!(SaveFile::decode(&forge("{\"kind\": ")).unwrap_err().to_string().starts_with("bad JSON at byte"));
+        assert!(SaveFile::decode(&forge("{\"kind\": \"world\"}")).unwrap_err().to_string().starts_with("not a save: "));
+        assert!(SaveFile::decode(&forge("{\"kind\": \"boss\", \"tick\": 1, \"sections\": {}}")).unwrap_err().to_string().starts_with("not a save: "));
+        assert!(SaveFile::decode(&forge("\u{0}\u{0}")).unwrap_err().to_string().starts_with("bad JSON"));
         let not_utf8 = {
             let body = [0xff_u8, 0xfe];
             let mut out = format!("{FORMAT} crc32={:08x} len=2\n", crc32fast::hash(&body)).into_bytes();
             out.extend_from_slice(&body);
             out
         };
-        assert!(SaveFile::decode(&not_utf8).unwrap_err().starts_with("the content is not UTF-8"));
+        assert!(SaveFile::decode(&not_utf8).unwrap_err().to_string().starts_with("the content is not UTF-8"));
     }
 
     #[test]

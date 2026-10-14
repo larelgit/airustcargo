@@ -94,8 +94,8 @@ struct Args {
     /// `jitter=`, `duplicate=`).
     #[arg(long, value_name = "SPEC")]
     net_sim: Option<String>,
-    /// Where saves are written, relative to the game's folder.
-    #[arg(long, value_name = "DIR", default_value = "saves")]
+    /// Where saves are written: a folder inside the game's folder (no absolute path, no `..`).
+    #[arg(long, value_name = "DIR", default_value = "saves", value_parser = save_dir_name)]
     save_dir: String,
     /// Keep player settings in DIR instead of the platform's settings folder.
     #[arg(long, value_name = "DIR", conflicts_with = "no_settings")]
@@ -112,6 +112,11 @@ struct Args {
     /// A client exits when its host ends the session, instead of going back to the menu.
     #[arg(long)]
     exit_with_host: bool,
+}
+
+/// The save folder: inside the game's folder, like `replays/`.
+fn save_dir_name(dir: &str) -> Result<String, String> {
+    shards_save::check_save_dir(dir).map(|()| dir.to_owned())
 }
 
 /// A save slot: a name, never a path.
@@ -632,6 +637,10 @@ mod tests {
         assert!(refused(&["game", "--no-settings", "--settings-dir", "s"]).contains("cannot be used with"));
         assert!(refused(&["game", "--world", "../etc"]).contains("a slot is 1-32 of a-z"));
         assert!(refused(&["game", "--character", "Hero"]).contains("a slot is 1-32 of a-z"));
+        assert!(refused(&["game", "--save-dir", "/var/saves"]).contains("is absolute"));
+        assert!(refused(&["game", "--save-dir", "../saves"]).contains("goes up with `..`"));
+        assert!(refused(&["game", "--save-dir", ""]).contains("is empty"));
+        assert_eq!(parse(&["game", "--save-dir", "saves/qa-1"]).unwrap().config().save_dir, "saves/qa-1");
 
         let plain = parse(&["game"]).unwrap().config();
         assert_eq!(plain.net, NetLaunch::Off);

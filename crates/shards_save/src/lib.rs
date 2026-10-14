@@ -22,17 +22,28 @@
 //! - **Writing** ([`store`]) is atomic: a temporary file, flushed, the older saves shifted
 //!   into three rotating backups (`.bak1` newest), a rename, a flush of the folder.
 //! - **Reading** takes the primary, or on any damage (a bad checksum, a truncated or garbled
-//!   file, JSON that does not read, a section from a newer version, a failed migration) the
-//!   newest good backup, rewrites the primary from it and says so in the journal (`save:
-//!   world/slot1.save is damaged (checksum mismatch); restored from backup 1 (tick 50110)`).
-//!   When every copy is bad, the error names each copy's problem and nothing is applied.
+//!   file, JSON that does not read, a failed migration) the newest good backup, rewrites the
+//!   primary from it and says so in the journal (`save: world/slot1.save is damaged
+//!   (checksum mismatch); restored from backup 1 (tick 50110)`). When every copy is bad, the
+//!   error names each copy's problem and nothing is applied.
+//! - **A newer save is not damage.** A copy written by a newer version of the game (a section
+//!   above this build's version, or a `shards-save/2` envelope) is refused with a clear error
+//!   (`world/slot1 was saved by a newer version of the game (section inventory v7 > v5);
+//!   nothing was changed`): no fallback to an older backup, no `.damaged`, no rewrite. Writing
+//!   refuses too while any copy of the slot is newer, so rotation can never lose it: save into
+//!   another slot, or update the game ([`Fault`]).
 //! - **Versions**: a section's version is in the file; an older one runs the chain of
-//!   migrations (`add_save_migration`), a newer one is refused, a section the game does not
-//!   register is skipped with a warning, one the file lacks gets its `missing()`. A chain with
-//!   a gap panics when the app is finished.
+//!   migrations (`add_save_migration`), a newer one is refused as above, a section the game
+//!   does not register is skipped with a warning, one the file lacks gets its `missing()`. A
+//!   chain with a gap panics when the app is finished.
 //! - **When**: [`save_now`] writes at once; [`SaveRequests::request`] and
 //!   [`autosave_on`](SaveAppExt::autosave_on) write at `FixedLast` of the tick, debounced per
-//!   kind by `*.save.ron` content ([`SaveDef`]). Saving never changes the simulation.
+//!   kind by `*.save.ron` content ([`SaveDef`]). Requests still waiting are written when the
+//!   game exits ([`flush_saves`], an exit hook). Saving never changes the simulation, and
+//!   nothing is written while a replay is played back ([`replay_playing`]).
+//! - **Launch**: the folder is `EngineConfig::save_dir` (`--save-dir`, inside the game's
+//!   folder), the current slots `world_slot` / `character_slot` (`--world`, `--character`),
+//!   which a single game also loads before its first tick ([`launch`]).
 //!
 //! Tools: `save_game`, `load_game` (an action: the recording restarts from the loaded state),
 //! `save_check`, `save_list`, `save_registry`, `save_damage` (QA of the recovery).
@@ -41,6 +52,7 @@
 pub mod autosave;
 pub mod canon;
 pub mod file;
+pub mod launch;
 pub mod ops;
 pub mod section;
 pub mod store;
@@ -53,14 +65,15 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value};
 use shards_content::ContentAppExt;
-use shards_core::EngineAppExt;
+use shards_core::{EngineAppExt, EngineConfig};
 
-pub use autosave::{SaveDef, SaveRequests, DEFAULT_DEBOUNCE_SECS};
-pub use file::{GameInfo, SaveFile, SectionData, SectionSet, FORMAT};
+pub use autosave::{flush_saves, SaveDef, SaveRequests, DEFAULT_DEBOUNCE_SECS};
+pub use file::{Fault, GameInfo, SaveFile, SectionData, SectionSet, FORMAT};
+pub use launch::{load_launch_slot, load_launch_slots, LaunchLoad, LaunchLoaded, LaunchOutcome};
 pub use ops::{
-    apply_sections, capture_sections, check_parts, check_state, default_body, load_parts, load_slot, prepare, read_file, resolve_body, save_now,
-    save_part, save_parts, save_slot, write_sections, Applied, ApplyError, CheckReport, FileCheck, LoadReport, Prepared, SaveConfig, SaveReport,
-    SaveSlots, SaveWhat,
+    apply_sections, capture_sections, check_parts, check_save_dir, check_state, default_body, load_parts, load_slot, newer_check, newer_sections, prepare, read_file,
+    replay_playing, resolve_body, save_now, save_part, save_parts, save_slot, write_sections, Applied, ApplyError, CheckReport, FileCheck, LoadReport,
+    Prepared, SaveConfig, SaveReport, SaveSlots, SaveWhat, NOT_WRITTEN_DURING_PLAYBACK,
 };
 pub use section::{Migration, SaveKey, SaveKind, SaveRegistry, SaveSection, SectionEntry};
 pub use store::{valid_slot, Damage, Recovery, Store, Which};
@@ -83,17 +96,33 @@ impl Plugin for SavePlugin {
             app.is_plugin_added::<ai_core::AiCorePlugin>(),
             "SavePlugin needs AiCorePlugin added first (shards::EnginePlugins adds both)"
         );
-        // SEAM(C1): the folder comes from `EngineConfig.save_dir` once C1 adds it
-        // (`--save-dir`); until then the default `saves/` next to `replays/`.
+        // The folder and the current slots come from the launch (`--save-dir`, `--world`,
+        // `--character`); an app without an `EngineConfig` keeps the defaults. A bad value
+        // is the game builder's mistake (the command line is checked before): stop with it.
+        let engine = app.world().get_resource::<EngineConfig>().cloned();
+        let (config, slots) = match &engine {
+            Some(engine) => (
+                SaveConfig::from_engine(engine).unwrap_or_else(|e| panic!("EngineConfig.save_dir: {e}")),
+                SaveSlots::from_engine(engine).unwrap_or_else(|e| panic!("EngineConfig.world_slot / character_slot: {e}")),
+            ),
+            None => (SaveConfig::default(), SaveSlots::default()),
+        };
         app.register_type::<SaveKey>()
             .init_resource::<SaveRegistry>()
-            .init_resource::<SaveConfig>()
-            .init_resource::<SaveSlots>()
+            .insert_resource(config)
+            .insert_resource(slots)
             .init_resource::<SaveRequests>()
+            .init_resource::<LaunchLoaded>()
             .add_content::<SaveDef>()
             .add_engine_module("save", VERSION)
             .add_ai_status("save", status)
+            .add_exit_hook("save: write the autosaves still waiting", autosave::flush_on_exit)
             .add_systems(FixedLast, autosave::write_requests.after(ReplaySystems::Remember));
+        // A single game loads what `--world` / `--character` name before its first tick; the
+        // network code does it for hosts and clients (`launch::load_launch_slot`).
+        if engine.as_ref().is_none_or(launch::loads_by_itself) {
+            app.add_systems(RunFixedMainLoop, launch::load_at_launch.in_set(RunFixedMainLoopSystems::BeforeFixedMainLoop));
+        }
         tools::register(app.world_mut());
     }
 

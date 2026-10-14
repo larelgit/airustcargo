@@ -61,7 +61,7 @@ use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::LoadStatus;
 use shards_level::{
-    check_level, despawn_level, level_asset, request_level, spawn_level_file, FromLevel, LevelInstances, LevelLibrary, LevelMarker, LevelPlugin,
+    check_level, despawn_level, level_asset, request_level, spawn_level_file, FromLevel, LevelCounter, LevelLibrary, LevelMarker, LevelPlugin,
 };
 use shards_world::{LevelSpawn, LevelSpawner, Marker, RegionPart, TileId, WorldAppExt, WorldPlugin};
 
@@ -89,12 +89,12 @@ struct TileLevels {
 }
 
 fn next_instance(world: &World) -> u32 {
-    world.get_resource::<LevelInstances>().map_or(1, LevelInstances::peek_next)
+    world.get_resource::<LevelCounter>().map_or(1, LevelCounter::peek_next)
 }
 
 fn restart_instances(world: &mut World, next: u32) {
-    if let Some(mut instances) = world.get_resource_mut::<LevelInstances>() {
-        instances.restart_at(next);
+    if let Some(mut counter) = world.get_resource_mut::<LevelCounter>() {
+        counter.restart_at(next);
     }
 }
 
