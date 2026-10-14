@@ -729,8 +729,16 @@ fn lines(app: &App) -> Vec<String> {
 fn a_client_joins_a_host_over_udp_loopback() {
     let started = Instant::now();
     let deadline = Duration::from_secs(10);
-    // A save folder of this run's own, inside the game's folder (as `--save-dir` must be).
+    // A save folder of this run's own, inside the game's folder (as `--save-dir` must be),
+    // gone when the test ends, passed or not.
+    struct Gone(String);
+    impl Drop for Gone {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
     let saves = format!("saves/test-net-udp-{}", std::process::id());
+    let _gone = Gone(saves.clone());
     let _ = std::fs::remove_dir_all(&saves);
     let mut host = udp_member(shards::core::NetLaunch::Host { port: 0 }, "host", None);
     shards::testing::wait_until_loaded(&mut host, deadline).unwrap();
@@ -769,5 +777,4 @@ fn a_client_joins_a_host_over_udp_loopback() {
     assert!(rejoined.is_some(), "not back within {deadline:?}: {:#?}", lines(&again));
     let state = again.world().resource::<NetState>().clone();
     assert_eq!(state, NetState::Connected { player: 1, body: Some(body) }, "the same slot and body");
-    let _ = std::fs::remove_dir_all(&saves);
 }
