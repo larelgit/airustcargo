@@ -44,6 +44,13 @@ pub trait Transport: Send + Sync + 'static {
 
     /// Set the simulated conditions of this member's links: of the link to `peer`, or of all links.
     /// Returns `false` when this transport cannot simulate (the caller then says so).
+    ///
+    /// What "the link" covers differs by transport, deliberately: the in-memory hub edits **both
+    /// directions** of the member's links (a hub link has one setting per direction, shared with the other
+    /// end), while [`Conditioned`](crate::conditioner::Conditioned) over a real socket shapes only what this
+    /// process **sends**, since it cannot shape the peer's egress; its ingress is
+    /// [`Conditioned::set_ingress`](crate::conditioner::Conditioned::set_ingress). To get the same round
+    /// trip on both, call it on both members (`latency=150` on each side is 300 ms either way).
     fn set_conditions(&mut self, _peer: Option<PeerId>, _conditions: LinkConditions) -> bool {
         false
     }

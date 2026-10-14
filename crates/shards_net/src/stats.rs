@@ -62,7 +62,9 @@ pub struct LinkStats {
     pub unreliable_stale: u64,
     /// Unreliable messages dropped by the sender's queue cap.
     pub unreliable_dropped: u64,
-    /// Datagrams dropped as already seen.
+    /// Datagrams dropped as already seen, plus reliable messages and blob pieces that arrived again in a
+    /// new datagram (the sender's resends of what was delivered already). A resend datagram can carry many
+    /// messages, so this can exceed `datagrams_in`; it is resend noise, not a count of datagrams.
     pub duplicates: u64,
     /// Datagrams dropped as older than the 256-datagram window.
     pub stale_datagrams: u64,

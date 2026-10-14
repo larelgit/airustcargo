@@ -16,7 +16,7 @@
 //! messages too big for a datagram are deflated once, before they are fragmented (see `link`).
 //! A datagram with a foreign magic, protocol or session is dropped and counted by the link.
 //!
-//! Inflating is budgeted ([`Budget`]): a datagram may make the receiver produce [`INFLATE_BUDGET`] bytes
+//! Inflating is budgeted (`Budget`): a datagram may make the receiver produce `INFLATE_BUDGET` (2 MiB) bytes
 //! in all, its body and its inline messages together. A sender never gets near that: a body is at most
 //! [`MAX_BODY`] bytes before it is deflated, and deflate expands a byte at most 1032-fold, so the most an
 //! honest datagram inflates to is about 1.2 MB.
