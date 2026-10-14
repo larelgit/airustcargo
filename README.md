@@ -35,10 +35,11 @@ Remote Protocol на 127.0.0.1), без MCP-прослоек. Тем же CLI п
 12. [Сценарии (E11)](#сценарии-e11)
 13. [Реплеи](#реплеи)
 14. [Снапшоты (E11.4)](#снапшоты-e114)
-15. [Песочница](#песочница)
-16. [Тесты и CI](#тесты-и-ci)
-17. [Что дальше](#что-дальше)
-18. [Соглашения и сборка](#соглашения-и-сборка)
+15. [Настройки (E8.6)](#настройки-e86)
+16. [Песочница](#песочница)
+17. [Тесты и CI](#тесты-и-ci)
+18. [Что дальше](#что-дальше)
+19. [Соглашения и сборка](#соглашения-и-сборка)
 
 ## Быстрый старт
 
@@ -261,6 +262,7 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 | `crates/shards_level` | уровни из Blender (E4.2): glTF с custom properties → коллайдеры, датчики, маркеры, префабы, компоненты; вид `level`, инструменты |
 | `crates/shards_world` | мир (E5): тайлы, регионы и подземелья в контенте, генератор с решателем сокетов и проверками, манифест, пакетные отчёты, загрузка и смена региона, активные зоны, стриминг картинки |
 | `crates/shards_npc` | враги (E6): автомат поведения, восприятие, режиссёр боя (жетоны), планировщик атак, навсетка по тайлам (`nav`: запекание, сшивка, маршруты), агенты и поводок |
+| `crates/shards_settings` | настройки игрока (E8.6): группы графики, звука, управления и доступности на настройках Bevy (`bevy_settings`), `settings.toml`, инструменты `settings`/`settings_set`, окно по настройкам графики |
 | `crates/ai_core` | слой ИИ, не зависит от конкретной игры: id, срез мира, журнал, инструменты, время, реплеи, транспорт |
 | `crates/shards_script` | без Bevy: формат сценариев, их запуск, разбор условий `--until`; общий для `shards` и тестов |
 | `crates/shards_cli` | бинарник `shards`, тонкий клиент к `ai/*` |
@@ -638,11 +640,18 @@ fall_height }`, плюс `Jumped`, `Mantled`, `ModeChanged`. Позиция `Tra
   $ shards act rebind action=sprint mode=Toggle
   ok: gameplay/sprint: mode toggle
   ```
-- Сохранение: изменения игрока лежат отдельным файлом-переопределением `$XDG_CONFIG_HOME/<игра>/input.ron`
-  (`~/.config/<игра>/input.ron`, `%APPDATA%` на Windows), поэтому новые умолчания доходят и до старых файлов. Имя игры —
-  `InputSettings.app_name`. Окно читает и пишет файл, без окна и в тестах — нет (чужие файлы не трогаются; явно заданный
-  `InputSettings.file` читается всегда). Файл, который не удалось прочитать, `rebind` не затирает. Сохранение на
-  собственном файле, а не на настройках Bevy (`bevy_settings`) — до модуля сохранений и настроек (E8).
+- Сохранение: изменения игрока — настройки группы `controls` (`ControlSettings`), их сохраняют настройки Bevy в
+  `settings.toml`, см. «Настройки (E8.6)». В файле только то, что отличается от умолчаний (`"gameplay.jump" =
+  ["Key(KeyJ)", "GamepadButton(South)"]`, режим в `hold_or_toggle`), поэтому новые умолчания доходят и до старых файлов.
+  `rebind` и любая правка `InputMap` пишут разницу в настройки (через секунду на диск), а `settings_set` и перечитанные
+  умолчания собирают карту заново. Старый файл `input.ron` (`$XDG_CONFIG_HOME/<игра>/input.ron`, имя папки —
+  `InputSettings.app_name`, `InputSettings.file` задаёт путь) переносится один раз: если в настройках ещё нет
+  управления и файл читается, его содержимое попадает в `controls.bindings`, файл переименовывается в
+  `input.ron.imported`, в журнале строка `settings: imported the controls from …`. Файл, который не читается, остаётся
+  как есть, в журнале предупреждение, управление по умолчанию. Без хранилища настроек (тесты, `--no-settings`, окно без
+  файла) старый файл читается только по явному `InputSettings.file` и не трогается.
+- `accessibility.hold_to_toggle` превращает удерживаемые действия (`sprint`, `block`, `glide`) в переключатели: нажатие
+  удерживает, следующее отпускает. Карта при этом не меняется (режим в ней прежний, `input_bindings` говорит об этом).
 - `input_bindings` показывает, что чем управляется:
   ```text
   $ shards act input_bindings
@@ -660,7 +669,7 @@ fall_height }`, плюс `Jumped`, `Mantled`, `ModeChanged`. Позиция `Tra
 стенами (луч от головы к желаемой позиции подтягивает камеру); захват цели: клавиша `lock_on` выбирает цель ближе всего к
 центру кадра в конусе и радиусе `CameraSettings::{lock_cone_deg, lock_range}`, сдвиг взгляда в сторону переключает на
 соседа, цель выходит из радиуса, умирает или теряет `LockOnTarget` — захват снимается; помощь прицеливания, тряска
-(`AddTrauma`; отключается настройкой), поле зрения. Выбранная цель пишется в `Intent.target` между тиками (это вход, его
+(`AddTrauma`; её сила, поле зрения, чувствительность и инверсия оси Y берутся из настроек игрока, см. «Настройки (E8.6)»). Выбранная цель пишется в `Intent.target` между тиками (это вход, его
 записывает реплей), но чужую цель камера никогда не снимает. **Камера — только представление:** геймплей и `observe`
 её не читают (`observe` видит глазами субъекта), поэтому окно с камерой играет ту же игру, что и без окна.
 
@@ -676,7 +685,7 @@ fall_height }`, плюс `Jumped`, `Mantled`, `ModeChanged`. Позиция `Tra
 | `jump`, `sprint`, `glide` | прыжок (из воды — на берег); спринт и планер как включённое состояние (`on=false` снимает) |
 | `clearance` | запрос: как далеко в восемь сторон и что остановит |
 | `path_to` | запрос: маршрут по тому, что можно пройти, проплыть и перелезть |
-| `input_bindings` (игрок), `rebind` (разработчик) | управление |
+| `input_bindings` (игрок), `rebind` (разработчик) | управление; `rebind` пишет в настройки `controls` |
 | `physics_overlay` (разработчик, окно) | коллайдеры и объёмы |
 
 Ошибки учат (`jump` в воде у берега: `ok: jumping out of the water onto the ledge 0.4m ahead (+1.3m)`; далеко от берега:
@@ -1730,7 +1739,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 
 | scope | инструменты |
 |---|---|
-| **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; движение: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; бой: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack; мир: region_info, level_info, nav_path, npc_state |
+| **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; движение: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; бой: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack; мир: region_info, level_info, nav_path, npc_state; настройки: settings, settings_set (как меню настроек у человека) |
 | **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load; мир: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay |
 
 Игра добавляет свои (в шаблоне `taunt` и условие `arena_cleared`, в песочнице условия `boss_phase_2`, `boss_dead`,
@@ -1739,8 +1748,8 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 
 - `query` только читает мир: без записи в журнал и без диффа;
 - `action` меняет мир: пишет в журнал, возвращает `CHANGES` и попадает в реплей;
-- `control` управляет временем или сессией (pause, resume, speed, step, possess, content_reload, rebind, snapshot_save,
-  snapshot_load, nav_bake): журнал и дифф
+- `control` управляет временем или сессией (pause, resume, speed, step, possess, content_reload, rebind, settings_set,
+  snapshot_save, snapshot_load, nav_bake): журнал и дифф
   как у action, но в реплей не попадает. Он меняет, *когда* что-то происходит, а не *что*.
 
 - **Действие возвращает изменения.** Каждый action-инструмент сравнивает срез мира до и после вызова и возвращает
@@ -2220,6 +2229,151 @@ id, ставятся тик, счётчики и ресурсы, пересоб�
 регион с тремя NPC на навсетке и ящиками, вырезаемыми и возвращаемыми (`shards_npc/tests/npc/snapshot.rs`).
 Почему не `DynamicWorld` Bevy: тот же слой reflection под ним, но сущности названы битами `Entity`, а не `AiId`; порядок
 вставки компонентов зависит от архетипа, а `AiId` должен встать раньше хуков; файл не стабилен по байтам.
+
+## Настройки (E8.6)
+
+Что игрок выставляет в меню настроек: графика, звук, управление, доступность. Их хранит и сохраняет между запусками
+собственный фреймворк настроек Bevy (`bevy::settings`, крейт `bevy-settings`, feature `bevy_settings`; в `Cargo.lock`
+он добавляет только этот крейт), а модуль `shards_settings` даёт группы, применение и инструменты. В файле
+`settings.toml` по таблице на группу:
+
+```toml
+# ~/.config/shards-my-game/settings.toml
+[graphics]
+fullscreen = false
+vsync = true
+resolution = "1920x1080"     # "auto" — как у игры
+render_scale = 1.0           # 0.5…2: множитель масштаба окна
+shadows = "high"             # off | low | medium | high
+
+[audio]                      # 0…1; master умножается на остальные
+master = 1.0
+music = 0.8
+sfx = 1.0
+voice = 1.0
+
+[accessibility]
+camera_shake = 0.3           # 0 — тряски нет совсем
+motion_blur = 0.5            # 0…1
+flashes = "reduced"          # full | reduced | off
+text_scale = 1.0             # 0.5…3, для UI игры
+fov_deg = 90.0               # 30…120
+hold_to_toggle = false       # удерживаемые кнопки работают как переключатели
+
+[controls]
+mouse_sensitivity = 1.0      # 0.05…5
+invert_y = false
+
+[controls.bindings]          # только то, что игрок поменял
+"gameplay.jump" = ["Key(KeyJ)", "GamepadButton(South)"]
+[controls.hold_or_toggle]
+"gameplay.block" = "toggle"  # press | hold | toggle
+```
+
+**Что применяется и где.** Каждый модуль применяет свои группы, вне симуляции (системы не в `SimSet`):
+
+| группа | кто и как |
+|---|---|
+| `graphics` | `shards_settings::apply_graphics`: основное окно (полный экран, vsync, размер, масштаб `scale_factor_override`); окно меняется, когда меняются настройки, а не каждый кадр, поэтому размер, который игрок потянул мышью, не отнимают. Без окна значения только хранятся. `shadows` читает игра: `GraphicsSettings::shadow_quality()` |
+| `audio` | хранится для звукового модуля (E9): `AudioSettings::volume("music")` отдаёт громкость с учётом `master` |
+| `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (см. «Ввод» в «Движении (E2)»); чувствительность и инверсия оси Y идут в `CameraSettings` |
+| `accessibility` | `shards_motion`: поле зрения и сила тряски камеры, `MotionBlur` на камерах, у которых он есть (игра добавляет компонент, настройка задаёт силу, 0 выключает), `hold_to_toggle` в карте ввода; `shards_action`: `flashes` для мерцания телеграфов и маркеров за кадром (`reduced` — вдвое мельче и не чаще 2 раз в секунду, `off` — ровный свет, `draw::pulse_at`) |
+
+Значения читаются с зажимом: в файле, правленном руками, может быть что угодно (`fov_deg = 400`, `flashes = "strobe"`),
+движок использует значение в диапазоне и слово по умолчанию (`fov()`, `flash_level()`, `scale()`, …), а не падает.
+Недостающие ключи берут умолчания, неизвестные игнорируются, ключ с неподходящим типом пропускается. Файл, который не
+разбирается как TOML, читается как умолчания (Bevy пишет ошибку в журнал), а следующее сохранение его заменяет.
+
+**Где лежит файл и когда пишется.** Настройки читаются один раз, когда `shards::run` запускает хранилище (`shards_settings::install`)
+**после** `build` игры: плагин Bevy сканирует реестр типов при добавлении, и к этому моменту все группы игры должны быть
+зарегистрированы. Куда:
+
+| запуск | что |
+|---|---|
+| окно, без флагов | папка настроек платформы (`$XDG_CONFIG_HOME` или `~/.config`, `~/Library/Preferences`, `%LocalAppData%`), подпапка `SettingsAppId`: игра задаёт её сама (`app.insert_resource(SettingsAppId::new("my-game"))`), иначе `shards-<заголовок окна>` |
+| `--settings-dir DIR` | `DIR/settings.toml` (папка делается абсолютной от рабочей) |
+| `--no-settings` | ничего не читается и не пишется: умолчания |
+| без окна (`--headless`) без `--settings-dir` | то же: проверка агента не читает и не меняет настройки игрока |
+| тесты (`testing::test_app`), `--replay … --verify`, встроенные игры стенда | ничего: группы есть, с умолчаниями |
+
+Пишется через секунду после последнего изменения (серия правок — одна запись) и при выходе (`kill`, Ctrl+C, закрытое окно:
+крючок выхода `SaveSettingsSync::IfChanged`). Прогон, в котором ничего не менялось, ничего не пишет. Запись атомарная
+(временный файл и переименование), но без `fsync`: для настроек этого достаточно, для сохранений (E8.1–5) нет.
+При первом запуске создаётся пустой `settings.toml` (иначе Bevy пишет в журнал «файл не найден»).
+
+**Инструменты** (scope Player: как меню настроек у человека):
+
+```text
+$ shards act settings group=accessibility
+accessibility.camera_shake = 1
+accessibility.motion_blur = 0.5
+accessibility.flashes = "full"
+accessibility.text_scale = 1
+accessibility.fov_deg = 70
+accessibility.hold_to_toggle = false
+# kept in ~/.config/shards-sandbox/settings.toml; a change is written a second after the last one, and when the game exits
+$ shards act settings_set group=accessibility key=camera_shake value=0.3
+ok:
+  accessibility.camera_shake 1 → 0.3
+$ shards act settings_set group=accessibility key=flashes value=blink
+error: accessibility.flashes `blink` is not one of full, reduced, off
+$ shards act settings_set group=controls key=bindings.gameplay.jump value='["Key(KeyJ)"]'
+$ shards act settings_set group=controls key=bindings.gameplay.jump reset=true      # записи таблицы нет «по умолчанию»: она уходит
+$ shards act settings_set group=audio reset=true                                    # вся группа к умолчаниям
+```
+
+`settings {group?}` печатает строки `группа.ключ = значение` (записи таблиц — `группа.поле.запись`) и в последней строке говорит,
+сохраняются ли изменения и куда. `settings_set group= key= value=` читает `value` по типу поля: булево (`true`, `on`,
+`yes`, `1`), число (с границами типа: `300` для `u8` — «out of range (0 to 255)»), слово варианта enum, текст, список как JSON
+(`["a","b"]`) или один элемент; число и `true` из CLI приходят числом и булевым и считаются своим текстом. Группа целиком
+пересобирается по своему типу, проверяется правилами группы (диапазоны, слова) и только потом заменяет ресурс: отказ ничего
+не меняет, а сообщение называет допустимое. Ключ с опечаткой подсказывает (`did you mean fov_deg`). Изменение пишется в
+журнал (`settings: accessibility.camera_shake 1 → 0.3`; изменение группы даёт не больше 12 строк, остальное — `… and N more`),
+это control-инструмент: **в реплей он не попадает.** `ai/status` получает поле `settings` (`store`, `groups`).
+
+**Управление.** `rebind` меняет `InputMap`, а разницу с умолчаниями записывает в `controls.bindings` и
+`controls.hold_or_toggle` (и откладывает запись). Правка `ControlSettings` (`settings_set`) или смена умолчаний в контенте
+(горячая перезагрузка) собирает карту заново; привязка, которая не читается, отклоняется на `settings_set` с именем
+ключа, а из файла пропускается с предупреждением в журнале (запись для действия, которого в этой версии нет, остаётся в
+файле и не мешает). Файл читается один раз при старте: правка руками в работающей игре не подхватывается. Старый
+`input.ron` переносится один раз (см. «Движение»).
+
+**Свои группы игры.**
+
+```rust
+use shards::prelude::*;
+
+#[derive(Resource, Reflect, SettingsGroup, Default)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "my_game")]
+struct MyGameSettings { show_hints: bool, language: String, dismissed: Vec<String> }
+
+fn check(s: &MyGameSettings) -> Result<(), String> {   // что `settings_set` не пропустит
+    if s.language.len() < 16 { Ok(()) } else { Err("my_game.language is too long".into()) }
+}
+
+app.add_settings_group::<MyGameSettings>()                     // в build, до запуска хранилища
+   .add_settings_check::<MyGameSettings>(check);
+```
+
+Группа — ресурс с `#[derive(SettingsGroup)]` и `#[reflect(Resource, SettingsGroup, Default)]`; `shards::prelude` даёт
+`SettingsGroup`, `ReflectSettingsGroup` и алиас `bevy_settings`, которого ждёт derive. Умолчания игры — ресурс, вставленный до запуска
+хранилища (`app.insert_resource(AccessibilitySettings { fov_deg: 90.0, ..default() })`): плагин Bevy накладывает файл поверх
+него. Только то, что TOML держит без сюрпризов: `bool`, целые до 32 бит (и `i64`), `f32`/`f64`, `String`, enum, `Vec`, `BTreeMap<String, _>`.
+Поле `u64` (значение выше `i64::MAX` роняет запись в TOML), карта с нестроковым ключом или группа без
+`#[reflect(SettingsGroup)]` отклоняется при регистрации паникой с именем поля (`MyGroup.score: u64 is not TOML-safe …`).
+Группы с одним именем таблицы склеиваются в одну таблицу. Регистрировать группу в `finish` плагина поздно.
+
+**Не часть симуляции.** Настройки на каждой машине свои: не в снапшотах (`add_snapshot_resource` не вызывается), не
+в реплеях и их хэше, не в реплицируемом наборе (`net_ignore_resource` для каждой группы). Движок не читает их в `SimSet`;
+камера и мерцание — представление, `Intent` от клавиатуры пишется как раньше (реплей записывает `Intent`, а не настройки).
+Эталонные реплеи после E8.6 не менялись.
+
+Проверка: `crates/shards_settings/tests/settings/` (группы переживают перезапуск, ничего не меняли — ничего не пишут, выходной крючок,
+секунда ожидания, пустой каталог и пустой файл, не TOML и правленые руками значения, значения по типу и отказы, свои группы,
+группы, которые TOML не держит, изоляция от снапшота, хэша и репликации), `shards_motion` (`tests/motion/input.rs`: перенос
+`input.ron`, карта ⇄ настройки, `hold_to_toggle`, камера), сценарий `crates/sandbox/scenarios/settings.scenario`.
+
 ## Песочница
 
 Песочница (`crates/sandbox`) — тестовая арена движка, на которой проверяется каждый модуль. Она собрана только на
@@ -2287,7 +2441,9 @@ id, ставятся тик, счётчики и ресурсы, пересоб�
   вперёд и обратно по навсетке (`move_to path=true`, остановка на `near_poi`), другое зерно — другой манифест, то же зерно —
   тот же, до байта;
 - `snapshot.scenario` (E11.4) — бой со стражем доводится до второй фазы, снимается снапшот, игра уезжает, `snapshot_load`
-  одной командой возвращает бой и его можно продолжить.
+  одной командой возвращает бой и его можно продолжить;
+- `settings.scenario` (E8.6) — `settings` и `settings_set`: значения по типу, отказы с допустимым, сброс, `rebind` как настройка
+  `controls`; в начале и в конце все группы возвращаются к умолчаниям (идёт и с файлом настроек, и без).
 
 Сценарии начинают с `heal`/`teleport`/`set`/`npc_set_state … calm`, поэтому идут на свежей игре и после других, в любом порядке:
 CI гоняет их вперёд и потом назад в одной игре. Сессии шести из них записаны как эталонные реплеи в `tests/replays/`

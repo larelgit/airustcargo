@@ -80,6 +80,35 @@ git push origin v0.1.0
 - `shards_world`: стартовый регион ждёт `seed_ready` и берёт `SimSeed`; смена региона шлёт `WorldRebuilt`.
 - `shards_action`: события действий и боя (`ActionStarted`, `Telegraph`, `Damaged`, `Died`, …) отражаются (`Reflect`).
 
+**Настройки игрока (E8.6, `shards_settings`)** — графика, звук, управление и доступность на собственном фреймворке настроек
+Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавляется только `bevy-settings 0.20.0`):
+
+- Группы `GraphicsSettings`, `AudioSettings`, `ControlSettings`, `AccessibilitySettings` (ресурсы, таблицы `settings.toml`);
+  свои группы игры — `app.add_settings_group::<G>()`, группа, которую TOML не держит (`u64`, нестроковый ключ карты), отклоняется
+  при регистрации с именем поля.
+- Хранилище: `shards::run` запускает его после `build` игры (`shards_settings::install`): папка платформы под `SettingsAppId`
+  (игра задаёт имя, иначе `shards-<заголовок>`), `--settings-dir DIR`, `--no-settings`; окно без флагов читает и пишет,
+  `--headless` без `--settings-dir`, тесты, `--verify` и встроенные игры нет. Запись через секунду после последнего изменения
+  и при выходе, без изменений ничего не пишется.
+- Инструменты `settings {group?}` (Player, запрос) и `settings_set group= key= value= | reset=true` (Player, control: не
+  попадает в реплей); значение читается по типу поля, отказ называет допустимое, изменение — строка журнала
+  `settings: accessibility.camera_shake 1 → 0.3`. `ai/status.settings`.
+- Применение: основное окно (`apply_graphics`: полный экран, vsync, размер, масштаб), камера (поле зрения, сила тряски,
+  чувствительность, инверсия Y, `MotionBlur` у камер, где он есть), мерцание телеграфов и маркеров за кадром
+  (`accessibility.flashes`, `draw::pulse_at`), `hold_to_toggle` в карте ввода. Громкости хранятся для звука (E9).
+- Настройки не входят в снапшоты, реплеи, их хэш и репликацию (`net_ignore_resource`); эталонные реплеи прежние.
+- Песочница: `SettingsAppId` `shards-sandbox`, сценарий `settings.scenario`; шаблон: `SettingsAppId::new("my-game")`.
+
+### Изменено
+
+- **Переназначение клавиш — настройки.** `rebind` пишет разницу с умолчаниями в `controls.bindings` и
+  `controls.hold_or_toggle` (запись через секунду) и больше не пишет `input.ron`; у него нет аргумента `save`.
+  `InputSettings` остался только как место старого файла (`app_name`, `file`; поля `persist` нет): при первом запуске, если в
+  настройках ещё нет управления, `input.ron` переносится в настройки и переименовывается в `input.ron.imported`.
+  `InputMap::save_overrides` удалён. Игре, которая задавала `InputSettings.app_name`, нужен `SettingsAppId`.
+- `shards_motion` и `shards_action` зависят от `shards_settings`; `MotionPlugin` сам добавляет `ShardsSettingsPlugin`, если
+  его нет; feature `render` у `shards_motion` включает `bevy_post_process`.
+
 ### Планируется
 
 - Шаблон игры: сохранение и кооп на двоих (фаза C, модули E7 и E8). В `template/README.md` для них оставлены
