@@ -45,6 +45,7 @@ pub mod id;
 pub mod journal;
 pub mod observe;
 pub mod paths;
+pub mod process;
 #[cfg(feature = "remote")]
 pub mod remote;
 pub mod replay;
@@ -74,6 +75,7 @@ pub use failures::{ai_core_error_handler, AiFailures, SystemFailure};
 pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible};
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
 pub use observe::{AiCamera, AiPerception, ObserveOptions};
+pub use process::AppToken;
 pub use replay::{AiReplay, Replay, ReplayHashing, ReplayReport};
 pub use rng::{DetRng, SimRng, SimSeed};
 pub use session::{AgentSession, AgentSessions, Caller, Scope};
@@ -122,6 +124,7 @@ impl Default for AiCorePlugin {
 
 impl Plugin for AiCorePlugin {
     fn build(&self, app: &mut App) {
+        process::ensure_token(app.world_mut());
         app.insert_resource(self.sim.clone())
             .insert_resource(Time::<Fixed>::from_hz(self.sim.tick_hz))
             .insert_resource(SimSeed(self.sim.seed))
@@ -145,6 +148,9 @@ impl Plugin for AiCorePlugin {
             .add_systems(FixedFirst, sim::advance_tick)
             // Before this frame's time is counted: a held gate means no tick is due.
             .add_systems(First, sim::apply_gate.before(bevy::time::TimeSystems))
+            // Several apps in one process: this one is working now (its log lines and
+            // failures are its own).
+            .add_systems(First, process::activate_app.before(sim::apply_gate))
             // Log lines into the journal after every tick (a long `step` runs many in
             // one frame), and once per frame for lines logged between ticks.
             .add_systems(FixedLast, journal::drain_logs.after(replay::ReplaySystems::Remember))

@@ -13,10 +13,15 @@
 //! <msg>`), the game pauses, the session is saved as a crash replay
 //! (`replays/crash-tick<N>.json`, once per failing system) to reproduce it with, and
 //! a `step` in progress stops there.
+//!
+//! Several apps in one process share the queue: each app's handler queues its failures
+//! under the app's [token](crate::process::AppToken), and an app collects only its own
+//! (and untagged ones).
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use bevy::ecs::error::{BevyError, ErrorContext, FallbackErrorHandler, Severity};
+use bevy::ecs::error::{BevyError, ErrorContext, ErrorHandler, FallbackErrorHandler, Severity};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 
@@ -30,6 +35,8 @@ pub(crate) const LOG_TARGET: &str = "ai_core::failures";
 
 /// What the handler saw; the tick is added when it is collected.
 struct Queued {
+    /// The app that was active when it failed ([`process`](crate::process)); 0: none yet.
+    token: u64,
     kind: String,
     name: String,
     message: String,
@@ -64,8 +71,14 @@ impl SystemFailure {
 
 /// [`FallbackErrorHandler`] that never panics: errors Bevy would panic on (system
 /// panics included) are logged and queued for [`collect`]; milder ones are logged at
-/// their own level, as Bevy does.
-pub fn ai_core_error_handler(mut error: BevyError, ctx: ErrorContext) {
+/// their own level, as Bevy does. The failure is queued under the
+/// [active](crate::process::active) app; [`AiCorePlugin`](crate::AiCorePlugin) installs a
+/// copy bound to its own app instead (see [`handler_for`]).
+pub fn ai_core_error_handler(error: BevyError, ctx: ErrorContext) {
+    handle(error, ctx, crate::process::active());
+}
+
+fn handle(mut error: BevyError, ctx: ErrorContext, token: u64) {
     if error.severity() != Severity::Panic {
         bevy::ecs::error::match_severity(error, ctx);
         return;
@@ -80,8 +93,55 @@ pub fn ai_core_error_handler(mut error: BevyError, ctx: ErrorContext) {
     let verb = if panicked { "panicked" } else { "failed" };
     error!(target: LOG_TARGET, "{kind} `{name}` {verb}: {message}");
     if let Ok(mut queue) = QUEUE.lock() {
-        queue.push(Queued { kind, name, message, panicked });
+        queue.push(Queued { token, kind, name, message, panicked });
     }
+}
+
+/// How many apps of one process get a handler bound to them; more fall back to the
+/// active app's token.
+const SLOTS: usize = 32;
+
+/// Slot → the token of the app that holds it (0: free).
+static SLOT_TOKENS: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
+
+fn slot_handler<const S: usize>(error: BevyError, ctx: ErrorContext) {
+    handle(error, ctx, SLOT_TOKENS[S].load(Ordering::Relaxed));
+}
+
+macro_rules! slot_handlers {
+    ($($slot:literal)*) => { [$(slot_handler::<$slot> as ErrorHandler),*] };
+}
+
+/// The handler is a plain `fn` that cannot capture its app, but Bevy reads it per world:
+/// one monomorphized copy per slot knows its app's token, whatever thread the failing
+/// system ran on and whichever app was activated last.
+static SLOT_HANDLERS: [ErrorHandler; SLOTS] =
+    slot_handlers!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31);
+
+/// Frees the app's handler slot when its world is dropped.
+#[derive(Resource)]
+struct HandlerSlot(usize);
+
+impl Drop for HandlerSlot {
+    fn drop(&mut self) {
+        SLOT_TOKENS[self.0].store(0, Ordering::Relaxed);
+    }
+}
+
+/// An error handler that queues this world's failures under its own token: a free slot's
+/// copy, or [`ai_core_error_handler`] when all slots are taken.
+pub fn handler_for(world: &mut World) -> ErrorHandler {
+    let token = crate::process::ensure_token(world);
+    if let Some(slot) = world.get_resource::<HandlerSlot>() {
+        return SLOT_HANDLERS[slot.0];
+    }
+    for (i, slot) in SLOT_TOKENS.iter().enumerate() {
+        if slot.compare_exchange(0, token, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+            world.insert_resource(HandlerSlot(i));
+            return SLOT_HANDLERS[i];
+        }
+    }
+    ai_core_error_handler
 }
 
 /// Failures collected but not reported by a `step` yet, and crash replay settings.
@@ -109,7 +169,8 @@ impl Default for AiFailures {
 
 pub(crate) fn plugin(app: &mut App, catch_system_panics: bool, crash_replays: bool) {
     if catch_system_panics {
-        app.insert_resource(FallbackErrorHandler(ai_core_error_handler));
+        let handler = handler_for(app.world_mut());
+        app.insert_resource(FallbackErrorHandler(handler));
     }
     app.insert_resource(AiFailures::new(crash_replays))
         .add_systems(FixedLast, collect_after_tick.after(journal::drain_logs))
@@ -121,8 +182,15 @@ fn collect_after_tick(world: &mut World) {
     collect(world);
 }
 
-fn take_queue() -> Vec<Queued> {
-    let mut queued = QUEUE.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default();
+/// This app's failures (and untagged ones); other apps' stay queued for them.
+fn take_queue(world: &World) -> Vec<Queued> {
+    let own = world.get_resource::<crate::process::AppToken>().map_or(0, |t| t.0);
+    let mut queued = Vec::new();
+    if let Ok(mut queue) = QUEUE.lock() {
+        let (mine, others): (Vec<_>, Vec<_>) = std::mem::take(&mut *queue).into_iter().partition(|q| q.token == own || q.token == 0);
+        *queue = others;
+        queued = mine;
+    }
     // Systems of one tick fail on several threads: keep the journal stable.
     queued.sort_by(|a, b| (&a.kind, &a.name).cmp(&(&b.kind, &b.name)));
     queued
@@ -131,7 +199,8 @@ fn take_queue() -> Vec<Queued> {
 /// Takes the queued failures: journals them, saves a crash replay, pauses the game.
 /// Returns what it took (also kept for the `step` running right now).
 pub fn collect(world: &mut World) -> Vec<SystemFailure> {
-    let queued = take_queue();
+    crate::process::activate(world);
+    let queued = take_queue(world);
     if queued.is_empty() {
         return Vec::new();
     }
@@ -183,7 +252,7 @@ fn collect_between_ticks(world: &mut World) {
 /// After a tool call: a failure there (a command the tool queued) is the tool's, not
 /// gameplay's. It is journaled with the tool's name; the game keeps running.
 pub(crate) fn blame_tool(world: &mut World, tool: &str) {
-    for q in take_queue() {
+    for q in take_queue(world) {
         let verb = if q.panicked { "panicked" } else { "failed" };
         journal::log(world, JournalKind::Error, format!("tool {tool}: {} {} {verb}: {}", q.kind, q.name, q.message));
     }

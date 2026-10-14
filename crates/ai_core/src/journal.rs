@@ -182,9 +182,31 @@ pub struct LogCapture(Arc<Mutex<Captured>>);
 /// Log lines kept per tick (and per frame between ticks).
 pub const MAX_CAPTURED_PER_TICK: usize = 64;
 
-/// The tracing subscriber is global and set once per process, while each app calls
-/// [`capture_log_layer`] again: the layer writes into the newest app's buffer.
-static CAPTURE_TARGET: Mutex<Option<(LogCapture, TickClock)>> = Mutex::new(None);
+/// The tracing subscriber is global and set once per process, while every app keeps its
+/// own buffer: `(app token, buffer, clock)`, oldest first. The layer writes into the
+/// [active](crate::process::active) app's buffer, or the newest one when the active app has
+/// none (an app alone in its process never notices the difference).
+static CAPTURE_TARGETS: Mutex<Vec<(u64, LogCapture, TickClock)>> = Mutex::new(Vec::new());
+
+/// The buffer the layer writes into right now.
+fn capture_target() -> Option<(LogCapture, TickClock)> {
+    let targets = CAPTURE_TARGETS.lock().ok()?;
+    let active = crate::process::active();
+    let (_, capture, clock) = targets.iter().rev().find(|(token, ..)| *token == active).or_else(|| targets.last())?;
+    Some((capture.clone(), clock.clone()))
+}
+
+/// Takes the app's buffer out of [`CAPTURE_TARGETS`] when its world is dropped.
+#[derive(Resource)]
+struct CaptureRegistration(u64);
+
+impl Drop for CaptureRegistration {
+    fn drop(&mut self) {
+        if let Ok(mut targets) = CAPTURE_TARGETS.lock() {
+            targets.retain(|(token, ..)| *token != self.0);
+        }
+    }
+}
 
 struct CaptureLayer;
 
@@ -197,7 +219,7 @@ impl<S: Subscriber> Layer<S> for CaptureLayer {
         if level > Level::WARN || target == crate::failures::LOG_TARGET || target == EMIT_TARGET {
             return;
         }
-        let Some((capture, clock)) = CAPTURE_TARGET.lock().ok().and_then(|t| t.clone()) else {
+        let Some((capture, clock)) = capture_target() else {
             return;
         };
         let mut visitor = MessageVisitor(String::new());
@@ -248,15 +270,31 @@ impl Visit for MessageVisitor {
 /// DefaultPlugins.set(LogPlugin { custom_layer: ai_core::capture_log_layer, ..default() })
 /// ```
 ///
-/// One app per process receives the lines: the one that called this last.
+/// Several apps in one process: the first one installs the layer (the subscriber is
+/// global), every app gets its own buffer through [`register_capture`], and lines go to the
+/// [active](crate::process) app.
 pub fn capture_log_layer(app: &mut App) -> Option<BoxedLayer> {
-    let capture = LogCapture::default();
-    let clock = app.world_mut().get_resource_or_init::<TickClock>().clone();
-    app.insert_resource(capture.clone());
-    if let Ok(mut target) = CAPTURE_TARGET.lock() {
-        *target = Some((capture, clock));
-    }
+    register_capture(app);
     Some(Box::new(CaptureLayer))
+}
+
+/// Gives this app its own log buffer in the process-wide capture layer, without installing
+/// a layer: for an app embedded next to another that installed it (no `LogPlugin` of its
+/// own, like a client in an in-process stand). Lines logged while the app is
+/// [active](crate::process::activate) land in its journal. Registering again does nothing.
+pub fn register_capture(app: &mut App) {
+    let world = app.world_mut();
+    let token = crate::process::ensure_token(world);
+    if world.contains_resource::<CaptureRegistration>() {
+        return;
+    }
+    let capture = LogCapture::default();
+    let clock = world.get_resource_or_init::<TickClock>().clone();
+    world.insert_resource(capture.clone());
+    if let Ok(mut targets) = CAPTURE_TARGETS.lock() {
+        targets.push((token, capture, clock));
+    }
+    world.insert_resource(CaptureRegistration(token));
 }
 
 /// Moves captured log lines into the journal, each with the tick it was logged at.

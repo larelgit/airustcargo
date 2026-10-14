@@ -186,6 +186,7 @@ pub fn tick_seconds(world: &World) -> f32 {
 /// Runs exactly one fixed tick right now, independent of frame timing.
 /// Mirrors `bevy::time::run_fixed_main_schedule`.
 pub fn run_tick(world: &mut World) -> Result<(), String> {
+    crate::process::activate(world);
     let result = world.try_schedule_scope(FixedMain, |world, schedule| {
         let timestep = world.resource::<Time<Fixed>>().timestep();
         world.resource_mut::<Time<Fixed>>().advance_by(timestep);
@@ -234,6 +235,7 @@ pub fn step(
     wall_budget: Duration,
     mut stop: impl FnMut(&mut World) -> Option<String>,
 ) -> Result<StepReport, String> {
+    crate::process::activate(world);
     if let Some(loading) = gate_message(world) {
         return Err(loading);
     }

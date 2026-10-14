@@ -220,6 +220,7 @@ fn clip(text: String, max: usize) -> String {
 /// Runs a tool on behalf of `agent`. The single entry point: BRP (`shards`), the
 /// game's own dev keys, tests and replays all call tools through here.
 pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> CallOutcome {
+    crate::process::activate(world);
     let caller = caller(world, agent);
     let outcome = |world: &World, ok: bool, result: Value, changes, journal| CallOutcome {
         tool: tool.to_owned(),
