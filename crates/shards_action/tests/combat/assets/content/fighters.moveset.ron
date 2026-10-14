@@ -1,0 +1,27 @@
+{
+    "hero": (
+        inputs: {
+            "light": "light_1",
+            "heavy": "heavy",
+            "dodge": "roll",
+            "block": "block",
+            "parry": "parry",
+            "use_item.flask": "drink",
+            "technique.1": "lunge",
+        },
+        stagger: "stagger",
+        death: "death",
+    ),
+    // The hero's kit with a dodge that stays in place: i-frames, no movement.
+    "evader": (
+        inputs: {"light": "light_1", "dodge": "sidestep", "block": "block", "parry": "parry"},
+        stagger: "stagger",
+    ),
+    "brute": (
+        inputs: {"light": "swipe", "heavy": "slam", "technique.1": "charge", "technique.2": "shockwave"},
+        stagger: "brute_stagger",
+        hit: "brute_flinch",
+    ),
+    // Never staggers: no `stagger` action.
+    "dummy": (inputs: {"light": "swipe"}),
+}

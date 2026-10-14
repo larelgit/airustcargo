@@ -283,7 +283,9 @@ pub fn spawn_prefab(world: &mut World, id: &str, transform: Transform, overrides
         None | Some(Value::Null) => {}
         Some(Value::Object(patches)) => {
             for (name, patch) in patches {
-                let reg = resolve(&registry, name).map_err(|e| format!("overrides: {e}"))?;
+                // A short name several types share means the prefab's own component.
+                let own = components.values().map(|(reg, _)| *reg).find(|reg| short_name(reg) == name);
+                let reg = resolve(&registry, name).or_else(|e| own.ok_or(e)).map_err(|e| format!("overrides: {e}"))?;
                 let mut json = match components.get(reg.type_info().type_path()) {
                     Some((_, value)) => serde_json::to_value(TypedReflectSerializer::new(value.as_partial_reflect(), &registry))
                         .map_err(|e| format!("overrides: {name}: {e}"))?,

@@ -600,6 +600,61 @@ cargo shards act move dir=W meters=9 && cargo shards step 300
 cargo shards observe; sleep 1; cargo shards observe
 ```
 
+## Бой: действия, урон, статусы (`shards_action`)
+
+Атака, блок, парирование, перекат и фляга — одно и то же: **действие**, временная шкала из контента
+(`*.action.ron`). Одна машина действий на бойца (`Fighter`) ведёт игрока, врагов и боссов; **мувсет**
+(`*.moveset.ron`) говорит, какой ввод какое действие запускает, плюс слоты `stagger`, `hit`, `death`.
+
+```ron
+// content/combat/hero.action.ron
+{
+    "light_1": (
+        net_id: 1,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)],
+        cost: (stamina: 10),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 100), damage: 20, poise: 10)],
+        cancels: [(span: Secs(0.3, 0.55), into: [Combo("light", "light_2"), Input("dodge")])],
+        displacement: [(0.0, 0.0), (0.3, 0.5)],
+    ),
+    "roll": (net_id: 5, phases: [("roll", 0.4)], cost: (stamina: 25), iframes: [Secs(0.0, 0.18)],
+             displacement: [(0.35, 4.0)], steer: Move),
+    "block": (net_id: 6, phases: [("raise", 0.1), ("hold", 0.3), ("lower", 0.1)],
+              hold: (input: "block", span: Phase("hold")), move_speed: 0.4,
+              guard: (span: Phases("raise", "hold"), perfect: Phase("raise"), damage_mult: 0.1)),
+}
+```
+
+- Окна — это `Span`: фаза (`Phase("active")`), от фазы до фазы или секунды (`Secs(0.3, 0.45)`). Есть окна
+  удара (сфера, капсула, конус, коробка, круг, линия по земле; урон, урон стойкости, статусы, флаги
+  `Unblockable`/`GuardBreak`/`NoParry`), неуязвимости, блока и идеального блока, гиперброни, отмены
+  (комбо — цепочка переходов `Combo`), удержания (блок держится, пока зажат ввод).
+- Смещение (`displacement`) действие отдаёт контроллеру через `LocomotionInput::external`: двигает тело
+  только контроллер, поэтому выпад останавливается о стену.
+- Нажатие ждёт в буфере ввода `CombatTuning::input_buffer` (0.15 с). Одно правило `can_start` отвечает и
+  машине, и инструментам: `ok: light_1`, `ok: queued, light starts in 0.10s`, `not enough stamina: 20/40
+  (ready in 1.5s)`, `busy: windup light_1 0.17s (ready in 0.27s, when a cancel window opens)`. Нажатие, чьё
+  время вышло, попадает в журнал: `e5 light rejected: busy (active light_1 0.10s)`.
+- Попадания ищутся в `SimSet::Resolve` после движения: формы ударов пересекаются с хёртбоксами (коллайдеры
+  со слоем `HURTBOX`, его получает коллайдер `Fighter`), атакующие и цели по порядку `AiId`, одна цель —
+  один раз за действие. Конвейер урона: бессмертие (`god`) → неуязвимость → парирование / блок / пробитие
+  защиты → броня → хуки игры (`add_damage_hook`) → здоровье, статусы, стойкость (пробитие — `stagger`),
+  смерть.
+- Ресурсы бойца: `Health`, `Stamina` (восстановление после задержки, спринт её тратит), `Poise`, `Armor`,
+  `Team`, `Charges` (фляга), `Dead`. Статусы (`*.status.ron`): накопление до порога, спад, длительность,
+  сопротивления, общий лимит активных; сами эффекты — хуки игры (`add_status_effect`).
+- Телеграфы: событие `Telegraph` с символом и звуковой меткой, `hit_zones(world)` для декалей и ИИ,
+  `threat_indicators(world, viewer, forward)` для предупреждений за кадром.
+
+Что видит ИИ: `windup slam 0.78s (zone circle 4.5m) hyper-armor`, `stam 75/100`, `poise broken 0.8s`,
+`bleed 60%`, `queued light 0.13s`; под строкой `YOU` — подсказка
+`ALERT in hit zone of e2 slam (lands in 0.78s): move 2.9m S to leave it`; в журнале
+`e2 winds up slam (0.80s) ⚠ circle 4.5m`, `e1 -> e2 heavy -45 (hp 55)`, `e1 blocked e2 swipe: -2 hp,
+-15 stamina (hp 98)`, `e2 staggered (parried)`. Инструменты игрока (только через `Intent`): `light_attack`,
+`heavy_attack`, `block on=…`, `parry`, `dodge dir=…|away_from=…`, `use_technique slot=1`, `use_item
+item=flask`, `lock_on target=…|off=true`, `attack target=… input=… repeat=true`; разработчика: `god`, `heal`,
+`stagger`.
+
 ## Статус по плану внедрения
 
 | # | шаг | статус |

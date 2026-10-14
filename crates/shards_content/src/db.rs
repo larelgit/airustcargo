@@ -674,6 +674,12 @@ impl<'a> Refs<'a> {
         self.db.get::<T>(id)
     }
 
+    /// Every definition of kind `T` by id, sorted: for checks across definitions
+    /// (unique wire ids).
+    pub fn iter<T: ContentDef>(&self) -> impl Iterator<Item = (&'a str, &'a T)> + 'a {
+        self.db.iter::<T>()
+    }
+
     /// Reports a problem with this definition.
     pub fn error(&mut self, message: impl Into<String>) {
         self.errors.push(ContentError {

@@ -458,14 +458,35 @@ fn find_registration<'r>(
     entity: Entity,
     component: &str,
 ) -> Result<&'r TypeRegistration, String> {
-    registry
+    let found = registry
         .get_with_short_type_path(component)
         .or_else(|| registry.get_with_type_path(component))
-        .filter(|r| r.data::<ReflectComponent>().is_some())
-        .ok_or_else(|| {
-            let names = reflectable_components(world, registry, entity);
-            format!("unknown component `{component}`; this entity has: {}", names.join(", "))
-        })
+        .filter(|r| r.data::<ReflectComponent>().is_some());
+    if let Some(reg) = found {
+        return Ok(reg);
+    }
+    if registry.is_ambiguous(component) {
+        // Several types share the short name (a game's `Health` and an engine's): the
+        // one this entity has is meant.
+        let mine: Vec<&TypeRegistration> = world
+            .inspect_entity(entity)
+            .into_iter()
+            .flatten()
+            .filter_map(|(_, info)| registry.get(info.type_id()?))
+            .filter(|r| r.data::<ReflectComponent>().is_some() && reg_name(r) == component)
+            .collect();
+        if let [only] = mine.as_slice() {
+            return Ok(only);
+        }
+        let paths: Vec<&str> = registry
+            .iter()
+            .filter(|r| r.type_info().type_path_table().short_path() == component)
+            .map(|r| r.type_info().type_path())
+            .collect();
+        return Err(format!("`{component}` names several components; use the full path: {}", paths.join(", ")));
+    }
+    let names = reflectable_components(world, registry, entity);
+    Err(format!("unknown component `{component}`; this entity has: {}", names.join(", ")))
 }
 
 fn reflect_component<'w, 'r>(

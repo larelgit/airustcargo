@@ -39,6 +39,19 @@ pub struct Describer {
 #[derive(Resource, Default, Clone)]
 pub struct AiDescribers(pub Vec<Describer>);
 
+/// Advice for the subject, from the whole world: `in hit zone of e6 slam (lands in
+/// 0.32s): move 2.1m S to leave it`. Each line shows as `ALERT ...` under `YOU`.
+pub type AdviceFn = fn(&World, Entity) -> Vec<String>;
+
+/// Registered advice sources, in registration order.
+#[derive(Resource, Default, Clone)]
+pub struct AiAdvisors(pub Vec<AdviceFn>);
+
+/// Every advice line for `subject`, in registration order.
+pub fn advice(world: &World, subject: Entity) -> Vec<String> {
+    world.get_resource::<AiAdvisors>().map(|a| a.0.iter().flat_map(|f| f(world, subject)).collect()).unwrap_or_default()
+}
+
 /// Everything the AI layer knows about one entity, independent of the viewer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EntityFacts {

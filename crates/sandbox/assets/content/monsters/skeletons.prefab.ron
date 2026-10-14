@@ -1,5 +1,6 @@
 // Monsters defined in data: `shards act spawn_prefab id=skeleton_captain x=3 z=-4`.
 // Components by name, values as in Bevy scenes; `extends` starts from another prefab.
+// Full paths where the engine has a component of the same name (`Health`, `Team`, `Body`).
 {
     "skeleton": (
         components: {
@@ -7,9 +8,9 @@
             "Skeleton": (),
             "AiKind": ("Skeleton"),
             "AiImportance": (1.0),
-            "Team": Monster,
-            "Health": (current: 40.0, max: 40.0),
-            "Body": (radius: 0.45, speed: 3.6),
+            "sandbox::gameplay::combat::Team": Monster,
+            "sandbox::gameplay::combat::Health": (current: 40.0, max: 40.0),
+            "sandbox::gameplay::combat::Body": (radius: 0.45, speed: 3.6),
             "SkeletonBrain": (aggro: 18.0, cooldown: 0.0),
             "Intent": (),
             "Action": Idle,
@@ -20,8 +21,8 @@
         components: {
             "Name": "Skeleton Captain",
             "AiImportance": (3.0),
-            "Health": (current: 90.0, max: 90.0),
-            "Body": (radius: 0.5, speed: 3.2),
+            "sandbox::gameplay::combat::Health": (current: 90.0, max: 90.0),
+            "sandbox::gameplay::combat::Body": (radius: 0.5, speed: 3.2),
         },
     ),
 }
