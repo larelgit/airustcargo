@@ -14,6 +14,7 @@
 //!   entities.
 
 use ai_core::prelude::*;
+use ai_core::replay::ReplayHashing;
 use bevy::prelude::*;
 use serde_json::Value;
 use shards_content::{spawn_prefab, ContentDb};
@@ -58,6 +59,8 @@ pub struct LevelInstance {
 pub struct LevelInstances {
     last: u32,
     list: Vec<LevelInstance>,
+    /// The replay check `level` is registered (by the first spawn).
+    checked: bool,
 }
 
 impl LevelInstances {
@@ -165,13 +168,14 @@ fn place(world: &mut World, level: &LevelAsset, plans: &[NodePlan], at: Transfor
         }
     }
     let visual = crate::render::spawn_visual(world, &level.path, at, instance);
-    world.get_resource_or_init::<LevelInstances>().list.push(LevelInstance {
-        id: instance,
-        label: label.to_owned(),
-        path: level.path.clone(),
-        at,
-        visual,
-    });
+    let mut instances = world.get_resource_or_init::<LevelInstances>();
+    instances.list.push(LevelInstance { id: instance, label: label.to_owned(), path: level.path.clone(), at, visual });
+    // Every replay check adds its name to the state hash, so a check registered at start would
+    // change the hash of games that never spawn a level (and invalidate their recordings): it
+    // joins with the first level instead, at the same tick in a recording and its playback.
+    if !std::mem::replace(&mut instances.checked, true) {
+        world.get_resource_or_init::<ReplayHashing>().add_check("level", level_hash);
+    }
     Ok(SpawnedLevel { instance, entities, visual })
 }
 

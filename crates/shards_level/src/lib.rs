@@ -118,7 +118,9 @@
 //! and `ColliderId`s are the same in every run. `spawn_level` and `level_reload` are
 //! actions, so replays record them. The replay check `level` hashes where each level was
 //! placed and the digest of its file: a recording made against another version of a file
-//! diverges at its first check (record the reference again after editing a level). When a
+//! diverges at its first check (record the reference again after editing a level). The
+//! check joins with the first level that is spawned, so a game without levels has the
+//! replay hashes it had before it had this module. When a
 //! file changes on disk (hot reload) the asset server reloads it and the instances are
 //! replaced through `level_reload`, which is journaled and recorded like any action.
 //!
@@ -184,7 +186,6 @@ impl Plugin for LevelPlugin {
             .init_resource::<LevelInstances>()
             .require_loaded("levels", library::level_status)
             .add_engine_module("level", VERSION)
-            .add_replay_check("level", spawn::level_hash)
             .register_ai_describer("marker", tools::describe_marker)
             .add_systems(
                 Update,
