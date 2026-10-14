@@ -163,6 +163,15 @@ impl NetCorrection {
         self.errors.clear();
     }
 
+    /// A world taken with this machine's orders kept (`mine`) over the host's (`host`, as its
+    /// world has them): the orders the host finished by then, or cleared, are finished here
+    /// too.
+    pub(crate) fn carry_orders(&mut self, mine: &VecDeque<Order>, host: &VecDeque<Order>) {
+        let finished = host.len() <= mine.len() && mine.iter().skip(mine.len() - host.len()).eq(host);
+        self.done = if finished { mine.len() - host.len() } else { 0 };
+        self.queue.clone_from(mine);
+    }
+
     /// The host's state of the body at `tick` (its `own` components), for the next `Correct`.
     pub(crate) fn host_state(&mut self, tick: u64, values: ComponentValues) {
         self.pending = Some((tick, values));
@@ -571,5 +580,23 @@ mod tests {
         more.push_back(walk(4.0));
         assert_eq!(c.finished(&more), 1);
         assert_eq!(c.finished(&VecDeque::from([walk(9.0)])), 0);
+    }
+
+    #[test]
+    fn orders_the_host_finished_before_its_world_are_finished_here() {
+        let mut c = NetCorrection::default();
+        let path = VecDeque::from([walk(1.0), walk(2.0), walk(3.0)]);
+        // A world taken again: the host's body there had passed the first leg.
+        c.restart();
+        c.carry_orders(&path, &VecDeque::from([walk(2.0), walk(3.0)]));
+        assert_eq!(c.finished(&path), 1);
+        // A region change stopped the body there: nothing left to walk here either.
+        c.restart();
+        c.carry_orders(&path, &VecDeque::new());
+        assert_eq!(c.finished(&path), 3);
+        // The host has not taken this queue yet (its frame is on its way): all of it is left.
+        c.restart();
+        c.carry_orders(&path, &VecDeque::from([walk(7.0)]));
+        assert_eq!(c.finished(&path), 0);
     }
 }

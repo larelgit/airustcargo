@@ -660,9 +660,18 @@ fn take_world(world: &mut World, client: &mut NetClient, welcome: Welcome, rebas
     if carry {
         // The body as this machine holds it: the host has (or will get) every frame of it,
         // and what the host changed itself (a region change stops its players) is sent again.
-        if let Some(mut intent) = body.and_then(|b| world.get_mut::<Intent>(b)) {
+        // The orders the host finished by its world's tick (or cleared) are finished for the
+        // prediction too, until `adopt_orders` takes the host's queue over.
+        let orders = body.and_then(|b| world.get_mut::<Intent>(b)).map(|mut intent| {
+            let host = intent.orders.clone();
             client.capture.hold(&mut intent);
             intent.pressed.extend(unsent);
+            (intent.orders.clone(), host)
+        });
+        if let Some((mine, host)) = orders
+            && let Some(mut correction) = world.get_resource_mut::<NetCorrection>()
+        {
+            correction.carry_orders(&mine, &host);
         }
     } else {
         client.capture = body.and_then(|b| world.get::<Intent>(b)).map(InputCapture::starting_from).unwrap_or_default();
