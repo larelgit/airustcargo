@@ -5380,7 +5380,9 @@ dependencies = [
  "shards_action",
  "shards_content",
  "shards_core",
+ "shards_level",
  "shards_motion",
+ "shards_world",
 ]
 
 [[package]]

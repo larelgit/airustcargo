@@ -11,5 +11,6 @@ mod generation;
 #[path = "../../../shards_level/tests/level/gltf.rs"]
 mod gltf;
 mod levels;
+mod nav;
 mod regions;
 mod zones;

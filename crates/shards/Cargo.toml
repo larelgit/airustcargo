@@ -15,6 +15,7 @@ render = [
     "shards_action/render",
     "shards_level/render",
     "shards_world/render",
+    "shards_npc/render",
     "bevy/3d_bevy_render",
     "bevy/ui_bevy_render",
     "bevy/bevy_winit",

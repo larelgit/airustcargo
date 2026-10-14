@@ -19,9 +19,14 @@
 //! - **Attack planner** ([`planner`]), for enemies and bosses: weights, distance windows,
 //!   cooldowns and forbidden sequences over the fighter's moveset ([`AttackPlanDef`]); it asks
 //!   the action machine's own rule ([`shards_action::can_start`]) before it presses.
-//! - **Nav agents** ([`nav`]): routes from a pluggable provider ([`NavPaths`], by default the
-//!   motion module's grid planner; the navmesh plugs in there), path following, avoidance
-//!   between NPCs, the leash around [`Home`].
+//! - **Navigation** ([`nav`]): every tile baked ahead of time into a walkable grid (the
+//!   motion module's own probe and move rule), stitched over the region's tile graph when it
+//!   loads ([`NavRegion`]), routes by A* over the tile graph, then over the grid of the
+//!   corridor, then string pulling; `--bake-nav` and `nav_bake` write the bake files.
+//! - **Nav agents** ([`nav`]): routes from a pluggable provider ([`NavPaths`]: the navmesh in
+//!   a loaded region, the motion module's local grid elsewhere), path following, avoidance
+//!   between NPCs, the leash around [`Home`]. Dormant NPCs (the world module's active zones)
+//!   do nothing.
 //!
 //! ```ron
 //! // content/npc/grunt.behavior.ron
@@ -66,11 +71,11 @@
 //! NPC; all state lives in components of the NPCs (hashed in replay checks, sounds heard but
 //! not yet taken in included), none in resources: a game without NPCs hashes as before.
 //!
-//! Seams: [`NavPaths`] (routes; the navmesh replaces the grid planner), [`NpcActivity`]
-//! (dormant NPCs; the world module's active zones plug in).
+//! Seams: [`NavPaths`] (routes; the navmesh by default), [`NpcActivity`] (who is active; by
+//! default every NPC the world module has not marked [`Dormant`](shards_world::Dormant)).
 //!
-//! Tools: `npc_state {id}` and `nav_path {from?, to, radius?}` (queries), `npc_set_state {id,
-//! state}` (dev). Journal: `e7 idle → chase e5`, `e7 takes an attack token on e5 (2/2)`, `e7
+//! Tools: `npc_state {id}`, `nav_path {from?, to, radius?}` and `nav_info` (queries),
+//! `npc_set_state {id, state}`, `nav_bake {tile?}` and `nav_overlay {on?}` (dev). Journal: `e7 idle → chase e5`, `e7 takes an attack token on e5 (2/2)`, `e7
 //! returns its attack token after swipe (1/2)`. The NPC's line: `attack e5 · token · leash
 //! 6/15m`.
 
@@ -87,6 +92,8 @@ use bevy::prelude::*;
 use shards_action::{ActionPlugin, ActionSystems};
 use shards_content::ContentAppExt;
 use shards_core::EngineAppExt;
+use shards_motion::perception::RoutePlanner;
+use shards_world::{WorldAppExt, WorldSystems};
 
 pub use brain::{
     clamp_to_leash, force_state, Home, Npc, NpcActivity, NpcBrain, NpcCondition, NpcCtx, NpcDrive, NpcHooks, NpcOutput,
@@ -97,7 +104,10 @@ pub use def::{
     SequenceBan, StateDef, TransitionDef, WaitRole,
 };
 pub use director::{AttackToken, Grant, TokenGranted, TokenReturned};
-pub use nav::{find_path, local_grid_path, straight_clear, NavAgent, NavPaths};
+pub use nav::{
+    bake_files, find_path, local_grid_path, navmesh_path, navmesh_route, straight_clear, NavAgent, NavError, NavPath, NavPaths,
+    NavQuery, NavRegion, NavSettingsDef, NavTile,
+};
 pub use perception::{sees, sight_clear, HeardAt, Noise, Perceived, Sensed, Sound};
 pub use planner::{banned, choose, pick_weighted, resolve, NpcPlan, PastAttack, Resolved};
 
@@ -107,8 +117,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The types a game uses most.
 pub mod prelude {
     pub use crate::{
-        AttackPlanDef, AttackToken, BehaviorDef, DirectorDef, Home, NavAgent, NavPaths, Noise, Npc, NpcAppExt, NpcBrain,
-        NpcCtx, NpcOutput, NpcPlugin, NpcSystems, Params, Patrol, PerceptionDef, Perceived,
+        AttackPlanDef, AttackToken, BehaviorDef, DirectorDef, Home, NavAgent, NavPaths, NavRegion, Noise, Npc, NpcAppExt,
+        NpcBrain, NpcCtx, NpcOutput, NpcPlugin, NpcSystems, Params, Patrol, PerceptionDef, Perceived,
     };
 }
 
@@ -152,8 +162,9 @@ impl NpcAppExt for App {
     }
 }
 
-/// NPC behaviour, perception, the combat director, the attack planner and nav agents (adds
-/// [`ActionPlugin`] if it is missing). Needs `CorePlugin` and `ContentPlugin`
+/// NPC behaviour, perception, the combat director, the attack planner, navigation and nav
+/// agents (adds [`ActionPlugin`] if it is missing). Needs `CorePlugin` and `ContentPlugin`;
+/// regions (and so the navmesh) come with the world module's `WorldPlugin`
 /// (`shards::EnginePlugins` adds all).
 pub struct NpcPlugin;
 
@@ -194,8 +205,12 @@ impl Plugin for NpcPlugin {
             .add_content::<DirectorDef>()
             .add_content::<AttackPlanDef>()
             .add_content::<NpcTuning>()
+            .add_content::<NavSettingsDef>()
             .init_resource::<NavPaths>()
             .init_resource::<NpcActivity>()
+            .init_resource::<nav::NavBakes>()
+            // The navmesh of each region, stitched as it loads.
+            .on_region_loaded(nav::region::region_loaded)
             .add_engine_module("npc", VERSION)
             .configure_sets(
                 FixedUpdate,
@@ -209,7 +224,8 @@ impl Plugin for NpcPlugin {
                 )
                     .chain()
                     .in_set(SimSet::Input)
-                    .after(ActionSystems::Orders),
+                    .after(ActionSystems::Orders)
+                    .after(WorldSystems::Zones),
             )
             .add_systems(
                 FixedUpdate,
@@ -224,6 +240,13 @@ impl Plugin for NpcPlugin {
             )
             .add_observer(perception::hear_noise)
             .add_observer(perception::hit_noise);
+        // `move_to path=true` on the navmesh (a game's own planner, added before, stays).
+        if !app.world().contains_resource::<RoutePlanner>() {
+            app.insert_resource(nav::ROUTE_PLANNER);
+        }
         ai::register(app);
+        nav::tools::register(app.world_mut());
+        #[cfg(feature = "render")]
+        nav::overlay::plugin(app);
     }
 }

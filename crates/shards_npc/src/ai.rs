@@ -3,18 +3,19 @@
 //! `nav_path` (queries) and `npc_set_state` (dev).
 
 use ai_core::prelude::*;
-use ai_core::spatial::{fmt_pos, relative};
+use ai_core::spatial::{compass, fmt_pos, relative};
 use ai_core::AiIndex;
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use shards_core::flat;
-use shards_motion::{physics::sync_physics, CharacterController, CharacterParams, TargetArg};
+use shards_motion::perception::{Leg, PathPlan, StepKind};
+use shards_motion::{physics::sync_physics, CharacterController, CharacterParams, LayerMask, PhysicsWorld, QueryFilter, TargetArg};
 
 use crate::brain::{force_state, Home, Npc, NpcBrain, NpcDrive, NpcStateChanged};
 use crate::director::{AttackToken, TokenGranted, TokenReturned};
-use crate::nav::{find_path, NavAgent, NavPaths};
+use crate::nav::{local_grid_path, navmesh_route, NavAgent, NavPaths, NAVMESH};
 use crate::perception::Perceived;
 use crate::planner::NpcPlan;
 
@@ -168,9 +169,11 @@ fn npc_state(In(call): In<Call<NpcStateArgs>>, world: &World) -> ToolResult<Valu
     }))
 }
 
-/// The route an NPC would take: what the NPC path provider (`NavPaths`) answers from a point
-/// or an entity (default: you) to another, for a body of `radius` (default: the walker's).
-/// Read-only.
+/// The route an NPC would take, as `path_to` reports one: `path 23.5m, 4 turns: 6.0m NE →
+/// 4.5m N (mantle 1.1m) → ...`, with the waypoints. Inside a loaded region it comes from the
+/// navmesh (`provider: navmesh`, and the tiles it crosses), elsewhere from the local grid (or
+/// the game's own provider). From a point or an entity (default: you) to another, for a body
+/// of `radius` (default: the walker's). Read-only.
 #[derive(Deserialize, JsonSchema)]
 pub struct NavPathArgs {
     /// Where the route starts: an entity id or a ground point {x, z}. Default: your body.
@@ -184,6 +187,7 @@ pub struct NavPathArgs {
 fn nav_path(In(call): In<Call<NavPathArgs>>, world: &mut World) -> ToolResult<Value> {
     // Tools run between ticks: colliders a call just moved must be where the route sees them.
     let _ = world.run_system_cached(sync_physics);
+    crate::nav::refresh(world);
     let index = world.resource::<AiIndex>();
     let place = |arg: &TargetArg| -> Result<(Vec3, Option<Entity>), String> {
         match *arg {
@@ -197,29 +201,63 @@ fn nav_path(In(call): In<Call<NavPathArgs>>, world: &mut World) -> ToolResult<Va
         }
     };
     let (from, walker) = match &call.args.from {
+        // A point: standing on top of whatever is there (a plateau, a bridge).
+        Some(arg @ TargetArg::Point { .. }) => {
+            let (mut at, _) = place(arg)?;
+            let filter = QueryFilter::new(LayerMask::WORLD);
+            if let Some(hit) = world.resource::<PhysicsWorld>().raycast(at + Vec3::Y * 500.0, Dir3::NEG_Y, 1000.0, &filter) {
+                at.y = hit.point.y;
+            }
+            (at, None)
+        }
         Some(arg) => place(arg)?,
         None => {
             let me = call.caller.require_subject().map_err(|e| format!("{e}; give `from`"))?;
             (world.get::<Transform>(me).ok_or("your body has no position")?.translation, Some(me))
         }
     };
-    let (mut to, _) = place(&call.args.to)?;
-    if matches!(call.args.to, TargetArg::Point { .. }) {
+    let (mut to, target) = place(&call.args.to)?;
+    if target.is_none() {
         to.y = from.y;
     }
-    let radius = call.args.radius.unwrap_or_else(|| {
-        walker
-            .and_then(|w| {
-                let own = world.get::<CharacterParams>(w);
-                world.get::<CharacterController>(w).map(|c| c.resolve(own, world.get_resource()).radius).or(own.map(|p| p.radius))
-            })
-            .unwrap_or(0.4)
-    });
+    let mut params = walker
+        .and_then(|w| {
+            let own = world.get::<CharacterParams>(w);
+            world.get::<CharacterController>(w).map(|c| c.resolve(own, world.get_resource()).clone()).or(own.cloned())
+        })
+        .unwrap_or_default();
+    if let Some(radius) = call.args.radius {
+        params.radius = radius;
+    }
+    let radius = params.radius;
     if !(radius > 0.0 && radius.is_finite()) {
         return Err(format!("radius must be > 0 (is {radius})"));
     }
-    let provider = world.get_resource::<NavPaths>().copied().unwrap_or_default().name;
-    let Some(path) = find_path(world, from, to, radius) else {
+    let round = |v: f32| (v * 100.0).round() / 100.0;
+    let paths = world.get_resource::<NavPaths>().copied().unwrap_or_default();
+    let mut provider = paths.name;
+    let mut find = paths.find;
+    if provider == NAVMESH {
+        match navmesh_route(world, from, to, &params, target.is_some()) {
+            Some(Ok(path)) => {
+                let mut out = path.to_plan().to_json();
+                out["provider"] = json!(NAVMESH);
+                out["from"] = json!(fmt_pos(from));
+                out["to"] = json!(fmt_pos(to));
+                out["tiles"] = json!(path.tiles.iter().map(|[x, y]| format!("({x}, {y})")).collect::<Vec<_>>());
+                out["distance"] = json!(round(path.length));
+                return Ok(out);
+            }
+            Some(Err(why)) => {
+                return Err(format!("no route from {} to {} for a body of {radius:.2}m (navmesh): {why}", fmt_pos(from), fmt_pos(to)));
+            }
+            None => {
+                provider = "local grid";
+                find = local_grid_path;
+            }
+        }
+    }
+    let Some(path) = find(world, from, to, radius) else {
         return Err(format!(
             "no route from {} to {} for a body of {radius:.2}m ({provider} paths); something blocks it all round, \
              or the goal is not on walkable ground",
@@ -227,22 +265,28 @@ fn nav_path(In(call): In<Call<NavPathArgs>>, world: &mut World) -> ToolResult<Va
             fmt_pos(to)
         ));
     };
-    let mut length = 0.0;
-    let mut at = from;
-    for p in &path {
-        length += flat(*p - at).length();
+    let mut out = walk_plan(from, &path).to_json();
+    out["provider"] = json!(provider);
+    out["from"] = json!(fmt_pos(from));
+    out["to"] = json!(fmt_pos(to));
+    Ok(out)
+}
+
+/// Waypoints walked in straight lines, as the motion planner reports a route.
+fn walk_plan(from: Vec3, points: &[Vec3]) -> PathPlan {
+    let mut legs: Vec<Leg> = Vec::new();
+    let (mut at, mut length) = (from, 0.0);
+    for p in points {
+        let delta = flat(*p - at);
+        let len = delta.length();
+        if len < 1e-4 {
+            continue;
+        }
+        length += len;
+        legs.push(Leg { dir: compass(delta), length: len, kind: StepKind::Walk, rise: 0.0, end: *p });
         at = *p;
     }
-    let round = |v: f32| (v * 100.0).round() / 100.0;
-    let waypoints: Vec<Value> =
-        path.iter().map(|p| json!({"x": round(p.x), "y": round(p.y), "z": round(p.z)})).collect();
-    Ok(json!({
-        "provider": provider,
-        "from": fmt_pos(from),
-        "to": fmt_pos(to),
-        "distance": round(length),
-        "waypoints": waypoints,
-    }))
+    PathPlan { start: from, legs, length, explored: 0 }
 }
 
 /// Dev: put an NPC in a state of its behaviour at once (its timers start over; the next

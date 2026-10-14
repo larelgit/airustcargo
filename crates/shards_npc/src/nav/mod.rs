@@ -1,11 +1,43 @@
-//! Nav agents: where an NPC walks, by which way, without bumping into the others.
+//! Navigation: the navmesh of the region (E6.1) and the nav agents that walk it.
+//!
+//! ## The navmesh
+//!
+//! Every tile (and dungeon room) is **baked** ahead of time into a grid of walkable cells
+//! ([`NavTile`]): the tile's gameplay geometry is spawned alone in a scratch world by the
+//! world module's own tile spawner and sampled with the motion module's terrain probe and
+//! move rule ([`step_onto`](shards_motion::perception::step_onto)), so the navmesh, the
+//! local planner (`path_to`) and the character controller agree on what can be walked,
+//! climbed ([`CharacterParams::can_climb`]), dropped and swum. Bakes live in
+//! `<assets>/nav/<tile>.navtile.ron` (rooms `.navroom.ron`), hashed against everything they
+//! are made from: `--bake-nav [tiles|all]` (the game binary, [`bake_files`]) or the
+//! `nav_bake` tool writes them; with a `nav` content definition ([`NavSettingsDef`]: cell
+//! size, the body, the folder) a missing or stale one is a content error.
+//!
+//! When a region loads, its tiles are placed and turned, **carved** where solids the bakes
+//! never saw stand (decor, props, colliders spawned later), **stitched** across every tile
+//! edge the sockets leave open, and joined by the levels' `navlink` markers
+//! ([`NavRegion`]). A tile without a fresh bake file is baked right then, with a journal
+//! warning.
+//!
+//! A **route** ([`NavRegion::path`]) is A* over the tile graph for the corridor, grid A*
+//! inside the corridor's tiles, then string pulling checked against the grid and the
+//! physics world. Routes need no window and replay identically.
+//!
+//! ```ron
+//! // content/nav/default.nav.ron
+//! { "default": (cell: 0.5, agent: Some("grunt"), safe_drop: 2.0) }
+//! ```
+//!
+//! ## Nav agents
+//!
+//! Where an NPC walks, by which way, without bumping into the others.
 //!
 //! - **Routes** come from [`NavPaths`], a seam: `fn(&World, from, to, radius) -> waypoints`.
-//!   The default is the motion module's local grid planner
-//!   ([`plan_path`]); a navmesh replaces it without
-//!   touching the agents. A goal in plain sight (a body-wide cast through the `WORLD` layer)
-//!   needs no route; a blocked one is planned again when the goal moves or every
-//!   [`NpcTuning::repath`] seconds.
+//!   The default asks the navmesh inside a loaded region and the motion module's local grid
+//!   planner ([`plan_path`]) everywhere else (and for bodies bigger than the baked one); a
+//!   game may plug in its own. A goal in plain sight (a body-wide cast through the `WORLD`
+//!   layer) needs no route; a blocked one is planned again when the goal moves or every
+//!   [`NpcTuning::repath`] seconds, which keeps route queries few however many NPCs chase.
 //! - **Following**: toward the next waypoint at the state's speed; arrived within `within`
 //!   meters of the goal.
 //! - **Avoidance** between NPCs: each looks [`NpcTuning::avoid_time`] seconds ahead at where
@@ -15,13 +47,30 @@
 //! - **Leash**: an NPC whose state keeps it leashed never steers out of its [`Home`] circle.
 //!
 //! The result is `Intent.move_dir` (and `aim`, presses, held inputs): NPCs drive their body
-//! exactly as players do.
+//! exactly as players do. `move_to path=true` follows navmesh routes too (the motion
+//! module's [`RoutePlanner`] seam), and `nav_path` shows them.
+
+pub mod bake;
+#[cfg(feature = "render")]
+pub(crate) mod overlay;
+pub mod query;
+pub mod region;
+pub mod settings;
+pub mod tile;
+pub(crate) mod tools;
+
+pub use query::{NavError, NavPath, NavQuery};
+pub use region::{rebuild, refresh, NavBakes, NavRegion};
+pub use settings::{NavSettings, NavSettingsDef};
+pub use tile::NavTile;
+pub use tools::{bake_files, BakeReport, NavOverlay};
 
 use ai_core::AiId;
 use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::{flat, Intent};
-use shards_motion::perception::{plan_path, PathRequest};
+use shards_motion::perception::{plan_path, PathPlan, PathRequest, RoutePlanner, RouteRequest};
+use shards_world::ActiveRegion;
 use shards_motion::{
     CharacterController, CharacterParams, LayerMask, MotionAi, MotionState, PhysicsWorld, QueryFilter, Shape,
 };
@@ -30,8 +79,8 @@ use crate::brain::{npcs_in_order, Home, Npc, NpcBrain, NpcDrive, LEASH_ROOM};
 use crate::def::NpcTuning;
 
 /// Pluggable routes: `find(world, from, to, body radius) -> waypoints` (the last one at
-/// `to`), `None` when there is no way. The default asks the motion module's local grid
-/// planner; a navmesh module replaces it.
+/// `to`), `None` when there is no way. The default ([`navmesh_path`]) asks the navmesh in a
+/// loaded region and the motion module's local grid planner elsewhere.
 #[derive(Resource, Clone, Copy)]
 pub struct NavPaths {
     /// Who answers, for tools: `local grid`, `navmesh`.
@@ -41,9 +90,50 @@ pub struct NavPaths {
 
 impl Default for NavPaths {
     fn default() -> Self {
-        Self { name: "local grid", find: local_grid_path }
+        Self { name: NAVMESH, find: navmesh_path }
     }
 }
+
+/// The name of the engine's own provider ([`NavPaths::default`]).
+pub const NAVMESH: &str = "navmesh";
+
+/// What the navmesh says about a walk of a body of `params`: `None` when it does not cover
+/// it (no region, a goal or start outside it, a bigger body than the baked one, a walker
+/// off the ground), else the route or why there is none.
+pub fn navmesh_route(world: &World, from: Vec3, to: Vec3, params: &CharacterParams, goal_level: bool) -> Option<Result<NavPath, String>> {
+    let nav = world.get_resource::<NavRegion>()?;
+    if world.get_resource::<ActiveRegion>().map(|r| r.hash) != Some(nav.hash) {
+        return None;
+    }
+    let physics = world.get_resource::<PhysicsWorld>()?;
+    let query = NavQuery { from, to, goal_level, radius: params.radius, height: params.height, step_height: params.step_height };
+    match nav.path(physics, &query) {
+        Ok(path) => Some(Ok(path)),
+        Err(NavError::NotCovered(_)) => None,
+        Err(NavError::NoRoute(why)) => Some(Err(why)),
+    }
+}
+
+/// The engine's routes: the navmesh's where it covers the walk, else the local grid's. Only
+/// the radius is known here: the body is taken to be as tall as the baked one.
+pub fn navmesh_path(world: &World, from: Vec3, to: Vec3, radius: f32) -> Option<Vec<Vec3>> {
+    let height = world.get_resource::<NavRegion>().map_or(CharacterParams::default().height, |nav| nav.agent_height);
+    let params = CharacterParams { radius, height, ..default() };
+    match navmesh_route(world, from, to, &params, false) {
+        Some(Ok(path)) => Some(path.points),
+        Some(Err(_)) => None,
+        None => local_grid_path(world, from, to, radius),
+    }
+}
+
+/// The motion module's [`RoutePlanner`]: `move_to path=true` on the navmesh.
+pub(crate) fn route_plan(world: &World, request: &RouteRequest) -> Option<Result<PathPlan, String>> {
+    let r = request.request;
+    navmesh_route(world, r.start, r.goal, request.params, r.goal_level).map(|route| route.map(|path| path.to_plan()))
+}
+
+/// The navmesh as the motion module's route planner.
+pub(crate) const ROUTE_PLANNER: RoutePlanner = RoutePlanner { name: NAVMESH, plan: route_plan };
 
 /// The route [`NavPaths`] gives right now (tools, tests).
 pub fn find_path(world: &World, from: Vec3, to: Vec3, radius: f32) -> Option<Vec<Vec3>> {
@@ -127,6 +217,8 @@ pub fn straight_clear(physics: &PhysicsWorld, from: Vec3, to: Vec3, radius: f32,
 
 /// `NpcSystems::Navigate`, first: routes for the agents whose goal is new, moved or blocked.
 pub(crate) fn nav_paths(world: &mut World) {
+    // The navmesh belongs to the region in the world and knows the solids spawned since.
+    refresh(world);
     let dt = world.resource::<Time>().delta_secs();
     let mut updated: Vec<(Entity, NavAgent)> = Vec::new();
     {

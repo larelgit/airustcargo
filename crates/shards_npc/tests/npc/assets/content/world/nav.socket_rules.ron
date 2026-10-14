@@ -1,0 +1,4 @@
+// Open ground meets open ground; a wall socket meets nothing walkers cross.
+{
+    "default": (kinds: ["open", "wall"], pairs: [("open", "wall")], passable: ["open"]),
+}

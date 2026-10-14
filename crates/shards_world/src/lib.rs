@@ -71,9 +71,12 @@ pub use content::{
 pub use generate::{generate, CheckFn, GenContext, GenError, Generated, Stage, StepFn, WorldGen};
 pub use grid::Dir;
 pub use manifest::RegionManifest;
+#[cfg(feature = "render")]
+pub use overlay::TileOverlay;
 pub use region::{
     change_region, despawn_region, level_paths, level_users, spawn_region, ActiveRegion, LevelCheckFn, LevelForgetFn, LevelRequestFn,
-    LevelSpawn, LevelSpawnFn, LevelSpawner, LevelStatusFn, Marker, Poi, RegionPart, RegionTile, StartRegion, TileId,
+    LevelSpawn, LevelSpawnFn, LevelSpawner, LevelStatusFn, Marker, Poi, RegionLoadedHooks, RegionPart, RegionTile, StartRegion,
+    TileId,
 };
 pub use report::BatchReport;
 pub use stream::{TileVisual, TileVisualFn, TileVisualSpawn};
@@ -137,6 +140,10 @@ pub trait WorldAppExt {
 
     /// Makes what a window draws for a tile, per LOD ([`stream`]).
     fn set_tile_visual_spawner(&mut self, spawner: TileVisualFn) -> &mut Self;
+
+    /// Runs `hook` each time a region has been built, inside the call that builds it
+    /// ([`RegionLoadedHooks`]).
+    fn on_region_loaded(&mut self, hook: fn(&mut World)) -> &mut Self;
 }
 
 impl WorldAppExt for App {
@@ -167,6 +174,11 @@ impl WorldAppExt for App {
 
     fn set_tile_visual_spawner(&mut self, spawner: TileVisualFn) -> &mut Self {
         self.insert_resource(stream::TileVisualSpawner(spawner));
+        self
+    }
+
+    fn on_region_loaded(&mut self, hook: fn(&mut World)) -> &mut Self {
+        self.world_mut().get_resource_or_init::<RegionLoadedHooks>().0.push(hook);
         self
     }
 }

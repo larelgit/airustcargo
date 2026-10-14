@@ -138,6 +138,13 @@ impl LevelSpawner {
     }
 }
 
+/// Run after a region is built, inside the call that builds it (behind the loading screen,
+/// before the next tick): modules derive their own data from it, in the order they were
+/// registered ([`WorldAppExt::on_region_loaded`](crate::WorldAppExt::on_region_loaded)).
+// SEAM(B4): `shards_npc` stitches the region's navmesh here.
+#[derive(Resource, Clone, Default)]
+pub struct RegionLoadedHooks(pub Vec<fn(&mut World)>);
+
 /// Every level file tiles and rooms are built from, sorted, once each: what a level loader
 /// loads while the game loads, so that building a region later never waits for a file.
 pub fn level_paths(db: &ContentDb) -> Vec<String> {
@@ -601,6 +608,11 @@ fn install(world: &mut World, manifest: RegionManifest) -> Result<RegionSpawned,
     };
     let what = format!("{} tiles, {} entities{players}", spawned.tiles, spawned.entities);
     journal::emit(world, JournalKind::Event, format!("region loaded: {title} ({what})"));
+    if let Some(RegionLoadedHooks(hooks)) = world.get_resource::<RegionLoadedHooks>().cloned() {
+        for hook in hooks {
+            hook(world);
+        }
+    }
     Ok(spawned)
 }
 

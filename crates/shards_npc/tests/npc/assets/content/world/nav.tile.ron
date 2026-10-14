@@ -1,0 +1,56 @@
+// 8 m tiles for the navigation tests. Every tile stands on a ground box whose top is y = 0;
+// in each tile's own frame the center is at the origin and north is -Z.
+{
+    "floor": (
+        sockets: (n: "open", e: "open", s: "open", w: "open"),
+        slots: [(at: (0.0, 0.0, 0.0), accepts: ["spawn"])],
+        geometry: Inline([Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0))]),
+    ),
+    // A 2 m square pillar in the middle.
+    "pillar": (
+        sockets: (n: "open", e: "open", s: "open", w: "open"),
+        geometry: Inline([
+            Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0)),
+            Box(min: (-1.0, 0.0, -1.0), max: (1.0, 3.0, 1.0)),
+        ]),
+    ),
+    // A wall across the tile from its west edge, a 2 m gap at its east end (before turning).
+    "half_wall": (
+        sockets: (n: "open", e: "open", s: "open", w: "open"),
+        rotations: [0, 90, 180, 270],
+        geometry: Inline([
+            Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0)),
+            Box(min: (-4.0, 0.0, -0.25), max: (2.0, 3.0, 0.25)),
+        ]),
+    ),
+    // Flat ground, but its west edge is a wall socket: walkers never cross it.
+    "sealed_w": (
+        sockets: (n: "open", e: "open", s: "open", w: "wall"),
+        geometry: Inline([Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0))]),
+    ),
+    // Ground in the west half, a plateau 4 m up in the east half: too high to climb, too
+    // deep to drop from.
+    "cliff": (
+        sockets: (n: "open", e: "open", s: "open", w: "open"),
+        geometry: Inline([
+            Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0)),
+            Box(min: (0.0, 0.0, -4.0), max: (4.0, 4.0, 4.0)),
+        ]),
+    ),
+    // A steep cone 5 m across: nothing on it or near its middle to stand on.
+    "spire": (
+        sockets: (n: "open", e: "open", s: "open", w: "open"),
+        geometry: Inline([
+            Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0)),
+            Solid(shape: Cone(half_height: 2.0, radius: 2.5), at: (0.0, 2.0, 0.0)),
+        ]),
+    ),
+    // A 1 m step up in the east half: climbed (mantled), and stepped down from.
+    "ledge": (
+        sockets: (n: "open", e: "open", s: "open", w: "open"),
+        geometry: Inline([
+            Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0)),
+            Box(min: (0.0, 0.0, -4.0), max: (4.0, 1.0, 4.0)),
+        ]),
+    ),
+}

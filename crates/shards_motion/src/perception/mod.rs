@@ -3,7 +3,9 @@
 //! [`Terrain`], the same rules the controller walks by, and need no window.
 //!
 //! The planner is a pure function on `&PhysicsWorld` ([`plan_path`]); `move_to path=true`
-//! and the tests call the same code as the `path_to` query.
+//! and the tests call the same code as the `path_to` query. A module that knows more of the
+//! world (the navmesh of a loaded region) registers a [`RoutePlanner`], which `move_to
+//! path=true` asks first.
 
 mod clearance;
 mod path;
@@ -20,7 +22,7 @@ use serde_json::Value;
 use shards_content::ContentDb;
 
 pub use clearance::{clearance, reach_toward, Hazard, Reach};
-pub use path::{plan_path, Leg, PathPlan, PathRequest, StepKind, CELL};
+pub use path::{hop_allowed, plan_path, step_onto, Leg, PathPlan, PathRequest, Stance, Step, StepKind, CELL, COST_PER_METER};
 pub use terrain::{Block, Probe, Terrain};
 
 use crate::ai::MotionAi;
@@ -31,6 +33,50 @@ use crate::tools::TargetArg;
 pub(crate) fn plugin(app: &mut App) {
     register_tool(app.world_mut(), "clearance", Scope::Player, ToolKind::Query, fresh::<ClearanceArgs>.pipe(clearance_tool));
     register_tool(app.world_mut(), "path_to", Scope::Player, ToolKind::Query, fresh::<PathToArgs>.pipe(path_to_tool));
+}
+
+/// A route planner that knows more of the world than the local grid: the navmesh of a
+/// loaded region. `move_to path=true` asks it first and plans on the local grid when it
+/// answers `None` (the walk is not in its part of the world, or not for this body).
+#[derive(Resource, Clone, Copy)]
+pub struct RoutePlanner {
+    /// Who answers, for messages: `navmesh`.
+    pub name: &'static str,
+    pub plan: fn(&World, &RouteRequest) -> Option<Result<PathPlan, String>>,
+}
+
+/// What `move_to path=true` asks a [`RoutePlanner`].
+pub struct RouteRequest<'a> {
+    pub walker: Entity,
+    /// The walker's locomotion numbers.
+    pub params: &'a CharacterParams,
+    /// What the local planner would be asked.
+    pub request: &'a PathRequest,
+}
+
+/// What `move_to path=true` and `path_to` plan for a walker at `start` toward `target`
+/// (`goal_level`: a body standing somewhere, so the floor must be near its feet).
+#[allow(clippy::too_many_arguments, reason = "every number of a request, named once")]
+pub(crate) fn request_for(
+    start: Vec3,
+    swimming_at: Option<f32>,
+    (goal, goal_level): (Vec3, bool),
+    within: Option<f32>,
+    max: Option<f32>,
+    safe_drop: f32,
+    exclude: Entity,
+) -> PathRequest {
+    let within = within.unwrap_or(if goal_level { 1.5 } else { 0.3 });
+    PathRequest {
+        start,
+        swimming_at,
+        goal,
+        goal_level,
+        within: within.max(0.0),
+        max_length: max.unwrap_or(80.0).clamp(1.0, 300.0),
+        safe_drop,
+        exclude: Some(exclude),
+    }
 }
 
 /// The parts of a body the perception tools read.
@@ -153,17 +199,6 @@ pub(crate) fn plan_for(
         }
         TargetArg::Point { x, z } => (Vec3::new(x, tf.translation.y, z), false),
     };
-    let within = within.unwrap_or(if goal_level { 1.5 } else { 0.3 });
-    let max_length = max.unwrap_or(80.0).clamp(1.0, 300.0);
-    let request = PathRequest {
-        start: tf.translation,
-        swimming_at: swimming_at(state),
-        goal,
-        goal_level,
-        within: within.max(0.0),
-        max_length,
-        safe_drop: ai.safe_drop,
-        exclude: Some(me),
-    };
+    let request = request_for(tf.translation, swimming_at(state), (goal, goal_level), within, max, ai.safe_drop, me);
     plan_path(physics, &params_of(bodies, db, me), &request)
 }

@@ -1,6 +1,7 @@
 //! A small local path planner: deterministic grid A* over what [`Terrain`] says a
 //! character can stand on and move between. It serves `path_to` and `move_to path=true`;
-//! navmesh pathing across a whole region is E6 and replaces it there.
+//! inside a loaded region a [`RoutePlanner`](super::RoutePlanner) (the navmesh) answers
+//! `move_to path=true` first.
 //!
 //! The grid has [`CELL`] spacing, aligned to the world, and a node is a cell at one floor
 //! level (stacked floors are different nodes). Moves go to the eight neighbours:
@@ -11,6 +12,9 @@
 //!   (a ledge whose face is within the body's reach of the cell next to it is crossed in
 //!   one two-cell hop);
 //! - **drop**: down to `safe_drop`, or into water from higher up.
+//!
+//! Those moves are one rule, [`step_onto`]: the navmesh bake samples tiles with it too, and
+//! climbing asks the controller's own [`CharacterParams::can_climb`].
 //!
 //! The search is bounded by a box around start and goal and by a node budget, and
 //! everything about it is integer arithmetic on costs and index order on ties, so the same
@@ -60,7 +64,8 @@ pub enum StepKind {
 }
 
 impl StepKind {
-    fn name(self) -> &'static str {
+    /// `walk`, `swim`, `mantle`, `drop`.
+    pub fn name(self) -> &'static str {
         match self {
             StepKind::Walk => "walk",
             StepKind::Swim => "swim",
@@ -209,6 +214,80 @@ fn flat_distance(a: Vec3, b: Vec3) -> f32 {
 fn too_high(height: f32, limit: f32) -> String {
     let places = if format!("{height:.1}") == format!("{limit:.1}") { 2 } else { 1 };
     format!("{height:.places$}m high (a character climbs at most {limit:.places$}m)")
+}
+
+/// Route costs are integers: this many units per meter walked.
+pub const COST_PER_METER: f32 = UNIT;
+
+/// Where a walker stands before a move.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stance {
+    /// Feet (a swimmer's: its float height).
+    pub pos: Vec3,
+    pub swimming: bool,
+    /// The `y` of the floor's normal (1 flat, and in water).
+    pub up: f32,
+}
+
+/// A move [`step_onto`] allows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Step {
+    /// Where it ends: feet.
+    pub pos: Vec3,
+    pub swimming: bool,
+    /// The `y` of the normal of the floor it ends on.
+    pub up: f32,
+    pub kind: StepKind,
+    /// [`COST_PER_METER`] per meter, more for swimming, climbing and falling.
+    pub cost: u32,
+    /// Height climbed (mantle) or fallen (drop), m.
+    pub rise: f32,
+}
+
+/// The one rule for moving from spot to spot, shared by this planner and the navmesh bake:
+/// from `from`, a move of `dist` meters to `(x, z)`, where a probe from the walker's height
+/// found `probe`. Walks up to `step_height` (more on slopes), mantles what
+/// [`CharacterParams::can_climb`] allows (with room to go up the face), drops down to
+/// `safe_drop`, swims into water from up to 20 m above it. `None`: no move.
+pub fn step_onto(terrain: &Terrain, from: Stance, (x, z): (f32, f32), probe: Probe, dist: f32, safe_drop: f32) -> Option<Step> {
+    let p = terrain.params;
+    match probe {
+        Probe::Water { surface } => {
+            let y = terrain.swim_height(surface);
+            if !from.swimming && from.pos.y - y > WATER_DROP {
+                return None;
+            }
+            Some(Step { pos: Vec3::new(x, y, z), swimming: true, up: 1.0, kind: StepKind::Swim, cost: (dist * SWIM_FACTOR * UNIT) as u32, rise: 0.0 })
+        }
+        Probe::Floor { y, normal } => {
+            let dy = y - from.pos.y;
+            let up = normal.y;
+            let allowance = terrain.slope_rise(dist, from.up, up);
+            let walkable_up = p.step_height + allowance;
+            let pos = Vec3::new(x, y, z);
+            let base = (dist * UNIT) as u32;
+            let floor = |kind, cost, rise| Some(Step { pos, swimming: false, up, kind, cost, rise });
+            if dy > walkable_up {
+                // Only what the controller climbs, and with room to go up the face first.
+                let climbable = p.can_climb(dy, from.swimming) && terrain.room_for(from.pos.x, from.pos.z, from.pos.y + dy);
+                if climbable { floor(StepKind::Mantle, base + ((MANTLE_COST + dy * 0.5) * UNIT) as u32, dy) } else { None }
+            } else if dy < -safe_drop {
+                None
+            } else if dy < -(p.step_height + allowance) {
+                floor(StepKind::Drop, base + (-dy * DROP_COST * UNIT) as u32, -dy)
+            } else {
+                floor(StepKind::Walk, base, 0.0)
+            }
+        }
+        Probe::Void | Probe::Blocked(_) => None,
+    }
+}
+
+/// Whether a two-cell hop over the foot of a wall (the cell between is too tight to stand
+/// in, but within the body's reach of the face) may end in a move of `kind`: up the ledge,
+/// down off it, or off an edge into water.
+pub fn hop_allowed(kind: StepKind, from_swimming: bool) -> bool {
+    matches!(kind, StepKind::Mantle | StepKind::Drop) || (kind == StepKind::Swim && !from_swimming)
 }
 
 /// Plans a route for a character of `params`. `Err` says why there is none and what stops
@@ -402,12 +481,10 @@ impl<'a> Planner<'a> {
                 out.push(m);
             } else if !diagonal && matches!(self.probe(i, j, from.0.y), Probe::Blocked(Block::Tight)) {
                 // The cell next to a ledge face is within the body's reach of it: hop over.
-                if let Some(m) = self.step(from, i + di, j + dj, Some(2.0 * CELL)) {
-                    // Over a wall's foot: up the ledge, down off it, or off an edge into water.
-                    let hop = matches!(m.kind, StepKind::Mantle | StepKind::Drop) || (m.kind == StepKind::Swim && from.1 == Cell::Floor);
-                    if hop {
-                        out.push(m);
-                    }
+                if let Some(m) = self.step(from, i + di, j + dj, Some(2.0 * CELL))
+                    && hop_allowed(m.kind, from.1 == Cell::Swim)
+                {
+                    out.push(m);
                 }
             }
         }
@@ -417,39 +494,18 @@ impl<'a> Planner<'a> {
     /// The move from `from` to cell `(i, j)`, if one exists. `distance` overrides the
     /// distance between the centres (a two-cell hop).
     fn step(&mut self, from: (Vec3, Cell, f32), i: i32, j: i32, distance: Option<f32>) -> Option<Move> {
-        let p = self.terrain.params;
         let (x, z) = (centre(i), centre(j));
         let dist = distance.unwrap_or_else(|| flat_distance(from.0, Vec3::new(x, from.0.y, z)));
         let probe = self.probe(i, j, from.0.y);
-        match probe {
-            Probe::Water { surface } => {
-                let y = self.terrain.swim_height(surface);
-                if from.1 == Cell::Floor && from.0.y - y > WATER_DROP {
-                    return None;
-                }
-                Some(Move { pos: Vec3::new(x, y, z), cell: Cell::Swim, up: 1.0, kind: StepKind::Swim, cost: (dist * SWIM_FACTOR * UNIT) as u32, rise: 0.0 })
-            }
-            Probe::Floor { y, normal } => {
-                let dy = y - from.0.y;
-                let up = normal.y;
-                let allowance = self.terrain.slope_rise(dist, from.2, up);
-                let walkable_up = p.step_height + allowance;
-                let pos = Vec3::new(x, y, z);
-                let base = (dist * UNIT) as u32;
-                if dy > walkable_up {
-                    // Only what the controller climbs, and with room to go up the face first.
-                    let climbable = p.can_climb(dy, from.1 == Cell::Swim) && self.terrain.room_for(from.0.x, from.0.z, from.0.y + dy);
-                    climbable.then(|| Move { pos, cell: Cell::Floor, up, kind: StepKind::Mantle, cost: base + ((MANTLE_COST + dy * 0.5) * UNIT) as u32, rise: dy })
-                } else if dy < -self.request.safe_drop {
-                    None
-                } else if dy < -(p.step_height + allowance) {
-                    Some(Move { pos, cell: Cell::Floor, up, kind: StepKind::Drop, cost: base + (-dy * DROP_COST * UNIT) as u32, rise: -dy })
-                } else {
-                    Some(Move { pos, cell: Cell::Floor, up, kind: StepKind::Walk, cost: base, rise: 0.0 })
-                }
-            }
-            Probe::Void | Probe::Blocked(_) => None,
-        }
+        let stance = Stance { pos: from.0, swimming: from.1 == Cell::Swim, up: from.2 };
+        step_onto(&self.terrain, stance, (x, z), probe, dist, self.request.safe_drop).map(|s| Move {
+            pos: s.pos,
+            cell: if s.swimming { Cell::Swim } else { Cell::Floor },
+            up: s.up,
+            kind: s.kind,
+            cost: s.cost,
+            rise: s.rise,
+        })
     }
 
     /// Walks the parents back into legs.

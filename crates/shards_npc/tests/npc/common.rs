@@ -1,6 +1,8 @@
 //! Headless arenas for NPCs: the engine core, content from `assets/` next to this file
-//! (through the asset server, behind the loading gate), motion, actions and the NPC module;
-//! a floor, and fighters spawned by the tests. Driven tick by tick, like a game runs.
+//! (through the asset server, behind the loading gate), motion, actions, the world module
+//! (regions, active zones) and the NPC module; a floor, and fighters spawned by the tests.
+//! Driven tick by tick, like a game runs. Regions are built from hand-made manifests of the
+//! test tiles ([`load_region`]).
 
 #![allow(dead_code)]
 
@@ -19,6 +21,8 @@ use shards_core::{CorePlugin, EngineConfig, EngineState, PlayerId};
 use shards_motion::{character, Collider, Shape};
 use shards_npc::prelude::*;
 use shards_npc::Home;
+use shards_world::manifest::{Layout, PlacedTile, RegionManifest, FORMAT};
+use shards_world::WorldPlugin;
 
 pub const DT: f32 = 1.0 / 60.0;
 
@@ -39,7 +43,19 @@ pub fn app_with(setup: impl FnOnce(&mut App)) -> App {
 }
 
 pub fn app_seeded(seed: u64, setup: impl FnOnce(&mut App)) -> App {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/npc/assets").to_owned();
+    let mut app = app_in(ASSETS, seed, setup);
+    let errors: Vec<String> = app.world().resource::<ContentDb>().errors().map(ToString::to_string).collect();
+    assert!(errors.is_empty(), "test content has errors: {errors:#?}");
+    floor(app.world_mut());
+    app
+}
+
+/// The test content.
+pub const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/npc/assets");
+
+/// An arena with the content of asset folder `dir`.
+pub fn app_in(dir: &str, seed: u64, setup: impl FnOnce(&mut App)) -> App {
+    let dir = dir.to_owned();
     let config = EngineConfig {
         headless: true,
         testing: true,
@@ -57,7 +73,8 @@ pub fn app_seeded(seed: u64, setup: impl FnOnce(&mut App)) -> App {
     app.add_plugins(config.ai_core_plugin())
         .add_plugins(CorePlugin { config })
         .add_plugins(ContentPlugin)
-        .add_plugins(NpcPlugin);
+        .add_plugins(NpcPlugin)
+        .add_plugins(WorldPlugin);
     setup(&mut app);
     app.finish();
     app.cleanup();
@@ -69,9 +86,6 @@ pub fn app_seeded(seed: u64, setup: impl FnOnce(&mut App)) -> App {
         app.update();
         std::thread::sleep(Duration::from_millis(1));
     }
-    let errors: Vec<String> = app.world().resource::<ContentDb>().errors().map(ToString::to_string).collect();
-    assert!(errors.is_empty(), "test content has errors: {errors:#?}");
-    floor(app.world_mut());
     app
 }
 
@@ -236,4 +250,39 @@ pub fn record_starts(app: &mut App) {
             started.0.push((tick.0, e.entity, e.action.clone()));
         },
     );
+}
+
+/// A manifest of region `region`'s rules with 8 m tiles: `rows` of `tile` or `tile:degrees`,
+/// north first (no points of interest, no generator).
+pub fn manifest(region: &str, rows: &[&str]) -> RegionManifest {
+    let mut tiles = Vec::new();
+    for (y, row) in rows.iter().enumerate() {
+        for (x, token) in row.split_whitespace().enumerate() {
+            let (tile, rot) = token.split_once(':').map_or((token, 0), |(t, r)| (t, r.parse().unwrap()));
+            tiles.push(PlacedTile { at: [x as i32, y as i32], size: [1, 1], tile: tile.into(), rot, decor: None });
+        }
+    }
+    let width = rows[0].split_whitespace().count() as u32;
+    RegionManifest {
+        format: FORMAT.into(),
+        region: region.into(),
+        layout: Layout::Grid,
+        seed: 0,
+        version: 1,
+        attempt: 1,
+        fallback: None,
+        size: [width, rows.len() as u32],
+        tile_size: 8.0,
+        tiles,
+        pois: Vec::new(),
+        links: Vec::new(),
+        spawn: None,
+        content_hash: "test".into(),
+    }
+}
+
+/// Builds `rows` (see [`manifest`]) as the region in the world, the way `region_load` does.
+pub fn load_region(app: &mut App, rows: &[&str]) {
+    let region = if rows.len() == 1 { "strip" } else { "grid" };
+    shards_world::change_region(app.world_mut(), manifest(region, rows)).unwrap();
 }
