@@ -74,6 +74,23 @@ expect result contains "already bound to `move`"
 act settings group=controls
 expect result !contains "gameplay.jump"
 
+# a player's agent has no `rebind`: the refusal names a way that works for it, and following it works
+session --agent player_bot --scope player
+act? settings_set group=controls key=bindings.gameplay.jump value="[\"Key(KeyE)\"]"
+expect result contains "free it first: settings_set group=controls key=bindings.gameplay.interact"
+act settings_set group=controls key=bindings.gameplay.interact value="[\"Key(KeyG)\"]"
+act settings_set group=controls key=bindings.gameplay.jump value="[\"Key(KeyE)\"]"
+# the tools agree on the controls as just set, with no frame between
+act settings_set group=controls key=bindings.gameplay.heavy value="[\"Key(KeyH)\"]"
+act input_bindings
+expect result contains "Key(KeyH)"
+act settings_set group=controls key=bindings.gameplay.heavy reset=true
+# taking an input back is a clash too: the default of `interact` is E, which `jump` reads now
+act? settings_set group=controls key=bindings.gameplay.interact reset=true
+expect result contains "controls.bindings.gameplay.interact"
+expect result contains "`jump`"
+session --agent scenario
+
 # --- and back to the defaults
 act settings_set group=accessibility reset=true
 act settings_set group=audio reset=true

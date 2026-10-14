@@ -10,6 +10,7 @@
 //! (and the new defaults) into a new map. [`ControlSync`] remembers the last state both agree
 //! on to tell which side moved, so neither writes the other's echo back.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::prelude::*;
@@ -113,7 +114,8 @@ fn parse_mode(text: &str) -> Option<BindMode> {
     }
 }
 
-/// `context.action` split at the first dot (actions like `technique.1` have dots, contexts do not).
+/// `context.action` split at the first dot (actions like `technique.1` have dots, contexts do not:
+/// content refuses a context name with one).
 fn split(key: &str) -> Option<(&str, &str)> {
     key.split_once('.')
 }
@@ -197,9 +199,14 @@ pub fn check(settings: &ControlSettings) -> Result<(), String> {
 
 /// What `settings_set` refuses beyond that, as `rebind` does: an entry it adds or changes must name
 /// a context and an action that exist (with a hint at the nearest name), and must not take an
-/// input another action of its context already reads. Only what the call changes is judged, so
-/// entries a file written for another version left behind do not stop anything. Before the first
-/// resolve, when the defaults are not known, nothing is judged.
+/// input another action of its context already reads; an entry it removes (a reset) must not give
+/// its action back an input another action has taken meanwhile. Only what the call changes is
+/// judged, so entries a file written for another version left behind do not stop anything.
+///
+/// It judges the map the settings would make as the game builds it: the defaults, the player's
+/// entries, and what the game added to the map itself (those are not settings, so an entry for
+/// one is refused, but an input one of them reads is taken). Before the first resolve, when the
+/// defaults are not known, nothing is judged.
 pub fn check_known(current: &ControlSettings, next: &ControlSettings, world: &World) -> Result<(), String> {
     let (Some(sync), Some(InputDefaults(defaults))) = (world.get_resource::<ControlSync>(), world.get_resource::<InputDefaults>()) else {
         return Ok(());
@@ -207,38 +214,91 @@ pub fn check_known(current: &ControlSettings, next: &ControlSettings, world: &Wo
     if sync.agreed.is_none() {
         return Ok(());
     }
+    let extras = world.get_resource::<InputMap>().map(|live| sync.extras(live, defaults)).unwrap_or_default();
+    let with_extras = |settings: &ControlSettings| {
+        let (mut map, _) = decode(defaults, settings);
+        map.apply(&extras);
+        map
+    };
+    // What the new settings make; what the old ones made (a clash it already had is not this call's);
+    // and what the game ships (a clash in that is the game's).
+    let (map, before) = (with_extras(next), with_extras(current));
+    let shipped = with_extras(&ControlSettings::default());
+
     let bindings: Vec<(&String, &Vec<String>)> = next.bindings.iter().filter(|(k, v)| current.bindings.get(*k) != Some(*v)).collect();
     let modes: Vec<&String> = next.hold_or_toggle.iter().filter(|(k, v)| current.hold_or_toggle.get(*k) != Some(*v)).map(|(k, _)| k).collect();
     for (field, key) in bindings.iter().map(|(k, _)| ("bindings", *k)).chain(modes.iter().map(|k| ("hold_or_toggle", *k))) {
         let label = format!("controls.{field}.{key}");
         let (context, action) = split(key).ok_or_else(|| format!("{label}: `{key}` is not `context.action` (for example `gameplay.jump`)"))?;
-        let Some(ctx) = defaults.context(context) else {
-            let all: Vec<&str> = defaults.contexts.iter().map(|c| c.name.as_str()).collect();
+        let Some(ctx) = map.context(context) else {
+            let all: Vec<&str> = map.contexts.iter().map(|c| c.name.as_str()).collect();
             return Err(format!("{label}: no input context `{context}`{}; contexts: {}", InputMap::suggest(context, all.iter().copied()), all.join(", ")));
         };
         if ctx.action(action).is_none() {
-            let names = defaults.action_names(context);
+            let names = map.action_names(context);
             return Err(format!(
                 "{label}: no action `{action}` in context `{context}`{}; actions: {}",
                 InputMap::suggest(action, names.iter().copied()),
                 names.join(", ")
             ));
         }
+        if defaults.action(context, action).is_none() {
+            return Err(format!(
+                "{label}: `{context}.{action}` is a control the game adds itself, not one of the default controls, and settings keep only those; \
+                 a dev session can change it until the game ends with the rebind tool"
+            ));
+        }
     }
-    // The map the new settings would make: an input some other action reads is a clash.
-    let (map, _) = decode(defaults, next);
+    // An input some other action reads is a clash.
     for (key, texts) in bindings {
         let Some((context, action)) = split(key) else { continue };
         for binding in texts.iter().filter_map(|t| Binding::parse(t).ok()) {
             if let Some(other) = map.used_by(context, &binding, action) {
                 return Err(format!(
-                    "controls.bindings.{key}: {binding} is already bound to `{other}` in `{context}`; rebind `{other}` first, \
-                     or take the input over with the rebind tool and force=true"
+                    "controls.bindings.{key}: {binding} is already bound to `{other}` in `{context}`; {}; \
+                     a dev session can take it over with `rebind context={context} action={action} binding='{}' force=true`",
+                    free_it_first(context, other),
+                    binding.text()
                 ));
             }
         }
     }
+    // An entry that goes puts its action back on the default inputs, which another action may have taken since.
+    for key in current.bindings.keys().filter(|k| !next.bindings.contains_key(*k)) {
+        let Some((context, action)) = split(key) else { continue };
+        let Some(restored) = map.action(context, action) else { continue };
+        for binding in &restored.bindings {
+            let Some(other) = map.used_by(context, binding, action) else { continue };
+            // Two actions that already shared this input in `m` are a clash the call did not make.
+            let shared = |m: &InputMap| m.action(context, action).is_some_and(|a| a.bindings.iter().any(|b| b.overlaps(binding))) && m.used_by(context, binding, action) == Some(other);
+            if shared(&before) || shared(&shipped) {
+                continue;
+            }
+            return Err(format!(
+                "controls.bindings.{key}: back to the default, `{action}` would read {binding}, which `{other}` already reads in `{context}`; {}",
+                free_it_first(context, other)
+            ));
+        }
+    }
     Ok(())
+}
+
+/// How a caller of `settings_set` (a player's agent has no `rebind`) makes an input free.
+fn free_it_first(context: &str, other: &str) -> String {
+    format!("free it first: settings_set group=controls key=bindings.{context}.{other} value=<another input>")
+}
+
+/// The map in play as `controls` would make it. `settings_set` replaces the settings and the map
+/// follows in the next `PreUpdate`; a tool called before that (a scenario, a test, two requests in
+/// one frame) must not start from a map the settings have moved on from, or `rebind` would write
+/// that map back over the change. A map edited directly wins, as it does when it is rebuilt.
+pub(super) fn current_map<'a>(map: &'a InputMap, defaults: &InputMap, controls: &ControlSettings, sync: &ControlSync) -> Cow<'a, InputMap> {
+    if sync.agreed.as_ref() != Some(map) || !sync.settings_moved(controls) {
+        return Cow::Borrowed(map);
+    }
+    let (mut desired, _) = decode(defaults, controls);
+    desired.apply(&sync.extras(map, defaults));
+    Cow::Owned(desired)
 }
 
 #[cfg(test)]

@@ -30,9 +30,17 @@ pub struct InputBindingsArgs {
 fn input_bindings(
     In(call): In<Call<InputBindingsArgs>>,
     map: Res<InputMap>,
+    defaults: Res<InputDefaults>,
+    controls: Option<Res<ControlSettings>>,
+    sync: Res<ControlSync>,
     contexts: Res<InputContexts>,
     accessibility: Option<Res<AccessibilitySettings>>,
 ) -> ToolResult {
+    // What the controls settings say, even when `settings_set` changed them a moment ago and the map has not followed yet.
+    let map = match controls.as_deref() {
+        Some(controls) => controls::current_map(&map, &defaults.0, controls, &sync),
+        None => std::borrow::Cow::Borrowed(&*map),
+    };
     let name = call.args.context.unwrap_or_else(|| contexts.top().to_owned());
     let Some(context) = map.context(&name) else {
         let names: Vec<&str> = map.contexts.iter().map(|c| c.name.as_str()).collect();
@@ -97,8 +105,11 @@ fn rebind(
 ) -> ToolResult {
     let RebindArgs { context, action, binding, slot, mode, unbind, force } = call.args;
     let context = context.unwrap_or_else(|| contexts.top().to_owned());
-    let names: Vec<String> = map.action_names(&context).iter().map(|n| (*n).to_owned()).collect();
-    if map.context(&context).is_some() && !names.contains(&action) {
+    // The map the settings make, not one they have moved on from (see `current_map`): the change is
+    // written back over the settings, and must not take another one of theirs with it.
+    let current = controls::current_map(&map, &defaults.0, &controls, &sync).into_owned();
+    let names: Vec<String> = current.action_names(&context).iter().map(|n| (*n).to_owned()).collect();
+    if current.context(&context).is_some() && !names.contains(&action) {
         let hint = InputMap::suggest(&action, names.iter().map(String::as_str));
         return Err(format!("no action `{action}` in context `{context}`{hint}; actions: {}", names.join(", ")));
     }
@@ -107,14 +118,14 @@ fn rebind(
     }
     let explain = |e: RebindError| match e {
         RebindError::NoContext(name) => {
-            let all: Vec<&str> = map.contexts.iter().map(|c| c.name.as_str()).collect();
+            let all: Vec<&str> = current.contexts.iter().map(|c| c.name.as_str()).collect();
             format!("no input context `{name}`{}; contexts: {}", InputMap::suggest(&name, all.iter().copied()), all.join(", "))
         }
         other => other.to_string(),
     };
     let mut done: Vec<String> = Vec::new();
     // Work on a copy: a refusal halfway leaves the controls as they were.
-    let mut next = map.clone();
+    let mut next = current.clone();
     if unbind {
         let gone = next.unbind(&context, &action, slot).map_err(explain)?;
         done.push(format!("removed {gone} from slot {slot}"));

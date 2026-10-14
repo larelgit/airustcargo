@@ -406,6 +406,16 @@ impl ContentDef for InputMap {
             if ctx.name.is_empty() {
                 refs.error("a context has no name");
             }
+            // The player's changes are stored as `context.action`, split at the first dot (actions
+            // like `technique.1` have dots), so a context with one could never be set or read back.
+            if ctx.name.contains('.') {
+                refs.error(format!(
+                    "context `{}`: a context name cannot contain `.` (controls are saved as `context.action`, and actions may have dots); \
+                     use `_` or `-`, for example `{}`",
+                    ctx.name,
+                    ctx.name.replace('.', "_")
+                ));
+            }
             let mut seen: Vec<&str> = Vec::new();
             for (n, action) in ctx.actions.iter().enumerate() {
                 if seen.contains(&action.action.as_str()) {

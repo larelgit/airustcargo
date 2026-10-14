@@ -605,7 +605,13 @@ fn settings_set_refuses_what_rebind_refuses() {
     refuses(&mut app, "bindings.Gameplay.jump", "[\"Key(KeyJ)\"]", &["no input context `Gameplay`", "did you mean `gameplay`", "contexts: gameplay, menu"]);
     refuses(&mut app, "hold_or_toggle.gameplay.sprnt", "toggle", &["controls.hold_or_toggle.gameplay.sprnt", "no action `sprnt`", "did you mean `sprint`"]);
     // An input another action of the context reads: W is inside the move binding, E is `interact`.
-    refuses(&mut app, "bindings.gameplay.jump", "[\"Key(KeyW)\"]", &["already bound to `move` in `gameplay`", "rebind `move` first", "force=true"]);
+    // The way out is named for the caller of `settings_set` (a player's agent has no `rebind`), the dev route after it.
+    refuses(
+        &mut app,
+        "bindings.gameplay.jump",
+        "[\"Key(KeyW)\"]",
+        &["already bound to `move` in `gameplay`", "free it first: settings_set group=controls key=bindings.gameplay.move", "a dev session can take it over with `rebind context=gameplay action=jump binding='Key(KeyW)' force=true`"],
+    );
     refuses(&mut app, "bindings.gameplay.jump", "[\"Key(KeyE)\"]", &["already bound to `interact`"]);
     assert_eq!(*app.world().resource::<ControlSettings>(), ControlSettings::default(), "nothing of it got in");
     frame(&mut app);
@@ -616,6 +622,101 @@ fn settings_set_refuses_what_rebind_refuses() {
     set_control(&mut app, "bindings.gameplay.jump", "[\"Key(KeyE)\"]");
     frame(&mut app);
     assert_eq!(app.world().resource::<InputMap>().action("gameplay", "jump").unwrap().bindings, [Binding::Key(KeyCode::KeyE)]);
+
+    // Taking an input back is a clash too: giving `interact` its default E back would put two actions on E.
+    let bindings = |app: &App, key: &str| app.world().resource::<ControlSettings>().bindings.get(key).cloned();
+    let err = fails(&mut app, "settings_set", json!({"group": "controls", "key": "bindings.gameplay.interact", "reset": true}));
+    assert!(err.contains("controls.bindings.gameplay.interact") && err.contains("`jump`") && err.contains("Key(KeyE)"), "{err}");
+    assert!(err.contains("free it first: settings_set group=controls key=bindings.gameplay.jump"), "{err}");
+    assert_eq!(bindings(&app, "gameplay.interact"), Some(vec!["Key(KeyG)".to_owned()]), "nothing changed");
+    // A table that leaves the entry out is the same removal.
+    let err = fails(&mut app, "settings_set", json!({"group": "controls", "key": "bindings", "value": {"gameplay.jump": ["Key(KeyE)"]}}));
+    assert!(err.contains("controls.bindings.gameplay.interact") && err.contains("`jump`"), "{err}");
+    assert_eq!(bindings(&app, "gameplay.interact"), Some(vec!["Key(KeyG)".to_owned()]), "nothing changed");
+    // Freeing the input first lets it through: the map is the defaults again.
+    ok(&mut app, "settings_set", json!({"group": "controls", "key": "bindings.gameplay.jump", "reset": true}));
+    ok(&mut app, "settings_set", json!({"group": "controls", "key": "bindings.gameplay.interact", "reset": true}));
+    frame(&mut app);
+    assert_eq!(*app.world().resource::<InputMap>(), InputMap::standard());
+
+    // The same when the other action took the input with `rebind … force`: dodge takes Space from jump.
+    ok(&mut app, "rebind", json!({"action": "dodge", "binding": "Key(Space)", "force": true}));
+    let err = fails(&mut app, "settings_set", json!({"group": "controls", "key": "bindings.gameplay.jump", "reset": true}));
+    assert!(err.contains("controls.bindings.gameplay.jump") && err.contains("`dodge`") && err.contains("Key(Space)"), "{err}");
+    // A reset of everything is always allowed: it is the defaults.
+    ok(&mut app, "settings_set", json!({"group": "controls", "reset": true}));
+    frame(&mut app);
+    assert_eq!(*app.world().resource::<InputMap>(), InputMap::standard());
+}
+
+#[test]
+fn a_reset_is_not_refused_for_a_clash_the_settings_already_had() {
+    // A hand-edited file has `interact` on E (its default, spelled out) and `jump` on E too. Resetting
+    // `interact` gives it E, which `jump` reads: the same two actions that shared it before, nothing new.
+    let dir = temp_dir("input_reset_old_clash");
+    std::fs::write(dir.join("settings.toml"), "[controls.bindings]\n\"gameplay.interact\" = [\"Key(KeyE)\"]\n\"gameplay.jump\" = [\"Key(KeyE)\"]\n").unwrap();
+    let mut app = input_app_in(Some(&dir), None);
+    local_player(&mut app);
+    frame(&mut app);
+    assert!(journal_has(&app, JournalKind::Warn, "both read"), "the file's clash is said at the start");
+    ok(&mut app, "settings_set", json!({"group": "controls", "key": "bindings.gameplay.interact", "reset": true}));
+    let c = app.world().resource::<ControlSettings>();
+    assert!(!c.bindings.contains_key("gameplay.interact") && c.bindings.contains_key("gameplay.jump"));
+}
+
+#[test]
+fn settings_set_judges_the_map_in_play_with_what_the_game_added() {
+    let mut app = input_app();
+    local_player(&mut app);
+    frame(&mut app);
+    // A game's own context and action, added by code: not settings, but they read inputs.
+    {
+        let mut map = app.world_mut().resource_mut::<InputMap>();
+        map.contexts.push(InputContext { name: "aim".into(), actions: vec![ActionBinding::new("fire", [Binding::Key(KeyCode::KeyH)])], drives_intent: true });
+        map.contexts[0].actions.push(ActionBinding::new("emote", [Binding::Key(KeyCode::KeyG)]));
+    }
+    frame(&mut app);
+    // An input an added action reads is taken, for `settings_set` as for `rebind`.
+    let err = fails(&mut app, "settings_set", json!({"group": "controls", "key": "bindings.gameplay.jump", "value": "[\"Key(KeyG)\"]"}));
+    assert!(err.contains("already bound to `emote` in `gameplay`"), "{err}");
+    assert!(fails(&mut app, "rebind", json!({"action": "jump", "binding": "Key(KeyG)"})).contains("emote"));
+    // An entry for a control the game added is not a setting; the refusal says so instead of saying it does not exist,
+    // when `input_bindings` lists it.
+    for (key, value) in [("bindings.aim.fire", "[\"Key(KeyJ)\"]"), ("bindings.gameplay.emote", "[\"Key(KeyJ)\"]"), ("hold_or_toggle.aim.fire", "toggle")] {
+        let err = fails(&mut app, "settings_set", json!({"group": "controls", "key": key, "value": value}));
+        assert!(err.contains("a control the game adds itself") && !err.contains("no input context") && !err.contains("no action"), "{key}: {err}");
+    }
+    assert!(ok(&mut app, "input_bindings", json!({"context": "aim"})).contains("fire"));
+    // A context or action nobody has is still unknown, and the list is the one `input_bindings` gives.
+    let err = fails(&mut app, "settings_set", json!({"group": "controls", "key": "bindings.aimm.fire", "value": "[\"Key(KeyJ)\"]"}));
+    assert!(err.contains("no input context `aimm`") && err.contains("did you mean `aim`") && err.contains("contexts: gameplay, menu, aim"), "{err}");
+    assert_eq!(*app.world().resource::<ControlSettings>(), ControlSettings::default(), "nothing of it got in");
+}
+
+#[test]
+fn rebind_and_input_bindings_start_from_the_controls_a_settings_set_just_made() {
+    let mut app = input_app();
+    local_player(&mut app);
+    frame(&mut app);
+    // No frame between the calls, as in a scenario or a test: the map has not followed the settings yet.
+    set_control(&mut app, "bindings.gameplay.jump", "[\"Key(KeyJ)\"]");
+    let listed = ok(&mut app, "input_bindings", json!({}));
+    assert!(listed.lines().any(|l| l.trim_start().starts_with("jump") && l.contains("Key(KeyJ)") && !l.contains("Space")), "{listed}");
+    ok(&mut app, "rebind", json!({"action": "dodge", "binding": "Key(KeyV)"}));
+    assert_eq!(app.world().resource::<ControlSettings>().bindings["gameplay.jump"], ["Key(KeyJ)"], "the setting survived the rebind");
+    frame(&mut app);
+    let map = app.world().resource::<InputMap>();
+    assert_eq!(map.action("gameplay", "jump").unwrap().bindings, [Binding::Key(KeyCode::KeyJ)]);
+    assert_eq!(map.action("gameplay", "dodge").unwrap().bindings[0], Binding::Key(KeyCode::KeyV));
+
+    // The other way: a reset, then a rebind of something else, does not bring the reset binding back.
+    ok(&mut app, "settings_set", json!({"group": "controls", "key": "bindings.gameplay.jump", "reset": true}));
+    ok(&mut app, "rebind", json!({"action": "light", "binding": "Key(KeyL)"}));
+    assert!(!app.world().resource::<ControlSettings>().bindings.contains_key("gameplay.jump"), "the reset did not come back");
+    frame(&mut app);
+    let map = app.world().resource::<InputMap>();
+    assert_eq!(map.action("gameplay", "jump"), InputMap::standard().action("gameplay", "jump"));
+    assert_eq!(map.action("gameplay", "light").unwrap().bindings[0], Binding::Key(KeyCode::KeyL));
 }
 
 #[test]
@@ -639,6 +740,7 @@ fn what_a_file_left_behind_does_not_stop_settings_set() {
     let c = app.world().resource::<ControlSettings>();
     assert_eq!(c.bindings["gameplay.jump"], ["Key(Spce)", "GamepadButton(South)"]);
     assert_eq!(c.bindings["gameplay.fly"], ["Key(KeyF)"]);
+    assert_eq!(c.bindings["gameplay.light"], ["Key(KeyL)"], "and so is what settings_set just set, though the map had not followed it when `rebind` ran");
     assert_eq!(c.hold_or_toggle["gameplay.block"], "tap");
     // Fixing one is setting it; the check judges that alone.
     set_control(&mut app, "bindings.gameplay.jump", "[\"Key(KeyJ)\"]");
@@ -770,4 +872,11 @@ fn content_sets_the_defaults_and_an_edit_keeps_the_players_changes() {
         (action: "jump", bindings: [Key(Space)]), (action: "dodge", bindings: [Key(Space)]) ])]) }"#);
     let out = ok(&mut app, "content_check", json!({}));
     assert!(out.contains("`jump` and `dodge` both read the input of Key(Space)"), "{out}");
+
+    // A context name with a dot is a content error too: the player's changes are stored as `context.action`,
+    // and `ui.inventory.close` would read back as the action `inventory.close` of a context `ui`.
+    write(&dir, "content/controls.input_map.ron", r#"{ "default": (contexts: [(name: "ui.inventory", actions: [
+        (action: "close", bindings: [Key(Escape)]) ])]) }"#);
+    let out = ok(&mut app, "content_check", json!({}));
+    assert!(out.contains("context `ui.inventory`: a context name cannot contain `.`") && out.contains("`ui_inventory`"), "{out}");
 }
