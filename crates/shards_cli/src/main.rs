@@ -78,7 +78,9 @@ struct Cli {
     #[arg(long, global = true, env = "SHARDS_PORT_FILE", value_name = "PATH")]
     port_file: Option<std::path::PathBuf>,
     /// The game's access token. Default: `.shards/<port>.token`, looked up from this
-    /// folder upwards (the game writes it into its working directory at start).
+    /// folder upwards (the game writes it into its working directory at start). Every game of
+    /// a stand has its own token: in `wait --peer all`, `stand` and `scenario` this one is the
+    /// host's, and a client's comes from `SHARDS_TOKEN_C1`, `SHARDS_TOKEN_C2` … (or its file).
     #[arg(long, global = true, env = "SHARDS_TOKEN", hide_env_values = true)]
     token: Option<String>,
     /// Which game of a stand (`cargo sandbox --stand 2 --port-file F`) a command talks to:
@@ -225,6 +227,7 @@ enum Cmd {
     /// The members of a stand (`cargo sandbox --stand 2 --port-file F`): role, player, body,
     /// port, ping and desyncs of the host and every client. `stand stop` has the host end the
     /// session (the clients are told and keep their characters), then ends the stand's process.
+    /// A client that is already gone is named, and the exit code is 1.
     Stand {
         #[command(subcommand)]
         op: Option<StandCmd>,
@@ -352,6 +355,14 @@ impl Client {
                 let here = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
                 return Err(format!("{method}: {msg} (no .shards/{}.token in {here} or above)", self.port));
             }
+            if msg.starts_with("unauthorized") {
+                // A stand has a token for every member: one token cannot open them all.
+                return Err(format!(
+                    "{method}: {msg} (the token given is not this game's, the one of port {}: every game of a stand has its own, \
+                     in .shards/{}.token; for a client of a stand, SHARDS_TOKEN_C1, SHARDS_TOKEN_C2 …)",
+                    self.port, self.port
+                ));
+            }
             return Err(format!("{method}: {msg}"));
         }
         Ok(reply.get("result").cloned().unwrap_or(Value::Null))
@@ -390,13 +401,14 @@ fn main() -> ExitCode {
     }
 }
 
-/// `shards stand` and `shards stand stop`.
+/// `shards stand` and `shards stand stop`: exit code 1 when a member was missing (it is
+/// named), after everything that could be done was.
 fn stand(cli: &Cli, op: Option<&StandCmd>) -> Result<ExitCode, String> {
-    match op {
-        None => peer::show(cli),
-        Some(StandCmd::Stop) => peer::stop(cli, &peer::terminate),
-    }
-    .map(|()| ExitCode::SUCCESS)
+    let complete = match op {
+        None => peer::show(cli)?,
+        Some(StandCmd::Stop) => peer::stop(cli, &peer::terminate)?,
+    };
+    Ok(if complete { ExitCode::SUCCESS } else { ExitCode::from(exit::TOOL_ERROR) })
 }
 
 impl Cli {
@@ -885,7 +897,7 @@ mod tests {
         std::fs::write(&file, "15711\n").unwrap();
         assert_eq!(read_port_file(&file), Ok(15711));
 
-        let cli = |args: &[&str]| Cli::try_parse_from([&["shards"], args, &["status"]].concat()).unwrap();
+        let cli = |args: &[&str]| crate::fake::parse(&[args, &["status"]].concat());
         let path = file.display().to_string();
         assert_eq!(cli(&["--port-file", &path]).port(), Ok(15711));
         assert_eq!(cli(&["--port-file", &path, "--port", "15799"]).port(), Ok(15799), "--port wins");
@@ -979,6 +991,41 @@ mod tests {
         assert_eq!(asked.lock().unwrap().len(), 1);
     }
 
+    /// `pause`, `resume` and `speed` of a stand are deferred like `step`: each is polled by its
+    /// own id until its own answer comes.
+    #[test]
+    fn the_clock_tools_are_polled_by_their_own_ids() {
+        use crate::fake::{reply, serve};
+        use std::collections::HashMap;
+        use std::sync::Mutex;
+
+        let tools: Mutex<HashMap<u64, String>> = Mutex::default();
+        let polled: Mutex<HashMap<u64, u32>> = Mutex::default();
+        let port = serve(move |method, params| {
+            Some(match method {
+                "ai/act" => {
+                    let mut tools = tools.lock().unwrap();
+                    let id = tools.len() as u64 + 1;
+                    tools.insert(id, params["tool"].as_str().unwrap().to_owned());
+                    reply(json!({"tool": params["tool"], "ok": true, "result": {"pending": id}, "tick": 0, "paused": true}))
+                }
+                "ai/step_poll" => {
+                    let id = params["id"].as_u64().unwrap();
+                    let times = *polled.lock().unwrap().entry(id).and_modify(|n| *n += 1).or_insert(1);
+                    let tool = tools.lock().unwrap()[&id].clone();
+                    let result = if times < 2 { json!({"pending": id}) } else { json!(format!("{tool} done as request {id}")) };
+                    reply(json!({"tool": tool, "ok": true, "result": result, "tick": 0, "paused": true}))
+                }
+                other => panic!("unexpected {other}"),
+            })
+        });
+        let client = Client::new(port, None).with_timeout(Duration::from_secs(5));
+        for (id, tool, args) in [(1, "pause", json!({})), (2, "resume", json!({})), (3, "speed", json!({"x": 2}))] {
+            let out = client.act("dev", tool, args).unwrap();
+            assert_eq!(out["result"], format!("{tool} done as request {id}"));
+        }
+    }
+
     #[test]
     fn a_game_that_runs_steps_at_once_is_never_polled() {
         use crate::fake::{reply, serve};
@@ -1020,16 +1067,40 @@ mod tests {
         assert_eq!(pending_id("observe", &json!({"ok": true, "result": {"pending": 3}})), None);
     }
 
+    /// The options that `README`, AGENTS.md and the stand workflow say can come from the
+    /// environment do read their variable; `fake::parse` switches them off for the other tests.
+    #[test]
+    fn every_option_has_its_variable() {
+        use clap::CommandFactory;
+        let command = Cli::command();
+        let variable = |id: &str| {
+            command.get_arguments().find(|arg| arg.get_id() == id).and_then(|arg| arg.get_env()).map(|v| v.to_string_lossy().into_owned())
+        };
+        for (id, name) in [
+            ("port", "SHARDS_PORT"),
+            ("port_file", "SHARDS_PORT_FILE"),
+            ("peer", "SHARDS_PEER"),
+            ("timeout", "SHARDS_TIMEOUT"),
+            ("token", "SHARDS_TOKEN"),
+            ("agent", "SHARDS_AGENT"),
+        ] {
+            assert_eq!(variable(id).as_deref(), Some(name), "--{id}");
+        }
+        // And the helper that parses without them really does: no variable reaches the Cli.
+        let cli = crate::fake::parse(&["status"]);
+        assert_eq!((cli.port, cli.peer, cli.timeout, cli.port_file, cli.token), (None, None, None, None, None));
+    }
+
     #[test]
     fn peer_timeout_and_player_are_global_or_per_command() {
-        let parse = |args: &[&str]| Cli::try_parse_from(["shards"].iter().chain(args)).unwrap_or_else(|e| panic!("{e}"));
+        let parse = |args: &[&str]| crate::fake::parse(args);
         assert_eq!(parse(&["--timeout", "5", "wait"]).timeout, Some(5));
         assert_eq!(parse(&["wait", "--timeout", "5"]).timeout, Some(5), "a global option may follow the command");
         assert_eq!(parse(&["shot", "--timeout", "3"]).timeout_or(10), Duration::from_secs(3));
         assert_eq!(parse(&["shot"]).timeout_or(10), Duration::from_secs(10));
         assert_eq!(parse(&["wait"]).poll_timeout(), Duration::from_secs(60));
         assert_eq!(parse(&["--peer", "c1", "session", "--player", "2"]).peer, Some(Peer::Client(1)));
-        let both = Cli::try_parse_from(["shards", "session", "--player", "1", "--subject", "e6"]).err().unwrap().to_string();
+        let both = crate::fake::try_parse(&["session", "--player", "1", "--subject", "e6"]).err().unwrap().to_string();
         assert!(both.contains("cannot be used with"), "{both}");
         assert!(matches!(parse(&["stand"]).cmd, Cmd::Stand { op: None }));
         assert!(matches!(parse(&["stand", "stop"]).cmd, Cmd::Stand { op: Some(StandCmd::Stop) }));

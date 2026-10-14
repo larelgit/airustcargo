@@ -150,9 +150,20 @@ pub fn run(cli: &Cli, client: &Client, files: &[PathBuf], quiet: bool, as_json: 
         return Err("no scenario ran; fix the files above".into());
     }
 
-    let mut driver = ClientDriver::new(cli, client);
+    // A stand scenario names its members itself (@host, @c1): its host is the stand's, found by
+    // the port file, whatever `--peer` or SHARDS_PEER says about the game a single command talks to.
+    let stand_host = match (scripts.iter().any(|s| s.stand().is_some()), cli.port_file.is_some()) {
+        (true, true) => {
+            if let Some(peer) = cli.peer.filter(|peer| *peer != Peer::Host) {
+                eprintln!("note: --peer {peer} is ignored for a stand scenario: it names its members itself (@host, @c1 …)");
+            }
+            Some(cli.client_for(Peer::Host)?)
+        }
+        _ => None,
+    };
     let mut reports = Vec::new();
     for script in &scripts {
+        let mut driver = ClientDriver::new(cli, if script.stand().is_some() { stand_host.as_ref().unwrap_or(client) } else { client });
         let report = run_with(script, &mut driver, &mut |line| {
             if !as_json && (!quiet || !line.ok) {
                 say(line);
@@ -190,8 +201,6 @@ mod tests {
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
-
-    use clap::Parser;
 
     use super::*;
     use crate::fake::{error, reply, serve};
@@ -236,7 +245,7 @@ mod tests {
     }
 
     fn cli(args: &[&str]) -> Cli {
-        Cli::try_parse_from([&["shards"], args, &["status"]].concat()).unwrap_or_else(|e| panic!("{e}"))
+        crate::fake::parse(&[args, &["status"]].concat())
     }
 
     #[test]
@@ -290,8 +299,20 @@ mod tests {
         assert_eq!(err, "no scenario ran; fix the files above");
     }
 
-    /// What a pretend stand's member did: `(member, method, tool)`.
-    type Calls = Arc<Mutex<Vec<(String, String, String)>>>;
+    /// What a pretend stand's member was asked.
+    struct Asked {
+        member: String,
+        method: String,
+        params: Value,
+    }
+
+    type Calls = Arc<Mutex<Vec<Asked>>>;
+
+    /// How often `member` was asked `method` (and, for `ai/act`, `tool`; `""` for any other).
+    fn asked(calls: &Calls, member: &str, method: &str, tool: &str) -> usize {
+        let log = calls.lock().unwrap();
+        log.iter().filter(|a| a.member == member && a.method == method && a.params["tool"].as_str().unwrap_or("") == tool).count()
+    }
 
     /// A pretend stand of a host and two clients, each its own server, port files beside `base`.
     /// A `step` on any of them is deferred: it answers `{"pending": 1}` and `ai/step_poll` says
@@ -303,7 +324,7 @@ mod tests {
             let polls = AtomicU64::new(0);
             let port = serve(move |method, params| {
                 let tool = params["tool"].as_str().unwrap_or("").to_owned();
-                calls.lock().unwrap().push((name.to_owned(), method.to_owned(), tool.clone()));
+                calls.lock().unwrap().push(Asked { member: name.to_owned(), method: method.to_owned(), params: params.clone() });
                 let outcome = |tool: &str, result: Value| json!({"tool": tool, "ok": true, "result": result, "tick": 7, "paused": true});
                 Some(match (method, tool.as_str()) {
                     ("ai/status", _) => reply(json!({"tick": 5, "seed": 42, "journal_seq": 0})),
@@ -331,6 +352,7 @@ mod tests {
         dir
     }
 
+
     #[test]
     fn a_stand_scenario_goes_to_the_members_it_names() {
         let dir = stand_dir("run");
@@ -346,14 +368,17 @@ mod tests {
         );
         let exit = run(&cli, &host, &[file], true, false).unwrap();
         assert_eq!(format!("{exit:?}"), code(0));
+        assert_eq!(asked(&calls, "c1", "ai/act", "ping"), 1);
+        assert_eq!(asked(&calls, "host", "ai/act", "ping"), 0, "the ping went to c1 alone");
+        assert_eq!(asked(&calls, "c2", "ai/act", "step"), 1);
+        assert_eq!(asked(&calls, "c2", "ai/step_poll", ""), 3, "pending twice, then the report");
+        assert_eq!(asked(&calls, "c1", "ai/act", "get") + asked(&calls, "c2", "ai/act", "get"), 2);
+        assert_eq!(asked(&calls, "host", "ai/act", "net_status"), 1, "the links were checked on the host");
+        // `session --player 1` reached c1's `ai/session` as player 1, and nobody else's.
         let log = calls.lock().unwrap();
-        let on = |member: &str, method: &str, tool: &str| log.iter().filter(|(m, me, t)| m == member && me == method && t == tool).count();
-        assert_eq!(on("c1", "ai/act", "ping"), 1);
-        assert_eq!(on("host", "ai/act", "ping"), 0, "the ping went to c1 alone");
-        assert_eq!(on("c2", "ai/act", "step"), 1);
-        assert_eq!(on("c2", "ai/step_poll", ""), 3, "pending twice, then the report");
-        assert_eq!(on("c1", "ai/act", "get") + on("c2", "ai/act", "get"), 2);
-        assert_eq!(on("host", "ai/act", "net_status"), 1, "the links were checked on the host");
+        let bound: Vec<&str> = log.iter().filter(|a| a.method == "ai/session" && a.params["player"] == 1).map(|a| a.member.as_str()).collect();
+        assert_eq!(bound, ["c1"], "the binding is c1's alone");
+        assert!(log.iter().filter(|a| a.method == "ai/session" && a.member != "c1").all(|a| a.params["player"].is_null()));
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -361,14 +386,54 @@ mod tests {
     fn a_stand_scenario_wants_the_links_of_its_header() {
         let dir = stand_dir("links");
         let base = dir.join("g.port");
-        pretend_stand(&base, "latency=0,jitter=0,loss=0,dup=0");
+        let calls = pretend_stand(&base, "latency=0,jitter=0,loss=0,dup=0");
         let path = base.display().to_string();
         let cli = cli(&["--port-file", &path]);
         let host = cli.client_for(Peer::Host).unwrap();
+        let script = Script::parse("links.scenario", "stand clients=2 latency=150 loss=0.02\n@c1 act ping\n").unwrap();
+        let failure = shards_script::run(&script, &mut ClientDriver::new(&cli, &host)).failure.expect("the links differ");
+        assert_eq!((failure.kind, failure.line), (FailureKind::Driver, 0));
+        assert_eq!(
+            failure.message,
+            "this scenario's `stand` line wants links with latency=150,loss=0.02, but the running stand has \
+             latency=0,jitter=0,loss=0,dup=0: start it with `--net-sim latency=150,loss=0.02` (or change the stand line)"
+        );
+        assert_eq!(asked(&calls, "c1", "ai/act", "ping"), 0, "nothing ran");
+        // As a command: a driver failure is exit code 2.
         let file = scenario_file("links.scenario", "stand clients=2 latency=150 loss=0.02\n@c1 act ping\n");
-        let exit = run(&cli, &host, &[file], false, true).unwrap();
-        assert_eq!(format!("{exit:?}"), code(2), "a stand that cannot run the file is a driver failure");
+        assert_eq!(format!("{:?}", run(&cli, &host, &[file], false, true).unwrap()), code(2));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// `--peer c1` (or `SHARDS_PEER=c1` left in the shell) names the game a single command talks to.
+    /// A stand scenario names its members itself: its `@host` is the stand's host.
+    #[test]
+    fn a_stand_scenario_ignores_the_peer_option_and_a_single_game_scenario_obeys_it() {
+        let dir = stand_dir("peer");
+        let base = dir.join("g.port");
+        let calls = pretend_stand(&base, "latency=150,jitter=0,loss=0.02,dup=0");
+        let path = base.display().to_string();
+        let cli = cli(&["--port-file", &path, "--peer", "c1"]);
+        let client = cli.client().expect("what main hands to scenario::run: c1's client");
+        assert_eq!(cli.port(), Ok(read_port(&crate::peer::member_file(&base, Peer::Client(1)))));
+        let stand = scenario_file("peer-stand.scenario", "stand clients=2 latency=150 loss=0.02\n@host act ping\n@c1 act ping\nact ping\n");
+        let exit = run(&cli, &client, &[stand], true, false).unwrap();
+        assert_eq!(format!("{exit:?}"), code(0));
+        assert_eq!(asked(&calls, "host", "ai/act", "ping"), 2, "@host and the unprefixed line are the host's");
+        assert_eq!(asked(&calls, "c1", "ai/act", "ping"), 1, "@c1 is c1");
+        assert_eq!(asked(&calls, "host", "ai/act", "net_status"), 1, "the links are the host's");
+        assert_eq!(asked(&calls, "c1", "ai/act", "net_status"), 0);
+        // A scenario without a stand line drives the game `--peer` names: c1.
+        let single = scenario_file("peer-single.scenario", "act ping\n");
+        let exit = run(&cli, &client, &[single], true, false).unwrap();
+        assert_eq!(format!("{exit:?}"), code(0));
+        assert_eq!(asked(&calls, "c1", "ai/act", "ping"), 2, "the single-game scenario ran on c1");
+        assert_eq!(asked(&calls, "host", "ai/act", "ping"), 2, "and not on the host");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn read_port(file: &std::path::Path) -> u16 {
+        std::fs::read_to_string(file).unwrap().trim().parse().unwrap()
     }
 
     #[test]
@@ -376,8 +441,16 @@ mod tests {
         let client = Client::new(fake_game(), None);
         let file = scenario_file("alone.scenario", "stand clients=2\nobserve\n");
         // No port file: the host is all there is.
-        let exit = run(&cli(&[]), &client, &[file], true, false).unwrap();
+        let exit = run(&cli(&[]), &client, std::slice::from_ref(&file), true, false).unwrap();
         assert_eq!(format!("{exit:?}"), code(2));
+        let script = Script::parse("alone.scenario", "stand clients=2\nobserve\n").unwrap();
+        let failure = shards_script::run(&script, &mut ClientDriver::new(&cli(&[]), &client)).failure.unwrap();
+        assert_eq!(failure.kind, FailureKind::Driver);
+        assert!(
+            failure.message.starts_with("this scenario needs a stand of host + 2 clients: run cargo sandbox --stand 2 --headless --paused"),
+            "{}",
+            failure.message
+        );
     }
 
     #[test]

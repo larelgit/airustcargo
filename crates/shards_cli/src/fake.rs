@@ -4,7 +4,28 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 
+use clap::{CommandFactory, FromArgMatches};
 use serde_json::{json, Value};
+
+use crate::Cli;
+
+/// The command line `args` (without the program name) as the options say it, whatever the
+/// environment holds: the variables `SHARDS_PORT_FILE`, `SHARDS_PEER`, `SHARDS_TIMEOUT` … are
+/// the documented way to use `shards`, so a test that exercises the options cannot depend on
+/// their being unset. (That an option reads its variable is `every_option_has_its_variable`.)
+pub fn try_parse(args: &[&str]) -> Result<Cli, clap::Error> {
+    let mut command = Cli::command();
+    for id in ["port", "port_file", "token", "agent", "peer", "timeout"] {
+        command = command.mut_arg(id, |arg| arg.env(None::<&str>));
+    }
+    let matches = command.try_get_matches_from(std::iter::once("shards").chain(args.iter().copied()))?;
+    Cli::from_arg_matches(&matches)
+}
+
+/// [`try_parse`] that must succeed.
+pub fn parse(args: &[&str]) -> Cli {
+    try_parse(args).unwrap_or_else(|e| panic!("{e}"))
+}
 
 /// Serves `handler(method, params)` on a free port until the test process ends; returns the
 /// port. The handler returns the whole JSON-RPC response ([`reply`], [`error`]), or `None`
