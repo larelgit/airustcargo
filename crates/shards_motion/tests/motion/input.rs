@@ -345,6 +345,28 @@ fn the_players_changes_are_saved_and_loaded_again() {
 }
 
 #[test]
+fn a_rebind_does_not_destroy_a_controls_file_that_could_not_be_read() {
+    let dir = temp_dir("input_bad_file");
+    let file = dir.join("input.ron");
+    let hand_edited = "(contexts: [ (name: \"gameplay\", actions: [ (action: \"jump\", bindings: [Key(KeyJ)]), oops";
+    std::fs::write(&file, hand_edited).unwrap();
+    let mut app = input_app_with(Some(InputSettings { file: Some(file.clone()), ..default() }));
+    assert_eq!(*app.world().resource::<InputMap>(), InputMap::standard(), "the defaults, and a warning");
+
+    // The first save says the old file is kept, and keeps it.
+    let out = ok(&mut app, "rebind", json!({"action": "sprint", "binding": "Key(KeyV)", "save": true}));
+    let backup = file.with_extension("ron.bad");
+    assert!(out.contains("saved to") && out.contains("could not be read") && out.contains("input.ron.bad"), "{out}");
+    assert_eq!(std::fs::read_to_string(&backup).unwrap(), hand_edited, "everything the player had written is still there");
+    assert!(InputMap::load_overrides(&file).is_ok(), "and the new file reads");
+
+    // Later saves are on a file that reads: the copy of the broken one stays as it was.
+    let again = ok(&mut app, "rebind", json!({"action": "jump", "binding": "Key(KeyU)", "save": true}));
+    assert!(!again.contains("could not be read"), "{again}");
+    assert_eq!(std::fs::read_to_string(&backup).unwrap(), hand_edited);
+}
+
+#[test]
 fn content_sets_the_defaults_and_an_edit_keeps_the_players_changes() {
     let dir = temp_dir("input_content");
     let controls = |jump: &str| format!(r#"{{ "default": (contexts: [(name: "gameplay", actions: [

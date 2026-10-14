@@ -133,8 +133,15 @@ fn rebind(
     let mut message = format!("ok: {context}/{action}: {}", done.join(", "));
     if save.unwrap_or(settings.persist) {
         let path = settings.path().ok_or("cannot save: no config folder (set HOME or XDG_CONFIG_HOME, or InputSettings::file)")?;
-        next.save_overrides(&defaults.0, &path)?;
+        let kept = next.save_overrides(&defaults.0, &path)?;
         message.push_str(&format!("; saved to {}", path.display()));
+        if let Some(bad) = kept {
+            message.push_str(&format!(
+                " (the file there could not be read, so the game ran on the default controls and it holds none of \
+                 your edits; it is kept as {}: fix it and merge it back)",
+                bad.display()
+            ));
+        }
     }
     *map = next;
     Ok(message)
