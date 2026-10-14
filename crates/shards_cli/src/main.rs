@@ -325,13 +325,28 @@ fn ready_line(status: &Value) -> String {
         other => other.to_string(),
     };
     let instance = &status["instance"];
-    format!(
+    let mut line = format!(
         "ready: tick {} · pid {} · seed {} · port {}",
         field(&status["tick"]),
         field(&instance["pid"]),
         field(&status["seed"]),
         field(&instance["port"])
-    )
+    );
+    // A member of a network session: who it is there.
+    let net = &status["net"];
+    if let Some(role) = net["role"].as_str().filter(|r| *r != "single") {
+        if let Some(member) = net["member"].as_str().filter(|m| !m.is_empty()) {
+            line.push_str(&format!(" · member {member}"));
+        }
+        line.push_str(&format!(" · role {role}"));
+        if let Some(player) = net["player"].as_u64() {
+            line.push_str(&format!(" · player {player}"));
+        }
+        if let Some(body) = net["body"].as_str() {
+            line.push_str(&format!(" · body {body}"));
+        }
+    }
+    line
 }
 
 fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
@@ -602,6 +617,11 @@ mod tests {
     fn the_ready_line_names_the_instance() {
         let status = json!({"tick": 0, "seed": 1, "instance": {"pid": 4242, "seed": 1, "port": 15711}});
         assert_eq!(ready_line(&status), "ready: tick 0 · pid 4242 · seed 1 · port 15711");
+        let single = json!({"tick": 0, "seed": 1, "instance": {"pid": 4242, "port": 15711}, "net": {"role": "single"}});
+        assert_eq!(ready_line(&single), "ready: tick 0 · pid 4242 · seed 1 · port 15711");
+        let member = json!({"tick": 9, "seed": 1, "instance": {"pid": 4242, "port": 15712},
+            "net": {"role": "client", "member": "c1", "player": 1, "body": "e23"}});
+        assert_eq!(ready_line(&member), "ready: tick 9 · pid 4242 · seed 1 · port 15712 · member c1 · role client · player 1 · body e23");
     }
 
     #[test]

@@ -59,17 +59,31 @@ fn state_text(world: &World) -> String {
     }
 }
 
-/// `ai/status.net`.
+/// `ai/status.net`: `{role, member, player, body, session, host_tick, peers}` (and the
+/// desync count), what `shards wait` prints of a member.
 fn status(world: &World) -> Value {
     let role = role(world);
-    let mut out = json!({ "role": role_name(role), "state": state_text(world) });
+    let member = world.get_resource::<shards_core::EngineConfig>().map(|c| c.player_name.clone()).unwrap_or_default();
+    let mut out = json!({ "role": role_name(role), "session": state_text(world), "member": member });
     if let Some(host) = world.get_resource::<NetHost>() {
-        out["players"] = json!(host.connected().count() + 1);
+        let body = world
+            .try_query_filtered::<&ai_core::AiId, With<ai_core::AiPlayer>>()
+            .and_then(|mut q| q.iter(world).next().map(|id| format!("e{}", id.0)));
+        out["player"] = json!(0);
+        out["body"] = json!(body);
+        out["host_tick"] = json!(sim::tick(world));
+        let peers: Vec<Value> = host
+            .connected()
+            .map(|p| json!({ "player": p.player, "name": p.hello.as_ref().map(|h| h.name.clone()), "body": p.body.map(|b| format!("e{b}")) }))
+            .collect();
+        out["peers"] = json!(peers);
         out["desyncs"] = json!(host.desyncs);
     }
     if let Some(client) = world.get_resource::<NetClient>() {
         out["host"] = json!(client.address);
         out["player"] = json!(client.player);
+        out["body"] = json!(client.body.map(|b| format!("e{b}")));
+        out["host_tick"] = json!(client.newest_host_tick);
         out["desyncs"] = json!(world.get_resource::<NetDesync>().map_or(0, |d| d.count));
     }
     out

@@ -241,6 +241,10 @@ fn clients_join_at_tick_zero_and_see_the_hosts_world() {
     let status = stand.call(HOST, "net_status", json!({}));
     assert!(status.ok, "{}", status.result);
     assert_eq!(status.result["peers"].as_array().unwrap().len(), 2, "{}", status.result);
+    // What `shards wait` prints of a member.
+    let net = &shards::ai_core::status::status(stand.world(C1))["net"];
+    let who = (net["member"].as_str(), net["role"].as_str(), net["player"].as_u64(), net["body"].as_str());
+    assert_eq!(who, (Some("c1"), Some("client"), Some(1), Some(b1.as_str())), "{net}");
     verify_host(&stand);
 }
 
