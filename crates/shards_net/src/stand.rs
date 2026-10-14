@@ -325,9 +325,13 @@ impl Stand {
                         self.running = true;
                         Ok(format!("running from tick {}", sim::tick(self.world(m))))
                     }
+                    // Refused as a game of its own refuses it (an infinity), the stand untouched.
+                    ClockAction::Speed(x) if !x.is_finite() => apply_clock(self.world_mut(m), ClockAction::Speed(x)),
                     ClockAction::Speed(x) => {
                         // As `sim::set_speed`: no negative speed (it would owe ticks forever).
                         self.speed = x.max(0.0);
+                        // The answer reads the stand's clock: it says the new speed.
+                        self.sync_clock();
                         let speed = self.speed;
                         apply_clock(self.world_mut(m), ClockAction::Speed(speed))
                     }
@@ -432,6 +436,8 @@ impl Stand {
     /// hooks. Returns how the host exits.
     pub fn shut_down(&mut self, max_ms: u64) -> AppExit {
         let Some(host) = self.members.first_mut() else { return AppExit::Success };
+        // What a hook logs goes to its own member's journal.
+        ai_core::activate(host.app.world());
         shards_core::run_exit_hooks(host.app.world_mut());
         let until = self.hub.now() + max_ms;
         loop {
@@ -445,6 +451,7 @@ impl Stand {
             self.advance_hub();
         }
         for member in self.members.iter_mut().skip(1) {
+            ai_core::activate(member.app.world());
             shards_core::run_exit_hooks(member.app.world_mut());
         }
         self.members[0].app.should_exit().unwrap_or(AppExit::Success)

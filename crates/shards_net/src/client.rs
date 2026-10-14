@@ -347,11 +347,18 @@ fn pace(world: &mut World, client: &mut NetClient) {
     world.resource_mut::<Time<Virtual>>().set_relative_speed(speed);
 }
 
+/// How long an ended client keeps its link once the host went quiet: it acknowledges what the
+/// host still sends (a `SessionEnd`, a `Bye`), then stops sending, keepalives too.
+pub const ENDED_PATIENCE_MS: u64 = 3000;
+
 fn flush(client: &mut NetClient, endpoint: &mut NetEndpoint) {
     let (Some(link), Some(host)) = (client.link.as_mut(), endpoint.host) else { return };
     let now = endpoint.clock.now();
     let transport = &mut endpoint.transport;
     link.flush(now, &mut |datagram| transport.send(host, datagram));
+    if matches!(client.stage, ClientStage::Ended(_)) && link.is_timed_out(now, ENDED_PATIENCE_MS) {
+        client.link = None;
+    }
 }
 
 // --- receiving -----------------------------------------------------------------------------
@@ -399,7 +406,7 @@ fn io_in(world: &mut World, client: &mut NetClient, endpoint: &mut NetEndpoint) 
     let live = !matches!(client.stage, ClientStage::Ended(_));
     if live && client.link.as_ref().is_some_and(|l| l.is_timed_out(now, timeout_ms)) {
         let secs = net_def(world).timeout_secs;
-        end(world, client, &format!("lost the host {} (no answer for {secs:.0} s)", client.address));
+        end(world, client, &format!("lost the host {} (no answer for {secs:.0} s)", client.address), AppExit::error());
     }
     // The world is built from the seed: ask for the host's.
     if client.stage == ClientStage::Accepted && world_built(world) {
@@ -504,7 +511,7 @@ fn on_message(world: &mut World, client: &mut NetClient, clock: &NetClock, messa
         }
         Msg::Refused { reason } => {
             journal::emit(world, JournalKind::Error, format!("net: refused by the host {}: {reason}", client.address));
-            end(world, client, &format!("refused: {reason}"));
+            end(world, client, &format!("refused: {reason}"), AppExit::error());
         }
         Msg::Welcome(welcome) => take_world(world, client, welcome, false),
         Msg::Rebase(welcome) => {
@@ -535,25 +542,30 @@ fn on_message(world: &mut World, client: &mut NetClient, clock: &NetClock, messa
             if let (Some(player), Some(body)) = (client.player, body) {
                 world.trigger(PlayerLeft { player, body, reason: "session ended".into() });
             }
-            end(world, client, &format!("session ended by host ({reason})"));
+            end(world, client, &format!("session ended by host ({reason})"), AppExit::Success);
         }
         Msg::Bye { reason } => {
             journal::emit(world, JournalKind::Warn, format!("net: the host sent us away ({reason})"));
-            end(world, client, &reason);
+            end(world, client, &reason, AppExit::error());
         }
         Msg::Paused(paused) => client.host_paused = paused,
         _ => {}
     }
 }
 
-/// The session is over for this client (`net_disconnected`, whatever the reason).
-fn end(world: &mut World, client: &mut NetClient, reason: &str) {
+/// The session is over for this client (`net_disconnected`, whatever the reason), once. With
+/// `--exit-with-host` the game exits with `exit`: 0 when the host ended the session, not 0 when
+/// it was refused, sent away, lost the host or could not take its world.
+pub(crate) fn end(world: &mut World, client: &mut NetClient, reason: &str, exit: AppExit) {
+    if matches!(client.stage, ClientStage::Ended(_)) {
+        return;
+    }
     client.stage = ClientStage::Ended(reason.to_owned());
     NetMarks::mark(world, |m| &mut m.disconnected);
     world.get_resource_or_init::<SimGate>().hold("net", format!("net: {reason}"));
     set_state(world, NetState::Ended(reason.to_owned()));
     if world.get_resource::<EngineConfig>().is_some_and(|c| c.exit_with_host) {
-        world.write_message(AppExit::Success);
+        world.write_message(exit);
     }
 }
 
@@ -568,10 +580,12 @@ fn take_world(world: &mut World, client: &mut NetClient, welcome: Welcome, rebas
         Some(body) if carry => world.get::<Intent>(body).map(|i| i.pressed.clone()).unwrap_or_default(),
         _ => Vec::new(),
     };
+    // The restore sets the clock to the host's tick: what it was here is read first.
+    let before = sim::tick(world);
     if let Err(e) = snapshot::restore_releasing(world, &welcome.snapshot, "net") {
         journal::emit(world, JournalKind::Error, format!("net: cannot take the host's world: {e}"));
         client.send(&Msg::Bye { reason: format!("cannot take the world: {e}") });
-        end(world, client, &format!("cannot take the host's world: {e}"));
+        end(world, client, &format!("cannot take the host's world: {e}"), AppExit::error());
         return;
     }
     // Whose body is whose: this machine's keyboard, camera and agents drive its own.
@@ -597,7 +611,7 @@ fn take_world(world: &mut World, client: &mut NetClient, welcome: Welcome, rebas
     // the old world are told apart by the epoch (`rebases`), not by their ticks. When the
     // host's ticks did not move, the inputs sent after its tick still come, and this clock
     // does not go back (a frame stamped again would be a duplicate there).
-    let tick = if carry { (welcome.tick + lead).max(sim::tick(world)) } else { welcome.tick + lead };
+    let tick = if carry { (welcome.tick + lead).max(before) } else { welcome.tick + lead };
     sim::set_tick(world, tick);
     client.lead = lead;
     client.clock.reset(2 + jitter as i64);
@@ -612,7 +626,8 @@ fn take_world(world: &mut World, client: &mut NetClient, welcome: Welcome, rebas
     client.player = Some(welcome.player);
     client.body = welcome.body;
     if carry {
-        // The body as this machine holds it: the host has (or will get) every frame of it.
+        // The body as this machine holds it: the host has (or will get) every frame of it,
+        // and what the host changed itself (a region change stops its players) is sent again.
         if let Some(mut intent) = body.and_then(|b| world.get_mut::<Intent>(b)) {
             client.capture.hold(&mut intent);
             intent.pressed.extend(unsent);

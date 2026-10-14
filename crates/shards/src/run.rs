@@ -336,48 +336,14 @@ mod stand {
                 None => None,
             });
         }
-        // The stand owns time: every member is paused and ticks when it says.
-        let host_config = EngineConfig { paused: true, player_name: args.name.clone().unwrap_or_else(|| "host".into()), ..config.clone() };
-        let hub = MemoryHub::new(config.seed);
-        let mut host = build(&host_config);
-        // The host is the player at this machine: its settings are read as a game's of its own
-        // are (`--settings-dir`, `--no-settings`). The clients keep none (`SettingsStore::Off`).
-        if let Err(e) = shards_settings::install(&mut host, &host_config) {
-            eprintln!("error: {e}");
-            return ExitCode::from(2);
-        }
-        host.add_systems(First, termination::exit_when_signalled);
-        shards_net::stand::attach(&mut host, &hub, "host", None);
-        host.finish();
-        host.cleanup();
-        let mut apps = vec![("host".to_owned(), host)];
-        let mut client_links = Vec::new();
-        for n in 1..=clients {
-            let name = format!("c{n}");
-            let client_config = EngineConfig {
-                embedded: true,
-                headless: true,
-                paused: true,
-                port: ports[n as usize],
-                net: NetLaunch::Join { addr: "host".into() },
-                player_name: name.clone(),
-                settings: SettingsStore::Off,
-                character_slot: None,
-                world_slot: None,
-                ..config.clone()
-            };
-            let mut app = build(&client_config);
-            let id = shards_net::stand::attach(&mut app, &hub, &name, Some(0));
-            client_links.push(hub.connect_both(0, id, links));
-            app.finish();
-            app.cleanup();
-            apps.push((name, app));
-        }
-        let mut stand = Stand::new(hub, apps);
-        for (i, link) in client_links.into_iter().enumerate() {
-            stand.members[i + 1].link = Some(link);
-        }
-        stand.load_timeout = Duration::from_secs(120);
+        let host_name = args.name.clone().unwrap_or_else(|| "host".into());
+        let mut stand = match members(build, &config, &host_name, links, &ports) {
+            Ok(stand) => stand,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::from(2);
+            }
+        };
         if let Err(e) = stand.settle() {
             eprintln!("error: {e}");
             return ExitCode::from(1);
@@ -419,6 +385,57 @@ mod stand {
         let exit = stand.shut_down(SHUTDOWN_MS);
         drop(files);
         exit_code(exit)
+    }
+
+    /// The stand's apps, built and attached to one hub, not loaded yet: the host (`host_name`)
+    /// and a client per further entry of `ports` (their BRP ports).
+    pub(super) fn members(
+        build: &impl Fn(&EngineConfig) -> App,
+        config: &EngineConfig,
+        host_name: &str,
+        links: LinkConditions,
+        ports: &[Option<u16>],
+    ) -> Result<Stand, String> {
+        // The stand owns time: every member is paused and ticks when it says.
+        let host_config = EngineConfig { paused: true, player_name: host_name.to_owned(), port: ports[0], ..config.clone() };
+        let hub = MemoryHub::new(config.seed);
+        let mut host = build(&host_config);
+        // The host is the player at this machine: its settings are read as a game's of its own
+        // are (`--settings-dir`, `--no-settings`). The clients keep none (`SettingsStore::Off`).
+        shards_settings::install(&mut host, &host_config)?;
+        host.add_systems(First, termination::exit_when_signalled);
+        shards_net::stand::attach(&mut host, &hub, "host", None);
+        host.finish();
+        host.cleanup();
+        let mut apps = vec![("host".to_owned(), host)];
+        let mut client_links = Vec::new();
+        for (n, port) in ports.iter().enumerate().skip(1) {
+            let name = format!("c{n}");
+            let client_config = EngineConfig {
+                embedded: true,
+                headless: true,
+                paused: true,
+                port: *port,
+                net: NetLaunch::Join { addr: "host".into() },
+                player_name: name.clone(),
+                settings: SettingsStore::Off,
+                character_slot: None,
+                world_slot: None,
+                ..config.clone()
+            };
+            let mut app = build(&client_config);
+            let id = shards_net::stand::attach(&mut app, &hub, &name, Some(0));
+            client_links.push(hub.connect_both(0, id, links));
+            app.finish();
+            app.cleanup();
+            apps.push((name, app));
+        }
+        let mut stand = Stand::new(hub, apps);
+        for (i, link) in client_links.into_iter().enumerate() {
+            stand.members[i + 1].link = Some(link);
+        }
+        stand.load_timeout = Duration::from_secs(120);
+        Ok(stand)
     }
 
     #[cfg(feature = "remote")]
@@ -925,6 +942,23 @@ mod tests {
         assert_eq!((join.save_dir.as_str(), join.settings), ("my_saves", SettingsStore::Off));
         let dir = parse(&["game", "--settings-dir", "/tmp/s"]).unwrap().config();
         assert_eq!(dir.settings, SettingsStore::Dir("/tmp/s".into()));
+    }
+
+    #[test]
+    fn a_stands_host_reads_the_players_settings_and_its_clients_keep_none() {
+        let dir = std::env::temp_dir().join(format!("shards_stand_settings_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config = EngineConfig {
+            net: NetLaunch::Stand { clients: 1, udp: false },
+            settings: SettingsStore::Dir(dir.to_string_lossy().into_owned()),
+            ..testing::config()
+        };
+        let stand = stand::members(&game, &config, "host", shards_net::LinkConditions::NONE, &[None, None]).unwrap();
+        let file = |member: usize| stand.world(member).get_resource::<shards_settings::SettingsStorage>().map(|s| s.file.clone());
+        assert_eq!(file(0), Some(Some(dir.join("settings.toml"))), "the host's settings live in --settings-dir");
+        assert_eq!(file(1), None, "a client of the stand keeps none");
+        drop(stand);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

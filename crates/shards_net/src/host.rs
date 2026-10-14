@@ -16,11 +16,11 @@ use shards_content::ContentDb;
 use shards_core::{player_body, Intent, PlayerId};
 
 use crate::def::{net_def, NetDef};
-use crate::hooks::{hooks, JoinDecision, JoinRequest, NetLeft};
+use crate::hooks::{hooks, JoinDecision, JoinRequest, NetLeft, NetSeat};
 use crate::inputs::InputQueue;
 use crate::link::{Delivered, Link, Role, SendError, Verdict};
 use crate::msg::{self, Accept, CallMsg, Hello, Inputs, Msg, Welcome, PROTO};
-use crate::replicate::{base_view, build_delta, close_view, DeltaInput, EncodeCache, Encoded, Fnv, SentView, ACK_PATIENCE, SENT_KEPT};
+use crate::replicate::{base_view, build_delta, close_view, DeltaInput, EncodeCache, Encoded, Fnv, SentView, ACK_PATIENCE, CLOSURE_CAP, SENT_KEPT};
 use crate::session::{NetEndpoint, NetGame, NetMarks, NetState, Ticked, NET_AGENT};
 use crate::transport::PeerId;
 use crate::wire;
@@ -49,6 +49,14 @@ pub const MAX_CHARACTER_BYTES: usize = 64 * 1024;
 
 /// Longest peer text (a desync's first difference, a version string) put into the journal.
 pub const MAX_PEER_TEXT: usize = 200;
+
+/// Largest message a peer that does not play yet is read, in bytes: a `Hello` with the
+/// largest character. A larger one is refused unread.
+pub const MAX_JOINING_MESSAGE: usize = MAX_CHARACTER_BYTES + 16 * 1024;
+
+/// Largest reliable message a player is read, in bytes (a call and its arguments, a desync
+/// report). A larger one is dropped unread.
+pub const MAX_PLAYER_MESSAGE: usize = 1 << 20;
 
 /// Where a peer is in the session.
 #[derive(Clone, Debug, PartialEq)]
@@ -108,6 +116,13 @@ pub struct Peer {
     /// The host tick of the newest desync report taken, and of the last resync one caused.
     last_desync: Option<u64>,
     desync_resync_at: Option<u64>,
+    /// The host's ticks moved (a snapshot load) since this peer last got the world: what it
+    /// has on its way is of the old ticks, and the world it gets next starts its inputs over.
+    ticks_moved: bool,
+    /// Messages its link would not take (it has too much unacknowledged), and how many of
+    /// them the link watch has said.
+    pub unsent: u64,
+    unsent_said: u64,
 }
 
 impl Peer {
@@ -141,14 +156,22 @@ impl Peer {
             calls_queued: 0,
             last_desync: None,
             desync_resync_at: None,
+            ticks_moved: false,
+            unsent: 0,
+            unsent_said: 0,
         }
     }
 
-    /// Queues `message`; the link refuses it when the peer has not acknowledged too much.
+    /// Queues `message`; the link refuses it when the peer has not acknowledged too much
+    /// (counted: the link watch says so at most once a second).
     fn send(&mut self, message: &Msg) -> Result<(), SendError> {
-        let sent = self.link.send_reliable(&msg::encode(message));
-        if let Err(e) = &sent {
-            warn!("net: cannot send to peer {}: {e}", self.id);
+        self.send_bytes(&msg::encode(message))
+    }
+
+    fn send_bytes(&mut self, bytes: &[u8]) -> Result<(), SendError> {
+        let sent = self.link.send_reliable(bytes);
+        if sent.is_err() {
+            self.unsent += 1;
         }
         sent
     }
@@ -196,10 +219,12 @@ pub struct NetHost {
     issued: u64,
     /// The endpoint runs on a wall clock (UDP): tokens are random, not derived.
     wall_clock: bool,
-    /// The host tick of the last send: a rebase at an earlier tick moved time back.
+    /// The host tick the last send saw: a tick that is neither it nor the next moved time.
     last_tick: u64,
     /// Components already said to be left out of the state (they do not read back).
     left_out_said: BTreeSet<String>,
+    /// Bytes of the last world sent again: a link with less room waits without a capture.
+    rebase_bytes: usize,
 }
 
 impl NetHost {
@@ -219,6 +244,7 @@ impl NetHost {
             wall_clock: false,
             last_tick: 0,
             left_out_said: BTreeSet::new(),
+            rebase_bytes: 0,
         }
     }
 
@@ -367,6 +393,10 @@ pub(crate) fn apply_inputs(world: &mut World) {
         if peer.body != now {
             if let Some(now) = now {
                 peer.rebase.get_or_insert_with(|| format!("a new body e{now}"));
+                // The session holds it for the player, as it held the old one.
+                if let Some(entity) = world.resource::<AiIndex>().get(AiId(now)) {
+                    world.entity_mut(entity).insert(NetSeat);
+                }
             }
             peer.body = now;
         }
@@ -395,7 +425,6 @@ pub(crate) fn send(world: &mut World) {
         send_state(world, host);
         watch_links(world, host);
         flush(host, endpoint);
-        host.last_tick = sim::tick(world);
     });
 }
 
@@ -407,7 +436,6 @@ pub(crate) fn pump(world: &mut World) {
         send_journal(world, host);
         send_rebases(world, host);
         flush(host, endpoint);
-        host.last_tick = sim::tick(world);
     });
 }
 
@@ -426,7 +454,8 @@ pub(crate) fn on_exit(world: &mut World) {
 }
 
 /// Ends the session, once (`net_end`, then the host quitting, end it once): the game saves
-/// the world, characters go to their players, `SessionEnd` to everyone, a last flush.
+/// the world, characters go to their players with `SessionEnd`, and the players leave (their
+/// bodies wait, as a leaver's do). Anyone still joining is refused. A last flush.
 pub fn end_session(world: &mut World, reason: &str) {
     if world.get_resource::<NetHost>().is_none_or(|h| h.ended.is_some()) {
         return;
@@ -436,15 +465,30 @@ pub fn end_session(world: &mut World, reason: &str) {
     with_host(world, |world, host, endpoint| {
         let tick = sim::tick(world);
         let capture = hooks(world).capture_character;
-        for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Connected) {
-            if let Some(body) = peer.body.and_then(|id| world.resource::<AiIndex>().get(AiId(id)))
-                && let Some(sections) = capture(world, body)
-            {
-                let _ = peer.send(&Msg::CharacterSave { tick, reason: "session ended".into(), sections });
+        let mut leaving = Vec::new();
+        for peer in host.peers.values_mut() {
+            match peer.stage {
+                PeerStage::Gone => continue,
+                PeerStage::Connected => {
+                    if let Some(body) = peer.body.and_then(|id| world.resource::<AiIndex>().get(AiId(id)))
+                        && let Some(sections) = capture(world, body)
+                    {
+                        let _ = peer.send(&Msg::CharacterSave { tick, reason: "session ended".into(), sections });
+                    }
+                    let _ = peer.send(&Msg::SessionEnd { reason: reason.to_owned(), saved_slot: None });
+                    leaving.push((peer.player, peer.id));
+                }
+                _ => {
+                    let _ = peer.send(&Msg::Refused { reason: format!("the session has ended ({reason})") });
+                }
             }
-            let _ = peer.send(&Msg::SessionEnd { reason: reason.to_owned(), saved_slot: None });
+            peer.stage = PeerStage::Gone;
         }
         host.ended = Some(reason.to_owned());
+        // Their characters went with `SessionEnd`: they leave without another.
+        for (player, peer) in leaving {
+            leave(world, host, player, peer, "session ended", false);
+        }
         flush(host, endpoint);
         // Over UDP, give the datagrams half a second to get out and be acknowledged.
         if endpoint.clock.is_wall() {
@@ -481,7 +525,9 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
     endpoint.transport.recv(now, &mut datagrams);
     for (from, bytes) in datagrams {
         if !host.peers.contains_key(&from) {
-            if host.ended.is_some() {
+            // A game that ended (kicked, timed out, this host's previous process) keeps acking
+            // for a while: only a message makes a new peer.
+            if host.ended.is_some() || !wire::carries_messages(&bytes) {
                 continue;
             }
             let Some(session) = wire::peek_session(&bytes) else { continue };
@@ -495,17 +541,34 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
     let ids: Vec<PeerId> = host.peers.keys().copied().collect();
     for id in ids {
         let delivered = host.peers.get_mut(&id).map(|p| p.link.poll(now)).unwrap_or_default();
-        for message in delivered {
+        // Every packet repeats the frames not acknowledged: the newest holds the rest.
+        let newest_inputs = delivered.iter().rposition(|m| matches!(m, Delivered::Unreliable(_)));
+        for (i, message) in delivered.into_iter().enumerate() {
+            let Some(playing) = host.peers.get(&id).map(|p| p.stage == PeerStage::Connected) else { break };
+            if matches!(message, Delivered::Unreliable(_)) && Some(i) != newest_inputs {
+                continue;
+            }
+            // Sizes first: nothing larger than an honest client sends is decoded.
             match message {
-                Delivered::Reliable(bytes) => match msg::decode::<Msg>(&bytes) {
-                    Ok(m) => on_message(world, host, id, m),
-                    Err(e) => crate::hooks::net_line(world, "undecodable", JournalKind::Warn, format!("peer {id}: {e}")),
-                },
+                Delivered::Reliable(bytes) => {
+                    let max = if playing { MAX_PLAYER_MESSAGE } else { MAX_JOINING_MESSAGE };
+                    if bytes.len() > max {
+                        oversized(world, host, id, bytes.len(), max);
+                        continue;
+                    }
+                    match msg::decode::<Msg>(&bytes) {
+                        Ok(m) => on_message(world, host, id, m),
+                        Err(e) => undecodable(world, id, &e),
+                    }
+                }
                 // Only a player sends inputs: anyone else's are not even read.
-                Delivered::Unreliable(_) if host.peers.get(&id).is_none_or(|p| p.stage != PeerStage::Connected) => {}
+                Delivered::Unreliable(_) if !playing => {}
+                Delivered::Unreliable(bytes) if bytes.len() > crate::inputs::MAX_INPUTS_BYTES => {
+                    oversized(world, host, id, bytes.len(), crate::inputs::MAX_INPUTS_BYTES);
+                }
                 Delivered::Unreliable(bytes) => match msg::decode::<Inputs>(&bytes) {
                     Ok(inputs) => on_inputs(world, host, id, inputs),
-                    Err(e) => crate::hooks::net_line(world, "undecodable", JournalKind::Warn, format!("peer {id}: {e}")),
+                    Err(e) => undecodable(world, id, &e),
                 },
             }
         }
@@ -528,6 +591,26 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
     }
 }
 
+/// A message over what an honest client sends: a player's is dropped, anyone else is
+/// refused (and told the limit).
+fn oversized(world: &mut World, host: &mut NetHost, id: PeerId, len: usize, max: usize) {
+    let Some(peer) = host.peers.get(&id) else { return };
+    let (kb, max_kb) = (len.div_ceil(1024), max / 1024);
+    match peer.stage {
+        PeerStage::Connected => {
+            let player = peer.player;
+            crate::hooks::net_line(world, &format!("oversized p{player}"), JournalKind::Warn, format!("p{player} sent a message of {kb} KB, over {max_kb} KB: dropped unread"));
+        }
+        PeerStage::Gone => {}
+        _ => refuse(world, host, id, &format!("a message of {kb} KB before you play is over the {max_kb} KB the host reads (a character takes at most {} KB)", MAX_CHARACTER_BYTES / 1024)),
+    }
+}
+
+/// A message that does not decode: the error quotes the peer's text, so it is clipped.
+fn undecodable(world: &mut World, id: PeerId, error: &str) {
+    crate::hooks::net_line(world, "undecodable", JournalKind::Warn, format!("peer {id}: {}", clip(error, MAX_PEER_TEXT)));
+}
+
 fn on_message(world: &mut World, host: &mut NetHost, id: PeerId, message: Msg) {
     match message {
         Msg::Hello(hello) => on_hello(world, host, id, hello),
@@ -542,7 +625,9 @@ fn on_message(world: &mut World, host: &mut NetHost, id: PeerId, message: Msg) {
         Msg::Bye { reason } => {
             let Some(peer) = host.peers.get_mut(&id) else { return };
             if peer.stage == PeerStage::Connected {
-                host.tasks.push(Task::Leave { player: peer.player, peer: id, reason: if reason.is_empty() { "quit".into() } else { reason } });
+                // The peer's words go into the journal, to every guest and into the replay.
+                let reason = if reason.is_empty() { "quit".into() } else { clip(&reason, MAX_PEER_TEXT) };
+                host.tasks.push(Task::Leave { player: peer.player, peer: id, reason });
             }
             peer.stage = PeerStage::Gone;
         }
@@ -770,7 +855,7 @@ fn run_tasks(world: &mut World, host: &mut NetHost) {
     for task in std::mem::take(&mut host.tasks) {
         match task {
             Task::Admit(id) => admit(world, host, id),
-            Task::Leave { player, peer, reason } => leave(world, host, player, peer, &reason),
+            Task::Leave { player, peer, reason } => leave(world, host, player, peer, &reason, true),
             Task::Call { peer, call } => forwarded(world, host, peer, call),
         }
     }
@@ -782,9 +867,10 @@ fn run_tasks(world: &mut World, host: &mut NetHost) {
 /// After the world was rebuilt (a snapshot load, a region change): every connected player has
 /// a body in it, and no other player of the session's plays on. A snapshot from before a
 /// player joined has none for them: they join again (recorded). One from after a player left
-/// has their body without `NetLeft`: it leaves again, and waits for their rejoin. A body the
-/// host joined itself (`player_join` without a peer: co-op on this machine) is no peer's
-/// and stays.
+/// (or one of another host process's session) has their body without `NetLeft`: it leaves
+/// again, and waits for their rejoin. Which bodies are the session's says the world itself
+/// ([`NetSeat`]), not the slots: a body the host joined itself (`player_join` without a peer:
+/// co-op on this machine) is no peer's and stays, whichever number a guest held before.
 fn reconcile_players(world: &mut World, host: &mut NetHost) {
     let connected: BTreeMap<u8, PeerId> = host.peers.iter().filter(|(_, p)| p.stage == PeerStage::Connected).map(|(id, p)| (p.player, *id)).collect();
     for (&player, id) in &connected {
@@ -803,8 +889,8 @@ fn reconcile_players(world: &mut World, host: &mut NetHost) {
         }
     }
     let others: BTreeSet<u8> = {
-        let mut q = world.query_filtered::<&PlayerId, Without<NetLeft>>();
-        q.iter(world).map(|p| p.0).filter(|n| *n != 0 && !connected.contains_key(n) && host.slots.contains_key(n)).collect()
+        let mut q = world.query_filtered::<&PlayerId, (With<NetSeat>, Without<NetLeft>)>();
+        q.iter(world).map(|p| p.0).filter(|n| *n != 0 && !connected.contains_key(n)).collect()
     };
     for player in others {
         let out = call_tool(world, NET_AGENT, "player_leave", json!({ "player": player, "reason": "not in the session" }));
@@ -865,6 +951,7 @@ fn admit(world: &mut World, host: &mut NetHost, id: PeerId) {
     peer.stage = PeerStage::Connected;
     peer.body = body;
     peer.joined_at = tick;
+    peer.ticks_moved = false;
     reset_view(peer);
     if let Some(slot) = host.slots.get_mut(&player) {
         slot.peer = Some(id);
@@ -894,10 +981,13 @@ fn welcome(world: &World, player: u8, body: Option<u32>, reason: &str) -> Result
     })
 }
 
-fn leave(world: &mut World, host: &mut NetHost, player: u8, peer: PeerId, reason: &str) {
+/// A player leaves: their character goes to them (unless `send_character` is false: it went
+/// already), their body waits for a rejoin, their slot is free.
+fn leave(world: &mut World, host: &mut NetHost, player: u8, peer: PeerId, reason: &str, send_character: bool) {
     let tick = sim::tick(world);
     if let Some(body) = player_body(world, player).and_then(|id| world.resource::<AiIndex>().get(id)) {
-        if let Some(sections) = (hooks(world).capture_character)(world, body)
+        if send_character
+            && let Some(sections) = (hooks(world).capture_character)(world, body)
             && let Some(peer) = host.peers.get_mut(&peer)
         {
             let _ = peer.send(&Msg::CharacterSave { tick, reason: reason.to_owned(), sections });
@@ -909,7 +999,9 @@ fn leave(world: &mut World, host: &mut NetHost, player: u8, peer: PeerId, reason
             }
         }
     }
-    if let Some(slot) = host.slots.get_mut(&player) {
+    // The slot is free only if this link still held it: a second game with the player's token
+    // took it over already.
+    if let Some(slot) = host.slots.get_mut(&player).filter(|s| s.peer == Some(peer)) {
         slot.peer = None;
         slot.left_at = Some(tick);
     }
@@ -1006,21 +1098,28 @@ fn send_journal(world: &mut World, host: &mut NetHost) {
 }
 
 fn send_rebases(world: &mut World, host: &mut NetHost) {
+    let tick = sim::tick(world);
+    // Not this tick again nor the next: time moved (a snapshot load). Every peer's inputs on
+    // their way are of the old ticks until it gets the world again, however long that waits
+    // (a full link, a loading gate) while the new ticks run on.
+    if !(host.last_tick..=host.last_tick + 1).contains(&tick) {
+        for peer in host.peers.values_mut() {
+            peer.ticks_moved = true;
+        }
+    }
+    host.last_tick = tick;
     if world.get_resource::<SimGate>().is_some_and(SimGate::is_held) {
         return;
     }
-    let tick = sim::tick(world);
-    // The host's ticks went on as they were (a resync, a new body, a region change), not back
-    // or ahead (a snapshot load): inputs on their way are still good.
-    let carry = (host.last_tick..=host.last_tick + 1).contains(&tick);
     let mut captured: Option<Result<ai_core::Snapshot, String>> = None;
     let mut sent = Vec::new();
     let mut waiting = Vec::new();
     let mut desync = false;
     for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Connected && p.rebase.is_some()) {
-        // Its link refuses more now: the world waits, and the peer keeps its epoch (as its
-        // client does) until it goes.
-        if peer.link.footprint().reliable_out >= peer.link.config().max_reliable_messages {
+        // Its link would refuse the world now (by count or by bytes, as large as the last
+        // one sent): it waits, uncaptured, and the peer keeps its epoch (as its client does)
+        // until it goes.
+        if !rebase_fits(&peer.link.footprint(), peer.link.config(), host.rebase_bytes) {
             waiting.push((peer.player, "its link has too much unacknowledged".to_owned()));
             continue;
         }
@@ -1029,6 +1128,9 @@ fn send_rebases(world: &mut World, host: &mut NetHost) {
         let reason = peer.rebase.clone().unwrap_or_default();
         // The player's body in this world, or none: never an id of the old world.
         let body = live_body(world, peer.player);
+        // The host's ticks went on as they were (a resync, a new body, a region change):
+        // inputs on their way are still good.
+        let carry = !peer.ticks_moved;
         let welcome = Msg::Rebase(Welcome {
             player: peer.player,
             body,
@@ -1038,8 +1140,10 @@ fn send_rebases(world: &mut World, host: &mut NetHost) {
             region: (hooks(world).describe_world)(world),
             carry_inputs: carry,
         });
-        let kb = msg::encode(&welcome).len() as f64 / 1024.0;
-        if let Err(e) = peer.send(&welcome) {
+        let bytes = msg::encode(&welcome);
+        host.rebase_bytes = bytes.len();
+        let kb = bytes.len() as f64 / 1024.0;
+        if let Err(e) = peer.send_bytes(&bytes) {
             waiting.push((peer.player, e.to_string()));
             continue;
         }
@@ -1048,6 +1152,7 @@ fn send_rebases(world: &mut World, host: &mut NetHost) {
         peer.rebase = None;
         peer.body = body;
         peer.resyncs += 1;
+        peer.ticks_moved = false;
         reset_view(peer);
         if !carry {
             // Its inputs start over on the new world's ticks: what it sent before is of
@@ -1056,6 +1161,10 @@ fn send_rebases(world: &mut World, host: &mut NetHost) {
             peer.accept_from_epoch = peer.resyncs;
             peer.margin = None;
             peer.applied_input_tick = 0;
+            peer.watched.0 = 0;
+            // So do its desync reports, and the cooldown of the resyncs they cause.
+            peer.last_desync = None;
+            peer.desync_resync_at = None;
         }
     }
     if desync {
@@ -1073,8 +1182,13 @@ fn send_rebases(world: &mut World, host: &mut NetHost) {
     }
 }
 
-/// Once a second: a peer's loss over 5 %, its RTT jumping, its inputs coming late (journal,
-/// rate-limited).
+/// Whether a link with `footprint` takes a message of `bytes` now (as `send_reliable` would).
+pub(crate) fn rebase_fits(footprint: &crate::link::Footprint, config: &crate::link::LinkConfig, bytes: usize) -> bool {
+    footprint.reliable_out < config.max_reliable_messages && footprint.reliable_out_bytes + bytes <= config.max_reliable_bytes
+}
+
+/// Once a second: a peer's loss over 5 %, its RTT jumping, its inputs coming late, messages
+/// its link would not take (journal, rate-limited).
 fn watch_links(world: &mut World, host: &mut NetHost) {
     let hz = (1.0 / sim::tick_seconds(world).max(1e-6)).round() as u64;
     if !sim::tick(world).is_multiple_of(hz.max(1)) {
@@ -1093,6 +1207,11 @@ fn watch_links(world: &mut World, host: &mut NetHost) {
         }
         if peer.inputs.late > late {
             lines.push((format!("late p{p}"), JournalKind::Warn, format!("p{p}: {} inputs came late in the last second", peer.inputs.late - late)));
+        }
+        if peer.unsent > peer.unsent_said {
+            let n = peer.unsent - peer.unsent_said;
+            lines.push((format!("unsent p{p}"), JournalKind::Warn, format!("p{p}: {n} messages not sent in the last second (its link has too much unacknowledged)")));
+            peer.unsent_said = peer.unsent;
         }
         peer.watched = (peer.inputs.late, stats.srtt_ms);
     }
@@ -1138,10 +1257,18 @@ fn send_state(world: &mut World, host: &mut NetHost) {
     // infinity) is left out for every client, as a snapshot leaves it out.
     let shared = &*world;
     let encoder = StateEncoder::new(shared, ai_core::state::StateRule::Replicated);
+    let mut capped_first = Vec::new();
+    let mut unsent_states = Vec::new();
     for (id, center, mut view) in views {
         let peer = host.peers.get_mut(&id).expect("listed above");
-        if close_view(shared, &encoder, &mut host.cache, &mut encoded, &mut view) {
+        // A capped view names entities the client does not get: its copy cannot hash as the
+        // host's, so it is not checked (as a view held back is not).
+        let capped = close_view(shared, &encoder, &mut host.cache, &mut encoded, &mut view);
+        if capped {
             peer.closure_capped += 1;
+            if peer.closure_capped == 1 {
+                capped_first.push(peer.player);
+            }
         }
         // The newest acknowledged view, unless the client has been quiet too long.
         let baseline = peer
@@ -1155,7 +1282,7 @@ fn send_state(world: &mut World, host: &mut NetHost) {
             baseline: baseline.as_ref().map(|(t, s)| (*t, &**s)),
             own: peer.body.map(|b| (b, &predicted)),
             applied_input_tick: peer.applied_input_tick,
-            with_hash,
+            with_hash: with_hash && !capped,
             cap_bytes: def.delta_cap_kb as usize * 1024,
             center,
         });
@@ -1166,7 +1293,7 @@ fn send_state(world: &mut World, host: &mut NetHost) {
         delta.epoch = peer.resyncs;
         let bytes = msg::encode(&delta);
         if let Err(e) = peer.link.send_unreliable(&bytes) {
-            warn!("net: state for p{} not sent: {e}", peer.player);
+            unsent_states.push((peer.player, e.to_string()));
         }
         peer.deltas += 1;
         peer.delta_bytes += built.bytes as u64;
@@ -1185,6 +1312,16 @@ fn send_state(world: &mut World, host: &mut NetHost) {
     let us = started.elapsed().as_micros() as u64;
     host.encode_us = (us, host.encode_us.1.max(us));
     host.encode_total = (host.encode_total.0 + us, host.encode_total.1 + 1);
+    for (player, why) in unsent_states {
+        crate::hooks::net_line(world, &format!("state p{player}"), JournalKind::Warn, format!("state for p{player} not sent: {why}"));
+    }
+    for player in capped_first {
+        journal::emit(
+            world,
+            JournalKind::Warn,
+            format!("net: p{player}'s view names over {CLOSURE_CAP} entities beyond it: they are not sent, and its copy is not checked for desyncs while that lasts"),
+        );
+    }
     for (path, (id, why)) in encoded.left_out {
         if host.left_out_said.insert(path.clone()) {
             let short = path.rsplit("::").next().unwrap_or(&path);
@@ -1215,7 +1352,21 @@ fn flush(host: &mut NetHost, endpoint: &mut NetEndpoint) {
 
 #[cfg(test)]
 mod tests {
-    use super::{rtt_jump, NetHost, Slot};
+    use super::{rebase_fits, rtt_jump, NetHost, Slot};
+    use crate::link::{Footprint, LinkConfig};
+
+    #[test]
+    fn a_world_waits_for_room_by_count_and_by_bytes() {
+        let config = LinkConfig::default();
+        let empty = Footprint::default();
+        assert!(rebase_fits(&empty, &config, 2 << 20));
+        let full = Footprint { reliable_out: config.max_reliable_messages, ..Footprint::default() };
+        assert!(!rebase_fits(&full, &config, 1));
+        // Few messages, but worlds the peer has not acknowledged: full by bytes.
+        let heavy = Footprint { reliable_out: 3, reliable_out_bytes: config.max_reliable_bytes - (1 << 20), ..Footprint::default() };
+        assert!(!rebase_fits(&heavy, &config, 2 << 20));
+        assert!(rebase_fits(&heavy, &config, 1 << 20));
+    }
 
     #[test]
     fn an_rtt_jump_is_half_again_and_50_ms() {
