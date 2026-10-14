@@ -39,6 +39,7 @@ cargo shards save-replay           # сессия с тика 0 → replays/tick
 # 4. Проиграть реплей (seed и частота тиков берутся из файла):
 cargo sandbox --replay replays/tick332.json
 cargo sandbox --replay replays/tick332.json --verify   # без окна; код 0 — игра совпала с записью
+xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify --windowed  # то же в окне
 ```
 
 **Rust** ставится через rustup, он добавляет `~/.cargo/bin` в PATH. В уже открытых
@@ -55,11 +56,13 @@ source ~/.local/share/rustengine-sysdeps/env.sh
 Этот путь нужен потому, что `bevy_remote` тянет цепочку `bevy_dev_tools` → `bevy_audio` → `alsa-sys`,
 а `alsa-sys` ищет `alsa.pc` через pkg-config. После `apt install` он не нужен.
 
-Управление в окне: WASD или стрелки — ходить, Space — уворот, J или ЛКМ — удар,
-P — пауза, N или `.` — один тик на паузе, F1 — оверлей с id, R — вылечить/воскресить,
-F12 — снимок с метками в `shots/`.
+Управление в окне — карта ввода движка (`InputMap::standard`, переназначается инструментом `rebind`):
+WASD или стрелки — ходить, мышь — камера, Space — прыжок, Shift — спринт, F — планер, Ctrl — перекат,
+ЛКМ — лёгкий удар (комбо), ПКМ — тяжёлый, Q — блок (держать), C — фляга, Tab — захват цели; геймпад
+тоже. Клавиши разработчика: P — пауза, N или `.` — один тик на паузе, F1 — оверлей с id, F2 —
+вылечить/воскресить, F3 — коллайдеры, F12 — снимок с метками в `shots/`.
 Клавиатура человека и инструменты агента пишут в один и тот же `Intent`, и нажатия идут через
-тот же буфер ввода: уворот или удар, который не удалось начать за 0.2 с, виден в журнале как `rejected`.
+тот же буфер ввода: удар или перекат, который не удалось начать за 0.15 с, виден в журнале как `rejected`.
 
 ## Архитектура
 
@@ -80,7 +83,7 @@ ai_core:              Observe — срез мира текстом            (o
 | crate | что это |
 |---|---|
 | `crates/ai_core` | слой ИИ, не зависит от конкретной игры |
-| `crates/sandbox` | тестовая арена: игрок, 2 скелета, босс Frost Warden (2 фазы, телеграфируемые атаки) |
+| `crates/sandbox` | тестовая арена, собранная только на `shards`, как игра: арена (игрок, 2 скелета, босс Frost Warden с четырьмя атаками и двумя фазами) и полоса препятствий; мир, персонажи и числа — контент в `assets/content/` (см. «Песочница») |
 | `crates/shards_cli` | бинарник `shards`, тонкий клиент к `ai/*` |
 | `crates/shards_script` | без Bevy: формат сценариев, их запуск, разбор условий `--until`; общий для `shards` и тестов |
 
@@ -107,15 +110,16 @@ ai_core:              Observe — срез мира текстом            (o
 ## Что видит ИИ
 
 ```text
-tick 133 (2.22s) | paused | speed 1x | seed 42 | you e5
-YOU  e5 Player  hp 100/100  stam 60/80  at (0.0, 4.7) facing N
+tick 207 (3.45s) | paused | speed 1x | seed 42 | you e5
+YOU  e5 Player  hp 100/100  stam 100/100  poise 60/60  flask 3/3  at (0.0, 12.0) facing N
+ALERT in hit zone of e6 shockwave (lands in 0.50s): move 1.2m W to leave it
 SEEN (by threat)
-  e6 Boss "Frost Warden"  hp 4000/4000  phase 1  windup IceSlam 0.32s  5.8m N
-  e7 Skeleton  hp 40/40  4.6m W
-  e8 Skeleton  hp 40/40  6.3m NE
-LANDMARKS  e3 Pillar 7.4m W · e4 Pillar 7.4m E · e1 Pillar 13.6m NW · e2 Pillar 13.6m NE
+  e6 Boss "Frost Warden"  hp 600/600  poise 140/140  windup shockwave 0.50s (zone line 9m×1.6m)  phase 1  7.4m N
+  e7 Skeleton  ground 3.6m/s  hp 40/40  poise 20/20  4.5m NW
+  e8 Skeleton  hp 40/40  poise 20/20  18.4m NE
+LANDMARKS  e3 Pillar 8.6m NW · e4 Pillar 8.6m NE · e1 Pillar 20.2m N · e2 Pillar 20.2m N
 SINCE seq 0
-  93 e6 winds up IceSlam (1.00s)
+  207 e6 winds up shockwave (0.50s) ≈ line 9m×1.6m
 ```
 
 - Видимость считается только от субъекта («YOU»): луч от его глаз (`pos + EYE_HEIGHT`) к цели
@@ -156,8 +160,8 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 
 | scope | инструменты |
 |---|---|
-| **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, move_to, move, attack, dodge, stop |
-| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn, heal, shot, replay_save |
+| **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; движение: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; бой: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack |
+| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, shot, replay_save |
 
 У каждого инструмента есть вид (`kind` в `shards tools`):
 
@@ -174,20 +178,18 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
   `e7 no longer exists (Skeleton renumbered to e99 at tick 40)`,
   ``unknown component `Mana`; this entity has: Health, …``,
   `AiId is managed by the engine; despawn and spawn instead`.
-- **`dodge` и `attack` объясняют отказ.** Разовый вход (уворот, удар без цели) ждёт в буфере
-  `InputBuffer` до 0.2 с, пока персонаж не сможет действовать, а `Intent` остаётся чистым входом.
-  Инструмент сразу проверяет то же правило, что и игра (`combat::start_blocker`):
-  - можно сейчас — как раньше: `ok: dodging S`, `ok: swinging`;
-  - станет можно в пределах 0.2 с — `ok: queued, dodges in 0.12s (S)`, `ok: queued, swings in 0.10s`;
+- **Инструменты боя объясняют отказ.** Нажатие ждёт в буфере ввода (0.15 с), пока действие не станет
+  возможным, а `Intent` остаётся чистым входом. Инструмент сразу проверяет то же правило, что и машина
+  действий (`can_start`):
+  - можно сейчас — `ok: roll (W)`, `ok: light_1`;
+  - станет можно в пределах буфера — `ok: queued, dodge starts in 0.05s (S)`, `ok: queued, heavy starts in 0.10s`;
   - иначе ошибка с причиной и временем, а `Intent` не меняется:
-    `not enough stamina: 10/25 (ready in 1.0s)`,
-    `busy: windup Sword 0.80s (ready in 0.80s); a windup cannot be cancelled`.
+    `not enough stamina: 10/20 (ready in 0.2s)`,
+    `busy: windup heavy 0.50s (ready in 0.90s, when a cancel window opens)`.
 
-  Правила прежние: уворот из `Idle` или `Recover` (он отменяет восстановление), удар только из
-  `Idle`. Вход, записанный мимо инструментов (клавиатура, `Intent` напрямую), у которого вышло время,
-  попадает в журнал: `e5 dodge rejected: stamina 10/25`, `e5 attack rejected: busy (windup Sword 0.10s)`.
-  Ожидающий вход виден в строке сущности: `queued dodge 0.15s`. Это изменение геймплея: реплеи,
-  записанные до буфера, расходятся, их нужно записать заново.
+  Что чем отменяется, решает контент: замах лёгкого удара уступает перекату и блоку, тяжёлого — нет.
+  Вход, записанный мимо инструментов (клавиатура, `Intent` напрямую), у которого вышло время, попадает
+  в журнал: `e5 dodge rejected: stamina 7/20`. Ожидающий вход виден в строке сущности: `queued heavy 0.10s`.
 - **Паника в инструменте не роняет игру.** Агент получает ошибку, запись уходит в журнал,
   инструмент перерегистрируется при следующем вызове. Расписания тиков при этом на месте; если
   паника всё-таки унесла их (игра отключила перехват, `catch_system_panics: false`), ответ так и
@@ -229,8 +231,9 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
   проверяет, что сама проверка ловит такую систему.
 - Тесты подтверждают: один seed и одни вызовы дают побитово одинаковый мир и журнал;
   `step 300` даёт то же, что 5 × `step 60` с `observe` и кадрами рендера между ними.
-- Реплей, записанный в окне, совпадает при проигрывании без окна (проверено вручную под Xvfb):
-  рендер-сущности не сдвигают ни `AiId`, ни порядок геймплея.
+- Реплей одинаков с окном и без: `--verify --windowed` проигрывает его в окне (рендер, камера, карта
+  ввода, визуал игры работают) и даёт тот же отчёт, что и `--verify` без окна. Рендер-сущности не
+  сдвигают ни `AiId`, ни `ColliderId`, ни порядок геймплея.
 
 ## Реплеи
 
@@ -255,7 +258,15 @@ cargo sandbox --replay replays/tick332.json # окно, реальное вре�
 cargo sandbox --replay replays/tick332.json --headless --paused   # дальше шагами через shards step
 cargo sandbox --replay replays/tick332.json --verify
 # replay finished at tick 332: identical to the recording (6 checks) [332 ticks in 0.13s]
+xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify --windowed  # в окне, по 60 тиков на кадр
+# replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 2.03s, 21 frames]
 ```
+
+**Эталонные реплеи** лежат в `tests/replays/` (папка в git, в отличие от `replays/`): полоса
+препятствий и бой-прототип, сыгранные их сценариями на свежей игре. Тест песочницы проверяет каждый
+файл самой игрой (`sandbox --replay FILE --verify`), CI — ещё и в окне под Xvfb. Если геймплей
+поменялся намеренно, запишите их заново:
+`cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`.
 
 - Игровые данные определяет то же правило, что и в `inspect`: всё, кроме типов `bevy_*` и внутренних
   маркеров `ai_core`, плюс `Transform` и `Name`. Поэтому компоненты, которые добавляет только окно
@@ -348,12 +359,12 @@ assert!(report.passed, "{report}");   // отчёт — построчный ж�
 
 ```text
 $ shards scenario crates/sandbox/scenarios/boss_fight.scenario
-ok   10 seed 42 → seed 42
+ok    8 seed 42 → seed 42
 …
-ok   30 step 900 --until near:e5:e6:3 → ran 101 ticks (0 → 101), stopped: e5 within 3.0m of e6
-ok   31 expect stopped "within" → e5 within 3.0m of e6
+ok   39 step 900 --until near:e5:e6:3.2 → ran 129 ticks (150 → 279), stopped: e5 within 3.2m of e6
+ok   40 expect stopped "within" → e5 within 3.2m of e6
 …
-PASS crates/sandbox/scenarios/boss_fight.scenario (37 commands, 267 ticks)
+PASS crates/sandbox/scenarios/boss_fight.scenario (49 commands, 452 ticks)
 ```
 
 Код выхода: 0 — все прошли, 1 — сценарий не прошёл (`FAIL file:line: сообщение`), 2 — файл не читается или
@@ -459,39 +470,38 @@ SHARDS_PORT_FILE=/tmp/shards-a.port cargo shards step 600 --until named:player_d
 ```
 
 **Внутри игры** та же точка входа, что за BRP, — `ai_core::call_tool(world, agent, tool, args)`.
-Её вызывают тесты, реплеи и клавиши разработчика в окне (P, N, R, F12).
+Её вызывают тесты, реплеи и клавиши разработчика в окне (P, N, F2, F3, F12).
 
 ## Пример сеанса (реальный вывод)
 
 ```text
-$ shards act attack target=e6 repeat=true
-ok: attacking e6 until it dies
-CHANGES
-  ~ e5 Player: +order attack e6 (repeat)
 $ shards step --until journal:winds
-ran 93 ticks (0 → 93), stopped: journal: 93 e6 winds up IceSlam (1.00s)
+ran 207 ticks (0 → 207), stopped: journal: 207 e6 winds up shockwave (0.50s) ≈ line 9m×1.6m
 CHANGES
-  ~ e5 Player: moved 9.3m N
-  ~ e6 Boss "Frost Warden": +windup IceSlam 0.98s; moved 4.9m S
-  …
-$ shards act dodge away_from=e6
-ok: dodging S
+  ~ e6 Boss "Frost Warden": +windup shockwave 0.50s (zone line 9m×1.6m); moved 10.6m S
+  ~ e7 Skeleton: +ground 3.6m/s; moved 11.1m SE
+$ shards act dodge
+ok: roll (W)
 $ shards step 40
-ran 40 ticks (93 → 133)
+ran 40 ticks (207 → 247)
 CHANGES
-  ~ e5 Player: stam 80/80 → stam 60/80; moved 2.0m S
-  ~ e6 Boss "Frost Warden": windup IceSlam 0.98s → windup IceSlam 0.32s
+  ~ e5 Player: stam 100/100 → stam 88/100; moved 4.0m W
+  ~ e6 Boss "Frost Warden": windup shockwave 0.50s (zone line 9m×1.6m) → active shockwave 0.08s (zone line 9m×1.6m)
   …
-$ shards act dodge dir=W
-ok: dodging W
-$ shards step 3
-ran 3 ticks (133 → 136)
-$ shards act dodge dir=E
-error: busy: dodge 0.30s (ready in 0.30s)
-$ shards step 8
-ran 8 ticks (136 → 144)
-$ shards act dodge dir=E
-ok: queued, dodges in 0.17s (E)
+$ shards act attack target=e6 repeat=true
+ok: attacking e6 with light until it dies
+$ shards step --until journal:light_2
+ran 109 ticks (247 → 356), stopped: journal: 356 e5 -> e6 light_2 -22 (hp 558)
+CHANGES
+  ~ e5 Player: hp 100/100 → hp 92/100; stam 88/100 → stam 84/100; poise 60/60 → poise 50/60; …
+  ~ e6 Boss "Frost Warden": hp 600/600 → hp 558/600; poise 140/140 → poise 114/140; …
+JOURNAL
+  264 e7 -> e5 claw -8 (hp 92)
+  338 e5 -> e6 light_1 -20 (hp 580)
+$ shards act heavy_attack
+ok: queued, heavy starts in 0.10s
+$ shards act dodge dir=S
+ok: queued, dodge starts in 0.05s (S)
 ```
 
 ## Агенты
@@ -525,7 +535,8 @@ source ~/.local/share/rustengine-sysdeps/env.sh   # пока не установ
 cargo test --workspace
 ```
 
-Всего 120 тестов:
+Всего 380 тестов в `cargo test --workspace` (ещё 12 `#[ignore]`: примеры в документации и запись
+эталонных реплеев). Среди них:
 
 - 33 юнит-теста `ai_core`: id (в том числе перенумерация и занятый id), журнал, RNG,
   компас и LOS, схемы, шаги симуляции, пути снимков (только `shots/`, чужой `x.json` цел), формат
@@ -540,29 +551,31 @@ cargo test --workspace
 - 33 юнит-теста `shards_script` (без Bevy): парсер условий и аргументов, слова как в shell, разбор
   каждой команды и текст каждой ошибки, запуск на поддельной игре (ожидания, `mark`, инварианты,
   `session`, `seed`, потерянная игра), разбор текста журнала;
-- 2 теста `crates/sandbox/tests/scenario_files.rs`: каждый файл из `crates/sandbox/scenarios/` проходит на
-  свежей игре (`sandbox::test_app(42)`) и все подряд в одной игре, как их гонит `shards scenario`;
-- 2 теста `crates/sandbox/tests/shutdown.rs` (запускают саму игру): после `kill` (код 143)
-  и SIGHUP (код 129) нет ни токена, ни файла порта; под `nohup` SIGHUP игру не останавливает;
-- 14 сценариев `crates/sandbox/tests/scenarios.rs`:
-  - детерминизм и разные seed;
-  - одинаковый результат при пошаговом и цельном прогоне;
-  - полный порядок систем и контрольный тест к этой проверке;
-  - фаза 2 босса через `set` + `step until named:boss_phase_2`;
-  - подсказывающие ошибки;
-  - `AiId` нельзя переписать через `set`, а вставка нового id перенумеровывает сущность без дублей
-    в `observe`; игровой `AimAssist` виден в подсказке `set`;
-  - видимость следует за субъектом: босс за колонной `occluded` для игрока и виден после `possess`
-    скелета; с `fov_deg = 120` сущность за спиной в NOT IN VIEW; вывод `observe` с камерой окна
-    и без неё одинаков, если убрать `scr(...)`;
-  - права scope;
-  - паника в инструменте;
-- 5 сценариев `crates/sandbox/tests/actions.rs`: `dodge` без стамины — ошибка со словом `stamina`,
-  и через тик ничего не изменилось; `dodge` во время замаха — ошибка со словом `windup`; действие,
-  возможное через 0.1 с (стамина, замах, восстановление перед ударом), — `ok: queued` и начинается
-  не позже чем через 12 тиков; правила уворота и удара прежние; вход прямо в `Intent` без стамины
-  через 0.2 с даёт в журнале `dodge rejected`;
-- 6 тестов `crates/sandbox/tests/system_failures.rs` (свой процесс: очередь сбоев глобальная):
+- 53 теста песочницы в одном бинарнике `crates/sandbox/tests/sandbox/` (и `#[ignore]`-тест, который
+  записывает эталонные реплеи):
+  - `scenario_files` (3): каждый файл из `crates/sandbox/scenarios/` проходит на свежей игре
+    (`sandbox::test_app(42)`) и все подряд в одной игре, как их гонит `shards scenario`; бой-прототип
+    выигран после шести разных пауз перед ним;
+  - `reference_replays` (1): каждый `tests/replays/*.json` проверяется самой игрой (`--verify`);
+  - `actions` (10): перекат без выносливости — ошибка с временем, `Intent` не тронут; замах лёгкого удара
+    уступает перекату, тяжёлого — нет; комбо из трёх ударов; блок и идеальный блок (страж шатается);
+    i-frames переката; фляга и её заряды; просроченный вход в журнале; предупреждение стража за 0.50 с и
+    никаких двух «зон» подряд; фаза 2 со вторым мувсетом; тела скелетов исчезают, стража — остаётся;
+  - `content` (5): контент чист; мир спавнится по layout; правка числа меняет следующий удар и реплей
+    совпадает; правка layout перестраивает поток, ориентиры сохраняют id; префабы;
+  - `course` (4): прыжок с разбега не перелетает бассейн, прыжок с обрыва без планера — в каньон,
+    планер без потока не долетает, с потоком — садится на площадку цели;
+  - `scenarios` (14): детерминизм и разные seed, пошаговый и цельный прогон, полный порядок систем и
+    контроль этой проверки, фаза 2 по `set`, подсказывающие ошибки, `AiId` под управлением движка,
+    подсказки `set`, видимость (колонна-коллайдер закрывает босса, `possess`, конус обзора, камера окна),
+    права scope, паника в инструменте;
+  - `replays` (14): прежние проверки реплеев на новой игре (входы всех видов, расхождение на тике 60,
+    перехват, ветка, вложенные вызовы, свежий мир, файлы только в `replays/`, хэш игры, а не текста,
+    `shards-replay/1`, `replay_ignore`/`add_replay_check`, компоненты окна и `Entity` в хэше,
+    несериализуемый компонент);
+  - `shutdown` (2): после `kill` (код 143) и SIGHUP (код 129) нет ни токена, ни файла порта; под `nohup`
+    SIGHUP игру не останавливает;
+- 7 тестов `crates/sandbox/tests/system_failures.rs` (свой процесс: очередь сбоев глобальная):
   паника на тике 50 останавливает `step 100` на тике 50 с записью в журнале, следующий `step 10`
   доходит до тика 60 и `FixedMain`/`FixedUpdate` на месте, в реальном времени сбой ставит игру
   на паузу, краш-реплей воспроизводит сбой на том же тике, паника и упавшая команда инструмента —
@@ -570,22 +583,7 @@ cargo test --workspace
 - 4 теста `crates/sandbox/tests/log_capture.rs` (свой процесс: ставят глобальный логгер):
   предупреждение сохраняет свой тик внутри `step 100`, `step --until journal:` останавливается
   на нём, 100 строк за тик режутся до 64 и одной строки про 36 отброшенных, action возвращает
-  свои предупреждения;
-- 14 сценариев `crates/sandbox/tests/replays.rs`:
-  - сессия со всеми видами входов (dev-правки, инструменты игрока, клавиатура, spawn, possess,
-    вызов после последнего тика) проигрывается побитово одинаково, клавиши во время просмотра игнорируются;
-  - изменённая игра даёт отчёт с первым разошедшимся тиком;
-  - action-вызов во время проигрывания перехватывает управление;
-  - ветка после проигрывания сохраняется одним реплеем и тоже воспроизводится;
-  - вложенные вызовы пишутся один раз;
-  - проигрывание требует свежего мира с тем же seed;
-  - `replay_save` пишет файл, который читается обратно, и только внутрь `replays/`;
-  - проверка хэширует игру, а не текст: проигрывание с лишним describer совпадает;
-  - реплей `shards-replay/1` отклоняется с причиной;
-  - `replay_ignore` и `add_replay_check` меняют состав хэша, правка исключённого компонента
-    при проигрывании не даёт расхождения;
-  - компоненты окна не меняют хэш, `Entity` в компоненте хэшируется как `AiId`;
-  - несериализуемый компонент пропускается, а в журнале о нём одна строка.
+  свои предупреждения.
 
 Снимки требуют окна и GPU, поэтому в `cargo test` их нет. Без дисплея их можно проверить через
 Xvfb и программный Vulkan (`apt install xvfb mesa-vulkan-drivers libxkbcommon-x11-0`):
@@ -654,6 +652,54 @@ cargo shards observe; sleep 1; cargo shards observe
 `heavy_attack`, `block on=…`, `parry`, `dodge dir=…|away_from=…`, `use_technique slot=1`, `use_item
 item=flask`, `lock_on target=…|off=true`, `attack target=… input=… repeat=true`; разработчика: `god`, `heal`,
 `stagger`.
+
+## Песочница: арена и полоса препятствий
+
+Песочница (`crates/sandbox`) собрана только на `shards`, как игра. Своего кода в ней немного: мир по
+контенту, мозги монстров (пишут `Intent`, как клавиатура), фазы босса, останки, условия для `step`,
+визуал окна. Всё, что числа и определения, — контент в `crates/sandbox/assets/content/` с горячей
+перезагрузкой:
+
+| файл | что в нём |
+|---|---|
+| `world/arena.layout.ron` | арена 40×40 м: пол, стены, колонны, ворота на восток; кого и где спавнить |
+| `world/course.layout.ron` | полоса препятствий от x = 40: ступени, уступ 1.3 м, бассейн 10 м, пандус на обрыв 18 м над каньоном, площадка цели через 32 м пропасти, восходящий поток посередине |
+| `characters/characters.prefab.ron` | префабы `player`, `skeleton`, `skeleton_captain`, `frost_warden`, `pillar` |
+| `characters/bodies.locomotion.ron` | как ходят игрок, скелет и страж |
+| `combat/player.action.ron` | комбо `light_1`–`light_3`, `heavy`, перекат (i-frames 0.18 с), блок с идеальным блоком, фляга |
+| `combat/warden.action.ron` | четыре атаки стража (`slash`, `slam`, `sweep`, `shockwave`), спокойные и в ярости |
+| `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | коготь скелета, мувсеты, буфер ввода |
+
+`layout` — вид контента самой песочницы: коробки (`solids`), пандусы, объёмы (вода, поток, триггер),
+ориентиры для ИИ и префабы для спавна. Слои спавнятся по порядку id, внутри — по порядку списков, так
+что `AiId` и `ColliderId` одинаковы в каждом запуске: e1–e4 колонны, e5 игрок, e6 страж, e7–e8 скелеты,
+e9–e13 ориентиры полосы `Stairs`, `Ledge`, `Pool`, `Cliff`, `Goal`. Правка layout на лету перестраивает
+геометрию на следующем тике; ориентиры сохраняют id, персонажи остаются.
+
+**Бой — прототип из GDD 39.** У игрока комбо из трёх лёгких ударов через окна отмены, тяжёлый удар с
+гипербронёй на замахе, перекат, блок (держать; первые 0.15 с — идеальный блок, он и есть парирование:
+урона нет, атакующий шатается), фляга (45 HP, 3 заряда). Выносливость тратят удары, перекат, блок и
+спринт; стойкость есть у всех. Страж выбирает из своих атак те, что достают до цели (`SimRng`), и
+никогда не делает две «зоны» подряд (тег `zone` в контенте); между атаками отдыхает. Предупреждение
+(`e6 winds up slam (0.50s) ⚠ circle 4m`) приходит ровно за 0.50 с до удара. С половины здоровья — фаза 2:
+второй мувсет, короче замахи и отдых. Скелеты: один коготь, вздрагивают от ударов, их тела исчезают
+через 1.5 с; тело стража остаётся (dev `heal` его поднимает).
+
+**Полоса препятствий (E2).** Прыжок (1.2 м) не перепрыгивает ничего: уступ 1.3 м берётся
+перелезанием, бассейн 10 м — вплавь с выходом через `jump`, до площадки цели долетает только планер и
+только с подъёмом в потоке. Площадка — триггер: `e5 reached goal`.
+
+**Сценарии-эталоны** (`crates/sandbox/scenarios/`), агент со scope `player`; время двигает агент
+сценария:
+- `obstacle_course.scenario` — `path_to` и `clearance`, ступени, уступ, бассейн, пандус, планер через
+  поток, цель; инварианты: жив, ни разу не ниже старта;
+- `combat_prototype.scenario` — страж побеждён за 11 раундов. Каждый раунд читается по предупреждению
+  (`step --until "journal:e6 winds up"`), дальше перекат из зоны, блок, идеальный блок с тяжёлым ударом,
+  обмен ударами под гипербронёй, фляга, комбо. Тест прогоняет его после шести разных пауз (другие атаки
+  в другом порядке) — победа каждый раз;
+- `boss_fight`, `dodge`, `errors` — переход в фазу 2, перекат против попадания, ошибки, которые учат.
+
+Сессии двух первых записаны как эталонные реплеи в `tests/replays/` (см. «Реплеи»).
 
 ## Статус по плану внедрения
 
