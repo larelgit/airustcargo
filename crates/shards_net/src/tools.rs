@@ -267,7 +267,7 @@ fn net_end(In(call): In<Call<NetEndArgs>>, world: &mut World) -> ToolResult<Valu
     match world.get_resource::<NetHost>() {
         None => return Err("this game is not hosting".into()),
         Some(host) if host.ended.is_some() => {
-            return Err(format!("the session has ended already ({}); net_status shows it", host.ended.as_deref().unwrap_or_default()).into());
+            return Err(format!("the session has ended already ({}); net_status shows it", host.ended.as_deref().unwrap_or_default()));
         }
         Some(_) => {}
     }
