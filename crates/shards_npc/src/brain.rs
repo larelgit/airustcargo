@@ -27,6 +27,7 @@ use bevy::prelude::*;
 use shards_action::{ActionState, Dead, Health};
 use shards_content::ContentDb;
 use shards_core::flat;
+use shards_world::Dormant;
 
 use crate::def::{AttackPlanDef, BehaviorDef, Cond, DirectorDef, Params, PerceptionDef};
 use crate::director::{AttackToken, Grant};
@@ -386,15 +387,15 @@ impl NpcHooks {
 }
 
 /// Whether NPC `entity` thinks and moves this tick: a game's (or a module's) rule for
-/// dormant NPCs. The default: always.
-// SEAM(B1): shards_world's `ActiveZone`/`Dormant` markers plug in here
-// (`|w, e| w.get::<Dormant>(e).is_none()`), and `NpcSystems` order after its zone update.
+/// dormant NPCs. The default: unless the world module's active zones marked it
+/// [`Dormant`] (far from every player); `NpcSystems` run after the zones are updated
+/// (`WorldSystems::Zones`), so an NPC wakes the tick a player comes near.
 #[derive(Resource, Clone, Copy)]
 pub struct NpcActivity(pub fn(&World, Entity) -> bool);
 
 impl Default for NpcActivity {
     fn default() -> Self {
-        Self(|_, _| true)
+        Self(|world, entity| world.get::<Dormant>(entity).is_none())
     }
 }
 

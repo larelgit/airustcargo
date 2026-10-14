@@ -5,6 +5,7 @@ mod common;
 mod director;
 mod fsm;
 mod nav;
+mod navmesh;
 mod perception;
 mod replay;
 mod tools;
