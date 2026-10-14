@@ -8,6 +8,8 @@
 //! shards::testing::ok(&mut app, "step", json!({"ticks": 60}));
 //! ```
 
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use ai_core::replay::{self, Replay};
@@ -17,6 +19,7 @@ use bevy::prelude::*;
 use serde_json::Value;
 use shards_core::{EngineConfig, EngineState, NetLaunch, SettingsStore};
 use shards_net::{LinkConditions, MemoryHub, PeerId, Stand};
+use shards_save::SaveConfig;
 
 use crate::EnginePlugins;
 
@@ -47,6 +50,30 @@ pub fn embedded_config(port: Option<u16>) -> EngineConfig {
     EngineConfig { testing: false, embedded: true, port, ..config() }
 }
 
+/// A save folder an app of a test has to itself, removed with the app. A test app that does
+/// not name `save_dir` writes there (a session that ends saves the world and the host's
+/// character), so that tests, which run side by side, never share saves and leave none behind.
+#[derive(Resource)]
+struct TestSaves(PathBuf);
+
+impl Drop for TestSaves {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Gives `app` a [`TestSaves`] folder unless its `config` names a `save_dir` of its own. A
+/// test that sets `SaveConfig::dir` itself, after this, simply replaces it.
+fn own_saves(app: &mut App, config: &EngineConfig) {
+    static N: AtomicUsize = AtomicUsize::new(0);
+    if config.save_dir != EngineConfig::default().save_dir {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("shards_test_saves_{}_{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+    app.world_mut().resource_mut::<SaveConfig>().dir = dir.clone();
+    app.insert_resource(TestSaves(dir));
+}
+
 /// Builds a headless test app: [`config`] changed by `configure`, the engine, then the
 /// game's plugins from `setup`; finishes it and updates it until loading is done.
 /// Returns it paused at tick 0, the world spawned. Panics, saying what is still loading,
@@ -55,7 +82,8 @@ pub fn test_app(configure: impl FnOnce(&mut EngineConfig), setup: impl FnOnce(&m
     let mut config = config();
     configure(&mut config);
     let mut app = App::new();
-    app.add_plugins(EnginePlugins::new(config));
+    app.add_plugins(EnginePlugins::new(config.clone()));
+    own_saves(&mut app, &config);
     setup(&mut app);
     app.finish();
     app.cleanup();
@@ -193,7 +221,8 @@ pub fn stand_host(clients: u8, configure: &impl Fn(&mut EngineConfig), setup: &i
     config.player_name = "host".into();
     let hub = MemoryHub::new(config.seed);
     let mut host = App::new();
-    host.add_plugins(EnginePlugins::new(config));
+    host.add_plugins(EnginePlugins::new(config.clone()));
+    own_saves(&mut host, &config);
     setup(&mut host);
     crate::net::stand::attach(&mut host, &hub, "host", None);
     host.finish();
@@ -220,7 +249,8 @@ pub fn stand_client(
     config.net = NetLaunch::Join { addr: "host".into() };
     config.player_name = name.to_owned();
     let mut app = App::new();
-    app.add_plugins(EnginePlugins::new(config));
+    app.add_plugins(EnginePlugins::new(config.clone()));
+    own_saves(&mut app, &config);
     setup(&mut app);
     // The host is the hub's first endpoint.
     let host: PeerId = 0;

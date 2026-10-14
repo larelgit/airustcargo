@@ -12,7 +12,7 @@ use ai_core::journal::{self, JournalKind};
 use ai_core::{sim, AiReplay};
 use bevy::prelude::*;
 use serde_json::Value;
-use shards_core::{EngineConfig, PlayerId};
+use shards_core::{EngineConfig, NetLaunch, PlayerId};
 
 use crate::canon;
 use crate::file::{Fault, GameInfo, SaveFile, SectionData, SectionSet};
@@ -91,8 +91,15 @@ impl Default for SaveSlots {
 impl SaveSlots {
     /// The slots a launch names (`--world SLOT`, `--character SLOT`: `EngineConfig::world_slot`
     /// and `character_slot`), else the defaults. A name that is not a slot is an error.
+    ///
+    /// A client (`--join`) that names no character plays the slot named after its player
+    /// (`--name`, [`slot_from_name`]), not `slot1`: a host and a client started from one game
+    /// folder would otherwise write one file, each the other's character.
     pub fn from_engine(engine: &EngineConfig) -> Result<Self, String> {
         let mut slots = Self::default();
+        if engine.character_slot.is_none() && matches!(engine.net, NetLaunch::Join { .. }) {
+            slots.character = slot_from_name(&engine.player_name);
+        }
         for (kind, slot) in [(SaveKind::World, &engine.world_slot), (SaveKind::Character, &engine.character_slot)] {
             if let Some(slot) = slot {
                 valid_slot(slot)?;
@@ -114,6 +121,39 @@ impl SaveSlots {
             SaveKind::World => self.world = slot.to_owned(),
             SaveKind::Character => self.character = slot.to_owned(),
         }
+    }
+}
+
+/// A slot named after a player: lowercase, anything but `a-z`, `0-9`, `_` and `-` becomes `_`,
+/// at most 32 characters, `player` for no name at all. The same name gives the same slot in
+/// every run.
+pub fn slot_from_name(name: &str) -> String {
+    let slot: String = name.to_lowercase().chars().map(|c| if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-' { c } else { '_' }).take(32).collect();
+    if slot.is_empty() { "player".to_owned() } else { slot }
+}
+
+/// What [`SaveRouting::route`] answers for a save it takes over: the report of where it went, or
+/// why it cannot.
+pub type Routed = Option<Result<SaveReport, String>>;
+
+/// Where a save goes when it is not this machine's own file to write. Co-op sets it
+/// (`shards::coop`): the host keeps the world and a client never writes one; a remote
+/// player's character is captured on the host and written on that player's machine. Without
+/// it, or with the default, every save is written here.
+#[derive(Resource, Clone, Copy)]
+pub struct SaveRouting {
+    /// Asked first by every save of `kind` (for a character, of the `body` it is about).
+    /// `Some(answer)` is the save's whole answer: nothing is written here.
+    pub route: fn(&mut World, SaveKind, Option<Entity>, &str) -> Routed,
+    /// The game decided to save (`save_now`, an autosave) and the `kind` it named was written
+    /// here, for `reason`: whoever else it concerns gets theirs too (a co-op host sends
+    /// every remote player's character).
+    pub saved: fn(&mut World, SaveKind, &str),
+}
+
+impl Default for SaveRouting {
+    fn default() -> Self {
+        Self { route: |_, _, _, _| None, saved: |_, _, _| {} }
     }
 }
 
@@ -325,10 +365,17 @@ pub struct SaveReport {
     /// `false`: nothing was written because a replay is being played back
     /// ([`replay_playing`]); the files are as they were.
     pub written: bool,
+    /// `Some`: the save was not written here but handed to whoever it belongs to
+    /// ([`SaveRouting`]: a co-op host sends a remote player's character to their machine).
+    /// `slot` then names that player.
+    pub target: Option<String>,
 }
 
 impl std::fmt::Display for SaveReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(target) = &self.target {
+            return write!(f, "{}/{} sent to {target} ({}, tick {})", self.kind, self.slot, self.reason, self.tick);
+        }
         if !self.written {
             return write!(f, "{}/{} not written during replay playback ({})", self.kind, self.slot, self.reason);
         }
@@ -351,6 +398,12 @@ fn store(world: &World) -> Result<Store, String> {
 pub fn save_part(world: &mut World, kind: SaveKind, body: Option<Entity>, slot: &str, label: &str, reason: &str) -> Result<SaveReport, String> {
     valid_slot(slot)?;
     let body = if kind == SaveKind::Character { resolve_body(world, body) } else { None };
+    // A networked game may know that this save is not this machine's to write.
+    if let Some(routing) = world.get_resource::<SaveRouting>().copied()
+        && let Some(answer) = (routing.route)(world, kind, body, reason)
+    {
+        return answer;
+    }
     let sections = capture_sections(world, kind, body).inspect_err(|e| {
         journal::emit(world, JournalKind::Error, format!("save: {kind}/{slot} not saved: {e}"));
     })?;
@@ -370,7 +423,7 @@ pub fn save_part(world: &mut World, kind: SaveKind, body: Option<Entity>, slot: 
 pub fn write_sections(world: &mut World, kind: SaveKind, slot: &str, label: &str, reason: &str, tick: u64, sections: SectionSet) -> Result<SaveReport, String> {
     valid_slot(slot)?;
     if replay_playing(world) {
-        let report = SaveReport { kind, slot: slot.to_owned(), tick, bytes: 0, sections: sections.len(), reason: reason.to_owned(), written: false };
+        let report = SaveReport { kind, slot: slot.to_owned(), tick, bytes: 0, sections: sections.len(), reason: reason.to_owned(), written: false, target: None };
         journal::log(world, JournalKind::Sim, format!("{NOT_WRITTEN_DURING_PLAYBACK} ({kind}/{slot}, {reason})"));
         return Ok(report);
     }
@@ -390,7 +443,7 @@ pub fn write_sections(world: &mut World, kind: SaveKind, slot: &str, label: &str
     written.inspect_err(|e| {
         journal::emit(world, JournalKind::Error, format!("save: {kind}/{slot} not saved: {e}"));
     })?;
-    let report = SaveReport { kind, slot: slot.to_owned(), tick, bytes: bytes.len(), sections: file.sections.len(), reason: reason.to_owned(), written: true };
+    let report = SaveReport { kind, slot: slot.to_owned(), tick, bytes: bytes.len(), sections: file.sections.len(), reason: reason.to_owned(), written: true, target: None };
     journal::log(world, JournalKind::Sim, format!("save: {report}"));
     Ok(report)
 }
@@ -416,7 +469,29 @@ pub fn save_slot(world: &mut World, what: SaveWhat, slot: &str, label: &str, rea
 /// is debounced. `reason` is journaled (`camp`, `found the ford`).
 pub fn save_now(world: &mut World, what: SaveWhat, reason: &str) -> Result<Vec<SaveReport>, String> {
     let slots = world.get_resource::<SaveSlots>().cloned().unwrap_or_default();
-    save_parts(world, &what.parts(), &slots, "", reason)
+    let (reports, failures) = save_parts_each(world, &what.parts(), &slots, "", reason);
+    // The game decided to save: the routing hears of each kind it asked for, whether or not this
+    // machine's own part could be written (a co-op host still sends its players theirs).
+    let mut asked: Vec<SaveKind> = reports.iter().filter(|r| r.written && r.target.is_none()).map(|r| r.kind).collect();
+    asked.extend(failures.iter().filter(|(_, body, _)| body.is_none()).map(|(kind, _, _)| *kind));
+    notify_kinds(world, &asked, reason);
+    parts_result(reports, failures)
+}
+
+/// Tells [`SaveRouting::saved`] about the saves the game decided on that were written here
+/// (`save_now`, an autosave), so that a co-op host can save the other players' characters
+/// with its own.
+pub(crate) fn notify_saved(world: &mut World, reports: &[SaveReport], reason: &str) {
+    let kinds: Vec<SaveKind> = reports.iter().filter(|r| r.written && r.target.is_none()).map(|r| r.kind).collect();
+    notify_kinds(world, &kinds, reason);
+}
+
+/// Tells [`SaveRouting::saved`] that the game decided to save these kinds of this machine's own.
+pub(crate) fn notify_kinds(world: &mut World, kinds: &[SaveKind], reason: &str) {
+    let Some(routing) = world.get_resource::<SaveRouting>().copied() else { return };
+    for &kind in kinds {
+        (routing.saved)(world, kind, reason);
+    }
 }
 
 /// Saves each of `parts` into its kind's slot of `slots`; the slots that were written become
@@ -429,24 +504,44 @@ pub fn save_parts(
     label: &str,
     reason: &str,
 ) -> Result<Vec<SaveReport>, String> {
+    let (reports, failures) = save_parts_each(world, parts, slots, label, reason);
+    parts_result(reports, failures)
+}
+
+/// A part that could not be saved: its kind, the body it named, why.
+type PartFailure = (SaveKind, Option<Entity>, String);
+
+/// [`save_parts`] with what each part came to, not one answer.
+fn save_parts_each(
+    world: &mut World,
+    parts: &[(SaveKind, Option<Entity>)],
+    slots: &SaveSlots,
+    label: &str,
+    reason: &str,
+) -> (Vec<SaveReport>, Vec<PartFailure>) {
     let (mut reports, mut failures) = (Vec::new(), Vec::new());
     for &(kind, body) in parts {
         match save_part(world, kind, body, slots.get(kind), label, reason) {
             Ok(report) => {
-                if report.written && let Some(mut current) = world.get_resource_mut::<SaveSlots>() {
+                if report.written && report.target.is_none() && let Some(mut current) = world.get_resource_mut::<SaveSlots>() {
                     current.set(kind, &report.slot);
                 }
                 reports.push(report);
             }
-            Err(e) => failures.push(format!("{kind}: {e}")),
+            Err(e) => failures.push((kind, body, e)),
         }
     }
+    (reports, failures)
+}
+
+fn parts_result(reports: Vec<SaveReport>, failures: Vec<PartFailure>) -> Result<Vec<SaveReport>, String> {
     if failures.is_empty() {
         return Ok(reports);
     }
+    let failed: Vec<String> = failures.iter().map(|(kind, _, e)| format!("{kind}: {e}")).collect();
     let saved: Vec<String> = reports.iter().map(ToString::to_string).collect();
     let also = if saved.is_empty() { String::new() } else { format!(" (saved: {})", saved.join(", ")) };
-    Err(format!("{}{also}", failures.join("; ")))
+    Err(format!("{}{also}", failed.join("; ")))
 }
 
 // --- reading -----------------------------------------------------------------------------
@@ -546,6 +641,7 @@ pub fn load_parts(world: &mut World, parts: &[(SaveKind, Option<Entity>)], slots
     }
     let mut reports = Vec::new();
     let mut applied_anything = false;
+    let mut world_applied = false;
     for (read, body) in reads.into_iter().zip(bodies) {
         let Read { kind, slot, file, prepared, recovery } = read;
         for name in &prepared.unknown {
@@ -555,14 +651,19 @@ pub fn load_parts(world: &mut World, parts: &[(SaveKind, Option<Entity>)], slots
         match apply_prepared(world, kind, body, prepared) {
             Ok(done) => {
                 applied_anything |= !done.applied.is_empty() || !done.missing.is_empty();
+                world_applied |= kind == SaveKind::World && (!done.applied.is_empty() || !done.missing.is_empty());
                 reports.push(LoadReport { kind, slot, tick: file.tick, label: file.label, applied: done.applied.len(), missing: done.missing.len(), unknown, recovery });
             }
             Err(e) => {
                 applied_anything |= !e.applied.is_empty();
+                world_applied |= kind == SaveKind::World && !e.applied.is_empty();
                 journal::emit(world, JournalKind::Error, format!("save: loading {kind}/{slot} failed: {}", e.message));
                 let done = if e.applied.is_empty() { "nothing of it was applied".to_owned() } else { format!("applied before it: {}", e.applied.join(", ")) };
                 if applied_anything {
                     restart_recording(world, "load_game");
+                    if world_applied {
+                        ai_core::world_rebuilt(world, format!("save {slot} loaded"));
+                    }
                 } else {
                     ai_core::replay::forget_call(world);
                 }
@@ -578,6 +679,10 @@ pub fn load_parts(world: &mut World, parts: &[(SaveKind, Option<Entity>)], slots
         journal::log(world, JournalKind::Sim, format!("save: {report}"));
     }
     restart_recording(world, "load_game");
+    // Whoever mirrors this world (a co-op host's clients) takes it whole again.
+    if world_applied && let Some(report) = reports.iter().find(|r| r.kind == SaveKind::World) {
+        ai_core::world_rebuilt(world, format!("save {} loaded", report.slot));
+    }
     Ok(reports)
 }
 
@@ -714,10 +819,28 @@ mod tests {
     }
 
     #[test]
+    fn a_client_without_a_character_plays_the_slot_named_after_it() {
+        assert_eq!(slot_from_name("Ann"), "ann");
+        assert_eq!(slot_from_name("Bob the 2nd!"), "bob_the_2nd_");
+        assert_eq!(slot_from_name(""), "player");
+        assert_eq!(slot_from_name(&"x".repeat(50)).len(), 32);
+        assert!(valid_slot(&slot_from_name("Ünïcode ✓")).is_ok());
+        let join = EngineConfig { net: NetLaunch::Join { addr: "h:1".into() }, player_name: "Ann".into(), ..EngineConfig::default() };
+        assert_eq!(SaveSlots::from_engine(&join).unwrap().character, "ann");
+        // Named, it is what was named; a host or a single game keeps `slot1`.
+        let named = EngineConfig { character_slot: Some("hero".into()), ..join.clone() };
+        assert_eq!(SaveSlots::from_engine(&named).unwrap().character, "hero");
+        let host = EngineConfig { net: NetLaunch::Host { port: 0 }, player_name: "Ann".into(), ..EngineConfig::default() };
+        assert_eq!(SaveSlots::from_engine(&host).unwrap().character, "slot1");
+    }
+
+    #[test]
     fn a_report_that_was_not_written_says_so() {
-        let report = SaveReport { kind: SaveKind::World, slot: "slot1".into(), tick: 9, bytes: 0, sections: 3, reason: "camp".into(), written: false };
+        let report = SaveReport { kind: SaveKind::World, slot: "slot1".into(), tick: 9, bytes: 0, sections: 3, reason: "camp".into(), written: false, target: None };
         assert_eq!(report.to_string(), "world/slot1 not written during replay playback (camp)");
         let report = SaveReport { written: true, bytes: 2048, ..report };
         assert_eq!(report.to_string(), "world/slot1 saved (camp, 2 KB, tick 9)");
+        let sent = SaveReport { kind: SaveKind::Character, slot: "p1".into(), target: Some("c1".into()), ..report };
+        assert_eq!(sent.to_string(), "character/p1 sent to c1 (camp, tick 9)");
     }
 }

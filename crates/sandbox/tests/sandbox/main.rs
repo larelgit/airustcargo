@@ -12,6 +12,7 @@ mod course;
 mod gltf;
 mod invariants;
 mod net;
+mod net_coop;
 mod net_guards;
 mod net_lifecycle;
 mod net_sync;
