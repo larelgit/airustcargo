@@ -21,8 +21,9 @@
 //! ```
 //!
 //! [`run`] is the standard `main`: `--headless --seed --port --port-file --no-remote
-//! --paused --hz --replay --verify [--windowed] --check-content --worldgen-report REGION
-//! --seeds 1..1000 --bake-nav [TILES]`. [`testing::test_app`] builds the
+//! --paused --hz --replay --verify [--windowed] --check-every N
+//! --check-detail components|entities|none --tick-budget-ms MS --check-content
+//! --worldgen-report REGION --seeds 1..1000 --bake-nav [TILES]`. [`testing::test_app`] builds the
 //! same game headless for tests, loaded and paused at tick 0.
 //!
 //! A game without a `bevy` dependency of its own uses Bevy's derives through the
