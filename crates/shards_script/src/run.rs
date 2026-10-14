@@ -5,12 +5,13 @@
 //! in-process through `ai_core::call_tool`, or over BRP through the `shards` CLI. So
 //! the same file means the same thing in `cargo test` and against a running game.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::script::{id_value, Command, Expect, ParseErrors, Script, ScriptLine, SessionConfig};
+use crate::script::{id_value, Command, Expect, ParseErrors, Script, ScriptLine, SessionConfig, StandHeader, HOST};
 
 /// The agent that runs the commands, until a `session --agent` switches it.
 pub const DEFAULT_AGENT: &str = "scenario";
@@ -85,6 +86,10 @@ pub struct JournalRead {
 /// The game a scenario drives. `Err` means the transport failed (the game is gone, the
 /// request was refused): the scenario cannot go on. A tool that fails is not an
 /// error here but an [`Outcome`] with `ok: false`.
+///
+/// The four required methods are the game itself (a stand's host). A driver of a stand
+/// answers [`peers`](Driver::peers) with every member and the `*_on` methods for each; a
+/// single-game driver keeps their defaults, and a scenario with a `stand` line is refused.
 pub trait Driver {
     /// Calls `tool` as `agent` (`ai/act`).
     fn call(&mut self, agent: &str, tool: &str, args: Value) -> Result<Outcome, String>;
@@ -97,6 +102,48 @@ pub trait Driver {
 
     /// Journal entries with `seq > after`.
     fn journal_since(&mut self, after: u64) -> Result<JournalRead, String>;
+
+    /// The members a scenario can address, host first: `["host"]` for a single game,
+    /// `["host", "c1", "c2"]` for a stand of two clients.
+    fn peers(&mut self) -> Result<Vec<String>, String> {
+        Ok(vec![HOST.to_owned()])
+    }
+
+    /// Whether the running stand fits the `stand` line (a live driver compares the link
+    /// conditions). The error says what to start instead. Called once, after
+    /// [`peers`](Driver::peers) matched the header.
+    fn check_stand(&mut self, _header: &StandHeader) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// [`call`](Driver::call) on member `peer`.
+    fn call_on(&mut self, peer: &str, agent: &str, tool: &str, args: Value) -> Result<Outcome, String> {
+        host_only(peer)?;
+        self.call(agent, tool, args)
+    }
+
+    /// [`session`](Driver::session) on member `peer`.
+    fn session_on(&mut self, peer: &str, agent: &str, config: &SessionConfig) -> Result<Outcome, String> {
+        host_only(peer)?;
+        self.session(agent, config)
+    }
+
+    /// [`status`](Driver::status) of member `peer`.
+    fn status_on(&mut self, peer: &str) -> Result<Status, String> {
+        host_only(peer)?;
+        self.status()
+    }
+
+    /// [`journal_since`](Driver::journal_since) of member `peer`.
+    fn journal_since_on(&mut self, peer: &str, after: u64) -> Result<JournalRead, String> {
+        host_only(peer)?;
+        self.journal_since(after)
+    }
+}
+
+/// What a single-game driver says about any member but the game itself.
+fn host_only(peer: &str) -> Result<(), String> {
+    if peer == HOST { Ok(()) } else { Err(format!("this game has no member `{peer}`: a scenario with a `stand` line needs a stand")) }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -215,7 +262,7 @@ pub fn run<D: Driver + ?Sized>(script: &Script, driver: &mut D) -> Report {
 /// scenario can be followed live.
 pub fn run_with<D: Driver + ?Sized>(script: &Script, driver: &mut D, on_line: &mut dyn FnMut(&LogLine)) -> Report {
     let mut report = Report::new(&script.name);
-    let mut run = Run::new(driver);
+    let mut run = Run::new(driver, script.stand().copied());
     let started = match run.start() {
         Ok(tick) => tick,
         Err(fail) => {
@@ -244,6 +291,12 @@ pub fn run_with<D: Driver + ?Sized>(script: &Script, driver: &mut D, on_line: &m
             break;
         }
     }
+    // A step run on a client says nothing of the host's tick: the stand's ticks are the host's.
+    if run.stand.is_some()
+        && let Ok(status) = run.driver.status_on(HOST)
+    {
+        run.tick = status.tick;
+    }
     report.ticks = run.tick.saturating_sub(started);
     report
 }
@@ -270,6 +323,8 @@ impl Fail {
 struct Invariant {
     line: usize,
     expect: Expect,
+    /// The member it is checked on; `None`: every member.
+    peer: Option<String>,
 }
 
 /// How the last `step` ended, from its message:
@@ -306,22 +361,34 @@ impl StepEnd {
     }
 }
 
+/// Where a member's journal expectations start counting.
+#[derive(Clone, Copy)]
+struct Mark {
+    /// Entries after this sequence number.
+    seq: u64,
+    /// The `mark` line that set it; `None`: the scenario's start.
+    line: Option<usize>,
+}
+
 struct Run<'d, D: ?Sized> {
     driver: &'d mut D,
     agent: String,
     seed: Option<u64>,
-    /// Tick after the newest call.
+    /// Tick after the newest call on the host.
     tick: u64,
     last_result: Option<String>,
     last_step: Option<StepEnd>,
-    /// Journal expectations look at entries after this sequence number.
-    mark: u64,
-    marked_at: Option<usize>,
+    /// Journal expectations of a member look at entries after its sequence number here.
+    marks: BTreeMap<String, Mark>,
     invariants: Vec<Invariant>,
+    /// The `stand` line, when the scenario has one.
+    stand: Option<StandHeader>,
+    /// The games the scenario runs on: `host` alone, or the stand's members.
+    members: Vec<String>,
 }
 
 impl<'d, D: Driver + ?Sized> Run<'d, D> {
-    fn new(driver: &'d mut D) -> Self {
+    fn new(driver: &'d mut D, stand: Option<StandHeader>) -> Self {
         Self {
             driver,
             agent: DEFAULT_AGENT.to_owned(),
@@ -329,30 +396,61 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
             tick: 0,
             last_result: None,
             last_step: None,
-            mark: 0,
-            marked_at: None,
+            marks: BTreeMap::new(),
             invariants: Vec::new(),
+            members: vec![HOST.to_owned()],
+            stand,
         }
     }
 
-    /// Reads the game's tick, seed and journal position and sets up the two agents.
+    /// Reads the game's tick, seed and journal position and sets up the two agents on every
+    /// member. A scenario with a `stand` line needs a driver that has exactly that stand.
     fn start(&mut self) -> Result<u64, Fail> {
-        let status = self.driver.status().map_err(Fail::lost)?;
+        if let Some(header) = self.stand {
+            let peers = self.driver.peers().map_err(Fail::lost)?;
+            let wanted = header.members();
+            if peers != wanted {
+                let has = match peers.len() {
+                    0 | 1 => String::new(),
+                    n => format!(", but this one is host + {} client{}", n - 1, if n == 2 { "" } else { "s" }),
+                };
+                let net_sim = if header.has_conditions() { format!(" --net-sim {}", header.net_sim()) } else { String::new() };
+                return Err(Fail::lost(format!(
+                    "this scenario needs a stand of {}{has}: run cargo sandbox --stand {} --headless --paused --port 0 --port-file F{net_sim}, \
+                     then SHARDS_PORT_FILE=F cargo shards scenario FILE",
+                    header.describe(),
+                    header.clients
+                )));
+            }
+            self.driver.check_stand(&header).map_err(Fail::lost)?;
+            self.members = wanted;
+        }
+        let status = self.driver.status_on(HOST).map_err(Fail::lost)?;
         self.seed = status.seed;
         self.tick = status.tick;
-        self.mark = status.journal_seq;
         // A fresh body each time: an earlier scenario may have left the agent possessing someone.
         let default = SessionConfig { scope: Some(crate::AgentScope::Dev), clear_subject: true, ..Default::default() };
-        for agent in [DEFAULT_AGENT, CHECK_AGENT] {
-            let out = self.driver.session(agent, &default).map_err(Fail::lost)?;
-            if !out.ok {
-                return Err(Fail::lost(format!("cannot set up agent `{agent}`: {}", out.text())));
+        for member in self.members.clone() {
+            let seq = if member == HOST { status.journal_seq } else { self.driver.status_on(&member).map_err(Fail::lost)?.journal_seq };
+            self.marks.insert(member.clone(), Mark { seq, line: None });
+            for agent in [DEFAULT_AGENT, CHECK_AGENT] {
+                let out = self.driver.session_on(&member, agent, &default).map_err(Fail::lost)?;
+                if !out.ok {
+                    return Err(Fail::lost(format!("cannot set up agent `{agent}`{}: {}", self.at(&member), out.text())));
+                }
             }
         }
         Ok(status.tick)
     }
 
+    /// ` on c1` in a stand, where it matters which member a message is about; nothing in a
+    /// single game.
+    fn at(&self, member: &str) -> String {
+        if self.stand.is_some() { format!(" on {member}") } else { String::new() }
+    }
+
     fn execute(&mut self, line: &ScriptLine) -> Result<String, Fail> {
+        let peer = line.peer.as_deref().unwrap_or(HOST);
         match &line.command {
             Command::Seed(want) => match self.seed {
                 Some(got) if got == *want => Ok(format!("seed {got}")),
@@ -361,8 +459,9 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                 ))),
                 None => Err(Fail::check("the game does not report its seed, so `seed N` cannot be checked")),
             },
+            Command::Stand(header) => Ok(format!("a stand of {}, links {}", header.describe(), if header.has_conditions() { header.net_sim() } else { "without conditions".to_owned() })),
             Command::Act { tool, args, may_fail } => {
-                let (out, text) = self.call(tool, args.clone())?;
+                let (out, text) = self.call(peer, tool, args.clone())?;
                 if tool == "step" && out.ok {
                     let step = StepEnd::parse(&text);
                     if !may_fail {
@@ -383,7 +482,7 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                 if let Some(ticks) = ticks {
                     args["ticks"] = json!(ticks);
                 }
-                let (out, text) = self.call("step", args)?;
+                let (out, text) = self.call(peer, "step", args)?;
                 if !out.ok {
                     return Err(Fail::check(format!("step failed: {text}")));
                 }
@@ -394,23 +493,46 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                 Ok(out.summary())
             }
             Command::Observe => {
-                let (out, text) = self.call("observe", json!({}))?;
+                let (out, text) = self.call(peer, "observe", json!({}))?;
                 if !out.ok {
                     return Err(Fail::check(format!("observe failed: {text}")));
                 }
                 Ok(format!("{} lines", text.lines().count()))
             }
             Command::Mark => {
-                self.mark = self.driver.status().map_err(Fail::lost)?.journal_seq;
-                self.marked_at = Some(line.number);
-                Ok(format!("journal counts from entry {}", self.mark + 1))
+                // Without a member, every member's journal counts from here.
+                let marked: Vec<String> = match &line.peer {
+                    Some(peer) => vec![peer.clone()],
+                    None => self.members.clone(),
+                };
+                for member in &marked {
+                    let seq = self.driver.status_on(member).map_err(Fail::lost)?.journal_seq;
+                    self.marks.insert(member.clone(), Mark { seq, line: Some(line.number) });
+                }
+                Ok(if self.stand.is_some() {
+                    let from: Vec<String> = marked.iter().map(|m| format!("{m} {}", self.marks[m].seq + 1)).collect();
+                    format!("journal counts from entry {}", from.join(", "))
+                } else {
+                    format!("journal counts from entry {}", self.marks[HOST].seq + 1)
+                })
             }
             Command::Session { agent, config } => {
                 let name = agent.clone().unwrap_or_else(|| self.agent.clone());
-                let out = self.driver.session(&name, config).map_err(Fail::lost)?;
-                if !out.ok {
-                    return Err(Fail::check(format!("session {name}: {}", out.text())));
+                // Without a member, the agent is set up on every member, so the following
+                // commands act as the same agent wherever they run.
+                let targets: Vec<String> = match &line.peer {
+                    Some(peer) => vec![peer.clone()],
+                    None => self.members.clone(),
+                };
+                let mut last = None;
+                for member in &targets {
+                    let out = self.driver.session_on(member, &name, config).map_err(Fail::lost)?;
+                    if !out.ok {
+                        return Err(Fail::check(format!("session {name}{}: {}", self.at(member), out.text())));
+                    }
+                    last = Some(out);
                 }
+                let out = last.expect("a scenario has at least the host");
                 self.agent = name;
                 let word = |key: &str| out.result.get(key).and_then(Value::as_str).map(str::to_owned);
                 let mut detail = format!("acting as {}", self.agent);
@@ -420,21 +542,30 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                 if let Some(subject) = word("subject") {
                     detail.push_str(&format!(", as {subject}"));
                 }
+                if let Some(player) = out.result.get("player").and_then(Value::as_u64) {
+                    detail.push_str(&format!(", as player {player}"));
+                }
                 Ok(detail)
             }
-            Command::Expect(expect) => self.eval(expect),
+            Command::Expect(expect) => self.eval(expect, peer),
             Command::Invariant(expect) => {
-                self.invariants.push(Invariant { line: line.number, expect: expect.clone() });
-                Ok(format!("must hold after every act and step from here on: {expect}"))
+                self.invariants.push(Invariant { line: line.number, expect: expect.clone(), peer: line.peer.clone() });
+                let on = match &line.peer {
+                    Some(peer) => format!(" on {peer}"),
+                    None if self.stand.is_some() => " on every member".to_owned(),
+                    None => String::new(),
+                };
+                Ok(format!("must hold{on} after every act and step from here on: {expect}"))
             }
         }
     }
 
-    /// Calls a tool as the current agent; remembers the tick and the result text.
-    fn call(&mut self, tool: &str, args: Value) -> Result<(Outcome, String), Fail> {
+    /// Calls a tool on member `peer` as the current agent; remembers the host's tick and the
+    /// result text.
+    fn call(&mut self, peer: &str, tool: &str, args: Value) -> Result<(Outcome, String), Fail> {
         let agent = self.agent.clone();
-        let out = self.driver.call(&agent, tool, args).map_err(Fail::lost)?;
-        if let Some(tick) = out.tick {
+        let out = self.driver.call_on(peer, &agent, tool, args).map_err(Fail::lost)?;
+        if let Some(tick) = out.tick.filter(|_| peer == HOST) {
             self.tick = tick;
         }
         let text = out.text();
@@ -444,19 +575,28 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
 
     fn check_invariants(&mut self) -> Result<(), Fail> {
         for index in 0..self.invariants.len() {
-            let (line, expect) = (self.invariants[index].line, self.invariants[index].expect.clone());
-            if let Err(fail) = self.eval(&expect) {
-                return Err(match fail.kind {
-                    FailureKind::Scenario => Fail::check(format!("invariant `{expect}` (line {line}) broke: {}", fail.message)),
-                    _ => fail,
-                });
+            let (line, expect, peer) =
+                (self.invariants[index].line, self.invariants[index].expect.clone(), self.invariants[index].peer.clone());
+            let members = match peer {
+                Some(peer) => vec![peer],
+                None => self.members.clone(),
+            };
+            for member in members {
+                if let Err(fail) = self.eval(&expect, &member) {
+                    let on = self.at(&member);
+                    return Err(match fail.kind {
+                        FailureKind::Scenario => Fail::check(format!("invariant `{expect}` (line {line}) broke{on}: {}", fail.message)),
+                        _ => fail,
+                    });
+                }
             }
         }
         Ok(())
     }
 
     /// Checks one expectation. `Ok` carries what was found, for the log.
-    fn eval(&mut self, expect: &Expect) -> Result<String, Fail> {
+    fn eval(&mut self, expect: &Expect, member: &str) -> Result<String, Fail> {
+        let place = self.at(member);
         match expect {
             Expect::Result { text, negate } => {
                 let Some(result) = &self.last_result else {
@@ -485,12 +625,14 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                 }
             }
             Expect::Journal { text, negate } => {
-                let read = self.driver.journal_since(self.mark).map_err(Fail::lost)?;
+                let mark = self.marks.get(member).copied().unwrap_or(Mark { seq: 0, line: None });
+                let read = self.driver.journal_since_on(member, mark.seq).map_err(Fail::lost)?;
                 let hit = read.lines.iter().find(|l| contains_ci(&l.text, text));
-                let since = match self.marked_at {
+                let since = match mark.line {
                     Some(line) => format!("since `mark` on line {line}"),
                     None => "since the scenario started".to_owned(),
                 };
+                let since = if place.is_empty() { since } else { format!("{} {since}", place.trim_start()) };
                 let dropped = if read.missed > 0 {
                     format!(" ({} older entries left the journal's buffer; use `mark` more often)", read.missed)
                 } else {
@@ -520,14 +662,14 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
             }
             Expect::Field { id, component, path, op, value } => {
                 let name = match path {
-                    Some(path) => format!("{id} {component}.{path}"),
-                    None => format!("{id} {component}"),
+                    Some(path) => format!("{id} {component}.{path}{place}"),
+                    None => format!("{id} {component}{place}"),
                 };
                 let mut args = json!({"id": id_value(id), "component": component});
                 if let Some(path) = path {
                     args["path"] = json!(path);
                 }
-                let out = self.driver.call(CHECK_AGENT, "get", args).map_err(Fail::lost)?;
+                let out = self.driver.call_on(member, CHECK_AGENT, "get", args).map_err(Fail::lost)?;
                 if !out.ok {
                     return Err(Fail::check(format!("cannot read {name}: {}", out.text())));
                 }
@@ -544,18 +686,18 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                 }
             }
             Expect::Shows { id, text } => {
-                let out = self.driver.call(CHECK_AGENT, "inspect", json!({"id": id_value(id)})).map_err(Fail::lost)?;
+                let out = self.driver.call_on(member, CHECK_AGENT, "inspect", json!({"id": id_value(id)})).map_err(Fail::lost)?;
                 if !out.ok {
-                    return Err(Fail::check(format!("cannot inspect {id}: {}", out.text())));
+                    return Err(Fail::check(format!("cannot inspect {id}{place}: {}", out.text())));
                 }
                 let full = out.text();
                 // The description the AI reads; the reflection dump below it is not "shown".
                 let shown = full.split("\ncomponents:").next().unwrap_or(&full);
                 if contains_ci(shown, text) {
-                    Ok(format!("{id} shows {text:?}"))
+                    Ok(format!("{id}{place} shows {text:?}"))
                 } else {
                     let summary: Vec<&str> = shown.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-                    Err(Fail::check(format!("{id} does not show {text:?}; it shows: {}", clip(&summary.join(" | "), 300))))
+                    Err(Fail::check(format!("{id}{place} does not show {text:?}; it shows: {}", clip(&summary.join(" | "), 300))))
                 }
             }
         }
@@ -970,5 +1112,200 @@ expect result contains "YOU e5"
         assert_eq!(read.lines[0].text, "93 e6 winds up IceSlam (1.00s)");
         assert_eq!(read.lines[2].text, "95 [warn] two\nlines");
         assert_eq!(parse_journal_text("journal (newest seq 0)").lines, []);
+    }
+
+    /// A pretend stand: one [`Fake`] per member. A `step` on any member steps them all.
+    struct FakeStand {
+        members: BTreeMap<String, Fake>,
+        /// `(member, agent, tool)` of every call, in order.
+        calls: Vec<(String, String, String)>,
+        /// What `check_stand` says.
+        links: Option<String>,
+    }
+
+    impl FakeStand {
+        fn new(clients: u8) -> Self {
+            let names = std::iter::once(HOST.to_owned()).chain((1..=clients).map(|n| format!("c{n}")));
+            Self { members: names.map(|n| (n, Fake::new())).collect(), calls: Vec::new(), links: Some("latency=150,jitter=0,loss=0.02,dup=0".into()) }
+        }
+
+        fn member(&mut self, peer: &str) -> Result<&mut Fake, String> {
+            self.members.get_mut(peer).ok_or_else(|| format!("no member {peer}"))
+        }
+    }
+
+    impl Driver for FakeStand {
+        fn call(&mut self, agent: &str, tool: &str, args: Value) -> Result<Outcome, String> {
+            self.call_on(HOST, agent, tool, args)
+        }
+        fn session(&mut self, agent: &str, config: &SessionConfig) -> Result<Outcome, String> {
+            self.session_on(HOST, agent, config)
+        }
+        fn status(&mut self) -> Result<Status, String> {
+            self.status_on(HOST)
+        }
+        fn journal_since(&mut self, after: u64) -> Result<JournalRead, String> {
+            self.journal_since_on(HOST, after)
+        }
+        fn peers(&mut self) -> Result<Vec<String>, String> {
+            // The host first, then the clients in name order.
+            Ok(self.members.keys().cloned().filter(|n| n == HOST).chain(self.members.keys().cloned().filter(|n| n != HOST)).collect())
+        }
+        fn check_stand(&mut self, header: &StandHeader) -> Result<(), String> {
+            header.check_conditions(self.links.as_deref())
+        }
+        fn call_on(&mut self, peer: &str, agent: &str, tool: &str, args: Value) -> Result<Outcome, String> {
+            self.calls.push((peer.to_owned(), agent.to_owned(), tool.to_owned()));
+            if tool == "step" {
+                // Stand time is global.
+                for (name, member) in self.members.iter_mut() {
+                    if name != peer {
+                        member.call(agent, tool, args.clone())?;
+                    }
+                }
+            }
+            self.member(peer)?.call(agent, tool, args)
+        }
+        fn session_on(&mut self, peer: &str, agent: &str, config: &SessionConfig) -> Result<Outcome, String> {
+            self.member(peer)?.session(agent, config)
+        }
+        fn status_on(&mut self, peer: &str) -> Result<Status, String> {
+            self.member(peer)?.status()
+        }
+        fn journal_since_on(&mut self, peer: &str, after: u64) -> Result<JournalRead, String> {
+            self.member(peer)?.journal_since(after)
+        }
+    }
+
+    fn run_stand(text: &str) -> (Report, FakeStand) {
+        let script = Script::parse("s.scenario", text).unwrap_or_else(|e| panic!("{e}"));
+        let mut stand = FakeStand::new(2);
+        let report = run(&script, &mut stand);
+        (report, stand)
+    }
+
+    const STAND: &str = "stand clients=2 latency=150 loss=0.02\n";
+
+    #[test]
+    fn a_stand_scenario_runs_every_command_on_the_member_it_names() {
+        let (report, stand) = run_stand(&format!(
+            "{STAND}seed 42\n@c1 act hurt amount=30\nact hurt amount=5\n@c2 step 10\n@c1 expect field e5 Health.current == 70\n\
+             @host expect field e5 Health.current == 95\nexpect field e5 Health.current == 95\n@c2 expect field e5 Health.current == 100\n\
+             @c2 observe\n@c2 expect result contains \"YOU e5\"\n"
+        ));
+        assert!(report.passed, "{report}");
+        assert_eq!(report.log[0].detail, "a stand of host + 2 clients, links latency=150,loss=0.02");
+        assert_eq!(report.log[2].command, "@c1 act hurt amount=30", "the log names the member");
+        // Who ran what: the commands as the scenario agent, the checks as the check agent.
+        let who: Vec<(&str, &str, &str)> = stand.calls.iter().map(|(m, a, t)| (m.as_str(), a.as_str(), t.as_str())).collect();
+        assert_eq!(who[0], ("c1", DEFAULT_AGENT, "hurt"));
+        assert_eq!(who[1], ("host", DEFAULT_AGENT, "hurt"));
+        assert_eq!(who[2], ("c2", DEFAULT_AGENT, "step"));
+        assert!(who.contains(&("c1", CHECK_AGENT, "get")) && who.contains(&("c2", CHECK_AGENT, "get")), "{who:?}");
+        // The host's ticks count: the step was called on c2, and a stand's time is global.
+        assert_eq!(report.ticks, 10, "{report}");
+        // Every member was set up with both agents, a fresh body each.
+        for (name, member) in &stand.members {
+            let agents: Vec<&str> = member.sessions.iter().map(|(a, _)| a.as_str()).collect();
+            assert_eq!(agents, [DEFAULT_AGENT, CHECK_AGENT], "{name}");
+        }
+    }
+
+    #[test]
+    fn a_single_game_refuses_a_stand_scenario_and_says_how_to_start_one() {
+        let f = failure(&format!("{STAND}observe"));
+        assert_eq!(f.kind, FailureKind::Driver);
+        assert_eq!(f.line, 0);
+        assert_eq!(
+            f.message,
+            "this scenario needs a stand of host + 2 clients: run cargo sandbox --stand 2 --headless --paused --port 0 --port-file F \
+             --net-sim latency=150,loss=0.02, then SHARDS_PORT_FILE=F cargo shards scenario FILE"
+        );
+        let f = failure("stand clients=1\nobserve");
+        assert!(f.message.starts_with("this scenario needs a stand of host + 1 client: run cargo sandbox --stand 1 --headless --paused --port 0 --port-file F, then"), "{}", f.message);
+    }
+
+    #[test]
+    fn a_stand_of_another_size_is_refused() {
+        let script = Script::parse("s.scenario", "stand clients=2 latency=150 loss=0.02\nobserve").unwrap();
+        let mut stand = FakeStand::new(1);
+        let f = run(&script, &mut stand).failure.unwrap();
+        assert_eq!(f.kind, FailureKind::Driver);
+        assert!(f.message.starts_with("this scenario needs a stand of host + 2 clients, but this one is host + 1 client: run cargo sandbox --stand 2"), "{}", f.message);
+        assert!(stand.calls.is_empty(), "nothing ran");
+    }
+
+    #[test]
+    fn the_links_of_the_running_stand_must_match_the_header() {
+        let script = Script::parse("s.scenario", &format!("{STAND}observe")).unwrap();
+        let mut stand = FakeStand::new(2);
+        stand.links = Some("latency=20,jitter=0,loss=0,dup=0".into());
+        let f = run(&script, &mut stand).failure.unwrap();
+        assert_eq!(f.kind, FailureKind::Driver);
+        assert!(f.message.contains("start it with `--net-sim latency=150,loss=0.02`"), "{}", f.message);
+        assert!(stand.calls.is_empty());
+    }
+
+    #[test]
+    fn an_invariant_without_a_member_is_checked_on_every_member() {
+        // c2 loses the health; the invariant names no member, so c2 breaks it.
+        let f = failure_on_stand(&format!("{STAND}invariant field e5 Health.current > 50\n@c2 act hurt amount=60\nstep 1"));
+        assert_eq!((f.line, f.command.as_str()), (3, "@c2 act hurt amount=60"));
+        assert_eq!(f.message, "invariant `field e5 Health.current > 50` (line 2) broke on c2: e5 Health.current on c2 is 40, which is not > 50");
+        // Named for the host alone, c2's loss goes unnoticed.
+        let (report, _) = run_stand(&format!("{STAND}@host invariant field e5 Health.current > 50\n@c2 act hurt amount=60\nstep 1"));
+        assert!(report.passed, "{report}");
+        let (report, _) = run_stand(&format!("{STAND}@c1 invariant field e5 Health.current > 50\n@c1 act hurt amount=60"));
+        assert!(!report.passed);
+        assert_eq!(report.log[1].detail, "must hold on c1 after every act and step from here on: field e5 Health.current > 50");
+    }
+
+    fn failure_on_stand(text: &str) -> Failure {
+        let (report, _) = run_stand(text);
+        assert!(!report.passed, "expected a failure:\n{report}");
+        report.failure.unwrap()
+    }
+
+    #[test]
+    fn journals_and_marks_are_per_member() {
+        let (report, _) = run_stand(&format!(
+            "{STAND}@c1 act hurt amount=1\n@c1 expect journal \"hurt\"\n@host expect !journal \"hurt\"\n@c2 expect !journal \"hurt\"\n\
+             mark\n@c1 expect !journal \"hurt\"\n@c2 act hurt amount=1\n@c2 expect journal \"hurt\"\n@c1 expect !journal \"hurt\"\n"
+        ));
+        assert!(report.passed, "{report}");
+        assert_eq!(report.log[5].detail, "journal counts from entry host 1, c1 2, c2 1");
+        let f = failure_on_stand(&format!("{STAND}@c1 act hurt amount=1\n@c2 expect journal \"hurt\""));
+        assert_eq!(f.message, "no journal entry on c2 since the scenario started contains \"hurt\"; the journal is empty then");
+        let f = failure_on_stand(&format!("{STAND}@c1 act hurt amount=1\n@c1 mark\n@c1 expect journal \"hurt\""));
+        assert_eq!(f.message, "no journal entry on c1 since `mark` on line 3 contains \"hurt\"; the journal is empty then");
+        // A mark on one member leaves the others' counting where it was.
+        let (report, _) = run_stand(&format!("{STAND}@c1 act hurt amount=1\n@host act hurt amount=1\n@c1 mark\n@host expect journal \"hurt\""));
+        assert!(report.passed, "{report}");
+    }
+
+    #[test]
+    fn a_session_without_a_member_sets_the_agent_up_everywhere() {
+        let (report, stand) = run_stand(&format!(
+            "{STAND}session --agent bot --scope player\n@c1 session --player 1\n@c1 act attack\nact attack\n"
+        ));
+        assert!(report.passed, "{report}");
+        assert_eq!(report.log[1].detail, "acting as bot, player scope");
+        let bots: Vec<&str> = stand.members.iter().filter(|(_, m)| m.sessions.iter().any(|(a, _)| a == "bot")).map(|(n, _)| n.as_str()).collect();
+        assert_eq!(bots, ["c1", "c2", "host"]);
+        let c1 = &stand.members["c1"];
+        let bound = c1.sessions.iter().filter(|(a, c)| a == "bot" && c.player == Some(1)).count();
+        assert_eq!(bound, 1, "the player binding is for c1 alone");
+        assert!(stand.members["c2"].sessions.iter().all(|(_, c)| c.player.is_none()));
+        let who: Vec<(&str, &str)> = stand.calls.iter().map(|(m, a, _)| (m.as_str(), a.as_str())).collect();
+        assert_eq!(who, [("c1", "bot"), ("host", "bot")]);
+    }
+
+    #[test]
+    fn a_member_that_does_not_answer_is_a_driver_failure() {
+        let script = Script::parse("s.scenario", &format!("{STAND}@c2 observe")).unwrap();
+        let mut stand = FakeStand::new(2);
+        stand.members.get_mut("c2").unwrap().gone = true;
+        let f = run(&script, &mut stand).failure.unwrap();
+        assert_eq!((f.kind, f.line), (FailureKind::Driver, 2), "{f:?}");
     }
 }
