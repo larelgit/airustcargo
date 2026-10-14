@@ -25,12 +25,13 @@ use ai_core::journal::{self, JournalKind};
 use ai_core::{AiId, AiKind, AiLandmark, AiPlayer, SimGate};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use shards_content::prefab::check_prefab;
 use shards_content::{spawn_prefab, ContentDb};
 use shards_core::{loading_statuses, EngineConfig, EngineState, Intent, LoadStatus, PlayerId};
 use shards_motion::{Collider, ColliderId, CollisionLayers, LayerMask, PhysicsWorld, QueryFilter, Shape, Volume};
 
 use crate::checks::RegionGraph;
-use crate::content::{PoiDef, RoomDef, TileDef, TileGeometry, TilePiece};
+use crate::content::{level_path_problem, PoiDef, RoomDef, TileDef, TileGeometry, TilePiece};
 use crate::generate::{self, Generated, WorldGen};
 use crate::grid::{rotation, turn, turns_of};
 use crate::manifest::{Layout, PlacedTile, RegionManifest};
@@ -194,7 +195,9 @@ pub(crate) fn request_level_files(
     let request = spawner.request;
     files.paths = level_paths(&db);
     files.synced = true;
-    let fresh: Vec<String> = files.paths.iter().filter(|p| !files.requested.contains(*p)).cloned().collect();
+    // A path outside the asset folder gets no request: the asset server answers with a handle
+    // that never loads (the loading gate reports it, see `levels_status`).
+    let fresh: Vec<String> = files.paths.iter().filter(|p| level_path_problem(p).is_none() && !files.requested.contains(*p)).cloned().collect();
     for path in fresh {
         files.requested.insert(path.clone());
         commands.queue(move |world: &mut World| request(world, &path));
@@ -213,7 +216,11 @@ pub(crate) fn levels_status(world: &World) -> LoadStatus {
     }
     let (mut waiting, mut failed) = (0, Vec::new());
     for path in &files.paths {
-        match (spawner.status)(world, path) {
+        let status = match level_path_problem(path) {
+            Some(why) => LoadStatus::Failed(why),
+            None => (spawner.status)(world, path),
+        };
+        match status {
             LoadStatus::Ready => {}
             LoadStatus::Pending(_) => waiting += 1,
             LoadStatus::Failed(why) => failed.push((path, why)),
@@ -317,7 +324,8 @@ struct TilePlan {
 
 /// The content of every tile `manifest` names, or what stops it from being built: tiles
 /// content lacks, level files without a level loader or that the loader rejects (not loaded,
-/// not loadable, problems in their nodes). Checked before anything changes.
+/// not loadable, problems in their nodes), prefabs that cannot be spawned. Checked before
+/// anything changes.
 fn plan(world: &World, manifest: &RegionManifest) -> Result<Vec<TilePlan>, String> {
     let db = world.resource::<ContentDb>();
     let loader = world.get_resource::<LevelSpawner>().copied();
@@ -361,7 +369,36 @@ fn plan(world: &World, manifest: &RegionManifest) -> Result<Vec<TilePlan>, Strin
             manifest.content_hash
         ));
     }
+    check_prefabs(world, manifest, &plans)?;
     Ok(plans)
+}
+
+/// Every prefab the build will spawn (tile pieces, decor, points of interest) can be: they are
+/// only read while spawning, and by then the old region is gone.
+fn check_prefabs(world: &World, manifest: &RegionManifest, plans: &[TilePlan]) -> Result<(), String> {
+    let db = world.resource::<ContentDb>();
+    let registry = world.resource::<AppTypeRegistry>().read();
+    let mut checked = BTreeSet::new();
+    let mut check = |id: &str| if checked.insert(id.to_owned()) { check_prefab(db, &registry, id, None) } else { Ok(()) };
+    for (placed, plan) in manifest.tiles.iter().zip(plans) {
+        let (x, y) = (placed.at[0], placed.at[1]);
+        if let TileGeometry::Inline(pieces) = &plan.geometry {
+            for piece in pieces {
+                if let TilePiece::Prefab { id, .. } = piece {
+                    check(id).map_err(|e| format!("tile `{}` at ({x}, {y}): {e}", plan.id))?;
+                }
+            }
+        }
+        if let Some(decor) = &placed.decor {
+            check(decor).map_err(|e| format!("tile `{}` decor: {e}", plan.id))?;
+        }
+    }
+    for poi in &manifest.pois {
+        if let Some(prefab) = db.get::<PoiDef>(&poi.poi).and_then(|d| d.prefab.as_deref()) {
+            check(prefab).map_err(|e| format!("poi `{}`: {e}", poi.poi))?;
+        }
+    }
+    Ok(())
 }
 
 /// Builds `manifest` in the world (it does not generate anything). Nothing is left behind
@@ -502,13 +539,23 @@ pub fn players(world: &mut World) -> Vec<Entity> {
 }
 
 /// The height of the ground under `at` (a ray down from 2 m above it), with the physics
-/// world brought up to date first.
+/// world brought up to date first. A ray that starts inside a solid (the floor stands higher
+/// than `at`, as on a plateau tile) starts again above that solid's top.
 pub fn ground_below(world: &mut World, at: Vec3, exclude: &[Entity]) -> Option<f32> {
     // The same pure function of the ECS the ticks run: it changes no tick's outcome.
     world.run_system_cached(shards_motion::physics::sync_physics).ok()?;
     let physics = world.get_resource::<PhysicsWorld>()?;
     let filter = QueryFilter { mask: LayerMask::WORLD, exclude: exclude.to_vec(), volumes: false };
-    physics.raycast(at + Vec3::Y * 2.0, Dir3::NEG_Y, 50.0, &filter).map(|hit| hit.point.y)
+    let mut from = at + Vec3::Y * 2.0;
+    // Each round climbs out of one more solid; a few stacked floors are all there is to find.
+    for _ in 0..8 {
+        let hit = physics.raycast(from, Dir3::NEG_Y, 50.0, &filter)?;
+        if hit.distance > 0.0 {
+            return Some(hit.point.y);
+        }
+        from.y = physics.collider(hit.entity)?.aabb_max.y + 0.05;
+    }
+    None
 }
 
 /// Moves every player to the region's spawn (on the ground there) and drops their orders,
@@ -567,13 +614,22 @@ fn set_state(world: &mut World, next: EngineState) {
     let _ = world.try_run_schedule(StateTransition);
 }
 
+/// Whether a state change can take effect now. Not inside a state transition (a game calling
+/// [`change_region`] from `OnEnter(InGame)`): its schedule is out of the world while it runs,
+/// so a requested state would only wait in `NextState` and enter the same state again, and
+/// again, every frame.
+fn can_change_state(world: &World) -> bool {
+    world.resource::<Schedules>().contains(StateTransition)
+}
+
 /// Replaces the region in the world with `manifest`: through `RegionLoading` (from the game
-/// or a menu), old region out, new region in, players to its spawn, back to `InGame` (or held
-/// by the loading gate while another module still loads). Refuses, changing nothing, a
-/// manifest whose tiles content lacks.
+/// or a menu; called from a state transition such as `OnEnter(InGame)` it replaces the region
+/// without the loading screen), old region out, new region in, players to its spawn, back to
+/// `InGame` (or held by the loading gate while another module still loads). Refuses, changing
+/// nothing, a manifest whose tiles or prefabs content lacks.
 pub fn change_region(world: &mut World, manifest: RegionManifest) -> Result<RegionSpawned, String> {
     plan(world, &manifest)?;
-    let trip = matches!(state(world), Some(EngineState::InGame | EngineState::MainMenu));
+    let trip = matches!(state(world), Some(EngineState::InGame | EngineState::MainMenu)) && can_change_state(world);
     if trip {
         set_state(world, EngineState::RegionLoading);
     }

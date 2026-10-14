@@ -304,16 +304,22 @@ fn check_pois(refs: &mut Refs, pois: &[FixedPoi], slots: &[PoiSlot], areas: usiz
     }
 }
 
+/// Why `path` cannot be a tile's level file: it is empty or leaves the asset folder.
+pub(crate) fn level_path_problem(path: &str) -> Option<String> {
+    if path.trim().is_empty() {
+        return Some("Level path is empty; give the level file, e.g. Level(path: \"levels/ruin.glb\")".into());
+    }
+    if !std::path::Path::new(path).components().all(|c| matches!(c, std::path::Component::Normal(_))) {
+        return Some(format!("level file `{path}` must be a path inside the asset folder, like `tiles/ruin.gltf` (relative, no `..`)"));
+    }
+    None
+}
+
 /// A tile's level file is a path inside the asset folder, and the file is there (when the
 /// content is checked with an asset folder, as the game and `content check` do).
 fn check_level_file(refs: &mut Refs, path: &str) {
-    if path.trim().is_empty() {
-        return refs.error("geometry: Level path is empty; give the level file, e.g. Level(path: \"levels/ruin.glb\")");
-    }
-    if !std::path::Path::new(path).components().all(|c| matches!(c, std::path::Component::Normal(_))) {
-        return refs.error(format!(
-            "geometry: level file `{path}` must be a path inside the asset folder, like `tiles/ruin.gltf` (relative, no `..`)"
-        ));
+    if let Some(why) = level_path_problem(path) {
+        return refs.error(format!("geometry: {why}"));
     }
     if let Some(root) = refs.asset_root()
         && !root.join(path).is_file()

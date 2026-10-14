@@ -126,7 +126,7 @@ fn cracked() -> Gltf {
 
 /// A fresh asset folder: the shared test content, the level tiles' content and their files;
 /// `extra` (path → bytes) is written last, over anything of the same name.
-fn site(name: &str, extra: &[(&str, &[u8])]) -> PathBuf {
+pub(crate) fn site(name: &str, extra: &[(&str, &[u8])]) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("shards_world_{}_{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let write = |path: &str, bytes: &[u8]| {
@@ -152,7 +152,7 @@ fn config_in(dir: &Path, seed: u64) -> EngineConfig {
 }
 
 /// The test game on `dir`, loaded and paused at tick 0, with `start` generated while it loaded.
-fn app_in(dir: &Path, seed: u64, start: Option<&str>) -> App {
+pub(crate) fn app_in(dir: &Path, seed: u64, start: Option<&str>) -> App {
     let app = testing::test_app(
         |c| *c = config_in(dir, seed),
         |app| {
@@ -168,7 +168,7 @@ fn app_in(dir: &Path, seed: u64, start: Option<&str>) -> App {
 }
 
 /// The same game built but not loaded.
-fn fresh_in(dir: &Path, seed: u64, start: Option<&str>) -> App {
+pub(crate) fn fresh_in(dir: &Path, seed: u64, start: Option<&str>) -> App {
     let mut app = App::new();
     app.add_plugins(EnginePlugins::new(config_in(dir, seed)));
     if let Some(region) = start {
