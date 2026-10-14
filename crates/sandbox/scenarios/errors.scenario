@@ -1,7 +1,18 @@
 # A bad call is explained, never silently dropped: every error says what was wrong and how
 # the call should look. `act?` lets a call fail; `expect result` reads the message.
 #
-# Needs no seed and changes nothing in the arena, so it passes in any game state.
+# It puts the player back at the arena's start (the layout's spawn point, facing north),
+# whatever came before, so it passes in any order with the other scenarios.
+
+# --- the player at the start: a live body, its controls released
+act heal id=e5
+act stop
+act block on=false
+act glide on=false
+act sprint on=false
+act lock_on off=true
+act teleport id=e5 x=0 z=12 y=0
+step 2
 
 # a tool that does not exist lists the ones that do
 act? fly
