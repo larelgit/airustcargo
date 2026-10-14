@@ -1,0 +1,39 @@
+// The hero's actions: a two-hit combo and a roll, plus the two the engine plays by itself
+// (stagger when poise breaks, death). Which press starts which action is in
+// `movesets.moveset.ron`.
+//
+// An action is a timeline: `phases` are named stretches (their lengths add up to the
+// action), and windows on it (`hits`, `iframes`, `cancels`) say what happens when.
+// `net_id` names the action on the wire for co-op later: unique among all actions.
+{
+    "light_1": (
+        net_id: 1,
+        phases: [("windup", 0.18), ("active", 0.1), ("recovery", 0.3)],
+        cost: (stamina: 10),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.2, angle: 110), damage: 20, poise: 12)],
+        // Pressing `light` again in this window chains into light_2, `dodge` rolls out of it.
+        cancels: [(span: Secs(0.3, 0.55), into: [Combo("light", "light_2"), Input("dodge")])],
+        displacement: [(0.18, 0.0), (0.3, 0.4)],
+        anim: "light_1",
+    ),
+    "light_2": (
+        net_id: 2,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.4)],
+        cost: (stamina: 12),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.2, angle: 110), damage: 28, poise: 20)],
+        cancels: [(span: Secs(0.35, 0.6), into: [Input("dodge")])],
+        anim: "light_2",
+    ),
+    // A roll: invulnerable at the start, moves 4 m along the stick (or the way it faces).
+    "roll": (
+        net_id: 3,
+        phases: [("roll", 0.4), ("recover", 0.1)],
+        cost: (stamina: 25),
+        iframes: [Secs(0.0, 0.2)],
+        displacement: [(0.35, 4.0)],
+        steer: Move,
+        anim: "roll",
+    ),
+    "hero_stagger": (net_id: 4, phases: [("stagger", 0.7)]),
+    "hero_death": (net_id: 5, phases: [("fall", 1.0)]),
+}

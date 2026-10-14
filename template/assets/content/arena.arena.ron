@@ -1,0 +1,24 @@
+// The level: a game's own content kind (`ArenaDef` in src/arena.rs, kind `arena`). The game
+// spawns the arena you name in `OnEnter(EngineState::InGame)`, once content has loaded.
+//
+// Meters; x east (+X), z south (+Z), north is -Z. A wall stands on the floor: `at` is the
+// center of its footprint and `half` its half extents (x, height, z).
+{
+    "yard": (
+        // The floor is a square this far from the center in every direction, fenced all round.
+        half: 20.0,
+        walls: [
+            // A long wall across the yard with a gap in the middle, and two pillars.
+            (at: (-9.0, -4.0), half: (7.0, 1.2, 0.5)),
+            (at: (9.0, -4.0), half: (7.0, 1.2, 0.5)),
+            (at: (-6.0, 6.0), half: (0.8, 2.0, 0.8)),
+            (at: (6.0, 6.0), half: (0.8, 2.0, 0.8)),
+        ],
+        // In this order, so ids stay the same from run to run: the hero is e1, the grunt e2.
+        spawns: [
+            (prefab: "hero", at: (0.0, 12.0)),
+            // yaw_deg 180: facing the hero (north is 0, the way the hero looks at the start).
+            (prefab: "grunt", at: (0.0, -10.0), yaw_deg: 180.0),
+        ],
+    ),
+}

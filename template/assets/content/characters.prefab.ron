@@ -1,0 +1,53 @@
+// Entities defined in data: `shards act spawn_prefab id=grunt x=3 z=-4` spawns one at any
+// time, the arena (arena.arena.ron) spawns its characters from here.
+//
+// Components by name, values as in Bevy scenes: every component must derive Reflect and
+// have #[reflect(Component)]. Fields a component's Default covers may be left out;
+// `extends: "other"` starts from another prefab and replaces whole components.
+{
+    "hero": (
+        components: {
+            "Name": "Hero",
+            "AiKind": ("Hero"),
+            "AiImportance": (5.0),
+            // The body an agent plays by default, and the player's number and keyboard
+            // (`PlayerId(1)` is the second player of co-op, later).
+            "AiPlayer": (),
+            "PlayerId": (0),
+            "LocalPlayer": (),
+            // Moves by `hero` in characters.locomotion.ron; fights by `hero` in movesets.moveset.ron.
+            "CharacterController": (params: "hero"),
+            "Fighter": (moveset: "hero"),
+            "Team": ("heroes"),
+            "Health": (current: 100.0, max: 100.0),
+            "Stamina": (current: 100.0, max: 100.0, regen: 30.0, delay: 0.8, since_use: 0.8),
+            "Poise": (current: 40.0, max: 40.0, regen: 10.0, delay: 2.0, since_hit: 2.0, broken: 0.0),
+        },
+    ),
+    "grunt": (
+        components: {
+            "Name": "Grunt",
+            "AiKind": ("Grunt"),
+            "AiImportance": (1.0),
+            // The game's own component (src/brain.rs): when it notices the hero and how
+            // often it prefers the slam to the swipe.
+            "Grunt": (aggro: 14.0, heavy_chance: 0.25),
+            "CharacterController": (params: "grunt"),
+            "Fighter": (moveset: "grunt"),
+            "Team": ("monsters"),
+            "Health": (current: 80.0, max: 80.0),
+            "Poise": (current: 45.0, max: 45.0, regen: 8.0, delay: 2.0, since_hit: 2.0, broken: 0.0),
+            // The lock-on camera can pick it.
+            "LockOnTarget": (),
+        },
+    ),
+    // A tougher grunt that starts from the grunt and changes only what differs.
+    "grunt_brute": (
+        extends: "grunt",
+        components: {
+            "Name": "Brute",
+            "Grunt": (aggro: 18.0, heavy_chance: 0.5),
+            "Health": (current: 140.0, max: 140.0),
+        },
+    ),
+}

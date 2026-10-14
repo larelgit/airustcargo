@@ -1,0 +1,25 @@
+// The grunt's attacks. Both warn first: the windup is the time to step aside or roll
+// (`telegraph` is what the player and `observe` see: a symbol and the danger zone).
+{
+    // Quick and often: 12 damage in front of it.
+    "swipe": (
+        net_id: 10,
+        phases: [("windup", 0.5), ("active", 0.15), ("recovery", 0.45)],
+        cost: (cooldown: 0.4),
+        track_until: 0.3,
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 110), damage: 12, poise: 15)],
+        telegraph: (symbol: "!", sound: "grunt_swipe"),
+    ),
+    // Rare and slow: a ground circle around it that nothing blocks but the roll.
+    "slam": (
+        net_id: 11,
+        phases: [("windup", 0.9), ("active", 0.1), ("recovery", 0.7)],
+        cost: (cooldown: 5.0),
+        hits: [(span: Phase("active"), shape: Circle(radius: 3.0), damage: 22, poise: 40)],
+        // Hits do not stagger it while it winds up.
+        hyper_armor: [Phases("windup", "active")],
+        telegraph: (symbol: "⚠", sound: "grunt_slam"),
+    ),
+    "grunt_stagger": (net_id: 12, phases: [("stagger", 0.9)]),
+    "grunt_death": (net_id: 13, phases: [("fall", 1.0)]),
+}
