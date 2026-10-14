@@ -2,6 +2,7 @@
 shots/
 replays/
 snapshots/
+saves/
 # ...but the reference replays CI verifies are part of the repository.
 !/tests/replays/
 .shards/

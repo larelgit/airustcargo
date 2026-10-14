@@ -12,6 +12,7 @@ mod course;
 mod gltf;
 mod reference_replays;
 mod replays;
+mod saves;
 mod scenario_files;
 mod scenarios;
 mod shutdown;

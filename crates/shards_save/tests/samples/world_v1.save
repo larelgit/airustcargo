@@ -1,0 +1,14 @@
+shards-save/1 crc32=883e1bb1 len=550
+{
+  "engine": "0.2.0",
+  "game": {"title":"Shards","version":"0.0.0"},
+  "kind": "world",
+  "label": "version 1 sample",
+  "sections": {
+    "calendar": {"data":{"day":40,"omens":{},"season":"autumn"},"version":1},
+    "chests": {"data":{"chest.0":{"loot":[5],"open":true},"chest.1":{"loot":[],"open":false},"chest.2":{"loot":[5],"open":true},"chest.3":{"loot":[],"open":false},"chest.4":{"loot":[5],"open":true},"chest.5":{"loot":[],"open":false}},"version":1},
+    "region": {"data":{"active":null},"version":1}
+  },
+  "slot": "old",
+  "tick": 0
+}
