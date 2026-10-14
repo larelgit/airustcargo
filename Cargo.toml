@@ -7,6 +7,7 @@ members = [
     "crates/shards_content",
     "crates/shards_motion",
     "crates/shards_action",
+    "crates/shards_level",
     "crates/shards",
     "crates/sandbox",
     "crates/shards_cli",
@@ -39,6 +40,10 @@ ron = "=0.12.2"
 # glam (shared with all of Bevy) to scalar libm math; one machine + one build is already
 # deterministic, which is what replays need.
 parry3d = { version = "=0.31.1", default-features = false, features = ["std", "alloc", "dim3", "f32"] }
+# Reads level files (Blender's glTF export) inside shards_level only; never part of a public API.
+# The JSON alone is enough (node tree, transforms, names, extras, POSITION bounds): no `import`
+# feature, so no image decoders. Bevy's own glTF loader uses the same crate for the visuals.
+gltf = { version = "=1.4.1", default-features = false, features = ["names", "extras"] }
 
 ai_core = { path = "crates/ai_core", default-features = false }
 shards_script = { path = "crates/shards_script" }
@@ -46,6 +51,7 @@ shards_core = { path = "crates/shards_core" }
 shards_content = { path = "crates/shards_content", default-features = false }
 shards_motion = { path = "crates/shards_motion" }
 shards_action = { path = "crates/shards_action" }
+shards_level = { path = "crates/shards_level" }
 shards = { path = "crates/shards", default-features = false }
 
 # Bevy's recommended dev setup: optimise dependencies, keep our own code fast to compile.

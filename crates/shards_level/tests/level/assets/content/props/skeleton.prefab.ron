@@ -1,0 +1,10 @@
+{
+    "skeleton": (
+        components: {
+            "Name": "Skeleton",
+            "AiKind": ("Skeleton"),
+            "Health": (current: 40.0, max: 40.0),
+            "Team": ("undead"),
+        },
+    ),
+}
