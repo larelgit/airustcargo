@@ -58,9 +58,19 @@ struct UdpStand {
 
 impl UdpStand {
     fn start(clients: u8) -> UdpStand {
+        UdpStand::start_after(clients, &[])
+    }
+
+    /// [`UdpStand::start`] in a folder that already holds the port files `stale` names: what an
+    /// earlier stand left when it was killed.
+    fn start_after(clients: u8, stale: &[&str]) -> UdpStand {
         let dir = std::env::temp_dir().join(format!("sandbox-stand-udp-{}-{clients}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        for file in stale {
+            // A port nobody listens on, as a killed game leaves it.
+            std::fs::write(dir.join(file), "1\n").unwrap();
+        }
         // Every process of the stand writes its output to one file, which a failure shows.
         let log = std::fs::File::create(dir.join("out.log")).unwrap();
         let host = Command::new(env!("CARGO_BIN_EXE_sandbox"))
@@ -126,6 +136,29 @@ impl UdpStand {
         }
     }
 
+    /// Waits for the host to exit (at most `limit`) and returns how; a host that runs on is
+    /// ended the polite way, with what the stand printed.
+    fn exit_status(&mut self, limit: Duration, what: &str) -> std::process::ExitStatus {
+        let started = Instant::now();
+        loop {
+            if let Some(status) = self.host.try_wait().unwrap() {
+                return status;
+            }
+            assert!(started.elapsed() < limit, "the host runs on: {what}\n{}", self.report());
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// Waits for the clients' port files to go (at most `limit`): a client that leaves removes its
+    /// file as it goes. Unlike [`UdpStand::until`] this is for after the host has exited.
+    fn wait_for_client_files_gone(&self, limit: Duration, files: &[&str]) {
+        let started = Instant::now();
+        while files.iter().any(|file| self.dir.join(file).exists()) {
+            assert!(started.elapsed() < limit, "the clients' files are still there after {limit:?}: {files:?}\n{}", self.report());
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     fn terminate(&self) {
         // SAFETY: a plain `kill` of our own child.
         assert_eq!(unsafe { libc::kill(self.host.id() as libc::pid_t, libc::SIGTERM) }, 0);
@@ -153,7 +186,8 @@ impl Drop for UdpStand {
 
 #[test]
 fn a_udp_stand_starts_client_processes_that_join_and_leave_with_the_host() {
-    let mut stand = UdpStand::start(2);
+    // Port files an earlier (bigger) stand left behind: the host clears them before its clients start.
+    let mut stand = UdpStand::start_after(2, &["g.port.c1", "g.port.c2", "g.port.c3", "g.port.c4"]);
     // The host and its two clients, each with a port of its own, both connected, and the host
     // listing them: all three statuses are read together, until they agree (the host sees a
     // client join a little before the client does, or after).
@@ -192,6 +226,10 @@ fn a_udp_stand_starts_client_processes_that_join_and_leave_with_the_host() {
     let pids = [&host, &c1, &c2].map(|s| s["instance"]["pid"].as_i64().unwrap());
     assert_eq!(pids.iter().collect::<std::collections::BTreeSet<_>>().len(), 3, "three processes: {pids:?}");
     assert_ne!(c1["net"]["body"], c2["net"]["body"]);
+    // The leftovers past this stand's two clients are gone: they are not members of it.
+    for stale in ["g.port.c3", "g.port.c4"] {
+        assert!(!stand.dir.join(stale).exists(), "{stale} was left by an earlier stand and the host cleared it");
+    }
 
     // `net_status` of a client: connected, in sync.
     let net = stand.brp(ports[1], "ai/act", json!({"tool": "net_status", "args": {}})).expect("the client answers");
@@ -210,9 +248,8 @@ fn a_udp_stand_starts_client_processes_that_join_and_leave_with_the_host() {
         std::thread::sleep(Duration::from_millis(50));
     };
     assert_eq!(code, Some(143), "exits on the signal like any game");
-    stand.until(Duration::from_secs(20), "the clients' files gone: they left", |s| {
-        (!s.dir.join("g.port.c1").exists() && !s.dir.join("g.port.c2").exists()).then_some(())
-    });
+    // The host has exited and been reaped: `until` would ask it to be alive, so this only polls the files.
+    stand.wait_for_client_files_gone(Duration::from_secs(20), &["g.port.c1", "g.port.c2"]);
     assert!(!stand.dir.join("g.port").exists(), "the host removed its port file");
     // The client processes are gone (or on their way out as zombies nobody has reaped yet).
     for pid in [pids[1], pids[2]] {
@@ -284,4 +321,48 @@ fn a_udp_stand_is_real_time_and_says_so() {
     assert_eq!(output.status.code(), Some(2));
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("--stand-udp runs in real time") && error.contains("Drop --paused"), "{error}");
+}
+
+/// `--stand 3` when the session holds the host and two clients (`max_players` 3): the third
+/// would be turned away, so the host says so and ends, instead of running on with a stand that
+/// is not the one asked for. The clients it started go with it.
+#[test]
+fn a_stand_the_session_has_no_room_for_is_refused() {
+    let mut stand = UdpStand::start(3);
+    let status = stand.exit_status(Duration::from_secs(90), "--stand 3 does not fit the session");
+    let log = std::fs::read_to_string(stand.dir.join("out.log")).unwrap_or_default();
+    assert_eq!(status.code(), Some(2), "{log}");
+    assert!(
+        log.contains("error: stand: --stand 3 needs room for 4 players, but the session allows 3 (`max_players` of the net definition)"),
+        "{log}"
+    );
+    assert!(!stand.dir.join("g.port").exists(), "the host removed its port file");
+    stand.wait_for_client_files_gone(Duration::from_secs(30), &["g.port.c1", "g.port.c2", "g.port.c3"]);
+}
+
+/// A client that has joined and then crashes (here: killed with SIGKILL) ends the stand with a
+/// status and says which client: a stand with a dead member is not the stand that was asked for.
+#[test]
+fn a_client_that_crashes_after_joining_ends_the_stand() {
+    let mut stand = UdpStand::start(1);
+    let c1 = stand.until(Duration::from_secs(90), "the client connected, and listed by the host", |s| {
+        let host = s.status("g.port")?;
+        let c1 = s.status("g.port.c1")?;
+        let joined = c1["net"]["session"].as_str().is_some_and(|text| text.starts_with("connected as p"));
+        let listed = host["net"]["peers"].as_array().is_some_and(|peers| peers.iter().any(|p| p["player"] == c1["net"]["player"]));
+        (joined && listed).then_some(c1)
+    });
+    let pid = c1["instance"]["pid"].as_i64().unwrap() as libc::pid_t;
+    // SAFETY: a plain `kill` of a process this test's stand started.
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGKILL) }, 0);
+    let status = stand.exit_status(Duration::from_secs(60), "its client was killed");
+    let log = std::fs::read_to_string(stand.dir.join("out.log")).unwrap_or_default();
+    assert_eq!(status.code(), Some(2), "{log}");
+    assert!(
+        log.contains("error: stand: client c1 was ended by signal 9 while the stand ran: it crashed, see its output above"),
+        "{log}"
+    );
+    assert!(!stand.dir.join("g.port").exists(), "the host removed its port file");
+    // A killed client cannot remove its own file: the stand's drop would wait for it.
+    let _ = std::fs::remove_file(stand.dir.join("g.port.c1"));
 }
