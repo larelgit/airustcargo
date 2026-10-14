@@ -20,11 +20,12 @@ pub mod state;
 use ai_core::{AiAppExt, AiCorePlugin, SimConfig, SimSet};
 use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
+use bevy::state::state::StateTransitionSystems;
 use serde::Serialize;
 use serde_json::{json, Value};
 
 pub use intent::{flat, follow_orders, input_names, Intent, Order, Press, Target};
-pub use loading::{LoadCheck, LoadStatus, LoadingGate};
+pub use loading::{statuses as loading_statuses, LoadCheck, LoadStatus, LoadingGate};
 pub use state::{EngineState, LocalPlayer, NetRole, PauseState, PlayerId};
 
 /// Version of the engine crates (they share one).
@@ -195,6 +196,7 @@ impl Plugin for CorePlugin {
             .init_resource::<NetRole>()
             .init_resource::<LoadingGate>()
             .init_resource::<state::MenuPaused>()
+            .init_resource::<state::RegionTrip>()
             .init_state::<EngineState>()
             .add_sub_state::<PauseState>()
             .replay_input::<Intent>()
@@ -213,6 +215,18 @@ impl Plugin for CorePlugin {
             )
             .add_systems(First, loading::update_loading.before(ai_core::sim::apply_gate))
             .add_systems(PreUpdate, state::close_pause_when_resumed)
+            .add_systems(
+                StateTransition,
+                (
+                    last_transition::<EngineState>
+                        .pipe(state::hide_game_schedules)
+                        .in_set(StateTransitionSystems::ExitSchedules)
+                        .before(ExitSchedules::<EngineState>::default()),
+                    state::restore_game_schedules
+                        .in_set(StateTransitionSystems::EnterSchedules)
+                        .after(EnterSchedules::<EngineState>::default()),
+                ),
+            )
             .add_systems(OnEnter(PauseState::Paused), state::pause_simulation)
             .add_systems(OnExit(PauseState::Paused), state::resume_simulation)
             .add_systems(Update, (state::journal_transitions::<EngineState>, state::journal_transitions::<PauseState>));

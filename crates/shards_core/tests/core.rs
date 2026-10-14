@@ -217,3 +217,46 @@ fn status_names_the_engine_and_its_modules() {
     assert_eq!(names, ["core", "content"]);
     assert!(app.world().resource::<EngineModules>().contains("core"));
 }
+
+/// Times `OnEnter(RegionLoading)` ran: the loading screen of a region change.
+#[derive(Resource, Default)]
+struct RegionScreens(u32);
+
+#[test]
+fn a_region_trip_keeps_the_game_and_holds_ticks_until_loaded() {
+    let mut app = app(test_config());
+    app.init_resource::<RegionScreens>()
+        .add_systems(OnEnter(EngineState::RegionLoading), |mut n: ResMut<RegionScreens>| n.0 += 1);
+    load(&mut app);
+    ok(&mut app, "step", json!({"ticks": 3}));
+    let heroes = |app: &mut App| app.world_mut().query_filtered::<Entity, With<Hero>>().iter(app.world()).count();
+    assert_eq!(heroes(&mut app), 1);
+
+    // A region change: something must load again before the game goes on.
+    app.world_mut().resource_mut::<Loaded>().0 = false;
+    app.world_mut().resource_mut::<NextState<EngineState>>().set(EngineState::RegionLoading);
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(state(&app), EngineState::RegionLoading);
+    assert_eq!(app.world().resource::<RegionScreens>().0, 1, "the loading screen came up");
+    let refused = act(&mut app, "step", json!({"ticks": 1}));
+    assert!(!refused.ok, "no tick while the region loads: {}", refused.result);
+    assert!(app.world().get_resource::<State<PauseState>>().is_none());
+
+    load(&mut app);
+    assert_eq!(heroes(&mut app), 1, "OnEnter(InGame) did not run again: the game kept its hero");
+    assert_eq!(app.world().resource::<State<PauseState>>().get(), &PauseState::Running);
+    ok(&mut app, "step", json!({"ticks": 2}));
+    assert_eq!(ai_core::sim::tick(app.world()), 5, "loading shifted no tick");
+    let journal: Vec<String> = app.world().resource::<AiJournal>().after(0).0.map(|e| e.text.clone()).collect();
+    assert!(journal.iter().any(|t| t == "state InGame -> RegionLoading"), "{journal:?}");
+    assert!(journal.iter().any(|t| t == "state RegionLoading -> InGame"), "{journal:?}");
+
+    // A real exit from the game still runs its schedules: back in, the game starts anew.
+    app.world_mut().resource_mut::<NextState<EngineState>>().set(EngineState::MainMenu);
+    app.update();
+    app.world_mut().resource_mut::<NextState<EngineState>>().set(EngineState::InGame);
+    app.update();
+    assert_eq!(heroes(&mut app), 2, "entering InGame from the menu spawns the world");
+}

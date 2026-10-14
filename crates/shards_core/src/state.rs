@@ -6,7 +6,10 @@
 //! ```
 //!
 //! The simulation never runs while the engine is `Loading` or `RegionLoading` (the
-//! [loading gate](crate::loading) holds it). `PauseState::Paused` is the player's pause
+//! [loading gate](crate::loading) holds it). A trip `InGame → RegionLoading → InGame` (a
+//! region change) keeps the game: `OnExit(InGame)` and `OnEnter(InGame)` do not run for
+//! it, so the players a game spawned on entering `InGame` stay (the region module moves
+//! them); `OnEnter`/`OnExit(RegionLoading)` mark the trip. `PauseState::Paused` is the player's pause
 //! (a menu): in single player it pauses the simulation, and an agent's `resume` closes
 //! it again. Pausing the simulation itself (`shards pause`, `--paused`) is a dev tool and
 //! leaves `PauseState` alone, so stepping a game never pops a menu up.
@@ -27,8 +30,9 @@ pub enum EngineState {
     MainMenu,
     /// Playing: games spawn their world on entering it.
     InGame,
-    /// Reserved for region streaming: no ticks run, and the engine returns to `InGame`
-    /// once the loading gate is open again (`OnEnter(InGame)` runs again then).
+    /// A region is being replaced (`shards_world`): no ticks run, and the engine returns
+    /// to `InGame` once the loading gate is open again. Coming from `InGame`, the trip
+    /// keeps the game: `OnExit(InGame)` and `OnEnter(InGame)` do not run for it.
     RegionLoading,
 }
 
@@ -98,6 +102,53 @@ pub(crate) fn close_pause_when_resumed(
     if state.is_some_and(|s| *s.get() == PauseState::Paused) && *role == NetRole::Single && !time.is_paused() {
         menu.0 = false;
         next.set(PauseState::Running);
+    }
+}
+
+/// Whether a region trip keeps the game, and the schedules hidden while its transition runs.
+#[derive(Resource, Default)]
+pub(crate) struct RegionTrip {
+    /// `RegionLoading` was entered from `InGame`: coming back continues that game.
+    from_game: bool,
+    /// Taken out of [`Schedules`] for the transition running now.
+    hidden: Vec<Schedule>,
+}
+
+/// `StateTransition`, before the exit schedules of `EngineState`: a region trip out of or
+/// back into `InGame` hides `OnExit(InGame)` / `OnEnter(InGame)` from this transition, so
+/// the game's world (its players above all) is neither torn down nor spawned twice.
+pub(crate) fn hide_game_schedules(In(transition): In<Option<StateTransitionEvent<EngineState>>>, world: &mut World) {
+    let Some(StateTransitionEvent { exited: Some(from), entered: Some(to), .. }) = transition else {
+        return;
+    };
+    let mut trip = world.get_resource_or_init::<RegionTrip>();
+    let hidden = match (from, to) {
+        (EngineState::InGame, EngineState::RegionLoading) => {
+            trip.from_game = true;
+            world.resource_mut::<Schedules>().remove(OnExit(EngineState::InGame))
+        }
+        (EngineState::RegionLoading, EngineState::InGame) if trip.from_game => {
+            trip.from_game = false;
+            world.resource_mut::<Schedules>().remove(OnEnter(EngineState::InGame))
+        }
+        (EngineState::RegionLoading, _) => {
+            trip.from_game = false;
+            None
+        }
+        _ => None,
+    };
+    if let Some(schedule) = hidden {
+        world.resource_mut::<RegionTrip>().hidden.push(schedule);
+    }
+}
+
+/// `StateTransition`, after the enter schedules of `EngineState`: puts back what
+/// [`hide_game_schedules`] took out.
+pub(crate) fn restore_game_schedules(world: &mut World) {
+    let hidden = std::mem::take(&mut world.get_resource_or_init::<RegionTrip>().hidden);
+    let mut schedules = world.resource_mut::<Schedules>();
+    for schedule in hidden {
+        schedules.insert(schedule);
     }
 }
 
