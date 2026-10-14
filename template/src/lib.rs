@@ -37,7 +37,6 @@ pub mod brain;
 #[cfg(feature = "render")]
 pub mod visuals;
 
-use shards::motion::InputSettings;
 use shards::prelude::*;
 
 /// Everything that is this game, on top of the engine: its content kinds, its level, its
@@ -46,8 +45,8 @@ pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        // Rebound keys are saved in the user's config folder, under this game's name.
-        app.world_mut().get_resource_mut::<InputSettings>().expect("add EnginePlugins before GamePlugin").app_name = "my_game".into();
+        // The player's settings (rebound keys, volume, accessibility) are kept in the user's config folder, under this game's name.
+        app.insert_resource(SettingsAppId::new("my-game"));
         app.add_plugins((arena::ArenaPlugin, brain::BrainPlugin, ai::GameAiPlugin));
     }
 }

@@ -34,6 +34,8 @@ pub struct SandboxPlugin;
 
 impl Plugin for SandboxPlugin {
     fn build(&self, app: &mut App) {
+        // The window title carries the seed and the port, so it cannot name the settings folder.
+        app.insert_resource(SettingsAppId::new("shards-sandbox"));
         app.add_plugins((gameplay::GameplayPlugin, ai::GameAiPlugin));
     }
 }

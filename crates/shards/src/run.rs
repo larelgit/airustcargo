@@ -209,6 +209,12 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
     // and the port file are removed on the way out.
     termination::catch_signals();
     let mut app = build(&config);
+    // Player settings are read now, not earlier: Bevy's settings plugin scans the type registry
+    // once, so every group the game registered while building must be there.
+    if let Err(e) = shards_settings::install(&mut app, &config) {
+        eprintln!("error: {e}");
+        return ExitCode::from(2);
+    }
     app.add_systems(First, termination::exit_when_signalled);
     if let Some(r) = recording
         && let Err(e) = replay::play(app.world_mut(), r)

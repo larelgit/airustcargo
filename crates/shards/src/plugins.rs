@@ -14,6 +14,7 @@ use shards_level::LevelPlugin;
 use shards_motion::MotionPlugin;
 use shards_npc::NpcPlugin;
 use shards_save::SavePlugin;
+use shards_settings::ShardsSettingsPlugin;
 use shards_world::WorldPlugin;
 
 use crate::save_sections::EngineSavePlugin;
@@ -81,6 +82,8 @@ impl PluginGroup for EnginePlugins {
             .add(config.ai_core_plugin())
             .add(CorePlugin { config: config.clone() })
             .add(ContentPlugin)
+            // Player settings: the groups the modules below apply (controls, camera, warnings).
+            .add(ShardsSettingsPlugin)
             .add(MotionPlugin)
             .add(ActionPlugin)
             .add(LevelPlugin)

@@ -79,7 +79,7 @@ cargo game                 # окно (`cargo game` = `cargo run --`, см. .car
    git init
    ```
 2. **Переименуйте пакет.** Имя `my_game` встречается в `Cargo.toml` (`name`, `[[bin]]`), `src/main.rs`
-   (`my_game::build_app`), `src/lib.rs` (`app_name`, заголовок окна), `src/arena.rs` (`require_content … "my_game"`)
+   (`my_game::build_app`), `src/lib.rs` (`SettingsAppId`, заголовок окна), `src/arena.rs` (`require_content … "my_game"`)
    и в `tests/` (`my_game::test_app`). Найти все места: `grep -rn my_game .`.
 3. **Подключите движок по тегу.** В `Cargo.toml` замените путь на тег релиза (версии и тег описаны в
    `CHANGELOG.md` движка):
