@@ -210,8 +210,6 @@ pub struct NetHost {
     cache: EncodeCache,
     journal_seq: u64,
     tasks: Vec<Task>,
-    /// The world was rebuilt: every connected peer gets it again.
-    rebase_all: Option<String>,
     /// Encode time of the last and the slowest send tick, microseconds.
     pub encode_us: (u64, u64),
     /// Encode time of every send tick, microseconds, and how many there were.
@@ -244,7 +242,6 @@ impl NetHost {
             cache: EncodeCache::default(),
             journal_seq: 0,
             tasks: Vec::new(),
-            rebase_all: None,
             encode_us: (0, 0),
             encode_total: (0, 0),
             desyncs: 0,
@@ -472,11 +469,17 @@ pub(crate) fn pump(world: &mut World) {
     });
 }
 
-/// Observer: the world was rebuilt (a region change, a snapshot load): every client gets it
-/// again once the world is out of its loading gate.
-pub(crate) fn on_world_rebuilt(event: On<WorldRebuilt>, mut host: Option<ResMut<NetHost>>) {
-    if let Some(host) = host.as_mut() {
-        host.rebase_all = Some(event.event().reason.clone());
+/// The world was rebuilt (a region change, a snapshot load) and the clients have not been
+/// given it yet. A resource of its own, not a field of [`NetHost`]: a guest's forwarded call
+/// (`regen`) rebuilds the world while the host is out of the world, inside `run_tasks`.
+#[derive(Resource, Default)]
+pub(crate) struct PendingRebuild(Option<String>);
+
+/// Observer: the world was rebuilt: every client gets it again once the world is out of its
+/// loading gate.
+pub(crate) fn on_world_rebuilt(event: On<WorldRebuilt>, pending: Option<ResMut<PendingRebuild>>) {
+    if let Some(mut pending) = pending {
+        pending.0 = Some(event.event().reason.clone());
     }
 }
 
@@ -889,8 +892,9 @@ fn refuse(world: &mut World, host: &mut NetHost, id: PeerId, reason: &str) {
 fn run_tasks(world: &mut World, host: &mut NetHost) {
     // A rebuilt world, once out of its loading gate: its players first, then every client
     // gets it whole.
-    if host.rebase_all.is_some() && !world.get_resource::<SimGate>().is_some_and(SimGate::is_held) {
-        let reason = host.rebase_all.take().unwrap_or_default();
+    let rebuilt = world.get_resource::<PendingRebuild>().is_some_and(|p| p.0.is_some());
+    if rebuilt && !world.get_resource::<SimGate>().is_some_and(SimGate::is_held) {
+        let reason = world.resource_mut::<PendingRebuild>().0.take().unwrap_or_default();
         reconcile_players(world, host);
         for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Connected) {
             peer.rebase = Some(reason.clone());
@@ -1313,6 +1317,13 @@ fn send_state(world: &mut World, host: &mut NetHost) {
     let def = net_def(world);
     let tick = sim::tick(world);
     if !tick.is_multiple_of(def.send_every.max(1) as u64) || host.connected().next().is_none() {
+        return;
+    }
+    // A world rebuilt in this tick (by a guest's forwarded call) goes first, at the next
+    // `run_tasks`: a delta of it before that would put its resources (the region's record) in
+    // clients that still have the old world, and the world they are sent then would find the
+    // region built already.
+    if world.get_resource::<PendingRebuild>().is_some_and(|p| p.0.is_some()) {
         return;
     }
     let started = std::time::Instant::now();

@@ -566,3 +566,23 @@ fn a_view_that_stops_being_capped_gives_the_client_the_references_it_read_as_not
     assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
     assert_eq!(rebases(&stand, C1), 1, "and no more worlds");
 }
+
+#[test]
+fn a_region_change_a_guest_forwards_reaches_every_client_as_a_world_again() {
+    let mut stand = stand_with(2, lossy());
+    stand.world_mut(HOST).insert_resource(dev_guests());
+    stand.run(20);
+    // The call runs on the host while the session is out of the world (inside its tasks): the
+    // rebuild it makes is not lost.
+    let sent = stand.call(C1, "regen", json!({"region": "wilds", "seed": 42}));
+    assert!(sent.ok, "{}", sent.result);
+    stand.run(90);
+    assert!(has_line(&stand, HOST, "host: regen") || host_calls(&stand, "regen").len() == 1, "{:#?}", journal(&stand, HOST));
+    let hash = stand.world(HOST).resource::<shards::world::ActiveRegion>().hash;
+    for member in [C1, C2] {
+        assert!(has_line(&stand, member, "net: the host's world again (region wilds)"), "{:#?}", journal(&stand, member));
+        assert_eq!(stand.world(member).resource::<shards::world::ActiveRegion>().hash, hash, "the same region");
+        assert_eq!(rebases(&stand, member), 1);
+        assert_eq!(desyncs(&stand, member), 0, "{:#?}", journal(&stand, member));
+    }
+}

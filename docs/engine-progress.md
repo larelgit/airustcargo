@@ -272,6 +272,7 @@ Xvfb показывает его вместе с оверлеем навсетк
 (`a_client_admitted_in_the_frame_the_hosts_ticks_jump_keeps_its_inputs_through_a_resync`).
 Вид, с которого сняли предел ссылок, отправляет клиенту мир один раз, а не ждёт рассинхрона
 (`a_view_that_stops_being_capped_gives_the_client_the_references_it_read_as_nothing`).
+Мир, перестроенный вызовом гостя, доходит до клиентов (`a_region_change_a_guest_forwards_reaches_every_client_as_a_world_again`).
 
 ## E8. Сохранения и настройки (фаза C)
 
