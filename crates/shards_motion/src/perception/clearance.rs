@@ -62,7 +62,7 @@ impl Reach {
 /// How a probe relates to the walker's state.
 enum Sample {
     /// Walkable: the walker is now at height `y`.
-    Pass { y: f32, flat: bool, swim: bool },
+    Pass { y: f32, up: f32, swim: bool },
     Stop(Hazard),
     /// Blocked or tight: the next probes say whether it is a wall, a ledge or the edge of a drop.
     Blocked,
@@ -112,11 +112,12 @@ struct Marcher<'a> {
     range: f32,
 }
 
-/// The walker's state along a march: floor (or swimming) height, whether the floor is flat.
+/// The walker's state along a march: floor (or swimming) height, the `y` of the floor's
+/// normal (1: flat).
 #[derive(Clone, Copy)]
 struct State {
     y: f32,
-    flat: bool,
+    up: f32,
     swim: bool,
 }
 
@@ -148,18 +149,17 @@ impl<'a> Marcher<'a> {
         match self.terrain.probe(at.x, at.z, from.y) {
             Probe::Floor { y, normal } => {
                 let dy = y - from.y;
-                let flat = normal.y > 0.999;
-                let allowance = if flat && from.flat { 0.0 } else { STEP * p.max_slope_deg.to_radians().tan() };
+                let allowance = self.terrain.slope_rise(STEP, from.up, normal.y);
                 if dy < -self.safe_drop {
                     Sample::Stop(Hazard::Cliff { drop: Some(-dy) })
                 } else if dy > p.step_height + allowance {
                     // Up to what the controller climbs it is a ledge, above that a wall.
                     Sample::Stop(if p.can_climb(dy, from.swim) { Hazard::Ledge { rise: dy } } else { Hazard::Wall })
                 } else {
-                    Sample::Pass { y, flat, swim: false }
+                    Sample::Pass { y, up: normal.y, swim: false }
                 }
             }
-            Probe::Water { surface } if from.swim => Sample::Pass { y: self.terrain.swim_height(surface), flat: true, swim: true },
+            Probe::Water { surface } if from.swim => Sample::Pass { y: self.terrain.swim_height(surface), up: 1.0, swim: true },
             Probe::Water { .. } => Sample::Stop(Hazard::Water),
             Probe::Void => Sample::Stop(Hazard::Cliff { drop: None }),
             Probe::Blocked(_) => Sample::Blocked,
@@ -168,15 +168,15 @@ impl<'a> Marcher<'a> {
 
     /// Marches from `origin` along `dir`; returns how far the walker gets and what stops it.
     fn march(&self, origin: Vec3, dir: Vec3, start: (f32, bool)) -> (f32, Hazard) {
-        let mut state = State { y: start.0, flat: true, swim: start.1 };
+        let mut state = State { y: start.0, up: 1.0, swim: start.1 };
         let mut passed = 0.0;
         let mut s = 0.0;
         while passed < self.range - 1e-4 {
             s = (s + STEP).min(self.range);
             let at = |t: f32| origin + dir * t;
             let stop = match self.sample(at(s), state) {
-                Sample::Pass { y, flat, swim } => {
-                    state = State { y, flat, swim };
+                Sample::Pass { y, up, swim } => {
+                    state = State { y, up, swim };
                     passed = s;
                     continue;
                 }

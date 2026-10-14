@@ -16,6 +16,8 @@ const FALL_PROBE: f32 = 60.0;
 /// A capsule rests a skin above its floor; the room test adds this margin so it never
 /// grazes the floor itself (m).
 const GRAZE: f32 = 0.02;
+/// A floor whose normal has a `y` above this is flat (about 2.6°).
+const FLAT: f32 = 0.999;
 
 /// Why a spot cannot be stood on.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -96,6 +98,20 @@ impl<'a> Terrain<'a> {
         }
     }
 
+    /// How much higher than a step a floor `dist` meters away may be and still be walked
+    /// onto, because the ground between slopes: `dist` times the tangent of the steeper tilt
+    /// of the two floors (`from_up`, `to_up`: the `y` of their normals, 1 for flat). Nothing
+    /// between two flat floors, where a difference in height is a step or a ledge.
+    pub fn slope_rise(&self, dist: f32, from_up: f32, to_up: f32) -> f32 {
+        let up = from_up.min(to_up);
+        if up > FLAT {
+            return 0.0;
+        }
+        // Floors steeper than the limit are not ground (`probe`), so the tilt is capped there.
+        let up = up.max(self.min_ground_y);
+        dist * (1.0 - up * up).max(0.0).sqrt() / up
+    }
+
     /// The highest water surface at the foot of a column, if the floor there is under water.
     fn water_at(&self, x: f32, floor: f32, z: f32) -> Option<f32> {
         self.physics
@@ -148,6 +164,18 @@ mod tests {
             physics.upsert((Entity::from_raw_u32(ids).unwrap(), &ColliderId(ids), &collider, &tf, None, None));
         }
         physics
+    }
+
+    #[test]
+    fn a_slope_lifts_a_floor_by_its_tilt() {
+        let (physics, params) = (PhysicsWorld::default(), CharacterParams::default());
+        let terrain = Terrain::new(&physics, &params, None);
+        let up = |degrees: f32| degrees.to_radians().cos();
+        assert_eq!(terrain.slope_rise(0.5, 1.0, up(1.0)), 0.0, "flat enough to be a step");
+        let gentle = terrain.slope_rise(0.5, up(3.6), 1.0);
+        assert!((gentle - 0.5 * 3.6f32.to_radians().tan()).abs() < 1e-4, "{gentle}");
+        assert!((terrain.slope_rise(0.5, 1.0, up(30.0)) - 0.5 * 30f32.to_radians().tan()).abs() < 1e-4, "the steeper of the two counts");
+        assert!((terrain.slope_rise(0.5, up(60.0), 1.0) - 0.5).abs() < 1e-4, "capped at the walkable limit (45°)");
     }
 
     #[test]

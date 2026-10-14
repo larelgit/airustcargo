@@ -322,6 +322,32 @@ fn a_swimmer_climbs_out_where_the_planner_and_the_jump_tool_say_it_can() {
     }
 }
 
+/// Ground tilted 3.6° about the x axis (so it is level going east, and not flat), and a
+/// 0.8 m high, 2 m deep ledge across the way east at x = 5.
+fn tilted_ground_with_a_ledge(world: &mut World) {
+    turned_block(world, Vec3::new(0.0, -0.5, 0.0), Vec3::new(200.0, 0.5, 200.0), Quat::from_rotation_x(3.6f32.to_radians()));
+    block(world, Vec3::new(5.0, -3.0, -20.0), Vec3::new(7.0, 0.8, 20.0));
+}
+
+#[test]
+fn a_gentle_slope_does_not_make_a_ledge_walkable() {
+    // The slope between two floors lifts one over the other by the tilt, not by the steepest
+    // slope a character can walk: ground a few degrees off flat is no excuse for a 0.8 m step.
+    let mut app = bare_engine("tilted_ledge");
+    tilted_ground_with_a_ledge(app.world_mut());
+    let e = player(app.world_mut(), Vec3::ZERO);
+    step(&mut app, 2);
+    let reaches = clearance(physics(&app), &params(), feet(&app, e), None, 15.0, 2.0, None);
+    let east = reach(&reaches, "E");
+    assert!(matches!(east.hazard, Hazard::Ledge { rise } if (rise - 0.8).abs() < 0.05), "{east:?}");
+    let plan = plan_path(physics(&app), &params(), &request(feet(&app, e), Vec3::new(10.0, 0.0, 0.0))).unwrap();
+    assert!(plan.summary().contains("(mantle 0.8m)"), "{}", plan.summary());
+
+    ok(&mut app, "move_to", json!({"target": {"x": 10, "z": 0}, "path": true}));
+    walk_until_there(&mut app, e, Vec3::new(10.0, 0.8, 0.0), 0.5, 900);
+    assert_eq!(seen(&app).mantled.len(), 1, "climbed once, as planned");
+}
+
 /// Ground, a 16.7° ramp up 3 m over 10 m, and a platform on top.
 fn ramp_course(world: &mut World) {
     block(world, Vec3::new(-30.0, -1.0, -6.0), Vec3::new(0.0, 0.0, 6.0));
