@@ -82,7 +82,7 @@ pub use process::AppToken;
 pub use replay::{AiReplay, Replay, ReplayHashing, ReplayReport};
 pub use rng::{DetRng, SimRng, SimSeed};
 pub use session::{configure_session, AgentSession, AgentSessions, Caller, PlayerResolver, Scope, SessionChange};
-pub use sim::{SimConfig, SimGate, SimSet, SimTick, TickClock};
+pub use sim::{SimConfig, SimGate, SimSet, SimTick, StepQueue, StepRoute, TickClock};
 pub use snapshot::{world_rebuilt, EntityKey, Snapshot, SnapshotRegistry, WorldRebuilt};
 pub use spatial::{AiLineOfSight, AiOccluder};
 pub use status::AiStatusFields;

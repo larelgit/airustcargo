@@ -283,6 +283,34 @@ pub struct CallOutcome {
 
 const MAX_CHANGES: usize = 60;
 
+/// At most [`MAX_CHANGES`] changes, and a line saying how many more there were.
+pub(crate) fn clip_changes(mut changes: Vec<String>) -> Vec<String> {
+    if changes.len() > MAX_CHANGES {
+        let extra = changes.len() - MAX_CHANGES;
+        changes.truncate(MAX_CHANGES);
+        changes.push(format!("… {extra} more changes"));
+    }
+    changes
+}
+
+/// The answer of a call to `tool` that ended with `result`, on the world as it is now, with no
+/// changes and no journal lines: for a driver that completes deferred requests.
+pub fn finished(world: &World, tool: &str, result: ToolResult<Value>) -> CallOutcome {
+    let (ok, result) = match result {
+        Ok(value) => (true, value),
+        Err(message) => (false, Value::String(message)),
+    };
+    CallOutcome {
+        tool: tool.to_owned(),
+        ok,
+        result,
+        tick: sim::tick(world),
+        paused: sim::is_paused(world),
+        changes: Vec::new(),
+        journal: Vec::new(),
+    }
+}
+
 /// Arguments longer than this are cut in the journal line (replays keep them whole):
 /// a content edit carries whole definitions.
 const MAX_JOURNALED_ARGS: usize = 200;
@@ -396,12 +424,7 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
     journal::drain_logs(world);
     let after = digest(world);
 
-    let mut changes = diff(&before, &after, origin);
-    if changes.len() > MAX_CHANGES {
-        let extra = changes.len() - MAX_CHANGES;
-        changes.truncate(MAX_CHANGES);
-        changes.push(format!("… {extra} more changes"));
-    }
+    let changes = clip_changes(diff(&before, &after, origin));
     let journal: Vec<String> = world.resource::<AiJournal>().after(mark).0.map(ToString::to_string).collect();
     let (ok, value) = match result {
         Ok(v) => (true, v),

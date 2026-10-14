@@ -108,6 +108,20 @@ fn ai_tools(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
     to_brp(world.resource::<AiTools>().specs(scope))
 }
 
+/// `ai/step_poll {id}`: a finished deferred request answers with its whole outcome (changes and
+/// journal lines included, like `ai/step` would have); otherwise the `step_poll` tool answers.
+fn ai_step_poll(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let p: AgentParams = parse(params)?;
+    if let Some(id) = p.rest.get("id").and_then(Value::as_u64)
+        && let Some(queue) = crate::sim::deferred_queue(world)
+        && let Ok(queue) = queue.lock()
+        && let crate::sim::StepPoll::Done(outcome) = queue.poll(id)
+    {
+        return to_brp(outcome);
+    }
+    to_brp(call_tool(world, &p.agent, "step_poll", Value::Object(p.rest)))
+}
+
 #[derive(Deserialize, Default)]
 struct SessionParams {
     #[serde(default = "default_agent")]
@@ -150,6 +164,7 @@ pub(crate) fn register_methods(world: &mut World) {
         ("ai/act", world.register_system(ai_act)),
         ("ai/observe", world.register_system(shortcut("observe"))),
         ("ai/step", world.register_system(shortcut("step"))),
+        ("ai/step_poll", world.register_system(ai_step_poll)),
         ("ai/journal", world.register_system(shortcut("journal"))),
         ("ai/shot", world.register_system(shortcut("shot"))),
         ("ai/tools", world.register_system(ai_tools)),
