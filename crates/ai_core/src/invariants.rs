@@ -1,0 +1,444 @@
+//! Invariants: rules the game must keep, checked after every tick.
+//!
+//! A rule is defined by its violation: it fires when its condition becomes true.
+//! - **game rules**: [`add_ai_invariant`](crate::AiAppExt::add_ai_invariant), code that
+//!   returns `Some(explanation)` while the rule is broken (`e5 outside the arena: x = 31.2`);
+//! - **session rules**: `assert_add {name, when}` (`shards assert add hp 'field:6:Health.current<0'`)
+//!   with any `step --until` condition, `warning` and `error` included.
+//!
+//! Rules run after every tick, in `step` and in real time. A violation takes the path of
+//! a failed gameplay system: a journal error `invariant <name> violated at tick N:
+//! <explanation>`, the game halts (pauses), the session is saved as
+//! `replays/invariant-<name>-tick<N>.json`, and a `step` stops with `stopped: invariant
+//! <name> violated at tick N (replay: …)`. The rule that fired stays off until
+//! `assert_reset` re-arms it, with every other rule that fired.
+//!
+//! Rules never change the game and stay out of replay checks and snapshots. Changes to
+//! the session's rules are recorded in the replay all the same, and playback makes them
+//! at the same ticks: the replay saved at a violation meets it again at the same tick,
+//! and `--verify` lists every violation on the way. Loading a snapshot keeps the rules
+//! and re-arms them, and the recording that starts there begins with the session's
+//! rules, so a replay from a snapshot checks them too.
+//!
+//! Rules run where the simulation runs: [`InvariantSystems`] is a set a game can gate
+//! (the engine skips it on a network client, whose world follows the host's), and a
+//! client hands the `assert_*` tools to its host ([`NetRoute::Host`]).
+
+use std::panic::{catch_unwind, AssertUnwindSafe};
+
+use bevy::prelude::*;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::builtin::{self, StopWhen};
+use crate::journal::{self, AiJournal, JournalKind};
+use crate::replay;
+use crate::session::Scope;
+use crate::sim::{self, Halt};
+use crate::tools::{register_tool, AiTools, Call, NetRoute, ToolKind, ToolResult};
+
+/// A game rule: `Some(explanation)` while it is broken.
+pub type Invariant = fn(&World) -> Option<String>;
+
+enum Rule {
+    /// [`add_ai_invariant`](crate::AiAppExt::add_ai_invariant).
+    Game(Invariant),
+    /// `assert_add`. Journal conditions look at entries after `seen`, so each entry once.
+    Session { when: StopWhen, seen: u64 },
+}
+
+struct Entry {
+    name: String,
+    rule: Rule,
+    /// The tick it fired at: off until `assert_reset`.
+    fired: Option<u64>,
+}
+
+/// A rule found broken after a tick.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Violation {
+    pub name: String,
+    pub tick: u64,
+    /// What the rule saw, e.g. `e5 outside the arena: x = 31.2`.
+    pub text: String,
+    /// The replay saved for it, relative to the game's working directory.
+    pub replay: Option<String>,
+}
+
+impl Violation {
+    /// `invariant hp violated at tick 12`
+    pub fn headline(&self) -> String {
+        format!("invariant {} violated at tick {}", self.name, self.tick)
+    }
+}
+
+/// The rules (game rules first, then session rules, each in the order added) and every
+/// violation this session.
+#[derive(Resource)]
+pub struct AiInvariants {
+    rules: Vec<Entry>,
+    violations: Vec<Violation>,
+    /// Violations a `step` has already been told about.
+    reported: usize,
+    /// Save `replays/invariant-<name>-tick<N>.json` for each violation. `false` in tests
+    /// and in `--verify`.
+    pub replays: bool,
+}
+
+impl AiInvariants {
+    pub fn new(replays: bool) -> Self {
+        Self { rules: Vec::new(), violations: Vec::new(), reported: 0, replays }
+    }
+
+    /// Every violation this session, oldest first.
+    pub fn violations(&self) -> &[Violation] {
+        &self.violations
+    }
+
+    /// Adds a game rule (prefer [`AiAppExt::add_ai_invariant`](crate::AiAppExt::add_ai_invariant));
+    /// a rule with the same name is replaced.
+    pub fn add_game_rule(&mut self, name: &str, rule: Invariant) -> Result<(), String> {
+        check_name(name)?;
+        let entry = Entry { name: name.to_owned(), rule: Rule::Game(rule), fired: None };
+        match self.rules.iter().position(|e| e.name == name) {
+            Some(i) => self.rules[i] = entry,
+            None => {
+                // Game rules come before session rules.
+                let at = self.rules.iter().position(|e| matches!(e.rule, Rule::Session { .. })).unwrap_or(self.rules.len());
+                self.rules.insert(at, entry);
+            }
+        }
+        Ok(())
+    }
+
+    fn position(&self, name: &str) -> Option<usize> {
+        self.rules.iter().position(|e| e.name == name)
+    }
+
+    fn names(&self) -> String {
+        let names: Vec<&str> = self.rules.iter().map(|e| e.name.as_str()).collect();
+        if names.is_empty() { "none".to_owned() } else { names.join(", ") }
+    }
+}
+
+impl Default for AiInvariants {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+
+/// Rule names end up in journal lines, `shards assert` commands and replay file names.
+pub(crate) fn check_name(name: &str) -> Result<(), String> {
+    let fits = !name.is_empty() && name.len() <= 64 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if fits {
+        Ok(())
+    } else {
+        Err(format!("bad rule name `{name}`: use up to 64 letters, digits, `_` and `-` (it names the replay file), e.g. boss_hp"))
+    }
+}
+
+/// `FixedLast`: the rules, after the tick's failures are collected.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InvariantSystems;
+
+pub(crate) fn plugin(app: &mut App, replays: bool) {
+    app.world_mut().get_resource_or_init::<AiInvariants>().replays = replays;
+    // Last in the tick: its log lines and its failures are in the journal by now.
+    app.configure_sets(FixedLast, InvariantSystems.after(crate::failures::collect_after_tick))
+        .add_systems(FixedLast, check_after_tick.in_set(InvariantSystems));
+    let world = app.world_mut();
+    register_tool(world, "assert_add", Scope::Dev, ToolKind::Control, assert_add_tool);
+    register_tool(world, "assert_list", Scope::Dev, ToolKind::Query, assert_list_tool);
+    register_tool(world, "assert_remove", Scope::Dev, ToolKind::Control, assert_remove_tool);
+    register_tool(world, "assert_reset", Scope::Dev, ToolKind::Control, assert_reset_tool);
+    // The rules live where they are checked: a client hands these calls to its host.
+    let mut tools = world.get_resource_or_init::<AiTools>();
+    for name in ["assert_add", "assert_list", "assert_remove", "assert_reset"] {
+        let _ = tools.set_route(name, NetRoute::Host);
+    }
+}
+
+// --- checking --------------------------------------------------------------------
+
+/// After every tick: runs the armed rules and fires the broken ones.
+fn check_after_tick(world: &mut World) {
+    let tick = sim::tick(world);
+    let Some(invariants) = world.get_resource::<AiInvariants>() else {
+        return;
+    };
+    // A failed system left this tick half-done, and the failure halted the game already.
+    let broken: Vec<(usize, String)> = if crate::failures::failed_in(world, tick) {
+        Vec::new()
+    } else {
+        invariants
+            .rules
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.fired.is_none())
+            .filter_map(|(i, entry)| broken(world, &entry.rule).map(|text| (i, text)))
+            .collect()
+    };
+    let mut first = None;
+    for (i, text) in broken {
+        let violation = fire(world, i, tick, text);
+        first.get_or_insert(Halt { reason: violation.headline(), replay: violation.replay });
+    }
+    if let Some(halt) = first {
+        sim::halt(world, halt);
+    }
+    // Entries up to here are seen, the lines the rules just wrote included: an `error`
+    // rule does not fire on another rule's violation.
+    let seen = world.resource::<AiJournal>().last_seq();
+    for entry in &mut world.resource_mut::<AiInvariants>().rules {
+        if let Rule::Session { seen: s, .. } = &mut entry.rule {
+            *s = seen;
+        }
+    }
+}
+
+fn broken(world: &World, rule: &Rule) -> Option<String> {
+    match rule {
+        Rule::Game(rule) => match catch_unwind(AssertUnwindSafe(|| rule(world))) {
+            Ok(text) => text,
+            Err(panic) => Some(format!("the rule itself panicked: {}", crate::tools::panic_message(&panic))),
+        },
+        Rule::Session { when, seen } => builtin::condition_hit(world, when, *seen),
+    }
+}
+
+fn fire(world: &mut World, index: usize, tick: u64, text: String) -> Violation {
+    let name = {
+        let mut invariants = world.resource_mut::<AiInvariants>();
+        let entry = &mut invariants.rules[index];
+        entry.fired = Some(tick);
+        entry.name.clone()
+    };
+    let mut violation = Violation { name, tick, text, replay: None };
+    journal::log(world, JournalKind::Error, format!("{}: {}", violation.headline(), violation.text));
+    violation.replay = save_replay(world, &violation);
+    world.resource_mut::<AiInvariants>().violations.push(violation.clone());
+    violation
+}
+
+fn save_replay(world: &mut World, violation: &Violation) -> Option<String> {
+    let recording = world.get_resource::<replay::AiReplay>().is_some_and(replay::AiReplay::is_recording);
+    if !world.resource::<AiInvariants>().replays || !recording {
+        return None;
+    }
+    let recording = replay::save(world);
+    let path = format!("{}/invariant-{}-tick{}.json", replay::REPLAYS_DIR, violation.name, violation.tick);
+    match replay::write(&recording, &path) {
+        Ok(_) => {
+            let text = format!("invariant replay saved: {path} (play it with --replay to reproduce)");
+            journal::log(world, JournalKind::Sim, text);
+            Some(path)
+        }
+        Err(e) => {
+            journal::log(world, JournalKind::Error, format!("invariant replay not saved: {e}"));
+            None
+        }
+    }
+}
+
+/// The recording restarts (a snapshot was loaded): every rule is armed again, journal
+/// rules look at entries from now on. Returns the session's rules as `Add`s, in order,
+/// for the new recording to start with.
+pub(crate) fn restarted(world: &mut World) -> Vec<AssertOp> {
+    let Some(seen) = world.get_resource::<AiJournal>().map(AiJournal::last_seq) else {
+        return Vec::new();
+    };
+    let Some(mut invariants) = world.get_resource_mut::<AiInvariants>() else {
+        return Vec::new();
+    };
+    let mut ops = Vec::new();
+    for entry in &mut invariants.rules {
+        entry.fired = None;
+        if let Rule::Session { when, seen: s } = &mut entry.rule {
+            *s = seen;
+            ops.push(AssertOp::Add { name: entry.name.clone(), when: when.clone() });
+        }
+    }
+    ops
+}
+
+/// Violations since the last call, for the `step` that is running.
+pub(crate) fn take_unreported(world: &mut World) -> Vec<Violation> {
+    let Some(mut invariants) = world.get_resource_mut::<AiInvariants>() else {
+        return Vec::new();
+    };
+    let new = invariants.violations[invariants.reported..].to_vec();
+    invariants.reported = invariants.violations.len();
+    new
+}
+
+// --- session rules ---------------------------------------------------------------
+
+/// A change to the session's rules, as the `assert_*` tools make it and replays store it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AssertOp {
+    Add { name: String, when: StopWhen },
+    Remove { name: String },
+    Reset,
+}
+
+/// Makes the change and records it in the replay: playback makes it again at this tick.
+pub(crate) fn apply(world: &mut World, op: &AssertOp) -> Result<String, String> {
+    let done = match op {
+        AssertOp::Add { name, when } => add(world, name, when)?,
+        AssertOp::Remove { name } => remove(world, name)?,
+        AssertOp::Reset => reset(world),
+    };
+    replay::record_assert(world, op.clone());
+    Ok(done)
+}
+
+fn add(world: &mut World, name: &str, when: &StopWhen) -> Result<String, String> {
+    check_name(name)?;
+    builtin::validate(world, when)?;
+    let seen = world.resource::<AiJournal>().last_seq();
+    let mut invariants = world.resource_mut::<AiInvariants>();
+    let entry = Entry { name: name.to_owned(), rule: Rule::Session { when: when.clone(), seen }, fired: None };
+    match invariants.position(name) {
+        Some(i) if matches!(invariants.rules[i].rule, Rule::Game(_)) => {
+            Err(format!("`{name}` is one of the game's invariants; pick another name"))
+        }
+        Some(i) => {
+            invariants.rules[i] = entry;
+            Ok(format!("replaced {name}: the game halts when {when}"))
+        }
+        None => {
+            invariants.rules.push(entry);
+            Ok(format!("added {name}: the game halts when {when}"))
+        }
+    }
+}
+
+fn remove(world: &mut World, name: &str) -> Result<String, String> {
+    let mut invariants = world.resource_mut::<AiInvariants>();
+    match invariants.position(name) {
+        Some(i) if matches!(invariants.rules[i].rule, Rule::Game(_)) => Err(format!(
+            "`{name}` is one of the game's invariants and stays; after it fires, `assert_reset` re-arms it"
+        )),
+        Some(i) => {
+            invariants.rules.remove(i);
+            Ok(format!("removed {name}"))
+        }
+        None => Err(format!("no rule `{name}`; rules: {}", invariants.names())),
+    }
+}
+
+fn reset(world: &mut World) -> String {
+    // A re-armed rule looks at the journal from now on, not at what it missed while off.
+    let seen = world.resource::<AiJournal>().last_seq();
+    let mut rearmed = Vec::new();
+    for entry in &mut world.resource_mut::<AiInvariants>().rules {
+        if entry.fired.take().is_some() {
+            rearmed.push(entry.name.clone());
+            if let Rule::Session { seen: s, .. } = &mut entry.rule {
+                *s = seen;
+            }
+        }
+    }
+    if rearmed.is_empty() { "no rule has fired; nothing to re-arm".to_owned() } else { format!("re-armed {}", rearmed.join(", ")) }
+}
+
+/// Add a rule the game must keep. After every tick (in `step` and in real time) the game
+/// halts when `when` becomes true: an error in the journal, a pause, the session saved as
+/// replays/invariant-<name>-tick<N>.json, and `step` stops there. A rule that fired stays
+/// off until `assert_reset`. Rules are recorded in replays, which then catch the same
+/// violations at the same ticks.
+#[derive(Deserialize, JsonSchema)]
+pub struct AssertAddArgs {
+    /// Letters, digits, `_` and `-` (it names the replay file). A session rule with
+    /// this name is replaced.
+    pub name: String,
+    /// A `step --until` condition: {"field": {"id": 6, "component": "Health", "path":
+    /// "current", "below": 0}}, {"gone": 7}, "warning", "error", ….
+    pub when: StopWhen,
+}
+
+fn assert_add_tool(In(call): In<Call<AssertAddArgs>>, world: &mut World) -> ToolResult {
+    let AssertAddArgs { name, when } = call.args;
+    apply(world, &AssertOp::Add { name, when })
+}
+
+/// Remove a rule added with `assert_add` (the game's own rules stay).
+#[derive(Deserialize, JsonSchema)]
+pub struct AssertRemoveArgs {
+    pub name: String,
+}
+
+fn assert_remove_tool(In(call): In<Call<AssertRemoveArgs>>, world: &mut World) -> ToolResult {
+    apply(world, &AssertOp::Remove { name: call.args.name })
+}
+
+/// Re-arm every rule that fired, the game's and the session's: each fires again after
+/// the next tick that finds it broken.
+#[derive(Deserialize, JsonSchema, Default)]
+pub struct AssertResetArgs {}
+
+fn assert_reset_tool(In(_): In<Call<AssertResetArgs>>, world: &mut World) -> ToolResult {
+    apply(world, &AssertOp::Reset)
+}
+
+/// The rules checked after every tick: the game's own and this session's, armed or fired.
+#[derive(Deserialize, JsonSchema, Default)]
+pub struct AssertListArgs {}
+
+fn assert_list_tool(In(_): In<Call<AssertListArgs>>, invariants: Res<AiInvariants>) -> ToolResult {
+    if invariants.rules.is_empty() {
+        return Ok("no rules; add one with assert_add {name, when}".into());
+    }
+    let mut out = format!("{} rules, checked after every tick", invariants.rules.len());
+    for entry in &invariants.rules {
+        let what = match &entry.rule {
+            Rule::Game(_) => "game rule".to_owned(),
+            Rule::Session { when, .. } => format!("when {when}"),
+        };
+        let state = match entry.fired {
+            Some(tick) => format!("fired at tick {tick}, off until assert_reset"),
+            None => "armed".to_owned(),
+        };
+        out.push_str(&format!("\n  {}  {what}  {state}", entry.name));
+    }
+    if let Some(last) = invariants.violations.last() {
+        out.push_str(&format!("\nviolations so far: {} (last: {})", invariants.violations.len(), last.headline()));
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rule_names_fit_a_file_name() {
+        assert!(check_name("boss_hp-2").is_ok());
+        for bad in ["", "boss hp", "../x", "hp/x", &"x".repeat(65)] {
+            let err = check_name(bad).unwrap_err();
+            assert!(err.contains("letters, digits"), "{err}");
+        }
+    }
+
+    #[test]
+    fn game_rules_come_first() {
+        let mut rules = AiInvariants::new(false);
+        rules.rules.push(Entry { name: "mine".into(), rule: Rule::Session { when: StopWhen::Error, seen: 0 }, fired: None });
+        rules.add_game_rule("health", |_| None).unwrap();
+        rules.add_game_rule("arena", |_| None).unwrap();
+        rules.add_game_rule("health", |_| Some("replaced".into())).unwrap();
+        let names: Vec<&str> = rules.rules.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["health", "arena", "mine"]);
+        assert!(rules.add_game_rule("no spaces", |_| None).is_err());
+    }
+
+    #[test]
+    fn ops_have_a_readable_json_shape() {
+        let add = AssertOp::Add { name: "hp".into(), when: StopWhen::Error };
+        assert_eq!(serde_json::to_value(&add).unwrap(), serde_json::json!({"add": {"name": "hp", "when": "error"}}));
+        assert_eq!(serde_json::to_value(AssertOp::Reset).unwrap(), serde_json::json!("reset"));
+        let back: AssertOp = serde_json::from_value(serde_json::json!({"remove": {"name": "hp"}})).unwrap();
+        assert_eq!(back, AssertOp::Remove { name: "hp".into() });
+    }
+}

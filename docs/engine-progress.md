@@ -53,7 +53,7 @@ Actions для них ещё не запускался (см. «Фазы»).
 | шаблон собирает уровень из Blender-файла с маркерами | `template/assets/tiles/ruin.gltf` + `ruin.level.ron` (обязательные маркеры); тесты `a_typo_in_the_level_is_an_error_that_names_the_fix`, колонна руины на месте, где поставил тайл. Файл сделан тестовым генератором glTF (`crates/sandbox/tests/sandbox/tiles.rs`), настоящий экспорт из Blender здесь не пробовали |
 | реплей начинается со снапшота, фаза босса — загрузка снапшота | сценарий `snapshot` и реплей `snapshot.json`; тесты `go_to_boss_phase_two_is_a_snapshot_loaded_by_name`, `a_snapshot_in_the_generated_region_goes_on_the_same_in_a_fresh_arena`; `ai_core::snapshot`, `shards::run` (код 2 для снапшота, который сборка не принимает) |
 | сценарии модулей идут в CI | `test` (`every_scenario_file_passes_on_a_fresh_game`, `…after_another`, `…backwards`) и `headless-cli` (вперёд, потом назад в одной живой игре); на GitHub не запускалось |
-| `content check` читает уровни и навигацию | `cargo sandbox --check-content` → `ok: 69 definitions in 22 files`; сломанные копии: опечатка компонента в узле, пропавший маркер, устаревший файл навсетки, опечатка сокета и точки — ошибки с файлом, узлом и подсказкой (README) |
+| `content check` читает уровни и навигацию | `cargo sandbox --check-content` → `ok: 70 definitions in 23 files`; сломанные копии: опечатка компонента в узле, пропавший маркер, устаревший файл навсетки, опечатка сокета и точки — ошибки с файлом, узлом и подсказкой (README) |
 | `clearance`/`path_to` по навсетке | 🟡 по навсетке отвечают `nav_path` (формат `path_to`, плюс тайлы маршрута) и `move_to path=true`; сами `path_to` и `clearance` остались запросами к физике |
 
 ## Сводка
@@ -279,7 +279,7 @@ Xvfb показывает его вместе с оверлеем навсетк
 | 1 | стилизованные материалы | ⏳ E |
 | 2 | растительность и инстансинг | ⏳ E |
 | 3 | эффекты и декали (телеграфы на земле из E3 — гизмо, не декали) | ⏳ E |
-| 4 | бюджеты и автотест производительности | ⏳ E |
+| 4 | бюджеты и автотест производительности | 🟡 время тика (задача 11) — ✅: строка `ticks:` у `step`, запись `[perf]` в журнале, `perf` в `ai/status`, `--tick-budget-ms` (`ai_core::perf`, `crates/sandbox/tests/perf.rs`). Время кадра, счётчики сущностей и отрисовок, автотест на эталонной сцене — E |
 | 5 | Steam | ⏳ E (нельзя проверить здесь) |
 | 6 | сборка под Windows | ⏳ E (нельзя проверить здесь) |
 | 7 | обработчик падений в один файл для отчёта | 🟡 краш-реплей `replays/crash-tick<N>.json` есть (E1/ai_core); сведений о системе и общего файла — ⏳ E |
@@ -296,6 +296,9 @@ Xvfb показывает его вместе с оверлеем навсетк
 | 5 | `clearance`, `path_to`, видимость лучами физики | 🟡 | по физике — ✅ (`src/perception/`, `physics_line_of_sight`; `tests/motion/perception.rs` (29)). По навсетке — `nav_path` (формат `path_to`, плюс тайлы маршрута; `tools::nav_path_answers_with_the_route_around_a_wall`) и `move_to path=true` (`move_to_path_follows_the_navmesh_beyond_the_local_planners_reach`); сами `path_to` и `clearance` остались запросами к физике |
 | 6 | связать слой ИИ с модулями | 🟡 | модули фазы A и B — ✅ (генератор: `regen`, `region_load`, `goto_tile`, `worldgen_report`; уровни и NPC — инструменты и строки в `observe`). Дерево интерфейса (D), агент-игрок и стенд «хост + клиенты» (C), инструменты сохранений (C) — впереди |
 | 7 | сценарные тесты: файл сценария в CI без окна, свой набор у модуля | ✅ для A и B | `shards_script`, `ai_core::scenario`, `shards scenario`; сценарии песочницы: `obstacle_course` (E2), `combat_prototype`, `boss_fight`, `dodge`, `errors` (E3), `npc_director`, `npc_navmesh` (E6), `region` (E5), `snapshot` (E11), сценарии шаблона `smoke`, `valley`; CI-задания `test` (в процессе, вперёд и назад) и `headless-cli` (против живой игры, вперёд и назад). Сценарии остальных модулей — по мере появления |
+| задача 9 | инварианты: правила, которые останавливают игру | ✅ | `ai_core::invariants`: `add_ai_invariant`, `assert_add`/`assert_list`/`assert_remove`/`assert_reset`, `shards assert`, `shards fuzz`, код выхода 3, реплей нарушения; правила песочницы `health_in_range` и `bodies_in_world`; `tests/sandbox/invariants.rs`, тесты `ai_core::invariants`, `shards_cli` (`fuzz_inputs_come_from_the_seed`), `shards_script` (оборванный шаг) |
+| задача 10 | подробности расхождения реплея | ✅ | `Check.parts`, `--check-every`, `--check-detail`; `--verify` называет сущности и компоненты и печатает их значения; `tests/sandbox/replays.rs`, тесты `ai_core::replay` |
+| задача 11 | время тика | ✅ | `ai_core::perf` (см. E10, п. 4); `crates/sandbox/tests/perf.rs`. Tracy игре на `shards` одним флагом пока не включить |
 
 | «Готово, когда» | статус |
 |---|---|
@@ -306,24 +309,26 @@ Xvfb показывает его вместе с оверлеем навсетк
 
 `cargo test --workspace` на 14 октября 2026:
 
-Всего 756 тестов проходят, 0 падают, 17 помечены `#[ignore]` (запись эталонных реплеев, проверка окна под Xvfb, примеры в
+Всего 1001 тест проходит, 0 падают, 21 помечен `#[ignore]` (запись эталонных реплеев, проверка окна под Xvfb, примеры в
 документации); у шаблона отдельно 23 проходят (и один `#[ignore]`: запись его эталонов). Запускать нужно из обычной оболочки:
 под `nohup` игнорируется SIGHUP, и тест `kill_and_hangup_remove_the_token_and_the_port_file` падает на `signal 1`.
 
 | крейт | тестов | где |
 |---|---|---|
-| `ai_core` | 52 | `crates/ai_core/src/*` (снапшоты 14) |
+| `ai_core` | 77 | `crates/ai_core/src/*` (снапшоты 14) |
 | `shards_script` | 35 | `crates/shards_script/src/*` |
-| `shards_cli` | 8 | `crates/shards_cli/src/*` |
-| `shards_core` | 11 | `src/` и `tests/core.rs` |
+| `shards_cli` | 12 | `crates/shards_cli/src/*` |
+| `shards_core` | 14 | `src/` и `tests/core.rs` |
 | `shards_content` | 22 | `src/` и `tests/content.rs` |
 | `shards_motion` | 154 | `src/` и `tests/motion/` (контроллер 28, перцепция 29, ввод 15, физика 11, …) |
-| `shards_action` | 136 | `src/` и `tests/combat/` |
+| `shards_action` | 137 | `src/` и `tests/combat/` |
 | `shards_level` | 79 | `src/` (3) и `tests/level/` (76: файл и узлы, свойства, коллайдеры, маркеры, спавн, `level` в контенте, реплей, картинка) |
-| `shards_world` | 71 | `src/` (17) и `tests/world/` (54: генерация, проверки, подземелья, регионы, смена региона, уровни-тайлы, зоны, навсетка региона) |
-| `shards_npc` | 79 | `src/` (19) и `tests/npc/` (60: поведение, восприятие, директор, навсетка, реплей, снапшот, инструменты, страж данными) |
-| `shards` | 12 | `src/`, `tests/engine.rs`, `tests/failures.rs`, `tests/level_render.rs`, `tests/action_render/` |
-| `sandbox` | 97 | `tests/sandbox/` (84, из них `snapshots.rs` 27; ещё `#[ignore]` запись эталонных реплеев), `tests/system_failures.rs` (7), `tests/log_capture.rs` (4), `src/` (2) |
+| `shards_world` | 72 | `src/` (17) и `tests/world/` (55: генерация, проверки, подземелья, регионы, смена региона, уровни-тайлы, зоны, навсетка региона) |
+| `shards_npc` | 82 | `src/` (19) и `tests/npc/` (63: поведение, восприятие, директор, навсетка, реплей, снапшот, инструменты, страж данными) |
+| `shards_save` | 87 | `src/` (32) и `tests/save/` (55) |
+| `shards_net` | 80 | `src/` |
+| `shards` | 17 | `src/`, `tests/engine.rs`, `tests/failures.rs`, `tests/level_render.rs`, `tests/action_render/` |
+| `sandbox` | 133 | `tests/sandbox/` (113, из них `snapshots.rs` 27, `replays.rs` 23, `invariants.rs` 10; ещё `#[ignore]` запись эталонных реплеев), `tests/system_failures.rs` (7), `tests/perf.rs` (6), `tests/log_capture.rs` (5), `src/` (2) |
 | шаблон | 23 | `template/tests/game/` (содержание, детерминизм, реплеи, сценарии, регион, манифест) |
 
 ## Известные ограничения и отложенное

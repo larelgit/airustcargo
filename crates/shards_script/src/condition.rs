@@ -5,12 +5,15 @@ use serde_json::{json, Value};
 use crate::args::loose_value;
 
 /// `journal:phase` · `gone:57` · `shows:42:windup` · `near:12:42:3` ·
-/// `field:12:Health.current<30` · `named:boss_phase_2` · raw JSON.
+/// `field:12:Health.current<30` · `named:boss_phase_2` · `warning` · `error` · raw JSON.
 ///
 /// Returns the JSON the `step` tool takes in its `until` list.
 pub fn parse_condition(s: &str) -> Result<Value, String> {
     if s.trim_start().starts_with('{') {
         return serde_json::from_str(s).map_err(|e| format!("bad condition JSON: {e}"));
+    }
+    if s == "warning" || s == "error" {
+        return Ok(json!(s));
     }
     let (kind, rest) = s.split_once(':').ok_or_else(|| format!("bad condition `{s}`"))?;
     Ok(match kind {
@@ -64,6 +67,9 @@ mod tests {
             json!({"field": {"id": "e5", "component": "Stamina", "path": "current", "above": 10.0}})
         );
         assert_eq!(parse_condition(r#"{"gone": 3}"#).unwrap(), json!({"gone": 3}));
+        assert_eq!(parse_condition("warning").unwrap(), json!("warning"));
+        assert_eq!(parse_condition("error").unwrap(), json!("error"));
+        assert!(parse_condition("warnings").is_err());
     }
 
     #[test]

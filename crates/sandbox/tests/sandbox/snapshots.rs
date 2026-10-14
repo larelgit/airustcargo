@@ -495,10 +495,10 @@ fn another_seed_or_engine_version_is_refused_with_the_fix() {
 // scenarios): the last one out removes the folder.
 
 /// A file in `snapshots/` (of the working directory) that goes away with the test.
-struct Scratch(PathBuf, String, #[allow(dead_code, reason = "held until the test is over")] MutexGuard<'static, ()>);
+pub(crate) struct Scratch(pub(crate) PathBuf, pub(crate) String, #[allow(dead_code, reason = "held until the test is over")] MutexGuard<'static, ()>);
 
 impl Scratch {
-    fn new(name: &str) -> Scratch {
+    pub(crate) fn new(name: &str) -> Scratch {
         // The scenarios' own snapshot (`snapshot.scenario`) is in the same folder.
         let turn = crate::scenario_files::snapshot_file_turn();
         let relative = format!("snapshots/sandbox_test_{}_{name}.json", std::process::id());

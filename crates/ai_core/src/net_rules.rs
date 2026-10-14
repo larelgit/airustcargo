@@ -134,7 +134,7 @@ pub fn rules_hash(world: &World) -> u64 {
                 .collect()
         })
         .unwrap_or_default();
-    let mut h = Fnv(0xcbf2_9ce4_8422_2325);
+    let mut h = Fnv::new();
     for (section, paths) in [("components", &components), ("resources", &resources), ("predicted", &predicted)] {
         h.bytes(section.as_bytes());
         h.u64(paths.len() as u64);

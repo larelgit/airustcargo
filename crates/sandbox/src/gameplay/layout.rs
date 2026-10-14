@@ -132,6 +132,45 @@ impl ContentDef for LayoutDef {
     }
 }
 
+impl LayoutDef {
+    /// What its solids, ramps and volumes cover on the ground plane (x, z); `None` without
+    /// any (a layout of spawns only).
+    pub fn footprint(&self) -> Option<Rect> {
+        let solids = self.solids.iter().map(|s| (s.min, s.max));
+        let volumes = self.volumes.iter().map(|v| (v.min, v.max));
+        let ramps = self.ramps.iter().map(|r| {
+            let half = r.width * 0.5;
+            (r.from.min(r.to) - Vec3::splat(half), r.from.max(r.to) + Vec3::splat(half))
+        });
+        solids.chain(volumes).chain(ramps).map(|(min, max)| Rect::from_corners(min.xz(), max.xz())).reduce(|a, b| a.union(b))
+    }
+}
+
+/// Where bodies may be (content kind `bounds`, id `world`): over what the built layouts and
+/// the loaded region cover on the ground, up to `margin` meters beyond, and no lower than
+/// `fall_below`. The `bodies_in_world` invariant ([`crate::ai`]) holds every character to it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(crate = "shards::serde", deny_unknown_fields)]
+pub struct BoundsDef {
+    /// Meters beyond the geometry that still count as inside.
+    pub margin: f32,
+    /// A body below this height has fallen out of the world.
+    pub fall_below: f32,
+}
+
+impl ContentDef for BoundsDef {
+    const KIND: &'static str = "bounds";
+
+    fn validate(&self, _: &str, refs: &mut Refs) {
+        if !(self.margin.is_finite() && self.margin >= 0.0) {
+            refs.error(format!("margin {} must be 0 or more", self.margin));
+        }
+        if !self.fall_below.is_finite() {
+            refs.error("fall_below must be a number of meters");
+        }
+    }
+}
+
 /// Part of a layout's geometry: rebuilt when the layout changes.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component)]
