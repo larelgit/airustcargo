@@ -47,6 +47,18 @@ fn app_on(dir: &Path) -> App {
     )
 }
 
+/// What the engine's window layer looks after (the third-person camera, the ground
+/// telegraphs, the off-screen markers) is the entity with `LocalPlayer`: the player.
+#[test]
+fn the_player_is_the_local_player() {
+    let mut app = sandbox::test_app(42);
+    let world = app.world_mut();
+    let local: Vec<Entity> = world.query_filtered::<Entity, With<LocalPlayer>>().iter(world).collect();
+    let players: Vec<Entity> = world.query_filtered::<Entity, With<sandbox::gameplay::Player>>().iter(world).collect();
+    assert_eq!(local, players, "exactly the player has LocalPlayer");
+    assert_eq!(local.len(), 1);
+}
+
 #[test]
 fn the_sandbox_content_is_clean() {
     let mut app = sandbox::test_app(42);
