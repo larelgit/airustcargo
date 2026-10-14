@@ -43,13 +43,93 @@ use crate::db::{closest, ron_options, ContentDb, ContentDef, Refs};
 
 /// An entity template: components by name, optionally on top of another prefab.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PrefabDef {
     /// The prefab this one builds on; its components come first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extends: Option<String>,
-    /// Component name (`Health` or a full type path) → its value in RON.
-    #[serde(default)]
+    /// Component name (`Health` or a full type path) → its value in RON, without
+    /// comments and blanks: how a file is formatted changes no definition (nor a
+    /// replay's content hash).
+    #[serde(default, deserialize_with = "compact_components")]
     pub components: BTreeMap<String, Box<RawValue>>,
+}
+
+fn compact_components<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<BTreeMap<String, Box<RawValue>>, D::Error> {
+    let components = BTreeMap::<String, Box<RawValue>>::deserialize(deserializer)?;
+    components
+        .into_iter()
+        .map(|(name, value)| {
+            let compact = compact_ron(value.get_ron()).into_boxed_str();
+            RawValue::from_boxed_ron(compact).map(|value| (name, value)).map_err(serde::de::Error::custom)
+        })
+        .collect()
+}
+
+/// RON without comments and the blanks between tokens (string and char literals kept
+/// as written): `(current: 40.0, /* full */ max: 40.0)` reads `(current:40.0,max:40.0)`.
+fn compact_ron(ron: &str) -> String {
+    let mut out = String::with_capacity(ron.len());
+    let mut rest = ron;
+    while let Some(c) = rest.chars().next() {
+        let len = if c.is_whitespace() {
+            c.len_utf8()
+        } else if rest.starts_with("//") {
+            rest.find('\n').unwrap_or(rest.len())
+        } else if rest.starts_with("/*") {
+            block_comment_len(rest)
+        } else {
+            let len = literal_len(rest).unwrap_or(c.len_utf8());
+            out.push_str(&rest[..len]);
+            len
+        };
+        rest = &rest[len..];
+    }
+    out
+}
+
+/// Length of the (nested) block comment `rest` starts with.
+fn block_comment_len(rest: &str) -> usize {
+    let mut depth = 0;
+    let mut i = 0;
+    while i < rest.len() {
+        if rest[i..].starts_with("/*") {
+            depth += 1;
+            i += 2;
+        } else if rest[i..].starts_with("*/") {
+            depth -= 1;
+            i += 2;
+            if depth == 0 {
+                return i;
+            }
+        } else {
+            i += rest[i..].chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    rest.len()
+}
+
+/// Length of the string (`"…"`, raw `r#"…"#`) or char literal `rest` starts with.
+fn literal_len(rest: &str) -> Option<usize> {
+    if let Some(raw) = rest.strip_prefix('r') {
+        let hashes = raw.len() - raw.trim_start_matches('#').len();
+        if raw[hashes..].starts_with('"') {
+            let close = format!("\"{}", "#".repeat(hashes));
+            let body = 1 + hashes + 1;
+            return Some(rest[body..].find(&close).map_or(rest.len(), |end| body + end + close.len()));
+        }
+        return None;
+    }
+    let quote = rest.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+    let mut chars = rest.char_indices().skip(1);
+    while let Some((i, c)) = chars.next() {
+        if c == '\\' {
+            chars.next();
+        } else if c == quote {
+            return Some(i + 1);
+        }
+    }
+    Some(rest.len())
 }
 
 impl ContentDef for PrefabDef {
@@ -114,15 +194,14 @@ fn short_name(reg: &TypeRegistration) -> &'static str {
 }
 
 /// A component value from its RON text, as the concrete type (so inserting it cannot
-/// fail halfway).
+/// fail halfway). Errors carry no line:col: the text is the compacted value alone, so
+/// a position in it is none in the file.
 fn read_component(registry: &TypeRegistry, reg: &TypeRegistration, ron: &str) -> Result<Box<dyn Reflect>, String> {
     let name = short_name(reg);
     let options = ron_options();
-    let mut de = ron::Deserializer::from_str_with_options(ron, &options).map_err(|e| format!("{name}: {e}"))?;
-    let value = TypedReflectDeserializer::new(reg, registry)
-        .deserialize(&mut de)
-        .map_err(|e| format!("{name}: {}", de.span_error(e)))?;
-    de.end().map_err(|e| format!("{name}: {}", de.span_error(e)))?;
+    let mut de = ron::Deserializer::from_str_with_options(ron, &options).map_err(|e| format!("{name}: {}", e.code))?;
+    let value = TypedReflectDeserializer::new(reg, registry).deserialize(&mut de).map_err(|e| format!("{name}: {e}"))?;
+    de.end().map_err(|e| format!("{name}: {e}"))?;
     concrete(reg, value.as_ref())
 }
 
@@ -255,6 +334,15 @@ pub(crate) fn spawn_prefab_tool(In(call): In<Call<SpawnPrefabArgs>>, world: &mut
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn compacting_keeps_literals_and_drops_formatting() {
+        let written = " (current: 40.0, /* full /* nested */ */ max: 40.0) // hp\n";
+        assert_eq!(compact_ron(written), "(current:40.0,max:40.0)");
+        assert_eq!(compact_ron("\n(\n  current:40.0,\n  max:  40.0,\n)"), "(current:40.0,max:40.0,)");
+        let literals = r##"( name: "a // b \" c", raw: r#"x " y"#, c: ' ', bar: r#ident )"##;
+        assert_eq!(compact_ron(literals), r##"(name:"a // b \" c",raw:r#"x " y"#,c:' ',bar:r#ident)"##);
+    }
 
     #[test]
     fn merge_patch_follows_rfc_7386() {

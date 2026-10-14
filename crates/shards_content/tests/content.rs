@@ -308,8 +308,10 @@ fn prefab_problems_are_found_when_content_loads() {
         "a": (extends: "b", components: { "Helth": (current: 1.0, max: 1.0) }),
         "b": (extends: "a", components: { "Health": (current: 1.0) }),
         "c": (extends: "nobody"),
+        "d": (components: { "Brain": (agro: 1.0) }),
     }"#;
-    let dir = assets("prefab_errors", &[("content/broken.prefab.ron", broken)]);
+    let typo = r#"{ "e": (extend: "a") }"#;
+    let dir = assets("prefab_errors", &[("content/broken.prefab.ron", broken), ("content/typo.prefab.ron", typo)]);
     let app = app(&dir);
     let errors = errors(&app);
     let has = |needle: &str| errors.iter().any(|e| e.contains(needle));
@@ -317,6 +319,28 @@ fn prefab_problems_are_found_when_content_loads() {
     assert!(has("prefab `a`: unknown component `Helth` (did you mean `Health`?)"), "{errors:?}");
     assert!(has("prefab `b`: Health is missing fields; give all of them: current, max"), "{errors:?}");
     assert!(has("prefab `c`: extends -> unknown prefab `nobody`"), "{errors:?}");
+    // A position inside the component's text is none in the file: none is given.
+    let brain = errors.iter().find(|e| e.contains("prefab `d`: Brain: ")).unwrap_or_else(|| panic!("{errors:?}"));
+    assert!(brain.starts_with("content/broken.prefab.ron: prefab `d`: Brain: ") && brain.contains("agro"), "{brain}");
+    assert!(!brain.contains(" 1:"), "{brain}");
+    // A misspelled key is an error, not a prefab without a parent.
+    let misspelled = errors.iter().find(|e| e.starts_with("content/typo.prefab.ron:1:")).unwrap_or_else(|| panic!("{errors:?}"));
+    assert!(misspelled.contains("prefab `e`: ") && misspelled.contains("extend"), "{misspelled}");
+}
+
+#[test]
+fn reformatting_a_prefab_changes_no_definition() {
+    let dir = assets("prefab_format", &[("content/monsters.prefab.ron", PREFABS)]);
+    let mut app = app(&dir);
+    let hash = app.world().resource::<ContentDb>().hash();
+    let health = "\"Health\": (current: 40.0, max: 40.0),";
+    assert!(PREFABS.contains(health));
+    let reformatted = PREFABS.replace(health, "\"Health\":   (\n  current: 40.0, // full\n  max: 40.0 ) /* hp */,");
+    write(&dir, "content/monsters.prefab.ron", &reformatted);
+    assert_eq!(text(&ok(&mut app, "content_reload", json!({}))), "content: no definitions changed in monsters.prefab.ron");
+    assert_eq!(app.world().resource::<ContentDb>().hash(), hash, "replays recorded before still match");
+    let skeleton = ok(&mut app, "content_get", json!({"kind": "prefab", "id": "skeleton"})).result;
+    assert_eq!(skeleton["def"]["components"]["Health"], "(current:40.0,max:40.0)");
 }
 
 #[test]
