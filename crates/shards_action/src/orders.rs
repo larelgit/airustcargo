@@ -5,10 +5,10 @@
 //! lasts; an order whose input can never start by waiting (a raised guard, no charges)
 //! is dropped with the reason in the journal instead of sitting there.
 
-use ai_core::AiIndex;
+use ai_core::{AiId, AiIndex};
 use bevy::prelude::*;
 use shards_content::ContentDb;
-use shards_core::{flat, Intent, Order};
+use shards_core::{flat, Intent, Order, Predicted};
 use shards_motion::Collider;
 
 use crate::def::{ActionDef, MovesetDef};
@@ -62,30 +62,8 @@ pub(crate) fn follow_attack_orders(
             }
             continue;
         };
-        let moveset = db.get::<MovesetDef>(&fighter.moveset);
-        let reach = moveset
-            .and_then(|m| m.action(input))
-            .and_then(|a| db.get::<ActionDef>(a))
-            .map_or(MIN_REACH, |d| d.reach().max(MIN_REACH));
-        let radius = collider.map_or(0.0, |c| c.shape.half_extents().x);
-        let to = flat(target_tf.translation - tf.translation);
-        if intent.aim != Some(target_tf.translation) {
-            intent.aim = Some(target_tf.translation);
-        }
-        // Attacks and facing follow a lock-on before the aim point: the order's target
-        // takes it over, or the order would swing at the wrong enemy forever.
-        if intent.target.is_some_and(|locked| locked != target) {
-            intent.target = Some(target);
-        }
-        if to.length() > reach * APPROACH + radius {
-            let dir = to.normalize_or_zero();
-            if intent.move_dir != dir {
-                intent.move_dir = dir;
-            }
+        if !approach(&db, fighter, &mut intent, tf.translation, target, input, target_tf.translation, collider) {
             continue;
-        }
-        if intent.move_dir != Vec3::ZERO {
-            intent.move_dir = Vec3::ZERO;
         }
         let view = FighterView {
             db: &db,
@@ -113,6 +91,73 @@ pub(crate) fn follow_attack_orders(
                 end(&mut intent);
             }
             Err(_) => {}
+        }
+    }
+}
+
+/// Aims at the order's target (`there`) and takes over the lock-on, walks towards it until
+/// in reach of the action `input` starts: whether it is in reach (and stands).
+#[allow(clippy::too_many_arguments)]
+fn approach(
+    db: &ContentDb,
+    fighter: &Fighter,
+    intent: &mut Intent,
+    here: Vec3,
+    target: AiId,
+    input: &str,
+    there: Vec3,
+    collider: Option<&Collider>,
+) -> bool {
+    let reach = db
+        .get::<MovesetDef>(&fighter.moveset)
+        .and_then(|m| m.action(input))
+        .and_then(|a| db.get::<ActionDef>(a))
+        .map_or(MIN_REACH, |d| d.reach().max(MIN_REACH));
+    let radius = collider.map_or(0.0, |c| c.shape.half_extents().x);
+    let to = flat(there - here);
+    if intent.aim != Some(there) {
+        intent.aim = Some(there);
+    }
+    // Attacks and facing follow a lock-on before the aim point: the order's target
+    // takes it over, or the order would swing at the wrong enemy forever.
+    if intent.target.is_some_and(|locked| locked != target) {
+        intent.target = Some(target);
+    }
+    if to.length() > reach * APPROACH + radius {
+        let dir = to.normalize_or_zero();
+        if intent.move_dir != dir {
+            intent.move_dir = dir;
+        }
+        return false;
+    }
+    if intent.move_dir != Vec3::ZERO {
+        intent.move_dir = Vec3::ZERO;
+    }
+    true
+}
+
+/// `NetSet::Predict` (`ActionSystems::PredictOrders`): a client's own body walks into reach
+/// of its front `Order::Attack` as the host walks it, instead of waiting for the host's
+/// state. Only the walk: the presses, a dropped order and its end are the host's (its state
+/// brings the swings, which the prediction adopts, and the order queue), and what this
+/// writes into `Intent` is undone after the tick (`NetSet::PredictEnd`).
+pub(crate) fn steer_attack_orders(
+    db: Res<ContentDb>,
+    index: Res<AiIndex>,
+    targets: Query<(&Transform, Has<Dead>, Option<&Collider>)>,
+    mut fighters: Query<(&Fighter, &mut Intent, &Transform, Has<Dead>), With<Predicted>>,
+) {
+    for (fighter, mut intent, tf, dead) in &mut fighters {
+        let Some(Order::Attack { target, input, .. }) = intent.orders.front().cloned() else { continue };
+        if dead {
+            continue;
+        }
+        let goal = index.get(target).and_then(|e| targets.get(e).ok()).filter(|(_, target_dead, _)| !target_dead);
+        match goal {
+            Some((there, _, collider)) => {
+                approach(&db, fighter, &mut intent, tf.translation, target, &input, there.translation, collider);
+            }
+            None => end(&mut intent),
         }
     }
 }

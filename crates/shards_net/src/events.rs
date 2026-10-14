@@ -98,6 +98,9 @@ pub(crate) fn retrigger_due(world: &mut World, shown: u64) {
     }
     let events = world.get_resource::<NetEvents>().cloned().unwrap_or_default();
     for (tick, path, value) in due {
+        if let Some(mut prediction) = world.get_resource_mut::<shards_core::NetPrediction>() {
+            prediction.event_tick = tick;
+        }
         let result = match events.retrigger.get(&path) {
             Some(retrigger) => retrigger(world, &value),
             None => Err(format!("`{path}` is not a net_event of this game")),

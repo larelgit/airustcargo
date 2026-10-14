@@ -8,11 +8,12 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use shards_core::NetRole;
+use shards_core::{NetPrediction, NetRole};
 
 use crate::client::{NetClient, NetDesync};
 use crate::conditioner::LinkConditions;
 use crate::host::{end_session, NetHost};
+use crate::predict::NetCorrection;
 use crate::session::{role, NetEndpoint, NetMarks, NetState};
 
 pub(crate) fn register(app: &mut App) {
@@ -106,12 +107,18 @@ fn observe_lines(world: &World, _: Entity) -> Vec<String> {
     if let Some(client) = world.get_resource::<NetClient>() {
         let rtt = client.link().map_or(0.0, |l| l.stats().srtt_ms);
         let desyncs = world.get_resource::<NetDesync>().map_or(0, |d| d.count);
+        let (mean, max) = world.get_resource::<NetCorrection>().map_or((0.0, 0.0), NetCorrection::error);
+        let snaps = world.get_resource::<NetCorrection>().map_or(0, |c| c.snaps);
+        let actions = world.get_resource::<NetPrediction>().map_or((0, 0), |p| (p.mispredicted, p.predicted));
         return vec![format!(
-            "NET {} on host {}, rtt {rtt:.0}ms, host tick {}, {} ticks ahead, desyncs {desyncs}",
+            "NET {} on host {}, rtt {rtt:.0}ms, host tick {}, {} ticks ahead, desyncs {desyncs}, \
+             prediction error {mean:.2} m (max {max:.2}), snaps {snaps}, mispredicted {}/{}",
             state_text(world),
             client.address,
             client.newest_host_tick,
-            sim::tick(world).saturating_sub(client.newest_host_tick)
+            sim::tick(world).saturating_sub(client.newest_host_tick),
+            actions.0,
+            actions.1,
         )];
     }
     Vec::new()
@@ -204,11 +211,29 @@ fn net_status(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
         out["inputs_unacked"] = json!(client.capture.unacked.len());
         out["deltas"] = json!({ "applied": client.deltas, "skipped": client.skipped, "stale": client.ring.stale, "missing_baseline": client.ring.missing_baseline, "bytes": client.delta_bytes });
         out["rebases"] = json!(client.rebases);
+        out["prediction"] = prediction(world);
         if let Some(desync) = world.get_resource::<NetDesync>().and_then(|d| d.last.clone()) {
             out["last_desync"] = json!({ "host_tick": desync.0, "tick": desync.1, "first": desync.2 });
         }
     }
     Ok(out)
+}
+
+/// A client's prediction of its own body: the position error against the host's state
+/// (mean and largest over the last 600 ticks), corrections, snaps, actions started ahead.
+pub(crate) fn prediction(world: &World) -> Value {
+    let Some(c) = world.get_resource::<NetCorrection>() else { return Value::Null };
+    let (mean, max) = c.error();
+    let p = world.get_resource::<NetPrediction>().cloned().unwrap_or_default();
+    json!({
+        "error_mean_m": mean,
+        "error_max_m": max,
+        "compared": c.compared,
+        "blends": c.blends,
+        "snaps": c.snaps,
+        "last_snap": c.last_snap.as_ref().map(|(tick, line)| json!({ "host_tick": tick, "line": line })),
+        "actions": { "predicted": p.predicted, "confirmed": p.confirmed, "mispredicted": p.mispredicted },
+    })
 }
 
 /// Simulate network conditions on this machine's links: `latency=150,jitter=10,loss=0.02,dup=0`

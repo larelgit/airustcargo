@@ -13,6 +13,7 @@
 use std::collections::VecDeque;
 
 use ai_core::{AiId, AiIndex};
+use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -174,7 +175,14 @@ pub fn flat(v: Vec3) -> Vec3 {
 /// `SimSet::Input`: steers towards the front [`Order::MoveTo`] in a straight line and
 /// pops it on arrival (or when its target entity is gone). Other orders are left to
 /// the modules that understand them.
-pub fn follow_orders(index: Res<AiIndex>, positions: Query<&Transform>, mut actors: Query<(Entity, &mut Intent)>) {
+///
+/// `F` picks the actors: `()` in the simulation, `With<Predicted>` where a client
+/// predicts its own body ([`NetSet::Predict`](crate::NetSet::Predict)): the same code.
+pub fn follow_orders<F: QueryFilter + 'static>(
+    index: Res<AiIndex>,
+    positions: Query<&Transform>,
+    mut actors: Query<(Entity, &mut Intent), F>,
+) {
     for (me, mut intent) in &mut actors {
         let Some(Order::MoveTo { target, within }) = intent.orders.front().cloned() else { continue };
         let Ok(here) = positions.get(me).map(|t| t.translation) else { continue };
