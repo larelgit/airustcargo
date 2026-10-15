@@ -513,8 +513,13 @@ fn wait(cli: &Cli, timeout: Duration) -> Result<ExitCode, String> {
     if cli.port.is_none() && cli.port_file.is_none() && matches!(cli.peer, Some(Peer::Client(_))) {
         return Err(cli.port().expect_err("a client's port is read from a port file"));
     }
-    // The game may still be starting: its port file may not exist yet.
-    let status = peer::wait_member(|| cli.client(), Instant::now() + timeout, cli.member())?;
+    // The game may still be starting: its port file may not exist yet. A port file that was read
+    // and is gone means the game ended, for a host's or a game on its own, not for a client's file:
+    // the host of a UDP stand clears the ones an earlier stand left, just after `wait` may have read
+    // one (`--port-file F.c1`, or `--peer c1`).
+    let by_client_file = cli.port.is_none() && cli.port_file.as_deref().is_some_and(peer::is_client_file);
+    let host = cli.member() == Peer::Host && !by_client_file;
+    let status = peer::wait_member(|| cli.client(), Instant::now() + timeout, host)?;
     say(ready_line(&status));
     Ok(ExitCode::SUCCESS)
 }
@@ -1007,6 +1012,43 @@ mod tests {
         };
         assert!(e.contains("cannot read the port file") && e.contains(".c1"), "{e}");
         assert!(begun.elapsed() >= Duration::from_millis(300));
+    }
+
+    /// `wait` on a client's own port file, without `--peer`: the file `F.c1` that an earlier stand
+    /// left is cleared by the host of the stand that starts now, and the client writes it again. A
+    /// host's file that was read and is gone has ended; a client's is waited for.
+    #[test]
+    fn a_wait_on_a_clients_port_file_is_not_ended_by_the_file_vanishing() {
+        let dir = std::env::temp_dir().join(format!("shards_wait_vanish_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let nobody = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        for (name, client_file) in [("g.port.c1", true), ("g.port", false)] {
+            let file = dir.join(name);
+            std::fs::write(&file, format!("{nobody}\n")).unwrap();
+            let gone = std::thread::spawn({
+                let file = file.clone();
+                move || {
+                    std::thread::sleep(Duration::from_millis(300));
+                    std::fs::remove_file(file).unwrap();
+                }
+            });
+            let cli = crate::fake::parse(&["--port-file", &file.display().to_string(), "wait"]);
+            let started = Instant::now();
+            let e = match wait(&cli, Duration::from_millis(1500)) {
+                Err(e) => e,
+                Ok(_) => panic!("there is no game to wait for"),
+            };
+            gone.join().unwrap();
+            if client_file {
+                assert!(e.starts_with("cannot read the port file") && e.contains("g.port.c1"), "{e}");
+                assert!(started.elapsed() >= Duration::from_millis(1500), "a client's file is waited for until the deadline");
+            } else {
+                assert!(e.starts_with("the game's port file is gone"), "{e}");
+                assert!(started.elapsed() < Duration::from_millis(1400), "a host's file that vanished ends the wait");
+            }
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

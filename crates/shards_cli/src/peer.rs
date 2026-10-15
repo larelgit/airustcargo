@@ -72,6 +72,14 @@ pub fn member_file(base: &Path, peer: Peer) -> PathBuf {
     }
 }
 
+/// Whether `path` names a client's port file (`F.c1`, `F.c2` …): the files a stand's host writes
+/// for its clients, by the suffix [`member_file`] gives them, which the host of a UDP stand also
+/// clears when an earlier stand left them.
+pub fn is_client_file(path: &Path) -> bool {
+    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+    matches!(name.rsplit_once('.').map(|(_, suffix)| suffix.parse::<Peer>()), Some(Ok(Peer::Client(_))))
+}
+
 /// The clients whose port files exist beside `base`: `c1`, `c2`, … up to the first gap.
 pub fn client_files(base: &Path) -> Vec<Peer> {
     (1..=u8::MAX).map(Peer::Client).take_while(|peer| member_file(base, *peer).exists()).collect()
@@ -199,9 +207,9 @@ struct Watch {
 }
 
 impl Watch {
-    /// A watch on `peer`'s game.
-    fn of(peer: Peer) -> Self {
-        Self { host: peer == Peer::Host, ..Self::default() }
+    /// A watch on a game; `host`: it is a host's (or a game on its own), not a client's.
+    fn new(host: bool) -> Self {
+        Self { host, ..Self::default() }
     }
 
     /// Asks `ai/status` of the game `connect` finds (its port file may not exist yet).
@@ -241,9 +249,9 @@ const WAIT_EVERY: Duration = Duration::from_millis(100);
 /// answers and has finished loading; returns that status. Gives up at `deadline` with what is
 /// wrong (no game at the port, still loading, …), and at once when waiting cannot help: the
 /// game answered and is gone (or, for a host, its port file was read and is gone), or refuses the
-/// token. `of` is the member the game is.
-pub fn wait_member(connect: impl Fn() -> Result<Client, String>, deadline: Instant, of: Peer) -> Result<Value, String> {
-    let mut watch = Watch::of(of);
+/// token. `host`: the game is a host's (or a game on its own), not a client's.
+pub fn wait_member(connect: impl Fn() -> Result<Client, String>, deadline: Instant, host: bool) -> Result<Value, String> {
+    let mut watch = Watch::new(host);
     loop {
         match watch.look(&connect) {
             Look::Ready(status) => return Ok(status),
@@ -373,7 +381,7 @@ fn round(cli: &Cli, base: &Path, host: &mut Watch, clients: &mut Vec<Watch>) -> 
         Look::Gone(why) => return Round::Failed(format!("the host ended the stand: {why}")),
         Look::Refused(why) => return Round::Failed(why),
     };
-    clients.resize_with(usize::from(expected_clients(&status, Some(base))), || Watch::of(Peer::Client(0)));
+    clients.resize_with(usize::from(expected_clients(&status, Some(base))), || Watch::new(false));
     let mut members = vec![("host".to_owned(), status)];
     let mut waiting = None;
     for (i, watch) in clients.iter_mut().enumerate() {
@@ -403,7 +411,7 @@ fn round(cli: &Cli, base: &Path, host: &mut Watch, clients: &mut Vec<Watch>) -> 
 /// leftover port file).
 pub fn settle(cli: &Cli, deadline: Instant) -> Result<Vec<(String, Value)>, String> {
     let base = cli.stand_base()?;
-    let (mut host, mut clients) = (Watch::of(Peer::Host), Vec::new());
+    let (mut host, mut clients) = (Watch::new(true), Vec::new());
     let mut wrong: Option<String> = None;
     loop {
         let why = match round(cli, base, &mut host, &mut clients) {
@@ -901,6 +909,17 @@ mod tests {
     }
 
     #[test]
+    fn a_clients_port_file_is_told_by_its_suffix() {
+        for client in ["g.port.c1", "g.port.c12", "/tmp/x/F.c255", "F.c2"] {
+            assert!(is_client_file(Path::new(client)), "{client}");
+        }
+        // The host's own, and names that the host of a stand does not clear for a client.
+        for other in ["g.port", "g.cache", "c1", "F.c0", "F.c01", "F.c256", "F.c1.part", "F.c", "F.cx", ""] {
+            assert!(!is_client_file(Path::new(other)), "{other}");
+        }
+    }
+
+    #[test]
     fn a_member_that_is_still_joining_is_not_ready() {
         let loaded = status(1, 1, net("client", "c1", Some(1), Some("e15")));
         assert!(not_ready(&loaded).is_empty());
@@ -1131,18 +1150,18 @@ mod tests {
         let long = || Instant::now() + Duration::from_secs(30);
         let started = Instant::now();
         let refusing = serve(|_, _| Some(crate::fake::error("unauthorized: bad token")));
-        let e = wait_member(|| Ok(Client::new(refusing, None)), long(), Peer::Host).unwrap_err();
+        let e = wait_member(|| Ok(Client::new(refusing, None)), long(), true).unwrap_err();
         assert!(e.starts_with("ai/status: unauthorized: bad token"), "{e}");
 
         let mut loading = status(1, 1, json!({"role": "single"}));
         loading["loading"] = json!(["content: 2 files left"]);
         let leaving = pretend_member(loading, 2, Tokens::default());
-        let e = wait_member(|| Ok(Client::new(leaving, None)), long(), Peer::Host).unwrap_err();
+        let e = wait_member(|| Ok(Client::new(leaving, None)), long(), true).unwrap_err();
         assert!(e.starts_with("the game was there and is gone (cannot reach the game at"), "{e}");
         assert!(started.elapsed() < Duration::from_secs(10), "neither waited for the deadline");
 
         let begun = Instant::now();
-        let e = wait_member(|| Err("cannot read the port file g.port".to_owned()), Instant::now() + Duration::from_millis(300), Peer::Host)
+        let e = wait_member(|| Err("cannot read the port file g.port".to_owned()), Instant::now() + Duration::from_millis(300), true)
             .unwrap_err();
         assert_eq!(e, "cannot read the port file g.port");
         assert!(begun.elapsed() >= Duration::from_millis(300), "a game that never was there is waited for");
@@ -1161,13 +1180,13 @@ mod tests {
             if reads.fetch_add(1, Ordering::SeqCst) == 0 { Ok(Client::new(nobody, None)) } else { Err("cannot read the port file g.port".to_owned()) }
         };
         let started = Instant::now();
-        let e = wait_member(file_then_none, started + Duration::from_secs(30), Peer::Host).unwrap_err();
+        let e = wait_member(file_then_none, started + Duration::from_secs(30), true).unwrap_err();
         assert!(e.starts_with("the game's port file is gone (cannot read the port file g.port): its process ended"), "{e}");
         assert!(started.elapsed() < Duration::from_secs(10), "no wait for the deadline");
         // The same for a client's file: the wait goes on to the deadline and says what it cannot reach.
         reads.store(0, Ordering::SeqCst);
         let begun = Instant::now();
-        let e = wait_member(file_then_none, begun + Duration::from_millis(400), Peer::Client(1)).unwrap_err();
+        let e = wait_member(file_then_none, begun + Duration::from_millis(400), false).unwrap_err();
         assert_eq!(e, "cannot read the port file g.port");
         assert!(begun.elapsed() >= Duration::from_millis(400));
     }
