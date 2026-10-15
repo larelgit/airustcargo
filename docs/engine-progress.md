@@ -402,7 +402,7 @@ Windows, где тестов меньше (часть только для Unix) 
 | крейт | тестов | где |
 |---|---|---|
 | `ai_core` | 91 | `crates/ai_core/src/*` (снапшоты 22) |
-| `shards_script` | 56 | `crates/shards_script/src/*` (разбор, условия, запуск сценариев 30, долгая игра `soak` 4, входы 2) |
+| `shards_script` | 58 | `crates/shards_script/src/*` (разбор, условия, запуск сценариев 30, долгая игра `soak` 6, входы 2) |
 | `shards_cli` | 53 | `crates/shards_cli/src/*` (клиент игры-пира `peer` 25, сценарии 12, команды 16) |
 | `shards_core` | 14 | `src/` и `tests/core.rs` |
 | `shards_content` | 22 | `src/` и `tests/content.rs` |

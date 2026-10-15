@@ -64,7 +64,8 @@ pub struct MemberTally {
     /// Times its body was found dead and healed by the host.
     pub revived: u64,
     /// Desyncs its session counted (`net_status`): a client's own, or the host's for all.
-    pub desyncs: u64,
+    /// `None`: its `net_status` was refused, so nobody can say it stayed in sync.
+    pub desyncs: Option<u64>,
     /// Its link at the end, one line (`rtt 301 ms, loss 2.1%, …`).
     pub net: String,
 }
@@ -87,9 +88,9 @@ pub struct SoakReport {
 }
 
 impl SoakReport {
-    /// No early end and no member counted a desync.
+    /// No early end, and every member was asked at the end and counted no desync.
     pub fn passed(&self) -> bool {
-        self.stopped.is_none() && self.members.iter().all(|m| m.desyncs == 0)
+        self.stopped.is_none() && self.members.iter().all(|m| m.desyncs == Some(0))
     }
 
     pub fn ticks(&self) -> u64 {
@@ -103,11 +104,8 @@ impl fmt::Display for SoakReport {
             writeln!(f, "{line}")?;
         }
         for m in &self.members {
-            writeln!(
-                f,
-                "  {}: {} inputs ({} refused), revived {}, desyncs {}; {}",
-                m.member, m.inputs, m.refused, m.revived, m.desyncs, m.net
-            )?;
+            let desyncs = m.desyncs.map_or("?".to_owned(), |d| d.to_string());
+            writeln!(f, "  {}: {} inputs ({} refused), revived {}, desyncs {desyncs}; {}", m.member, m.inputs, m.refused, m.revived, m.net)?;
         }
         let verdict = if self.passed() { "PASS" } else { "FAIL" };
         write!(
@@ -124,6 +122,10 @@ impl fmt::Display for SoakReport {
         if let Some(why) = &self.stopped {
             write!(f, "; stopped: {why}")?;
         }
+        let unasked: Vec<&str> = self.members.iter().filter(|m| m.desyncs.is_none()).map(|m| m.member.as_str()).collect();
+        if !unasked.is_empty() {
+            write!(f, "; no net_status from {}", unasked.join(", "))?;
+        }
         Ok(())
     }
 }
@@ -135,13 +137,15 @@ fn game_time(ticks: u64, hz: f64) -> String {
 }
 
 /// Plays `plan` on the game `driver` reaches (every member of a stand, or a single game) and
-/// says how it went; `progress` gets every progress line as it is made. `Err` only when the
-/// game cannot be reached, or a scheduled call (`regen`, `save_game`, `step`) is refused: the
-/// error names it.
+/// says how it went; `progress` gets every progress line as it is made. `Err` when the game
+/// cannot be reached, a scheduled call (`regen`, `save_game`, `step`) is refused (the error
+/// names it), or the plan ends past the last tick a game can count.
 pub fn run(driver: &mut dyn Driver, plan: &SoakPlan, progress: &mut dyn FnMut(&str)) -> Result<SoakReport, String> {
     let peers = driver.peers()?;
     let from = driver.status_on(HOST)?.tick;
-    let end = from + plan.ticks;
+    let end = from
+        .checked_add(plan.ticks)
+        .ok_or_else(|| format!("a soak of {} ticks from tick {from} ends past the last tick a game counts ({}): ask for fewer minutes", plan.ticks, u64::MAX))?;
     let until = vec![parse_condition("named:net_desync")?];
     let mut rng = SplitMix(plan.seed);
     let mut report = SoakReport {
@@ -151,10 +155,11 @@ pub fn run(driver: &mut dyn Driver, plan: &SoakPlan, progress: &mut dyn FnMut(&s
         members: peers.iter().map(|p| MemberTally { member: p.clone(), ..MemberTally::default() }).collect(),
         ..SoakReport::default()
     };
+    // A point past the last tick is never reached (`tick < end`), so it saturates there.
     let every = |n: u64| (n > 0).then_some(n);
-    let mut next_regen = every(plan.regen_every).filter(|_| !plan.regions.is_empty()).map(|n| from + n);
-    let mut next_save = every(plan.save_every).map(|n| from + n);
-    let mut next_report = every(plan.report_every).map(|n| from + n);
+    let mut next_regen = every(plan.regen_every).filter(|_| !plan.regions.is_empty()).map(|n| from.saturating_add(n));
+    let mut next_save = every(plan.save_every).map(|n| from.saturating_add(n));
+    let mut next_report = every(plan.report_every).map(|n| from.saturating_add(n));
     let mut say = |report: &mut SoakReport, line: String| {
         progress(&line);
         report.log.push(line);
@@ -191,13 +196,13 @@ pub fn run(driver: &mut dyn Driver, plan: &SoakPlan, progress: &mut dyn FnMut(&s
             let seed = rng.below(1_000_000);
             scheduled(driver, "regen", json!({"region": region, "seed": seed}))?;
             report.regens += 1;
-            next_regen = Some(tick + plan.regen_every);
+            next_regen = Some(tick.saturating_add(plan.regen_every));
             say(&mut report, format!("tick {tick}: the host goes to {region} (seed {seed})"));
         }
         if next_save.is_some_and(|at| tick >= at) {
             scheduled(driver, "save_game", json!({"what": "all"}))?;
             report.saves += 1;
-            next_save = Some(tick + plan.save_every);
+            next_save = Some(tick.saturating_add(plan.save_every));
         }
 
         let ticks = (1 + rng.below(plan.max_step.max(1))).min(end - tick);
@@ -213,7 +218,7 @@ pub fn run(driver: &mut dyn Driver, plan: &SoakPlan, progress: &mut dyn FnMut(&s
             break;
         }
         if next_report.is_some_and(|at| tick >= at) {
-            next_report = Some(tick + plan.report_every);
+            next_report = Some(tick.saturating_add(plan.report_every));
             let line = progress_line(driver, &report, tick)?;
             say(&mut report, line);
         }
@@ -223,10 +228,11 @@ pub fn run(driver: &mut dyn Driver, plan: &SoakPlan, progress: &mut dyn FnMut(&s
         let status = driver.call_on(peer, SOAK_AGENT, "net_status", json!({}))?;
         let tally = &mut report.members[member];
         if status.ok {
-            tally.desyncs = desyncs(&status.result);
+            tally.desyncs = Some(desyncs(&status.result));
             tally.net = net_line(&status.result);
         } else {
-            tally.net = format!("net_status: {}", status.text());
+            // Left `None`: a member that cannot say how it went does not pass.
+            tally.net = format!("net_status refused: {}", status.text());
         }
     }
     Ok(report)
@@ -318,12 +324,14 @@ mod tests {
         tick: u64,
         dead: bool,
         desync_at: Option<u64>,
+        /// The member whose `net_status` is refused, if any.
+        mute: Option<&'static str>,
         calls: Vec<(String, String, Value)>,
     }
 
     impl Pretend {
         fn new(desync_at: Option<u64>) -> Self {
-            Self { tick: 0, dead: true, desync_at, calls: Vec::new() }
+            Self { tick: 0, dead: true, desync_at, mute: None, calls: Vec::new() }
         }
 
         fn count(&self, peer: &str, tool: &str) -> usize {
@@ -383,6 +391,7 @@ mod tests {
                     };
                     Outcome { ok: true, result: Value::String(text), tick: Some(self.tick) }
                 }
+                "net_status" if self.mute == Some(peer) => Outcome::err("unknown tool `net_status`"),
                 "net_status" if peer == HOST => {
                     let desyncs = u64::from(self.desync_at.is_some_and(|at| self.tick >= at));
                     Outcome::ok(json!({"peers": [
@@ -436,8 +445,40 @@ mod tests {
         assert!(!report.passed());
         assert_eq!(report.to_tick, 250);
         assert_eq!(report.stopped.as_deref(), Some("net_desync"));
-        assert_eq!(report.members[0].desyncs, 1, "the host's count is asked at the end");
+        assert_eq!(report.members[0].desyncs, Some(1), "the host's count is asked at the end");
         assert!(report.to_string().starts_with("soak seed 3") && report.to_string().contains("FAIL soak seed 3"), "{report}");
+    }
+
+    #[test]
+    fn a_member_that_cannot_say_how_it_went_fails_the_soak() {
+        let plan = SoakPlan { seed: 5, ticks: 120, ..SoakPlan::default() };
+        let mut stand = Pretend::new(None);
+        stand.mute = Some("c1");
+        let report = run(&mut stand, &plan, &mut |_| {}).unwrap();
+        assert!(report.stopped.is_none(), "it played every tick: {report}");
+        assert!(!report.passed(), "{report}");
+        assert_eq!(report.members[1].desyncs, None);
+        assert_eq!(report.members[1].net, "net_status refused: unknown tool `net_status`");
+        let text = report.to_string();
+        assert!(text.contains("  c1: ") && text.contains("desyncs ?; net_status refused"), "{text}");
+        assert!(text.contains("FAIL soak seed 5") && text.ends_with("; no net_status from c1"), "{text}");
+    }
+
+    #[test]
+    fn a_plan_past_the_last_tick_is_refused_before_anything_is_played() {
+        let plan = SoakPlan { ticks: u64::MAX, regen_every: u64::MAX, save_every: u64::MAX, report_every: u64::MAX, ..SoakPlan::default() };
+        let mut stand = Pretend::new(None);
+        stand.tick = 10;
+        let err = run(&mut stand, &plan, &mut |_| {}).unwrap_err();
+        assert!(err.starts_with(&format!("a soak of {} ticks from tick 10 ends past the last tick", u64::MAX)), "{err}");
+        assert!(stand.calls.is_empty(), "nothing was called: {:?}", stand.calls);
+
+        // A plan that fits: its schedule points past the last tick saturate there and never come.
+        let plan = SoakPlan { ticks: 90, ..plan };
+        let mut stand = Pretend::new(None);
+        stand.tick = 1;
+        let report = run(&mut stand, &plan, &mut |_| {}).unwrap();
+        assert_eq!((report.from_tick, report.to_tick, report.saves, report.regens), (1, 91, 0, 0), "{report}");
     }
 
     #[test]
