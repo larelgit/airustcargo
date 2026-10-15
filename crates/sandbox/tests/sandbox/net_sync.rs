@@ -802,6 +802,35 @@ fn a_cap_that_comes_and_goes_costs_a_world_per_cooldown_and_not_one_per_flip() {
 }
 
 #[test]
+fn a_world_replaced_in_a_capped_view_is_not_followed_by_a_world_for_the_cap_that_is_gone() {
+    let mut stand = shards::testing::stand(1, LinkConditions::NONE, configure, with_references);
+    stand.run(30);
+    let before = snapshot::capture(stand.world(HOST)).unwrap();
+    // 70 pillars far out of view, all named by the boss: c1's view is capped.
+    let far: Vec<String> = (0..70)
+        .map(|i| spawned(&stand.call(HOST, "spawn_prefab", json!({"id": "pillar", "x": 300.0 + 3.0 * i as f32, "z": 300.0}))))
+        .collect();
+    let boss = entity(&stand, HOST, BOSS).unwrap();
+    let roster: Vec<Entity> = far.iter().map(|id| entity(&stand, HOST, id).unwrap()).collect();
+    stand.world_mut(HOST).entity_mut(boss).insert((Roster(roster), shards::net::NetAlways));
+    stand.run(200);
+    assert!(peer_of(&stand, 1).closure_capped > 0, "the cap was reached");
+    assert_eq!(rebases(&stand, C1), 0, "and it never lifted");
+    // The host goes back to a world without the pillars (a snapshot load; a region change is the same
+    // to the peer): its first view meets no cap.
+    snapshot::restore(stand.world_mut(HOST), &before, false).unwrap();
+    stand.run(60);
+    assert!(has_line(&stand, C1, &format!("net: the host's world again (snapshot of tick {})", before.tick)), "{:#?}", journal(&stand, C1));
+    let capped = peer_of(&stand, 1).closure_capped;
+    stand.run(120);
+    assert_eq!(peer_of(&stand, 1).closure_capped, capped, "the view of the world it went back to is not capped");
+    // The cap of the world that is gone is no cap of this one: nothing is lifted, so no second world follows.
+    assert!(!has_line(&stand, C1, "(view complete)"), "{:#?}", journal(&stand, C1).into_iter().filter(|l| l.contains("again")).collect::<Vec<_>>());
+    assert_eq!(rebases(&stand, C1), 1, "the snapshot's world, and no other");
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+}
+
+#[test]
 fn a_player_sent_away_is_waited_for_while_it_takes_in_what_is_queued_ahead_of_its_goodbye() {
     use shards::ai_core::journal::{self, JournalKind};
     let mut stand = stand_with(1, lossy());

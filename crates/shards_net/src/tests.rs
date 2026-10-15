@@ -298,6 +298,35 @@ fn two_megabyte_blobs_cross_a_lossy_link() {
 }
 
 #[test]
+fn a_blob_that_takes_long_to_cross_keeps_raising_what_the_peer_has_acknowledged() {
+    // One 2 MB message: about 2000 pieces, 32 a round trip of 300 ms, so it crosses in ~20 s. The
+    // message is acknowledged once, at the end: what shows a slow peer is not a deaf one is the pieces.
+    let mut sim = Sim::new(61);
+    sim.add(cond(150, 0, 0.0, 0.0), cond(150, 0, 0.0, 0.0));
+    let blob = payload(7, 2 << 20);
+    let mut queued = false;
+    let mut hook = |_now: u64, pairs: &mut [Pair]| {
+        if !queued {
+            queued = true;
+            pairs[0].a.send_reliable(&blob).unwrap();
+        }
+    };
+    let mut seen = vec![0u64];
+    let mut next = 1000;
+    while sim.pairs[0].reliable_b().is_empty() && sim.now < 120_000 {
+        sim.step(&mut hook);
+        if sim.now >= next {
+            seen.push(sim.pairs[0].a.reliable_acked());
+            next += 1000;
+        }
+    }
+    assert!(*sim.pairs[0].reliable_b()[0] == blob, "the blob crossed");
+    assert!(sim.now > 15_000, "it takes longer than a gone peer is held without acknowledging anything: {} ms", sim.now);
+    // Every second of the crossing took in more of it: no ten-second stretch without progress.
+    assert!(seen.len() > 15 && seen.windows(2).all(|w| w[1] > w[0]), "{seen:?}");
+}
+
+#[test]
 fn blobs_are_sent_one_at_a_time_with_a_bounded_window() {
     // No loss: the number of fragments on the wire never exceeds the window.
     let mut sim = Sim::new(5);

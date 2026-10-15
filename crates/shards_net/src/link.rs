@@ -1277,6 +1277,12 @@ impl Link {
         }
     }
 
+    /// Whether nothing the peer sent is held here: no message delivered and not yet polled, none
+    /// buffered ahead of a gap, no blob part-way in (a Hello that comes in pieces).
+    pub fn nothing_incoming(&self) -> bool {
+        self.delivered.is_empty() && self.rin_buf.is_empty() && self.rin_blobs.is_empty()
+    }
+
     /// Reliable messages and blob pieces the peer has acknowledged, all told: it grows while the peer
     /// takes in what is sent (a slow peer is not a deaf one).
     pub fn reliable_acked(&self) -> u64 {

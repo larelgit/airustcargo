@@ -92,6 +92,10 @@ const GONE_LIMIT_MS: u64 = 10_000;
 /// A peer that is gone is forgotten at the latest this long after, acknowledging or not.
 const GONE_CEILING_MS: u64 = 300_000;
 
+/// A peer that has not said hello is held this long for what is on its way (a Hello that comes
+/// in pieces) when the host needs its place; after it, it makes room as any other.
+const NEW_PEER_GRACE_MS: u64 = 5_000;
+
 /// Where a peer is in the session.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PeerStage {
@@ -693,7 +697,7 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
                 continue;
             }
             let Some(session) = wire::peek_session(&bytes) else { continue };
-            if !make_room(host, endpoint, def.max_players) {
+            if !make_room(host, endpoint, def.max_players, now) {
                 continue;
             }
             host.peers.insert(from, Peer::new(from, session, now));
@@ -704,7 +708,7 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
         }
     }
     let mut ids: Vec<PeerId> = host.peers.keys().copied().collect();
-    // In the order of the ids (that of arrival, so players take their numbers as they came),
+    // In the order of the ids (creation order in a stand; over UDP the hash of the address),
     // unless the last poll left a peer unread: the peers that do not play yet share a budget,
     // and the one it ran out on must not be last again.
     if let Some(first) = host.poll_first.take() {
@@ -821,14 +825,23 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
 }
 
 /// Room for one more peer that does not play: when the host holds `max_strangers` of them
-/// (joining, refused, gone), the oldest that has not said hello, else the oldest refused
-/// stranger, makes room. `false`: there is none, and the datagram is not answered.
-fn make_room(host: &mut NetHost, endpoint: &mut NetEndpoint, max_players: u8) -> bool {
+/// (joining, refused, gone), one makes room: the oldest refused stranger, else the oldest that
+/// has not said hello (but only when nothing of it is held unread in its link, and none of it is
+/// part-way in, or after [`NEW_PEER_GRACE_MS`]: an honest Hello waits there, acknowledged, until
+/// a poll takes it, or comes in pieces, and the link would not send what was acknowledged
+/// again), else the oldest peer that is gone whatever it was (it loses what of its goodbye it did
+/// not take in). `false`: there is none, and the datagram is not answered, so its sender's link
+/// sends it again.
+fn make_room(host: &mut NetHost, endpoint: &mut NetEndpoint, max_players: u8, now: u64) -> bool {
     if host.peers.values().filter(|p| p.stage != PeerStage::Connected).count() < max_strangers(max_players) {
         return true;
     }
     let oldest = |wanted: &dyn Fn(&Peer) -> bool| host.peers.values().filter(|p| wanted(p)).min_by_key(|p| (p.stage_mark.1, p.id)).map(|p| p.id);
-    let victim = oldest(&|p| p.stage == PeerStage::New).or_else(|| oldest(&|p| p.stage == PeerStage::Gone && !p.admitted));
+    let victim = oldest(&|p| p.stage == PeerStage::Gone && !p.admitted)
+        .or_else(|| {
+            oldest(&|p| p.stage == PeerStage::New && (p.link.nothing_incoming() || now.saturating_sub(p.stage_mark.1) > NEW_PEER_GRACE_MS))
+        })
+        .or_else(|| oldest(&|p| p.stage == PeerStage::Gone));
     let Some(victim) = victim else { return false };
     host.peers.remove(&victim);
     endpoint.transport.forget(victim);
@@ -868,12 +881,17 @@ fn oversized(world: &mut World, host: &mut NetHost, id: PeerId, len: usize, max:
 fn undecodable(world: &mut World, host: &mut NetHost, id: PeerId, error: &str) {
     crate::hooks::net_line(world, "undecodable", JournalKind::Warn, format!("peer {id}: {}", clip(error, MAX_PEER_TEXT)));
     if host.peers.get(&id).is_some_and(|p| p.stage == PeerStage::New) {
-        refuse(world, host, id, JOIN_STARTS_WITH_HELLO);
+        // A Hello of another build may be what does not decode: both causes are named.
+        refuse(world, host, id, &format!("{FIRST_MESSAGE_UNREADABLE} ({}); a join starts with a hello, and both ends need the same build", clip(error, 80)));
     }
 }
 
 /// What a peer that opens with anything but a `Hello` is told.
 const JOIN_STARTS_WITH_HELLO: &str = "a join starts with a hello";
+
+/// What a peer whose first message does not decode is told (a stranger's junk, or the Hello of
+/// another build).
+const FIRST_MESSAGE_UNREADABLE: &str = "your first message does not decode";
 
 fn on_message(world: &mut World, host: &mut NetHost, id: PeerId, message: Msg) {
     // An honest client opens with its `Hello`: anything else first is a stranger, who costs the
@@ -1135,6 +1153,10 @@ fn run_tasks(world: &mut World, host: &mut NetHost) {
         for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Connected) {
             peer.rebase = Some(reason.clone());
             peer.rebuild_pending = true;
+            // Both describe the view of the world that is gone: the new one starts uncapped, with
+            // no world sent for it yet.
+            peer.capped = false;
+            peer.view_complete_at = None;
         }
         // Values cached for ids of the old world mean nothing now.
         host.cache.clear();

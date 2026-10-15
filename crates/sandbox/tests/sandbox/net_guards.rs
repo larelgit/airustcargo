@@ -47,6 +47,13 @@ impl Rogue {
         self.link.send_reliable(bytes).unwrap();
     }
 
+    /// Sends what is queued and takes in nothing: a peer that never acknowledges.
+    fn send_only(&mut self, stand: &Stand) {
+        let now = stand.hub.now();
+        let Self { transport, link, .. } = self;
+        link.flush(now, &mut |datagram| transport.send(0, datagram));
+    }
+
     /// Takes what arrived, sends what is queued.
     fn pump(&mut self, stand: &Stand) {
         let now = stand.hub.now();
@@ -445,7 +452,8 @@ fn what_a_stranger_sends_after_its_refusal_is_not_read() {
     assert!(flood.refused().is_some_and(|r| r.contains("engine version differs")), "{:?}", flood.got);
     let said = |stand: &Stand| journal(stand, HOST).into_iter().filter(|l| l.contains("net: peer ")).count();
     assert_eq!(said(&stand), 0, "{:#?}", journal(&stand, HOST));
-    // The same bytes from a stranger that was not refused are read, and said.
+    // The same bytes from a stranger on its own are read and said (then it is refused: an
+    // unreadable first message is no hello).
     stand.run(70);
     let mut junk = Rogue::new(&stand, "junk", 112);
     junk.say_raw(b"not json at all");
@@ -561,6 +569,18 @@ fn a_stranger_whose_first_message_is_not_a_hello_is_refused_at_once() {
     junk.say_raw(b"not json at all");
     junk.run(&mut stand, 5);
     assert!(junk.refused().is_some_and(|r| r.contains("a join starts with a hello")), "{:?}", junk.got.iter().map(short).collect::<Vec<_>>());
+    // The hello of another build is that too: it is not a stranger's junk, and the refusal says what to do.
+    let mut other = Rogue::new(&stand, "other", 125);
+    let mut skewed = json!(Msg::Hello(hello(&stand, "other")));
+    skewed["Hello"].as_object_mut().expect("a hello").remove("tick_hz");
+    other.say_raw(&msg::encode(&skewed));
+    other.run(&mut stand, 5);
+    let told = other.refused().expect("refused");
+    assert!(told.contains("your first message does not decode") && told.contains("tick_hz") && told.contains("same build"), "{told}");
+    assert!(told.contains("a join starts with a hello"), "and what a join starts with: {told}");
+    // What decodes to something else is told only what a join starts with.
+    let told = ready.refused().expect("refused");
+    assert!(told.contains("a join starts with a hello") && !told.contains("does not decode"), "{told}");
     // A goodbye first is no offence, and a hello first is read.
     let mut bye = Rogue::new(&stand, "bye", 123);
     bye.say(&Msg::Bye { reason: "wrong number".into() });
@@ -668,6 +688,156 @@ fn the_host_holds_so_many_strangers_and_the_oldest_makes_room() {
     let mut honest = Rogue::new(&stand, "honest", 300);
     honest.join(&mut stand, "honest");
     assert!(stand.world(HOST).resource::<NetHost>().peers.len() <= cap + 1);
+}
+
+/// A refused stranger: its first message is not a hello. It does not acknowledge the refusal, so
+/// the host holds it as gone for a while (it is the stranger the host would like to forget first).
+fn refused_stranger(stand: &Stand, name: &str, session: u32) -> Rogue {
+    let mut stranger = Rogue::new(stand, name, session);
+    stranger.say(&Msg::Ready { checks: BTreeMap::new() });
+    stranger.pump(stand);
+    stranger
+}
+
+fn held(stand: &Stand, r: &Rogue) -> bool {
+    stand.world(HOST).resource::<NetHost>().peers.contains_key(&r.transport.id())
+}
+
+#[test]
+fn a_hello_is_not_lost_to_the_strangers_that_arrive_with_it() {
+    let mut stand = stand(0);
+    let cap = max_strangers(NetDef::default().max_players);
+    // A table full of refused strangers.
+    let refused: Vec<Rogue> = (0..cap).map(|i| refused_stranger(&stand, &format!("r{i}"), 500 + 2 * i as u32)).collect();
+    stand.run(2);
+    let peers = |stand: &Stand| stand.world(HOST).resource::<NetHost>().peers.values().filter(|p| p.stage == PeerStage::Gone).count();
+    assert_eq!(peers(&stand), cap, "the table is full of peers that are gone");
+    assert!(refused.iter().all(|r| held(&stand, r)));
+    // One tick: fresh strangers, an honest hello among them, more fresh strangers after it. Each
+    // of them finds the table full: none may take the place of one that has not had its turn.
+    let mut honest = Rogue::new(&stand, "honest", 560);
+    let mut junk: Vec<Rogue> = (0..5).map(|i| Rogue::new(&stand, &format!("j{i}"), 570 + 2 * i as u32)).collect();
+    for fresh in &mut junk[..2] {
+        fresh.say(&Msg::Ready { checks: BTreeMap::new() });
+        fresh.pump(&stand);
+    }
+    honest.say(&Msg::Hello(hello(&stand, "honest")));
+    honest.pump(&stand);
+    for fresh in &mut junk[2..4] {
+        fresh.say(&Msg::Ready { checks: BTreeMap::new() });
+        fresh.pump(&stand);
+    }
+    stand.run(1);
+    // And another one in the next tick, before the honest client has been answered anything.
+    junk[4].say(&Msg::Ready { checks: BTreeMap::new() });
+    junk[4].pump(&stand);
+    stand.run(1);
+    // Well within the time its link waits to send the hello again: it was not lost.
+    honest.wait_for(&mut stand, 20, "accepted", |m| matches!(m, Msg::Accept(_)));
+}
+
+#[test]
+fn strangers_that_arrive_in_one_tick_are_held_up_to_the_cap_and_the_rest_are_left_unanswered() {
+    let mut stand = stand(0);
+    let cap = max_strangers(NetDef::default().max_players);
+    let mut strangers: Vec<Rogue> = (0..cap + 3).map(|i| Rogue::new(&stand, &format!("b{i}"), 700 + 2 * i as u32)).collect();
+    for stranger in &mut strangers {
+        stranger.say_unreliable(b"hello?");
+        stranger.pump(&stand);
+    }
+    stand.run(1);
+    assert_eq!(stand.world(HOST).resource::<NetHost>().peers.len(), cap, "no more than {cap} strangers at once");
+    // The first to come are held: the ones after them did not take their places before a poll read them.
+    assert!(strangers[..cap].iter().all(|s| held(&stand, s)), "the first {cap} are held");
+    assert!(strangers[cap..].iter().all(|s| !held(&stand, s)), "the rest got no peer");
+    // The next tick they have had their turn, and said nothing: the oldest makes room.
+    let mut late = Rogue::new(&stand, "late", 800);
+    late.say_unreliable(b"hello?");
+    late.pump(&stand);
+    stand.run(1);
+    assert!(held(&stand, &late) && !held(&stand, &strangers[0]));
+    assert_eq!(stand.world(HOST).resource::<NetHost>().peers.len(), cap);
+}
+
+/// Letters that do not compress much: a message of this size travels in pieces.
+fn letters(len: usize) -> String {
+    let mut x = 0x2545_F491_4F6C_DD1Du64;
+    (0..len)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            char::from(b'a' + (x % 26) as u8)
+        })
+        .collect()
+}
+
+#[test]
+fn a_hello_that_comes_in_pieces_is_held_for_a_while_and_then_makes_room_as_any_other() {
+    let mut stand = stand(0);
+    let cap = max_strangers(NetDef::default().max_players);
+    // A hello with a 70 KB character: some 40 pieces, and the window lets 32 of them through.
+    let mut slow = Rogue::new(&stand, "slow", 1000);
+    let mut big = hello(&stand, "slow");
+    big.character = Some(json!({"bag": letters(70_000)}));
+    slow.say(&Msg::Hello(big));
+    slow.pump(&stand);
+    stand.run(1);
+    let id = slow.transport.id();
+    assert_eq!(peer_with(&stand, id).link.footprint().partial_blobs, 1, "its hello is part-way in");
+    // The table fills with strangers that say nothing (all younger than it).
+    let mut strangers: Vec<Rogue> = (1..cap).map(|i| Rogue::new(&stand, &format!("t{i}"), 1000 + 2 * i as u32)).collect();
+    for stranger in &mut strangers {
+        stranger.say_unreliable(b"hello?");
+        stranger.pump(&stand);
+    }
+    stand.run(2);
+    assert_eq!(stand.world(HOST).resource::<NetHost>().peers.len(), cap);
+    // One more: it takes the place of a stranger that said nothing, not of the hello that is on its way.
+    let mut one_more = Rogue::new(&stand, "more", 1100);
+    one_more.say_unreliable(b"hello?");
+    one_more.pump(&stand);
+    stand.run(1);
+    assert!(held(&stand, &slow) && held(&stand, &one_more) && !held(&stand, &strangers[0]), "the oldest that said nothing made room");
+    // Its pieces never come: after a while it is a stranger like the others, and the oldest.
+    stand.run(330);
+    assert!(held(&stand, &slow), "silent for a few seconds, not yet for the ten the link allows");
+    let mut last = Rogue::new(&stand, "last", 1200);
+    last.say_unreliable(b"hello?");
+    last.pump(&stand);
+    stand.run(1);
+    assert!(held(&stand, &last) && !held(&stand, &slow), "after its time it made room");
+}
+
+#[test]
+fn a_table_full_of_players_that_were_put_out_and_still_owe_acknowledgements_makes_room_for_a_hello() {
+    let mut stand = stand(0);
+    let cap = max_strangers(NetDef::default().max_players);
+    // One game that joins again and again with the token it was given, from a new address each
+    // time: the game it had before is put out (gone, admitted), and takes in nothing of what the
+    // host sends after, so its link is never idle and it is not forgotten for as long as it wants.
+    let (mut token, mut squats) = (String::new(), Vec::new());
+    for i in 0..=cap {
+        let mut game = Rogue::new(&stand, &format!("q{i}"), 900 + 2 * i as u32);
+        let mut hi = hello(&stand, "squatter");
+        hi.token = token.clone();
+        game.say(&Msg::Hello(hi));
+        if let Msg::Accept(accept) = game.wait_for(&mut stand, 60, "accepted", |m| matches!(m, Msg::Accept(_))) {
+            token = accept.token;
+        }
+        game.say(&Msg::Ready { checks: BTreeMap::new() });
+        game.send_only(&stand);
+        let id = game.transport.id();
+        run_until(&mut stand, 30, &format!("game {i} is in"), |s| s.world(HOST).resource::<NetHost>().peers.get(&id).is_some_and(|p| p.stage == PeerStage::Connected));
+        squats.push(game);
+    }
+    let gone = |stand: &Stand| stand.world(HOST).resource::<NetHost>().peers.values().filter(|p| p.stage == PeerStage::Gone).count();
+    assert_eq!(gone(&stand), cap, "the table is full of games that were put out: {:#?}", journal(&stand, HOST));
+    // A newcomer's hello is answered all the same: the oldest of them makes room.
+    let mut honest = Rogue::new(&stand, "honest", 990);
+    honest.say(&Msg::Hello(hello(&stand, "honest")));
+    honest.wait_for(&mut stand, 20, "accepted", |m| matches!(m, Msg::Accept(_)));
+    assert!(!held(&stand, &squats[0]), "the oldest made room");
 }
 
 #[test]
