@@ -31,7 +31,7 @@
 | что | как проверено |
 |---|---|
 | сборка и тесты движка | `cargo test --workspace` (0 падают; число тестов по крейтам — в разделе «Тесты»); `cargo clippy --workspace --all-targets --locked -- -D warnings` и то же для шаблона без замечаний; `template/Cargo.lock` не расходится с корневым |
-| шаблон отдельно от движка | `cargo test --manifest-path template/Cargo.toml` (19 тестов); копия `template/` вне репозитория, переименованная, с зависимостью-`path` на `crates/shards`: `cargo test`, запуск без окна, `shards scenario`, перезапись реплея (отдельный репозиторий с тегом так не проверить: тега ещё нет) |
+| шаблон отдельно от движка | `cargo test --manifest-path template/Cargo.toml` (число тестов — в разделе «Тесты»); копия `template/` вне репозитория, переименованная, с зависимостью-`path` на `crates/shards`: `cargo test`, запуск без окна, `shards scenario`, перезапись реплея (отдельный репозиторий с тегом так не проверить: тега ещё нет) |
 | сценарии против живой игры | `cargo sandbox --headless --paused --port 0 --port-file F`, `SHARDS_PORT_FILE=F cargo shards scenario crates/sandbox/scenarios/*.scenario` → `5 of 5 scenarios passed` |
 | контент | `cargo sandbox --check-content` → `ok: 38 definitions in 9 files`; сломанная копия контента даёт ошибки с файлом, строкой и подсказкой (README, «Контент») |
 | эталонные реплеи без окна | `cargo sandbox --replay tests/replays/combat_prototype.json --verify` → `identical to the recording (39 checks)`, то же для `obstacle_course.json` (17 проверок) и для реплея шаблона (5 проверок) |
@@ -39,7 +39,7 @@
 | скриншот с метками | `xvfb-run -a cargo sandbox --paused …` и `shards shot`: PNG и легенда |
 
 Что проверено для приёмки фазы B (команды запускались из корня репозитория без окна, если не сказано иное; `cargo test --workspace`:
-752 теста проходят, 0 падают, 17 `#[ignore]`; шаблон: 23 проходят):
+все проходят, 0 падают; шаблон: все проходят):
 
 | что | как проверено |
 |---|---|
@@ -93,7 +93,7 @@
 | 2 | режим без окна из тех же плагинов, минус окно, рендер и звук | ✅ | `crates/shards/src/plugins.rs` (`without_display`); тест `headless_is_the_same_plugins_minus_display`; `MinimalPlugins` в песочнице больше нет |
 | 3 | состояния: загрузка, меню, игра, экран загрузки региона, пауза | 🟡 | `crates/shards_core/src/state.rs`, `loading.rs`; тесты `crates/shards_core/tests/core.rs`. `EngineState::{Loading, MainMenu, InGame, RegionLoading}` и `PauseState`, шлюз загрузки. `RegionLoading` теперь работает: через него идёт каждая смена региона (`regen`, `region_load`), с тестами `shards_world` (`regen_replaces_the_region_through_the_loading_screen_and_keeps_the_hero`). Картинки экрана загрузки нет (E9) |
 | 4 | версии: SemVer, теги git, CHANGELOG | 🟡 | `CHANGELOG.md`, версия `0.2.0` в `[workspace.package]`. Теги ставит мейнтейнер; ни `v0.1.0`, ни `v0.2.0` ещё нет |
-| 5 | шаблон в `template/`: персонаж, враг, арена, сохранение, кооп на двоих | 🟡 | `template/`: персонаж, враг, арена, свой вид контента, инструмент и условие, сценарий, реплей, 23 теста (и один `#[ignore]`: запись эталонных реплеев). Сохранения и кооп — фазы C (в README шаблона оставлены разделы-заглушки) |
+| 5 | шаблон в `template/`: персонаж, враг, арена, сохранение, кооп на двоих | 🟡 | `template/`: персонаж, враг, арена, свой вид контента, инструмент и условие, сценарий, реплей, 24 теста (и один `#[ignore]`: запись эталонных реплеев). Сохранения и кооп — фазы C (в README шаблона оставлены разделы-заглушки) |
 | 6 | CI: тесты, clippy, сборка шаблона, `--verify` реплеев | ✅ | `.github/workflows/ci.yml` (задания `test`, `clippy`, `template`, `headless-cli`, `replays-window`), `.github/actions/setup`. Идёт на GitHub на каждый push и pull request |
 
 Граница («игра добавляет плагины поверх `EnginePlugins` и не меняет код движка»): ✅, шаблон и песочница
@@ -278,14 +278,22 @@ Xvfb показывает его вместе с оверлеем навсетк
 (`a_region_a_guest_changed_while_its_link_was_full_reaches_it_whole_not_as_deltas_first`).
 Ушедший пир, который подтверждает, ждёт свой `Bye` за мегабайтами в очереди
 (`a_player_sent_away_is_waited_for_while_it_takes_in_what_is_queued_ahead_of_its_goodbye`; глухой уходит, как раньше).
-Чужак: первое сообщение не `Hello` — отказ, общий бюджет разбора (опрос идёт по порядку id и начинается с пропущенного: игроки получают
-номера в порядке прихода, `players_that_say_hello_in_one_tick_take_their_numbers_in_the_order_of_their_ids`), предел числа пиров, не входящих в игру,
+Чужак: первое сообщение не `Hello` — отказ (то, что не разбирается, — отказ с обеими причинами), общий бюджет разбора (опрос идёт по порядку
+`PeerId` и начинается с пропущенного; номера игроков, чьи `Hello` пришли в один тик, следуют порядку `PeerId`: в стенде это порядок создания, по UDP —
+хэш адреса, `players_that_say_hello_in_one_tick_take_their_numbers_in_the_order_of_their_ids`), предел числа пиров, не входящих в игру
+(новый не вытесняет непрочитанного: `a_hello_is_not_lost_to_the_strangers_that_arrive_with_it`,
+`strangers_that_arrive_in_one_tick_are_held_up_to_the_cap_and_the_rest_are_left_unanswered`,
+`a_hello_that_comes_in_pieces_is_held_for_a_while_and_then_makes_room_as_any_other`; ушедшие допущенные вытесняются в последнюю очередь:
+`a_table_full_of_players_that_were_put_out_and_still_owe_acknowledgements_makes_room_for_a_hello`),
 бюджет `JOINING_POLL_BYTES` проверен ненадёжным чужаком
 (`a_stranger_whose_first_message_is_not_a_hello_is_refused_at_once`, `peers_that_do_not_play_yet_share_a_budget_and_each_takes_a_turn`,
 `the_host_holds_so_many_strangers_and_the_oldest_makes_room`, `a_stranger_that_is_not_refused_is_read_for_so_many_bytes_a_poll_and_no_more`).
 Не сделано: проверка `calls_queued` до разбора `Call` у допущенного гостя; меньший `max_undelivered_bytes` канала до входа (канал
 раздувает сообщения до бюджета опроса).
 Мир, перестроенный вызовом гостя, доходит до клиентов (`a_region_change_a_guest_forwards_reaches_every_client_as_a_world_again`).
+Перестройка мира сбрасывает признак урезанного вида и срок мира `view complete`
+(`a_world_replaced_in_a_capped_view_is_not_followed_by_a_world_for_the_cap_that_is_gone`); счётчик `Link::reliable_acked` считает и куски
+блоба (юнит-тест `a_blob_that_takes_long_to_cross_keeps_raising_what_the_peer_has_acknowledged`).
 Работа пира за опрос ограничена, отпущенный пир не читается, вход со сроком, `net_kick peer=`
 (`a_guest_makes_the_host_decode_no_more_than_a_budget_in_one_poll`, `what_a_stranger_sends_after_its_refusal_is_not_read`,
 `a_peer_that_never_says_hello_is_dropped_however_it_keeps_sending`, `a_peer_that_never_acknowledges_its_refusal_is_forgotten_all_the_same`,
@@ -365,30 +373,30 @@ Xvfb показывает его вместе с оверлеем навсетк
 
 ## Тесты
 
-Тесты по крейтам, `cargo test -p <крейт>`: строки `ai_core`, `shards_net`, `shards` и `sandbox` пересчитаны 15 октября 2026,
-остальные взяты из последнего полного прогона `cargo test --workspace` (слияние C8, `5d98620`). Общего числа здесь и в README
-нет: оно расходилось с таблицами при каждой правке, а проверить его можно только полным прогоном. Помечены `#[ignore]`: запись
-эталонных реплеев, проверка окна под Xvfb, замеры сети, примеры в документации; у шаблона отдельно 24 проходят (и один
-`#[ignore]`: запись его эталонов). Запускать нужно из обычной оболочки:
+Тесты по крейтам, `cargo test -p <крейт>`: все строки, кроме шаблона, взяты из одного полного прогона `cargo test --workspace`
+15 октября 2026 (после слияния C7, `3b2d359`, и правок пятого круга ревью; сборка этого дерева, 0 падают); у шаблона — счёт `#[test]` и
+`#[ignore]` в `template/tests/game`, его прогон отдельный. Общего числа здесь и в README нет: оно расходилось с таблицами при
+каждой правке, а проверить его можно только полным прогоном. Помечены `#[ignore]`: запись эталонных реплеев, проверка окна под Xvfb,
+замеры сети, примеры в документации; у шаблона 24 проходят (и один `#[ignore]`: запись его эталонов). Запускать нужно из обычной оболочки:
 под `nohup` игнорируется SIGHUP, и тест `kill_and_hangup_remove_the_token_and_the_port_file` падает на `signal 1`.
 
 | крейт | тестов | где |
 |---|---|---|
-| `ai_core` | 88 | `crates/ai_core/src/*` (снапшоты 22) |
-| `shards_script` | 35 | `crates/shards_script/src/*` |
-| `shards_cli` | 12 | `crates/shards_cli/src/*` |
+| `ai_core` | 91 | `crates/ai_core/src/*` (снапшоты 22) |
+| `shards_script` | 50 | `crates/shards_script/src/*` (разбор, условия, запуск сценариев 30) |
+| `shards_cli` | 54 | `crates/shards_cli/src/*` (клиент игры-пира `peer` 25, сценарии 12, команды 17) |
 | `shards_core` | 14 | `src/` и `tests/core.rs` |
 | `shards_content` | 22 | `src/` и `tests/content.rs` |
 | `shards_motion` | 175 | `src/` и `tests/motion/` (контроллер 28, перцепция 29, ввод 30, физика 11, …) |
-| `shards_settings` | 57 | `src/` (16) и `tests/settings/` (41: хранилище, файл и его порча, правка файла руками в работающей игре, повтор записи и запись при выходе, группы, инструменты, изоляция от снапшота, хэша и репликации) |
+| `shards_settings` | 62 | `src/` (18) и `tests/settings/` (44: хранилище, файл и его порча, правка файла руками в работающей игре, повтор записи и запись при выходе, группы, инструменты, изоляция от снапшота, хэша и репликации) |
 | `shards_action` | 145 | `src/` и `tests/combat/` |
 | `shards_level` | 80 | `src/` (3) и `tests/level/` (77: файл и узлы, свойства, коллайдеры, маркеры, спавн, `level` в контенте, реплей, картинка) |
 | `shards_world` | 72 | `src/` (17) и `tests/world/` (55: генерация, проверки, подземелья, регионы, смена региона, уровни-тайлы, зоны, навсетка региона) |
 | `shards_npc` | 82 | `src/` (19) и `tests/npc/` (63: поведение, восприятие, директор, навсетка, реплей, снапшот, инструменты, страж данными) |
 | `shards_save` | 91 | `src/` (33) и `tests/save/` (58) |
-| `shards_net` | 126 | `src/` (81 — канальный слой без Bevy, 45 — сессия) |
-| `shards` | 29 | `src/` (в том числе `coop`), `tests/engine.rs`, `tests/failures.rs`, `tests/level_render.rs`, `tests/run_to.rs` (3), `tests/action_render/` |
-| `sandbox` | 277 | `tests/sandbox/` (256, из них кооператив `net*.rs` 139: `net.rs` 17, `net_coop.rs` 34, `net_sync.rs` 28, `net_guards.rs` 22, `net_lifecycle.rs` 20, `net_predict.rs` 14, `net_seams.rs` 4; `snapshots.rs` 29, `replays.rs` 23, `invariants.rs` 12; ещё 3 `#[ignore]`: запись эталонных реплеев и два замера сети), `tests/system_failures.rs` (8), `tests/perf.rs` (6), `tests/log_capture.rs` (5), `src/` (2) |
+| `shards_net` | 127 | `src/` (82 — канальный слой без Bevy, 45 — сессия) |
+| `shards` | 43 | `src/` (35: `coop` 3, `run` 14, `stand_udp` 14, …), `tests/engine.rs`, `tests/failures.rs`, `tests/level_render.rs`, `tests/run_to.rs` (3), `tests/action_render/` |
+| `sandbox` | 294 | `tests/sandbox/` (273, из них кооператив `net*.rs` 144: `net.rs` 17, `net_coop.rs` 34, `net_sync.rs` 29, `net_guards.rs` 26, `net_lifecycle.rs` 20, `net_predict.rs` 14, `net_seams.rs` 4; `stand_udp.rs` 7, `snapshots.rs` 29, `replays.rs` 23, `invariants.rs` 12; ещё 3 `#[ignore]`: запись эталонных реплеев и два замера сети), `tests/system_failures.rs` (8), `tests/perf.rs` (6), `tests/log_capture.rs` (5), `src/` (2) |
 | шаблон | 24 | `template/tests/game/` (содержание, детерминизм, реплеи, сценарии, регион, манифест) |
 
 ## Известные ограничения и отложенное
@@ -440,9 +448,10 @@ Xvfb показывает его вместе с оверлеем навсетк
   движок коммитом (`rev = "…"`).
 - **Вход в сессию без предела частоты.** `Hello`, `Ready` и `Bye` подряд не ограничены по частоте; пир, который шлёт их
   без остановки, получает отказ на первом `Hello` и не читается дальше (бюджет разбора за опрос), а срок входа
-  (`6 × timeout_secs`) и срок забвения ушедшего (10 с без подтверждений) не дают ему занять запись надолго. Сессия по LAN без проверки
-  личности, предел по адресу по UDP обходится сменой порта; пир, который шлёт по одной датаграмме с сообщением чаще, чем
-  его отпускают, заводится заново.
+  (`6 × timeout_secs`) и срок забвения ушедшего (10 с без подтверждений, потолок 5 минут) не дают ему занять запись надолго, а
+  таблица пиров, которые не играют, ограничена (`max_strangers`) и при нехватке места отдаёт запись, не теряя непрочитанного
+  `Hello`. Сессия по LAN без проверки личности, предел по адресу по UDP обходится сменой порта; пир, который шлёт по одной
+  датаграмме с сообщением чаще, чем его отпускают, заводится заново.
 - **Сохранения в кооперативе: что не сделано.** Клиент не просит у хоста собственное сохранение сейчас (его `save_game
   what=character` отвечает, что персонажа сохраняет хост: у клиента нет полного персонажа, и то, что он снял бы сам,
   затёрло бы хороший файл). Персонаж больше 64 КБ ни один хост не примет. Слоты по умолчанию — `slot1`, у клиента по
