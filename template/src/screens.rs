@@ -30,8 +30,12 @@ fn trophies(world: &World, _: &str) -> Option<UiValue> {
 /// Saves the world and the hero, then ends the game; a save that fails keeps the game going,
 /// so nothing is lost. The save is the player's own `save_game`, called as whoever pressed: an
 /// agent with player scope may save only its hero (the world is the host's), so its press
-/// saves that.
+/// saves that. A co-op guest saves nothing here: leaving, it gets its hero from the host.
 fn save_and_quit(world: &mut World, press: &UiPress) -> Result<String, String> {
+    if world.get_resource::<NetRole>().is_some_and(|role| !role.simulates()) {
+        world.write_message(AppExit::Success);
+        return Ok("the host saves your hero as you leave; the game ends".to_owned());
+    }
     let sessions = world.resource::<AgentSessions>();
     let scope = sessions.get(&press.agent).map_or(sessions.default_scope, |s| s.scope);
     let what = if scope.allows(Scope::Dev) { "all" } else { "character" };
