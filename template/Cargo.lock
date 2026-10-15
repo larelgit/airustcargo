@@ -5356,6 +5356,7 @@ dependencies = [
  "shards_settings",
  "shards_ui",
  "shards_world",
+ "winit",
 ]
 
 [[package]]
@@ -5408,6 +5409,7 @@ version = "0.2.0"
 dependencies = [
  "ai_core",
  "bevy",
+ "schemars",
  "serde",
  "serde_json",
 ]

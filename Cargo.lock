@@ -5435,6 +5435,7 @@ dependencies = [
  "shards_settings",
  "shards_ui",
  "shards_world",
+ "winit",
 ]
 
 [[package]]

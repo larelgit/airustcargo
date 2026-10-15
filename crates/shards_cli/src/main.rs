@@ -23,6 +23,7 @@
 //! shards content check             # every content file parsed and validated
 //! shards worldgen --region meadow --seeds 1..1000 --report   # batch check of the generator
 //! shards scenario a.scenario b.scenario   # commands, expectations, invariants: exit 0 / 1 failed / 2 error
+//! shards package                 # the game built for players in dist/, checked as a clean machine runs it
 //! shards tools
 //! shards raw world.query '{"data":{"components":["sandbox::gameplay::combat::Health"]}}'
 //! ```
@@ -43,6 +44,7 @@ use shards_script::{parse_args, parse_condition};
 
 #[cfg(test)]
 mod fake;
+mod package;
 mod peer;
 mod scenario;
 
@@ -298,6 +300,36 @@ enum Cmd {
     /// file go. Waits until it answers no more (--timeout, 15 s). How a game is stopped on Windows;
     /// on unix `kill PID` does the same.
     Quit,
+    /// Build the game for players and check the build. Profile `dist` (else `release`), the
+    /// game's feature `dist` when it has one (no `shards` server, no developer keys), on Windows
+    /// the C runtime linked in and `assets/icon.png` as the program's icon. The program and
+    /// `assets/` go to `dist/<name>-<version>-<os>-<arch>/` beside the game's Cargo.toml. Then a
+    /// copy of that folder, started with a bare environment, must pass `--check-content` and
+    /// `--smoke`, import only system DLLs (Windows) and write nothing into its own folder. Needs no
+    /// running game. Exit 0, 1 (a check failed), 2 (the build failed).
+    Package {
+        /// The game's Cargo.toml. Default: the package of this folder.
+        #[arg(long, value_name = "PATH")]
+        manifest_path: Option<std::path::PathBuf>,
+        /// The game's package, in a workspace of several (`--package sandbox`).
+        #[arg(long, value_name = "NAME")]
+        package: Option<String>,
+        /// Its program, when it has several.
+        #[arg(long, value_name = "NAME")]
+        bin: Option<String>,
+        /// Cargo profile. Default: `dist` when the workspace defines it, else `release`.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Where the package's folder goes. Default: `dist/` beside the game's Cargo.toml.
+        #[arg(long, value_name = "DIR")]
+        out: Option<std::path::PathBuf>,
+        /// Ticks the package's smoke test runs (`--smoke`).
+        #[arg(long, value_name = "TICKS", default_value_t = 300, value_parser = clap::value_parser!(u64).range(1..))]
+        smoke_ticks: u64,
+        /// Build and copy; check nothing.
+        #[arg(long)]
+        no_check: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -494,6 +526,16 @@ fn main() -> ExitCode {
             };
             scenario::soak(&cli, &plan, cli.json)
         }
+        // A build, not a game: nothing to connect to.
+        (Cmd::Package { manifest_path, package, bin, profile, out, smoke_ticks, no_check }, _) => package::run(&package::Options {
+            manifest_path: manifest_path.clone(),
+            package: package.clone(),
+            bin: bin.clone(),
+            profile: profile.clone(),
+            out: out.clone(),
+            smoke: *smoke_ticks,
+            check: !no_check,
+        }),
         (_, Some(Peer::All)) => Err(peer::ALL_NEEDS_A_MEMBER.to_owned()),
         _ => cli.client().and_then(|client| run(&cli, &client)),
     };
@@ -654,6 +696,7 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
         },
         Cmd::Fuzz { seed, steps, max_ticks } => return fuzz(&act, *seed, *steps, *max_ticks),
         Cmd::Soak { .. } => unreachable!("a soak finds its members itself (main)"),
+        Cmd::Package { .. } => unreachable!("a package needs no game (main)"),
         Cmd::Shot { no_marks, out } => {
             let reply = act("shot", json!({"marks": !no_marks, "path": out}))?;
             if reply.get("ok") != Some(&Value::Bool(true)) {

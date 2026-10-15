@@ -118,6 +118,35 @@ impl PluginGroup for EnginePlugins {
             .add(EngineAudioPlugin)
             // The developer menu and console, last: every module above has added its entries.
             .add(DevPlugin)
+            // A build for players: none of the developer's keys.
+            .add(PlayerKeys)
+    }
+}
+
+/// A build for players (feature `dist`): the developer's keys do nothing, neither the console and
+/// the menu (` and F10) nor the overlays (F2, F6, F7). Their tools stay, and such a build serves
+/// them to nobody (it is built without `remote`). Without `dist` this does nothing.
+struct PlayerKeys;
+
+impl Plugin for PlayerKeys {
+    fn build(&self, _: &mut App) {}
+
+    #[cfg_attr(not(all(feature = "dist", feature = "render")), allow(unused_variables))]
+    fn finish(&self, app: &mut App) {
+        #[cfg(all(feature = "dist", feature = "render"))]
+        {
+            let world = app.world_mut();
+            world.insert_resource(shards_dev::DevKeys { console: None, menu: None });
+            if let Some(mut overlay) = world.get_resource_mut::<shards_action::render::CombatOverlay>() {
+                overlay.key = None;
+            }
+            if let Some(mut overlay) = world.get_resource_mut::<shards_net::NetOverlay>() {
+                overlay.key = None;
+            }
+            if let Some(mut overlay) = world.get_resource_mut::<shards_npc::NpcOverlay>() {
+                overlay.key = None;
+            }
+        }
     }
 }
 
@@ -147,7 +176,11 @@ impl Plugin for EmbeddedLogCapture {
 fn with_window(group: PluginGroupBuilder, config: &EngineConfig) -> PluginGroupBuilder {
     let (width, height) = config.window;
     let window = Window { title: config.title.clone(), resolution: (width, height).into(), ..default() };
-    group.set(WindowPlugin { primary_window: Some(window), ..default() })
+    let group = group.set(WindowPlugin { primary_window: Some(window), ..default() });
+    // `<assets>/icon.png`, if the game has one, in the title bar and the taskbar.
+    #[cfg(feature = "render")]
+    let group = group.add(crate::window_icon::WindowIconPlugin);
+    group
 }
 
 /// What a GPU would have told the image loaders: no compressed formats (Bevy asks for it

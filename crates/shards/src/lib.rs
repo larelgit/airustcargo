@@ -48,6 +48,8 @@ mod run;
 pub mod save_sections;
 mod stand_udp;
 mod ui_wiring;
+#[cfg(feature = "render")]
+mod window_icon;
 pub mod testing;
 pub mod tile_levels;
 
