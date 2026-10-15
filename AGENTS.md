@@ -19,8 +19,8 @@
 - Крейты: `shards` (зонтик, единственная зависимость игры), `shards_core`, `shards_content`, `shards_motion`,
   `shards_action`, `shards_level` (уровни из Blender), `shards_world` (регионы, генерация), `shards_npc` (враги, навсетка),
   `shards_save` (сохранения: секции, слоты, миграции, копии), `shards_ui` (экраны и меню из контента), `shards_locale`
-  (языки: тексты на Fluent, смена на лету), `shards_audio` (звук: шины, голоса, музыка в слоях), `ai_core`, `shards_script`, `shards_cli`, `sandbox` (арена движка). Карта — в
-  README, «Архитектура».
+  (языки: тексты на Fluent, смена на лету), `shards_audio` (звук: шины, голоса, музыка в слоях), `shards_dev` (меню и
+  консоль разработчика), `ai_core`, `shards_script`, `shards_cli`, `sandbox` (арена движка). Карта — в README, «Архитектура».
 
 ## Как смотреть на игру и действовать в ней
 
@@ -61,17 +61,22 @@ kill <pid>                              # pid из `wait`
   для визуальных багов: PNG с метками `eN` и легенда, где на картинке какой id.
 - Ошибки инструментов объясняют, как исправить вызов. Читайте их, а не повторяйте вызов вслепую.
 - Инструменты движка (`shards tools`): **движение** — `move_to` (`path=true` ведёт по `path_to`), `move`, `stop`, `jump`,
-  `sprint`, `glide`, запросы `clearance` и `path_to`, `input_bindings`, `rebind`; **бой** — `light_attack`, `heavy_attack`,
+  `sprint`, `glide`, запросы `clearance` и `path_to` (в регионе по навсетке: `path_to` называет `provider`, `clearance` —
+  `closed`, где навсетка кончается раньше физики), `input_bindings`, `rebind`; **бой** — `light_attack`, `heavy_attack`,
   `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on`, `attack`, `god`, `heal`, `stagger`; **контент** —
   `content_list`, `content_get`, `content_check`, `content_reload`, `spawn_prefab`; **мир** — `regen`, `region_load`,
   `goto_tile`, `region_info`, `worldgen_report`, `spawn_level`, `level_info`, `level_reload`; **NPC и навигация** —
-  `npc_state`, `npc_set_state`, `nav_path`, `nav_info`, `nav_bake`, оверлеи `world_overlay` и `nav_overlay` (окно); **правила** —
+  `npc_state`, `npc_set_state`, `nav_path`, `nav_info`, `nav_bake`, оверлеи `world_overlay` и `nav_overlay` (окно),
+  `npc_overlay` (строка на NPC рядом с игроками: состояние, цель, жетон, поводок, что видит и слышит; в окне — F7); **правила** —
   `assert_add`, `assert_list`, `assert_remove`, `assert_reset` (`shards assert`); **интерфейс** — `ui_read` (дерево экранов: id
   виджетов, значения, фокус), `ui_open`, `ui_close`, `ui_navigate`, `ui_click`, `ui_set`; **язык** — `locale` (языки, на каком
   играют, чего каждому не хватает), `text` (сообщение с параметрами на любом языке); язык меняет `settings_set group=locale
   key=language value=ru`; **звук** — `audio` (что слышит эта машина: трек и слой музыки, стемы, шины, голоса, неуслышанные
   звуки с причиной), `sound_play` (сыграть звук по правилам микшера: `at=eN`, `point=[x,y,z]`, `times=25`), `music_set`
-  (`track=…`/`none`, `layer=combat`/`auto`); громкость — `settings_set group=audio key=sfx value=0.5`. Условия для
+  (`track=…`/`none`, `layer=combat`/`auto`); громкость — `settings_set group=audio key=sfx value=0.5`; **меню и консоль
+  разработчика** — `dev_menu` (пункты по разделам со строкой каждого; `run=<id>` выполняет пункт: `boss_phase_2`, `god`,
+  `region_check`), `console line="speed x=0.25"` (строка как у `shards act`); в окне это F10 и `` ` ``, `open=true` показывает
+  панель для `shot`. Свои пункты игра кладёт в контент (`*.devmenu.ron`), модуль — `add_dev_entry`. Условия для
   `step --until named:…`: `near_poi`, `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_engaged`,
   `npc_near`; свои у игры (в песочнице `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`, в шаблоне
   `arena_cleared`, `foe_near`, `in_fight`).
@@ -174,7 +179,8 @@ kill <pid>                              # pid из `wait`
   то, что показывает лишь эта машина, журнал пишет видом `JournalKind::Local`, а не `Event` (хост шлёт клиентам события).
 - **Новый модуль движка** — крейт с плагином, который называет себя `add_engine_module(name, version)` (так он виден в
   `ai/status`), с наборами систем для упорядочивания и одной строкой в `EnginePlugins`. Состояние он описывает для ИИ
-  (describe, `journal_event`), действия отдаёт инструментами, числа берёт из контента; у него юнит-тесты, сценарий в
+  (describe, `journal_event`), действия отдаёт инструментами (то, что разработчику нужно под рукой в окне, — ещё и пунктом
+  меню разработчика `add_dev_entry`, который зовёт тот же инструмент), числа берёт из контента; у него юнит-тесты, сценарий в
   песочнице, реплей и раздел README.
 - **Мир, регионы и уровни (фаза B).** Всё, что геймплей берёт из тайлов, комнат и уровней (коллайдеры, маркеры, префабы,
   точки интереса), — сущности **верхнего уровня с мировым `Transform`**: так их читает физика и так их создают
