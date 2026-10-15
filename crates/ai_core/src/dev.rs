@@ -75,6 +75,17 @@ impl DevMenu {
     }
 }
 
+/// Whether the console or the menu has the keyboard (`shards_dev` keeps it): the engine's
+/// debug keys (the overlays' F2, F6, F7) wait while it does, so a key typed into a panel
+/// toggles nothing.
+#[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DevKeyboard(pub bool);
+
+/// A run condition for a debug key's system: no panel has the keyboard.
+pub fn keys_free(taken: Option<Res<DevKeyboard>>) -> bool {
+    !taken.is_some_and(|t| t.0)
+}
+
 /// The line of a switch's entry: `{tool} on=false` while it is `on`, else `{tool} on=true`.
 pub fn toggle_line(tool: &str, on: bool) -> String {
     format!("{tool} on={}", !on)
@@ -84,6 +95,7 @@ pub fn toggle_line(tool: &str, on: bool) -> String {
 pub(crate) fn register(app: &mut App) {
     use crate::AiAppExt;
     let run = |line: &str| DevCommand::Run(line.into());
+    app.init_resource::<DevKeyboard>();
     app.add_dev_entry("time", "pause", "Pause / resume", DevCommand::Live(|w, _| Ok(if crate::sim::is_paused(w) { "resume" } else { "pause" }.into())))
         .add_dev_entry("time", "step", "One tick (while paused)", run("step ticks=1"))
         .add_dev_entry("time", "slow", "Slow motion x0.25", run("speed x=0.25"))

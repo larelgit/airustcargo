@@ -439,7 +439,8 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   **Консоль** (`` ` `` в окне; инструмент `console`): строка `tool key=value …`, как у `shards act`, через `call_tool` от
   агента `console` (scope Dev); ответ — результат и журнал вызова; `help`, `clear`; в окне история (стрелки), Tab по именам
   инструментов и аргументов из схем, прокрутка меню колесом и стрелками, мышь. Пока панель открыта, сверху контекст ввода `dev`
-  (`shards::dev::has_keyboard`), клавиши — ресурс `DevKeys`.
+  (`shards::dev::has_keyboard`), и клавиши оверлеев (F2, F6, F7) ждут его закрытия (`ai_core::dev::DevKeyboard`, условие
+  `keys_free`); клавиши — ресурс `DevKeys`.
 - `ai_core::dev`: `DevMenu`, `DevEntry`, `DevCommand` (`Run`, `Fill`, `Live`), `AiAppExt::add_dev_entry`, `toggle_line`,
   `parse_line`, `run_line`; `session::caller` стал публичным. `shards_script` экспортирует `split_words`.
 - Вид контента `devmenu` (`content/**/*.devmenu.ron`: `group`, `label`, `run` или `fill`; строка проверяется при загрузке);

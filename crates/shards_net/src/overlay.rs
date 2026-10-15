@@ -124,7 +124,7 @@ mod window {
     struct NetOverlayText;
 
     pub(super) fn plugin(app: &mut App) {
-        app.add_systems(Update, (toggle_with_key, show).chain().run_if(any_with_component::<Window>));
+        app.add_systems(Update, (toggle_with_key.run_if(ai_core::dev::keys_free), show).chain().run_if(any_with_component::<Window>));
     }
 
     fn toggle_with_key(keys: Option<Res<ButtonInput<KeyCode>>>, mut overlay: ResMut<NetOverlay>) {

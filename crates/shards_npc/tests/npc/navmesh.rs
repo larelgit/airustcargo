@@ -141,6 +141,10 @@ fn stitching_turns_tiles_with_them_and_follows_open_sockets() {
     let east = nav.reach(from, (1, 0), 15.0).unwrap();
     assert!((east - 4.0).abs() < 0.05, "to the far side of the last column: {east}");
     assert_eq!(nav.reach(from, (0, 1), 15.0), None, "south leaves the region");
+    // Only compass steps: a wider one would overflow the column it walks to.
+    for step in [(i32::MAX, 0), (2, 0), (0, i32::MIN), (0, 0)] {
+        assert_eq!(nav.reach(from, step, 15.0), None, "{step:?}");
+    }
     // Where the sockets meet, the way goes on to the range, or out of the region.
     let mut open = crate::common::app();
     load_region(&mut open, &["floor floor floor"]);

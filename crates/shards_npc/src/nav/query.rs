@@ -195,12 +195,14 @@ impl NavRegion {
     /// swimming ones), to the far side of the last column it enters. A climb, a step into
     /// water, a tile edge that does not connect or a spot switched off ends it. `None` where
     /// the navmesh does not know `from` (outside the region, in the air, on a prop) or the
-    /// way leaves the region (it knows nothing beyond).
+    /// way leaves the region (it knows nothing beyond); also for a step that is no compass
+    /// step (`dx` and `dz` each -1, 0 or 1, not both 0).
     pub fn reach(&self, from: Vec3, (dx, dz): (i32, i32), range: f32) -> Option<f32> {
-        let dir = Vec2::new(dx as f32, dz as f32).normalize_or_zero();
-        if !from.is_finite() || !range.is_finite() || dir == Vec2::ZERO {
+        let compass = (-1..=1).contains(&dx) && (-1..=1).contains(&dz) && (dx, dz) != (0, 0);
+        if !from.is_finite() || !range.is_finite() || !compass {
             return None;
         }
+        let dir = Vec2::new(dx as f32, dz as f32).normalize();
         self.instance_at(self.column_of(from))?;
         let mut node = self.start_node(from)?;
         let swimmer = self.is_swim(node);

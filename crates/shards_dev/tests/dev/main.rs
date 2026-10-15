@@ -152,6 +152,34 @@ fn the_console_answers_each_line_and_keeps_them() {
 }
 
 #[test]
+fn the_engines_debug_keys_wait_while_a_panel_has_the_keyboard() {
+    use bevy::input::keyboard::{Key, KeyboardInput};
+    use bevy::input::ButtonState;
+    use shards::ai_core::dev::DevKeyboard;
+
+    let folder = Folder::new("keys", &[]);
+    let mut app = app(&folder);
+    let window = app.world_mut().spawn(Window::default()).id();
+    // F7 down for a frame, then up: the NPC overlay's key.
+    let f7 = |app: &mut App| {
+        for state in [ButtonState::Pressed, ButtonState::Released] {
+            let key = KeyboardInput { key_code: KeyCode::F7, logical_key: Key::F7, state, text: None, repeat: false, window };
+            app.world_mut().write_message(key);
+            app.update();
+        }
+    };
+    ok(&mut app, "console", json!({"open": true}));
+    app.update();
+    assert_eq!(*app.world().resource::<DevKeyboard>(), DevKeyboard(true));
+    f7(&mut app);
+    assert!(!app.world().resource::<NpcOverlay>().enabled, "F7 typed into the console toggles nothing");
+    ok(&mut app, "console", json!({"open": false}));
+    app.update();
+    f7(&mut app);
+    assert!(app.world().resource::<NpcOverlay>().enabled);
+}
+
+#[test]
 fn tab_completes_tool_names_then_their_arguments() {
     let folder = Folder::new("tab", &[]);
     let app = app(&folder);

@@ -88,7 +88,7 @@ pub(crate) fn plugin(app: &mut App) {
             CombatOverlayGizmos,
             GizmoConfig { depth_bias: -1.0, line: GizmoLineConfig { width: 2.0, ..default() }, ..default() },
         )
-        .add_systems(Update, toggle_with_key)
+        .add_systems(Update, toggle_with_key.run_if(ai_core::dev::keys_free))
         .add_systems(
             PostUpdate,
             (collect, (flush_telegraphs, flush_overlay)).chain().after(TransformSystems::Propagate).run_if(any_with_component::<Window>),

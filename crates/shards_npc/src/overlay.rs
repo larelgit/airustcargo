@@ -11,6 +11,7 @@ use ai_core::{AiAppExt, AiId, AiPlayer, Call, DevCommand, Scope, ToolResult};
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use shards_action::Dead;
 use shards_core::{flat, PlayerId};
 
 use crate::ai::npc_line;
@@ -77,8 +78,9 @@ fn overlay_tool(In(call): In<Call<NpcOverlayArgs>>, world: &mut World) -> ToolRe
     Ok(format!("npc overlay on\n{lines}"))
 }
 
-/// Players' bodies: the overlay shows what is near them.
-type Players = Or<(With<PlayerId>, With<AiPlayer>)>;
+/// Players' living bodies: the overlay shows what is near them (a fallen one's body lies
+/// there, and the NPCs around it have nobody to fight).
+type Players = (Or<(With<PlayerId>, With<AiPlayer>)>, Without<Dead>);
 
 /// Whether `at` is within [`NEAR`] of a player (anywhere, when there is none).
 fn near_players(players: &[Vec3], at: Vec3) -> bool {
@@ -170,7 +172,7 @@ mod window {
     use crate::perception::Perceived;
 
     pub(super) fn plugin(app: &mut App) {
-        app.add_systems(Update, toggle_with_key.run_if(any_with_component::<Window>));
+        app.add_systems(Update, toggle_with_key.run_if(any_with_component::<Window>).run_if(ai_core::dev::keys_free));
         // Headless apps have no gizmo plugin: the tool still answers, nothing is drawn.
         if app.is_plugin_added::<bevy::gizmos::GizmoPlugin>() {
             app.add_systems(PostUpdate, draw.run_if(resource_exists::<GizmoConfigStore>));

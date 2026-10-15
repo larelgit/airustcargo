@@ -53,6 +53,9 @@ fn npc_overlay_answers_a_line_per_npc_near_the_players() {
             break;
         }
     }
+    // A fallen player's body is nobody to be near: the far grunt stays out.
+    let body = player(app.world_mut(), 1, Vec3::new(0.0, 0.0, 78.0));
+    app.world_mut().entity_mut(body).insert(shards_action::Dead);
     let out = ok(&mut app, "npc_overlay", json!({}));
     let lines: Vec<String> = text(&out).lines().map(str::to_owned).collect();
     assert_eq!(lines[0], "npc overlay on");

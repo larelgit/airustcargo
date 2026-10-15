@@ -1,7 +1,9 @@
 //! The console and the menu in the game window. The key left of 1 opens the console, F10 the
 //! menu ([`DevKeys`]); Escape closes either. While one is open the input map's `dev` context is
-//! on top, so the character hears no key, and what is typed goes to the console.
+//! on top, so the character hears no key, the engine's debug keys wait ([`DevKeyboard`]), and
+//! what is typed goes to the console.
 
+use ai_core::dev::DevKeyboard;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::MouseScrollPixelsPerLine;
 use bevy::input::ButtonState;
@@ -278,8 +280,14 @@ fn run_pending(world: &mut World) {
 }
 
 /// The `dev` context on top while the console or the menu is open; taken off when both close.
-fn take_keyboard(console: Res<DevConsole>, contexts: Option<ResMut<InputContexts>>, mut pushed: Local<bool>) {
+fn take_keyboard(
+    console: Res<DevConsole>,
+    mut taken: ResMut<DevKeyboard>,
+    contexts: Option<ResMut<InputContexts>>,
+    mut pushed: Local<bool>,
+) {
     let wants = console.open || console.menu_open;
+    taken.set_if_neq(DevKeyboard(wants));
     let Some(mut contexts) = contexts else { return };
     if wants && !*pushed {
         contexts.push(DEV_CONTEXT);
