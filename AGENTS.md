@@ -92,6 +92,16 @@ kill <pid>                              # pid из `wait`
   `cargo sandbox --headless --paused --port 0 --port-file F` и `SHARDS_PORT_FILE=F cargo shards wait`.
   На занятом порту игра не стартует (код выхода 3). `shards wait` печатает pid, seed и порт ответившей
   игры: проверьте, что это ваша.
+- Кооператив без окон одной командой: `cargo sandbox --stand 2 --headless --paused --port 0 --port-file F --net-sim
+  latency=150,loss=0.02 &` — хост и два клиента, у каждого свой порт и токен (`F`, `F.c1`, `F.c2`). Дальше `export
+  SHARDS_PORT_FILE=F`, и: `cargo shards wait --peer all` ждёт всех (и сразу падает с причиной, если игра не стенд, хост
+  кончил стенд или токен не тот; так же ведёт себя обычный `shards wait`), `cargo shards --peer c1 observe` смотрит глазами клиента (токен клиента —
+  `SHARDS_TOKEN_C1` или его `.shards/<порт>.token`; `SHARDS_TOKEN` — токен хоста), `cargo shards stand` показывает
+  участников, `cargo shards stand stop` останавливает стенд. Сценарии стенда (`stand clients=2 …`, команды с `@c1`) лежат в
+  `crates/sandbox/scenarios/stand/`: `shards scenario crates/sandbox/scenarios/stand/*.scenario`. `--stand 2 --stand-udp` —
+  то же по настоящему UDP, клиентами-процессами, только в реальном времени; клиент, не вошедший в сессию или упавший,
+  останавливает стенд (ушедший сам или тот, с кем связь закрыл хост, `net_kick`, — нет), а `--stand N` не больше
+  `max_players - 1`.
 - Проверить, как игра играется честно: `shards session --scope player`. Тогда доступны только
   инструменты игрока, и они действуют через `Intent`, как человек.
 

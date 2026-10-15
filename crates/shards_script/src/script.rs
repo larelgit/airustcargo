@@ -10,7 +10,14 @@ use crate::condition::parse_condition;
 use crate::lex::split_words;
 
 /// What the "unknown command" error offers.
-const COMMANDS: &str = "act, act?, step, observe, session, expect, invariant, mark, seed";
+const COMMANDS: &str = "act, act?, step, observe, session, expect, invariant, mark, seed, stand";
+
+/// The member a command runs on when no `@peer` says otherwise: the host of a stand, or the
+/// only game of a single-game scenario.
+pub const HOST: &str = "host";
+
+/// The most clients a stand has (a host and two clients is the co-op session's size).
+pub const MAX_STAND_CLIENTS: u8 = 2;
 
 /// What the "unknown expectation" error offers.
 const EXPECTATIONS: &str = "result, stopped, journal, !journal, field, shows";
@@ -30,13 +37,125 @@ pub struct ScriptLine {
     pub number: usize,
     /// The line as written (comment cut off).
     pub text: String,
+    /// The member the command names with an `@host`/`@c1`/`@c2` prefix (stand scenarios).
+    pub peer: Option<String>,
     pub command: Command,
+}
+
+/// The `stand` line of a scenario: a host and `clients` clients on links with these
+/// conditions (one way). `latency=150` means a 300 ms round trip, as `--net-sim` does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StandHeader {
+    pub clients: u8,
+    pub latency_ms: u32,
+    pub jitter_ms: u32,
+    /// Probability that a packet is dropped, 0..=1.
+    pub loss: f32,
+    /// Probability that a delivered packet is delivered twice, 0..=1.
+    pub dup: f32,
+}
+
+impl StandHeader {
+    /// The members, in the order a stand ticks them: `host`, `c1`, `c2`.
+    pub fn members(&self) -> Vec<String> {
+        std::iter::once(HOST.to_owned()).chain((1..=self.clients).map(|n| format!("c{n}"))).collect()
+    }
+
+    /// `host + 2 clients`.
+    pub fn describe(&self) -> String {
+        format!("host + {} client{}", self.clients, if self.clients == 1 { "" } else { "s" })
+    }
+
+    /// Whether the links have any conditions.
+    pub fn has_conditions(&self) -> bool {
+        self.latency_ms > 0 || self.jitter_ms > 0 || self.loss > 0.0 || self.dup > 0.0
+    }
+
+    /// The `--net-sim` value that makes a stand match: `latency=150,loss=0.02`; empty when the
+    /// links have no conditions.
+    pub fn net_sim(&self) -> String {
+        let mut parts = Vec::new();
+        if self.latency_ms > 0 {
+            parts.push(format!("latency={}", self.latency_ms));
+        }
+        if self.jitter_ms > 0 {
+            parts.push(format!("jitter={}", self.jitter_ms));
+        }
+        if self.loss > 0.0 {
+            parts.push(format!("loss={}", self.loss));
+        }
+        if self.dup > 0.0 {
+            parts.push(format!("dup={}", self.dup));
+        }
+        parts.join(",")
+    }
+
+    /// Checks the conditions a running stand reports (`net_status.conditions`, in the form
+    /// `latency=150,jitter=0,loss=0.02,dup=0`; none at all counts as no conditions) against
+    /// the header. The error names the `--net-sim` to start the stand with.
+    pub fn check_conditions(&self, reported: Option<&str>) -> Result<(), String> {
+        let (mut latency, mut jitter, mut loss, mut dup) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        let text = reported.unwrap_or("").trim();
+        if !matches!(text, "" | "none" | "off") {
+            for part in text.split(',') {
+                let unreadable = || format!("cannot read the stand's link conditions `{text}`");
+                let (key, value) = part.split_once('=').ok_or_else(unreadable)?;
+                let number: f64 = value.trim().parse().map_err(|_| unreadable())?;
+                match key.trim() {
+                    "latency" => latency = number,
+                    "jitter" => jitter = number,
+                    "loss" => loss = number,
+                    "dup" => dup = number,
+                    _ => {}
+                }
+            }
+        }
+        let same = (latency - f64::from(self.latency_ms)).abs() < 0.5
+            && (jitter - f64::from(self.jitter_ms)).abs() < 0.5
+            && (loss - f64::from(self.loss)).abs() < 1e-4
+            && (dup - f64::from(self.dup)).abs() < 1e-4;
+        if same {
+            return Ok(());
+        }
+        let wanted = if self.has_conditions() { self.net_sim() } else { "no conditions".to_owned() };
+        let running = if text.is_empty() { "none".to_owned() } else { text.to_owned() };
+        let fix = if self.has_conditions() {
+            format!("start it with `--net-sim {}`", self.net_sim())
+        } else {
+            "start it without --net-sim".to_owned()
+        };
+        Err(format!(
+            "this scenario's `stand` line wants links with {wanted}, but the running stand has {running}: {fix} (or change the stand line)"
+        ))
+    }
+}
+
+/// The header as it is written in a file.
+impl fmt::Display for StandHeader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "stand clients={}", self.clients)?;
+        if self.latency_ms > 0 {
+            write!(f, " latency={}", self.latency_ms)?;
+        }
+        if self.jitter_ms > 0 {
+            write!(f, " jitter={}", self.jitter_ms)?;
+        }
+        if self.loss > 0.0 {
+            write!(f, " loss={}", self.loss)?;
+        }
+        if self.dup > 0.0 {
+            write!(f, " dup={}", self.dup)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     /// The scenario is written for this seed (checked against the game's `status`).
     Seed(u64),
+    /// The scenario needs a stand: a host and clients, on links with these conditions.
+    Stand(StandHeader),
     /// Call a tool. `may_fail` (`act?`): a failing call does not fail the scenario.
     Act { tool: String, args: Value, may_fail: bool },
     /// Advance the simulation. `ticks: None` leaves the default to the `step` tool.
@@ -82,6 +201,9 @@ pub struct SessionConfig {
     pub subject: Option<String>,
     /// Back to the player character.
     pub clear_subject: bool,
+    /// Play as this player's body (`PlayerId`), found again on every call, so the binding
+    /// survives a respawn (`ai/session player=N`).
+    pub player: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -201,8 +323,9 @@ impl std::error::Error for ParseErrors {}
 impl Script {
     /// Parses a scenario. `name` is the file name, for error messages and reports.
     pub fn parse(name: &str, text: &str) -> Result<Script, ParseErrors> {
-        let mut lines = Vec::new();
+        let mut lines: Vec<ScriptLine> = Vec::new();
         let mut errors = Vec::new();
+        let mut stand: Option<StandHeader> = None;
         let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         for (index, raw) in text.lines().enumerate() {
             let number = index + 1;
@@ -214,22 +337,109 @@ impl Script {
                     continue;
                 }
             };
-            let Some((head, args)) = split.words.split_first() else {
+            let Some((first_word, rest)) = split.words.split_first() else {
                 continue;
             };
-            match parse_command(head, args, lines.is_empty()) {
-                Ok(command) => lines.push(ScriptLine { number, text: split.code, command }),
+            // `@c1 act …`: the member the command runs on.
+            let (peer, head, args) = match first_word.strip_prefix('@') {
+                Some(peer) => match rest.split_first() {
+                    Some((head, args)) => (Some(peer), head, args),
+                    None => {
+                        errors.push(fail(format!("`@{peer}` needs a command after it, e.g. `@{peer} act move_to target=e6`")));
+                        continue;
+                    }
+                },
+                None => (None, first_word, rest),
+            };
+            if let Some(peer) = peer
+                && let Err(message) = check_peer(peer, stand.as_ref())
+            {
+                errors.push(fail(message));
+                continue;
+            }
+            // `seed` and `stand` head the file, in either order, each once.
+            let ctx = Ctx {
+                header_open: lines.iter().all(|l| matches!(l.command, Command::Seed(_) | Command::Stand(_))),
+                seed_seen: lines.iter().any(|l| matches!(l.command, Command::Seed(_))),
+                stand_seen: lines.iter().any(|l| matches!(l.command, Command::Stand(_))),
+                has_peer: peer.is_some(),
+            };
+            match parse_command(head, args, &ctx) {
+                Ok(command) => {
+                    if let Command::Stand(header) = &command {
+                        stand = Some(*header);
+                    }
+                    lines.push(ScriptLine { number, text: split.code, peer: peer.map(str::to_owned), command });
+                }
                 Err(message) => errors.push(fail(message)),
             }
         }
         if errors.is_empty() { Ok(Script { name: name.to_owned(), lines }) } else { Err(ParseErrors(errors)) }
     }
+
+    /// The `stand` line, when the scenario has one.
+    pub fn stand(&self) -> Option<&StandHeader> {
+        self.lines.iter().find_map(|l| match &l.command {
+            Command::Stand(header) => Some(header),
+            _ => None,
+        })
+    }
+
+    /// The `seed` line, when the scenario has one.
+    pub fn seed(&self) -> Option<u64> {
+        self.lines.iter().find_map(|l| match l.command {
+            Command::Seed(seed) => Some(seed),
+            _ => None,
+        })
+    }
 }
 
-fn parse_command(head: &str, args: &[String], first: bool) -> Result<Command, String> {
+/// What the lines before a command say about where it may stand.
+struct Ctx {
+    /// Only `seed` and `stand` came before.
+    header_open: bool,
+    seed_seen: bool,
+    stand_seen: bool,
+    /// The line starts with `@peer`.
+    has_peer: bool,
+}
+
+/// `@host`, `@c1`, `@c2`: a member of this scenario's stand.
+fn check_peer(peer: &str, stand: Option<&StandHeader>) -> Result<(), String> {
+    let Some(stand) = stand else {
+        return Err(format!(
+            "`@{peer}`: this scenario has no stand; start the file with `stand clients=N`, then `@host`, `@c1` … name the member"
+        ));
+    };
+    if peer == HOST {
+        return Ok(());
+    }
+    let clients = (1..=stand.clients).map(|n| format!("c{n}")).collect::<Vec<_>>().join(", ");
+    let noun = if stand.clients == 1 { "client" } else { "clients" };
+    let client = peer.strip_prefix('c').and_then(|n| n.parse::<u8>().ok()).filter(|n| format!("c{n}") == peer);
+    match client {
+        Some(n) if (1..=stand.clients).contains(&n) => Ok(()),
+        Some(_) => Err(format!("@{peer}: this stand has {noun} {clients}")),
+        None => Err(format!("@{peer}: a member is `host` or one of the {noun} {clients}")),
+    }
+}
+
+fn parse_command(head: &str, args: &[String], ctx: &Ctx) -> Result<Command, String> {
+    if ctx.has_peer && matches!(head, "seed" | "stand") {
+        return Err(format!("`{head}` is about the whole scenario, not one member; drop the @peer"));
+    }
     match head {
+        "stand" => {
+            if ctx.stand_seen {
+                return Err("a scenario has one `stand` line".into());
+            }
+            if !ctx.header_open {
+                return Err("`stand` must come before every other command (only `seed` may come first)".into());
+            }
+            parse_stand(args).map(Command::Stand)
+        }
         "seed" => {
-            if !first {
+            if ctx.seed_seen || !ctx.header_open {
                 return Err("`seed` must come before every other command".into());
             }
             let [n] = args else { return Err("seed needs one number, e.g. `seed 42`".into()) };
@@ -267,6 +477,66 @@ fn parse_command(head: &str, args: &[String], first: bool) -> Result<Command, St
     }
 }
 
+fn parse_stand(args: &[String]) -> Result<StandHeader, String> {
+    const USAGE: &str = "stand clients=N [latency=MS] [jitter=MS] [loss=P] [dup=P], e.g. `stand clients=2 latency=150 loss=0.02`";
+    let mut header = StandHeader { clients: 0, latency_ms: 0, jitter_ms: 0, loss: 0.0, dup: 0.0 };
+    let mut seen: Vec<&str> = Vec::new();
+    for word in args {
+        let Some((key, value)) = word.split_once('=') else {
+            return Err(format!("stand: expected key=value, got `{word}`; use {USAGE}"));
+        };
+        let key = match key {
+            "duplicate" => "dup",
+            "latency_ms" => "latency",
+            "jitter_ms" => "jitter",
+            other => other,
+        };
+        if seen.contains(&key) {
+            return Err(format!("stand: `{key}` is given twice"));
+        }
+        let ms = |value: &str| {
+            value
+                .strip_suffix("ms")
+                .unwrap_or(value)
+                .trim()
+                .parse::<u32>()
+                .map_err(|_| format!("stand: {key} is whole milliseconds, e.g. {key}=150, got `{value}`"))
+        };
+        let probability = |value: &str| {
+            let (number, scale) = match value.strip_suffix('%') {
+                Some(n) => (n, 0.01),
+                None => (value, 1.0),
+            };
+            number
+                .trim()
+                .parse::<f32>()
+                .ok()
+                .map(|p| p * scale)
+                .filter(|p| p.is_finite() && (0.0..=1.0).contains(p))
+                .ok_or_else(|| format!("stand: {key} is a probability from 0 to 1 (or a percentage), e.g. {key}=0.02, got `{value}`"))
+        };
+        match key {
+            "clients" => {
+                header.clients = value
+                    .parse::<u8>()
+                    .ok()
+                    .filter(|n| (1..=MAX_STAND_CLIENTS).contains(n))
+                    .ok_or_else(|| format!("stand: clients must be 1 or {MAX_STAND_CLIENTS} (a host and one or two clients), got `{value}`"))?;
+            }
+            "latency" => header.latency_ms = ms(value)?,
+            "jitter" => header.jitter_ms = ms(value)?,
+            "loss" => header.loss = probability(value)?,
+            "dup" => header.dup = probability(value)?,
+            other => return Err(format!("stand: unknown key `{other}`; use clients, latency, jitter, loss, dup")),
+        }
+        seen.push(key);
+    }
+    if !seen.contains(&"clients") {
+        return Err(format!("stand needs clients=N; use {USAGE}"));
+    }
+    Ok(header)
+}
+
 fn parse_step(args: &[String]) -> Result<Command, String> {
     let mut ticks = None;
     let mut until = Vec::new();
@@ -293,7 +563,7 @@ fn parse_step(args: &[String]) -> Result<Command, String> {
 }
 
 fn parse_session(args: &[String]) -> Result<Command, String> {
-    const USAGE: &str = "session [--agent NAME] [--scope player|dev] [--subject ID] [--clear-subject]";
+    const USAGE: &str = "session [--agent NAME] [--scope player|dev] [--subject ID | --player N] [--clear-subject]";
     let mut agent = None;
     let mut config = SessionConfig::default();
     let mut words = args.iter();
@@ -319,12 +589,19 @@ fn parse_session(args: &[String]) -> Result<Command, String> {
                 check_id(&id)?;
                 config.subject = Some(id);
             }
+            "--player" => {
+                let n = value("a player number")?;
+                config.player = Some(n.parse().map_err(|_| format!("--player needs a player number such as 0 or 1, got `{n}`"))?);
+            }
             "--clear-subject" => config.clear_subject = true,
             other => return Err(format!("unknown option `{other}` for session; use {USAGE}")),
         }
     }
     if config.subject.is_some() && config.clear_subject {
         return Err("--subject and --clear-subject contradict each other".into());
+    }
+    if config.player.is_some() && (config.subject.is_some() || config.clear_subject) {
+        return Err("--player binds the agent to a player's body; it contradicts --subject and --clear-subject".into());
     }
     if agent.is_none() && config == SessionConfig::default() {
         return Err(format!("session changes nothing; use {USAGE}"));
@@ -447,6 +724,7 @@ invariant field e5 Health.current > 0
             .iter()
             .map(|l| match &l.command {
                 Command::Seed(_) => "seed",
+                Command::Stand(_) => "stand",
                 Command::Act { may_fail: false, .. } => "act",
                 Command::Act { .. } => "act?",
                 Command::Step { .. } => "step",
@@ -503,7 +781,22 @@ invariant field e5 Health.current > 0
             only("session --agent bot --scope=Player --subject e7"),
             Command::Session {
                 agent: Some("bot".into()),
-                config: SessionConfig { scope: Some(AgentScope::Player), subject: Some("e7".into()), clear_subject: false }
+                config: SessionConfig {
+                    scope: Some(AgentScope::Player),
+                    subject: Some("e7".into()),
+                    ..Default::default()
+                }
+            }
+        );
+        assert_eq!(
+            only("session --player 1"),
+            Command::Session { agent: None, config: SessionConfig { player: Some(1), ..Default::default() } }
+        );
+        assert_eq!(
+            only("session --agent bot --player=2 --scope dev"),
+            Command::Session {
+                agent: Some("bot".into()),
+                config: SessionConfig { scope: Some(AgentScope::Dev), player: Some(2), ..Default::default() }
             }
         );
         assert_eq!(
@@ -540,7 +833,7 @@ invariant field e5 Health.current > 0
         let e = error("act attack\nstpe 5");
         assert_eq!(
             e,
-            "t.scenario:2: unknown command `stpe`; expected act, act?, step, observe, session, expect, invariant, mark, seed"
+            "t.scenario:2: unknown command `stpe`; expected act, act?, step, observe, session, expect, invariant, mark, seed, stand"
         );
         assert_eq!(error("step 5 6"), "t.scenario:1: step takes one tick count; `6` is a second one (conditions go after --until)");
         assert_eq!(error("step --until"), "t.scenario:1: `--until` needs a condition, e.g. --until journal:died");
@@ -572,9 +865,111 @@ invariant field e5 Health.current > 0
         assert_eq!(error("expect field e5 Health.current > lots"), "t.scenario:1: expect field compares with a number, got `lots`");
         assert_eq!(error("expect field boss Health.current > 1"), "t.scenario:1: `boss` is not an entity id; use e6 or 6");
         assert_eq!(error("expect journal \"open"), "t.scenario:1: unclosed `\"` quote");
-        assert_eq!(error("session"), "t.scenario:1: session changes nothing; use session [--agent NAME] [--scope player|dev] [--subject ID] [--clear-subject]");
+        assert_eq!(
+            error("session"),
+            "t.scenario:1: session changes nothing; use session [--agent NAME] [--scope player|dev] [--subject ID | --player N] [--clear-subject]"
+        );
         assert_eq!(error("session --scope god"), "t.scenario:1: unknown scope `god`; use player or dev");
         assert!(error("session --subject e7 --clear-subject").contains("contradict"));
+        assert_eq!(error("session --player one"), "t.scenario:1: --player needs a player number such as 0 or 1, got `one`");
+        assert!(error("session --player 1 --subject e7").contains("contradicts --subject"));
+        assert!(error("session --player 1 --clear-subject").contains("contradicts --subject"));
+        assert!(error("session --player").contains("`--player` needs a player number"));
+    }
+
+    #[test]
+    fn a_stand_header_names_the_members_and_the_links() {
+        let Command::Stand(header) = only("stand clients=2 latency=150 loss=0.02") else { panic!() };
+        assert_eq!(header, StandHeader { clients: 2, latency_ms: 150, jitter_ms: 0, loss: 0.02, dup: 0.0 });
+        assert_eq!(header.members(), ["host", "c1", "c2"]);
+        assert_eq!(header.describe(), "host + 2 clients");
+        assert_eq!(header.net_sim(), "latency=150,loss=0.02");
+        assert_eq!(header.to_string(), "stand clients=2 latency=150 loss=0.02");
+        // Every key, the aliases, units.
+        let Command::Stand(all) = only("stand clients=1 latency=40ms jitter_ms=5 loss=2% duplicate=0.5") else { panic!() };
+        assert_eq!((all.clients, all.latency_ms, all.jitter_ms, all.dup), (1, 40, 5, 0.5));
+        assert!((all.loss - 0.02).abs() < 1e-6);
+        assert_eq!(all.describe(), "host + 1 client");
+        let Command::Stand(plain) = only("stand clients=2") else { panic!() };
+        assert!(!plain.has_conditions());
+        assert_eq!(plain.net_sim(), "");
+        // The header comes first, `seed` before or after it; the rest of the file follows.
+        let script = parse("stand clients=2 latency=150\nseed 42\n@c1 act lock_on\nstep 5\n@host expect journal \"x\"\n");
+        assert_eq!(script.stand(), Some(&header_with(2, 150)));
+        assert_eq!(script.seed(), Some(42));
+        assert_eq!(parse("seed 42\nstand clients=1\n").stand().map(|h| h.clients), Some(1));
+        assert_eq!(parse("observe\n").stand(), None);
+    }
+
+    fn header_with(clients: u8, latency_ms: u32) -> StandHeader {
+        StandHeader { clients, latency_ms, jitter_ms: 0, loss: 0.0, dup: 0.0 }
+    }
+
+    #[test]
+    fn a_stand_header_is_checked_against_the_links_a_stand_reports() {
+        let header = header_with(2, 150);
+        assert!(header.check_conditions(Some("latency=150,jitter=0,loss=0,dup=0")).is_ok());
+        let lossy = StandHeader { loss: 0.02, ..header };
+        assert!(lossy.check_conditions(Some("latency=150,jitter=0,loss=0.02,dup=0")).is_ok());
+        let plain = header_with(1, 0);
+        assert!(plain.check_conditions(None).is_ok(), "no conditions at all is no conditions");
+        assert!(plain.check_conditions(Some("")).is_ok());
+        let e = lossy.check_conditions(Some("latency=150,jitter=0,loss=0,dup=0")).unwrap_err();
+        assert_eq!(
+            e,
+            "this scenario's `stand` line wants links with latency=150,loss=0.02, but the running stand has latency=150,jitter=0,loss=0,dup=0: \
+             start it with `--net-sim latency=150,loss=0.02` (or change the stand line)"
+        );
+        let e = plain.check_conditions(Some("latency=20,jitter=0,loss=0,dup=0")).unwrap_err();
+        assert!(e.contains("wants links with no conditions") && e.contains("start it without --net-sim"), "{e}");
+        assert!(header.check_conditions(None).unwrap_err().contains("but the running stand has none"));
+        assert!(header.check_conditions(Some("fast")).unwrap_err().contains("cannot read the stand's link conditions `fast`"));
+    }
+
+    #[test]
+    fn commands_name_the_member_they_run_on() {
+        let script = parse(
+            "stand clients=2\n@c1 act move_to target=e6\n@c2 step 5 --until journal:x\nact lock_on\n@host expect journal \"x\"\n\
+             @c2 invariant field e5 Health.current > 0\n@c1 mark\n@c1 session --player 1\n@c1 observe\n",
+        );
+        let peers: Vec<Option<&str>> = script.lines.iter().map(|l| l.peer.as_deref()).collect();
+        assert_eq!(peers, [None, Some("c1"), Some("c2"), None, Some("host"), Some("c2"), Some("c1"), Some("c1"), Some("c1")]);
+        assert_eq!(script.lines[1].text, "@c1 act move_to target=e6", "the log shows the member");
+        let Command::Step { ticks, until } = &script.lines[2].command else { panic!() };
+        assert_eq!((*ticks, until.len()), (Some(5), 1));
+    }
+
+    #[test]
+    fn stand_errors_name_the_line_and_the_fix() {
+        assert_eq!(error("stand"), "t.scenario:1: stand needs clients=N; use stand clients=N [latency=MS] [jitter=MS] [loss=P] [dup=P], e.g. `stand clients=2 latency=150 loss=0.02`");
+        assert!(error("stand latency=150").contains("stand needs clients=N"));
+        assert_eq!(error("stand clients=3"), "t.scenario:1: stand: clients must be 1 or 2 (a host and one or two clients), got `3`");
+        assert!(error("stand clients=0").contains("clients must be 1 or 2"));
+        assert!(error("stand clients=two").contains("got `two`"));
+        assert_eq!(error("stand clients=2 lag=5"), "t.scenario:1: stand: unknown key `lag`; use clients, latency, jitter, loss, dup");
+        assert_eq!(error("stand clients=2 clients=1"), "t.scenario:1: stand: `clients` is given twice");
+        assert!(error("stand clients=2 latency=fast").contains("latency is whole milliseconds"));
+        assert!(error("stand clients=2 loss=1.5").contains("loss is a probability from 0 to 1"));
+        assert!(error("stand clients=2 dup=-1").contains("dup is a probability"));
+        assert!(error("stand 2").contains("expected key=value, got `2`"));
+        assert_eq!(error("stand clients=1\nstand clients=2"), "t.scenario:2: a scenario has one `stand` line");
+        assert_eq!(error("observe\nstand clients=2"), "t.scenario:2: `stand` must come before every other command (only `seed` may come first)");
+        // The peer must be a member of the stand.
+        assert_eq!(error("stand clients=2\n@c3 act ping"), "t.scenario:2: @c3: this stand has clients c1, c2");
+        assert_eq!(error("stand clients=1\n@c2 act ping"), "t.scenario:2: @c2: this stand has client c1");
+        assert_eq!(error("stand clients=2\n@c0 act ping"), "t.scenario:2: @c0: this stand has clients c1, c2");
+        assert_eq!(error("stand clients=2\n@bob act ping"), "t.scenario:2: @bob: a member is `host` or one of the clients c1, c2");
+        assert_eq!(error("stand clients=2\n@c01 act ping"), "t.scenario:2: @c01: a member is `host` or one of the clients c1, c2");
+        assert!(error("@c1 act ping").contains("`@c1`: this scenario has no stand; start the file with `stand clients=N`"));
+        assert!(error("@host observe").contains("this scenario has no stand"));
+        assert_eq!(error("stand clients=2\n@c1"), "t.scenario:2: `@c1` needs a command after it, e.g. `@c1 act move_to target=e6`");
+        assert!(error("stand clients=2\n@c1 seed 42").contains("`seed` is about the whole scenario"));
+        assert!(error("@c1 stand clients=2").contains("no stand") || error("@c1 stand clients=2").contains("whole scenario"));
+        // A peer before the header is not a member yet.
+        assert!(error("@c1 act ping\nstand clients=2").contains("this scenario has no stand"));
+        // Every bad line is still reported.
+        let errors = Script::parse("t.scenario", "stand clients=2\n@c3 observe\nstpe\n@c1 observe\n").unwrap_err();
+        assert_eq!(errors.0.iter().map(|e| e.line).collect::<Vec<_>>(), [2, 3]);
     }
 
     #[test]
@@ -583,6 +978,7 @@ invariant field e5 Health.current > 0
         assert_eq!(only("seed 0x5EED"), Command::Seed(0x5EED));
         assert_eq!(error("observe\nseed 42"), "t.scenario:2: `seed` must come before every other command");
         assert_eq!(error("seed 42\nseed 43"), "t.scenario:2: `seed` must come before every other command");
+        assert_eq!(error("stand clients=1\nact ping\nseed 42"), "t.scenario:3: `seed` must come before every other command");
         assert_eq!(error("seed"), "t.scenario:1: seed needs one number, e.g. `seed 42`");
         assert_eq!(error("seed many"), "t.scenario:1: seed needs a whole number, got `many`");
     }

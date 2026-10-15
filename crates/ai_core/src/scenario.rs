@@ -59,51 +59,65 @@ impl Driver for WorldDriver<'_> {
         Ok(Outcome { ok: out.ok, result: out.result, tick: Some(out.tick) })
     }
 
-    /// What `ai/session` does, minus the transport.
     fn session(&mut self, agent: &str, config: &SessionConfig) -> Result<Outcome, String> {
-        let subject = match &config.subject {
-            Some(text) => {
-                let Some(id) = AiId::parse(text) else {
-                    return Ok(Outcome::err(format!("`{text}` is not an entity id; use e6 or 6")));
-                };
-                if let Err(message) = self.world.resource::<AiIndex>().resolve(id) {
-                    return Ok(Outcome::err(message));
-                }
-                Some(id)
-            }
-            None => None,
-        };
-        let scope = config.scope.map(|s| match s {
-            AgentScope::Player => Scope::Player,
-            AgentScope::Dev => Scope::Dev,
-        });
-        let change = SessionChange { scope, subject, player: None, clear_subject: config.clear_subject };
-        match configure_session(self.world, agent, &change) {
-            Ok(now) => Ok(Outcome::ok(session_json(&now))),
-            Err(message) => Ok(Outcome::err(message)),
-        }
+        Ok(configure_agent(self.world, agent, config))
     }
 
     fn status(&mut self) -> Result<Status, String> {
-        // Log lines of the last tick belong before the position a `mark` is taken at.
-        journal::drain_logs(self.world);
-        Ok(Status {
-            tick: sim::tick(self.world),
-            seed: self.world.get_resource::<SimSeed>().map(|s| s.0),
-            journal_seq: self.world.resource::<AiJournal>().last_seq(),
-        })
+        Ok(world_status(self.world))
     }
 
     fn journal_since(&mut self, after: u64) -> Result<JournalRead, String> {
-        journal::drain_logs(self.world);
-        let (entries, missed) = self.world.resource::<AiJournal>().after(after);
-        // The agents' own call echoes only repeat the scenario's commands.
-        let lines = entries
-            .filter(|e| e.kind != JournalKind::Agent)
-            .map(|e| JournalLine { seq: e.seq, text: e.to_string() })
-            .collect();
-        Ok(JournalRead { lines, missed })
+        Ok(world_journal_since(self.world, after))
     }
+}
+
+/// What `ai/session` does to `world`, minus the transport: the scenario `session` command.
+/// A refusal (an entity or a player that does not exist) is an `ok: false` outcome. For
+/// in-process drivers of other worlds (a stand's members).
+pub fn configure_agent(world: &mut World, agent: &str, config: &SessionConfig) -> Outcome {
+    let subject = match &config.subject {
+        Some(text) => {
+            let Some(id) = AiId::parse(text) else {
+                return Outcome::err(format!("`{text}` is not an entity id; use e6 or 6"));
+            };
+            if let Err(message) = world.resource::<AiIndex>().resolve(id) {
+                return Outcome::err(message);
+            }
+            Some(id)
+        }
+        None => None,
+    };
+    let scope = config.scope.map(|s| match s {
+        AgentScope::Player => Scope::Player,
+        AgentScope::Dev => Scope::Dev,
+    });
+    let change = SessionChange { scope, subject, player: config.player, clear_subject: config.clear_subject };
+    match configure_session(world, agent, &change) {
+        Ok(now) => Outcome::ok(session_json(&now)),
+        Err(message) => Outcome::err(message),
+    }
+}
+
+/// The tick, seed and journal position of `world`.
+pub fn world_status(world: &mut World) -> Status {
+    // Log lines of the last tick belong before the position a `mark` is taken at.
+    journal::drain_logs(world);
+    Status {
+        tick: sim::tick(world),
+        seed: world.get_resource::<SimSeed>().map(|s| s.0),
+        journal_seq: world.resource::<AiJournal>().last_seq(),
+    }
+}
+
+/// The journal entries of `world` after `after`, without the agents' own call echoes.
+pub fn world_journal_since(world: &mut World, after: u64) -> JournalRead {
+    journal::drain_logs(world);
+    let (entries, missed) = world.resource::<AiJournal>().after(after);
+    // The agents' own call echoes only repeat the scenario's commands.
+    let lines =
+        entries.filter(|e| e.kind != JournalKind::Agent).map(|e| JournalLine { seq: e.seq, text: e.to_string() }).collect();
+    JournalRead { lines, missed }
 }
 
 #[cfg(test)]
@@ -208,6 +222,22 @@ step 1
         let failure = report.failure.unwrap();
         assert_eq!((failure.kind, failure.line), (FailureKind::Scenario, 1));
         assert!(failure.message.starts_with("session scenario: e99 does not exist"), "{}", failure.message);
+    }
+
+    #[test]
+    fn a_player_binding_reaches_the_session_and_a_stand_needs_a_stand() {
+        let mut app = game();
+        // This game has no module that numbers players: the refusal is the game's own.
+        let report = run_str(app.world_mut(), "p.scenario", "session --player 1");
+        let failure = report.failure.unwrap();
+        assert_eq!((failure.kind, failure.line), (FailureKind::Scenario, 1));
+        assert!(failure.message.starts_with("session scenario: this game has no players to bind to"), "{}", failure.message);
+        // A game on its own is not a stand.
+        let report = run_str(app.world_mut(), "s.scenario", "stand clients=2 latency=150\n@c1 observe");
+        let failure = report.failure.unwrap();
+        assert_eq!(failure.kind, FailureKind::Driver);
+        assert!(failure.message.starts_with("this scenario needs a stand of host + 2 clients: run cargo sandbox --stand 2"), "{}", failure.message);
+        assert_eq!(app.world().resource::<SimTick>().0, 0, "nothing ran");
     }
 
     #[test]

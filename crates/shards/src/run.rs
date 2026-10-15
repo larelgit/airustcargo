@@ -162,11 +162,14 @@ fn net_sim_spec(text: &str) -> Result<String, String> {
 
 /// What the ready line says of the session: the role and, for a host, its UDP port. A host
 /// on port 0 has none yet (a free one is bound at startup; `shards wait` prints it).
-fn net_ready(net: &NetLaunch) -> String {
+fn net_ready(net: &NetLaunch, name: Option<&str>) -> String {
+    // A game given a name says which member of a stand it is (`--name c1`).
+    let member = name.map_or_else(String::new, |name| format!(" · member {name}"));
     match net {
-        NetLaunch::Host { port: 0 } => " · role host".to_owned(),
-        NetLaunch::Host { port } => format!(" · role host · net udp:{port}"),
-        NetLaunch::Join { addr } => format!(" · role client · net udp:{addr}"),
+        NetLaunch::Host { port: 0 } => format!("{member} · role host"),
+        NetLaunch::Host { port } => format!("{member} · role host · net udp:{port}"),
+        NetLaunch::Join { addr } => format!("{member} · role client · net udp:{addr}"),
+        NetLaunch::Stand { clients, udp: true } => format!("{member} · role host · stand of {clients} over UDP (clients are child processes)"),
         _ => String::new(),
     }
 }
@@ -240,8 +243,15 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
     };
     let mut config = args.config();
     if matches!(config.net, NetLaunch::Stand { udp: true, .. }) {
-        eprintln!("error: --stand-udp arrives with the network CLI; run --stand N (in this process), or --host and --join");
-        return ExitCode::from(2);
+        if args.paused {
+            eprintln!(
+                "error: --stand-udp runs in real time: UDP games cannot be stepped together, so --paused has no meaning here. \
+                 Drop --paused (an agent steps this stand by waiting, e.g. `shards step 120` on the host), or use --stand N without --stand-udp for a stand that stops"
+            );
+            return ExitCode::from(2);
+        }
+        // Its own name in the session, and in its ready line.
+        config.player_name = args.name.clone().unwrap_or_else(|| "host".into());
     }
     if config.net != NetLaunch::Off && (args.replay.is_some() || args.check_content || args.worldgen_report.is_some() || args.bake_nav.is_some()) {
         eprintln!("error: --host, --join and --stand start a session; drop them to verify, check or bake");
@@ -277,7 +287,7 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
     // From here on `kill` ends the game through `AppExit`, like Ctrl+C: the token
     // and the port file are removed on the way out.
     termination::catch_signals();
-    if let NetLaunch::Stand { clients, .. } = config.net {
+    if let NetLaunch::Stand { clients, udp: false } = config.net {
         return stand::run(&build, &args, config, clients);
     }
     let mut app = build(&config);
@@ -288,6 +298,22 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
         return ExitCode::from(2);
     }
     app.add_systems(First, termination::exit_when_signalled);
+    // A stand over UDP: this process is the host, and starts its clients once its socket is open.
+    if let NetLaunch::Stand { clients, udp: true } = config.net {
+        crate::stand_udp::install(
+            &mut app,
+            crate::stand_udp::StandSpec {
+                clients,
+                seed: config.seed,
+                hz: config.tick_hz,
+                net_sim: config.net_sim.clone(),
+                tick_budget: config.tick_budget,
+                port_file: args.port_file.clone(),
+                no_remote: args.no_remote,
+                save_dir: config.save_dir.clone(),
+            },
+        );
+    }
     if let Some(r) = recording
         && let Err(e) = replay::play(app.world_mut(), r)
     {
@@ -301,7 +327,7 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let net = net_ready(&config.net);
+    let net = net_ready(&config.net, args.name.as_deref().or(matches!(config.net, NetLaunch::Stand { .. }).then_some("host")));
     println!("{}{net}", ai_core::ready_line(0, std::process::id(), config.seed, config.port));
     exit_code(app.run())
 }
@@ -317,12 +343,7 @@ mod stand {
     /// Hub time a stand's shutdown may take for the end of the session to reach its clients.
     const SHUTDOWN_MS: u64 = 5_000;
 
-    /// The port file of member `name` beside `path` (`F` → `F.c1`).
-    fn member_file(path: &std::path::Path, name: &str) -> PathBuf {
-        let mut file = path.as_os_str().to_owned();
-        file.push(format!(".{name}"));
-        PathBuf::from(file)
-    }
+    use crate::stand_udp::member_file;
 
     /// The character slot of stand client `n`: named after it, because the members share the save
     /// folder.
@@ -790,7 +811,7 @@ fn bake_nav(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, tiles: 
 /// through `AppExit`, so what it wrote at start (the BRP token, `--port-file`) is
 /// removed. A signal the game was started with ignored (`nohup`) stays ignored; a
 /// second signal exits at once.
-mod termination {
+pub(crate) mod termination {
     use std::sync::atomic::{AtomicI32, Ordering};
 
     use bevy::app::AppExit;
@@ -799,10 +820,16 @@ mod termination {
     /// The first termination signal received; 0: none yet.
     static RECEIVED: AtomicI32 = AtomicI32::new(0);
 
+    /// The signals the game catches and leaves on, with code 128 + the signal. (Ctrl+C, SIGINT,
+    /// is Bevy's own handler, with the same kind of exit.) The stand tells a client that left
+    /// this way from one that crashed.
+    #[cfg(unix)]
+    pub(crate) const CAUGHT: [libc::c_int; 2] = [libc::SIGTERM, libc::SIGHUP];
+
     #[cfg(unix)]
     pub fn catch_signals() {
         let handler: extern "C" fn(libc::c_int) = on_signal;
-        for signal in [libc::SIGTERM, libc::SIGHUP] {
+        for signal in CAUGHT {
             // SAFETY: plain `sigaction` calls with valid pointers; the handler only
             // makes async-signal-safe calls.
             unsafe {
@@ -1016,10 +1043,20 @@ mod tests {
 
     #[test]
     fn the_ready_line_names_a_hosts_port_only_when_it_is_known() {
-        assert_eq!(net_ready(&NetLaunch::Host { port: 9000 }), " · role host · net udp:9000");
-        assert_eq!(net_ready(&NetLaunch::Host { port: 0 }), " · role host", "port 0 is picked at startup: `shards wait` prints it");
-        assert_eq!(net_ready(&NetLaunch::Join { addr: "1.2.3.4:7777".into() }), " · role client · net udp:1.2.3.4:7777");
-        assert_eq!(net_ready(&NetLaunch::Off), "");
+        assert_eq!(net_ready(&NetLaunch::Host { port: 9000 }, None), " · role host · net udp:9000");
+        assert_eq!(net_ready(&NetLaunch::Host { port: 0 }, None), " · role host", "port 0 is picked at startup: `shards wait` prints it");
+        assert_eq!(net_ready(&NetLaunch::Join { addr: "1.2.3.4:7777".into() }, None), " · role client · net udp:1.2.3.4:7777");
+        assert_eq!(net_ready(&NetLaunch::Off, None), "");
+        // A named game says which member of a stand it is.
+        assert_eq!(
+            net_ready(&NetLaunch::Join { addr: "127.0.0.1:7777".into() }, Some("c1")),
+            " · member c1 · role client · net udp:127.0.0.1:7777"
+        );
+        assert_eq!(
+            net_ready(&NetLaunch::Stand { clients: 2, udp: true }, Some("host")),
+            " · member host · role host · stand of 2 over UDP (clients are child processes)"
+        );
+        assert_eq!(net_ready(&NetLaunch::Stand { clients: 2, udp: false }, Some("host")), "", "an in-process stand prints a line per member itself");
     }
 
     #[test]

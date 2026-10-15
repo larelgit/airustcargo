@@ -5358,6 +5358,7 @@ dependencies = [
  "shards_net",
  "shards_npc",
  "shards_save",
+ "shards_script",
  "shards_settings",
  "shards_world",
 ]
@@ -5383,6 +5384,7 @@ name = "shards_cli"
 version = "0.2.0"
 dependencies = [
  "clap",
+ "libc",
  "serde",
  "serde_json",
  "shards_script",

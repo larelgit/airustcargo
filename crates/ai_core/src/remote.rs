@@ -412,10 +412,19 @@ fn utc_timestamp(time: std::time::SystemTime) -> String {
 /// games on `--port 0` and find them. Removed again when dropped (the game exits).
 pub struct PortFile(std::path::PathBuf);
 
+/// Where `path` is written before it is renamed into place: `F.c1` goes through `F.c1.part`, so
+/// the sibling files of a stand (`F`, `F.c1`, `F.c2`, written by processes that start together)
+/// never share a temporary file.
+fn part_path(path: &std::path::Path) -> std::path::PathBuf {
+    let mut part = path.as_os_str().to_owned();
+    part.push(".part");
+    part.into()
+}
+
 impl PortFile {
     /// Writes `port` to `path` atomically: readers see the whole number or nothing.
     pub fn write(path: &std::path::Path, port: u16) -> Result<Self, String> {
-        let part = path.with_extension("part");
+        let part = part_path(path);
         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         }
@@ -577,6 +586,48 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "15711\n");
         drop(file);
         assert!(!path.exists(), "removed when the game exits");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The games of a stand (`F`, `F.c1`, `F.c2`) write their port files at the same moment, as
+    /// processes of their own: no two of them may go through the same temporary file, or one
+    /// rename moves what the other wrote (and the other rename finds nothing to move).
+    #[test]
+    fn the_port_files_of_a_stand_never_share_a_temporary_file() {
+        let base = std::path::Path::new("/tmp/stand/g.port");
+        let parts: Vec<std::path::PathBuf> = ["g.port", "g.port.c1", "g.port.c2", "g.part", "plain"]
+            .iter()
+            .map(|name| part_path(&base.with_file_name(name)))
+            .collect();
+        let distinct: std::collections::BTreeSet<&std::path::PathBuf> = parts.iter().collect();
+        assert_eq!(distinct.len(), parts.len(), "{parts:?}");
+        assert_eq!(parts[1], std::path::Path::new("/tmp/stand/g.port.c1.part"));
+        // And `write` goes through them. The host's `g.port.part` is the host's temporary file,
+        // in flight: a sibling's write must not touch it (the old name, `g.port.part` for
+        // `g.port.c1` too, would have renamed it away as the client's own).
+        let dir = std::env::temp_dir().join(format!("ai_core_port_files_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("g.port.part"), "the host is still writing\n").unwrap();
+        let mut files = Vec::new();
+        for (i, name) in ["g.port.c1", "g.port.c2"].iter().enumerate() {
+            files.push(PortFile::write(&dir.join(name), 15701 + i as u16).unwrap());
+            assert_eq!(
+                std::fs::read_to_string(dir.join("g.port.part")).unwrap(),
+                "the host is still writing\n",
+                "{name} left the host's temporary file alone"
+            );
+            assert_eq!(std::fs::read_to_string(dir.join(name)).unwrap(), format!("{}\n", 15701 + i), "{name} is whole");
+            assert!(!dir.join(format!("{name}.part")).exists(), "{name}'s own temporary file is renamed away");
+        }
+        // The host's file, last: written whole through its own, and no temporary of any is left.
+        std::fs::remove_file(dir.join("g.port.part")).unwrap();
+        files.push(PortFile::write(&dir.join("g.port"), 15700).unwrap());
+        assert_eq!(std::fs::read_to_string(dir.join("g.port")).unwrap(), "15700\n");
+        let mut left: Vec<String> = std::fs::read_dir(&dir).unwrap().filter_map(|e| Some(e.ok()?.file_name().to_string_lossy().into_owned())).collect();
+        left.sort();
+        assert_eq!(left, ["g.port", "g.port.c1", "g.port.c2"], "no .part file is left behind");
+        drop(files);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -399,7 +399,8 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 `--host [PORT] | --join ADDR | --stand N [--stand-udp]` (взаимоисключающие, `--stand` только с `--headless`), `--name`,
 `--net-sim SPEC`, `--save-dir DIR`, `--settings-dir DIR | --no-settings`, `--character SLOT`, `--world SLOT` (слот —
 1–32 символа `a-z0-9_-`), `--exit-with-host`. `--host`, `--join` и `--stand` начинают сессию (раздел «Сессия
-кооператива»); `--stand-udp` пока выходит с кодом 2, опечатка в `--net-sim` — тоже (`latency=15O` не запускает игру без
+кооператива»); `--stand-udp` вместо стенда в одном процессе запускает хост по UDP и N клиентов дочерними процессами (только
+в реальном времени: с `--paused` выход с кодом 2), опечатка в `--net-sim` — тоже код 2 (`latency=15O` не запускает игру без
 задержки). Занятый порт —
 выход с кодом 3 до того, как собрано хоть что-то. `--check-every` и `--check-detail` задают запись реплея, поэтому с `--replay`
 не сочетаются. `--tick-budget-ms` — число миллисекунд, которое помещается в `Duration` и не меньше 1 нс; `inf`, `1e30` и `1e-10`
@@ -2022,6 +2023,83 @@ cargo sandbox --headless --paused --stand 2 --net-sim latency=150,loss=0.02 --po
   (`--exit-with-host`), выходит из сессии, остальные играют дальше. Ctrl+C завершает сессию как выход хоста и ждёт
   (по времени сети), пока клиенты получат конец сессии; хуки выхода каждого участника пишут в его журнал. Настройки игрока (`--settings-dir`, `--no-settings`) у стенда —
   настройки хоста, клиенты стенда своих не хранят.
+- **Стенд по UDP** (`--stand N --stand-udp`, только с `--headless`, только в реальном времени): процесс — хост на свободном
+  UDP-порту (как `--host 0`), а клиенты — дочерние процессы той же игры: `--join 127.0.0.1:ПОРТ --headless --port 0
+  --port-file F.cK --name cK --no-settings --exit-with-host --save-dir <save-dir>/stand-cK` с теми же `--seed`, `--hz`,
+  `--net-sim` и `--tick-budget-ms`. UDP-игры нельзя шагнуть вместе, поэтому агент «шагает» такой стенд ожиданием (`shards
+  step 120` у хоста гонит 120 тиков подряд, клиенты идут следом), а `--paused` отвергается с этой причиной. Клиенты уходят
+  вместе с хостом (конец сессии, потом SIGTERM тем, кто остался; на Linux ещё PDEATHSIG). Стенд останавливается кодом
+  выхода клиента и строкой с его именем, если клиент не запустился или вышел раньше, чем записал файл порта
+  (`error: stand: client c2 exited with code 2 before it was ready …`), вышел, так и не войдя в сессию (хост его не
+  пустил, до или после `Hello`: сессия полна, тело не создалось, мир не отправился, вход не закончился за срок; или его
+  кикнули, или он замолчал, пока входил; `… without being admitted to the host (refused, kicked or timed out while
+  joining: is the session full?)`) или упал после входа (любой
+  выход, кроме перечисленных ниже: `… while the stand ran: it crashed`). Ушедшим по своей воле считается выход с кодом 0
+  или `128+сигнал` (129, 130, 143) и сам сигнал SIGHUP, SIGINT или SIGTERM (те, на которых игра выходит штатно): такой
+  клиент, сказал ли он хосту «до свидания» или нет, попадает только в журнал хоста (`… while the stand ran`), и стенд идёт
+  дальше. Так же в журнал идёт принятый клиент (получил тело), связь с которым закрыл сам хост (`net_kick`, таймаут
+  тишины): он выходит с кодом 1 по `--exit-with-host` (`… after the host closed its link to it`). Кик или тишина, пока
+  клиент ещё входит, этим не оправданы: он так и не вошёл, и стенд останавливается. Не в счёт: отказ (клиент, которого хост не принял, в
+  сессию не входил, и связи, которую можно закрыть, у него не было), игра, которую вытеснила вторая с тем же токеном (она
+  потеряна как участник), и прощание, которое отправил сам клиент. Клиент, который не смог принять мир хоста (`Bye`
+  «cannot take the world») и вышел с кодом 1, останавливает стенд, как любой упавший. Кто закрыл связь, хост записывает в
+  слот, как только она закрыта (`NetHost::link_closed_by_host`), а не разбирает текст причины; вошёл ли клиент, говорит
+  `Slot::admitted` (он получил тело), а не то, что слот есть. Хуки выхода хоста (конец
+  сессии для клиентов, сохранения, остальные дети) идут в той же системе, что остановила стенд; если стенд кончился
+  раньше (сигнал в кадре, в котором закончилась загрузка), дети не стартуют вовсе. Дети стартуют не в
+  `PostStartup`, а на первом кадре после загрузки контента, и только после проверки, что в сессии есть место для N клиентов
+  (`max_players` в определении сети, по умолчанию 3: хост и два клиента): иначе стенд кончается кодом 2 и строкой `error:
+  stand: --stand 3 needs room for 4 players, but the session allows 3 …`, а ни один процесс не запущен (`--stand 20` не
+  запускает двадцать игр ради отказа). Перед запуском детей хост убирает файлы порта, которые оставил прежний стенд
+  (`kill -9`): `F.c1` … `F.cN` и все `F.cK` подряд за ними, поэтому лишний файл не считается ни участником, ни клиентом,
+  который уже стартовал.
+- **Стенд из командной строки.** Все участники стенда видны как отдельные игры с отдельным токеном (`.shards/<порт>.token`):
+
+  ```text
+  $ cargo sandbox --stand 2 --headless --paused --port 0 --port-file F --net-sim latency=150,loss=0.02 &
+  $ export SHARDS_PORT_FILE=F                           # участники ищутся по F, F.c1, F.c2; дальше --port-file не нужен
+  $ cargo shards wait --peer all                        # строка на участника + проверка, что это одна сессия
+  member=host role=host player=0 body=e5 port=44639 pid=31446 seed=42 tick=0
+  member=c1 role=client player=1 body=e15 port=39311 pid=31446 seed=42 tick=14
+  member=c2 role=client player=2 body=e16 port=44345 pid=31446 seed=42 tick=14
+  stand: host + 2 clients · seed 42 · one session
+  $ cargo shards --peer c1 observe                      # глазами клиента c1 (или SHARDS_PEER=c1); порт читается из F.c1
+  tick 14 (0.23s) | paused | speed 1x | seed 42 | you e15
+  YOU  e15 Player  hp 100/100  stam 100/100  poise 60/60  flask 3/3  at (2.0, 4.0) facing N
+  NET connected as p1 (e15) on host host, rtt 300ms, host tick 0, 14 ticks ahead, desyncs 0, prediction error 0.00 m …
+  …
+  $ cargo shards step 420                               # step любого участника гонит всех
+  $ cargo shards stand                                  # участники: роль, игрок, тело, порт, пинг, рассинхроны
+  stand: host + 2 clients (in this process) · seed 42 · links latency=150,jitter=0,loss=0.02,dup=0
+  MEMBER  ROLE    PLAYER  BODY  PORT   PING    DESYNCS  TICK
+  host    host    0       e5    44639  -       0        420
+  c1      client  1       e15   39311  300 ms  0        434
+  c2      client  2       e16   44345  300 ms  0        434
+  $ cargo shards stand stop                             # net_end у хоста, потом SIGTERM; ждёт, пока никто не отвечает
+  session ended: stand stopped
+  stand stopped: host pid 31446, c1 pid 31446, c2 pid 31446
+  ```
+
+  `--peer all` годится только для `wait` и `stand`. Токен у каждого участника свой, на любом пути (`observe`, `act`, `step`,
+  `status`, `wait --peer c1`, `save-replay`, сценарий одной игры под `--peer c1`, а также `wait --peer all`, `stand` и
+  сценарии стенда): токен хоста — `--token` (`SHARDS_TOKEN`), иначе `.shards/<порт>.token` от текущей папки вверх; токен
+  клиента — `SHARDS_TOKEN_C1`, `SHARDS_TOKEN_C2`, иначе его `.shards/<порт>.token`, и только если нет ни того ни другого,
+  уходит `--token` (так можно передать токен клиента явно). С `--port` (одна игра) `--peer` токен не выбирает: это токен
+  `--token` или файл этой игры. Ответ `unauthorized` называет переменную, которую нужно задать. `wait --peer all` ждёт
+  запуска сколько нужно, но останавливается сразу, когда ждать бессмысленно: хост или клиент уже отвечал и пропал (хост
+  закончил стенд: `the host ended the stand: the game was there and is gone …`; файл порта хоста, который `wait` успел
+  прочитать и который потом исчез, значит то же, даже если хост ни разу не ответил: `… the game's port file is gone …`;
+  стенд, умерший до того, как `wait` прочитал `F`, как и прежде ждёт до `--timeout`, читать там нечего; к файлам клиентов
+  это не относится, называет ли их `--peer c1` или сам файл (`--port-file F.c1` без `--peer`): хост UDP-стенда убирает
+  оставленные прежним стендом сам), участник дважды подряд отвечает
+  `unauthorized` или участники дважды подряд называют одно и то же несовпадение (первый участник не хост, чужой seed, два
+  клиента с одним номером игрока). Не хватает клиента или хост ещё не перечислил игроков — это идущий запуск, он ждёт до
+  `--timeout`. Размер стенда `wait`, `stand` и сценарий берут из `ai/status.net.stand.clients` хоста, а не из файлов порта
+  (файл, оставшийся от прежнего стенда, участником не считается; без `net.stand` у хоста — клиенты с файлами подряд). Клиент, чей
+  файл порта уже убран (он ушёл), `shards stand` показывает строкой `c2: cannot read the port file …`, `stand stop` называет
+  его и всё равно останавливает остальных; код выхода в обоих случаях 1. У стенда `step`, `pause`, `resume` и `speed`
+  отвечают `{"pending": id}`: `shards` опрашивает `ai/step_poll` каждые 20 мс (`--timeout`, по умолчанию 60 с) и печатает
+  отчёт, как у обычного `step`. `session --player N` (BRP `ai/session player=N`) привязывает агента к телу игрока N.
 
 #### Предсказание и сглаживание (C4)
 
@@ -2085,7 +2163,8 @@ cargo sandbox --headless --paused --stand 2 --net-sim latency=150,loss=0.02 --po
 - каждый метод — `ai/*`, стандартные `world.*`, `registry.*`, `rpc.discover` и `+watch` — требует `params.token`. Без него
   или с чужим токеном ответ один: `unauthorized: run shards from the game folder or set SHARDS_TOKEN`;
 - `shards` берёт токен из `SHARDS_TOKEN` (`--token`) или из `.shards/<port>.token`, поднимаясь от текущей папки вверх, и
-  сам добавляет его к параметрам. Своему клиенту передайте его явно:
+  сам добавляет его к параметрам (у клиента стенда, `--peer c1`, свой: `SHARDS_TOKEN_C1`, иначе его файл; см. «Стенд из
+  командной строки»). Своему клиенту передайте его явно:
 
 ```bash
 TOKEN=$(cat .shards/15702.token)
@@ -2104,7 +2183,9 @@ journal, pause, resume, speed, status, session, content, worldgen, raw, wait. А
 `--port`/`SHARDS_PORT`, `--port-file`/`SHARDS_PORT_FILE` (порт из файла игры; `--port` важнее), `--token`/`SHARDS_TOKEN`,
 `--agent`/`SHARDS_AGENT`, `--json` (у `tools` — со схемами аргументов). `shards wait` ждёт, пока игра ответит и
 загрузится (контент; пока идёт загрузка, `step` отвечает ошибкой), и печатает, кто ответил: `ready: tick 0 · pid 4242 ·
-seed 1 · port 15711` (ту же строку игра печатает при старте, её же первой строкой выводит `shards status`). `shards
+seed 1 · port 15711` (ту же строку игра печатает при старте, её же первой строкой выводит `shards status`). Он сразу
+выходит с причиной (код 2), когда ждать бессмысленно: игра уже отвечала и пропала, дважды подряд ответила `unauthorized`,
+файл порта хоста прочитан и исчез или командная строка не называет игру (`--peer c1 wait` без файла порта). `shards
 content check` перечитывает файлы контента запущенной игры и выходит с кодом 1 при ошибках; без запущенной игры —
 `--check-content`. `shards worldgen --region R --seeds 1..1000 --report` печатает пакетный отчёт генератора запущенной игры
 (код 1, пока прошли не все зёрна); без игры — `--worldgen-report R --seeds …` самой игры.
@@ -2312,6 +2393,36 @@ invariant field e5 Health.current > 0      # любое ожидание; про
 - **Мир берётся как есть.** Сценарий не перезапускает игру. Чтобы файл шёл и на свежей игре, и после других, он сам
   приводит мир в порядок первыми командами (`heal`, `teleport`, `set`, `npc_set_state … calm`, `regen`): так сделаны все
   `crates/sandbox/scenarios/*.scenario`, они идут на свежей игре и после других, вперёд и назад (CI проверяет оба порядка).
+- **Сценарий для стенда** (E7, E11.6) описывает хост и клиентов (`cargo sandbox --stand 2`). Первой строкой (до или после
+  `seed`) идёт заголовок `stand clients=N [latency=MS] [jitter=MS] [loss=P] [dup=P]` (N — 1 или 2), любая команда может
+  начинаться с участника, на котором она выполняется: `@host` (по умолчанию), `@c1`, `@c2`. Файлы со `stand` лежат в
+  `crates/sandbox/scenarios/stand/`, а не рядом с остальными: одна игра их не выполнит (`this scenario needs a stand of
+  host + 2 clients: run cargo sandbox --stand 2 …`), а `scenarios/*.scenario` идёт на одной игре.
+
+  ```text
+  stand clients=2 latency=150 loss=0.02     # связь 150 мс в одну сторону (300 мс туда и обратно), 2% потерь
+  seed 42
+  @host act heal id=e15                     # инструмент на хосте
+  @c1 act move_to target='{"x":2,"z":4}'    # команда клиента c1 идёт хосту, как у игрока
+  step 300                                  # общий: 300 тиков стенда, у кого бы ни вызвали
+  @c2 step 100 --until journal:swing        # условие читает журнал c2
+  @c2 expect field e15 Transform.translation.z < 6   # expect/invariant идут на том, кого назвали
+  invariant !journal "desync"               # без участника — на каждом
+  @c1 session --agent bot --player 1        # агент bot играет за тело игрока 1, только у c1
+  mark                                      # без участника — у каждого свой журнал считается отсюда
+  ```
+
+  `expect result` и `expect stopped` читают последний ответ (последний `step`) на названном участнике, а без него — последний
+  вообще; агент, который выполняет команды, свой у каждого участника (`session --agent X` без участника задаёт его всем,
+  `@c1 session …` — только c1). Неизвестный участник — ошибка разбора (`@c3: this stand has clients c1, c2`). Живой стенд
+  должен совпадать с заголовком: столько клиентов (иначе `this scenario needs a stand of host + 2 clients, but this one
+  is host + 1 client`) и те же условия связи, что в `--net-sim` (иначе ошибка называет, с чем его запустить). В тесте файл
+  идёт на стенде, построенном по заголовку: `shards::testing::run_stand_scenario(|app| { … }, путь)`; против живого —
+  `SHARDS_PORT_FILE=F shards scenario crates/sandbox/scenarios/stand/*.scenario` (участники ищутся по `F`, `F.c1`, `F.c2`,
+  а сколько клиентов в стенде, говорит хост, `ai/status.net.stand.clients`: файл порта от прежнего стенда участником не
+  считается; `--peer` и `SHARDS_PEER` для такого файла не действуют, даже `all` или `c2`, которого нет: игру для
+  одиночного сценария `shards` ищет только тогда, когда такой сценарий есть). Участник, который перестал отвечать, называется в
+  отчёте: `c2: cannot reach the game at …`, а при проверке инварианта и с его строкой.
 
 В тесте:
 
@@ -3164,7 +3275,7 @@ xvfb-run -a cargo test -p shards --test action_render -- --ignored --nocapture  
 | `test` | `cargo test --workspace --locked`: юнит-тесты, сценарии песочницы (в том числе мир и NPC), эталонные реплеи (`--verify`) |
 | `clippy` | `cargo clippy --all-targets --locked -- -D warnings` для движка и для шаблона |
 | `template` | `template/Cargo.lock` не расходится с корневым; `cargo test` шаблона; `cargo run -- --check-content`, `--verify` его реплеев и `--worldgen-report valley --seeds 1..1000` через бинарник игры |
-| `headless-cli` | `cargo sandbox --check-content` (уровни тайлов и запечённая навигация тоже), `--worldgen-report wilds --seeds 1..1000`; живая песочница без окна (`--port 0 --port-file`), `shards wait`, `shards scenario crates/sandbox/scenarios/*.scenario`, потом те же сценарии в обратном порядке в той же игре; `kill` в конце |
+| `headless-cli` | `cargo sandbox --check-content` (уровни тайлов и запечённая навигация тоже), `--worldgen-report wilds --seeds 1..1000`; живая песочница без окна (`--port 0 --port-file`), `shards wait`, `shards scenario crates/sandbox/scenarios/*.scenario`, потом те же сценарии в обратном порядке в той же игре; `kill` в конце; живой стенд (`--stand 2 --net-sim latency=150,loss=0.02`): `shards wait --peer all`, `shards scenario crates/sandbox/scenarios/stand/*.scenario`, `shards stand`, `shards stand stop` |
 | `replays-window` | те же реплеи (песочницы и шаблона) в окне под Xvfb: `--verify --windowed`; необязательное (`continue-on-error`), пока не докажет стабильность |
 
 ## Что дальше

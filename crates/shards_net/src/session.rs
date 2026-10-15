@@ -245,22 +245,26 @@ fn open_endpoint(world: &mut World) {
     let config = world.get_resource::<EngineConfig>().cloned().unwrap_or_default();
     let clock = NetClock::Wall(Arc::new(WallClock::new()));
     match &config.net {
-        NetLaunch::Host { port } => match crate::udp::UdpTransport::bind_port(*port) {
-            Ok(udp) => {
-                // The port actually bound (`--host 0` picks a free one).
-                let at = udp.socket_addr().map_or_else(|_| format!("port {port}"), |a| a.to_string());
-                journal::emit(world, JournalKind::Sim, format!("net: hosting on UDP {at}"));
-                let transport = crate::conditioner_from(&config, udp);
-                world.insert_resource(NetEndpoint { transport, clock, host: None });
-            }
-            Err(e) => {
-                journal::emit(world, JournalKind::Error, format!("net: cannot host on UDP port {port}: {e}; pick another with --host PORT"));
-                world.insert_resource(NetState::Ended(format!("cannot host on port {port}: {e}")));
-                if config.exit_with_host {
-                    world.write_message(AppExit::from_code(NO_SESSION_EXIT));
+        // `--stand N --stand-udp` is a UDP host on a free port; its clients are child processes.
+        NetLaunch::Host { .. } | NetLaunch::Stand { udp: true, .. } => {
+            let port = if let NetLaunch::Host { port } = &config.net { *port } else { 0 };
+            match crate::udp::UdpTransport::bind_port(port) {
+                Ok(udp) => {
+                    // The port actually bound (`--host 0` picks a free one).
+                    let at = udp.socket_addr().map_or_else(|_| format!("port {port}"), |a| a.to_string());
+                    journal::emit(world, JournalKind::Sim, format!("net: hosting on UDP {at}"));
+                    let transport = crate::conditioner_from(&config, udp);
+                    world.insert_resource(NetEndpoint { transport, clock, host: None });
+                }
+                Err(e) => {
+                    journal::emit(world, JournalKind::Error, format!("net: cannot host on UDP port {port}: {e}; pick another with --host PORT"));
+                    world.insert_resource(NetState::Ended(format!("cannot host on port {port}: {e}")));
+                    if config.exit_with_host {
+                        world.write_message(AppExit::from_code(NO_SESSION_EXIT));
+                    }
                 }
             }
-        },
+        }
         NetLaunch::Join { addr } => {
             let opened = crate::udp::UdpTransport::bind("0.0.0.0:0").map_err(|e| e.to_string()).and_then(|mut udp| {
                 let host = udp.connect_str(addr)?;

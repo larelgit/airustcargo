@@ -66,6 +66,10 @@ fn status(world: &World) -> Value {
     let role = role(world);
     let member = world.get_resource::<shards_core::EngineConfig>().map(|c| c.player_name.clone()).unwrap_or_default();
     let mut out = json!({ "role": role_name(role), "session": state_text(world), "member": member });
+    // A stand's host knows how many clients it was started with (`shards wait --peer all`).
+    if let Some(shards_core::NetLaunch::Stand { clients, udp }) = world.get_resource::<shards_core::EngineConfig>().map(|c| &c.net) {
+        out["stand"] = json!({ "clients": clients, "udp": udp });
+    }
     if let Some(host) = world.get_resource::<NetHost>() {
         let body = world
             .try_query_filtered::<&ai_core::AiId, With<ai_core::AiPlayer>>()
