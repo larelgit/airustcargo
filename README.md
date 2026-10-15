@@ -40,10 +40,11 @@ Remote Protocol на 127.0.0.1), без MCP-прослоек. Тем же CLI п
 17. [Сохранения (E8.1–5)](#сохранения-e815)
 18. [Настройки (E8.6)](#настройки-e86)
 19. [Интерфейс (E9)](#интерфейс-e9)
-20. [Песочница](#песочница)
-21. [Тесты и CI](#тесты-и-ci)
-22. [Что дальше](#что-дальше)
-23. [Соглашения и сборка](#соглашения-и-сборка)
+20. [Локализация (E9.4)](#локализация-e94)
+21. [Песочница](#песочница)
+22. [Тесты и CI](#тесты-и-ci)
+23. [Что дальше](#что-дальше)
+24. [Соглашения и сборка](#соглашения-и-сборка)
 
 ## Быстрый старт
 
@@ -62,7 +63,7 @@ cargo shards observe                       # срез мира текстом + 
 cargo shards tools                         # что можно сделать (--json: со схемами аргументов)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # в ответе CHANGES и JOURNAL
-cargo shards content check                 # ok: 73 definitions in 24 files
+cargo shards content check                 # ok: 76 definitions in 26 files
 cargo shards act regen region=wilds seed=42   # сгенерированный регион к югу от арены; игрок у его ворот
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # маршрут к логову по навсетке: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # проверка генератора на тысяче зёрен
@@ -83,7 +84,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Контент без игры: читает и проверяет все файлы (в том числе файлы уровней тайлов и запечённую навигацию), код 0 или 1.
 cargo sandbox --check-content
-# ok: 73 definitions in 24 files
+# ok: 76 definitions in 26 files
 
 # 7. Мир без игры: генератор на тысяче зёрен (код 0, если прошли все) и запекание навигации тайлов.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -275,6 +276,7 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 | `crates/shards_npc` | враги (E6): автомат поведения, восприятие, режиссёр боя (жетоны), планировщик атак, навсетка по тайлам (`nav`: запекание, сшивка, маршруты), агенты и поводок |
 | `crates/shards_settings` | настройки игрока (E8.6): группы графики, звука, управления и доступности на настройках Bevy (`bevy_settings`), `settings.toml`, инструменты `settings`/`settings_set`, окно по настройкам графики |
 | `crates/shards_ui` | интерфейс (E9): экраны и темы в контенте (`screen`, `theme`), стек экранов, фокус и навигация, источники значений и действия кнопок, инструменты `ui_*`, раздел `UI` в `observe`; с feature `render` — рисование на Bevy UI с подписями AccessKit |
+| `crates/shards_locale` | локализация (E9.4): языки в контенте (`locale`), тексты на Fluent (`assets/locale/<язык>/*.ftl`) с параметрами и формами множественного числа, запасной язык, настройка `locale.language` и смена языка на лету, инструменты `locale` и `text`, горячая перезагрузка файлов |
 | `crates/ai_core` | слой ИИ, не зависит от конкретной игры: id, срез мира, журнал, инструменты, время, реплеи, транспорт |
 | `crates/shards_script` | без Bevy: формат сценариев, их запуск, разбор условий `--until`, долгая игра агентов (`soak`) и их случайные входы; общий для `shards` и тестов |
 | `crates/shards_cli` | бинарник `shards`, тонкий клиент к `ai/*` |
@@ -539,7 +541,7 @@ reflection, как в сценах Bevy; каждый компонент дол�
 
 ```text
 $ shards act content_list
-content: 73 definitions in 24 files
+content: 76 definitions in 26 files
   action  23
   animset  0
   attack_plan  3
@@ -573,7 +575,7 @@ CHANGES
 ```
 
 **`--check-content` и `shards content check`.** Первый читает файлы без игры (для CI: код 0 или 1; отсутствующая папка
-`content` — тоже ошибка, чтобы проверка не прошла впустую), второй спрашивает запущенную игру: `ok: 73 definitions in 24
+`content` — тоже ошибка, чтобы проверка не прошла впустую), второй спрашивает запущенную игру: `ok: 76 definitions in 26
 files`. Модули добавляют к проверке своё: файлы уровней, названные определениями `level` (каждый узел, компонент и
 обязательный маркер), файлы уровней, из которых построены тайлы (должны лежать в папке ассетов), и запечённая навигация
 тайлов (с определением `nav` устаревший или отсутствующий файл — ошибка с командой `--bake-nav`).
@@ -2499,6 +2501,7 @@ PASS crates/sandbox/scenarios/boss_fight.scenario (50 commands, 422 ticks)
 PASS crates/sandbox/scenarios/combat_prototype.scenario (215 commands, 2214 ticks)
 PASS crates/sandbox/scenarios/dodge.scenario (74 commands, 591 ticks)
 PASS crates/sandbox/scenarios/errors.scenario (38 commands, 2 ticks)
+PASS crates/sandbox/scenarios/locale.scenario (61 commands, 0 ticks)
 PASS crates/sandbox/scenarios/npc_director.scenario (38 commands, 1923 ticks)
 PASS crates/sandbox/scenarios/npc_navmesh.scenario (31 commands, 1271 ticks)
 PASS crates/sandbox/scenarios/obstacle_course.scenario (86 commands, 1010 ticks)
@@ -2506,8 +2509,8 @@ PASS crates/sandbox/scenarios/region.scenario (40 commands, 353 ticks)
 PASS crates/sandbox/scenarios/saves.scenario (76 commands, 157 ticks)
 PASS crates/sandbox/scenarios/settings.scenario (76 commands, 0 ticks)
 PASS crates/sandbox/scenarios/snapshot.scenario (51 commands, 365 ticks)
-PASS crates/sandbox/scenarios/ui.scenario (73 commands, 0 ticks)
-12 of 12 scenarios passed
+PASS crates/sandbox/scenarios/ui.scenario (74 commands, 0 ticks)
+13 of 13 scenarios passed
 ```
 
 Без `--quiet` каждая команда печатается строкой `ok  39 step 900 --until near:e5:e6:3.2 → ran 129 ticks (150 → 279),
@@ -3353,11 +3356,105 @@ ok: closed settings; pause is on top · focus pause/settings
 **Рисование** (feature `render`, только когда есть окно): узел Bevy UI на каждый виджет, рамка на экран (меню затемняет
 игру, HUD не ловит мышь, модальное окно выше меню), значения меняются на месте, фокус — обводка и `InputFocus`. Каждому виджету —
 узел AccessKit: роль (`Dialog`, `Button`, `Slider`, `ProgressIndicator`, …), подпись и значение, поэтому экранный чтец читает
-меню. Текст рисуется шрифтом Bevy по умолчанию (латиница; шрифты и локализация — D2).
+меню. Текст рисуется шрифтом темы (`font: "fonts/FiraSans-Regular.ttf"`, файл в папке ассетов; проверка контента ищет его), без
+него — шрифтом Bevy по умолчанию, в котором только латиница.
 
 Проверка: `crates/shards_ui` (юнит-тесты разбора и навигации; `tests/ui/`: экраны, меню, клавиатура, рисование и подписи
 доступности без GPU, реплей с нажатыми кнопками, правка экрана в работающей игре и отказ сломанной), сценарии
 `crates/sandbox/scenarios/ui.scenario` и `template/scenarios/menus.scenario`.
+
+## Локализация (E9.4)
+
+Текст игры — файлы [Fluent](https://projectfluent.org), по папке на язык: `assets/locale/<язык>/*.ftl`. Какие языки есть,
+говорит контент вида `locale` (`content/**/*.locale.ron`): id — тег языка (`en`, `ru`, `pt-BR`), `name` — название на самом
+этом языке, `fallback` — язык, из которого берётся недостающее. Модуль `shards_locale` строит языки из контента и файлов, держит
+язык, на котором играют, и переключает его на лету: открытые экраны тут же говорят всё заново.
+
+```ron
+// content/ui/languages.locale.ron
+{
+    "en": (name: "English"),
+    "ru": (name: "Русский", fallback: "en"),
+}
+```
+
+```ftl
+# assets/locale/ru/menus.ftl
+pause-resume = Продолжить
+defeated = { $count ->
+    [one] Повержен { $count } враг
+    [few] Повержено { $count } врага
+   *[many] Повержено { $count } врагов
+}
+leave = Покинуть { $place }?
+place-arena = арену
+```
+
+**Только целые фразы.** Сообщение — фраза целиком, с параметрами; код не склеивает текст из кусков. Число выбирает форму
+множественного числа по правилам языка (`1 враг`, `3 врага`, `5 врагов`; в английском `1 enemy`, `3 enemies`), а параметром
+может быть другое сообщение того же языка: `leave` с `$place = place-arena` — «Покинуть арену?». Из кода:
+
+```rust
+use shards::prelude::*;                                    // Args, Locale
+
+let text = shards::locale::text(world, "defeated", &Args::new().number("count", n));
+let ask = shards::locale::text(world, "leave", &Args::new().message("place", "place-arena"));
+```
+
+**Контент называет сообщения** через `@`: `label: "@pause-resume"`, `title: "@settings-title"`, `text: "@hud-hint"`. Так
+пишутся заголовки экранов и панелей, подписи, тексты, подсказки, строки `Compare` и подписи вариантов выбора — у `Choice`
+теперь есть `labels` (по одной на вариант: `options: ["full", "reduced", "off"], labels: ["@flashes-full", …]`); `ui_set`
+принимает и вариант, и его подпись. `@@` начинает текст с `@`. Источник игры (`add_ui_source`) отдаёт уже готовый текст:
+шаблон форматирует `hud-trophies` с числом трофеев, и HUD пишет `1 trophy` или `5 трофеев`.
+
+**Язык игрока** — настройка `locale.language` (группа `locale` в `settings.toml`), меняется как любая другая: в меню (`Choice`
+с `setting: "locale.language"`) или `settings_set group=locale key=language value=ru`. Пустая — язык игры: первый по id без
+`fallback`. Язык, которого у игры нет, отклоняется: ``` `de` is not a language of this game: en (English), ru (Русский)```.
+Смена применяется до возврата вызова (событие `SettingsChanged` модуля настроек): журнал пишет `locale: language en → ru`,
+модуль посылает `TextChanged`, и интерфейс переписывает подписи открытых экранов, не трогая значения, фокус и страницы.
+
+**Чего нет.** Сообщение, которого нет в языке, берётся из `fallback`; нет и там — показывается его id. Каждый такой случай и
+забытый параметр журнал называет один раз: `locale: ru has no message `settings-fov`; it is shown in en`, ``locale: en `leave`:
+Unknown variable: $place``. Проверка контента (`--check-content`, `content_check`) разбирает файлы каждого языка и называет
+ошибку файлом, строкой и столбцом (`locale/ru/menus.ftl:9:15: Expected a token starting with "="`), находит сообщение в двух
+файлах одного языка, `fallback` по кругу, язык без файлов и `@id` экрана, которого нет ни в языке, ни в его запасных:
+``screen `pause`: widget `resume` label names message `pause-resum`, which en and ru have not, nor their fallbacks (did you mean
+`@pause-resume`?)``.
+
+**Горячая перезагрузка.** С наблюдателем за файлами (`hot_reload`) правка `.ftl` применяется в течение секунды: `locale: text
+reloaded (locale/ru/menus.ftl)`, экраны переписываются; ошибки в правленом файле идут в журнал как `[error] locale: …`. Новый
+язык — строка в `*.locale.ron` (её подхватывает перезагрузка контента) и папка файлов.
+
+**Для агента.** `locale` — на каком языке играют, сколько сообщений у каждого языка и каких ему не хватает; `locale
+language=ru` — все сообщения языка с текстом. `text id= args={json} language=?` — сообщение с параметрами, как его покажет
+игра (число — число, `"@id"` — фраза, `"@@x"` — текст `@x`), и строки `#` о том, что пришлось взять из запасного языка:
+
+```text
+$ shards act locale
+playing: en
+en English: 33 messages
+ru Русский → en: 32 messages; lacks 1: settings-fov
+# switch: settings_set group=locale key=language value=<id>; `locale language=<id>` lists one language's text
+$ shards act text id=defeated 'args={"count": 3}' language=ru
+Повержено 3 врага
+$ shards act text id=pause-resum
+error: en has no message `pause-resum` (did you mean `pause-resume`?)
+```
+
+`ai/status` получает поле `locale` (`language`, `chain` — язык и его запасные, `languages`). Оба инструмента — query со scope
+Player.
+
+**Вне симуляции.** Язык — настройка этой машины: он не входит ни в снапшот, ни в хэш реплея, хост его не пересылает, и два
+игрока кооператива читают игру на разных языках. Шлюз загрузки ждёт, пока языки построены, поэтому первый экран уже на языке
+игрока.
+
+**Шрифт.** Шрифт Bevy по умолчанию — только латиница, поэтому игра с кириллицей называет свой в теме (`font`). Песочница и
+шаблон кладут Fira Sans (SIL Open Font License, `assets/fonts/FiraSans-OFL.txt`).
+
+Проверка: `crates/shards_locale` (юнит-тесты: формы множественного числа, фраза во фразе, запасной язык, забытый параметр,
+разбор файлов и ошибки с позицией; `tests/locale/`: смена языка в работающей игре и меню на новом языке, проверка контента,
+горячая перезагрузка файла), сценарий `crates/sandbox/scenarios/locale.scenario`, в шаблоне — `template/scenarios/menus.scenario`
+и `tests/game/screens.rs`.
 
 ## Песочница
 
@@ -3390,7 +3487,8 @@ ok: closed settings; pause is on top · focus pause/settings
 | `region/camps.prefab.ron`, `region/ruin.level.ron` | лагерные скелеты (`Home` 12 м) и страж логова (10 м); файл руины и маркеры, обязательные в нём |
 | `world/watch.layout.ron` | третий скелет арены (`e14`) |
 | `world/world.bounds.ron` | границы мира для правила `bodies_in_world`: запас вокруг построенных layout и региона, высота, ниже которой тело выпало |
-| `ui/menus.screen.ron` | меню на виджетах движка: `pause`, `settings` (все группы настроек на вкладках), вопрос `confirm_quit`; HUD у песочницы свой, в коде окна (`visuals.rs`) |
+| `ui/menus.screen.ron` | меню на виджетах движка: `pause`, `settings` (все группы настроек и язык на вкладках), вопрос `confirm_quit`; HUD у песочницы свой, в коде окна (`visuals.rs`) |
+| `ui/languages.locale.ron`, `ui/arena.theme.ron` | языки меню (английский и русский с запасным английским; тексты — `assets/locale/<язык>/menus.ftl`) и тема со шрифтом Fira Sans, в котором есть кириллица (`assets/fonts/`) |
 
 `layout` — вид контента самой песочницы: коробки (`solids`), пандусы, объёмы (вода, поток, триггер), ориентиры для ИИ и
 префабы для спавна. Слои спавнятся по порядку id, внутри — по порядку списков, так что `AiId` и `ColliderId` одинаковы в
@@ -3436,7 +3534,10 @@ ok: closed settings; pause is on top · focus pause/settings
 - `settings.scenario` (E8.6) — `settings` и `settings_set`: значения по типу, отказы с допустимым, сброс, `rebind` как настройка
   `controls`; в начале и в конце все группы возвращаются к умолчаниям (идёт и с файлом настроек, и без);
 - `ui.scenario` (E9) — меню проходится по дереву интерфейса: пауза, вкладки настроек, слайдер и выбор меняют настройки
-  игрока, вопрос поверх меню, ошибки, которые учат; в начале и в конце меню закрыты, настройки по умолчанию.
+  игрока, вопрос поверх меню, ошибки, которые учат; в начале и в конце меню закрыты, настройки по умолчанию;
+- `locale.scenario` (E9.4) — `locale` и `text`: формы множественного числа по языку, фраза во фразе, подсказка к опечатке;
+  вкладка «Language» меню переключает его на русский, пока оно открыто, недостающее в русском берётся из английского, язык,
+  которого нет, отклоняется; в начале и в конце язык игры, меню закрыты.
 
 Сценарии начинают с `heal`/`teleport`/`set`/`npc_set_state … calm`, поэтому идут на свежей игре и после других, в любом порядке:
 CI гоняет их вперёд и потом назад в одной игре. Сессии шести из них записаны как эталонные реплеи в `tests/replays/`
@@ -3514,11 +3615,10 @@ E11), B (мир: E5, E6, уровни из Blender, снапшоты) и C (ко
 клиенты»; приёмка — полчаса хоста и двух клиентов на 150 мс и 2 % потерь без рассинхрона, `shards soak`) собраны, CI
 проверяет их на каждом пуше. Впереди:
 
-1. **Фаза D — интерфейс и контент:** интерфейс (E9.1–3: экраны, фокус, темы, дерево для агента) собран в `shards_ui`, впереди
-   локализация; звук (шины, адаптивная музыка,
-   пространственные звуки); остатки E4 и E11: консоль и меню разработчика, оверлей NPC, `path_to` и `clearance` по
-   навсетке (сейчас по ней только `nav_path` и `move_to path=true`), проверка, что сокеты файла уровня совпадают с
-   сокетами тайла в RON.
+1. **Фаза D — интерфейс и контент:** интерфейс (E9.1–3: экраны, фокус, темы, дерево для агента) собран в `shards_ui`,
+   локализация (E9.4) — в `shards_locale`; впереди звук (шины, адаптивная музыка, пространственные звуки); остатки E4
+   и E11: консоль и меню разработчика, оверлей NPC, `path_to` и `clearance` по навсетке (сейчас по ней только `nav_path`
+   и `move_to path=true`), проверка, что сокеты файла уровня совпадают с сокетами тайла в RON.
 2. **Остатки фазы B:** стриминг геометрии тайлов для физики (сейчас по расстоянию грузится только картинка), навсетка под
    несколько тел.
 3. **Фаза E — платформа:** рендер и производительность, Steam, Windows, скриншоты без окна (E10).
