@@ -19,7 +19,7 @@
 - Крейты: `shards` (зонтик, единственная зависимость игры), `shards_core`, `shards_content`, `shards_motion`,
   `shards_action`, `shards_level` (уровни из Blender), `shards_world` (регионы, генерация), `shards_npc` (враги, навсетка),
   `shards_save` (сохранения: секции, слоты, миграции, копии), `shards_ui` (экраны и меню из контента), `shards_locale`
-  (языки: тексты на Fluent, смена на лету), `ai_core`, `shards_script`, `shards_cli`, `sandbox` (арена движка). Карта — в
+  (языки: тексты на Fluent, смена на лету), `shards_audio` (звук: шины, голоса, музыка в слоях), `ai_core`, `shards_script`, `shards_cli`, `sandbox` (арена движка). Карта — в
   README, «Архитектура».
 
 ## Как смотреть на игру и действовать в ней
@@ -69,9 +69,15 @@ kill <pid>                              # pid из `wait`
   `assert_add`, `assert_list`, `assert_remove`, `assert_reset` (`shards assert`); **интерфейс** — `ui_read` (дерево экранов: id
   виджетов, значения, фокус), `ui_open`, `ui_close`, `ui_navigate`, `ui_click`, `ui_set`; **язык** — `locale` (языки, на каком
   играют, чего каждому не хватает), `text` (сообщение с параметрами на любом языке); язык меняет `settings_set group=locale
-  key=language value=ru`. Условия для
-  `step --until named:…`: `near_poi`, `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`; свои у игры (в песочнице
-  `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`).
+  key=language value=ru`; **звук** — `audio` (что слышит эта машина: трек и слой музыки, стемы, шины, голоса, неуслышанные
+  звуки с причиной), `sound_play` (сыграть звук по правилам микшера: `at=eN`, `point=[x,y,z]`, `times=25`), `music_set`
+  (`track=…`/`none`, `layer=combat`/`auto`); громкость — `settings_set group=audio key=sfx value=0.5`. Условия для
+  `step --until named:…`: `near_poi`, `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_engaged`,
+  `npc_near`; свои у игры (в песочнице `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`, в шаблоне
+  `arena_cleared`, `foe_near`, `in_fight`).
+- Звук решается на часах симуляции и одинаков без окна: слушайте игру через `audio` и строку `MUSIC` в `observe`, а не через
+  динамики. Смены музыки идут в журнал строками `[local] music: arena explore → combat` (не игровые события). Файлы звуков
+  песочницы и шаблона синтезирует `cargo run -p sandbox --example make_sounds`.
 - Инструменты боя (`dodge`, `light_attack`, `block`, `use_item`, `attack`) отвечают по правилам игры сразу: `ok: roll (W)`,
   `ok: queued, heavy starts in 0.10s` (вход ждёт в буфере) или ошибка с причиной и временем (`not enough stamina: 10/20
   (ready in 0.2s)`, `busy: windup heavy 0.50s (ready in 0.90s, when a cancel window opens)`). На ошибку сделайте `step`
@@ -163,6 +169,9 @@ kill <pid>                              # pid из `wait`
 - **HUD и меню — контент** (`*.screen.ron`, тема — `*.theme.ron`), а не код окна: значения виджетам игра даёт
   `add_ui_source`, действия кнопок — `add_ui_action`. Экраны вне симуляции (без `AiId`, не в снапшоте); всё, что меняет мир,
   кнопка делает инструментом (`tool …`) или действием игры, а реплей повторяет само нажатие (`ui_click`, `ui_navigate`).
+- **Звук — контент** (`*.sound.ron`, `*.music.ron`, микшер `*.audio.ron`): атака называет звук в `telegraph.sound`, игра
+  играет свой `PlaySound`, слой музыки ждёт условие по имени (`add_ai_condition`). Звук только читает мир и не меняет его;
+  то, что показывает лишь эта машина, журнал пишет видом `JournalKind::Local`, а не `Event` (хост шлёт клиентам события).
 - **Новый модуль движка** — крейт с плагином, который называет себя `add_engine_module(name, version)` (так он виден в
   `ai/status`), с наборами систем для упорядочивания и одной строкой в `EnginePlugins`. Состояние он описывает для ИИ
   (describe, `journal_event`), действия отдаёт инструментами, числа берёт из контента; у него юнит-тесты, сценарий в

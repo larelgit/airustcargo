@@ -41,10 +41,11 @@ Remote Protocol на 127.0.0.1), без MCP-прослоек. Тем же CLI п
 18. [Настройки (E8.6)](#настройки-e86)
 19. [Интерфейс (E9)](#интерфейс-e9)
 20. [Локализация (E9.4)](#локализация-e94)
-21. [Песочница](#песочница)
-22. [Тесты и CI](#тесты-и-ci)
-23. [Что дальше](#что-дальше)
-24. [Соглашения и сборка](#соглашения-и-сборка)
+21. [Звук (E9.5)](#звук-e95)
+22. [Песочница](#песочница)
+23. [Тесты и CI](#тесты-и-ci)
+24. [Что дальше](#что-дальше)
+25. [Соглашения и сборка](#соглашения-и-сборка)
 
 ## Быстрый старт
 
@@ -63,7 +64,7 @@ cargo shards observe                       # срез мира текстом + 
 cargo shards tools                         # что можно сделать (--json: со схемами аргументов)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # в ответе CHANGES и JOURNAL
-cargo shards content check                 # ok: 76 definitions in 26 files
+cargo shards content check                 # ok: 94 definitions in 29 files
 cargo shards act regen region=wilds seed=42   # сгенерированный регион к югу от арены; игрок у его ворот
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # маршрут к логову по навсетке: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # проверка генератора на тысяче зёрен
@@ -84,7 +85,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Контент без игры: читает и проверяет все файлы (в том числе файлы уровней тайлов и запечённую навигацию), код 0 или 1.
 cargo sandbox --check-content
-# ok: 76 definitions in 26 files
+# ok: 94 definitions in 29 files
 
 # 7. Мир без игры: генератор на тысяче зёрен (код 0, если прошли все) и запекание навигации тайлов.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -277,6 +278,7 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 | `crates/shards_settings` | настройки игрока (E8.6): группы графики, звука, управления и доступности на настройках Bevy (`bevy_settings`), `settings.toml`, инструменты `settings`/`settings_set`, окно по настройкам графики |
 | `crates/shards_ui` | интерфейс (E9): экраны и темы в контенте (`screen`, `theme`), стек экранов, фокус и навигация, источники значений и действия кнопок, инструменты `ui_*`, раздел `UI` в `observe`; с feature `render` — рисование на Bevy UI с подписями AccessKit |
 | `crates/shards_locale` | локализация (E9.4): языки в контенте (`locale`), тексты на Fluent (`assets/locale/<язык>/*.ftl`) с параметрами и формами множественного числа, запасной язык, настройка `locale.language` и смена языка на лету, инструменты `locale` и `text`, горячая перезагрузка файлов |
+| `crates/shards_audio` | звук (E9.5): звуки, музыка и микшер в контенте (`sound`, `music`, `audio`), шины с громкостью из настроек, голоса с приоритетом и лимитом, пространственные звуки, музыка в слоях по условиям игры, звуки телеграфов и событий, инструменты `audio`, `sound_play`, `music_set`, строка `MUSIC` в `observe`; с feature `audio` зонтика — воспроизведение через Bevy audio |
 | `crates/ai_core` | слой ИИ, не зависит от конкретной игры: id, срез мира, журнал, инструменты, время, реплеи, транспорт |
 | `crates/shards_script` | без Bevy: формат сценариев, их запуск, разбор условий `--until`, долгая игра агентов (`soak`) и их случайные входы; общий для `shards` и тестов |
 | `crates/shards_cli` | бинарник `shards`, тонкий клиент к `ai/*` |
@@ -289,9 +291,9 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 |---|---|
 | `id` | `AiId` (`e42`): стабильный монотонный id, никогда не переиспользуется; надгробия для удалённых. Id назначает только движок: `set` и BRP `world.mutate_components` его не меняют, а новая вставка перенумеровывает сущность (надгробие `renumbered to e99`) |
 | `describe` | только явно зарегистрированные компоненты видны ИИ, у каждого короткий describe; подсказки под строкой `YOU` (`register_ai_advice`) |
-| `observe` | текстовый срез: YOU / ALERT / SEEN (по угрозе) / NOT IN VIEW / LANDMARKS / разделы модулей (`register_ai_observe_section`: `UI`) / SINCE, видимость от глаз субъекта; `inspect`, `nearby`, диффы |
+| `observe` | текстовый срез: YOU / ALERT / SEEN (по угрозе) / NOT IN VIEW / LANDMARKS / разделы модулей (`register_ai_observe_section`: `UI`, `MUSIC`) / SINCE, видимость от глаз субъекта; `inspect`, `nearby`, диффы |
 | `spatial` | позиции относительно игрока («8.4m NE»), line of sight (подменяемо: движение ставит лучи по физике, `AiOccluder` тоже работает) |
-| `journal` | кольцевой буфер игровых событий (observers) плюс перехват `warn!`/`error!` из tracing: строка получает тик, на котором записана, и попадает в журнал после каждого тика; не больше 64 строк на тик |
+| `journal` | кольцевой буфер игровых событий (observers) плюс перехват `warn!`/`error!` из tracing: строка получает тик, на котором записана, и попадает в журнал после каждого тика; не больше 64 строк на тик. Строки вида `local` (`[local] music: …`) показывает только эта машина: хост их клиентам не шлёт |
 | `tools` | реестр: args-struct + Bevy-система, JSON Schema (schemars), scope, `catch_unwind` |
 | `builtin` | встроенные инструменты: observe, inspect, step, set/get через reflection, … |
 | `sim` | тик, пауза, синхронный `step` по FixedMain, стоп-условия, остановка игры (`Halt`) на упавшей системе и нарушенном инварианте, `SimGate` (удержание тиков на время загрузки) |
@@ -395,7 +397,8 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 событий. Работают трансформы, ассеты, сцены, состояния и физика, поэтому геймплей одинаковый. Это проверяет `--verify
 --windowed`: реплей в окне даёт тот же отчёт, что без окна. Cargo features у `shards`, `sandbox` и шаблона: `render`
 (окно, 3D, UI, клавиатура и мышь; без неё игра собирается только для `--headless`), `remote` (методы `ai/*`),
-`hot_reload` (по умолчанию все три), `audio`, `gamepad`, `wayland`, `dynamic`.
+`hot_reload` (по умолчанию все три), `audio` (звук через устройство вывода; песочница и шаблон включают его по умолчанию,
+см. «Звук»), `gamepad`, `wayland`, `dynamic`.
 
 **`shards::run`** — стандартный `main`. Флаги: `--headless --seed N --port N|0 --port-file F --no-remote --paused --hz N
 --replay FILE --verify [--windowed] --check-every N --check-detail components|entities|none --tick-budget-ms MS --check-content
@@ -541,7 +544,7 @@ reflection, как в сценах Bevy; каждый компонент дол�
 
 ```text
 $ shards act content_list
-content: 76 definitions in 26 files
+content: 94 definitions in 29 files
   action  23
   animset  0
   attack_plan  3
@@ -812,7 +815,8 @@ $ shards act path_to target=e12              # e12 — ориентир «Cliff�
   промежутка удержания и кончается внутри него, валидация отвергает: оно открывалось бы на каждом круге.
 - Смещение (`displacement`) действие отдаёт контроллеру через `LocomotionInput::external`: двигает тело только
   контроллер, поэтому выпад останавливается о стену.
-- Анимация и звук — только имена: `anim: "light_1"` (клип) и `telegraph.sound` (метка для модуля звука).
+- Анимация и звук — только имена: `anim: "light_1"` (клип) и `telegraph.sound` (звук из `*.sound.ron`: модуль звука играет
+  его там, куда придётся удар, см. «Звук»).
 
 **Машина.** Нажатие из `Intent` ждёт в буфере ввода `CombatTuning::input_buffer` (0.15 с по умолчанию), пока его действие
 не станет возможным; окна отмены дают перебить действие другим (комбо); удержанное действие зацикливается (поднятый
@@ -1590,7 +1594,9 @@ $ shards scenario crates/sandbox/scenarios/npc_director.scenario   # три ск
 см. «Мир и генерация») не думает и не ходит и просыпается в тот тик, когда игрок подошёл. Условия `step --until`:
 `named:npc_attacking` (чья-то атака идёт), `named:npcs_calm` (ни у кого нет цели), `named:npc_beyond_leash` (активный NPC дальше
 поводка на метр: шаг, который должен держать NPC в зоне, на нём не должен останавливаться), `named:npc_detour` (NPC идёт
-по маршруту из нескольких участков, потому что цель не на виду).
+по маршруту из нескольких участков, потому что цель не на виду), `named:npc_engaged` (активный NPC с целью в состоянии вида
+`chase`, `attack` или `wait_token`: дерётся; спокойный NPC, который кого-то видит, — нет), `named:npc_near` (живой игрок ближе
+полутора дальностей зрения активного NPC: его вот-вот заметят). Последние два слушает музыка (см. «Звук»).
 
 ### Навсетка
 
@@ -1794,17 +1800,18 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 
 | scope | инструменты |
 |---|---|
-| **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; движение: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; бой: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack; мир: region_info, level_info, nav_path, npc_state; настройки: settings, settings_set (как меню настроек у человека) |
-| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, assert_add, assert_list, assert_remove, assert_reset; мир: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay |
+| **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; движение: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; бой: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack; мир: region_info, level_info, nav_path, npc_state; настройки: settings, settings_set (как меню настроек у человека); звук: audio |
+| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, assert_add, assert_list, assert_remove, assert_reset; мир: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay; звук: sound_play, music_set |
 
-Игра добавляет свои (в шаблоне `taunt` и условие `arena_cleared`, в песочнице условия `boss_phase_2`, `boss_dead`,
-`player_dead`, `three_attacking`). Модули добавляют условия для `step --until named:…`: `near_poi` (мир, появляется с первым
-регионом), `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour` (NPC). У каждого инструмента есть вид (`kind` в `shards tools`):
+Игра добавляет свои (в шаблоне `taunt` и условия `arena_cleared`, `foe_near`, `in_fight`, в песочнице условия `boss_phase_2`,
+`boss_dead`, `player_dead`, `three_attacking`). Модули добавляют условия для `step --until named:…`: `near_poi` (мир, появляется
+с первым регионом), `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_engaged`, `npc_near` (NPC). У каждого
+инструмента есть вид (`kind` в `shards tools`):
 
 - `query` только читает мир: без записи в журнал и без диффа;
 - `action` меняет мир: пишет в журнал, возвращает `CHANGES` и попадает в реплей;
 - `control` управляет временем или сессией (pause, resume, speed, step, possess, content_reload, rebind, settings_set,
-  snapshot_save, snapshot_load, nav_bake): журнал и дифф
+  snapshot_save, snapshot_load, nav_bake, sound_play, music_set): журнал и дифф
   как у action, но в реплей не попадает. Он меняет, *когда* что-то происходит, а не *что*.
   Исключение — правила (`assert_add`, `assert_remove`, `assert_reset`): мир они не меняют, но
   решают, где игра остановится, поэтому реплей записывает их отдельными событиями.
@@ -2833,10 +2840,10 @@ shards load-snapshot snapshots/boss_phase2.json   # или act snapshot_load pat
 
 ```text
 $ shards save-snapshot snapshots/wilds_fight.json                  # игра 1: регион wilds, на 332-м тике страж бьёт игрока
-saved /…/snapshots/wilds_fight.json: tick 332, 30 entities, 3 resources
+saved /…/snapshots/wilds_fight.json: tick 332, 30 entities, 4 resources
 $ shards load-snapshot snapshots/wilds_fight.json                  # игра 2: свежая, на арене, региона нет
-loaded /…/snapshots/wilds_fight.json: tick 332, 30 entities, 3 resources; region: wilds seed 42 v1 built again from its manifest (199 entities); the recording now starts at tick 332
-  332 [sim] snapshot loaded: …/snapshots/wilds_fight.json (tick 332, 30 entities, 3 resources; region: wilds seed 42 v1 built again from its manifest (199 entities))
+loaded /…/snapshots/wilds_fight.json: tick 332, 30 entities, 4 resources; region: wilds seed 42 v1 built again from its manifest (199 entities); the recording now starts at tick 332
+  332 [sim] snapshot loaded: …/snapshots/wilds_fight.json (tick 332, 30 entities, 4 resources; region: wilds seed 42 v1 built again from its manifest (199 entities))
 $ shards step 120                                                  # то же, что в игре 1
 ran 120 ticks (332 → 452)
   ~ e25 Skeleton "Den Guard": +ground 1.6m/s; fight e5 · token · leash 9/10m → fight e5 · circle · leash 7/10m; -active claw 0.10s (zone cone 1.8m 100°); moved 1.8m S
@@ -3028,6 +3035,7 @@ master = 1.0
 music = 0.8
 sfx = 1.0
 voice = 1.0
+ui = 1.0                     # звуки меню
 
 [accessibility]
 camera_shake = 0.3           # 0 — тряски нет совсем
@@ -3052,7 +3060,7 @@ invert_y = false
 | группа | кто и как |
 |---|---|
 | `graphics` | `shards_settings::apply_graphics`: основное окно (полный экран, vsync, размер, масштаб `scale_factor_override`); окно меняется, когда меняются настройки, а не каждый кадр, поэтому размер, который игрок потянул мышью, не отнимают. Без окна значения только хранятся. `shadows` читает игра: `GraphicsSettings::shadow_quality()` |
-| `audio` | хранится для звукового модуля (E9): `AudioSettings::volume("music")` отдаёт громкость с учётом `master` |
+| `audio` | `shards_audio`: громкость шин `music`, `sfx`, `voice`, `ui` с учётом `master` (`AudioSettings::volume("music")`), применяется к тому, что уже звучит (см. «Звук») |
 | `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (см. «Ввод» в «Движении (E2)»); чувствительность и инверсия оси Y идут в `CameraSettings` |
 | `accessibility` | `shards_motion`: поле зрения и сила тряски камеры, `MotionBlur` на камерах, у которых он есть (игра добавляет компонент, настройка задаёт силу, 0 выключает), `hold_to_toggle` в карте ввода; `shards_action`: `flashes` для мерцания телеграфов и маркеров за кадром (`reduced` — вдвое мельче и не чаще 2 раз в секунду, `off` — ровный свет, `draw::pulse_at`) |
 
@@ -3339,8 +3347,8 @@ ok: closed settings; pause is on top · focus pause/settings
 `pause/resume is under confirm_quit: answer or close that first`, ``settings/text_size is a slider: a number from 0.5 to 3, not `big` ``.
 Пока открыто меню, `observe` печатает после `LANDMARKS` раздел `UI` (верхний экран, до 20 строк, и какими инструментами
 действовать); HUD в `observe` не попадает. Журнал: `ui: opened pause`, `ui: pause/resume pressed (close)`, `ui: settings/text_size
-1 → 1.25`, `ui: closed pause`; код слышит события `UiPressed`, `UiChanged`, `UiScreenChanged`. `ai/status` получает поле `ui`
-(`screens`; `input` — экран, который берёт ввод; `focus`).
+1 → 1.25`, `ui: closed pause`; код слышит события `UiFocusMoved`, `UiPressed`, `UiChanged`, `UiScreenChanged` (их озвучивает
+модуль звука). `ai/status` получает поле `ui` (`screens`; `input` — экран, который берёт ввод; `focus`).
 
 **Человек.** Клавиша `pause` карты ввода (Escape, Start на геймпаде) открывает экран `pause`, если он есть в контенте. Пока
 открыто меню, сверху стоит контекст ввода `menu` (персонаж ничего не слышит): `navigate` (стрелки, WASD, левый стик; зажатое
@@ -3437,8 +3445,8 @@ language=ru` — все сообщения языка с текстом. `text i
 ```text
 $ shards act locale
 playing: en
-en English: 33 messages
-ru Русский → en: 32 messages; lacks 1: settings-fov
+en English: 34 messages
+ru Русский → en: 33 messages; lacks 1: settings-fov
 # switch: settings_set group=locale key=language value=<id>; `locale language=<id>` lists one language's text
 $ shards act text id=defeated 'args={"count": 3}' language=ru
 Повержено 3 врага
@@ -3460,6 +3468,119 @@ Player.
 разбор файлов и ошибки с позицией; `tests/locale/`: смена языка в работающей игре и меню на новом языке, проверка контента,
 горячая перезагрузка файла), сценарий `crates/sandbox/scenarios/locale.scenario`, в шаблоне — `template/scenarios/menus.scenario`
 и `tests/game/screens.rs`.
+
+## Звук (E9.5)
+
+Как звучит игра, решает контент трёх видов, а модуль `shards_audio` решает, что звучит сейчас, откуда и насколько громко.
+Решает он на часах симуляции, одинаково в окне и без окна, поэтому агент слышит игру через инструменты, а не через динамики.
+
+```ron
+// content/audio/arena.sound.ron: звуки (вид `sound`)
+{
+    "warden_slam": (files: ["sounds/warden_slam.wav"], priority: 220, spatial: (near: 4.0, far: 55.0)),
+    "hit": (files: ["sounds/hit_1.wav", "sounds/hit_2.wav"], priority: 120, spatial: (near: 2.0, far: 30.0), max_instances: 4),
+    "ui_press": (files: ["sounds/ui_press.wav"], bus: Ui, volume: 0.5),
+}
+// content/audio/arena.music.ron: музыка (вид `music`)
+{
+    "arena": (
+        stems: [
+            (file: "music/arena_pad.wav", layers: ["explore", "tension", "combat"]),
+            (file: "music/arena_pulse.wav", layers: ["tension", "combat"]),
+            (file: "music/arena_drums.wav", layers: ["combat"]),
+        ],
+        layers: [(name: "explore"), (name: "tension", when: "npc_near"), (name: "combat", when: "npc_engaged")],
+        fade_in: 1.0, fade_out: 2.5, hold: 5.0,
+    ),
+}
+// content/audio/mixer.audio.ron: микшер (вид `audio`, один на игру)
+{ "mixer": (voices: 24, music: "arena", sounds: {"damaged": "hit", "ui_pressed": "ui_press"}) }
+```
+
+**Шины.** Каждый звук идёт по шине: `Music` (только музыка), `Sfx` (по умолчанию: удары, атаки, мир), `Ui` (меню), `Voice`
+(речь). Громкость шины — настройка игрока `audio.<шина>`, умноженная на `audio.master` (группа `audio`; новая настройка
+`audio.ui` — громкость меню). `settings_set group=audio key=sfx value=0.5` или слайдер меню применяется к тому, что уже звучит.
+
+**Голоса.** Одновременно звучат не больше `voices` микшера (по умолчанию 24). Когда свободных голосов нет, новый звук забирает
+голос самого слабого (ниже `priority`, потом тише, потом старше), если сам сильнее; иначе его не слышно. Звук с `max_instances`
+забирает голос своего же самого старого. Звук со `spatial` слышен оттуда, где он случился: целиком ближе `near`, тише по
+`(1 − t)²` до `far`, а дальше `far` даже не запускается; панорама — по тому, куда смотрит слушатель. Слушатель — тело, которым
+играют на этой машине (тот же `viewer`, что у HUD), повёрнутое как камера (`AudioListener`: движок вешает его на камеру
+третьего лица). Звук из нескольких файлов играет их по очереди.
+
+**Откуда звуки.** Телеграф атаки (E3) называет свой звук (`telegraph: (…, sound: "warden_slam")`), и он звучит там, куда
+придётся удар, от атакующего. Ключ анимации (`AnimationCue`) играет звук с тем же именем от тела, если такой звук есть. События
+движка звучат звуками из `sounds` микшера: `damaged`, `blocked`, `parried`, `evaded`, `guard_broken`, `staggered`, `died`,
+`healed` (от того, с кем это случилось) и `ui_moved`, `ui_pressed`, `ui_changed`, `ui_opened`, `ui_closed` (меню, везде
+одинаково; HUD не звучит). Игра играет свои: `commands.trigger(PlaySound::new("coin", SoundAt::Entity(hero)))` или
+`shards::audio::play(world, "coin", SoundAt::Point { position, source: None })`.
+
+**Музыка в слоях.** Стемы трека — файлы одной длины: они стартуют вместе и идут по кругу, а слой включает свои. Слои идут от
+спокойного к напряжённому; у каждого, кроме первого, условие `when` — имя условия, как у `step --until named:…` (`!имя` —
+отрицание): движка (`npc_near` и `npc_engaged` модуля NPC) или игры (`add_ai_condition`). Звучит самый напряжённый слой, чьё
+условие выполняется, иначе первый. Более напряжённый приходит сразу, более спокойный — когда его хотят `hold` секунд подряд,
+так что передышка в бою не обрывает музыку. Стемы входят за `fade_in` и уходят за `fade_out`. Журнал пишет смены строкой
+`[local] music: arena explore → tension`. `music_set track=boss` меняет трек (старый затихает), `track=none` — тишина,
+`layer=combat` держит слой, что бы ни было в игре, `layer=auto` отпускает.
+
+**Для агента.** `audio` (query, scope Player) — что слышит эта машина: трек, слой и сколько он длится, какой спокойный слой
+ждёт своего `hold`, стемы с громкостью, шины, голоса (звук, источник, расстояние, громкость, приоритет, длина), последние
+неуслышанные звуки с причиной и где слушатель:
+
+```text
+$ shards act audio
+music arena: combat for 10.9s
+  music/arena_pad.wav [arena] 1.00
+  music/arena_pulse.wav [arena] 1.00
+  music/arena_drums.wav [arena] 1.00
+buses (with master): music 0.80 · sfx 1.00 · ui 1.00 · voice 1.00
+voices 2/24 (started 29, dropped 1)
+  #27 parry sfx e6 1.2m gain 1.00 prio 160 (0.80s)
+  #29 warden_slash sfx e6 0.3m gain 1.00 prio 180 (0.32s)
+  dropped whoosh at 10.3s: out of earshot: 32.5 m, heard to 20 m
+listener e5 at (0.0, 0.0, -2.6)
+$ shards act sound_play sound=parry at=e6
+playing parry #27: sounds/parry.wav at 1.2 m, gain 1.00, 0.80s
+$ shards act sound_play sound=parry at=e5 times=25
+parry ×25: 24 playing, 1 not heard: all 24 voices play sounds as strong or stronger
+$ shards act music_set layer=explore
+arena keeps to explore until `music_set layer=auto`
+```
+
+`observe` пишет строку `MUSIC  arena: combat for 10.3s`, `ai/status` — поле `audio` (`track`, `layer`, `voices`, `limit`).
+`sound_play` (`sound`, `at=eN` или `point=[x,y,z]`, `times` до 64) и `music_set` — инструменты Dev вида control. Ошибки
+называют, что есть: ``no sound `warden_slom` (did you mean `warden_slam`?)``, ``arena has no layer `fight`; layers: explore,
+tension, combat``.
+
+**Часы.** Микшер и музыка работают в `FixedPostUpdate` после каждого тика (`AudioSystems::Mix`): `step` их двигает, пауза
+останавливает. Звуки меню идут по реальному времени и слышны на паузе, а голоса эффектов на паузе замирают.
+
+**Вне симуляции.** Звук — дело этой машины: условия и события только читаются, ничего из звука не входит в хэш реплея, строки
+журнала о музыке — вида `local` (не игровые события, хост не пересылает их клиентам), и клиент кооператива слышит свою копию
+боя. Состояние музыки (`Music`: трек, слой, сколько он длится, стемы) входит в снапшот, и загруженная сессия слышит то же;
+голоса — нет.
+
+**Воспроизведение.** Feature `audio` крейта `shards` (у песочницы и шаблона включена) играет решения микшера через Bevy audio:
+WAV и Ogg Vorbis; на Linux нужен `libasound2-dev` (он уже в списке пакетов). Без устройства вывода ничего не звучит, а микшер
+решает так же. Голос — синк своего файла с громкостью из микшера; пространственный стоит в метре от ушей с той стороны, откуда
+звук.
+
+**Проверка контента.** `--check-content` и `content_check` находят файл, которого нет или который не WAV и не Ogg Vorbis,
+стемы разной длины (``stems loop together, so they need one length: `music/calm.wav` plays 2.00 s, `sounds/beep.wav` 0.50 s``),
+слой без стемов, первый слой с `when` и следующий без него, слой стема, которого нет у трека (с подсказкой), звук на шине
+`Music`, `far` ближе `near`, `max_instances: 0`, событие микшера, которого нет у движка (``no engine event `damagd` (did you
+mean `damaged`?)``), второй микшер и атаку, чей телеграф называет звук, которого нет (``action `bite` warns with sound `boon`,
+which no `*.sound.ron` defines (did you mean `boom`?)``). Условие слоя, которого игра не зарегистрировала, журнал называет
+один раз, когда трек играет.
+
+**Файлы песочницы и шаблона** синтезированы, записей в репозитории нет: `cargo run -p sandbox --example make_sounds` пишет их
+заново (16-битный моно WAV, шум с зерном — те же байты при каждом запуске).
+
+Проверка: `crates/shards_audio` (юнит-тесты: длина WAV и Ogg, затухание с расстоянием, шины по настройкам, голоса и их кража;
+`tests/audio/`: лимит голосов и `max_instances`, расстояние и источник, часы симуляции, громкость игрока, события, телеграфы и
+меню, инструменты, слои музыки и `hold`, `music_set`, строки `local`, снапшот, проверка контента), сценарий
+`crates/sandbox/scenarios/audio.scenario`, в шаблоне — `tests/game/audio.rs` (музыка переходит в `combat`, когда герой подходит
+к грунту).
 
 ## Песочница
 
@@ -3494,6 +3615,7 @@ Player.
 | `world/world.bounds.ron` | границы мира для правила `bodies_in_world`: запас вокруг построенных layout и региона, высота, ниже которой тело выпало |
 | `ui/menus.screen.ron` | меню на виджетах движка: `pause`, `settings` (все группы настроек и язык на вкладках), вопрос `confirm_quit`; HUD у песочницы свой, в коде окна (`visuals.rs`) |
 | `ui/languages.locale.ron`, `ui/arena.theme.ron` | языки меню (английский и русский с запасным английским; тексты — `assets/locale/<язык>/menus.ftl`) и тема со шрифтом Fira Sans, в котором есть кириллица (`assets/fonts/`) |
+| `audio/arena.sound.ron`, `audio/arena.music.ron`, `audio/mixer.audio.ron` | звуки (атаки стража, удары, блок, парирование, смерть, лечение, меню), музыка арены в трёх слоях и микшер: 24 голоса, звуки событий движка; файлы — `assets/sounds/`, `assets/music/` (синтезированы `cargo run -p sandbox --example make_sounds`) |
 
 `layout` — вид контента самой песочницы: коробки (`solids`), пандусы, объёмы (вода, поток, триггер), ориентиры для ИИ и
 префабы для спавна. Слои спавнятся по порядку id, внутри — по порядку списков, так что `AiId` и `ColliderId` одинаковы в
@@ -3542,7 +3664,11 @@ Player.
   игрока, вопрос поверх меню, ошибки, которые учат; в начале и в конце меню закрыты, настройки по умолчанию;
 - `locale.scenario` (E9.4) — `locale` и `text`: формы множественного числа по языку, фраза во фразе, подсказка к опечатке;
   вкладка «Language» меню переключает его на русский, пока оно открыто, недостающее в русском берётся из английского, язык,
-  которого нет, отклоняется; в начале и в конце язык игры, меню закрыты.
+  которого нет, отклоняется; в начале и в конце язык игры, меню закрыты;
+- `audio.scenario` (E9.5) — музыка арены идёт за игрой: в каньоне вдали от монстров `explore`, у стража `tension`, страж дерётся —
+  `combat` сразу, успокоился — `tension` через пять секунд; `music_set` держит слой и учит на ошибках; 25 звуков на 24 голоса,
+  сильный звук забирает голос слабого, голоса освобождаются; звук дальше `far` не запускается; громкость игрока применяется к
+  тому, что звучит; лечение и меню звучат звуками микшера.
 
 Сценарии начинают с `heal`/`teleport`/`set`/`npc_set_state … calm`, поэтому идут на свежей игре и после других, в любом порядке:
 CI гоняет их вперёд и потом назад в одной игре. Сессии шести из них записаны как эталонные реплеи в `tests/replays/`
@@ -3621,9 +3747,9 @@ E11), B (мир: E5, E6, уровни из Blender, снапшоты) и C (ко
 проверяет их на каждом пуше. Впереди:
 
 1. **Фаза D — интерфейс и контент:** интерфейс (E9.1–3: экраны, фокус, темы, дерево для агента) собран в `shards_ui`,
-   локализация (E9.4) — в `shards_locale`; впереди звук (шины, адаптивная музыка, пространственные звуки); остатки E4
-   и E11: консоль и меню разработчика, оверлей NPC, `path_to` и `clearance` по навсетке (сейчас по ней только `nav_path`
-   и `move_to path=true`), проверка, что сокеты файла уровня совпадают с сокетами тайла в RON.
+   локализация (E9.4) — в `shards_locale`, звук (E9.5: шины, голоса, пространственные звуки, музыка в слоях) — в
+   `shards_audio`; впереди остатки E4 и E11: консоль и меню разработчика, оверлей NPC, `path_to` и `clearance` по навсетке
+   (сейчас по ней только `nav_path` и `move_to path=true`), проверка, что сокеты файла уровня совпадают с сокетами тайла в RON.
 2. **Остатки фазы B:** стриминг геометрии тайлов для физики (сейчас по расстоянию грузится только картинка), навсетка под
    несколько тел.
 3. **Фаза E — платформа:** рендер и производительность, Steam, Windows, скриншоты без окна (E10).
