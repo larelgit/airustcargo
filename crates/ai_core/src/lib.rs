@@ -41,6 +41,7 @@
 
 pub mod builtin;
 pub mod describe;
+pub mod dev;
 pub mod failures;
 #[cfg(feature = "render")]
 pub mod highlight;
@@ -81,6 +82,7 @@ pub use builtin::{AiConditions, StopWhen};
 pub use describe::{
     AdviceFn, AiAdvisors, AiDescribers, AiKind, AiObserveLines, AiObserveSections, Describer, EntityFacts, ObserveLinesFn, ObserveSectionFn,
 };
+pub use dev::{DevCommand, DevEntry, DevLine, DevMenu};
 pub use failures::{ai_core_error_handler, AiFailures, SystemFailure};
 pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible};
 pub use invariants::{AiInvariants, InvariantSystems, Violation};
@@ -168,6 +170,7 @@ impl Plugin for AiCorePlugin {
             .init_resource::<AiIndex>()
             .init_resource::<AiJournal>()
             .init_resource::<AiDescribers>()
+            .init_resource::<DevMenu>()
             .init_resource::<AiAdvisors>()
             .init_resource::<AiTools>()
             .init_resource::<AgentSessions>()
@@ -204,6 +207,7 @@ impl Plugin for AiCorePlugin {
         }
 
         builtin::register(app.world_mut());
+        dev::register(app);
         replay::plugin(app, self.check_every, self.check_detail);
         snapshot::plugin(app);
         perf::plugin(app, self.tick_budget, self.report_perf);
@@ -329,6 +333,11 @@ pub trait AiAppExt {
     /// the engine's version and modules. A second field with the same key replaces
     /// the first.
     fn add_ai_status(&mut self, key: &str, field: status::StatusField) -> &mut Self;
+
+    /// An entry of the developer menu (`shards_dev`): `label` in section `group`, running a
+    /// tool call written as `shards act` takes it ([`DevCommand`]). A module adds the entries of
+    /// its own tools; the same `id` again replaces the entry.
+    fn add_dev_entry(&mut self, group: &str, id: &str, label: &str, command: DevCommand) -> &mut Self;
 
     /// Saves resource `R` in snapshots and puts it back on load: for state that lives
     /// outside entities with an `AiId` and decides what a tick does (a counter, a timer).
@@ -470,6 +479,12 @@ impl AiAppExt for App {
 
     fn add_ai_status(&mut self, key: &str, field: status::StatusField) -> &mut Self {
         self.world_mut().get_resource_or_init::<AiStatusFields>().add(key, field);
+        self
+    }
+
+    fn add_dev_entry(&mut self, group: &str, id: &str, label: &str, command: DevCommand) -> &mut Self {
+        let entry = DevEntry { group: group.into(), id: id.into(), label: label.into(), command };
+        self.world_mut().get_resource_or_init::<DevMenu>().add(entry);
         self
     }
 

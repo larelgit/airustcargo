@@ -1,0 +1,54 @@
+# The developer menu and console (E11.1): what F10 and the console key do in a window, an
+# agent does with `dev_menu` and `console`, through the same tools as `shards`. Every item of
+# the GDD's list (32.8) has an entry; the sandbox adds its own after the engine's. It puts back
+# everything it switches.
+
+# --- the player at the arena's start, mortal, the overlays off
+act heal id=e5
+act god on=false
+act combat_overlay on=false
+act npc_overlay on=false
+act teleport id=e5 x=0 z=12 y=0
+step 2
+
+# --- the menu: the engine's sections, then the sandbox's
+act dev_menu
+expect result contains "Immortality on / off"
+expect result contains "worldgen_200"
+expect result contains "combat_overlay"
+expect result contains "npc_overlay"
+expect result contains "net_lag"
+expect result contains "save_check"
+expect result contains "Warden, phase 2 (snapshot)"
+expect result !contains "no tool `"
+# a switch runs the line of its other state: immortality on, then off
+act dev_menu run=god
+expect result contains "e5 is invulnerable"
+act dev_menu
+expect result contains "god on=false"
+act dev_menu run=god
+expect result contains "e5 can be hurt again"
+# the sandbox's entries: the player to the obstacle course and back; a seed to fill in
+act dev_menu run=course_start
+expect field e5 Transform.translation.x > 39
+act dev_menu run=arena_start
+expect field e5 Transform.translation.x < 1
+act? dev_menu run=wilds
+expect result contains "needs values: run `regen region=wilds seed=`"
+
+# --- the console: a line as `shards act` takes it; a bad one says how to fix it
+act console line="combat_overlay"
+expect result contains "combat overlay on"
+act console line="combat_overlay on=false"
+expect result contains "combat overlay off"
+act? console line="teleport id=e5 x"
+expect result contains "expected key=value, got `x`"
+act? console line="fly"
+expect result contains "unknown tool `fly`"
+
+# --- the world's entries once there is a region: the generator checks its seed
+act regen region=wilds seed=42
+act dev_menu
+expect result contains "worldgen_report region=wilds seeds=42"
+act dev_menu run=region_check
+expect result contains "ok: worldgen wilds v1, seeds 42: 1/1 passed"

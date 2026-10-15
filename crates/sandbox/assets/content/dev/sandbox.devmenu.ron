@@ -1,0 +1,10 @@
+// The sandbox's own entries of the developer menu (F10 in a window, `dev_menu` for an agent),
+// after the engine's. The warden's second phase is a snapshot: record it once with
+// `shards save-snapshot snapshots/boss_phase2.json` when the fight stands there (or run
+// scenarios/snapshot.scenario).
+{
+    "boss_phase_2": (group: "sandbox", label: "Warden, phase 2 (snapshot)", run: "snapshot_load path=snapshots/boss_phase2.json"),
+    "arena_start": (group: "sandbox", label: "Player to the arena's start", run: "teleport id=e5 x=0 z=12 y=0"),
+    "course_start": (group: "sandbox", label: "Player to the obstacle course", run: "teleport id=e5 x=40 z=0 y=0"),
+    "wilds": (group: "sandbox", label: "The wilds, seed...", fill: "regen region=wilds seed="),
+}

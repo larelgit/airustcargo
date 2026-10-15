@@ -18,6 +18,7 @@ render = [
     "shards_npc/render",
     "shards_net/render",
     "shards_ui/render",
+    "shards_dev/render",
     "bevy/3d_bevy_render",
     "bevy/ui_bevy_render",
     "bevy/bevy_winit",
@@ -56,6 +57,7 @@ shards_settings.workspace = true
 shards_locale.workspace = true
 shards_ui.workspace = true
 shards_audio.workspace = true
+shards_dev.workspace = true
 bevy = { workspace = true, features = ["default_app", "std", "multi_threaded", "serialize"] }
 serde.workspace = true
 serde_json.workspace = true

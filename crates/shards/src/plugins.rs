@@ -11,6 +11,7 @@ use shards_action::ActionPlugin;
 use shards_audio::AudioPlugin as ShardsAudioPlugin;
 use shards_content::ContentPlugin;
 use shards_core::{CorePlugin, EngineConfig};
+use shards_dev::DevPlugin;
 use shards_level::LevelPlugin;
 use shards_motion::MotionPlugin;
 use shards_net::NetPlugin;
@@ -115,6 +116,8 @@ impl PluginGroup for EnginePlugins {
             // Sound and music: what the fight and the menus sound like, heard from the body.
             .add(ShardsAudioPlugin)
             .add(EngineAudioPlugin)
+            // The developer menu and console, last: every module above has added its entries.
+            .add(DevPlugin)
     }
 }
 

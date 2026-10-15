@@ -144,7 +144,9 @@ impl Caller {
     }
 }
 
-pub(crate) fn caller(world: &mut World, agent: &str) -> Caller {
+/// The caller a call of `agent` would have now: its scope and subject (its session is made on
+/// first use).
+pub fn caller(world: &mut World, agent: &str) -> Caller {
     let session = world.resource_mut::<AgentSessions>().get_or_create(agent).clone();
     let resolver = world.resource::<AgentSessions>().player_resolver;
     let (subject, subject_id) = match (session.player, session.subject) {

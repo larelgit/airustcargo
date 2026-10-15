@@ -1,0 +1,29 @@
+[package]
+name = "shards_dev"
+description = "Shards developer tools (E11.1): the in-game console and developer menu, both calling the same tools as `shards` through `call_tool`."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# The console and the menu drawn with Bevy UI, opened by keys (` and F10). The menu's entries,
+# the console's lines, completion and the `console` and `dev_menu` tools are always built: an
+# agent reaches them without a window.
+render = ["ai_core/render", "shards_motion/render", "bevy/bevy_ui", "bevy/bevy_text", "bevy/bevy_window", "bevy/ui_picking"]
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+shards_script.workspace = true
+# The input context the console takes while it has the keyboard.
+shards_motion.workspace = true
+bevy = { workspace = true, features = ["std", "serialize"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+# Integration tests build apps the way a game does: the whole engine (`shards::testing`).
+shards = { workspace = true, features = ["render", "remote", "hot_reload"] }

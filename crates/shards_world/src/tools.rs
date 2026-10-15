@@ -4,7 +4,7 @@
 use ai_core::prelude::*;
 use ai_core::spatial::fmt_pos;
 use ai_core::tools::{register_tool, ToolKind};
-use ai_core::SimSeed;
+use ai_core::{DevCommand, SimSeed};
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -24,6 +24,30 @@ pub(crate) fn register(world: &mut World) {
     register_tool(world, "goto_tile", Dev, Action, goto_tile);
     register_tool(world, "worldgen_report", Dev, Query, worldgen_report);
     register_tool(world, "region_info", Player, Query, region_info);
+}
+
+/// The developer menu's world entries: the seed, the generator's checks for this seed and
+/// for many, a tile to go to, another region.
+pub(crate) fn dev_entries(app: &mut App) {
+    /// The region in the world, or why the entry does nothing here.
+    fn manifest(world: &World) -> Result<&RegionManifest, String> {
+        world.get_resource::<ActiveRegion>().map(|r| &r.manifest).ok_or_else(|| "no region in the world: make one with `regen region=<id>`".to_owned())
+    }
+    app.add_dev_entry("world", "region_info", "Region and its seed", DevCommand::Run("region_info".into()))
+        .add_dev_entry(
+            "world",
+            "region_check",
+            "Check this seed: rules, reachability",
+            DevCommand::Live(|w, _| manifest(w).map(|m| format!("worldgen_report region={} seeds={}", m.region, m.seed))),
+        )
+        .add_dev_entry(
+            "world",
+            "worldgen_200",
+            "Generate 200 regions like this one",
+            DevCommand::Live(|w, _| manifest(w).map(|m| format!("worldgen_report region={} seeds=1..200", m.region))),
+        )
+        .add_dev_entry("world", "goto_tile", "Go to tile...", DevCommand::Fill("goto_tile x= y=".into()))
+        .add_dev_entry("world", "regen", "New region...", DevCommand::Fill("regen region= seed=".into()));
 }
 
 /// Generate a region (or dungeon) and change to it behind the loading screen: the old
@@ -123,12 +147,24 @@ pub struct WorldgenReportArgs {
     /// `region` or `dungeon` content id.
     pub region: String,
     /// `1..1000` (both ends included), `7`, or `1,5,10..20`. Default 1..100.
-    pub seeds: Option<String>,
+    pub seeds: Option<SeedsArg>,
+}
+
+/// Seeds as text, or one seed as a number (`seeds=7` reads as one).
+#[derive(Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum SeedsArg {
+    One(u64),
+    Text(String),
 }
 
 fn worldgen_report(In(call): In<Call<WorldgenReportArgs>>, world: &mut World) -> ToolResult {
     let worldgen = world.resource::<WorldGen>().clone();
-    let seeds = call.args.seeds.unwrap_or_else(|| "1..100".into());
+    let seeds = match call.args.seeds {
+        Some(SeedsArg::One(seed)) => seed.to_string(),
+        Some(SeedsArg::Text(text)) => text,
+        None => "1..100".into(),
+    };
     let report = crate::report::run(world.resource::<ContentDb>(), &worldgen, &call.args.region, &seeds)?;
     Ok(report.to_string().trim_end().to_owned())
 }

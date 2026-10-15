@@ -9,8 +9,10 @@
 //! The overlay is switched with the `combat_overlay` tool or a key ([`CombatOverlay::key`],
 //! F2). Telegraphs are always on; [`TelegraphSettings`] can turn them off for a cutscene.
 
+use ai_core::dev::toggle_line;
 use ai_core::prelude::*;
 use ai_core::tools::{register_tool, ToolKind};
+use ai_core::DevCommand;
 use bevy::gizmos::config::{GizmoConfig, GizmoConfigGroup, GizmoLineConfig};
 use bevy::gizmos::AppGizmoBuilder;
 use bevy::prelude::*;
@@ -70,6 +72,12 @@ pub struct CombatDraw {
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<CombatOverlay>().init_resource::<TelegraphSettings>().init_resource::<CombatDraw>();
     register_tool(app.world_mut(), "combat_overlay", Scope::Dev, ToolKind::Query, overlay_tool);
+    app.add_dev_entry(
+        "combat",
+        "combat_overlay",
+        "Hitboxes, hurtboxes, attack zones (F2)",
+        DevCommand::Live(|w, _| Ok(toggle_line("combat_overlay", w.resource::<CombatOverlay>().enabled))),
+    );
     // Headless apps have no gizmo plugin: the tool still answers, nothing is drawn.
     if app.is_plugin_added::<bevy::gizmos::GizmoPlugin>() {
         app.insert_gizmo_config(

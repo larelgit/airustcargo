@@ -4,9 +4,10 @@
 //! targets and heard noises, and its leash around home (red when it stands beyond). The
 //! `npc_overlay` tool answers the same as lines, one per NPC, anywhere.
 
+use ai_core::dev::toggle_line;
 use ai_core::spatial::{fmt_pos, relative};
 use ai_core::tools::{register_tool, ToolKind};
-use ai_core::{AiId, AiPlayer, Call, Scope, ToolResult};
+use ai_core::{AiAppExt, AiId, AiPlayer, Call, DevCommand, Scope, ToolResult};
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -37,6 +38,20 @@ impl Default for NpcOverlay {
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<NpcOverlay>();
     register_tool(app.world_mut(), "npc_overlay", Scope::Dev, ToolKind::Query, overlay_tool);
+    app.add_dev_entry(
+        "ai",
+        "npc_overlay",
+        "NPC minds: state, senses, leash (F7)",
+        DevCommand::Live(|w, _| Ok(toggle_line("npc_overlay", w.resource::<NpcOverlay>().enabled))),
+    )
+    .add_dev_entry(
+        "ai",
+        "nav_overlay",
+        "Navmesh and NPC routes",
+        DevCommand::Live(|w, _| Ok(toggle_line("nav_overlay", w.resource::<crate::nav::NavOverlay>().enabled))),
+    )
+    .add_dev_entry("ai", "npc_state", "One NPC's mind...", DevCommand::Fill("npc_state id=".into()))
+    .add_dev_entry("ai", "nav_info", "Navmesh of this region", DevCommand::Run("nav_info".into()));
     #[cfg(feature = "render")]
     window::plugin(app);
 }
