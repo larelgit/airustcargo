@@ -231,6 +231,26 @@ pub struct Slot {
     pub name: String,
     pub peer: Option<PeerId>,
     pub left_at: Option<u64>,
+    /// Who closed the link of this player's last game, once it was closed (the first to do so).
+    pub closed_by: Option<Closer>,
+}
+
+/// Who closed a link.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Closer {
+    /// The host: it kicked the player (`net_kick`), turned it away, put it out for another game
+    /// with its token, or its silence timed out.
+    Host,
+    /// The player's game said goodbye (`Bye`): it quit, or could not go on (`cannot take the world`).
+    Peer,
+}
+
+/// Notes that `by` closed the link of peer `id`, on the slot that peer holds. The first to close
+/// it counts: a kicked game answers with a `Bye` of its own, and the host did the closing.
+fn note_closer(slots: &mut std::collections::BTreeMap<u8, Slot>, id: PeerId, by: Closer) {
+    if let Some(slot) = slots.values_mut().find(|s| s.peer == Some(id)) {
+        slot.closed_by.get_or_insert(by);
+    }
 }
 
 /// What the host does at the next `ApplyCalls`.
@@ -365,20 +385,20 @@ impl NetHost {
         peer.send_noted(&Msg::Bye { reason: reason.to_owned() }, "the kick");
         let (connected, player) = (peer.stage == PeerStage::Connected, peer.player);
         peer.stage = PeerStage::Gone;
+        note_closer(&mut self.slots, id, Closer::Host);
         if connected {
             self.tasks.push(Task::Leave { player, peer: id, reason: reason.to_owned() });
         }
         Ok(())
     }
 
-    /// Whether the player who joined as `name` has left, or is leaving: the host kicked it
-    /// (`net_kick`: its link is `Gone` at once, its slot is vacated at the next tick), it said
-    /// goodbye, or it timed out. A process that exits with an error after this was told to by
-    /// the host, which is not a crash of its own.
-    pub fn has_left(&self, name: &str) -> bool {
-        self.slots.values().filter(|slot| slot.name == name).any(|slot| {
-            slot.left_at.is_some() || slot.peer.and_then(|id| self.peers.get(&id)).is_some_and(|peer| peer.stage == PeerStage::Gone)
-        })
+    /// Whether the host closed the link of the player who joined as `name`: it kicked it
+    /// (`net_kick`), turned it away, put it out for another game with its token, or its silence
+    /// timed out. Recorded the moment the link closes, before the slot is vacated at the next
+    /// tick. A farewell the player's game sent (`Bye`) is not that: a game that says goodbye and
+    /// exits with an error did not leave because the host asked.
+    pub fn link_closed_by_host(&self, name: &str) -> bool {
+        self.slots.values().any(|slot| slot.name == name && slot.closed_by == Some(Closer::Host))
     }
 
     /// Sends player `player`'s machine its character (co-op saves: `sections` as the game
@@ -718,6 +738,7 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
                 NetMarks::mark(world, |m| &mut m.disconnected);
             }
             peer.stage = PeerStage::Gone;
+            note_closer(&mut host.slots, peer.id, Closer::Host);
         }
     }
     // A peer that does not get on with joining is dropped, keepalives or not: the host holds a
@@ -782,6 +803,7 @@ fn on_message(world: &mut World, host: &mut NetHost, id: PeerId, message: Msg) {
                 host.tasks.push(Task::Leave { player: peer.player, peer: id, reason });
             }
             peer.stage = PeerStage::Gone;
+            note_closer(&mut host.slots, id, Closer::Peer);
         }
         Msg::Call(call) => {
             let Some(peer) = host.peers.get_mut(&id).filter(|p| p.stage == PeerStage::Connected) else { return };
@@ -907,6 +929,7 @@ fn on_hello(world: &mut World, host: &mut NetHost, id: PeerId, hello: Hello) {
                     host.tasks.push(Task::Leave { player: n, peer: old, reason: "reconnected".into() });
                 }
                 peer.stage = PeerStage::Gone;
+                note_closer(&mut host.slots, old, Closer::Host);
             }
             Some(n)
         }
@@ -934,7 +957,7 @@ fn on_hello(world: &mut World, host: &mut NetHost, id: PeerId, hello: Hello) {
         let old = old.token.clone();
         host.retire(old);
     }
-    host.slots.insert(player, Slot { token, name: hello.name.clone(), peer: Some(id), left_at: None });
+    host.slots.insert(player, Slot { token, name: hello.name.clone(), peer: Some(id), left_at: None, closed_by: None });
     let peer = host.peers.get_mut(&id).expect("known peer");
     peer.player = player;
     peer.hello = Some(hello);
@@ -995,6 +1018,7 @@ fn refuse(world: &mut World, host: &mut NetHost, id: PeerId, reason: &str) {
     let name = peer.name();
     for slot in host.slots.values_mut().filter(|s| s.peer == Some(id)) {
         slot.peer = None;
+        slot.closed_by.get_or_insert(Closer::Host);
     }
     // At most a line a second: anyone who can send a datagram can be refused.
     crate::hooks::net_line(world, "refused", JournalKind::Warn, format!("refused {name}: {reason}"));
@@ -1122,6 +1146,7 @@ fn admit(world: &mut World, host: &mut NetHost, id: PeerId) {
     if let Some(slot) = host.slots.get_mut(&player) {
         slot.peer = Some(id);
         slot.left_at = None;
+        slot.closed_by = None;
     }
     NetMarks::mark(world, |m| &mut m.joined);
     journal::emit(world, JournalKind::Sim, format!("net: p{player} ({}) joined at tick {tick} (world {kb:.1} KB)", hello.name));
@@ -1617,26 +1642,43 @@ mod tests {
     }
 
     #[test]
-    fn a_player_the_host_sent_away_has_left_before_its_slot_is_vacated() {
-        use super::{Peer, PeerStage};
+    fn the_host_closing_a_link_is_told_from_the_player_saying_goodbye() {
+        use super::{note_closer, Closer, Peer, PeerStage};
         let mut host = NetHost::new();
         let mut peer = Peer::new(7, 1, 0);
         peer.stage = PeerStage::Connected;
         peer.player = 1;
         host.peers.insert(7, peer);
-        host.slots.insert(1, Slot { token: "t".into(), name: "c1".into(), peer: Some(7), left_at: None });
-        assert!(!host.has_left("c1"), "connected");
-        assert!(!host.has_left("c2"), "nobody joined as c2");
-        // `net_kick`: the link is Gone at once, the slot is vacated by the next tick's Leave.
+        host.slots.insert(1, Slot { name: "c1".into(), peer: Some(7), ..Default::default() });
+        assert!(!host.link_closed_by_host("c1"), "connected");
+        assert!(!host.link_closed_by_host("c2"), "nobody joined as c2");
+        // `net_kick`: the link is Gone at once and the host closed it; the slot is vacated by the
+        // next tick's Leave, which changes nothing about who closed it.
         host.kick(1, "kicked: by the host").unwrap();
-        assert!(host.has_left("c1"), "kicked");
-        // After the tick: the slot is free and the peer dropped.
+        assert!(host.link_closed_by_host("c1"), "kicked");
         host.peers.clear();
         let slot = host.slots.get_mut(&1).unwrap();
         slot.peer = None;
         slot.left_at = Some(9);
-        assert!(host.has_left("c1"), "vacated");
-        assert!(!host.has_left("c2"));
+        assert!(host.link_closed_by_host("c1"), "vacated");
+        assert!(!host.link_closed_by_host("c2"));
+
+        // A goodbye the player's game sent is not the host closing the link, even when the host
+        // then vacates the slot, and the first to close counts either way.
+        let mut host = NetHost::new();
+        host.slots.insert(1, Slot { name: "c1".into(), peer: Some(8), ..Default::default() });
+        note_closer(&mut host.slots, 8, Closer::Peer);
+        host.slots.get_mut(&1).unwrap().left_at = Some(3);
+        assert!(!host.link_closed_by_host("c1"), "it said goodbye");
+        note_closer(&mut host.slots, 8, Closer::Host);
+        assert!(!host.link_closed_by_host("c1"), "the first to close counts");
+        // The same player kicked first, and answering with its own goodbye.
+        host.slots.insert(2, Slot { name: "c2".into(), peer: Some(9), ..Default::default() });
+        note_closer(&mut host.slots, 9, Closer::Host);
+        note_closer(&mut host.slots, 9, Closer::Peer);
+        assert!(host.link_closed_by_host("c2"), "kicked, then said goodbye");
+        // A link nobody holds a slot with notes nothing.
+        note_closer(&mut host.slots, 99, Closer::Host);
     }
 
     #[test]
@@ -1684,7 +1726,7 @@ mod tests {
         // A stand (runs repeat): two players of one name still get two tokens.
         let mut host = NetHost::new();
         let first = host.issue_token(7, 1, "player");
-        host.slots.insert(1, Slot { token: first.clone(), name: "player".into(), peer: None, left_at: None });
+        host.slots.insert(1, Slot { token: first.clone(), name: "player".into(), peer: None, ..Default::default() });
         let second = host.issue_token(7, 2, "player");
         assert!(hex(&first) && hex(&second), "{first} {second}");
         assert_ne!(first, second);

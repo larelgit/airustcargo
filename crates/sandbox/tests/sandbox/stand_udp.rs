@@ -395,7 +395,7 @@ fn a_client_the_host_kicks_leaves_and_the_stand_goes_on() {
     stand.until(Duration::from_secs(30), "the host to journal that it sent c1 away", |s| {
         std::fs::read_to_string(s.dir.join("out.log"))
             .ok()?
-            .contains("client c1 exited with code 1 after the host ended its session (kicked, sent away or timed out)")
+            .contains("client c1 exited with code 1 after the host closed its link to it (net_kick, or its silence timed out)")
             .then_some(())
     });
     std::thread::sleep(Duration::from_millis(1500));
@@ -406,4 +406,31 @@ fn a_client_the_host_kicks_leaves_and_the_stand_goes_on() {
     assert!(after["net"]["session"].as_str().is_some_and(|text| text.starts_with("connected as p")), "{}", after["net"]);
     assert_eq!(after["net"]["player"], c2["net"]["player"]);
     assert_eq!(host["net"]["stand"], json!({"clients": 2, "udp": true}));
+}
+
+/// A client that is asked to quit (SIGTERM, as `kill` or a CI trap sends it) says goodbye to the
+/// host and leaves with the code a signalled game leaves with: the host does not take that for a
+/// crash, nor for its own doing. The stand goes on for the others.
+#[test]
+fn a_client_that_is_asked_to_quit_leaves_and_the_stand_goes_on() {
+    let mut stand = UdpStand::start(2);
+    let (c1, c2) = stand.until(Duration::from_secs(90), "both clients connected", |s| {
+        let c1 = s.status("g.port.c1")?;
+        let c2 = s.status("g.port.c2")?;
+        let joined = |client: &Value| client["net"]["session"].as_str().is_some_and(|text| text.starts_with("connected as p"));
+        (joined(&c1) && joined(&c2)).then_some((c1, c2))
+    });
+    let pid = c1["instance"]["pid"].as_i64().unwrap() as libc::pid_t;
+    // SAFETY: a plain `kill` of a process this test's stand started.
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
+    stand.wait_for_client_files_gone(Duration::from_secs(30), &["g.port.c1"]);
+    stand.until(Duration::from_secs(30), "the host to journal that c1 left", |s| {
+        std::fs::read_to_string(s.dir.join("out.log")).ok()?.contains("client c1 exited with code 143 while the stand ran").then_some(())
+    });
+    std::thread::sleep(Duration::from_millis(1500));
+    let log = std::fs::read_to_string(stand.dir.join("out.log")).unwrap_or_default();
+    assert!(!log.contains("it crashed") && !log.contains("after the host closed its link"), "{log}");
+    assert!(stand.host.try_wait().unwrap().is_none(), "the host runs on\n{log}");
+    let after = stand.status("g.port.c2").expect("c2 still answers");
+    assert_eq!(after["net"]["player"], c2["net"]["player"]);
 }

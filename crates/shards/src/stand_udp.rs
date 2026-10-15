@@ -15,7 +15,7 @@
 //! appeared (a bad flag, a busy port, a crash at start), exits without ever having joined (the
 //! session was full), or crashes later, ends the stand at once with that child's exit status and
 //! a line saying which one; a child that joined and leaves on purpose (exit code 0, SIGTERM,
-//! SIGINT, SIGHUP) or that the host sent away (`net_kick`, a timeout) is journaled. `--stand N`
+//! SIGINT, SIGHUP) or whose link the host closed (`net_kick`, a timeout) is journaled. `--stand N`
 //! needs room for N clients in the session (`max_players` of the net definition): the host
 //! checks it as soon as content is loaded, and starts no child before.
 
@@ -218,13 +218,15 @@ fn start_children(world: &mut World) {
                 children.push(StandChild { name: format!("c{n}"), child, ready: !waits_for_files });
             }
             Err(e) => {
-                world.resource_mut::<StandChildren>().0 = children;
+                world.insert_resource(StandChildren(children));
                 end_stand(world, &format!("cannot start c{n} ({}): {e}", exe.display()), 2);
                 return;
             }
         }
     }
-    world.resource_mut::<StandChildren>().0 = children;
+    // Inserted, not written into the resource: the exit hooks take it away, and a start that
+    // follows them must not be a panic.
+    world.insert_resource(StandChildren(children));
 }
 
 /// What a child's exit means: whether it ends the stand, the code the host exits with, and the
@@ -243,17 +245,18 @@ struct Seen {
     ready: bool,
     /// The host had admitted it to the session (a refused client never is).
     joined: bool,
-    /// The host ended its session before it exited (`net_kick`, a timeout, its goodbye): a client
-    /// that leaves this way exits with an error code of its own, which is not a crash.
-    sent_away: bool,
+    /// The host closed the client's link before it exited (`net_kick`, its silence timed out, a
+    /// refusal): a client that leaves this way exits with an error code of its own, which is not a
+    /// crash. A goodbye the client sent is not that: it says nothing about why it went.
+    host_closed: bool,
     /// The host's session has ended: its clients are leaving, as they should.
     session_over: bool,
 }
 
 /// `name` exited with `status`. A child that leaves on purpose after joining (exit code 0, or
-/// the code of a signal that ends a game: SIGTERM, SIGINT, SIGHUP) or that the host sent away is
-/// journaled. One that never started, never joined (the session was full) or crashed ends the
-/// stand.
+/// the code of a signal that ends a game: SIGTERM, SIGINT, SIGHUP) or whose link the host closed
+/// is journaled. One that never started, never joined (the session was full) or crashed ends the
+/// stand, whatever goodbye it said on the way out.
 fn verdict(name: &str, status: ExitStatus, seen: Seen) -> Verdict {
     let how = match (status.code(), exit_signal(status)) {
         (Some(code), _) => format!("exited with code {code}"),
@@ -265,9 +268,6 @@ fn verdict(name: &str, status: ExitStatus, seen: Seen) -> Verdict {
     let code = status.code().filter(|code| *code > 0 && *code < 256).map_or(2, |code| code as u8);
     if seen.session_over {
         return Verdict { fatal: false, code: 0, text: format!("client {name} {how} after the session ended") };
-    }
-    if seen.sent_away {
-        return Verdict { fatal: false, code: 0, text: format!("client {name} {how} after the host ended its session (kicked, sent away or timed out)") };
     }
     if !seen.ready {
         return Verdict { fatal: true, code, text: format!("client {name} {how} before it was ready (it never wrote its port file): see its output above") };
@@ -283,6 +283,9 @@ fn verdict(name: &str, status: ExitStatus, seen: Seen) -> Verdict {
     }
     if on_purpose {
         return Verdict { fatal: false, code: 0, text: format!("client {name} {how} while the stand ran") };
+    }
+    if seen.host_closed {
+        return Verdict { fatal: false, code: 0, text: format!("client {name} {how} after the host closed its link to it (net_kick, or its silence timed out)") };
     }
     Verdict { fatal: true, code, text: format!("client {name} {how} while the stand ran: it crashed, see its output above") }
 }
@@ -323,6 +326,11 @@ fn exit_signal(_: ExitStatus) -> Option<i32> {
 fn watch_children(world: &mut World, mut started: Local<bool>) {
     if !*started && world.get_resource::<State<EngineState>>().is_some_and(|state| *state.get() != EngineState::Loading) {
         *started = true;
+        // A stand that has already ended (a signal in the frame loading finished ran the exit
+        // hooks, which let the children go and took the resource) starts nothing.
+        if world.get_resource::<shards_core::ExitHooks>().is_some_and(|hooks| hooks.ran()) || !world.contains_resource::<StandChildren>() {
+            return;
+        }
         let clients = world.resource::<StandSpec>().clients;
         if let Err(why) = room_for(clients, net_def(world).max_players) {
             end_stand(world, &why, 2);
@@ -343,8 +351,8 @@ fn watch_children(world: &mut World, mut started: Local<bool>) {
         match c.child.try_wait() {
             Ok(Some(status)) => {
                 let joined = host.is_some_and(|host| host.slots.values().any(|slot| slot.name == c.name));
-                let sent_away = host.is_some_and(|host| host.has_left(&c.name));
-                left.push(verdict(&c.name, status, Seen { ready: c.ready, joined, sent_away, session_over }));
+                let host_closed = host.is_some_and(|host| host.link_closed_by_host(&c.name));
+                left.push(verdict(&c.name, status, Seen { ready: c.ready, joined, host_closed, session_over }));
                 false
             }
             _ => true,
@@ -437,7 +445,7 @@ mod tests {
     }
 
     fn seen(ready: bool, joined: bool, session_over: bool) -> Seen {
-        Seen { ready, joined, sent_away: false, session_over }
+        Seen { ready, joined, host_closed: false, session_over }
     }
 
     #[test]
@@ -497,18 +505,41 @@ mod tests {
         }
     }
 
-    /// A client the host kicked (`net_kick`), said goodbye to or lost leaves with an error code of
-    /// its own (`--exit-with-host`, `client::end`): the host knows it left, so it is not a crash.
+    /// A client whose link the host closed (`net_kick`, a timeout) leaves with an error code of its
+    /// own (`--exit-with-host`, `client::end`): the host knows why it went, so it is not a crash. A
+    /// deliberate exit keeps its own line, whoever closed the link.
     #[test]
     #[cfg(unix)]
-    fn a_client_the_host_sent_away_is_only_journaled_whatever_code_it_leaves_with() {
-        for script in ["exit 1", "exit 0", "exit 143"] {
-            let v = verdict("c1", status_of(script), Seen { ready: true, joined: true, sent_away: true, session_over: false });
-            assert!(!v.fatal && v.code == 0, "{script}: {v:?}");
-            assert!(v.text.ends_with("after the host ended its session (kicked, sent away or timed out)"), "{script}: {}", v.text);
+    fn a_client_whose_link_the_host_closed_is_only_journaled_whatever_code_it_leaves_with() {
+        let closed = Seen { ready: true, joined: true, host_closed: true, session_over: false };
+        let v = verdict("c1", status_of("exit 1"), closed);
+        assert_eq!(
+            v,
+            Verdict {
+                fatal: false,
+                code: 0,
+                text: "client c1 exited with code 1 after the host closed its link to it (net_kick, or its silence timed out)".into()
+            }
+        );
+        // A deliberate exit is that, and says so: the host having closed the link does not rename it.
+        for script in ["exit 0", "exit 143", "kill -TERM $$"] {
+            let v = verdict("c1", status_of(script), closed);
+            assert!(!v.fatal && v.code == 0 && v.text.ends_with("while the stand ran"), "{script}: {v:?}");
         }
-        let v = verdict("c1", status_of("exit 1"), Seen { ready: true, joined: true, sent_away: true, session_over: false });
-        assert_eq!(v.text, "client c1 exited with code 1 after the host ended its session (kicked, sent away or timed out)");
+    }
+
+    /// A client that says goodbye and then exits with an error did not leave because the host asked:
+    /// `take_world` sends `Bye` ("cannot take the world") and exits 1, and that is a dead member.
+    #[test]
+    #[cfg(unix)]
+    fn a_client_that_said_goodbye_and_exited_with_an_error_is_a_crash() {
+        let said_goodbye = Seen { ready: true, joined: true, host_closed: false, session_over: false };
+        let v = verdict("c1", status_of("exit 1"), said_goodbye);
+        assert!(v.fatal && v.code == 1, "{v:?}");
+        assert!(v.text.ends_with("while the stand ran: it crashed, see its output above"), "{}", v.text);
+        // ... and one that says goodbye on a deliberate exit (a SIGTERM, `quit`) left on purpose.
+        let v = verdict("c1", status_of("exit 143"), said_goodbye);
+        assert!(!v.fatal && v.text == "client c1 exited with code 143 while the stand ran", "{v:?}");
     }
 
     #[test]
@@ -564,8 +595,10 @@ mod tests {
         Never,
         /// It joined and is in the session.
         Joined,
-        /// It joined and the host has sent it away (the slot is vacated).
-        SentAway,
+        /// It joined and the host closed its link (the slot is vacated).
+        HostClosed,
+        /// It joined and said goodbye itself (the slot is vacated).
+        SaidGoodbye,
     }
 
     /// A pretend host: `watch_children` alone in `Last`, a probe for an exit hook, and a real child
@@ -582,8 +615,12 @@ mod tests {
             .add_exit_hook("probe", probe);
         if session != Session::Never {
             let mut host = NetHost::new();
-            let left_at = (session == Session::SentAway).then_some(5);
-            host.slots.insert(1, shards_net::host::Slot { name: "c1".into(), left_at, ..Default::default() });
+            let (left_at, closed_by) = match session {
+                Session::HostClosed => (Some(5), Some(shards_net::host::Closer::Host)),
+                Session::SaidGoodbye => (Some(5), Some(shards_net::host::Closer::Peer)),
+                _ => (None, None),
+            };
+            host.slots.insert(1, shards_net::host::Slot { name: "c1".into(), left_at, closed_by, ..Default::default() });
             app.insert_resource(host);
         }
         let child = Command::new("sh").args(["-c", script]).stdin(Stdio::null()).spawn().expect("sh runs");
@@ -638,17 +675,67 @@ mod tests {
         }
     }
 
-    /// `net_kick` of a client of a UDP stand: it exits with code 1, the host has sent it away, and
+    /// `net_kick` of a client of a UDP stand: it exits with code 1, the host closed its link, and
     /// the stand goes on for the others.
     #[test]
     #[cfg(unix)]
     fn a_client_the_host_kicked_does_not_end_the_stand() {
-        let app = watch("exit 1", true, Session::SentAway);
+        let app = watch("exit 1", true, Session::HostClosed);
         assert_eq!(app.world().resource::<Hooked>().0, 0);
         assert_eq!(app.should_exit(), None);
         // The same exit from a client the host still holds is a crash.
         let app = watch("exit 1", true, Session::Joined);
         assert_eq!(app.world().resource::<Hooked>().0, 1);
         assert!(exits_with(&app, 1), "{:?}", app.should_exit());
+        // So is the same exit from one that said goodbye itself (it could not take the world).
+        let app = watch("exit 1", true, Session::SaidGoodbye);
+        assert_eq!(app.world().resource::<Hooked>().0, 1);
+        assert!(exits_with(&app, 1), "{:?}", app.should_exit());
+        // ... while a deliberate exit after a goodbye is only journaled.
+        let app = watch("exit 143", true, Session::SaidGoodbye);
+        assert_eq!(app.should_exit(), None);
+    }
+
+    /// A pretend host that has left `Loading`: a stand whose clients `watch_children` starts.
+    #[cfg(unix)]
+    fn in_game() -> App {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin)
+            .insert_state(EngineState::InGame)
+            .insert_resource(spec())
+            .init_resource::<StandChildren>()
+            .init_resource::<Hooked>()
+            .add_systems(Last, watch_children)
+            .add_exit_hook("probe", probe);
+        app
+    }
+
+    /// A signal in the frame in which loading finishes runs the exit hooks (which take the
+    /// children away) before `watch_children` sees the state change: it must start nothing, and
+    /// not panic on the resource the hooks removed.
+    #[test]
+    #[cfg(unix)]
+    fn a_stand_that_ended_in_the_frame_loading_finished_starts_no_clients() {
+        let mut app = in_game();
+        shards_core::run_exit_hooks(app.world_mut());
+        app.world_mut().remove_resource::<StandChildren>();
+        assert_eq!(app.world().resource::<Hooked>().0, 1);
+        app.update();
+        // Had it started the clients, the host's missing socket would have ended the stand again.
+        assert_eq!(app.should_exit(), None, "nothing was started, so nothing failed");
+        assert!(app.world().get_resource::<StandChildren>().is_none());
+        assert_eq!(app.world().resource::<Hooked>().0, 1, "once");
+        app.update();
+    }
+
+    /// The other side of that: a stand that has not ended starts its clients on the first frame
+    /// after loading, and a host without a UDP socket says so and ends.
+    #[test]
+    #[cfg(unix)]
+    fn a_stand_starts_its_clients_on_the_first_frame_after_loading() {
+        let mut app = in_game();
+        app.update();
+        assert!(exits_with(&app, 2), "no socket to tell the clients about: {:?}", app.should_exit());
+        assert_eq!(app.world().resource::<Hooked>().0, 1, "the hooks ran with it");
     }
 }
