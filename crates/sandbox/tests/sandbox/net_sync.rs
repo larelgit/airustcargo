@@ -831,6 +831,33 @@ fn a_world_replaced_in_a_capped_view_is_not_followed_by_a_world_for_the_cap_that
 }
 
 #[test]
+fn a_world_sent_again_to_a_player_in_a_capped_view_is_not_followed_by_a_world_for_the_cap_that_is_gone() {
+    let mut stand = shards::testing::stand(1, LinkConditions::NONE, configure, with_references);
+    let me = body(&stand, C1);
+    let centre = position(&stand, HOST, &me);
+    // 70 pillars far away, named by a pillar next to c1 (which is not seen from anywhere else): the
+    // cap is where the keeper stands.
+    let far: Vec<String> = (0..70)
+        .map(|i| spawned(&stand.call(HOST, "spawn_prefab", json!({"id": "pillar", "x": 300.0 + 3.0 * i as f32, "z": 300.0}))))
+        .collect();
+    let keeper = spawned(&stand.call(HOST, "spawn_prefab", json!({"id": "pillar", "x": centre.x + 4.0, "z": centre.z + 4.0})));
+    let roster: Vec<Entity> = far.iter().map(|id| entity(&stand, HOST, id).unwrap()).collect();
+    let keeper_entity = entity(&stand, HOST, &keeper).unwrap();
+    stand.world_mut(HOST).entity_mut(keeper_entity).insert(Roster(roster));
+    stand.run(200);
+    assert!(peer_of(&stand, 1).closure_capped > 0, "the cap was reached");
+    assert_eq!(rebases(&stand, C1), 0, "and it never lifted");
+    // The keeper is somewhere else, and the world is asked for again in the same tick: c1's view meets no cap.
+    assert!(stand.call(HOST, "teleport", json!({"id": keeper, "x": 600.0, "z": 600.0})).ok);
+    assert!(stand.call(HOST, "net_resync", json!({})).ok);
+    stand.run(120);
+    assert!(has_line(&stand, C1, "net: the host's world again (asked)"), "{:#?}", journal(&stand, C1).into_iter().filter(|l| l.contains("again")).collect::<Vec<_>>());
+    assert!(!has_line(&stand, C1, "(view complete)"), "{:#?}", journal(&stand, C1).into_iter().filter(|l| l.contains("again")).collect::<Vec<_>>());
+    assert_eq!(rebases(&stand, C1), 1, "the world it asked for, and no other");
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+}
+
+#[test]
 fn a_player_sent_away_is_waited_for_while_it_takes_in_what_is_queued_ahead_of_its_goodbye() {
     use shards::ai_core::journal::{self, JournalKind};
     let mut stand = stand_with(1, lossy());

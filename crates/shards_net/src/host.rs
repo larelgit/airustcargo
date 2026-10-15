@@ -92,8 +92,10 @@ const GONE_LIMIT_MS: u64 = 10_000;
 /// A peer that is gone is forgotten at the latest this long after, acknowledging or not.
 const GONE_CEILING_MS: u64 = 300_000;
 
-/// A peer that has not said hello is held this long for what is on its way (a Hello that comes
-/// in pieces) when the host needs its place; after it, it makes room as any other.
+/// A peer that has not said hello, and may still hold its first message (a Hello that comes in
+/// pieces), is spared this long from its creation when the host needs its place, however it
+/// keeps sending; after it, it makes room as any other. At most `max_players` peers are spared
+/// at once: no more could join, and anyone can send a datagram that looks like a Hello coming.
 const NEW_PEER_GRACE_MS: u64 = 5_000;
 
 /// Where a peer is in the session.
@@ -689,6 +691,7 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
     let def = net_def(world);
     let mut datagrams = Vec::new();
     endpoint.transport.recv(now, &mut datagrams);
+    let mut evicted = Vec::new();
     for (from, bytes) in datagrams {
         if !host.peers.contains_key(&from) {
             // A game that ended (kicked, timed out, this host's previous process) keeps acking
@@ -697,7 +700,7 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
                 continue;
             }
             let Some(session) = wire::peek_session(&bytes) else { continue };
-            if !make_room(host, endpoint, def.max_players, now) {
+            if !make_room(host, endpoint, def.max_players, now, &mut evicted) {
                 continue;
             }
             host.peers.insert(from, Peer::new(from, session, now));
@@ -706,6 +709,9 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
         if let Verdict::Rejected(reason) = peer.link.on_datagram(now, &bytes) {
             debug!("net: datagram from peer {from} rejected: {reason:?}");
         }
+    }
+    for line in evicted {
+        crate::hooks::net_line(world, "evicted", JournalKind::Warn, line);
     }
     let mut ids: Vec<PeerId> = host.peers.keys().copied().collect();
     // In the order of the ids (creation order in a stand; over UDP the hash of the address),
@@ -825,25 +831,42 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
 }
 
 /// Room for one more peer that does not play: when the host holds `max_strangers` of them
-/// (joining, refused, gone), one makes room: the oldest refused stranger, else the oldest that
-/// has not said hello (but only when nothing of it is held unread in its link, and none of it is
-/// part-way in, or after [`NEW_PEER_GRACE_MS`]: an honest Hello waits there, acknowledged, until
-/// a poll takes it, or comes in pieces, and the link would not send what was acknowledged
-/// again), else the oldest peer that is gone whatever it was (it loses what of its goodbye it did
-/// not take in). `false`: there is none, and the datagram is not answered, so its sender's link
-/// sends it again.
-fn make_room(host: &mut NetHost, endpoint: &mut NetEndpoint, max_players: u8, now: u64) -> bool {
+/// (joining, refused, gone), one makes room: the refused stranger gone longest, else the oldest
+/// peer that has not said hello, except the (at most `max_players`) oldest of those that may
+/// still hold their first message and are younger than [`NEW_PEER_GRACE_MS`] (an honest Hello
+/// waits unread in its link, acknowledged, until a poll takes it, or comes in pieces, and the
+/// link would not send what it acknowledged again), else the peer gone longest whatever it was
+/// (it loses what of its goodbye it did not take in; said in `evicted`). Peers that cannot make
+/// room are those holding a seat (at most `max_players`) and the spared (at most `max_players`),
+/// fewer than the table holds: there is always one to make room. `false`, the safe answer if there
+/// were none, leaves the datagram unanswered, so its sender's link sends it again.
+fn make_room(host: &mut NetHost, endpoint: &mut NetEndpoint, max_players: u8, now: u64, evicted: &mut Vec<String>) -> bool {
     if host.peers.values().filter(|p| p.stage != PeerStage::Connected).count() < max_strangers(max_players) {
         return true;
     }
+    let mut spared: Vec<(u64, PeerId)> = host
+        .peers
+        .values()
+        .filter(|p| p.stage == PeerStage::New && p.link.may_hold_first_message() && now.saturating_sub(p.stage_mark.1) <= NEW_PEER_GRACE_MS)
+        .map(|p| (p.stage_mark.1, p.id))
+        .collect();
+    spared.sort();
+    spared.truncate(usize::from(max_players));
     let oldest = |wanted: &dyn Fn(&Peer) -> bool| host.peers.values().filter(|p| wanted(p)).min_by_key(|p| (p.stage_mark.1, p.id)).map(|p| p.id);
-    let victim = oldest(&|p| p.stage == PeerStage::Gone && !p.admitted)
-        .or_else(|| {
-            oldest(&|p| p.stage == PeerStage::New && (p.link.nothing_incoming() || now.saturating_sub(p.stage_mark.1) > NEW_PEER_GRACE_MS))
-        })
-        .or_else(|| oldest(&|p| p.stage == PeerStage::Gone));
+    // By when `flush` first saw them gone: one a tool put out between ticks has no time yet, and
+    // its goodbye is still to be sent, so it is the last.
+    let longest_gone = |wanted: &dyn Fn(&Peer) -> bool| {
+        host.peers.values().filter(|p| p.stage == PeerStage::Gone && wanted(p)).min_by_key(|p| (p.gone_since.unwrap_or(u64::MAX), p.id)).map(|p| p.id)
+    };
+    let victim = longest_gone(&|p| !p.admitted)
+        .or_else(|| oldest(&|p| p.stage == PeerStage::New && !spared.iter().any(|(_, id)| *id == p.id)))
+        .or_else(|| longest_gone(&|_| true));
     let Some(victim) = victim else { return false };
-    host.peers.remove(&victim);
+    if let Some(peer) = host.peers.remove(&victim)
+        && peer.admitted
+    {
+        evicted.push(format!("forgot p{} (gone) before it took in all it was sent: the table of peers that do not play was full", peer.player));
+    }
     endpoint.transport.forget(victim);
     true
 }
@@ -1515,6 +1538,10 @@ fn send_rebases(world: &mut World, host: &mut NetHost) {
         peer.resyncs += 1;
         peer.ticks_moved = false;
         reset_view(peer, reason == VIEW_COMPLETE);
+        if reason != VIEW_COMPLETE {
+            // The world it just got was whole: what the cap kept out of the view it had is in it.
+            peer.capped = false;
+        }
         if !carry {
             // Its inputs start over on the new world's ticks: what it sent before is of
             // another timeline.

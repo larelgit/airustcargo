@@ -1277,10 +1277,12 @@ impl Link {
         }
     }
 
-    /// Whether nothing the peer sent is held here: no message delivered and not yet polled, none
-    /// buffered ahead of a gap, no blob part-way in (a Hello that comes in pieces).
-    pub fn nothing_incoming(&self) -> bool {
-        self.delivered.is_empty() && self.rin_buf.is_empty() && self.rin_blobs.is_empty()
+    /// Whether what the peer sent could still be its first message, which the link does not take
+    /// again once it acknowledged it: a message delivered and not yet polled, or a blob part-way
+    /// in at the number the next message has. What is held ahead of a gap is not one (a first
+    /// message is number 0), and anyone can send that.
+    pub fn may_hold_first_message(&self) -> bool {
+        !self.delivered.is_empty() || self.rin_blobs.contains_key(&self.rin_next)
     }
 
     /// Reliable messages and blob pieces the peer has acknowledged, all told: it grows while the peer
