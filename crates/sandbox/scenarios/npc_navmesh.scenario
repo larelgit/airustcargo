@@ -38,6 +38,13 @@ act path_to target='{"x": 24, "z": 140}'
 expect result contains "\"provider\": \"navmesh\""
 expect result !contains "path 10.0m"
 session --agent scenario
+# the NPC overlay (F7 in a window) says what the guard has on its mind: the player, its
+# leash, and the way around
+act npc_overlay
+expect result contains "fight e5"
+expect result contains "/10m"
+expect result contains "detour, "
+act npc_overlay on=false
 # around the columns to the player, and a claw; never out of its zone on the way
 step 900 --until "journal:-> e5 claw" --until named:npc_beyond_leash
 expect stopped "-> e5 claw"

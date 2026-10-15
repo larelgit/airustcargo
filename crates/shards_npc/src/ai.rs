@@ -110,7 +110,11 @@ fn npc_near(w: &World) -> bool {
 /// `chase e5 · token · leash 12/20m`, `attack e5 · circle`, `idle (dormant)`.
 pub fn describe_npc(e: EntityRef) -> Option<String> {
     e.get::<Npc>()?;
-    let brain = e.get::<NpcBrain>()?;
+    npc_line(e.get::<NpcBrain>()?, e.get::<AttackToken>(), e.get::<Home>(), e.get::<Transform>())
+}
+
+/// [`describe_npc`] from the parts it reads.
+pub(crate) fn npc_line(brain: &NpcBrain, token: Option<&AttackToken>, home: Option<&Home>, tf: Option<&Transform>) -> Option<String> {
     if brain.state.is_empty() {
         return None;
     }
@@ -122,12 +126,12 @@ pub fn describe_npc(e: EntityRef) -> Option<String> {
     if let Some(target) = brain.target {
         line.push_str(&format!(" {target}"));
     }
-    if e.get::<AttackToken>().is_some_and(|t| t.held.is_some()) {
+    if token.is_some_and(|t| t.held.is_some()) {
         line.push_str(" · token");
     } else if let Some(role) = &brain.role {
         line.push_str(&format!(" · {role}"));
     }
-    if let (Some(home), Some(tf)) = (e.get::<Home>(), e.get::<Transform>())
+    if let (Some(home), Some(tf)) = (home, tf)
         && let Some(at) = home.pos
     {
         line.push_str(&format!(" · leash {:.0}/{:.0}m", flat(tf.translation - at).length(), home.leash));
