@@ -281,10 +281,14 @@ Xvfb показывает его вместе с оверлеем навсетк
 Чужак: первое сообщение не `Hello` — отказ (то, что не разбирается, — отказ с обеими причинами), общий бюджет разбора (опрос идёт по порядку
 `PeerId` и начинается с пропущенного; номера игроков, чьи `Hello` пришли в один тик, следуют порядку `PeerId`: в стенде это порядок создания, по UDP —
 хэш адреса, `players_that_say_hello_in_one_tick_take_their_numbers_in_the_order_of_their_ids`), предел числа пиров, не входящих в игру
-(новый не вытесняет непрочитанного: `a_hello_is_not_lost_to_the_strangers_that_arrive_with_it`,
-`strangers_that_arrive_in_one_tick_are_held_up_to_the_cap_and_the_rest_are_left_unanswered`,
-`a_hello_that_comes_in_pieces_is_held_for_a_while_and_then_makes_room_as_any_other`; ушедшие допущенные вытесняются в последнюю очередь:
-`a_table_full_of_players_that_were_put_out_and_still_owe_acknowledgements_makes_room_for_a_hello`),
+(новый не вытесняет непрочитанного, берегущихся не больше `max_players`: `a_hello_is_not_lost_to_the_strangers_that_arrive_with_it`,
+`a_burst_of_strangers_in_one_tick_never_fills_more_than_the_cap_and_spares_the_first_few`,
+`a_hello_that_comes_in_pieces_is_held_for_a_while_and_then_makes_room_as_any_other`,
+`a_message_ahead_of_a_gap_pins_no_seat_and_a_hello_still_gets_in`,
+`strangers_holding_part_of_a_hello_pin_no_more_seats_than_a_session_has_players`,
+`a_hello_in_pieces_is_spared_before_messages_that_can_never_be_a_hello`; ушедшие допущенные вытесняются в последнюю очередь, по времени
+ухода: `a_table_full_of_players_that_were_put_out_and_still_owe_acknowledgements_makes_room_for_a_hello`,
+`a_guest_put_out_between_ticks_is_the_last_a_full_table_forgets_not_the_first`),
 бюджет `JOINING_POLL_BYTES` проверен ненадёжным чужаком
 (`a_stranger_whose_first_message_is_not_a_hello_is_refused_at_once`, `peers_that_do_not_play_yet_share_a_budget_and_each_takes_a_turn`,
 `the_host_holds_so_many_strangers_and_the_oldest_makes_room`, `a_stranger_that_is_not_refused_is_read_for_so_many_bytes_a_poll_and_no_more`).
@@ -292,7 +296,8 @@ Xvfb показывает его вместе с оверлеем навсетк
 раздувает сообщения до бюджета опроса).
 Мир, перестроенный вызовом гостя, доходит до клиентов (`a_region_change_a_guest_forwards_reaches_every_client_as_a_world_again`).
 Перестройка мира сбрасывает признак урезанного вида и срок мира `view complete`
-(`a_world_replaced_in_a_capped_view_is_not_followed_by_a_world_for_the_cap_that_is_gone`); счётчик `Link::reliable_acked` считает и куски
+(`a_world_replaced_in_a_capped_view_is_not_followed_by_a_world_for_the_cap_that_is_gone`), как и любой мир целиком, кроме `view complete`
+(`a_world_sent_again_to_a_player_in_a_capped_view_is_not_followed_by_a_world_for_the_cap_that_is_gone`); счётчик `Link::reliable_acked` считает и куски
 блоба (юнит-тест `a_blob_that_takes_long_to_cross_keeps_raising_what_the_peer_has_acknowledged`).
 Работа пира за опрос ограничена, отпущенный пир не читается, вход со сроком, `net_kick peer=`
 (`a_guest_makes_the_host_decode_no_more_than_a_budget_in_one_poll`, `what_a_stranger_sends_after_its_refusal_is_not_read`,
@@ -374,7 +379,7 @@ Xvfb показывает его вместе с оверлеем навсетк
 ## Тесты
 
 Тесты по крейтам, `cargo test -p <крейт>`: все строки, кроме шаблона, взяты из одного полного прогона `cargo test --workspace`
-15 октября 2026 (после слияния C7, `3b2d359`, и правок пятого круга ревью; сборка этого дерева, 0 падают); у шаблона — счёт `#[test]` и
+15 октября 2026 (после слияния C7, `3b2d359`, и правок шестого круга ревью; сборка этого дерева, 0 падают); у шаблона — счёт `#[test]` и
 `#[ignore]` в `template/tests/game`, его прогон отдельный. Общего числа здесь и в README нет: оно расходилось с таблицами при
 каждой правке, а проверить его можно только полным прогоном. Помечены `#[ignore]`: запись эталонных реплеев, проверка окна под Xvfb,
 замеры сети, примеры в документации; у шаблона 24 проходят (и один `#[ignore]`: запись его эталонов). Запускать нужно из обычной оболочки:
@@ -396,7 +401,7 @@ Xvfb показывает его вместе с оверлеем навсетк
 | `shards_save` | 91 | `src/` (33) и `tests/save/` (58) |
 | `shards_net` | 127 | `src/` (82 — канальный слой без Bevy, 45 — сессия) |
 | `shards` | 43 | `src/` (35: `coop` 3, `run` 14, `stand_udp` 14, …), `tests/engine.rs`, `tests/failures.rs`, `tests/level_render.rs`, `tests/run_to.rs` (3), `tests/action_render/` |
-| `sandbox` | 294 | `tests/sandbox/` (273, из них кооператив `net*.rs` 144: `net.rs` 17, `net_coop.rs` 34, `net_sync.rs` 29, `net_guards.rs` 26, `net_lifecycle.rs` 20, `net_predict.rs` 14, `net_seams.rs` 4; `stand_udp.rs` 7, `snapshots.rs` 29, `replays.rs` 23, `invariants.rs` 12; ещё 3 `#[ignore]`: запись эталонных реплеев и два замера сети), `tests/system_failures.rs` (8), `tests/perf.rs` (6), `tests/log_capture.rs` (5), `src/` (2) |
+| `sandbox` | 299 | `tests/sandbox/` (278, из них кооператив `net*.rs` 149: `net.rs` 17, `net_coop.rs` 34, `net_sync.rs` 30, `net_guards.rs` 30, `net_lifecycle.rs` 20, `net_predict.rs` 14, `net_seams.rs` 4; `stand_udp.rs` 7, `snapshots.rs` 29, `replays.rs` 23, `invariants.rs` 12; ещё 3 `#[ignore]`: запись эталонных реплеев и два замера сети), `tests/system_failures.rs` (8), `tests/perf.rs` (6), `tests/log_capture.rs` (5), `src/` (2) |
 | шаблон | 24 | `template/tests/game/` (содержание, детерминизм, реплеи, сценарии, регион, манифест) |
 
 ## Известные ограничения и отложенное
@@ -449,9 +454,12 @@ Xvfb показывает его вместе с оверлеем навсетк
 - **Вход в сессию без предела частоты.** `Hello`, `Ready` и `Bye` подряд не ограничены по частоте; пир, который шлёт их
   без остановки, получает отказ на первом `Hello` и не читается дальше (бюджет разбора за опрос), а срок входа
   (`6 × timeout_secs`) и срок забвения ушедшего (10 с без подтверждений, потолок 5 минут) не дают ему занять запись надолго, а
-  таблица пиров, которые не играют, ограничена (`max_strangers`) и при нехватке места отдаёт запись, не теряя непрочитанного
-  `Hello`. Сессия по LAN без проверки личности, предел по адресу по UDP обходится сменой порта; пир, который шлёт по одной
-  датаграмме с сообщением чаще, чем его отпускают, заводится заново.
+  таблица пиров, которые не играют, ограничена (`max_strangers`) и при нехватке места отдаёт запись, стараясь не терять
+  непрочитанный `Hello` (не более `max_players` берегущихся от создания, 5 с). Сессия по LAN без проверки личности, предел по
+  адресу по UDP обходится сменой порта; пир, который шлёт по одной датаграмме с сообщением чаще, чем его отпускают, заводится
+  заново. **Известный предел:** кто шлёт со многих настоящих адресов без остановки, может задержать, а то и сорвать вход игрока,
+  чей `Hello` идёт по частям (уже подтверждённые куски канал не пришлёт снова), или пришёл одной датаграммой в тот же тик,
+  что и пачка датаграмм с новых адресов; без рукопожатия, не держащего состояния у хоста (cookie), это не закрыть.
 - **Сохранения в кооперативе: что не сделано.** Клиент не просит у хоста собственное сохранение сейчас (его `save_game
   what=character` отвечает, что персонажа сохраняет хост: у клиента нет полного персонажа, и то, что он снял бы сам,
   затёрло бы хороший файл). Персонаж больше 64 КБ ни один хост не примет. Слоты по умолчанию — `slot1`, у клиента по
