@@ -215,6 +215,17 @@ fn an_edited_text_file_applies_while_the_game_runs() {
     assert_eq!(line(&tree, "pause/resume"), "pause/resume  button \"Продолжить\" → close ◀ focus");
     std::fs::remove_dir(&unreadable).unwrap();
     assert_eq!(shards::locale::reload_text(app.world_mut()), Vec::<String>::new());
+
+    // So does one with a file that is not UTF-8: read leniently, it would be other text.
+    std::fs::write(&unreadable, b"pause-title = Pa\xffse\n").unwrap();
+    assert_eq!(shards::locale::reload_text(app.world_mut()), Vec::<String>::new());
+    let errors = journal(&app, "locale: locale/ru/x.ftl: not UTF-8");
+    assert_eq!(errors.len(), 1, "{:?}", journal(&app, "locale: "));
+    assert!(errors[0].ends_with("save the file as UTF-8; ru keeps the text it had"), "{}", errors[0]);
+    let tree = ok(&mut app, "ui_read", json!({}));
+    assert!(tree.contains("pause \"Пауза\""), "{tree}");
+    std::fs::remove_file(&unreadable).unwrap();
+    assert_eq!(shards::locale::reload_text(app.world_mut()), Vec::<String>::new());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

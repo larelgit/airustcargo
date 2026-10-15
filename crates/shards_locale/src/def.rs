@@ -97,7 +97,9 @@ pub fn read_language(root: &Path, id: &str) -> Result<Vec<FtlFile>, String> {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let asset = format!("{LOCALE_DIR}/{id}/{name}");
         let bytes = std::fs::read(&path).map_err(|e| format!("{asset}: cannot read: {e}"))?;
-        files.push(FtlFile { path: asset, text: String::from_utf8_lossy(&bytes).into_owned() });
+        // Strictly: a lossy read would turn a corrupt file into other text and other message ids.
+        let text = String::from_utf8(bytes).map_err(|e| format!("{asset}: not UTF-8 ({e}); save the file as UTF-8"))?;
+        files.push(FtlFile { path: asset, text });
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
