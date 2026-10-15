@@ -377,7 +377,7 @@ cargo test --test game record_reference_replays -- --ignored
 ## Тесты
 
 ```bash
-cargo test                   # всё: 33 теста (и один `#[ignore]`: запись эталонов), секунды
+cargo test                   # всё: 34 теста (и один `#[ignore]`: запись эталонов), секунды
 cargo test --test game determinism
 ```
 
