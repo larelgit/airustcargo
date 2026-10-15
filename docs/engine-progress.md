@@ -1,7 +1,7 @@
 # Ход работ по ТЗ
 
 Сверка с [engine-tz.md](engine-tz.md): что из «Что сделать» и «Готово, когда» каждого модуля E1–E11 уже есть,
-где это лежит и чем проверено. Состояние на 14 октября 2026: фазы A и B собраны, фаза C идёт (см. «Фазы»). CI на GitHub
+где это лежит и чем проверено. Состояние на 15 октября 2026: фазы A, B и C собраны (см. «Фазы»). CI на GitHub
 (`.github/workflows/ci.yml`) идёт на каждый push и pull request; все пять заданий зелёные.
 
 Статусы:
@@ -22,7 +22,7 @@
 |---|---|---|---|
 | A | прототип боя (GDD 39) | E1; E2; E3; из E4 — база контента, префабы, `content check`, детерминированная загрузка; из E11 — оверлеи боя, бессмертие, спавн префаба, сценарные тесты | ✅ **собрана и проверена** локально и в CI. Все пункты «Готово, когда» E1–E3 и частей E4/E11 выполнены и проверены тестами и командами ниже. Тег `v0.2.0` ещё не поставлен (его ставит мейнтейнер, см. `CHANGELOG.md`) |
 | B | мир | E5; E6; из E4 — уровни из Blender; из E11 — `clearance`/`path_to` по навсетке, снапшоты | 🟡 **собрана, проверена** локально и в CI. «Готово, когда» E5, E6, уровней из Blender и снапшотов выполнены и проверены тестами, сценариями и реплеями (таблица ниже). Не сделано до конца: стриминг геометрии тайлов для физики (стримится только картинка), `path_to` и `clearance` по навсетке (по навсетке `nav_path` и `move_to path=true`), навсетка под несколько тел. Тег `v0.3.0` не поставлен |
-| C | кооператив (этап 3) | E7; E8; из E11 — стенд «хост + клиенты» | 🟡 **идёт.** Есть: задел (клиенты без `SimSet`, правила репликации, кодек состояния, отложенный `step`, хуки выхода, флаги запуска), канальный слой сети `shards_net` (E7.2), сессия кооператива и стенд «хост + клиенты» (E7.1, 3, 4, 6, 7; E11.6), сохранения E8.1–5 (`shards_save`), настройки игрока E8.6 (`shards_settings`), сохранения в кооперативе (`shards::coop`: персонаж едет с игроком, мир хранит хост), предсказание своего тела, сглаживание чужих и оверлей сети (E7.4, 5, 8; C4). Впереди: CLI сети и сценарии стенда, получасовой прогон |
+| C | кооператив (этап 3) | E7; E8; из E11 — стенд «хост + клиенты» | ✅ **собрана и проверена** локально и в CI: задел (клиенты без `SimSet`, правила репликации, кодек состояния, отложенный `step`, хуки выхода, флаги запуска), канальный слой сети `shards_net` (E7.2), сессия кооператива и стенд «хост + клиенты» (E7.1, 3, 4, 6, 7; E11.6), сохранения E8.1–5 (`shards_save`), настройки игрока E8.6 (`shards_settings`), сохранения в кооперативе (`shards::coop`: персонаж едет с игроком, мир хранит хост), предсказание своего тела, сглаживание чужих и оверлей сети (E7.4, 5, 8; C4), CLI сети и сценарии стенда (C7), сохранения и кооператив на двоих в шаблоне, долгая игра `shards soak` (C9). Приёмка E7 — полчаса хоста и двух клиентов на 150 мс и 2 % без рассинхрона (таблица ниже). Тег не поставлен |
 | D | контент и интерфейс | E9; остаток E4 и E11 | ⏳ не начата |
 | E | платформа | E10 | 🟡 начата: из E10 есть время тика (`step`, `[perf]`, `--tick-budget-ms`); остальное не начато (Steam и Windows нельзя проверить на этой машине) |
 
@@ -45,7 +45,7 @@
 |---|---|
 | шаблон генерирует регион 8×8 из тестовых тайлов | `template/`: долина `valley` (4 тайла: луг, колонны, ворота и руина из файла glTF), тесты `tests/game/region.rs`; `cargo run -- --worldgen-report valley --seeds 1..1000` → `1000/1000 passed (63 after a retry)` |
 | 1000 зёрен проходят проверку | `cargo sandbox --worldgen-report wilds --seeds 1..1000` → `1000/1000 passed (42 after a retry), 0 fell back, 0 failed, 0 panicked [1000 seeds in 0.31s]`; тесты `a_thousand_seeds_pass_their_checks_quickly` (`shards_world`), `a_thousand_seeds_of_the_valley_pass_its_checks` (шаблон); подземелье `crypt` — те же 1000 зёрен за 0.17 с; CI-задания `headless-cli` и `template` гоняют отчёт |
-| одно зерно и версия — побайтно один манифест | тесты `an_8x8_region_generates_passes_its_checks_and_is_byte_stable`, `the_same_seed_builds_the_same_world_down_to_ids`, `the_same_seed_and_version_give_the_same_manifest_byte_for_byte` (шаблон); сценарий `region` сверяет хэш `d9d721509840d909` дебрей с зерном 42 и повторяет его после другого региона |
+| одно зерно и версия — побайтно один манифест | тесты `an_8x8_region_generates_passes_its_checks_and_is_byte_stable`, `the_same_seed_builds_the_same_world_down_to_ids`, `the_same_seed_and_version_give_the_same_manifest_byte_for_byte` (шаблон); сценарий `region` сверяет хэш `7bbfdc3b62623fbc` дебрей с зерном 42 и повторяет его после другого региона |
 | переход между регионами с экраном загрузки без окна | тесты `regen_replaces_the_region_through_the_loading_screen_and_keeps_the_hero`, `a_region_changed_from_on_enter_in_game_does_not_enter_the_game_again`, `going_to_the_valley_passes_the_loading_screen_headless_and_keeps_the_hero` (шаблон); сценарий и реплей `region` (игрок тот же, тик не сдвинулся) |
 | враг обходит колонны по навсетке и не выходит за зону | сценарий `npc_navmesh` (`npc_detour` — обход колоннады, `npc_beyond_leash` — ни разу за поводок), реплей `npc_navmesh.json`; тесты `an_npc_walks_around_pillars_by_navmesh_and_stays_on_its_leash`, `a_sentry_chases_to_its_leash_goes_home_healing_and_never_crosses`; рейдер шаблона: `a_raider_comes_by_the_navmesh_and_keeps_to_its_camp` |
 | при одном игроке из трёх врагов атакуют не больше двух | сценарий `npc_director` (30 с боя, `three_attacking` ни разу), тест `one_player_three_enemies_never_more_than_two_attack_at_once`, реплей `npc_director.json` |
@@ -56,17 +56,29 @@
 | `content check` читает уровни и навигацию | `cargo sandbox --check-content` → `ok: 70 definitions in 23 files`; сломанные копии: опечатка компонента в узле, пропавший маркер, устаревший файл навсетки, опечатка сокета и точки — ошибки с файлом, узлом и подсказкой (README) |
 | `clearance`/`path_to` по навсетке | 🟡 по навсетке отвечают `nav_path` (формат `path_to`, плюс тайлы маршрута) и `move_to path=true`; сами `path_to` и `clearance` остались запросами к физике |
 
+Что проверено для приёмки фазы C (Windows, отладочная сборка; `cargo test --workspace` и тесты шаблона — в разделе «Тесты»):
+
+| что | как проверено |
+|---|---|
+| хост и два клиента без окна полчаса играют скриптами агентов при 150 мс и 2 % потерь без рассинхрона | `cargo sandbox --stand 2 --headless --paused --port 0 --port-file F --net-sim latency=150,loss=0.02`, `SHARDS_PORT_FILE=F cargo shards soak --seed 30 --minutes 30 --regen wilds --regen-minutes 5 --save-minutes 3` → `PASS soak seed 30: ticks 0 → 108000 (30:00 of game time), 7005 rounds, 5 region changes, 9 saves`, рассинхронов 0 у хоста и обоих клиентов (6 минут). То же клиентами-процессами по настоящему UDP (`--stand 2 --stand-udp`, зерно 31): `PASS`, 0 рассинхронов; шаги `soak` гнали хоста в 2,7 раза быстрее реального времени, поэтому ввод клиентов часто опаздывал (около 5300 входов на клиента), а предсказание часто сбрасывалось (средняя ошибка 1–1,5 м). В процессе: `half_an_hour_of_three_players_on_lossy_links_stays_in_sync` (`#[ignore]`, 168 с), каждый пуш — `two_minutes_of_three_players_on_lossy_links_stay_in_sync` и три минуты на живом стенде в CI (`headless-cli`), полчаса — `soak.yml` раз в неделю |
+| подключение и отключение не теряют прогресс | `a_player_who_leaves_has_the_latest_in_their_file_and_comes_back_to_it`, `a_rejoin_within_the_grace_keeps_the_body_and_sends_the_file_what_it_missed`, `a_rejoin_after_the_grace_restores_the_character_the_host_kept`, `world_progress_a_guest_made_is_in_the_hosts_world_save_after_the_guest_left` (`net_coop.rs`); шаблон: `a_guest_brings_their_trophies_to_the_next_session` |
+| сетевые сценарии на транспорте в памяти идут в CI | `every_stand_scenario_file_passes_on_a_fresh_stand`, `a_stand_scenario_run_twice_gives_identical_journals` (`scenario_files.rs`), `every_stand_scenario_passes` (шаблон); живой стенд в `headless-cli`: `shards scenario crates/sandbox/scenarios/stand/*.scenario` |
+| «сохранить → загрузить» на 1000 случайных состояниях не теряет данных | `a_thousand_random_states_round_trip_through_files` (`shards_save/tests/save/roundtrip.rs`) |
+| повреждённый файл восстанавливается из копии | `every_kind_of_damage_to_the_primary_is_restored_from_the_first_backup`, `the_next_backup_is_tried_when_the_first_is_bad_too` (`damage.rs`) |
+| файл старой версии мигрирует и загружается | `old_files_migrate_and_load` на закоммиченных образцах версии 1 (`migrate.rs`) |
+| шаблон: сохранение и кооп на двоих | `scenarios/saves.scenario`, `scenarios/stand/coop.scenario`, `tests/game/coop.rs` |
+
 ## Сводка
 
 | модуль | фаза | состояние |
 |---|---|---|
-| E1. Ядро, сборка, шаблон | A | ✅ кроме сохранения и кооператива в шаблоне (C) |
+| E1. Ядро, сборка, шаблон | A | ✅ (сохранения и кооператив на двоих в шаблоне — C9) |
 | E2. Движение | A | ✅ физика на parry3d, контроллер, ввод, камера, оценка пути; навсетка — E6 |
 | E3. Действия, бой, анимация | A | ✅ бой на данных, анимационный мост, телеграфы |
 | E4. Контент и уровни | A (часть), B, D | 🟡 база, префабы, `content check` — ✅; уровни из Blender — 🟡 (формат и пайплайн ✅, настоящий экспорт Blender не пробовали) |
 | E5. Генерация мира | B | 🟡 генератор, решатель, проверки, манифест, подземелья, отчёты, смена региона, активные зоны — ✅; стримится только картинка тайлов |
 | E6. Навигация и ИИ врагов | B | ✅ навсетка по тайлам, поведение, восприятие, директор, планировщик; 🟡 уклонение простое, навсетка под одно тело |
-| E7. Сеть и кооператив | C | 🟡 транспорт, сессия, ввод, репликация, подключение и отключение, предсказание и сглаживание, оверлей сети (`shards_net`); впереди CLI сети и сценарии стенда |
+| E7. Сеть и кооператив | C | ✅ транспорт, сессия, ввод, репликация, подключение и отключение, предсказание и сглаживание, оверлей сети (`shards_net`), CLI сети и сценарии стенда, долгая игра `shards soak`; приёмка — полчаса трёх игроков на 150 мс и 2 % без рассинхрона |
 | E8. Сохранения и настройки | C | ✅ сохранения (1–5, `shards_save`), настройки игрока (6, `shards_settings`) и сохранения в кооперативе (7, `shards::coop`) |
 | E9. Интерфейс, звук, локализация | D | ⏳ |
 | E10. Рендер, производительность, платформа | E | 🟡 время тика (`step`, `[perf]`, `--tick-budget-ms`) — ✅; остальное — ⏳ |
@@ -93,7 +105,7 @@
 | 2 | режим без окна из тех же плагинов, минус окно, рендер и звук | ✅ | `crates/shards/src/plugins.rs` (`without_display`); тест `headless_is_the_same_plugins_minus_display`; `MinimalPlugins` в песочнице больше нет |
 | 3 | состояния: загрузка, меню, игра, экран загрузки региона, пауза | 🟡 | `crates/shards_core/src/state.rs`, `loading.rs`; тесты `crates/shards_core/tests/core.rs`. `EngineState::{Loading, MainMenu, InGame, RegionLoading}` и `PauseState`, шлюз загрузки. `RegionLoading` теперь работает: через него идёт каждая смена региона (`regen`, `region_load`), с тестами `shards_world` (`regen_replaces_the_region_through_the_loading_screen_and_keeps_the_hero`). Картинки экрана загрузки нет (E9) |
 | 4 | версии: SemVer, теги git, CHANGELOG | 🟡 | `CHANGELOG.md`, версия `0.2.0` в `[workspace.package]`. Теги ставит мейнтейнер; ни `v0.1.0`, ни `v0.2.0` ещё нет |
-| 5 | шаблон в `template/`: персонаж, враг, арена, сохранение, кооп на двоих | 🟡 | `template/`: персонаж, враг, арена, свой вид контента, инструмент и условие, сценарий, реплей, 24 теста (и один `#[ignore]`: запись эталонных реплеев). Сохранения и кооп — фазы C (в README шаблона оставлены разделы-заглушки) |
+| 5 | шаблон в `template/`: персонаж, враг, арена, сохранение, кооп на двоих | ✅ | `template/`: персонаж, враг, арена, свой вид контента, инструмент и условие, сценарии, реплей, 28 тестов (и один `#[ignore]`: запись эталонных реплеев). Сохранения (C9): свои разделы `trophies` (персонаж) и `fallen` (мир) в `src/progress.rs`, автосохранение очищенного двора, `scenarios/saves.scenario`. Кооп на двоих (C9): `content/session.net.ron`, `scenarios/stand/coop.scenario`, `tests/game/coop.rs` (гость на 150 мс и 2 %: трофей его на каждой копии и в его файле, следующая игра с ним, реплей хоста) |
 | 6 | CI: тесты, clippy, сборка шаблона, `--verify` реплеев | ✅ | `.github/workflows/ci.yml` (задания `test`, `clippy`, `template`, `headless-cli`, `replays-window`), `.github/actions/setup`. Идёт на GitHub на каждый push и pull request |
 
 Граница («игра добавляет плагины поверх `EnginePlugins` и не меняет код движка»): ✅, шаблон и песочница
@@ -202,7 +214,7 @@ Xvfb показывает его вместе с оверлеем навсетк
 |---|---|---|
 | шаблон генерирует регион 8×8 из тестовых тайлов | ✅ | шаблон: долина `valley` (4 тайла, три лагеря), песочница: `wilds` (9 тайлов) |
 | 1000 зёрен проходят проверку | ✅ | `--worldgen-report wilds --seeds 1..1000`, то же для `valley`; тесты; CI-задания `headless-cli`, `template` |
-| одинаковые зерно и версия дают побайтно одинаковый манифест | ✅ | `the_same_seed_and_version_give_the_same_manifest_byte_for_byte` (шаблон), сценарий `region` (хэш `d9d721509840d909`) |
+| одинаковые зерно и версия дают побайтно одинаковый манифест | ✅ | `the_same_seed_and_version_give_the_same_manifest_byte_for_byte` (шаблон), сценарий `region` (хэш `7bbfdc3b62623fbc`) |
 | переход между регионами с экраном загрузки работает без окна | ✅ | `regen_replaces_the_region_through_the_loading_screen_and_keeps_the_hero`, реплей `region.json`, `--verify --windowed` |
 
 ## E6. Навигация и ИИ противников (фаза B)
@@ -244,7 +256,7 @@ Xvfb показывает его вместе с оверлеем навсетк
 | 5 | предсказание | ✅ C4: своё тело клиента идёт на тике нажатия (`NetSet::PredictInput` → `Predict` → `PredictEnd`, те же системы приказов, движения и действий с `With<Predicted>`), действия начинаются сразу и подтверждаются хостом, урон — только хоста; поправка по тикам (`correction_rate`), рывок при большой ошибке, расходящемся режиме движения, смерти и первом сравнении после мира заново или прыжка часов, после рывка тело не трогают, пока взятое состояние не догонит метки хоста; пройденные точки пути остаются пройденными, законченный хостом приказ приходит с его `aim`/`target`. `crates/sandbox/tests/sandbox/net_predict.rs` (14 тестов, 150 мс и 2 % потерь: бег, столб, путь из точек, ход к цели атаки — ошибка 0 м), юнит-тесты `shards_net::predict`, `inputs`. Ревью C4 (9 находок) закрыто, новые тесты проверены на коде без правки |
 | 6 | мир через манифест | ✅ мир приходит снапшотом с манифестом региона, клиент строит регион сам; смена региона и снапшот на хосте отправляют мир заново и сверяют игроков с новым миром, игрок, которого хост добавил сам, остаётся, какой бы номер ни держал до него гость: тела пиров помечены `NetSeat`, тела гостей снапшота из другого процесса уходят (`a_region_change_on_the_host_sends_every_client_the_new_world`, `a_snapshot_loaded_on_the_host_goes_to_its_clients`, `a_body_the_host_joined_itself_stays_through_a_rebuilt_world`, `a_number_a_guest_left_is_the_hosts_own_once_it_joins_a_player_there`, `guest_bodies_of_a_snapshot_loaded_into_a_new_host_leave_and_free_their_numbers`, `net_sync.rs`) |
 | 7 | подключение и отключение | ✅ хук `join_policy` («не во время босса»), отказ с причиной при другой сборке и полной сессии, выход и тайм-аут — тело ждёт `rejoin_grace_secs`, возвращение по токену хоста (хранится в `<save-dir>/net/`, проверено на UDP: `a_client_joins_a_host_over_udp_loopback`); вторая игра с тем же токеном занимает слот (и держит его, пока ждёт `join_policy`: `a_slot_a_second_game_took_stays_its_own_while_it_waits`), первая получает `Bye` с причиной, персонаж уходит в то соединение, которое вышло, даже когда оно не первое у хоста (`a_second_game_with_a_players_token_takes_the_slot_and_the_first_is_told`); выход хоста и `net_end` завершают сессию один раз с персонажами клиентам, игроки уходят, ждущим — отказ (`net_end_lets_the_players_go_and_refuses_whoever_waits`); закончившийся клиент замолкает, хост не заводит пира по одним подтверждениям; `--exit-with-host`: 0 — конец от хоста, 1 — отказ, кик, потеря хоста, 2 — сессию не открыть; по UDP `pause`/`resume`/`speed` — у хоста. Перед концом сессии хост сохраняет мир и своего персонажа, персонажи клиентов уходят с `SessionEnd` один раз (E8, `shards::coop`) |
-| 8 | отладка сети | 🟡 строки `net:` в журнале (с ограничением частоты для того, что вызывает пир), `net_sim` (задержка и потери на ходу), `net_status`, `net_kick`, `net_resync`, `net_end`, условия `net_joined`, `net_left`, `net_disconnected`, `net_desync`; оверлей сети `net_overlay` (F6: каналы, рассинхроны, ошибка предсказания, рывки) и поле `prediction` в `net_status` (C4). Впереди CLI сети и сценарии стенда (C7) |
+| 8 | отладка сети | ✅ строки `net:` в журнале (с ограничением частоты для того, что вызывает пир), `net_sim` (задержка и потери на ходу), `net_status`, `net_kick`, `net_resync`, `net_end`, условия `net_joined`, `net_left`, `net_disconnected`, `net_desync`; оверлей сети `net_overlay` (F6: каналы, рассинхроны, ошибка предсказания, рывки) и поле `prediction` в `net_status` (C4), у клиента ещё `desyncs` и `last_desync` (C9). CLI сети (C7): `shards --peer c1`, `wait --peer all`, `shards stand` и `stand stop`, сценарии стенда (`stand clients=2 …`, `@c1`). Долгая игра `shards soak` (C9) |
 
 Задел (C1): клиент не гоняет `SimSet` (`simulates`/`predicts`, `NetSet::Predict`, `Predicted`), правила репликации
 (`net_ignore`, `rules_hash`), общий со снапшотами кодек состояния (`ai_core::state`), токены приложений одного процесса,
@@ -379,30 +391,32 @@ Xvfb показывает его вместе с оверлеем навсетк
 ## Тесты
 
 Тесты по крейтам, `cargo test -p <крейт>`: все строки, кроме шаблона, взяты из одного полного прогона `cargo test --workspace`
-15 октября 2026 (после слияния C7, `3b2d359`, и правок шестого круга ревью; сборка этого дерева, 0 падают); у шаблона — счёт `#[test]` и
+15 октября 2026 (после слияния C7, `3b2d359`, и правок шестого круга ревью; сборка этого дерева, 0 падают). Строки `shards_script`,
+`shards_cli`, `shards_world` и `sandbox` после C9 пересчитаны по разнице: тесты добавлены и убраны в этих крейтах, а прогон C9 шёл на
+Windows, где тестов меньше (часть только для Unix) и девять падают (см. «Известные ограничения»). У шаблона — счёт `#[test]` и
 `#[ignore]` в `template/tests/game`, его прогон отдельный. Общего числа здесь и в README нет: оно расходилось с таблицами при
 каждой правке, а проверить его можно только полным прогоном. Помечены `#[ignore]`: запись эталонных реплеев, проверка окна под Xvfb,
-замеры сети, примеры в документации; у шаблона 24 проходят (и один `#[ignore]`: запись его эталонов). Запускать нужно из обычной оболочки:
+замеры сети, получасовая долгая игра, примеры в документации; у шаблона 28 проходят (и один `#[ignore]`: запись его эталонов). Запускать нужно из обычной оболочки:
 под `nohup` игнорируется SIGHUP, и тест `kill_and_hangup_remove_the_token_and_the_port_file` падает на `signal 1`.
 
 | крейт | тестов | где |
 |---|---|---|
 | `ai_core` | 91 | `crates/ai_core/src/*` (снапшоты 22) |
-| `shards_script` | 50 | `crates/shards_script/src/*` (разбор, условия, запуск сценариев 30) |
-| `shards_cli` | 54 | `crates/shards_cli/src/*` (клиент игры-пира `peer` 25, сценарии 12, команды 17) |
+| `shards_script` | 56 | `crates/shards_script/src/*` (разбор, условия, запуск сценариев 30, долгая игра `soak` 4, входы 2) |
+| `shards_cli` | 53 | `crates/shards_cli/src/*` (клиент игры-пира `peer` 25, сценарии 12, команды 16) |
 | `shards_core` | 14 | `src/` и `tests/core.rs` |
 | `shards_content` | 22 | `src/` и `tests/content.rs` |
 | `shards_motion` | 175 | `src/` и `tests/motion/` (контроллер 28, перцепция 29, ввод 30, физика 11, …) |
 | `shards_settings` | 62 | `src/` (18) и `tests/settings/` (44: хранилище, файл и его порча, правка файла руками в работающей игре, повтор записи и запись при выходе, группы, инструменты, изоляция от снапшота, хэша и репликации) |
 | `shards_action` | 145 | `src/` и `tests/combat/` |
 | `shards_level` | 80 | `src/` (3) и `tests/level/` (77: файл и узлы, свойства, коллайдеры, маркеры, спавн, `level` в контенте, реплей, картинка) |
-| `shards_world` | 72 | `src/` (17) и `tests/world/` (55: генерация, проверки, подземелья, регионы, смена региона, уровни-тайлы, зоны, навсетка региона) |
+| `shards_world` | 74 | `src/` (17) и `tests/world/` (57: генерация, проверки, подземелья, регионы, смена региона, стена по краю, уровни-тайлы, зоны, навсетка региона) |
 | `shards_npc` | 82 | `src/` (19) и `tests/npc/` (63: поведение, восприятие, директор, навсетка, реплей, снапшот, инструменты, страж данными) |
 | `shards_save` | 91 | `src/` (33) и `tests/save/` (58) |
 | `shards_net` | 127 | `src/` (82 — канальный слой без Bevy, 45 — сессия) |
 | `shards` | 43 | `src/` (35: `coop` 3, `run` 14, `stand_udp` 14, …), `tests/engine.rs`, `tests/failures.rs`, `tests/level_render.rs`, `tests/run_to.rs` (3), `tests/action_render/` |
-| `sandbox` | 299 | `tests/sandbox/` (278, из них кооператив `net*.rs` 149: `net.rs` 17, `net_coop.rs` 34, `net_sync.rs` 30, `net_guards.rs` 30, `net_lifecycle.rs` 20, `net_predict.rs` 14, `net_seams.rs` 4; `stand_udp.rs` 7, `snapshots.rs` 29, `replays.rs` 23, `invariants.rs` 12; ещё 3 `#[ignore]`: запись эталонных реплеев и два замера сети), `tests/system_failures.rs` (8), `tests/perf.rs` (6), `tests/log_capture.rs` (5), `src/` (2) |
-| шаблон | 24 | `template/tests/game/` (содержание, детерминизм, реплеи, сценарии, регион, манифест) |
+| `sandbox` | 300 | `tests/sandbox/` (279, из них кооператив `net*.rs` 149: `net.rs` 17, `net_coop.rs` 34, `net_sync.rs` 30, `net_guards.rs` 30, `net_lifecycle.rs` 20, `net_predict.rs` 14, `net_seams.rs` 4; `stand_udp.rs` 7, `snapshots.rs` 29, `replays.rs` 23, `invariants.rs` 12, долгая игра `soak.rs` 1; ещё 4 `#[ignore]`: запись эталонных реплеев, два замера сети и получасовая долгая игра), `tests/system_failures.rs` (8), `tests/perf.rs` (6), `tests/log_capture.rs` (5), `src/` (2) |
+| шаблон | 28 | `template/tests/game/` (содержание, кооператив 3, детерминизм, реплеи, сценарии и сценарии стенда, регион, манифест) |
 
 ## Известные ограничения и отложенное
 
@@ -460,12 +474,23 @@ Xvfb показывает его вместе с оверлеем навсетк
   заново. **Известный предел:** кто шлёт со многих настоящих адресов без остановки, может задержать, а то и сорвать вход игрока,
   чей `Hello` идёт по частям (уже подтверждённые куски канал не пришлёт снова), или пришёл одной датаграммой в тот же тик,
   что и пачка датаграмм с новых адресов; без рукопожатия, не держащего состояния у хоста (cookie), это не закрыть.
+- **Контент во время сессии не синхронизируется.** Хэш контента сверяется при входе. Если файл контента правят во время
+  сессии (горячая перезагрузка), мир заново, который хост шлёт после этого (смена региона, рассинхрон), клиент с другим
+  контентом не берёт (`net: cannot take the host's world: …`) и выходит из сессии. Так кончился первый получасовой
+  прогон `shards soak`, когда файл региона на диске поменяли посреди игры. Контент правят между сессиями.
 - **Сохранения в кооперативе: что не сделано.** Клиент не просит у хоста собственное сохранение сейчас (его `save_game
   what=character` отвечает, что персонажа сохраняет хост: у клиента нет полного персонажа, и то, что он снял бы сам,
   затёрло бы хороший файл). Персонаж больше 64 КБ ни один хост не примет. Слоты по умолчанию — `slot1`, у клиента по
   имени игрока. Ветки с проигрываемым реплеем (`replay_playing`) в маршрутизации хоста тестом не покрыты.
-- **Шаблон ещё без сохранения и кооператива** (C), без HUD и меню (D). Долина, рейдеры на навсетке и уровень из файла в нём
+- **Шаблон ещё без HUD и меню** (D). Долина, рейдеры на навсетке, уровень из файла, сохранения и кооператив на двоих в нём
   есть.
+- **На Windows не проходят девять тестов движка и один шаблона** (CI идёт на Linux, где проходят все): эталонные реплеи
+  записаны на Linux и расходятся в последних битах float (`every_reference_replay_verifies_headless`,
+  `reference_replays_still_match` шаблона; `record-replays.yml` записывает их на Linux); `snapshot_save` отвечает путём
+  `\\?\E:\…\snapshots\…` вместо `snapshots/…` (три теста `scenario_files`); разделители путей
+  (`a_relative_root_makes_the_asset_folder_absolute`); сигналы Unix у `shards stand stop` (два теста `peer`; на Windows `stand
+  stop` просит закончить процесс самому); запись настроек, которой нельзя случиться (два теста `persist`). Игра и стенд на
+  Windows работают: получасовые прогоны `shards soak` из таблицы приёмки фазы C шли там.
 - **Относительный `BEVY_ASSET_ROOT` не принимает наблюдатель за файлами.** `BEVY_ASSET_ROOT=crates/sandbox target/debug/sandbox
   --headless` падает в `AssetPlugin` с `Failed to create file watcher from path "crates/sandbox/assets"`; абсолютный путь
   (`$PWD/crates/sandbox`) работает, как и `cargo sandbox`.
