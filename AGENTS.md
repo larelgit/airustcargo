@@ -18,7 +18,7 @@
   `cargo test --manifest-path template/Cargo.toml`.
 - Крейты: `shards` (зонтик, единственная зависимость игры), `shards_core`, `shards_content`, `shards_motion`,
   `shards_action`, `shards_level` (уровни из Blender), `shards_world` (регионы, генерация), `shards_npc` (враги, навсетка),
-  `shards_save` (сохранения: секции, слоты, миграции, копии), `ai_core`, `shards_script`, `shards_cli`, `sandbox` (арена движка). Карта — в README, «Архитектура».
+  `shards_save` (сохранения: секции, слоты, миграции, копии), `shards_ui` (экраны и меню из контента), `ai_core`, `shards_script`, `shards_cli`, `sandbox` (арена движка). Карта — в README, «Архитектура».
 
 ## Как смотреть на игру и действовать в ней
 
@@ -64,7 +64,8 @@ kill <pid>                              # pid из `wait`
   `content_list`, `content_get`, `content_check`, `content_reload`, `spawn_prefab`; **мир** — `regen`, `region_load`,
   `goto_tile`, `region_info`, `worldgen_report`, `spawn_level`, `level_info`, `level_reload`; **NPC и навигация** —
   `npc_state`, `npc_set_state`, `nav_path`, `nav_info`, `nav_bake`, оверлеи `world_overlay` и `nav_overlay` (окно); **правила** —
-  `assert_add`, `assert_list`, `assert_remove`, `assert_reset` (`shards assert`). Условия для
+  `assert_add`, `assert_list`, `assert_remove`, `assert_reset` (`shards assert`); **интерфейс** — `ui_read` (дерево экранов: id
+  виджетов, значения, фокус), `ui_open`, `ui_close`, `ui_navigate`, `ui_click`, `ui_set`. Условия для
   `step --until named:…`: `near_poi`, `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`; свои у игры (в песочнице
   `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`).
 - Инструменты боя (`dodge`, `light_attack`, `block`, `use_item`, `attack`) отвечают по правилам игры сразу: `ok: roll (W)`,
@@ -153,6 +154,9 @@ kill <pid>                              # pid из `wait`
 - `AiId` назначает движок. Не пишите его на месте (`get_mut`, `set`, BRP `world.mutate_components`):
   индекс «id → сущность» ведут хуки `on_insert` и `on_discard`. Вставка нового `AiId` перенумеровывает
   сущность, а старый id получает надгробие `renumbered to eN`.
+- **HUD и меню — контент** (`*.screen.ron`, тема — `*.theme.ron`), а не код окна: значения виджетам игра даёт
+  `add_ui_source`, действия кнопок — `add_ui_action`. Экраны вне симуляции (без `AiId`, не в снапшоте); всё, что меняет мир,
+  кнопка делает инструментом (`tool …`) или действием игры, а реплей повторяет само нажатие (`ui_click`, `ui_navigate`).
 - **Новый модуль движка** — крейт с плагином, который называет себя `add_engine_module(name, version)` (так он виден в
   `ai/status`), с наборами систем для упорядочивания и одной строкой в `EnginePlugins`. Состояние он описывает для ИИ
   (describe, `journal_event`), действия отдаёт инструментами, числа берёт из контента; у него юнит-тесты, сценарий в

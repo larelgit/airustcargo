@@ -346,6 +346,31 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
 - CI: `soak.yml` (полчаса на живом стенде: по понедельникам, руками, на пуше с `[soak]`) и `record-replays.yml`
   (эталонные реплеи песочницы и шаблона, записанные заново на Linux, артефактом: на пуше с `[record replays]`).
 
+**Интерфейс (D1, E9.1–3, `shards_ui`)** — HUD и меню из контента, дерево интерфейса для агента:
+
+- Виды контента `screen` (`*.screen.ron`: слой `Hud`/`Menu`/`Modal`, `pauses`, `open_at_start`, `closable`, заголовок,
+  место, раскладка, виджеты) и `theme` (цвета, размеры шрифтов, отступы; id `default`). Виджеты: `Panel`, `List`, `Grid`,
+  `Tabs`, `Text`, `Hint`, `Bar`, `Cooldown`, `Compass`, `Allies`, `Compare`, `Button`, `Slider`, `Toggle`, `Choice`.
+  Проверки контента: повтор id, `open` несуществующего экрана, страница вкладок без id, диапазон слайдера, `setting` не
+  вида `группа.ключ`, HUD с паузой.
+- Стек экранов и фокус (`UiStack`, `model::navigate`): `up`/`down`/`next`/`prev` с переходом через край, строки и сетки
+  влево-вправо, `left`/`right` меняют слайдер, переключатель, выбор и вкладки, `confirm`, `back`; модальное окно закрывает
+  всё под собой. Меню с `pauses` ставит `PauseState::Paused` в одиночной игре и снимает паузу, только если поставило её само.
+- Кнопки: `close`, `back`, `open <экран>`, `quit`, `tool <имя> {json}` (от имени нажавшего, с его scope), действие игры
+  (`UiAppExt::add_ui_action`). Значения — из источников (`add_ui_source`; движок даёт `you.health`, `you.stamina`, `you.poise`,
+  `you.charges:<имя>`, `you.cooldown:<действие>`, `you.heading`, `allies`; `shards_ui::viewer` — чьи они) или из настроек
+  игрока (`setting`: меняется через `settings_set`). События `UiPressed`, `UiChanged`, `UiScreenChanged`.
+- Инструменты `ui_read`, `ui_open`, `ui_close`, `ui_navigate`, `ui_click`, `ui_set` (scope Player); раздел `UI` в
+  `observe`, пока открыто меню; журнал `ui: …`; поле `ui` в `ai/status`. Экраны вне симуляции (без `AiId`, не в снапшоте и
+  хэше), а инструменты — action: реплей нажимает те же кнопки.
+- Рисование (feature `render`, только с окном): узлы Bevy UI, тема, размер текста `accessibility.text_scale`, мышь через
+  picking, роли, подписи и значения AccessKit для экранных чтецов, `InputFocus` за фокусом.
+- `shards`: `EngineUiPlugin` — источники `you.*` и `allies`, клавиша `pause` открывает экран `pause`, контекст ввода `menu`
+  (`navigate` с повтором, `confirm`, `back`) зовёт `ui_*` от агента `input`.
+- Песочница: меню `pause`, `settings` (все группы настроек на вкладках), `confirm_quit`
+  (`content/ui/menus.screen.ron`), сценарий `ui.scenario`. Шаблон: HUD (здоровье, стамина, трофеи — источник игры),
+  пауза, настройки и «сохранить и выйти» (`src/screens.rs`, `screens.screen.ron`), сценарий `menus.scenario`.
+
 ### Исправлено
 
 - Мир: тело могло уйти, уклониться или быть отброшено за край сгенерированного региона и падать без конца. Нашёл первый
@@ -566,10 +591,14 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   хоста и причину, `on_session_end` возвращает слот мира, появился `join_character`. `load_game` мира вызывает
   `WorldRebuilt`. Клиент сети без `--character` играет слот по имени игрока, а не `slot1`. В списке модулей `ai/status` —
   `coop`.
+- `observe` печатает после `LANDMARKS` разделы модулей (`AiAppExt::register_ai_observe_section`; первый — `UI`). В карте ввода
+  у `gameplay` новое действие `pause` (Escape, Start); в меню Escape — `back` контекста `menu`. `SettingsRegistry::value` читает
+  одну настройку текстом. В списке модулей `ai/status` — `ui`. Контент песочницы и шаблона прибавил экраны, поэтому
+  эталонные реплеи расходятся на `replay check content` и записываются заново (`record-replays.yml`).
 
 ### Планируется
 
-- Фаза D: виджеты и экраны, дерево интерфейса для агента, локализация, звук (E9); остатки E4 и E11.
+- Фаза D: локализация (D2), звук (D3), остатки E4 и E11 (D4).
 
 ## [0.3.0] — фаза B: мир, враги и снапшоты (не выпущена)
 

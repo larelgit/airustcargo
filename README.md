@@ -39,10 +39,11 @@ Remote Protocol на 127.0.0.1), без MCP-прослоек. Тем же CLI п
 16. [Снапшоты (E11.4)](#снапшоты-e114)
 17. [Сохранения (E8.1–5)](#сохранения-e815)
 18. [Настройки (E8.6)](#настройки-e86)
-19. [Песочница](#песочница)
-20. [Тесты и CI](#тесты-и-ci)
-21. [Что дальше](#что-дальше)
-22. [Соглашения и сборка](#соглашения-и-сборка)
+19. [Интерфейс (E9)](#интерфейс-e9)
+20. [Песочница](#песочница)
+21. [Тесты и CI](#тесты-и-ci)
+22. [Что дальше](#что-дальше)
+23. [Соглашения и сборка](#соглашения-и-сборка)
 
 ## Быстрый старт
 
@@ -61,7 +62,7 @@ cargo shards observe                       # срез мира текстом + 
 cargo shards tools                         # что можно сделать (--json: со схемами аргументов)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # в ответе CHANGES и JOURNAL
-cargo shards content check                 # ok: 70 definitions in 23 files
+cargo shards content check                 # ok: 73 definitions in 24 files
 cargo shards act regen region=wilds seed=42   # сгенерированный регион к югу от арены; игрок у его ворот
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # маршрут к логову по навсетке: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # проверка генератора на тысяче зёрен
@@ -82,7 +83,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Контент без игры: читает и проверяет все файлы (в том числе файлы уровней тайлов и запечённую навигацию), код 0 или 1.
 cargo sandbox --check-content
-# ok: 70 definitions in 23 files
+# ok: 73 definitions in 24 files
 
 # 7. Мир без игры: генератор на тысяче зёрен (код 0, если прошли все) и запекание навигации тайлов.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -273,6 +274,7 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 | `crates/shards_save` | сохранения (E8.1–5): секции и реестр, слоты, конверт `shards-save/1`, миграции, атомарная запись с тремя копиями и восстановлением, `save_now` и автосохранение, инструменты `save_*` и `load_game`; секции движка (`region`, `position`, `vitals`) регистрирует зонтик |
 | `crates/shards_npc` | враги (E6): автомат поведения, восприятие, режиссёр боя (жетоны), планировщик атак, навсетка по тайлам (`nav`: запекание, сшивка, маршруты), агенты и поводок |
 | `crates/shards_settings` | настройки игрока (E8.6): группы графики, звука, управления и доступности на настройках Bevy (`bevy_settings`), `settings.toml`, инструменты `settings`/`settings_set`, окно по настройкам графики |
+| `crates/shards_ui` | интерфейс (E9): экраны и темы в контенте (`screen`, `theme`), стек экранов, фокус и навигация, источники значений и действия кнопок, инструменты `ui_*`, раздел `UI` в `observe`; с feature `render` — рисование на Bevy UI с подписями AccessKit |
 | `crates/ai_core` | слой ИИ, не зависит от конкретной игры: id, срез мира, журнал, инструменты, время, реплеи, транспорт |
 | `crates/shards_script` | без Bevy: формат сценариев, их запуск, разбор условий `--until`, долгая игра агентов (`soak`) и их случайные входы; общий для `shards` и тестов |
 | `crates/shards_cli` | бинарник `shards`, тонкий клиент к `ai/*` |
@@ -285,7 +287,7 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 |---|---|
 | `id` | `AiId` (`e42`): стабильный монотонный id, никогда не переиспользуется; надгробия для удалённых. Id назначает только движок: `set` и BRP `world.mutate_components` его не меняют, а новая вставка перенумеровывает сущность (надгробие `renumbered to e99`) |
 | `describe` | только явно зарегистрированные компоненты видны ИИ, у каждого короткий describe; подсказки под строкой `YOU` (`register_ai_advice`) |
-| `observe` | текстовый срез: YOU / ALERT / SEEN (по угрозе) / NOT IN VIEW / LANDMARKS / SINCE, видимость от глаз субъекта; `inspect`, `nearby`, диффы |
+| `observe` | текстовый срез: YOU / ALERT / SEEN (по угрозе) / NOT IN VIEW / LANDMARKS / разделы модулей (`register_ai_observe_section`: `UI`) / SINCE, видимость от глаз субъекта; `inspect`, `nearby`, диффы |
 | `spatial` | позиции относительно игрока («8.4m NE»), line of sight (подменяемо: движение ставит лучи по физике, `AiOccluder` тоже работает) |
 | `journal` | кольцевой буфер игровых событий (observers) плюс перехват `warn!`/`error!` из tracing: строка получает тик, на котором записана, и попадает в журнал после каждого тика; не больше 64 строк на тик |
 | `tools` | реестр: args-struct + Bevy-система, JSON Schema (schemars), scope, `catch_unwind` |
@@ -537,7 +539,7 @@ reflection, как в сценах Bevy; каждый компонент дол�
 
 ```text
 $ shards act content_list
-content: 70 definitions in 23 files
+content: 73 definitions in 24 files
   action  23
   animset  0
   attack_plan  3
@@ -558,8 +560,10 @@ content: 70 definitions in 23 files
   prefab  7
   region  1
   room  0
+  screen  3
   socket_rules  1
   status  0
+  theme  0
   tile  9
   tile_map  1
 $ shards act spawn_prefab id=skeleton x=5 z=5
@@ -569,7 +573,7 @@ CHANGES
 ```
 
 **`--check-content` и `shards content check`.** Первый читает файлы без игры (для CI: код 0 или 1; отсутствующая папка
-`content` — тоже ошибка, чтобы проверка не прошла впустую), второй спрашивает запущенную игру: `ok: 70 definitions in 23
+`content` — тоже ошибка, чтобы проверка не прошла впустую), второй спрашивает запущенную игру: `ok: 73 definitions in 24
 files`. Модули добавляют к проверке своё: файлы уровней, названные определениями `level` (каждый узел, компонент и
 обязательный маркер), файлы уровней, из которых построены тайлы (должны лежать в папке ассетов), и запечённая навигация
 тайлов (с определением `nav` устаревший или отсутствующий файл — ошибка с командой `--bake-nav`).
@@ -2500,8 +2504,10 @@ PASS crates/sandbox/scenarios/npc_navmesh.scenario (31 commands, 1271 ticks)
 PASS crates/sandbox/scenarios/obstacle_course.scenario (86 commands, 1010 ticks)
 PASS crates/sandbox/scenarios/region.scenario (40 commands, 353 ticks)
 PASS crates/sandbox/scenarios/saves.scenario (76 commands, 157 ticks)
+PASS crates/sandbox/scenarios/settings.scenario (76 commands, 0 ticks)
 PASS crates/sandbox/scenarios/snapshot.scenario (51 commands, 365 ticks)
-10 of 10 scenarios passed
+PASS crates/sandbox/scenarios/ui.scenario (73 commands, 0 ticks)
+12 of 12 scenarios passed
 ```
 
 Без `--quiet` каждая команда печатается строкой `ok  39 step 900 --until near:e5:e6:3.2 → ran 129 ticks (150 → 279),
@@ -3195,6 +3201,164 @@ app.add_settings_group::<MyGameSettings>()                     // в build, до
 `hold_to_toggle`; `tests/motion/camera.rs`),
 `crates/sandbox/tests/sandbox/settings.rs`, сценарий `crates/sandbox/scenarios/settings.scenario`.
 
+## Интерфейс (E9)
+
+HUD и меню игры — контент. Модуль `shards_ui` держит открытые экраны стеком, водит фокус, как геймпад, нажимает кнопки и
+меняет значения, а агенту рассказывает обо всём этом текстом: меню проходится по дереву интерфейса, без картинки. С окном
+(feature `render`) экраны рисуются на Bevy UI, с темой, размером текста игрока и подписями для экранных чтецов.
+
+**Экран** — определение вида `screen` (`content/**/*.screen.ron`, горячая перезагрузка):
+
+```ron
+// content/ui/menus.screen.ron
+{
+    "pause": (
+        pauses: true,                       // в одиночной игре — PauseState::Paused, пока открыт
+        title: "Paused",
+        widgets: [
+            Button(id: "resume", label: "Resume", action: "close"),
+            Button(id: "settings", label: "Settings", action: "open settings"),
+            Button(id: "quit", label: "Quit", action: "open confirm_quit"),
+        ],
+    ),
+    "settings": (
+        title: "Settings",
+        widgets: [
+            Tabs(id: "tabs", children: [
+                Panel(id: "display", title: "Display", children: [
+                    Slider(id: "text_size", label: "Text size", min: 0.5, max: 3.0, step: 0.25, setting: "accessibility.text_scale"),
+                    Choice(id: "flashes", label: "Flashes", options: ["full", "reduced", "off"], setting: "accessibility.flashes"),
+                ]),
+                Panel(id: "controls", title: "Controls", children: [
+                    Toggle(id: "hold", label: "Hold to toggle", setting: "accessibility.hold_to_toggle"),
+                ]),
+            ]),
+            Button(id: "back", label: "Back", action: "back"),
+        ],
+    ),
+    "confirm_quit": (
+        layer: Modal, closable: false, title: "Give up?",
+        widgets: [Panel(layout: Row, children: [
+            Button(id: "yes", label: "Yes", action: "give_up"),   // действие игры: add_ui_action
+            Button(id: "no", label: "No", action: "close"),
+        ])],
+    ),
+}
+// content/ui/hud.screen.ron
+{
+    "hud": (
+        layer: Hud, open_at_start: true, anchor: TopLeft,
+        widgets: [
+            Bar(id: "health", label: "HP", bind: "you.health", color: "health"),
+            Bar(id: "stamina", label: "Stamina", bind: "you.stamina", color: "stamina"),
+            Hint(text: "[Esc] Pause"),
+            Compass(),
+            Allies(id: "allies"),
+        ],
+    ),
+}
+```
+
+| поле экрана | что |
+|---|---|
+| `layer` | `Hud` (ввода не берёт, лежит под меню), `Menu` (по умолчанию: берёт управление), `Modal` (поверх меню; пока открыт, ниже ничего не нажать) |
+| `pauses` | в одиночной игре (`NetRole::Single`) открытый экран ставит `PauseState::Paused`, и симуляция стоит; закрытие возвращает игру, только если паузу поставило меню. В кооперативе мир идёт дальше. HUD паузы не ставит (ошибка контента) |
+| `open_at_start` | открыть при входе в игру (`OnEnter(InGame)`): так открывается HUD |
+| `closable` | `false` — `back` и `ui_close` экран не закрывают, только его кнопки (вопрос, на который надо ответить) |
+| `title`, `anchor`, `layout` | заголовок; где на экране (`TopLeft` … `BottomRight`, по умолчанию `Center`); `Column` или `Row` |
+
+**Виджеты.** Держат другие: `Panel` (заголовок, `layout`), `List`, `Grid` (`columns`), `Tabs` (страницы — `Panel`/`List`/`Grid`
+с id; видна одна). Показывают: `Text` (свой текст или `bind`), `Hint` (подсказка; пустая не видна), `Bar` (`value`/`max` или
+`bind`, `color` — имя цвета темы или `#rrggbb`), `Cooldown` (время до готовности), `Compass` (куда смотрит игрок и четыре
+ближайшие точки интереса), `Allies` (рамки союзников: имя, здоровье, лежит ли), `Compare` (до → после по строкам: `damage 12 →
+15 (+3)`). Берут ввод: `Button` (`action`), `Slider` (`min`, `max`, `step`), `Toggle`, `Choice` (`options`); у трёх последних
+`setting: "группа.ключ"` — настройка игрока: виджет показывает её и меняет через `settings_set` (её проверки, запись в
+`settings.toml`, журнал `settings: …`). Id виджета — `экран/id` (`pause/resume`); у виджета без id — вид и номер (`hud/hint1`).
+Ошибки контента называют файл и виджет: повтор id, `open` несуществующего экрана, слайдер без диапазона, `setting` не вида
+`группа.ключ`; правка, которая их вносит, отклоняется, и остаётся прежний экран.
+
+**Действия кнопок:** `close` (закрыть свой экран), `back` (закрыть верхний), `open <экран>`, `quit` (`AppExit`), `tool <имя>
+{json}` — инструмент от имени нажавшего агента и с его scope (кнопка не даёт игроку инструмент разработчика), одно слово —
+действие игры:
+
+```rust
+app.add_ui_action("give_up", |world, press| {          // press: widget, screen, action, agent
+    world.resource_mut::<Run>().over = true;
+    Ok("you gave up".into())                            // текст ответа `ui_click`; Err — отказ
+})
+.add_ui_source("trophies", |world, _arg| {               // bind: "trophies"; "имя:арг" передаёт арг
+    Some(UiValue::Text(format!("{} trophies", world.resource::<Trophies>().0)))
+});
+```
+
+Источники движка (`shards`): `you.health`, `you.stamina`, `you.poise` (полоса), `you.charges:<заряд>`, `you.cooldown:<действие>`,
+`you.heading` (компас), `allies`. «You» — тело, которым управляет эта машина (`LocalPlayer`), иначе то, за которое играет
+агент (`AiPlayer`). Неизвестный источник пишет в журнал одно предупреждение, а виджет остаётся пустым.
+
+**Тема** — определение вида `theme` с id `default` (без него — тема движка): цвета `text`, `dim_text`, `panel`, `backdrop`,
+`button`, `button_hover`, `accent`, `focus` и именованные (`health`, `stamina`, `poise`, `mana`, свои), размеры шрифтов
+(`font_size`, `title_size`, `hint_size`), `spacing`, `padding`, `radius`, `bar_width`, `bar_height`, `button_width`. Шрифты
+умножаются на `accessibility.text_scale` игрока.
+
+**Для агента.** Инструменты (scope Player — как меню у человека):
+
+```text
+$ shards act ui_open screen=pause
+ok: opened pause (menu, pauses the game) · focus pause/resume
+$ shards act ui_navigate dir=down
+ok: focus pause/settings (button "Settings")
+$ shards act ui_navigate dir=confirm
+ok: pressed pause/settings: opened settings (menu) · focus settings/tabs
+$ shards act ui_read
+SCREENS  settings ◀ takes input · pause
+settings "Settings" (menu)
+  settings/tabs  tabs [display] controls ◀ focus
+  settings/display  panel "Display"
+    settings/text_size  slider "Text size" 1 (0.5..3 step 0.25) [accessibility.text_scale]
+    settings/flashes  choice "Flashes" full (full|reduced|off) [accessibility.flashes]
+  settings/controls  panel "Controls" (page not shown)
+  settings/back  button "Back" → back
+…
+$ shards act ui_set id=settings/text_size value=1.6
+ok: settings/text_size 1 → 1.5                    # к шагу слайдера; 9 → 3, к его краю
+$ shards act ui_click id=settings/hold
+error: settings/hold is on a page that is not shown …
+$ shards act ui_navigate dir=back
+ok: closed settings; pause is on top · focus pause/settings
+```
+
+`ui_read {screen?}` — дерево открытых экранов, верхний первым: id, вид, подпись, значение, привязка (`[группа.ключ]`, `← you.health`),
+фокус. `ui_open screen=` и `ui_close {screen?}` открывают и закрывают; `ui_navigate dir=` ходит, как геймпад
+(`up`/`down`/`next`/`prev` — фокус с переходом через край, в строке и сетке ещё `left`/`right`; `left`/`right` на слайдере,
+переключателе, выборе и вкладках меняют значение; `confirm` нажимает, `back` закрывает); `ui_click id=` нажимает (кнопка
+делает действие, переключатель и выбор идут дальше); `ui_set id= value=` ставит значение (число, `on`/`off`, вариант, страница
+по id, заголовку или номеру). Ошибки говорят, как исправить вызов: ``no screen `setting` (did you mean `settings`?)``,
+`pause/resume is under confirm_quit: answer or close that first`, ``settings/text_size is a slider: a number from 0.5 to 3, not `big` ``.
+Пока открыто меню, `observe` печатает после `LANDMARKS` раздел `UI` (верхний экран, до 20 строк, и какими инструментами
+действовать); HUD в `observe` не попадает. Журнал: `ui: opened pause`, `ui: pause/resume pressed (close)`, `ui: settings/text_size
+1 → 1.25`, `ui: closed pause`; код слышит события `UiPressed`, `UiChanged`, `UiScreenChanged`. `ai/status` получает поле `ui`
+(`screens`; `input` — экран, который берёт ввод; `focus`).
+
+**Человек.** Клавиша `pause` карты ввода (Escape, Start на геймпаде) открывает экран `pause`, если он есть в контенте. Пока
+открыто меню, сверху стоит контекст ввода `menu` (персонаж ничего не слышит): `navigate` (стрелки, WASD, левый стик; зажатое
+направление повторяется через 0,35 с и потом каждые 0,12 с), `confirm` (Enter, South) и `back` (Escape, East); их можно
+переназначить (`rebind context=menu`, настройки `controls`). Мышь —
+через picking Bevy: наведение подсвечивает, щелчок — `ui_click`. Всё это — вызовы `ui_*` от агента `input`, поэтому реплей
+записывает их и нажимает те же кнопки на тех же тиках.
+
+**Вне симуляции.** У виджетов нет `AiId` (меню не сдвигает id), экраны не входят ни в снапшот, ни в хэш реплея, хост их не
+пересылает: у каждой машины свои. Инструменты, которые их меняют, — action, и реплей их повторяет; вызов, который делает
+кнопка (`tool heal …`), в реплей отдельно не пишется: его делает тот же щелчок.
+
+**Рисование** (feature `render`, только когда есть окно): узел Bevy UI на каждый виджет, рамка на экран (меню затемняет
+игру, HUD не ловит мышь, модальное окно выше меню), значения меняются на месте, фокус — обводка и `InputFocus`. Каждому виджету —
+узел AccessKit: роль (`Dialog`, `Button`, `Slider`, `ProgressIndicator`, …), подпись и значение, поэтому экранный чтец читает
+меню. Текст рисуется шрифтом Bevy по умолчанию (латиница; шрифты и локализация — D2).
+
+Проверка: `crates/shards_ui` (юнит-тесты разбора и навигации; `tests/ui/`: экраны, меню, клавиатура, рисование и подписи
+доступности без GPU, реплей с нажатыми кнопками, правка экрана в работающей игре и отказ сломанной), сценарии
+`crates/sandbox/scenarios/ui.scenario` и `template/scenarios/menus.scenario`.
+
 ## Песочница
 
 Песочница (`crates/sandbox`) — тестовая арена движка, на которой проверяется каждый модуль. Она собрана только на
@@ -3226,6 +3390,7 @@ app.add_settings_group::<MyGameSettings>()                     // в build, до
 | `region/camps.prefab.ron`, `region/ruin.level.ron` | лагерные скелеты (`Home` 12 м) и страж логова (10 м); файл руины и маркеры, обязательные в нём |
 | `world/watch.layout.ron` | третий скелет арены (`e14`) |
 | `world/world.bounds.ron` | границы мира для правила `bodies_in_world`: запас вокруг построенных layout и региона, высота, ниже которой тело выпало |
+| `ui/menus.screen.ron` | меню на виджетах движка: `pause`, `settings` (все группы настроек на вкладках), вопрос `confirm_quit`; HUD у песочницы свой, в коде окна (`visuals.rs`) |
 
 `layout` — вид контента самой песочницы: коробки (`solids`), пандусы, объёмы (вода, поток, триггер), ориентиры для ИИ и
 префабы для спавна. Слои спавнятся по порядку id, внутри — по порядку списков, так что `AiId` и `ColliderId` одинаковы в
@@ -3269,7 +3434,9 @@ app.add_settings_group::<MyGameSettings>()                     // в build, до
 - `snapshot.scenario` (E11.4) — бой со стражем доводится до второй фазы, снимается снапшот, игра уезжает, `snapshot_load`
   одной командой возвращает бой и его можно продолжить;
 - `settings.scenario` (E8.6) — `settings` и `settings_set`: значения по типу, отказы с допустимым, сброс, `rebind` как настройка
-  `controls`; в начале и в конце все группы возвращаются к умолчаниям (идёт и с файлом настроек, и без).
+  `controls`; в начале и в конце все группы возвращаются к умолчаниям (идёт и с файлом настроек, и без);
+- `ui.scenario` (E9) — меню проходится по дереву интерфейса: пауза, вкладки настроек, слайдер и выбор меняют настройки
+  игрока, вопрос поверх меню, ошибки, которые учат; в начале и в конце меню закрыты, настройки по умолчанию.
 
 Сценарии начинают с `heal`/`teleport`/`set`/`npc_set_state … calm`, поэтому идут на свежей игре и после других, в любом порядке:
 CI гоняет их вперёд и потом назад в одной игре. Сессии шести из них записаны как эталонные реплеи в `tests/replays/`
@@ -3347,8 +3514,8 @@ E11), B (мир: E5, E6, уровни из Blender, снапшоты) и C (ко
 клиенты»; приёмка — полчаса хоста и двух клиентов на 150 мс и 2 % потерь без рассинхрона, `shards soak`) собраны, CI
 проверяет их на каждом пуше. Впереди:
 
-1. **Фаза D — интерфейс и контент:** виджеты, стек экранов, фокус, навигация с клавиатуры и геймпада, темы и масштаб
-   текста; дерево интерфейса в `observe` и инструменты для него (E9); локализация; звук (шины, адаптивная музыка,
+1. **Фаза D — интерфейс и контент:** интерфейс (E9.1–3: экраны, фокус, темы, дерево для агента) собран в `shards_ui`, впереди
+   локализация; звук (шины, адаптивная музыка,
    пространственные звуки); остатки E4 и E11: консоль и меню разработчика, оверлей NPC, `path_to` и `clearance` по
    навсетке (сейчас по ней только `nav_path` и `move_to path=true`), проверка, что сокеты файла уровня совпадают с
    сокетами тайла в RON.
