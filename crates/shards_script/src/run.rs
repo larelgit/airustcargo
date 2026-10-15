@@ -110,7 +110,8 @@ pub trait Driver {
     }
 
     /// Whether the running stand fits the `stand` line (a live driver compares the link
-    /// conditions). The error says what to start instead. Called once, after
+    /// conditions). The error says what to start instead, and is shown as it is (a driver that
+    /// cannot reach the host names it itself). Called once, after
     /// [`peers`](Driver::peers) matched the header.
     fn check_stand(&mut self, _header: &StandHeader) -> Result<(), String> {
         Ok(())
@@ -436,7 +437,8 @@ impl<'d, D: Driver + ?Sized> Run<'d, D> {
                     header.clients
                 )));
             }
-            self.driver.check_stand(&header).map_err(Fail::lost_on(true, HOST))?;
+            // The verdict on the links is the scenario's own message (it says what to start the stand with): not a lost member.
+            self.driver.check_stand(&header).map_err(Fail::lost)?;
             self.members = wanted;
         }
         let in_stand = self.stand.is_some();
@@ -1316,6 +1318,8 @@ expect result contains "YOU e5"
         let f = run(&script, &mut stand).failure.unwrap();
         assert_eq!(f.kind, FailureKind::Driver);
         assert!(f.message.contains("start it with `--net-sim latency=150,loss=0.02`"), "{}", f.message);
+        // The verdict on the links is the scenario's own words: no member is blamed for it.
+        assert!(f.message.starts_with("this scenario's `stand` line wants links"), "{}", f.message);
         assert!(stand.calls.is_empty());
     }
 
