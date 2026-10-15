@@ -230,3 +230,19 @@ cargo sandbox --replay replays/crash-tick<N>.json --verify   # код 1, пок�
   `cargo test --test game record_reference_replays -- --ignored` в `template/`).
 - Изменили поведение модуля — обновите его раздел в README, `docs/engine-progress.md` (статусы) и `CHANGELOG.md`
   (`Unreleased`).
+
+## Cursor Cloud specific instructions
+
+- Образ уже содержит Rust из `rust-toolchain.toml` (канал, rustfmt, clippy) и пакеты `pkg-config`,
+  `libasound2-dev`, `libudev-dev`, плюс для окна `xvfb`, `mesa-vulkan-drivers`, `libxkbcommon-x11-0`.
+  `cargo` стоит в `/usr/local/cargo/bin` и виден login-шеллу без `source ~/.cargo/env`.
+- Установка среды собирает workspace и шаблон (`cargo build --workspace --locked` и
+  `cargo build --locked --manifest-path template/Cargo.toml`). Каталоги `target/` и `template/target`
+  могут быть уже заполнены; не удаляйте их, если не меняли зависимости.
+- Песочницу не запускайте как сервис при старте среды. Сессия нужна на время задачи: команды из раздела
+  «Как смотреть на игру». Окно на этом образе рисует программный Vulkan (llvmpipe). Предупреждение Bevy
+  `b0006` для этого адаптера ожидаемо и не ломает `--verify --windowed` под `xvfb-run -a`.
+- Ядро обновляет mtime примерно раз в 4 мс. Два теста `shards_settings` отличают файлы одинаковой длины
+  по mtime и на этом ядре падают: `persist::a_write_that_fails_does_not_cost_the_settings` и
+  `persist::a_write_that_fails_in_the_exit_frame_leaves_the_last_good_copy_in_place`. В CI на другом ядре
+  они проходят. Это не повод менять код настроек.
