@@ -397,7 +397,11 @@ fn a_world_of_an_earlier_tick_that_waits_for_room_still_starts_the_inputs_over()
     let mut stand = stand(1);
     stand.run(30);
     let saved = snapshot::capture(stand.world(HOST)).unwrap();
+    // An input of the old ticks: the host has applied it, and keeps it in its record of c1.
+    assert!(stand.call(C1, "dodge", json!({"dir": "E"})).ok);
     stand.run(300);
+    let before = peer_of(&stand, 1).applied_input_tick;
+    assert!(before > 30 && peer_of(&stand, 1).inputs.newest > 30, "the dodge was applied at {before}");
     // Back 300 ticks, with c1's link too full to take the world for a while: the host's new
     // ticks run on meanwhile, and still the world that goes is of other ticks than c1's.
     snapshot::restore(stand.world_mut(HOST), &saved, false).unwrap();
@@ -409,9 +413,20 @@ fn a_world_of_an_earlier_tick_that_waits_for_room_still_starts_the_inputs_over()
     assert_eq!(peer_of(&stand, 1).resyncs, 0, "not sent: it waits a tick at least");
     run_until(&mut stand, 600, "the snapshot reaches c1", |s| rebases(s, C1) == 1);
     let (host_at, c1_at) = (sim::tick(stand.world(HOST)), sim::tick(stand.world(C1)));
-    assert!(c1_at < host_at + 20, "c1 kept its clock of the old ticks: c1 at {c1_at}, the host at {host_at}");
+    assert!(c1_at < host_at + 20, "c1 is on the host's new ticks: c1 at {c1_at}, the host at {host_at}");
+    // The host started c1's inputs over: what it applied or held of the old ticks is gone (a
+    // world sent as if the ticks had not moved keeps it, and the old dodge would shadow new ones).
+    let peer = peer_of(&stand, 1);
+    assert_eq!((peer.applied_input_tick, peer.inputs.newest), (0, 0), "the record of c1's inputs is of the old ticks: {before}");
     stand.run(60);
     assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+    // A dodge on the new ticks lands once, at its stamped tick.
+    assert!(stand.call(C1, "dodge", json!({"dir": "E"})).ok);
+    let asked_at = sim::tick(stand.world(C1));
+    stand.run(40);
+    let me = body(&stand, C1);
+    assert_eq!(inputs_of(&stand, &me, "dodge").last(), Some(&asked_at));
+    assert_eq!(peer_of(&stand, 1).inputs.late, 0);
 }
 
 #[test]
