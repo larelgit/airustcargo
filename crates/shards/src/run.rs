@@ -129,10 +129,11 @@ struct Args {
     /// The world to load: a save slot (`[a-z0-9_-]`, up to 32).
     #[arg(long, value_name = "SLOT", value_parser = slot_name)]
     world: Option<String>,
-    /// The game exits when its session ends, instead of going back to the menu: with 0 when the
-    /// host ended it, 1 when the game was refused, kicked, lost its host or could not take its
-    /// world, 2 when the session cannot be opened (a host's port taken, an address that does not
-    /// resolve).
+    /// A client exits when its session ends, instead of going back to the menu: with 0 when the
+    /// host ended it, 1 when it was refused, kicked, lost the host or could not take the host's
+    /// world. Exit 2 also applies when the session cannot be opened: an address that does not
+    /// resolve, or the port of a `--host` game that is taken. A `--host` game does not exit
+    /// when it ends the session.
     #[arg(long)]
     exit_with_host: bool,
 }
@@ -982,8 +983,10 @@ mod tests {
         use clap::CommandFactory;
         let help = Args::command().render_long_help().to_string();
         let help = help.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(help.contains("with 0 when the host ended it, 1 when the game was refused"), "{help}");
-        assert!(help.contains("2 when the session cannot be opened (a host's port taken"), "{help}");
+        assert!(help.contains("--exit-with-host A client exits when its session ends"), "a client's flag: {help}");
+        assert!(help.contains("with 0 when the host ended it, 1 when it was refused"), "{help}");
+        assert!(help.contains("Exit 2 also applies when the session cannot be opened"), "{help}");
+        assert!(help.contains("A `--host` game does not exit when it ends the session"), "{help}");
     }
 
     /// A folder that goes away with the test, whether it ends or fails.
