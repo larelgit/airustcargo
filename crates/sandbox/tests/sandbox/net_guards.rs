@@ -578,7 +578,7 @@ fn heavy_hello(stand: &Stand, name: &str) -> Msg {
     Msg::Hello(heavy)
 }
 
-fn peer_with<'a>(stand: &'a Stand, id: shards::net::PeerId) -> &'a shards::net::host::Peer {
+fn peer_with(stand: &Stand, id: shards::net::PeerId) -> &shards::net::host::Peer {
     stand.world(HOST).resource::<NetHost>().peers.get(&id).expect("the peer is there")
 }
 
@@ -593,7 +593,7 @@ fn a_stranger_that_is_not_refused_is_read_for_so_many_bytes_a_poll_and_no_more()
     }
     stranger.run(&mut stand, 3);
     let read = JOINING_POLL_BYTES / size;
-    assert!(read >= 2 && read < 5, "{read} of 5 fit in {JOINING_POLL_BYTES}");
+    assert!((2..5).contains(&read), "{read} of 5 fit in {JOINING_POLL_BYTES}");
     let peer = peer_with(&stand, stranger.transport.id());
     assert_eq!(peer.unread as usize, 5 - read, "the rest was dropped unread");
     assert_ne!(peer.stage, PeerStage::Gone, "a peer that joins and repeats itself is not an offence");
