@@ -435,7 +435,10 @@ fn main() -> ExitCode {
         (Cmd::Wait, Some(Peer::All)) => peer::wait_all(&cli, cli.timeout_or(DEFAULT_TIMEOUT_SECS)).map(|()| ExitCode::SUCCESS),
         (Cmd::Wait, _) => wait(&cli, cli.timeout_or(DEFAULT_TIMEOUT_SECS)),
         (Cmd::Stand { op }, _) => stand(&cli, op.as_ref()),
-        (_, Some(Peer::All)) => Err("--peer all is for `wait` and `stand`; name one member: host, c1, c2".to_owned()),
+        // A scenario finds its own game: a stand scenario names its members (@host, @c1) and needs
+        // no game of `--peer`'s (`SHARDS_PEER=all` or `=c2` left in the shell does not fail it).
+        (Cmd::Scenario { files, quiet }, _) => scenario::run(&cli, None, files, *quiet, cli.json),
+        (_, Some(Peer::All)) => Err(peer::ALL_NEEDS_A_MEMBER.to_owned()),
         _ => cli.client().and_then(|client| run(&cli, &client)),
     };
     match result {
@@ -505,8 +508,13 @@ fn read_port_file(path: &std::path::Path) -> Result<u16, String> {
 /// Polls `ai/status` until the game answers and has finished loading, then prints who
 /// answered.
 fn wait(cli: &Cli, timeout: Duration) -> Result<ExitCode, String> {
+    // A command line that can never name a game is refused now: it is a typo, not a game that
+    // has not started yet (`--peer c1 wait` with no port file to read c1's port from).
+    if cli.port.is_none() && cli.port_file.is_none() && matches!(cli.peer, Some(Peer::Client(_))) {
+        return Err(cli.port().expect_err("a client's port is read from a port file"));
+    }
     // The game may still be starting: its port file may not exist yet.
-    let status = peer::wait_member(|| cli.client(), Instant::now() + timeout)?;
+    let status = peer::wait_member(|| cli.client(), Instant::now() + timeout, cli.member())?;
     say(ready_line(&status));
     Ok(ExitCode::SUCCESS)
 }
@@ -576,7 +584,7 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
         Cmd::SaveReplay { path } => act("replay_save", json!({"path": path}))?,
         Cmd::SaveSnapshot { path } => act("snapshot_save", json!({"path": path}))?,
         Cmd::LoadSnapshot { path, force } => act("snapshot_load", json!({"path": path, "force": force}))?,
-        Cmd::Scenario { files, quiet } => return scenario::run(cli, client, files, *quiet, cli.json),
+        Cmd::Scenario { files, quiet } => return scenario::run(cli, Some(client), files, *quiet, cli.json),
         Cmd::Assert { op } => match op {
             AssertCmd::Add { name, when } => act("assert_add", json!({"name": name, "when": parse_condition(when)?}))?,
             AssertCmd::List => act("assert_list", json!({}))?,
@@ -975,6 +983,30 @@ mod tests {
         assert_eq!(still_loading(&json!({"loading": ["content: 2 files left"]})), ["content: 2 files left"]);
         assert!(still_loading(&json!({"loading": []})).is_empty());
         assert!(still_loading(&json!({"tick": 0})).is_empty(), "older games count as loaded");
+    }
+
+    /// `--peer c1 wait` with no port file can never find a game: it says so at once, as
+    /// `wait --peer all` does, instead of polling for the whole timeout. A port file that is not
+    /// written yet is a game that has not started: that wait goes on.
+    #[test]
+    fn wait_refuses_a_command_line_that_cannot_name_a_game_at_once() {
+        let started = Instant::now();
+        let e = match wait(&crate::fake::parse(&["--peer", "c1", "wait"]), Duration::from_secs(30)) {
+            Err(e) => e,
+            Ok(_) => panic!("there is no game to wait for"),
+        };
+        assert!(e.starts_with("--peer c1 needs the stand's port file: pass --port-file F"), "{e}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // With a port file that is not there yet, it waits (here: until the short deadline).
+        let begun = Instant::now();
+        let missing = std::env::temp_dir().join(format!("shards_wait_missing_{}.port", std::process::id())).display().to_string();
+        let cli = crate::fake::parse(&["--port-file", &missing, "--peer", "c1", "wait"]);
+        let e = match wait(&cli, Duration::from_millis(300)) {
+            Err(e) => e,
+            Ok(_) => panic!("there is no game to wait for"),
+        };
+        assert!(e.contains("cannot read the port file") && e.contains(".c1"), "{e}");
+        assert!(begun.elapsed() >= Duration::from_millis(300));
     }
 
     #[test]

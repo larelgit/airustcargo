@@ -77,6 +77,9 @@ pub fn client_files(base: &Path) -> Vec<Peer> {
     (1..=u8::MAX).map(Peer::Client).take_while(|peer| member_file(base, *peer).exists()).collect()
 }
 
+/// What `--peer all` is told by a command that talks to one game.
+pub const ALL_NEEDS_A_MEMBER: &str = "--peer all is for `wait` and `stand`; name one member: host, c1, c2";
+
 const NEEDS_PORT_FILE: &str = "a stand's members are found by their port files: pass --port-file F (or SHARDS_PORT_FILE=F); \
                                `cargo sandbox --stand 2 --port 0 --port-file F` writes F for the host, F.c1 and F.c2 for the clients";
 
@@ -103,9 +106,25 @@ impl Cli {
 
     /// [`Cli::client`] with the environment and the folder to look for token files from given.
     pub fn client_with(&self, env: &dyn Fn(&str) -> Option<String>, from: Option<&Path>) -> Result<Client, String> {
-        // `--port` names a game, not a member: its token is the one given, else its file.
-        let peer = if self.port.is_some() { Peer::Host } else { self.peer.unwrap_or(Peer::Host) };
-        Ok(self.client_in(self.port()?, peer, env, from))
+        self.client_as(self.member(), env, from)
+    }
+
+    /// The client for the game of `peer`, found like [`Cli::client`] finds the game `--peer` names.
+    fn client_as(&self, peer: Peer, env: &dyn Fn(&str) -> Option<String>, from: Option<&Path>) -> Result<Client, String> {
+        Ok(self.client_in(self.port_of(peer)?, peer, env, from))
+    }
+
+    /// The client for the stand's host (or a game on its own), whatever `--peer` says: `--port`, else
+    /// the host's port file, else the default port. For a stand scenario, which names its members
+    /// itself.
+    pub fn host_client(&self) -> Result<Client, String> {
+        self.client_as(Peer::Host, &|name| std::env::var(name).ok(), std::env::current_dir().ok().as_deref())
+    }
+
+    /// The member a single command talks to: the one `--peer` names. `--port` names a game, not a
+    /// member, so with it the game is the host's: its token is the one given, else its file.
+    pub fn member(&self) -> Peer {
+        if self.port.is_some() { Peer::Host } else { self.peer.unwrap_or(Peer::Host) }
     }
 
     fn client_in(&self, port: u16, peer: Peer, env: &dyn Fn(&str) -> Option<String>, from: Option<&Path>) -> Client {
@@ -164,19 +183,37 @@ enum Look {
 }
 
 /// What polling remembers of one member: that it answered once (so a silence after that is its
-/// end, not its start) and that it refused the token (once is allowed to be a token file that is
-/// not written yet).
+/// end, not its start), that it refused the token (once is allowed to be a token file that is
+/// not written yet), and, for the host of a stand or a game on its own, that its port file was
+/// read (a game that is there and writes its file first, and whose file is gone later, has ended,
+/// whether or not it ever answered).
 #[derive(Default)]
 struct Watch {
     seen: bool,
     refused: bool,
+    filed: bool,
+    /// Whether a port file that was read and is gone means the game ended. Not for a client: the
+    /// host of a UDP stand removes a client's file left by an earlier stand just after `wait` may
+    /// have read it.
+    host: bool,
 }
 
 impl Watch {
+    /// A watch on `peer`'s game.
+    fn of(peer: Peer) -> Self {
+        Self { host: peer == Peer::Host, ..Self::default() }
+    }
+
     /// Asks `ai/status` of the game `connect` finds (its port file may not exist yet).
     fn look(&mut self, connect: &dyn Fn() -> Result<Client, String>) -> Look {
         let answer = match connect() {
-            Ok(client) => client.try_call("ai/status", Value::Null),
+            Ok(client) => {
+                self.filed = true;
+                client.try_call("ai/status", Value::Null)
+            }
+            Err(e) if self.filed && self.host => {
+                return Look::Gone(format!("the game's port file is gone ({e}): its process ended; its own output says why"));
+            }
             Err(e) => Err(CallError::Unreachable(e)),
         };
         match answer {
@@ -203,9 +240,10 @@ const WAIT_EVERY: Duration = Duration::from_millis(100);
 /// Polls `ai/status` of the game `connect` finds (its port file may not exist yet) until it
 /// answers and has finished loading; returns that status. Gives up at `deadline` with what is
 /// wrong (no game at the port, still loading, …), and at once when waiting cannot help: the
-/// game answered and is gone, or refuses the token.
-pub fn wait_member(connect: impl Fn() -> Result<Client, String>, deadline: Instant) -> Result<Value, String> {
-    let mut watch = Watch::default();
+/// game answered and is gone (or, for a host, its port file was read and is gone), or refuses the
+/// token. `of` is the member the game is.
+pub fn wait_member(connect: impl Fn() -> Result<Client, String>, deadline: Instant, of: Peer) -> Result<Value, String> {
+    let mut watch = Watch::of(of);
     loop {
         match watch.look(&connect) {
             Look::Ready(status) => return Ok(status),
@@ -335,7 +373,7 @@ fn round(cli: &Cli, base: &Path, host: &mut Watch, clients: &mut Vec<Watch>) -> 
         Look::Gone(why) => return Round::Failed(format!("the host ended the stand: {why}")),
         Look::Refused(why) => return Round::Failed(why),
     };
-    clients.resize_with(usize::from(expected_clients(&status, Some(base))), Watch::default);
+    clients.resize_with(usize::from(expected_clients(&status, Some(base))), || Watch::of(Peer::Client(0)));
     let mut members = vec![("host".to_owned(), status)];
     let mut waiting = None;
     for (i, watch) in clients.iter_mut().enumerate() {
@@ -365,7 +403,7 @@ fn round(cli: &Cli, base: &Path, host: &mut Watch, clients: &mut Vec<Watch>) -> 
 /// leftover port file).
 pub fn settle(cli: &Cli, deadline: Instant) -> Result<Vec<(String, Value)>, String> {
     let base = cli.stand_base()?;
-    let (mut host, mut clients) = (Watch::default(), Vec::new());
+    let (mut host, mut clients) = (Watch::of(Peer::Host), Vec::new());
     let mut wrong: Option<String> = None;
     loop {
         let why = match round(cli, base, &mut host, &mut clients) {
@@ -1093,20 +1131,45 @@ mod tests {
         let long = || Instant::now() + Duration::from_secs(30);
         let started = Instant::now();
         let refusing = serve(|_, _| Some(crate::fake::error("unauthorized: bad token")));
-        let e = wait_member(|| Ok(Client::new(refusing, None)), long()).unwrap_err();
+        let e = wait_member(|| Ok(Client::new(refusing, None)), long(), Peer::Host).unwrap_err();
         assert!(e.starts_with("ai/status: unauthorized: bad token"), "{e}");
 
         let mut loading = status(1, 1, json!({"role": "single"}));
         loading["loading"] = json!(["content: 2 files left"]);
         let leaving = pretend_member(loading, 2, Tokens::default());
-        let e = wait_member(|| Ok(Client::new(leaving, None)), long()).unwrap_err();
+        let e = wait_member(|| Ok(Client::new(leaving, None)), long(), Peer::Host).unwrap_err();
         assert!(e.starts_with("the game was there and is gone (cannot reach the game at"), "{e}");
         assert!(started.elapsed() < Duration::from_secs(10), "neither waited for the deadline");
 
         let begun = Instant::now();
-        let e = wait_member(|| Err("cannot read the port file g.port".to_owned()), Instant::now() + Duration::from_millis(300)).unwrap_err();
+        let e = wait_member(|| Err("cannot read the port file g.port".to_owned()), Instant::now() + Duration::from_millis(300), Peer::Host)
+            .unwrap_err();
         assert_eq!(e, "cannot read the port file g.port");
         assert!(begun.elapsed() >= Duration::from_millis(300), "a game that never was there is waited for");
+    }
+
+    /// A host whose port file was read and is gone by the next poll has ended, even if it never
+    /// answered (it lived for a few hundred milliseconds: a client that could not start ended it).
+    /// A client's file read and gone is not that: the host of a UDP stand removes the leftover
+    /// of an earlier stand just after `wait` may have read it, and the real client writes it again.
+    #[test]
+    fn a_host_whose_port_file_vanished_unanswered_has_ended_but_a_clients_file_is_waited_for() {
+        let nobody = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        let reads = AtomicUsize::new(0);
+        // The first read finds a file (a port nothing answers at), the later ones find none.
+        let file_then_none = || {
+            if reads.fetch_add(1, Ordering::SeqCst) == 0 { Ok(Client::new(nobody, None)) } else { Err("cannot read the port file g.port".to_owned()) }
+        };
+        let started = Instant::now();
+        let e = wait_member(file_then_none, started + Duration::from_secs(30), Peer::Host).unwrap_err();
+        assert!(e.starts_with("the game's port file is gone (cannot read the port file g.port): its process ended"), "{e}");
+        assert!(started.elapsed() < Duration::from_secs(10), "no wait for the deadline");
+        // The same for a client's file: the wait goes on to the deadline and says what it cannot reach.
+        reads.store(0, Ordering::SeqCst);
+        let begun = Instant::now();
+        let e = wait_member(file_then_none, begun + Duration::from_millis(400), Peer::Client(1)).unwrap_err();
+        assert_eq!(e, "cannot read the port file g.port");
+        assert!(begun.elapsed() >= Duration::from_millis(400));
     }
 
     /// `wait --peer all` fails at once on what waiting cannot mend, with the mismatch.
@@ -1171,6 +1234,30 @@ mod tests {
         for dir in [dir, lost, refused] {
             let _ = std::fs::remove_dir_all(dir);
         }
+    }
+
+    /// The stand's host wrote its port file, never answered, and removed the file again (it ended
+    /// in its first frames: a client could not start). `wait --peer all` read the file once: it says
+    /// the host ended the stand, instead of waiting for a file that will not come back.
+    #[test]
+    fn wait_all_stops_at_once_when_the_hosts_port_file_vanishes_unanswered() {
+        let dir = scratch("vanish");
+        let nobody = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        std::fs::write(dir.join("g.port"), format!("{nobody}\n")).unwrap();
+        let ended = std::thread::spawn({
+            let file = dir.join("g.port");
+            move || {
+                std::thread::sleep(Duration::from_millis(400));
+                std::fs::remove_file(file).unwrap();
+            }
+        });
+        let path = dir.join("g.port").display().to_string();
+        let started = Instant::now();
+        let e = settle(&cli(&["--port-file", &path, "--peer", "all", "wait"]), started + Duration::from_secs(30)).unwrap_err();
+        ended.join().unwrap();
+        assert!(e.starts_with("the host ended the stand: the game's port file is gone (cannot read the port file"), "{e}");
+        assert!(started.elapsed() < Duration::from_secs(10));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// A client's port file left by an earlier stand points nowhere: the wait goes on until the

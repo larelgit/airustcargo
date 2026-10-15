@@ -76,7 +76,8 @@ impl Driver for ClientDriver<'_> {
     /// The links of the running stand are the header's: `net_status` says how its host was
     /// started (`--net-sim`).
     fn check_stand(&mut self, header: &StandHeader) -> Result<(), String> {
-        let status = self.call_on(HOST, CHECK_AGENT, "net_status", json!({}))?;
+        // A host that does not answer is named; the verdict on the links is the scenario's own message.
+        let status = self.call_on(HOST, CHECK_AGENT, "net_status", json!({})).map_err(|e| format!("host: {e}"))?;
         if !status.ok {
             return Err(format!("cannot read the stand's links: {}", status.text()));
         }
@@ -131,7 +132,12 @@ impl Driver for ClientDriver<'_> {
 
 /// Reads and parses every file first (a typo in the third file should not show up
 /// after the first two ran), then runs them in order against the game.
-pub fn run(cli: &Cli, client: &Client, files: &[PathBuf], quiet: bool, as_json: bool) -> Result<ExitCode, String> {
+///
+/// `client` is the game a single-game scenario runs against, when the caller has it (tests).
+/// `None`: it is looked up from the options (`--port`, `--port-file`, `--peer`) when a script
+/// needs one. A stand scenario with the stand's port file given does not: it finds its members
+/// itself, so a `--peer` (or `SHARDS_PEER`) that names a game that is not there cannot fail it.
+pub fn run(cli: &Cli, client: Option<&Client>, files: &[PathBuf], quiet: bool, as_json: bool) -> Result<ExitCode, String> {
     let mut scripts = Vec::new();
     let mut unreadable = false;
     for path in files {
@@ -156,7 +162,9 @@ pub fn run(cli: &Cli, client: &Client, files: &[PathBuf], quiet: bool, as_json: 
 
     // A stand scenario names its members itself (@host, @c1): its host is the stand's, found by
     // the port file, whatever `--peer` or SHARDS_PEER says about the game a single command talks to.
-    let stand_host = match (scripts.iter().any(|s| s.stand().is_some()), cli.port_file.is_some()) {
+    let stands = scripts.iter().any(|s| s.stand().is_some());
+    let singles = scripts.iter().any(|s| s.stand().is_none());
+    let stand_host = match (stands, cli.port_file.is_some()) {
         (true, true) => {
             if let Some(peer) = cli.peer.filter(|peer| *peer != Peer::Host) {
                 eprintln!("note: --peer {peer} is ignored for a stand scenario: it names its members itself (@host, @c1 …)");
@@ -165,9 +173,25 @@ pub fn run(cli: &Cli, client: &Client, files: &[PathBuf], quiet: bool, as_json: 
         }
         _ => None,
     };
+    // The game for the scripts that have no stand to find: a single-game script runs on the game
+    // `--peer` names; a stand scenario without a port file, on the one game `--port` names.
+    let found;
+    let game = match client {
+        Some(client) => Some(client),
+        None if singles => {
+            found = if cli.peer == Some(Peer::All) { Err(crate::peer::ALL_NEEDS_A_MEMBER.to_owned()) } else { cli.client() }?;
+            Some(&found)
+        }
+        None if stands && stand_host.is_none() => {
+            found = cli.host_client()?;
+            Some(&found)
+        }
+        None => None,
+    };
     let mut reports = Vec::new();
     for script in &scripts {
-        let mut driver = ClientDriver::new(cli, if script.stand().is_some() { stand_host.as_ref().unwrap_or(client) } else { client });
+        let host = if script.stand().is_some() { stand_host.as_ref().or(game) } else { game };
+        let mut driver = ClientDriver::new(cli, host.expect("a game was found for every script"));
         let report = run_with(script, &mut driver, &mut |line| {
             if !as_json && (!quiet || !line.ok) {
                 say(line);
@@ -262,7 +286,7 @@ mod tests {
              session --agent bot --scope player\nact ping\n",
         );
         let bad = scenario_file("bad.scenario", "act ping\nexpect result contains \"ping\"\n");
-        let exit = |files: Vec<PathBuf>| format!("{:?}", run(&cli(&[]), &client, &files, true, false).unwrap());
+        let exit = |files: Vec<PathBuf>| format!("{:?}", run(&cli(&[]), Some(&client), &files, true, false).unwrap());
         assert_eq!(exit(vec![good.clone()]), code(0));
         assert_eq!(exit(vec![good, bad]), code(1));
     }
@@ -294,12 +318,12 @@ mod tests {
         let free = TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
         let client = Client::new(free, None);
         let file = scenario_file("any.scenario", "observe\n");
-        assert_eq!(format!("{:?}", run(&cli(&[]), &client, &[file], true, false).unwrap()), code(2));
+        assert_eq!(format!("{:?}", run(&cli(&[]), Some(&client), &[file], true, false).unwrap()), code(2));
 
         let typo = scenario_file("typo.scenario", "observe\nstpe 5\n");
-        let err = run(&cli(&[]), &client, &[typo], true, false).unwrap_err();
+        let err = run(&cli(&[]), Some(&client), &[typo], true, false).unwrap_err();
         assert_eq!(err, "no scenario ran; fix the files above");
-        let err = run(&cli(&[]), &client, &[PathBuf::from("no/such.scenario")], true, false).unwrap_err();
+        let err = run(&cli(&[]), Some(&client), &[PathBuf::from("no/such.scenario")], true, false).unwrap_err();
         assert_eq!(err, "no scenario ran; fix the files above");
     }
 
@@ -378,7 +402,7 @@ mod tests {
             "stand clients=2 latency=150 loss=0.02\nseed 42\n@c1 act ping\n@c2 step 3\n@c1 expect field e5 Transform.translation.x < 5\n\
              @c2 expect field e5 Transform.translation.x > 5\n@c1 session --player 1\n",
         );
-        let exit = run(&cli, &host, &[file], true, false).unwrap();
+        let exit = run(&cli, Some(&host), &[file], true, false).unwrap();
         assert_eq!(format!("{exit:?}"), code(0));
         assert_eq!(asked(&calls, "c1", "ai/act", "ping"), 1);
         assert_eq!(asked(&calls, "host", "ai/act", "ping"), 0, "the ping went to c1 alone");
@@ -413,8 +437,21 @@ mod tests {
         assert_eq!(asked(&calls, "c1", "ai/act", "ping"), 0, "nothing ran");
         // As a command: a driver failure is exit code 2.
         let file = scenario_file("links.scenario", "stand clients=2 latency=150 loss=0.02\n@c1 act ping\n");
-        assert_eq!(format!("{:?}", run(&cli, &host, &[file], false, true).unwrap()), code(2));
+        assert_eq!(format!("{:?}", run(&cli, Some(&host), &[file], false, true).unwrap()), code(2));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A host that does not answer the links check is named (its message is a bare transport
+    /// error); a host that answers with other links is not blamed: that message is the scenario's.
+    #[test]
+    fn a_host_that_does_not_answer_the_links_check_is_named() {
+        let free = TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        let client = Client::new(free, None);
+        let cli = cli(&[]);
+        let script = Script::parse("links.scenario", "stand clients=1 latency=150\n").unwrap();
+        let header = script.stand().cloned().expect("a stand line");
+        let e = ClientDriver::new(&cli, &client).check_stand(&header).unwrap_err();
+        assert!(e.starts_with("host: cannot reach the game at http://127.0.0.1:"), "{e}");
     }
 
     /// `--peer c1` (or `SHARDS_PEER=c1` left in the shell) names the game a single command talks to.
@@ -429,7 +466,7 @@ mod tests {
         let client = cli.client().expect("what main hands to scenario::run: c1's client");
         assert_eq!(cli.port(), Ok(read_port(&crate::peer::member_file(&base, Peer::Client(1)))));
         let stand = scenario_file("peer-stand.scenario", "stand clients=2 latency=150 loss=0.02\n@host act ping\n@c1 act ping\nact ping\n");
-        let exit = run(&cli, &client, &[stand], true, false).unwrap();
+        let exit = run(&cli, Some(&client), &[stand], true, false).unwrap();
         assert_eq!(format!("{exit:?}"), code(0));
         assert_eq!(asked(&calls, "host", "ai/act", "ping"), 2, "@host and the unprefixed line are the host's");
         assert_eq!(asked(&calls, "c1", "ai/act", "ping"), 1, "@c1 is c1");
@@ -437,10 +474,38 @@ mod tests {
         assert_eq!(asked(&calls, "c1", "ai/act", "net_status"), 0);
         // A scenario without a stand line drives the game `--peer` names: c1.
         let single = scenario_file("peer-single.scenario", "act ping\n");
-        let exit = run(&cli, &client, &[single], true, false).unwrap();
+        let exit = run(&cli, Some(&client), &[single], true, false).unwrap();
         assert_eq!(format!("{exit:?}"), code(0));
         assert_eq!(asked(&calls, "c1", "ai/act", "ping"), 2, "the single-game scenario ran on c1");
         assert_eq!(asked(&calls, "host", "ai/act", "ping"), 2, "and not on the host");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// `SHARDS_PEER=all` (or `=c2`, left over from a bigger stand) in the shell: a stand scenario
+    /// names its members itself and runs all the same. The command line is what `main` hands to
+    /// `run`: no game of its own (`None`), found only for a script that needs one.
+    #[test]
+    fn a_stand_scenario_runs_whatever_peer_is_left_in_the_shell() {
+        let dir = stand_dir("peer_left");
+        let base = dir.join("g.port");
+        let calls = pretend_stand_of(&base, "latency=150,jitter=0,loss=0.02,dup=0", Some(1));
+        // A stand of one client: there is no F.c2.
+        std::fs::remove_file(crate::peer::member_file(&base, Peer::Client(2))).unwrap();
+        let path = base.display().to_string();
+        let stand = scenario_file("peer-left.scenario", "stand clients=1 latency=150 loss=0.02\n@c1 act ping\n@host act ping\n");
+        for peer in ["all", "c2"] {
+            let cli = cli(&["--port-file", &path, "--peer", peer]);
+            let exit = run(&cli, None, std::slice::from_ref(&stand), true, false).unwrap();
+            assert_eq!(format!("{exit:?}"), code(0), "--peer {peer}");
+        }
+        assert_eq!(asked(&calls, "c1", "ai/act", "ping"), 2);
+        assert_eq!(asked(&calls, "host", "ai/act", "ping"), 2);
+        // A single-game scenario obeys `--peer`: `all` is refused, and c2 is not there to be found.
+        let single = scenario_file("peer-left-single.scenario", "act ping\n");
+        let e = run(&cli(&["--port-file", &path, "--peer", "all"]), None, std::slice::from_ref(&single), true, false).unwrap_err();
+        assert_eq!(e, crate::peer::ALL_NEEDS_A_MEMBER);
+        let e = run(&cli(&["--port-file", &path, "--peer", "c2"]), None, &[single], true, false).unwrap_err();
+        assert!(e.contains("g.port.c2") && e.contains("is the game running with --port-file?"), "{e}");
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -453,7 +518,7 @@ mod tests {
         let client = Client::new(fake_game(), None);
         let file = scenario_file("alone.scenario", "stand clients=2\nobserve\n");
         // No port file: the host is all there is.
-        let exit = run(&cli(&[]), &client, std::slice::from_ref(&file), true, false).unwrap();
+        let exit = run(&cli(&[]), Some(&client), std::slice::from_ref(&file), true, false).unwrap();
         assert_eq!(format!("{exit:?}"), code(2));
         let script = Script::parse("alone.scenario", "stand clients=2\nobserve\n").unwrap();
         let failure = shards_script::run(&script, &mut ClientDriver::new(&cli(&[]), &client)).failure.unwrap();
@@ -513,7 +578,7 @@ mod tests {
         let host = cli_with.client_for(Peer::Host).unwrap();
         assert_eq!(ClientDriver::new(&cli_with, &host).peers().unwrap(), ["host", "c1"]);
         let file = scenario_file("stale.scenario", "stand clients=1\n@c1 act ping\n");
-        let exit = run(&cli_with, &host, &[file], true, false).unwrap();
+        let exit = run(&cli_with, Some(&host), &[file], true, false).unwrap();
         assert_eq!(format!("{exit:?}"), code(0));
         assert_eq!(asked(&calls, "c1", "ai/act", "ping"), 1);
         assert_eq!(asked(&calls, "c2", "ai/status", ""), 0, "the leftover was never asked");
