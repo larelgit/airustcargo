@@ -244,11 +244,14 @@ struct Seen {
     /// Its port file had appeared: it had started.
     ready: bool,
     /// The host had admitted it to the session (it got a body). A client the host turned away
-    /// after its hello has a slot, and never was.
+    /// after its hello has a slot, and never was; nor was one the host kicked or silenced while
+    /// it was still joining.
     joined: bool,
     /// The host closed the client's link before it exited (`net_kick`, its silence timed out): a
-    /// client that leaves this way exits with an error code of its own, which is not a crash. A
-    /// goodbye the client sent is not that: it says nothing about why it went. Nor is a refusal.
+    /// client that was admitted and leaves this way exits with an error code of its own, which is
+    /// not a crash. It excuses only an admitted client: a kick or a silence during the join is
+    /// still a client that never joined. A goodbye the client sent is not that either: it says
+    /// nothing about why it went. Nor is a refusal.
     host_closed: bool,
     /// The host's session has ended: its clients are leaving, as they should.
     session_over: bool,
@@ -278,7 +281,7 @@ fn verdict(name: &str, status: ExitStatus, seen: Seen) -> Verdict {
             fatal: true,
             code,
             text: format!(
-                "client {name} {how} without joining the host (it may have been refused: is the session full?): see the host's journal and its output above"
+                "client {name} {how} without being admitted to the host (refused, kicked or timed out while joining: is the session full?): see the host's journal and its output above"
             ),
         };
     }
@@ -475,7 +478,11 @@ mod tests {
     fn a_child_that_never_joined_ends_the_stand_too() {
         let v = verdict("c3", status_of("exit 0"), seen(true, false, false));
         assert!(v.fatal && v.code == 2, "{v:?}");
-        assert!(v.text.starts_with("client c3 exited with code 0 without joining the host (it may have been refused: is the session full?)"), "{}", v.text);
+        assert!(
+            v.text.starts_with("client c3 exited with code 0 without being admitted to the host (refused, kicked or timed out while joining: is the session full?)"),
+            "{}",
+            v.text
+        );
         let v = verdict("c3", status_of("exit 4"), seen(true, false, false));
         assert!(v.fatal && v.code == 4, "its own code");
     }
@@ -594,9 +601,12 @@ mod tests {
     enum Session {
         /// It never joined: no slot (the session was full).
         Never,
-        /// The host turned it away after its hello: it has a slot (here even one that says the host
-        /// closed the link), and was never admitted.
+        /// The host turned it away after its hello: it has a slot, and was never admitted. A refusal
+        /// records no closer.
         Refused,
+        /// The host kicked it, or its silence timed out, while it was still joining: it has a slot that
+        /// says the host closed the link, and was never admitted.
+        KickedWhileJoining,
         /// It joined and is in the session.
         Joined,
         /// It joined and the host closed its link (the slot is vacated).
@@ -620,13 +630,14 @@ mod tests {
         if session != Session::Never {
             let mut host = NetHost::new();
             let (left_at, closed_by) = match session {
-                // Marked as closed by the host on purpose: even so, a game that was never admitted never joined.
-                Session::Refused => (None, Some(shards_net::host::Closer::Host)),
+                // The host closed the link of a game that was never admitted: it never joined, and a
+                // kick or a silence does not excuse that.
+                Session::KickedWhileJoining => (None, Some(shards_net::host::Closer::Host)),
                 Session::HostClosed => (Some(5), Some(shards_net::host::Closer::Host)),
                 Session::SaidGoodbye => (Some(5), Some(shards_net::host::Closer::Peer)),
                 _ => (None, None),
             };
-            let admitted = session != Session::Refused;
+            let admitted = !matches!(session, Session::Refused | Session::KickedWhileJoining);
             host.slots.insert(1, shards_net::host::Slot { name: "c1".into(), left_at, closed_by, admitted, ..Default::default() });
             app.insert_resource(host);
         }
@@ -666,11 +677,14 @@ mod tests {
         let app = watch("exit 0", true, Session::Never);
         assert_eq!(app.world().resource::<Hooked>().0, 1);
         assert!(exits_with(&app, 2), "{:?}", app.should_exit());
-        // A client the host turned away after its hello (the slot exists, nobody was admitted): it
-        // never joined, whatever the slot says.
-        let app = watch("exit 1", true, Session::Refused);
-        assert_eq!(app.world().resource::<Hooked>().0, 1);
-        assert!(exits_with(&app, 1), "{:?}", app.should_exit());
+        // A client the host turned away after its hello (the slot exists, nobody was admitted, no
+        // closer is recorded), and one the host kicked or silenced while it was joining (the slot says
+        // the host closed the link): neither ever joined, and both end the stand.
+        for session in [Session::Refused, Session::KickedWhileJoining] {
+            let app = watch("exit 1", true, session);
+            assert_eq!(app.world().resource::<Hooked>().0, 1);
+            assert!(exits_with(&app, 1), "{:?}", app.should_exit());
+        }
         // A joined client that crashed.
         let app = watch("exit 101", true, Session::Joined);
         assert_eq!(app.world().resource::<Hooked>().0, 1);

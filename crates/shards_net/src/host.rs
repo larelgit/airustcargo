@@ -241,7 +241,8 @@ pub struct Slot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Closer {
     /// The host: it kicked the player (`net_kick`), or its silence timed out. A refusal is not
-    /// that: a game that was never admitted did not have a link to close.
+    /// that (nothing is recorded for it). Recorded for a game still joining too; whether that
+    /// excuses its exit is for the reader of the slot, who also asks `Slot::admitted`.
     Host,
     /// The player's game said goodbye (`Bye`): it quit, or could not go on (`cannot take the world`).
     Peer,
@@ -398,7 +399,9 @@ impl NetHost {
     /// (`net_kick`), or its silence timed out. Recorded the moment the link closes, before the
     /// slot is vacated at the next tick. A farewell the player's game sent (`Bye`) is not that: a
     /// game that says goodbye and exits with an error did not leave because the host asked. Nor
-    /// is a refusal: a game the host turned away was never in the session.
+    /// is a refusal: nothing is recorded for it. A game still joining can have its link closed
+    /// too (a kick, a silence past the timeout): check `Slot::admitted` for whether it ever was
+    /// in the session.
     pub fn link_closed_by_host(&self, name: &str) -> bool {
         self.slots.values().any(|slot| slot.name == name && slot.closed_by == Some(Closer::Host))
     }
@@ -1755,6 +1758,19 @@ mod tests {
         let slot = &host.slots[&host.peers[&7].player];
         assert!(slot.peer.is_none() && slot.closed_by.is_none() && !slot.admitted, "{slot:?}");
         assert!(!host.link_closed_by_host("c2"), "a refusal is not the host closing a link");
+
+        // The game comes back with the token `decide` sent it in `Accept`: the same player and slot,
+        // and a holder that was never admitted is still not one (a token kept does not make it so).
+        let player = host.peers[&7].player;
+        let token = host.slots[&player].token.clone();
+        assert!(!token.is_empty(), "the Accept carried a token");
+        host.peers.insert(8, Peer::new(8, 2, 0));
+        let hello = hello_of(&world, "c2", &token);
+        on_hello(&mut world, &mut host, 8, hello);
+        assert_eq!(host.peers[&8].player, player, "the same player");
+        let slot = &host.slots[&player];
+        assert!(slot.peer == Some(8) && !slot.admitted && slot.closed_by.is_none(), "{slot:?}");
+        assert_eq!(host.slots.len(), 1, "no second slot");
     }
 
     /// A token keeps what its slot knew of its holder (it was admitted once); a new one starts as
