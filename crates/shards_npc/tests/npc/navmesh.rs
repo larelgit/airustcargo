@@ -460,6 +460,38 @@ fn solids_the_bakes_never_saw_are_carved_out_and_back_in() {
     assert!(route(&app, from, to).unwrap().length < 4.01, "straight across again");
 }
 
+/// A diagonal step passes between two side columns: where carving switched one of them off,
+/// `reach` stops, though the bake's diagonal link and the column it leads to are still there.
+#[test]
+fn a_diagonal_reach_stops_where_a_side_column_is_switched_off() {
+    let mut app = app();
+    load_region(&mut app, &["floor floor floor"]);
+    // A thin post: carving switches off the columns round it, not the ones a step further.
+    wall(app.world_mut(), Vec3::new(11.9, 0.0, 3.9), Vec3::new(12.1, 2.5, 4.1));
+    step(&mut app, 1);
+    let off: Vec<[i32; 2]> = {
+        let nav = app.world().resource::<NavRegion>();
+        disabled(&app).into_iter().map(|n| nav.node_column(n)).collect()
+    };
+    let nav = app.world().resource::<NavRegion>();
+    let open = |c: [i32; 2]| !off.contains(&c) && !nav.nodes_at(c).is_empty();
+    // A column whose east side is off, while it, its south-east diagonal and its south side are open.
+    let column = off
+        .iter()
+        .map(|c| [c[0] - 1, c[1]])
+        .find(|c| open(*c) && open([c[0] + 1, c[1] + 1]) && open([c[0], c[1] + 1]))
+        .expect("a column beside the carved ones");
+    let from = nav.node_pos(nav.nodes_at(column).start);
+    let half_diagonal = 0.5 * nav.cell * std::f32::consts::SQRT_2;
+    let south_east = nav.reach(from, (1, 1), 2.0).unwrap();
+    assert!(
+        south_east <= half_diagonal + 1e-3,
+        "south-east stops at the corner of its own column: {south_east} (column {column:?}, off {off:?})"
+    );
+    // South, its one way open, goes on.
+    assert!(nav.reach(from, (0, 1), 2.0).unwrap() > 1.0);
+}
+
 /// The nodes switched off now, in node order.
 fn disabled(app: &App) -> Vec<u32> {
     let nav = app.world().resource::<NavRegion>();

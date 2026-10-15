@@ -193,10 +193,11 @@ impl NavRegion {
     /// How far a body standing at `from` goes on the navmesh in compass step `(dx, dz)` (m,
     /// at most `range`): column by column over walking links and drops (and, for a swimmer,
     /// swimming ones), to the far side of the last column it enters. A climb, a step into
-    /// water, a tile edge that does not connect or a spot switched off ends it. `None` where
-    /// the navmesh does not know `from` (outside the region, in the air, on a prop) or the
-    /// way leaves the region (it knows nothing beyond); also for a step that is no compass
-    /// step (`dx` and `dz` each -1, 0 or 1, not both 0).
+    /// water, a tile edge that does not connect or a spot switched off ends it (for a diagonal
+    /// step, a side column switched off too). `None` where the navmesh does not know `from`
+    /// (outside the region, in the air, on a prop) or the way leaves the region (it knows
+    /// nothing beyond); also for a step that is no compass step (`dx` and `dz` each -1, 0 or
+    /// 1, not both 0).
     pub fn reach(&self, from: Vec3, (dx, dz): (i32, i32), range: f32) -> Option<f32> {
         let compass = (-1..=1).contains(&dx) && (-1..=1).contains(&dz) && (dx, dz) != (0, 0);
         if !from.is_finite() || !range.is_finite() || !compass {
@@ -216,7 +217,13 @@ impl NavRegion {
                 return Some(range);
             }
             let [cx, cz] = self.node_column(node);
-            match self.move_toward(node, (dx, dz), takes) {
+            // A diagonal step passes between two side columns, and a ray that does not run
+            // through the corner enters one of them: both must still be open (a bake's diagonal
+            // link knows they were, not that nothing switched one off since).
+            let sides_open = dx == 0
+                || dz == 0
+                || (self.move_toward(node, (dx, 0), takes).is_some() && self.move_toward(node, (0, dz), takes).is_some());
+            match self.move_toward(node, (dx, dz), takes).filter(|_| sides_open) {
                 Some(next) => node = next,
                 None if self.instance_at([cx + dx, cz + dz]).is_none() => return None,
                 None => return Some(reached.max(0.0)),

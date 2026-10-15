@@ -165,6 +165,9 @@ pub struct DevPlugin;
 impl Plugin for DevPlugin {
     fn build(&self, app: &mut App) {
         app.add_content::<DevMenuDef>().init_resource::<DevConsole>().add_engine_module("dev", VERSION);
+        // The window's console is the developer's: dev scope from the start, whatever a new agent gets by
+        // default. Set once, so a scope given to it later (`configure_session`) holds.
+        app.world_mut().get_resource_or_init::<AgentSessions>().configure(CONSOLE_AGENT, Scope::Dev, None);
         register_tool(app.world_mut(), "dev_menu", Scope::Dev, ToolKind::Query, dev_menu_tool);
         register_tool(app.world_mut(), "console", Scope::Dev, ToolKind::Query, console_tool);
         #[cfg(feature = "render")]
@@ -330,10 +333,6 @@ pub fn run_console_line(world: &mut World, agent: &str, line: &str) -> ToolResul
     let (tool, _) = parse_line(line)?;
     if tool == "console" || tool == "dev_menu" {
         return Err(format!("`{tool}` runs lines itself: type the tool you want (`god`, `region_info`)"));
-    }
-    // The console has dev scope whatever a new agent gets by default.
-    if agent == CONSOLE_AGENT {
-        world.resource_mut::<AgentSessions>().get_or_create(CONSOLE_AGENT).scope = Scope::Dev;
     }
     let outcome = run_line(world, agent, line)?;
     let text = outcome_text(&outcome);

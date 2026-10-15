@@ -262,10 +262,7 @@ fn run_pending(world: &mut World) {
                 }
                 Err(why) => {
                     let text = format!("> {}\nerror: `{}` does nothing here: {why}", entry.label, entry.id);
-                    let mut console = world.resource_mut::<DevConsole>();
-                    for line in text.lines() {
-                        console.log.push_back(line.to_owned());
-                    }
+                    world.resource_mut::<DevConsole>().say(&text);
                 }
             }
         }
