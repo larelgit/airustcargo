@@ -6,7 +6,7 @@
 //! - a **game action** a button does (`action: "save_and_quit"`), when `close`, `open <screen>`,
 //!   `quit` and `tool <name> {json}` are not enough.
 
-use shards::ai_core::call_tool;
+use shards::ai_core::{call_tool, AgentSessions};
 use shards::prelude::*;
 use shards::serde_json::json;
 use shards::ui::viewer;
@@ -28,9 +28,14 @@ fn trophies(world: &World, _: &str) -> Option<UiValue> {
 }
 
 /// Saves the world and the hero, then ends the game; a save that fails keeps the game going,
-/// so nothing is lost. The save is the player's own `save_game`, called as whoever pressed.
+/// so nothing is lost. The save is the player's own `save_game`, called as whoever pressed: an
+/// agent with player scope may save only its hero (the world is the host's), so its press
+/// saves that.
 fn save_and_quit(world: &mut World, press: &UiPress) -> Result<String, String> {
-    let saved = call_tool(world, &press.agent, "save_game", json!({"what": "all"}));
+    let sessions = world.resource::<AgentSessions>();
+    let scope = sessions.get(&press.agent).map_or(sessions.default_scope, |s| s.scope);
+    let what = if scope.allows(Scope::Dev) { "all" } else { "character" };
+    let saved = call_tool(world, &press.agent, "save_game", json!({"what": what}));
     let text = saved.result.as_str().map_or_else(|| saved.result.to_string(), str::to_owned);
     if !saved.ok {
         return Err(format!("not saved, so the game goes on: {text}"));

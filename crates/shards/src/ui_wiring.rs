@@ -81,7 +81,7 @@ fn allies(world: &World, _: &str) -> Option<UiValue> {
         .iter(world)
         .filter(|(e, ..)| Some(*e) != me)
         .map(|(_, id, hp, name, dead)| {
-            let name = name.map_or_else(|| format!("p{}", id.0 + 1), |n| format!("p{} {}", id.0 + 1, n.as_str()));
+            let name = name.map_or_else(|| format!("p{}", u16::from(id.0) + 1), |n| format!("p{} {}", u16::from(id.0) + 1, n.as_str()));
             (id.0, Ally { name, health: hp.current, max: hp.max, down: dead })
         })
         .collect();
@@ -105,14 +105,22 @@ fn menu_controls(world: &mut World) {
     if menu_open != pushed
         && let Some(mut contexts) = world.get_resource_mut::<InputContexts>()
     {
-        if menu_open {
+        // A context pushed above `menu` keeps it until that one comes off: popping now would
+        // take the other one away instead.
+        let changed = if menu_open {
             contexts.push("menu");
+            true
         } else if contexts.top() == "menu" {
             contexts.pop();
+            true
+        } else {
+            false
+        };
+        if changed {
+            world.resource_mut::<MenuControls>().pushed = menu_open;
+            // This frame's controls were read in the other context.
+            return;
         }
-        world.resource_mut::<MenuControls>().pushed = menu_open;
-        // This frame's controls were read in the other context.
-        return;
     }
     let Some(controls) = world.get_resource::<ControlState>().cloned() else { return };
     if !menu_open {

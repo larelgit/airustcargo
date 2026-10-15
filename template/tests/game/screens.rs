@@ -1,7 +1,7 @@
 //! The HUD and menus: what is the game's own in them (src/screens.rs) works.
 
 use my_game::progress::Trophies;
-use shards::ai_core::AiIndex;
+use shards::ai_core::{call_tool, configure_session, AiIndex, SessionChange};
 use shards::bevy::ecs::message::Messages;
 use shards::prelude::*;
 use shards::serde_json::json;
@@ -34,6 +34,23 @@ fn save_and_quit_saves_first_and_then_ends_the_game() {
     let done = say(&mut app, "ui_click", json!({"id": "confirm_quit/yes"}));
     assert!(done.starts_with("pressed confirm_quit/yes: ") && done.ends_with("; the game ends"), "{done}");
     assert!(done.contains("world/slot1"), "{done}");
+    let exits = app.world().resource::<Messages<AppExit>>();
+    assert_eq!(exits.iter_current_update_messages().count(), 1, "the game is asked to end");
+}
+
+#[test]
+fn a_player_scope_agent_saves_its_hero_and_quits() {
+    let mut app = my_game::test_app(SEED);
+    let player = SessionChange { scope: Some(Scope::Player), ..default() };
+    configure_session(app.world_mut(), "playtester", &player).unwrap();
+    for (tool, args) in [("ui_open", json!({"screen": "pause"})), ("ui_click", json!({"id": "pause/quit"}))] {
+        let out = call_tool(app.world_mut(), "playtester", tool, args);
+        assert!(out.ok, "{tool}: {}", out.result);
+    }
+    let out = call_tool(app.world_mut(), "playtester", "ui_click", json!({"id": "confirm_quit/yes"}));
+    let done = out.result.as_str().unwrap_or_default().to_owned();
+    assert!(out.ok && done.ends_with("; the game ends"), "{done}");
+    assert!(done.contains("character/slot1") && !done.contains("world/"), "only the hero is saved: {done}");
     let exits = app.world().resource::<Messages<AppExit>>();
     assert_eq!(exits.iter_current_update_messages().count(), 1, "the game is asked to end");
 }
