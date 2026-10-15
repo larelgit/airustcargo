@@ -104,11 +104,16 @@ fn spawn_arena(world: &mut World) {
         world.spawn((Collider::standing_box(Vec3::new(hx, height, hz)), Transform::from_xyz(x, 0.0, z)));
     }
 
-    for spawn in &arena.spawns {
+    for (i, spawn) in arena.spawns.iter().enumerate() {
         let at = Vec3::new(spawn.at.0, 0.0, spawn.at.1);
         let transform = Transform::from_translation(at).with_rotation(Quat::from_rotation_y(spawn.yaw_deg.to_radians()));
-        if let Err(why) = spawn_prefab(world, &spawn.prefab, transform, None) {
-            error!("arena `{ARENA}`: cannot spawn {}: {why}", spawn.prefab);
+        match spawn_prefab(world, &spawn.prefab, transform, None) {
+            // What a world save knows it by (`progress::Fallen`): its place in `spawns`, the same
+            // in every run and every build of this content.
+            Ok(character) => {
+                world.entity_mut(character).insert(SaveKey::new(format!("{ARENA}.{i}")));
+            }
+            Err(why) => error!("arena `{ARENA}`: cannot spawn {}: {why}", spawn.prefab),
         }
     }
 

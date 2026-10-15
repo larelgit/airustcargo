@@ -10,6 +10,7 @@
 //! | [`arena`] | the level as content (`assets/content/arena.arena.ron`) and the system that builds it |
 //! | [`brain`] | the grunt: notices the hero and attacks it, through `Intent` like a player |
 //! | [`ai`] | what an agent can do that is this game's (`taunt`) and wait for (`arena_cleared`) |
+//! | [`progress`] | what a save keeps that is this game's: a hero's trophies, the yard's fallen grunts |
 //! | `visuals` | meshes, light and the camera when there is a window (`render` feature) |
 //!
 //! All numbers are content in `assets/content/`: how the hero moves, every action's timing
@@ -20,6 +21,13 @@
 //! (`assets/tiles/ruin.gltf`); its raiders are NPCs of the engine (`content/npc/`) that walk the
 //! navmesh baked into `assets/nav/` and keep to their camps. A dev goes there with
 //! `shards act regen region=valley seed=42`.
+//!
+//! Saves and co-op come with the engine too. `--world SLOT --character SLOT` load a save at the
+//! start and autosaves write it; `save_game`, `load_game` and `save_check` are tools. The game
+//! adds only what is its own to a save ([`progress`]). Two players play the yard together with
+//! `--stand 1` (host and client in one process), or `--host 0` and `--join ADDR` on two machines:
+//! the second hero comes from the same prefab (`content/session.net.ron`), and its trophies go
+//! home with it.
 //!
 //! ```text
 //! cargo game                              # window: WASD, mouse, Space, Ctrl, left click
@@ -34,6 +42,7 @@
 pub mod ai;
 pub mod arena;
 pub mod brain;
+pub mod progress;
 #[cfg(feature = "render")]
 pub mod visuals;
 
@@ -52,7 +61,7 @@ impl Plugin for GamePlugin {
         // Earlier versions of the template kept rebound keys in `~/.config/my_game/input.ron`; asking
         // for them here imports them once. A game that never shipped that file deletes this line.
         app.insert_resource(shards::motion::InputSettings::for_game("my_game"));
-        app.add_plugins((arena::ArenaPlugin, brain::BrainPlugin, ai::GameAiPlugin));
+        app.add_plugins((arena::ArenaPlugin, brain::BrainPlugin, ai::GameAiPlugin, progress::ProgressPlugin));
     }
 }
 

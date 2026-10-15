@@ -11,7 +11,7 @@
             "AiKind": ("Hero"),
             "AiImportance": (5.0),
             // The body an agent plays by default, and the player's number and keyboard
-            // (`PlayerId(1)` is the second player of co-op, later).
+            // (a second player in co-op gets this prefab too, as `PlayerId(1)`: content/session.net.ron).
             "AiPlayer": (),
             "PlayerId": (0),
             "LocalPlayer": (),
@@ -22,6 +22,9 @@
             "Health": (current: 100.0, max: 100.0),
             "Stamina": (current: 100.0, max: 100.0, regen: 30.0, delay: 0.8, since_use: 0.8),
             "Poise": (current: 40.0, max: 40.0, regen: 10.0, delay: 2.0, since_hit: 2.0, broken: 0.0),
+            // The game's own component (src/progress.rs): grunts this hero defeated, kept in its
+            // character save.
+            "Trophies": (defeated: 0),
         },
     ),
     "grunt": (

@@ -1,0 +1,49 @@
+# Saves: the engine keeps where the hero stands and how healthy it is; the game adds what is its
+# own (src/progress.rs): the hero's trophies (a character section) and the yard's fallen grunts (a
+# world section). Clearing the yard saves both at the end of that tick. A load puts both back on
+# a yard that was set up again, and a save loaded twice gives no trophy twice.
+#
+# Files go to the game's save folder (`saves/` next to Cargo.toml when it runs live; a temporary
+# folder of its own in `cargo test`), slot `slot1` of each kind.
+
+seed 42
+
+# --- the yard as content made it, whatever ran before
+act heal id=e1
+act heal id=e2
+act set id=e1 component=Trophies path=defeated value=0
+act teleport id=e1 x=0 z=12 y=0
+act teleport id=e2 x=0 z=-10 y=0
+act save_registry
+expect result contains "trophies"
+expect result contains "fallen"
+
+# --- the hero defeats the grunt: a trophy, and the clear yard saves everything that tick
+act move_to target=e2 within=3
+step 900 --until near:e1:e2:3.5
+act attack target=e2 repeat=true
+step 1800 --until named:arena_cleared
+expect stopped "arena_cleared"
+expect field e1 Trophies.defeated == 1
+step 2
+expect journal "save: world/slot1 saved (yard_cleared"
+expect journal "save: character/slot1 saved (yard_cleared"
+act save_check what=world slot=slot1
+expect result contains "same as world/slot1"
+
+# --- the grunt stands again and the trophy is lost: one load brings back both
+act heal id=e2
+act set id=e1 component=Trophies path=defeated value=0
+expect field e2 Health.current == 80
+act save_check what=all slot=slot1
+expect result contains "differs in fallen"
+act load_game what=all slot=slot1
+expect result contains "ok: "
+expect field e1 Trophies.defeated == 1
+expect shows e2 "dead"
+
+# --- loading it again changes nothing: the grunt that falls again earns nobody a trophy
+mark
+act load_game what=all slot=slot1
+expect field e1 Trophies.defeated == 1
+expect !journal "yard_cleared"
