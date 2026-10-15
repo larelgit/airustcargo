@@ -69,7 +69,7 @@ pub const PLAYER_POLL_BYTES: usize = 4 * MAX_PLAYER_MESSAGE;
 /// What the host decodes in one poll of all the peers that do not play yet together, in bytes:
 /// four of the largest message. A peer is polled only while a whole message is left of it
 /// (what it sent waits in its link, which holds a bounded amount and then holds the sender
-/// back), and the peers are taken from a different one each poll, so none is starved.
+/// back), and a poll starts with the peer the last one left unread, so none is starved.
 pub const SHARED_JOINING_POLL_BYTES: usize = 4 * MAX_JOINING_MESSAGE;
 
 /// Peers that are not playing (joining, refused, gone) the host holds at once, for a session
@@ -302,8 +302,9 @@ pub struct NetHost {
     left_out_said: BTreeSet<String>,
     /// Bytes of the last world sent again: a link with less room waits without a capture.
     rebase_bytes: usize,
-    /// Which peer the next poll starts with.
-    poll_turn: usize,
+    /// The peer the next poll starts with: the first one the last poll left unread because the
+    /// budget of the peers that do not play yet was spent. `None`: in the order of the ids.
+    poll_first: Option<PeerId>,
 }
 
 impl NetHost {
@@ -324,7 +325,7 @@ impl NetHost {
             last_tick: 0,
             left_out_said: BTreeSet::new(),
             rebase_bytes: 0,
-            poll_turn: 0,
+            poll_first: None,
         }
     }
 
@@ -668,13 +669,13 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
         }
     }
     let mut ids: Vec<PeerId> = host.peers.keys().copied().collect();
-    // From a different peer each poll: the peers that do not play yet share a budget, and the
-    // first of them must not always be the one that spends it.
-    if !ids.is_empty() {
-        let turn = host.poll_turn % ids.len();
-        ids.rotate_left(turn);
+    // In the order of the ids (that of arrival, so players take their numbers as they came),
+    // unless the last poll left a peer unread: the peers that do not play yet share a budget,
+    // and the one it ran out on must not be last again.
+    if let Some(first) = host.poll_first.take() {
+        let at = ids.partition_point(|id| *id < first);
+        ids.rotate_left(at);
     }
-    host.poll_turn = host.poll_turn.wrapping_add(1);
     let mut joining_left = SHARED_JOINING_POLL_BYTES;
     let mut flooded: Vec<(String, usize)> = Vec::new();
     for id in ids {
@@ -685,6 +686,7 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
             if let Some(peer) = host.peers.get_mut(&id) {
                 peer.skipped += 1;
             }
+            host.poll_first.get_or_insert(id);
             continue;
         }
         // A peer that is gone is polled too (its link's buffers empty), but never read.

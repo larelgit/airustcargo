@@ -278,7 +278,8 @@ Xvfb показывает его вместе с оверлеем навсетк
 (`a_region_a_guest_changed_while_its_link_was_full_reaches_it_whole_not_as_deltas_first`).
 Ушедший пир, который подтверждает, ждёт свой `Bye` за мегабайтами в очереди
 (`a_player_sent_away_is_waited_for_while_it_takes_in_what_is_queued_ahead_of_its_goodbye`; глухой уходит, как раньше).
-Чужак: первое сообщение не `Hello` — отказ, общий бюджет разбора и круговой порядок опроса, предел числа пиров, не входящих в игру,
+Чужак: первое сообщение не `Hello` — отказ, общий бюджет разбора (опрос идёт по порядку id и начинается с пропущенного: игроки получают
+номера в порядке прихода, `players_that_say_hello_in_one_tick_take_their_numbers_in_the_order_of_their_ids`), предел числа пиров, не входящих в игру,
 бюджет `JOINING_POLL_BYTES` проверен ненадёжным чужаком
 (`a_stranger_whose_first_message_is_not_a_hello_is_refused_at_once`, `peers_that_do_not_play_yet_share_a_budget_and_each_takes_a_turn`,
 `the_host_holds_so_many_strangers_and_the_oldest_makes_room`, `a_stranger_that_is_not_refused_is_read_for_so_many_bytes_a_poll_and_no_more`).

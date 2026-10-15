@@ -627,6 +627,29 @@ fn peers_that_do_not_play_yet_share_a_budget_and_each_takes_a_turn() {
 }
 
 #[test]
+fn players_that_say_hello_in_one_tick_take_their_numbers_in_the_order_of_their_ids() {
+    let mut stand = stand(0);
+    stand.world_mut(HOST).insert_resource(NetDefaults(NetDef { max_players: 8, ..Default::default() }));
+    // Polls that found nobody, or somebody, move nothing: a poll reads in the order of the ids
+    // unless it left a peer unread.
+    stand.run(5);
+    let mut arrivals: Vec<Rogue> = (0..3).map(|i| Rogue::new(&stand, &format!("o{i}"), 400 + 2 * i)).collect();
+    for (i, arrival) in arrivals.iter_mut().enumerate() {
+        arrival.say(&Msg::Hello(hello(&stand, &format!("o{i}"))));
+        arrival.pump(&stand);
+    }
+    stand.run(2);
+    let numbers: Vec<Option<u8>> = arrivals
+        .iter_mut()
+        .map(|arrival| {
+            arrival.pump(&stand);
+            arrival.got.iter().find_map(|m| if let Msg::Accept(a) = m { Some(a.player) } else { None })
+        })
+        .collect();
+    assert_eq!(numbers, vec![Some(1), Some(2), Some(3)], "{:#?}", journal(&stand, HOST));
+}
+
+#[test]
 fn the_host_holds_so_many_strangers_and_the_oldest_makes_room() {
     let mut stand = stand(0);
     let cap = max_strangers(NetDef::default().max_players);
