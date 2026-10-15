@@ -17,13 +17,30 @@ fn line(tree: &str, id: &str) -> String {
 fn the_hud_shows_the_trophies_of_the_hero() {
     let mut app = my_game::test_app(SEED);
     let hud = say(&mut app, "ui_read", json!({"screen": "hud"}));
-    assert_eq!(line(&hud, "hud/trophies"), "hud/trophies  text \"Trophies 0\" ← trophies");
+    assert_eq!(line(&hud, "hud/trophies"), "hud/trophies  text \"0 trophies\" ← trophies");
     fight(&mut app);
     let hero = app.world().resource::<AiIndex>().get(shards::ai_core::AiId(1)).unwrap();
     let defeated = app.world().get::<Trophies>(hero).unwrap().defeated;
     assert_eq!(defeated, 1, "the fight defeats the grunt");
     let hud = say(&mut app, "ui_read", json!({"screen": "hud"}));
-    assert_eq!(line(&hud, "hud/trophies"), "hud/trophies  text \"Trophies 1\" ← trophies");
+    assert_eq!(line(&hud, "hud/trophies"), "hud/trophies  text \"1 trophy\" ← trophies");
+}
+
+#[test]
+fn the_hud_and_menus_switch_language_while_the_game_runs() {
+    let mut app = my_game::test_app(SEED);
+    say(&mut app, "ui_open", json!({"screen": "pause"}));
+    say(&mut app, "settings_set", json!({"group": "locale", "key": "language", "value": "ru"}));
+    let tree = say(&mut app, "ui_read", json!({}));
+    assert_eq!(line(&tree, "hud/trophies"), "hud/trophies  text \"0 трофеев\" ← trophies", "the number picks Russian's plural form");
+    assert_eq!(line(&tree, "hud/hint"), "hud/hint  hint \"[Esc] Меню\"");
+    assert_eq!(line(&tree, "pause/resume"), "pause/resume  button \"Продолжить\" → close ◀ focus");
+    say(&mut app, "ui_close", json!({"screen": "pause"}));
+    fight(&mut app);
+    let hud = say(&mut app, "ui_read", json!({"screen": "hud"}));
+    assert_eq!(line(&hud, "hud/trophies"), "hud/trophies  text \"1 трофей\" ← trophies");
+    let err = fails(&mut app, "settings_set", json!({"group": "locale", "key": "language", "value": "de"}));
+    assert!(err.contains("`de` is not a language of this game: en (English), ru (Русский)"), "{err}");
 }
 
 #[test]

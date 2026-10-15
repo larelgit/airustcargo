@@ -1,55 +1,68 @@
 // The arena's menus on the engine's widgets: Escape (gamepad Start) opens `pause`. Every
 // setting of the four groups sits on a page of `settings`; a change there is `settings_set`.
-// The arena keeps its own HUD (visuals.rs), so there is no `hud` screen here.
+// The arena keeps its own HUD (visuals.rs), so there is no `hud` screen here. What a player reads
+// is a message of the arena's languages (`@pause-resume`: assets/locale/<language>/menus.ftl),
+// shown in the language played; the `language` page switches it.
 {
     "pause": (
         pauses: true,
-        title: "Paused",
+        title: "@pause-title",
         widgets: [
-            Button(id: "resume", label: "Resume", action: "close"),
-            Button(id: "settings", label: "Settings", action: "open settings"),
-            Button(id: "quit", label: "Quit", action: "open confirm_quit"),
+            Button(id: "resume", label: "@pause-resume", action: "close"),
+            Button(id: "settings", label: "@pause-settings", action: "open settings"),
+            Button(id: "quit", label: "@pause-quit", action: "open confirm_quit"),
         ],
     ),
     "settings": (
-        title: "Settings",
+        title: "@settings-title",
         widgets: [
             Tabs(id: "tabs", children: [
-                Panel(id: "graphics", title: "Graphics", children: [
-                    Toggle(id: "fullscreen", label: "Fullscreen", setting: "graphics.fullscreen"),
-                    Toggle(id: "vsync", label: "VSync", setting: "graphics.vsync"),
-                    Slider(id: "render_scale", label: "Render scale", min: 0.5, max: 2.0, step: 0.25, setting: "graphics.render_scale"),
-                    Choice(id: "shadows", label: "Shadows", options: ["off", "low", "medium", "high"], setting: "graphics.shadows"),
+                Panel(id: "graphics", title: "@settings-graphics", children: [
+                    Toggle(id: "fullscreen", label: "@settings-fullscreen", setting: "graphics.fullscreen"),
+                    Toggle(id: "vsync", label: "@settings-vsync", setting: "graphics.vsync"),
+                    Slider(id: "render_scale", label: "@settings-render-scale", min: 0.5, max: 2.0, step: 0.25, setting: "graphics.render_scale"),
+                    Choice(id: "shadows", label: "@settings-shadows", options: ["off", "low", "medium", "high"], setting: "graphics.shadows"),
                 ]),
-                Panel(id: "audio", title: "Audio", children: [
-                    Slider(id: "master", label: "Master", min: 0.0, max: 1.0, step: 0.1, setting: "audio.master"),
-                    Slider(id: "music", label: "Music", min: 0.0, max: 1.0, step: 0.1, setting: "audio.music"),
-                    Slider(id: "sfx", label: "Effects", min: 0.0, max: 1.0, step: 0.1, setting: "audio.sfx"),
-                    Slider(id: "voice", label: "Voice", min: 0.0, max: 1.0, step: 0.1, setting: "audio.voice"),
+                Panel(id: "audio", title: "@settings-audio", children: [
+                    Slider(id: "master", label: "@settings-master", min: 0.0, max: 1.0, step: 0.1, setting: "audio.master"),
+                    Slider(id: "music", label: "@settings-music", min: 0.0, max: 1.0, step: 0.1, setting: "audio.music"),
+                    Slider(id: "sfx", label: "@settings-sfx", min: 0.0, max: 1.0, step: 0.1, setting: "audio.sfx"),
+                    Slider(id: "voice", label: "@settings-voice", min: 0.0, max: 1.0, step: 0.1, setting: "audio.voice"),
                 ]),
-                Panel(id: "controls", title: "Controls", children: [
-                    Slider(id: "sensitivity", label: "Look speed", min: 0.25, max: 3.0, step: 0.25, setting: "controls.mouse_sensitivity"),
-                    Toggle(id: "invert_y", label: "Invert look", setting: "controls.invert_y"),
-                    Toggle(id: "hold", label: "Hold to toggle", setting: "accessibility.hold_to_toggle"),
+                Panel(id: "controls", title: "@settings-controls", children: [
+                    Slider(id: "sensitivity", label: "@settings-look-speed", min: 0.25, max: 3.0, step: 0.25, setting: "controls.mouse_sensitivity"),
+                    Toggle(id: "invert_y", label: "@settings-invert-y", setting: "controls.invert_y"),
+                    Toggle(id: "hold", label: "@settings-hold", setting: "accessibility.hold_to_toggle"),
                 ]),
-                Panel(id: "accessibility", title: "Accessibility", children: [
-                    Slider(id: "text_size", label: "Text size", min: 0.5, max: 3.0, step: 0.25, setting: "accessibility.text_scale"),
-                    Choice(id: "flashes", label: "Flashes", options: ["full", "reduced", "off"], setting: "accessibility.flashes"),
-                    Slider(id: "shake", label: "Camera shake", min: 0.0, max: 1.0, step: 0.1, setting: "accessibility.camera_shake"),
-                    Slider(id: "blur", label: "Motion blur", min: 0.0, max: 1.0, step: 0.1, setting: "accessibility.motion_blur"),
-                    Slider(id: "fov", label: "Field of view", min: 50.0, max: 110.0, step: 5.0, setting: "accessibility.fov_deg"),
+                Panel(id: "accessibility", title: "@settings-accessibility", children: [
+                    Slider(id: "text_size", label: "@settings-text-size", min: 0.5, max: 3.0, step: 0.25, setting: "accessibility.text_scale"),
+                    Choice(id: "flashes", label: "@settings-flashes", options: ["full", "reduced", "off"], setting: "accessibility.flashes"),
+                    Slider(id: "shake", label: "@settings-shake", min: 0.0, max: 1.0, step: 0.1, setting: "accessibility.camera_shake"),
+                    Slider(id: "blur", label: "@settings-blur", min: 0.0, max: 1.0, step: 0.1, setting: "accessibility.motion_blur"),
+                    Slider(id: "fov", label: "@settings-fov", min: 50.0, max: 110.0, step: 5.0, setting: "accessibility.fov_deg"),
+                ]),
+                // A language's name is written in that language, whichever is played.
+                Panel(id: "language", title: "@settings-language", children: [
+                    Choice(
+                        id: "game_language",
+                        label: "@settings-language",
+                        options: ["en", "ru"],
+                        labels: ["English", "Русский"],
+                        value: "en",
+                        setting: "locale.language",
+                    ),
                 ]),
             ]),
-            Button(id: "back", label: "Back", action: "back"),
+            Button(id: "back", label: "@settings-back", action: "back"),
         ],
     ),
     "confirm_quit": (
         layer: Modal,
-        title: "Quit the arena?",
+        title: "@quit-title",
         widgets: [
             Panel(layout: Row, children: [
-                Button(id: "no", label: "No", action: "close"),
-                Button(id: "yes", label: "Quit", action: "quit"),
+                Button(id: "no", label: "@quit-no", action: "close"),
+                Button(id: "yes", label: "@quit-yes", action: "quit"),
             ]),
         ],
     ),

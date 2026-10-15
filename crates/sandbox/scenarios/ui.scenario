@@ -12,6 +12,7 @@ act? ui_close screen=settings
 act? ui_close screen=pause
 act settings_set group=audio reset=true
 act settings_set group=accessibility reset=true
+act settings_set group=locale reset=true
 act ui_read
 expect result contains "no screens are open"
 observe
@@ -35,7 +36,7 @@ act ui_navigate dir=confirm
 expect result contains "pressed pause/settings: opened settings (menu) · focus settings/tabs"
 act ui_read
 expect result contains "SCREENS  settings ◀ takes input · pause"
-expect result contains "settings/tabs  tabs [graphics] audio controls accessibility ◀ focus"
+expect result contains "settings/tabs  tabs [graphics] audio controls accessibility language ◀ focus"
 expect result contains "settings/shadows  choice \"Shadows\" high (off|low|medium|high) [graphics.shadows]"
 expect result contains "settings/audio  panel \"Audio\" (page not shown)"
 expect result !contains "settings/music"
@@ -64,7 +65,7 @@ expect result contains "settings/flashes full → reduced"
 act? ui_set id=settings/fov value=wide
 expect result contains "settings/fov is a slider: a number from 50 to 110, not `wide`"
 act? ui_set id=settings/tabs value=sound
-expect result contains "settings/tabs has pages graphics, audio, controls, accessibility (or 1 to 4), not `sound`"
+expect result contains "settings/tabs has pages graphics, audio, controls, accessibility, language (or 1 to 5), not `sound`"
 
 # --- a question over the menu; back closes it, and the menu below keeps its focus
 act ui_navigate dir=back

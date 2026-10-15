@@ -1,58 +1,77 @@
 // The HUD and menus, on the engine's widgets (the engine draws them and moves through them):
 // Escape (gamepad Start) opens `pause`. `bind` shows a value: `you.health` and `you.stamina` are
 // the engine's, `trophies` the game's (src/screens.rs). `setting` is the player's setting a
-// widget shows and changes. Edit them while the game runs.
+// widget shows and changes. A text that starts with `@` is a message of the game's languages
+// (assets/locale/<language>/game.ftl), shown in the one played. Edit them while the game runs.
 {
     "hud": (
         layer: Hud,
         open_at_start: true,
         anchor: TopLeft,
         widgets: [
-            Bar(id: "health", label: "HP", bind: "you.health", color: "health"),
-            Bar(id: "stamina", label: "Stamina", bind: "you.stamina", color: "stamina"),
+            Bar(id: "health", label: "@hud-health", bind: "you.health", color: "health"),
+            Bar(id: "stamina", label: "@hud-stamina", bind: "you.stamina", color: "stamina"),
             Text(id: "trophies", bind: "trophies"),
-            Hint(id: "hint", text: "[Esc] Menu"),
+            Hint(id: "hint", text: "@hud-hint"),
         ],
     ),
     "pause": (
         pauses: true,
-        title: "Paused",
+        title: "@pause-title",
         widgets: [
-            Button(id: "resume", label: "Resume", action: "close"),
-            Button(id: "settings", label: "Settings", action: "open settings"),
-            Button(id: "quit", label: "Save and quit", action: "open confirm_quit"),
+            Button(id: "resume", label: "@pause-resume", action: "close"),
+            Button(id: "settings", label: "@pause-settings", action: "open settings"),
+            Button(id: "quit", label: "@pause-quit", action: "open confirm_quit"),
         ],
     ),
     "settings": (
-        title: "Settings",
+        title: "@settings-title",
         widgets: [
             Tabs(id: "tabs", children: [
-                Panel(id: "display", title: "Display", children: [
-                    Toggle(id: "fullscreen", label: "Fullscreen", setting: "graphics.fullscreen"),
-                    Slider(id: "text_size", label: "Text size", min: 0.75, max: 2.0, step: 0.25, setting: "accessibility.text_scale"),
-                    Choice(id: "flashes", label: "Flashes", options: ["full", "reduced", "off"], setting: "accessibility.flashes"),
-                    Slider(id: "shake", label: "Camera shake", min: 0.0, max: 1.0, step: 0.25, setting: "accessibility.camera_shake"),
+                Panel(id: "display", title: "@settings-display", children: [
+                    Toggle(id: "fullscreen", label: "@settings-fullscreen", setting: "graphics.fullscreen"),
+                    Slider(id: "text_size", label: "@settings-text-size", min: 0.75, max: 2.0, step: 0.25, setting: "accessibility.text_scale"),
+                    Choice(
+                        id: "flashes",
+                        label: "@settings-flashes",
+                        options: ["full", "reduced", "off"],
+                        labels: ["@flashes-full", "@flashes-reduced", "@flashes-off"],
+                        setting: "accessibility.flashes",
+                    ),
+                    Slider(id: "shake", label: "@settings-shake", min: 0.0, max: 1.0, step: 0.25, setting: "accessibility.camera_shake"),
                 ]),
-                Panel(id: "sound", title: "Sound", children: [
-                    Slider(id: "master", label: "Volume", min: 0.0, max: 1.0, step: 0.1, setting: "audio.master"),
-                    Slider(id: "music", label: "Music", min: 0.0, max: 1.0, step: 0.1, setting: "audio.music"),
+                Panel(id: "sound", title: "@settings-sound", children: [
+                    Slider(id: "master", label: "@settings-volume", min: 0.0, max: 1.0, step: 0.1, setting: "audio.master"),
+                    Slider(id: "music", label: "@settings-music", min: 0.0, max: 1.0, step: 0.1, setting: "audio.music"),
                 ]),
-                Panel(id: "controls", title: "Controls", children: [
-                    Slider(id: "look", label: "Look speed", min: 0.25, max: 3.0, step: 0.25, setting: "controls.mouse_sensitivity"),
-                    Toggle(id: "invert_y", label: "Invert look", setting: "controls.invert_y"),
-                    Toggle(id: "hold", label: "Hold to toggle", setting: "accessibility.hold_to_toggle"),
+                Panel(id: "controls", title: "@settings-controls", children: [
+                    Slider(id: "look", label: "@settings-look", min: 0.25, max: 3.0, step: 0.25, setting: "controls.mouse_sensitivity"),
+                    Toggle(id: "invert_y", label: "@settings-invert", setting: "controls.invert_y"),
+                    Toggle(id: "hold", label: "@settings-hold", setting: "accessibility.hold_to_toggle"),
+                ]),
+                // A language's name is written in that language, whichever is played; `value` is
+                // what shows while the player has not picked one (the game's own, English).
+                Panel(id: "language", title: "@settings-language", children: [
+                    Choice(
+                        id: "game_language",
+                        label: "@settings-language",
+                        options: ["en", "ru"],
+                        labels: ["English", "Русский"],
+                        value: "en",
+                        setting: "locale.language",
+                    ),
                 ]),
             ]),
-            Button(id: "back", label: "Back", action: "back"),
+            Button(id: "back", label: "@settings-back", action: "back"),
         ],
     ),
     "confirm_quit": (
         layer: Modal,
-        title: "Save and quit?",
+        title: "@quit-title",
         widgets: [
             Panel(layout: Row, children: [
-                Button(id: "no", label: "Not yet", action: "close"),
-                Button(id: "yes", label: "Save and quit", action: "save_and_quit"),
+                Button(id: "no", label: "@quit-no", action: "close"),
+                Button(id: "yes", label: "@quit-yes", action: "save_and_quit"),
             ]),
         ],
     ),

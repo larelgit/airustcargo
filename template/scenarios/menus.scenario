@@ -1,7 +1,8 @@
 # Menus: the HUD and menus are content (assets/content/screens.screen.ron) and the engine draws
 # them. A player's agent goes through them by the UI tree alone, the way a gamepad does:
 # `ui_read` lists every widget by id with its value, `ui_navigate` moves, `ui_click` presses,
-# `ui_set` sets. A widget bound to a player setting changes that setting.
+# `ui_set` sets. A widget bound to a player setting changes that setting. Labels are messages of the
+# game's languages (assets/locale), and the Language page switches them while the game runs.
 
 seed 42
 
@@ -12,12 +13,13 @@ act? ui_close screen=pause
 act heal id=e1
 act settings_set group=accessibility reset=true
 act settings_set group=audio reset=true
+act settings_set group=locale reset=true
 
 # --- the HUD: open from the start, the hero's numbers and the game's own trophies
 act ui_read screen=hud
 expect result contains "hud/health  bar \"HP\" 100/100 ← you.health"
 expect result contains "hud/stamina  bar \"Stamina\" 100/100 ← you.stamina"
-expect result contains "hud/trophies  text \"Trophies "
+expect result contains "hud/trophies  text \""
 expect result contains "hud/hint  hint \"[Esc] Menu\""
 
 # --- from here on, only what a player may do
@@ -45,6 +47,19 @@ expect result contains "settings/music 0.8 → 0.5"
 act settings group=audio
 expect result contains "audio.music = 0.5"
 
+# --- the Language page: Russian at once, the HUD too; a plural form by the number
+act ui_set id=settings/tabs value=4
+expect result contains "settings/tabs sound → language"
+act ui_set id=settings/game_language value=ru
+expect journal "locale: language en → ru"
+act ui_read
+expect result contains "settings/back  button \"Назад\""
+expect result contains "pause/resume  button \"Продолжить\""
+expect result contains "hud/health  bar \"Здоровье\""
+expect result contains "hud/hint  hint \"[Esc] Меню\""
+act ui_set id=settings/game_language value=English
+expect result contains "settings/game_language ru → en"
+
 # --- back to the pause menu; Save and quit asks first, and Not yet keeps playing
 act ui_navigate dir=back
 expect result contains "closed settings; pause is on top · focus pause/settings"
@@ -61,3 +76,4 @@ expect journal "ui: closed pause"
 session --agent scenario
 act settings_set group=accessibility reset=true
 act settings_set group=audio reset=true
+act settings_set group=locale reset=true

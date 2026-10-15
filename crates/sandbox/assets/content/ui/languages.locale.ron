@@ -1,0 +1,7 @@
+// The arena's languages: each one's text is assets/locale/<id>/*.ftl, and a message Russian lacks
+// is shown in English. The player picks one in Settings → Language, or an agent with
+// `settings_set group=locale key=language value=ru`; the menus change while the game runs.
+{
+    "en": (name: "English"),
+    "ru": (name: "Русский", fallback: "en"),
+}
