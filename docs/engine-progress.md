@@ -373,7 +373,7 @@ Xvfb показывает его вместе с оверлеем навсетк
 | `shards_world` | 72 | `src/` (17) и `tests/world/` (55: генерация, проверки, подземелья, регионы, смена региона, уровни-тайлы, зоны, навсетка региона) |
 | `shards_npc` | 82 | `src/` (19) и `tests/npc/` (63: поведение, восприятие, директор, навсетка, реплей, снапшот, инструменты, страж данными) |
 | `shards_save` | 91 | `src/` (33) и `tests/save/` (58) |
-| `shards_net` | 121 | `src/` (81 — канальный слой без Bevy, 40 — сессия) |
+| `shards_net` | 126 | `src/` (81 — канальный слой без Bevy, 45 — сессия) |
 | `shards` | 29 | `src/` (в том числе `coop`), `tests/engine.rs`, `tests/failures.rs`, `tests/level_render.rs`, `tests/run_to.rs` (3), `tests/action_render/` |
 | `sandbox` | 267 | `tests/sandbox/` (246, из них кооператив `net*.rs` 132, `snapshots.rs` 29, `replays.rs` 23, `invariants.rs` 12; ещё 3 `#[ignore]`: запись эталонных реплеев и два замера сети), `tests/system_failures.rs` (8), `tests/perf.rs` (6), `tests/log_capture.rs` (5), `src/` (2) |
 | шаблон | 24 | `template/tests/game/` (содержание, детерминизм, реплеи, сценарии, регион, манифест) |
