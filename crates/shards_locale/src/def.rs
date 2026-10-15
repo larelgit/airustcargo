@@ -116,16 +116,8 @@ pub struct Parsed {
 pub fn parse_language(files: &[FtlFile]) -> Parsed {
     let mut parsed = Parsed { resources: Vec::new(), ids: BTreeMap::new(), problems: Vec::new() };
     for file in files {
-        let resource = match FluentResource::try_new(file.text.clone()) {
-            Ok(resource) => resource,
-            Err((resource, errors)) => {
-                for e in errors {
-                    let (line, col) = line_col(&file.text, e.pos.start);
-                    parsed.problems.push(format!("{}:{line}:{col}: {e}", file.path));
-                }
-                resource
-            }
-        };
+        let (resource, problems) = parse_file(file);
+        parsed.problems.extend(problems);
         for entry in resource.entries() {
             let ast::Entry::Message(message) = entry else { continue };
             let name = message.id.name.to_owned();
@@ -141,6 +133,28 @@ pub fn parse_language(files: &[FtlFile]) -> Parsed {
         parsed.resources.push((file.path.clone(), resource));
     }
     parsed
+}
+
+/// What of `file` parsed, and its syntax mistakes as `file:line:col: what`.
+fn parse_file(file: &FtlFile) -> (FluentResource, Vec<String>) {
+    match FluentResource::try_new(file.text.clone()) {
+        Ok(resource) => (resource, Vec::new()),
+        Err((resource, errors)) => {
+            let problems = errors
+                .into_iter()
+                .map(|e| {
+                    let (line, col) = line_col(&file.text, e.pos.start);
+                    format!("{}:{line}:{col}: {e}", file.path)
+                })
+                .collect();
+            (resource, problems)
+        }
+    }
+}
+
+/// The syntax mistakes of `file` (`locale/ru/menus.ftl:2:14: …`), none when it parses.
+pub fn syntax_problems(file: &FtlFile) -> Vec<String> {
+    parse_file(file).1
 }
 
 /// 1-based line and column of byte `at` in `text`.

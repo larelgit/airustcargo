@@ -186,14 +186,35 @@ fn an_edited_text_file_applies_while_the_game_runs() {
     assert_eq!(line(&tree, "pause/resume"), "pause/resume  button \"Дальше\" → close ◀ focus");
     assert_eq!(line(&tree, "pause/hint"), "pause/hint  hint \"[Esc] Назад\"", "a message added is there at once");
 
-    // A mistake is journaled with its place; the messages around it still count.
+    // An edit with a mistake is journaled with its place, once, and refused: the file keeps the
+    // version that read until it is fixed.
     std::fs::write(&file, original.replace("pause-title = Пауза", "pause-title Пауза")).unwrap();
-    shards::locale::reload_text(app.world_mut());
+    assert_eq!(shards::locale::reload_text(app.world_mut()), Vec::<String>::new(), "the edit was refused");
     let errors = journal(&app, "locale: locale/ru/menus.ftl:1:");
     assert_eq!(errors.len(), 1, "{:?}", journal(&app, "locale: "));
+    assert!(errors[0].ends_with("; kept the previous version"), "{}", errors[0]);
     let tree = ok(&mut app, "ui_read", json!({}));
-    assert!(tree.contains("pause \"Paused\""), "the broken message is English's again: {tree}");
+    assert!(tree.contains("pause \"Пауза\""), "{tree}");
+    assert_eq!(line(&tree, "pause/resume"), "pause/resume  button \"Дальше\" → close ◀ focus");
+    shards::locale::reload_text(app.world_mut());
+    assert_eq!(journal(&app, "locale: locale/ru/menus.ftl:1:").len(), 1, "the same mistake is journaled once");
+    std::fs::write(&file, &original).unwrap();
+    assert_eq!(shards::locale::reload_text(app.world_mut()), ["locale/ru/menus.ftl"], "fixed, it applies");
+    let tree = ok(&mut app, "ui_read", json!({}));
     assert_eq!(line(&tree, "pause/resume"), "pause/resume  button \"Продолжить\" → close ◀ focus");
+
+    // A language whose files cannot be read now keeps the text it had.
+    let unreadable = dir.join("locale/ru/x.ftl");
+    std::fs::create_dir(&unreadable).unwrap();
+    assert_eq!(shards::locale::reload_text(app.world_mut()), Vec::<String>::new());
+    shards::locale::reload_text(app.world_mut());
+    let errors = journal(&app, "locale: locale/ru/x.ftl: cannot read:");
+    assert_eq!(errors.len(), 1, "{:?}", journal(&app, "locale: "));
+    assert!(errors[0].ends_with("; ru keeps the text it had"), "{}", errors[0]);
+    let tree = ok(&mut app, "ui_read", json!({}));
+    assert_eq!(line(&tree, "pause/resume"), "pause/resume  button \"Продолжить\" → close ◀ focus");
+    std::fs::remove_dir(&unreadable).unwrap();
+    assert_eq!(shards::locale::reload_text(app.world_mut()), Vec::<String>::new());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -82,6 +82,8 @@ struct LocaleSource {
     /// The setting as last followed.
     wanted: Option<String>,
     next_scan: Duration,
+    /// Edits the last reload refused (see [`reload_text`]).
+    refused: BTreeMap<String, String>,
 }
 
 /// Languages as content and their Fluent text, the `locale.language` setting, the tools and the
@@ -166,7 +168,10 @@ fn reread_files(world: &mut World) {
 
 /// Reads every language's files again and, where they changed, builds the languages anew: what
 /// the file watcher does every second. The files that changed (none: nothing was done); the journal
-/// says `locale: text reloaded (…)` and the mistakes in them.
+/// says `locale: text reloaded (…)` and the mistakes in them. An edit that does not parse is
+/// refused, as content's are: the file keeps its previous version (a new file waits) until it
+/// does, and a language whose files cannot be read now (an editor mid-save) keeps the text it
+/// had. Each refusal is journaled once.
 pub fn reload_text(world: &mut World) -> Vec<String> {
     if !world.get_resource::<Locale>().is_some_and(|l| l.built) {
         return Vec::new();
@@ -175,22 +180,65 @@ pub fn reload_text(world: &mut World) -> Vec<String> {
     let source = world.resource::<LocaleSource>();
     let mut files = BTreeMap::new();
     let mut changed = Vec::new();
+    let mut refusals = Refusals { before: &source.refused, now: BTreeMap::new(), problems: Vec::new() };
     for (id, before) in &source.files {
-        let now = def::read_language(&root, id).unwrap_or_default();
+        let now = match def::read_language(&root, id) {
+            Ok(now) => keep_where_broken(before, now, &mut refusals),
+            Err(e) => {
+                refusals.refuse(format!("{}/{id}/", def::LOCALE_DIR), e.clone(), vec![format!("{e}; {id} keeps the text it had")]);
+                before.clone()
+            }
+        };
         changed.extend(edited(before, &now));
         files.insert(id.clone(), now);
     }
-    if changed.is_empty() {
-        return changed;
-    }
+    let Refusals { now: refused, mut problems, .. } = refusals;
     let defs = source.defs.clone();
-    let problems: Vec<String> = files.values().flat_map(|f| def::parse_language(f).problems).collect();
-    install(world, defs, files);
-    journal::emit(world, JournalKind::Event, format!("locale: text reloaded ({})", changed.join(", ")));
+    world.resource_mut::<LocaleSource>().refused = refused;
+    if !changed.is_empty() {
+        problems.extend(files.values().flat_map(|f| def::parse_language(f).problems));
+        install(world, defs, files);
+        journal::emit(world, JournalKind::Event, format!("locale: text reloaded ({})", changed.join(", ")));
+    }
     for problem in problems {
         journal::emit(world, JournalKind::Error, format!("locale: {problem}"));
     }
     changed
+}
+
+/// What a reload refused: by file (or `locale/<id>/` for a folder that could not be read), the
+/// text or error refused, so the same one is journaled once.
+struct Refusals<'a> {
+    before: &'a BTreeMap<String, String>,
+    now: BTreeMap<String, String>,
+    problems: Vec<String>,
+}
+
+impl Refusals<'_> {
+    fn refuse(&mut self, key: String, what: String, problems: Vec<String>) {
+        if self.before.get(&key) != Some(&what) {
+            self.problems.extend(problems);
+        }
+        self.now.insert(key, what);
+    }
+}
+
+/// `now`, where each file that changed since `before` and does not parse is its version in
+/// `before` again (or left out, when it is new).
+fn keep_where_broken(before: &[def::FtlFile], now: Vec<def::FtlFile>, refusals: &mut Refusals) -> Vec<def::FtlFile> {
+    let mut kept = Vec::new();
+    for file in now {
+        let was = before.iter().find(|f| f.path == file.path);
+        let mistakes = if was.is_some_and(|w| w.text == file.text) { Vec::new() } else { def::syntax_problems(&file) };
+        if mistakes.is_empty() {
+            kept.push(file);
+            continue;
+        }
+        let outcome = if was.is_some() { "kept the previous version" } else { "left out until it parses" };
+        refusals.refuse(file.path.clone(), file.text, mistakes.into_iter().map(|m| format!("{m}; {outcome}")).collect());
+        kept.extend(was.cloned());
+    }
+    kept
 }
 
 /// Files of one language added, changed or removed between two reads.
