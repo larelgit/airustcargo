@@ -5,8 +5,11 @@
 #   template       the template game builds and passes its tests apart from the workspace
 #   headless-cli   a live sandbox without a window, driven by the `shards` CLI; content and
 #                  1000-seed worldgen checks through the game's binary; a live stand (host and
-#                  two clients, `--stand 2`) running the stand scenarios
+#                  two clients, `--stand 2`) running the stand scenarios and a three-minute soak
 #   replays-window the same replays verified with a window (Xvfb + software Vulkan); optional
+#
+# Elsewhere: soak.yml (half an hour of a live stand, weekly), record-replays.yml (the reference
+# replays recorded again on Linux, on demand).
 #
 # What the jobs run you can run by hand: the commands are the same.
 
@@ -184,6 +187,9 @@ jobs:
           ready=$(cargo shards --port-file "$port_file" wait --peer all --timeout 180)
           echo "$ready"
           cargo shards --port-file "$port_file" scenario crates/sandbox/scenarios/stand/*.scenario
+          # Three minutes of seeded play on every member, the host changing the region and saving on
+          # the way: no member may desync (soak.yml plays the half hour of E7's acceptance).
+          cargo shards --port-file "$port_file" soak --seed 7 --minutes 3 --regen wilds --regen-minutes 1 --save-minutes 1
           cargo shards --port-file "$port_file" stand
           cargo shards --port-file "$port_file" stand stop
           stand_pid=

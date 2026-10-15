@@ -1,0 +1,62 @@
+# Records the reference replays again on Linux, where CI verifies them, and hands them back as an
+# artifact. A replay recorded on another OS may differ in the last bits of a float (its libm), so
+# the checked-in ones come from here.
+#
+# After a deliberate change of gameplay or content: push a commit whose message contains
+# `[record replays]` (or run this workflow by hand once it is on the default branch), then
+#   gh run download <run id> --name reference-replays --dir .
+#   git add tests/replays template/tests/replays && git commit
+# The artifact holds both folders at their places in the repository.
+
+name: record replays
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: record-replays-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  record:
+    name: record
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[record replays]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: dev
+          save: "false"
+      - name: Record the sandbox's reference replays
+        run: cargo test -p sandbox --test sandbox --locked -- --ignored record_reference_replays
+      - name: Record the template's reference replays
+        run: cargo test --manifest-path template/Cargo.toml --test game --locked -- --ignored record_reference_replays
+      # What a later CI run checks them with, before anyone downloads them.
+      - name: The new replays verify
+        run: |
+          cargo test -p sandbox --test sandbox --locked reference_replays
+          cargo test --manifest-path template/Cargo.toml --test game --locked reference_replays
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reference-replays
+          path: |
+            tests/replays/*.json
+            template/tests/replays/*.json
+          if-no-files-found: error
