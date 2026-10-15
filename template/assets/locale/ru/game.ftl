@@ -29,6 +29,8 @@ settings-shake = Тряска камеры
 settings-sound = Звук
 settings-volume = Громкость
 settings-music = Музыка
+settings-sfx = Эффекты
+settings-ui = Интерфейс
 
 settings-controls = Управление
 settings-look = Скорость обзора

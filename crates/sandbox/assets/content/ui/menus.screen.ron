@@ -28,6 +28,7 @@
                     Slider(id: "music", label: "@settings-music", min: 0.0, max: 1.0, step: 0.1, setting: "audio.music"),
                     Slider(id: "sfx", label: "@settings-sfx", min: 0.0, max: 1.0, step: 0.1, setting: "audio.sfx"),
                     Slider(id: "voice", label: "@settings-voice", min: 0.0, max: 1.0, step: 0.1, setting: "audio.voice"),
+                    Slider(id: "ui", label: "@settings-ui", min: 0.0, max: 1.0, step: 0.1, setting: "audio.ui"),
                 ]),
                 Panel(id: "controls", title: "@settings-controls", children: [
                     Slider(id: "sensitivity", label: "@settings-look-speed", min: 0.25, max: 3.0, step: 0.25, setting: "controls.mouse_sensitivity"),

@@ -1,0 +1,119 @@
+# Sound and music (E9.5): the arena's sounds (`content/audio/arena.sound.ron`), its music in three
+# layers (`arena.music.ron`) and its mixer (`mixer.audio.ron`: 24 voices, the sounds of the
+# engine's events). The mixer decides what plays on the simulation's clock, so a headless game
+# hears the same as one with a window: `audio` says it all, `observe` has the layer, the journal
+# its changes. Calm to intense: `explore`, `tension` (an awake monster could see the hero: the NPC
+# module's `npc_near`), `combat` (a monster fights: `npc_engaged`). A more intense layer comes at
+# once, a calmer one after five seconds of being wanted.
+
+seed 42
+
+# --- everyone calm, no menu open, the volumes as shipped, the music following the game
+act? ui_close screen=confirm_quit
+act? ui_close screen=settings
+act? ui_close screen=pause
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act god on=false
+act settings_set group=audio reset=true
+act music_set track=arena layer=auto
+# the hero on the canyon floor past the course, far beyond every monster's sight
+act teleport id=e5 x=120 y=-9 z=0
+# five seconds of calm before the music lets go of a fight, two and a half for a stem to fade
+step 600
+act audio
+expect result contains "music arena: explore"
+expect result contains "music/arena_pad.wav [arena] 1.00"
+expect result contains "music/arena_pulse.wav [arena] 0.00"
+expect result contains "music/arena_drums.wav [arena] 0.00"
+observe
+expect result contains "MUSIC  arena: explore"
+
+# --- 1. back in the arena, 16 m from the warden, which could see the hero any moment: tension at
+# once, and the pulse comes in over a second
+mark
+act teleport id=e5 x=0 y=0 z=10
+step 2
+expect journal "music: arena explore → tension"
+step 60
+act audio
+expect result contains "music/arena_pulse.wav [arena] 1.00"
+expect result contains "music/arena_drums.wav [arena] 0.00"
+
+# --- 2. the warden fights: combat at once, the drums come in
+act god
+mark
+act npc_set_state id=e6 state=fight
+step 2
+expect journal "music: arena tension → combat"
+step 60
+act audio
+expect result contains "music arena: combat"
+expect result contains "music/arena_drums.wav [arena] 1.00"
+
+# --- 3. it stops: combat holds five seconds, then the music calms down to tension
+act npc_set_state id=e6 state=calm
+mark
+step 240
+expect !journal "→ tension"
+act audio
+expect result contains "tension wanted"
+step 120
+expect journal "music: arena combat → tension"
+
+# --- 4. a layer held: music_set keeps the track to it whatever the game does, until `auto`
+mark
+act music_set layer=combat
+expect result contains "arena keeps to combat until `music_set layer=auto`"
+step 1
+expect journal "music: arena tension → combat"
+act music_set layer=auto
+expect result contains "arena follows the game again"
+act? music_set layer=fight
+expect result contains "arena has no layer `fight`; layers: explore, tension, combat"
+act? music_set track=arina
+expect result contains "no track `arina` (did you mean `arena`?)"
+
+# --- 5. voices: 24 at once; one more as strong is not heard, a stronger one takes the weakest's
+# voice, and they free their voices when they have played. (Weaker voices still playing, a
+# menu's on real time, give theirs up to the parries: the count of those varies.)
+act sound_play sound=parry at=e5 times=25
+expect result contains "parry ×25: 24 playing"
+expect result contains ", 1 not heard: all 24 voices play sounds as strong or stronger"
+act sound_play sound=warden_slam at=e5
+expect result contains "took the voice of parry #"
+act audio
+expect result contains "voices 24/24"
+step 60
+act audio
+expect result contains "voices 0/24"
+
+# --- 6. far is quiet: a sound past its `far` is not even started; an unknown one is named
+act sound_play sound=whoosh point='[0.0, 0.0, -14.0]'
+expect result contains "not heard: out of earshot: 24.0 m, heard to 20 m"
+act? sound_play sound=warden_slom
+expect result contains "no sound `warden_slom` (did you mean `warden_slam`?)"
+
+# --- 7. the player's volumes apply to what plays
+act settings_set group=audio key=sfx value=0.5
+act sound_play sound=parry
+expect result contains "gain 0.50"
+act settings_set group=audio reset=true
+act audio
+expect result contains "buses (with master): music 0.80 · sfx 1.00 · ui 1.00 · voice 1.00"
+
+# --- 8. the engine's events sound: a heal plays the mixer's `healed` sound at the body, a menu
+# its own on the ui bus
+act set id=e5 component=Health path=current value=50
+act heal id=e5
+act audio
+expect result contains "heal sfx e5 0.0m"
+act ui_open screen=pause
+act audio
+expect result contains "ui_open ui"
+act ui_close screen=pause
+act god on=false

@@ -29,6 +29,8 @@ settings-shake = Camera shake
 settings-sound = Sound
 settings-volume = Volume
 settings-music = Music
+settings-sfx = Effects
+settings-ui = Interface
 
 settings-controls = Controls
 settings-look = Look speed
