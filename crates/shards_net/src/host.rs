@@ -233,13 +233,15 @@ pub struct Slot {
     pub left_at: Option<u64>,
     /// Who closed the link of this player's last game, once it was closed (the first to do so).
     pub closed_by: Option<Closer>,
+    /// The token's holder was admitted once (got a body): the game may hold something of theirs.
+    pub admitted: bool,
 }
 
 /// Who closed a link.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Closer {
-    /// The host: it kicked the player (`net_kick`), turned it away, put it out for another game
-    /// with its token, or its silence timed out.
+    /// The host: it kicked the player (`net_kick`), or its silence timed out. A refusal is not
+    /// that: a game that was never admitted did not have a link to close.
     Host,
     /// The player's game said goodbye (`Bye`): it quit, or could not go on (`cannot take the world`).
     Peer,
@@ -393,10 +395,10 @@ impl NetHost {
     }
 
     /// Whether the host closed the link of the player who joined as `name`: it kicked it
-    /// (`net_kick`), turned it away, put it out for another game with its token, or its silence
-    /// timed out. Recorded the moment the link closes, before the slot is vacated at the next
-    /// tick. A farewell the player's game sent (`Bye`) is not that: a game that says goodbye and
-    /// exits with an error did not leave because the host asked.
+    /// (`net_kick`), or its silence timed out. Recorded the moment the link closes, before the
+    /// slot is vacated at the next tick. A farewell the player's game sent (`Bye`) is not that: a
+    /// game that says goodbye and exits with an error did not leave because the host asked. Nor
+    /// is a refusal: a game the host turned away was never in the session.
     pub fn link_closed_by_host(&self, name: &str) -> bool {
         self.slots.values().any(|slot| slot.name == name && slot.closed_by == Some(Closer::Host))
     }
@@ -728,19 +730,8 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
             }
         }
     }
-    // Silence: a connected player leaves, anyone else is forgotten.
     let def = net_def(world);
-    let timeout_ms = (def.timeout_secs * 1000.0) as u64;
-    for peer in host.peers.values_mut() {
-        if peer.stage != PeerStage::Gone && peer.link.is_timed_out(now, timeout_ms) {
-            if peer.stage == PeerStage::Connected {
-                host.tasks.push(Task::Leave { player: peer.player, peer: peer.id, reason: "timeout".into() });
-                NetMarks::mark(world, |m| &mut m.disconnected);
-            }
-            peer.stage = PeerStage::Gone;
-            note_closer(&mut host.slots, peer.id, Closer::Host);
-        }
-    }
+    drop_silent_peers(world, host, now, (def.timeout_secs * 1000.0) as u64);
     // A peer that does not get on with joining is dropped, keepalives or not: the host holds a
     // peer (and a slot) for each. The game's "not now" (`Waiting`) is the game's to hold.
     let handshake_ms = (def.timeout_secs * HANDSHAKE_TIMEOUTS * 1000.0) as u64;
@@ -761,6 +752,20 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
     let waiting: Vec<PeerId> = host.peers.iter().filter(|(_, p)| matches!(p.stage, PeerStage::Waiting(_))).map(|(id, _)| *id).collect();
     for id in waiting {
         decide(world, host, id);
+    }
+}
+
+/// Silence: a connected player leaves, anyone else is forgotten. The host closed the link.
+fn drop_silent_peers(world: &mut World, host: &mut NetHost, now: u64, timeout_ms: u64) {
+    for peer in host.peers.values_mut() {
+        if peer.stage != PeerStage::Gone && peer.link.is_timed_out(now, timeout_ms) {
+            if peer.stage == PeerStage::Connected {
+                host.tasks.push(Task::Leave { player: peer.player, peer: peer.id, reason: "timeout".into() });
+                NetMarks::mark(world, |m| &mut m.disconnected);
+            }
+            peer.stage = PeerStage::Gone;
+            note_closer(&mut host.slots, peer.id, Closer::Host);
+        }
     }
 }
 
@@ -929,7 +934,6 @@ fn on_hello(world: &mut World, host: &mut NetHost, id: PeerId, hello: Hello) {
                     host.tasks.push(Task::Leave { player: n, peer: old, reason: "reconnected".into() });
                 }
                 peer.stage = PeerStage::Gone;
-                note_closer(&mut host.slots, old, Closer::Host);
             }
             Some(n)
         }
@@ -957,7 +961,10 @@ fn on_hello(world: &mut World, host: &mut NetHost, id: PeerId, hello: Hello) {
         let old = old.token.clone();
         host.retire(old);
     }
-    host.slots.insert(player, Slot { token, name: hello.name.clone(), peer: Some(id), left_at: None, closed_by: None });
+    // A token the session issued keeps what the slot knew of its holder; a new one starts as nobody
+    // who was admitted.
+    let admitted = known.is_some_and(|n| host.slots[&n].admitted);
+    host.slots.insert(player, Slot { token, name: hello.name.clone(), peer: Some(id), left_at: None, closed_by: None, admitted });
     let peer = host.peers.get_mut(&id).expect("known peer");
     peer.player = player;
     peer.hello = Some(hello);
@@ -1016,9 +1023,9 @@ fn refuse(world: &mut World, host: &mut NetHost, id: PeerId, reason: &str) {
     let _ = peer.send(&Msg::Refused { reason: reason.to_owned() });
     peer.stage = PeerStage::Gone;
     let name = peer.name();
+    // A refusal is a join that failed, not a link the host closed: nothing is recorded as such.
     for slot in host.slots.values_mut().filter(|s| s.peer == Some(id)) {
         slot.peer = None;
-        slot.closed_by.get_or_insert(Closer::Host);
     }
     // At most a line a second: anyone who can send a datagram can be refused.
     crate::hooks::net_line(world, "refused", JournalKind::Warn, format!("refused {name}: {reason}"));
@@ -1147,6 +1154,7 @@ fn admit(world: &mut World, host: &mut NetHost, id: PeerId) {
         slot.peer = Some(id);
         slot.left_at = None;
         slot.closed_by = None;
+        slot.admitted = true;
     }
     NetMarks::mark(world, |m| &mut m.joined);
     journal::emit(world, JournalKind::Sim, format!("net: p{player} ({}) joined at tick {tick} (world {kb:.1} KB)", hello.name));
@@ -1626,6 +1634,7 @@ fn flush(host: &mut NetHost, endpoint: &mut NetEndpoint) {
 #[cfg(test)]
 mod tests {
     use super::{rebase_fits, rtt_jump, NetHost, Slot};
+    use bevy::prelude::World;
     use crate::link::{Footprint, LinkConfig};
 
     #[test]
@@ -1679,6 +1688,143 @@ mod tests {
         assert!(host.link_closed_by_host("c2"), "kicked, then said goodbye");
         // A link nobody holds a slot with notes nothing.
         note_closer(&mut host.slots, 99, Closer::Host);
+    }
+
+    /// A bare world the join handlers can run in: a tick counter and a timestep, no game.
+    fn bare_world() -> World {
+        use bevy::prelude::*;
+        let mut world = World::new();
+        world.init_resource::<ai_core::SimTick>();
+        world.init_resource::<bevy::ecs::reflect::AppTypeRegistry>();
+        world.insert_resource(Time::<Fixed>::default());
+        world
+    }
+
+    /// The hello of a game that the host takes: same protocol, engine, rules and rate.
+    fn hello_of(world: &World, name: &str, token: &str) -> crate::msg::Hello {
+        crate::msg::Hello {
+            proto: crate::msg::PROTO,
+            engine: ai_core::snapshot::ENGINE_VERSION.into(),
+            game: world.get_resource::<crate::session::NetGame>().cloned().unwrap_or_default().0,
+            content_hash: 0,
+            net_rules_hash: ai_core::net_rules::rules_hash(world),
+            name: name.into(),
+            token: token.into(),
+            character: None,
+            tick_hz: 1.0 / ai_core::sim::tick_seconds(world) as f64,
+        }
+    }
+
+    /// A peer in the session as player `player`, holding the slot of `name`.
+    fn playing(host: &mut NetHost, id: u64, player: u8, name: &str) {
+        use super::{Peer, PeerStage};
+        let mut peer = Peer::new(id, 1, 0);
+        peer.stage = PeerStage::Connected;
+        peer.player = player;
+        host.peers.insert(id, peer);
+        host.slots.insert(player, Slot { token: format!("token-{name}"), name: name.into(), peer: Some(id), admitted: true, ..Default::default() });
+    }
+
+    fn left_with(host: &NetHost, who: u64) -> Vec<String> {
+        host.tasks
+            .iter()
+            .filter_map(|task| match task {
+                super::Task::Leave { peer, reason, .. } if *peer == who => Some(reason.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A game the host turned away after its hello (it has a slot by then) was never admitted, and
+    /// the host closed no link: a stand must not take its error exit for the host's doing.
+    #[test]
+    fn a_refused_join_is_not_a_link_the_host_closed_and_is_not_admitted() {
+        use super::{on_hello, refuse, Peer, PeerStage};
+        let mut world = bare_world();
+        let mut host = NetHost::new();
+        host.peers.insert(7, Peer::new(7, 1, 0));
+        let hello = hello_of(&world, "c2", "");
+        assert_eq!(super::refusal(&world, &hello), None, "the hello is one the host takes");
+        on_hello(&mut world, &mut host, 7, hello);
+        assert_eq!(host.peers[&7].stage, PeerStage::Accepted, "a game with no say accepts");
+        let slot = &host.slots[&host.peers[&7].player];
+        assert!((slot.name.as_str(), slot.peer, slot.admitted) == ("c2", Some(7), false), "{slot:?}");
+        // `admit` failing (its body could not be made), the handshake deadline, a policy: all refuse.
+        refuse(&mut world, &mut host, 7, "cannot spawn your body: a hook failed");
+        assert_eq!(host.peers[&7].stage, PeerStage::Gone);
+        let slot = &host.slots[&host.peers[&7].player];
+        assert!(slot.peer.is_none() && slot.closed_by.is_none() && !slot.admitted, "{slot:?}");
+        assert!(!host.link_closed_by_host("c2"), "a refusal is not the host closing a link");
+    }
+
+    /// A token keeps what its slot knew of its holder (it was admitted once); a new one starts as
+    /// nobody who was. A second game with a token puts the first out, and is nothing the host
+    /// excuses: the displaced game is a lost member.
+    #[test]
+    fn a_known_token_keeps_its_admission_and_a_displaced_game_is_not_excused() {
+        use super::{on_hello, PeerStage, Peer};
+        let mut world = bare_world();
+        let mut host = NetHost::new();
+        playing(&mut host, 7, 1, "c1");
+        // A second game comes with c1's token while the first is playing.
+        host.peers.insert(8, Peer::new(8, 2, 0));
+        let hello = hello_of(&world, "c1", "token-c1");
+        on_hello(&mut world, &mut host, 8, hello);
+        assert_eq!(host.peers[&7].stage, PeerStage::Gone, "the first game is told to go");
+        assert_eq!(left_with(&host, 7), ["reconnected"]);
+        let slot = &host.slots[&1];
+        assert!(slot.peer == Some(8) && slot.admitted && slot.closed_by.is_none(), "the token's slot, admitted before: {slot:?}");
+        assert!(!host.link_closed_by_host("c1"), "the displaced game is not a link the host closed");
+        // A game with a token of its own starts as nobody who was admitted.
+        host.peers.insert(9, Peer::new(9, 3, 0));
+        let hello = hello_of(&world, "c2", "");
+        on_hello(&mut world, &mut host, 9, hello);
+        let new = host.slots.values().find(|s| s.name == "c2").expect("c2 has a slot");
+        assert!(!new.admitted && new.peer == Some(9), "{new:?}");
+    }
+
+    /// A goodbye the game sent, through the real handler: the player closed the link, not the host.
+    /// The game that cannot take the world sends one and exits 1.
+    #[test]
+    fn a_goodbye_through_the_handler_is_the_players_closing() {
+        use super::{on_message, Closer, PeerStage};
+        let mut world = bare_world();
+        let mut host = NetHost::new();
+        playing(&mut host, 7, 1, "c1");
+        on_message(&mut world, &mut host, 7, crate::msg::Msg::Bye { reason: "cannot take the world: x".into() });
+        assert_eq!(host.peers[&7].stage, PeerStage::Gone);
+        assert_eq!(host.slots[&1].closed_by, Some(Closer::Peer));
+        assert!(!host.link_closed_by_host("c1"));
+        assert_eq!(left_with(&host, 7), ["cannot take the world: x"]);
+        // The host's kick comes first, through its own tool, and the game's answering goodbye
+        // changes nothing about who closed the link.
+        playing(&mut host, 8, 2, "c2");
+        host.kick(2, "kicked: by the host").unwrap();
+        on_message(&mut world, &mut host, 8, crate::msg::Msg::Bye { reason: "quit".into() });
+        assert_eq!(host.slots[&2].closed_by, Some(Closer::Host));
+        assert!(host.link_closed_by_host("c2"));
+    }
+
+    /// Silence, through the real check io_in makes: the host closed the link of a game it stopped
+    /// hearing from, and left alone one it heard from.
+    #[test]
+    fn a_silent_game_is_dropped_by_the_host_and_a_heard_one_is_not() {
+        use super::{drop_silent_peers, Closer, PeerStage};
+        let mut world = bare_world();
+        let mut host = NetHost::new();
+        playing(&mut host, 7, 1, "c1");
+        playing(&mut host, 8, 2, "c2");
+        // c1's link was last used at tick 0 of the clock, c2's a second ago (a link counts its silence
+        // from the first use when it has never heard from the peer).
+        host.peers.get_mut(&7).unwrap().link.flush(0, &mut |_| {});
+        host.peers.get_mut(&8).unwrap().link.flush(59_000, &mut |_| {});
+        drop_silent_peers(&mut world, &mut host, 60_000, 10_000);
+        assert_eq!(host.peers[&7].stage, PeerStage::Gone);
+        assert_eq!(host.slots[&1].closed_by, Some(Closer::Host));
+        assert!(host.link_closed_by_host("c1"));
+        assert_eq!(left_with(&host, 7), ["timeout"]);
+        assert_eq!(host.peers[&8].stage, PeerStage::Connected, "c2 is still heard");
+        assert!(!host.link_closed_by_host("c2"));
     }
 
     #[test]

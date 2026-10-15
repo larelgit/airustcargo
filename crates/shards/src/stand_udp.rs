@@ -13,7 +13,7 @@
 //!
 //! The host watches its children. One that cannot be started, exits before its port file
 //! appeared (a bad flag, a busy port, a crash at start), exits without ever having joined (the
-//! session was full), or crashes later, ends the stand at once with that child's exit status and
+//! session was full, or the host turned it away), or crashes later, ends the stand at once with that child's exit status and
 //! a line saying which one; a child that joined and leaves on purpose (exit code 0, SIGTERM,
 //! SIGINT, SIGHUP) or whose link the host closed (`net_kick`, a timeout) is journaled. `--stand N`
 //! needs room for N clients in the session (`max_players` of the net definition): the host
@@ -243,11 +243,12 @@ struct Verdict {
 struct Seen {
     /// Its port file had appeared: it had started.
     ready: bool,
-    /// The host had admitted it to the session (a refused client never is).
+    /// The host had admitted it to the session (it got a body). A client the host turned away
+    /// after its hello has a slot, and never was.
     joined: bool,
-    /// The host closed the client's link before it exited (`net_kick`, its silence timed out, a
-    /// refusal): a client that leaves this way exits with an error code of its own, which is not a
-    /// crash. A goodbye the client sent is not that: it says nothing about why it went.
+    /// The host closed the client's link before it exited (`net_kick`, its silence timed out): a
+    /// client that leaves this way exits with an error code of its own, which is not a crash. A
+    /// goodbye the client sent is not that: it says nothing about why it went. Nor is a refusal.
     host_closed: bool,
     /// The host's session has ended: its clients are leaving, as they should.
     session_over: bool,
@@ -255,7 +256,7 @@ struct Seen {
 
 /// `name` exited with `status`. A child that leaves on purpose after joining (exit code 0, or
 /// the code of a signal that ends a game: SIGTERM, SIGINT, SIGHUP) or whose link the host closed
-/// is journaled. One that never started, never joined (the session was full) or crashed ends the
+/// is journaled. One that never started, never joined (the session was full, or it was turned away) or crashed ends the
 /// stand, whatever goodbye it said on the way out.
 fn verdict(name: &str, status: ExitStatus, seen: Seen) -> Verdict {
     let how = match (status.code(), exit_signal(status)) {
@@ -350,7 +351,7 @@ fn watch_children(world: &mut World, mut started: Local<bool>) {
         }
         match c.child.try_wait() {
             Ok(Some(status)) => {
-                let joined = host.is_some_and(|host| host.slots.values().any(|slot| slot.name == c.name));
+                let joined = host.is_some_and(|host| host.slots.values().any(|slot| slot.name == c.name && slot.admitted));
                 let host_closed = host.is_some_and(|host| host.link_closed_by_host(&c.name));
                 left.push(verdict(&c.name, status, Seen { ready: c.ready, joined, host_closed, session_over }));
                 false
@@ -591,8 +592,10 @@ mod tests {
     /// What the host's session says about client `c1`.
     #[derive(Clone, Copy, PartialEq)]
     enum Session {
-        /// It never joined.
+        /// It never joined: no slot (the session was full).
         Never,
+        /// The host turned it away after its hello: it has a slot, and was never admitted.
+        Refused,
         /// It joined and is in the session.
         Joined,
         /// It joined and the host closed its link (the slot is vacated).
@@ -620,7 +623,8 @@ mod tests {
                 Session::SaidGoodbye => (Some(5), Some(shards_net::host::Closer::Peer)),
                 _ => (None, None),
             };
-            host.slots.insert(1, shards_net::host::Slot { name: "c1".into(), left_at, closed_by, ..Default::default() });
+            let admitted = session != Session::Refused;
+            host.slots.insert(1, shards_net::host::Slot { name: "c1".into(), left_at, closed_by, admitted, ..Default::default() });
             app.insert_resource(host);
         }
         let child = Command::new("sh").args(["-c", script]).stdin(Stdio::null()).spawn().expect("sh runs");
@@ -659,6 +663,11 @@ mod tests {
         let app = watch("exit 0", true, Session::Never);
         assert_eq!(app.world().resource::<Hooked>().0, 1);
         assert!(exits_with(&app, 2), "{:?}", app.should_exit());
+        // A client the host turned away after its hello (the slot exists, nobody was admitted): it
+        // never joined, whatever the slot says.
+        let app = watch("exit 1", true, Session::Refused);
+        assert_eq!(app.world().resource::<Hooked>().0, 1);
+        assert!(exits_with(&app, 1), "{:?}", app.should_exit());
         // A joined client that crashed.
         let app = watch("exit 101", true, Session::Joined);
         assert_eq!(app.world().resource::<Hooked>().0, 1);
