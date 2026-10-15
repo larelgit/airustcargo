@@ -323,7 +323,8 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
 
 - `shards soak` и `shards_script::soak` (`SoakPlan`, `SoakReport`, `run`, `SOAK_AGENT`): агенты с зерном играют за
   каждого участника стенда (или за одну игру): каждый раунд `observe` и случайный вход игрока, мёртвое тело лечит хост,
-  хост по расписанию меняет регион (`--regen`, `--regen-minutes`) и сохраняет всё (`--save-minutes`), стенд шагает с
+  хост по расписанию меняет регион (`--regen`, `--regen-minutes`) и сохраняет всё (`--save-minutes`) — ровно в срок: шаг
+  его не перешагивает, — стенд шагает с
   `--until named:net_desync`. Первый рассинхрон, упавшая система или нарушенный инвариант — код выхода 3; в конце
   `net_status` каждого (участник, который на него не ответил, прогон не проходит: `desyncs ?`). План, который кончается
   за последним тиком, что может сосчитать игра, отвергается до первого вызова. Работает через `Driver`: против живого стенда и в `cargo test` (`shards::testing::StandDriver`).
@@ -339,7 +340,7 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   стена не меняет, её коллайдеры идут после тайлов.
 - `net_status` клиента называет число своих рассинхронов (`desyncs`).
 - Шаблон: сохранения (`src/progress.rs`: раздел персонажа `trophies`, раздел мира `fallen`, автосохранение очищенного
-  двора; `SaveKey` у персонажей арены; `scenarios/saves.scenario`) и кооп на двоих (`content/session.net.ron`,
+  двора; `SaveKey` у персонажей арены по ключу `key` из контента (`yard.gate_grunt`), повтор ключа — ошибка контента; `scenarios/saves.scenario`) и кооп на двоих (`content/session.net.ron`,
   `scenarios/stand/coop.scenario`, `tests/game/coop.rs`; тест стенд-сценариев `every_stand_scenario_passes`). Папка
   `saves/` шаблона — в `.gitignore`.
 - CI: `soak.yml` (полчаса на живом стенде: по понедельникам, руками, на пуше с `[soak]`) и `record-replays.yml`

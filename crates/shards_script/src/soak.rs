@@ -191,21 +191,25 @@ pub fn run(driver: &mut dyn Driver, plan: &SoakPlan, progress: &mut dyn FnMut(&s
             tally.refused += u64::from(!out.ok);
         }
 
-        if next_regen.is_some_and(|at| tick >= at) {
+        // Due points keep to the plan's grid (`from + k * every`), not to when the last one came.
+        if let Some(at) = next_regen.filter(|at| tick >= *at) {
             let region = &plan.regions[(report.regens % plan.regions.len() as u64) as usize];
             let seed = rng.below(1_000_000);
             scheduled(driver, "regen", json!({"region": region, "seed": seed}))?;
             report.regens += 1;
-            next_regen = Some(tick.saturating_add(plan.regen_every));
+            next_regen = Some(at.saturating_add(plan.regen_every));
             say(&mut report, format!("tick {tick}: the host goes to {region} (seed {seed})"));
         }
-        if next_save.is_some_and(|at| tick >= at) {
+        if let Some(at) = next_save.filter(|at| tick >= *at) {
             scheduled(driver, "save_game", json!({"what": "all"}))?;
             report.saves += 1;
-            next_save = Some(tick.saturating_add(plan.save_every));
+            next_save = Some(at.saturating_add(plan.save_every));
         }
 
-        let ticks = (1 + rng.below(plan.max_step.max(1))).min(end - tick);
+        // A step ends where the next scheduled call is due, so each comes on its tick: a step
+        // over two due points would skip a region change or a save.
+        let due = [next_regen, next_save].into_iter().flatten().map(|at| at.saturating_sub(tick)).filter(|n| *n > 0).min();
+        let ticks = (1 + rng.below(plan.max_step.max(1))).min(end - tick).min(due.unwrap_or(u64::MAX));
         let out = scheduled(driver, "step", json!({"ticks": ticks, "until": until}))?;
         tick = match out.tick {
             Some(t) => t,
@@ -435,6 +439,22 @@ mod tests {
         let mut again = Pretend::new(None);
         run(&mut again, &plan, &mut |_| {}).unwrap();
         assert_eq!(again.calls, stand.calls);
+    }
+
+    #[test]
+    fn a_schedule_finer_than_a_step_is_kept_to_the_tick() {
+        // Steps of up to 30 ticks, a region change every 25 and a save every 40: no step may run
+        // over a due point, or one would be lost.
+        let plan = SoakPlan { seed: 9, ticks: 600, max_step: 30, regions: vec!["wilds".into()], regen_every: 25, save_every: 40, ..SoakPlan::default() };
+        let mut stand = Pretend::new(None);
+        let report = run(&mut stand, &plan, &mut |_| {}).unwrap();
+        assert_eq!((report.regens, report.saves), (23, 14), "every due point before tick 600: {report}");
+        let at: Vec<u64> = report
+            .log
+            .iter()
+            .filter_map(|l| l.strip_prefix("tick ")?.split_once(':')?.0.parse().ok())
+            .collect();
+        assert_eq!(at, (1..=23).map(|k| k * 25).collect::<Vec<u64>>(), "each region change on its tick");
     }
 
     #[test]
