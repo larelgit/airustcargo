@@ -146,6 +146,10 @@ pub struct Peer {
     unsent_said: u64,
     /// Messages dropped unread: past what one poll decodes, or from a peer that was gone.
     pub unread: u64,
+    /// What its link would not take of the messages a player must hear of (the end of the
+    /// session, their character, a kick), until the journal says so: the peer is gone before
+    /// the link watch would.
+    lost: Vec<(&'static str, String)>,
     /// The stage it was last seen in, and when it entered it (host clock, milliseconds).
     stage_mark: (std::mem::Discriminant<PeerStage>, u64),
     /// When it was first seen gone.
@@ -161,6 +165,7 @@ impl Peer {
             stage_mark: (std::mem::discriminant(&PeerStage::New), now),
             gone_since: None,
             unread: 0,
+            lost: Vec::new(),
             hello: None,
             player: 0,
             body: None,
@@ -197,6 +202,13 @@ impl Peer {
     /// (counted: the link watch says so at most once a second).
     fn send(&mut self, message: &Msg) -> Result<(), SendError> {
         self.send_bytes(&msg::encode(message))
+    }
+
+    /// [`send`](Self::send) for a message whose loss is said in the journal (`say_lost`).
+    fn send_noted(&mut self, message: &Msg, what: &'static str) {
+        if let Err(e) = self.send(message) {
+            self.lost.push((what, e.to_string()));
+        }
     }
 
     fn send_bytes(&mut self, bytes: &[u8]) -> Result<(), SendError> {
@@ -350,7 +362,7 @@ impl NetHost {
         let Some(peer) = self.peers.get_mut(&id).filter(|p| p.stage != PeerStage::Gone) else {
             return Err(format!("no peer {id} is here; net_status lists them"));
         };
-        let _ = peer.send(&Msg::Bye { reason: reason.to_owned() });
+        peer.send_noted(&Msg::Bye { reason: reason.to_owned() }, "the kick");
         let (connected, player) = (peer.stage == PeerStage::Connected, peer.player);
         peer.stage = PeerStage::Gone;
         if connected {
@@ -490,6 +502,7 @@ pub(crate) fn send(world: &mut World) {
         send_rebases(world, host);
         send_state(world, host);
         watch_links(world, host);
+        say_lost(world, host);
         flush(host, endpoint);
     });
 }
@@ -501,6 +514,7 @@ pub(crate) fn pump(world: &mut World) {
         run_tasks(world, host);
         send_journal(world, host);
         send_rebases(world, host);
+        say_lost(world, host);
         flush(host, endpoint);
     });
 }
@@ -545,9 +559,9 @@ pub fn end_session(world: &mut World, reason: &str) {
                     if let Some(body) = peer.body.and_then(|id| world.resource::<AiIndex>().get(AiId(id)))
                         && let Some(sections) = capture(world, body)
                     {
-                        let _ = peer.send(&Msg::CharacterSave { tick, reason: "session ended".into(), sections });
+                        peer.send_noted(&Msg::CharacterSave { tick, reason: "session ended".into(), sections }, "the character");
                     }
-                    let _ = peer.send(&Msg::SessionEnd { reason: reason.to_owned(), saved_slot: saved_slot.clone() });
+                    peer.send_noted(&Msg::SessionEnd { reason: reason.to_owned(), saved_slot: saved_slot.clone() }, "the end of the session");
                     leaving.push((peer.player, peer.id));
                 }
                 _ => {
@@ -561,6 +575,7 @@ pub fn end_session(world: &mut World, reason: &str) {
         for (player, peer) in leaving {
             leave(world, host, player, peer, "session ended", false);
         }
+        say_lost(world, host);
         flush(host, endpoint);
         // Over UDP, give the datagrams half a second to get out and be acknowledged.
         if endpoint.clock.is_wall() {
@@ -877,7 +892,7 @@ fn on_hello(world: &mut World, host: &mut NetHost, id: PeerId, hello: Hello) {
                 // Back before the old link timed out (a restart), or a second game with the same
                 // token (two clients of one name sharing a save folder): the old one leaves first,
                 // and is told why.
-                let _ = peer.send(&Msg::Bye { reason: "another game joined with your token; give each game its own --name or --save-dir".into() });
+                peer.send_noted(&Msg::Bye { reason: "another game joined with your token; give each game its own --name or --save-dir".into() }, "the goodbye");
                 if peer.stage == PeerStage::Connected {
                     host.tasks.push(Task::Leave { player: n, peer: old, reason: "reconnected".into() });
                 }
@@ -1156,7 +1171,7 @@ fn leave(world: &mut World, host: &mut NetHost, player: u8, peer: PeerId, reason
             && let Some(sections) = (hooks(world).capture_character)(world, body)
             && let Some(peer) = host.peers.get_mut(&peer)
         {
-            let _ = peer.send(&Msg::CharacterSave { tick, reason: reason.to_owned(), sections });
+            peer.send_noted(&Msg::CharacterSave { tick, reason: reason.to_owned(), sections }, "the character");
         }
         if world.get::<NetLeft>(body).is_none() {
             let out = call_tool(world, NET_AGENT, "player_leave", json!({ "player": player, "reason": reason }));
@@ -1373,6 +1388,18 @@ fn send_rebases(world: &mut World, host: &mut NetHost) {
 /// not waited for, and a size remembered from an earlier world cannot hold a later one back.
 pub(crate) fn rebase_fits(footprint: &crate::link::Footprint, config: &crate::link::LinkConfig, bytes: usize) -> bool {
     bytes > config.max_blob_bytes || (footprint.reliable_out < config.max_reliable_messages && footprint.reliable_out_bytes + bytes <= config.max_reliable_bytes)
+}
+
+/// Says in the journal what a link would not take of the messages a player must hear of, for
+/// peers of every stage (a peer that was sent away is dropped soon after; the link watch
+/// looks at players only). At most a line a second for each player and message.
+fn say_lost(world: &mut World, host: &mut NetHost) {
+    for peer in host.peers.values_mut() {
+        for (what, why) in std::mem::take(&mut peer.lost) {
+            let player = peer.player;
+            crate::hooks::net_line(world, &format!("lost p{player} {what}"), JournalKind::Warn, format!("p{player}: {what} not sent: {why}"));
+        }
+    }
 }
 
 /// Once a second: a peer's loss over 5 %, its RTT jumping, its inputs coming late, messages

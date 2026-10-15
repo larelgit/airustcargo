@@ -341,6 +341,34 @@ fn a_step_and_a_resume_asked_in_one_frame_run_in_the_order_they_were_asked() {
     assert!(polled(&mut stand, step).as_str().is_some_and(|t| t.starts_with("ran 2 ticks")));
 }
 
+/// A stand whose c1 cannot take another reliable message: more gameplay lines in one tick than
+/// a link holds unacknowledged.
+fn stand_with_a_full_link() -> Stand {
+    use shards::ai_core::journal::{self, JournalKind};
+    let mut stand = stand(1);
+    stand.run(20);
+    for i in 0..1100 {
+        journal::emit(stand.world_mut(HOST), JournalKind::Event, format!("filler {i}"));
+    }
+    stand.run(1);
+    stand
+}
+
+#[test]
+fn a_kick_a_full_link_will_not_carry_is_said_in_the_journal() {
+    let mut stand = stand_with_a_full_link();
+    assert!(stand.call(HOST, "net_kick", json!({"player": 1, "reason": "testing"})).ok);
+    stand.run(2);
+    assert!(has_line(&stand, HOST, "p1: the kick not sent: reliable queue is full"), "{:#?}", journal(&stand, HOST));
+}
+
+#[test]
+fn the_end_of_a_session_a_full_link_will_not_carry_is_said_in_the_journal() {
+    let mut stand = stand_with_a_full_link();
+    assert!(stand.call(HOST, "net_end", json!({"reason": "testing"})).ok);
+    assert!(has_line(&stand, HOST, "p1: the end of the session not sent: reliable queue is full"), "{:#?}", journal(&stand, HOST));
+}
+
 /// Whether the app was the active one when its exit hooks ran.
 #[derive(Resource)]
 struct ActiveAtExit(bool);

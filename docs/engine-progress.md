@@ -282,6 +282,8 @@ Xvfb показывает его вместе с оверлеем навсетк
 Отказанная загрузка снапшота не вытесняет старые строки журнала (`a_refused_load_does_not_push_the_oldest_journal_lines_out`).
 Клиент, ждущий состояния хоста, просыпается от пришедшей дельты (`a_state_that_came_wakes_a_client_that_waits_for_news`,
 `a_state_that_came_makes_a_stands_client_run_again`).
+Кик и конец сессии, которые не принял полный канал, называются в журнале хоста
+(`a_kick_a_full_link_will_not_carry_is_said_in_the_journal`, `the_end_of_a_session_a_full_link_will_not_carry_is_said_in_the_journal`).
 
 ## E8. Сохранения и настройки (фаза C)
 
