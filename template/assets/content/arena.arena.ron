@@ -14,11 +14,12 @@
             (at: (-6.0, 6.0), half: (0.8, 2.0, 0.8)),
             (at: (6.0, 6.0), half: (0.8, 2.0, 0.8)),
         ],
-        // In this order, so ids stay the same from run to run: the hero is e1, the grunt e2.
+        // In this order, so ids stay the same from run to run: the hero is e1, the grunt e2. A save
+        // knows a character by its `key` (`yard.gate_grunt`), which stays when spawns move.
         spawns: [
-            (prefab: "hero", at: (0.0, 12.0)),
+            (key: "hero", prefab: "hero", at: (0.0, 12.0)),
             // yaw_deg 180: facing the hero (north is 0, the way the hero looks at the start).
-            (prefab: "grunt", at: (0.0, -10.0), yaw_deg: 180.0),
+            (key: "gate_grunt", prefab: "grunt", at: (0.0, -10.0), yaw_deg: 180.0),
         ],
     ),
 }

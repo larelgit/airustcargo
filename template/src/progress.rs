@@ -73,7 +73,7 @@ fn count_the_fallen(
 }
 
 /// The yard's grunts that are down, by their [`SaveKey`] (the arena gives every character it
-/// spawns one: `yard.0`, `yard.1`, …, its place in the arena's `spawns`).
+/// spawns one from its `key` in content: `yard.gate_grunt`).
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(crate = "shards::serde")]
 pub struct Fallen {

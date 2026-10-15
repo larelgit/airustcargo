@@ -142,7 +142,7 @@ fn the_guest_defeats_the_grunt_and_takes_the_trophy_home() {
     let file = read_file(stand.world_mut(GUEST), SaveKind::Character, &slot).unwrap();
     assert_eq!(file.sections.0["trophies"].data, json!({"defeated": 1}));
     let world = read_file(stand.world_mut(HOST), SaveKind::World, "slot1").unwrap();
-    assert_eq!(world.sections.0["fallen"].data, json!({"grunts": ["yard.1"]}));
+    assert_eq!(world.sections.0["fallen"].data, json!({"grunts": ["yard.gate_grunt"]}));
     let own = read_file(stand.world_mut(HOST), SaveKind::Character, "slot1").unwrap();
     assert_eq!(own.sections.0["trophies"].data, json!({"defeated": 0}), "the host's hero earned nothing");
 
