@@ -44,32 +44,65 @@ pub fn wav_seconds(bytes: &[u8]) -> Result<f64, String> {
     Err("has no `data` chunk".to_owned())
 }
 
-/// An Ogg Vorbis file: the last page's granule position (samples) over the identification
-/// header's sample rate.
+/// An Ogg Vorbis file: the granule position (samples) of the Vorbis stream's last complete page
+/// over its identification header's sample rate. Pages are walked by their headers, never
+/// searched for: packet data may hold the bytes `OggS` too.
 pub fn ogg_seconds(bytes: &[u8]) -> Result<f64, String> {
     if bytes.len() < 4 || &bytes[0..4] != b"OggS" {
         return Err("is no Ogg file (no `OggS` page)".to_owned());
     }
-    let ident = find(bytes, b"\x01vorbis").ok_or("is no Ogg Vorbis file (no Vorbis identification header)")?;
-    // `\x01vorbis`, version (4), channels (1), sample rate (4).
-    let rate_at = ident + 7 + 4 + 1;
-    let rate = bytes.get(rate_at..rate_at + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap())).filter(|r| *r > 0);
-    let rate = rate.ok_or("has a broken Vorbis header (no sample rate)")?;
-    let last = rfind(bytes, b"OggS").ok_or("has no Ogg page")?;
-    // `OggS`, version (1), flags (1), granule position (8).
-    let granule = bytes.get(last + 6..last + 14).map(|b| i64::from_le_bytes(b.try_into().unwrap())).ok_or("ends inside an Ogg page header")?;
-    if granule < 0 {
-        return Err("has no sample count on its last page".to_owned());
+    let mut stream = None;
+    let mut last = None;
+    let mut at = 0;
+    // What follows the last complete page (a cut-off page, bytes that are no page) adds no sound.
+    while let Some(page) = OggPage::read(bytes, at) {
+        at = page.end;
+        let Some((serial, _)) = stream else {
+            // `\x01vorbis`, version (4), channels (1), sample rate (4): the first packet of its stream.
+            if page.body.starts_with(b"\x01vorbis") {
+                let rate = page.body.get(12..16).map(|b| u32::from_le_bytes(b.try_into().unwrap())).filter(|r| *r > 0);
+                stream = Some((page.serial, rate.ok_or("has a broken Vorbis header (no sample rate)")?));
+            }
+            continue;
+        };
+        // -1: no packet ends on this page.
+        if page.serial == serial && page.granule >= 0 {
+            last = Some(page.granule);
+        }
     }
-    Ok(granule as f64 / f64::from(rate))
+    let (_, rate) = stream.ok_or("is no Ogg Vorbis file (no Vorbis identification header)")?;
+    let samples = last.ok_or("has no sample count on any page of its Vorbis stream")?;
+    Ok(samples as f64 / f64::from(rate))
 }
 
-fn find(bytes: &[u8], needle: &[u8]) -> Option<usize> {
-    bytes.windows(needle.len()).position(|w| w == needle)
+/// One Ogg page: `OggS`, version (1), flags (1), granule position (8), serial (4), sequence (4),
+/// CRC (4), segment count (1), the segment sizes, then the body.
+struct OggPage<'a> {
+    granule: i64,
+    serial: u32,
+    body: &'a [u8],
+    /// Where the next page starts.
+    end: usize,
 }
 
-fn rfind(bytes: &[u8], needle: &[u8]) -> Option<usize> {
-    bytes.windows(needle.len()).rposition(|w| w == needle)
+impl<'a> OggPage<'a> {
+    /// The complete page at `at`, if one is there.
+    fn read(bytes: &'a [u8], at: usize) -> Option<Self> {
+        let header = bytes.get(at..at + 27)?;
+        if &header[0..4] != b"OggS" {
+            return None;
+        }
+        let segments = usize::from(header[26]);
+        let sizes = bytes.get(at + 27..at + 27 + segments)?;
+        let start = at + 27 + segments;
+        let end = start + sizes.iter().map(|s| usize::from(*s)).sum::<usize>();
+        Some(Self {
+            granule: i64::from_le_bytes(header[6..14].try_into().unwrap()),
+            serial: u32::from_le_bytes(header[14..18].try_into().unwrap()),
+            body: bytes.get(start..end)?,
+            end,
+        })
+    }
 }
 
 /// A WAV file of mono 16-bit PCM samples: what the tests and the sound generator write.
@@ -107,20 +140,51 @@ mod tests {
         assert!(wav_seconds(b"not a wav file").unwrap_err().contains("no RIFF/WAVE header"));
     }
 
+    /// An Ogg page of stream `serial` with `body` (under 255 bytes: one segment).
+    fn page(serial: u32, granule: i64, body: &[u8]) -> Vec<u8> {
+        let mut page = b"OggS\0\0".to_vec();
+        page.extend_from_slice(&granule.to_le_bytes());
+        page.extend_from_slice(&serial.to_le_bytes());
+        page.extend_from_slice(&[0; 8]);
+        page.push(1);
+        page.push(body.len() as u8);
+        page.extend_from_slice(body);
+        page
+    }
+
+    /// The identification header of a stream at `rate` Hz.
+    fn ident(rate: u32) -> Vec<u8> {
+        let mut body = b"\x01vorbis".to_vec();
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.push(2);
+        body.extend_from_slice(&rate.to_le_bytes());
+        body.extend_from_slice(&[0; 14]);
+        body
+    }
+
     #[test]
     fn an_ogg_plays_its_last_granule_over_its_sample_rate() {
-        let mut ogg = b"OggS\0\x02".to_vec();
-        ogg.extend_from_slice(&0i64.to_le_bytes());
-        ogg.extend_from_slice(&[0; 13]);
-        ogg.extend_from_slice(b"\x01vorbis");
-        ogg.extend_from_slice(&0u32.to_le_bytes());
-        ogg.push(2);
-        ogg.extend_from_slice(&44_100u32.to_le_bytes());
-        ogg.extend_from_slice(&[0; 20]);
-        ogg.extend_from_slice(b"OggS\0\x04");
-        ogg.extend_from_slice(&88_200i64.to_le_bytes());
+        let mut ogg = page(7, 0, &ident(44_100));
+        ogg.extend(page(7, -1, &[0; 20]));
+        ogg.extend(page(7, 88_200, &[0; 20]));
         assert_eq!(ogg_seconds(&ogg), Ok(2.0));
         assert!(ogg_seconds(b"OggS but nothing else").unwrap_err().contains("no Vorbis identification header"));
+    }
+
+    #[test]
+    fn an_ogg_is_read_page_by_page_whatever_its_packets_hold() {
+        let mut ogg = page(7, 0, &ident(8_000));
+        ogg.extend(page(7, 4_000, b"audio data"));
+        // The last packet holds `OggS` and what would read as a granule position after it.
+        let mut tricky = b"xxOggS\0\0".to_vec();
+        tricky.extend_from_slice(&999_999i64.to_le_bytes());
+        ogg.extend(page(7, 16_000, &tricky));
+        assert_eq!(ogg_seconds(&ogg), Ok(2.0));
+        // Another stream's pages do not count, nor does a page cut off at the end.
+        ogg.extend(page(9, 80_000, b"video"));
+        let cut = page(7, 64_000, &[0; 40]);
+        ogg.extend_from_slice(&cut[..cut.len() - 10]);
+        assert_eq!(ogg_seconds(&ogg), Ok(2.0));
     }
 
     #[test]

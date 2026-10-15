@@ -158,8 +158,11 @@ fn choose_layer(world: &mut World, track: &str, def: &MusicDef, dt: f32) {
         None => Some(want),
         Some(now) if want > now || (forced && want != now) => Some(want),
         Some(now) if want < now => {
-            // Calm counts whichever calmer layer is wanted; the one wanted last plays.
-            music.calmer = Some(def.layers[want].name.clone());
+            // Each calmer layer counts its own time: one wanted for a tick never plays.
+            if music.calmer.as_deref() != Some(def.layers[want].name.as_str()) {
+                music.calmer = Some(def.layers[want].name.clone());
+                music.calmer_for = 0.0;
+            }
             music.calmer_for += dt;
             (music.calmer_for + SLACK >= def.hold).then_some(want)
         }
@@ -246,6 +249,8 @@ fn switch(world: &mut World, track: Option<&str>, journal: bool) -> Result<Strin
         return Err(format!("no track `{track}`{hint}; tracks: {}", if known.is_empty() { "none".to_owned() } else { known.join(", ") }));
     }
     let mut music = world.resource_mut::<Music>();
+    // A track chosen before the first tick stays: the game's start track does not replace it.
+    music.started = true;
     music.track = track.map(str::to_owned);
     music.layer = None;
     music.forced = None;
@@ -270,19 +275,25 @@ pub fn force_layer(world: &mut World, layer: Option<&str>) -> Result<String, Str
     let Some(track) = world.resource::<Music>().track.clone() else {
         return Err("no music plays: start a track first (`music_set track=<id>`)".to_owned());
     };
-    let def = world.resource::<ContentDb>().get::<MusicDef>(&track).cloned().ok_or_else(|| format!("track `{track}` is gone from content"))?;
-    if let Some(layer) = layer
-        && def.layer_index(layer).is_none()
-    {
-        let names: Vec<&str> = def.layer_names().collect();
-        let hint = closest(layer, names.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
-        return Err(format!("{track} has no layer `{layer}`{hint}; layers: {}", names.join(", ")));
+    let def = world.resource::<ContentDb>().get::<MusicDef>(&track).ok_or_else(|| format!("track `{track}` is gone from content"))?;
+    if let Some(layer) = layer {
+        check_layer(&track, def, layer)?;
     }
     world.resource_mut::<Music>().forced = layer.map(str::to_owned);
     Ok(match layer {
         Some(layer) => format!("{track} keeps to {layer} until `music_set layer=auto`"),
         None => format!("{track} follows the game again"),
     })
+}
+
+/// Whether `layer` is a layer of `track` (defined by `def`); the error names the ones it has.
+pub fn check_layer(track: &str, def: &MusicDef, layer: &str) -> Result<(), String> {
+    if def.layer_index(layer).is_some() {
+        return Ok(());
+    }
+    let names: Vec<&str> = def.layer_names().collect();
+    let hint = closest(layer, names.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
+    Err(format!("{track} has no layer `{layer}`{hint}; layers: {}", names.join(", ")))
 }
 
 /// `arena: combat for 6.2s; explore wanted 1.0/5.0s` (`no music` when none plays).

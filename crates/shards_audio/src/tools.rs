@@ -6,10 +6,11 @@ use ai_core::{Call, Id, Scope, ToolResult};
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use shards_content::ContentDb;
 
-use crate::def::Bus;
+use crate::def::{Bus, MusicDef};
 use crate::mixer::{bus_volume, play, voice_limit, Mixer, Played, SoundAt};
-use crate::music::{force_layer, set_track, summary, Music};
+use crate::music::{check_layer, force_layer, set_track, summary, Music};
 
 /// How many voices the `audio` tool lists before it counts the rest.
 const VOICES_SHOWN: usize = 12;
@@ -142,6 +143,21 @@ fn music_set(In(call): In<Call<MusicSetArgs>>, world: &mut World) -> ToolResult 
     let MusicSetArgs { track, layer } = call.args;
     if track.is_none() && layer.is_none() {
         return Err(format!("give `track` (a track, or none) or `layer` (a layer, or auto); now: {}", summary(world)));
+    }
+    // The layer is checked against the track that will play before anything changes: a call
+    // that fails leaves the music as it was.
+    if let Some(layer) = layer.as_deref().filter(|l| *l != "auto") {
+        let after = match track.as_deref() {
+            Some("none") => return Err(format!("`layer={layer}` needs music, and `track=none` plays none")),
+            Some(track) => Some(track.to_owned()),
+            None => world.resource::<Music>().track.clone(),
+        };
+        // An unknown track, or none playing: `set_track` and `force_layer` below say so.
+        if let Some(after) = after
+            && let Some(def) = world.resource::<ContentDb>().get::<MusicDef>(&after)
+        {
+            check_layer(&after, def, layer)?;
+        }
     }
     let mut said = Vec::new();
     if let Some(track) = track {

@@ -98,6 +98,10 @@ pub fn tone(seconds: f32, hz: f32) -> Vec<u8> {
 #[derive(Resource, Default)]
 pub struct Fighting(pub bool);
 
+/// Whether the test's foe is near: what `tense`'s `tension` layer waits on.
+#[derive(Resource, Default)]
+pub struct Near(pub bool);
+
 /// The engine on `assets`, headless and paused at tick 0, with the hero and the foe.
 pub fn game(assets: &Folder) -> App {
     let dir = assets.path().to_string_lossy().into_owned();
@@ -105,6 +109,8 @@ pub fn game(assets: &Folder) -> App {
         move |config| config.asset_dir = dir,
         |app| {
             app.init_resource::<Fighting>()
+                .init_resource::<Near>()
+                .add_ai_condition("near", |w| w.resource::<Near>().0)
                 .add_ai_condition("fighting", |w| w.resource::<Fighting>().0)
                 .add_systems(OnEnter(EngineState::InGame), spawn);
         },

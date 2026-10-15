@@ -62,6 +62,34 @@ fn a_calmer_layer_waits_for_the_hold_and_a_fight_on_the_way_starts_it_again() {
 }
 
 #[test]
+fn each_calmer_layer_waits_for_the_hold_of_its_own() {
+    let assets = Folder::new("hold3");
+    assets.put(
+        "content/audio/tense.music.ron",
+        r#"{"tense": (
+            stems: [(file: "music/calm.wav", layers: ["explore", "tension", "combat"]), (file: "music/drums.wav", layers: ["combat"])],
+            layers: [(name: "explore"), (name: "tension", when: "near"), (name: "combat", when: "fighting")],
+            hold: 2.0,
+        )}"#,
+    );
+    let mut app = game(&assets);
+    ok(&mut app, "music_set", json!({"track": "tense"}));
+    app.world_mut().resource_mut::<Near>().0 = true;
+    fight(&mut app, true);
+    step(&mut app, 1);
+    assert_eq!((music(&app).track.as_deref(), music(&app).layer.as_deref()), (Some("tense"), Some("combat")), "a track chosen before the first tick stays");
+    // Out of the fight but near: tension is wanted for a while, then explore.
+    fight(&mut app, false);
+    wait(&mut app, 1.5);
+    app.world_mut().resource_mut::<Near>().0 = false;
+    wait(&mut app, 1.5);
+    assert_eq!(music(&app).layer.as_deref(), Some("combat"), "explore has been wanted 1.5 of its 2 s");
+    wait(&mut app, 0.5);
+    assert_eq!(music(&app).layer.as_deref(), Some("explore"));
+    assert_eq!(journal(&app, JournalKind::Local, "tense "), ["music: tense starts", "music: tense plays combat", "music: tense combat → explore"]);
+}
+
+#[test]
 fn music_set_holds_a_layer_changes_the_track_and_explains_a_wrong_call() {
     let assets = Folder::new("set");
     let mut app = game(&assets);
@@ -90,6 +118,11 @@ fn music_set_holds_a_layer_changes_the_track_and_explains_a_wrong_call() {
     assert_eq!(refused(&mut app, "music_set", json!({"track": "thme"})), "no track `thme` (did you mean `theme`?); tracks: quiet, theme");
     ok(&mut app, "music_set", json!({"track": "theme"}));
     assert_eq!(refused(&mut app, "music_set", json!({"layer": "combt"})), "theme has no layer `combt` (did you mean `combat`?); layers: explore, combat");
+    // Both are checked first: a call that fails changes nothing.
+    assert_eq!(refused(&mut app, "music_set", json!({"track": "quiet", "layer": "combat"})), "quiet has no layer `combat`; layers: explore");
+    assert_eq!(refused(&mut app, "music_set", json!({"track": "none", "layer": "combat"})), "`layer=combat` needs music, and `track=none` plays none");
+    assert_eq!(music(&app).track.as_deref(), Some("theme"));
+    assert_eq!(journal(&app, JournalKind::Local, "music: theme → quiet").len(), 1, "no second switch was journaled");
     assert!(refused(&mut app, "music_set", json!({})).starts_with("give `track` (a track, or none) or `layer` (a layer, or auto); now: theme: "));
 }
 
