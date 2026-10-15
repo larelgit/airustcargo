@@ -280,6 +280,8 @@ Xvfb показывает его вместе с оверлеем навсетк
 Мир больше того, что берёт канал, отказывается один раз (`a_world_over_what_a_link_carries_sends_its_player_away_once_instead_of_waiting_every_tick`,
 `a_world_no_link_carries_is_tried_not_waited_for`).
 Отказанная загрузка снапшота не вытесняет старые строки журнала (`a_refused_load_does_not_push_the_oldest_journal_lines_out`).
+Клиент, ждущий состояния хоста, просыпается от пришедшей дельты (`a_state_that_came_wakes_a_client_that_waits_for_news`,
+`a_state_that_came_makes_a_stands_client_run_again`).
 
 ## E8. Сохранения и настройки (фаза C)
 

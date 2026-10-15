@@ -198,6 +198,13 @@ fn with_client(world: &mut World, f: impl FnOnce(&mut World, &mut NetClient, &mu
 /// Ticks a client may run beyond the newest host state and its lead before it waits.
 pub const STARVE_AHEAD: u64 = 30;
 
+/// The newest host tick this client has news of: the newest state applied, or one that came
+/// and waits for the next tick to apply it. A client that waits for news (starved) runs no
+/// tick, so a state that came while it waits must count as news, or it waits for ever.
+fn newest_seen(client: &NetClient) -> u64 {
+    client.newest_host_tick.max(client.pending.as_ref().map_or(0, |d| d.tick))
+}
+
 /// Ticks a stand runs this client for one host tick: 0 until it is connected, then what its
 /// clock says (0, 1 or 2), and 0 while it is far ahead of the newest state (starved).
 pub fn clock_ticks(world: &mut World) -> u32 {
@@ -206,7 +213,7 @@ pub fn clock_ticks(world: &mut World) -> u32 {
     if client.stage != ClientStage::Connected {
         return 0;
     }
-    if tick > client.newest_host_tick + client.lead + STARVE_AHEAD {
+    if tick > newest_seen(&client) + client.lead + STARVE_AHEAD {
         return 0;
     }
     client.clock.ticks(tick)
@@ -381,8 +388,9 @@ fn pace(world: &mut World, client: &mut NetClient) {
     if client.stage != ClientStage::Connected {
         return;
     }
-    // Far ahead of the newest state (the host is paused, steps, or hangs): wait for it.
-    let starved = sim::tick(world) > client.newest_host_tick + client.lead + STARVE_AHEAD;
+    // Far ahead of the newest state (the host is paused, steps, or hangs): wait for it. A state
+    // that came is news already: waiting, no tick runs to apply it.
+    let starved = sim::tick(world) > newest_seen(client) + client.lead + STARVE_AHEAD;
     let mut time = world.resource_mut::<Time<Virtual>>();
     if starved != time.is_paused() {
         if starved {
@@ -399,7 +407,7 @@ fn pace(world: &mut World, client: &mut NetClient) {
         Pace::Speed(speed) => speed,
         Pace::Skip => {
             // Forward only: the newest state can be older than this clock.
-            let tick = client.newest_host_tick + client.lead;
+            let tick = newest_seen(client) + client.lead;
             if tick > sim::tick(world) {
                 sim::set_tick(world, tick);
                 client.clock.reset(client.clock.target);
@@ -909,6 +917,38 @@ mod tests {
         pace(&mut world, &mut client);
         assert_eq!(sim::tick(&world), 305);
         assert_eq!(client.clock.error(), None, "it waits for a fresh report");
+    }
+
+    fn waiting(world: &World) -> bool {
+        world.resource::<Time<Virtual>>().is_paused()
+    }
+
+    #[test]
+    fn a_state_that_came_wakes_a_client_that_waits_for_news() {
+        // 15 ticks past the 35 it may run ahead of the newest state: it waits, its clock paused.
+        let (mut world, mut client) = paced(200, 150, 0);
+        pace(&mut world, &mut client);
+        assert!(waiting(&world));
+        // The host went on and its state arrived. Waiting, the client runs no tick to apply
+        // it: only that it came can end the wait (the next tick applies it).
+        client.pending = Some(StateDelta { tick: 195, ..default() });
+        pace(&mut world, &mut client);
+        assert!(!waiting(&world), "a state is waiting, so there is news");
+        assert_eq!(client.newest_host_tick, 150, "applying it is the next tick's");
+        // A state that does not reach far enough does not.
+        let (mut world, mut client) = paced(200, 150, 0);
+        client.pending = Some(StateDelta { tick: 160, ..default() });
+        pace(&mut world, &mut client);
+        assert!(waiting(&world));
+    }
+
+    #[test]
+    fn a_state_that_came_makes_a_stands_client_run_again() {
+        let (mut world, client) = paced(200, 150, 0);
+        world.insert_resource(client);
+        assert_eq!(clock_ticks(&mut world), 0, "far ahead of the newest state: it waits");
+        world.resource_mut::<NetClient>().pending = Some(StateDelta { tick: 195, ..default() });
+        assert_eq!(clock_ticks(&mut world), 1, "a state is waiting for a tick to apply it");
     }
 
     #[test]
