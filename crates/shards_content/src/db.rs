@@ -130,6 +130,30 @@ struct KindFns {
     validate: fn(&AnyDef, &str, &mut Refs),
 }
 
+/// A check of untyped definitions.
+type CheckFn = Arc<dyn Fn(&AnyDef, &str, &mut Refs) + Send + Sync>;
+
+/// A check another module adds to every definition of a kind ([`ContentKinds::add_check`]).
+#[derive(Clone)]
+struct KindCheck {
+    kind: &'static str,
+    name: &'static str,
+    run: CheckFn,
+}
+
+/// `check` of kind `T`'s definitions, run on untyped ones.
+fn erase_check<T: ContentDef>(check: fn(&T, &str, &mut Refs)) -> CheckFn {
+    // The bound gives the closure the signature for every lifetime of its arguments.
+    fn run<F: Fn(&AnyDef, &str, &mut Refs) + Send + Sync + 'static>(f: F) -> CheckFn {
+        Arc::new(f)
+    }
+    run(move |def, id, refs| {
+        if let Some(def) = def.downcast_ref::<T>() {
+            check(def, id, refs);
+        }
+    })
+}
+
 /// One registered kind.
 #[derive(Clone)]
 pub struct KindInfo {
@@ -150,6 +174,8 @@ pub struct ContentKinds {
     kinds: Vec<KindInfo>,
     /// (kind, id, who needs it).
     required: Vec<(&'static str, String, String)>,
+    /// Checks other modules add to kinds, in the order they were added.
+    checks: Vec<KindCheck>,
     registry: Option<AppTypeRegistry>,
     /// The asset folder, for definitions that name asset files (levels).
     asset_root: Option<PathBuf>,
@@ -185,6 +211,18 @@ impl ContentKinds {
         if !self.required.iter().any(|(kind, known, _)| *kind == T::KIND && known == id) {
             self.required.push((T::KIND, id.to_owned(), by.to_owned()));
         }
+    }
+
+    /// Runs `check` on every definition of kind `T` after its own
+    /// [`validate`](ContentDef::validate), wherever content is validated (loading, a hot edit,
+    /// `content check`): for what a module that does not own the kind knows of it (the umbrella
+    /// crate reads a tile's level file, which neither the world nor the level module may do
+    /// alone). Adding a check of the same `name` to the kind again changes nothing.
+    pub fn add_check<T: ContentDef>(&mut self, name: &'static str, check: fn(&T, &str, &mut Refs)) {
+        if self.checks.iter().any(|c| c.kind == T::KIND && c.name == name) {
+            return;
+        }
+        self.checks.push(KindCheck { kind: T::KIND, name, run: erase_check(check) });
     }
 
     /// `json` as kind `kind` writes it, so `25` and `25.0` compare equal; `None` when it
@@ -429,6 +467,9 @@ impl ContentDb {
                 let asset_root = kinds.asset_root.as_deref();
                 let mut refs = Refs { db: self, kind, id, file: &entry.file, registry, asset_root, errors: &mut errors };
                 (info.fns.validate)(&entry.def, id, &mut refs);
+                for check in kinds.checks.iter().filter(|c| c.kind == *kind) {
+                    (check.run)(&entry.def, id, &mut refs);
+                }
             }
         }
         for (kind, id, by) in &kinds.required {
@@ -852,5 +893,36 @@ mod tests {
         let errors: Vec<String> = db.errors().map(ToString::to_string).collect();
         assert_eq!(errors, ["content/a.grid.ron: grid `g`: cannot be written as JSON: key must be a string (maps need string keys)"]);
         assert!(db.get::<Grid>("g").is_none());
+    }
+
+    #[test]
+    fn a_check_another_module_adds_runs_after_the_kinds_own_once_per_name() {
+        #[derive(Serialize, Deserialize, Clone)]
+        struct Door {
+            width: f32,
+        }
+        impl ContentDef for Door {
+            const KIND: &'static str = "door";
+            fn validate(&self, _: &str, refs: &mut Refs) {
+                if self.width <= 0.0 {
+                    refs.error("width must be above 0");
+                }
+            }
+        }
+        fn fits(door: &Door, _: &str, refs: &mut Refs) {
+            if door.width > 3.0 {
+                refs.error(format!("width {} is wider than a wall's 3 m", door.width));
+            }
+        }
+        let mut kinds = ContentKinds::default();
+        kinds.register::<Door>();
+        kinds.add_check::<Door>("walls", fits);
+        kinds.add_check::<Door>("walls", fits);
+        let source = Source { path: "content/a.door.ron".into(), text: r#"{ "gate": (width: 4.0), "hatch": (width: -1.0) }"#.into() };
+        let errors: Vec<String> = ContentDb::build(&kinds, &[source]).errors().map(ToString::to_string).collect();
+        assert_eq!(
+            errors,
+            ["content/a.door.ron: door `gate`: width 4 is wider than a wall's 3 m", "content/a.door.ron: door `hatch`: width must be above 0"]
+        );
     }
 }

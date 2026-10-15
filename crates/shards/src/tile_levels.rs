@@ -33,7 +33,10 @@
 //!   `pois`, `links` from the tile's RON, never the file: generation is a pure function of
 //!   seed, version and content, and runs without assets (`--worldgen-report`). The `socket`
 //!   and slot markers an artist puts in the file are placed in the world for the game
-//!   (connectors, props at the edges), not read back by the solver.
+//!   (connectors, props at the edges), not read back by the solver. Content's check holds the
+//!   two together: a socket marker stands on an edge of the tile, at a part of it where the
+//!   tile's `sockets` have its kind (`socket marker `road` (node `Road.E`) is on the east edge,
+//!   where sockets.e has `grass``), at the size of every region that uses the tile.
 //! - **Visuals** (the `render` feature): one scene of the file per tile, under a root of its
 //!   own that carries no gameplay, like any level.
 //!
@@ -56,13 +59,17 @@
 //! plays without frames, so a frame later is too late).
 
 use std::collections::BTreeMap;
+use std::path::{Component, Path};
 
 use bevy::prelude::*;
-use shards_content::ContentDb;
+use shards_content::{ContentAppExt, ContentDb, Refs};
 use shards_core::LoadStatus;
 use shards_level::{
-    check_level, despawn_level, level_asset, request_level, spawn_level_file, FromLevel, LevelCounter, LevelLibrary, LevelMarker, LevelPlugin,
+    check_level, despawn_level, level_asset, request_level, spawn_level_file, FromLevel, LevelAsset, LevelCounter, LevelLibrary,
+    LevelMarker, LevelPlugin, MarkerKind,
 };
+use shards_world::content::{RegionDef, TileDef, TileGeometry};
+use shards_world::sockets::parse_edge;
 use shards_world::{LevelSpawn, LevelSpawner, Marker, RegionPart, TileId, WorldAppExt, WorldPlugin};
 
 /// Joins `shards_level` to `shards_world`: level files as the geometry of tiles and rooms.
@@ -76,6 +83,7 @@ impl Plugin for TileLevelsPlugin {
             "TileLevelsPlugin needs LevelPlugin and WorldPlugin added first (shards::EnginePlugins adds all three)"
         );
         app.init_resource::<TileLevels>()
+            .add_content_check::<TileDef>("level file", check_tile_file)
             .set_level_spawner(LevelSpawner { spawn, request, status, check, forget, next_instance, restart_instances })
             .add_observer(retag_level_entity)
             .add_observer(retag_level_marker);
@@ -117,6 +125,102 @@ fn check(world: &World, path: &str) -> Result<(), String> {
     let lines: Vec<String> = problems.iter().map(|p| format!("  {p}")).collect();
     let count = if problems.len() == 1 { "1 problem".to_owned() } else { format!("{} problems", problems.len()) };
     Err(format!("{count}:\n{}", lines.join("\n")))
+}
+
+// --- the content check of a tile's file -----------------------------------------------------
+
+/// How far from an edge a socket marker may stand and still be on it, as a share of the tile's
+/// size (1.6 m of a 16 m tile): an artist puts it on the edge, or just inside.
+const ON_EDGE: f32 = 0.1;
+
+/// The edges in the order of `sockets`, and their fields.
+const EDGES: [(&str, &str); 4] = [("north", "n"), ("east", "e"), ("south", "s"), ("west", "w")];
+
+/// Content's check of a tile built from a level file (when content loads, on a hot edit, at
+/// `content check`): the file's `socket` markers against the tile's `sockets`, at every size a
+/// region uses the tile at. Each marker stands on an edge, at a part of it whose socket is of the
+/// marker's kind (and height, when the marker names one). Markers are optional: a socket the file
+/// does not mark is not checked. What is wrong inside the file (a node, a file that does not
+/// read) is no content error: the loader reports it when the file loads.
+fn check_tile_file(tile: &TileDef, id: &str, refs: &mut Refs) {
+    let TileGeometry::Level { path } = &tile.geometry else { return };
+    let Some(root) = refs.asset_root() else { return };
+    // The tile's own check names a path out of the asset folder and a file that is not there.
+    if !Path::new(path).components().all(|c| matches!(c, Component::Normal(_))) || !root.join(path).is_file() {
+        return;
+    }
+    let Ok(level) = LevelAsset::read(root, path) else { return };
+    for problem in socket_problems(tile, id, &level, refs) {
+        refs.error(format!("geometry: {path}: {problem}"));
+    }
+}
+
+/// What does not match between the file's socket markers and the tile's `sockets`, once each.
+fn socket_problems(tile: &TileDef, id: &str, level: &LevelAsset, refs: &Refs) -> Vec<String> {
+    let markers: Vec<_> = level.markers().into_iter().filter(|m| m.kind == MarkerKind::Socket).collect();
+    if markers.is_empty() {
+        return Vec::new();
+    }
+    // The tile's own check reports edges that do not parse.
+    let Ok(edges) = tile.sockets.parse() else { return Vec::new() };
+    let mut problems = Vec::new();
+    let mut say = |problem: String| {
+        if !problems.contains(&problem) {
+            problems.push(problem);
+        }
+    };
+    let mut sockets = Vec::new();
+    for marker in &markers {
+        match parse_edge(&marker.name) {
+            Ok(parts) if parts.len() == 1 => sockets.push((marker, parts[0].clone())),
+            _ => say(format!("socket marker `{}` (node `{}`) names no socket: give one kind, like `socket = road` or `road@1`", marker.name, marker.node)),
+        }
+    }
+    // Sizes only regions give: a tile in none has no edges to stand on yet.
+    let tiles: Vec<(&str, &TileDef)> = refs.iter::<TileDef>().collect();
+    let mut sizes: Vec<(f32, &str)> = Vec::new();
+    for (region_id, region) in refs.iter::<RegionDef>() {
+        let uses = region.tile_ids(tiles.iter().copied()).is_ok_and(|ids| ids.contains(&id));
+        if uses && !sizes.iter().any(|(size, _)| *size == region.tile_size) {
+            sizes.push((region.tile_size, region_id));
+        }
+    }
+    for (size, region) in sizes {
+        let half = size / 2.0;
+        for (marker, socket) in &sockets {
+            let p = marker.position;
+            let off = [(p.z + half).abs(), (p.x - half).abs(), (p.z - half).abs(), (p.x + half).abs()];
+            let edge = (0..4).min_by(|a, b| off[*a].total_cmp(&off[*b])).unwrap_or(0);
+            if off[edge] > ON_EDGE * size {
+                say(format!(
+                    "socket marker `{}` (node `{}`) at x {:.1}, z {:.1} is on no edge: the {size} m tiles of region `{region}` have them at x and z = ±{half}",
+                    marker.name, marker.node, p.x, p.z
+                ));
+                continue;
+            }
+            // Clockwise along the edge, as `sockets` lists its parts.
+            let along = [p.x + half, p.z + half, half - p.x, half - p.z][edge] / size;
+            let parts = &edges[edge];
+            let part = ((along * parts.len() as f32).max(0.0) as usize).min(parts.len() - 1);
+            let want = &parts[part];
+            // A marker without a height matches the part at any height.
+            if want.kind != socket.kind || (marker.name.contains('@') && want.height != socket.height) {
+                let (name, field) = EDGES[edge];
+                say(format!(
+                    "socket marker `{}` (node `{}`) is on the {name} edge, where sockets.{field} has `{want}`{}",
+                    marker.name,
+                    marker.node,
+                    part_of(part, parts.len())
+                ));
+            }
+        }
+    }
+    problems
+}
+
+/// ` (part 2 of 3)`, or nothing for an edge of one part.
+fn part_of(part: usize, parts: usize) -> String {
+    if parts == 1 { String::new() } else { format!(" (part {} of {parts})", part + 1) }
 }
 
 fn spawn(world: &mut World, request: &LevelSpawn) -> Result<Vec<Entity>, String> {
