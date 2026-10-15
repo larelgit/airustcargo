@@ -1,0 +1,15 @@
+// The HUD of the tests: the hero's bars, a hint, the compass and the other players.
+{
+    "hud": (
+        layer: Hud,
+        open_at_start: true,
+        anchor: TopLeft,
+        widgets: [
+            Bar(id: "health", label: "HP", bind: "you.health", color: "health"),
+            Bar(id: "stamina", label: "Stamina", bind: "you.stamina", color: "stamina"),
+            Hint(id: "hint", text: "[Esc] Pause"),
+            Compass(id: "compass"),
+            Allies(id: "allies"),
+        ],
+    ),
+}

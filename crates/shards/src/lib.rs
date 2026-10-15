@@ -45,6 +45,7 @@ mod plugins;
 mod run;
 pub mod save_sections;
 mod stand_udp;
+mod ui_wiring;
 pub mod testing;
 pub mod tile_levels;
 
@@ -63,12 +64,14 @@ pub use shards_npc as npc;
 pub use shards_save as save;
 pub use shards_script as script;
 pub use shards_settings as settings;
+pub use shards_ui as ui;
 pub use shards_world as world;
 
 pub use plugins::EnginePlugins;
 pub use run::run;
 pub use shards_core::EngineConfig;
 pub use tile_levels::TileLevelsPlugin;
+pub use ui_wiring::{EngineUiPlugin, PAUSE_SCREEN};
 
 /// Everything a game module needs in scope.
 pub mod prelude {
@@ -84,6 +87,7 @@ pub mod prelude {
     pub use shards_npc::prelude::*;
     pub use shards_save::prelude::*;
     pub use shards_settings::prelude::*;
+    pub use shards_ui::prelude::*;
     pub use shards_world::prelude::*;
 
     pub use crate::EnginePlugins;

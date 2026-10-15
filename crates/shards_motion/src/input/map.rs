@@ -469,6 +469,8 @@ impl InputMap {
             ActionBinding::new("use_item", [Key(KeyCode::KeyC), Pad(GamepadButton::DPadDown)]),
             ActionBinding::new("interact", [Key(KeyCode::KeyE), Pad(GamepadButton::North)]),
             ActionBinding::new("lock_on", [Key(KeyCode::Tab), Mouse(MouseButton::Middle), Pad(GamepadButton::RightThumb)]),
+            // Opens the game's `pause` screen (shards_ui); in a menu `back` closes it.
+            ActionBinding::new("pause", [Key(KeyCode::Escape), Pad(GamepadButton::Start)]),
         ];
         let menu = vec![
             ActionBinding::new(

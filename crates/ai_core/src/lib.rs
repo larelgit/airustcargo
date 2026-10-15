@@ -78,7 +78,9 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 pub use builtin::{AiConditions, StopWhen};
-pub use describe::{AdviceFn, AiAdvisors, AiDescribers, AiKind, AiObserveLines, Describer, EntityFacts, ObserveLinesFn};
+pub use describe::{
+    AdviceFn, AiAdvisors, AiDescribers, AiKind, AiObserveLines, AiObserveSections, Describer, EntityFacts, ObserveLinesFn, ObserveSectionFn,
+};
 pub use failures::{ai_core_error_handler, AiFailures, SystemFailure};
 pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible};
 pub use invariants::{AiInvariants, InvariantSystems, Violation};
@@ -271,6 +273,10 @@ pub trait AiAppExt {
     /// road_bend rot 90`): for modules whose state is about places, not entities.
     fn register_ai_observe_lines(&mut self, lines: describe::ObserveLinesFn) -> &mut Self;
 
+    /// Lines about the game that are no subject's, printed in `observe` after `LANDMARKS` as they
+    /// are (`UI  pause (on top, pauses the game)`), whether or not the agent has a subject.
+    fn register_ai_observe_section(&mut self, section: describe::ObserveSectionFn) -> &mut Self;
+
     /// An action tool: journaled, returns the list of changes it caused.
     fn add_ai_tool<A, O, M, S>(&mut self, name: &str, scope: Scope, system: S) -> &mut Self
     where
@@ -394,6 +400,11 @@ impl AiAppExt for App {
 
     fn register_ai_observe_lines(&mut self, lines: describe::ObserveLinesFn) -> &mut Self {
         self.world_mut().get_resource_or_init::<AiObserveLines>().0.push(lines);
+        self
+    }
+
+    fn register_ai_observe_section(&mut self, section: describe::ObserveSectionFn) -> &mut Self {
+        self.world_mut().get_resource_or_init::<AiObserveSections>().0.push(section);
         self
     }
 
