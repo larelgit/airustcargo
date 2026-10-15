@@ -100,7 +100,8 @@ kill <pid>                              # pid из `wait`
   участников, `cargo shards stand stop` останавливает стенд. Сценарии стенда (`stand clients=2 …`, команды с `@c1`) лежат в
   `crates/sandbox/scenarios/stand/`: `shards scenario crates/sandbox/scenarios/stand/*.scenario`. `--stand 2 --stand-udp` —
   то же по настоящему UDP, клиентами-процессами, только в реальном времени; клиент, не вошедший в сессию или упавший,
-  останавливает стенд (ушедший сам или отправленный `net_kick` — нет), а `--stand N` не больше `max_players - 1`.
+  останавливает стенд (ушедший сам или тот, с кем связь закрыл хост, `net_kick`, — нет), а `--stand N` не больше
+  `max_players - 1`.
 - Проверить, как игра играется честно: `shards session --scope player`. Тогда доступны только
   инструменты игрока, и они действуют через `Intent`, как человек.
 
