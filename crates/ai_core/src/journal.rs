@@ -39,6 +39,9 @@ pub enum JournalKind {
     Error,
     /// Ticks over their time budget (see [`perf`](crate::perf)).
     Perf,
+    /// What this machine alone presents (its music): written on every machine of a co-op
+    /// game, never sent to another, and no gameplay event.
+    Local,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -59,6 +62,7 @@ impl std::fmt::Display for JournalEntry {
             JournalKind::Warn => write!(f, "{} [warn] {}", self.tick, self.text),
             JournalKind::Error => write!(f, "{} [error] {}", self.tick, self.text),
             JournalKind::Perf => write!(f, "{} [perf] {}", self.tick, self.text),
+            JournalKind::Local => write!(f, "{} [local] {}", self.tick, self.text),
         }
     }
 }

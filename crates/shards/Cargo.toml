@@ -30,8 +30,9 @@ render = [
 remote = ["ai_core/remote"]
 # Content files apply as they change on disk (Bevy's file watcher).
 hot_reload = ["shards_content/hot_reload"]
-# Need system packages: libasound2-dev / libudev-dev / libwayland-dev libxkbcommon-dev.
-audio = ["bevy/audio"]
+# Sound through the audio device (the audio module's playback; WAV and Ogg Vorbis). Without it the
+# mixer and the music still decide what would play. Needs libasound2-dev on Linux.
+audio = ["shards_audio/playback"]
 gamepad = ["bevy/bevy_gilrs", "shards_motion/gamepad"]
 wayland = ["bevy/wayland"]
 # Faster incremental builds (`--features dynamic`).
@@ -54,6 +55,7 @@ shards_script.workspace = true
 shards_settings.workspace = true
 shards_locale.workspace = true
 shards_ui.workspace = true
+shards_audio.workspace = true
 bevy = { workspace = true, features = ["default_app", "std", "multi_threaded", "serialize"] }
 serde.workspace = true
 serde_json.workspace = true

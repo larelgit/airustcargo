@@ -136,7 +136,7 @@ impl GraphicsSettings {
     }
 }
 
-/// Volumes, 0 (silent) to 1 (full). Kept for the audio module; `master` scales the other three.
+/// Volumes, 0 (silent) to 1 (full), of the audio module's buses; `master` scales the others.
 #[derive(Resource, Reflect, SettingsGroup, Clone, Debug, PartialEq)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "audio")]
@@ -145,16 +145,18 @@ pub struct AudioSettings {
     pub music: f64,
     pub sfx: f64,
     pub voice: f64,
+    /// Menu sounds.
+    pub ui: f64,
 }
 
 impl Default for AudioSettings {
     fn default() -> Self {
-        Self { master: 1.0, music: 0.8, sfx: 1.0, voice: 1.0 }
+        Self { master: 1.0, music: 0.8, sfx: 1.0, voice: 1.0, ui: 1.0 }
     }
 }
 
 impl AudioSettings {
-    /// The volume of `channel` (`music`, `sfx`, `voice`; anything else is the master
+    /// The volume of `channel` (`music`, `sfx`, `voice`, `ui`; anything else is the master
     /// alone) with the master applied, each clamped to 0..1.
     pub fn volume(&self, channel: &str) -> f32 {
         let unit = |v: f64| if v.is_finite() { v.clamp(0.0, 1.0) as f32 } else { 0.0 };
@@ -162,6 +164,7 @@ impl AudioSettings {
             "music" => self.music,
             "sfx" => self.sfx,
             "voice" => self.voice,
+            "ui" => self.ui,
             _ => 1.0,
         };
         unit(self.master) * unit(part)
@@ -169,7 +172,7 @@ impl AudioSettings {
 
     /// Why these values are not allowed, if they are not.
     pub fn check(&self) -> Result<(), String> {
-        for (name, value) in [("master", self.master), ("music", self.music), ("sfx", self.sfx), ("voice", self.voice)] {
+        for (name, value) in [("master", self.master), ("music", self.music), ("sfx", self.sfx), ("voice", self.voice), ("ui", self.ui)] {
             range(&format!("audio.{name}"), value, 0.0, 1.0)?;
         }
         Ok(())

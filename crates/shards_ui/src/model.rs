@@ -188,6 +188,12 @@ pub struct UiChanged {
     pub value: String,
 }
 
+/// Navigation moved the focus to another widget (`up`, `next`, …; not a press or a change).
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct UiFocusMoved {
+    pub widget: String,
+}
+
 /// A screen opened or closed.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct UiScreenChanged {
@@ -581,6 +587,9 @@ pub fn navigate(world: &mut World, nav: Nav, agent: &str) -> Result<String, Stri
         Nav::Back => unreachable!("handled above"),
     };
     set_focus(world, target);
+    if target != current {
+        world.trigger(UiFocusMoved { widget: path_of(world, target) });
+    }
     Ok(format!("focus {}", describe_short(world, target)))
 }
 

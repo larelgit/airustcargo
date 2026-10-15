@@ -26,8 +26,8 @@
 //! - **Agents** read the tree with `ui_read` and in `observe` (a `UI` section while a menu is
 //!   open: its widgets, values and focus), and act with `ui_navigate`, `ui_click`, `ui_set`,
 //!   `ui_open` and `ui_close`. The journal says `ui: opened pause`, `ui: pause/resume pressed
-//!   (close)`, `ui: settings/text_size 1 → 1.25`. Code hears [`UiPressed`], [`UiChanged`] and
-//!   [`UiScreenChanged`].
+//!   (close)`, `ui: settings/text_size 1 → 1.25`. Code hears [`UiPressed`], [`UiChanged`],
+//!   [`UiFocusMoved`] and [`UiScreenChanged`].
 //! - **This machine's, not the simulation's**: no widget has an `AiId` (opening a menu shifts no
 //!   id), screens are outside snapshots and the replay hash, and a host does not send them. The
 //!   tools that change them are actions, so a replay presses the same buttons at the same ticks.
@@ -54,7 +54,8 @@ use shards_core::{EngineAppExt, EngineState, PauseState};
 pub use bind::{live_value, read_source, viewer, UiActionFn, UiActions, UiPress, UiSourceFn, UiSources};
 pub use def::{Anchor, ButtonAction, CompareRow, Layer, Layout, ScreenDef, ThemeDef, WidgetDef};
 pub use model::{
-    focused, top_screen, Ally, Mark, Nav, UiChanged, UiPressed, UiScreen, UiScreenChanged, UiStack, UiValue, UiWidget, WidgetKind,
+    focused, top_screen, Ally, Mark, Nav, UiChanged, UiFocusMoved, UiPressed, UiScreen, UiScreenChanged, UiStack, UiValue, UiWidget,
+    WidgetKind,
 };
 pub use tools::{UiClickArgs, UiCloseArgs, UiNavigateArgs, UiOpenArgs, UiReadArgs, UiSetArgs};
 
@@ -67,7 +68,7 @@ pub const INPUT_AGENT: &str = "input";
 
 /// The types a game module uses most.
 pub mod prelude {
-    pub use crate::{UiAppExt, UiChanged, UiPress, UiPressed, UiScreenChanged, UiStack, UiValue};
+    pub use crate::{UiAppExt, UiChanged, UiFocusMoved, UiPress, UiPressed, UiScreenChanged, UiStack, UiValue};
 }
 
 /// The UI systems other modules order against.

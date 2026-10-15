@@ -1,0 +1,31 @@
+[package]
+name = "shards_audio"
+description = "Shards audio (E9.5): buses with the player's volumes, sounds with priorities and a voice limit heard from where they happen, music in layers that follow the game; played through Bevy's audio when there is a device."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# Playing what the mixer decides through Bevy's audio (rodio): WAV and Ogg Vorbis files, an output
+# device, and the ALSA headers on Linux (libasound2-dev). The mixer, the music, the tools and the
+# checks are always built: a headless game decides what it would play just the same.
+playback = ["bevy/bevy_audio", "bevy/vorbis", "bevy/wav"]
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+shards_settings.workspace = true
+# The cues it plays: attacks' telegraphs, clips' cues, hits, blocks, deaths.
+shards_action.workspace = true
+# Menu sounds, and the body a HUD is about (the listener).
+shards_ui.workspace = true
+bevy = { workspace = true, features = ["std", "serialize"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+# Integration tests build apps the way a game does: the whole engine (`shards::testing`).
+shards = { workspace = true, features = ["render", "remote", "hot_reload"] }

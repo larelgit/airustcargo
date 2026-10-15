@@ -8,6 +8,7 @@ use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::window::ExitCondition;
 use shards_action::ActionPlugin;
+use shards_audio::AudioPlugin as ShardsAudioPlugin;
 use shards_content::ContentPlugin;
 use shards_core::{CorePlugin, EngineConfig};
 use shards_level::LevelPlugin;
@@ -20,6 +21,7 @@ use shards_settings::ShardsSettingsPlugin;
 use shards_ui::UiPlugin as ShardsUiPlugin;
 use shards_world::WorldPlugin;
 
+use crate::audio_wiring::EngineAudioPlugin;
 use crate::coop::CoopPlugin;
 use crate::net_wiring::EngineNetPlugin;
 use crate::save_sections::EngineSavePlugin;
@@ -110,6 +112,9 @@ impl PluginGroup for EnginePlugins {
             // Screens and menus, then the HUD's values and the controls in menus.
             .add(ShardsUiPlugin)
             .add(EngineUiPlugin)
+            // Sound and music: what the fight and the menus sound like, heard from the body.
+            .add(ShardsAudioPlugin)
+            .add(EngineAudioPlugin)
     }
 }
 

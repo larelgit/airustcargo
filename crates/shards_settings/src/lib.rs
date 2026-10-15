@@ -27,8 +27,8 @@
 //!   puts [`GraphicsSettings`] on the primary window ([`apply_graphics`]); `shards_motion`
 //!   turns [`ControlSettings`] into the input map (and `rebind` writes back), and
 //!   [`AccessibilitySettings`] and the look speed into the camera; `shards_action` draws
-//!   attack warnings by [`AccessibilitySettings::flash_level`]. Audio volumes are kept for the
-//!   audio module.
+//!   attack warnings by [`AccessibilitySettings::flash_level`]; `shards_audio` plays each bus at
+//!   its volume ([`AudioSettings::volume`]: `master` times the bus).
 //! - **Per machine, never simulated**: settings are not in snapshots, replays or the replay
 //!   hash, and a host does not replicate them. `settings_set` is a control tool, so replays do
 //!   not record it either; a change is journaled (`settings: accessibility.camera_shake 1 → 0.3`).
