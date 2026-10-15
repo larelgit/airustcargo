@@ -667,29 +667,33 @@ fn noise(seed: u64, n: usize) -> String {
         .collect()
 }
 
+/// 1000 lines of 50 KB that hardly deflate: c1's link holds the 32 MB it may, a few hundred
+/// messages (not the 1024 it may count), its acknowledgements are a round trip away (a lossy
+/// stand), and one line more leaves it less room than a world takes.
+fn fill_the_link_by_bytes(stand: &mut shards::net::Stand) {
+    use shards::ai_core::journal::{self, JournalKind};
+    for i in 0..1000 {
+        journal::log(stand.world_mut(HOST), JournalKind::Event, noise(i, 50_000));
+    }
+    stand.run(1);
+    let room = |stand: &shards::net::Stand| {
+        let link = &peer_of(stand, 1).link;
+        link.config().max_reliable_bytes - link.footprint().reliable_out_bytes
+    };
+    let left = room(stand);
+    journal::log(stand.world_mut(HOST), JournalKind::Event, noise(7, left - 8_000));
+    stand.run(1);
+    assert!(room(stand) < 10_000, "room {} of {left}", room(stand));
+}
+
 #[test]
 fn a_world_waits_for_a_link_that_is_full_by_bytes_without_being_captured_again() {
-    use shards::ai_core::journal::{self, JournalKind};
     let mut stand = shards::testing::stand(1, lossy(), configure, |app| {
         app.add_plugins(sandbox::SandboxPlugin);
         app.init_resource::<Captures>().add_snapshot_check("captures", "counts the captures of the world", count_capture);
     });
     stand.run(60);
-    // 1000 lines of 50 KB that hardly deflate: the link holds the 32 MB it may, a few hundred
-    // messages (not the 1024 it may count), and its acknowledgements are a round trip away.
-    for i in 0..1000 {
-        journal::log(stand.world_mut(HOST), JournalKind::Event, noise(i, 50_000));
-    }
-    stand.run(1);
-    // And one line more that leaves less room than the world takes.
-    let room = |stand: &shards::net::Stand| {
-        let link = &peer_of(stand, 1).link;
-        link.config().max_reliable_bytes - link.footprint().reliable_out_bytes
-    };
-    let left = room(&stand);
-    journal::log(stand.world_mut(HOST), JournalKind::Event, noise(7, left - 8_000));
-    stand.run(1);
-    assert!(room(&stand) < 10_000, "room {} of {left}", room(&stand));
+    fill_the_link_by_bytes(&mut stand);
     let before = captures(&stand);
     assert!(stand.call(HOST, "net_resync", json!({})).ok);
     stand.run(10);
@@ -698,6 +702,32 @@ fn a_world_waits_for_a_link_that_is_full_by_bytes_without_being_captured_again()
     // Once to learn how large the world is, and not again while the link has no room for it.
     let taken = captures(&stand) - before;
     assert_eq!(taken, 1, "the world was captured {taken} times in 10 ticks");
+}
+
+#[test]
+fn a_region_a_guest_changed_while_its_link_was_full_reaches_it_whole_not_as_deltas_first() {
+    use shards::ai_core::journal::{self, JournalKind};
+    let mut stand = stand_with(1, lossy());
+    stand.world_mut(HOST).insert_resource(dev_guests());
+    stand.run(60);
+    // More gameplay lines in one tick than a link holds unacknowledged (150 ms away: the room
+    // comes back after a round trip).
+    for i in 0..1100 {
+        journal::emit(stand.world_mut(HOST), JournalKind::Event, format!("filler {i}"));
+    }
+    stand.run(1);
+    // The region changes while the world cannot be sent: it waits for room, and meanwhile c1
+    // gets no delta of the new region (it would put the new region's record in its old world,
+    // and the world found it built when it came).
+    let sent = stand.call(C1, "regen", json!({"region": "wilds", "seed": 42}));
+    assert!(sent.ok, "{}", sent.result);
+    run_until(&mut stand, 600, "c1 is given the new region", |s| has_line(s, C1, "net: the host's world again (region wilds)") || matches!(net_state(s, C1), NetState::Ended(_)));
+    assert!(connected(&stand, C1), "{:?}: {:#?}", net_state(&stand, C1), journal(&stand, C1).into_iter().filter(|l| l.len() < 400).collect::<Vec<_>>());
+    let hash = stand.world(HOST).resource::<shards::world::ActiveRegion>().hash;
+    assert_eq!(stand.world(C1).resource::<shards::world::ActiveRegion>().hash, hash, "the same region");
+    assert!(has_line(&stand, HOST, "net: p1 cannot be sent the world now"), "it did wait for room: {:#?}", journal(&stand, HOST).into_iter().filter(|l| l.len() < 400 && !l.contains("filler")).collect::<Vec<_>>());
+    stand.run(120);
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1).into_iter().filter(|l| l.len() < 400).collect::<Vec<_>>());
 }
 
 /// The Roster of c1's copy of the boss.

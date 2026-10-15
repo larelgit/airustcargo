@@ -126,6 +126,9 @@ pub struct Peer {
     capped: bool,
     /// The host tick a world was last queued for it because its view stopped being capped.
     view_complete_at: Option<u64>,
+    /// The world was rebuilt and this peer has not been sent the new one yet: no delta goes to
+    /// it before (it would be of a world it does not have, in the epoch of the old one).
+    rebuild_pending: bool,
     /// JSON bytes of state values sent, by component type path (or resource name).
     pub by_component: BTreeMap<String, u64>,
     /// What the link watch saw a second ago: late inputs, RTT.
@@ -188,6 +191,7 @@ impl Peer {
             closure_capped: 0,
             capped: false,
             view_complete_at: None,
+            rebuild_pending: false,
             by_component: BTreeMap::new(),
             watched: (0, 0.0),
             accept_from_epoch: 0,
@@ -1004,6 +1008,7 @@ fn run_tasks(world: &mut World, host: &mut NetHost) {
         reconcile_players(world, host);
         for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Connected) {
             peer.rebase = Some(reason.clone());
+            peer.rebuild_pending = true;
         }
         // Values cached for ids of the old world mean nothing now.
         host.cache.clear();
@@ -1354,6 +1359,7 @@ fn send_rebases(world: &mut World, host: &mut NetHost) {
         sent.push(format!("p{} gets the world again ({reason}, {kb:.1} KB)", peer.player));
         desync |= reason == "desync";
         peer.rebase = None;
+        peer.rebuild_pending = false;
         peer.body = body;
         peer.resyncs += 1;
         peer.ticks_moved = false;
@@ -1477,7 +1483,7 @@ fn send_state(world: &mut World, host: &mut NetHost) {
         rules.predicted().filter_map(|t| registry.get(t).map(|r| r.type_info().type_path().to_owned())).collect()
     };
     let mut encoded = Encoded { resources: Encoded::resources_of(world), ..default() };
-    let ids: Vec<PeerId> = host.peers.iter().filter(|(_, p)| p.stage == PeerStage::Connected).map(|(id, _)| *id).collect();
+    let ids: Vec<PeerId> = host.peers.iter().filter(|(_, p)| p.stage == PeerStage::Connected && !p.rebuild_pending).map(|(id, _)| *id).collect();
     // Who sees what (a query: the world mutably), then one encoder for every peer.
     let views: Vec<(PeerId, Option<Vec3>, BTreeSet<u32>)> = ids
         .into_iter()
