@@ -15,5 +15,7 @@
         fallback: "valley_safe",
         // Raiders farther than this from the hero rest.
         active_radius: 40.0,
+        // An invisible wall 4 m high around the edge, so nobody walks off the end of the world.
+        edge_wall: 4.0,
     ),
 }

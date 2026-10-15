@@ -75,7 +75,7 @@ pub use manifest::RegionManifest;
 pub use overlay::TileOverlay;
 pub use region::{
     change_region, despawn_region, level_paths, level_users, spawn_region, ActiveRegion, LevelCheckFn, LevelForgetFn, LevelNextFn,
-    LevelRequestFn, LevelRestartFn, LevelSpawn, LevelSpawnFn, LevelSpawner, LevelStatusFn, Marker, Poi, RegionBuild, RegionLoadedHooks,
+    LevelRequestFn, LevelRestartFn, LevelSpawn, LevelSpawnFn, LevelSpawner, LevelStatusFn, Marker, Poi, RegionBuild, RegionEdge, RegionLoadedHooks,
     RegionPart, RegionTile, StartRegion, TileId,
 };
 pub use report::BatchReport;
@@ -199,6 +199,7 @@ impl Plugin for WorldPlugin {
             .add_content::<DungeonDef>()
             .register_type::<TileId>()
             .register_type::<RegionPart>()
+            .register_type::<RegionEdge>()
             .register_type::<RegionTile>()
             .register_type::<Poi>()
             .register_type::<Marker>()

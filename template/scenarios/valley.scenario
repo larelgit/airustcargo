@@ -13,7 +13,7 @@ act regen region=valley seed=42
 expect result contains "ok: valley seed 42 v1"
 expect result contains "spawn at (-40.0, 56.0)"
 act region_info
-expect result contains "\"manifest_hash\": \"e7cec72c6e3e08c4\""
+expect result contains "\"manifest_hash\": \"36930e9ac5dc441e\""
 act god
 observe
 expect result contains "TILE (1, 1) gate"
