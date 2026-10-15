@@ -16,6 +16,8 @@ const STEP: f32 = 0.5;
 const REFINE: u32 = 5;
 /// Compass names, clockwise from north.
 pub const COMPASS: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+/// [`COMPASS`] as steps between grid columns `(x, z)` (N is -Z, E is +X).
+pub const COMPASS_STEPS: [(i32, i32); 8] = [(0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1)];
 
 /// What ends the way in one direction.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -31,6 +33,9 @@ pub enum Hazard {
     Water,
     /// A step up too high to walk onto but within a climb: `rise` meters.
     Ledge { rise: f32 },
+    /// The ground goes on, but the [`RoutePlanner`](super::RoutePlanner) `by` (the navmesh)
+    /// knows no way on: a tile edge that does not connect, a spot blocked now.
+    Closed { by: &'static str },
 }
 
 /// One direction of [`clearance`].
@@ -45,7 +50,7 @@ pub struct Reach {
 
 impl Reach {
     /// `N free 12.0m`, `NE wall 2.1m`, `E cliff 3.0m (drop 8.5m)`, `SE water 4.2m`,
-    /// `S ledge 2.0m (+1.1m)`.
+    /// `S ledge 2.0m (+1.1m)`, `W closed 4.0m (the navmesh goes no further)`.
     pub fn describe(&self) -> String {
         let d = self.distance;
         match self.hazard {
@@ -55,6 +60,7 @@ impl Reach {
             Hazard::Cliff { drop: None } => format!("{} cliff {d:.1}m (no floor in reach)", self.dir),
             Hazard::Water => format!("{} water {d:.1}m", self.dir),
             Hazard::Ledge { rise } => format!("{} ledge {d:.1}m (+{rise:.1}m)", self.dir),
+            Hazard::Closed { by } => format!("{} closed {d:.1}m (the {by} goes no further)", self.dir),
         }
     }
 }

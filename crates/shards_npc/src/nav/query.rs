@@ -1,4 +1,5 @@
-//! Routes on the navmesh: [`NavRegion::path`].
+//! Routes on the navmesh: [`NavRegion::path`] (and how far a straight walk goes,
+//! [`NavRegion::reach`]).
 //!
 //! 1. **Ends**: the start is the node the walker stands on (within a meter); the goal the
 //!    node at the goal (its own column first, then within two meters).
@@ -187,6 +188,38 @@ impl NavRegion {
         let a = Hop { node: start, pos: query.from, kind: StepKind::Walk, rise: 0.0 };
         let b = Hop { node: goal, pos: Vec3::new(query.to.x, self.node_pos(goal).y, query.to.z), kind: StepKind::Walk, rise: 0.0 };
         Some(self.line_clear(physics, query, a, b))
+    }
+
+    /// How far a body standing at `from` goes on the navmesh in compass step `(dx, dz)` (m,
+    /// at most `range`): column by column over walking links and drops (and, for a swimmer,
+    /// swimming ones), to the far side of the last column it enters. A climb, a step into
+    /// water, a tile edge that does not connect or a spot switched off ends it. `None` where
+    /// the navmesh does not know `from` (outside the region, in the air, on a prop) or the
+    /// way leaves the region (it knows nothing beyond).
+    pub fn reach(&self, from: Vec3, (dx, dz): (i32, i32), range: f32) -> Option<f32> {
+        let dir = Vec2::new(dx as f32, dz as f32).normalize_or_zero();
+        if !from.is_finite() || !range.is_finite() || dir == Vec2::ZERO {
+            return None;
+        }
+        self.instance_at(self.column_of(from))?;
+        let mut node = self.start_node(from)?;
+        let swimmer = self.is_swim(node);
+        let takes = |kind: StepKind| matches!(kind, StepKind::Walk | StepKind::Drop) || (swimmer && kind == StepKind::Swim);
+        // From a column's center to its side (or corner) ahead.
+        let half = 0.5 * self.cell * Vec2::new(dx as f32, dz as f32).length();
+        loop {
+            let at = self.node_pos(node);
+            let reached = Vec2::new(at.x - from.x, at.z - from.z).dot(dir) + half;
+            if reached >= range {
+                return Some(range);
+            }
+            let [cx, cz] = self.node_column(node);
+            match self.move_toward(node, (dx, dz), takes) {
+                Some(next) => node = next,
+                None if self.instance_at([cx + dx, cz + dz]).is_none() => return None,
+                None => return Some(reached.max(0.0)),
+            }
+        }
     }
 
     /// The walker's node: in its own column, a floor at most a meter below its feet (or half

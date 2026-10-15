@@ -470,13 +470,19 @@ impl NavRegion {
 
     /// The walking move from `node` to the neighbouring global column `(dx, dz)` away
     /// (one step: orthogonal or diagonal), if there is one.
-    pub fn walk_toward(&self, node: NodeId, (dx, dz): (i32, i32)) -> Option<NodeId> {
+    pub fn walk_toward(&self, node: NodeId, step: (i32, i32)) -> Option<NodeId> {
+        self.move_toward(node, step, |kind| kind == StepKind::Walk)
+    }
+
+    /// The move from `node` to the neighbouring global column `(dx, dz)` away (one step:
+    /// orthogonal or diagonal, no navlink) of a kind `takes` accepts, if there is one.
+    pub fn move_toward(&self, node: NodeId, (dx, dz): (i32, i32), takes: impl Fn(StepKind) -> bool) -> Option<NodeId> {
         let (inst, n) = self.split(node);
         let instance = &self.instances[inst as usize];
         let local = instance.to_local_dir((dx, dz));
         let code = MOVES.iter().take(8).position(|m| *m == local)? as u8;
         let base = self.base[inst as usize];
-        if let Some(link) = instance.nav.links_of(n).iter().find(|l| l.code == code && l.kind == StepKind::Walk) {
+        if let Some(link) = instance.nav.links_of(n).iter().find(|l| l.code == code && takes(l.kind)) {
             return (!instance.is_disabled(link.to)).then_some(base + link.to);
         }
         let target = {
@@ -485,7 +491,7 @@ impl NavRegion {
         };
         self.extras_of(node)
             .iter()
-            .find(|e| e.kind == StepKind::Walk && !e.navlink && self.node_column(e.to) == target)
+            .find(|e| takes(e.kind) && !e.navlink && self.node_column(e.to) == target)
             .filter(|e| !self.is_disabled(e.to))
             .map(|e| e.to)
     }

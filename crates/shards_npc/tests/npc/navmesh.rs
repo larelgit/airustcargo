@@ -124,9 +124,29 @@ fn stitching_turns_tiles_with_them_and_follows_open_sockets() {
     assert!(err.contains("cannot reach at all") && err.contains("sockets"), "{err}");
     assert_eq!(app.world().resource::<NavRegion>().report.closed_edges, 1);
     // The local grid sees only the geometry: it walks straight across.
+    let across = shards_npc::nav::local_grid_path(app.world(), Vec3::new(4.0, 0.0, 4.0), Vec3::new(12.0, 0.0, 4.0), 0.4);
+    assert!(across.is_some(), "the ground meets");
+    // An agent's `path_to` and `clearance` ask the navmesh: no way, and east ends at the edge.
     player(app.world_mut(), 0, Vec3::new(4.0, 0.0, 4.0));
-    let out = ok(&mut app, "path_to", json!({"target": {"x": 12.0, "z": 4.0}}));
-    assert!(out.result["path"].as_str().unwrap().starts_with("path 8.0m"), "{}", out.result);
+    let err = fails(&mut app, "path_to", json!({"target": {"x": 12.0, "z": 4.0}}));
+    assert!(err.starts_with("navmesh: ") && err.contains("cannot reach at all"), "{err}");
+    let line = text(&ok(&mut app, "clearance", json!({})));
+    assert!(line.contains("E closed 4.0m (the navmesh goes no further)"), "{line}");
+    // Past the region's own edges the navmesh knows nothing: the physics world answers there.
+    for dir in ["N", "S", "W", "NW", "SW"] {
+        assert!(!line.contains(&format!("{dir} closed")), "{dir}: {line}");
+    }
+    let from = Vec3::new(4.0, 0.0, 4.0);
+    let nav = app.world().resource::<NavRegion>();
+    let east = nav.reach(from, (1, 0), 15.0).unwrap();
+    assert!((east - 4.0).abs() < 0.05, "to the far side of the last column: {east}");
+    assert_eq!(nav.reach(from, (0, 1), 15.0), None, "south leaves the region");
+    // Where the sockets meet, the way goes on to the range, or out of the region.
+    let mut open = crate::common::app();
+    load_region(&mut open, &["floor floor floor"]);
+    let nav = open.world().resource::<NavRegion>();
+    assert_eq!(nav.reach(from, (1, 0), 15.0), Some(15.0));
+    assert_eq!(nav.reach(from, (1, 0), 30.0), None);
 }
 
 #[test]
@@ -327,8 +347,13 @@ fn move_to_path_follows_the_navmesh_beyond_the_local_planners_reach() {
     load_region(&mut app, &rows);
     let hero = player(app.world_mut(), 0, Vec3::new(2.0, 0.0, 2.0));
     let goal = json!({"x": 62.0, "z": 62.0});
-    let far = fails(&mut app, "path_to", json!({"target": goal}));
-    assert!(far.contains("farther than max 80m"), "the local planner stops at 80 m: {far}");
+    // The local grid stops at 80 m; `path_to` asks the navmesh first, which goes as far as
+    // the region does, unless `max` says otherwise.
+    let far = ok(&mut app, "path_to", json!({"target": goal}));
+    assert_eq!(far.result["provider"], "navmesh", "{}", far.result);
+    assert!(far.result["path"].as_str().unwrap().starts_with("path 8"), "{}", far.result);
+    let capped = fails(&mut app, "path_to", json!({"target": goal, "max": 80}));
+    assert!(capped.contains("the shortest route (navmesh) is 8") && capped.contains("longer than max 80m"), "{capped}");
     let out = ok(&mut app, "move_to", json!({"target": goal, "path": true}));
     assert!(text(&out).starts_with("ok: following path 8"), "{}", text(&out));
     for _ in 0..40 {

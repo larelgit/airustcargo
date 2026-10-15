@@ -18,7 +18,7 @@ use crate::ai::MotionAi;
 use crate::controller::locomotion::CLIMB_OUT_REACH;
 use crate::controller::{CharacterController, CharacterParams, LocomotionInput, MotionMode, MotionState};
 use crate::intent::GlideUntilLanded;
-use crate::perception::{self, reach_toward, Bodies, Hazard, PathPlan, RoutePlanner, RouteRequest};
+use crate::perception::{self, reach_toward, Bodies, Hazard, PathPlan};
 use crate::physics::{fresh, PhysicsWorld};
 
 pub(crate) fn plugin(app: &mut App) {
@@ -67,40 +67,22 @@ pub struct MoveToArgs {
     pub path: bool,
 }
 
-/// What a [`RoutePlanner`] (the navmesh) answers for `move_to path=true`; `None` when there
+/// What a [`RoutePlanner`](perception::RoutePlanner) (the navmesh) answers for `move_to path=true`; `None` when there
 /// is none, it does not cover the walk, or the call is not one it can answer (the second half
 /// then says what is wrong with it).
 type Routed = Option<Result<PathPlan, String>>;
 
-/// `move_to`'s first half: with `path`, ask the registered [`RoutePlanner`].
+/// `move_to`'s first half: with `path`, ask the registered [`RoutePlanner`](perception::RoutePlanner).
 fn routed(In(call): In<Call<MoveToArgs>>, world: &World) -> (Call<MoveToArgs>, Routed) {
-    let answer = if call.args.path { ask_route_planner(world, &call) } else { None };
-    (call, answer)
-}
-
-fn ask_route_planner(world: &World, call: &Call<MoveToArgs>) -> Routed {
-    let planner = world.get_resource::<RoutePlanner>()?;
-    let me = call.caller.subject?;
-    let tf = world.get::<Transform>(me)?;
-    let goal = match call.args.target {
-        TargetArg::Entity(id) => {
-            let entity = world.get_resource::<AiIndex>()?.resolve(id.0).ok().filter(|e| *e != me)?;
-            (world.get::<Transform>(entity)?.translation, true)
+    let answer = match (call.args.path, call.caller.subject) {
+        (true, Some(me)) => {
+            let default = if matches!(call.args.target, TargetArg::Entity(_)) { 1.5 } else { 0.3 };
+            let within = call.args.within.unwrap_or(default).max(0.2);
+            perception::planner_route(world, me, &call.args.target, Some(within), None).map(|(_, answer)| answer)
         }
-        TargetArg::Point { x, z } if x.is_finite() && z.is_finite() => (Vec3::new(x, tf.translation.y, z), false),
-        TargetArg::Point { .. } => return None,
+        _ => None,
     };
-    let db = world.get_resource::<ContentDb>();
-    let own = world.get::<CharacterParams>(me);
-    let params = match world.get::<CharacterController>(me) {
-        Some(controller) => controller.resolve(own, db).clone(),
-        None => own.cloned().unwrap_or_default(),
-    };
-    let swimming = perception::swimming_at(world.get::<MotionState>(me));
-    let safe_drop = world.get_resource::<MotionAi>().map_or(MotionAi::default().safe_drop, |ai| ai.safe_drop);
-    let within = call.args.within.unwrap_or(if goal.1 { 1.5 } else { 0.3 }).max(0.2);
-    let request = perception::request_for(tf.translation, swimming, goal, Some(within), None, safe_drop, me);
-    (planner.plan)(world, &RouteRequest { walker: me, params: &params, request: &request })
+    (call, answer)
 }
 
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
