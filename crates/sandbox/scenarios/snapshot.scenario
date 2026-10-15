@@ -34,7 +34,7 @@ act set id=e6 component=Health path=current value=295
 step 300 --until named:boss_phase_2
 expect stopped "boss_phase_2"
 act snapshot_save path=snapshots/boss_phase2.json
-expect result contains "snapshots/boss_phase2.json: tick"
+expect result contains "boss_phase2.json: tick"
 
 # --- later, anything: the player elsewhere, the warden healed and back in phase 1
 act teleport id=e5 x=40 z=0 y=0

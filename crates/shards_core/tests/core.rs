@@ -361,3 +361,19 @@ fn exit_hooks_run_once_in_order_when_the_game_ends() {
     shards_core::run_exit_hooks(app.world_mut());
     assert_eq!(app.world().resource::<Exited>().0, ["save", "bye"], "once, however often the game ends");
 }
+
+/// `quit` ends the game from outside the way an `AppExit` does: the answer first, then the hooks.
+#[test]
+fn quit_answers_then_ends_the_game_through_its_exit_hooks() {
+    let mut app = app(test_config());
+    app.add_exit_hook("save", |w| w.get_resource_or_init::<Exited>().0.push("save"));
+    load(&mut app);
+    let said = ok(&mut app, "quit", json!({}));
+    assert_eq!(said.result, json!("quitting: the game ends in 0.2s, after its exit hooks"));
+    app.update();
+    assert!(app.should_exit().is_none() && app.world().get_resource::<Exited>().is_none(), "not yet: the answer gets out first");
+    std::thread::sleep(Duration::from_millis(250));
+    app.update();
+    assert_eq!(app.should_exit(), Some(AppExit::Success));
+    assert_eq!(app.world().resource::<Exited>().0, ["save"]);
+}

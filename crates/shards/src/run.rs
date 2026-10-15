@@ -291,6 +291,7 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
         return stand::run(&build, &args, config, clients);
     }
     let mut app = build(&config);
+    termination::catch_console_close();
     // Player settings are read now, not earlier: Bevy's settings plugin scans the type registry
     // once, so every group the game registered while building must be there.
     if let Err(e) = shards_settings::install(&mut app, &config) {
@@ -387,6 +388,7 @@ mod stand {
                 return ExitCode::from(2);
             }
         };
+        termination::catch_console_close();
         if let Err(e) = stand.settle() {
             eprintln!("error: {e}");
             return ExitCode::from(1);
@@ -807,8 +809,8 @@ fn bake_nav(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, tiles: 
     }
 }
 
-/// `kill` (SIGTERM) and a closed terminal (SIGHUP) end the game the way Ctrl+C does:
-/// through `AppExit`, so what it wrote at start (the BRP token, `--port-file`) is
+/// `kill` (SIGTERM) and a closed terminal (SIGHUP; on Windows a closed console) end the game the
+/// way Ctrl+C does: through `AppExit`, so what it wrote at start (the BRP token, `--port-file`) is
 /// removed. A signal the game was started with ignored (`nohup`) stays ignored; a
 /// second signal exits at once.
 pub(crate) mod termination {
@@ -846,8 +848,58 @@ pub(crate) mod termination {
         }
     }
 
-    #[cfg(not(unix))]
+    /// Windows: the console's closing (its window closed, a log-off, a shutdown) is SIGHUP's
+    /// counterpart. Ctrl+C and Ctrl+Break are left to Bevy's handler.
+    #[cfg(windows)]
+    pub fn catch_signals() {
+        catch_console_close();
+    }
+
+    #[cfg(not(any(unix, windows)))]
     pub fn catch_signals() {}
+
+    /// Windows asks the console handler registered last first, and the one of Bevy's Ctrl+C
+    /// plugin answers every event, the console's closing too, after which Windows ends the
+    /// process at once. Called again once the game is built, this puts the engine's in front.
+    #[cfg(windows)]
+    pub fn catch_console_close() {
+        // SAFETY: registers (and first takes out) a handler function; no other pointers.
+        unsafe {
+            windows::SetConsoleCtrlHandler(Some(on_console_event), 0);
+            windows::SetConsoleCtrlHandler(Some(on_console_event), 1);
+        }
+    }
+
+    #[cfg(not(windows))]
+    pub fn catch_console_close() {}
+
+    #[cfg(windows)]
+    mod windows {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            pub fn SetConsoleCtrlHandler(handler: Option<unsafe extern "system" fn(u32) -> i32>, add: i32) -> i32;
+        }
+    }
+
+    /// SIGHUP's number: a closed console ends the game with code 129, as a closed terminal does.
+    #[cfg(windows)]
+    const CONSOLE_CLOSED: i32 = 1;
+
+    /// Runs on a thread of its own. Windows ends the process when this returns, and five seconds
+    /// after the event at the latest, so it waits: the game sees the flag on its next frame, runs
+    /// its exit hooks and returns from `main`, which ends the process (this thread with it).
+    #[cfg(windows)]
+    unsafe extern "system" fn on_console_event(event: u32) -> i32 {
+        const CTRL_CLOSE_EVENT: u32 = 2;
+        const CTRL_LOGOFF_EVENT: u32 = 5;
+        const CTRL_SHUTDOWN_EVENT: u32 = 6;
+        if !matches!(event, CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT | CTRL_SHUTDOWN_EVENT) {
+            return 0;
+        }
+        let _ = RECEIVED.compare_exchange(0, CONSOLE_CLOSED, Ordering::SeqCst, Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(4500));
+        1
+    }
 
     #[cfg(unix)]
     extern "C" fn on_signal(signal: libc::c_int) {

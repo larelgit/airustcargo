@@ -205,7 +205,7 @@ mod tests {
     fn a_relative_root_makes_the_asset_folder_absolute() {
         let cwd = std::env::current_dir().unwrap();
         let resolved = resolve_asset_path("assets", Some("crates/sandbox"), &cwd);
-        assert_eq!(resolved, cwd.join("crates/sandbox/assets").display().to_string());
+        assert_eq!(resolved, cwd.join("crates/sandbox").join("assets").display().to_string());
         // What Bevy does next: it joins its base onto the path, and the absolute one wins.
         assert_eq!(Path::new("crates/sandbox").join(&resolved), Path::new(&resolved));
     }

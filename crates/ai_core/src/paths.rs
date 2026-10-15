@@ -38,7 +38,7 @@ pub fn inside_of(base: &Path, dir: &str, requested: &str, example: &str) -> Resu
     std::fs::create_dir_all(&root).map_err(|e| format!("cannot create {}: {e}", root.display()))?;
     // The folder itself may be a symlink (replays kept on another disk); what is inside
     // it must stay inside it.
-    let root = root.canonicalize().map_err(|e| format!("cannot open {}: {e}", root.display()))?;
+    let root = canonical(&root).map_err(|e| format!("cannot open {}: {e}", root.display()))?;
     let parent = folders.iter().fold(root.clone(), |p, f| p.join(f));
     // Check the part that exists before creating the rest: `create_dir_all` would follow a
     // symlink out of the folder.
@@ -46,12 +46,12 @@ pub fn inside_of(base: &Path, dir: &str, requested: &str, example: &str) -> Resu
     while std::fs::symlink_metadata(existing).is_err() {
         existing = existing.parent().unwrap_or(root.as_path());
     }
-    let real = existing.canonicalize().map_err(|_| refuse("goes through a broken symlink"))?;
+    let real = canonical(existing).map_err(|_| refuse("goes through a broken symlink"))?;
     if !real.starts_with(&root) {
         return Err(refuse("leads outside through a symlink"));
     }
     std::fs::create_dir_all(&parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-    let path = parent.canonicalize().map_err(|e| format!("cannot open {}: {e}", parent.display()))?.join(name);
+    let path = canonical(&parent).map_err(|e| format!("cannot open {}: {e}", parent.display()))?.join(name);
     // Writing (or removing) through a symlink would touch its target.
     if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(refuse("is a symlink"));
@@ -59,15 +59,46 @@ pub fn inside_of(base: &Path, dir: &str, requested: &str, example: &str) -> Resu
     Ok(path)
 }
 
+/// `path` made absolute with every link followed, written the way people write it: on Windows
+/// without the `\\?\` that [`Path::canonicalize`] puts in front (`\\?\C:\game` → `C:\game`,
+/// `\\?\UNC\server\share` → `\\server\share`), so the answers of tools show a path one can paste.
+pub fn canonical(path: &Path) -> std::io::Result<PathBuf> {
+    path.canonicalize().map(|p| without_verbatim(&p))
+}
+
+/// `path` without Windows' verbatim prefix, where the plain form means the same: a drive or a
+/// share. Other paths are left as they are.
+pub fn without_verbatim(path: &Path) -> PathBuf {
+    let text = path.as_os_str().to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match text.strip_prefix(r"\\?\") {
+        // `C:\…`: a drive letter, a colon, a separator.
+        Some(rest) if rest.len() >= 3 && rest.as_bytes()[0].is_ascii_alphabetic() && &rest[1..3] == r":\" => PathBuf::from(rest),
+        _ => path.to_path_buf(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_verbatim_prefix_goes_where_the_plain_path_means_the_same() {
+        let plain = |p: &str| without_verbatim(Path::new(p)).display().to_string();
+        assert_eq!(plain(r"\\?\E:\game\replays\a.json"), r"E:\game\replays\a.json");
+        assert_eq!(plain(r"\\?\UNC\server\share\a.json"), r"\\server\share\a.json");
+        // A device or a volume by its GUID has no plain form.
+        assert_eq!(plain(r"\\?\Volume{1234}\a.json"), r"\\?\Volume{1234}\a.json");
+        assert_eq!(plain("/home/me/game/replays/a.json"), "/home/me/game/replays/a.json");
+    }
 
     fn base(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("ai_core_paths_{name}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        dir.canonicalize().unwrap()
+        canonical(&dir).unwrap()
     }
 
     #[test]

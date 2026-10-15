@@ -54,6 +54,10 @@ const DEFAULT_PORT: u16 = 15702;
 /// How often a deferred `step` is asked whether it is done.
 const POLL_EVERY: Duration = Duration::from_millis(20);
 
+/// How long a connection to the game may take. The game is on this machine: it accepts at once, or
+/// nothing listens. (Windows tries a refused loopback connection again for about two seconds.)
+const CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
+
 /// How long `shards` waits for a deferred `step` (and for `wait`, `shot` and `stand stop` to
 /// finish) unless `--timeout` says otherwise.
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
@@ -290,6 +294,10 @@ enum Cmd {
     /// the host and every client of a stand, one line each, and a check that they are one
     /// session. Gives up after --timeout seconds (60).
     Wait,
+    /// End the game the way Ctrl+C does (its tool `quit`): its exit hooks run, its token and port
+    /// file go. Waits until it answers no more (--timeout, 15 s). How a game is stopped on Windows;
+    /// on unix `kill PID` does the same.
+    Quit,
 }
 
 #[derive(Subcommand)]
@@ -352,6 +360,7 @@ impl Client {
     fn new(port: u16, token: Option<String>) -> Self {
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(300)))
+            .timeout_connect(Some(CONNECT_TIMEOUT))
             .http_status_as_error(false)
             .build()
             .new_agent();
@@ -408,7 +417,10 @@ impl Client {
         let params = with_token(params, self.token.as_deref()).map_err(CallError::Other)?;
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
         let mut resp = self.agent.post(&self.url).send_json(&body).map_err(|e| match e {
-            ureq::Error::Io(_) | ureq::Error::ConnectionFailed | ureq::Error::HostNotFound => {
+            ureq::Error::Io(_)
+            | ureq::Error::ConnectionFailed
+            | ureq::Error::HostNotFound
+            | ureq::Error::Timeout(ureq::Timeout::Connect) => {
                 CallError::Unreachable(format!("cannot reach the game at {} ({e}). Is it running? Try `cargo sandbox`.", self.url))
             }
             e => CallError::Other(format!("request failed: {e}")),
@@ -499,7 +511,7 @@ fn main() -> ExitCode {
 fn stand(cli: &Cli, op: Option<&StandCmd>) -> Result<ExitCode, String> {
     let complete = match op {
         None => peer::show(cli)?,
-        Some(StandCmd::Stop) => peer::stop(cli, &peer::terminate)?,
+        Some(StandCmd::Stop) => peer::stop(cli, &|client, pid| peer::end_game(client, &cli.agent, pid))?,
     };
     Ok(if complete { ExitCode::SUCCESS } else { ExitCode::from(exit::TOOL_ERROR) })
 }
@@ -733,9 +745,30 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             return Ok(ExitCode::SUCCESS);
         }
         Cmd::Wait => return wait(cli, cli.timeout_or(DEFAULT_TIMEOUT_SECS)),
+        Cmd::Quit => return quit(cli, client),
         Cmd::Stand { op } => return stand(cli, op.as_ref()),
     };
     Ok(print_outcome(&outcome, cli.json))
+}
+
+/// `shards quit`: the game's `quit`, then a wait until it answers no more.
+fn quit(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
+    let pid = client.call("ai/status", Value::Null)?["instance"]["pid"].as_u64();
+    let out = client.act(&cli.agent, "quit", json!({}))?;
+    if out["ok"] != Value::Bool(true) {
+        return Ok(print_outcome(&out, cli.json));
+    }
+    let game = pid.map_or_else(|| "the game".to_owned(), |pid| format!("the game (pid {pid})"));
+    let limit = cli.timeout_or(15);
+    let started = Instant::now();
+    while client.call("ai/status", Value::Null).is_ok() {
+        if started.elapsed() >= limit {
+            return Err(format!("{game} still answers {}s after `quit`: see `shards journal`, or end it yourself", limit.as_secs()));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    say(format!("{game} ended"));
+    Ok(ExitCode::SUCCESS)
 }
 
 /// The game writes the PNG under a temporary name and renames it when complete, so

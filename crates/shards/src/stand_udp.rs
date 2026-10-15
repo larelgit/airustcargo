@@ -114,7 +114,20 @@ fn signal(child: &Child) {
     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
 }
 
-#[cfg(not(unix))]
+/// Ctrl+Break to the child's own process group (it leads one: see [`start_children`]), which Bevy's
+/// Ctrl+C handler turns into a normal exit, as SIGTERM is on unix.
+#[cfg(windows)]
+fn signal(child: &Child) {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GenerateConsoleCtrlEvent(event: u32, group: u32) -> i32;
+    }
+    const CTRL_BREAK_EVENT: u32 = 1;
+    // SAFETY: takes no pointers; a host without a console only gets an error back.
+    unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child.id()) };
+}
+
+#[cfg(not(any(unix, windows)))]
 fn signal(_: &Child) {}
 
 /// Makes `app` the host of a stand over UDP: its clients start once its content is loaded (and
@@ -212,6 +225,13 @@ fn start_children(world: &mut World) {
                 });
             }
         }
+        // Its own process group, so that Ctrl+Break reaches it alone (`signal`).
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NEW_PROCESS_GROUP: u32 = 0x200;
+            command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+        }
         match command.spawn() {
             Ok(child) => {
                 journal::emit(world, JournalKind::Sim, format!("stand: c{n} started (pid {}), joining {addr}", child.id()));
@@ -308,9 +328,10 @@ fn left_on_purpose(status: ExitStatus) -> bool {
     }
 }
 
+/// Windows: code 0, 129 (its console closed) or 130 (Ctrl+C or Ctrl+Break, Bevy's handler).
 #[cfg(not(unix))]
 fn left_on_purpose(status: ExitStatus) -> bool {
-    status.code() == Some(0)
+    matches!(status.code(), Some(0 | 129 | 130))
 }
 
 #[cfg(unix)]
@@ -388,7 +409,12 @@ fn end_children(world: &mut World) {
     }
     wait_until(&mut children, TERM_WAIT, left);
     for c in &children.0 {
-        eprintln!("warning: stand client {} (pid {}) is still running after SIGTERM; end it with `kill {}`", c.name, c.child.id(), c.child.id());
+        eprintln!(
+            "warning: stand client {} (pid {}) is still running after it was told to leave; end it with `shards quit` (its port file) or `kill {}` on unix",
+            c.name,
+            c.child.id(),
+            c.child.id()
+        );
     }
     // What is still there stays: the host is going, and a dropped `StandChildren` signals once more.
 }

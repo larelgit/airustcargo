@@ -293,6 +293,7 @@ impl Plugin for CorePlugin {
             .register_type::<NetRole>();
         // `ai/session {player: N}`, `possess player=N`: the body with `PlayerId(N)`.
         app.world_mut().get_resource_or_init::<ai_core::AgentSessions>().set_player_resolver(state::player_body);
+        exit::register(app.world_mut());
         app.insert_resource(self.config.clone())
             .init_resource::<NetRole>()
             .init_resource::<LoadingGate>()
@@ -340,6 +341,7 @@ impl Plugin for CorePlugin {
             )
             .add_systems(First, loading::update_loading.before(ai_core::sim::apply_gate))
             .add_systems(PreUpdate, state::close_pause_when_resumed)
+            .add_systems(First, exit::quit_when_due)
             .add_systems(Last, run_exit_hooks.run_if(exit::exiting))
             .add_systems(
                 StateTransition,

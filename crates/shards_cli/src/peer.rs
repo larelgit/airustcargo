@@ -631,13 +631,32 @@ fn wait_gone<'a>(members: &'a [(String, &Client)], limit: Duration) -> Vec<&'a s
     }
 }
 
-/// Ends the process `pid` the polite way: SIGTERM, which the game turns into a normal exit (the
-/// token and port files go away with it), never `kill -9`.
-#[cfg(unix)]
+/// Ends the game at `client`, process `pid`, the polite way: its `quit` tool, which ends it as
+/// Ctrl+C does (its token and port file go with it), on every platform. A game from before
+/// `quit` gets SIGTERM on unix, which it turns into the same exit; never `kill -9`.
+pub fn end_game(client: &Client, agent: &str, pid: u32) -> Result<(), String> {
+    let out = client.act(agent, "quit", json!({}))?;
+    if out["ok"] == Value::Bool(true) {
+        return Ok(());
+    }
+    let why = out["result"].as_str().unwrap_or("refused");
+    if why.starts_with("unknown tool `quit`") {
+        return terminate(pid);
+    }
+    Err(format!("pid {pid} would not quit: {why}"))
+}
+
+/// Ends the process `pid` with SIGTERM, which the game turns into a normal exit (the token and
+/// port files go away with it), never `kill -9`.
 pub fn terminate(pid: u32) -> Result<(), String> {
     if pid <= 1 || pid == std::process::id() {
         return Err(format!("refusing to signal pid {pid}: it is not a game's"));
     }
+    signal(pid)
+}
+
+#[cfg(unix)]
+fn signal(pid: u32) -> Result<(), String> {
     // SAFETY: `kill` with a pid and a signal number takes no pointers.
     match unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) } {
         0 => Ok(()),
@@ -646,19 +665,19 @@ pub fn terminate(pid: u32) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
-pub fn terminate(pid: u32) -> Result<(), String> {
-    Err(format!("`shards stand stop` signals processes on unix only; end pid {pid} yourself"))
+fn signal(pid: u32) -> Result<(), String> {
+    Err(format!("pid {pid} has no `quit`, and Windows has no signal for another console's process: close its window"))
 }
 
 /// `shards stand stop`: the host ends the session (every client is told and keeps its
-/// character), then the stand's process gets SIGTERM, and the command waits until no member
-/// answers. A stand of child processes (`--stand-udp`) is ended by its host; a child that is
-/// still there afterwards is signalled too.
+/// character), then the host is asked to quit (`end`: [`end_game`]), and the command waits until
+/// no member answers. A stand of child processes (`--stand-udp`) is ended by its host; a child
+/// that is still there afterwards is asked too.
 ///
 /// A client that is already gone (its port file removed, or it does not answer) is reported
 /// and left out; the rest of the stand is stopped all the same. Returns `false` when a member
 /// was missing, for the exit code.
-pub fn stop(cli: &Cli, kill: &dyn Fn(u32) -> Result<(), String>) -> Result<bool, String> {
+pub fn stop(cli: &Cli, end: &dyn Fn(&Client, u32) -> Result<(), String>) -> Result<bool, String> {
     let (members, host) = members_of(cli)?;
     let agent = cli.agent.as_str();
     // Who is here to stop (name, client, pid), and who was not.
@@ -688,21 +707,22 @@ pub fn stop(cli: &Cli, kill: &dyn Fn(u32) -> Result<(), String>) -> Result<bool,
     } else {
         say(format!("note: net_end: {}", ended["result"].as_str().unwrap_or("refused")));
     }
-    kill(host_pid)?;
+    end(host_client, host_pid)?;
     let answering: Vec<(String, &Client)> = present.iter().map(|(name, client, _)| (name.clone(), *client)).collect();
     let mut alive = wait_gone(&answering, cli.timeout_or(15));
     if !alive.is_empty() {
         // Children of a UDP stand that outlived their host: each has its own process.
-        for (name, _, pid) in &present {
+        for (name, client, pid) in &present {
             if *pid != host_pid && alive.contains(&name.as_str()) {
-                kill(*pid)?;
+                end(client, *pid)?;
             }
         }
         alive = wait_gone(&answering, Duration::from_secs(cli.timeout_or(15).as_secs().min(5)));
     }
     if !alive.is_empty() {
         return Err(format!(
-            "{} still answer{} after SIGTERM: end them yourself (`kill PID`, not -9, so they remove their port files)",
+            "{} still answer{} after being asked to quit: end them yourself (`shards quit` with their port file, or \
+             `kill PID` on unix, not -9, so they remove their port files)",
             alive.join(", "),
             if alive.len() == 1 { "s" } else { "" }
         ));
@@ -1186,9 +1206,9 @@ mod tests {
         // The same for a client's file: the wait goes on to the deadline and says what it cannot reach.
         reads.store(0, Ordering::SeqCst);
         let begun = Instant::now();
-        let e = wait_member(file_then_none, begun + Duration::from_millis(400), false).unwrap_err();
+        let e = wait_member(file_then_none, begun + Duration::from_millis(1500), false).unwrap_err();
         assert_eq!(e, "cannot read the port file g.port");
-        assert!(begun.elapsed() >= Duration::from_millis(400));
+        assert!(begun.elapsed() >= Duration::from_millis(1500));
     }
 
     /// `wait --peer all` fails at once on what waiting cannot mend, with the mismatch.
@@ -1317,7 +1337,7 @@ mod tests {
         let path = dir.join("g.port").display().to_string();
         let c = cli(&["--port-file", &path, "stand", "stop"]);
         let signalled = std::sync::Mutex::new(Vec::new());
-        let kill = |pid: u32| {
+        let kill = |_: &Client, pid: u32| {
             signalled.lock().unwrap().push(pid);
             // The game exits: its servers stop answering.
             dead.store(true, Ordering::SeqCst);
@@ -1325,7 +1345,7 @@ mod tests {
         };
         assert_eq!(stop(&c, &kill), Ok(true), "everyone was there");
         assert_eq!(ended.load(Ordering::SeqCst), 1, "the host ended the session once");
-        assert_eq!(*signalled.lock().unwrap(), [4242], "the stand is one process: one signal");
+        assert_eq!(*signalled.lock().unwrap(), [4242], "the stand is one process: asked once");
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1335,11 +1355,12 @@ mod tests {
         pretend_stand(&dir, Arc::new(AtomicBool::new(false)), Arc::default());
         let path = dir.join("g.port").display().to_string();
         let c = cli(&["--port-file", &path, "--timeout", "1", "stand", "stop"]);
-        // Nothing is signalled for real, and nobody stops answering.
-        let e = stop(&c, &|_| Ok(())).unwrap_err();
+        // Nobody is asked for real, and nobody stops answering.
+        let e = stop(&c, &|_, _| Ok(())).unwrap_err();
         assert_eq!(
             e,
-            "host, c1, c2 still answer after SIGTERM: end them yourself (`kill PID`, not -9, so they remove their port files)"
+            "host, c1, c2 still answer after being asked to quit: end them yourself (`shards quit` with their port file, or \
+             `kill PID` on unix, not -9, so they remove their port files)"
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -1362,7 +1383,7 @@ mod tests {
         assert!(members[0].client.is_ok() && members[1].client.is_ok());
         // `stand stop`: the session ends, the process gets its signal, c1 and the host are waited for.
         let signalled = std::sync::Mutex::new(Vec::new());
-        let kill = |pid: u32| {
+        let kill = |_: &Client, pid: u32| {
             signalled.lock().unwrap().push(pid);
             dead.store(true, Ordering::SeqCst);
             Ok(())
@@ -1377,6 +1398,26 @@ mod tests {
         assert_eq!(show(&cli(&["--port-file", &path, "stand"])), Ok(true));
         let _ = std::fs::remove_dir_all(dir);
         let _ = std::fs::remove_dir_all(whole);
+    }
+
+    /// A game is asked to quit, on every platform; one that refuses says why; one from before
+    /// `quit` gets the signal path (refused here for pid 1, before anything is sent).
+    #[test]
+    fn a_game_is_asked_to_quit() {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let port = serve({
+            let asked = asked.clone();
+            move |method, params| {
+                asked.lock().unwrap().push(format!("{method} {}", params["tool"].as_str().unwrap_or("")));
+                Some(reply(json!({"ok": true, "result": "quitting: the game ends in 0.2s, after its exit hooks"})))
+            }
+        });
+        assert_eq!(end_game(&Client::new(port, None), "cli", 4242), Ok(()));
+        assert_eq!(*asked.lock().unwrap(), ["ai/act quit"]);
+        let inside = serve(|_, _| Some(reply(json!({"ok": false, "result": "this game runs inside its stand's process"}))));
+        assert_eq!(end_game(&Client::new(inside, None), "cli", 4242), Err("pid 4242 would not quit: this game runs inside its stand's process".into()));
+        let old = serve(|_, _| Some(reply(json!({"ok": false, "result": "unknown tool `quit`; available: observe"}))));
+        assert!(end_game(&Client::new(old, None), "cli", 1).unwrap_err().contains("refusing to signal pid 1"));
     }
 
     #[test]
