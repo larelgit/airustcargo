@@ -159,11 +159,15 @@ fn music_set(In(call): In<Call<MusicSetArgs>>, world: &mut World) -> ToolResult 
             check_layer(&after, def, layer)?;
         }
     }
+    // Silence holds no layer: `track=none` lets go of it, and `layer=auto` has nothing left to do.
+    let silenced = track.as_deref() == Some("none");
     let mut said = Vec::new();
     if let Some(track) = track {
         said.push(set_track(world, (track != "none").then_some(track.as_str()))?);
     }
-    if let Some(layer) = layer {
+    if let Some(layer) = layer
+        && !(silenced && layer == "auto")
+    {
         said.push(force_layer(world, (layer != "auto").then_some(layer.as_str()))?);
     }
     Ok(said.join("; "))

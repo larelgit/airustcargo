@@ -29,6 +29,10 @@ fn the_content_check_names_what_would_not_play() {
                 stems: [(file: "music/calm.wav", layers: ["explore"]), (file: "sounds/beep.wav", layers: ["combt"])],
                 layers: [(name: "explore", when: "fighting"), (name: "combat"), (name: "boss", when: "fighting")],
             ),
+            "twice": (
+                stems: [(file: "music/calm.wav", layers: ["calm", "loud"])],
+                layers: [(name: "calm"), (name: "loud", when: "!!fighting")],
+            ),
         }"#,
     );
     assets.put("content/audio/second.audio.ron", r#"{"other": (voices: 0, music: "thme", sounds: {"damagd": "beep"})}"#);
@@ -45,6 +49,8 @@ fn the_content_check_names_what_would_not_play() {
     has("layer `explore` is the first, the one played when no other holds: it takes no `when` (`fighting`)");
     has("layer `combat` has no `when`: only the first layer plays without one");
     has("layer `combat` plays no stem: add it to a stem's `layers`");
+    // The music reads one `!`: a second would name a condition no game registers.
+    has("layer `loud`: `when` names no condition (`npc_engaged`, `!npcs_calm`; one `!` at most), not `!!fighting`");
     has("a game has one mixer, and this one has more");
     has("voices: 1 to 256, not 0");
     has("thme");

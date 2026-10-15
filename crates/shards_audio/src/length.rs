@@ -38,8 +38,9 @@ pub fn wav_seconds(bytes: &[u8]) -> Result<f64, String> {
             let size = size.min(bytes.len() - body);
             return Ok(size as f64 / f64::from(rate));
         }
-        // Chunks are padded to an even size.
-        at = body + size + (size & 1);
+        // Chunks are padded to an even size. A size past the end ends the walk.
+        let Some(next) = body.checked_add(size).and_then(|n| n.checked_add(size & 1)) else { break };
+        at = next;
     }
     Err("has no `data` chunk".to_owned())
 }
@@ -138,6 +139,10 @@ mod tests {
         assert_eq!(wav_seconds(&wav), Ok(0.5));
         assert!(wav_seconds(b"RIFF\0\0\0\0WAVE").unwrap_err().contains("no `data` chunk"));
         assert!(wav_seconds(b"not a wav file").unwrap_err().contains("no RIFF/WAVE header"));
+        // A chunk that says it is 4 GiB long ends the walk on any target.
+        let mut huge = b"RIFF\0\0\0\0WAVEjunk".to_vec();
+        huge.extend(u32::MAX.to_le_bytes());
+        assert!(wav_seconds(&huge).unwrap_err().contains("no `data` chunk"));
     }
 
     /// An Ogg page of stream `serial` with `body` (under 255 bytes: one segment).

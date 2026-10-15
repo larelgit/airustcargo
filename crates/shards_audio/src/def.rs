@@ -209,6 +209,12 @@ pub struct LayerDef {
     pub when: Option<String>,
 }
 
+/// A layer's `when` as the music reads it: whether it is negated (one `!`), and the
+/// condition's name.
+pub fn condition_of(when: &str) -> (bool, &str) {
+    when.strip_prefix('!').map_or((false, when.trim()), |name| (true, name.trim()))
+}
+
 impl MusicDef {
     /// The layer called `name`, by its place from calm (0) to intense.
     pub fn layer_index(&self, name: &str) -> Option<usize> {
@@ -244,9 +250,10 @@ impl ContentDef for MusicDef {
                     layer.name
                 )),
                 (1.., None) => refs.error(format!("layer `{}` has no `when`: only the first layer plays without one", layer.name)),
-                (_, Some(when)) if when.trim_start_matches('!').trim().is_empty() => {
-                    refs.error(format!("layer `{}`: `when` names no condition (`npc_engaged`, `!npcs_calm`)", layer.name))
-                }
+                (_, Some(when)) if matches!(condition_of(when).1.chars().next(), None | Some('!')) => refs.error(format!(
+                    "layer `{}`: `when` names no condition (`npc_engaged`, `!npcs_calm`; one `!` at most), not `{when}`",
+                    layer.name
+                )),
                 _ => {}
             }
         }

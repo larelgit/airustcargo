@@ -124,6 +124,26 @@ fn music_set_holds_a_layer_changes_the_track_and_explains_a_wrong_call() {
     assert_eq!(music(&app).track.as_deref(), Some("theme"));
     assert_eq!(journal(&app, JournalKind::Local, "music: theme → quiet").len(), 1, "no second switch was journaled");
     assert!(refused(&mut app, "music_set", json!({})).starts_with("give `track` (a track, or none) or `layer` (a layer, or auto); now: theme: "));
+    // Silence lets go of a held layer by itself: `layer=auto` with it is no error.
+    ok(&mut app, "music_set", json!({"layer": "combat"}));
+    assert_eq!(ok(&mut app, "music_set", json!({"track": "none", "layer": "auto"})), "theme fades out");
+    assert_eq!((music(&app).track, music(&app).forced), (None, None));
+}
+
+#[test]
+fn a_track_taken_out_of_content_fades_out() {
+    let assets = Folder::new("gone");
+    let mut app = game(&assets);
+    wait(&mut app, 1.0);
+    assert_eq!(music(&app).track.as_deref(), Some("theme"));
+    assets.put("content/audio/test.music.ron", r#"{"quiet": (stems: [(file: "music/calm.wav", layers: ["explore"])], layers: [(name: "explore")])}"#);
+    assets.put("content/audio/mixer.audio.ron", r#"{"mixer": (voices: 4, music: "quiet")}"#);
+    ok(&mut app, "content_reload", json!({}));
+    step(&mut app, 1);
+    assert_eq!(music(&app).track, None);
+    assert_eq!(journal(&app, JournalKind::Local, "gone from content"), ["music: theme fades out (gone from content)"]);
+    wait(&mut app, 1.5);
+    assert!(music(&app).stems.is_empty(), "its stems faded out: {:?}", music(&app).stems);
 }
 
 #[test]

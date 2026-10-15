@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use shards_content::db::closest;
 use shards_content::ContentDb;
 
-use crate::def::MusicDef;
+use crate::def::{condition_of, MusicDef};
 use crate::mixer::audio_def;
 
 /// What the music does: the track, its layer, and every stem heard or fading. Saved in snapshots,
@@ -86,10 +86,18 @@ pub fn step(world: &mut World, dt: f32) {
     }
     let track = world.resource::<Music>().track.clone();
     let def = track.as_deref().and_then(|t| world.resource::<ContentDb>().get::<MusicDef>(t)).cloned();
-    if let (Some(track), Some(def)) = (track, def) {
-        match_stems(world, &track, &def);
-        choose_layer(world, &track, &def, dt);
-        aim_stems(world, &track, &def);
+    match (track, def) {
+        (Some(track), Some(def)) => {
+            match_stems(world, &track, &def);
+            choose_layer(world, &track, &def, dt);
+            aim_stems(world, &track, &def);
+        }
+        // An edit took the track out of content: its stems fade out as any track's do.
+        (Some(track), None) => {
+            let _ = switch(world, None, false);
+            journal::emit(world, JournalKind::Local, format!("music: {track} fades out (gone from content)"));
+        }
+        _ => {}
     }
     fade(world, dt);
 }
@@ -134,8 +142,7 @@ fn wanted(world: &mut World, track: &str, def: &MusicDef) -> usize {
 
 /// Whether condition `when` (`name`, `!name`) holds, or why it cannot be told.
 pub fn holds(world: &World, when: &str) -> Result<bool, String> {
-    let (negated, name) = when.strip_prefix('!').map_or((false, when), |n| (true, n));
-    let name = name.trim();
+    let (negated, name) = condition_of(when);
     let conditions = world.get_resource::<AiConditions>();
     match conditions.and_then(|c| c.0.get(name)) {
         Some(condition) => Ok(condition(world) != negated),
