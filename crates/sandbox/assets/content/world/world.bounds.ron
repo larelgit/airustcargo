@@ -1,0 +1,16 @@
+// Where the sandbox's characters may be: the `bodies_in_world` invariant halts the game when
+// one ends a tick elsewhere. Inside means over a piece of what the built layouts have: each
+// solid, ramp and volume counts by its own rectangle on the ground, not by the layout's
+// bounding box, so the void beside the arena's corridor and beside the course's lane is
+// outside (past `margin` of the pieces). The pieces: the arena's floor and walls (x and z
+// -21.5..21.5), its corridor (x 21.5..44, z -5.5..5.5), the course's lane (x 44..86,
+// z -5.5..5.5) and the canyon floor under the glide (x 86..141.5, z -17.5..17.5). Or over the
+// loaded region's cells (the wilds: x -64..64, z 48..176; the region stays one rectangle).
+// `margin` meters wider on every rectangle, and above `fall_below` (the canyon floor under
+// the course's cliff is at -10).
+{
+    "world": (
+        margin: 4.0,
+        fall_below: -30.0,
+    ),
+}

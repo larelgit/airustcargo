@@ -1,0 +1,20 @@
+{
+    // The GDD's numbers: two attackers on one player, three on two, four on three.
+    "default": (
+        tokens: {1: 2, 2: 3, 3: 4},
+        waiting: [
+            (role: Circle, distance: 3.5, orbit: 1.2),
+            (role: Strafe, distance: 3.0, orbit: 1.0, period: 1.5),
+            (role: Hold, distance: 5.0),
+        ],
+        patience: 3.0,
+    ),
+    // Three tokens, but a target takes at most 2.0 of danger at once.
+    "budget": (tokens: {1: 3}, budget: Some(2.0), waiting: [(role: Hold, distance: 3.0)]),
+    // Three tokens; two heavy attacks never overlap.
+    "combos": (tokens: {1: 3}, allowed: [("light", "light"), ("light", "heavy")], waiting: [(role: Hold, distance: 3.0)]),
+    // One attacker at a time; a circle and a hold for the rest.
+    "single": (tokens: {1: 1}, waiting: [(role: Circle, distance: 4.0, orbit: 1.5), (role: Hold, distance: 6.0)]),
+    // A boss: it fights alone, resting close to its target.
+    "boss": (tokens: {1: 1}, waiting: [(role: Hold, distance: 2.6)]),
+}

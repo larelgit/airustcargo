@@ -1,0 +1,726 @@
+//! Content: how NPCs behave, perceive, share attacks and choose them.
+//!
+//! Five kinds, all hot-reloadable, all numbers a game tunes without a rebuild:
+//!
+//! - `behavior` ([`BehaviorDef`]): a state machine. States name a **state hook** (`kind`,
+//!   engine-provided like `chase` or the game's own) with entry parameters; transitions are
+//!   guarded by **named conditions** with parameters. The logic behind the names is code
+//!   (`add_npc_condition`, `add_npc_state`), the wiring is data.
+//! - `perception` ([`PerceptionDef`]): sight range, field of view, eye height, hearing,
+//!   memory.
+//! - `director` ([`DirectorDef`]): attack tokens by number of players, the collision budget,
+//!   which attack tags may overlap, what those without a token do.
+//! - `attack_plan` ([`AttackPlanDef`]): the attacks an NPC chooses from (weights, distance
+//!   windows, cooldowns, tags, costs) and the sequences it never plays.
+//! - `npc_tuning` ([`NpcTuning`], id `default`): engine-wide numbers (noise radii, avoidance).
+//!
+//! ```ron
+//! // content/npc/grunt.behavior.ron
+//! {
+//!     "grunt": (
+//!         initial: "idle",
+//!         states: {
+//!             "idle": (transitions: [(to: "chase", when: ["target_seen"])]),
+//!             "chase": (params: {"within": 3.0}, transitions: [
+//!                 (to: "home", when: [("!target_in_leash", {"margin": 2.0})]),
+//!                 (to: "fight", when: [("target_within", {"meters": 4.0})]),
+//!                 (to: "idle", when: ["target_lost"]),
+//!             ]),
+//!             "fight": (kind: "attack", transitions: [(to: "chase", when: [("!target_within", {"meters": 6.0})])]),
+//!             "home": (kind: "return_home", params: {"heal": 20.0}, transitions: [(to: "idle", when: ["at_home"])]),
+//!         },
+//!     ),
+//! }
+//! ```
+
+use std::collections::BTreeMap;
+use std::fmt;
+
+use serde::de::Deserializer;
+use serde::ser::{SerializeTuple, Serializer};
+use serde::{Deserialize, Serialize};
+use shards_action::ActionDef;
+use shards_content::{ContentDb, ContentDef, Refs};
+
+/// One parameter value: a flag, a number or a word.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(untagged)]
+pub enum Param {
+    Flag(bool),
+    Num(f32),
+    Text(String),
+}
+
+/// Named parameters of a state or a condition: `{"meters": 3.0, "speed": 0.5}`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(transparent)]
+pub struct Params(pub BTreeMap<String, Param>);
+
+impl Params {
+    /// Number `key`, or `default` when it is missing or not a number.
+    pub fn num(&self, key: &str, default: f32) -> f32 {
+        match self.0.get(key) {
+            Some(Param::Num(v)) => *v,
+            _ => default,
+        }
+    }
+
+    /// Word `key`.
+    pub fn text(&self, key: &str) -> Option<&str> {
+        match self.0.get(key) {
+            Some(Param::Text(v)) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Flag `key`, or `default`.
+    pub fn flag(&self, key: &str, default: bool) -> bool {
+        match self.0.get(key) {
+            Some(Param::Flag(v)) => *v,
+            _ => default,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// `meters=3 speed=0.5`: for journal lines and tools.
+    pub fn describe(&self) -> String {
+        self.0
+            .iter()
+            .map(|(k, v)| match v {
+                Param::Flag(b) => format!("{k}={b}"),
+                Param::Num(n) => format!("{k}={n}"),
+                Param::Text(t) => format!("{k}={t}"),
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+/// A named condition with parameters: `"target_seen"`, `("target_within", {"meters": 3.0})`.
+/// A `!` before the name negates it: `"!has_token"`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cond {
+    pub name: String,
+    pub negate: bool,
+    pub params: Params,
+}
+
+impl Cond {
+    pub fn new(name: &str, params: Params) -> Self {
+        match name.strip_prefix('!') {
+            Some(rest) => Self { name: rest.trim().to_owned(), negate: true, params },
+            None => Self { name: name.trim().to_owned(), negate: false, params },
+        }
+    }
+
+    fn written_name(&self) -> String {
+        if self.negate { format!("!{}", self.name) } else { self.name.clone() }
+    }
+}
+
+impl fmt::Display for Cond {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.params.is_empty() {
+            write!(f, "{}", self.written_name())
+        } else {
+            write!(f, "{}({})", self.written_name(), self.params.describe())
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Cond {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Name(String),
+            With(String, Params),
+        }
+        Ok(match Raw::deserialize(d)? {
+            Raw::Name(name) => Cond::new(&name, Params::default()),
+            Raw::With(name, params) => Cond::new(&name, params),
+        })
+    }
+}
+
+impl Serialize for Cond {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        if self.params.is_empty() {
+            return s.serialize_str(&self.written_name());
+        }
+        let mut t = s.serialize_tuple(2)?;
+        t.serialize_element(&self.written_name())?;
+        t.serialize_element(&self.params)?;
+        t.end()
+    }
+}
+
+/// Go to state `to` when every condition in `when` holds (an empty `when` always holds).
+/// A state's transitions are tried in order; the first that holds is taken, one per tick.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TransitionDef {
+    pub to: String,
+    #[serde(default)]
+    pub when: Vec<Cond>,
+}
+
+/// One state of a behaviour.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct StateDef {
+    /// The state hook that runs it (`idle`, `patrol`, `chase`, `return_home`, `wait_token`,
+    /// `attack`, `flee`, `hold`, `investigate`, or one the game added). Default: the state's
+    /// own name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Entry parameters the hook reads: `{"speed": 0.5, "within": 2.0}`.
+    #[serde(skip_serializing_if = "Params::is_empty")]
+    pub params: Params,
+    /// On entry a timer is drawn in `(min, max)` seconds (`SimRng`); `timer_done` holds once it
+    /// ran out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<(f32, f32)>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub transitions: Vec<TransitionDef>,
+}
+
+/// A behaviour (content kind `behavior`): a state machine whose logic the engine and the
+/// game provide by name.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BehaviorDef {
+    /// The state a new NPC starts in.
+    pub initial: String,
+    pub states: BTreeMap<String, StateDef>,
+}
+
+impl BehaviorDef {
+    /// The hook name of state `state`.
+    pub fn kind_of<'a>(&'a self, state: &'a str) -> &'a str {
+        self.states.get(state).and_then(|s| s.kind.as_deref()).unwrap_or(state)
+    }
+}
+
+impl ContentDef for BehaviorDef {
+    const KIND: &'static str = "behavior";
+
+    fn validate(&self, _: &str, refs: &mut Refs) {
+        let names: Vec<&str> = self.states.keys().map(String::as_str).collect();
+        let unknown = |refs: &mut Refs, field: &str, state: &str| {
+            let hint = shards_content::db::closest(state, names.iter().copied())
+                .map(|c| format!(" (did you mean `{c}`?)"))
+                .unwrap_or_default();
+            refs.error(format!("{field} names an unknown state `{state}`{hint}; states: {}", names.join(", ")));
+        };
+        if self.states.is_empty() {
+            refs.error("states is empty; give at least one, e.g. {\"idle\": ()}");
+            return;
+        }
+        if !self.states.contains_key(&self.initial) {
+            unknown(refs, "initial", &self.initial);
+        }
+        for (name, state) in &self.states {
+            if let Some((lo, hi)) = state.duration
+                && !(lo >= 0.0 && hi >= lo && hi.is_finite())
+            {
+                refs.error(format!("states.{name}.duration ({lo}, {hi}) must be 0 <= min <= max"));
+            }
+            for (i, t) in state.transitions.iter().enumerate() {
+                if !self.states.contains_key(&t.to) {
+                    unknown(refs, &format!("states.{name}.transitions[{i}].to"), &t.to);
+                }
+                for c in &t.when {
+                    if c.name.is_empty() {
+                        refs.error(format!("states.{name}.transitions[{i}].when has a condition without a name"));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// How an NPC senses (content kind `perception`). Missing fields keep their defaults.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct PerceptionDef {
+    /// Sees hostile fighters this far (m).
+    pub sight_range: f32,
+    /// Field of view, full angle (degrees; 360 sees all around).
+    pub fov_deg: f32,
+    /// Eyes above the feet (m): sight rays start here.
+    pub eye_height: f32,
+    /// Within this distance a target is noticed whatever way the NPC faces (still not through
+    /// walls).
+    pub near: f32,
+    /// Sight needs a clear ray through the world (`WORLD` layer). `false`: walls do not
+    /// block (a boss that always knows its arena).
+    pub line_of_sight: bool,
+    /// Hearing: a noise of radius `r` is heard within `r × hearing` (0: deaf).
+    pub hearing: f32,
+    /// Seconds a target stays known after it was last seen or heard.
+    pub memory: f32,
+}
+
+impl Default for PerceptionDef {
+    fn default() -> Self {
+        Self {
+            sight_range: 15.0,
+            fov_deg: 120.0,
+            eye_height: 1.6,
+            near: 2.0,
+            line_of_sight: true,
+            hearing: 1.0,
+            memory: 5.0,
+        }
+    }
+}
+
+impl ContentDef for PerceptionDef {
+    const KIND: &'static str = "perception";
+
+    fn validate(&self, _: &str, refs: &mut Refs) {
+        for (name, v) in [
+            ("sight_range", self.sight_range),
+            ("eye_height", self.eye_height),
+            ("near", self.near),
+            ("hearing", self.hearing),
+            ("memory", self.memory),
+        ] {
+            non_negative(refs, name, v);
+        }
+        if !(self.fov_deg > 0.0 && self.fov_deg <= 360.0) {
+            refs.error(format!("fov_deg must be in (0, 360] degrees (is {})", self.fov_deg));
+        }
+    }
+}
+
+/// What an NPC without an attack token does around its target.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Role {
+    /// Walk around the target at `distance`, `orbit` m/s along the circle.
+    #[default]
+    Circle,
+    /// Side-step around the target at `distance`, changing direction every `period` seconds.
+    Strafe,
+    /// Keep within `distance` of the target: close in when farther, else stand.
+    Hold,
+}
+
+impl Role {
+    pub fn name(self) -> &'static str {
+        match self {
+            Role::Circle => "circle",
+            Role::Strafe => "strafe",
+            Role::Hold => "hold",
+        }
+    }
+}
+
+/// A waiting role and its numbers. Waiters get slots around their target in the order they
+/// start waiting; slot `n` takes role `n % roles` of [`DirectorDef::waiting`].
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct WaitRole {
+    pub role: Role,
+    /// Meters from the target (centre to centre).
+    pub distance: f32,
+    /// Movement input while getting there: 0.5 walks, 1 runs.
+    pub speed: f32,
+    /// Circle and strafe: meters per second along the circle.
+    pub orbit: f32,
+    /// Strafe: seconds before it turns the other way.
+    pub period: f32,
+}
+
+impl Default for WaitRole {
+    fn default() -> Self {
+        Self { role: Role::Circle, distance: 4.0, speed: 0.5, orbit: 1.0, period: 2.0 }
+    }
+}
+
+/// How NPCs share their target (content kind `director`). An NPC fights by the director its
+/// [`Npc`](crate::Npc) names (`default` when it names none, the engine's numbers when content
+/// has no `default`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct DirectorDef {
+    /// Attack tokens by number of living players: `{1: 2, 2: 3, 3: 4}`. Only a token holder
+    /// starts an attack, and holds the token until the attack ends. More players than listed:
+    /// the highest entry; fewer: the lowest.
+    pub tokens: BTreeMap<u32, u32>,
+    /// How much danger one target may face at once: the attacks in flight on it may cost this
+    /// much together ([`AttackOption::cost`]). `None`: no limit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget: Option<f32>,
+    /// Tag pairs whose attacks may hit one target at the same time (`("light", "heavy")`;
+    /// `"*"` matches any tag). Empty: any attacks may overlap.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allowed: Vec<(String, String)>,
+    /// What those without a token do, by slot.
+    pub waiting: Vec<WaitRole>,
+    /// A token not used for an attack within this many seconds goes back.
+    pub patience: f32,
+}
+
+impl Default for DirectorDef {
+    fn default() -> Self {
+        Self {
+            tokens: BTreeMap::from([(1, 2), (2, 3), (3, 4)]),
+            budget: None,
+            allowed: Vec::new(),
+            waiting: vec![WaitRole::default()],
+            patience: 4.0,
+        }
+    }
+}
+
+impl DirectorDef {
+    /// The id NPCs fight by unless they name another.
+    pub const DEFAULT: &'static str = "default";
+
+    /// Tokens for `players` living players.
+    pub fn limit(&self, players: u32) -> u32 {
+        self.tokens
+            .range(..=players.max(1))
+            .next_back()
+            .or_else(|| self.tokens.iter().next())
+            .map_or(0, |(_, n)| *n)
+    }
+
+    /// Director `id` (empty: `default`) from `db`, or the engine's numbers.
+    pub fn of(db: &ContentDb, id: &str) -> DirectorDef {
+        let id = if id.is_empty() { Self::DEFAULT } else { id };
+        db.get::<DirectorDef>(id).cloned().unwrap_or_default()
+    }
+
+    /// Whether attacks tagged `a` and `b` may land on one target at the same time.
+    pub fn may_overlap(&self, a: &[String], b: &[String]) -> bool {
+        if self.allowed.is_empty() {
+            return true;
+        }
+        let matches = |pattern: &str, tags: &[String]| pattern == "*" || tags.iter().any(|t| t == pattern);
+        self.allowed.iter().any(|(x, y)| (matches(x, a) && matches(y, b)) || (matches(x, b) && matches(y, a)))
+    }
+}
+
+impl ContentDef for DirectorDef {
+    const KIND: &'static str = "director";
+
+    fn validate(&self, _: &str, refs: &mut Refs) {
+        if self.tokens.is_empty() {
+            refs.error("tokens is empty; give tokens by number of players, e.g. {1: 2, 2: 3, 3: 4}");
+        }
+        if self.tokens.contains_key(&0) {
+            refs.error("tokens: player counts start at 1");
+        }
+        if let Some(b) = self.budget
+            && !(b > 0.0 && b.is_finite())
+        {
+            refs.error(format!("budget must be > 0 (is {b}); leave it out for no limit"));
+        }
+        non_negative(refs, "patience", self.patience);
+        for (i, w) in self.waiting.iter().enumerate() {
+            non_negative(refs, &format!("waiting[{i}].distance"), w.distance);
+            non_negative(refs, &format!("waiting[{i}].orbit"), w.orbit);
+            if !(0.0..=1.0).contains(&w.speed) {
+                refs.error(format!("waiting[{i}].speed is a movement input in 0..1 (is {})", w.speed));
+            }
+            if w.role == Role::Strafe && w.period <= 0.0 {
+                refs.error(format!("waiting[{i}].period must be > 0 for a strafe (is {})", w.period));
+            }
+        }
+    }
+}
+
+/// One attack an NPC may choose: a moveset `input`, or an `action` (pressed through the
+/// moveset input that starts it).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct AttackOption {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    /// The name bans, cooldowns and tools use; default: the input or the action.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Relative chance among the options that may be chosen.
+    pub weight: f32,
+    /// Distance window (m, centre to centre): no closer than `min`...
+    pub min: f32,
+    /// ...and no farther than `max`. Default: the action's reach × the plan's `cover` plus the
+    /// target's body radius.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max: Option<f32>,
+    /// Seconds before the planner chooses it again (on top of the action's own cooldown).
+    pub cooldown: f32,
+    /// Tags for bans and the director's allowed combinations; the action's own tags and the
+    /// option's name count too.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// Its share of the target's collision budget while it is in flight.
+    pub cost: f32,
+}
+
+impl Default for AttackOption {
+    fn default() -> Self {
+        Self { input: None, action: None, name: None, weight: 1.0, min: 0.0, max: None, cooldown: 0.0, tags: Vec::new(), cost: 1.0 }
+    }
+}
+
+impl AttackOption {
+    /// Its name: `name`, else the input, else the action.
+    pub fn label(&self) -> &str {
+        self.name.as_deref().or(self.input.as_deref()).or(self.action.as_deref()).unwrap_or("")
+    }
+}
+
+/// Never choose an attack tagged with one of `then` when one of the last `within` attacks
+/// was tagged with one of `after`: `(after: ["zone"], then: ["zone"], within: 1)` = never two
+/// zone attacks in a row.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct SequenceBan {
+    pub after: Vec<String>,
+    pub then: Vec<String>,
+    pub within: u32,
+}
+
+impl Default for SequenceBan {
+    fn default() -> Self {
+        Self { after: Vec::new(), then: Vec::new(), within: 1 }
+    }
+}
+
+/// How an NPC chooses its next attack (content kind `attack_plan`), for enemies and bosses
+/// alike.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct AttackPlanDef {
+    pub options: Vec<AttackOption>,
+    /// Also every moveset input whose action hits and that `options` does not name, weight 1.
+    pub auto: bool,
+    /// Default distance windows reach this share of an action's reach (plus the target's
+    /// body radius): the target is well inside the zone when the warning shows.
+    pub cover: f32,
+    /// Choose only among attacks whose window holds the distance now, walking closer until
+    /// one does. Off: when none fits, choose among all and walk into the chosen one's window.
+    pub in_range_only: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bans: Vec<SequenceBan>,
+    /// Seconds of rest after an attack before it asks for the next token: `(min, max)`,
+    /// counted while it runs no action (a stagger after a parried attack is no rest).
+    pub rest: (f32, f32),
+}
+
+impl Default for AttackPlanDef {
+    fn default() -> Self {
+        Self { options: Vec::new(), auto: false, cover: 0.8, in_range_only: false, bans: Vec::new(), rest: (0.5, 1.0) }
+    }
+}
+
+impl AttackPlanDef {
+    /// How many past attacks the bans look at.
+    pub fn memory(&self) -> usize {
+        self.bans.iter().map(|b| b.within as usize).max().unwrap_or(0).max(1)
+    }
+}
+
+impl ContentDef for AttackPlanDef {
+    const KIND: &'static str = "attack_plan";
+
+    fn validate(&self, _: &str, refs: &mut Refs) {
+        if self.options.is_empty() && !self.auto {
+            refs.error("options is empty and auto is off: give options, or `auto: true` to use the moveset's attacks");
+        }
+        let mut names: Vec<&str> = Vec::new();
+        for (i, o) in self.options.iter().enumerate() {
+            let at = format!("options[{i}]");
+            match (&o.input, &o.action) {
+                (Some(_), Some(_)) => refs.error(format!("{at} names both an input and an action; give one")),
+                (None, None) => refs.error(format!("{at} names neither an input nor an action, e.g. (input: \"light\")")),
+                (None, Some(action)) => {
+                    refs.require::<ActionDef>(action, &format!("{at}.action"));
+                }
+                _ => {}
+            }
+            if names.contains(&o.label()) {
+                refs.error(format!("{at}: another option is also named `{}`; give one a `name`", o.label()));
+            }
+            names.push(o.label());
+            non_negative(refs, &format!("{at}.weight"), o.weight);
+            non_negative(refs, &format!("{at}.min"), o.min);
+            non_negative(refs, &format!("{at}.cooldown"), o.cooldown);
+            non_negative(refs, &format!("{at}.cost"), o.cost);
+            if let Some(max) = o.max
+                && !(max >= o.min && max.is_finite())
+            {
+                refs.error(format!("{at}.max {max} must be at least min {}", o.min));
+            }
+        }
+        if !self.options.is_empty() && self.options.iter().all(|o| o.weight <= 0.0) {
+            refs.error("every option has weight 0: none would ever be chosen");
+        }
+        if !(self.cover > 0.0 && self.cover.is_finite()) {
+            refs.error(format!("cover must be > 0 (is {})", self.cover));
+        }
+        let (lo, hi) = self.rest;
+        if !(lo >= 0.0 && hi >= lo && hi.is_finite()) {
+            refs.error(format!("rest ({lo}, {hi}) must be 0 <= min <= max"));
+        }
+        for (i, b) in self.bans.iter().enumerate() {
+            if b.after.is_empty() || b.then.is_empty() {
+                refs.error(format!("bans[{i}] needs tags in both `after` and `then`"));
+            }
+            if b.within == 0 {
+                refs.error(format!("bans[{i}].within must be at least 1 (the last attack)"));
+            }
+        }
+    }
+}
+
+/// Engine-wide NPC numbers (content kind `npc_tuning`, id `default`). Missing fields keep
+/// their defaults.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct NpcTuning {
+    /// Radius of the noise a hit makes (m), heard around the one hit; 0: hits are silent.
+    pub hit_noise: f32,
+    /// Radius of the noise a sprinting character makes (m); 0: silent.
+    pub sprint_noise: f32,
+    /// Nav agents look this far ahead (s) for NPCs they would bump into.
+    pub avoid_time: f32,
+    /// Room kept between two NPCs' bodies when they pass (m).
+    pub avoid_margin: f32,
+    /// Seconds between two route plans of one agent whose way is blocked.
+    pub repath: f32,
+    /// A waypoint counts as reached this close (m).
+    pub waypoint_reach: f32,
+}
+
+impl Default for NpcTuning {
+    fn default() -> Self {
+        Self { hit_noise: 10.0, sprint_noise: 8.0, avoid_time: 1.0, avoid_margin: 0.3, repath: 1.0, waypoint_reach: 0.4 }
+    }
+}
+
+impl NpcTuning {
+    /// The id the engine reads.
+    pub const ID: &'static str = "default";
+
+    /// The tuning in `db`, or the defaults.
+    pub fn of(db: &ContentDb) -> NpcTuning {
+        db.get::<NpcTuning>(Self::ID).cloned().unwrap_or_default()
+    }
+}
+
+impl ContentDef for NpcTuning {
+    const KIND: &'static str = "npc_tuning";
+
+    fn validate(&self, id: &str, refs: &mut Refs) {
+        if id != Self::ID {
+            refs.error(format!("the engine reads only the tuning `{}`; rename this one", Self::ID));
+        }
+        for (name, v) in [
+            ("hit_noise", self.hit_noise),
+            ("sprint_noise", self.sprint_noise),
+            ("avoid_time", self.avoid_time),
+            ("avoid_margin", self.avoid_margin),
+            ("repath", self.repath),
+            ("waypoint_reach", self.waypoint_reach),
+        ] {
+            non_negative(refs, name, v);
+        }
+    }
+}
+
+fn non_negative(refs: &mut Refs, field: &str, v: f32) {
+    if !(v >= 0.0 && v.is_finite()) {
+        refs.error(format!("{field} must be a number >= 0 (is {v})"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ron<T: serde::de::DeserializeOwned>(text: &str) -> T {
+        ron::Options::default()
+            .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+            .from_str(text)
+            .unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    #[test]
+    fn conditions_read_as_names_or_with_params_and_round_trip_through_json() {
+        let t: TransitionDef =
+            ron(r#"(to: "fight", when: ["target_seen", "!has_token", ("target_within", {"meters": 3, "loud": true})])"#);
+        assert_eq!(t.when[0], Cond::new("target_seen", Params::default()));
+        assert!(t.when[1].negate && t.when[1].name == "has_token");
+        assert_eq!(t.when[2].params.num("meters", 0.0), 3.0, "integers read as numbers");
+        assert!(t.when[2].params.flag("loud", false));
+        assert_eq!(t.when[2].to_string(), "target_within(loud=true meters=3)");
+        let json = serde_json::to_value(&t).unwrap();
+        assert_eq!(serde_json::from_value::<TransitionDef>(json).unwrap(), t);
+    }
+
+    #[test]
+    fn token_limits_follow_the_player_count() {
+        let d = DirectorDef::default();
+        assert_eq!((d.limit(0), d.limit(1), d.limit(2), d.limit(3), d.limit(7)), (2, 2, 3, 4, 4));
+        let d: DirectorDef = ron("(tokens: {2: 3, 4: 5})");
+        assert_eq!((d.limit(1), d.limit(3), d.limit(4)), (3, 3, 5));
+        let json = serde_json::to_value(&d).unwrap();
+        assert_eq!(serde_json::from_value::<DirectorDef>(json).unwrap(), d, "player counts survive JSON keys");
+    }
+
+    #[test]
+    fn allowed_combinations_match_tags_either_way_round() {
+        let d: DirectorDef = ron(r#"(allowed: [("light", "heavy"), ("light", "light")])"#);
+        let (light, heavy) = (vec!["light".to_owned()], vec!["heavy".to_owned()]);
+        assert!(d.may_overlap(&light, &heavy) && d.may_overlap(&heavy, &light) && d.may_overlap(&light, &light));
+        assert!(!d.may_overlap(&heavy, &heavy));
+        assert!(DirectorDef::default().may_overlap(&heavy, &heavy), "no list: anything overlaps");
+        let any: DirectorDef = ron(r#"(allowed: [("*", "light")])"#);
+        assert!(any.may_overlap(&heavy, &light) && !any.may_overlap(&heavy, &heavy));
+    }
+
+    #[test]
+    fn validation_names_the_field_and_the_fix() {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<BehaviorDef>();
+        kinds.register::<AttackPlanDef>();
+        kinds.register::<ActionDef>();
+        let behaviors = r#"{
+            "b": (initial: "idel", states: {
+                "idle": (transitions: [(to: "chace", when: ["target_seen"])]),
+                "chase": (duration: (2.0, 1.0)),
+            }),
+        }"#;
+        let plans = r#"{
+            "p": (options: [(input: "light", action: "x"), (action: "swip", weight: -1), (input: "light")], rest: (1, 0)),
+        }"#;
+        let sources = [
+            shards_content::db::Source { path: "content/b.behavior.ron".into(), text: behaviors.into() },
+            shards_content::db::Source { path: "content/p.attack_plan.ron".into(), text: plans.into() },
+        ];
+        let db = ContentDb::build(&kinds, &sources);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        // Kinds validate in name order: `attack_plan` before `behavior`.
+        let expected = [
+            "content/p.attack_plan.ron: attack_plan `p`: options[0] names both an input and an action; give one",
+            "content/p.attack_plan.ron: attack_plan `p`: options[1].action -> unknown action `swip`",
+            "content/p.attack_plan.ron: attack_plan `p`: options[1].weight must be a number >= 0 (is -1)",
+            "content/p.attack_plan.ron: attack_plan `p`: options[2]: another option is also named `light`; give one a `name`",
+            "content/p.attack_plan.ron: attack_plan `p`: rest (1, 0) must be 0 <= min <= max",
+            "content/b.behavior.ron: behavior `b`: initial names an unknown state `idel` (did you mean `idle`?); states: chase, idle",
+            "content/b.behavior.ron: behavior `b`: states.chase.duration (2, 1) must be 0 <= min <= max",
+            "content/b.behavior.ron: behavior `b`: states.idle.transitions[0].to names an unknown state `chace` (did you mean `chase`?); states: chase, idle",
+        ];
+        assert_eq!(errors, expected);
+    }
+}

@@ -1,20 +1,28 @@
 //! Tick timing: the real time of every tick, against a budget, in `step` replies, the
 //! journal and `ai/status`. `sandbox::test_app` keeps timing out of replies and the
 //! journal (it differs from run to run), so these tests turn it on themselves. They
-//! sleep in gameplay systems: a file of their own keeps them off other tests' clocks.
+//! sleep in gameplay systems far longer than a tick of this sandbox takes, with budgets
+//! well above a tick too. The games of one process share Bevy's task pools, and a thread
+//! that waits for its own systems may run another game's meanwhile, a sleeping one
+//! included: so these tests have a file of their own, away from the other tests, and
+//! run one game at a time ([`one_clock`]).
 
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use ai_core::prelude::*;
-use ai_core::replay;
-use ai_core::{call_tool, AiJournal, AiPerf, AiReplay, CallOutcome, JournalKind};
-use bevy::prelude::*;
-use serde_json::{json, Value};
+use shards::ai_core::{self, replay, AiJournal, AiPerf, AiReplay, JournalKind};
+use shards::prelude::*;
+use shards::serde_json::{self, json};
+use shards::testing::ok;
 
-fn ok(app: &mut App, tool: &str, args: Value) -> CallOutcome {
-    let out = call_tool(app.world_mut(), "dev", tool, args.clone());
-    assert!(out.ok, "{tool} {args} failed: {}", out.result);
-    out
+/// How long a slow tick sleeps, and the budget it breaks.
+const SLOW_MS: u64 = 200;
+const BUDGET_MS: u64 = 120;
+
+/// Held by every test while its game ticks: one clock at a time in this process.
+fn one_clock() -> MutexGuard<'static, ()> {
+    static CLOCK: Mutex<()> = Mutex::new(());
+    CLOCK.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Runs `ticks` ticks; the reply's lines.
@@ -23,13 +31,13 @@ fn step(app: &mut App, ticks: u64) -> Vec<String> {
     out.result.as_str().unwrap().lines().map(str::to_owned).collect()
 }
 
-/// A gameplay system that sleeps `ms` in each of `ticks`.
-fn slow(app: &mut App, ticks: &'static [u64], ms: u64) {
+/// A gameplay system that sleeps [`SLOW_MS`] in each of `ticks`.
+fn slow(app: &mut App, ticks: &'static [u64]) {
     app.add_systems(
         FixedUpdate,
         (move |tick: Res<SimTick>| {
             if ticks.contains(&tick.0) {
-                std::thread::sleep(Duration::from_millis(ms));
+                std::thread::sleep(Duration::from_millis(SLOW_MS));
             }
         })
         .in_set(SimSet::Cleanup),
@@ -64,16 +72,17 @@ fn max_of(line: &str) -> (f64, u64) {
 
 #[test]
 fn a_slow_tick_shows_in_the_step_reply_and_the_journal() {
+    let _clock = one_clock();
     let mut app = warmed_up();
-    slow(&mut app, &[10], 30);
-    report(&mut app, Duration::from_millis(20));
+    slow(&mut app, &[10]);
+    report(&mut app, Duration::from_millis(BUDGET_MS));
 
     let reply = step(&mut app, 20);
     assert_eq!(reply[0], "ran 20 ticks (1 → 21)");
     let line = &reply[1];
-    assert!(line.starts_with("ticks: avg ") && line.ends_with(", budget 20.0 ms, 1 over budget"), "{line}");
+    assert!(line.starts_with("ticks: avg ") && line.ends_with(", budget 120.0 ms, 1 over budget"), "{line}");
     let (max, tick) = max_of(line);
-    assert!(max >= 30.0, "{line}");
+    assert!(max >= SLOW_MS as f64, "{line}");
     assert_eq!(tick, 10, "{line}");
 
     let entries = perf_entries(&app);
@@ -82,11 +91,12 @@ fn a_slow_tick_shows_in_the_step_reply_and_the_journal() {
     // The status keeps the same ticks.
     let status = ai_core::perf::status(app.world());
     assert_eq!((status["worst_tick"].as_u64(), status["over_budget"].as_u64()), (Some(10), Some(1)), "{status}");
-    assert!(status["max_ms"].as_f64().unwrap() >= 30.0, "{status}");
+    assert!(status["max_ms"].as_f64().unwrap() >= SLOW_MS as f64, "{status}");
 }
 
 #[test]
 fn ticks_within_budget_leave_the_journal_alone() {
+    let _clock = one_clock();
     let mut app = warmed_up();
     report(&mut app, Duration::from_secs(10));
     let reply = step(&mut app, 120);
@@ -97,13 +107,14 @@ fn ticks_within_budget_leave_the_journal_alone() {
 
 #[test]
 fn ticks_over_budget_are_journaled_at_most_once_a_game_second() {
+    let _clock = one_clock();
     let mut app = warmed_up();
-    slow(&mut app, &[10, 20, 30, 40, 75], 25);
-    report(&mut app, Duration::from_millis(20));
+    slow(&mut app, &[10, 20, 30, 40, 75]);
+    report(&mut app, Duration::from_millis(BUDGET_MS));
 
     let reply = step(&mut app, 150);
-    assert!(reply[1].ends_with(", 5 over budget"), "{reply:?}");
     let entries = perf_entries(&app);
+    assert!(reply[1].ends_with(", 5 over budget"), "{reply:?} {entries:?}");
     let tail = |entry: &str| entry.split_once(" ms at tick ").map(|(_, tick)| tick.to_owned()).unwrap();
     // The first one right away; the next three after a game-second (60 ticks), as one;
     // tick 75 waits for the second after that.
@@ -116,9 +127,10 @@ fn ticks_over_budget_are_journaled_at_most_once_a_game_second() {
 
 #[test]
 fn timing_off_still_measures_for_the_status() {
+    let _clock = one_clock();
     let mut app = warmed_up();
-    slow(&mut app, &[10], 30);
-    app.world_mut().resource_mut::<AiPerf>().budget = Some(Duration::from_millis(20));
+    slow(&mut app, &[10]);
+    app.world_mut().resource_mut::<AiPerf>().budget = Some(Duration::from_millis(BUDGET_MS));
     // `test_app`: no `ticks:` line, no journal entries.
     assert_eq!(step(&mut app, 20), ["ran 20 ticks (1 → 21)"]);
     assert_eq!(perf_entries(&app), Vec::<String>::new());
@@ -128,6 +140,7 @@ fn timing_off_still_measures_for_the_status() {
 
 #[test]
 fn the_status_covers_the_last_600_ticks() {
+    let _clock = one_clock();
     let mut app = sandbox::test_app(42);
     step(&mut app, 700);
     let status = ai_core::perf::status(app.world());
@@ -141,9 +154,10 @@ fn the_status_covers_the_last_600_ticks() {
 
 #[test]
 fn timing_stays_out_of_replays() {
+    let _clock = one_clock();
     let mut original = warmed_up();
-    slow(&mut original, &[10], 30);
-    report(&mut original, Duration::from_millis(20));
+    slow(&mut original, &[10]);
+    report(&mut original, Duration::from_millis(BUDGET_MS));
     ok(&mut original, "attack", json!({"target": "e6", "repeat": true}));
     step(&mut original, 120);
     assert_eq!(perf_entries(&original).len(), 1);

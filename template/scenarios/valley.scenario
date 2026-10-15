@@ -1,0 +1,38 @@
+# The generated region: the valley (`assets/content/region/`), made from seed 42 by the
+# engine's generator, loaded behind the loading screen; the hero walks to a raiders' camp over
+# the navmesh, a raider (an NPC of the engine: `assets/content/npc/`) comes for it, and turns
+# back to its camp when the hero walks off. The raiders come with the region, so the scenario
+# follows them by the journal and the engine's stop condition `npc_beyond_leash` (an NPC out of
+# its zone), which must never hold.
+
+seed 42
+
+# --- 1. to the valley: seed 42 always makes the same one (its manifest hash says so); the
+# hero appears at its gate
+act regen region=valley seed=42
+expect result contains "ok: valley seed 42 v1"
+expect result contains "spawn at (-40.0, 56.0)"
+act region_info
+expect result contains "\"manifest_hash\": \"e7cec72c6e3e08c4\""
+act god
+observe
+expect result contains "TILE (1, 1) gate"
+
+# --- 2. to the first camp, (11, 69), as a player plans it: over the navmesh
+act nav_path to='{"x": 11, "z": 69}'
+expect result contains "\"provider\": \"navmesh\""
+act move_to target='{"x": 11, "z": 66}' path=true within=1
+expect result contains "ok: following path"
+step 1200 --until "journal:→ fight e1" --until named:npc_beyond_leash
+expect stopped "idle → fight e1"
+step 600 --until "journal:-> e1" --until named:npc_beyond_leash
+expect stopped "-> e1"
+
+# --- 3. the hero walks off west; the raider follows to the edge of its camp, then goes back
+act move_to target='{"x": -10, "z": 60}' path=true
+step 900 --until "journal:fight → home e1" --until named:npc_beyond_leash
+expect stopped "fight → home e1"
+step 600 --until named:npc_beyond_leash
+expect result contains "no condition met"
+expect journal "home → idle"
+act god on=false

@@ -1,0 +1,61 @@
+# A bad call is explained, never silently dropped: every error says what was wrong and how
+# the call should look. `act?` lets a call fail; `expect result` reads the message.
+#
+# It puts the player back at the arena's start (the layout's spawn point, facing north),
+# whatever came before, so it passes in any order with the other scenarios.
+
+# --- the player at the start: a live body, its controls released
+act heal id=e5
+act stop
+act block on=false
+act glide on=false
+act sprint on=false
+act lock_on off=true
+act teleport id=e5 x=0 z=12 y=0
+step 2
+
+# a tool that does not exist lists the ones that do
+act? fly
+expect result contains "unknown tool `fly`; available:"
+expect result contains "move_to"
+
+# a missing argument: the message ends with the signature to call it by
+act? teleport id=e5
+expect result contains "missing field `x`"
+expect result contains "Expected: teleport(id: integer|string"
+
+# an entity that does not exist (an id far beyond any a session hands out: regions spawn many)
+act? inspect id=99999
+expect result contains "e99999 does not exist"
+
+# a component the entity does not have
+act? set id=e5 component=Mana value=5
+expect result contains "unknown component `Mana`; this entity has:"
+expect result contains "Health"
+
+# a stop condition that does not exist
+act? step until='[{"named":"nope"}]'
+# The known ones: the sandbox's, among the engine modules' own (npc_attacking, ...).
+expect result contains "unknown condition `nope`; known: boss_dead, boss_phase_2, "
+expect result contains "player_dead"
+
+# a player-scope agent plays fair: no cheats, no control over time
+session --agent bot --scope player
+act? teleport id=e5 x=0 z=0
+expect result contains "`teleport` needs dev scope; agent `bot` has player scope"
+act? step ticks=10
+expect result contains "needs dev scope"
+act? dodge dir=sideways
+expect result contains "unknown direction `sideways`; use N, NE, E, SE, S, SW, W or NW"
+# the moveset says what the player has: the perfect block is its parry
+act? parry
+expect result contains "your moveset `player` has no `parry`; it has: block, dodge, heavy, light"
+act? use_item item=bomb
+expect result contains "no item `bomb`; you have: flask"
+act? path_to target='{"x": 120, "z": 0}'
+expect result contains "farther than max 80m"
+session --agent scenario
+
+# none of this was worth a warning or an error in the journal
+expect !journal "[error]"
+expect !journal "[warn]"

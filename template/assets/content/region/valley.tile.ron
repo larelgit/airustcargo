@@ -1,0 +1,41 @@
+// The valley's tiles (content kind `tile`): 16 m squares whose top is y = 0. The generator
+// fits them by their edge sockets and puts points of interest in their `slots`; positions are
+// in the tile's frame (its center at the origin, -Z north, before it turns).
+//
+// `ruin` is a level file from Blender (`assets/tiles/ruin.gltf`, the same file as the engine's
+// sandbox: ground, broken walls, a column, a camp marker); the others are inline boxes.
+{
+    "meadow": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        weight: 4.0,
+        slots: [(at: (3.0, 0.0, -3.0), accepts: ["camp"])],
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+    ),
+    // Four columns (2 x 4 x 2 m) with a camp between them: its raider walks around them.
+    "columns": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        weight: 1.5,
+        slots: [(at: (0.0, 0.0, 0.0), accepts: ["camp"])],
+        geometry: Inline([
+            Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0)),
+            Solid(shape: Cuboid(half: (1.0, 2.0, 1.0)), at: (-3.0, 2.0, -3.0)),
+            Solid(shape: Cuboid(half: (1.0, 2.0, 1.0)), at: (3.0, 2.0, -3.0)),
+            Solid(shape: Cuboid(half: (1.0, 2.0, 1.0)), at: (-3.0, 2.0, 3.0)),
+            Solid(shape: Cuboid(half: (1.0, 2.0, 1.0)), at: (3.0, 2.0, 3.0)),
+        ]),
+    ),
+    "ruin": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        rotations: [0, 90, 180, 270],
+        max_count: 4,
+        slots: [(at: (-2.0, 0.0, 2.0), accepts: ["camp"])],
+        geometry: Level(path: "tiles/ruin.gltf"),
+    ),
+    // Where the hero arrives; the region puts it in its north-west corner (`fixed`).
+    "gate": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        weight: 0.0,
+        slots: [(at: (0.0, 0.0, 0.0), accepts: ["spawn"])],
+        geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
+    ),
+}

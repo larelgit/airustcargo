@@ -180,15 +180,15 @@ fn measure(mut perf: ResMut<AiPerf>, tick: Res<SimTick>, fixed: Res<Time<Fixed>>
     }
 }
 
-/// Starts counting the ticks of a `step`.
-pub(crate) fn begin_span(world: &mut World) {
+/// Starts counting the ticks of a `step` (a stand's driver counts its own).
+pub fn begin_span(world: &mut World) {
     if let Some(mut perf) = world.get_resource_mut::<AiPerf>() {
         perf.span = TickStats::default();
     }
 }
 
 /// The ticks since [`begin_span`].
-pub(crate) fn span(world: &World) -> TickStats {
+pub fn span(world: &World) -> TickStats {
     world.get_resource::<AiPerf>().map(|p| p.span).unwrap_or_default()
 }
 

@@ -1,0 +1,17 @@
+// From the entry to the throne room through the vault, with a few side rooms.
+{
+    "crypt": (
+        version: 1,
+        cell_size: 8.0,
+        entrance: "entry",
+        goal: "throne",
+        rooms: ["#crypt"],
+        fixed: ["vault"],
+        path: (3, 6),
+        branches: (1, 3),
+        max_size: (14, 14),
+        secondary: [(poi: "chest", count: 2)],
+        checks: (distances: [(a: "spawn", b: "boss", min: 16.0)]),
+        backtracks: 500,
+    ),
+}

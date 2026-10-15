@@ -1,0 +1,11 @@
+[package]
+name = "shards_script"
+description = "Scenario files and `--until` conditions, shared by the `shards` CLI and in-process tests. No Bevy."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

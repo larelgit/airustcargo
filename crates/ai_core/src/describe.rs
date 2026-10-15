@@ -39,6 +39,33 @@ pub struct Describer {
 #[derive(Resource, Default, Clone)]
 pub struct AiDescribers(pub Vec<Describer>);
 
+/// Advice for the subject, from the whole world: `in hit zone of e6 slam (lands in
+/// 0.32s): move 2.1m S to leave it`. Each line shows as `ALERT ...` under `YOU`.
+pub type AdviceFn = fn(&World, Entity) -> Vec<String>;
+
+/// Registered advice sources, in registration order.
+#[derive(Resource, Default, Clone)]
+pub struct AiAdvisors(pub Vec<AdviceFn>);
+
+/// Every advice line for `subject`, in registration order.
+pub fn advice(world: &World, subject: Entity) -> Vec<String> {
+    world.get_resource::<AiAdvisors>().map(|a| a.0.iter().flat_map(|f| f(world, subject)).collect()).unwrap_or_default()
+}
+
+/// Where the subject is, from the whole world, in lines of their own under `YOU` (after its
+/// `ALERT`s): `TILE (3, 4) road_bend rot 90 · forest_a seed 42 v3`. Return nothing to add
+/// nothing.
+pub type ObserveLinesFn = fn(&World, Entity) -> Vec<String>;
+
+/// Registered sources of lines under `YOU`, in registration order.
+#[derive(Resource, Default, Clone)]
+pub struct AiObserveLines(pub Vec<ObserveLinesFn>);
+
+/// Every line about `subject`'s surroundings, in registration order.
+pub fn observe_lines(world: &World, subject: Entity) -> Vec<String> {
+    world.get_resource::<AiObserveLines>().map(|l| l.0.iter().flat_map(|f| f(world, subject)).collect()).unwrap_or_default()
+}
+
 /// Everything the AI layer knows about one entity, independent of the viewer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EntityFacts {

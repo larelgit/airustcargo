@@ -1,0 +1,5 @@
+// How autosaves are debounced in the tests: the world once a second, the character twice as often.
+{
+    "world": (debounce_secs: 1.0),
+    "character": (debounce_secs: 0.5),
+}

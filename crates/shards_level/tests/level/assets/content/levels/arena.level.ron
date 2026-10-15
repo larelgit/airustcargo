@@ -1,0 +1,12 @@
+{
+    "arena": (
+        file: "arena.gltf",
+        required_markers: [
+            (kind: "spawn", name: "start"),
+            (kind: "landmark"),
+            (kind: "trigger", name: "goal"),
+            (kind: "socket", name: "road", min: 2),
+        ],
+        at: (0.0, 0.0, 0.0),
+    ),
+}

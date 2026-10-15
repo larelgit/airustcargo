@@ -1,0 +1,45 @@
+name: Set up the engine build
+description: >
+  System packages, the Rust toolchain named by rust-toolchain.toml, and the cargo cache.
+  Every job of ci.yml starts with it (after actions/checkout).
+
+inputs:
+  cache-key:
+    description: >
+      Jobs with the same key share one cargo cache. Bevy compiles for many minutes and its
+      artifacts are big, so jobs that build the same thing must not each keep a copy.
+    required: true
+  save:
+    description: >
+      Whether this job saves the cache when it ends. Jobs that only reuse what `test` built
+      (the template, the window job) set it to false: what they add would only bloat it.
+    required: false
+    default: "true"
+  packages:
+    description: Extra apt packages (the window job needs xvfb and a software Vulkan driver).
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # `bevy_remote` pulls `bevy_audio` -> alsa-sys, which finds alsa.pc through pkg-config.
+    - name: System packages
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev libudev-dev ${{ inputs.packages }}
+
+    # The channel and components (rustfmt, clippy) come from rust-toolchain.toml. Since
+    # rustup 1.28 cargo no longer installs a missing toolchain by itself; `rustup show
+    # active-toolchain` does (the explicit install is a fallback for other rustup versions).
+    - name: Rust toolchain (from rust-toolchain.toml)
+      shell: bash
+      run: rustup show active-toolchain || rustup toolchain install --profile minimal
+
+    # Caches ~/.cargo and target/ (dependencies only: the workspace's own crates are rebuilt).
+    - name: Cargo cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: ${{ inputs.cache-key }}
+        save-if: ${{ inputs.save }}

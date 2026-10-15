@@ -1,0 +1,16 @@
+// What the wilds fall back to when no attempt of the generator passes its checks.
+{
+    "wilds_safe": (
+        rows: [
+            "grass grass grass grass grass grass grass grass",
+            "grass gate grass grass grass grass grass grass",
+            "grass grass grass grass grass grass pillars grass",
+            "grass grass grass grass grass grass grass grass",
+            "grass grass grass grass grass grass grass grass",
+            "grass grass grass grass grass hall grass grass",
+            "grass pillars grass grass grass grass grass grass",
+            "grass grass grass grass grass grass grass grass",
+        ],
+        pois: [(poi: "spawn", at: (1, 1)), (poi: "den", at: (5, 5)), (poi: "shrine", at: (3, 3)), (poi: "camp", at: (6, 2)), (poi: "camp", at: (1, 6))],
+    ),
+}

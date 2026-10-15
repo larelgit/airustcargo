@@ -1,0 +1,5 @@
+// Engine-wide combat numbers: how long a press waits for its action (s), statuses at once,
+// what sprinting costs per second, how far `lock_on` looks (m).
+{
+    "default": (input_buffer: 0.15, max_statuses: 3, sprint_stamina_per_s: 12.0, lock_on_range: 20.0),
+}

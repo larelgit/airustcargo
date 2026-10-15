@@ -8,7 +8,8 @@
 //!   with the tick it took effect at. Changes made by gameplay systems inside a
 //!   tick are deterministic and not stored.
 //! - **calls**: every action tool call (`teleport`, `set`, `spawn`, `attack`, …) with
-//!   the caller's scope and body. Control tools (`pause`, `step`, `possess`) change
+//!   the caller's scope and body (a tool may take back one it refused,
+//!   [`forget_call`]). Control tools (`pause`, `step`, `possess`) change
 //!   *when* things happen, not what, and are left out. Raw BRP edits
 //!   (`world.insert_components`) bypass the tools and are not recorded.
 //! - **rules**: session invariants added, removed and re-armed (`assert_*`, see
@@ -30,6 +31,14 @@
 //! playback takes over and ends it.
 //!
 //! Recording continues during playback, so a branch saves as one whole replay.
+//!
+//! **From a snapshot.** A recording that starts at tick `N` instead of 0 carries the
+//! [`Snapshot`] it started from (`start`, format `shards-replay/3`). Loading a snapshot
+//! into a running game (`snapshot_load`) restarts the recording there: what came before
+//! is not part of it any more, the snapshot is. Playback loads that snapshot as soon as
+//! the game has loaded, then plays the events and compares the checks as usual, so
+//! `--replay FILE --verify` works for such a replay too. Replays without a start are
+//! `shards-replay/2` or `/3` files that begin at tick 0; this build plays both.
 
 use std::any::TypeId;
 use std::borrow::Cow;
@@ -56,16 +65,19 @@ use crate::journal::{self, JournalKind};
 use crate::rng::SimSeed;
 use crate::session::{AgentSessions, Caller, Scope};
 use crate::sim::{self, SimTick};
+use crate::snapshot::{self, Snapshot};
 use crate::tools::{call_tool, register_tool, Call, ToolKind, ToolResult};
 
-/// Format tag written into every replay file. Version 3 adds session rules (`assert`
-/// events), the check interval and a breakdown of every check; version 2 files play
-/// as before, checked by their hashes alone. Version 1 hashed the AI's text and cannot
-/// be checked by this build.
+/// Format tag written into every replay file. Version 3 adds, each of them optional: a
+/// starting snapshot (`start`), session rules (`assert` events), the check interval and
+/// a breakdown of every check. A version 3 file without some of them plays as one
+/// without them: from tick 0, no rules, a check every [`CHECK_EVERY`] ticks, hashes
+/// alone. Version 2 files (hashes of game data, from tick 0) play as before, checked by
+/// their hashes alone. Version 1 hashed the AI's text and cannot be checked by this
+/// build.
 pub const FORMAT: &str = "shards-replay/3";
 
 const FORMAT_V2: &str = "shards-replay/2";
-
 const FORMAT_V1: &str = "shards-replay/1";
 
 /// Ticks between state checks by default (one second at 60 Hz), and in every
@@ -142,6 +154,10 @@ pub struct Replay {
     /// What each check keeps next to its hash.
     #[serde(default = "CheckDetail::hashes_only")]
     pub check_detail: CheckDetail,
+    /// The state the recording starts from, when it does not start at tick 0: playback
+    /// loads it first. Every event and check is at or after its tick.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<Snapshot>,
     /// The recording ends after this many ticks, in this state.
     pub end: Check,
     /// In the order they happened.
@@ -347,6 +363,8 @@ impl Divergence {
 
 struct Playback {
     replay: Replay,
+    /// The recording's starting snapshot, until the game has loaded and it is put in.
+    pending_start: Option<Snapshot>,
     /// Index of the next event to apply.
     next: usize,
     /// Input events due before the current tick, picked up by the typed input systems.
@@ -361,12 +379,20 @@ struct Playback {
 pub struct AiReplay {
     events: Vec<ReplayEvent>,
     checks: Vec<Check>,
+    /// The snapshot this recording starts from (`None`: tick 0).
+    start: Option<Snapshot>,
     /// Ticks between checks; a playback uses its recording's.
     check_every: u64,
     /// What each check keeps; a playback uses its recording's.
     check_detail: CheckDetail,
     /// Names of the registered input components.
     inputs: Vec<&'static str>,
+    /// Per registered input component: learn the values it has now (after a snapshot
+    /// replaced the entities, the remembered ones belong to entities that are gone).
+    memory_resets: Vec<fn(&mut World)>,
+    /// Per registered input component: move what is remembered of an entity to the one
+    /// that stands for it now (a refused load put the same entities back as new ones).
+    memory_follows: Vec<FollowMemory>,
     playback: Option<Playback>,
     report: Option<ReplayReport>,
     /// Set while playback itself calls tools, so its calls do not count as a takeover.
@@ -374,6 +400,10 @@ pub struct AiReplay {
     /// Action calls running right now. Calls made from inside another action are
     /// not recorded: replaying the outer one makes them again.
     action_depth: u32,
+    /// Where the running outermost action call is recorded, for [`forget_call`].
+    current_call: Option<usize>,
+    /// This game does not record its session ([`set_recording`]).
+    not_recording: bool,
 }
 
 impl Default for AiReplay {
@@ -381,13 +411,18 @@ impl Default for AiReplay {
         Self {
             events: Vec::new(),
             checks: Vec::new(),
+            start: None,
             check_every: CHECK_EVERY,
             check_detail: CheckDetail::default(),
             inputs: Vec::new(),
+            memory_resets: Vec::new(),
+            memory_follows: Vec::new(),
             playback: None,
             report: None,
             replaying: false,
             action_depth: 0,
+            current_call: None,
+            not_recording: false,
         }
     }
 }
@@ -395,6 +430,12 @@ impl Default for AiReplay {
 impl AiReplay {
     pub fn is_playing(&self) -> bool {
         self.playback.is_some()
+    }
+
+    /// The recording being played back, for modules that prepare the world for it
+    /// before tick 1 (content restores the versions a recording started from).
+    pub fn playing(&self) -> Option<&Replay> {
+        self.playback.as_ref().map(|p| &p.replay)
     }
 
     /// Ticks between checks (at least 1) and what each keeps, from now on. Set them
@@ -413,6 +454,75 @@ impl AiReplay {
     pub fn recorded_events(&self) -> usize {
         self.events.len()
     }
+
+    /// The snapshot this recording starts from, if it does not start at tick 0.
+    pub fn started_from(&self) -> Option<&Snapshot> {
+        self.start.as_ref()
+    }
+
+    /// Whether this game records its session (see [`set_recording`]).
+    pub fn is_recording(&self) -> bool {
+        !self.not_recording
+    }
+}
+
+/// Why `replay_save` refuses in a game that does not record.
+pub const NOT_RECORDING: &str =
+    "this game does not record its session: the host records every player's; save the replay there";
+
+/// Turns the recording of this session on or off. Off (a client of a networked game, whose
+/// session the host records): no calls, inputs or checks are recorded, `replay_save` refuses
+/// and says why, no crash replay is written. Playback is not affected.
+pub fn set_recording(world: &mut World, on: bool) {
+    let mut replay = world.resource_mut::<AiReplay>();
+    replay.not_recording = !on;
+    if !on {
+        replay.events.clear();
+        replay.checks.clear();
+        replay.current_call = None;
+    }
+}
+
+/// The recording starts from the world as it is now: what [`snapshot_load`](crate::snapshot)
+/// does after a load, for whoever else rebuilds the world (loading a saved game, a client
+/// taking the host's world). A playback in progress ends, with `reason`. Returns how many
+/// recorded events were dropped.
+pub fn restart_from_current(world: &mut World, reason: &str) -> Result<usize, String> {
+    let start = crate::snapshot::capture(world)?;
+    if world.resource::<AiReplay>().playback.is_some() {
+        interrupt(world, reason.to_owned());
+    }
+    Ok(restart_from(world, start, false))
+}
+
+/// A snapshot was loaded: the recording starts here now. What was recorded before is
+/// dropped (a replay is one run from one start), a playback in progress is over when
+/// `interrupt_playback` (someone loaded a snapshot into it; playback itself putting its
+/// own start in does not), and the input memories learn the entities that are there now.
+///
+/// Session rules are not part of a snapshot: every rule is re-armed and the session's
+/// rules are recorded again at the start, so playback from the snapshot checks the same
+/// rules from the same tick.
+pub(crate) fn restart_from(world: &mut World, start: Snapshot, interrupt_playback: bool) -> usize {
+    if interrupt_playback && world.resource::<AiReplay>().playback.is_some() {
+        interrupt(world, format!("a snapshot was loaded (tick {})", start.tick));
+    }
+    let rules = invariants::restarted(world);
+    let at = start.tick;
+    let mut replay = world.resource_mut::<AiReplay>();
+    let dropped = replay.events.len();
+    replay.events.clear();
+    replay.checks.clear();
+    replay.start = Some(start);
+    replay.current_call = None;
+    if !replay.not_recording {
+        replay.events.extend(rules.into_iter().map(|op| ReplayEvent::Assert { at, op }));
+    }
+    let resets = replay.memory_resets.clone();
+    for reset in resets {
+        reset(world);
+    }
+    dropped
 }
 
 // --- recording -------------------------------------------------------------------
@@ -426,15 +536,19 @@ pub(crate) fn begin_action(world: &mut World, caller: &Caller, tool: &str, args:
     if replay.action_depth > 1 {
         return;
     }
-    replay.events.push(ReplayEvent::Call {
-        at,
-        agent: caller.agent.clone(),
-        scope: caller.scope,
-        subject: caller.subject_id,
-        tool: tool.to_owned(),
-        args: args.clone(),
-    });
+    // Whether a game records its session does not change what its playback does.
     let takeover = replay.playback.is_some() && !replay.replaying;
+    if !replay.not_recording {
+        replay.current_call = Some(replay.events.len());
+        replay.events.push(ReplayEvent::Call {
+            at,
+            agent: caller.agent.clone(),
+            scope: caller.scope,
+            subject: caller.subject_id,
+            tool: tool.to_owned(),
+            args: args.clone(),
+        });
+    }
     if takeover {
         interrupt(world, format!("{} took over ({tool})", caller.agent));
     }
@@ -444,13 +558,30 @@ pub(crate) fn begin_action(world: &mut World, caller: &Caller, tool: &str, args:
 pub(crate) fn end_action(world: &mut World) {
     let mut replay = world.resource_mut::<AiReplay>();
     replay.action_depth = replay.action_depth.saturating_sub(1);
+    if replay.action_depth == 0 {
+        replay.current_call = None;
+    }
+}
+
+/// Takes the running action call out of the recording: for a tool that refused before
+/// it changed anything, so what playback reads from recorded calls comes only from
+/// calls that applied (content restores a replay's starting definitions from the
+/// `before` of its `content_apply` calls). A call made inside another action is not
+/// recorded, so there is nothing to take.
+pub fn forget_call(world: &mut World) {
+    let mut replay = world.resource_mut::<AiReplay>();
+    if replay.action_depth == 1
+        && let Some(index) = replay.current_call.take()
+    {
+        replay.events.remove(index);
+    }
 }
 
 /// A change to the session's rules: recorded like a call, but it never takes over a
 /// playback (rules do not change the game).
 pub(crate) fn record_assert(world: &mut World, op: AssertOp) {
     let at = sim::tick(world);
-    if let Some(mut replay) = world.get_resource_mut::<AiReplay>() {
+    if let Some(mut replay) = world.get_resource_mut::<AiReplay>().filter(|r| !r.not_recording) {
         replay.events.push(ReplayEvent::Assert { at, op });
     }
 }
@@ -527,18 +658,55 @@ fn inputs_between_ticks<C: Component<Mutability = Mutable> + Clone + PartialEq +
         }
     }
 
-    for (entity, id, value) in &q {
-        if !value.last_changed().is_newer_than(memory.since, ticks.this_run()) {
-            continue;
-        }
-        if memory.last.get(&entity) == Some(&*value) {
-            continue;
-        }
-        match serde_json::to_value(&*value) {
-            Ok(v) => replay.events.push(ReplayEvent::Input { at: tick.0, id: *id, component: name.to_owned(), value: v }),
+    if replay.not_recording {
+        return;
+    }
+    // In id order, not query order: the window and other modules change how entities are
+    // grouped, and the same session must record the same file with and without them.
+    let mut changed: Vec<(AiId, &C)> = q
+        .iter()
+        .filter(|(entity, _, value)| {
+            value.last_changed().is_newer_than(memory.since, ticks.this_run()) && memory.last.get(entity) != Some(&**value)
+        })
+        .map(|(_, id, value)| (*id, value.into_inner()))
+        .collect();
+    changed.sort_unstable_by_key(|(id, _)| *id);
+    for (id, value) in changed {
+        match serde_json::to_value(value) {
+            Ok(v) => replay.events.push(ReplayEvent::Input { at: tick.0, id, component: name.to_owned(), value: v }),
             Err(e) => warn!("replay: cannot record {name} of {id}: {e}"),
         }
     }
+}
+
+/// Moves what an input component remembers from old entities to the ones that stand for them.
+type FollowMemory = fn(&mut World, &HashMap<Entity, Entity>);
+
+/// The entities were put back as they were, as new ones (`moved`: old → new): a refused
+/// snapshot load undid what it had built. The input memories follow them, so an input
+/// changed since the last tick is still recorded as one, and an input that is what it was
+/// is not.
+pub(crate) fn follow_entities(world: &mut World, moved: &HashMap<Entity, Entity>) {
+    let follows = world.get_resource::<AiReplay>().map(|r| r.memory_follows.clone()).unwrap_or_default();
+    for follow in follows {
+        follow(world, moved);
+    }
+}
+
+fn follow_memory<C: Component + Clone>(world: &mut World, moved: &HashMap<Entity, Entity>) {
+    let mut memory = world.resource_mut::<InputMemory<C>>();
+    let last = std::mem::take(&mut memory.last);
+    memory.last = last.into_iter().map(|(entity, value)| (moved.get(&entity).copied().unwrap_or(entity), value)).collect();
+}
+
+/// After a snapshot replaced the entities: remember what the new ones hold, as of now.
+fn reset_memory<C: Component + Clone>(world: &mut World) {
+    let last: HashMap<Entity, C> = world.query::<(Entity, &C)>().iter(world).map(|(e, c)| (e, c.clone())).collect();
+    // Writes made from here on are newer than this; what was restored is not.
+    let since = world.increment_change_tick();
+    let mut memory = world.resource_mut::<InputMemory<C>>();
+    memory.last = last;
+    memory.since = since;
 }
 
 /// Registers input component `C`. Prefer [`AiAppExt::replay_input`](crate::AiAppExt::replay_input).
@@ -546,7 +714,12 @@ pub fn register_input<C>(app: &mut App)
 where
     C: Component<Mutability = Mutable> + Clone + PartialEq + Serialize + DeserializeOwned,
 {
-    app.world_mut().get_resource_or_init::<AiReplay>().inputs.push(crate::short_type_name::<C>());
+    {
+        let mut replay = app.world_mut().get_resource_or_init::<AiReplay>();
+        replay.inputs.push(crate::short_type_name::<C>());
+        replay.memory_resets.push(reset_memory::<C>);
+        replay.memory_follows.push(follow_memory::<C>);
+    }
     app.init_resource::<InputMemory<C>>()
         .add_systems(PostStartup, remember_inputs::<C>)
         .add_systems(FixedFirst, inputs_between_ticks::<C>.in_set(ReplaySystems::Inputs))
@@ -571,6 +744,16 @@ pub enum ReplaySystems {
 /// A game's own contribution to every replay check.
 pub type ReplayCheck = fn(&World) -> u64;
 
+/// A contribution to every replay check for state that may be absent: `None` adds nothing,
+/// not even the check's name.
+pub type OptionalReplayCheck = fn(&World) -> Option<u64>;
+
+#[derive(Clone, Copy)]
+enum HashedCheck {
+    Always(ReplayCheck),
+    WhenSome(OptionalReplayCheck),
+}
+
 /// What goes into [`state_hash`] besides AI-visible entities, and what stays out.
 #[derive(Resource, Default)]
 pub struct ReplayHashing {
@@ -578,7 +761,7 @@ pub struct ReplayHashing {
     ignored: HashSet<TypeId>,
     /// Game data outside AI-visible entities
     /// ([`AiAppExt::add_replay_check`](crate::AiAppExt::add_replay_check)), by name.
-    checks: Vec<(String, ReplayCheck)>,
+    checks: Vec<(String, HashedCheck)>,
     /// Components already reported as not serializable.
     reported: HashSet<&'static str>,
 }
@@ -588,7 +771,25 @@ impl ReplayHashing {
         self.ignored.insert(component);
     }
 
+    /// Whether component `component` is left out of replay checks
+    /// ([`replay_ignore`](crate::AiAppExt::replay_ignore)).
+    pub fn is_ignored(&self, component: TypeId) -> bool {
+        self.ignored.contains(&component)
+    }
+
     pub fn add_check(&mut self, name: &str, check: ReplayCheck) {
+        self.push_check(name, HashedCheck::Always(check));
+    }
+
+    /// [`add_check`](Self::add_check) for state that may be absent (no level placed): while
+    /// `check` returns `None` the hash is what it would be without the check. So the hash
+    /// depends on the state only, never on whether the state existed before (a snapshot taken
+    /// before the first level loads exactly after one came and went).
+    pub fn add_optional_check(&mut self, name: &str, check: OptionalReplayCheck) {
+        self.push_check(name, HashedCheck::WhenSome(check));
+    }
+
+    fn push_check(&mut self, name: &str, check: HashedCheck) {
         self.checks.retain(|(n, _)| n != name);
         self.checks.push((name.to_owned(), check));
     }
@@ -679,7 +880,14 @@ fn hash_state(world: &World, detail: CheckDetail) -> (Check, Vec<&'static str>) 
         }
     }
     for (name, check) in hashing.map(|c| c.checks.as_slice()).unwrap_or_default() {
-        let value = check(world);
+        // An optional check that has nothing adds nothing: not to the hash, not to the parts.
+        let value = match check {
+            HashedCheck::Always(check) => check(world),
+            HashedCheck::WhenSome(check) => match check(world) {
+                Some(value) => value,
+                None => continue,
+            },
+        };
         h.bytes(name.as_bytes());
         h.u64(value);
         if let Some(parts) = &mut parts {
@@ -743,14 +951,14 @@ impl ReflectSerializerProcessor for EntitiesAsIds<'_> {
     }
 }
 
-struct Fnv(u64);
+pub(crate) struct Fnv(pub(crate) u64);
 
 impl Fnv {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Fnv(0xcbf2_9ce4_8422_2325)
     }
 
-    fn bytes(&mut self, bytes: &[u8]) {
+    pub(crate) fn bytes(&mut self, bytes: &[u8]) {
         for b in bytes {
             self.0 = (self.0 ^ *b as u64).wrapping_mul(0x0100_0000_01b3);
         }
@@ -758,7 +966,7 @@ impl Fnv {
         self.u64_raw(bytes.len() as u64);
     }
 
-    fn u64(&mut self, v: u64) {
+    pub(crate) fn u64(&mut self, v: u64) {
         self.u64_raw(v);
     }
 
@@ -774,6 +982,10 @@ fn check_state(world: &mut World) {
     if tick == 0 || !tick.is_multiple_of(world.resource::<AiReplay>().check_every) {
         return;
     }
+    let replay = world.resource::<AiReplay>();
+    if replay.not_recording && replay.playback.is_none() {
+        return;
+    }
     let check = check_now(world);
     let replay = world.resource::<AiReplay>();
     // Only the first divergence is explained: later ones follow from it.
@@ -783,7 +995,9 @@ fn check_state(world: &mut World) {
         Some((expected.hash == check.hash, first.then(|| divergence(world, &playback.replay, expected, &check))))
     });
     let mut replay = world.resource_mut::<AiReplay>();
-    replay.checks.push(check);
+    if !replay.not_recording {
+        replay.checks.push(check);
+    }
     let (Some(playback), Some((matched, found))) = (&mut replay.playback, found) else {
         return;
     };
@@ -972,7 +1186,11 @@ fn one_line(text: &str) -> String {
 
 /// Starts playing `replay` back. The world must be fresh (tick 0, nothing recorded
 /// yet) and built with the replay's seed and tick rate. Events are applied as ticks
-/// run; step or resume the game to play it.
+/// run; step or resume the game to play it. Start it before the game loads when you
+/// can (right after building the app): modules then prepare the world before it is
+/// spawned (content restores the definitions the recording started from). A recording
+/// that starts from a snapshot has it put in as soon as the game has loaded, before the
+/// first tick: the world the game spawned is replaced by the snapshot's.
 pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
     if replay.format == FORMAT_V1 {
         return Err(format!(
@@ -981,7 +1199,13 @@ pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
         ));
     }
     if replay.format != FORMAT && replay.format != FORMAT_V2 {
-        return Err(format!("not a replay this build can play: format `{}`, expected `{FORMAT}`", replay.format));
+        return Err(format!(
+            "not a replay this build can play: format `{}`, expected `{FORMAT}` (or `{FORMAT_V2}`)",
+            replay.format
+        ));
+    }
+    if replay.start.is_some() && replay.format != FORMAT {
+        return Err(format!("a replay that starts from a snapshot is `{FORMAT}`, this one says `{}`", replay.format));
     }
     if replay.check_every == 0 {
         return Err("the replay says it checks every 0 ticks; it needs at least 1".into());
@@ -1009,7 +1233,19 @@ pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
     if !state.events.is_empty() {
         return Err(format!("this world already recorded {} events; playback needs a fresh one", state.events.len()));
     }
-    let mut last_at = 0;
+    if let Some(start) = &replay.start {
+        if start.seed != replay.seed || (start.tick_hz - replay.tick_hz).abs() > 1e-3 {
+            return Err(format!(
+                "the replay's snapshot is from seed {} at {} ticks/s, the replay itself from seed {} at {}",
+                start.seed, start.tick_hz, replay.seed, replay.tick_hz
+            ));
+        }
+        if start.tick > replay.end.tick {
+            return Err(format!("the replay ends at tick {}, before its snapshot (tick {})", replay.end.tick, start.tick));
+        }
+    }
+    let from = replay.start.as_ref().map_or(0, |s| s.tick);
+    let mut last_at = from;
     for event in &replay.events {
         if event.at() < last_at || event.at() > replay.end.tick {
             return Err(format!("events out of order or past the end (tick {})", event.at()));
@@ -1025,6 +1261,7 @@ pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
         }
     }
     let end = replay.end.tick;
+    let pending_start = replay.start.clone();
     let mut state = world.resource_mut::<AiReplay>();
     state.report = None;
     // Check at the recording's ticks with its detail. The recording made from here on
@@ -1033,22 +1270,43 @@ pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
     if replay.format != FORMAT_V2 {
         state.check_detail = replay.check_detail;
     }
-    state.playback =
-        Some(Playback { replay, next: 0, due_inputs: Vec::new(), matched: 0, diverged_at: None, divergence: None });
-    journal::log(world, JournalKind::Sim, format!("replay started: {end} ticks"));
+    state.playback = Some(Playback {
+        replay,
+        pending_start,
+        next: 0,
+        due_inputs: Vec::new(),
+        matched: 0,
+        diverged_at: None,
+        divergence: None,
+    });
+    let text = match from {
+        0 => format!("replay started: {end} ticks"),
+        from => format!("replay started: ticks {from} to {end}, from a snapshot"),
+    };
+    journal::log(world, JournalKind::Sim, text);
     Ok(())
 }
 
 /// Applies the calls due after the current tick and queues its inputs; at the end
 /// of the recording, compares the final state and finishes. Runs before every tick
-/// and once per frame (so a paused game finishes right at the last tick).
+/// and once per frame (so a paused game finishes right at the last tick), but not
+/// while the game loads: a recording that ends at tick 0 finishes on the spawned world.
 fn advance_playback(world: &mut World, at_tick_start: bool) {
-    let tick = sim::tick(world);
     let end = match &world.resource::<AiReplay>().playback {
         Some(p) => p.replay.end.tick,
         None => return,
     };
-    if !at_tick_start && tick != end {
+    // Once the game has loaded (its own world is spawned), before anything else.
+    if world.resource::<AiReplay>().playback.as_ref().is_some_and(|p| p.pending_start.is_some())
+        && sim::gate_message(world).is_none()
+    {
+        apply_start(world);
+        if world.resource::<AiReplay>().playback.is_none() {
+            return;
+        }
+    }
+    let tick = sim::tick(world);
+    if !at_tick_start && (tick != end || sim::gate_message(world).is_some()) {
         return;
     }
     loop {
@@ -1090,15 +1348,61 @@ fn advance_playback(world: &mut World, at_tick_start: bool) {
     }
 }
 
+/// Puts the recording's starting snapshot in. A snapshot this game cannot load (other
+/// content, another build) ends the playback with the reason: it cannot be played.
+fn apply_start(world: &mut World) {
+    let Some(start) = world.resource_mut::<AiReplay>().playback.as_mut().and_then(|p| p.pending_start.take()) else {
+        return;
+    };
+    let tick = start.tick;
+    match snapshot::restore(world, &start, false) {
+        Ok(report) => {
+            // The playback's recording starts where the recording being played did.
+            restart_from(world, start, false);
+            journal::log(world, JournalKind::Sim, format!("replay starts from its snapshot at tick {tick}: {report}"));
+            if !report.exact() {
+                // The game is not where the recording was: report it from the first tick.
+                journal::log(
+                    world,
+                    JournalKind::Error,
+                    format!("replay diverged at tick {tick}: {}", report.explain_differences()),
+                );
+                // `--verify` prints the headline, not the journal: it says what the restore found.
+                let found: Vec<&str> = report.differences.iter().take(3).map(String::as_str).collect();
+                let more = report.differences.len().saturating_sub(found.len());
+                let mut why = format!("the start does not restore exactly: {}", found.join("; "));
+                if more > 0 {
+                    why.push_str(&format!("; … (+{more})"));
+                }
+                if let Some(playback) = &mut world.resource_mut::<AiReplay>().playback {
+                    playback.diverged_at.get_or_insert(tick);
+                    playback.divergence.get_or_insert(Divergence {
+                        tick,
+                        entities: Vec::new(),
+                        more: 0,
+                        checks: Vec::new(),
+                        no_details: Some(why),
+                    });
+                }
+            }
+        }
+        Err(why) => {
+            journal::log(world, JournalKind::Error, format!("replay cannot start from its snapshot (tick {tick}): {why}"));
+            interrupt(world, format!("cannot start from its snapshot (tick {tick}): {why}"));
+        }
+    }
+}
+
 /// One recorded call, as its agent with the recorded scope and body; the agent's
 /// live session is restored afterwards.
 fn replay_call(world: &mut World, agent: &str, scope: Scope, subject: Option<AiId>, tool: &str, args: Value) {
     let saved = world.resource_mut::<AgentSessions>().get_or_create(agent).clone();
-    world.resource_mut::<AgentSessions>().configure(agent, scope, subject);
+    // The recorded call ran as `subject`, never as a player body the live session is bound to.
+    world.resource_mut::<AgentSessions>().configure(agent, scope, subject).player = None;
     world.resource_mut::<AiReplay>().replaying = true;
     call_tool(world, agent, tool, args);
     world.resource_mut::<AiReplay>().replaying = false;
-    world.resource_mut::<AgentSessions>().configure(agent, saved.scope, saved.subject);
+    world.resource_mut::<AgentSessions>().configure(agent, saved.scope, saved.subject).player = saved.player;
 }
 
 fn finish(world: &mut World) {
@@ -1156,6 +1460,7 @@ pub fn save(world: &World) -> Replay {
         tick_hz: 1.0 / world.resource::<Time<Fixed>>().timestep().as_secs_f64(),
         check_every: replay.check_every,
         check_detail: replay.check_detail,
+        start: replay.start.clone(),
         end: hash_state(world, replay.check_detail).0,
         events: replay.events.clone(),
         checks: replay.checks.clone(),
@@ -1173,6 +1478,7 @@ pub fn status(world: &World) -> Value {
     let replay = world.resource::<AiReplay>();
     json!({
         "recorded_events": replay.events.len(),
+        "starts_at_tick": replay.start.as_ref().map(|s| s.tick),
         "checks": {"every": replay.check_every, "detail": replay.check_detail},
         "playing": replay.playback.as_ref().map(|p| json!({
             "end_tick": p.replay.end.tick,
@@ -1205,6 +1511,9 @@ pub fn write(replay: &Replay, requested: &str) -> Result<std::path::PathBuf, Str
 }
 
 fn replay_save_tool(In(call): In<Call<ReplaySaveArgs>>, world: &mut World) -> ToolResult {
+    if !world.resource::<AiReplay>().is_recording() {
+        return Err(NOT_RECORDING.to_owned());
+    }
     let replay = save(world);
     let requested = call.args.path.unwrap_or_else(|| format!("{REPLAYS_DIR}/tick{}.json", replay.end.tick));
     let path = write(&replay, &requested)?;
@@ -1231,9 +1540,14 @@ pub(crate) fn plugin(app: &mut App, check_every: u64, check_detail: CheckDetail)
         .add_systems(FixedLast, check_state.in_set(ReplaySystems::Check))
         .add_systems(Last, |w: &mut World| advance_playback(w, false));
     register_tool(app.world_mut(), "replay_save", Scope::Dev, ToolKind::Query, replay_save_tool);
+    // The host records every player's session.
+    let _ = app
+        .world_mut()
+        .resource_mut::<crate::AiTools>()
+        .set_route("replay_save", crate::tools::NetRoute::HostOnly(crate::tools::ON_THE_HOST));
 }
 
-mod hex_u64 {
+pub(crate) mod hex_u64 {
     use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S: Serializer>(v: &u64, s: S) -> Result<S::Ok, S::Error> {
@@ -1415,6 +1729,109 @@ mod tests {
         );
     }
 
+    #[derive(Component, Clone, PartialEq, Serialize, Deserialize, Default)]
+    struct Knob(u32);
+
+    fn game() -> App {
+        use crate::AiAppExt;
+        let mut app = App::new();
+        app.add_plugins(bevy::time::TimePlugin)
+            .add_plugins(crate::AiCorePlugin {
+                remote_port: None,
+                crash_replays: false,
+                sim: crate::SimConfig { start_paused: true, ..Default::default() },
+                ..Default::default()
+            })
+            .replay_input::<Knob>();
+        app.world_mut().spawn((crate::AiKind::new("Dial"), Knob(0), Transform::default()));
+        app.finish();
+        app.cleanup();
+        app.update();
+        app
+    }
+
+    fn turn_and_run(app: &mut App, to: u32, ticks: u64) {
+        let dial = app.world().resource::<AiIndex>().get(AiId(1)).unwrap();
+        app.world_mut().get_mut::<Knob>(dial).unwrap().0 = to;
+        let out = crate::call_tool(app.world_mut(), "dev", "teleport", json!({"id": 1, "x": to, "z": 0}));
+        assert!(out.ok, "{}", out.result);
+        sim::step(app.world_mut(), ticks, std::time::Duration::from_secs(5), |_| None).unwrap();
+    }
+
+    #[test]
+    fn a_game_that_does_not_record_records_nothing_and_says_why() {
+        let mut app = game();
+        set_recording(app.world_mut(), false);
+        turn_and_run(&mut app, 3, CHECK_EVERY * 2);
+        let replay = app.world().resource::<AiReplay>();
+        assert!(!replay.is_recording());
+        assert_eq!((replay.recorded_events(), replay.checks.len()), (0, 0));
+        let out = crate::call_tool(app.world_mut(), "dev", "replay_save", json!({}));
+        assert!(!out.ok && out.result.as_str().unwrap().contains("the host records"), "{}", out.result);
+
+        set_recording(app.world_mut(), true);
+        turn_and_run(&mut app, 4, CHECK_EVERY);
+        let replay = app.world().resource::<AiReplay>();
+        assert_eq!((replay.recorded_events(), replay.checks.len()), (2, 1), "a call and an input, one check");
+
+        let dropped = restart_from_current(app.world_mut(), "a saved game was loaded").unwrap();
+        assert_eq!(dropped, 2);
+        let replay = app.world().resource::<AiReplay>();
+        assert_eq!(replay.started_from().map(|s| s.tick), Some(CHECK_EVERY * 3));
+        assert_eq!(replay.recorded_events(), 0);
+    }
+
+    #[test]
+    fn a_takeover_ends_playback_even_when_the_game_does_not_record() {
+        let mut app = game();
+        // A recording of a fresh game that ends later: nothing to replay but the ticks.
+        let mut replay = save(app.world());
+        replay.end.tick = 120;
+        set_recording(app.world_mut(), false);
+        play(app.world_mut(), replay).unwrap();
+        assert!(app.world().resource::<AiReplay>().is_playing());
+
+        let out = crate::call_tool(app.world_mut(), "dev", "teleport", json!({"id": 1, "x": 3, "z": 0}));
+        assert!(out.ok, "{}", out.result);
+        let state = app.world().resource::<AiReplay>();
+        assert!(!state.is_playing(), "the action interrupted the playback");
+        assert_eq!(state.report().and_then(|r| r.interrupted.as_deref()), Some("dev took over (teleport)"));
+        assert_eq!(state.recorded_events(), 0, "and nothing was recorded");
+    }
+
+    #[derive(Component)]
+    struct Shiny;
+
+    /// The inputs of one tick are recorded in id order, whatever order a query meets them in
+    /// (a window's render components regroup entities; the file must not change with them).
+    #[test]
+    fn inputs_of_a_tick_are_recorded_in_id_order() {
+        let mut app = game();
+        let second = app.world_mut().spawn((crate::AiKind::new("Dial"), Knob(0), Transform::default())).id();
+        app.update();
+        let first = app.world().resource::<AiIndex>().get(AiId(1)).unwrap();
+        // Out of its table and back in: the first dial now sits after the second.
+        app.world_mut().entity_mut(first).insert(Shiny);
+        app.world_mut().entity_mut(first).remove::<Shiny>();
+        let world = app.world_mut();
+        let met: Vec<AiId> = world.query_filtered::<&AiId, With<Knob>>().iter(world).copied().collect();
+        assert_eq!(met, [AiId(2), AiId(1)], "the test needs query order to differ from id order");
+        app.world_mut().get_mut::<Knob>(second).unwrap().0 = 7;
+        app.world_mut().get_mut::<Knob>(first).unwrap().0 = 5;
+        sim::step(app.world_mut(), 1, std::time::Duration::from_secs(5), |_| None).unwrap();
+        let recorded: Vec<(AiId, serde_json::Value)> = app
+            .world()
+            .resource::<AiReplay>()
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                ReplayEvent::Input { id, value, .. } => Some((*id, value.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(recorded, [(AiId(1), json!(5)), (AiId(2), json!(7))]);
+    }
+
     #[test]
     fn breakdowns_read_back_as_written() {
         let check = Check {
@@ -1461,6 +1878,31 @@ mod tests {
         let replay: Replay = serde_json::from_value(v2).unwrap();
         assert_eq!((replay.check_every, replay.check_detail), (CHECK_EVERY, CheckDetail::None));
         assert_eq!(replay.checks, vec![Check { tick: 60, hash: 1, parts: None }]);
+    }
+
+    /// One version 3: a file with a start and no check settings (written before the check
+    /// settings existed) and one with check settings and no start both read, each without
+    /// what it does not say.
+    #[test]
+    fn version_3_files_read_without_what_they_do_not_say() {
+        let no_settings = json!({
+            "format": FORMAT, "seed": 7, "tick_hz": 60.0,
+            "end": {"tick": 120, "hash": "02"},
+            "events": [{"input": {"at": 0, "id": 1, "component": "Knob", "value": 3}}],
+            "checks": [{"tick": 60, "hash": "01"}],
+        });
+        let replay: Replay = serde_json::from_value(no_settings).unwrap();
+        assert_eq!((replay.check_every, replay.check_detail, replay.start.is_none()), (CHECK_EVERY, CheckDetail::None, true));
+        let settings = json!({
+            "format": FORMAT, "seed": 7, "tick_hz": 60.0, "check_every": 30, "check_detail": "entities",
+            "end": {"tick": 60, "hash": "02", "parts": {"entities": {"e1": "0a"}}},
+            "events": [{"assert": {"at": 0, "op": {"add": {"name": "hp", "when": "error"}}}}],
+            "checks": [{"tick": 30, "hash": "01", "parts": {"entities": {"e1": "0b"}}}],
+        });
+        let replay: Replay = serde_json::from_value(settings).unwrap();
+        assert_eq!((replay.check_every, replay.check_detail, replay.start.is_none()), (30, CheckDetail::Entities, true));
+        let written = serde_json::to_value(&replay).unwrap();
+        assert!(written.get("start").is_none(), "no start, no field: {written}");
     }
 
     #[test]
@@ -1530,5 +1972,52 @@ mod tests {
         let v2 = Divergence { entities: vec![], more: 0, checks: vec![], no_details: Some("replay format 2".into()), ..d };
         r.divergence = Some(v2);
         assert_eq!(r.to_string(), "replay finished at tick 600: DIVERGED at tick 60: no details: replay format 2");
+    }
+
+    /// Who a tool saw as the caller's body.
+    #[derive(Resource, Default)]
+    struct SeenBodies(Vec<Option<AiId>>);
+
+    fn who(In(call): In<Call<crate::tools::NoArgs>>, world: &mut World) -> ToolResult {
+        world.resource_mut::<SeenBodies>().0.push(call.caller.subject_id);
+        Ok("ok".into())
+    }
+
+    /// Player 1 plays the first dial.
+    fn first_dial_is_player_one(world: &World, n: u8) -> Option<AiId> {
+        (n == 1).then(|| world.resource::<AiIndex>().get(AiId(1)).map(|_| AiId(1))).flatten()
+    }
+
+    /// A replayed call runs as its recorded body, and the live session, a player binding
+    /// included, is exactly what it was before it.
+    #[test]
+    fn a_replayed_call_restores_a_player_bound_session() {
+        let mut app = game();
+        let world = app.world_mut();
+        world.spawn((crate::AiKind::new("Hero"), crate::AiPlayer));
+        world.init_resource::<SeenBodies>();
+        register_tool(world, "who", Scope::Player, ToolKind::Query, who);
+        world.resource_mut::<AgentSessions>().set_player_resolver(first_dial_is_player_one);
+
+        let out = call_tool(world, "p1", "possess", json!({"player": 1}));
+        assert!(out.ok, "{}", out.result);
+        let session = |world: &World| {
+            let s = world.resource::<AgentSessions>().get("p1").unwrap();
+            (s.scope, s.subject, s.player)
+        };
+        let bound = (Scope::Dev, None, Some(1));
+        assert_eq!(session(world), bound);
+
+        // Recorded with the hero (e2) as the body: the player binding must not decide it ...
+        replay_call(world, "p1", Scope::Dev, Some(AiId(2)), "who", json!({}));
+        assert_eq!(session(world), bound, "the binding to player 1 survives a replayed call");
+        // ... nor when the recording had the default body (the AiPlayer entity, e2).
+        replay_call(world, "p1", Scope::Dev, None, "who", json!({}));
+        assert_eq!(session(world), bound);
+        assert_eq!(world.resource::<SeenBodies>().0, [Some(AiId(2)), Some(AiId(2))], "never player 1's body e1");
+
+        // The live binding itself still resolves to its body afterwards.
+        call_tool(world, "p1", "who", json!({}));
+        assert_eq!(world.resource::<SeenBodies>().0[2], Some(AiId(1)));
     }
 }

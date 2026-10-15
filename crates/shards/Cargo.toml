@@ -1,0 +1,62 @@
+[package]
+name = "shards"
+description = "The Shards engine as one dependency: EnginePlugins, the standard main, test apps, prelude."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = ["render", "remote", "hot_reload"]
+# Window, 3D rendering, UI, keyboard and mouse. Without it a game only runs headless.
+render = [
+    "ai_core/render",
+    "shards_motion/render",
+    "shards_action/render",
+    "shards_level/render",
+    "shards_world/render",
+    "shards_npc/render",
+    "shards_net/render",
+    "bevy/3d_bevy_render",
+    "bevy/ui_bevy_render",
+    "bevy/bevy_winit",
+    "bevy/x11",
+    "bevy/default_font",
+    "bevy/keyboard",
+    "bevy/mouse",
+]
+# `ai/*` methods for the `shards` CLI (BRP on localhost, behind a token). Dev builds.
+remote = ["ai_core/remote"]
+# Content files apply as they change on disk (Bevy's file watcher).
+hot_reload = ["shards_content/hot_reload"]
+# Need system packages: libasound2-dev / libudev-dev / libwayland-dev libxkbcommon-dev.
+audio = ["bevy/audio"]
+gamepad = ["bevy/bevy_gilrs", "shards_motion/gamepad"]
+wayland = ["bevy/wayland"]
+# Faster incremental builds (`--features dynamic`).
+dynamic = ["bevy/dynamic_linking"]
+# Tracy profiler zones for every system (`--features trace_tracy`; connect the Tracy client).
+trace_tracy = ["bevy/trace_tracy"]
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+shards_motion.workspace = true
+shards_action.workspace = true
+shards_level.workspace = true
+shards_npc.workspace = true
+shards_world.workspace = true
+shards_save.workspace = true
+shards_net.workspace = true
+shards_script.workspace = true
+shards_settings.workspace = true
+bevy = { workspace = true, features = ["default_app", "std", "multi_threaded", "serialize"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+clap.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# `kill` and a closed terminal end the game through `AppExit` (see `run`).
+libc.workspace = true

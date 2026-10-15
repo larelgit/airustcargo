@@ -1,0 +1,28 @@
+[package]
+name = "shards_motion"
+description = "Shards motion: physics layer, kinematic character controller, input action map, third-person camera, motion AI tools."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# The third-person camera systems and the collider overlay (they need a window to be seen;
+# the pure camera math and the data types are always built).
+render = ["ai_core/render", "bevy/bevy_post_process"]
+# Real gamepads through gilrs (needs libudev). Without it `Gamepad` entities still work,
+# a game or a test just has to spawn them.
+gamepad = ["bevy/bevy_gilrs"]
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+shards_settings.workspace = true
+# `keyboard`, `mouse`, `gamepad` only switch on bevy_input's types: the input map names them.
+bevy = { workspace = true, features = ["std", "serialize", "keyboard", "mouse", "gamepad"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+ron.workspace = true
+parry3d.workspace = true

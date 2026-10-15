@@ -1,118 +1,76 @@
-//! Sandbox arena for `ai_core`: a player, two skeletons and the Frost Warden boss.
+//! Sandbox for the Shards engine, built only on the `shards` crate, the way a game is.
+//!
+//! - **Arena** (the combat prototype): the player, two skeletons and the Frost Warden, a boss
+//!   with four telegraphed attacks and an enraged second phase.
+//! - **Obstacle course** east of it: stairs, a ledge to mantle, a pool to swim, a cliff
+//!   and a gap only a glide (with an updraft) crosses, to a goal pad.
+//! - **The wilds** south of it: a region the engine generates from a seed (8 × 8 tiles of
+//!   16 m, one of them a level file from Blender, `assets/tiles/ruin.gltf`), with skeleton
+//!   camps and a den in a pillar hall, walked over its navmesh. A dev goes there with
+//!   `regen region=wilds seed=42`; the bake files of its tiles are in `assets/nav/`.
+//!
+//! The monsters are the engine's NPCs: their behaviours, perception, the combat director
+//! and attack plans are content (`content/npc/`).
+//!
+//! Everything that is numbers or definitions is content in `assets/content/`: the world
+//! layout, the characters (prefabs), how they move (locomotion), what they can do (actions,
+//! movesets). Edit it while the game runs.
 //!
 //! Run windowed: `cargo sandbox` · headless: `cargo sandbox --headless --paused`
 //! Then drive it from another terminal: `cargo shards observe`, `cargo shards step 60`.
+
+// Bevy queries name every component they touch.
+#![allow(clippy::type_complexity)]
 
 pub mod ai;
 pub mod gameplay;
 #[cfg(feature = "render")]
 pub mod visuals;
 
-use std::time::Duration;
+use shards::prelude::*;
 
-use ai_core::prelude::*;
-use ai_core::{AiPerception, CheckDetail};
-use bevy::app::{ScheduleRunnerPlugin, TerminalCtrlCHandlerPlugin};
-use bevy::log::LogPlugin;
-use bevy::prelude::*;
+/// The sandbox game on top of the engine: gameplay and what the AI sees of it.
+pub struct SandboxPlugin;
 
-#[derive(Clone, Debug)]
-pub struct GameConfig {
-    /// No window, no GPU: CI, parallel playtests, servers.
-    pub headless: bool,
-    pub seed: u64,
-    /// BRP port for `shards` (`None`: no HTTP server).
-    pub port: Option<u16>,
-    pub paused: bool,
-    pub tick_hz: f64,
-    /// A gameplay failure saves `replays/crash-tick<N>.json`.
-    pub crash_replays: bool,
-    /// Ticks between replay checks, stored in the replay (`--check-every`).
-    pub check_every: u64,
-    /// What each replay check keeps to name what diverged (`--check-detail`).
-    pub check_detail: CheckDetail,
-    /// A slower tick is over budget (`--tick-budget-ms`); `None`: the tick's duration.
-    pub tick_budget: Option<Duration>,
-    /// Tick timing in `step` replies and `perf` journal entries.
-    pub report_perf: bool,
-}
-
-impl Default for GameConfig {
-    fn default() -> Self {
-        Self {
-            headless: false,
-            seed: 42,
-            port: Some(ai_core::DEFAULT_PORT),
-            paused: false,
-            tick_hz: 60.0,
-            crash_replays: true,
-            check_every: ai_core::replay::CHECK_EVERY,
-            check_detail: CheckDetail::default(),
-            tick_budget: None,
-            report_perf: true,
-        }
+impl Plugin for SandboxPlugin {
+    fn build(&self, app: &mut App) {
+        // The window title carries the seed and the port, so it cannot name the settings folder.
+        app.insert_resource(SettingsAppId::new("shards-sandbox"));
+        // The sandbox is the game that kept its rebound keys in `~/.config/shards/input.ron`: it
+        // asks for them to be imported (a windowed run with the settings in the platform's own
+        // folder only; a game that does not ask never reads that shared file).
+        app.insert_resource(shards::motion::InputSettings::for_game("shards"));
+        app.add_plugins((gameplay::GameplayPlugin, ai::GameAiPlugin));
     }
 }
 
-fn ai_plugin(cfg: &GameConfig) -> AiCorePlugin {
-    AiCorePlugin {
-        sim: SimConfig { tick_hz: cfg.tick_hz, seed: cfg.seed, start_paused: cfg.paused },
-        perception: AiPerception::default(),
-        remote_port: cfg.port,
-        crash_replays: cfg.crash_replays,
-        check_every: cfg.check_every,
-        check_detail: cfg.check_detail,
-        tick_budget: cfg.tick_budget,
-        report_perf: cfg.report_perf,
-        ..default()
-    }
-}
-
-pub fn build_app(cfg: &GameConfig) -> App {
+/// The app `shards::run` runs: the engine from `config`, the sandbox, and its looks
+/// when there is a window.
+pub fn build_app(config: &EngineConfig) -> App {
+    let title = format!("Shards sandbox · seed {} · BRP :{}", config.seed, config.port.unwrap_or(0));
     let mut app = App::new();
-    let log = LogPlugin { custom_layer: ai_core::capture_log_layer, ..default() };
-    if cfg.headless {
-        let frame = Duration::from_secs_f64(1.0 / 60.0);
-        // Ctrl+C exits through `AppExit`, so files written at start (--port-file) are removed.
-        app.add_plugins((MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(frame)), TerminalCtrlCHandlerPlugin, log));
-    } else {
+    app.add_plugins(EnginePlugins::new(EngineConfig { title, ..config.clone() })).add_plugins(SandboxPlugin);
+    if !config.headless && !config.testing {
         #[cfg(feature = "render")]
-        {
-            let window = WindowPlugin {
-                primary_window: Some(Window {
-                    title: format!("Shards sandbox · seed {} · BRP :{}", cfg.seed, cfg.port.unwrap_or(0)),
-                    resolution: (1280, 720).into(),
-                    ..default()
-                }),
-                ..default()
-            };
-            app.add_plugins(DefaultPlugins.set(log).set(window)).add_plugins(visuals::VisualsPlugin);
-        }
+        app.add_plugins(visuals::VisualsPlugin);
         #[cfg(not(feature = "render"))]
         panic!("built without the `render` feature: run with --headless");
     }
-    app.add_plugins(ai_plugin(cfg)).add_plugins((gameplay::GameplayPlugin, ai::GameAiPlugin));
     app
 }
 
-/// Paused, headless, no logging, no HTTP, no crash replay files and no tick timing in
-/// replies or the journal (it differs from run to run): drive it with
-/// `ai_core::call_tool`. Tests that look at timing turn it on with `AiPerf::report`.
+/// Paused at tick 0 with the world spawned, headless, no logging, no HTTP, no crash
+/// replay files and no tick timing in replies or the journal (it differs from run to
+/// run): drive it with `shards::ai_core::call_tool`. Tests that look at timing turn it on
+/// with `AiPerf::report`.
 pub fn test_app(seed: u64) -> App {
-    test_app_with(GameConfig { seed, ..default() })
+    test_app_with(|config| config.seed = seed)
 }
 
-/// [`test_app`] with other settings (seed, tick rate, replay checks); the window, the
-/// HTTP server, crash replay files and timing reports stay off, and the game starts
-/// paused.
-pub fn test_app_with(cfg: GameConfig) -> App {
-    let cfg = GameConfig { headless: true, port: None, paused: true, crash_replays: false, report_perf: false, ..cfg };
-    let mut app = App::new();
-    app.add_plugins(MinimalPlugins)
-        .add_plugins(ai_plugin(&cfg))
-        .add_plugins((gameplay::GameplayPlugin, ai::GameAiPlugin));
-    app.finish();
-    app.cleanup();
-    app.update();
-    app
+/// [`test_app`] with other settings (seed, tick rate, replay checks): `configure` changes
+/// [`shards::testing::config`]. Keep it headless and paused.
+pub fn test_app_with(configure: impl FnOnce(&mut EngineConfig)) -> App {
+    shards::testing::test_app(configure, |app| {
+        app.add_plugins(SandboxPlugin);
+    })
 }

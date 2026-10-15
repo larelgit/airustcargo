@@ -1,188 +1,233 @@
-//! Window-only layer: meshes, camera, HUD, keyboard → `Intent`, telegraph gizmos.
-//! Gameplay never depends on anything here, so the same game runs headless.
+//! Window-only layer: meshes for what the physics layer collides with, the engine's
+//! third-person camera, a HUD, the updrafts' wireframes. Keyboard, mouse and gamepad reach
+//! the player through the engine's input map (into `Intent`), like an agent's tools do.
+//! Gameplay never depends on anything here, so the same game runs headless; nothing here
+//! adds a component a replay would hash.
+//!
+//! The combat picture is the engine's (`shards_action`'s `render` feature, part of
+//! `EnginePlugins`): ground telegraphs with their symbols, the F2 combat overlay and the
+//! markers for attacks off screen, drawn for the `LocalPlayer` (the player prefab has it)
+//! through the active camera (the `AiCamera` below). Nothing of that is drawn here.
 
-use ai_core::highlight::AiOverlay;
-use ai_core::prelude::*;
-use ai_core::sim;
-use bevy::prelude::*;
+use std::collections::HashSet;
 
-use crate::gameplay::combat::{Action, AttackKind, Health, Shape, Stamina, Team};
-use crate::gameplay::intent::Intent;
-use crate::gameplay::{Boss, Pillar, Player, Skeleton, ARENA_HALF};
+use shards::ai_core::highlight::AiOverlay;
+use shards::ai_core::sim;
+use shards::motion::{CharacterController, Collider, Shape, Volume, VolumeKind};
+use shards::prelude::*;
+
+use crate::gameplay::{Boss, LayoutPiece, Look, PieceKind, Player, Skeleton};
 
 pub struct VisualsPlugin;
 
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ClearColor(Color::srgb(0.05, 0.06, 0.09)))
-            // Before `Startup`: the arena spawns there, and `dress` needs the palette.
+            .init_resource::<Dressed>()
             .add_systems(PreStartup, setup_assets)
             .add_systems(Startup, (setup_scene, setup_hud).chain())
-            .add_observer(dress::<Player>)
-            .add_observer(dress::<Skeleton>)
-            .add_observer(dress::<Boss>)
-            .add_observer(dress::<Pillar>)
-            .add_systems(PreUpdate, keyboard_to_intent)
-            .add_systems(Update, (dev_keys, follow_camera, update_hud, telegraphs));
+            .add_systems(Update, (dev_keys, dress, update_hud, draw_updrafts).chain());
     }
 }
 
 #[derive(Resource)]
 struct Palette {
-    capsule: Handle<Mesh>,
-    boss: Handle<Mesh>,
+    cube: Handle<Mesh>,
+    post: Handle<Mesh>,
     nose: Handle<Mesh>,
-    pillar: Handle<Mesh>,
     player: Handle<StandardMaterial>,
     skeleton: Handle<StandardMaterial>,
-    boss_mat: Handle<StandardMaterial>,
+    boss: Handle<StandardMaterial>,
     stone: Handle<StandardMaterial>,
+    floor: Handle<StandardMaterial>,
+    wall: Handle<StandardMaterial>,
+    sand: Handle<StandardMaterial>,
     dark: Handle<StandardMaterial>,
+    water: Handle<StandardMaterial>,
+    goal: Handle<StandardMaterial>,
+    marker: Handle<StandardMaterial>,
 }
 
 fn setup_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
-    let mut mat = |c: Color| mats.add(StandardMaterial { base_color: c, perceptual_roughness: 0.8, ..default() });
+    let mut solid = |c: Color| mats.add(StandardMaterial { base_color: c, perceptual_roughness: 0.85, ..default() });
+    let (player, skeleton, boss) =
+        (solid(Color::srgb(0.25, 0.55, 1.0)), solid(Color::srgb(0.85, 0.82, 0.7)), solid(Color::srgb(0.55, 0.85, 1.0)));
+    let (stone, floor, wall) = (
+        solid(Color::srgb(0.38, 0.39, 0.43)),
+        solid(Color::srgb(0.17, 0.19, 0.23)),
+        solid(Color::srgb(0.27, 0.28, 0.33)),
+    );
+    let (sand, dark, marker) =
+        (solid(Color::srgb(0.55, 0.5, 0.38)), solid(Color::srgb(0.1, 0.1, 0.12)), solid(Color::srgb(1.0, 0.85, 0.2)));
+    let mut glass = |c: Color| mats.add(StandardMaterial { base_color: c, alpha_mode: AlphaMode::Blend, ..default() });
+    let (water, goal) = (glass(Color::srgba(0.15, 0.4, 0.95, 0.45)), glass(Color::srgba(0.3, 1.0, 0.4, 0.3)));
     commands.insert_resource(Palette {
-        capsule: meshes.add(Capsule3d::new(0.45, 0.9)),
-        boss: meshes.add(Capsule3d::new(1.0, 1.6)),
+        cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
+        post: meshes.add(Cylinder::new(0.08, 1.6)),
         nose: meshes.add(Cuboid::new(0.25, 0.25, 0.5)),
-        pillar: meshes.add(Cuboid::new(2.0, 4.0, 2.0)),
-        player: mat(Color::srgb(0.25, 0.55, 1.0)),
-        skeleton: mat(Color::srgb(0.85, 0.82, 0.7)),
-        boss_mat: mat(Color::srgb(0.55, 0.85, 1.0)),
-        stone: mat(Color::srgb(0.35, 0.36, 0.4)),
-        dark: mat(Color::srgb(0.1, 0.1, 0.12)),
+        player,
+        skeleton,
+        boss,
+        stone,
+        floor,
+        wall,
+        sand,
+        dark,
+        water,
+        goal,
+        marker,
     });
 }
 
-fn setup_scene(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
-    commands.spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(ARENA_HALF * 2.0, ARENA_HALF * 2.0))),
-        MeshMaterial3d(mats.add(StandardMaterial { base_color: Color::srgb(0.16, 0.18, 0.22), ..default() })),
-    ));
+fn setup_scene(mut commands: Commands) {
     commands.spawn((
         DirectionalLight { illuminance: 9000.0, shadow_maps_enabled: true, ..default() },
-        Transform::from_xyz(8.0, 18.0, 6.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(30.0, 40.0, 20.0).looking_at(Vec3::new(40.0, 0.0, 0.0), Vec3::Y),
     ));
-    commands.insert_resource(GlobalAmbientLight { brightness: 250.0, ..default() });
-    let start = Vec3::new(0.0, 0.0, 12.0);
-    let camera = Transform::from_translation(start + CAMERA_OFFSET).looking_at(start + CAMERA_LOOK_AHEAD, Vec3::Y);
-    commands.spawn((Camera3d::default(), AiCamera, camera));
+    commands.insert_resource(GlobalAmbientLight { brightness: 300.0, ..default() });
+    // The engine's camera: it follows the `LocalPlayer`, mouse and right stick turn it.
+    let camera = ThirdPersonCamera { distance: 8.0, pitch: 0.5, ..default() };
+    let at = Transform::from_xyz(0.0, 8.0, 20.0).looking_at(Vec3::new(0.0, 0.0, 12.0), Vec3::Y);
+    commands.spawn((Camera3d::default(), AiCamera, camera, at));
 }
 
-/// Gives a freshly spawned gameplay entity its looks (works for `spawn` from tools too).
-fn dress<T: Component>(add: On<Add<T>>, mut commands: Commands, palette: Res<Palette>, q: Query<(Has<Player>, Has<Skeleton>, Has<Boss>)>) {
-    let entity = add.event().entity;
-    let Ok((is_player, is_skeleton, is_boss)) = q.get(entity) else { return };
-    let (mesh, mat, lift) = if is_player {
-        (palette.capsule.clone(), palette.player.clone(), 0.9)
-    } else if is_skeleton {
-        (palette.capsule.clone(), palette.skeleton.clone(), 0.9)
-    } else if is_boss {
-        (palette.boss.clone(), palette.boss_mat.clone(), 1.8)
-    } else {
-        // Pillar: a 4 m box standing on the entity's origin.
-        commands.entity(entity).insert(Visibility::default()).with_child((
-            Mesh3d(palette.pillar.clone()),
-            MeshMaterial3d(palette.stone.clone()),
-            Transform::from_xyz(0.0, 2.0, 0.0),
-        ));
-        return;
-    };
-    commands.entity(entity).insert(Visibility::default()).with_children(|c| {
-        c.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::from_xyz(0.0, lift, 0.0)));
-        c.spawn((Mesh3d(palette.nose.clone()), MeshMaterial3d(palette.dark.clone()), Transform::from_xyz(0.0, lift + 0.3, -0.55)));
-    });
-}
+/// Entities that have their looks already (window-only bookkeeping: no marker component
+/// on gameplay entities, so nothing here enters a replay's hash).
+#[derive(Resource, Default)]
+struct Dressed(HashSet<Entity>);
 
-/// Human input becomes `Intent`, exactly like an agent's tool calls do. Space and J
-/// go through the same input buffer as the `dodge` and `attack` tools: a press the
-/// character cannot act on within 0.2 s shows up in the journal as rejected.
-fn keyboard_to_intent(
-    keys: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    mut q: Query<(&mut Intent, &Transform), With<Player>>,
+type Undressed<'a> = (
+    Entity,
+    &'a Collider,
+    Option<&'a CharacterController>,
+    Option<&'a Volume>,
+    Option<&'a LayoutPiece>,
+    Has<Player>,
+    Has<Skeleton>,
+    Has<Boss>,
+);
+
+/// Gives what collides its looks: characters a capsule with a nose, boxes and ramps their
+/// stone, volumes a see-through box; landmarks without a body a post. A layout piece whose
+/// collider changed (a hot edit) is dressed anew.
+#[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
+fn dress(
+    mut commands: Commands,
+    palette: Res<Palette>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut dressed: ResMut<Dressed>,
+    bodies: Query<Undressed>,
+    changed: Query<Entity, (With<LayoutPiece>, Changed<Collider>)>,
+    posts: Query<Entity, (With<AiLandmark>, Without<Collider>)>,
+    children: Query<&Children>,
 ) {
-    let Ok((mut intent, tf)) = q.single_mut() else { return };
-    let mut dir = Vec3::ZERO;
-    for (key, d) in [
-        (KeyCode::KeyW, Vec3::NEG_Z),
-        (KeyCode::ArrowUp, Vec3::NEG_Z),
-        (KeyCode::KeyS, Vec3::Z),
-        (KeyCode::ArrowDown, Vec3::Z),
-        (KeyCode::KeyA, Vec3::NEG_X),
-        (KeyCode::ArrowLeft, Vec3::NEG_X),
-        (KeyCode::KeyD, Vec3::X),
-        (KeyCode::ArrowRight, Vec3::X),
-    ] {
-        if keys.pressed(key) {
-            dir += d;
+    for entity in &changed {
+        if dressed.0.remove(&entity) {
+            for child in children.get(entity).into_iter().flatten() {
+                commands.entity(*child).despawn();
+            }
         }
     }
-    let human_moving = dir != Vec3::ZERO;
-    if human_moving {
-        // The human takes over: drop whatever an agent ordered.
-        intent.orders.clear();
-        intent.move_dir = dir.normalize();
-    } else if intent.orders.is_empty() {
-        intent.move_dir = Vec3::ZERO;
+    for (entity, collider, character, volume, piece, player, skeleton, boss) in &bodies {
+        if !dressed.0.insert(entity) {
+            continue;
+        }
+        let at = Transform::from_translation(collider.offset);
+        let mut e = commands.entity(entity);
+        e.insert(Visibility::default());
+        if character.is_some() {
+            let Shape::Capsule { half_height, radius } = collider.shape else { continue };
+            let mat = if player {
+                palette.player.clone()
+            } else if skeleton {
+                palette.skeleton.clone()
+            } else if boss {
+                palette.boss.clone()
+            } else {
+                palette.stone.clone()
+            };
+            let height = 2.0 * (half_height + radius);
+            let body = meshes.add(Capsule3d::new(radius, half_height * 2.0));
+            e.with_children(|c| {
+                c.spawn((Mesh3d(body), MeshMaterial3d(mat), at));
+                let nose = Transform::from_xyz(0.0, height * 0.8, -radius - 0.15);
+                c.spawn((Mesh3d(palette.nose.clone()), MeshMaterial3d(palette.dark.clone()), nose));
+            });
+            continue;
+        }
+        let Shape::Cuboid { half } = collider.shape else { continue };
+        let mat = match (volume.map(|v| &v.kind), piece.map(|p| p.kind)) {
+            (Some(VolumeKind::Water), _) => palette.water.clone(),
+            // Drawn as a wireframe (`draw_updrafts`): a glider inside one sees through.
+            (Some(VolumeKind::Updraft { .. }), _) => continue,
+            (Some(VolumeKind::Trigger { .. }), _) => palette.goal.clone(),
+            (None, Some(PieceKind::Solid(Look::Floor))) => palette.floor.clone(),
+            (None, Some(PieceKind::Solid(Look::Wall))) => palette.wall.clone(),
+            (None, Some(PieceKind::Solid(Look::Sand))) => palette.sand.clone(),
+            _ => palette.stone.clone(),
+        };
+        let cube = Transform { scale: half * 2.0, ..at };
+        e.with_child((Mesh3d(palette.cube.clone()), MeshMaterial3d(mat), cube));
     }
-    if keys.just_pressed(KeyCode::Space) {
-        intent.dodge = Some(if human_moving { dir } else { *tf.forward() });
-    }
-    if keys.just_pressed(KeyCode::KeyJ) || mouse.just_pressed(MouseButton::Left) {
-        intent.attack = Some(AttackKind::Sword);
+    for entity in &posts {
+        if dressed.0.insert(entity) {
+            let post = (
+                Mesh3d(palette.post.clone()),
+                MeshMaterial3d(palette.marker.clone()),
+                Transform::from_xyz(0.0, 0.8, 0.0),
+            );
+            commands.entity(entity).insert(Visibility::default()).with_child(post);
+        }
     }
 }
 
-/// P: pause · N / `.`: one tick while paused · F1: id overlay · R: revive ·
-/// F12: marked screenshot into shots/.
+/// P: pause · N / `.`: one tick while paused · F1: id overlay · F3: collider overlay ·
+/// F4: revive the player · F12: marked screenshot into shots/. (F2, the combat overlay, and
+/// F6, the net overlay, are the engine's, and so is the rest of the keyboard, its input map:
+/// WASD, Space, Shift, F, Ctrl, mouse, Q, C, Tab.)
 fn dev_keys(world: &mut World) {
-    let (pause, step, overlay, revive, shot) = {
+    let (pause, step, overlay, revive, colliders, shot) = {
         let keys = world.resource::<ButtonInput<KeyCode>>();
         (
             keys.just_pressed(KeyCode::KeyP),
             keys.just_pressed(KeyCode::KeyN) || keys.just_pressed(KeyCode::Period),
             keys.just_pressed(KeyCode::F1),
-            keys.just_pressed(KeyCode::KeyR),
+            keys.just_pressed(KeyCode::F4),
+            keys.just_pressed(KeyCode::F3),
             keys.just_pressed(KeyCode::F12),
         )
     };
+    let call = |world: &mut World, tool: &str, args: shards::serde_json::Value| {
+        shards::ai_core::call_tool(world, "keyboard", tool, args);
+    };
     if pause {
         let tool = if sim::is_paused(world) { "resume" } else { "pause" };
-        ai_core::call_tool(world, "keyboard", tool, serde_json::Value::Null);
+        call(world, tool, shards::serde_json::Value::Null);
     }
     if step && sim::is_paused(world) {
-        ai_core::call_tool(world, "keyboard", "step", serde_json::json!({"ticks": 1}));
+        call(world, "step", shards::serde_json::json!({"ticks": 1}));
     }
     if overlay {
         let mut o = world.resource_mut::<AiOverlay>();
         o.enabled = !o.enabled;
     }
     if revive {
-        ai_core::call_tool(world, "keyboard", "heal", serde_json::Value::Null);
+        call(world, "heal", shards::serde_json::Value::Null);
+    }
+    if colliders {
+        let on = !world.get_resource::<Colliders>().is_some_and(|c| c.0);
+        world.insert_resource(Colliders(on));
+        call(world, "physics_overlay", shards::serde_json::json!({"on": on}));
     }
     if shot {
         // The path lands in the journal once the file is written.
-        ai_core::call_tool(world, "keyboard", "shot", serde_json::Value::Null);
+        call(world, "shot", shards::serde_json::Value::Null);
     }
 }
 
-/// Behind and above the player, looking a bit ahead (north) so the arena is in frame.
-const CAMERA_OFFSET: Vec3 = Vec3::new(0.0, 20.0, 12.0);
-const CAMERA_LOOK_AHEAD: Vec3 = Vec3::new(0.0, 0.0, -5.0);
-
-fn follow_camera(
-    time: Res<Time<Real>>,
-    player: Query<&Transform, (With<Player>, Without<Camera3d>)>,
-    mut cam: Query<&mut Transform, With<Camera3d>>,
-) {
-    let (Ok(p), Ok(mut c)) = (player.single(), cam.single_mut()) else { return };
-    let t = 1.0 - (-6.0 * time.delta_secs()).exp();
-    c.translation = c.translation.lerp(p.translation + CAMERA_OFFSET, t);
-    let focus = c.translation - CAMERA_OFFSET + CAMERA_LOOK_AHEAD;
-    c.look_at(focus, Vec3::Y);
-}
+/// Whether F3 turned the collider overlay on.
+#[derive(Resource)]
+struct Colliders(bool);
 
 #[derive(Component)]
 struct HudText;
@@ -190,12 +235,40 @@ struct HudText;
 #[derive(Component)]
 struct BossText;
 
+/// A HUD bar: its fill's share of the full width.
+#[derive(Component, Clone, Copy)]
+enum Bar {
+    Health,
+    Stamina,
+    Poise,
+}
+
 fn setup_hud(mut commands: Commands) {
+    let bar = |kind: Bar, color: Color| {
+        (
+            Node { width: Val::Px(240.0), height: Val::Px(9.0), margin: UiRect::bottom(Val::Px(4.0)), ..default() },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
+            children![(
+                Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+                BackgroundColor(color),
+                kind
+            )],
+        )
+    };
     commands.spawn((
-        Node { position_type: PositionType::Absolute, top: Val::Px(10.0), left: Val::Px(12.0), ..default() },
-        Text::new(""),
-        TextFont::from_font_size(17.0),
-        HudText,
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(10.0),
+            left: Val::Px(12.0),
+            flex_direction: FlexDirection::Column,
+            ..default()
+        },
+        children![
+            bar(Bar::Health, Color::srgb(0.85, 0.2, 0.2)),
+            bar(Bar::Stamina, Color::srgb(0.3, 0.8, 0.35)),
+            bar(Bar::Poise, Color::srgb(0.9, 0.75, 0.25)),
+            (Text::new(""), TextFont::from_font_size(16.0), HudText),
+        ],
     ));
     commands.spawn((
         Node { position_type: PositionType::Absolute, top: Val::Px(10.0), right: Val::Px(12.0), ..default() },
@@ -206,73 +279,89 @@ fn setup_hud(mut commands: Commands) {
     ));
 }
 
+/// The keys, for the HUD: the engine's input map (`InputMap::standard`) and the dev keys.
+const CONTROLS: &str = "WASD move | Space jump | Shift sprint | F glide | Ctrl dodge\n\
+                        LMB light | RMB heavy | Q block | C flask | Tab lock-on\n\
+                        P pause | N step | F1 ids | F2 combat | F3 colliders | F4 revive | F6 net | F12 shot";
+
+type PlayerHud<'a> = (
+    &'a AiId,
+    &'a Health,
+    Option<&'a Stamina>,
+    Option<&'a Poise>,
+    Option<&'a Charges>,
+    &'a ActionState,
+    Option<&'a MotionState>,
+    Has<Dead>,
+);
+
 fn update_hud(
     tick: Res<SimTick>,
     time: Res<Time<Virtual>>,
-    player: Query<(&AiId, &Health, &Stamina, &Action), With<Player>>,
-    boss: Query<(&AiId, &Health, &Boss, &Name)>,
+    player: Query<PlayerHud, With<Player>>,
+    boss: Query<(&AiId, &Health, &Boss, &Name, Option<&Poise>, Has<Dead>)>,
+    mut bars: Query<(&Bar, &mut Node)>,
     mut hud: Query<&mut Text, (With<HudText>, Without<BossText>)>,
     mut boss_hud: Query<&mut Text, (With<BossText>, Without<HudText>)>,
 ) {
-    if let (Ok(mut text), Ok((id, hp, st, action))) = (hud.single_mut(), player.single()) {
-        let state = if time.is_paused() { "PAUSED" } else { "running" };
-        let dead = if matches!(action, Action::Dead { .. }) { "   DEAD — R to revive" } else { "" };
-        text.0 = format!(
-            "{id}  HP {:.0}/{:.0}  STAM {:.0}/{:.0}{dead}\ntick {}  {state}\nWASD move | Space dodge | J/LMB attack\nP pause | N step | F1 ids | F12 shot",
-            hp.current, hp.max, st.current, st.max, tick.0
-        );
+    if let Ok((id, hp, st, poise, charges, action, motion, dead)) = player.single() {
+        let share = |now: f32, max: f32| if max > 0.0 { (now / max).clamp(0.0, 1.0) * 100.0 } else { 0.0 };
+        for (bar, mut node) in &mut bars {
+            let pct = match bar {
+                Bar::Health => share(hp.current, hp.max),
+                Bar::Stamina => st.map_or(0.0, |s| share(s.current, s.max)),
+                Bar::Poise => poise.map_or(0.0, |p| share(p.current, p.max)),
+            };
+            if node.width != Val::Percent(pct) {
+                node.width = Val::Percent(pct);
+            }
+        }
+        if let Ok(mut text) = hud.single_mut() {
+            let state = if time.is_paused() { "PAUSED" } else { "running" };
+            let flasks = charges.and_then(|c| c.get("flask")).map_or(0, |f| f.current);
+            let doing = action.current.as_ref().map_or("free".to_owned(), |r| format!("{} {}", r.phase, r.action));
+            // The built-in font is ASCII only.
+            let moving = motion
+                .map(shards::motion::describe_motion)
+                .unwrap_or_default()
+                .replace('↑', "up ")
+                .replace('↓', "down ");
+            let dead = if dead { "   DEAD (F4 revives)" } else { "" };
+            text.0 = format!(
+                "{id}  HP {:.0}/{:.0}  STAM {:.0}  flasks {flasks}{dead}\n{doing}  {moving}\ntick {}  {state}\n{CONTROLS}",
+                hp.current,
+                hp.max,
+                st.map_or(0.0, |s| s.current),
+                tick.0
+            );
+        }
     }
     if let Ok(mut text) = boss_hud.single_mut() {
         text.0 = boss
             .iter()
-            .map(|(id, hp, b, name)| format!("{id} {name}  phase {}  {:.0}/{:.0}", b.phase, hp.current, hp.max))
+            .map(|(id, hp, b, name, poise, dead)| {
+                let poise = poise.map(shards::action::fighter::describe_poise).unwrap_or_default();
+                let state = if dead { "  fallen".to_owned() } else { format!("  {poise}") };
+                format!("{id} {name}  phase {}  {:.0}/{:.0}{state}", b.phase, hp.current, hp.max)
+            })
             .collect::<Vec<_>>()
             .join("\n");
     }
 }
 
-/// Windup shapes on the ground, health bars over heads.
-fn telegraphs(mut gizmos: Gizmos, q: Query<(&Transform, &Action, &Team, Option<&Health>)>) {
-    let ground = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-    for (tf, action, team, health) in &q {
-        let p = tf.translation;
-        if let Action::Windup { attack, left } = action {
-            let spec = attack.spec();
-            let progress = (1.0 - left / spec.windup.max(0.01)).clamp(0.0, 1.0);
-            let color = if *team == Team::Monster { Color::srgb(1.0, 0.25, 0.2) } else { Color::srgb(0.4, 0.8, 1.0) };
-            match spec.shape {
-                Shape::Circle { radius } => {
-                    gizmos.circle(Isometry3d::new(p + Vec3::Y * 0.05, ground), radius, color);
-                    gizmos.circle(Isometry3d::new(p + Vec3::Y * 0.05, ground), radius * progress, color);
-                }
-                Shape::Cone { range, half_angle_deg } => {
-                    let fwd = *tf.forward();
-                    let steps = 8;
-                    let mut prev = None;
-                    for i in 0..=steps {
-                        let a = (-half_angle_deg + 2.0 * half_angle_deg * i as f32 / steps as f32).to_radians();
-                        let edge = p + Quat::from_rotation_y(a) * fwd * range + Vec3::Y * 0.05;
-                        if i == 0 || i == steps {
-                            gizmos.line(p + Vec3::Y * 0.05, edge, color);
-                        }
-                        if let Some(prev) = prev {
-                            gizmos.line(prev, edge, color);
-                        }
-                        prev = Some(edge);
-                    }
-                    gizmos.line(p + Vec3::Y * 0.05, p + fwd * range * progress + Vec3::Y * 0.05, color);
-                }
-            }
-        }
-        if let Some(h) = health
-            && h.current < h.max
-            && !matches!(action, Action::Dead { .. })
-        {
-            let top = p + Vec3::Y * if h.max > 1000.0 { 4.0 } else { 2.3 };
-            let w = if h.max > 1000.0 { 2.4 } else { 1.0 };
-            let frac = (h.current / h.max).clamp(0.0, 1.0);
-            gizmos.line(top - Vec3::X * w, top + Vec3::X * w, Color::srgb(0.25, 0.05, 0.05));
-            gizmos.line(top - Vec3::X * w, top - Vec3::X * w + Vec3::X * 2.0 * w * frac, Color::srgb(0.2, 0.9, 0.3));
+/// Updrafts: their box as a wireframe and streaks rising through it.
+fn draw_updrafts(mut gizmos: Gizmos, time: Res<Time<Real>>, q: Query<(&Volume, &Collider, &Transform)>) {
+    let color = Color::srgba(0.5, 0.95, 1.0, 0.6);
+    for (volume, collider, tf) in &q {
+        let (VolumeKind::Updraft { .. }, Shape::Cuboid { half }) = (&volume.kind, collider.shape) else { continue };
+        let center = tf.translation + collider.offset;
+        gizmos.cube(Transform { translation: center, rotation: tf.rotation, scale: half * 2.0 }, color);
+        let rise = (time.elapsed_secs() * 4.0).rem_euclid(half.y * 2.0);
+        for i in 0..9 {
+            let (fx, fz) = ((i % 3) as f32 - 1.0, (i / 3) as f32 - 1.0);
+            let base = center + Vec3::new(fx * half.x * 0.6, -half.y, fz * half.z * 0.6);
+            let y = (rise + i as f32 * 1.7).rem_euclid(half.y * 2.0);
+            gizmos.line(base + Vec3::Y * y, base + Vec3::Y * (y + 1.5).min(half.y * 2.0), color);
         }
     }
 }

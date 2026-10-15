@@ -1,0 +1,37 @@
+// Area 1: the arena (the combat prototype). Layouts spawn in id order when the game starts:
+// solids, ramps, volumes, landmarks, then the prefabs under `spawns` (so the pillars are
+// e1-e4, the player e5, the Frost Warden e6, the skeletons e7 and e8; a third skeleton, e14,
+// comes with `watch.layout.ron`, after the course's landmarks). Boxes by their `min`
+// and `max` corners; +Y is up, -Z is north. Edit while the game runs: the geometry is rebuilt
+// on the next tick (spawns stay: they are the game's characters).
+//
+// A 40 x 40 m floor walled in 3 m high, four pillars, and a gate in the east wall: a
+// corridor leads to the obstacle course (`course.layout.ron`).
+{
+    "arena": (
+        solids: [
+            (min: (-21.5, -1.0, -21.5), max: (21.5, 0.0, 21.5), look: Floor),
+            // Walls 3 m high and 1.5 m thick (`clearance` sees a wall, not the void behind it).
+            (min: (-21.5, 0.0, -21.5), max: (21.5, 3.0, -20.0), look: Wall),
+            (min: (-21.5, 0.0, 20.0), max: (21.5, 3.0, 21.5), look: Wall),
+            (min: (-21.5, 0.0, -20.0), max: (-20.0, 3.0, 20.0), look: Wall),
+            // East wall, with an 8 m gate at z -4..4.
+            (min: (20.0, 0.0, -20.0), max: (21.5, 3.0, -4.0), look: Wall),
+            (min: (20.0, 0.0, 4.0), max: (21.5, 3.0, 20.0), look: Wall),
+            // The corridor to the course.
+            (min: (21.5, -1.0, -5.5), max: (44.0, 0.0, 5.5), look: Floor),
+            (min: (21.5, 0.0, -5.5), max: (44.0, 3.0, -4.0), look: Wall),
+            (min: (21.5, 0.0, 4.0), max: (44.0, 3.0, 5.5), look: Wall),
+        ],
+        spawns: [
+            (prefab: "pillar", at: (-7.0, 0.0, -7.0)),
+            (prefab: "pillar", at: (7.0, 0.0, -7.0)),
+            (prefab: "pillar", at: (-7.0, 0.0, 7.0)),
+            (prefab: "pillar", at: (7.0, 0.0, 7.0)),
+            (prefab: "player", at: (0.0, 0.0, 12.0), facing: (0.0, 0.0, -1.0)),
+            (prefab: "frost_warden", at: (0.0, 0.0, -6.0), facing: (0.0, 0.0, 1.0)),
+            (prefab: "skeleton", at: (-12.0, 0.0, 2.0)),
+            (prefab: "skeleton", at: (12.0, 0.0, -2.0)),
+        ],
+    ),
+}

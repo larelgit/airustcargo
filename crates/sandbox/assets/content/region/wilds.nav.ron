@@ -1,0 +1,11 @@
+// How the region's tiles are baked into navigation grids (content kind `nav`, id `default`):
+// half-meter cells for the skeletons' body. The bake files are in `assets/nav/`; after editing
+// a tile, its level file or the skeleton's locomotion, bake again:
+//
+//   cargo sandbox --bake-nav            (or the dev tool `nav_bake`)
+//
+// `content check` names a missing or stale bake. The warden is wider than a skeleton: it
+// plans on the local grid.
+{
+    "default": (cell: 0.5, agent: Some("skeleton"), safe_drop: 2.0),
+}

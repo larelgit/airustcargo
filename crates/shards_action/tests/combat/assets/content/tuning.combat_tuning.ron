@@ -1,0 +1,3 @@
+{
+    "default": (input_buffer: 0.15, max_statuses: 2, sprint_stamina_per_s: 30),
+}

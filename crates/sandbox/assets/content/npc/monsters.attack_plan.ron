@@ -1,0 +1,10 @@
+// How the monsters choose their attacks (content kind `attack_plan`).
+{
+    // One claw, when the player is within its reach; a breath of 1.4-1.9 s after each.
+    "skeleton": (options: [(input: "light", tags: ["light"])], rest: (1.4, 1.9)),
+    // The warden: any attack of its moveset that reaches the player now (picked at random
+    // among them), never two attacks that cover a zone in a row, a rest of 1.2-1.8 s after
+    // each. Enraged (phase 2, the boss's second moveset and plan): shorter rests.
+    "warden": (auto: true, in_range_only: true, bans: [(after: ["zone"], then: ["zone"], within: 1)], rest: (1.2, 1.8)),
+    "warden_enraged": (auto: true, in_range_only: true, bans: [(after: ["zone"], then: ["zone"], within: 1)], rest: (1.0, 1.4)),
+}

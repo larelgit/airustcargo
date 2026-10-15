@@ -1,0 +1,14 @@
+// Skeletons: one quick claw, no warning. A hit makes them flinch; enough poise damage
+// staggers them.
+{
+    "claw": (
+        net_id: 20,
+        phases: [("windup", 0.45), ("active", 0.1), ("recovery", 0.6)],
+        track_until: 0.2,
+        hits: [(span: Phase("active"), shape: Cone(range: 1.8, angle: 100), damage: 8, poise: 10)],
+        anim: "claw",
+    ),
+    "skeleton_flinch": (net_id: 21, phases: [("flinch", 0.25)], anim: "flinch"),
+    "skeleton_stagger": (net_id: 22, phases: [("stagger", 0.7)], anim: "stagger"),
+    "skeleton_death": (net_id: 23, phases: [("fall", 1.0)], anim: "death"),
+}

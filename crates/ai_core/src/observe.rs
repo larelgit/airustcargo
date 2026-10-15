@@ -3,6 +3,7 @@
 //! ```text
 //! tick 1532 (25.53s) | paused | speed 1x | seed 42 | you e12
 //! YOU  e12 Player  hp 64/100  stam 30/80  Dodge 0.20s  at (3.0, -4.2) facing N
+//! ALERT in hit zone of e42 slam (lands in 0.60s): move 2.1m S to leave it
 //! SEEN (by threat)
 //!   e42 Boss "Frost Warden"  hp 2300/4000  phase 2  WindupSlam 0.60s  8.4m NE  scr(812,344)
 //!   e57 Skeleton  hp 40/40  Chase  15.0m W  occluded
@@ -225,6 +226,9 @@ pub fn header(world: &World, subject: Option<AiId>) -> String {
     if let Some(id) = subject {
         let _ = write!(h, " | you {id}");
     }
+    if let Some(gate) = world.get_resource::<sim::SimGate>().filter(|g| g.is_held()) {
+        let _ = write!(h, " | loading: {}", gate.reasons().join(", "));
+    }
     h
 }
 
@@ -242,6 +246,12 @@ pub fn observe(world: &World, opts: &ObserveOptions) -> String {
     match &subject {
         Some(s) => {
             let _ = writeln!(out, "YOU  {}", you_line(s));
+            for line in crate::describe::advice(world, s.entity) {
+                let _ = writeln!(out, "ALERT {line}");
+            }
+            for line in crate::describe::observe_lines(world, s.entity) {
+                let _ = writeln!(out, "{line}");
+            }
         }
         None => out.push_str("YOU  (no subject: looking from the world origin)\n"),
     }

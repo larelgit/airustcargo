@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit reviews at most 300 files per pull request, counted after these filters. Reviewed: engine and
+# game code, CLI, scenarios, build and CI files, docs. Not reviewed: test code and its fixtures (`tests/`,
+# including the recorded reference replays), content data (`*.ron`, baked navigation included) and the
+# engine specification, which is the input of the work rather than part of it.
+# Settings not named here come from the organization's CodeRabbit settings.
+inheritance: true
+reviews:
+  path_filters:
+    - "!**/tests/**"
+    - "!**/*.ron"
+    - "!docs/engine-tz.md"

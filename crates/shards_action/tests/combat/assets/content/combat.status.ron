@@ -1,0 +1,3 @@
+{
+    "bleed": (threshold: 100, decay_per_s: 10, duration: 1.0, effect: "bleed"),
+}

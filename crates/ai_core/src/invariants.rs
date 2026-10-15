@@ -13,10 +13,19 @@
 //! <name> violated at tick N (replay: …)`. The rule that fired stays off until
 //! `assert_reset` re-arms it, with every other rule that fired.
 //!
-//! Rules never change the game and stay out of replay checks. Changes to the session's
-//! rules are recorded in the replay all the same, and playback makes them at the same
-//! ticks: the replay saved at a violation meets it again at the same tick, and
-//! `--verify` lists every violation on the way.
+//! Rules never change the game and stay out of replay checks and snapshots. Changes to
+//! the session's rules are recorded in the replay all the same, and playback makes them
+//! at the same ticks: the replay saved at a violation meets it again at the same tick,
+//! and `--verify` lists every violation on the way. Loading a snapshot keeps the rules
+//! and re-arms them, and the recording that starts there begins with the session's
+//! rules, so a replay from a snapshot checks them too.
+//!
+//! Rules run where the simulation runs: [`InvariantSystems`] is a set a game can gate
+//! (the engine skips it on a network client, whose world follows the host's), and the four
+//! `assert_*` tools are [`NetRoute::HostOnly`]: a client refuses them and says the rules are
+//! checked on the host. (They are Dev tools, which a host caps for a guest to the player's
+//! scope, so handing them over would be refused there while the client reported `ok`; and
+//! `assert_list` is a query, which runs where it is called.)
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -29,7 +38,10 @@ use crate::journal::{self, AiJournal, JournalKind};
 use crate::replay;
 use crate::session::Scope;
 use crate::sim::{self, Halt};
-use crate::tools::{register_tool, Call, ToolKind, ToolResult};
+use crate::tools::{register_tool, AiTools, Call, NetRoute, ToolKind, ToolResult};
+
+/// Why a client refuses the `assert_*` tools ([`NetRoute::HostOnly`]).
+pub const RULES_ON_THE_HOST: &str = "the rules are checked on the host: call it there";
 
 /// A game rule: `Some(explanation)` while it is broken.
 pub type Invariant = fn(&World) -> Option<String>;
@@ -131,15 +143,30 @@ pub(crate) fn check_name(name: &str) -> Result<(), String> {
     }
 }
 
+/// `FixedLast`: the rules, after the tick's failures are collected.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InvariantSystems;
+
 pub(crate) fn plugin(app: &mut App, replays: bool) {
     app.world_mut().get_resource_or_init::<AiInvariants>().replays = replays;
     // Last in the tick: its log lines and its failures are in the journal by now.
-    app.add_systems(FixedLast, check_after_tick.after(crate::failures::collect_after_tick));
+    app.configure_sets(FixedLast, InvariantSystems.after(crate::failures::collect_after_tick))
+        .add_systems(FixedLast, check_after_tick.in_set(InvariantSystems));
     let world = app.world_mut();
     register_tool(world, "assert_add", Scope::Dev, ToolKind::Control, assert_add_tool);
     register_tool(world, "assert_list", Scope::Dev, ToolKind::Query, assert_list_tool);
     register_tool(world, "assert_remove", Scope::Dev, ToolKind::Control, assert_remove_tool);
     register_tool(world, "assert_reset", Scope::Dev, ToolKind::Control, assert_reset_tool);
+    // The rules live where they are checked, on the host. A client does not hand the changes
+    // over: the host caps a guest's forwarded calls to the player scope, so it would refuse
+    // these Dev tools while the client's call reported `ok`. The list is a query, which never
+    // goes to the host either. A client refuses all four and says where to call them.
+    let mut tools = world.get_resource_or_init::<AiTools>();
+    for name in ["assert_add", "assert_list", "assert_remove", "assert_reset"] {
+        if let Err(why) = tools.set_route(name, NetRoute::HostOnly(RULES_ON_THE_HOST)) {
+            panic!("invariants: {why}");
+        }
+    }
 }
 
 // --- checking --------------------------------------------------------------------
@@ -151,7 +178,7 @@ fn check_after_tick(world: &mut World) {
         return;
     };
     // A failed system left this tick half-done, and the failure halted the game already.
-    let broken: Vec<(usize, String)> = if crate::failures::failed_in(world, tick) {
+    let broken: Vec<(usize, String)> = if crate::failures::failed_this_tick(world) {
         Vec::new()
     } else {
         invariants
@@ -205,7 +232,8 @@ fn fire(world: &mut World, index: usize, tick: u64, text: String) -> Violation {
 }
 
 fn save_replay(world: &mut World, violation: &Violation) -> Option<String> {
-    if !world.resource::<AiInvariants>().replays {
+    let recording = world.get_resource::<replay::AiReplay>().is_some_and(replay::AiReplay::is_recording);
+    if !world.resource::<AiInvariants>().replays || !recording {
         return None;
     }
     let recording = replay::save(world);
@@ -223,8 +251,29 @@ fn save_replay(world: &mut World, violation: &Violation) -> Option<String> {
     }
 }
 
-/// Violations since the last call, for the `step` that is running.
-pub(crate) fn take_unreported(world: &mut World) -> Vec<Violation> {
+/// The recording restarts (a snapshot was loaded): every rule is armed again, journal
+/// rules look at entries from now on. Returns the session's rules as `Add`s, in order,
+/// for the new recording to start with.
+pub(crate) fn restarted(world: &mut World) -> Vec<AssertOp> {
+    let Some(seen) = world.get_resource::<AiJournal>().map(AiJournal::last_seq) else {
+        return Vec::new();
+    };
+    let Some(mut invariants) = world.get_resource_mut::<AiInvariants>() else {
+        return Vec::new();
+    };
+    let mut ops = Vec::new();
+    for entry in &mut invariants.rules {
+        entry.fired = None;
+        if let Rule::Session { when, seen: s } = &mut entry.rule {
+            *s = seen;
+            ops.push(AssertOp::Add { name: entry.name.clone(), when: when.clone() });
+        }
+    }
+    ops
+}
+
+/// Violations since the last call, for the `step` that is running (or a stand's driver).
+pub fn take_unreported(world: &mut World) -> Vec<Violation> {
     let Some(mut invariants) = world.get_resource_mut::<AiInvariants>() else {
         return Vec::new();
     };

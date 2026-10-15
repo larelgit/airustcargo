@@ -5,13 +5,12 @@
 
 use std::sync::Mutex;
 
-use ai_core::prelude::*;
-use ai_core::replay;
-use ai_core::{call_tool, AiFailures, AiJournal, AiReplay, CallOutcome, JournalKind};
-use bevy::app::FixedMain;
-use bevy::prelude::*;
-use bevy::time::TimeUpdateStrategy;
-use serde_json::{json, Value};
+use shards::ai_core::replay;
+use shards::ai_core::{call_tool, AiFailures, AiJournal, AiReplay, CallOutcome, JournalKind};
+use shards::bevy::app::FixedMain;
+use shards::bevy::time::TimeUpdateStrategy;
+use shards::prelude::*;
+use shards::serde_json::{json, Value};
 
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
@@ -65,7 +64,7 @@ fn a_panic_stops_the_step_at_its_tick() {
         text(&out)
     );
     assert!(text(&out).contains("the ice gave way"), "{}", text(&out));
-    assert_eq!(ai_core::sim::tick(app.world()), 50);
+    assert_eq!(shards::ai_core::sim::tick(app.world()), 50);
     let line = format!("50 [error] system {SYSTEM} panicked at tick 50: the ice gave way");
     assert!(journal(&app, JournalKind::Error).contains(&line), "{:?}", journal(&app, JournalKind::Error));
     assert!(out.journal.contains(&line), "the step reports it too: {:?}", out.journal);
@@ -79,7 +78,7 @@ fn the_game_runs_on_after_a_failure() {
     assert!(has_fixed_schedules(&app), "FixedMain and FixedUpdate must survive the panic");
     let out = ok(&mut app, "step", json!({"ticks": 10}));
     assert_eq!(text(&out), "ran 10 ticks (50 → 60)");
-    assert_eq!(ai_core::sim::tick(app.world()), 60);
+    assert_eq!(shards::ai_core::sim::tick(app.world()), 60);
     assert!(has_fixed_schedules(&app));
 }
 
@@ -92,8 +91,8 @@ fn real_time_play_pauses_on_a_failure() {
     for _ in 0..80 {
         app.update();
     }
-    assert!(ai_core::sim::is_paused(app.world()), "the failure must pause the game");
-    assert_eq!(ai_core::sim::tick(app.world()), 50, "no tick after the failing one");
+    assert!(shards::ai_core::sim::is_paused(app.world()), "the failure must pause the game");
+    assert_eq!(shards::ai_core::sim::tick(app.world()), 50, "no tick after the failing one");
     assert!(journal(&app, JournalKind::Sim).iter().any(|l| l.contains(&format!("paused: system {SYSTEM} panicked at tick 50"))));
     assert!(journal(&app, JournalKind::Error).iter().any(|l| l.contains("panicked at tick 50: the ice gave way")));
     assert!(has_fixed_schedules(&app));
@@ -124,6 +123,64 @@ fn the_crash_replay_reproduces_the_failure() {
 }
 
 #[test]
+fn a_failure_while_loading_keeps_the_game_paused_after_it() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let mut app = App::new();
+    app.add_plugins(EnginePlugins::new(EngineConfig { paused: false, ..shards::testing::config() }))
+        .add_systems(OnEnter(EngineState::InGame), missing_floor);
+    app.finish();
+    app.cleanup();
+    shards::testing::wait_until_loaded(&mut app, std::time::Duration::from_secs(20)).unwrap();
+    app.insert_resource(TimeUpdateStrategy::FixedTimesteps(1)); // one tick per frame, if it runs
+    for _ in 0..5 {
+        app.update();
+    }
+    assert!(shards::ai_core::sim::is_paused(app.world()), "opening the gate must not resume a failed game");
+    assert_eq!(shards::ai_core::sim::tick(app.world()), 0);
+    let paused = journal(&app, JournalKind::Sim);
+    assert!(paused.iter().any(|l| l.contains("paused: system system_failures::missing_floor panicked at tick 0")), "{paused:?}");
+}
+
+/// An `OnEnter` that fails to spawn the world.
+fn missing_floor() {
+    panic!("the floor is missing");
+}
+
+/// Gives way at tick 3 while `Boom` is set: another run of the same ticks does not.
+#[derive(Resource)]
+struct Boom(bool);
+
+fn flaky_ice(tick: Res<SimTick>, boom: Res<Boom>) {
+    if tick.0 == 3 && boom.0 {
+        panic!("the ice gave way");
+    }
+}
+
+#[test]
+fn a_rewind_past_a_failure_checks_the_rules_of_the_tick_that_failed() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let mut app = sandbox::test_app(42);
+    app.insert_resource(Boom(true))
+        .add_systems(FixedUpdate, flaky_ice.in_set(SimSet::Resolve))
+        // Broken at tick 3 and not before or after.
+        .add_ai_invariant("only_at_three", |w| (shards::ai_core::sim::tick(w) == 3).then(|| "broken at tick 3".to_owned()));
+    ok(&mut app, "step", json!({"ticks": 1}));
+    let before = shards::ai_core::snapshot::capture(app.world()).unwrap();
+
+    // The failure halted tick 3, and its rules were left alone.
+    let out = ok(&mut app, "step", json!({"ticks": 10}));
+    assert!(text(&out).contains("stopped: gameplay system system_failures::flaky_ice panicked at tick 3"), "{}", text(&out));
+    assert!(app.world().resource::<shards::ai_core::AiInvariants>().violations().is_empty());
+
+    // Back to tick 1 and on another way (the system does not fail now): tick 3 is a tick like
+    // any other, and the rule that is broken in it fires.
+    app.world_mut().resource_mut::<Boom>().0 = false;
+    shards::ai_core::snapshot::restore(app.world_mut(), &before, false).unwrap();
+    let out = ok(&mut app, "step", json!({"ticks": 5}));
+    assert_eq!(text(&out), "ran 2 ticks (1 → 3), stopped: invariant only_at_three violated at tick 3");
+}
+
+#[test]
 fn a_panicking_tool_is_not_a_gameplay_failure() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let mut app = icy_app();
@@ -142,7 +199,7 @@ fn a_panicking_tool_is_not_a_gameplay_failure() {
     let out = ok(&mut app, "orphan", json!({}));
     assert!(out.journal.iter().any(|l| l.contains("[error] tool orphan: command")), "{:?}", out.journal);
     ok(&mut app, "step", json!({"ticks": 10}));
-    assert_eq!(ai_core::sim::tick(app.world()), 10, "the tool's failure does not stop the next step");
+    assert_eq!(shards::ai_core::sim::tick(app.world()), 10, "the tool's failure does not stop the next step");
 }
 
 #[test]

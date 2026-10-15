@@ -1,0 +1,10 @@
+// Points of interest of the test regions.
+{
+    "spawn": (),
+    "camp": (prefab: "campfire"),
+    "shrine": (),
+    "chest": (),
+    "ruin": (label: "Ruins"),
+    "boss": (),
+    "vault": (),
+}

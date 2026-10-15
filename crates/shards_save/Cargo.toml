@@ -1,0 +1,22 @@
+[package]
+name = "shards_save"
+description = "Shards saves: character and world sections (the schema), versioned slots with migrations, atomic writes with checksums and backups, autosave, tools."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+bevy = { workspace = true, features = ["std", "serialize", "bevy_state"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+crc32fast.workspace = true
+
+[dev-dependencies]
+# Integration tests build apps the way a game does: the whole engine (`shards::testing`).
+# With the features a game has, so `cargo test -p shards_save` builds Bevy as the workspace does.
+shards = { workspace = true, features = ["render", "remote", "hot_reload"] }

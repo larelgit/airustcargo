@@ -1,0 +1,63 @@
+[package]
+name = "my_game"
+description = "A minimal game on the Shards engine: the template to copy."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+publish = false
+
+# The game is a library (everything: plugins, content kinds, tools) and a thin binary
+# (`shards::run`), so tests build the same app a player runs. The tests are in tests/game:
+# one binary, so Bevy links once; there is nothing to test in src/ itself.
+[lib]
+test = false
+doctest = false
+
+[[bin]]
+name = "my_game"
+path = "src/main.rs"
+test = false
+
+[features]
+default =["render", "remote", "hot_reload"]
+# `shards` BRP server (`shards observe`, `shards step`, ...). Dev builds.
+remote = ["shards/remote"]
+# Window, 3D rendering, UI. Without it the game only runs `--headless`.
+render = ["shards/render"]
+# Content files apply as they change on disk.
+hot_reload = ["shards/hot_reload"]
+# Need system packages: libasound2-dev / libudev-dev / libwayland-dev libxkbcommon-dev.
+audio = ["shards/audio"]
+gamepad = ["shards/gamepad"]
+wayland = ["shards/wayland"]
+# Faster incremental builds (`cargo run --features dynamic`; the `cargo game` alias passes flags to the game).
+dynamic = ["shards/dynamic"]
+# Tracy profiler zones for every system (`cargo run --release --features trace_tracy`).
+trace_tracy = ["shards/trace_tracy"]
+
+[dependencies]
+# The engine is the game's only dependency: Bevy, serde and schemars come through it
+# (`shards::prelude`, `shards::serde`, `shards::schemars`).
+#
+# Here the template sits inside the engine repository, so it points at the folder. In
+# your own repository pin the engine instead (see CHANGELOG.md of the engine). The template
+# needs the world, NPCs and navmesh of phase B (0.3.0), so not the phase A tag v0.2.0; until
+# the maintainer tags v0.3.0 pin a commit, afterwards a tag:
+#   shards = { git = "https://github.com/larelgit/airustcargo", rev = "<commit>", default-features = false }
+#   shards = { git = "https://github.com/larelgit/airustcargo", tag = "v0.3.0", default-features = false }
+shards = { path = "../crates/shards", default-features = false }
+
+# A workspace of its own: the engine repository's workspace must not swallow the template,
+# and the template must not depend on anything of the engine repository except `shards`.
+[workspace]
+resolver = "3"
+
+# Bevy's recommended dev setup: optimise dependencies, keep our own code fast to compile.
+[profile.dev]
+opt-level = 1
+# Line tables keep backtraces readable; full debug info made every test binary huge.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false

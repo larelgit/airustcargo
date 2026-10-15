@@ -1,0 +1,234 @@
+# Engine CI: every push and every pull request.
+#
+#   test           cargo test --workspace: unit tests, sandbox scenarios, checked-in replays
+#   clippy         warnings are errors, engine and template
+#   template       the template game builds and passes its tests apart from the workspace
+#   headless-cli   a live sandbox without a window, driven by the `shards` CLI; content and
+#                  1000-seed worldgen checks through the game's binary; a live stand (host and
+#                  two clients, `--stand 2`) running the stand scenarios
+#   replays-window the same replays verified with a window (Xvfb + software Vulkan); optional
+#
+# What the jobs run you can run by hand: the commands are the same.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A newer push to the same branch makes the older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Incremental compilation only slows a clean CI build down and bloats the cache.
+  CARGO_INCREMENTAL: 0
+  # One Bevy build per cache: the template reuses the engine workspace's `target/`.
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ---------------------------------------------------------------------------------------
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: dev
+      # Includes the sandbox's scenario files (crates/sandbox/scenarios/*.scenario, and the stand
+      # scenarios in scenarios/stand/ on in-process stands) and the checked-in replays (--verify),
+      # which are cargo tests there.
+      - name: cargo test --workspace
+        run: cargo test --workspace --locked
+
+  # ---------------------------------------------------------------------------------------
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: clippy
+      - name: cargo clippy (engine workspace)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # What people copy must be clean too.
+      - name: cargo clippy (template)
+        run: cargo clippy --manifest-path template/Cargo.toml --all-targets --locked -- -D warnings
+
+  # ---------------------------------------------------------------------------------------
+  # The template is a workspace of its own (template/Cargo.toml has [workspace]) whose only
+  # dependency is `shards`: it must build and pass its tests without the rest of the engine
+  # repository, like a game in its own repository would.
+  template:
+    name: template
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: dev
+          # Reuses the Bevy build of the `test` job (same dependency versions, same profile,
+          # same target dir) and leaves the cache alone.
+          save: "false"
+      # The template has its own Cargo.lock. Dependencies must stay at the versions the
+      # engine itself is built and tested with, so the two lockfiles may not disagree.
+      - name: template/Cargo.lock agrees with Cargo.lock
+        run: |
+          python3 - <<'EOF'
+          import sys, tomllib
+
+          def versions(path):
+              with open(path, "rb") as f:
+                  return {(p["name"], p["version"]) for p in tomllib.load(f)["package"] if "source" in p}
+
+          engine, template = versions("Cargo.lock"), versions("template/Cargo.lock")
+          # Everything the template pins from a registry must be pinned the same way in the engine.
+          drift = sorted(template - engine)
+          if drift:
+              sys.exit("template/Cargo.lock pins what Cargo.lock does not: " + ", ".join(f"{n} {v}" for n, v in drift)
+                       + "\nResync it: cp Cargo.lock template/Cargo.lock && cargo metadata --manifest-path template/Cargo.toml --format-version 1 >/dev/null")
+          print(f"ok: {len(template)} registry packages, all pinned like the engine's")
+          EOF
+      - name: cargo test (template)
+        run: cargo test --manifest-path template/Cargo.toml --locked
+      # The game's own binary: its content is valid and its reference replays still match.
+      - name: Content check and replay verification, through the game's binary
+        working-directory: template
+        run: |
+          cargo run --locked -- --check-content
+          for replay in tests/replays/*.json; do
+            cargo run --locked -- --replay "$replay" --verify
+          done
+      # E5: the generated region passes its checks for 1000 seeds (exit 1 if any fails).
+      - name: Worldgen report, 1000 seeds of the valley
+        working-directory: template
+        run: cargo run --locked -- --worldgen-report valley --seeds 1..1000
+
+  # ---------------------------------------------------------------------------------------
+  # A real game process, no window, played by the CLI the way an agent plays it.
+  headless-cli:
+    name: headless-cli
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: dev
+      - name: Build the sandbox and the CLI
+        run: cargo build --locked -p sandbox -p shards_cli
+      # Every content file, the level files tiles are built from (node by node) and the
+      # navmesh bakes (a stale one names the tile to bake again).
+      - name: Content check
+        run: cargo sandbox --check-content
+      # E5: the generated region passes its checks for 1000 seeds (exit 1 if any fails).
+      - name: Worldgen report, 1000 seeds of the wilds
+        run: cargo sandbox --worldgen-report wilds --seeds 1..1000
+      - name: Scenarios against a live game
+        run: |
+          port_file="$RUNNER_TEMP/game.port"
+          log="$RUNNER_TEMP/game.log"
+          game_pid=
+          # SIGTERM, never -9: the game removes its token and port file on the way out. On a
+          # failure the game's own log is what explains it.
+          trap 'status=$?; if [ -n "$game_pid" ]; then kill "$game_pid" || true; fi; if [ "$status" -ne 0 ]; then cat "$log"; fi' EXIT
+          cargo sandbox --headless --paused --port 0 --port-file "$port_file" > "$log" 2>&1 &
+          # `cargo run` replaces itself with the game, so this is the game's pid from the start: the
+          # trap ends a game that never came up, which `wait` could not have named.
+          game_pid=$!
+          # `shards wait` prints which game answered: "ready: tick 0 · pid 4242 · seed 42 · port 40817".
+          ready=$(cargo shards --port-file "$port_file" wait --timeout 180)
+          echo "$ready"
+          cargo shards --port-file "$port_file" scenario crates/sandbox/scenarios/*.scenario
+          # Then backwards, in the same game: each scenario sets up what it needs, whatever
+          # ran before (a region loaded, a snapshot's tick).
+          cargo shards --port-file "$port_file" scenario $(ls crates/sandbox/scenarios/*.scenario | sort -r)
+      # E7 / E11.6: the stand scenarios (crates/sandbox/scenarios/stand/, outside the glob above:
+      # a single game cannot run a file that names a host and clients) against a live stand: a
+      # host and two clients, each a game of its own with its own `shards` port, on simulated
+      # links (150 ms one way, 2% loss). `wait --peer all` checks that the three are one session.
+      - name: Stand scenarios against a live stand
+        run: |
+          port_file="$RUNNER_TEMP/stand.port"
+          log="$RUNNER_TEMP/stand.log"
+          stand_pid=
+          # `stand stop` ends it the polite way; the signal is only for a stand that never came up.
+          trap 'status=$?; if [ -n "$stand_pid" ]; then kill "$stand_pid" || true; fi; if [ "$status" -ne 0 ]; then cat "$log"; fi' EXIT
+          cargo sandbox --stand 2 --headless --paused --port 0 --port-file "$port_file" --net-sim latency=150,loss=0.02 > "$log" 2>&1 &
+          # The stand's pid from the start (`cargo run` replaces itself with the game): a stand that
+          # never came up is the one the trap has to end.
+          stand_pid=$!
+          # One line per member: "member=c1 role=client player=1 body=e15 port=… pid=… seed=42 tick=14".
+          ready=$(cargo shards --port-file "$port_file" wait --peer all --timeout 180)
+          echo "$ready"
+          cargo shards --port-file "$port_file" scenario crates/sandbox/scenarios/stand/*.scenario
+          cargo shards --port-file "$port_file" stand
+          cargo shards --port-file "$port_file" stand stop
+          stand_pid=
+
+  # ---------------------------------------------------------------------------------------
+  # E1: the same replay matches with a window (under Xvfb, drawn by a software Vulkan driver)
+  # and without. Slow and dependent on the runner's graphics stack, so it may fail without
+  # failing the run until it has proved stable: then drop `continue-on-error`.
+  #
+  # `--windowed` exists now (crates/shards/src/run.rs). The job stays `continue-on-error`
+  # because software rendering on the CI runners is not yet proven: a failure here may come
+  # from the runner's graphics stack rather than from the engine.
+  replays-window:
+    name: replays-window
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: dev
+          save: "false"
+          packages: xvfb mesa-vulkan-drivers libxkbcommon-x11-0
+      - name: Build the sandbox and the template
+        run: |
+          cargo build --locked -p sandbox
+          cargo build --locked --manifest-path template/Cargo.toml
+      - name: Verify the sandbox's replays with a window
+        run: |
+          shopt -s nullglob
+          replays=(tests/replays/*.json crates/sandbox/tests/replays/*.json)
+          if [ ${#replays[@]} -eq 0 ]; then
+            echo "::warning::no sandbox replays found in tests/replays/ or crates/sandbox/tests/replays/"
+          fi
+          for replay in "${replays[@]}"; do
+            echo "== $replay"
+            xvfb-run -a cargo sandbox --replay "$replay" --verify --windowed
+          done
+      - name: Verify the template's replays with a window
+        working-directory: template
+        run: |
+          for replay in tests/replays/*.json; do
+            echo "== $replay"
+            xvfb-run -a cargo run --locked -- --replay "$replay" --verify --windowed
+          done

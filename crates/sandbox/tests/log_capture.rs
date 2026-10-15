@@ -6,11 +6,10 @@
 
 use std::sync::Mutex;
 
-use ai_core::prelude::*;
-use ai_core::{call_tool, AiInvariants, AiJournal, CallOutcome, JournalKind};
-use bevy::log::LogPlugin;
-use bevy::prelude::*;
-use serde_json::{json, Value};
+use shards::ai_core::{call_tool, AiInvariants, AiJournal, CallOutcome, JournalKind};
+use shards::bevy::log::LogPlugin;
+use shards::prelude::*;
+use shards::serde_json::{json, Value};
 
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
@@ -29,10 +28,10 @@ fn noisy(tick: Res<SimTick>) {
 
 /// Headless and paused, with the capture layer in Bevy's logger (and nothing on stderr).
 fn app() -> App {
-    let quiet = |_: &mut App| -> Option<bevy::log::BoxedFmtLayer> {
-        Some(Box::new(bevy::log::tracing_subscriber::fmt::Layer::default().with_writer(std::io::sink)))
+    let quiet = |_: &mut App| -> Option<shards::bevy::log::BoxedFmtLayer> {
+        Some(Box::new(shards::bevy::log::tracing_subscriber::fmt::Layer::default().with_writer(std::io::sink)))
     };
-    let log = LogPlugin { custom_layer: ai_core::capture_log_layer, fmt_layer: quiet, ..default() };
+    let log = LogPlugin { custom_layer: shards::ai_core::capture_log_layer, fmt_layer: quiet, ..default() };
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, log))
         .add_plugins(AiCorePlugin {
@@ -83,7 +82,7 @@ fn step_until_journal_sees_a_warning_in_its_own_tick() {
     let out = ok(&mut app, "step", json!({"ticks": 100, "until": [{"journal": "frost cracks"}]}));
     let text = out.result.as_str().unwrap();
     assert!(text.starts_with("ran 30 ticks (0 → 30), stopped: journal: 30 [warn]"), "{text}");
-    assert_eq!(ai_core::sim::tick(app.world()), 30);
+    assert_eq!(shards::ai_core::sim::tick(app.world()), 30);
 }
 
 #[test]

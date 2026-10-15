@@ -1,0 +1,38 @@
+# Smoke test of the whole game: the hero walks up to the grunt and defeats it.
+#
+# The same file runs in `cargo test` without a window (tests/scenarios.rs) and against a
+# running game (`shards scenario scenarios/smoke.scenario`), with the same meaning. It plays
+# the way an agent plays: look, act, step until something happens, check the journal.
+# The format is documented in the engine's README ("Сценарии").
+
+seed 42
+
+# --- 1. the world is as content says: the hero at one end, the grunt far beyond its aggro range
+observe
+expect result contains "e1 Hero"
+expect result contains "e2 Grunt"
+expect field e1 Health.current == 100
+expect field e2 Health.current == 80
+invariant field e1 Health.current > 0
+
+# --- 2. walk towards the grunt; it notices the hero and comes to meet it
+act move_to target=e2 within=3
+expect result contains "move_to e2"
+step 900 --until near:e1:e2:3.5
+expect stopped "within"
+
+# --- 3. fight until it is dead (the hero attacks again and again until its target dies)
+act attack target=e2 repeat=true
+expect result contains "attacking e2 with light until it dies"
+step 1800 --until named:arena_cleared
+expect stopped "arena_cleared"
+expect journal "e2 winds up"
+expect journal "e1 -> e2"
+expect journal "e2 died"
+expect shows e2 "dead"
+expect field e2 Health.current == 0
+
+# --- 4. the hero is still on its feet
+observe
+expect result contains "e1 Hero"
+expect !journal "e1 died"

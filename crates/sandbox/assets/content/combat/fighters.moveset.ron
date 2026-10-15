@@ -1,0 +1,42 @@
+// Which input starts which action, per kind of fighter. Keyboard, gamepad, agent tools and
+// the monsters' brains all press these input names through `Intent`.
+//
+// Parry: the sandbox's player has none of its own; the perfect block (the first 0.15 s of a
+// raised guard) is its parry.
+{
+    "player": (
+        inputs: {
+            "light": "light_1",
+            "heavy": "heavy",
+            "dodge": "roll",
+            "block": "block",
+            // The keyboard's `use_item` (C) uses the selected item: the flask.
+            "use_item": "drink",
+            "use_item.flask": "drink",
+        },
+        stagger: "player_stagger",
+        death: "player_death",
+    ),
+    "skeleton": (
+        inputs: {"light": "claw"},
+        stagger: "skeleton_stagger",
+        hit: "skeleton_flinch",
+        death: "skeleton_death",
+    ),
+    // The warden's brain reads its attacks from here: every input whose action hits.
+    "warden": (
+        inputs: {"light": "slash", "heavy": "slam", "technique.1": "sweep", "technique.2": "shockwave"},
+        stagger: "warden_stagger",
+        death: "warden_death",
+    ),
+    "warden_enraged": (
+        inputs: {
+            "light": "slash_enraged",
+            "heavy": "slam_enraged",
+            "technique.1": "sweep_enraged",
+            "technique.2": "shockwave_enraged",
+        },
+        stagger: "warden_stagger",
+        death: "warden_death",
+    ),
+}

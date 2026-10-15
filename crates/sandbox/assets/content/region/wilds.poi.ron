@@ -1,0 +1,12 @@
+// The points of interest of the wilds. Each one stands in the world as a landmark the AI sees
+// (`observe` lists them under POI with a direction and distance); a camp or a den also spawns
+// its monster there.
+{
+    // Where players appear: the gate in the region's north-west.
+    "spawn": (label: Some("Spawn")),
+    // A skeleton camp: one skeleton that stays within 12 m of it.
+    "camp": (label: Some("Camp"), prefab: Some("camp_skeleton")),
+    // The den in the pillar hall: its guard knows the hall (it sees through the pillars).
+    "den": (label: Some("Den"), prefab: Some("den_guard")),
+    "shrine": (label: Some("Shrine")),
+}

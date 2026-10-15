@@ -1,0 +1,340 @@
+//! The engine's settings groups: what a player sets in a settings screen.
+//!
+//! Each group is a Bevy resource that Bevy's settings framework loads from and saves to
+//! `settings.toml` (one TOML table per group). They hold only what TOML holds without
+//! surprises: booleans, numbers, strings, string-keyed maps and lists. Choices are strings
+//! (`flashes = "reduced"`) with a typed reading next to them ([`FlashLevel`],
+//! [`GraphicsSettings::shadow_quality`]), because a hand-edited file may say anything: every
+//! reading clamps or falls back, nothing relies on the file being valid.
+//!
+//! Settings are per machine and never part of the simulation: they are not in snapshots, not
+//! in replays and not replicated to other players.
+
+use bevy::prelude::*;
+use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
+
+/// How flashing and flickering effects (the pulse of an attack warning) are drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FlashLevel {
+    /// As designed.
+    #[default]
+    Full,
+    /// Slower and shallower: at most 2 pulses a second, half the depth.
+    Reduced,
+    /// Steady: nothing flickers.
+    Off,
+}
+
+impl FlashLevel {
+    /// The values `AccessibilitySettings::flashes` takes.
+    pub const NAMES: [&'static str; 3] = ["full", "reduced", "off"];
+
+    /// Reads `full`, `reduced` or `off` (any case).
+    pub fn parse(text: &str) -> Option<FlashLevel> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "full" => Some(FlashLevel::Full),
+            "reduced" => Some(FlashLevel::Reduced),
+            "off" => Some(FlashLevel::Off),
+            _ => None,
+        }
+    }
+
+    /// How the level is written in the file.
+    pub fn name(self) -> &'static str {
+        match self {
+            FlashLevel::Full => "full",
+            FlashLevel::Reduced => "reduced",
+            FlashLevel::Off => "off",
+        }
+    }
+}
+
+/// Shadow quality, from `GraphicsSettings::shadows`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ShadowQuality {
+    Off,
+    Low,
+    Medium,
+    #[default]
+    High,
+}
+
+impl ShadowQuality {
+    /// The values `GraphicsSettings::shadows` takes.
+    pub const NAMES: [&'static str; 4] = ["off", "low", "medium", "high"];
+
+    /// Reads `off`, `low`, `medium` or `high` (any case).
+    pub fn parse(text: &str) -> Option<ShadowQuality> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "off" => Some(ShadowQuality::Off),
+            "low" => Some(ShadowQuality::Low),
+            "medium" => Some(ShadowQuality::Medium),
+            "high" => Some(ShadowQuality::High),
+            _ => None,
+        }
+    }
+}
+
+/// Window and rendering. Applied to the primary window by [`apply_graphics`](crate::apply_graphics)
+/// while there is one; a headless game only keeps the values.
+#[derive(Resource, Reflect, SettingsGroup, Clone, Debug, PartialEq)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "graphics")]
+pub struct GraphicsSettings {
+    /// Borderless fullscreen on the current monitor.
+    pub fullscreen: bool,
+    /// Wait for the display's refresh (no tearing) instead of drawing as fast as possible.
+    pub vsync: bool,
+    /// Window size when not fullscreen: `auto` keeps the game's own, `1920x1080` sets it
+    /// (logical pixels, 320x200 to 16384x16384).
+    pub resolution: String,
+    /// The window's scale factor: 1 keeps the display's own, 0.5 to 2 overrides it (Bevy's
+    /// `scale_factor_override`: the window gets logical size times this many pixels).
+    pub render_scale: f64,
+    /// `off`, `low`, `medium` or `high`. The game's lights read it ([`GraphicsSettings::shadow_quality`]).
+    pub shadows: String,
+}
+
+impl Default for GraphicsSettings {
+    fn default() -> Self {
+        Self { fullscreen: false, vsync: true, resolution: "auto".into(), render_scale: 1.0, shadows: "high".into() }
+    }
+}
+
+impl GraphicsSettings {
+    /// The window size `resolution` asks for; `None` for `auto` or anything that is not
+    /// `<width>x<height>` within 320x200 to 16384x16384.
+    pub fn window_size(&self) -> Option<(u32, u32)> {
+        let (w, h) = self.resolution.trim().split_once(['x', 'X'])?;
+        let (w, h) = (w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?);
+        ((320..=16384).contains(&w) && (200..=16384).contains(&h)).then_some((w, h))
+    }
+
+    /// `render_scale` within 0.5 to 2 (a NaN or a hand-edited 40 does no harm).
+    pub fn scale(&self) -> f32 {
+        if self.render_scale.is_finite() { self.render_scale.clamp(0.5, 2.0) as f32 } else { 1.0 }
+    }
+
+    /// `shadows`, the default (`high`) when the file says something else.
+    pub fn shadow_quality(&self) -> ShadowQuality {
+        ShadowQuality::parse(&self.shadows).unwrap_or_default()
+    }
+
+    /// Why these values are not allowed, if they are not (what `settings_set` refuses).
+    pub fn check(&self) -> Result<(), String> {
+        if self.resolution.trim() != "auto" && self.window_size().is_none() {
+            return Err(format!(
+                "graphics.resolution `{}` is not `auto` or `<width>x<height>` (320x200 to 16384x16384), e.g. `1920x1080`",
+                self.resolution
+            ));
+        }
+        range("graphics.render_scale", self.render_scale, 0.5, 2.0)?;
+        if ShadowQuality::parse(&self.shadows).is_none() {
+            return Err(format!("graphics.shadows `{}` is not one of {}", self.shadows, ShadowQuality::NAMES.join(", ")));
+        }
+        Ok(())
+    }
+}
+
+/// Volumes, 0 (silent) to 1 (full). Kept for the audio module; `master` scales the other three.
+#[derive(Resource, Reflect, SettingsGroup, Clone, Debug, PartialEq)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "audio")]
+pub struct AudioSettings {
+    pub master: f64,
+    pub music: f64,
+    pub sfx: f64,
+    pub voice: f64,
+}
+
+impl Default for AudioSettings {
+    fn default() -> Self {
+        Self { master: 1.0, music: 0.8, sfx: 1.0, voice: 1.0 }
+    }
+}
+
+impl AudioSettings {
+    /// The volume of `channel` (`music`, `sfx`, `voice`; anything else is the master
+    /// alone) with the master applied, each clamped to 0..1.
+    pub fn volume(&self, channel: &str) -> f32 {
+        let unit = |v: f64| if v.is_finite() { v.clamp(0.0, 1.0) as f32 } else { 0.0 };
+        let part = match channel {
+            "music" => self.music,
+            "sfx" => self.sfx,
+            "voice" => self.voice,
+            _ => 1.0,
+        };
+        unit(self.master) * unit(part)
+    }
+
+    /// Why these values are not allowed, if they are not.
+    pub fn check(&self) -> Result<(), String> {
+        for (name, value) in [("master", self.master), ("music", self.music), ("sfx", self.sfx), ("voice", self.voice)] {
+            range(&format!("audio.{name}"), value, 0.0, 1.0)?;
+        }
+        Ok(())
+    }
+}
+
+/// Controls the player changed (E2's `rebind`), as strings.
+///
+/// `bindings` and `hold_or_toggle` hold only what differs from the game's default controls,
+/// so new default actions still reach an old file. The motion module turns them into the
+/// input map (and back when `rebind` changes it).
+#[derive(Resource, Reflect, SettingsGroup, Clone, Debug, PartialEq)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "controls")]
+pub struct ControlSettings {
+    /// `"context.action"` to its bindings in slot order, written like a content file
+    /// (`"gameplay.jump" = ["Key(KeyJ)", "GamepadButton(South)"]`). An empty list unbinds.
+    pub bindings: std::collections::BTreeMap<String, Vec<String>>,
+    /// `"context.action"` to `press`, `hold` or `toggle`.
+    pub hold_or_toggle: std::collections::BTreeMap<String, String>,
+    /// Look speed multiplier (0.05 to 5).
+    pub mouse_sensitivity: f64,
+    /// Looking up moves the camera up instead of down.
+    pub invert_y: bool,
+}
+
+impl Default for ControlSettings {
+    fn default() -> Self {
+        Self { bindings: Default::default(), hold_or_toggle: Default::default(), mouse_sensitivity: 1.0, invert_y: false }
+    }
+}
+
+impl ControlSettings {
+    /// The look speed multiplier within 0.05 to 5.
+    pub fn sensitivity(&self) -> f32 {
+        if self.mouse_sensitivity.is_finite() { self.mouse_sensitivity.clamp(0.05, 5.0) as f32 } else { 1.0 }
+    }
+
+    /// Why these values are not allowed, if they are not.
+    pub fn check(&self) -> Result<(), String> {
+        range("controls.mouse_sensitivity", self.mouse_sensitivity, 0.05, 5.0)?;
+        for (key, mode) in &self.hold_or_toggle {
+            if !matches!(mode.trim().to_ascii_lowercase().as_str(), "press" | "hold" | "toggle") {
+                return Err(format!("controls.hold_or_toggle.{key} `{mode}` is not one of press, hold, toggle"));
+            }
+        }
+        for key in self.bindings.keys().chain(self.hold_or_toggle.keys()) {
+            if !key.contains('.') {
+                return Err(format!("`{key}` is not `context.action` (for example `gameplay.jump`)"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Things that make the game easier on the eyes and hands.
+#[derive(Resource, Reflect, SettingsGroup, Clone, Debug, PartialEq)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "accessibility")]
+pub struct AccessibilitySettings {
+    /// How hard hits shake the camera, 0 (never) to 1 (as designed).
+    pub camera_shake: f64,
+    /// Motion blur strength, 0 (none) to 1. Applied to cameras that carry Bevy's `MotionBlur`.
+    pub motion_blur: f64,
+    /// Flashing and flickering: `full`, `reduced` or `off` ([`FlashLevel`]).
+    pub flashes: String,
+    /// Text size multiplier (0.5 to 3), for the game's UI.
+    pub text_scale: f64,
+    /// Vertical field of view in degrees (30 to 120).
+    pub fov_deg: f64,
+    /// Every held button (`block`, `sprint`, ...) works as a toggle: press once to hold, again
+    /// to let go.
+    pub hold_to_toggle: bool,
+}
+
+impl Default for AccessibilitySettings {
+    fn default() -> Self {
+        Self { camera_shake: 1.0, motion_blur: 0.5, flashes: "full".into(), text_scale: 1.0, fov_deg: 70.0, hold_to_toggle: false }
+    }
+}
+
+impl AccessibilitySettings {
+    /// `camera_shake` within 0..1.
+    pub fn shake(&self) -> f32 {
+        unit(self.camera_shake, 1.0)
+    }
+
+    /// `motion_blur` within 0..1.
+    pub fn blur(&self) -> f32 {
+        unit(self.motion_blur, 0.0)
+    }
+
+    /// `flashes`, [`FlashLevel::Full`] when the file says something else.
+    pub fn flash_level(&self) -> FlashLevel {
+        FlashLevel::parse(&self.flashes).unwrap_or_default()
+    }
+
+    /// `text_scale` within 0.5 to 3.
+    pub fn text(&self) -> f32 {
+        if self.text_scale.is_finite() { self.text_scale.clamp(0.5, 3.0) as f32 } else { 1.0 }
+    }
+
+    /// `fov_deg` within 30 to 120.
+    pub fn fov(&self) -> f32 {
+        if self.fov_deg.is_finite() { self.fov_deg.clamp(30.0, 120.0) as f32 } else { 70.0 }
+    }
+
+    /// Why these values are not allowed, if they are not.
+    pub fn check(&self) -> Result<(), String> {
+        range("accessibility.camera_shake", self.camera_shake, 0.0, 1.0)?;
+        range("accessibility.motion_blur", self.motion_blur, 0.0, 1.0)?;
+        range("accessibility.text_scale", self.text_scale, 0.5, 3.0)?;
+        range("accessibility.fov_deg", self.fov_deg, 30.0, 120.0)?;
+        if FlashLevel::parse(&self.flashes).is_none() {
+            return Err(format!("accessibility.flashes `{}` is not one of {}", self.flashes, FlashLevel::NAMES.join(", ")));
+        }
+        Ok(())
+    }
+}
+
+fn unit(value: f64, fallback: f32) -> f32 {
+    if value.is_finite() { value.clamp(0.0, 1.0) as f32 } else { fallback }
+}
+
+/// `Ok` when `value` is a number within `lo..=hi`.
+fn range(name: &str, value: f64, lo: f64, hi: f64) -> Result<(), String> {
+    if value.is_finite() && (lo..=hi).contains(&value) {
+        Ok(())
+    } else {
+        Err(format!("{name} {value} is out of range: use a number from {lo} to {hi}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn readings_clamp_whatever_the_file_says() {
+        let g = GraphicsSettings { resolution: "1920x1080".into(), render_scale: 40.0, shadows: "ultra".into(), ..default() };
+        assert_eq!(g.window_size(), Some((1920, 1080)));
+        assert_eq!(g.scale(), 2.0);
+        assert_eq!(g.shadow_quality(), ShadowQuality::High, "an unknown word is the default");
+        assert_eq!(GraphicsSettings { resolution: "10x10".into(), ..default() }.window_size(), None);
+        assert_eq!(GraphicsSettings { resolution: "auto".into(), ..default() }.window_size(), None);
+        let a = AccessibilitySettings { camera_shake: f64::NAN, fov_deg: 400.0, flashes: "strobe".into(), ..default() };
+        assert_eq!((a.shake(), a.fov(), a.flash_level()), (1.0, 120.0, FlashLevel::Full));
+        let audio = AudioSettings { master: 0.5, music: 0.5, ..default() };
+        assert_eq!(audio.volume("music"), 0.25);
+        assert_eq!(audio.volume("other"), 0.5);
+    }
+
+    #[test]
+    fn checks_name_the_setting_and_what_is_allowed() {
+        let bad = AccessibilitySettings { fov_deg: 200.0, ..default() }.check().unwrap_err();
+        assert!(bad.contains("accessibility.fov_deg 200") && bad.contains("30 to 120"), "{bad}");
+        let bad = AccessibilitySettings { flashes: "blink".into(), ..default() }.check().unwrap_err();
+        assert!(bad.contains("full, reduced, off"), "{bad}");
+        let bad = GraphicsSettings { resolution: "wide".into(), ..default() }.check().unwrap_err();
+        assert!(bad.contains("1920x1080"), "{bad}");
+        let mut controls = ControlSettings::default();
+        controls.hold_or_toggle.insert("gameplay.sprint".into(), "tap".into());
+        assert!(controls.check().unwrap_err().contains("press, hold, toggle"));
+        for ok in [GraphicsSettings::default().check(), AudioSettings::default().check(), ControlSettings::default().check(), AccessibilitySettings::default().check()] {
+            assert_eq!(ok, Ok(()));
+        }
+    }
+}

@@ -1,0 +1,44 @@
+// How the sandbox's characters move: `CharacterController { params: "player" }` picks one.
+// Distances in meters, speeds in m/s. Missing fields keep the engine's defaults; edit while
+// the game runs and the next tick moves by the new numbers.
+//
+// A plain jump (1.2 m) clears no obstacle of the course: the ledge is 1.3 m (a mantle,
+// up to 1.6 m), the pool 10 m, the gap to the goal 32 m (a glide: 9 m/s forward, 2 m/s down,
+// and the updraft half way).
+{
+    "player": (
+        radius: 0.4,
+        height: 1.8,
+        walk_speed: 2.0,
+        run_speed: 5.0,
+        sprint_speed: 7.5,
+        jump_height: 1.2,
+        mantle_height: 1.6,
+        mantle_time: 0.45,
+        swim_speed: 3.0,
+        glide_speed: 9.0,
+        glide_fall_speed: 2.0,
+        glide_accel: 8.0,
+        turn_speed_deg: 720.0,
+    ),
+    "skeleton": (
+        radius: 0.4,
+        height: 1.8,
+        walk_speed: 1.6,
+        run_speed: 3.6,
+        sprint_speed: 3.6,
+        turn_speed_deg: 540.0,
+    ),
+    // Big and heavy: wide body, slow turn, no sprint.
+    "warden": (
+        radius: 0.8,
+        height: 3.2,
+        walk_speed: 1.6,
+        run_speed: 3.4,
+        sprint_speed: 3.4,
+        acceleration: 20.0,
+        deceleration: 30.0,
+        step_height: 0.4,
+        turn_speed_deg: 300.0,
+    ),
+}

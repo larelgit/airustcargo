@@ -1,0 +1,7 @@
+// What tiles and points of interest spawn.
+{
+    "rocks": (components: {"Name": "rocks"}),
+    "campfire": (components: {"AiKind": ("Campfire")}),
+    // An NPC: driven through `Intent`, so active zones mark it.
+    "guard": (components: {"AiKind": ("Guard"), "Intent": ()}),
+}

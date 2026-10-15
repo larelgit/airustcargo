@@ -1,0 +1,9 @@
+// The arena's third skeleton, on watch in its north-west corner. A layout of its own so it
+// spawns after the course (layouts spawn in id order): it is e14, and the course's landmarks
+// keep their ids (e9-e13). With the two others it is the pack the combat director shares out
+// (`npc_director.scenario`: three skeletons, never more than two swinging at once).
+{
+    "watch": (
+        spawns: [(prefab: "skeleton", at: (-16.0, 0.0, -16.0), facing: (1.0, 0.0, 1.0))],
+    ),
+}

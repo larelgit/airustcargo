@@ -13,7 +13,7 @@
 //! | `ai/shot`     | `{agent?, marks?, path?}`                 |
 //! | `ai/tools`    | `{agent?}`                                |
 //! | `ai/session`  | `{agent, scope?, subject?}`               |
-//! | `ai/status`   | none (`instance`: pid, seed, port, start) |
+//! | `ai/status`   | none (`instance`: pid, seed, port, start; `loading`: what holds the simulation) |
 //!
 //! Full world access: compile it into dev builds only. It listens on 127.0.0.1, and
 //! every method, Bevy's own included, wants `params.token`: the random [`AiToken`]
@@ -24,11 +24,9 @@ use bevy_remote::{BrpError, BrpResult, RemoteMethodSystemId, RemoteMethods};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::id::{AiId, AiIndex, AI_ID_IS_MANAGED};
-use crate::journal::AiJournal;
+use crate::id::{AiId, AI_ID_IS_MANAGED};
 use crate::rng::SimSeed;
-use crate::session::{AgentSessions, Scope};
-use crate::sim;
+use crate::session::{configure_session, session_json, AgentSessions, Scope, SessionChange};
 use crate::tools::{call_tool, AiTools, Id};
 
 pub const DEFAULT_AGENT: &str = "dev";
@@ -110,6 +108,13 @@ fn ai_tools(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
     to_brp(world.resource::<AiTools>().specs(scope))
 }
 
+/// `ai/step_poll {id}`: the `step_poll` tool, which answers a finished deferred request with its
+/// whole outcome (changes, journal lines and `halted` included, like `ai/step` would have).
+fn ai_step_poll(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let p: AgentParams = parse(params)?;
+    to_brp(call_tool(world, &p.agent, "step_poll", Value::Object(p.rest)))
+}
+
 #[derive(Deserialize, Default)]
 struct SessionParams {
     #[serde(default = "default_agent")]
@@ -119,18 +124,16 @@ struct SessionParams {
     /// Reset `subject` to the player character.
     #[serde(default)]
     clear_subject: bool,
+    /// Play as this player's body (`PlayerId`), found again on every call.
+    player: Option<u8>,
 }
 
 fn ai_session(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
     let p: SessionParams = parse(params)?;
-    if let Some(id) = p.subject {
-        id.entity(world).map_err(|m| BrpError { code: bevy_remote::error_codes::INVALID_PARAMS, message: m, data: None })?;
-    }
-    let mut sessions = world.resource_mut::<AgentSessions>();
-    let current = sessions.get_or_create(&p.agent).clone();
-    let subject = if p.clear_subject { None } else { p.subject.map(|i| i.0).or(current.subject) };
-    let s = sessions.configure(&p.agent, p.scope.unwrap_or(current.scope), subject).clone();
-    to_brp(json!({"agent": s.name, "scope": s.scope, "subject": s.subject.map(|i| i.to_string()), "seen_seq": s.seen_seq}))
+    let change = SessionChange { scope: p.scope, subject: p.subject.map(|i| i.0), player: p.player, clear_subject: p.clear_subject };
+    let session = configure_session(world, &p.agent, &change)
+        .map_err(|message| BrpError { code: bevy_remote::error_codes::INVALID_PARAMS, message, data: None })?;
+    to_brp(session_json(&session))
 }
 
 fn ai_status(In(_): In<Option<Value>>, world: &mut World) -> BrpResult {
@@ -138,20 +141,9 @@ fn ai_status(In(_): In<Option<Value>>, world: &mut World) -> BrpResult {
     let instance = world.get_resource::<AiInstance>().map(|i| {
         json!({"pid": i.pid, "seed": seed, "port": i.port, "started_at": i.started_at})
     });
-    to_brp(json!({
-        "instance": instance,
-        "tick": sim::tick(world),
-        "paused": sim::is_paused(world),
-        "speed": sim::speed(world),
-        "tick_hz": (1.0 / world.resource::<Time<Fixed>>().timestep().as_secs_f64() * 1000.0).round() / 1000.0,
-        "seed": seed,
-        "entities": world.resource::<AiIndex>().len(),
-        "journal_seq": world.resource::<AiJournal>().last_seq(),
-        "agents": world.resource::<AgentSessions>().names(),
-        "tools": world.resource::<AiTools>().names(Scope::Dev),
-        "replay": crate::replay::status(world),
-        "perf": crate::perf::status(world),
-    }))
+    let mut status = crate::status::status(world);
+    status["instance"] = instance.unwrap_or(Value::Null);
+    to_brp(status)
 }
 
 /// Registers the `ai/*` methods. Runs in `Plugin::finish`, after `RemotePlugin` built
@@ -165,6 +157,7 @@ pub(crate) fn register_methods(world: &mut World) {
         ("ai/act", world.register_system(ai_act)),
         ("ai/observe", world.register_system(shortcut("observe"))),
         ("ai/step", world.register_system(shortcut("step"))),
+        ("ai/step_poll", world.register_system(ai_step_poll)),
         ("ai/journal", world.register_system(shortcut("journal"))),
         ("ai/shot", world.register_system(shortcut("shot"))),
         ("ai/tools", world.register_system(ai_tools)),
@@ -179,7 +172,7 @@ pub(crate) fn register_methods(world: &mut World) {
 }
 
 /// BRP's `world.mutate_components` writes in place, past the hooks that keep
-/// [`AiIndex`] in sync, so it refuses `AiId` the way the `set` tool does.
+/// [`AiIndex`](crate::AiIndex) in sync, so it refuses `AiId` the way the `set` tool does.
 fn guard_ai_id(world: &mut World) {
     let method = bevy_remote::builtin_methods::BRP_MUTATE_COMPONENTS_METHOD;
     let Some(&RemoteMethodSystemId::Instant(mutate)) = world.resource::<RemoteMethods>().get(method) else {
@@ -419,10 +412,19 @@ fn utc_timestamp(time: std::time::SystemTime) -> String {
 /// games on `--port 0` and find them. Removed again when dropped (the game exits).
 pub struct PortFile(std::path::PathBuf);
 
+/// Where `path` is written before it is renamed into place: `F.c1` goes through `F.c1.part`, so
+/// the sibling files of a stand (`F`, `F.c1`, `F.c2`, written by processes that start together)
+/// never share a temporary file.
+fn part_path(path: &std::path::Path) -> std::path::PathBuf {
+    let mut part = path.as_os_str().to_owned();
+    part.push(".part");
+    part.into()
+}
+
 impl PortFile {
     /// Writes `port` to `path` atomically: readers see the whole number or nothing.
     pub fn write(path: &std::path::Path, port: u16) -> Result<Self, String> {
-        let part = path.with_extension("part");
+        let part = part_path(path);
         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         }
@@ -584,6 +586,48 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "15711\n");
         drop(file);
         assert!(!path.exists(), "removed when the game exits");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The games of a stand (`F`, `F.c1`, `F.c2`) write their port files at the same moment, as
+    /// processes of their own: no two of them may go through the same temporary file, or one
+    /// rename moves what the other wrote (and the other rename finds nothing to move).
+    #[test]
+    fn the_port_files_of_a_stand_never_share_a_temporary_file() {
+        let base = std::path::Path::new("/tmp/stand/g.port");
+        let parts: Vec<std::path::PathBuf> = ["g.port", "g.port.c1", "g.port.c2", "g.part", "plain"]
+            .iter()
+            .map(|name| part_path(&base.with_file_name(name)))
+            .collect();
+        let distinct: std::collections::BTreeSet<&std::path::PathBuf> = parts.iter().collect();
+        assert_eq!(distinct.len(), parts.len(), "{parts:?}");
+        assert_eq!(parts[1], std::path::Path::new("/tmp/stand/g.port.c1.part"));
+        // And `write` goes through them. The host's `g.port.part` is the host's temporary file,
+        // in flight: a sibling's write must not touch it (the old name, `g.port.part` for
+        // `g.port.c1` too, would have renamed it away as the client's own).
+        let dir = std::env::temp_dir().join(format!("ai_core_port_files_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("g.port.part"), "the host is still writing\n").unwrap();
+        let mut files = Vec::new();
+        for (i, name) in ["g.port.c1", "g.port.c2"].iter().enumerate() {
+            files.push(PortFile::write(&dir.join(name), 15701 + i as u16).unwrap());
+            assert_eq!(
+                std::fs::read_to_string(dir.join("g.port.part")).unwrap(),
+                "the host is still writing\n",
+                "{name} left the host's temporary file alone"
+            );
+            assert_eq!(std::fs::read_to_string(dir.join(name)).unwrap(), format!("{}\n", 15701 + i), "{name} is whole");
+            assert!(!dir.join(format!("{name}.part")).exists(), "{name}'s own temporary file is renamed away");
+        }
+        // The host's file, last: written whole through its own, and no temporary of any is left.
+        std::fs::remove_file(dir.join("g.port.part")).unwrap();
+        files.push(PortFile::write(&dir.join("g.port"), 15700).unwrap());
+        assert_eq!(std::fs::read_to_string(dir.join("g.port")).unwrap(), "15700\n");
+        let mut left: Vec<String> = std::fs::read_dir(&dir).unwrap().filter_map(|e| Some(e.ok()?.file_name().to_string_lossy().into_owned())).collect();
+        left.sort();
+        assert_eq!(left, ["g.port", "g.port.c1", "g.port.c2"], "no .part file is left behind");
+        drop(files);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

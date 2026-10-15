@@ -1,0 +1,60 @@
+# The combat director (E6): three skeletons around one player, and never more than two of
+# them swinging at once. The skeletons are NPCs of the engine (`content/npc/`): each fights by
+# the `default` director, which hands out two attack tokens for one player; only a token
+# holder starts an attack, and it keeps the token until the attack is over. The others wait in
+# the director's roles (circle, strafe, hold) until a token comes back.
+#
+# The invariant is checked every tick, from the outside: `three_attacking` (a stop condition
+# of the sandbox) holds when three NPCs are in an attack action at once, so a step that runs
+# 30 s with it must end with "no condition met". The player stands in god mode: the fight
+# goes on as long as the scenario wants.
+
+seed 42
+
+# --- the arena, everyone out of the fight first, whatever was played in it before
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+step 120
+# the warden at its post, out of it; the player in the middle of the arena's south half, the
+# three skeletons around it, 5 m away
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e5 x=0 z=8 y=0
+act teleport id=e7 x=-5 z=8 y=0
+act teleport id=e8 x=5 z=8 y=0
+act teleport id=e14 x=0 z=13 y=0
+act heal id=e7
+act heal id=e8
+act heal id=e14
+act god
+step 2
+invariant field e5 Health.current > 0
+
+# --- 1. the pack wakes: every skeleton fights the player, two take the tokens
+mark
+act npc_set_state id=e7 state=idle
+act npc_set_state id=e8 state=idle
+act npc_set_state id=e14 state=idle
+step 120 --until "journal:(2/2)"
+expect stopped "takes an attack token on e5 (2/2)"
+
+# --- 2. thirty seconds of fighting: never three swings at once (checked every tick)
+step 1800 --until named:three_attacking
+expect result contains "no condition met"
+expect !journal "takes an attack token on e5 (3/"
+# every one of the three got its turn, the tokens went round
+expect journal "e7 -> e5 claw"
+expect journal "e8 -> e5 claw"
+expect journal "e14 -> e5 claw"
+expect journal "returns its attack token after light"
+
+# --- the pack stands down again
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act god on=false

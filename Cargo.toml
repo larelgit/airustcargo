@@ -1,10 +1,28 @@
 [workspace]
 resolver = "3"
-members = ["crates/ai_core", "crates/sandbox", "crates/shards_cli"]
+members = [
+    "crates/ai_core",
+    "crates/shards_script",
+    "crates/shards_core",
+    "crates/shards_content",
+    "crates/shards_motion",
+    "crates/shards_action",
+    "crates/shards_level",
+    "crates/shards_save",
+    "crates/shards_settings",
+    "crates/shards_npc",
+    "crates/shards_world",
+    "crates/shards_net",
+    "crates/shards",
+    "crates/sandbox",
+    "crates/shards_cli",
+]
+# A separate workspace on purpose: it depends on `shards` alone, like a game in its own repo.
+exclude = ["template"]
 default-members = ["crates/sandbox", "crates/shards_cli"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.97.1"
 publish = false
@@ -20,12 +38,45 @@ schemars = "1.2"
 clap = { version = "4.6", features = ["derive", "env"] }
 ureq = { version = "3.4", default-features = false, features = ["json"] }
 libc = "0.2"
+# Content files (RON definitions and prefabs).
+ron = "=0.12.2"
+# Checksums of save files, inside shards_save only.
+crc32fast = "=1.5.2"
+# Collision queries inside shards_motion only; never part of a public API. `alloc` holds
+# the support-map shape casts and EPA contacts. No `enhanced-determinism`: it switches
+# glam (shared with all of Bevy) to scalar libm math; one machine + one build is already
+# deterministic, which is what replays need.
+parry3d = { version = "=0.31.1", default-features = false, features = ["std", "alloc", "dim3", "f32"] }
+# Reads level files (Blender's glTF export) inside shards_level only; never part of a public API.
+# The JSON alone is enough (node tree, transforms, names, extras, POSITION bounds): no `import`
+# feature, so no image decoders. Bevy's own glTF loader uses the same crate for the visuals.
+gltf = { version = "=1.4.1", default-features = false, features = ["names", "extras"] }
+# Reads `settings.toml` inside shards_settings only (Bevy's settings framework reads it with the
+# same crate, so nothing new is built); never part of a public API.
+toml = { version = "=1.1.8", default-features = false, features = ["std", "serde", "parse", "display"] }
+# Deflate of link bodies and blobs inside shards_net only; never part of a public API. Pure Rust
+# (miniz_oxide), raw deflate streams: no zlib header, no C or SIMD backends.
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
 
 ai_core = { path = "crates/ai_core", default-features = false }
+shards_script = { path = "crates/shards_script" }
+shards_core = { path = "crates/shards_core" }
+shards_content = { path = "crates/shards_content", default-features = false }
+shards_motion = { path = "crates/shards_motion" }
+shards_action = { path = "crates/shards_action" }
+shards_level = { path = "crates/shards_level" }
+shards_npc = { path = "crates/shards_npc" }
+shards_save = { path = "crates/shards_save" }
+shards_settings = { path = "crates/shards_settings" }
+shards_world = { path = "crates/shards_world" }
+shards_net = { path = "crates/shards_net" }
+shards = { path = "crates/shards", default-features = false }
 
 # Bevy's recommended dev setup: optimise dependencies, keep our own code fast to compile.
 [profile.dev]
 opt-level = 1
+# Line tables keep backtraces readable; full debug info made every test binary ~330 MB.
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 3

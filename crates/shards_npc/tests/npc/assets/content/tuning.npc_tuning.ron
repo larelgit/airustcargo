@@ -1,0 +1,1 @@
+{ "default": (hit_noise: 10.0, sprint_noise: 8.0, avoid_time: 1.0, avoid_margin: 0.3) }

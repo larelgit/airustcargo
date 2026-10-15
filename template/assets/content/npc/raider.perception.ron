@@ -1,0 +1,4 @@
+// What the raider notices (content kind `perception`): 12 m all around, not through walls.
+{
+    "raider": (sight_range: 12.0, fov_deg: 360.0, near: 3.0, memory: 4.0),
+}

@@ -1,0 +1,9 @@
+// The ruin tile's level file (content kind `level`) and what it must contain: `content check`
+// reads the file (every node, component and marker) and names the node and the property of
+// any problem; a missing marker is an error too.
+{
+    "ruin": (
+        file: "tiles/ruin.gltf",
+        required_markers: [(kind: "camp", name: "ruin_camp"), (kind: "socket", name: "grass", min: 4), (kind: "landmark")],
+    ),
+}

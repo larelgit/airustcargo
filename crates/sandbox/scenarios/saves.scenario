@@ -1,0 +1,102 @@
+# Saves (E8): a character save is explicit sections (here the engine's: where the player stands
+# and how healthy they are) in a file with a checksum and three rotating backups. The scenario
+# saves the player, loses the state, loads it back, then breaks the file on purpose
+# (`save_damage`, QA of the recovery path): the next load takes the newest good backup and the
+# journal says so; when every copy is broken the load fails and changes nothing. Last, a body that
+# died since the save is brought back by the load. Files go to saves/character/qa* of the game's
+# working directory (not committed: made here).
+
+seed 42
+
+# --- the player at a known state; nothing below lets a tick go by
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god on=false
+act teleport id=e5 x=3 z=-2 y=0
+act set id=e5 component=Health path=current value=61
+act set id=e5 component=Stamina path=current value=40
+
+# --- four saves, so the slot has a save and its three backups from this run, whatever an earlier run left
+act save_game what=character slot=qa label="scenario"
+expect result contains "ok: character/qa saved (save_game, "
+act save_game what=character slot=qa
+act save_game what=character slot=qa
+act save_game what=character slot=qa
+act save_list
+expect result contains "character/qa (current): save ok (tick "
+expect result contains "bak3 ok (tick "
+
+# --- somewhere else and in better shape: the state differs from the file in the sections that hold it
+act teleport id=e5 x=-9 z=7 y=0
+act heal id=e5
+act save_check what=character slot=qa
+expect result contains "differs in position, vitals"
+
+# --- one call puts the player back, and the check agrees
+act load_game what=character slot=qa
+expect result contains "ok: character/qa loaded"
+expect field e5 Health.current == 61
+expect field e5 Transform.translation.x == 3
+act save_check what=character slot=qa
+expect result contains "same as character/qa"
+
+# --- the file is damaged: the load takes the newest good backup, and the primary is a good file again
+mark
+act save_damage what=character slot=qa how=flip
+expect result contains "character/qa.save"
+act teleport id=e5 x=-9 z=7 y=0
+act load_game what=character slot=qa
+expect result contains "from backup 1"
+expect journal "save: character/qa.save is damaged (checksum mismatch"
+expect journal "restored from backup 1"
+expect field e5 Transform.translation.x == 3
+act save_check what=character slot=qa
+expect result !contains "read from backup"
+
+# --- every copy damaged: the error names each, and nothing is applied
+act save_damage what=character slot=qa how=truncate
+act save_damage what=character slot=qa how=garbage copy=bak1
+act save_damage what=character slot=qa how=flip copy=bak2
+act save_damage what=character slot=qa how=truncate copy=bak3
+act teleport id=e5 x=-9 z=7 y=0
+act? load_game what=character slot=qa
+expect result contains "cannot load character/qa, every copy is unusable, nothing was applied"
+expect result contains "qa.save.bak1: no header"
+expect field e5 Transform.translation.x == -9
+
+# --- death: a body that died since the save lives again, as the dev `heal` brings it back. Save, get hurt,
+# load, die, load again and keep playing. Every load restarts the recording, so the reference replay of this
+# scenario (tests/replays/saves.json) starts from the state right after the last load and holds the play after it
+act npc_set_state id=e6 state=calm
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act heal id=e5
+act teleport id=e5 x=0 z=12 y=0
+act save_game what=character slot=qa label="before the fight"
+expect result contains "ok: character/qa saved"
+act set id=e5 component=Health path=current value=30
+step 5
+act load_game what=character slot=qa
+expect field e5 Health.current > 30
+mark
+act set id=e5 component=Health path=current value=0
+step 2
+expect journal "e5 died"
+act? light_attack
+expect result contains "dead"
+act load_game what=character slot=qa
+expect result contains "ok: character/qa loaded"
+expect journal "e5 healed"
+expect field e5 Health.current > 30
+act light_attack
+step 90
+act move dir=W meters=2
+step 60
+expect field e5 Health.current > 0
+
+# --- the world back as it was
+act heal id=e5
+act teleport id=e5 x=0 z=12 y=0

@@ -1,0 +1,2193 @@
+{
+  "format": "shards-replay/3",
+  "seed": 42,
+  "tick_hz": 59.99999880000003,
+  "check_every": 60,
+  "check_detail": "components",
+  "start": {
+    "format": "shards-snapshot/1",
+    "tick": 7,
+    "seed": 42,
+    "tick_hz": 59.99999880000003,
+    "engine": "0.2.0",
+    "state_hash": "33735a86c06fc6b0",
+    "checks": {
+      "content": "ad91af3fc5344219",
+      "levels": "cbf29ce484222325",
+      "static_colliders": "b16a4682932b69b4"
+    },
+    "ids": {
+      "next": 15,
+      "graveyard": []
+    },
+    "resources": {
+      "shards_level::spawn::LevelCounter": {
+        "last": 0
+      },
+      "shards_motion::physics::ColliderIds": {
+        "next": 44
+      }
+    },
+    "entities": [
+      {
+        "id": 1,
+        "components": {
+          "ai_core::describe::AiKind": "Pillar",
+          "ai_core::id::AiLandmark": {},
+          "ai_core::id::AiVisible": {},
+          "bevy_ecs::name::Name": "Pillar",
+          "bevy_transform::components::transform::Transform": {
+            "rotation": [
+              0.0,
+              -0.0,
+              -0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              -7.0,
+              0.0,
+              -7.0
+            ]
+          },
+          "sandbox::gameplay::Pillar": {},
+          "shards_motion::physics::Body": "Static",
+          "shards_motion::physics::Collider": {
+            "layers": {
+              "filters": 4294967295,
+              "memberships": 1
+            },
+            "offset": [
+              0.0,
+              2.0,
+              0.0
+            ],
+            "shape": {
+              "Cuboid": {
+                "half": [
+                  1.0,
+                  2.0,
+                  1.0
+                ]
+              }
+            }
+          },
+          "shards_motion::physics::ColliderId": 10
+        }
+      },
+      {
+        "id": 2,
+        "components": {
+          "ai_core::describe::AiKind": "Pillar",
+          "ai_core::id::AiLandmark": {},
+          "ai_core::id::AiVisible": {},
+          "bevy_ecs::name::Name": "Pillar",
+          "bevy_transform::components::transform::Transform": {
+            "rotation": [
+              0.0,
+              -0.0,
+              -0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              7.0,
+              0.0,
+              -7.0
+            ]
+          },
+          "sandbox::gameplay::Pillar": {},
+          "shards_motion::physics::Body": "Static",
+          "shards_motion::physics::Collider": {
+            "layers": {
+              "filters": 4294967295,
+              "memberships": 1
+            },
+            "offset": [
+              0.0,
+              2.0,
+              0.0
+            ],
+            "shape": {
+              "Cuboid": {
+                "half": [
+                  1.0,
+                  2.0,
+                  1.0
+                ]
+              }
+            }
+          },
+          "shards_motion::physics::ColliderId": 11
+        }
+      },
+      {
+        "id": 3,
+        "components": {
+          "ai_core::describe::AiKind": "Pillar",
+          "ai_core::id::AiLandmark": {},
+          "ai_core::id::AiVisible": {},
+          "bevy_ecs::name::Name": "Pillar",
+          "bevy_transform::components::transform::Transform": {
+            "rotation": [
+              0.0,
+              -0.0,
+              -0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              -7.0,
+              0.0,
+              7.0
+            ]
+          },
+          "sandbox::gameplay::Pillar": {},
+          "shards_motion::physics::Body": "Static",
+          "shards_motion::physics::Collider": {
+            "layers": {
+              "filters": 4294967295,
+              "memberships": 1
+            },
+            "offset": [
+              0.0,
+              2.0,
+              0.0
+            ],
+            "shape": {
+              "Cuboid": {
+                "half": [
+                  1.0,
+                  2.0,
+                  1.0
+                ]
+              }
+            }
+          },
+          "shards_motion::physics::ColliderId": 12
+        }
+      },
+      {
+        "id": 4,
+        "components": {
+          "ai_core::describe::AiKind": "Pillar",
+          "ai_core::id::AiLandmark": {},
+          "ai_core::id::AiVisible": {},
+          "bevy_ecs::name::Name": "Pillar",
+          "bevy_transform::components::transform::Transform": {
+            "rotation": [
+              0.0,
+              -0.0,
+              -0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              7.0,
+              0.0,
+              7.0
+            ]
+          },
+          "sandbox::gameplay::Pillar": {},
+          "shards_motion::physics::Body": "Static",
+          "shards_motion::physics::Collider": {
+            "layers": {
+              "filters": 4294967295,
+              "memberships": 1
+            },
+            "offset": [
+              0.0,
+              2.0,
+              0.0
+            ],
+            "shape": {
+              "Cuboid": {
+                "half": [
+                  1.0,
+                  2.0,
+                  1.0
+                ]
+              }
+            }
+          },
+          "shards_motion::physics::ColliderId": 13
+        }
+      },
+      {
+        "id": 5,
+        "components": {
+          "ai_core::describe::AiKind": "Player",
+          "ai_core::id::AiPlayer": {},
+          "ai_core::id::AiVisible": {},
+          "bevy_ecs::name::Name": "Player",
+          "bevy_transform::components::transform::Transform": {
+            "rotation": [
+              0.0,
+              -0.0,
+              -0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              0.0,
+              0.0,
+              12.0
+            ]
+          },
+          "sandbox::gameplay::Player": {},
+          "shards_action::fighter::Charges": [
+            {
+              "current": 3,
+              "max": 3,
+              "name": "flask"
+            }
+          ],
+          "shards_action::fighter::Cooldowns": [],
+          "shards_action::fighter::Fighter": {
+            "moveset": "player"
+          },
+          "shards_action::fighter::Health": {
+            "current": 100.0,
+            "max": 100.0
+          },
+          "shards_action::fighter::Poise": {
+            "broken": 0.0,
+            "current": 60.0,
+            "delay": 2.0,
+            "max": 60.0,
+            "regen": 20.0,
+            "since_hit": 2.0
+          },
+          "shards_action::fighter::Stamina": {
+            "current": 100.0,
+            "delay": 0.5,
+            "exhausted": false,
+            "max": 100.0,
+            "regen": 45.0,
+            "since_use": 0.5
+          },
+          "shards_action::fighter::Team": "heroes",
+          "shards_action::machine::ActionState": {
+            "current": null,
+            "started": 1
+          },
+          "shards_action::machine::InputBuffer": {
+            "queued": []
+          },
+          "shards_action::status::Statuses": [],
+          "shards_core::intent::Intent": {
+            "aim": null,
+            "held": [],
+            "move_dir": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "orders": [],
+            "pressed": [],
+            "target": null
+          },
+          "shards_core::state::LocalPlayer": {},
+          "shards_core::state::PlayerId": 0,
+          "shards_motion::controller::CharacterController": {
+            "params": "player"
+          },
+          "shards_motion::controller::LocomotionInput": {
+            "external": [
+              -0.0,
+              0.0,
+              -0.0
+            ],
+            "face": [
+              -0.0,
+              0.0,
+              -1.0
+            ],
+            "glide": false,
+            "jump": false,
+            "locked": true,
+            "move_dir": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sprint": false
+          },
+          "shards_motion::controller::MotionState": {
+            "coyote_left": 0.12,
+            "fall_from_y": null,
+            "ground_normal": [
+              2.3260343e-6,
+              1.0,
+              -0.0
+            ],
+            "grounded": true,
+            "jump_buffer_left": 0.0,
+            "mantle": null,
+            "mode": "Ground",
+            "placed": [
+              4.7683784e-8,
+              0.02000003,
+              12.0
+            ],
+            "sprinting": false,
+            "updraft": null,
+            "velocity": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "volumes": [],
+            "water_surface": null
+          },
+          "shards_motion::physics::Body": "Kinematic",
+          "shards_motion::physics::Collider": {
+            "layers": {
+              "filters": 1,
+              "memberships": 6
+            },
+            "offset": [
+              0.0,
+              0.9,
+              0.0
+            ],
+            "shape": {
+              "Capsule": {
+                "half_height": 0.49999997,
+                "radius": 0.4
+              }
+            }
+          },
+          "shards_motion::physics::ColliderId": 14
+        }
+      },
+      {
+        "id": 6,
+        "components": {
+          "ai_core::describe::AiKind": "Boss",
+          "ai_core::id::AiImportance": 10.0,
+          "ai_core::id::AiVisible": {},
+          "bevy_ecs::name::Name": "Frost Warden",
+          "bevy_transform::components::transform::Transform": {
+            "rotation": [
+              0.0,
+              1.0,
+              -0.0,
+              -0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              1.1921073e-8,
+              0.01999955,
+              -6.0
+            ]
+          },
+          "sandbox::gameplay::Boss": {
+            "movesets": [
+              "warden",
+              "warden_enraged"
+            ],
+            "phase": 1,
+            "plans": [
+              "warden",
+              "warden_enraged"
+            ]
+          },
+          "shards_action::fighter::Cooldowns": [],
+          "shards_action::fighter::Fighter": {
+            "moveset": "warden"
+          },
+          "shards_action::fighter::Health": {
+            "current": 600.0,
+            "max": 600.0
+          },
+          "shards_action::fighter::Poise": {
+            "broken": 0.0,
+            "current": 140.0,
+            "delay": 3.0,
+            "max": 140.0,
+            "regen": 25.0,
+            "since_hit": 3.0
+          },
+          "shards_action::fighter::Team": "monsters",
+          "shards_action::machine::ActionState": {
+            "current": null,
+            "started": 0
+          },
+          "shards_action::machine::InputBuffer": {
+            "queued": []
+          },
+          "shards_action::status::Statuses": [],
+          "shards_core::intent::Intent": {
+            "aim": null,
+            "held": [],
+            "move_dir": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "orders": [],
+            "pressed": [],
+            "target": null
+          },
+          "shards_motion::camera::LockOnTarget": {},
+          "shards_motion::controller::CharacterController": {
+            "params": "warden"
+          },
+          "shards_motion::controller::LocomotionInput": {
+            "external": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "face": null,
+            "glide": false,
+            "jump": false,
+            "locked": false,
+            "move_dir": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sprint": false
+          },
+          "shards_motion::controller::MotionState": {
+            "coyote_left": 0.12,
+            "fall_from_y": null,
+            "ground_normal": [
+              5.886881e-7,
+              1.0,
+              -0.0
+            ],
+            "grounded": true,
+            "jump_buffer_left": 0.0,
+            "mantle": null,
+            "mode": "Ground",
+            "placed": [
+              1.1921073e-8,
+              0.01999955,
+              -6.0
+            ],
+            "sprinting": false,
+            "updraft": null,
+            "velocity": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "volumes": [],
+            "water_surface": null
+          },
+          "shards_motion::physics::Body": "Kinematic",
+          "shards_motion::physics::Collider": {
+            "layers": {
+              "filters": 1,
+              "memberships": 6
+            },
+            "offset": [
+              0.0,
+              1.6,
+              0.0
+            ],
+            "shape": {
+              "Capsule": {
+                "half_height": 0.8,
+                "radius": 0.8
+              }
+            }
+          },
+          "shards_motion::physics::ColliderId": 15,
+          "shards_npc::brain::Home": {
+            "leash": 26.0,
+            "pos": [
+              0.0,
+              0.0,
+              -6.0
+            ]
+          },
+          "shards_npc::brain::Npc": {
+            "behavior": "warden",
+            "director": "boss",
+            "perception": "boss",
+            "plan": "warden"
+          },
+          "shards_npc::brain::NpcBrain": {
+            "active": true,
+            "attacks_done": 0,
+            "done_at_entry": 0,
+            "orbit": 0.0,
+            "point": null,
+            "role": null,
+            "since": 0.11666667,
+            "slot": null,
+            "state": "calm",
+            "step": 0,
+            "target": null,
+            "timer": 0.0
+          },
+          "shards_npc::brain::NpcDrive": {
+            "face": null,
+            "goal": null,
+            "heal": 0.0,
+            "held": [],
+            "hold": [],
+            "leashed": false,
+            "press": [],
+            "request_token": false,
+            "speed": 0.0,
+            "strike": false,
+            "waiting": false,
+            "within": 0.0
+          },
+          "shards_npc::director::AttackToken": {
+            "asking_since": null,
+            "held": null
+          },
+          "shards_npc::nav::NavAgent": {
+            "arrived": true,
+            "desired": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "direct": false,
+            "goal": null,
+            "index": 0,
+            "path": [],
+            "planned_to": null,
+            "repath": 0.0,
+            "speed": 0.0,
+            "within": 0.0
+          },
+          "shards_npc::perception::Perceived": {
+            "focus": null,
+            "known": [],
+            "noise": null,
+            "sounds": []
+          },
+          "shards_npc::planner::NpcPlan": {
+            "attacks": 0,
+            "cooldowns": [],
+            "history": [],
+            "rest": 0.0
+          }
+        }
+      },
+      {
+        "id": 7,
+        "components": {
+          "ai_core::describe::AiKind": "Skeleton",
+          "ai_core::id::AiImportance": 1.0,
+          "ai_core::id::AiVisible": {},
+          "bevy_ecs::name::Name": "Skeleton",
+          "bevy_transform::components::transform::Transform": {
+            "rotation": [
+              0.0,
+              -0.0,
+              -0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              -12.0,
+              0.019999849,
+              2.0
+            ]
+          },
+          "sandbox::gameplay::Skeleton": {},
+          "sandbox::gameplay::fate::Remains": {
+            "despawn_after": 1.5
+          },
+          "shards_action::fighter::Cooldowns": [],
+          "shards_action::fighter::Fighter": {
+            "moveset": "skeleton"
+          },
+          "shards_action::fighter::Health": {
+            "current": 40.0,
+            "max": 40.0
+          },
+          "shards_action::fighter::Poise": {
+            "broken": 0.0,
+            "current": 20.0,
+            "delay": 2.0,
+            "max": 20.0,
+            "regen": 10.0,
+            "since_hit": 2.0
+          },
+          "shards_action::fighter::Team": "monsters",
+          "shards_action::machine::ActionState": {
+            "current": null,
+            "started": 0
+          },
+          "shards_action::machine::InputBuffer": {
+            "queued": []
+          },
+          "shards_action::status::Statuses": [],
+          "shards_core::intent::Intent": {
+            "aim": null,
+            "held": [],
+            "move_dir": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "orders": [],
+            "pressed": [],
+            "target": null
+          },
+          "shards_motion::camera::LockOnTarget": {},
+          "shards_motion::controller::CharacterController": {
+            "params": "skeleton"
+          },
+          "shards_motion::controller::LocomotionInput": {
+            "external": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "face": null,
+            "glide": false,
+            "jump": false,
+            "locked": false,
+            "move_dir": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sprint": false
+          },
+          "shards_motion::controller::MotionState": {
+            "coyote_left": 0.12,
+            "fall_from_y": null,
+            "ground_normal": [
+              -0.0,
+              1.0,
+              -0.0
+            ],
+            "grounded": true,
+            "jump_buffer_left": 0.0,
+            "mantle": null,
+            "mode": "Ground",
+            "placed": [
+              -12.0,
+              0.019999849,
+              2.0
+            ],
+            "sprinting": false,
+            "updraft": null,
+            "velocity": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "volumes": [],
+            "water_surface": null
+          },
+          "shards_motion::physics::Body": "Kinematic",
+          "shards_motion::physics::Collider": {
+            "layers": {
+              "filters": 1,
+              "memberships": 6
+            },
+            "offset": [
+              0.0,
+              0.9,
+              0.0
+            ],
+            "shape": {
+              "Capsule": {
+                "half_height": 0.49999997,
+                "radius": 0.4
+              }
+            }
+          },
+          "shards_motion::physics::ColliderId": 16,
+          "shards_npc::brain::Home": {
+            "leash": 30.0,
+            "pos": [
+              -12.0,
+              0.0,
+              2.0
+            ]
+          },
+          "shards_npc::brain::Npc": {
+            "behavior": "skeleton",
+            "director": "",
+            "perception": "skeleton",
+            "plan": "skeleton"
+          },
+          "shards_npc::brain::NpcBrain": {
+            "active": true,
+            "attacks_done": 0,
+            "done_at_entry": 0,
+            "orbit": 0.0,
+            "point": null,
+            "role": null,
+            "since": 0.11666667,
+            "slot": null,
+            "state": "calm",
+            "step": 0,
+            "target": null,
+            "timer": 0.0
+          },
+          "shards_npc::brain::NpcDrive": {
+            "face": null,
+            "goal": null,
+            "heal": 0.0,
+            "held": [],
+            "hold": [],
+            "leashed": false,
+            "press": [],
+            "request_token": false,
+            "speed": 0.0,
+            "strike": false,
+            "waiting": false,
+            "within": 0.0
+          },
+          "shards_npc::director::AttackToken": {
+            "asking_since": null,
+            "held": null
+          },
+          "shards_npc::nav::NavAgent": {
+            "arrived": true,
+            "desired": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "direct": false,
+            "goal": null,
+            "index": 0,
+            "path": [],
+            "planned_to": null,
+            "repath": 0.0,
+            "speed": 0.0,
+            "within": 0.0
+          },
+          "shards_npc::perception::Perceived": {
+            "focus": null,
+            "known": [],
+            "noise": null,
+            "sounds": []
+          },
+          "shards_npc::planner::NpcPlan": {
+            "attacks": 0,
+            "cooldowns": [],
+            "history": [],
+            "rest": 0.0
+          }
+        }
+      },
+      {
+        "id": 8,
+        "components": {
+          "ai_core::describe::AiKind": "Skeleton",
+          "ai_core::id::AiImportance": 1.0,
+          "ai_core::id::AiVisible": {},
+          "bevy_ecs::name::Name": "Skeleton",
+          "bevy_transform::components::transform::Transform": {
+            "rotation": [
+              0.0,
+              -0.0,
+              -0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              12.0,
+              0.019999294,
+              -2.0
+            ]
+          },
+          "sandbox::gameplay::Skeleton": {},
+          "sandbox::gameplay::fate::Remains": {
+            "despawn_after": 1.5
+          },
+          "shards_action::fighter::Cooldowns": [],
+          "shards_action::fighter::Fighter": {
+            "moveset": "skeleton"
+          },
+          "shards_action::fighter::Health": {
+            "current": 40.0,
+            "max": 40.0
+          },
+          "shards_action::fighter::Poise": {
+            "broken": 0.0,
+            "current": 20.0,
+            "delay": 2.0,
+            "max": 20.0,
+            "regen": 10.0,
+            "since_hit": 2.0
+          },
+          "shards_action::fighter::Team": "monsters",
+          "shards_action::machine::ActionState": {
+            "current": null,
+            "started": 0
+          },
+          "shards_action::machine::InputBuffer": {
+            "queued": []
+          },
+          "shards_action::status::Statuses": [],
+          "shards_core::intent::Intent": {
+            "aim": null,
+            "held": [],
+            "move_dir": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "orders": [],
+            "pressed": [],
+            "target": null
+          },
+          "shards_motion::camera::LockOnTarget": {},
+          "shards_motion::controller::CharacterController": {
+            "params": "skeleton"
+          },
+          "shards_motion::controller::LocomotionInput": {
+            "external": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "face": null,
+            "glide": false,
+            "jump": false,
+            "locked": false,
+            "move_dir": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sprint": false
+          },
+          "shards_motion::controller::MotionState": {
+            "coyote_left": 0.12,
+            "fall_from_y": null,
+            "ground_normal": [
+              -0.0,
+              1.0,
+              -0.0
+            ],
+            "grounded": true,
+            "jump_buffer_left": 0.0,
+            "mantle": null,
+            "mode": "Ground",
+            "placed": [
+              12.0,
+              0.019999294,
+              -2.0
+            ],
+            "sprinting": false,
+            "updraft": null,
+            "velocity": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "volumes": [],
+            "water_surface": null
+          },
+          "shards_motion::physics::Body": "Kinematic",
+          "shards_motion::physics::Collider": {
+            "layers": {
+              "filters": 1,
+              "memberships": 6
+            },
+            "offset": [
+              0.0,
+              0.9,
+              0.0
+            ],
+            "shape": {
+              "Capsule": {
+                "half_height": 0.49999997,
+                "radius": 0.4
+              }
+            }
+          },
+          "shards_motion::physics::ColliderId": 17,
+          "shards_npc::brain::Home": {
+            "leash": 30.0,
+            "pos": [
+              12.0,
+              0.0,
+              -2.0
+            ]
+          },
+          "shards_npc::brain::Npc": {
+            "behavior": "skeleton",
+            "director": "",
+            "perception": "skeleton",
+            "plan": "skeleton"
+          },
+          "shards_npc::brain::NpcBrain": {
+            "active": true,
+            "attacks_done": 0,
+            "done_at_entry": 0,
+            "orbit": 0.0,
+            "point": null,
+            "role": null,
+            "since": 0.11666667,
+            "slot": null,
+            "state": "calm",
+            "step": 0,
+            "target": null,
+            "timer": 0.0
+          },
+          "shards_npc::brain::NpcDrive": {
+            "face": null,
+            "goal": null,
+            "heal": 0.0,
+            "held": [],
+            "hold": [],
+            "leashed": false,
+            "press": [],
+            "request_token": false,
+            "speed": 0.0,
+            "strike": false,
+            "waiting": false,
+            "within": 0.0
+          },
+          "shards_npc::director::AttackToken": {
+            "asking_since": null,
+            "held": null
+          },
+          "shards_npc::nav::NavAgent": {
+            "arrived": true,
+            "desired": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "direct": false,
+            "goal": null,
+            "index": 0,
+            "path": [],
+            "planned_to": null,
+            "repath": 0.0,
+            "speed": 0.0,
+            "within": 0.0
+          },
+          "shards_npc::perception::Perceived": {
+            "focus": null,
+            "known": [],
+            "noise": null,
+            "sounds": []
+          },
+          "shards_npc::planner::NpcPlan": {
+            "attacks": 0,
+            "cooldowns": [],
+            "history": [],
+            "rest": 0.0
+          }
+        }
+      },
+      {
+        "id": 9,
+        "components": {
+          "ai_core::describe::AiKind": "Stairs",
+          "ai_core::id::AiLandmark": {},
+          "ai_core::id::AiVisible": {},
+          "bevy_ecs::name::Name": "Stairs",
+          "bevy_transform::components::transform::Transform": {
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              44.0,
+              0.0,
+              0.0
+            ]
+          },
+          "sandbox::gameplay::layout::LayoutPiece": {
+            "kind": {
+              "Landmark": 0
+            },
+            "layout": "course"
+          }
+        }
+      },
+      {
+        "id": 10,
+        "components": {
+          "ai_core::describe::AiKind": "Ledge",
+          "ai_core::id::AiLandmark": {},
+          "ai_core::id::AiVisible": {},
+          "bevy_ecs::name::Name": "Ledge",
+          "bevy_transform::components::transform::Transform": {
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              52.0,
+              2.0,
+              0.0
+            ]
+          },
+          "sandbox::gameplay::layout::LayoutPiece": {
+            "kind": {
+              "Landmark": 1
+            },
+            "layout": "course"
+          }
+        }
+      },
+      {
+        "id": 11,
+        "components": {
+          "ai_core::describe::AiKind": "Pool",
+          "ai_core::id::AiLandmark": {},
+          "ai_core::id::AiVisible": {},
+          "bevy_ecs::name::Name": "Pool",
+          "bevy_transform::components::transform::Transform": {
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              56.0,
+              3.3,
+              0.0
+            ]
+          },
+          "sandbox::gameplay::layout::LayoutPiece": {
+            "kind": {
+              "Landmark": 2
+            },
+            "layout": "course"
+          }
+        }
+      },
+      {
+        "id": 12,
+        "components": {
+          "ai_core::describe::AiKind": "Cliff",
+          "ai_core::id::AiLandmark": {},
+          "ai_core::id::AiVisible": {},
+          "bevy_ecs::name::Name": "Cliff",
+          "bevy_transform::components::transform::Transform": {
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              86.0,
+              8.0,
+              0.0
+            ]
+          },
+          "sandbox::gameplay::layout::LayoutPiece": {
+            "kind": {
+              "Landmark": 3
+            },
+            "layout": "course"
+          }
+        }
+      },
+      {
+        "id": 13,
+        "components": {
+          "ai_core::describe::AiKind": "Goal",
+          "ai_core::id::AiLandmark": {},
+          "ai_core::id::AiVisible": {},
+          "bevy_ecs::name::Name": "Goal",
+          "bevy_transform::components::transform::Transform": {
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              125.0,
+              6.0,
+              0.0
+            ]
+          },
+          "sandbox::gameplay::layout::LayoutPiece": {
+            "kind": {
+              "Landmark": 4
+            },
+            "layout": "course"
+          },
+          "shards_motion::physics::Body": "Static",
+          "shards_motion::physics::Collider": {
+            "layers": {
+              "filters": 2,
+              "memberships": 16
+            },
+            "offset": [
+              0.0,
+              1.5,
+              0.0
+            ],
+            "shape": {
+              "Cuboid": {
+                "half": [
+                  5.0,
+                  1.5,
+                  3.5
+                ]
+              }
+            }
+          },
+          "shards_motion::physics::ColliderId": 42,
+          "shards_motion::physics::Volume": {
+            "kind": {
+              "Trigger": {
+                "name": "goal"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": 14,
+        "components": {
+          "ai_core::describe::AiKind": "Skeleton",
+          "ai_core::id::AiImportance": 1.0,
+          "ai_core::id::AiVisible": {},
+          "bevy_ecs::name::Name": "Skeleton",
+          "bevy_transform::components::transform::Transform": {
+            "rotation": [
+              0.0,
+              0.92387956,
+              -0.0,
+              -0.38268346
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              -16.0,
+              0.01999995,
+              -16.0
+            ]
+          },
+          "sandbox::gameplay::Skeleton": {},
+          "sandbox::gameplay::fate::Remains": {
+            "despawn_after": 1.5
+          },
+          "shards_action::fighter::Cooldowns": [],
+          "shards_action::fighter::Fighter": {
+            "moveset": "skeleton"
+          },
+          "shards_action::fighter::Health": {
+            "current": 40.0,
+            "max": 40.0
+          },
+          "shards_action::fighter::Poise": {
+            "broken": 0.0,
+            "current": 20.0,
+            "delay": 2.0,
+            "max": 20.0,
+            "regen": 10.0,
+            "since_hit": 2.0
+          },
+          "shards_action::fighter::Team": "monsters",
+          "shards_action::machine::ActionState": {
+            "current": null,
+            "started": 0
+          },
+          "shards_action::machine::InputBuffer": {
+            "queued": []
+          },
+          "shards_action::status::Statuses": [],
+          "shards_core::intent::Intent": {
+            "aim": null,
+            "held": [],
+            "move_dir": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "orders": [],
+            "pressed": [],
+            "target": null
+          },
+          "shards_motion::camera::LockOnTarget": {},
+          "shards_motion::controller::CharacterController": {
+            "params": "skeleton"
+          },
+          "shards_motion::controller::LocomotionInput": {
+            "external": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "face": null,
+            "glide": false,
+            "jump": false,
+            "locked": false,
+            "move_dir": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sprint": false
+          },
+          "shards_motion::controller::MotionState": {
+            "coyote_left": 0.12,
+            "fall_from_y": null,
+            "ground_normal": [
+              -0.0,
+              1.0,
+              -0.0
+            ],
+            "grounded": true,
+            "jump_buffer_left": 0.0,
+            "mantle": null,
+            "mode": "Ground",
+            "placed": [
+              -16.0,
+              0.01999995,
+              -16.0
+            ],
+            "sprinting": false,
+            "updraft": null,
+            "velocity": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "volumes": [],
+            "water_surface": null
+          },
+          "shards_motion::physics::Body": "Kinematic",
+          "shards_motion::physics::Collider": {
+            "layers": {
+              "filters": 1,
+              "memberships": 6
+            },
+            "offset": [
+              0.0,
+              0.9,
+              0.0
+            ],
+            "shape": {
+              "Capsule": {
+                "half_height": 0.49999997,
+                "radius": 0.4
+              }
+            }
+          },
+          "shards_motion::physics::ColliderId": 43,
+          "shards_npc::brain::Home": {
+            "leash": 30.0,
+            "pos": [
+              -16.0,
+              0.0,
+              -16.0
+            ]
+          },
+          "shards_npc::brain::Npc": {
+            "behavior": "skeleton",
+            "director": "",
+            "perception": "skeleton",
+            "plan": "skeleton"
+          },
+          "shards_npc::brain::NpcBrain": {
+            "active": true,
+            "attacks_done": 0,
+            "done_at_entry": 0,
+            "orbit": 0.0,
+            "point": null,
+            "role": null,
+            "since": 0.11666667,
+            "slot": null,
+            "state": "calm",
+            "step": 0,
+            "target": null,
+            "timer": 0.0
+          },
+          "shards_npc::brain::NpcDrive": {
+            "face": null,
+            "goal": null,
+            "heal": 0.0,
+            "held": [],
+            "hold": [],
+            "leashed": false,
+            "press": [],
+            "request_token": false,
+            "speed": 0.0,
+            "strike": false,
+            "waiting": false,
+            "within": 0.0
+          },
+          "shards_npc::director::AttackToken": {
+            "asking_since": null,
+            "held": null
+          },
+          "shards_npc::nav::NavAgent": {
+            "arrived": true,
+            "desired": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "direct": false,
+            "goal": null,
+            "index": 0,
+            "path": [],
+            "planned_to": null,
+            "repath": 0.0,
+            "speed": 0.0,
+            "within": 0.0
+          },
+          "shards_npc::perception::Perceived": {
+            "focus": null,
+            "known": [],
+            "noise": null,
+            "sounds": []
+          },
+          "shards_npc::planner::NpcPlan": {
+            "attacks": 0,
+            "cooldowns": [],
+            "history": [],
+            "rest": 0.0
+          }
+        }
+      }
+    ]
+  },
+  "end": {
+    "tick": 157,
+    "hash": "560dbb0f7ae6ed6a",
+    "parts": {
+      "entities": {
+        "e1": {
+          "Body": "e406ed6e99cc6b9a",
+          "Collider": "fe3aec64863beaa5",
+          "ColliderId": "bed2f67298c5d4b8",
+          "Name": "061aaa57a4d625c3",
+          "Pillar": "aaf80ef159585437",
+          "Transform": "041e2e43567b55d9"
+        },
+        "e2": {
+          "Body": "e406ed6e99cc6b9a",
+          "Collider": "fe3aec64863beaa5",
+          "ColliderId": "ce2867f4591df34f",
+          "Name": "061aaa57a4d625c3",
+          "Pillar": "aaf80ef159585437",
+          "Transform": "280926ac8df55015"
+        },
+        "e3": {
+          "Body": "e406ed6e99cc6b9a",
+          "Collider": "fe3aec64863beaa5",
+          "ColliderId": "13e967db9b4d1116",
+          "Name": "061aaa57a4d625c3",
+          "Pillar": "aaf80ef159585437",
+          "Transform": "d80cde9f049c660f"
+        },
+        "e4": {
+          "Body": "e406ed6e99cc6b9a",
+          "Collider": "fe3aec64863beaa5",
+          "ColliderId": "2b68a115042adea5",
+          "Name": "061aaa57a4d625c3",
+          "Pillar": "aaf80ef159585437",
+          "Transform": "ea2d4533c2f7918b"
+        },
+        "e5": {
+          "ActionState": "a606ea45e92ed757",
+          "AiPlayer": "5bbc70d05f43552a",
+          "Body": "c5fb29ebf3188250",
+          "CharacterController": "a0adb7ba123afddc",
+          "Charges": "ec4c2b7b5888c51f",
+          "Collider": "24c98f83e815c6ca",
+          "ColliderId": "7129a0fc4659fc6c",
+          "Cooldowns": "e590eaa870b29409",
+          "Fighter": "1f359b69a7b75764",
+          "Health": "7a4bdd5c767454d8",
+          "InputBuffer": "ef38bf400db90191",
+          "Intent": "38dab3b75de55ab8",
+          "LocalPlayer": "9649be778570e9b6",
+          "LocomotionInput": "39e4de9fd83ac7a7",
+          "MotionState": "8ea83ea7282c6a13",
+          "Name": "34a01a235b960c38",
+          "Player": "d4e87c7e9cc60712",
+          "PlayerId": "881ccf3ad5b62384",
+          "Poise": "09bce6fa03f41f3c",
+          "Stamina": "0d0eee3f04a65ab4",
+          "Statuses": "3fb30d18ef67d4e2",
+          "Team": "165e6b65a6b6cead",
+          "Transform": "c5b9bd2b93fc7e0f"
+        },
+        "e6": {
+          "ActionState": "a414b3792e392e19",
+          "AiImportance": "743dc2453c5f77e0",
+          "AttackToken": "6a2088a8dc7c3f7c",
+          "Body": "c5fb29ebf3188250",
+          "Boss": "be5ecd999df96d58",
+          "CharacterController": "3abd911557824fe8",
+          "Collider": "21cdcb0bebf5ce74",
+          "ColliderId": "807f127e06b21b03",
+          "Cooldowns": "e590eaa870b29409",
+          "Fighter": "7002c1b322ce3d58",
+          "Health": "d63e299505ded448",
+          "Home": "aee8d489b01e0d6d",
+          "InputBuffer": "ef38bf400db90191",
+          "Intent": "38dab3b75de55ab8",
+          "LockOnTarget": "8e7e24c8d091cff2",
+          "LocomotionInput": "39e4de9fd83ac7a7",
+          "MotionState": "1b0f39eab5831839",
+          "Name": "c60481842b5403a4",
+          "NavAgent": "59682c99cad9d12c",
+          "Npc": "ab29948735442598",
+          "NpcBrain": "622dd88de1c6e708",
+          "NpcDrive": "86e42107c9ecae6a",
+          "NpcPlan": "a2740f05b7e737bb",
+          "Perceived": "1448903f14552316",
+          "Poise": "fd9e11bfbe548f9d",
+          "Statuses": "3fb30d18ef67d4e2",
+          "Team": "e1125bce710d6b86",
+          "Transform": "2dc2e23c7b44514e"
+        },
+        "e7": {
+          "ActionState": "a414b3792e392e19",
+          "AiImportance": "89520b33e189ae73",
+          "AttackToken": "6a2088a8dc7c3f7c",
+          "Body": "c5fb29ebf3188250",
+          "CharacterController": "13d5771d1d4867a8",
+          "Collider": "24c98f83e815c6ca",
+          "ColliderId": "c640126548e138ca",
+          "Cooldowns": "e590eaa870b29409",
+          "Fighter": "6c1fbdc91a3bb378",
+          "Health": "912481d4b2622c56",
+          "Home": "54cb820fd1f7c854",
+          "InputBuffer": "ef38bf400db90191",
+          "Intent": "38dab3b75de55ab8",
+          "LockOnTarget": "8e7e24c8d091cff2",
+          "LocomotionInput": "39e4de9fd83ac7a7",
+          "MotionState": "a479ec98c2ca52a5",
+          "Name": "69a7067b825ad410",
+          "NavAgent": "59682c99cad9d12c",
+          "Npc": "5261f0cbfc256463",
+          "NpcBrain": "463d244646f69abb",
+          "NpcDrive": "86e42107c9ecae6a",
+          "NpcPlan": "a2740f05b7e737bb",
+          "Perceived": "2d6a1dff6618ef36",
+          "Poise": "2b6a1a3a1ec4b2ff",
+          "Remains": "c4e7959a2bd6b475",
+          "Skeleton": "fa92b4aa8d957e72",
+          "Statuses": "3fb30d18ef67d4e2",
+          "Team": "e1125bce710d6b86",
+          "Transform": "0fc111f64d9e70a5"
+        },
+        "e8": {
+          "ActionState": "a414b3792e392e19",
+          "AiImportance": "89520b33e189ae73",
+          "AttackToken": "6a2088a8dc7c3f7c",
+          "Body": "c5fb29ebf3188250",
+          "CharacterController": "13d5771d1d4867a8",
+          "Collider": "24c98f83e815c6ca",
+          "ColliderId": "ddbf4b9eb1bf0659",
+          "Cooldowns": "e590eaa870b29409",
+          "Fighter": "6c1fbdc91a3bb378",
+          "Health": "912481d4b2622c56",
+          "Home": "bdbfb97f2809c9b0",
+          "InputBuffer": "ef38bf400db90191",
+          "Intent": "38dab3b75de55ab8",
+          "LockOnTarget": "8e7e24c8d091cff2",
+          "LocomotionInput": "39e4de9fd83ac7a7",
+          "MotionState": "45b7aeb32aeb0ff5",
+          "Name": "69a7067b825ad410",
+          "NavAgent": "59682c99cad9d12c",
+          "Npc": "5261f0cbfc256463",
+          "NpcBrain": "463d244646f69abb",
+          "NpcDrive": "86e42107c9ecae6a",
+          "NpcPlan": "a2740f05b7e737bb",
+          "Perceived": "2d6a1dff6618ef36",
+          "Poise": "2b6a1a3a1ec4b2ff",
+          "Remains": "c4e7959a2bd6b475",
+          "Skeleton": "fa92b4aa8d957e72",
+          "Statuses": "3fb30d18ef67d4e2",
+          "Team": "e1125bce710d6b86",
+          "Transform": "f5fe10d264ff0061"
+        },
+        "e9": {
+          "LayoutPiece": "83e361eaafe2d570",
+          "Name": "7c72e023996963a1",
+          "Transform": "54e02980584bd414"
+        },
+        "e10": {
+          "LayoutPiece": "3f15f9843a9832db",
+          "Name": "c76ff53fa859a245",
+          "Transform": "729dccc6e32686bb"
+        },
+        "e11": {
+          "LayoutPiece": "b33b738cc2183d6e",
+          "Name": "175a9febf881758f",
+          "Transform": "6f824aaa5a94d839"
+        },
+        "e12": {
+          "LayoutPiece": "4c7b6acf20627431",
+          "Name": "38cebf147e036920",
+          "Transform": "fbbc3e4aa50bc8e2"
+        },
+        "e13": {
+          "Body": "e406ed6e99cc6b9a",
+          "Collider": "14df4dd013eeb97f",
+          "ColliderId": "dccc62637e4994cf",
+          "LayoutPiece": "894eac084b442204",
+          "Name": "b67d4006a7d0ebac",
+          "Transform": "3c6472d71cb8c6a1",
+          "Volume": "1900d0d04c3b9162"
+        },
+        "e14": {
+          "ActionState": "a414b3792e392e19",
+          "AiImportance": "89520b33e189ae73",
+          "AttackToken": "6a2088a8dc7c3f7c",
+          "Body": "c5fb29ebf3188250",
+          "CharacterController": "13d5771d1d4867a8",
+          "Collider": "24c98f83e815c6ca",
+          "ColliderId": "cd76f0e1bdf17638",
+          "Cooldowns": "e590eaa870b29409",
+          "Fighter": "6c1fbdc91a3bb378",
+          "Health": "912481d4b2622c56",
+          "Home": "50d3bcafcee8f61c",
+          "InputBuffer": "ef38bf400db90191",
+          "Intent": "38dab3b75de55ab8",
+          "LockOnTarget": "8e7e24c8d091cff2",
+          "LocomotionInput": "39e4de9fd83ac7a7",
+          "MotionState": "9a431375471c8d4d",
+          "Name": "69a7067b825ad410",
+          "NavAgent": "59682c99cad9d12c",
+          "Npc": "5261f0cbfc256463",
+          "NpcBrain": "463d244646f69abb",
+          "NpcDrive": "86e42107c9ecae6a",
+          "NpcPlan": "a2740f05b7e737bb",
+          "Perceived": "2d6a1dff6618ef36",
+          "Poise": "2b6a1a3a1ec4b2ff",
+          "Remains": "c4e7959a2bd6b475",
+          "Skeleton": "fa92b4aa8d957e72",
+          "Statuses": "3fb30d18ef67d4e2",
+          "Team": "e1125bce710d6b86",
+          "Transform": "1422b70ffba47449"
+        }
+      },
+      "game": {
+        "content": "ad91af3fc5344219"
+      }
+    }
+  },
+  "events": [
+    {
+      "call": {
+        "at": 7,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "light_attack",
+        "args": {}
+      }
+    },
+    {
+      "input": {
+        "at": 7,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [
+            {
+              "dir": null,
+              "input": "light"
+            }
+          ],
+          "target": null
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 97,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "move",
+        "args": {
+          "dir": "W",
+          "meters": 2
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 97,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [
+            {
+              "MoveTo": {
+                "target": {
+                  "Point": [
+                    -2.0,
+                    0.01999988965690136,
+                    11.69999885559082
+                  ]
+                },
+                "within": 0.30000001192092896
+              }
+            }
+          ],
+          "pressed": [],
+          "target": null
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 157,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "heal",
+        "args": {
+          "id": "e5"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 157,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "teleport",
+        "args": {
+          "id": "e5",
+          "x": 0,
+          "y": 0,
+          "z": 12
+        }
+      }
+    }
+  ],
+  "checks": [
+    {
+      "tick": 60,
+      "hash": "ad60c0c0935ef16f",
+      "parts": {
+        "entities": {
+          "e1": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "fe3aec64863beaa5",
+            "ColliderId": "bed2f67298c5d4b8",
+            "Name": "061aaa57a4d625c3",
+            "Pillar": "aaf80ef159585437",
+            "Transform": "041e2e43567b55d9"
+          },
+          "e2": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "fe3aec64863beaa5",
+            "ColliderId": "ce2867f4591df34f",
+            "Name": "061aaa57a4d625c3",
+            "Pillar": "aaf80ef159585437",
+            "Transform": "280926ac8df55015"
+          },
+          "e3": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "fe3aec64863beaa5",
+            "ColliderId": "13e967db9b4d1116",
+            "Name": "061aaa57a4d625c3",
+            "Pillar": "aaf80ef159585437",
+            "Transform": "d80cde9f049c660f"
+          },
+          "e4": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "fe3aec64863beaa5",
+            "ColliderId": "2b68a115042adea5",
+            "Name": "061aaa57a4d625c3",
+            "Pillar": "aaf80ef159585437",
+            "Transform": "ea2d4533c2f7918b"
+          },
+          "e5": {
+            "ActionState": "a606ea45e92ed757",
+            "AiPlayer": "5bbc70d05f43552a",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "a0adb7ba123afddc",
+            "Charges": "ec4c2b7b5888c51f",
+            "Collider": "24c98f83e815c6ca",
+            "ColliderId": "7129a0fc4659fc6c",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "1f359b69a7b75764",
+            "Health": "7a4bdd5c767454d8",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "38dab3b75de55ab8",
+            "LocalPlayer": "9649be778570e9b6",
+            "LocomotionInput": "39e4de9fd83ac7a7",
+            "MotionState": "8abcbe27c39605a1",
+            "Name": "34a01a235b960c38",
+            "Player": "d4e87c7e9cc60712",
+            "PlayerId": "881ccf3ad5b62384",
+            "Poise": "09bce6fa03f41f3c",
+            "Stamina": "0d0eee3f04a65ab4",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "165e6b65a6b6cead",
+            "Transform": "091fa51071b7fe6d"
+          },
+          "e6": {
+            "ActionState": "a414b3792e392e19",
+            "AiImportance": "743dc2453c5f77e0",
+            "AttackToken": "6a2088a8dc7c3f7c",
+            "Body": "c5fb29ebf3188250",
+            "Boss": "be5ecd999df96d58",
+            "CharacterController": "3abd911557824fe8",
+            "Collider": "21cdcb0bebf5ce74",
+            "ColliderId": "807f127e06b21b03",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "7002c1b322ce3d58",
+            "Health": "d63e299505ded448",
+            "Home": "aee8d489b01e0d6d",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "38dab3b75de55ab8",
+            "LockOnTarget": "8e7e24c8d091cff2",
+            "LocomotionInput": "39e4de9fd83ac7a7",
+            "MotionState": "1b0f39eab5831839",
+            "Name": "c60481842b5403a4",
+            "NavAgent": "59682c99cad9d12c",
+            "Npc": "ab29948735442598",
+            "NpcBrain": "5417b98ab121c2fe",
+            "NpcDrive": "86e42107c9ecae6a",
+            "NpcPlan": "a2740f05b7e737bb",
+            "Perceived": "fdf29f1268647b72",
+            "Poise": "fd9e11bfbe548f9d",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "e1125bce710d6b86",
+            "Transform": "2dc2e23c7b44514e"
+          },
+          "e7": {
+            "ActionState": "a414b3792e392e19",
+            "AiImportance": "89520b33e189ae73",
+            "AttackToken": "6a2088a8dc7c3f7c",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "13d5771d1d4867a8",
+            "Collider": "24c98f83e815c6ca",
+            "ColliderId": "c640126548e138ca",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "6c1fbdc91a3bb378",
+            "Health": "912481d4b2622c56",
+            "Home": "54cb820fd1f7c854",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "38dab3b75de55ab8",
+            "LockOnTarget": "8e7e24c8d091cff2",
+            "LocomotionInput": "39e4de9fd83ac7a7",
+            "MotionState": "a479ec98c2ca52a5",
+            "Name": "69a7067b825ad410",
+            "NavAgent": "59682c99cad9d12c",
+            "Npc": "5261f0cbfc256463",
+            "NpcBrain": "0dc9ac0165aff591",
+            "NpcDrive": "86e42107c9ecae6a",
+            "NpcPlan": "a2740f05b7e737bb",
+            "Perceived": "2d6a1dff6618ef36",
+            "Poise": "2b6a1a3a1ec4b2ff",
+            "Remains": "c4e7959a2bd6b475",
+            "Skeleton": "fa92b4aa8d957e72",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "e1125bce710d6b86",
+            "Transform": "0fc111f64d9e70a5"
+          },
+          "e8": {
+            "ActionState": "a414b3792e392e19",
+            "AiImportance": "89520b33e189ae73",
+            "AttackToken": "6a2088a8dc7c3f7c",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "13d5771d1d4867a8",
+            "Collider": "24c98f83e815c6ca",
+            "ColliderId": "ddbf4b9eb1bf0659",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "6c1fbdc91a3bb378",
+            "Health": "912481d4b2622c56",
+            "Home": "bdbfb97f2809c9b0",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "38dab3b75de55ab8",
+            "LockOnTarget": "8e7e24c8d091cff2",
+            "LocomotionInput": "39e4de9fd83ac7a7",
+            "MotionState": "45b7aeb32aeb0ff5",
+            "Name": "69a7067b825ad410",
+            "NavAgent": "59682c99cad9d12c",
+            "Npc": "5261f0cbfc256463",
+            "NpcBrain": "0dc9ac0165aff591",
+            "NpcDrive": "86e42107c9ecae6a",
+            "NpcPlan": "a2740f05b7e737bb",
+            "Perceived": "2d6a1dff6618ef36",
+            "Poise": "2b6a1a3a1ec4b2ff",
+            "Remains": "c4e7959a2bd6b475",
+            "Skeleton": "fa92b4aa8d957e72",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "e1125bce710d6b86",
+            "Transform": "f5fe10d264ff0061"
+          },
+          "e9": {
+            "LayoutPiece": "83e361eaafe2d570",
+            "Name": "7c72e023996963a1",
+            "Transform": "54e02980584bd414"
+          },
+          "e10": {
+            "LayoutPiece": "3f15f9843a9832db",
+            "Name": "c76ff53fa859a245",
+            "Transform": "729dccc6e32686bb"
+          },
+          "e11": {
+            "LayoutPiece": "b33b738cc2183d6e",
+            "Name": "175a9febf881758f",
+            "Transform": "6f824aaa5a94d839"
+          },
+          "e12": {
+            "LayoutPiece": "4c7b6acf20627431",
+            "Name": "38cebf147e036920",
+            "Transform": "fbbc3e4aa50bc8e2"
+          },
+          "e13": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "14df4dd013eeb97f",
+            "ColliderId": "dccc62637e4994cf",
+            "LayoutPiece": "894eac084b442204",
+            "Name": "b67d4006a7d0ebac",
+            "Transform": "3c6472d71cb8c6a1",
+            "Volume": "1900d0d04c3b9162"
+          },
+          "e14": {
+            "ActionState": "a414b3792e392e19",
+            "AiImportance": "89520b33e189ae73",
+            "AttackToken": "6a2088a8dc7c3f7c",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "13d5771d1d4867a8",
+            "Collider": "24c98f83e815c6ca",
+            "ColliderId": "cd76f0e1bdf17638",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "6c1fbdc91a3bb378",
+            "Health": "912481d4b2622c56",
+            "Home": "50d3bcafcee8f61c",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "38dab3b75de55ab8",
+            "LockOnTarget": "8e7e24c8d091cff2",
+            "LocomotionInput": "39e4de9fd83ac7a7",
+            "MotionState": "9a431375471c8d4d",
+            "Name": "69a7067b825ad410",
+            "NavAgent": "59682c99cad9d12c",
+            "Npc": "5261f0cbfc256463",
+            "NpcBrain": "0dc9ac0165aff591",
+            "NpcDrive": "86e42107c9ecae6a",
+            "NpcPlan": "a2740f05b7e737bb",
+            "Perceived": "2d6a1dff6618ef36",
+            "Poise": "2b6a1a3a1ec4b2ff",
+            "Remains": "c4e7959a2bd6b475",
+            "Skeleton": "fa92b4aa8d957e72",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "e1125bce710d6b86",
+            "Transform": "1422b70ffba47449"
+          }
+        },
+        "game": {
+          "content": "ad91af3fc5344219"
+        }
+      }
+    },
+    {
+      "tick": 120,
+      "hash": "a1caa641902255a3",
+      "parts": {
+        "entities": {
+          "e1": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "fe3aec64863beaa5",
+            "ColliderId": "bed2f67298c5d4b8",
+            "Name": "061aaa57a4d625c3",
+            "Pillar": "aaf80ef159585437",
+            "Transform": "041e2e43567b55d9"
+          },
+          "e2": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "fe3aec64863beaa5",
+            "ColliderId": "ce2867f4591df34f",
+            "Name": "061aaa57a4d625c3",
+            "Pillar": "aaf80ef159585437",
+            "Transform": "280926ac8df55015"
+          },
+          "e3": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "fe3aec64863beaa5",
+            "ColliderId": "13e967db9b4d1116",
+            "Name": "061aaa57a4d625c3",
+            "Pillar": "aaf80ef159585437",
+            "Transform": "d80cde9f049c660f"
+          },
+          "e4": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "fe3aec64863beaa5",
+            "ColliderId": "2b68a115042adea5",
+            "Name": "061aaa57a4d625c3",
+            "Pillar": "aaf80ef159585437",
+            "Transform": "ea2d4533c2f7918b"
+          },
+          "e5": {
+            "ActionState": "a606ea45e92ed757",
+            "AiPlayer": "5bbc70d05f43552a",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "a0adb7ba123afddc",
+            "Charges": "ec4c2b7b5888c51f",
+            "Collider": "24c98f83e815c6ca",
+            "ColliderId": "7129a0fc4659fc6c",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "1f359b69a7b75764",
+            "Health": "7a4bdd5c767454d8",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "95bfefa1be43c4e8",
+            "LocalPlayer": "9649be778570e9b6",
+            "LocomotionInput": "6ef687da7da9d332",
+            "MotionState": "81c84518d53c9add",
+            "Name": "34a01a235b960c38",
+            "Player": "d4e87c7e9cc60712",
+            "PlayerId": "881ccf3ad5b62384",
+            "Poise": "09bce6fa03f41f3c",
+            "Stamina": "0d0eee3f04a65ab4",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "165e6b65a6b6cead",
+            "Transform": "4e83645e649efb4e"
+          },
+          "e6": {
+            "ActionState": "a414b3792e392e19",
+            "AiImportance": "743dc2453c5f77e0",
+            "AttackToken": "6a2088a8dc7c3f7c",
+            "Body": "c5fb29ebf3188250",
+            "Boss": "be5ecd999df96d58",
+            "CharacterController": "3abd911557824fe8",
+            "Collider": "21cdcb0bebf5ce74",
+            "ColliderId": "807f127e06b21b03",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "7002c1b322ce3d58",
+            "Health": "d63e299505ded448",
+            "Home": "aee8d489b01e0d6d",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "38dab3b75de55ab8",
+            "LockOnTarget": "8e7e24c8d091cff2",
+            "LocomotionInput": "39e4de9fd83ac7a7",
+            "MotionState": "1b0f39eab5831839",
+            "Name": "c60481842b5403a4",
+            "NavAgent": "59682c99cad9d12c",
+            "Npc": "ab29948735442598",
+            "NpcBrain": "fb3e1e0390a4ce6b",
+            "NpcDrive": "86e42107c9ecae6a",
+            "NpcPlan": "a2740f05b7e737bb",
+            "Perceived": "888b025f67b3c25e",
+            "Poise": "fd9e11bfbe548f9d",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "e1125bce710d6b86",
+            "Transform": "2dc2e23c7b44514e"
+          },
+          "e7": {
+            "ActionState": "a414b3792e392e19",
+            "AiImportance": "89520b33e189ae73",
+            "AttackToken": "6a2088a8dc7c3f7c",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "13d5771d1d4867a8",
+            "Collider": "24c98f83e815c6ca",
+            "ColliderId": "c640126548e138ca",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "6c1fbdc91a3bb378",
+            "Health": "912481d4b2622c56",
+            "Home": "54cb820fd1f7c854",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "38dab3b75de55ab8",
+            "LockOnTarget": "8e7e24c8d091cff2",
+            "LocomotionInput": "39e4de9fd83ac7a7",
+            "MotionState": "a479ec98c2ca52a5",
+            "Name": "69a7067b825ad410",
+            "NavAgent": "59682c99cad9d12c",
+            "Npc": "5261f0cbfc256463",
+            "NpcBrain": "bea0cc97d0c5d196",
+            "NpcDrive": "86e42107c9ecae6a",
+            "NpcPlan": "a2740f05b7e737bb",
+            "Perceived": "2d6a1dff6618ef36",
+            "Poise": "2b6a1a3a1ec4b2ff",
+            "Remains": "c4e7959a2bd6b475",
+            "Skeleton": "fa92b4aa8d957e72",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "e1125bce710d6b86",
+            "Transform": "0fc111f64d9e70a5"
+          },
+          "e8": {
+            "ActionState": "a414b3792e392e19",
+            "AiImportance": "89520b33e189ae73",
+            "AttackToken": "6a2088a8dc7c3f7c",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "13d5771d1d4867a8",
+            "Collider": "24c98f83e815c6ca",
+            "ColliderId": "ddbf4b9eb1bf0659",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "6c1fbdc91a3bb378",
+            "Health": "912481d4b2622c56",
+            "Home": "bdbfb97f2809c9b0",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "38dab3b75de55ab8",
+            "LockOnTarget": "8e7e24c8d091cff2",
+            "LocomotionInput": "39e4de9fd83ac7a7",
+            "MotionState": "45b7aeb32aeb0ff5",
+            "Name": "69a7067b825ad410",
+            "NavAgent": "59682c99cad9d12c",
+            "Npc": "5261f0cbfc256463",
+            "NpcBrain": "bea0cc97d0c5d196",
+            "NpcDrive": "86e42107c9ecae6a",
+            "NpcPlan": "a2740f05b7e737bb",
+            "Perceived": "2d6a1dff6618ef36",
+            "Poise": "2b6a1a3a1ec4b2ff",
+            "Remains": "c4e7959a2bd6b475",
+            "Skeleton": "fa92b4aa8d957e72",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "e1125bce710d6b86",
+            "Transform": "f5fe10d264ff0061"
+          },
+          "e9": {
+            "LayoutPiece": "83e361eaafe2d570",
+            "Name": "7c72e023996963a1",
+            "Transform": "54e02980584bd414"
+          },
+          "e10": {
+            "LayoutPiece": "3f15f9843a9832db",
+            "Name": "c76ff53fa859a245",
+            "Transform": "729dccc6e32686bb"
+          },
+          "e11": {
+            "LayoutPiece": "b33b738cc2183d6e",
+            "Name": "175a9febf881758f",
+            "Transform": "6f824aaa5a94d839"
+          },
+          "e12": {
+            "LayoutPiece": "4c7b6acf20627431",
+            "Name": "38cebf147e036920",
+            "Transform": "fbbc3e4aa50bc8e2"
+          },
+          "e13": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "14df4dd013eeb97f",
+            "ColliderId": "dccc62637e4994cf",
+            "LayoutPiece": "894eac084b442204",
+            "Name": "b67d4006a7d0ebac",
+            "Transform": "3c6472d71cb8c6a1",
+            "Volume": "1900d0d04c3b9162"
+          },
+          "e14": {
+            "ActionState": "a414b3792e392e19",
+            "AiImportance": "89520b33e189ae73",
+            "AttackToken": "6a2088a8dc7c3f7c",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "13d5771d1d4867a8",
+            "Collider": "24c98f83e815c6ca",
+            "ColliderId": "cd76f0e1bdf17638",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "6c1fbdc91a3bb378",
+            "Health": "912481d4b2622c56",
+            "Home": "50d3bcafcee8f61c",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "38dab3b75de55ab8",
+            "LockOnTarget": "8e7e24c8d091cff2",
+            "LocomotionInput": "39e4de9fd83ac7a7",
+            "MotionState": "9a431375471c8d4d",
+            "Name": "69a7067b825ad410",
+            "NavAgent": "59682c99cad9d12c",
+            "Npc": "5261f0cbfc256463",
+            "NpcBrain": "bea0cc97d0c5d196",
+            "NpcDrive": "86e42107c9ecae6a",
+            "NpcPlan": "a2740f05b7e737bb",
+            "Perceived": "2d6a1dff6618ef36",
+            "Poise": "2b6a1a3a1ec4b2ff",
+            "Remains": "c4e7959a2bd6b475",
+            "Skeleton": "fa92b4aa8d957e72",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "e1125bce710d6b86",
+            "Transform": "1422b70ffba47449"
+          }
+        },
+        "game": {
+          "content": "ad91af3fc5344219"
+        }
+      }
+    }
+  ]
+}

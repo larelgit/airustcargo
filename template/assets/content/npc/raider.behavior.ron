@@ -1,0 +1,21 @@
+// The raider's behaviour (content kind `behavior`): an NPC of the engine's NPC module. The
+// states and conditions are the engine's; this file wires them. It fights the hero while the
+// hero is within its leash (10 m of its camp, 2 m of slack), and goes home otherwise.
+{
+    "raider": (
+        initial: "idle",
+        states: {
+            "idle": (transitions: [(to: "fight", when: ["target_known", ("target_in_leash", {"margin": 2.0})])]),
+            // `attack`: with an attack token of the combat director it chooses an attack (its
+            // attack plan), walks into reach and presses it; routes come from the navmesh.
+            "fight": (kind: "attack", transitions: [
+                (to: "home", when: [("!target_in_leash", {"margin": 2.0})]),
+                (to: "home", when: ["target_lost"]),
+            ]),
+            "home": (kind: "return_home", params: {"heal": 10.0}, transitions: [
+                (to: "fight", when: ["target_known", "target_in_leash"]),
+                (to: "idle", when: ["at_home"]),
+            ]),
+        },
+    ),
+}

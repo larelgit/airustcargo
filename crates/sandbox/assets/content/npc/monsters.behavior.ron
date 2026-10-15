@@ -1,0 +1,44 @@
+// How the sandbox's monsters behave (content kind `behavior`): state machines whose states
+// and conditions are the engine's (`shards_npc`), wired here. The director gives the attack
+// tokens; the attack plans (`monsters.attack_plan.ron`) choose what to swing.
+//
+// Every monster also has `calm`: no way out of it, so it stands where it is until a dev sends
+// it back (`npc_set_state id=e7 state=calm`, then `state=idle`). Scenarios use it to take a
+// monster out of a fight they do not test.
+{
+    // Fights what it sees within its leash (2 m of slack): with a token it strikes, without
+    // one it waits in the director's roles around the target. When the target leaves the
+    // leash or is lost, home, mending 10 health a second.
+    "skeleton": (
+        initial: "idle",
+        states: {
+            "idle": (transitions: [(to: "fight", when: ["target_known", ("target_in_leash", {"margin": 2.0})])]),
+            "fight": (kind: "attack", transitions: [
+                (to: "home", when: [("!target_in_leash", {"margin": 2.0})]),
+                (to: "home", when: ["target_lost"]),
+            ]),
+            "home": (kind: "return_home", params: {"heal": 10.0}, transitions: [
+                (to: "fight", when: ["target_known", "target_in_leash"]),
+                (to: "idle", when: ["at_home"]),
+            ]),
+            "calm": (kind: "idle"),
+        },
+    ),
+    // The Frost Warden guards its post: it fights players within its leash of it, and walks
+    // back (it does not heal: a boss fight is not undone by stepping out).
+    "warden": (
+        initial: "guard",
+        states: {
+            "guard": (kind: "idle", transitions: [(to: "fight", when: ["target_known", "target_in_leash"])]),
+            "fight": (kind: "attack", transitions: [
+                (to: "home", when: ["!target_in_leash"]),
+                (to: "home", when: ["target_lost"]),
+            ]),
+            "home": (kind: "return_home", transitions: [
+                (to: "fight", when: ["target_known", "target_in_leash"]),
+                (to: "guard", when: ["at_home"]),
+            ]),
+            "calm": (kind: "idle"),
+        },
+    ),
+}

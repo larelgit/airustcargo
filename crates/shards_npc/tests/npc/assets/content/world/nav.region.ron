@@ -1,0 +1,6 @@
+// The navigation tests build their regions from hand-made manifests with these regions'
+// rules (the generator is not used).
+{
+    "strip": (size: (3, 1), tile_size: 8.0, version: 1, pois: [(poi: "spawn")]),
+    "grid": (size: (8, 8), tile_size: 8.0, version: 1, pois: [(poi: "spawn")]),
+}

@@ -1,0 +1,30 @@
+[package]
+name = "shards_level"
+description = "Shards levels: glTF files from Blender become entities with engine components, colliders, volumes and markers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# The level's visual scene: the same file through Bevy's glTF loader, under one root entity.
+# Gameplay entities are the same with or without it.
+render = ["ai_core/render", "shards_motion/render", "bevy/bevy_gltf", "bevy/bevy_world_serialization"]
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+shards_motion.workspace = true
+bevy = { workspace = true, features = ["std", "serialize", "bevy_asset", "bevy_state"] }
+gltf.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+# Test apps load their content through the asset server, like a game.
+bevy = { workspace = true, features = ["std", "serialize", "bevy_asset", "bevy_state", "multi_threaded"] }
+ron.workspace = true
+# The arena fixture names the engine's own components (Health, Team).
+shards_action.workspace = true

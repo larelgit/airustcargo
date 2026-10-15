@@ -1,0 +1,6 @@
+// How the tiles are baked into navigation grids (content kind `nav`, id `default`): half-meter
+// cells for a grunt-sized body. The bake files are in `assets/nav/`; after editing a tile or
+// its level file, bake again: `cargo game --bake-nav` (`content check` names a stale bake).
+{
+    "default": (cell: 0.5, agent: Some("grunt"), safe_drop: 2.0),
+}

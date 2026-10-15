@@ -1,0 +1,6 @@
+// Which tile edges may meet in the sandbox's generated region (`wilds.region.ron`). An edge is
+// one socket (`grass`) or several along it, clockwise (`grass road grass`: a road in the
+// middle third); facing edges must match. Both kinds can be walked.
+{
+    "default": (kinds: ["grass", "road"], passable: ["grass", "road"], roads: ["road"]),
+}

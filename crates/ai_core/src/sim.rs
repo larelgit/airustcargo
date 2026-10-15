@@ -10,9 +10,14 @@
 //! as the CPU allows) and returns only after the ticks ran. A gameplay system that
 //! fails, or an invariant that is violated, halts the game and ends the step at its
 //! tick (see [`failures`](crate::failures) and [`invariants`](crate::invariants)).
+//!
+//! While something must finish first (content loading), [`SimGate`] holds the
+//! simulation: no ticks run, in real time or through [`step`], so loading never shifts
+//! a tick.
 
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bevy::app::FixedMain;
@@ -68,6 +73,86 @@ impl TickClock {
     pub fn get(&self) -> u64 {
         self.0.load(Ordering::Relaxed)
     }
+
+    /// A snapshot moved the simulation to another tick.
+    pub(crate) fn set(&self, tick: u64) {
+        self.0.store(tick, Ordering::Relaxed);
+    }
+}
+
+/// Named holds on the simulation. While any exists, no tick runs: real-time play is
+/// paused (and resumes on release only if the gate paused it, so a `--paused` game
+/// stays paused), [`step`] and `resume` refuse with [`SimGate::message`], and
+/// `ai/status` lists the [`reasons`](SimGate::reasons) under `loading`.
+///
+/// Loading never shifts ticks: whatever a game loads, tick 1 always runs on the same
+/// world.
+#[derive(Resource, Default, Debug)]
+pub struct SimGate {
+    /// Name → what it waits for, in name order.
+    holds: BTreeMap<String, String>,
+    /// The gate paused `Time<Virtual>`, so its release unpauses it.
+    paused_time: bool,
+}
+
+impl SimGate {
+    /// Holds the simulation until [`release`](Self::release)`(name)`. Holding again
+    /// under the same name only updates the reason (progress: `2 files left`).
+    pub fn hold(&mut self, name: &str, reason: impl Into<String>) {
+        self.holds.insert(name.to_owned(), reason.into());
+    }
+
+    /// Ends hold `name` (nothing if there is none).
+    pub fn release(&mut self, name: &str) {
+        self.holds.remove(name);
+    }
+
+    /// What hold `name` waits for, if it is held.
+    pub fn reason(&self, name: &str) -> Option<&str> {
+        self.holds.get(name).map(String::as_str)
+    }
+
+    /// Whether anything holds the simulation.
+    pub fn is_held(&self) -> bool {
+        !self.holds.is_empty()
+    }
+
+    /// `content: 2 files left`, one per hold, in name order.
+    pub fn reasons(&self) -> Vec<String> {
+        self.holds.iter().map(|(name, reason)| format!("{name}: {reason}")).collect()
+    }
+
+    /// Why ticks cannot run now, and what to do; `None` when nothing holds them.
+    pub fn message(&self) -> Option<String> {
+        self.is_held()
+            .then(|| format!("the game is still loading ({}); wait with `shards wait`", self.reasons().join(", ")))
+    }
+
+    /// Someone paused on purpose while the gate held: releasing it must not resume.
+    /// Returns whether the gate had paused it.
+    pub(crate) fn forget_pause(&mut self) -> bool {
+        std::mem::take(&mut self.paused_time)
+    }
+}
+
+/// `First`, before the clock advances: a held gate pauses `Time<Virtual>` before this
+/// frame's time is counted, so no fixed tick is due; the last release unpauses it, if
+/// the gate was the one that paused it. Systems that hold or release run before it.
+pub fn apply_gate(mut gate: ResMut<SimGate>, mut time: ResMut<Time<Virtual>>) {
+    if gate.is_held() {
+        if !time.is_paused() {
+            time.pause();
+            gate.paused_time = true;
+        }
+    } else if gate.paused_time {
+        gate.paused_time = false;
+        time.unpause();
+    }
+}
+
+/// [`SimGate::message`] for this world (no gate: nothing holds it).
+pub fn gate_message(world: &World) -> Option<String> {
+    world.get_resource::<SimGate>().and_then(SimGate::message)
 }
 
 pub(crate) fn advance_tick(mut tick: ResMut<SimTick>, clock: Option<Res<TickClock>>) {
@@ -77,8 +162,13 @@ pub(crate) fn advance_tick(mut tick: ResMut<SimTick>, clock: Option<Res<TickCloc
     }
 }
 
+/// Whether the simulation is paused: its virtual clock is, or (an in-process stand) the
+/// driver that runs its ticks says so.
 pub fn is_paused(world: &World) -> bool {
-    world.resource::<Time<Virtual>>().is_paused()
+    match driven(world) {
+        Some(clock) => !clock.running,
+        None => world.resource::<Time<Virtual>>().is_paused(),
+    }
 }
 
 pub fn pause(world: &mut World) {
@@ -89,17 +179,51 @@ pub fn resume(world: &mut World) {
     world.resource_mut::<Time<Virtual>>().unpause();
 }
 
-/// Game speed multiplier for real-time play (1.0 = normal).
+/// Game speed multiplier for real-time play (1.0 = normal). An infinity or NaN changes
+/// nothing (Bevy's clock would panic on it).
 pub fn set_speed(world: &mut World, speed: f32) {
-    world.resource_mut::<Time<Virtual>>().set_relative_speed(speed.max(0.0));
+    if speed.is_finite() {
+        world.resource_mut::<Time<Virtual>>().set_relative_speed(speed.max(0.0));
+    }
 }
 
 pub fn speed(world: &World) -> f32 {
-    world.resource::<Time<Virtual>>().relative_speed()
+    match driven(world) {
+        Some(clock) => clock.speed,
+        None => world.resource::<Time<Virtual>>().relative_speed(),
+    }
+}
+
+/// The driver's clock, when a driver runs this world's ticks ([`StepQueue::set_driven`]).
+fn driven(world: &World) -> Option<DrivenClock> {
+    match world.get_resource::<StepRoute>() {
+        Some(StepRoute::Deferred(queue)) => queue.lock().ok()?.driven,
+        _ => None,
+    }
 }
 
 pub fn tick(world: &World) -> u64 {
     world.resource::<SimTick>().0
+}
+
+/// The simulation clock goes to `tick`: the counter, the log's copy of it and the fixed
+/// time (a system that reads `Res<Time>` in a tick sees the same elapsed time as in the
+/// original session).
+pub fn set_tick(world: &mut World, tick: u64) {
+    let before = self::tick(world);
+    world.resource_mut::<SimTick>().0 = tick;
+    if let Some(clock) = world.get_resource::<TickClock>() {
+        clock.set(tick);
+    }
+    let fixed = world.resource::<Time<Fixed>>();
+    let step = fixed.timestep();
+    let of = |n: u64| Duration::from_nanos((step.as_nanos() * n as u128) as u64);
+    // Called from inside a tick (a replay's start, before the tick counter moves), the
+    // fixed time is one step ahead of the counter: it stays so.
+    let ahead = if fixed.elapsed().saturating_sub(of(before)) >= step { step } else { Duration::ZERO };
+    let mut time = Time::<Fixed>::from_duration(step);
+    time.advance_by(of(tick) + ahead);
+    *world.resource_mut::<Time<Fixed>>() = time;
 }
 
 /// Seconds of simulated time per tick.
@@ -128,7 +252,10 @@ pub struct Halts {
 /// Pauses the game right after a failure or a violation (real-time play runs no further
 /// tick this frame) and counts the halt. A `step` is paused already and stops by itself.
 pub(crate) fn halt(world: &mut World, halt: Halt) {
-    if !is_paused(world) {
+    // A halt while loading (an `OnEnter` spawning the world) finds real time paused by
+    // the gate: the pause becomes the halt's, so opening the gate keeps it.
+    let gate_paused = world.get_resource_mut::<SimGate>().is_some_and(|mut gate| gate.forget_pause());
+    if !is_paused(world) || gate_paused {
         pause(world);
         let mut fixed = world.resource_mut::<Time<Fixed>>();
         let overstep = fixed.overstep();
@@ -143,6 +270,7 @@ pub(crate) fn halt(world: &mut World, halt: Halt) {
 /// Runs exactly one fixed tick right now, independent of frame timing.
 /// Mirrors `bevy::time::run_fixed_main_schedule`.
 pub fn run_tick(world: &mut World) -> Result<(), String> {
+    crate::process::activate(world);
     let result = world.try_schedule_scope(FixedMain, |world, schedule| {
         let timestep = world.resource::<Time<Fixed>>().timestep();
         world.resource_mut::<Time<Fixed>>().advance_by(timestep);
@@ -189,12 +317,18 @@ impl StepReport {
 /// Pauses the game (if needed) and runs up to `max_ticks` ticks synchronously.
 /// `stop` is checked after every tick; returning `Some(reason)` ends the run. A halt (a
 /// failed gameplay system, a violated invariant) ends it first.
+/// Refused while the [`SimGate`] holds the simulation; a hold that appears during the
+/// run ends it.
 pub fn step(
     world: &mut World,
     max_ticks: u64,
     wall_budget: Duration,
     mut stop: impl FnMut(&mut World) -> Option<String>,
 ) -> Result<StepReport, String> {
+    crate::process::activate(world);
+    if let Some(loading) = gate_message(world) {
+        return Err(loading);
+    }
     pause(world);
     // Failures and violations from before this step are in the journal already; they
     // are not its own.
@@ -222,6 +356,10 @@ pub fn step(
             end = StepEnd::Condition(reason);
             break;
         }
+        if let Some(gate) = world.get_resource::<SimGate>().filter(|g| g.is_held()) {
+            end = StepEnd::Condition(format!("the game started loading ({})", gate.reasons().join(", ")));
+            break;
+        }
         if started.elapsed() > wall_budget {
             end = StepEnd::WallClock;
             break;
@@ -229,6 +367,195 @@ pub fn step(
     }
     let timing = crate::perf::span(world);
     Ok(StepReport { from_tick, to_tick: tick(world), end, wall: started.elapsed(), timing })
+}
+
+// --- deferred steps --------------------------------------------------------------
+
+/// Where `step`, `pause`, `resume` and `speed` run.
+///
+/// [`Local`](StepRoute::Local) (the default): right away, on this world. In an in-process
+/// stand (a host and its clients as apps of one process) a member cannot run ticks alone: one
+/// tick is a tick of every member. There the route is [`Deferred`](StepRoute::Deferred): the
+/// tools put a request into the [`StepQueue`] and answer `{"pending": id}`; the stand's driver
+/// runs it between frames ([`StepWatch`](crate::builtin::StepWatch) makes its report the one
+/// `step` prints) and completes it; `step_poll {id}` (BRP `ai/step_poll`) answers with it.
+#[derive(Resource, Clone, Default)]
+pub enum StepRoute {
+    #[default]
+    Local,
+    Deferred(Arc<Mutex<StepQueue>>),
+}
+
+/// A `step` waiting for the driver.
+#[derive(Clone, Debug)]
+pub struct StepRequest {
+    pub id: u64,
+    /// At most this many ticks (the default and the cap already applied).
+    pub ticks: u64,
+    /// Stop conditions, already checked against the world.
+    pub until: Vec<crate::builtin::StopWhen>,
+    /// The agent that asked.
+    pub requester: String,
+    /// The journal's newest entry when it was asked: `journal:` conditions and the report's
+    /// journal lines look after it.
+    pub journal_mark: u64,
+}
+
+/// What a deferred clock tool asks for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ClockAction {
+    Pause,
+    Resume,
+    Speed(f32),
+}
+
+impl ClockAction {
+    /// The tool that asks for it.
+    pub fn tool(self) -> &'static str {
+        match self {
+            ClockAction::Pause => "pause",
+            ClockAction::Resume => "resume",
+            ClockAction::Speed(_) => "speed",
+        }
+    }
+}
+
+/// A `pause`, `resume` or `speed` waiting for the driver.
+#[derive(Clone, Debug)]
+pub struct ClockRequest {
+    pub id: u64,
+    pub action: ClockAction,
+    pub requester: String,
+}
+
+/// A deferred request, as the driver takes it.
+#[derive(Clone, Debug)]
+pub enum Request {
+    Step(StepRequest),
+    Clock(ClockRequest),
+}
+
+impl Request {
+    pub fn id(&self) -> u64 {
+        match self {
+            Request::Step(step) => step.id,
+            Request::Clock(clock) => clock.id,
+        }
+    }
+}
+
+/// Where a deferred request is.
+#[derive(Clone, Debug)]
+pub enum StepPoll {
+    /// Waiting for the driver, or running.
+    Pending,
+    /// Done: what the call would have answered right away.
+    Done(crate::tools::CallOutcome),
+    /// No such request (or finished too long ago).
+    Unknown,
+}
+
+/// Finished requests kept for `step_poll`.
+pub const FINISHED_KEPT: usize = 64;
+
+/// How a driver runs a world's ticks: in real time or not, and at what speed. A stand's
+/// members keep their virtual clocks paused (the driver runs their ticks); this is what
+/// [`is_paused`] and [`speed`] report for them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrivenClock {
+    pub running: bool,
+    pub speed: f32,
+}
+
+/// Requests of [`StepRoute::Deferred`], shared between the tools and the driver.
+#[derive(Default, Debug)]
+pub struct StepQueue {
+    next_id: u64,
+    /// Steps and clock changes in the order they were asked: a `resume` after a `step` leaves
+    /// the clock running, as it would where they run right away.
+    requests: VecDeque<Request>,
+    /// Taken by the driver, not completed yet.
+    running: BTreeSet<u64>,
+    finished: VecDeque<(u64, crate::tools::CallOutcome)>,
+    driven: Option<DrivenClock>,
+}
+
+impl StepQueue {
+    /// The driver says how it runs the world's ticks now (see [`DrivenClock`]).
+    pub fn set_driven(&mut self, clock: DrivenClock) {
+        self.driven = Some(clock);
+    }
+
+    fn next(&mut self) -> u64 {
+        self.next_id += 1;
+        self.next_id
+    }
+
+    /// Queues a step; returns its id.
+    pub fn push_step(&mut self, ticks: u64, until: Vec<crate::builtin::StopWhen>, requester: &str, journal_mark: u64) -> u64 {
+        let id = self.next();
+        self.requests.push_back(Request::Step(StepRequest { id, ticks, until, requester: requester.to_owned(), journal_mark }));
+        id
+    }
+
+    /// Queues a clock change; returns its id.
+    pub fn push_clock(&mut self, action: ClockAction, requester: &str) -> u64 {
+        let id = self.next();
+        self.requests.push_back(Request::Clock(ClockRequest { id, action, requester: requester.to_owned() }));
+        id
+    }
+
+    /// The queued steps and clock changes, in the order they were asked; they count as running
+    /// until [`complete`](Self::complete)d.
+    pub fn take_requests(&mut self) -> Vec<Request> {
+        let requests: Vec<Request> = self.requests.drain(..).collect();
+        self.running.extend(requests.iter().map(Request::id));
+        requests
+    }
+
+    /// Request `id` is done; `outcome` is what its call answers (see
+    /// [`StepWatch::finish`](crate::builtin::StepWatch::finish), [`finished`](crate::tools::finished)).
+    pub fn complete(&mut self, id: u64, outcome: crate::tools::CallOutcome) {
+        self.running.remove(&id);
+        self.requests.retain(|r| r.id() != id);
+        self.finished.retain(|(done, _)| *done != id);
+        self.finished.push_back((id, outcome));
+        while self.finished.len() > FINISHED_KEPT {
+            self.finished.pop_front();
+        }
+    }
+
+    pub fn poll(&self, id: u64) -> StepPoll {
+        if let Some((_, outcome)) = self.finished.iter().find(|(done, _)| *done == id) {
+            return StepPoll::Done(outcome.clone());
+        }
+        let waiting = self.running.contains(&id) || self.requests.iter().any(|r| r.id() == id);
+        if waiting { StepPoll::Pending } else { StepPoll::Unknown }
+    }
+
+    /// The newest id handed out (0: none yet).
+    pub fn last_id(&self) -> u64 {
+        self.next_id
+    }
+}
+
+/// A finished deferred request, with the whole outcome the call would have answered right
+/// away (`halted` included); `None` while it is pending, unknown, or steps run here.
+pub fn finished_request(world: &World, id: u64) -> Option<crate::tools::CallOutcome> {
+    let queue = deferred_queue(world)?;
+    let queue = queue.lock().ok()?;
+    match queue.poll(id) {
+        StepPoll::Done(outcome) => Some(outcome),
+        StepPoll::Pending | StepPoll::Unknown => None,
+    }
+}
+
+/// The queue, when this world's steps are deferred.
+pub fn deferred_queue(world: &World) -> Option<Arc<Mutex<StepQueue>>> {
+    match world.get_resource::<StepRoute>() {
+        Some(StepRoute::Deferred(queue)) => Some(queue.clone()),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -275,6 +602,37 @@ mod tests {
     }
 
     #[test]
+    fn a_held_gate_stops_real_time_and_step_and_its_release_restores_them() {
+        use bevy::time::{TimeSystems, TimeUpdateStrategy};
+        let mut app = app();
+        app.init_resource::<SimGate>()
+            .add_systems(First, apply_gate.before(TimeSystems))
+            .insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
+        app.world_mut().resource_mut::<SimGate>().hold("content", "2 files left");
+        for _ in 0..5 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<SimTick>().0, 0, "held: no real-time ticks");
+        let err = step(app.world_mut(), 5, Duration::from_secs(5), |_| None).unwrap_err();
+        assert_eq!(err, "the game is still loading (content: 2 files left); wait with `shards wait`");
+
+        app.world_mut().resource_mut::<SimGate>().release("content");
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<SimTick>().0, 3, "released: real time runs again");
+
+        // A game that was paused before the gate held it stays paused after.
+        pause(app.world_mut());
+        app.world_mut().resource_mut::<SimGate>().hold("region", "loading");
+        app.update();
+        app.world_mut().resource_mut::<SimGate>().release("region");
+        app.update();
+        assert!(is_paused(app.world()));
+        assert_eq!(app.world().resource::<SimTick>().0, 3);
+    }
+
+    #[test]
     fn step_stops_on_condition() {
         let mut app = app();
         let report = step(app.world_mut(), 100, Duration::from_secs(5), |w| {
@@ -284,5 +642,17 @@ mod tests {
         assert_eq!(report.to_tick, 7);
         assert_eq!(report.end, StepEnd::Condition("tick 7".into()));
         assert!(is_paused(app.world()));
+    }
+
+    #[test]
+    fn deferred_requests_come_in_the_order_they_were_asked() {
+        let mut queue = StepQueue::default();
+        let step = queue.push_step(2, Vec::new(), "dev", 0);
+        let resume = queue.push_clock(ClockAction::Resume, "dev");
+        let again = queue.push_step(1, Vec::new(), "dev", 0);
+        let taken: Vec<u64> = queue.take_requests().iter().map(Request::id).collect();
+        assert_eq!(taken, [step, resume, again], "a clock change is not run before the step asked first");
+        assert!(matches!(queue.poll(resume), StepPoll::Pending), "taken, not completed yet");
+        assert!(queue.take_requests().is_empty());
     }
 }
