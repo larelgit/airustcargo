@@ -699,3 +699,74 @@ fn a_world_waits_for_a_link_that_is_full_by_bytes_without_being_captured_again()
     let taken = captures(&stand) - before;
     assert_eq!(taken, 1, "the world was captured {taken} times in 10 ticks");
 }
+
+/// The Roster of c1's copy of the boss.
+fn their_roster(stand: &shards::net::Stand) -> Vec<Entity> {
+    stand.world(C1).get::<Roster>(entity(stand, C1, BOSS).unwrap()).unwrap().0.clone()
+}
+
+#[test]
+fn a_view_that_stops_being_capped_through_the_hysteresis_gives_the_world_once_not_every_few_ticks() {
+    let mut stand = shards::testing::stand(1, LinkConditions::NONE, configure, with_references);
+    let me = body(&stand, C1);
+    let centre = position(&stand, HOST, &me);
+    // 70 pillars on a ring 65 m from c1: outside the interest radius (60 m), inside what stays
+    // in view once it was (60 + 10 m). The first view meets the cap; the next, which keeps what
+    // the first had, does not.
+    let ring: Vec<String> = (0..70)
+        .map(|i| {
+            let angle = i as f32 / 70.0 * std::f32::consts::TAU;
+            let (x, z) = (centre.x + 65.0 * angle.cos(), centre.z + 65.0 * angle.sin());
+            spawned(&stand.call(HOST, "spawn_prefab", json!({"id": "pillar", "x": x, "z": z})))
+        })
+        .collect();
+    let boss = entity(&stand, HOST, BOSS).unwrap();
+    let roster: Vec<Entity> = ring.iter().map(|id| entity(&stand, HOST, id).unwrap()).collect();
+    stand.world_mut(HOST).entity_mut(boss).insert((Roster(roster), shards::net::NetAlways));
+    // Past two cooldowns of 5 s: a view that lost its memory with every world would ask for another each time.
+    stand.run(700);
+    assert!(peer_of(&stand, 1).closure_capped > 0, "the cap was reached");
+    // The world once, for the references the cap kept out, and not again with every view.
+    assert_eq!(rebases(&stand, C1), 1, "{:#?}", journal(&stand, C1).into_iter().filter(|l| l.contains("again")).take(5).collect::<Vec<_>>());
+    assert!(has_line(&stand, C1, "net: the host's world again (view complete)"), "{:#?}", journal(&stand, C1));
+    assert!(!their_roster(&stand).contains(&Entity::PLACEHOLDER), "every pillar of the roster is there");
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+}
+
+#[test]
+fn a_cap_that_comes_and_goes_costs_a_world_per_cooldown_and_not_one_per_flip() {
+    let mut stand = shards::testing::stand(1, LinkConditions::NONE, configure, with_references);
+    let far: Vec<String> = (0..70)
+        .map(|i| spawned(&stand.call(HOST, "spawn_prefab", json!({"id": "pillar", "x": 300.0 + 3.0 * i as f32, "z": 300.0}))))
+        .collect();
+    let boss = entity(&stand, HOST, BOSS).unwrap();
+    let roster: Vec<Entity> = far.iter().map(|id| entity(&stand, HOST, id).unwrap()).collect();
+    stand.world_mut(HOST).entity_mut(boss).insert((Roster(roster), shards::net::NetAlways));
+    stand.run(200);
+    let near = |stand: &mut shards::net::Stand| {
+        for (i, id) in far.iter().take(8).enumerate() {
+            assert!(stand.call(HOST, "teleport", json!({"id": id, "x": -10.0 + i as f32, "z": 18.0})).ok);
+        }
+    };
+    let away = |stand: &mut shards::net::Stand| {
+        for (i, id) in far.iter().take(8).enumerate() {
+            assert!(stand.call(HOST, "teleport", json!({"id": id, "x": 300.0 + 3.0 * i as f32, "z": 300.0})).ok);
+        }
+    };
+    // Eight pillars in and out of the view six times in four seconds: the cap lifts six times.
+    for _ in 0..6 {
+        near(&mut stand);
+        stand.run(20);
+        away(&mut stand);
+        stand.run(20);
+    }
+    near(&mut stand);
+    stand.run(30);
+    assert_eq!(rebases(&stand, C1), 1, "one world for the first lift, none while the cooldown (5 s) lasts: {:#?}", journal(&stand, C1));
+    assert_eq!(desyncs(&stand, C1), 0, "and no hash that would find what the lift has not given yet: {:#?}", journal(&stand, C1));
+    // When it is over, the pillars still in view get their world.
+    stand.run(300);
+    assert_eq!(rebases(&stand, C1), 2);
+    assert!(!their_roster(&stand).contains(&Entity::PLACEHOLDER));
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+}

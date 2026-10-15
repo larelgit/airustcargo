@@ -272,6 +272,8 @@ Xvfb показывает его вместе с оверлеем навсетк
 (`a_client_admitted_in_the_frame_the_hosts_ticks_jump_keeps_its_inputs_through_a_resync`).
 Вид, с которого сняли предел ссылок, отправляет клиенту мир один раз, а не ждёт рассинхрона
 (`a_view_that_stops_being_capped_gives_the_client_the_references_it_read_as_nothing`).
+Мир «view complete» хранит память вида и идёт не чаще раза в 5 с (`a_view_that_stops_being_capped_through_the_hysteresis_gives_the_world_once_not_every_few_ticks`,
+`a_cap_that_comes_and_goes_costs_a_world_per_cooldown_and_not_one_per_flip`).
 Мир, перестроенный вызовом гостя, доходит до клиентов (`a_region_change_a_guest_forwards_reaches_every_client_as_a_world_again`).
 Работа пира за опрос ограничена, отпущенный пир не читается, вход со сроком, `net_kick peer=`
 (`a_guest_makes_the_host_decode_no_more_than_a_budget_in_one_poll`, `what_a_stranger_sends_after_its_refusal_is_not_read`,

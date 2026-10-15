@@ -124,6 +124,8 @@ pub struct Peer {
     /// The last view was capped: it named entities the client does not have, and the client's
     /// references to them read as nothing.
     capped: bool,
+    /// The host tick a world was last queued for it because its view stopped being capped.
+    view_complete_at: Option<u64>,
     /// JSON bytes of state values sent, by component type path (or resource name).
     pub by_component: BTreeMap<String, u64>,
     /// What the link watch saw a second ago: late inputs, RTT.
@@ -185,6 +187,7 @@ impl Peer {
             held_back: 0,
             closure_capped: 0,
             capped: false,
+            view_complete_at: None,
             by_component: BTreeMap::new(),
             watched: (0, 0.0),
             accept_from_epoch: 0,
@@ -1108,7 +1111,7 @@ fn admit(world: &mut World, host: &mut NetHost, id: PeerId) {
     peer.body = body;
     peer.joined_at = tick;
     peer.ticks_moved = false;
-    reset_view(peer);
+    reset_view(peer, false);
     if let Some(slot) = host.slots.get_mut(&player) {
         slot.peer = Some(id);
         slot.left_at = None;
@@ -1142,11 +1145,19 @@ fn send_character(world: &mut World, host: &mut NetHost, player: u8, body: Optio
     host.send_character(player, sim::tick(world), reason, sections);
 }
 
-fn reset_view(peer: &mut Peer) {
+/// The next delta is whole. `keep_view`: the entities in view stay as the memory of the interest
+/// radius's hysteresis: the world is the same one, and a view that stops being capped was
+/// decided with that memory (without it the cap would fall on it again at once).
+fn reset_view(peer: &mut Peer, keep_view: bool) {
     peer.sent.clear();
     peer.acked = None;
-    peer.view.clear();
+    if !keep_view {
+        peer.view.clear();
+    }
 }
+
+/// Why a world is sent again because a view stopped being capped.
+const VIEW_COMPLETE: &str = "view complete";
 
 /// The world as a client must take it.
 fn welcome(world: &World, player: u8, body: Option<u32>, reason: &str) -> Result<Welcome, String> {
@@ -1346,7 +1357,7 @@ fn send_rebases(world: &mut World, host: &mut NetHost) {
         peer.body = body;
         peer.resyncs += 1;
         peer.ticks_moved = false;
-        reset_view(peer);
+        reset_view(peer, reason == VIEW_COMPLETE);
         if !carry {
             // Its inputs start over on the new world's ticks: what it sent before is of
             // another timeline.
@@ -1457,6 +1468,7 @@ fn send_state(world: &mut World, host: &mut NetHost) {
         return;
     }
     let started = std::time::Instant::now();
+    let view_cooldown = DESYNC_RESYNC_COOLDOWN_SECS * (1.0 / sim::tick_seconds(world).max(1e-6)).round() as u64;
     let paused = sim::is_paused(world);
     let with_hash = tick.is_multiple_of(def.desync_every.max(1) as u64);
     let predicted: BTreeSet<String> = {
@@ -1489,10 +1501,15 @@ fn send_state(world: &mut World, host: &mut NetHost) {
         // The entities the cap kept out are in the view now (the player came closer): the
         // references to them that the client read as nothing do not change in any delta, so the
         // client is given the world once more, and its copy is not checked before it has it.
-        let completed = peer.capped && !capped;
-        peer.capped = capped;
+        // A lift that does not hold (the player stands where the cap comes and goes) costs a
+        // world per cooldown at most: until it is over the view counts as capped still.
+        let lifted = peer.capped && !capped;
+        let cooling = peer.view_complete_at.is_some_and(|at| at <= tick && tick < at + view_cooldown);
+        let completed = lifted && !cooling;
+        peer.capped = capped || (lifted && cooling);
         if completed {
-            peer.rebase.get_or_insert_with(|| "view complete".into());
+            peer.view_complete_at = Some(tick);
+            peer.rebase.get_or_insert_with(|| VIEW_COMPLETE.into());
         }
         if capped {
             peer.closure_capped += 1;
@@ -1512,7 +1529,7 @@ fn send_state(world: &mut World, host: &mut NetHost) {
             baseline: baseline.as_ref().map(|(t, s)| (*t, &**s)),
             own: peer.body.map(|b| (b, &predicted)),
             applied_input_tick: peer.applied_input_tick,
-            with_hash: with_hash && !capped && !completed,
+            with_hash: with_hash && !peer.capped && !completed,
             cap_bytes: def.delta_cap_kb as usize * 1024,
             center,
         });
