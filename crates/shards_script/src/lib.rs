@@ -61,12 +61,19 @@
 //! rules, a driver only moves JSON, so a scenario means the same thing in
 //! `cargo test` (`ai_core::scenario`, `shards::testing::run_stand_scenario`) and against a
 //! running game (`shards scenario`).
+//!
+//! A **soak** ([`soak`]) is the other way to drive a game from here: no file, but seeded
+//! agents that play every member of a stand for as long as they are told (`shards soak
+//! --minutes 30`) and stop at the first desync. Its inputs, and those of `shards fuzz`, are
+//! [`inputs`].
 
 mod args;
 mod condition;
+pub mod inputs;
 mod lex;
 mod run;
 mod script;
+pub mod soak;
 
 pub use args::{loose_value, parse_args};
 pub use condition::parse_condition;

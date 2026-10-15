@@ -562,6 +562,9 @@ fn a_client_whose_copy_differs_is_told_and_sent_the_world_again() {
     stand.run(150);
     assert_eq!(desyncs(&stand, C1), 1, "one desync, then the same again: {:#?}", journal(&stand, C1));
     assert_eq!(stand.world(HOST).resource::<NetHost>().desyncs, 1);
+    // The client's own count is in its `net_status` too (what `shards soak` reads of every member).
+    let status = stand.call(C1, "net_status", json!({}));
+    assert_eq!((status.result["desyncs"].as_u64(), status.result["last_desync"]["host_tick"].as_u64()), (Some(1), Some(last.0)), "{}", status.result);
 }
 
 // --- what a client sees --------------------------------------------------------------------

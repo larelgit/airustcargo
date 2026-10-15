@@ -14,6 +14,7 @@
 //! shards load-snapshot snapshots/tick120.json   # back to it: the next step continues from there
 //! shards assert add hp 'field:6:Health.current<0'   # halt the game when it breaks
 //! shards fuzz --seed 7 --steps 300 # random inputs until a rule breaks
+//! shards --port-file F soak --minutes 30   # seeded agents on every member of a stand until a desync
 //! shards --port-file F wait        # a game started with `--port 0 --port-file F`; waits for loading
 //! shards --port-file F wait --peer all   # a stand (`--stand 2`): its host and every client
 //! shards --peer c1 observe         # one member of a stand, found by F.c1
@@ -37,6 +38,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use serde_json::{json, Map, Value};
+use shards_script::inputs::{ids_in, random_input, SplitMix};
 use shards_script::{parse_args, parse_condition};
 
 #[cfg(test)]
@@ -186,6 +188,35 @@ enum Cmd {
         /// Longest step after an input, in ticks.
         #[arg(long, default_value_t = 30)]
         max_ticks: u64,
+    },
+    /// A long co-op session played by seeded agents on every member of a stand at once (or on
+    /// one game): every round each member makes a random player input with what it sees (move,
+    /// attack, dodge; the host heals a dead body), the host changes the region and saves now and
+    /// then, and the stand steps a few ticks. Stops at the first desync the host hears of (exit
+    /// code 3); at the end prints every member's link and prediction. With a stand's port file it
+    /// finds the members itself, like a stand scenario: `--peer` does not apply.
+    Soak {
+        /// Seed of the agents' inputs (the game has its own).
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// Minutes of game time to play.
+        #[arg(long, default_value_t = 1.0)]
+        minutes: f64,
+        /// Longest step between two rounds of inputs, in ticks.
+        #[arg(long, default_value_t = 30)]
+        max_ticks: u64,
+        /// A region the host changes to now and then (`regen`); repeat it for several, taken in turn.
+        #[arg(long = "regen", value_name = "REGION")]
+        regions: Vec<String>,
+        /// Minutes of game time between region changes.
+        #[arg(long, default_value_t = 5.0)]
+        regen_minutes: f64,
+        /// Minutes of game time between saves of everything on the host (`save_game what=all`; 0: none).
+        #[arg(long, default_value_t = 0.0)]
+        save_minutes: f64,
+        /// Minutes of game time between progress lines.
+        #[arg(long, default_value_t = 1.0)]
+        report_minutes: f64,
     },
     /// List the tools available to this agent (--json: with argument schemas).
     Tools,
@@ -438,6 +469,19 @@ fn main() -> ExitCode {
         // A scenario finds its own game: a stand scenario names its members (@host, @c1) and needs
         // no game of `--peer`'s (`SHARDS_PEER=all` or `=c2` left in the shell does not fail it).
         (Cmd::Scenario { files, quiet }, _) => scenario::run(&cli, None, files, *quiet, cli.json),
+        // A soak plays every member there is, like a stand scenario.
+        (Cmd::Soak { seed, minutes, max_ticks, regions, regen_minutes, save_minutes, report_minutes }, _) => {
+            let plan = scenario::SoakMinutes {
+                seed: *seed,
+                minutes: *minutes,
+                max_step: *max_ticks,
+                regions: regions.clone(),
+                regen_minutes: *regen_minutes,
+                save_minutes: *save_minutes,
+                report_minutes: *report_minutes,
+            };
+            scenario::soak(&cli, &plan, cli.json)
+        }
         (_, Some(Peer::All)) => Err(peer::ALL_NEEDS_A_MEMBER.to_owned()),
         _ => cli.client().and_then(|client| run(&cli, &client)),
     };
@@ -597,6 +641,7 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             AssertCmd::Reset => act("assert_reset", json!({}))?,
         },
         Cmd::Fuzz { seed, steps, max_ticks } => return fuzz(&act, *seed, *steps, *max_ticks),
+        Cmd::Soak { .. } => unreachable!("a soak finds its members itself (main)"),
         Cmd::Shot { no_marks, out } => {
             let reply = act("shot", json!({"marks": !no_marks, "path": out}))?;
             if reply.get("ok") != Some(&Value::Bool(true)) {
@@ -800,58 +845,6 @@ fn print_outcome(out: &Value, as_json: bool) -> ExitCode {
     code
 }
 
-const DIRS: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
-
-/// SplitMix64: tiny and seedable, plenty to pick inputs with.
-struct SplitMix(u64);
-
-impl SplitMix {
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
-
-    /// `0..n`.
-    fn below(&mut self, n: u64) -> u64 {
-        self.next() % n.max(1)
-    }
-}
-
-/// Ids of the entities an observation lists (not your own, not journal lines).
-fn ids_in(observation: &str) -> Vec<String> {
-    let is_id = |t: &&str| t.len() > 1 && t.starts_with('e') && t[1..].bytes().all(|b| b.is_ascii_digit());
-    observation
-        .lines()
-        .skip(1) // header: tick, pause, seed, you
-        .take_while(|l| !l.starts_with("SINCE"))
-        .filter(|l| !l.starts_with("YOU"))
-        .flat_map(|l| l.split([' ', '·']))
-        .filter(is_id)
-        .map(str::to_owned)
-        .collect()
-}
-
-/// One random player input: a tool and its arguments.
-fn random_input(rng: &mut SplitMix, ids: &[String]) -> (&'static str, Value) {
-    let dir = |rng: &mut SplitMix| DIRS[rng.below(DIRS.len() as u64) as usize];
-    let target = |rng: &mut SplitMix| ids.get(rng.below(ids.len() as u64) as usize).cloned();
-    match rng.below(3) {
-        0 => ("move", json!({"dir": dir(rng), "meters": 1 + rng.below(8)})),
-        1 => match target(rng) {
-            Some(id) if rng.below(2) == 0 => ("attack", json!({"target": id, "repeat": rng.below(2) == 0})),
-            // `attack` needs a target; a plain swing in the facing direction is `light_attack`.
-            _ => ("light_attack", json!({})),
-        },
-        _ => match target(rng) {
-            Some(id) if rng.below(2) == 0 => ("dodge", json!({"away_from": id})),
-            _ => ("dodge", json!({"dir": dir(rng)})),
-        },
-    }
-}
-
 /// Random player inputs between short steps until the game halts or `rounds` ran out.
 /// A refused input is part of the game: the next round goes on.
 fn fuzz(act: &dyn Fn(&str, Value) -> Result<Value, String>, seed: u64, rounds: u32, max_ticks: u64) -> Result<ExitCode, String> {
@@ -917,31 +910,6 @@ mod tests {
         assert_eq!(outcome_code(&step(json!({"halted": null}))), 0);
         let codes = [0, exit::TOOL_ERROR, exit::SHARDS_ERROR, exit::HALTED];
         assert_eq!(codes, [0, 1, 2, 3], "README lists these");
-    }
-
-    #[test]
-    fn fuzz_inputs_come_from_the_seed() {
-        let observation = "tick 0 (0.00s) | paused | speed 1x | seed 42 | you e5\n\
-                           YOU  e5 Player  hp 100/100\n\
-                           SEEN (by threat)\n  e6 Boss \"Frost Warden\"  hp 4000/4000  18.0m N\n  e7 Skeleton  12.6m W\n\
-                           LANDMARKS  e3 Pillar 8.6m W · e4 Pillar 8.6m E\n\
-                           SINCE seq 0\n  0 e5 -> e9 Sword";
-        assert_eq!(ids_in(observation), ["e6", "e7", "e3", "e4"]);
-        let run = |seed| {
-            let mut rng = SplitMix(seed);
-            (0..20).map(|_| random_input(&mut rng, &ids_in(observation))).collect::<Vec<_>>()
-        };
-        assert_eq!(run(7), run(7));
-        assert_ne!(run(7), run(8));
-        let tools: Vec<&str> = run(7).iter().map(|(t, _)| *t).collect();
-        assert!(["move", "attack", "light_attack", "dodge"].iter().all(|t| tools.contains(t)), "{tools:?}");
-        // `attack` takes a target (a call without one is refused), with entities seen or not.
-        for ids in [ids_in(observation), Vec::new()] {
-            let mut rng = SplitMix(3);
-            let inputs: Vec<_> = (0..200).map(|_| random_input(&mut rng, &ids)).collect();
-            assert!(inputs.iter().filter(|(t, _)| *t == "attack").all(|(_, args)| args["target"].is_string()), "{inputs:?}");
-            assert!(inputs.iter().any(|(t, _)| *t == "light_attack"), "a plain swing is still sent");
-        }
     }
 
     #[test]
