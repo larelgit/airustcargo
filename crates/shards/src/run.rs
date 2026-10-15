@@ -807,7 +807,7 @@ fn bake_nav(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, tiles: 
 /// through `AppExit`, so what it wrote at start (the BRP token, `--port-file`) is
 /// removed. A signal the game was started with ignored (`nohup`) stays ignored; a
 /// second signal exits at once.
-mod termination {
+pub(crate) mod termination {
     use std::sync::atomic::{AtomicI32, Ordering};
 
     use bevy::app::AppExit;
@@ -816,10 +816,16 @@ mod termination {
     /// The first termination signal received; 0: none yet.
     static RECEIVED: AtomicI32 = AtomicI32::new(0);
 
+    /// The signals the game catches and leaves on, with code 128 + the signal. (Ctrl+C, SIGINT,
+    /// is Bevy's own handler, with the same kind of exit.) The stand tells a client that left
+    /// this way from one that crashed.
+    #[cfg(unix)]
+    pub(crate) const CAUGHT: [libc::c_int; 2] = [libc::SIGTERM, libc::SIGHUP];
+
     #[cfg(unix)]
     pub fn catch_signals() {
         let handler: extern "C" fn(libc::c_int) = on_signal;
-        for signal in [libc::SIGTERM, libc::SIGHUP] {
+        for signal in CAUGHT {
             // SAFETY: plain `sigaction` calls with valid pointers; the handler only
             // makes async-signal-safe calls.
             unsafe {

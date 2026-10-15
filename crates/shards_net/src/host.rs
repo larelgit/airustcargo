@@ -322,6 +322,16 @@ impl NetHost {
         Ok(())
     }
 
+    /// Whether the player who joined as `name` has left, or is leaving: the host kicked it
+    /// (`net_kick`: its link is `Gone` at once, its slot is vacated at the next tick), it said
+    /// goodbye, or it timed out. A process that exits with an error after this was told to by
+    /// the host, which is not a crash of its own.
+    pub fn has_left(&self, name: &str) -> bool {
+        self.slots.values().filter(|slot| slot.name == name).any(|slot| {
+            slot.left_at.is_some() || slot.peer.and_then(|id| self.peers.get(&id)).is_some_and(|peer| peer.stage == PeerStage::Gone)
+        })
+    }
+
     /// Sends player `player`'s machine its character (co-op saves: `sections` as the game
     /// captured it on the host, at host tick `tick`, saved for `reason`). Reliable and in order
     /// with everything else the host says. `false`: that player is not connected.
@@ -1433,6 +1443,29 @@ mod tests {
         let heavy = Footprint { reliable_out: 3, reliable_out_bytes: config.max_reliable_bytes - (1 << 20), ..Footprint::default() };
         assert!(!rebase_fits(&heavy, &config, 2 << 20));
         assert!(rebase_fits(&heavy, &config, 1 << 20));
+    }
+
+    #[test]
+    fn a_player_the_host_sent_away_has_left_before_its_slot_is_vacated() {
+        use super::{Peer, PeerStage};
+        let mut host = NetHost::new();
+        let mut peer = Peer::new(7, 1);
+        peer.stage = PeerStage::Connected;
+        peer.player = 1;
+        host.peers.insert(7, peer);
+        host.slots.insert(1, Slot { token: "t".into(), name: "c1".into(), peer: Some(7), left_at: None });
+        assert!(!host.has_left("c1"), "connected");
+        assert!(!host.has_left("c2"), "nobody joined as c2");
+        // `net_kick`: the link is Gone at once, the slot is vacated by the next tick's Leave.
+        host.kick(1, "kicked: by the host").unwrap();
+        assert!(host.has_left("c1"), "kicked");
+        // After the tick: the slot is free and the peer dropped.
+        host.peers.clear();
+        let slot = host.slots.get_mut(&1).unwrap();
+        slot.peer = None;
+        slot.left_at = Some(9);
+        assert!(host.has_left("c1"), "vacated");
+        assert!(!host.has_left("c2"));
     }
 
     #[test]

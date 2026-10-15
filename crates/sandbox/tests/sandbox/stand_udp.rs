@@ -64,7 +64,10 @@ impl UdpStand {
     /// [`UdpStand::start`] in a folder that already holds the port files `stale` names: what an
     /// earlier stand left when it was killed.
     fn start_after(clients: u8, stale: &[&str]) -> UdpStand {
-        let dir = std::env::temp_dir().join(format!("sandbox-stand-udp-{}-{clients}", std::process::id()));
+        // A folder per stand: tests of the same size run side by side, in one process.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("sandbox-stand-udp-{}-{clients}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         for file in stale {
@@ -325,7 +328,7 @@ fn a_udp_stand_is_real_time_and_says_so() {
 
 /// `--stand 3` when the session holds the host and two clients (`max_players` 3): the third
 /// would be turned away, so the host says so and ends, instead of running on with a stand that
-/// is not the one asked for. The clients it started go with it.
+/// is not the one asked for. No client process is started for it: the check comes first.
 #[test]
 fn a_stand_the_session_has_no_room_for_is_refused() {
     let mut stand = UdpStand::start(3);
@@ -337,7 +340,11 @@ fn a_stand_the_session_has_no_room_for_is_refused() {
         "{log}"
     );
     assert!(!stand.dir.join("g.port").exists(), "the host removed its port file");
-    stand.wait_for_client_files_gone(Duration::from_secs(30), &["g.port.c1", "g.port.c2", "g.port.c3"]);
+    // Nothing was started to be torn down again: the host's journal would say `c1 started (pid …)`.
+    assert!(!log.contains("started (pid"), "no client process was started: {log}");
+    for client in ["g.port.c1", "g.port.c2", "g.port.c3"] {
+        assert!(!stand.dir.join(client).exists(), "{client} was never written");
+    }
 }
 
 /// A client that has joined and then crashes (here: killed with SIGKILL) ends the stand with a
@@ -365,4 +372,38 @@ fn a_client_that_crashes_after_joining_ends_the_stand() {
     assert!(!stand.dir.join("g.port").exists(), "the host removed its port file");
     // A killed client cannot remove its own file: the stand's drop would wait for it.
     let _ = std::fs::remove_file(stand.dir.join("g.port.c1"));
+}
+
+/// `net_kick` of a client of a UDP stand: the client leaves with an error code of its own (it was
+/// sent away), the host journals that and the stand goes on for the others. It is not a crash.
+#[test]
+fn a_client_the_host_kicks_leaves_and_the_stand_goes_on() {
+    let mut stand = UdpStand::start(2);
+    let (host, c1, c2) = stand.until(Duration::from_secs(90), "both clients connected, and listed by the host", |s| {
+        let host = s.status("g.port")?;
+        let c1 = s.status("g.port.c1")?;
+        let c2 = s.status("g.port.c2")?;
+        let joined = |client: &Value| client["net"]["session"].as_str().is_some_and(|text| text.starts_with("connected as p"));
+        let listed = |client: &Value| host["net"]["peers"].as_array().is_some_and(|p| p.iter().any(|p| p["player"] == client["net"]["player"]));
+        (joined(&c1) && joined(&c2) && listed(&c1) && listed(&c2)).then_some((host, c1, c2))
+    });
+    let player = c1["net"]["player"].as_u64().unwrap();
+    let kicked = stand.brp(stand.port("g.port").unwrap(), "ai/act", json!({"tool": "net_kick", "args": {"player": player}}));
+    assert_eq!(kicked.as_ref().map(|k| &k["ok"]), Some(&json!(true)), "{kicked:?}");
+    // c1 goes (its port file with it), the host says why, and neither the host nor c2 follows.
+    stand.wait_for_client_files_gone(Duration::from_secs(30), &["g.port.c1"]);
+    stand.until(Duration::from_secs(30), "the host to journal that it sent c1 away", |s| {
+        std::fs::read_to_string(s.dir.join("out.log"))
+            .ok()?
+            .contains("client c1 exited with code 1 after the host ended its session (kicked, sent away or timed out)")
+            .then_some(())
+    });
+    std::thread::sleep(Duration::from_millis(1500));
+    let log = std::fs::read_to_string(stand.dir.join("out.log")).unwrap_or_default();
+    assert!(!log.contains("it crashed"), "a kick is not a crash: {log}");
+    assert!(stand.host.try_wait().unwrap().is_none(), "the host runs on\n{log}");
+    let after = stand.status("g.port.c2").expect("c2 still answers");
+    assert!(after["net"]["session"].as_str().is_some_and(|text| text.starts_with("connected as p")), "{}", after["net"]);
+    assert_eq!(after["net"]["player"], c2["net"]["player"]);
+    assert_eq!(host["net"]["stand"], json!({"clients": 2, "udp": true}));
 }
