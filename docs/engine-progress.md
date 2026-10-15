@@ -284,6 +284,11 @@ Xvfb показывает его вместе с оверлеем навсетк
 `a_state_that_came_makes_a_stands_client_run_again`).
 Кик и конец сессии, которые не принял полный канал, называются в журнале хоста
 (`a_kick_a_full_link_will_not_carry_is_said_in_the_journal`, `the_end_of_a_session_a_full_link_will_not_carry_is_said_in_the_journal`).
+Тесты на описанное, но не проверенное: мир ждёт канал, полный по байтам, и не снимается каждый тик
+(`a_world_waits_for_a_link_that_is_full_by_bytes_without_being_captured_again`: проверка снапшота считает снятия), коды выхода
+1 и 2 (`a_game_the_host_refuses_exits_with_1`, `a_game_that_loses_its_host_exits_with_1`,
+`a_game_that_cannot_take_the_hosts_world_exits_with_1`, `a_host_whose_port_is_taken_exits_with_2`), кик ждущего игрока
+(`a_player_the_game_keeps_waiting_is_not_dropped_for_joining_slowly_and_a_kick_reaches_it`). Каждый проверен откатом кода.
 Тест `a_world_of_an_earlier_tick_that_waits_for_room_still_starts_the_inputs_over` до третьего ревью проходил и на коде без
 правки хоста (он смотрел только на часы клиента) и не видел ввода: теперь у хоста есть применённый кадр, и после мира,
 который ждал места, запись ввода (`applied_input_tick`, `inputs.newest`) начата заново, а новый кадр ложится один раз на своём

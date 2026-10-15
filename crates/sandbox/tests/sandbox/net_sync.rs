@@ -636,3 +636,66 @@ fn a_world_over_what_a_link_carries_sends_its_player_away_once_instead_of_waitin
 fn peer_count(stand: &shards::net::Stand) -> usize {
     stand.world(HOST).resource::<NetHost>().connected().count()
 }
+
+// --- a link full by bytes -------------------------------------------------------------------
+
+/// How many times the world was captured: a snapshot check that counts when it runs.
+#[derive(Resource, Default)]
+struct Captures(std::sync::atomic::AtomicU64);
+
+fn count_capture(world: &World) -> u64 {
+    if let Some(captures) = world.get_resource::<Captures>() {
+        captures.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    0
+}
+
+fn captures(stand: &shards::net::Stand) -> u64 {
+    stand.world(HOST).resource::<Captures>().0.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// `n` printable characters that hardly deflate.
+fn noise(seed: u64, n: usize) -> String {
+    let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    (0..n)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (b'!' + (x % 90) as u8) as char
+        })
+        .collect()
+}
+
+#[test]
+fn a_world_waits_for_a_link_that_is_full_by_bytes_without_being_captured_again() {
+    use shards::ai_core::journal::{self, JournalKind};
+    let mut stand = shards::testing::stand(1, lossy(), configure, |app| {
+        app.add_plugins(sandbox::SandboxPlugin);
+        app.init_resource::<Captures>().add_snapshot_check("captures", "counts the captures of the world", count_capture);
+    });
+    stand.run(60);
+    // 1000 lines of 50 KB that hardly deflate: the link holds the 32 MB it may, a few hundred
+    // messages (not the 1024 it may count), and its acknowledgements are a round trip away.
+    for i in 0..1000 {
+        journal::log(stand.world_mut(HOST), JournalKind::Event, noise(i, 50_000));
+    }
+    stand.run(1);
+    // And one line more that leaves less room than the world takes.
+    let room = |stand: &shards::net::Stand| {
+        let link = &peer_of(stand, 1).link;
+        link.config().max_reliable_bytes - link.footprint().reliable_out_bytes
+    };
+    let left = room(&stand);
+    journal::log(stand.world_mut(HOST), JournalKind::Event, noise(7, left - 8_000));
+    stand.run(1);
+    assert!(room(&stand) < 10_000, "room {} of {left}", room(&stand));
+    let before = captures(&stand);
+    assert!(stand.call(HOST, "net_resync", json!({})).ok);
+    stand.run(10);
+    assert!(has_line(&stand, HOST, "net: p1 cannot be sent the world now"), "{:#?}", journal(&stand, HOST).into_iter().filter(|l| l.len() < 300).collect::<Vec<_>>());
+    assert_eq!(peer_of(&stand, 1).resyncs, 0, "not sent yet");
+    // Once to learn how large the world is, and not again while the link has no room for it.
+    let taken = captures(&stand) - before;
+    assert_eq!(taken, 1, "the world was captured {taken} times in 10 ticks");
+}

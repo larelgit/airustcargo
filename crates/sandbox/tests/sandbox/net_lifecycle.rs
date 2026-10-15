@@ -2,7 +2,7 @@
 //! (once, with every character saved), and the stand's clock and shutdown.
 
 use shards::ai_core::process::AppToken;
-use shards::ai_core::sim;
+use shards::ai_core::{sim, AiJournal};
 use shards::net::host::PeerStage;
 use shards::net::{JoinDecision, JoinRequest, LinkConditions, NetDef, NetDefaults, NetHooks, NetHost, NetLeft, NetState, Stand};
 use shards::prelude::*;
@@ -411,6 +411,67 @@ fn only_the_host_ends_a_stand() {
     assert!(stand.call(HOST, "net_end", json!({})).ok);
     run_until(&mut stand, 60, "c2 hears the end", |s| matches!(net_state(s, C2), NetState::Ended(_)));
     assert_eq!(stand.members[C2].app.should_exit(), Some(AppExit::Success));
+}
+
+fn exit_with_host(config: &mut shards::EngineConfig) {
+    config.seed = 42;
+    config.exit_with_host = true;
+}
+
+#[test]
+fn a_game_the_host_refuses_exits_with_1() {
+    let mut stand = shards::testing::stand_host(1, &exit_with_host, &sandbox_setup);
+    // 60 Hz is the host's: a game at another rate is refused (`start with --hz 60`).
+    let slow = |config: &mut shards::EngineConfig| {
+        exit_with_host(config);
+        config.tick_hz = 30.0;
+    };
+    let c1 = shards::testing::stand_client(&mut stand, "c1", LinkConditions::NONE, &slow, &sandbox_setup);
+    run_until(&mut stand, 300, "c1 is refused", |s| matches!(net_state(s, c1), NetState::Ended(_)));
+    assert!(matches!(net_state(&stand, c1), NetState::Ended(why) if why.contains("tick rate differs")), "{:?}", net_state(&stand, c1));
+    assert_eq!(stand.members[c1].app.should_exit(), Some(AppExit::error()));
+}
+
+#[test]
+fn a_game_that_loses_its_host_exits_with_1() {
+    let mut stand = shards::testing::stand(1, LinkConditions::NONE, exit_with_host, sandbox_setup);
+    stand.run(30);
+    // Silence of one second is the end of it (the default is ten); nothing gets through.
+    stand.world_mut(C1).insert_resource(shards::net::NetDefaults(shards::net::NetDef { timeout_secs: 1.0, ..Default::default() }));
+    stand.set_link(C1, "loss=0.99".parse().unwrap()).unwrap();
+    run_until(&mut stand, 900, "c1 loses the host", |s| matches!(net_state(s, C1), NetState::Ended(_)));
+    assert!(matches!(net_state(&stand, C1), NetState::Ended(why) if why.contains("lost the host")), "{:?}", net_state(&stand, C1));
+    assert_eq!(stand.members[C1].app.should_exit(), Some(AppExit::error()));
+}
+
+#[test]
+fn a_game_that_cannot_take_the_hosts_world_exits_with_1() {
+    let mut stand = shards::testing::stand_host(1, &exit_with_host, &sandbox_setup);
+    // Level geometry only the host's game has (no AiId, so no snapshot holds it): the client's
+    // world is not the one the host's was taken in, and it cannot take the host's.
+    let wall = shards::motion::Collider::new(shards::motion::Shape::Cuboid { half: Vec3::new(1.0, 1.0, 1.0) });
+    stand.world_mut(HOST).spawn((wall, Transform::from_xyz(40.0, 0.0, 40.0)));
+    let c1 = shards::testing::stand_client(&mut stand, "c1", LinkConditions::NONE, &exit_with_host, &sandbox_setup);
+    run_until(&mut stand, 300, "c1 cannot take the world", |s| matches!(net_state(s, c1), NetState::Ended(_)));
+    assert!(matches!(net_state(&stand, c1), NetState::Ended(why) if why.contains("cannot take the host's world")), "{:?}", net_state(&stand, c1));
+    assert_eq!(stand.members[c1].app.should_exit(), Some(AppExit::error()));
+}
+
+#[test]
+fn a_host_whose_port_is_taken_exits_with_2() {
+    let taken = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
+    let port = taken.local_addr().unwrap().port();
+    let mut config = shards::testing::config();
+    config.seed = 42;
+    config.net = shards::core::NetLaunch::Host { port };
+    config.exit_with_host = true;
+    let mut app = sandbox::build_app(&config);
+    app.finish();
+    app.cleanup();
+    app.update();
+    assert_eq!(app.should_exit(), Some(AppExit::from_code(2)));
+    let lines: Vec<String> = app.world().resource::<AiJournal>().after(0).0.map(ToString::to_string).collect();
+    assert!(lines.iter().any(|l| l.contains(&format!("net: cannot host on UDP port {port}"))), "{lines:#?}");
 }
 
 #[test]
