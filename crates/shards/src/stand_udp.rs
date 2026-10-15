@@ -594,7 +594,8 @@ mod tests {
     enum Session {
         /// It never joined: no slot (the session was full).
         Never,
-        /// The host turned it away after its hello: it has a slot, and was never admitted.
+        /// The host turned it away after its hello: it has a slot (here even one that says the host
+        /// closed the link), and was never admitted.
         Refused,
         /// It joined and is in the session.
         Joined,
@@ -619,6 +620,8 @@ mod tests {
         if session != Session::Never {
             let mut host = NetHost::new();
             let (left_at, closed_by) = match session {
+                // Marked as closed by the host on purpose: even so, a game that was never admitted never joined.
+                Session::Refused => (None, Some(shards_net::host::Closer::Host)),
                 Session::HostClosed => (Some(5), Some(shards_net::host::Closer::Host)),
                 Session::SaidGoodbye => (Some(5), Some(shards_net::host::Closer::Peer)),
                 _ => (None, None),
