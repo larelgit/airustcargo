@@ -800,3 +800,24 @@ fn a_cap_that_comes_and_goes_costs_a_world_per_cooldown_and_not_one_per_flip() {
     assert!(!their_roster(&stand).contains(&Entity::PLACEHOLDER));
     assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
 }
+
+#[test]
+fn a_player_sent_away_is_waited_for_while_it_takes_in_what_is_queued_ahead_of_its_goodbye() {
+    use shards::ai_core::journal::{self, JournalKind};
+    let mut stand = stand_with(1, lossy());
+    stand.run(60);
+    // About 2 MB the link has to carry before anything after it: over this link that takes
+    // longer than the 10 s a peer that is gone is held without taking in anything.
+    for i in 0..40 {
+        journal::log(stand.world_mut(HOST), JournalKind::Event, noise(i, 50_000));
+    }
+    stand.run(1);
+    assert!(stand.call(HOST, "net_kick", json!({"player": 1, "reason": "testing"})).ok);
+    stand.run(700);
+    let host = stand.world(HOST).resource::<NetHost>();
+    assert!(host.peers.values().all(|p| p.stage == shards::net::host::PeerStage::Gone), "gone");
+    assert_eq!(host.peers.len(), 1, "still held after {} ms: it keeps acknowledging", stand.hub.now());
+    assert!(!host.peers.values().next().unwrap().link.is_idle(), "and the goodbye is not out yet");
+    run_until(&mut stand, 3000, "c1 hears the goodbye", |s| matches!(net_state(s, C1), NetState::Ended(_)));
+    assert!(matches!(net_state(&stand, C1), NetState::Ended(why) if why.contains("kicked: testing")), "{:?}", net_state(&stand, C1));
+}

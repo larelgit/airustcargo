@@ -401,6 +401,8 @@ struct Counters {
     unreliable_delivered: u64,
     unreliable_stale: u64,
     unreliable_dropped: u64,
+    /// Reliable messages and blob pieces the peer acknowledged.
+    reliable_acked: u64,
 }
 
 /// A datagram being assembled.
@@ -1092,6 +1094,7 @@ impl Link {
             return;
         }
         item.acked = true;
+        self.c.reliable_acked += 1;
         self.rel_out_bytes -= item.bytes;
         item.bytes = 0;
         if matches!(item.body, RelBody::Blob(_)) {
@@ -1147,10 +1150,17 @@ impl Link {
         if let Some((rseq, idx, _)) = frag
             && let Some(pos) = self.rel_index(rseq)
         {
-            let all = match &mut self.rel_out[pos].body {
-                RelBody::Blob(b) => b.ack(idx as usize),
-                _ => false,
+            let (new_piece, all) = match &mut self.rel_out[pos].body {
+                RelBody::Blob(b) => {
+                    let before = b.acked_count;
+                    let all = b.ack(idx as usize);
+                    (b.acked_count > before, all)
+                }
+                _ => (false, false),
             };
+            if new_piece {
+                self.c.reliable_acked += 1;
+            }
             if all {
                 self.mark_acked(pos);
             }
@@ -1265,6 +1275,12 @@ impl Link {
             refused_datagrams: self.c.refused,
             silence_ms: self.last_recv.map_or(0, |t| self.now.saturating_sub(t)),
         }
+    }
+
+    /// Reliable messages and blob pieces the peer has acknowledged, all told: it grows while the peer
+    /// takes in what is sent (a slow peer is not a deaf one).
+    pub fn reliable_acked(&self) -> u64 {
+        self.c.reliable_acked
     }
 
     /// What the link holds in memory right now.

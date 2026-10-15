@@ -72,9 +72,13 @@ pub const PLAYER_POLL_BYTES: usize = 4 * MAX_PLAYER_MESSAGE;
 /// A peer the game keeps waiting (`join_policy`) is the game's to hold, and exempt.
 pub const HANDSHAKE_TIMEOUTS: f32 = 6.0;
 
-/// A peer that is gone is forgotten at the latest this long after, however it goes on talking
-/// (one that never acknowledges its last message keeps sending keepalives for ever).
+/// A peer that is gone is forgotten when this long went by without it acknowledging anything
+/// more of what it was sent (one that never acknowledges its last message keeps sending
+/// keepalives for ever; a slow one that does is waited for).
 const GONE_LIMIT_MS: u64 = 10_000;
+
+/// A peer that is gone is forgotten at the latest this long after, acknowledging or not.
+const GONE_CEILING_MS: u64 = 300_000;
 
 /// Where a peer is in the session.
 #[derive(Clone, Debug, PartialEq)]
@@ -159,6 +163,8 @@ pub struct Peer {
     stage_mark: (std::mem::Discriminant<PeerStage>, u64),
     /// When it was first seen gone.
     gone_since: Option<u64>,
+    /// What its link had acknowledged when it last did (`Link::reliable_acked`), and when.
+    gone_progress: (u64, u64),
 }
 
 impl Peer {
@@ -169,6 +175,7 @@ impl Peer {
             stage: PeerStage::New,
             stage_mark: (std::mem::discriminant(&PeerStage::New), now),
             gone_since: None,
+            gone_progress: (0, 0),
             unread: 0,
             lost: Vec::new(),
             hello: None,
@@ -1590,18 +1597,25 @@ fn flush(host: &mut NetHost, endpoint: &mut NetEndpoint) {
         peer.link.flush(now, &mut |datagram| transport.send(*id, datagram));
     }
     // Gone peers are dropped once nothing of theirs waits (a refusal, a kick), or once they
-    // stopped answering (a timeout, a peer that went before acknowledging), or at the latest
-    // `GONE_LIMIT_MS` after they went: one that sends keepalives but never acknowledges its
-    // last message would stay for ever.
+    // stopped answering (a timeout, a peer that went before acknowledging), or took in nothing
+    // more for `GONE_LIMIT_MS` (one that sends keepalives but never acknowledges would stay for
+    // ever; one that is slow but acknowledges is waited for, up to `GONE_CEILING_MS`).
     for peer in host.peers.values_mut().filter(|p| p.stage == PeerStage::Gone) {
-        peer.gone_since.get_or_insert(now);
+        let since = *peer.gone_since.get_or_insert(now);
+        let acked = peer.link.reliable_acked();
+        if peer.gone_progress.1 < since || acked > peer.gone_progress.0 {
+            peer.gone_progress = (acked, now);
+        }
     }
     let gone: Vec<PeerId> = host
         .peers
         .iter()
         .filter(|(_, p)| {
             p.stage == PeerStage::Gone
-                && (p.link.is_idle() || p.link.is_timed_out(now, GONE_PATIENCE_MS) || p.gone_since.is_some_and(|since| now.saturating_sub(since) > GONE_LIMIT_MS))
+                && (p.link.is_idle()
+                    || p.link.is_timed_out(now, GONE_PATIENCE_MS)
+                    || now.saturating_sub(p.gone_progress.1) > GONE_LIMIT_MS
+                    || p.gone_since.is_some_and(|since| now.saturating_sub(since) > GONE_CEILING_MS))
         })
         .map(|(id, _)| *id)
         .collect();
