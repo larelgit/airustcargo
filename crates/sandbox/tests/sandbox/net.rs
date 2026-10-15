@@ -388,6 +388,33 @@ fn a_player_waits_out_the_boss_fight_then_joins_mid_session() {
     verify_host(&stand);
 }
 
+fn door_closed(_: &World, _: &shards::net::JoinRequest) -> shards::net::JoinDecision {
+    shards::net::JoinDecision::Wait("the door is closed".into())
+}
+
+#[test]
+fn a_player_the_game_keeps_waiting_is_not_dropped_for_joining_slowly_and_a_kick_reaches_it() {
+    let setup = |app: &mut App| {
+        app.add_plugins(sandbox::SandboxPlugin);
+        app.world_mut().resource_mut::<shards::net::NetHooks>().join_policy = door_closed;
+    };
+    let mut stand = shards::testing::stand_host(1, &configure, &setup);
+    let c1 = shards::testing::stand_client(&mut stand, "c1", LinkConditions::NONE, &configure, &setup);
+    // Joining may take 6 s here; the game keeps this player waiting for more than that.
+    stand.world_mut(HOST).insert_resource(shards::net::NetDefaults(shards::net::NetDef { timeout_secs: 1.0, ..Default::default() }));
+    stand.run(450);
+    assert!(matches!(net_state(&stand, c1), NetState::Joining(why) if why.contains("the door is closed")), "{:?}", net_state(&stand, c1));
+    let waiting = |stand: &Stand| stand.world(HOST).resource::<NetHost>().peers.values().filter(|p| matches!(p.stage, shards::net::host::PeerStage::Waiting(_))).count();
+    assert_eq!(waiting(&stand), 1);
+    let kicked = stand.call(HOST, "net_kick", json!({"player": 1, "reason": "testing"}));
+    assert!(kicked.ok, "{}", kicked.result);
+    stand.run(20);
+    assert!(matches!(net_state(&stand, c1), NetState::Ended(why) if why.contains("kicked: testing")), "{:?}", net_state(&stand, c1));
+    assert_eq!(waiting(&stand), 0);
+    assert!(stand.world(HOST).resource::<NetHost>().peers.values().all(|p| p.stage == shards::net::host::PeerStage::Gone));
+    assert!(!stand.call(HOST, "net_kick", json!({"player": 1})).ok, "nobody is left to kick");
+}
+
 /// Guests whose dev calls run with dev scope on the host (the default is player scope).
 pub(super) fn dev_guests() -> shards::net::NetDefaults {
     shards::net::NetDefaults(shards::net::NetDef { guest_scope: Scope::Dev, ..Default::default() })

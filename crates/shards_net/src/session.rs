@@ -211,7 +211,10 @@ impl Plugin for NetPlugin {
         match &config.net {
             NetLaunch::Off => {}
             NetLaunch::Host { .. } | NetLaunch::Stand { .. } => {
-                app.insert_resource(NetRole::Host).insert_resource(NetState::Hosting).insert_resource(NetHost::new());
+                app.insert_resource(NetRole::Host)
+                    .insert_resource(NetState::Hosting)
+                    .insert_resource(NetHost::new())
+                    .init_resource::<host::PendingRebuild>();
                 app.add_exit_hook("net", host::on_exit);
             }
             NetLaunch::Join { addr } => {

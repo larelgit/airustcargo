@@ -108,8 +108,10 @@ pub struct EngineConfig {
     pub character_slot: Option<String>,
     /// The world to load (`--world SLOT`): a save slot.
     pub world_slot: Option<String>,
-    /// A client exits when its host ends the session, instead of going back to the menu
-    /// (`--exit-with-host`).
+    /// The game exits when its session ends, instead of going back to the menu
+    /// (`--exit-with-host`): with 0 when the host ended it, 1 when the game was refused,
+    /// kicked, lost its host or could not take its world, 2 when the session cannot be
+    /// opened (a host's port taken, an address that does not resolve).
     pub exit_with_host: bool,
 }
 

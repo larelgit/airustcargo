@@ -198,6 +198,13 @@ fn with_client(world: &mut World, f: impl FnOnce(&mut World, &mut NetClient, &mu
 /// Ticks a client may run beyond the newest host state and its lead before it waits.
 pub const STARVE_AHEAD: u64 = 30;
 
+/// The newest host tick this client has news of: the newest state applied, or one that came
+/// and waits for the next tick to apply it. A client that waits for news (starved) runs no
+/// tick, so a state that came while it waits must count as news, or it waits for ever.
+fn newest_seen(client: &NetClient) -> u64 {
+    client.newest_host_tick.max(client.pending.as_ref().map_or(0, |d| d.tick))
+}
+
 /// Ticks a stand runs this client for one host tick: 0 until it is connected, then what its
 /// clock says (0, 1 or 2), and 0 while it is far ahead of the newest state (starved).
 pub fn clock_ticks(world: &mut World) -> u32 {
@@ -206,7 +213,7 @@ pub fn clock_ticks(world: &mut World) -> u32 {
     if client.stage != ClientStage::Connected {
         return 0;
     }
-    if tick > client.newest_host_tick + client.lead + STARVE_AHEAD {
+    if tick > newest_seen(&client) + client.lead + STARVE_AHEAD {
         return 0;
     }
     client.clock.ticks(tick)
@@ -337,14 +344,53 @@ pub(crate) fn on_exit(world: &mut World) {
     });
 }
 
-/// Real time over UDP: run slightly faster or slower to keep the inputs early, and jump when
-/// far off.
+/// Ticks the inputs may be off before the clock does more than nudge its speed.
+pub const PACE_FAR: i64 = 30;
+
+/// How fast a client runs when its inputs arrive more than [`PACE_FAR`] ticks early: it
+/// slows down hard instead of going back.
+pub const PACE_BRAKE: f32 = 0.5;
+
+/// What the client's clock does about an error (+: the inputs arrive too early).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Pace {
+    /// Runs at this speed.
+    Speed(f32),
+    /// Jumps forward to the host's newest tick plus the lead.
+    Skip,
+}
+
+/// The speed that brings an error of a few ticks back: slower when early, faster when late.
+fn nudge(error: i64) -> f32 {
+    (1.0 - error as f32 * 0.02).clamp(0.9, 1.1)
+}
+
+/// Late by a lot: skip ahead. Early by a lot: brake. Else nudge the speed.
+///
+/// The clock never goes back. Frames the client sent for the ticks it would run again are on
+/// the host already, waiting for their ticks: it drops a second frame of a tick it has as a
+/// duplicate, with the presses the client took out of its `Intent` for it, and applies the
+/// old one after the new ones that come before it. A jump forward lands on ticks nothing
+/// was sent for.
+fn pace_for(error: i64) -> Pace {
+    if error < -PACE_FAR {
+        Pace::Skip
+    } else if error > PACE_FAR {
+        Pace::Speed(PACE_BRAKE)
+    } else {
+        Pace::Speed(nudge(error))
+    }
+}
+
+/// Real time over UDP: run slightly faster or slower to keep the inputs early, skip ahead
+/// when far behind, brake when far ahead.
 fn pace(world: &mut World, client: &mut NetClient) {
     if client.stage != ClientStage::Connected {
         return;
     }
-    // Far ahead of the newest state (the host is paused, steps, or hangs): wait for it.
-    let starved = sim::tick(world) > client.newest_host_tick + client.lead + STARVE_AHEAD;
+    // Far ahead of the newest state (the host is paused, steps, or hangs): wait for it. A state
+    // that came is news already: waiting, no tick runs to apply it.
+    let starved = sim::tick(world) > newest_seen(client) + client.lead + STARVE_AHEAD;
     let mut time = world.resource_mut::<Time<Virtual>>();
     if starved != time.is_paused() {
         if starved {
@@ -357,14 +403,20 @@ fn pace(world: &mut World, client: &mut NetClient) {
         return;
     }
     let Some(error) = client.clock.error() else { return };
-    if error.abs() > 30 {
-        let tick = client.newest_host_tick + client.lead;
-        sim::set_tick(world, tick);
-        client.clock.reset(client.clock.target);
-        crate::hooks::net_line(world, "clock", JournalKind::Warn, format!("clock resync to tick {tick} (was {error:+} ticks off)"));
-        return;
-    }
-    let speed = (1.0 - error as f32 * 0.02).clamp(0.9, 1.1);
+    let speed = match pace_for(error) {
+        Pace::Speed(speed) => speed,
+        Pace::Skip => {
+            // Forward only: the newest state can be older than this clock.
+            let tick = newest_seen(client) + client.lead;
+            if tick > sim::tick(world) {
+                sim::set_tick(world, tick);
+                client.clock.reset(client.clock.target);
+                crate::hooks::net_line(world, "clock", JournalKind::Warn, format!("clock resync to tick {tick} (was {error:+} ticks off)"));
+                return;
+            }
+            nudge(error)
+        }
+    };
     world.resource_mut::<Time<Virtual>>().set_relative_speed(speed);
 }
 
@@ -639,9 +691,14 @@ fn take_world(world: &mut World, client: &mut NetClient, welcome: Welcome, rebas
     client.clock.reset(2 + jitter as i64);
     client.ring.clear();
     client.pending = None;
-    // Events of the old world name its entities; the new world's come after it.
+    // The channel is ordered and the host sends its events before the world that replaces
+    // theirs, so every event waiting now is of the old world, whatever its tick: it names
+    // entities that are gone, or that the same ids give to others (a snapshot of an earlier
+    // tick restores the id counter). Its tick can also be above the new world's, and
+    // `retrigger_due` goes by order: it would hold the new world's events back. The new
+    // world's come after this message.
     if rebase && let Some(mut inbox) = world.get_resource_mut::<crate::events::EventInbox>() {
-        inbox.0.retain(|(tick, _, _)| *tick > welcome.tick);
+        inbox.0.clear();
     }
     client.floor = welcome.tick;
     client.newest_host_tick = welcome.tick;
@@ -803,5 +860,103 @@ pub(crate) fn install_forwarder(world: &mut World) {
     let Some(address) = world.get_resource::<NetClient>().map(|c| c.address.clone()) else { return };
     if let Some(mut tools) = world.get_resource_mut::<AiTools>() {
         tools.set_forwarder(Some(forwarder(&address)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ai_core::SimTick;
+
+    /// A connected client at `tick`, the newest state from `newest` and a lead of 5, whose
+    /// inputs arrive `error` ticks too early.
+    fn paced(tick: u64, newest: u64, error: i64) -> (World, NetClient) {
+        let mut world = World::new();
+        world.insert_resource(SimTick(tick));
+        world.insert_resource(Time::<Fixed>::from_hz(60.0));
+        world.insert_resource(Time::<Virtual>::default());
+        let mut client = NetClient::new("host", &EngineConfig::default());
+        client.stage = ClientStage::Connected;
+        client.newest_host_tick = newest;
+        client.lead = 5;
+        client.clock.target = 2;
+        client.clock.report((tick, error + client.clock.target));
+        assert_eq!(client.clock.error(), Some(error));
+        (world, client)
+    }
+
+    fn speed(world: &World) -> f32 {
+        world.resource::<Time<Virtual>>().relative_speed()
+    }
+
+    #[test]
+    fn a_far_error_skips_forward_or_brakes_and_a_near_one_nudges() {
+        assert_eq!(pace_for(PACE_FAR + 1), Pace::Speed(PACE_BRAKE));
+        assert_eq!(pace_for(i64::MAX), Pace::Speed(PACE_BRAKE));
+        assert_eq!(pace_for(-PACE_FAR - 1), Pace::Skip);
+        assert_eq!(pace_for(PACE_FAR), Pace::Speed(0.9));
+        assert_eq!(pace_for(-PACE_FAR), Pace::Speed(1.1));
+        assert_eq!(pace_for(0), Pace::Speed(1.0));
+        assert!(matches!(pace_for(-3), Pace::Speed(s) if s > 1.0 && s < 1.1));
+    }
+
+    #[test]
+    fn a_client_far_ahead_of_the_host_slows_down_and_never_sets_its_tick_back() {
+        // 40 ticks early: the ticks from the newest state's tick on are stamped on frames the
+        // host holds. Going back to them would drop the presses of their repeats as duplicates.
+        let (mut world, mut client) = paced(180, 150, 40);
+        pace(&mut world, &mut client);
+        assert_eq!(sim::tick(&world), 180, "the tick stays");
+        assert_eq!(speed(&world), PACE_BRAKE);
+        assert_eq!(client.clock.error(), Some(40), "the clock is not reset either");
+    }
+
+    #[test]
+    fn a_client_far_behind_the_host_skips_forward_to_its_newest_state_plus_the_lead() {
+        let (mut world, mut client) = paced(100, 300, -40);
+        pace(&mut world, &mut client);
+        assert_eq!(sim::tick(&world), 305);
+        assert_eq!(client.clock.error(), None, "it waits for a fresh report");
+    }
+
+    fn waiting(world: &World) -> bool {
+        world.resource::<Time<Virtual>>().is_paused()
+    }
+
+    #[test]
+    fn a_state_that_came_wakes_a_client_that_waits_for_news() {
+        // 15 ticks past the 35 it may run ahead of the newest state: it waits, its clock paused.
+        let (mut world, mut client) = paced(200, 150, 0);
+        pace(&mut world, &mut client);
+        assert!(waiting(&world));
+        // The host went on and its state arrived. Waiting, the client runs no tick to apply
+        // it: only that it came can end the wait (the next tick applies it).
+        client.pending = Some(StateDelta { tick: 195, ..default() });
+        pace(&mut world, &mut client);
+        assert!(!waiting(&world), "a state is waiting, so there is news");
+        assert_eq!(client.newest_host_tick, 150, "applying it is the next tick's");
+        // A state that does not reach far enough does not.
+        let (mut world, mut client) = paced(200, 150, 0);
+        client.pending = Some(StateDelta { tick: 160, ..default() });
+        pace(&mut world, &mut client);
+        assert!(waiting(&world));
+    }
+
+    #[test]
+    fn a_state_that_came_makes_a_stands_client_run_again() {
+        let (mut world, client) = paced(200, 150, 0);
+        world.insert_resource(client);
+        assert_eq!(clock_ticks(&mut world), 0, "far ahead of the newest state: it waits");
+        world.resource_mut::<NetClient>().pending = Some(StateDelta { tick: 195, ..default() });
+        assert_eq!(clock_ticks(&mut world), 1, "a state is waiting for a tick to apply it");
+    }
+
+    #[test]
+    fn a_skip_that_would_go_back_runs_faster_instead() {
+        // Late inputs, but the newest state is older than this clock: no tick to skip to.
+        let (mut world, mut client) = paced(120, 100, -40);
+        pace(&mut world, &mut client);
+        assert_eq!(sim::tick(&world), 120);
+        assert_eq!(speed(&world), 1.1);
     }
 }

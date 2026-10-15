@@ -5,12 +5,13 @@
 use std::collections::BTreeMap;
 
 use shards::ai_core::tools::{AiTools, NetRoute};
-use shards::ai_core::{configure_session, net_rules, sim, snapshot, AgentSessions, AiIndex, SessionChange};
+use shards::ai_core::{configure_session, net_rules, sim, snapshot, AgentSessions, AiIndex, Scope, SessionChange};
 use shards::content::ContentDb;
 use shards::core::Press;
 use shards::net::inputs::InputFrame;
-use shards::net::msg::{self, Hello, Inputs, Msg, StateDelta, Welcome};
-use shards::net::{Delivered, Link, LinkConditions, MemoryTransport, NetGame, NetHost, NetState, Role, Stand, Transport};
+use shards::net::host::{PeerStage, PLAYER_POLL_BYTES};
+use shards::net::msg::{self, CallMsg, Hello, Inputs, Msg, StateDelta, Welcome};
+use shards::net::{Delivered, Link, LinkConditions, MemoryTransport, NetDef, NetDefaults, NetGame, NetHost, NetState, Role, Stand, Transport};
 use shards::prelude::*;
 use shards::serde_json::{json, Map, Value};
 
@@ -424,4 +425,125 @@ fn a_packet_tick_near_the_end_of_u64_is_a_large_margin_not_a_panic() {
     assert_eq!(margin.map(|m| m.0), Some(1 << 63));
     assert!(margin.unwrap().1 > 1 << 62, "{margin:?}");
     assert!(matches!(stand.world(HOST).resource::<NetState>(), NetState::Hosting), "the host plays on");
+}
+
+// --- the work a peer can make, and peers that stay ---------------------------------------
+
+#[test]
+fn what_a_stranger_sends_after_its_refusal_is_not_read() {
+    let mut stand = stand(0);
+    let mut flood = Rogue::new(&stand, "flood", 111);
+    let mut old = hello(&stand, "old");
+    old.engine = "0.0.1".into();
+    flood.say(&Msg::Hello(old));
+    // Behind the refused hello, in the same poll: none of it is decoded (an undecodable
+    // message would be said in the journal).
+    for _ in 0..20 {
+        flood.say_raw(b"not json at all");
+    }
+    flood.run(&mut stand, 5);
+    assert!(flood.refused().is_some_and(|r| r.contains("engine version differs")), "{:?}", flood.got);
+    let said = |stand: &Stand| journal(stand, HOST).into_iter().filter(|l| l.contains("net: peer ")).count();
+    assert_eq!(said(&stand), 0, "{:#?}", journal(&stand, HOST));
+    // The same bytes from a stranger that was not refused are read, and said.
+    stand.run(70);
+    let mut junk = Rogue::new(&stand, "junk", 112);
+    junk.say_raw(b"not json at all");
+    junk.run(&mut stand, 5);
+    assert_eq!(said(&stand), 1, "{:#?}", journal(&stand, HOST));
+}
+
+#[test]
+fn a_guest_makes_the_host_decode_no_more_than_a_budget_in_one_poll() {
+    let mut stand = stand(0);
+    let mut guest = Rogue::new(&stand, "guest", 113);
+    guest.join(&mut stand, "guest");
+    // Each call is under the 1 MiB a player is read; together they are over what one poll decodes.
+    let call = |id: u64| {
+        Msg::Call(CallMsg { id, agent: "dev".into(), scope: Scope::Player, subject: None, tool: "net_status".into(), args: json!({"pad": "a".repeat(700_000)}) })
+    };
+    let (mut spent, mut expected) = (0usize, 0usize);
+    for id in 1..=10 {
+        let len = msg::encode(&call(id)).len();
+        if spent + len <= PLAYER_POLL_BYTES {
+            spent += len;
+            expected += 1;
+        }
+        guest.say(&call(id));
+    }
+    assert!(expected < 10 && expected > 1, "{expected}");
+    guest.run(&mut stand, 6);
+    // Every call that is read gets its answer; the others were not read.
+    let replies = guest.got.iter().filter(|m| matches!(m, Msg::CallReply { .. })).count();
+    assert_eq!(replies, expected, "{:?}", guest.got.iter().map(short).collect::<Vec<_>>());
+    let peer = stand.world(HOST).resource::<NetHost>().peers.values().next().unwrap();
+    assert_eq!(peer.unread as usize, 10 - expected);
+    assert!(!host_lines(&stand, "p1 sent over").is_empty(), "said: {:#?}", journal(&stand, HOST));
+}
+
+/// A session whose silence timeout is the shortest there is: a minute of joining becomes 6 s.
+fn quick_timeout() -> NetDefaults {
+    NetDefaults(NetDef { timeout_secs: 1.0, ..Default::default() })
+}
+
+#[test]
+fn a_peer_that_never_says_hello_is_dropped_however_it_keeps_sending() {
+    let mut stand = stand(0);
+    stand.world_mut(HOST).insert_resource(quick_timeout());
+    let mut stranger = Rogue::new(&stand, "stranger", 114);
+    // One datagram with a message makes a peer on the host; it never says hello. It sends
+    // keepalives, so its silence never times out.
+    stranger.say_unreliable(b"hello?");
+    stranger.run(&mut stand, 120);
+    let id = stranger.transport.id();
+    let stage = |stand: &Stand| stand.world(HOST).resource::<NetHost>().peers.get(&id).map(|p| p.stage.clone());
+    assert_eq!(stage(&stand), Some(PeerStage::New));
+    stranger.run(&mut stand, 300);
+    assert!(stranger.refused().is_some_and(|r| r.contains("joining did not go on in 6 s")), "{:?}", stranger.got.iter().map(short).collect::<Vec<_>>());
+    stranger.run(&mut stand, 20);
+    assert_eq!(stage(&stand), None, "forgotten");
+}
+
+#[test]
+fn net_kick_sends_away_a_peer_that_has_no_player_yet() {
+    let mut stand = stand(0);
+    let mut stranger = Rogue::new(&stand, "stranger", 115);
+    stranger.say_unreliable(b"hello?");
+    stranger.run(&mut stand, 5);
+    let id = stranger.transport.id();
+    // A player number reaches no one here; the peer number does.
+    assert!(!stand.call(HOST, "net_kick", json!({"player": 0})).ok);
+    assert!(!stand.call(HOST, "net_kick", json!({})).ok);
+    assert!(!stand.call(HOST, "net_kick", json!({"player": 1, "peer": id})).ok);
+    let status = stand.call(HOST, "net_status", json!({}));
+    assert!(status.result["peers"].as_array().unwrap().iter().any(|p| p["peer"] == json!(id) && p["stage"] == json!("New")), "{}", status.result);
+    let kicked = stand.call(HOST, "net_kick", json!({"peer": id, "reason": "testing"}));
+    assert!(kicked.ok, "{}", kicked.result);
+    stranger.run(&mut stand, 5);
+    assert!(stranger.got.iter().any(|m| matches!(m, Msg::Bye { reason } if reason == "kicked: testing")), "{:?}", stranger.got.iter().map(short).collect::<Vec<_>>());
+    stranger.run(&mut stand, 20);
+    assert!(stand.world(HOST).resource::<NetHost>().peers.is_empty());
+    assert!(!stand.call(HOST, "net_kick", json!({"peer": id})).ok, "already gone");
+}
+
+#[test]
+fn a_peer_that_never_acknowledges_its_refusal_is_forgotten_all_the_same() {
+    let mut stand = stand(0);
+    let mut deaf = Rogue::new(&stand, "deaf", 116);
+    let mut old = hello(&stand, "deaf");
+    old.engine = "0.0.1".into();
+    deaf.say(&Msg::Hello(old));
+    // It sends (keepalives, the hello) but takes in nothing the host says, acknowledgements
+    // included: the host's refusal stays unacknowledged for ever.
+    for _ in 0..900 {
+        let now = stand.hub.now();
+        let Rogue { transport, link, .. } = &mut deaf;
+        link.flush(now, &mut |datagram| transport.send(0, datagram));
+        stand.run(1);
+        if stand.world(HOST).resource::<NetHost>().peers.is_empty() {
+            break;
+        }
+    }
+    assert!(stand.world(HOST).resource::<NetHost>().peers.is_empty(), "still there after {} ms", stand.hub.now());
+    assert!(stand.hub.now() >= 10_000, "not before its limit: {} ms", stand.hub.now());
 }

@@ -823,21 +823,21 @@ mod tests {
     fn drive(app: &mut App) {
         let world = app.world_mut();
         let queue = crate::sim::deferred_queue(world).unwrap();
-        let (steps, clock) = {
-            let mut queue = queue.lock().unwrap();
-            (queue.take_steps(), queue.take_clock())
-        };
-        for request in clock {
-            let result = super::apply_clock(world, request.action).map(serde_json::Value::String);
-            let outcome = crate::tools::finished(world, request.action.tool(), result);
-            queue.lock().unwrap().complete(request.id, outcome);
-        }
-        for request in steps {
-            let watch = super::StepWatch::begin(world, &request);
-            let wall = std::time::Duration::from_secs(super::STEP_WALL_SECS);
-            let report = crate::sim::step(world, request.ticks, wall, |w| watch.check(w)).unwrap();
-            let outcome = watch.finish(world, &report);
-            queue.lock().unwrap().complete(request.id, outcome);
+        let requests = queue.lock().unwrap().take_requests();
+        for request in requests {
+            let (id, outcome) = match request {
+                crate::sim::Request::Clock(request) => {
+                    let result = super::apply_clock(world, request.action).map(serde_json::Value::String);
+                    (request.id, crate::tools::finished(world, request.action.tool(), result))
+                }
+                crate::sim::Request::Step(request) => {
+                    let watch = super::StepWatch::begin(world, &request);
+                    let wall = std::time::Duration::from_secs(super::STEP_WALL_SECS);
+                    let report = crate::sim::step(world, request.ticks, wall, |w| watch.check(w)).unwrap();
+                    (request.id, watch.finish(world, &report))
+                }
+            };
+            queue.lock().unwrap().complete(id, outcome);
         }
     }
 

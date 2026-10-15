@@ -63,6 +63,12 @@ impl std::fmt::Display for JournalEntry {
     }
 }
 
+/// The journal at one moment, for [`AiJournal::rewind`].
+pub(crate) struct JournalMark {
+    seq: u64,
+    entries: VecDeque<JournalEntry>,
+}
+
 #[derive(Resource, Debug)]
 pub struct AiJournal {
     entries: VecDeque<JournalEntry>,
@@ -103,11 +109,22 @@ impl AiJournal {
         self.next_seq - 1
     }
 
-    /// Takes back the entries after `seq`: what a change that was undone inside the same call
-    /// wrote (a refused snapshot load). Their numbers are not handed out again.
-    pub(crate) fn discard_after(&mut self, seq: u64) {
-        while self.entries.back().is_some_and(|e| e.seq > seq) {
+    /// The journal as it is, to take back what a change that is undone inside the same call
+    /// writes (a refused snapshot load): [`rewind`](Self::rewind).
+    pub(crate) fn mark(&self) -> JournalMark {
+        JournalMark { seq: self.last_seq(), entries: self.entries.clone() }
+    }
+
+    /// Takes back the entries written after `mark`, and brings back the oldest entries they
+    /// pushed out of a full ring: the journal is as it was, but for the numbers, which are not
+    /// handed out again.
+    pub(crate) fn rewind(&mut self, mark: JournalMark) {
+        while self.entries.back().is_some_and(|e| e.seq > mark.seq) {
             self.entries.pop_back();
+        }
+        let front = self.entries.front().map_or(mark.seq + 1, |e| e.seq);
+        for entry in mark.entries.into_iter().rev().filter(|e| e.seq < front) {
+            self.entries.push_front(entry);
         }
     }
 

@@ -173,9 +173,11 @@ fn net_status(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
             .map(|p| {
                 let s = p.link.stats();
                 json!({
+                    "peer": p.id,
                     "player": p.player,
                     "name": p.hello.as_ref().map(|h| h.name.clone()),
                     "stage": format!("{:?}", p.stage),
+                    "unread": p.unread,
                     "body": p.body.map(|b| format!("e{b}")),
                     "rtt_ms": s.srtt_ms,
                     "loss": s.loss,
@@ -257,19 +259,34 @@ fn net_sim(In(call): In<Call<NetSimArgs>>, world: &mut World) -> ToolResult<Valu
     Ok(json!(format!("links now {conditions}")))
 }
 
-/// Send a player away (they may rejoin with the same token while their body waits).
+/// Send a player away (they may rejoin with the same token while their body waits): one
+/// playing, or still joining. Give `player` or `peer`.
 #[derive(Deserialize, JsonSchema)]
 pub struct NetKickArgs {
-    pub player: u8,
+    /// The player's number (`net_status` lists them).
+    pub player: Option<u8>,
+    /// Or the peer's number from `net_status`: a stranger that has not said hello has no
+    /// player number.
+    pub peer: Option<u64>,
     /// Shown to the player.
     pub reason: Option<String>,
 }
 
 fn net_kick(In(call): In<Call<NetKickArgs>>, world: &mut World) -> ToolResult<Value> {
     let mut host = world.get_resource_mut::<NetHost>().ok_or("this game is not hosting")?;
-    let reason = format!("kicked: {}", call.args.reason.unwrap_or_else(|| "by the host".into()));
-    host.kick(call.args.player, &reason)?;
-    Ok(json!(format!("p{} leaves at the next tick ({reason})", call.args.player)))
+    let NetKickArgs { player, peer, reason } = call.args;
+    let reason = format!("kicked: {}", reason.unwrap_or_else(|| "by the host".into()));
+    match (player, peer) {
+        (Some(player), None) => {
+            host.kick(player, &reason)?;
+            Ok(json!(format!("p{player} leaves at the next tick ({reason})")))
+        }
+        (None, Some(peer)) => {
+            host.kick_peer(peer, &reason)?;
+            Ok(json!(format!("peer {peer} is sent away ({reason})")))
+        }
+        _ => Err("give `player` (a number from net_status) or `peer` (a peer number from net_status), one of them".into()),
+    }
 }
 
 /// Send the whole world again to one player (or all).

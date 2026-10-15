@@ -260,7 +260,40 @@ Xvfb показывает его вместе с оверлеем навсетк
 байтам, строка в секунду о неотправленном, слот второй игры, `net_end` и тишина после конца, `speed` на стенде, коды
 выхода, хуки выхода стенда, настройки хоста стенда) закрыты тестами в `crates/sandbox/tests/sandbox/net_*.rs`, юнит-тестами
 `shards_net` и `shards` (`run.rs`); каждый из них проверен на коде без правки: падает или (для новых функций) не
-собирается. Не сделано по этому ревью: срок и предел частоты для пиров, которые ещё не вошли в игру (раздел ниже).
+собирается. Не сделано по этому ревью: предел частоты `Hello`, `Ready` и `Bye` подряд (раздел ниже).
+
+Ревью CodeRabbit по PR C3: часы клиента по UDP не идут назад (далеко впереди хоста клиент идёт вдвое медленнее, далеко
+позади прыгает только вперёд; юнит-тесты `client::tests`), события `net_event` старого мира не показываются после мира заново
+(`events_of_the_world_a_snapshot_replaced_are_not_shown_and_do_not_hold_back_the_new_ones`), `step` и `resume` одного участника
+в одном кадре идут по порядку вызовов (`a_step_and_a_resume_asked_in_one_frame_run_in_the_order_they_were_asked`),
+`snapshot_load` с неточным восстановлением возвращает мир (`a_load_that_would_not_be_exact_is_refused_and_puts_the_world_back`,
+`a_load_that_cannot_restore_exactly_fails_and_changes_nothing`).
+Третье ревью C3 (раунд 3): скачок тика хоста замечается до приёма игроков кадра
+(`a_client_admitted_in_the_frame_the_hosts_ticks_jump_keeps_its_inputs_through_a_resync`).
+Вид, с которого сняли предел ссылок, отправляет клиенту мир один раз, а не ждёт рассинхрона
+(`a_view_that_stops_being_capped_gives_the_client_the_references_it_read_as_nothing`).
+Мир, перестроенный вызовом гостя, доходит до клиентов (`a_region_change_a_guest_forwards_reaches_every_client_as_a_world_again`).
+Работа пира за опрос ограничена, отпущенный пир не читается, вход со сроком, `net_kick peer=`
+(`a_guest_makes_the_host_decode_no_more_than_a_budget_in_one_poll`, `what_a_stranger_sends_after_its_refusal_is_not_read`,
+`a_peer_that_never_says_hello_is_dropped_however_it_keeps_sending`, `a_peer_that_never_acknowledges_its_refusal_is_forgotten_all_the_same`,
+`net_kick_sends_away_a_peer_that_has_no_player_yet`, `a_player_the_game_keeps_waiting_is_not_dropped_for_joining_slowly_and_a_kick_reaches_it`).
+Мир больше того, что берёт канал, отказывается один раз (`a_world_over_what_a_link_carries_sends_its_player_away_once_instead_of_waiting_every_tick`,
+`a_world_no_link_carries_is_tried_not_waited_for`).
+Отказанная загрузка снапшота не вытесняет старые строки журнала (`a_refused_load_does_not_push_the_oldest_journal_lines_out`).
+Клиент, ждущий состояния хоста, просыпается от пришедшей дельты (`a_state_that_came_wakes_a_client_that_waits_for_news`,
+`a_state_that_came_makes_a_stands_client_run_again`).
+Кик и конец сессии, которые не принял полный канал, называются в журнале хоста
+(`a_kick_a_full_link_will_not_carry_is_said_in_the_journal`, `the_end_of_a_session_a_full_link_will_not_carry_is_said_in_the_journal`).
+Тесты на описанное, но не проверенное: мир ждёт канал, полный по байтам, и не снимается каждый тик
+(`a_world_waits_for_a_link_that_is_full_by_bytes_without_being_captured_again`: проверка снапшота считает снятия), коды выхода
+1 и 2 (`a_game_the_host_refuses_exits_with_1`, `a_game_that_loses_its_host_exits_with_1`,
+`a_game_that_cannot_take_the_hosts_world_exits_with_1`, `a_host_whose_port_is_taken_exits_with_2`), кик ждущего игрока
+(`a_player_the_game_keeps_waiting_is_not_dropped_for_joining_slowly_and_a_kick_reaches_it`). Каждый проверен откатом кода.
+Тест `a_world_of_an_earlier_tick_that_waits_for_room_still_starts_the_inputs_over` до третьего ревью проходил и на коде без
+правки хоста (он смотрел только на часы клиента) и не видел ввода: теперь у хоста есть применённый кадр, и после мира,
+который ждал места, запись ввода (`applied_input_tick`, `inputs.newest`) начата заново, а новый кадр ложится один раз на своём
+тике. Проверено двумя откатами: хост считает `carry` по-старому (падает на часах клиента) и хост не сбрасывает запись
+(падает на записи ввода). Оговорка «каждый тест падал на коде без правки» (абзац выше) верна для остальных тестов того ревью.
 
 ## E8. Сохранения и настройки (фаза C)
 
@@ -319,15 +352,16 @@ Xvfb показывает его вместе с оверлеем навсетк
 
 ## Тесты
 
-`cargo test --workspace` на 14 октября 2026:
-
-Всего 1109 тестов проходят, 0 падают, 23 помечены `#[ignore]` (запись эталонных реплеев, проверка окна под Xvfb, примеры в
-документации); у шаблона отдельно 24 проходят (и один `#[ignore]`: запись его эталонов). Запускать нужно из обычной оболочки:
+Тесты по крейтам, `cargo test -p <крейт>`: строки `ai_core`, `shards_net`, `shards` и `sandbox` пересчитаны 15 октября 2026,
+остальные взяты из последнего полного прогона `cargo test --workspace` (слияние C8, `5d98620`). Общего числа здесь и в README
+нет: оно расходилось с таблицами при каждой правке, а проверить его можно только полным прогоном. Помечены `#[ignore]`: запись
+эталонных реплеев, проверка окна под Xvfb, замеры сети, примеры в документации; у шаблона отдельно 24 проходят (и один
+`#[ignore]`: запись его эталонов). Запускать нужно из обычной оболочки:
 под `nohup` игнорируется SIGHUP, и тест `kill_and_hangup_remove_the_token_and_the_port_file` падает на `signal 1`.
 
 | крейт | тестов | где |
 |---|---|---|
-| `ai_core` | 86 | `crates/ai_core/src/*` (снапшоты 20) |
+| `ai_core` | 88 | `crates/ai_core/src/*` (снапшоты 22) |
 | `shards_script` | 35 | `crates/shards_script/src/*` |
 | `shards_cli` | 12 | `crates/shards_cli/src/*` |
 | `shards_core` | 14 | `src/` и `tests/core.rs` |
@@ -339,9 +373,9 @@ Xvfb показывает его вместе с оверлеем навсетк
 | `shards_world` | 72 | `src/` (17) и `tests/world/` (55: генерация, проверки, подземелья, регионы, смена региона, уровни-тайлы, зоны, навсетка региона) |
 | `shards_npc` | 82 | `src/` (19) и `tests/npc/` (63: поведение, восприятие, директор, навсетка, реплей, снапшот, инструменты, страж данными) |
 | `shards_save` | 91 | `src/` (33) и `tests/save/` (58) |
-| `shards_net` | 102 | `src/` (81 — канальный слой без Bevy, 21 — сессия) |
-| `shards` | 28 | `src/` (в том числе `coop`), `tests/engine.rs`, `tests/failures.rs`, `tests/level_render.rs`, `tests/run_to.rs` (3), `tests/action_render/` |
-| `sandbox` | 236 | `tests/sandbox/` (215, из них кооператив `net*.rs` 98, `snapshots.rs` 28, `replays.rs` 23, `invariants.rs` 12; ещё `#[ignore]`: запись эталонных реплеев и два замера сети), `tests/system_failures.rs` (8), `tests/perf.rs` (6), `tests/log_capture.rs` (5), `src/` (2) |
+| `shards_net` | 121 | `src/` (81 — канальный слой без Bevy, 40 — сессия) |
+| `shards` | 29 | `src/` (в том числе `coop`), `tests/engine.rs`, `tests/failures.rs`, `tests/level_render.rs`, `tests/run_to.rs` (3), `tests/action_render/` |
+| `sandbox` | 267 | `tests/sandbox/` (246, из них кооператив `net*.rs` 132, `snapshots.rs` 29, `replays.rs` 23, `invariants.rs` 12; ещё 3 `#[ignore]`: запись эталонных реплеев и два замера сети), `tests/system_failures.rs` (8), `tests/perf.rs` (6), `tests/log_capture.rs` (5), `src/` (2) |
 | шаблон | 24 | `template/tests/game/` (содержание, детерминизм, реплеи, сценарии, регион, манифест) |
 
 ## Известные ограничения и отложенное
@@ -391,11 +425,11 @@ Xvfb показывает его вместе с оверлеем навсетк
 - **Теги не поставлены.** `v0.1.0` (коммит `e90193d`), `v0.2.0` и `v0.3.0` ставит мейнтейнер; версия в `Cargo.toml` остаётся
   `0.2.0`, пока он не выпустит `0.3.0` (записи фазы B уже лежат в `CHANGELOG.md` под `0.3.0`). Пока тегов нет, игра закрепляет
   движок коммитом (`rev = "…"`).
-- **Вход в сессию без срока и без предела частоты.** Пир, который прислал `Hello` и дальше шлёт только подтверждения,
-  держит слот, пока не замолчит; `Hello`, `Ready` и `Bye` подряд не ограничены по частоте. Сессия по LAN без проверки
-  личности: такой пир — законный игрок той же сборки, слот он держит не дольше, чем держал бы игрок, который вошёл и стоит, а
-  `net_kick` убирает и того, кто ещё ждёт `join_policy` или строит мир. Срок для `Accepted`/`Ready` отказывал бы медленным
-  клиентам, которые строят большой регион, а предел по адресу по UDP обходится сменой порта.
+- **Вход в сессию без предела частоты.** `Hello`, `Ready` и `Bye` подряд не ограничены по частоте; пир, который шлёт их
+  без остановки, получает отказ на первом `Hello` и не читается дальше (бюджет разбора за опрос), а срок входа
+  (`6 × timeout_secs`) и срок забвения ушедшего (10 с) не дают ему занять запись надолго. Сессия по LAN без проверки
+  личности, предел по адресу по UDP обходится сменой порта; пир, который шлёт по одной датаграмме с сообщением чаще, чем
+  его отпускают, заводится заново.
 - **Сохранения в кооперативе: что не сделано.** Клиент не просит у хоста собственное сохранение сейчас (его `save_game
   what=character` отвечает, что персонажа сохраняет хост: у клиента нет полного персонажа, и то, что он снял бы сам,
   затёрло бы хороший файл). Персонаж больше 64 КБ ни один хост не примет. Слоты по умолчанию — `slot1`, у клиента по

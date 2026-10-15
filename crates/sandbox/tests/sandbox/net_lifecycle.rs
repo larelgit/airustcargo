@@ -2,7 +2,7 @@
 //! (once, with every character saved), and the stand's clock and shutdown.
 
 use shards::ai_core::process::AppToken;
-use shards::ai_core::sim;
+use shards::ai_core::{sim, AiJournal};
 use shards::net::host::PeerStage;
 use shards::net::{JoinDecision, JoinRequest, LinkConditions, NetDef, NetDefaults, NetHooks, NetHost, NetLeft, NetState, Stand};
 use shards::prelude::*;
@@ -314,6 +314,61 @@ fn a_stands_members_say_how_the_stand_runs_them() {
     assert!(stand.call(C1, "resume", json!({})).ok && stand.call(C1, "pause", json!({})).ok);
 }
 
+#[test]
+fn a_step_and_a_resume_asked_in_one_frame_run_in_the_order_they_were_asked() {
+    let mut stand = stand(1);
+    let ask = |stand: &mut Stand, tool: &str, args: Value| -> u64 {
+        let out = shards::ai_core::call_tool(stand.world_mut(HOST), "dev", tool, args);
+        out.result.get("pending").and_then(Value::as_u64).unwrap_or_else(|| panic!("{tool} was not deferred: {}", out.result))
+    };
+    let polled = |stand: &mut Stand, id: u64| shards::ai_core::call_tool(stand.world_mut(HOST), "dev", "step_poll", json!({"id": id})).result;
+    let from = sim::tick(stand.world(HOST));
+
+    // Two requests land between one pass of the stand's driver and the next: the step first, then
+    // the resume. The stand ends up running, as a game that ran them one after the other.
+    let (step, resume) = (ask(&mut stand, "step", json!({"ticks": 3})), ask(&mut stand, "resume", json!({})));
+    stand.drive();
+    assert!(stand.running, "the resume came last");
+    assert_eq!(sim::tick(stand.world(HOST)), from + 3, "the step ran too");
+    assert!(polled(&mut stand, step).as_str().is_some_and(|t| t.starts_with("ran 3 ticks")), "{}", polled(&mut stand, step));
+    assert!(polled(&mut stand, resume).as_str().is_some_and(|t| t.starts_with("running from tick")), "{}", polled(&mut stand, resume));
+
+    // The other way round it ends paused: a step pauses.
+    let (resume, step) = (ask(&mut stand, "resume", json!({})), ask(&mut stand, "step", json!({"ticks": 2})));
+    stand.drive();
+    assert!(!stand.running, "the step came last");
+    assert!(polled(&mut stand, resume).as_str().is_some_and(|t| t.starts_with("running from tick")));
+    assert!(polled(&mut stand, step).as_str().is_some_and(|t| t.starts_with("ran 2 ticks")));
+}
+
+/// A stand whose c1 cannot take another reliable message: more gameplay lines in one tick than
+/// a link holds unacknowledged.
+fn stand_with_a_full_link() -> Stand {
+    use shards::ai_core::journal::{self, JournalKind};
+    let mut stand = stand(1);
+    stand.run(20);
+    for i in 0..1100 {
+        journal::emit(stand.world_mut(HOST), JournalKind::Event, format!("filler {i}"));
+    }
+    stand.run(1);
+    stand
+}
+
+#[test]
+fn a_kick_a_full_link_will_not_carry_is_said_in_the_journal() {
+    let mut stand = stand_with_a_full_link();
+    assert!(stand.call(HOST, "net_kick", json!({"player": 1, "reason": "testing"})).ok);
+    stand.run(2);
+    assert!(has_line(&stand, HOST, "p1: the kick not sent: reliable queue is full"), "{:#?}", journal(&stand, HOST));
+}
+
+#[test]
+fn the_end_of_a_session_a_full_link_will_not_carry_is_said_in_the_journal() {
+    let mut stand = stand_with_a_full_link();
+    assert!(stand.call(HOST, "net_end", json!({"reason": "testing"})).ok);
+    assert!(has_line(&stand, HOST, "p1: the end of the session not sent: reliable queue is full"), "{:#?}", journal(&stand, HOST));
+}
+
 /// Whether the app was the active one when its exit hooks ran.
 #[derive(Resource)]
 struct ActiveAtExit(bool);
@@ -356,6 +411,67 @@ fn only_the_host_ends_a_stand() {
     assert!(stand.call(HOST, "net_end", json!({})).ok);
     run_until(&mut stand, 60, "c2 hears the end", |s| matches!(net_state(s, C2), NetState::Ended(_)));
     assert_eq!(stand.members[C2].app.should_exit(), Some(AppExit::Success));
+}
+
+fn exit_with_host(config: &mut shards::EngineConfig) {
+    config.seed = 42;
+    config.exit_with_host = true;
+}
+
+#[test]
+fn a_game_the_host_refuses_exits_with_1() {
+    let mut stand = shards::testing::stand_host(1, &exit_with_host, &sandbox_setup);
+    // 60 Hz is the host's: a game at another rate is refused (`start with --hz 60`).
+    let slow = |config: &mut shards::EngineConfig| {
+        exit_with_host(config);
+        config.tick_hz = 30.0;
+    };
+    let c1 = shards::testing::stand_client(&mut stand, "c1", LinkConditions::NONE, &slow, &sandbox_setup);
+    run_until(&mut stand, 300, "c1 is refused", |s| matches!(net_state(s, c1), NetState::Ended(_)));
+    assert!(matches!(net_state(&stand, c1), NetState::Ended(why) if why.contains("tick rate differs")), "{:?}", net_state(&stand, c1));
+    assert_eq!(stand.members[c1].app.should_exit(), Some(AppExit::error()));
+}
+
+#[test]
+fn a_game_that_loses_its_host_exits_with_1() {
+    let mut stand = shards::testing::stand(1, LinkConditions::NONE, exit_with_host, sandbox_setup);
+    stand.run(30);
+    // Silence of one second is the end of it (the default is ten); nothing gets through.
+    stand.world_mut(C1).insert_resource(shards::net::NetDefaults(shards::net::NetDef { timeout_secs: 1.0, ..Default::default() }));
+    stand.set_link(C1, "loss=0.99".parse().unwrap()).unwrap();
+    run_until(&mut stand, 900, "c1 loses the host", |s| matches!(net_state(s, C1), NetState::Ended(_)));
+    assert!(matches!(net_state(&stand, C1), NetState::Ended(why) if why.contains("lost the host")), "{:?}", net_state(&stand, C1));
+    assert_eq!(stand.members[C1].app.should_exit(), Some(AppExit::error()));
+}
+
+#[test]
+fn a_game_that_cannot_take_the_hosts_world_exits_with_1() {
+    let mut stand = shards::testing::stand_host(1, &exit_with_host, &sandbox_setup);
+    // Level geometry only the host's game has (no AiId, so no snapshot holds it): the client's
+    // world is not the one the host's was taken in, and it cannot take the host's.
+    let wall = shards::motion::Collider::new(shards::motion::Shape::Cuboid { half: Vec3::new(1.0, 1.0, 1.0) });
+    stand.world_mut(HOST).spawn((wall, Transform::from_xyz(40.0, 0.0, 40.0)));
+    let c1 = shards::testing::stand_client(&mut stand, "c1", LinkConditions::NONE, &exit_with_host, &sandbox_setup);
+    run_until(&mut stand, 300, "c1 cannot take the world", |s| matches!(net_state(s, c1), NetState::Ended(_)));
+    assert!(matches!(net_state(&stand, c1), NetState::Ended(why) if why.contains("cannot take the host's world")), "{:?}", net_state(&stand, c1));
+    assert_eq!(stand.members[c1].app.should_exit(), Some(AppExit::error()));
+}
+
+#[test]
+fn a_host_whose_port_is_taken_exits_with_2() {
+    let taken = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
+    let port = taken.local_addr().unwrap().port();
+    let mut config = shards::testing::config();
+    config.seed = 42;
+    config.net = shards::core::NetLaunch::Host { port };
+    config.exit_with_host = true;
+    let mut app = sandbox::build_app(&config);
+    app.finish();
+    app.cleanup();
+    app.update();
+    assert_eq!(app.should_exit(), Some(AppExit::from_code(2)));
+    let lines: Vec<String> = app.world().resource::<AiJournal>().after(0).0.map(ToString::to_string).collect();
+    assert!(lines.iter().any(|l| l.contains(&format!("net: cannot host on UDP port {port}"))), "{lines:#?}");
 }
 
 #[test]
