@@ -9,7 +9,7 @@ use shards::ai_core::{configure_session, net_rules, sim, snapshot, AgentSessions
 use shards::content::ContentDb;
 use shards::core::Press;
 use shards::net::inputs::InputFrame;
-use shards::net::host::{PeerStage, PLAYER_POLL_BYTES};
+use shards::net::host::{max_strangers, PeerStage, JOINING_POLL_BYTES, PLAYER_POLL_BYTES, SHARED_JOINING_POLL_BYTES};
 use shards::net::msg::{self, CallMsg, Hello, Inputs, Msg, StateDelta, Welcome};
 use shards::net::{Delivered, Link, LinkConditions, MemoryTransport, NetDef, NetDefaults, NetGame, NetHost, NetState, Role, Stand, Transport};
 use shards::prelude::*;
@@ -546,4 +546,125 @@ fn a_peer_that_never_acknowledges_its_refusal_is_forgotten_all_the_same() {
     }
     assert!(stand.world(HOST).resource::<NetHost>().peers.is_empty(), "still there after {} ms", stand.hub.now());
     assert!(stand.hub.now() >= 10_000, "not before its limit: {} ms", stand.hub.now());
+}
+
+// --- strangers: what they cost and how many ----------------------------------------------------
+
+#[test]
+fn a_stranger_whose_first_message_is_not_a_hello_is_refused_at_once() {
+    let mut stand = stand(0);
+    let mut ready = Rogue::new(&stand, "ready", 121);
+    ready.say(&Msg::Ready { checks: BTreeMap::new() });
+    ready.run(&mut stand, 5);
+    assert!(ready.refused().is_some_and(|r| r.contains("a join starts with a hello")), "{:?}", ready.got.iter().map(short).collect::<Vec<_>>());
+    let mut junk = Rogue::new(&stand, "junk", 122);
+    junk.say_raw(b"not json at all");
+    junk.run(&mut stand, 5);
+    assert!(junk.refused().is_some_and(|r| r.contains("a join starts with a hello")), "{:?}", junk.got.iter().map(short).collect::<Vec<_>>());
+    // A goodbye first is no offence, and a hello first is read.
+    let mut bye = Rogue::new(&stand, "bye", 123);
+    bye.say(&Msg::Bye { reason: "wrong number".into() });
+    bye.run(&mut stand, 5);
+    assert!(bye.refused().is_none(), "{:?}", bye.got.iter().map(short).collect::<Vec<_>>());
+    let mut honest = Rogue::new(&stand, "honest", 124);
+    honest.say(&Msg::Hello(hello(&stand, "honest")));
+    honest.wait_for(&mut stand, 30, "accepted", |m| matches!(m, Msg::Accept(_)));
+}
+
+/// A `Hello` of a character of 60 KB: valid, and 60 KB to read.
+fn heavy_hello(stand: &Stand, name: &str) -> Msg {
+    let mut heavy = hello(stand, name);
+    heavy.character = Some(json!({"bag": "x".repeat(60_000)}));
+    Msg::Hello(heavy)
+}
+
+fn peer_with<'a>(stand: &'a Stand, id: shards::net::PeerId) -> &'a shards::net::host::Peer {
+    stand.world(HOST).resource::<NetHost>().peers.get(&id).expect("the peer is there")
+}
+
+#[test]
+fn a_stranger_that_is_not_refused_is_read_for_so_many_bytes_a_poll_and_no_more() {
+    let mut stand = stand(0);
+    let mut stranger = Rogue::new(&stand, "stranger", 131);
+    // Five hellos at once: the first is the join, the rest repeat it (and are read all the same, up to a budget).
+    let size = msg::encode(&heavy_hello(&stand, "stranger")).len();
+    for _ in 0..5 {
+        stranger.say(&heavy_hello(&stand, "stranger"));
+    }
+    stranger.run(&mut stand, 3);
+    let read = JOINING_POLL_BYTES / size;
+    assert!(read >= 2 && read < 5, "{read} of 5 fit in {JOINING_POLL_BYTES}");
+    let peer = peer_with(&stand, stranger.transport.id());
+    assert_eq!(peer.unread as usize, 5 - read, "the rest was dropped unread");
+    assert_ne!(peer.stage, PeerStage::Gone, "a peer that joins and repeats itself is not an offence");
+    let id = stranger.transport.id();
+    assert!(host_lines(&stand, &format!("net: peer {id} sent over")).len() == 1, "{:#?}", journal(&stand, HOST));
+}
+
+#[test]
+fn peers_that_do_not_play_yet_share_a_budget_and_each_takes_a_turn() {
+    let mut stand = stand(0);
+    stand.world_mut(HOST).insert_resource(NetDefaults(NetDef { max_players: 8, ..Default::default() }));
+    let mut flooders: Vec<Rogue> = (0..3).map(|i| Rogue::new(&stand, &format!("f{i}"), 141 + 2 * i)).collect();
+    let mut honest = Rogue::new(&stand, "honest", 150);
+    honest.say(&Msg::Hello(hello(&stand, "honest")));
+    // Three peers that join and then repeat themselves with 60 KB, every tick: more than the poll
+    // of peers that do not play reads. The honest one is last in line: it is not starved.
+    for _ in 0..12 {
+        for (i, flooder) in flooders.iter_mut().enumerate() {
+            for _ in 0..3 {
+                flooder.say(&heavy_hello(&stand, &format!("f{i}")));
+            }
+            flooder.pump(&stand);
+        }
+        honest.pump(&stand);
+        stand.run(1);
+    }
+    honest.pump(&stand);
+    assert!(honest.got.iter().any(|m| matches!(m, Msg::Accept(_))), "the honest peer was not served: {:?}", honest.got.iter().map(short).collect::<Vec<_>>());
+    let skipped: u64 = stand.world(HOST).resource::<NetHost>().peers.values().map(|p| p.skipped).sum();
+    assert!(skipped > 0, "the budget they share ({SHARED_JOINING_POLL_BYTES} B) ran out");
+}
+
+#[test]
+fn the_host_holds_so_many_strangers_and_the_oldest_makes_room() {
+    let mut stand = stand(0);
+    let cap = max_strangers(NetDef::default().max_players);
+    let mut strangers: Vec<Rogue> = (0..cap + 2).map(|i| Rogue::new(&stand, &format!("s{i}"), 200 + 2 * i as u32)).collect();
+    // One a tick, so which is oldest is plain: each makes a peer that never says hello.
+    for stranger in &mut strangers {
+        stranger.say_unreliable(b"hello?");
+        stranger.pump(&stand);
+        stand.run(1);
+    }
+    let held = |stand: &Stand, r: &Rogue| stand.world(HOST).resource::<NetHost>().peers.contains_key(&r.transport.id());
+    assert_eq!(stand.world(HOST).resource::<NetHost>().peers.len(), cap, "no more than {cap} strangers at once");
+    assert!(!held(&stand, &strangers[0]) && !held(&stand, &strangers[1]), "the oldest made room");
+    assert!(held(&stand, &strangers[2]) && held(&stand, &strangers[cap + 1]));
+    // A player joining finds room in the same way, and joins.
+    let mut honest = Rogue::new(&stand, "honest", 300);
+    honest.join(&mut stand, "honest");
+    assert!(stand.world(HOST).resource::<NetHost>().peers.len() <= cap + 1);
+}
+
+#[test]
+fn peers_over_their_budget_share_one_journal_line_a_second_and_one_key() {
+    let mut stand = stand(0);
+    stand.world_mut(HOST).insert_resource(NetDefaults(NetDef { max_players: 8, ..Default::default() }));
+    let mut strangers: Vec<Rogue> = (0..3).map(|i| Rogue::new(&stand, &format!("g{i}"), 160 + 2 * i)).collect();
+    for (i, stranger) in strangers.iter_mut().enumerate() {
+        for _ in 0..5 {
+            stranger.say(&heavy_hello(&stand, &format!("g{i}")));
+        }
+    }
+    for stranger in &mut strangers {
+        stranger.pump(&stand);
+    }
+    stand.run(1);
+    // Three peers over budget in one poll: one line, not a line (and a key) for each.
+    let lines = host_lines(&stand, "sent over");
+    assert_eq!(lines.len(), 1, "{lines:#?}");
+    assert!(lines[0].contains("(and ") && lines[0].contains(" more)"), "{}", lines[0]);
+    let limits = stand.world(HOST).resource::<shards::net::hooks::LineLimits>();
+    assert!(limits.0.keys().all(|k| !k.starts_with("flood ")), "{:?}", limits.0.keys().collect::<Vec<_>>());
 }

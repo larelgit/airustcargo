@@ -174,6 +174,7 @@ fn net_status(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
                     "name": p.hello.as_ref().map(|h| h.name.clone()),
                     "stage": format!("{:?}", p.stage),
                     "unread": p.unread,
+                    "skipped": p.skipped,
                     "body": p.body.map(|b| format!("e{b}")),
                     "rtt_ms": s.srtt_ms,
                     "loss": s.loss,

@@ -66,6 +66,18 @@ pub const JOINING_POLL_BYTES: usize = 2 * MAX_JOINING_MESSAGE;
 /// What the host decodes of a player in one poll, in bytes: four of the largest message.
 pub const PLAYER_POLL_BYTES: usize = 4 * MAX_PLAYER_MESSAGE;
 
+/// What the host decodes in one poll of all the peers that do not play yet together, in bytes:
+/// four of the largest message. A peer is polled only while a whole message is left of it
+/// (what it sent waits in its link, which holds a bounded amount and then holds the sender
+/// back), and the peers are taken from a different one each poll, so none is starved.
+pub const SHARED_JOINING_POLL_BYTES: usize = 4 * MAX_JOINING_MESSAGE;
+
+/// Peers that are not playing (joining, refused, gone) the host holds at once, for a session
+/// of `max_players`: more are not admitted unless an older stranger makes room.
+pub fn max_strangers(max_players: u8) -> usize {
+    2 * usize::from(max_players) + 4
+}
+
 /// A peer that stays in one stage of joining (no hello, building its world) longer than this
 /// many times the silence timeout (`NetDef::timeout_secs`, 10 s: a minute) is dropped,
 /// whatever it keeps sending: the join of an honest client takes the time to load a world.
@@ -155,6 +167,10 @@ pub struct Peer {
     unsent_said: u64,
     /// Messages dropped unread: past what one poll decodes, or from a peer that was gone.
     pub unread: u64,
+    /// Polls that left it alone because the peers that do not play yet had spent their share.
+    pub skipped: u64,
+    /// It was admitted to the session at some time (a stranger that was refused never was).
+    admitted: bool,
     /// What its link would not take of the messages a player must hear of (the end of the
     /// session, their character, a kick), until the journal says so: the peer is gone before
     /// the link watch would.
@@ -177,6 +193,8 @@ impl Peer {
             gone_since: None,
             gone_progress: (0, 0),
             unread: 0,
+            skipped: 0,
+            admitted: false,
             lost: Vec::new(),
             hello: None,
             player: 0,
@@ -284,6 +302,8 @@ pub struct NetHost {
     left_out_said: BTreeSet<String>,
     /// Bytes of the last world sent again: a link with less room waits without a capture.
     rebase_bytes: usize,
+    /// Which peer the next poll starts with.
+    poll_turn: usize,
 }
 
 impl NetHost {
@@ -304,6 +324,7 @@ impl NetHost {
             last_tick: 0,
             left_out_said: BTreeSet::new(),
             rebase_bytes: 0,
+            poll_turn: 0,
         }
     }
 
@@ -625,6 +646,7 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
     // Before the tasks of this frame: a peer admitted in it gets the world as it is after the
     // jump, and starts with its ticks not moved.
     note_ticks(world, host);
+    let def = net_def(world);
     let mut datagrams = Vec::new();
     endpoint.transport.recv(now, &mut datagrams);
     for (from, bytes) in datagrams {
@@ -635,6 +657,9 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
                 continue;
             }
             let Some(session) = wire::peek_session(&bytes) else { continue };
+            if !make_room(host, endpoint, def.max_players) {
+                continue;
+            }
             host.peers.insert(from, Peer::new(from, session, now));
         }
         let peer = host.peers.get_mut(&from).expect("inserted above");
@@ -642,8 +667,26 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
             debug!("net: datagram from peer {from} rejected: {reason:?}");
         }
     }
-    let ids: Vec<PeerId> = host.peers.keys().copied().collect();
+    let mut ids: Vec<PeerId> = host.peers.keys().copied().collect();
+    // From a different peer each poll: the peers that do not play yet share a budget, and the
+    // first of them must not always be the one that spends it.
+    if !ids.is_empty() {
+        let turn = host.poll_turn % ids.len();
+        ids.rotate_left(turn);
+    }
+    host.poll_turn = host.poll_turn.wrapping_add(1);
+    let mut joining_left = SHARED_JOINING_POLL_BYTES;
+    let mut flooded: Vec<(String, usize)> = Vec::new();
     for id in ids {
+        let Some(joining) = host.peers.get(&id).map(|p| !matches!(p.stage, PeerStage::Connected | PeerStage::Gone)) else { continue };
+        if joining && joining_left < MAX_JOINING_MESSAGE {
+            // Not enough left for one message: what it sent stays in its link, which holds only so
+            // much and then holds the sender back.
+            if let Some(peer) = host.peers.get_mut(&id) {
+                peer.skipped += 1;
+            }
+            continue;
+        }
         // A peer that is gone is polled too (its link's buffers empty), but never read.
         let delivered = host.peers.get_mut(&id).map(|p| p.link.poll(now)).unwrap_or_default();
         // Every packet repeats the frames not acknowledged: the newest holds the rest.
@@ -651,6 +694,7 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
         let total = delivered.len();
         // The size caps bound one message; this bounds what a poll decodes of one peer.
         let (mut spent, mut unread, mut over) = (0usize, 0u64, false);
+        let joining_budget = JOINING_POLL_BYTES.min(joining_left);
         for (i, message) in delivered.into_iter().enumerate() {
             let Some((playing, gone)) = host.peers.get(&id).map(|p| (p.stage == PeerStage::Connected, p.stage == PeerStage::Gone)) else { break };
             if gone {
@@ -662,7 +706,7 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
             if matches!(message, Delivered::Unreliable(_)) && Some(i) != newest_inputs {
                 continue;
             }
-            let budget = if playing { PLAYER_POLL_BYTES } else { JOINING_POLL_BYTES };
+            let budget = if playing { PLAYER_POLL_BYTES } else { joining_budget };
             // Sizes first: nothing larger than an honest client sends is decoded.
             match message {
                 Delivered::Reliable(bytes) => {
@@ -678,7 +722,7 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
                     spent += bytes.len();
                     match msg::decode::<Msg>(&bytes) {
                         Ok(m) => on_message(world, host, id, m),
-                        Err(e) => undecodable(world, id, &e),
+                        Err(e) => undecodable(world, host, id, &e),
                     }
                 }
                 // Only a player sends inputs: anyone else's are not even read.
@@ -694,26 +738,28 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
                     spent += bytes.len();
                     match msg::decode::<Inputs>(&bytes) {
                         Ok(inputs) => on_inputs(world, host, id, inputs),
-                        Err(e) => undecodable(world, id, &e),
+                        Err(e) => undecodable(world, host, id, &e),
                     }
                 }
             }
+        }
+        if joining {
+            joining_left = joining_left.saturating_sub(spent);
         }
         if let Some(peer) = host.peers.get_mut(&id) {
             peer.unread += unread;
             if over {
                 let who = if peer.stage == PeerStage::Connected { format!("p{}", peer.player) } else { format!("peer {id}") };
-                crate::hooks::net_line(
-                    world,
-                    &format!("flood {id}"),
-                    JournalKind::Warn,
-                    format!("{who} sent over {} KB in one tick: the rest was dropped unread", spent / 1024),
-                );
+                flooded.push((who, spent / 1024));
             }
         }
     }
+    // One line a second for all of them: who sent more than a poll reads is not a key of its own.
+    if let Some((who, kb)) = flooded.first() {
+        let more = if flooded.len() > 1 { format!(" (and {} more)", flooded.len() - 1) } else { String::new() };
+        crate::hooks::net_line(world, "flood", JournalKind::Warn, format!("{who} sent over {kb} KB in one tick: the rest was dropped unread{more}"));
+    }
     // Silence: a connected player leaves, anyone else is forgotten.
-    let def = net_def(world);
     let timeout_ms = (def.timeout_secs * 1000.0) as u64;
     for peer in host.peers.values_mut() {
         if peer.stage != PeerStage::Gone && peer.link.is_timed_out(now, timeout_ms) {
@@ -747,6 +793,21 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
     }
 }
 
+/// Room for one more peer that does not play: when the host holds `max_strangers` of them
+/// (joining, refused, gone), the oldest that has not said hello, else the oldest refused
+/// stranger, makes room. `false`: there is none, and the datagram is not answered.
+fn make_room(host: &mut NetHost, endpoint: &mut NetEndpoint, max_players: u8) -> bool {
+    if host.peers.values().filter(|p| p.stage != PeerStage::Connected).count() < max_strangers(max_players) {
+        return true;
+    }
+    let oldest = |wanted: &dyn Fn(&Peer) -> bool| host.peers.values().filter(|p| wanted(p)).min_by_key(|p| (p.stage_mark.1, p.id)).map(|p| p.id);
+    let victim = oldest(&|p| p.stage == PeerStage::New).or_else(|| oldest(&|p| p.stage == PeerStage::Gone && !p.admitted));
+    let Some(victim) = victim else { return false };
+    host.peers.remove(&victim);
+    endpoint.transport.forget(victim);
+    true
+}
+
 /// A message over what an honest client sends: a player's is dropped, anyone else is
 /// refused (and told the limit).
 fn oversized(world: &mut World, host: &mut NetHost, id: PeerId, len: usize, max: usize) {
@@ -763,11 +824,23 @@ fn oversized(world: &mut World, host: &mut NetHost, id: PeerId, len: usize, max:
 }
 
 /// A message that does not decode: the error quotes the peer's text, so it is clipped.
-fn undecodable(world: &mut World, id: PeerId, error: &str) {
+fn undecodable(world: &mut World, host: &mut NetHost, id: PeerId, error: &str) {
     crate::hooks::net_line(world, "undecodable", JournalKind::Warn, format!("peer {id}: {}", clip(error, MAX_PEER_TEXT)));
+    if host.peers.get(&id).is_some_and(|p| p.stage == PeerStage::New) {
+        refuse(world, host, id, JOIN_STARTS_WITH_HELLO);
+    }
 }
 
+/// What a peer that opens with anything but a `Hello` is told.
+const JOIN_STARTS_WITH_HELLO: &str = "a join starts with a hello";
+
 fn on_message(world: &mut World, host: &mut NetHost, id: PeerId, message: Msg) {
+    // An honest client opens with its `Hello`: anything else first is a stranger, who costs the
+    // host no more reading.
+    if host.peers.get(&id).is_some_and(|p| p.stage == PeerStage::New) && !matches!(message, Msg::Hello(_) | Msg::Bye { .. }) {
+        refuse(world, host, id, JOIN_STARTS_WITH_HELLO);
+        return;
+    }
     match message {
         Msg::Hello(hello) => on_hello(world, host, id, hello),
         Msg::Ready { .. } => {
@@ -1120,6 +1193,7 @@ fn admit(world: &mut World, host: &mut NetHost, id: PeerId) {
         return;
     }
     peer.stage = PeerStage::Connected;
+    peer.admitted = true;
     peer.body = body;
     peer.joined_at = tick;
     peer.ticks_moved = false;
