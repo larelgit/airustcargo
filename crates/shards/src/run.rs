@@ -129,7 +129,10 @@ struct Args {
     /// The world to load: a save slot (`[a-z0-9_-]`, up to 32).
     #[arg(long, value_name = "SLOT", value_parser = slot_name)]
     world: Option<String>,
-    /// A client exits when its host ends the session, instead of going back to the menu.
+    /// The game exits when its session ends, instead of going back to the menu: with 0 when the
+    /// host ended it, 1 when the game was refused, kicked, lost its host or could not take its
+    /// world, 2 when the session cannot be opened (a host's port taken, an address that does not
+    /// resolve).
     #[arg(long)]
     exit_with_host: bool,
 }
@@ -975,9 +978,28 @@ mod tests {
     }
 
     #[test]
+    fn the_help_of_exit_with_host_says_what_the_codes_mean() {
+        use clap::CommandFactory;
+        let help = Args::command().render_long_help().to_string();
+        let help = help.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(help.contains("with 0 when the host ended it, 1 when the game was refused"), "{help}");
+        assert!(help.contains("2 when the session cannot be opened (a host's port taken"), "{help}");
+    }
+
+    /// A folder that goes away with the test, whether it ends or fails.
+    struct TempDir(std::path::PathBuf);
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
     fn a_stands_host_reads_the_players_settings_and_its_clients_keep_none() {
-        let dir = std::env::temp_dir().join(format!("shards_stand_settings_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let scratch = TempDir(std::env::temp_dir().join(format!("shards_stand_settings_{}", std::process::id())));
+        let dir = &scratch.0;
+        let _ = std::fs::remove_dir_all(dir);
         let config = EngineConfig {
             net: NetLaunch::Stand { clients: 1, udp: false },
             settings: SettingsStore::Dir(dir.to_string_lossy().into_owned()),
@@ -987,8 +1009,6 @@ mod tests {
         let file = |member: usize| stand.world(member).get_resource::<shards_settings::SettingsStorage>().map(|s| s.file.clone());
         assert_eq!(file(0), Some(Some(dir.join("settings.toml"))), "the host's settings live in --settings-dir");
         assert_eq!(file(1), None, "a client of the stand keeps none");
-        drop(stand);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
