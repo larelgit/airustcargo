@@ -352,15 +352,16 @@ Xvfb показывает его вместе с оверлеем навсетк
 
 ## Тесты
 
-`cargo test --workspace` на 14 октября 2026:
-
-Всего 1109 тестов проходят, 0 падают, 23 помечены `#[ignore]` (запись эталонных реплеев, проверка окна под Xvfb, примеры в
-документации); у шаблона отдельно 24 проходят (и один `#[ignore]`: запись его эталонов). Запускать нужно из обычной оболочки:
+Тесты по крейтам, `cargo test -p <крейт>`: строки `ai_core`, `shards_net`, `shards` и `sandbox` пересчитаны 15 октября 2026,
+остальные взяты из последнего полного прогона `cargo test --workspace` (слияние C8, `5d98620`). Общего числа здесь и в README
+нет: оно расходилось с таблицами при каждой правке, а проверить его можно только полным прогоном. Помечены `#[ignore]`: запись
+эталонных реплеев, проверка окна под Xvfb, замеры сети, примеры в документации; у шаблона отдельно 24 проходят (и один
+`#[ignore]`: запись его эталонов). Запускать нужно из обычной оболочки:
 под `nohup` игнорируется SIGHUP, и тест `kill_and_hangup_remove_the_token_and_the_port_file` падает на `signal 1`.
 
 | крейт | тестов | где |
 |---|---|---|
-| `ai_core` | 86 | `crates/ai_core/src/*` (снапшоты 20) |
+| `ai_core` | 88 | `crates/ai_core/src/*` (снапшоты 22) |
 | `shards_script` | 35 | `crates/shards_script/src/*` |
 | `shards_cli` | 12 | `crates/shards_cli/src/*` |
 | `shards_core` | 14 | `src/` и `tests/core.rs` |
@@ -372,9 +373,9 @@ Xvfb показывает его вместе с оверлеем навсетк
 | `shards_world` | 72 | `src/` (17) и `tests/world/` (55: генерация, проверки, подземелья, регионы, смена региона, уровни-тайлы, зоны, навсетка региона) |
 | `shards_npc` | 82 | `src/` (19) и `tests/npc/` (63: поведение, восприятие, директор, навсетка, реплей, снапшот, инструменты, страж данными) |
 | `shards_save` | 91 | `src/` (33) и `tests/save/` (58) |
-| `shards_net` | 102 | `src/` (81 — канальный слой без Bevy, 21 — сессия) |
-| `shards` | 28 | `src/` (в том числе `coop`), `tests/engine.rs`, `tests/failures.rs`, `tests/level_render.rs`, `tests/run_to.rs` (3), `tests/action_render/` |
-| `sandbox` | 236 | `tests/sandbox/` (215, из них кооператив `net*.rs` 98, `snapshots.rs` 28, `replays.rs` 23, `invariants.rs` 12; ещё `#[ignore]`: запись эталонных реплеев и два замера сети), `tests/system_failures.rs` (8), `tests/perf.rs` (6), `tests/log_capture.rs` (5), `src/` (2) |
+| `shards_net` | 121 | `src/` (81 — канальный слой без Bevy, 40 — сессия) |
+| `shards` | 29 | `src/` (в том числе `coop`), `tests/engine.rs`, `tests/failures.rs`, `tests/level_render.rs`, `tests/run_to.rs` (3), `tests/action_render/` |
+| `sandbox` | 267 | `tests/sandbox/` (246, из них кооператив `net*.rs` 132, `snapshots.rs` 29, `replays.rs` 23, `invariants.rs` 12; ещё 3 `#[ignore]`: запись эталонных реплеев и два замера сети), `tests/system_failures.rs` (8), `tests/perf.rs` (6), `tests/log_capture.rs` (5), `src/` (2) |
 | шаблон | 24 | `template/tests/game/` (содержание, детерминизм, реплеи, сценарии, регион, манифест) |
 
 ## Известные ограничения и отложенное
