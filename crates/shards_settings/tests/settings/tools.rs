@@ -4,7 +4,7 @@ use serde_json::json;
 use shards::ai_core::{AiReplay, JournalKind};
 use shards::core::SettingsStore;
 use shards::prelude::*;
-use shards::settings::{AccessibilitySettings, SettingsAppExt, SettingsGroup};
+use shards::settings::{AccessibilitySettings, SettingsAppExt, SettingsChanged, SettingsGroup};
 
 use crate::common::*;
 
@@ -154,6 +154,26 @@ fn a_change_of_settings_is_not_part_of_the_game() {
     set(&mut app, "accessibility", "fov_deg", "100");
     set(&mut app, "controls", "invert_y", "true");
     assert_eq!(app.world().resource::<AiReplay>().recorded_events(), recorded, "a control tool: replays do not record it");
+}
+
+/// The groups `SettingsChanged` named, in order.
+#[derive(Resource, Default)]
+struct Heard(Vec<String>);
+
+#[test]
+fn what_follows_a_group_hears_it_change_before_the_call_returns() {
+    let mut app = game_with(SettingsStore::Off, |app| {
+        app.init_resource::<Heard>().add_observer(|changed: On<SettingsChanged>, mut heard: ResMut<Heard>| heard.0.push(changed.group.clone()));
+    });
+    set(&mut app, "audio", "music", "0.1");
+    assert_eq!(app.world().resource::<Heard>().0, ["audio"], "once, from settings_set itself");
+    ok(&mut app, "settings_set", json!({"group": "audio", "key": "music", "value": "0.1"}));
+    assert_eq!(app.world().resource::<Heard>().0, ["audio"], "nothing changed: nothing heard");
+
+    // Code that changes a group itself is heard on the next frame.
+    app.world_mut().resource_mut::<AccessibilitySettings>().fov_deg = 100.0;
+    app.update();
+    assert_eq!(app.world().resource::<Heard>().0, ["audio", "accessibility"]);
 }
 
 // --- a game's own group ---

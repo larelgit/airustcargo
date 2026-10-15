@@ -14,6 +14,11 @@
 //!     ),
 //! }
 //! ```
+//!
+//! Text a player reads (a title, a label, a text, an option's label, a stat) can name a message
+//! of the game's languages instead: `label: "@menu-resume"` shows that message in the language
+//! played, and again in another when the player switches. `@@` starts a text with `@`. The
+//! content check finds a message no language has.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -239,6 +244,12 @@ pub enum WidgetDef {
         id: String,
         label: String,
         options: Vec<String>,
+        /// What each option says, in the order of `options` (`"@difficulty-hard"`, `"Русский"`).
+        /// Empty: the options themselves.
+        #[serde(default)]
+        labels: Vec<String>,
+        /// The option shown at first (default: the first), and while the setting is none of the
+        /// options (a language setting left empty: the game's own).
         #[serde(default)]
         value: Option<String>,
         #[serde(default)]
@@ -325,6 +336,27 @@ impl WidgetDef {
             _ => None,
         }
     }
+
+    /// The text a player reads in it as content writes it (`@menu-resume` or itself), and the
+    /// field each is in: titles, labels, texts, options' labels, stats.
+    pub fn texts(&self) -> Vec<(&str, &'static str)> {
+        let mut texts: Vec<(&str, &'static str)> = self.title().map(|t| (t, "title")).into_iter().collect();
+        match self {
+            WidgetDef::Text { text, .. } | WidgetDef::Hint { text, .. } => texts.push((text, "text")),
+            WidgetDef::Button { label, .. }
+            | WidgetDef::Bar { label, .. }
+            | WidgetDef::Cooldown { label, .. }
+            | WidgetDef::Slider { label, .. }
+            | WidgetDef::Toggle { label, .. } => texts.push((label, "label")),
+            WidgetDef::Choice { label, labels, .. } => {
+                texts.push((label, "label"));
+                texts.extend(labels.iter().map(|l| (l.as_str(), "labels")));
+            }
+            WidgetDef::Compare { rows, .. } => texts.extend(rows.iter().map(|r| (r.stat.as_str(), "rows.stat"))),
+            _ => {}
+        }
+        texts
+    }
 }
 
 /// What a button does, read from its `action`.
@@ -394,6 +426,22 @@ impl ContentDef for ScreenDef {
         for widget in &self.widgets {
             check_widget(widget, refs, &mut seen, &mut counters);
         }
+        // Every message named is in each language or its fallbacks.
+        let mut texts: Vec<(&str, String)> = self.title.as_deref().map(|t| (t, "`title`".to_owned())).into_iter().collect();
+        let mut counters = BTreeMap::new();
+        for widget in &self.widgets {
+            texts_of(widget, &mut counters, &mut texts);
+        }
+        shards_locale::check_messages(refs, texts);
+    }
+}
+
+/// The texts of `widget` and the widgets inside it, each with where it is (`widget `resume` label`).
+fn texts_of<'a>(widget: &'a WidgetDef, counters: &mut BTreeMap<&'static str, u32>, out: &mut Vec<(&'a str, String)>) {
+    let id = assign_id(widget, counters);
+    out.extend(widget.texts().into_iter().map(|(text, field)| (text, format!("widget `{id}` {field}"))));
+    for child in widget.children() {
+        texts_of(child, counters, out);
     }
 }
 
@@ -448,9 +496,16 @@ fn check_widget(widget: &WidgetDef, refs: &mut Refs, seen: &mut BTreeSet<String>
             check_setting(&id, setting.as_deref(), refs);
         }
         WidgetDef::Toggle { setting, .. } => check_setting(&id, setting.as_deref(), refs),
-        WidgetDef::Choice { options, value, setting, .. } => {
+        WidgetDef::Choice { options, labels, value, setting, .. } => {
             if options.is_empty() {
                 refs.error(format!("choice `{id}`: no `options`"));
+            }
+            if !labels.is_empty() && labels.len() != options.len() {
+                refs.error(format!(
+                    "choice `{id}`: {} `labels` for {} `options`: one for each option, in their order (or none)",
+                    labels.len(),
+                    options.len()
+                ));
             }
             if let Some(v) = value
                 && !options.contains(v)
@@ -505,6 +560,9 @@ pub struct ThemeDef {
     pub focus: String,
     /// Named colours for bars (`color: "health"`).
     pub colors: BTreeMap<String, String>,
+    /// A font file under the asset folder (`fonts/FiraSans-Regular.ttf`) for every text. Default:
+    /// the engine's own, which has ASCII letters only: a game in other scripts names one.
+    pub font: Option<String>,
     pub font_size: f32,
     pub title_size: f32,
     pub hint_size: f32,
@@ -529,6 +587,7 @@ impl Default for ThemeDef {
             accent: "#d9a441".into(),
             focus: "#f5d76e".into(),
             colors: colors.into_iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect(),
+            font: None,
             font_size: 18.0,
             title_size: 26.0,
             hint_size: 15.0,
@@ -578,6 +637,12 @@ impl ContentDef for ThemeDef {
             if !(value >= 0.0 && value.is_finite()) {
                 refs.error(format!("{field}: 0 or more, not {value}"));
             }
+        }
+        if let Some(font) = &self.font
+            && let Some(root) = refs.asset_root()
+            && !root.join(font).is_file()
+        {
+            refs.error(format!("font: no file `{font}` under the asset folder (a .ttf or .otf, `fonts/FiraSans-Regular.ttf`)"));
         }
     }
 }

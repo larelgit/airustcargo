@@ -15,6 +15,9 @@
 //!   "you.health"`, sources from [`UiAppExt::add_ui_source`]; the engine gives `you.*` and
 //!   `allies`) or a player setting (`setting: "accessibility.text_scale"`), which changing the
 //!   widget changes and saves.
+//! - **Languages**: a title, label or text that names a message (`@menu-resume`) shows it in the
+//!   language played ([`shards_locale`]); when the player switches language, every open screen says
+//!   it again in the new one, and a choice's options have labels (`labels`) of their own.
 //! - **Buttons** do `close`, `back`, `open <screen>`, `quit`, `tool <name> {json}` (as the agent
 //!   that pressed, with its scope), or a game action ([`UiAppExt::add_ui_action`]).
 //! - **Focus and navigation** ([`model::navigate`]): `up`/`down`/`next`/`prev` move the focus on
@@ -30,9 +33,9 @@
 //!   tools that change them are actions, so a replay presses the same buttons at the same ticks.
 //! - **Drawing** (feature `render`, with a window): Bevy UI nodes for every widget, the theme's
 //!   colours and sizes, the player's text size, the mouse through picking, and every widget
-//!   named for screen readers (AccessKit roles, labels, values; focus follows the UI's).
-//!   The keyboard and gamepad reach the UI through the engine's input map (`menu` context), which
-//!   the `shards` crate joins to it.
+//!   named for screen readers (AccessKit roles, labels, values; focus follows the UI's). A theme
+//!   names a font for scripts beyond ASCII (`font`). The keyboard and gamepad reach the UI through
+//!   the engine's input map (`menu` context), which the `shards` crate joins to it.
 
 pub mod bind;
 pub mod def;
@@ -114,12 +117,16 @@ impl Plugin for UiPlugin {
             .init_resource::<UiSources>()
             .init_resource::<UiActions>()
             .init_resource::<model::UiPaused>()
+            .init_resource::<model::UiTextVersion>()
             .add_engine_module("ui", VERSION)
             .add_ai_status("ui", status)
             .register_ai_observe_section(text::observe_section)
             .add_systems(OnEnter(EngineState::InGame), model::open_start_screens)
             .add_systems(OnExit(PauseState::Paused), model::close_pausing_screens)
-            .add_systems(Update, (model::rebuild_edited_screens, bind::refresh_values).chain().in_set(UiSystems::Model));
+            .configure_sets(Update, UiSystems::Model.after(shards_locale::LocaleSystems::Build))
+            .add_systems(Update, (model::rebuild_edited_screens, model::retell_screens, bind::refresh_values).chain().in_set(UiSystems::Model))
+            // Another language: open screens say it again before the call that switched returns.
+            .add_observer(|_: On<shards_locale::TextChanged>, mut commands: Commands| commands.queue(model::retell_screens));
         tools::register(app.world_mut());
         #[cfg(feature = "render")]
         render::plugin(app);

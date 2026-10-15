@@ -77,8 +77,10 @@ pub fn widget_line(world: &World, e: Entity, focus: Option<Entity>) -> String {
             let _ = write!(line, " {} ({}..{}{step})", format_number(*v), format_number(*min), format_number(*max));
         }
         (WidgetKind::Toggle, UiValue::Flag(on)) => line.push_str(if *on { " on" } else { " off" }),
-        (WidgetKind::Choice { options }, UiValue::Choice(v)) => {
-            let _ = write!(line, " {v} ({})", options.join("|"));
+        (WidgetKind::Choice { options, .. }, UiValue::Choice(v)) => {
+            let said = w.kind.option_label(v);
+            let said = if said == v { String::new() } else { format!(" \"{said}\"") };
+            let _ = write!(line, " {v}{said} ({})", options.join("|"));
         }
         (WidgetKind::Tabs, UiValue::Page(i)) => {
             let pages: Vec<String> = widget_children(world, e)
@@ -121,7 +123,8 @@ pub fn compass_point(deg: f32) -> &'static str {
 fn screen_title(world: &World, root: Entity) -> String {
     let Some(s) = world.get::<UiScreen>(root) else { return String::new() };
     let mut title = s.name.clone();
-    if let Some(t) = &s.def.title {
+    // The root's label: the title in the language played.
+    if let Some(t) = world.get::<UiWidget>(root).map(|w| &w.label).filter(|t| !t.is_empty()) {
         let _ = write!(title, " \"{t}\"");
     }
     let pauses = if s.def.pauses { ", pauses the game" } else { "" };

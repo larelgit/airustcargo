@@ -1,0 +1,26 @@
+[package]
+name = "shards_locale"
+description = "Shards localization (E9.4): languages as content, Fluent text with parameters and plurals, the player's language switched while the game runs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+shards_settings.workspace = true
+bevy = { workspace = true, features = ["std", "serialize", "bevy_settings"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+# Fluent: the bundles, the parser (positions of mistakes, the ids a file holds) and language
+# tags; inside this crate only, never part of a public API.
+fluent-bundle.workspace = true
+fluent-syntax.workspace = true
+unic-langid.workspace = true
+
+[dev-dependencies]
+# Integration tests build apps the way a game does: the whole engine (`shards::testing`).
+shards = { workspace = true, features = ["render", "remote", "hot_reload"] }

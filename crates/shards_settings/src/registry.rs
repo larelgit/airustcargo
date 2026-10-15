@@ -475,6 +475,15 @@ pub(crate) fn changes(group: &str, info: &'static TypeInfo, old: &Value, new: &V
     lines
 }
 
+/// A settings group changed (`locale`, `accessibility`): by a tool, a settings screen or the
+/// game's own code. Triggered with the journal's lines, before `settings_set` returns, so what
+/// follows a setting (the language played) can follow it at once. Not for the first look of a
+/// group (loading the file is no change).
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct SettingsChanged {
+    pub group: String,
+}
+
 /// The most settings lines one change of one group may journal.
 const MAX_LINES: usize = 12;
 
@@ -494,10 +503,10 @@ fn look(world: &mut World, only_changed: bool) {
     if !world.contains_resource::<SettingsRegistry>() {
         return;
     }
-    let (lines, differs) = world.resource_scope(|world, mut registry: Mut<SettingsRegistry>| {
+    let (lines, groups) = world.resource_scope(|world, mut registry: Mut<SettingsRegistry>| {
         let registry = &mut *registry;
         let mut lines: Vec<String> = Vec::new();
-        let mut differs = false;
+        let mut groups: Vec<String> = Vec::new();
         for group in registry.groups.iter() {
             let key = group.type_path();
             let first = !registry.seen.contains_key(key);
@@ -508,7 +517,9 @@ fn look(world: &mut World, only_changed: bool) {
             if let Some(before) = registry.seen.get(key)
                 && *before != now
             {
-                differs = true;
+                if !groups.iter().any(|g| g == group.name()) {
+                    groups.push(group.name().to_owned());
+                }
                 let mut changed = changes(group.name(), group.info(), before, &now);
                 if changed.len() > MAX_LINES {
                     let more = changed.len() - MAX_LINES;
@@ -519,14 +530,14 @@ fn look(world: &mut World, only_changed: bool) {
             }
             registry.seen.insert(key, now);
         }
-        (lines, differs)
+        (lines, groups)
     });
     // A change nobody asked to save (a game's own settings screen edits a group through `ResMut`)
     // is written like any other: a second after the last one, and at exit.
-    if differs && only_changed {
+    if !groups.is_empty() && only_changed {
         crate::store::save_soon_in(world);
     }
-    if lines.is_empty() {
+    if groups.is_empty() {
         return;
     }
     let tick = world.get_resource::<SimTick>().map_or(0, |t| t.0);
@@ -535,4 +546,9 @@ fn look(world: &mut World, only_changed: bool) {
             journal.push(tick, JournalKind::Event, line);
         }
     }
+    for group in groups {
+        world.trigger(SettingsChanged { group });
+    }
+    // What the observers queued is done before the tool that changed the group returns.
+    world.flush();
 }

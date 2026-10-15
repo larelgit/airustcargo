@@ -78,7 +78,7 @@ fn with_a_window_widgets_are_nodes_with_roles_labels_and_values() {
     app.update();
     let slider = a11y(&mut app, "settings/text_size");
     assert_eq!((slider.role(), slider.numeric_value(), slider.min_numeric_value(), slider.max_numeric_value()), (Role::Slider, Some(1.0), Some(0.5), Some(3.0)));
-    assert_eq!(a11y(&mut app, "settings/flashes").value(), Some("< full >"));
+    assert_eq!(a11y(&mut app, "settings/flashes").value(), Some("full"), "what the option says, without the arrows drawn around it");
     let controls = widget(&mut app, "settings/controls");
     assert_eq!(app.world().get::<Node>(controls).unwrap().display, Display::None, "the page not shown");
     ok(&mut app, "ui_set", json!({"id": "settings/tabs", "value": "controls"}));

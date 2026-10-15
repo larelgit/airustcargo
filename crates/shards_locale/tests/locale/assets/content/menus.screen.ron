@@ -1,0 +1,22 @@
+// A menu whose every text is a message, but one: `@@` starts a text with `@`.
+{
+    "pause": (
+        pauses: true,
+        title: "@pause-title",
+        widgets: [
+            Button(id: "resume", label: "@pause-resume", action: "close"),
+            Choice(
+                id: "language",
+                label: "@pause-language",
+                options: ["en", "ru"],
+                labels: ["English", "Русский"],
+                value: "en",
+                setting: "locale.language",
+            ),
+            Choice(id: "speed", label: "@pause-speed", options: ["slow", "fast"], labels: ["@speed-slow", "@speed-fast"]),
+            Compare(id: "sword", title: "@pause-sword", rows: [(stat: "@stat-damage", before: 12, after: 15)]),
+            Text(id: "mail", text: "@@ada"),
+            Hint(id: "hint", text: "@pause-hint"),
+        ],
+    ),
+}
