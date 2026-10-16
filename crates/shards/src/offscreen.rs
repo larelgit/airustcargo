@@ -39,7 +39,13 @@ impl Plugin for OffscreenPlugin {
         app.insert_resource(Offscreen { image, size })
             .insert_resource(stuck.clone())
             .add_observer(aim_at_the_image)
-            .add_systems(PostUpdate, show_the_ui.before(bevy::ui::UiSystems::Prepare))
+            .add_systems(
+                PostUpdate,
+                (
+                    aim_changed_targets.before(bevy::camera::CameraUpdateSystems),
+                    show_the_ui.after(aim_changed_targets).before(bevy::ui::UiSystems::Prepare),
+                ),
+            )
             .add_systems(Last, end_when_stuck);
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app.insert_resource(stuck).add_systems(Render, wait_for_the_gpu.in_set(RenderSystems::Cleanup));
@@ -73,11 +79,23 @@ fn end_when_stuck(stuck: Res<GpuStuck>, mut exit: MessageWriter<AppExit>, mut en
     exit.write(AppExit::error());
 }
 
-/// A camera aimed at the primary window is aimed at the image instead.
+/// A camera aimed at the primary window is aimed at the image instead, from the moment its target
+/// is inserted.
 fn aim_at_the_image(insert: On<Insert<RenderTarget>>, mut targets: Query<&mut RenderTarget>, offscreen: Res<Offscreen>) {
-    let Ok(mut target) = targets.get_mut(insert.entity) else {
-        return;
-    };
+    if let Ok(target) = targets.get_mut(insert.entity) {
+        aim(target, &offscreen);
+    }
+}
+
+/// A target a game system changed in place (no insert, so no observer) is aimed the same way,
+/// before Bevy works out where each camera draws.
+fn aim_changed_targets(mut targets: Query<&mut RenderTarget, Changed<RenderTarget>>, offscreen: Res<Offscreen>) {
+    for target in &mut targets {
+        aim(target, &offscreen);
+    }
+}
+
+fn aim(mut target: Mut<RenderTarget>, offscreen: &Offscreen) {
     if matches!(*target, RenderTarget::Window(WindowRef::Primary)) {
         *target = RenderTarget::Image(offscreen.image.clone().into());
     }
@@ -123,5 +141,31 @@ mod tests {
         stuck.0.store(true, Ordering::Relaxed);
         app.update();
         assert_eq!(app.should_exit(), Some(AppExit::error()));
+    }
+
+    /// A camera aimed at the window, on insert or by a game system changing its target later,
+    /// draws into the image; one aimed at an image of its own keeps it.
+    #[test]
+    fn every_camera_aimed_at_the_window_draws_into_the_image() {
+        let mut app = App::new();
+        let mut images = Assets::<Image>::default();
+        let (image, own) = (images.add(Image::default()), images.add(Image::default()));
+        app.insert_resource(Offscreen { image: image.clone(), size: UVec2::ONE })
+            .add_observer(aim_at_the_image)
+            .add_systems(PostUpdate, aim_changed_targets);
+        let drawn = |app: &App, camera: Entity| match app.world().get::<RenderTarget>(camera) {
+            Some(RenderTarget::Image(target)) => Some(target.handle.clone()),
+            _ => None,
+        };
+        let inserted = app.world_mut().spawn(RenderTarget::Window(WindowRef::Primary)).id();
+        let retargeted = app.world_mut().spawn(RenderTarget::Image(own.clone().into())).id();
+        assert_eq!(drawn(&app, inserted).as_ref(), Some(&image), "on insert");
+        app.update();
+        *app.world_mut().get_mut::<RenderTarget>(retargeted).unwrap() = RenderTarget::Window(WindowRef::Primary);
+        app.update();
+        assert_eq!(drawn(&app, retargeted).as_ref(), Some(&image), "changed in place");
+        let kept = app.world_mut().spawn(RenderTarget::Image(own.clone().into())).id();
+        app.update();
+        assert_eq!(drawn(&app, kept), Some(own));
     }
 }
