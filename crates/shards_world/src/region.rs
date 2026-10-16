@@ -447,6 +447,14 @@ fn plan(world: &World, manifest: &RegionManifest) -> Result<Vec<TilePlan>, Strin
     Ok(plans)
 }
 
+/// Whether content can build `manifest` now: every tile or room it names, the level files and
+/// prefabs they are made of, the decor and the prefabs of its points of interest. What
+/// [`change_region`] checks before it changes anything, for a caller that wants to know first
+/// (a save that says where its world came from only once it can be built). Changes nothing.
+pub fn check_manifest(world: &World, manifest: &RegionManifest) -> Result<(), String> {
+    plan(world, manifest).map(drop)
+}
+
 /// Every prefab the build will spawn (tile pieces, decor, points of interest) can be: they are
 /// only read while spawning, and by then the old region is gone.
 fn check_prefabs(world: &World, manifest: &RegionManifest, plans: &[TilePlan]) -> Result<(), String> {
