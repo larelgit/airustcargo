@@ -565,6 +565,8 @@ fn real_time(app: &mut App, def: &PerfDef, timestep: Duration) -> Result<(TickSt
     ai_core::perf::begin_span(app.world_mut());
     crate::frames::begin_span(app.world_mut());
     let wall = play(app, def.ticks, "measurement")?;
+    // The last measured frames are still being drawn: wait for them on the paused game.
+    crate::frames::end_span(app);
     let world = app.world();
     let ticks = ai_core::perf::span(world);
     let frames = crate::frames::span(world).map(|f| FrameSummary {

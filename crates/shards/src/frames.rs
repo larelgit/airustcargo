@@ -200,6 +200,9 @@ pub struct FrameClock {
     /// When the newest GPU report came in: the next one is a later frame's.
     gpu_seen: Option<Instant>,
     span: FrameStats,
+    /// The frames the span counts: from the first after [`begin_span`] to the last before
+    /// [`end_span`] (`u64::MAX` while it is open).
+    span_frames: (u64, u64),
 }
 
 impl FrameClock {
@@ -213,6 +216,7 @@ impl FrameClock {
             gpu: VecDeque::with_capacity(RECENT),
             gpu_seen: None,
             span: FrameStats::default(),
+            span_frames: (1, u64::MAX),
         }
     }
 
@@ -263,7 +267,10 @@ impl FrameClock {
             self.recent.pop_front();
         }
         self.recent.push_back(frame);
-        self.span.add(&frame, self.budget);
+        let (first, last) = self.span_frames;
+        if (first..=last).contains(&frame.frame) {
+            self.span.add(&frame, self.budget);
+        }
     }
 
     /// The GPU reported a frame.
@@ -272,7 +279,14 @@ impl FrameClock {
             self.gpu.pop_front();
         }
         self.gpu.push_back(gpu);
-        self.span.add_gpu(&gpu);
+        if self.frame <= self.span_frames.1 {
+            self.span.add_gpu(&gpu);
+        }
+    }
+
+    /// No frame of the span still waits for its render time.
+    fn span_settled(&self) -> bool {
+        self.waiting.front().is_none_or(|&(frame, ..)| frame > self.span_frames.1)
     }
 
     /// The last [`RECENT`] frames, oldest first.
@@ -293,14 +307,34 @@ impl FrameClock {
     }
 }
 
-/// Starts counting frames afresh (the perf autotest after its warmup).
+/// Starts counting frames afresh (the perf autotest after its warmup), from the next frame on:
+/// the frames before it whose render times come in later are not counted.
 pub fn begin_span(world: &mut World) {
     if let Some(mut clock) = world.get_resource_mut::<FrameClock>() {
         clock.span = FrameStats::default();
+        clock.span_frames = (clock.frame + 1, u64::MAX);
     }
 }
 
-/// The frames since [`begin_span`]; `None` when nothing is drawn.
+/// Ends the span at the last frame begun, and draws frames until the render times of the span's
+/// frames have come in (or are given up on): the game is to be paused, so the frames drawn to wait
+/// for them run no ticks, and they are not counted.
+pub fn end_span(app: &mut App) {
+    match app.world_mut().get_resource_mut::<FrameClock>() {
+        Some(mut clock) => clock.span_frames.1 = clock.frame,
+        None => return,
+    }
+    for _ in 0..=IN_FLIGHT {
+        if app.world().resource::<FrameClock>().span_settled() {
+            break;
+        }
+        app.update();
+    }
+}
+
+/// The frames between [`begin_span`] and [`end_span`] (the ones so far, while it is open); `None`
+/// when nothing is drawn. GPU reports carry no frame: those are the ones that came in while it was
+/// open, a few frames later than the frames.
 pub fn span(world: &World) -> Option<FrameStats> {
     world.get_resource::<FrameClock>().map(|c| c.span)
 }
@@ -502,6 +536,31 @@ mod tests {
         begin_span(&mut world);
         assert_eq!(span(&world).map(|s| s.frames), Some(0));
         assert_eq!(world.resource::<FrameClock>().recent().count(), RECENT, "the kept frames stay");
+    }
+
+    #[test]
+    fn a_span_counts_its_own_frames_whenever_their_render_times_come_in() {
+        let mut world = World::new();
+        world.insert_resource(FrameClock::new(ms(16)));
+        let mut clock = world.resource_mut::<FrameClock>();
+        // A warmup of two frames; the second is still drawn when the span begins.
+        let at = frames(&mut clock, Instant::now(), &[(30, 1, false), (2, 1, false)]);
+        clock.rendered(1, ms(1));
+        begin_span(&mut world);
+        let mut clock = world.resource_mut::<FrameClock>();
+        let at = frames(&mut clock, at, &[(30, 1, false), (2, 1, false)]);
+        clock.rendered(2, ms(1));
+        clock.rendered(3, ms(1));
+        clock.span_frames.1 = clock.frame;
+        assert!(!clock.span_settled(), "frame 4 waits for its render time");
+        // A frame on the paused game while the last one is drawn: it is not the span's.
+        frames(&mut clock, at, &[(40, 0, true)]);
+        clock.rendered(4, ms(1));
+        clock.rendered(5, ms(1));
+        assert!(clock.span_settled());
+        let span = span(&world).unwrap();
+        assert_eq!((span.frames, span.over_budget, span.worst_frame), (2, 1, 3), "frames 3 and 4 only");
+        assert_eq!(world.resource::<FrameClock>().recent().count(), 5, "every frame is still recent");
     }
 
     #[test]
