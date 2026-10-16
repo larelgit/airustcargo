@@ -495,8 +495,9 @@ InGame`).
 - Смена региона заканчивается событием `WorldRebuilt { reason: "region <id>" }` (как и загрузка снапшота).
 - `player_body(world, n)` — тело с `PlayerId(n)`; через него агент, привязанный к игроку, находит своё тело.
 
-**`ai/status`** показывает версию и модули: `engine: {version: "0.2.0", modules: [core, content, motion, action, level,
-world, npc], state: "InGame", pause: "Running"}` и `loading: []`, пока ничего не грузится; с регионом в мире ещё поле `world`.
+**`ai/status`** показывает версию и модули: `engine: {version: "0.2.0", modules: [core, content, settings, motion, action, level,
+world, npc, net, save, coop, locale, ui, audio, look, scatter, fx, dev], state: "InGame", pause: "Running"}` и `loading: []`, пока
+ничего не грузится; с регионом в мире ещё поле `world`.
 
 ## Контент (E4)
 
@@ -517,7 +518,8 @@ world, npc], state: "InGame", pause: "Running"}` и `loading: []`, пока ни
 - Движок регистрирует свои виды: `prefab`, `locomotion`, `action`, `moveset`, `status`, `combat_tuning`, `animset`,
   `input_map`, уровни `level`, мир `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`, враги `behavior`,
   `perception`, `director`, `attack_plan`, `npc_tuning` и `nav`, вид мешей `look` (см. «Стилизованные материалы (E10.1)»),
-  эффекты `effect` и `fx` (см. «Эффекты и декали (E10.3)»). Игра добавляет свои: у песочницы `layout`, у шаблона `arena`.
+  растительность `scatter` (см. «Растительность и мелкие объекты (E10.2)»), эффекты `effect` и `fx` (см. «Эффекты и декали
+  (E10.3)»). Игра добавляет свои: у песочницы `layout`, у шаблона `arena`.
   `content_list` (инструмент) показывает виды и число определений.
 - `#[serde(deny_unknown_fields)]` на структуре превращает опечатку в ошибку со строкой; без него опечатка в необязательном
   поле молча оставит значение по умолчанию.
@@ -587,28 +589,39 @@ content: 123 definitions in 35 files
   action  23
   animset  0
   attack_plan  3
+  audio  1
   behavior  2
   bounds  1
   combat_tuning  1
   devmenu  4
   director  2
   dungeon  0
+  effect  5
+  fx  1
   input_map  0
   layout  3
   level  1
+  locale  2
   locomotion  3
+  look  15
   moveset  4
+  music  1
   nav  1
+  net  0
   npc_tuning  0
   perception  3
+  perf  1
   poi  4
   prefab  7
   region  1
   room  0
+  save  0
+  scatter  3
   screen  3
   socket_rules  1
+  sound  16
   status  0
-  theme  0
+  theme  1
   tile  9
   tile_map  1
 $ shards act spawn_prefab id=skeleton x=5 z=5
@@ -2881,14 +2894,14 @@ perf reference: all 8 budgets met
 
 **Меню** (F10 в окне; инструмент `dev_menu`) — пункты по разделам. Свои пункты модули движка регистрируют для своих
 инструментов (`add_dev_entry`): время (пауза, шаг, замедление, снапшоты, отчёт об ошибке), мир (регион и его зерно, проверка этого зерна
-генератором и 200 таких регионов, коллайдеры, тайлы, виды мешей и их контуры, эффекты), бой (бессмертие, лечение, хитбоксы, декали телеграфов), ИИ (умы NPC, навсетка), сеть
+генератором и 200 таких регионов, коллайдеры, тайлы, виды мешей и их контуры, растительность, эффекты), бой (бессмертие, лечение, хитбоксы, декали телеграфов), ИИ (умы NPC, навсетка), сеть
 (связи, имитация лага), сохранения (проверка). За ними — пункты игры из контента. Переключатель показывает строку своего
 другого состояния (`npc_overlay on=false`, пока оверлей включён); пункт, которому нужно значение, в окне кладёт строку в
 консоль дописать, а инструмент просит выполнить её со значениями; пункт, которому сейчас не на чем работать, говорит почему:
 
 ```text
 $ shards act dev_menu
-dev menu: 35 entries (F10 in a window); `dev_menu run=<id>` runs one, `console line=...` runs any line
+dev menu: 37 entries (F10 in a window); `dev_menu run=<id>` runs one, `console line=...` runs any line
 time
   pause            Pause / resume                          resume
   step             One tick (while paused)                 step ticks=1
@@ -4307,7 +4320,7 @@ built: …\target\x86_64-pc-windows-msvc\dist\my_game.exe
 package: …\my_game\dist\my_game-0.1.0-windows-x86_64 (program 123.6 MB, assets/ 52 files, 1.3 MB)
 subsystem: windows (no console window)
 imports: system DLLs only (kernel32.dll, oleaut32.dll, uiautomationcore.dll, user32.dll, …, dxgi.dll, ws2_32.dll)
-check-content: ok: 67 definitions in 27 files
+check-content: ok: 71 definitions in 29 files
 smoke: ok: loaded in 0.05s, 300 ticks in 0.07s
 writes: nothing in its own folder
 ```
