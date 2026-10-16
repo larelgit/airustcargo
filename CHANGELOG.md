@@ -807,7 +807,7 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
 - Числа — контент: `avoidance: (weight, horizon, range, neighbours, margin)` у `npc_tuning` (для всех) или у поведения
   (`BehaviorDef.avoidance`, перекрывает), `AvoidanceDef` с проверкой границ; `weight: 0.0` выключает уклонение.
 - `NavAgent`: поля `preferred` (скорость, которую просит маршрут), `avoiding` (кого обходит) и `side` (с какой стороны).
-  `npc_state` → `nav.avoiding`, `npc_overlay` → `avoiding e7`, условие `step --until named:npc_avoiding`; журнал о
+  `npc_state` → `nav.avoiding`, `npc_overlay` → `avoiding e7`, условие `step --until named:npc_avoiding`; журнал об
   уклонении молчит.
 - Прямой маршрут (цель на виду) больше не идёт вслепую, когда NPC сошёл с проверенной прямой: `NavAgent.planned_from` помнит,
   откуда план строился, и NPC дальше своего радиуса от отрезка «оттуда — цель» (обходил тело, его толкнули или отбросили)
