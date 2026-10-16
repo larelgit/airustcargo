@@ -190,6 +190,22 @@ fn a_game_that_is_its_own_host_is_refused() {
 }
 
 #[test]
+fn a_lobby_of_this_same_account_is_refused_and_says_so() {
+    // The host is another game on the account the client plays on: Steam hands the client its own
+    // id as the lobby's owner, which is no one to play against.
+    let steam = FakeSteam::new(MemoryHub::new(19));
+    let lobby = steam.lobby_of(FIRST_USER, SteamLobby::Invisible, 3);
+    let mut app = build(config(|c| client(c, "me", Some(lobby))), steam.user(FIRST_USER, "me"), save_folder());
+    frames_until(&mut app, |w| matches!(session(w).state, SteamState::Failed(_)));
+    let why = format!(
+        "cannot enter Steam lobby {lobby}: this Steam account owns the lobby: a second game on the same account cannot join it (join from another account)"
+    );
+    assert_eq!(session(app.world()).state, SteamState::Failed(why.clone()));
+    assert!(journal(app.world(), Some(JournalKind::Error)).contains(&format!("steam: {why}")), "{:?}", journal(app.world(), None));
+    assert!(matches!(app.world().resource::<NetState>(), NetState::Joining(w) if w.contains("steam_join lobby=ID")));
+}
+
+#[test]
 fn a_lobby_is_friends_only_unless_the_launch_names_its_type() {
     let steam = FakeSteam::new(MemoryHub::new(41));
     let friends = build(config(lobby_host), steam.user(FIRST_USER, "host"), save_folder());

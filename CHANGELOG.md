@@ -767,7 +767,7 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   поиск. `steam_join` берёт id из ответа; пункт `steam_lobbies` — в меню разработчика. Бэкенд: `Backend::find_lobbies` (пустой,
   поддельный с `FakeSteam::hold_searches`, `fail_searches` и `set_lobby_data` для тестов, настоящий — `RequestLobbyList` с
   равенствами по строкам, одним свободным местом и дальностью «весь мир», подробности лобби читаются в `pump`);
-  `SteamLobby::in_search`. Тесты: 4 в `src/fake.rs`, 3 в `src/lobbies.rs`, 7 в `tests/steam/lobbies.rs`. Размер лобби, которого Steam не назвал, строка показывает как `2 of ?`. На настоящем Steam поиск не проверен.
+  `SteamLobby::in_search`. Тесты: 4 в `src/fake.rs`, 3 в `src/lobbies.rs`, 7 в `tests/steam/lobbies.rs`. Размер лобби, которого Steam не назвал, строка показывает как `2 of ?`. Вход в лобби, хозяин которого — этот же аккаунт (вторая игра на аккаунте хоста), отказывает прямо: `this Steam account owns the lobby: a second game on the same account cannot join it (join from another account)`, а не «its owner left»; `FakeSteam::lobby_of` делает такое лобби для теста. На настоящем Steam поиск не проверен.
 - Стенд поверх поддельного Steam (`shards`, `shards_net`, `shards_steam`): `--stand N --stand-steam [--steam-lobby TYPE]` (игра
   со feature `steam`; без неё код 2) строит тот же стенд в одном процессе, но участники встречаются по `FakeSteam` с реле на
   сети в памяти стенда без задержки (`--net-sim` работает поверх реле один раз, как у настоящего Steam): хост делает лобби, клиенты ждут лобби (`--join steam:`), ищут его `steam_lobbies` и входят

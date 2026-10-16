@@ -4877,7 +4877,10 @@ server · serving as 90071992547409921: players join with --join steam:900719925
 - `steam_host` (Dev, control) — хост лобби создаёт лобби заново после сбоя; сервер говорит, вошёл ли он. Запущенная игра хостом
   не становится: только флагами.
 - `steam_join lobby=ID` или `host=ID` (Dev, control) — клиент, запущенный с `--join steam:` или не вошедший в свою сессию, входит в
-  лобби (id — из `steam_lobbies`, `steam` или журнала хоста) или к хосту. Игра в сессии её не меняет.
+  лобби (id — из `steam_lobbies`, `steam` или журнала хоста) или к хосту. Игра в сессии её не меняет. Лобби, хозяин которого
+  этот же аккаунт Steam (вторая игра на том же аккаунте, что и хост), вход отклоняет и говорит об этом: `cannot enter Steam
+  lobby <id>: this Steam account owns the lobby: a second game on the same account cannot join it (join from another
+  account)`; `the lobby has no host (its owner left)` остаётся для лобби, у которого Steam владельца не назвал.
 - `steam_invite friend=ID` (Player, control) — пригласить друга в лобби; без `friend` открывается окно приглашений оверлея.
 - `achievement_unlock id=… [player=N]` (Dev, control, только хост) — открыть, как открыла бы игра; на хосте событие уходит и
   клиентам.
@@ -4961,7 +4964,7 @@ cargo run -p sandbox --features shards/steam_sdk -- --headless --steam-host --st
 cargo run -p sandbox --features shards/steam_sdk -- --headless --join steam: --steam-app 480 --port 0 --port-file /tmp/cli.port &
 SHARDS_PORT_FILE=/tmp/cli.port cargo shards act steam_lobbies    # 1 lobby of `…` of this build …: lobby <id> · host <имя> (<id>) · 1 of 3 · build matches
 SHARDS_PORT_FILE=/tmp/host.port cargo shards act steam_lobbies   # то же; нет — смотрите note: в ответе (лобби самого хоста Steam в список мог не включить)
-SHARDS_PORT_FILE=/tmp/cli.port cargo shards act steam_join lobby=<id из ответа>   # без второго аккаунта Steam откажет: «the lobby is gone or full, or you may not enter it»
+SHARDS_PORT_FILE=/tmp/cli.port cargo shards act steam_join lobby=<id из ответа>   # тот же аккаунт: «cannot enter Steam lobby <id>: this Steam account owns the lobby: a second game on the same account cannot join it (join from another account)»
 SHARDS_PORT_FILE=/tmp/cli.port cargo shards quit; SHARDS_PORT_FILE=/tmp/host.port cargo shards quit
 ```
 

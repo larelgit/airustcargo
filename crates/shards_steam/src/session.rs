@@ -301,14 +301,30 @@ fn serving(world: &mut World, backend: &mut dyn Backend, id: SteamId) {
     journal::log(world, JournalKind::Local, format!("steam: game server logged on as {id}: players join with --join steam:{id}"));
 }
 
+/// Why a lobby has no host to play against: its owner is this very account.
+const SAME_ACCOUNT: &str =
+    "this Steam account owns the lobby: a second game on the same account cannot join it (join from another account)";
+/// Why a lobby has no host to play against: Steam names no owner.
+const NO_OWNER: &str = "the lobby has no host (its owner left)";
+
+/// The host of a lobby a client entered: its owner, or why there is none. The owner is no host
+/// when Steam names none (it left), or when it is `me`: a second game on the account that hosts
+/// has no one but itself to play against.
+fn lobby_host(owner: Option<SteamId>, me: Option<SteamId>) -> Result<SteamId, &'static str> {
+    match owner {
+        None | Some(0) => Err(NO_OWNER),
+        Some(owner) if Some(owner) == me => Err(SAME_ACCOUNT),
+        Some(owner) => Ok(owner),
+    }
+}
+
 /// A client entered its lobby: the owner is the host, and the relay opens to it.
 fn entered(world: &mut World, backend: &mut dyn Backend, lobby: SteamId) {
-    let me = backend.info().user;
-    let owner = match backend.lobby_owner(lobby) {
-        Some(owner) if Some(owner) != me && owner != 0 => owner,
-        _ => {
+    let owner = match lobby_host(backend.lobby_owner(lobby), backend.info().user) {
+        Ok(owner) => owner,
+        Err(why) => {
             backend.leave_lobby(lobby);
-            return client_failed(world, backend, Some(lobby), "the lobby has no host (its owner left)");
+            return client_failed(world, backend, Some(lobby), why);
         }
     };
     let members = backend.lobby_members(lobby);
@@ -535,4 +551,20 @@ pub(crate) fn invite(world: &mut World, friend: Option<SteamId>) -> Result<Strin
         });
     };
     world.resource_mut::<Steam>().backend.invite(lobby, friend)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_lobby_owned_by_this_account_has_no_host_to_play_against() {
+        let (me, other) = (76_561_197_960_265_729, 76_561_197_960_265_730);
+        assert_eq!(lobby_host(Some(other), Some(me)), Ok(other));
+        assert_eq!(lobby_host(Some(other), None), Ok(other), "no id of its own yet: the owner is someone else's");
+        assert_eq!(lobby_host(Some(me), Some(me)), Err(SAME_ACCOUNT));
+        assert_eq!(lobby_host(Some(0), Some(me)), Err(NO_OWNER));
+        assert_eq!(lobby_host(None, Some(me)), Err(NO_OWNER));
+        assert!(SAME_ACCOUNT.contains("a second game on the same account"), "it says what happened, not that the owner left");
+    }
 }

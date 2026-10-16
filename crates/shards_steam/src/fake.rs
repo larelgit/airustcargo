@@ -232,6 +232,16 @@ impl FakeSteam {
         self.lock().lobbies.get(&lobby).map(|l| l.kind)
     }
 
+    /// A lobby that `owner`'s account made in a game outside this process (a second game of the
+    /// same account, or one this fake does not run): no game here is told of it. Its id.
+    pub fn lobby_of(&self, owner: SteamId, kind: SteamLobby, max: u32) -> SteamId {
+        let mut u = self.lock();
+        u.lobbies_made += 1;
+        let lobby = LOBBY_BASE + u.lobbies_made;
+        u.lobbies.insert(lobby, Lobby { kind, owner, members: vec![owner], max: max.max(1), data: BTreeMap::new() });
+        lobby
+    }
+
     /// Sets `key` in `lobby`'s data as its owner would: a test's way to give a lobby another build.
     /// Whether the lobby exists.
     pub fn set_lobby_data(&self, lobby: SteamId, key: &str, value: &str) -> bool {
