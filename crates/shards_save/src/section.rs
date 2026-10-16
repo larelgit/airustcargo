@@ -100,8 +100,9 @@ pub trait SaveSection: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// Key in the file and in the registry: lowercase letters, digits, `_`. Unique across
     /// the game. Registering a second section with a name replaces the first (a game
     /// replaces the engine's `position` with "restore at camp"), keeping its place in the
-    /// order sections are applied; the first one's migrations go with it when the second
-    /// comes from another crate (register the new one's migrations after it).
+    /// order sections are applied. A replacement from another crate starts a migration history
+    /// of its own: the first one's migrations are removed with it, and the new one registers the
+    /// migrations of its own versions after it.
     const NAME: &'static str;
     /// The schema version, from 1. Raise it when the serde form changes in a way old files
     /// do not read, and add a migration from the version before.
@@ -372,8 +373,9 @@ pub struct SaveRegistry {
 
 impl SaveRegistry {
     /// Adds a section; one with the same name is replaced in place. A section of another crate
-    /// (a game's in place of the engine's) has data of its own: the migrations registered for
-    /// the one it replaces, which read that one's old data, go with it. Panics on a bad name,
+    /// (a game's in place of the engine's) has data of its own and starts its own migration
+    /// history: the migrations registered for the one it replaces, which read that one's old
+    /// data, are removed. Panics on a bad name,
     /// version 0, or a name that is already registered as the other kind.
     pub fn add(&mut self, entry: SectionEntry) {
         assert!(valid_name(&entry.name), "save section name `{}` must be lowercase letters, digits and `_`, at most 48", entry.name);

@@ -10,8 +10,9 @@
 //! | `vitals` | character | health, stamina and charges. Applied to the components the body already has (a fresh body has what its prefab gives it); a charge the body lacks is added. A body that died since the save is revived (`shards_action::revive`, as the dev `heal` does, and `Healed` follows); a save made at zero health leaves it dead |
 //!
 //! A game replaces one with a section of the same name (`position` as "restore at the last
-//! camp"): the new one takes its place in the order sections are applied, and the engine's
-//! migrations of the one it replaces (`region` from v1) go with it.
+//! camp"): the new one takes its place in the order sections are applied and starts a migration
+//! history of its own; the engine's migrations of the one it replaces (`region` from v1) are
+//! removed.
 
 use ai_core::journal::{self, JournalKind};
 use bevy::prelude::*;
@@ -67,7 +68,7 @@ pub struct RegionSave {
 /// the one its hash and names describe does not read: the save module counts that copy as
 /// damaged and tries its backups.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(try_from = "SavedRegionData")]
+#[serde(try_from = "SavedRegionData", into = "SavedRegionData")]
 pub struct SavedRegion {
     pub id: String,
     pub seed: u64,
@@ -81,23 +82,37 @@ pub struct SavedRegion {
     pub manifest: Option<RegionManifest>,
 }
 
-/// [`SavedRegion`] as a file holds it, before it is checked.
-#[derive(Deserialize)]
+/// [`SavedRegion`] as a file holds it, before it is checked. `from_v1` marks a region migrated
+/// from version 1 of the section, the only one that may lack its manifest: a version 2 file
+/// without one is damaged, not old.
+#[derive(Serialize, Deserialize)]
 struct SavedRegionData {
     id: String,
     seed: u64,
     version: u32,
     manifest_hash: String,
-    #[serde(default)]
     manifest: Option<RegionManifest>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    from_v1: bool,
+}
+
+impl From<SavedRegion> for SavedRegionData {
+    fn from(saved: SavedRegion) -> Self {
+        let SavedRegion { id, seed, version, manifest_hash, manifest } = saved;
+        let from_v1 = manifest.is_none();
+        SavedRegionData { id, seed, version, manifest_hash, manifest, from_v1 }
+    }
 }
 
 impl TryFrom<SavedRegionData> for SavedRegion {
     type Error = String;
 
     fn try_from(data: SavedRegionData) -> Result<Self, String> {
-        let SavedRegionData { id, seed, version, manifest_hash, manifest } = data;
+        let SavedRegionData { id, seed, version, manifest_hash, manifest, from_v1 } = data;
         let saved = SavedRegion { id, seed, version, manifest_hash, manifest };
+        if saved.manifest.is_none() && !from_v1 {
+            return Err(format!("the save of {} keeps no manifest; only a save of version 1 of the section may lack it", saved.title()));
+        }
         saved.check()?;
         Ok(saved)
     }
@@ -133,10 +148,12 @@ impl SavedRegion {
 }
 
 /// Version 1 of the section kept no manifest: such a region is generated again when it is
-/// loaded ([`SavedRegion::manifest`] `None`).
+/// loaded ([`SavedRegion::manifest`] `None`). `from_v1` says so to the reader, which refuses a
+/// missing manifest in any other save.
 fn region_from_v1(mut old: Value) -> Result<Value, String> {
     if let Some(active) = old.get_mut("active").and_then(Value::as_object_mut) {
         active.insert("manifest".to_owned(), Value::Null);
+        active.insert("from_v1".to_owned(), Value::Bool(true));
     }
     Ok(old)
 }
@@ -492,17 +509,30 @@ mod tests {
         let err = read(saved(foreign)).unwrap_err();
         assert!(err.contains("is of format `shards-region/0`; this build reads `shards-region/1`"), "{err}");
 
-        let mut garbled = good;
+        let mut garbled = good.clone();
         garbled["active"]["manifest_hash"] = json!("not hex");
         assert!(read(garbled).unwrap_err().contains("manifest_hash `not hex` is not hex"));
+
+        // A version 2 save without its manifest is damaged, not a version 1 one: it is not
+        // generated again, and the load tries the backups.
+        let mut null = good.clone();
+        null["active"]["manifest"] = Value::Null;
+        let mut omitted = good.clone();
+        omitted["active"].as_object_mut().unwrap().remove("manifest");
+        for without in [null, omitted] {
+            let err = read(without).unwrap_err();
+            assert!(err.contains("the save of meadow seed 42 v3 keeps no manifest; only a save of version 1 of the section may lack it"), "{err}");
+        }
     }
 
     #[test]
     fn a_version_1_region_reads_as_one_without_a_manifest() {
         let v1 = json!({"active": {"id": "wilds", "seed": 42, "version": 1, "manifest_hash": "7bbfdc3b62623fbc"}});
         let migrated = region_from_v1(v1).unwrap();
-        assert_eq!(migrated["active"]["manifest"], Value::Null);
-        let active = read(migrated).unwrap().active.unwrap();
+        assert_eq!((&migrated["active"]["manifest"], &migrated["active"]["from_v1"]), (&Value::Null, &json!(true)));
+        let back = read(migrated.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&back).unwrap(), migrated, "writes back as it read, still marked");
+        let active = back.active.unwrap();
         assert_eq!(active.check(), Ok(0x7bbf_dc3b_6262_3fbc));
         assert_eq!((active.title(), active.manifest), ("wilds seed 42 v1".to_owned(), None));
         // Saved outside any region: nothing to add.
