@@ -100,6 +100,14 @@ fn a_player_waiting_for_an_invite_follows_it_and_a_busy_one_keeps_it() {
     let out = stand.call(0, "steam_invite", serde_json::json!({ "friend": SECOND_USER }));
     assert!(out.ok, "{}", out.result);
     assert_eq!(text(&out), format!("invited c1 ({SECOND_USER}) to lobby {lobby}"));
+    // The client takes the invite at one frame and enters the lobby at a later one, while its content
+    // may still be loading; `settle` has nothing to wait for until the client has a transport.
+    let started = std::time::Instant::now();
+    while !matches!(session(stand.world(member)).state, SteamState::InLobby { .. }) {
+        assert!(started.elapsed() < testing::LOAD_TIMEOUT, "{:?}", session(stand.world(member)).state);
+        stand.frame();
+        std::thread::sleep(Duration::from_millis(1));
+    }
     stand.settle().unwrap();
     let world = stand.world(member);
     assert_eq!(connected(world), Some(1), "{:?}", world.resource::<NetState>());
