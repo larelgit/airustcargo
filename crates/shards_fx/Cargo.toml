@@ -1,0 +1,29 @@
+[package]
+name = "shards_fx"
+description = "Shards effects (E10.3): particles from content in pools, and the ground telegraphs of attacks as decals."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# Drawing the effects: the pools' meshes, the particle and zone materials, their shaders, the
+# decals and the depth prepass they need. Without it the kinds, their checks and the tools are
+# still there: a headless game draws nothing to play.
+render = ["ai_core/render", "shards_action/render", "bevy/3d_bevy_render", "bevy/bevy_pbr"]
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+shards_action.workspace = true
+shards_motion.workspace = true
+bevy = { workspace = true, features = ["std", "serialize", "bevy_asset"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+ron.workspace = true
+# Integration tests build apps the way a game does: the whole engine (`shards::testing`).
+shards = { workspace = true, features = ["render", "remote", "hot_reload"] }

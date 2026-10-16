@@ -5425,6 +5425,7 @@ dependencies = [
  "shards_content",
  "shards_core",
  "shards_dev",
+ "shards_fx",
  "shards_level",
  "shards_locale",
  "shards_look",
@@ -5523,6 +5524,23 @@ dependencies = [
  "shards_core",
  "shards_motion",
  "shards_script",
+]
+
+[[package]]
+name = "shards_fx"
+version = "0.2.0"
+dependencies = [
+ "ai_core",
+ "bevy",
+ "ron",
+ "schemars",
+ "serde",
+ "serde_json",
+ "shards",
+ "shards_action",
+ "shards_content",
+ "shards_core",
+ "shards_motion",
 ]
 
 [[package]]

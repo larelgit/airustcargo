@@ -1,0 +1,15 @@
+// The sandbox's table of effects (content kind `fx`, one per game): which effect each engine
+// event plays. A hit plays at the one hit, away from the attacker; a guard's, a parry's at the
+// defender; a death's, a heal's at who died or healed. A clip's cue would play `cues` (the
+// sandbox's clips have none).
+{
+    "sandbox": (
+        effects: {
+            "damaged": "hit_spark",
+            "blocked": "block_spark",
+            "parried": "parry_flash",
+            "died": "death_dust",
+            "healed": "heal_glow",
+        },
+    ),
+}

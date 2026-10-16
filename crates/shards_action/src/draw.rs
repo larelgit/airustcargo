@@ -176,7 +176,7 @@ fn closed(points: &[Vec3]) -> Vec<Vec3> {
 }
 
 /// The average of the ring's points: where a fill grows from.
-fn centroid(ring: &[Vec3]) -> Vec3 {
+pub fn centroid(ring: &[Vec3]) -> Vec3 {
     if ring.is_empty() {
         return Vec3::ZERO;
     }
@@ -432,6 +432,10 @@ pub struct TelegraphStyle {
     pub symbol_lift: f32,
     /// How much the warning flickers (the player's accessibility setting).
     pub flashes: FlashLevel,
+    /// The fill on the ground (the hatch and the copy of the outline that grows as the hit
+    /// nears) is a decal the effects module draws (`telegraph_decals`): the gizmos draw the
+    /// outline, the symbol and its stem alone.
+    pub decals: bool,
 }
 
 impl Default for TelegraphStyle {
@@ -444,6 +448,7 @@ impl Default for TelegraphStyle {
             symbol_size: 0.9,
             symbol_lift: 2.4,
             flashes: FlashLevel::Full,
+            decals: false,
         }
     }
 }
@@ -495,16 +500,19 @@ pub fn telegraph(
     let middle = centroid(&outline);
 
     out.strip(closed(&outline), rgba(base, (0.4 + 0.6 * k) * flicker));
-    let spacing = style.hatch_far + (style.hatch_near - style.hatch_far) * k;
-    for (a, b) in hatch(&outline, spacing, std::f32::consts::FRAC_PI_4) {
-        out.line(a, b, rgba(base, (0.12 + 0.4 * k) * flicker));
-    }
-    // The fill: a copy of the outline that grows from the middle and reaches it as the hit
-    // lands. Read as a timer even in grey.
-    if k < 1.0 - 1e-3 {
-        out.strip(closed(&scaled(&outline, middle, k.max(0.04))), rgba(base, 0.55 + 0.45 * k));
-    } else {
-        out.strip(closed(&scaled(&outline, middle, 0.98)), rgba(base, flicker));
+    // The hatch and the fill are the decal's when the effects module draws one.
+    if !style.decals {
+        let spacing = style.hatch_far + (style.hatch_near - style.hatch_far) * k;
+        for (a, b) in hatch(&outline, spacing, std::f32::consts::FRAC_PI_4) {
+            out.line(a, b, rgba(base, (0.12 + 0.4 * k) * flicker));
+        }
+        // The fill: a copy of the outline that grows from the middle and reaches it as the hit
+        // lands. Read as a timer even in grey.
+        if k < 1.0 - 1e-3 {
+            out.strip(closed(&scaled(&outline, middle, k.max(0.04))), rgba(base, 0.55 + 0.45 * k));
+        } else {
+            out.strip(closed(&scaled(&outline, middle, 0.98)), rgba(base, flicker));
+        }
     }
     // The symbol: the telegraph's, or a bang for an attack that gives no warning of its own
     // (what `threat_indicators` and the agent's ALERT say too).
@@ -528,21 +536,41 @@ fn local_player(world: &World) -> Option<(Entity, Option<Team>)> {
     q.iter(world).next().map(|(e, t)| (e, t.cloned()))
 }
 
-/// The ground telegraphs, for the local player's eyes: every zone of an attack that has a
-/// telegraph, and every zone hostile to the player even without one (drawn with a bang).
-/// Enemies' zones are warm, the others cool; the player's own swings are no warning and stay
-/// off the ground (the combat overlay shows them). With no local player every zone is hostile.
-pub fn telegraphs(world: &World, style: &TelegraphStyle, time: f32, billboard: Quat) -> DrawList {
+/// A zone on the ground for the local player's eyes, as [`shown_telegraphs`] picks it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShownTelegraph {
+    pub zone: HitZone,
+    /// The floor under its attacker.
+    pub ground_y: f32,
+    /// An enemy's (warm), else an ally's (cool).
+    pub hostile: bool,
+}
+
+/// The zones the ground shows the local player: every zone of an attack that has a telegraph,
+/// and every zone hostile to the player even without one (drawn with a bang). Enemies' zones are
+/// hostile, the others not; the player's own swings are no warning and stay off the ground (the
+/// combat overlay shows them). With no local player every zone is hostile. The gizmos and the
+/// effects module's decals draw this one list.
+pub fn shown_telegraphs(world: &World) -> Vec<ShownTelegraph> {
     let me = local_player(world);
-    let mut out = DrawList::default();
+    let mut out = Vec::new();
     for zone in hit_zones(world) {
         let mine = me.as_ref().is_some_and(|(e, _)| *e == zone.attacker);
         let hostile = !mine && me.as_ref().is_none_or(|(_, team)| hostile(zone.team.as_ref(), team.as_ref()));
         if zone.symbol.is_none() && !hostile {
             continue;
         }
-        let ground = ground_of(world, zone.attacker, zone.shape.origin.y);
-        out.extend(telegraph(&zone, ground, hostile, style, time, billboard));
+        let ground_y = ground_of(world, zone.attacker, zone.shape.origin.y);
+        out.push(ShownTelegraph { zone, ground_y, hostile });
+    }
+    out
+}
+
+/// The ground telegraphs ([`shown_telegraphs`]), enemies' zones warm, the others cool.
+pub fn telegraphs(world: &World, style: &TelegraphStyle, time: f32, billboard: Quat) -> DrawList {
+    let mut out = DrawList::default();
+    for shown in shown_telegraphs(world) {
+        out.extend(telegraph(&shown.zone, shown.ground_y, shown.hostile, style, time, billboard));
     }
     out
 }
@@ -946,6 +974,20 @@ mod tests {
         let radius = |r: &Vec<Vec3>| r.iter().map(|p| (p.x * p.x + p.z * p.z).sqrt()).fold(0.0, f32::max);
         assert!((radius(rings[0]) - 3.0).abs() < 1e-3);
         assert!((radius(rings[1]) - 1.5).abs() < 1e-3, "the fill grows with the urgency: {}", radius(rings[1]));
+    }
+
+    #[test]
+    fn with_decals_the_gizmos_leave_the_hatch_and_the_fill_to_them() {
+        let z = zone(HitShape::Circle { radius: 3.0, height: 2.0 }, 0.6, Some("!"));
+        let gizmos = telegraph(&z, 0.0, true, &TelegraphStyle::default(), 0.0, Quat::IDENTITY);
+        let decals = telegraph(&z, 0.0, true, &TelegraphStyle { decals: true, ..TelegraphStyle::default() }, 0.0, Quat::IDENTITY);
+        let (strips, lines, texts) = decals.counts();
+        let rings = decals.0.iter().filter(|p| matches!(p, Prim::Strip { points, .. } if points.len() > 30)).count();
+        assert_eq!(rings, 1, "the outline, not the fill");
+        assert_eq!(lines, 1, "the stem, no hatch");
+        // The rest, the bang's strokes, as before.
+        assert_eq!((strips + 1, texts), (gizmos.counts().0, gizmos.counts().2));
+        assert!(gizmos.counts().1 > lines);
     }
 
     #[test]
