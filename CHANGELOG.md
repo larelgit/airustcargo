@@ -764,10 +764,11 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
 - `tools/blender/outpost_level.py`: уровень, собранный как у художника (неприменённые поворот и масштаб, модификатор *Array*,
   родители через Ctrl+P, пустышки-маркеры всех видов, датчики, коллайдеры всех форм, префаб, компоненты из текста, словаря и
   флажка, коллекция-инстанс, лампа, имена с пробелами и не латиницей), экспортируется Blender 5.2.2 LTS без окна
-  (`blender -b --factory-startup --python-exit-code 1 -P tools/blender/outpost_level.py -- <папка>`), байт в байт
-  одинаково. Файлы — `crates/shards_level/tests/level/blender/`: `outpost.glb`, `outpost_lights.gltf` + `.bin` (с лампой),
-  `outpost_draco.glb`, `outpost_broken.glb` (ошибки художника).
-- Тесты `tests/level/from_blender.rs` (13) читают эти файлы: пути узлов, мировые позиции после Z-up → Y-up, формы и размеры
+  (`blender -b --factory-startup --python-exit-code 1 -P tools/blender/outpost_level.py -- <папка>`; байт в байт экспорт не
+  повторяется, двоичные данные мешей от запуска к запуску немного разные). Файлы — `crates/shards_level/tests/level/blender/`:
+  `outpost.glb`, `outpost_lights.gltf` + `.bin` (с лампой), `outpost_draco.glb`, `outpost_meshopt.glb` и
+  `outpost_meshopt_khr.glb` (meshopt с `EXT_` и с `KHR_`), `outpost_broken.glb` (ошибки художника).
+- Тесты `tests/level/from_blender.rs` (14) читают эти файлы: пути узлов, мировые позиции после Z-up → Y-up, формы и размеры
   коллайдеров, датчики, все маркеры, префаб и компоненты, `content check`, `level_info`, `spawn_level`, `level_reload`, горячая
   перезагрузка (сломанный экспорт поверх файла отклонён, исправленный заменяет уровень),
   ошибки с путями узлов; `crates/shards/tests/level_render.rs` рисует `outpost.glb` загрузчиком Bevy.
@@ -778,7 +779,8 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
 - Уровни (найдено настоящим экспортом Blender): `to` у `navlink` принимает и свойство *Data-Block* (объект, который экспортёр
   пишет как `{"name", "type"}`), без второй, ложной ошибки «узел не navlink»; файл с обязательным расширением, которое не
   меняет узлов (`KHR_lights_punctual` с *Punctual Lights*, `KHR_texture_transform`), читается и без фичи `render`, а сжатые
-  меши (Draco, meshopt, квантование) отказывают одной строкой с галочкой, которую снять; свойства движка на данных меша
+  меши (Draco, meshopt с `EXT_meshopt_compression` и с `KHR_meshopt_compression`, квантование) отказывают одной строкой
+  с галочкой, которую снять (у квантования — с тем, что его писал не Blender); свойства движка на данных меша
   вместо объекта — ошибка узла, а не молчание; картинка уровня — сцена по умолчанию файла, а не нулевая (Blender пишет все
   сцены `.blend`, и сцена с коллекцией-инстансом шла первой).
 - Windows: `cargo clippy --workspace --all-targets -- -D warnings` молчит: помощники тестов `stand_udp`, которые нужны только

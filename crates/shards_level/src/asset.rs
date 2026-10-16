@@ -197,13 +197,18 @@ impl LevelAsset {
     }
 }
 
-/// Required extensions that store meshes compressed: their `POSITION` data is not in plain
-/// buffers, and Bevy's glTF loader has no decoder for them, so the level could not be drawn.
-/// With the fix in Blender's glTF export.
-const COMPRESSED_MESHES: [(&str, &str); 3] = [
-    ("KHR_draco_mesh_compression", "untick *Data → Draco Compression*"),
-    ("EXT_meshopt_compression", "turn meshopt compression off"),
-    ("KHR_mesh_quantization", "export without mesh quantization"),
+/// Required extensions that store meshes compressed or quantized: Bevy's glTF loader has no
+/// decoder for them, so the level could not be drawn. With the fix. Blender 5.2's exporter
+/// writes Draco and both meshopt variants (*Data → Meshopt Compression* chooses which), but
+/// never `KHR_mesh_quantization`: a file with it went through another tool.
+const COMPRESSED_MESHES: [(&str, &str); 4] = [
+    ("KHR_draco_mesh_compression", "in Blender's glTF export, untick *Data → Draco Compression* and export again"),
+    ("EXT_meshopt_compression", "in Blender's glTF export, untick *Data → Meshopt Compression* and export again"),
+    ("KHR_meshopt_compression", "in Blender's glTF export, untick *Data → Meshopt Compression* and export again"),
+    (
+        "KHR_mesh_quantization",
+        "Blender's glTF export never quantizes, so another tool did (gltfpack does unless given `-noq`): export from Blender again, or run that tool without quantization",
+    ),
 ];
 
 /// The file's JSON, validated. Extensions the file marks required are no reason to refuse
@@ -218,7 +223,7 @@ fn parse(bytes: &[u8]) -> Result<gltf::Document, String> {
     let mut json = gltf::Gltf::from_slice_without_validation(bytes).map_err(invalid)?.document.into_json();
     if let Some((name, fix)) = COMPRESSED_MESHES.iter().find(|(name, _)| json.extensions_required.iter().any(|e| e == name)) {
         return Err(format!(
-            "the meshes are compressed with `{name}`, which the engine cannot read or draw; in Blender's glTF export, {fix} and export again"
+            "the meshes are compressed with `{name}`, which the engine cannot read or draw; {fix}"
         ));
     }
     json.extensions_required.clear();

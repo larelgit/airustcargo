@@ -32,8 +32,8 @@
 //!    every property is dropped); under *Data → Mesh*, tick **Apply Modifiers** (without it
 //!    the file has the meshes before their modifiers, and `auto` colliders fit those).
 //!    *Transform → +Y Up* stays on. `.glb` and `.gltf` (separate or embedded) all work, and
-//!    so do lights and materials; *Draco Compression* does not (Bevy cannot draw it): the
-//!    error says so.
+//!    so do lights and materials; *Draco Compression* and *Meshopt Compression* (either of
+//!    its extensions) do not (Bevy cannot draw them): the error says which box to untick.
 //! 4. Put the file in the game's asset folder, list it in a content file
 //!    (`content/levels/arena.level.ron`, see [`LevelDef`]), and run `shards content check`.
 //!

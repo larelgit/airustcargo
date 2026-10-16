@@ -1,7 +1,8 @@
 //! The level pipeline on files Blender itself exported: `blender/` holds what
 //! `tools/blender/outpost_level.py` writes with Blender 5.2.2 LTS (`outpost.glb`, the same
-//! scene as glTF Separate with punctual lights, with Draco compression, and with an
-//! artist's mistakes), and the content that names it. No Blender is needed to run these
+//! scene as glTF Separate with punctual lights, with Draco compression, with meshopt
+//! compression under each of its two extensions, and with an artist's mistakes), and the
+//! content that names it. No Blender is needed to run these
 //! tests; re-export after changing the script:
 //!
 //! ```text
@@ -63,7 +64,7 @@ fn the_fixtures_are_what_blender_exported() {
     let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(doc["asset"]["generator"], "Khronos glTF Blender I/O v5.2.40");
     assert_eq!(doc["buffers"][0]["uri"], "outpost_lights.bin");
-    for glb in ["outpost.glb", "outpost_draco.glb", "outpost_broken.glb"] {
+    for glb in ["outpost.glb", "outpost_draco.glb", "outpost_meshopt.glb", "outpost_meshopt_khr.glb", "outpost_broken.glb"] {
         let bytes = std::fs::read(blender().join(glb)).unwrap();
         assert_eq!(&bytes[..4], b"glTF", "{glb} is glTF Binary");
     }
@@ -325,6 +326,23 @@ fn draco_compression_is_refused_with_the_fix() {
     let err = LevelAsset::read(&blender(), "outpost_draco.glb").unwrap_err();
     assert!(err.contains("KHR_draco_mesh_compression"), "{err}");
     assert!(err.contains("Draco Compression"), "the fix: {err}");
+}
+
+#[test]
+fn meshopt_compression_is_refused_with_the_fix_under_either_extension() {
+    // *Data → Meshopt Compression* writes `EXT_meshopt_compression` by default and
+    // `KHR_meshopt_compression` when its *Meshopt Extension* says so; both keep `POSITION`
+    // bounds, so only the refusal stops a level Bevy cannot draw.
+    for (glb, extension) in
+        [("outpost_meshopt.glb", "EXT_meshopt_compression"), ("outpost_meshopt_khr.glb", "KHR_meshopt_compression")]
+    {
+        let bytes = std::fs::read(blender().join(glb)).unwrap();
+        let doc = gltf::Gltf::from_slice_without_validation(&bytes).unwrap().document.into_json();
+        assert_eq!(doc.extensions_required, [extension], "{glb} is compressed: Blender found its meshopt library");
+        let err = LevelAsset::read(&blender(), glb).unwrap_err();
+        assert!(err.contains(&format!("`{extension}`")), "{glb}: {err}");
+        assert!(err.contains("untick *Data → Meshopt Compression*"), "{glb}, the fix: {err}");
+    }
 }
 
 #[test]

@@ -140,11 +140,13 @@ fn required_extensions_are_no_reason_to_refuse_a_level_unless_meshes_are_compres
     })
     .unwrap();
     assert_eq!(level.nodes.len(), nodes);
-    // Compressed meshes: the bounds are not in plain buffers and Bevy cannot draw them.
+    // Compressed meshes: Bevy cannot draw them. Blender writes both meshopt extensions (one
+    // checkbox, an enum picks the name); quantization comes from other tools.
     for (name, fix) in [
         ("KHR_draco_mesh_compression", "untick *Data → Draco Compression*"),
-        ("EXT_meshopt_compression", "meshopt compression off"),
-        ("KHR_mesh_quantization", "without mesh quantization"),
+        ("EXT_meshopt_compression", "untick *Data → Meshopt Compression*"),
+        ("KHR_meshopt_compression", "untick *Data → Meshopt Compression*"),
+        ("KHR_mesh_quantization", "Blender's glTF export never quantizes"),
     ] {
         let err = arena_edited(|doc| doc["extensionsRequired"] = json!(["KHR_lights_punctual", name])).unwrap_err();
         assert!(err.starts_with(&format!("the meshes are compressed with `{name}`")) && err.contains(fix), "{err}");

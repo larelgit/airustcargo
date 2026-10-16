@@ -17,6 +17,9 @@ It writes into the folder given after `--`:
 - `outpost_lights.gltf` + `outpost_lights.bin`: glTF Separate, the same scene with
   *Include -> Punctual Lights* ticked (the exporter marks `KHR_lights_punctual` required);
 - `outpost_draco.glb`: the same scene with Draco mesh compression;
+- `outpost_meshopt.glb` and `outpost_meshopt_khr.glb`: the same scene with *Data -> Meshopt
+  Compression*, once with each of its two extensions (`EXT_meshopt_compression`, the
+  default, and `KHR_meshopt_compression`);
 - `outpost_broken.glb`: the scene with mistakes an artist makes (typos, a navlink to
   nowhere, a property on the mesh data instead of the object), for the error messages.
 
@@ -252,7 +255,7 @@ def break_it():
     objects["Rock"].data["collider"] = "auto"
 
 
-def export(path, fmt, lights=False, draco=False):
+def export(path, fmt, lights=False, draco=False, meshopt=None):
     result = bpy.ops.export_scene.gltf(
         filepath=path,
         export_format=fmt,
@@ -260,6 +263,8 @@ def export(path, fmt, lights=False, draco=False):
         export_apply=True,
         export_lights=lights,
         export_draco_mesh_compression_enable=draco,
+        export_meshopt_compression_enable=meshopt is not None,
+        export_meshopt_extension=meshopt or "EXT_meshopt_compression",
     )
     if result != {"FINISHED"}:
         raise RuntimeError(f"export of {path} failed: {result}")
@@ -272,6 +277,8 @@ def main():
     export(os.path.join(folder, "outpost.glb"), "GLB")
     export(os.path.join(folder, "outpost_lights.gltf"), "GLTF_SEPARATE", lights=True)
     export(os.path.join(folder, "outpost_draco.glb"), "GLB", draco=True)
+    export(os.path.join(folder, "outpost_meshopt.glb"), "GLB", meshopt="EXT_meshopt_compression")
+    export(os.path.join(folder, "outpost_meshopt_khr.glb"), "GLB", meshopt="KHR_meshopt_compression")
     break_it()
     export(os.path.join(folder, "outpost_broken.glb"), "GLB")
 
