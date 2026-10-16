@@ -148,6 +148,7 @@ fn the_crash_replay_reproduces_the_failure() {
     assert!(report.journal.contains(&line), "{:?}", report.journal);
     assert_eq!(report.replay_file.as_deref(), Some("replays/crash-tick50.json"));
     assert_eq!(report.replay.as_ref(), Some(&recording));
+    assert!(!report.panics.iter().any(|p| p.message == "the ice gave way"), "not again among the others: {:?}", report.panics);
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     std::fs::write(&file, shards::serde_json::to_string(&report).unwrap()).unwrap();
     assert_eq!(replay::load(&file), Ok(recording.clone()), "--replay takes the report as it is");
@@ -249,11 +250,23 @@ fn a_panic_nobody_handled_on_another_thread_gets_a_report() {
     assert_eq!(report.what.headline, "thread 'worker' panicked");
     assert_eq!(report.what.thread.as_deref(), Some("worker"));
     assert!(report.replay.as_ref().is_some_and(|r| r.end.tick == 10), "the world is there: so is the replay");
+    // The tool's panic had no report of its own: it is among the others here.
+    let others: Vec<&str> = report.panics.iter().map(|p| p.message.as_str()).collect();
+    assert!(others.contains(&"kaboom") && !others.contains(&"the worker fell over"), "{others:?}");
     // Once per place.
     assert!(worker().join().is_err());
     app.update();
     let reports = journal(&app, JournalKind::Sim).into_iter().filter(|l| l.contains("crash report saved")).count();
     assert_eq!(reports, 1, "one report per place");
+    // A later report does not list them again.
+    let out = ok(&mut app, "crash_report", json!({}));
+    let file = text(&out).trim_start_matches("saved ").split_once(':').unwrap().0.to_owned();
+    let path = std::env::current_dir().unwrap().join(file);
+    let later: crash::CrashReport = shards::serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_dir("crashes");
+    let again: Vec<&str> = later.panics.iter().map(|p| p.message.as_str()).collect();
+    assert!(!again.contains(&"kaboom") && !again.contains(&"the worker fell over"), "{again:?}");
 }
 
 #[test]

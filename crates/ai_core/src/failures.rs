@@ -269,7 +269,7 @@ pub(crate) fn blame_tool(world: &mut World, tool: &str) {
 /// The crash replay and the crash report of a failure, once per failing system, while the game
 /// writes them. What the panic hook kept of the panic (where, the call stack) goes into the report.
 fn save_crash_files(world: &mut World, failure: &mut SystemFailure) {
-    let kept = failure.panicked.then(|| crash::handled(&failure.message)).flatten();
+    let kept = failure.panicked.then(|| crash::reported(&failure.message)).flatten();
     let key = format!("{} {}", failure.kind, failure.name);
     let Some(mut state) = world.get_resource_mut::<AiFailures>() else {
         return;

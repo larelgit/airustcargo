@@ -466,9 +466,11 @@ Visual C++ Redistributable не нужен; `assets/icon.png` становитс
 Без `render` игра собирается только для `--headless` (сервер, генерация мира на тысячах зёрен). Проверить такую сборку
 без `shards` можно так: `cargo run --release --no-default-features -- --smoke 600` — загрузка и 600 тиков, код 0 или 1.
 
-Если игра у игрока упала, рядом с ней (или в `%LOCALAPPDATA%\my_game\crashes`, если в её папку писать нельзя) лежит отчёт
-`crashes/crash-<время>-tick<N>.json`: что упало и где, версия игры (`version` в `build_app` — версия из `Cargo.toml`),
-система, видеокарта, журнал, лог и реплей сессии. Его присылают с баг-репортом, а проигрывают как реплей:
+Если игра у игрока упала, она пишет отчёт `crash-<время>-tick<N>.json` в `crashes/` своей рабочей папки (при запуске из
+Проводника это папка программы). Если туда писать нельзя (игра в `Program Files`), отчёт идёт в папку игрока:
+`%LOCALAPPDATA%\my_game\crashes` на Windows, `~/Library/Logs/my_game` на macOS, `~/.local/state/my_game/crashes` (или
+`$XDG_STATE_HOME/my_game/crashes`) на Linux; путь называет stderr. В отчёте — что упало и где, версия игры (`version` в
+`build_app` — версия из `Cargo.toml`), система, видеокарта, журнал, лог и реплей сессии. Его присылают с баг-репортом, а проигрывают как реплей:
 `cargo run -- --replay crashes/crash-….json`. Подробно — README движка, «Отчёт о падении».
 
 ## Чего в шаблоне ещё нет

@@ -163,7 +163,10 @@ struct Kept {
     token: u64,
     /// The app that was working when it happened, as it was then.
     seen: Option<Seen>,
+    /// Caught where it happened, or reported: no report of its own is written for it.
     handled: bool,
+    /// In a report already (as what it is about, or among its other panics).
+    reported: bool,
 }
 
 /// An app's game and session, as of its last frame.
@@ -234,7 +237,7 @@ fn keep_panic(message: &str, location: Option<String>) {
     if memory.panics.len() == PANICS_KEPT {
         memory.panics.pop_front();
     }
-    memory.panics.push_back(Kept { what, backtrace, thread: current.id(), token: active, seen, handled: false });
+    memory.panics.push_back(Kept { what, backtrace, thread: current.id(), token: active, seen, handled: false, reported: false });
 }
 
 /// A log line for reports (the capture layer passes info, warnings and errors).
@@ -247,14 +250,24 @@ pub(crate) fn keep_log(line: String) {
 }
 
 /// An unhandled panic with this message was handled where it happened (a tool answered with it, a
-/// rule was reported broken): no report is written for it. Returns what the hook kept of it, for a
-/// report of its own.
+/// rule was reported broken): no report of its own is written for it; the next report lists it
+/// among its other panics. Returns what the hook kept of it.
 ///
 /// Two threads or two apps of one process may panic with the same words at once. The caller
 /// handles its own: the newest one of this thread first, then the newest one of the app active
 /// here, then the newest one of all (a system panics on a worker thread, where the active app is
 /// whichever was activated last in the process).
 pub fn handled(message: &str) -> Option<What> {
+    claim(message, false)
+}
+
+/// [`handled`] for the panic a report is about: the report does not list it again among its other
+/// panics.
+pub(crate) fn reported(message: &str) -> Option<What> {
+    claim(message, true)
+}
+
+fn claim(message: &str, reported: bool) -> Option<What> {
     let (thread, token) = (std::thread::current().id(), crate::process::active());
     let kept = {
         let mut memory = memory();
@@ -264,6 +277,7 @@ pub fn handled(message: &str) -> Option<What> {
         };
         let kept = &mut memory.panics[index];
         kept.handled = true;
+        kept.reported |= reported;
         taken(kept)
     };
     Some(with_backtrace(kept))
@@ -472,7 +486,7 @@ fn cpu() -> Option<String> {
 
 /// A report of what happened in this world: its game, session, status, journal and replay (the
 /// session's, or `replay` when the caller already made it), the log and the machine. Panics the
-/// hook kept and nobody reported go with it (they are reported now).
+/// hook kept that no report has yet go with it (caught ones too), and are reported now.
 pub fn report(world: &World, what: What, replay: Option<Replay>) -> CrashReport {
     let (replay, no_replay) = match replay {
         Some(replay) => (Some(replay), None),
@@ -490,8 +504,10 @@ pub fn report(world: &World, what: What, replay: Option<Replay>) -> CrashReport 
         let kept: Vec<_> = memory
             .panics
             .iter_mut()
+            .filter(|p| !p.reported)
             .map(|p| {
                 p.handled = true;
+                p.reported = true;
                 taken(p)
             })
             .collect();
@@ -547,17 +563,20 @@ pub fn fatal(payload: &(dyn std::any::Any + Send)) -> CrashReport {
         let index = memory
             .panics
             .iter()
-            .rposition(|p| !p.handled && p.what.message == message && p.what.thread.as_deref() == Some(thread.as_str()))
+            .rposition(|p| !p.handled && p.what.message == message && p.thread == current.id())
             .or_else(|| memory.panics.iter().rposition(|p| !p.handled && p.what.message == message));
         let this = index.map(|i| (taken(&memory.panics[i]), memory.panics[i].seen.clone()));
         let others: Vec<_> = memory
             .panics
-            .iter_mut()
+            .iter()
             .enumerate()
-            .filter(|(i, _)| Some(*i) != index)
+            .filter(|(i, p)| Some(*i) != index && !p.reported)
             .map(|(_, p)| taken(p))
             .collect();
-        memory.panics.iter_mut().for_each(|p| p.handled = true);
+        memory.panics.iter_mut().for_each(|p| {
+            p.handled = true;
+            p.reported = true;
+        });
         let last = memory.seen.last().cloned();
         (this, others, last, memory.log.iter().cloned().collect())
     };
@@ -715,8 +734,10 @@ fn watch(world: &mut World) {
     let unhandled = {
         let mut memory = memory();
         let found = memory.panics.iter_mut().find(|p| !p.handled && p.seen.as_ref().is_none_or(|s| s.token == token));
+        // Reported now, or already at the same place.
         found.map(|p| {
             p.handled = true;
+            p.reported = true;
             taken(p)
         })
     };
