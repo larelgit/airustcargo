@@ -43,12 +43,13 @@ Remote Protocol на 127.0.0.1), без MCP-прослоек. Тем же CLI п
 20. [Интерфейс (E9)](#интерфейс-e9)
 21. [Локализация (E9.4)](#локализация-e94)
 22. [Звук (E9.5)](#звук-e95)
-23. [Сборка для игроков и Windows (E10.6)](#сборка-для-игроков-и-windows-e106)
-24. [Отчёт о падении (E10.7)](#отчёт-о-падении-e107)
-25. [Песочница](#песочница)
-26. [Тесты и CI](#тесты-и-ci)
-27. [Что дальше](#что-дальше)
-28. [Соглашения и сборка](#соглашения-и-сборка)
+23. [Стилизованные материалы (E10.1)](#стилизованные-материалы-e101)
+24. [Сборка для игроков и Windows (E10.6)](#сборка-для-игроков-и-windows-e106)
+25. [Отчёт о падении (E10.7)](#отчёт-о-падении-e107)
+26. [Песочница](#песочница)
+27. [Тесты и CI](#тесты-и-ci)
+28. [Что дальше](#что-дальше)
+29. [Соглашения и сборка](#соглашения-и-сборка)
 
 ## Быстрый старт
 
@@ -67,7 +68,7 @@ cargo shards observe                       # срез мира текстом + 
 cargo shards tools                         # что можно сделать (--json: со схемами аргументов)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # в ответе CHANGES и JOURNAL
-cargo shards content check                 # ok: 99 definitions in 31 files
+cargo shards content check                 # ok: 110 definitions in 32 files
 cargo shards act regen region=wilds seed=42   # сгенерированный регион к югу от арены; игрок у его ворот
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # маршрут к логову по навсетке: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # проверка генератора на тысяче зёрен
@@ -90,7 +91,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Контент без игры: читает и проверяет все файлы (в том числе файлы уровней тайлов и запечённую навигацию), код 0 или 1.
 cargo sandbox --check-content
-# ok: 99 definitions in 31 files
+# ok: 110 definitions in 32 files
 
 # 7. Мир без игры: генератор на тысяче зёрен (код 0, если прошли все) и запекание навигации тайлов.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -232,6 +233,10 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 17. **Уровень из Blender.** Объекты с custom properties, экспорт glTF с Custom Properties, файл в `assets/`, определение `level`
     (`*.level.ron`: файл и обязательные маркеры) или тайл с `geometry: Level(path: "tiles/ruin.gltf")`: «Уровни из Blender
     (E4.2)».
+18. **Как выглядят меши.** Цвет и свет им дают виды: файл `assets/content/*.look.ron`, префаб тела с `"Look": ("hero")`, меши, которые
+    игра делает сама, — один белый материал и `Look::new("stone")`. Меняется только картинка (feature `render`, окно или
+    `--offscreen`), правка файла видна сразу; `shards act looks` перечисляет виды и что каждый рисует. Подробнее — «Стилизованные
+    материалы (E10.1)».
 
 Правила, которые держат игру детерминированной (геймплей в `FixedUpdate` внутри `SimSet`, случайность только через
 `SimRng`, порядок по `AiId`, управление только через `Intent`, `replay_input`/`replay_ignore`/`add_replay_check`), — в
@@ -266,7 +271,8 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 `shards_world` и `shards_level` друг друга не знают (их соединяет `shards::TileLevelsPlugin`); `shards_npc` стоит над обоими:
 берёт у мира граф тайлов, активные зоны и событие «регион загружен», у уровней — файлы тайлов для запекания. `shards_dev`
 (меню и консоль разработчика) не знает ни одного модуля: свои пункты меню модули регистрируют в `ai_core` (`add_dev_entry`),
-а он вызывает их инструменты по имени.
+а он вызывает их инструменты по имени. `shards_look` (как рисуются меши) знает только `ai_core`, ядро и контент: к префабам он
+подходит проверкой, которую добавляет к виду `prefab` (`add_content_check`), а геймплея не касается.
 
 ### Крейты
 
@@ -286,6 +292,7 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 | `crates/shards_ui` | интерфейс (E9): экраны и темы в контенте (`screen`, `theme`), стек экранов, фокус и навигация, источники значений и действия кнопок, инструменты `ui_*`, раздел `UI` в `observe`; с feature `render` — рисование на Bevy UI с подписями AccessKit |
 | `crates/shards_locale` | локализация (E9.4): языки в контенте (`locale`), тексты на Fluent (`assets/locale/<язык>/*.ftl`) с параметрами и формами множественного числа, запасной язык, настройка `locale.language` и смена языка на лету, инструменты `locale` и `text`, горячая перезагрузка файлов |
 | `crates/shards_audio` | звук (E9.5): звуки, музыка и микшер в контенте (`sound`, `music`, `audio`), шины с громкостью из настроек, голоса с приоритетом и лимитом, пространственные звуки, музыка в слоях по условиям игры, звуки телеграфов и событий, инструменты `audio`, `sound_play`, `music_set`, строка `MUSIC` в `observe`; с feature `audio` зонтика — воспроизведение через Bevy audio |
+| `crates/shards_look` | вид мешей (E10.1): виды в контенте (`look`, `*.look.ron`) — цвет, свет полосами (`Toon`), `Matte`, `Unlit`, `Lit`, плоские грани, контур одной ширины в пикселях, свечение, материалы glTF; компонент `Look`, материал и шейдеры на WESL, инструменты `looks` и `look_outlines`, поле `looks` в `ai/status`, два пункта меню разработчика; с feature `render` — стилизация мешей (окно или `--offscreen`) |
 | `crates/shards_dev` | меню и консоль разработчика (E11): пункты модулей (`add_dev_entry`) и игры (вид контента `devmenu`), консоль строк `tool key=value`, инструменты `dev_menu` и `console`; с feature `render` — панели в окне (F10 и `` ` ``), Tab дописывает имена из схем, контекст ввода `dev` |
 | `crates/ai_core` | слой ИИ, не зависит от конкретной игры: id, срез мира, журнал, инструменты, время, реплеи, транспорт |
 | `crates/shards_script` | без Bevy: формат сценариев, их запуск, разбор условий `--until`, долгая игра агентов (`soak`) и их случайные входы; общий для `shards` и тестов |
@@ -498,7 +505,8 @@ world, npc], state: "InGame", pause: "Running"}` и `loading: []`, пока ни
 - Id — непустая строка без пробелов и управляющих символов; уникален внутри вида по всем файлам.
 - Движок регистрирует свои виды: `prefab`, `locomotion`, `action`, `moveset`, `status`, `combat_tuning`, `animset`,
   `input_map`, уровни `level`, мир `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`, враги `behavior`,
-  `perception`, `director`, `attack_plan`, `npc_tuning` и `nav`. Игра добавляет свои: у песочницы `layout`, у шаблона `arena`.
+  `perception`, `director`, `attack_plan`, `npc_tuning` и `nav`, вид мешей `look` (см. «Стилизованные материалы (E10.1)»). Игра
+  добавляет свои: у песочницы `layout`, у шаблона `arena`.
   `content_list` (инструмент) показывает виды и число определений.
 - `#[serde(deny_unknown_fields)]` на структуре превращает опечатку в ошибку со строкой; без него опечатка в необязательном
   поле молча оставит значение по умолчанию.
@@ -564,7 +572,7 @@ reflection, как в сценах Bevy; каждый компонент дол�
 
 ```text
 $ shards act content_list
-content: 99 definitions in 31 files
+content: 110 definitions in 32 files
   action  23
   animset  0
   attack_plan  3
@@ -1854,7 +1862,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 | scope | инструменты |
 |---|---|
 | **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; движение: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; бой: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack; мир: region_info, level_info, nav_path, npc_state; настройки: settings, settings_set (как меню настроек у человека); звук: audio |
-| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset; мир: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; звук: sound_play, music_set; меню и консоль разработчика: dev_menu, console |
+| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset; мир: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; звук: sound_play, music_set; вид мешей: looks, look_outlines; меню и консоль разработчика: dev_menu, console |
 
 Игра добавляет свои (в шаблоне `taunt` и условия `arena_cleared`, `foe_near`, `in_fight`, в песочнице условия `boss_phase_2`,
 `boss_dead`, `player_dead`, `three_attacking`). Модули добавляют условия для `step --until named:…`: `near_poi` (мир, появляется
@@ -2850,14 +2858,14 @@ perf reference: all 7 budgets met
 
 **Меню** (F10 в окне; инструмент `dev_menu`) — пункты по разделам. Свои пункты модули движка регистрируют для своих
 инструментов (`add_dev_entry`): время (пауза, шаг, замедление, снапшоты, отчёт об ошибке), мир (регион и его зерно, проверка этого зерна
-генератором и 200 таких регионов, коллайдеры, тайлы), бой (бессмертие, лечение, хитбоксы), ИИ (умы NPC, навсетка), сеть
+генератором и 200 таких регионов, коллайдеры, тайлы, виды мешей и их контуры), бой (бессмертие, лечение, хитбоксы), ИИ (умы NPC, навсетка), сеть
 (связи, имитация лага), сохранения (проверка). За ними — пункты игры из контента. Переключатель показывает строку своего
 другого состояния (`npc_overlay on=false`, пока оверлей включён); пункт, которому нужно значение, в окне кладёт строку в
 консоль дописать, а инструмент просит выполнить её со значениями; пункт, которому сейчас не на чем работать, говорит почему:
 
 ```text
 $ shards act dev_menu
-dev menu: 31 entries (F10 in a window); `dev_menu run=<id>` runs one, `console line=...` runs any line
+dev menu: 33 entries (F10 in a window); `dev_menu run=<id>` runs one, `console line=...` runs any line
 time
   pause            Pause / resume                          resume
   step             One tick (while paused)                 step ticks=1
@@ -3839,6 +3847,144 @@ which no `*.sound.ron` defines (did you mean `boom`?)``). Условие сло�
 `crates/sandbox/scenarios/audio.scenario`, в шаблоне — `tests/game/audio.rs` (музыка переходит в `combat`, когда герой подходит
 к грунту).
 
+## Стилизованные материалы (E10.1)
+
+Как выглядит поверхность, решает контент вида `look` (`*.look.ron`), а модуль `shards_look` рисует по нему меши: свет полосами,
+плоские грани, контур одной ширины в пикселях, собственное свечение. Игра даёт мешам один белый материал и имя вида; цвет и свет
+приходят из вида. Это дело только картинки: геймплей про виды не знает.
+
+```ron
+// crates/sandbox/assets/content/look/sandbox.look.ron (сокращено)
+{
+    "low_poly": (flat: true, outline: Some((width: 2.0, color: "#0b0f1a"))),
+    "player": (extends: "low_poly", color: Some("#408cff")),
+    "stone": (color: Some("#61636e"), outline: Some((width: 1.5, color: "#16171c"))),
+    "floor": (color: Some("#2b303b"), shading: Toon(bands: 2)),
+    "dark": (color: Some("#1a1a1f"), shading: Matte),
+    "marker": (color: Some("#ffd933"), shading: Unlit),
+}
+```
+
+**Поля.** Все необязательны; поле, которого у вида нет, — ошибка со строкой (`deny_unknown_fields`).
+
+- `extends: "low_poly"` — пресет: вид начинается с другого вида и меняет только те поля, что называет сам (цепочка любой длины;
+  `materials` не наследуется). Так низкополигональный стиль задаётся один раз: `low_poly` — плоские грани и контур, а тела
+  называют только свой цвет.
+- `color: Some("#rrggbb")` — цвет (`#rgb`, `#rrggbb` или `#rrggbbaa`, sRGB); он умножается на текстуру и вершинные цвета меша.
+  Прозрачность материала остаётся, если цвет её не задаёт (`#rrggbbaa`). Без `color` меш сохраняет свой цвет: материала игры или
+  файла glTF.
+- `shading` — как падает свет: `Toon(bands: 3)` (по умолчанию; от 2 до 8 полос), `Matte` (мягкий свет без блика), `Unlit` (цвет как
+  есть, на солнце и в тени), `Lit(roughness: 0.4, metallic: 1.0)` (физический свет Bevy, оба числа от 0 до 1).
+- `flat: true` — плоские грани: у каждого треугольника своя нормаль, грани low-poly на любом меше.
+- `outline: Some((width: 2.0, color: "#000000"))` — контур вокруг силуэта; `width` в пикселях картинки (больше 0, не больше 16),
+  по умолчанию 2 и чёрный.
+- `glow: Some("#7fe0ff")` — собственный свет (лампы, глаза, кристаллы): виден при любом освещении и любой экспозиции камеры; у
+  `Unlit` он прибавляется к цвету.
+- `materials: ["Crystal", "Crystal.001"]` — материалы glTF (имена, как их показывает Blender), которые рисует этот вид, кроме
+  материала с именем самого вида.
+
+**Какие меши.** Вид меша берётся по порядку: `Look` на самом меше; `Look` на ближайшей сущности выше; имя материала glTF
+(`GltfMaterialName`: вид, у которого оно в `materials`, или вид с таким же id), так что уровни и тайлы из Blender получают стиль без
+кода. `Look(String)` — компонент: его несёт префаб (`"Look": ("stone")`) или ставит код (`Look::new("stone")`), и он стилизует меши
+сущности и всех её потомков. Меш, которому вида не нашлось, остаётся с материалом игры (так в песочнице рисуются вода и триггеры).
+Стилизуются меши с `MeshMaterial3d<StandardMaterial>`; вид берёт из этого материала всё, чего не задаёт сам: цвет (без `color`),
+текстуры, вершинные цвета, прозрачность. `Look` с id, которого нет в контенте, ничего не меняет.
+
+**Горячая перезагрузка.** Правка `*.look.ron` в работающей игре перекрашивает все меши в том же кадре; `Look`, который поставили,
+сменили или сняли, — меши под ним; меш, которому игра дала свой материал или меш, стилизуется заново от них; материал или меш,
+изменённые на месте (glTF перезагрузился, игра поправила материал через `Assets::get_mut`), — тоже. Меши, у которых материал или
+меш ещё грузится (glTF), ждут и получают вид, когда загрузятся. Материал делается один на пару «вид, исходный материал»: тысяча
+одинаковых камней — один материал.
+
+**Свет полосами (`Toon`).** Солнце (каждый направленный свет, с тенями) освещает поверхность `bands` ступенями: 0, 1/(bands − 1),
+…, 1. Любой свет — уже первая ступень, поэтому свет и тень делятся там, где свет кончается; край ступени сглажен на один пиксель.
+Две полосы — классический двухтоновый cel. Окружающий свет (`GlobalAmbientLight`), лампы и прожекторы падают ровно, как диффузный
+свет Bevy, без полос; ничего не блестит (шероховатость 1, металличность 0, отражение 0; так же у `Matte`). Экспозиция камеры
+применяется к свету, но не к `glow`. Материалы `Toon` всегда рисуются прямым проходом (forward), даже если игра по умолчанию
+рисует отложенно (deferred): иначе полос бы не было. Материал glTF без света (`KHR_materials_unlit`) вид освещает по своему
+`shading`: светом его не рисует только `Unlit`.
+
+**Контур.** Меш ещё раз, наизнанку: дочерняя сущность `OutlineHull` рисует только его задние грани, вершины сдвинуты на `width`
+пикселей экрана вдоль нормали на экране, поэтому линия одной ширины вблизи и вдали. Нормали контура усреднены по точкам меша (позиции
+ближе 0.1 мм — одна точка, каждая грань с весом своего угла): на рёбрах куба и у плоских граней нет щелей. Контур строится из
+исходного меша, а не из плоской копии. У меша со скином контур получает тот же `SkinnedMesh` и гнётся вместе с ним. Контур не
+бросает тени и не идёт в prepass; он только вокруг силуэта, рёбер внутри нет. Контур берёт у меша его `RenderLayers` (и следит
+за ними), `NoFrustumCulling` и `VisibilityRange`. Без контура остаются: прозрачные материалы (`alpha_mode` не `Opaque`: стекло,
+вырезанные карточки листвы — оболочка просвечивала бы или обвела всю карточку), меши с морф-таргетами (оболочка не следовала бы
+за ними), меш, чьи данные ушли на GPU, и не список треугольников. Плоской копии тоже нет у меша с морф-таргетами.
+
+**Только картинка.** Меши меняются с feature `render` зонтика, в окне или с `--offscreen`; без картинки (`--headless`) ничего не
+стилизуется: системы видов идут, только когда есть картинка (`ai_core::display::drawn`). `Look` на теле из префаба — обычный
+компонент префаба: он входит в реплей и снапшот и уходит клиентам кооператива (иначе клиент рисовал бы тела, которые хост
+заспавнил после входа, без вида). Поэтому код, который ставит `Look` только для картинки, ставит его на меши-потомки без `AiId`,
+а не на тела (так делают `visuals.rs` песочницы и шаблона). Контур — сущность без `AiId`. Определения видов входят в хэш
+базы контента, как любой контент: новый вид или правка вида расходит старый реплей на проверке `content`, и эталоны записывают
+заново.
+
+**Для агента.** `looks` (Dev, query) — виды (цвет, свет, плоские грани, контур, свечение, материалы glTF) и сколько мешей каждый
+рисует сейчас, затем меши без вида и те, что ждут свои файлы. `look_outlines on=false` (Dev, query; без аргумента — включить)
+прячет контуры или возвращает: они остаются построенными, так что включать их снова бесплатно. Настройка — ресурс `LookSettings`,
+не в реплее и не в снапшоте.
+
+```text
+$ shards act looks
+9 looks · 49 meshes styled (36 outlined) · 2 without a look · outlines on
+  dark      #1a1a1f · matte · 5 meshes
+  floor     #2b303b · toon 2 bands · 2 meshes
+  marker    #ffd933 · unlit · 4 meshes
+  player    #408cff · toon 3 bands · flat · outline 2px #0b1a33 · 1 mesh
+  sand      #8c8061 · toon 2 bands · 2 meshes
+  skeleton  #d9d1b3 · toon 3 bands · flat · outline 2px #2a2418 · 3 meshes
+  stone     #61636e · toon 3 bands · outline 1.5px #16171c · 17 meshes
+  wall      #454754 · toon 3 bands · outline 1.5px #16171c · 14 meshes
+  warden    #8cd9ff · toon 3 bands · flat · outline 3px #0a2433 · 1 mesh
+$ shards act look_outlines on=false
+outlines off: 36 drawn with an outline
+```
+
+Без картинки инструмент говорит, почему нечего считать: `9 looks · nothing is drawn headless: looks style meshes in a window or
+with --offscreen`, и дальше те же строки видов без числа мешей. Меши, которые ещё ждут материал или меш, названы последней строкой
+(`3 meshes wait for their material or mesh to load`).
+
+`ai/status` — поле `looks`: `{"looks": 9, "outlined": 36, "outlines": true, "styled": 49}` (видов, мешей с контуром, контуры включены,
+мешей в стиле видов). `inspect eN` показывает `Look` сущности. В меню разработчика (раздел `world`) два пункта: `looks` («Looks
+and what they draw») и `look_outlines` («Outlines of the looks»; пока контуры видны, он выполняет `look_outlines on=false`).
+
+**Проверка контента.** `--check-content` и `content_check` называют файл, вид и поле:
+
+```text
+content/look/sandbox.look.ron: look `stone`: shading: Toon has 2 to 8 bands, not 1
+content/look/sandbox.look.ron: look `stone`: color: `red` is not a colour: `#rrggbb` or `#rrggbbaa`
+content/look/sandbox.look.ron: look `wall`: outline: width is above 0 and at most 16 pixels, not 20
+content/look/sandbox.look.ron: look `wall`: materials: `Rock` is drawn with look `stone` already; a material has one look
+content/characters/characters.prefab.ron: prefab `skeleton`: Look -> unknown look `stoen` (did you mean `stone`?)
+```
+
+Ещё: `extends` на вид, которого нет (с `did you mean`), и цикл пресетов (`extends: a -> b -> a`), `Lit` с числом вне 0…1, пустое
+имя в `materials`, имя материала, которое равно id другого вида (тот и так рисует материал с
+таким именем). Имена материалов сверяются как написаны, с регистром. Проверка префабов видит `Look` в префабе, а не `Look::new` в
+коде: вид с опечаткой в коде молча ничего не меняет, и его видно по строке `without a look` у `looks`.
+
+**Как игра этим пользуется.** (1) Файл видов `assets/content/looks.look.ron`. (2) Тело — префаб с `"Look": ("hero")`: так у героя,
+грунта и рейдера шаблона и у игрока, скелета, стража и колонны песочницы. (3) Меши, которые игра делает сама (тела по
+коллайдерам, столбы-маркеры), получают один белый материал и `Look` на самом меше, не на теле (`visuals.rs` песочницы и шаблона).
+Общий стиль — пресет: `low_poly` с плоскими гранями и контуром, и виды тел с `extends: "low_poly"` и своим цветом:
+
+```rust
+let white = materials.add(StandardMaterial::default());   // цвет и свет дадут виды
+commands.entity(body).with_child((Mesh3d(mesh), MeshMaterial3d(white), Look::new("stone")));
+```
+
+Материалы из Blender называют именем вида (или перечисляют в `materials`). Полосы и тени даёт `DirectionalLight` с
+`shadow_maps_enabled: true`, ровный свет — `GlobalAmbientLight`. Своё остаётся своим: меш без вида (стекло, вода) рисуется
+материалом игры. Посмотреть: `cargo sandbox --offscreen --paused --port 0 --port-file F &`, `shards act looks`, `shards shot -o
+shots/looks.png`; сравнить без контуров — `shards act look_outlines on=false`, снова `shot`.
+
+**Чего нет.** Только `StandardMaterial`: меши с другим материалом вид не берёт. Контур — оболочка, не постобработка по глубине и
+нормалям: рёбер внутри силуэта у него нет. Ширина контура одна на вид: от расстояния и размера меша она не зависит (вдали не
+сузить). Проверено на GPU с `--offscreen` (песочница: полосы, плоские грани и контуры на картинке); в окне на дисплее глазами не
+проверяли.
+
 ## Сборка для игроков и Windows (E10.6)
 
 `shards package` собирает игру для игроков и проверяет сборку так, как её запустит чужая машина. Запущенная игра не нужна.
@@ -3852,7 +3998,7 @@ built: …\target\x86_64-pc-windows-msvc\dist\my_game.exe
 package: …\my_game\dist\my_game-0.1.0-windows-x86_64 (program 123.6 MB, assets/ 52 files, 1.3 MB)
 subsystem: windows (no console window)
 imports: system DLLs only (kernel32.dll, oleaut32.dll, uiautomationcore.dll, user32.dll, …, dxgi.dll, ws2_32.dll)
-check-content: ok: 58 definitions in 25 files
+check-content: ok: 63 definitions in 26 files
 smoke: ok: loaded in 0.05s, 300 ticks in 0.07s
 writes: nothing in its own folder
 ```
@@ -4012,7 +4158,8 @@ saved crashes/crash-20261016-123456-tick30.json: tick 30, 120 log lines, 48 jour
 |---|---|
 | `world/arena.layout.ron` | арена 40×40 м: пол, стены, колонны, ворота на восток; кого и где спавнить |
 | `world/course.layout.ron` | полоса препятствий от x = 40: ступени, уступ 1.3 м, бассейн 10 м, пандус на обрыв 18 м над каньоном, площадка цели через 32 м пропасти, восходящий поток посередине |
-| `characters/characters.prefab.ron` | префабы `player`, `skeleton`, `skeleton_captain`, `frost_warden`, `pillar` |
+| `characters/characters.prefab.ron` | префабы `player`, `skeleton`, `skeleton_captain`, `frost_warden`, `pillar`; у тел и колонны `Look` — вид, которым их рисует окно |
+| `look/sandbox.look.ron` | виды (E10.1): `player`, `skeleton`, `warden` (плоские грани, контур), `stone`, `wall` (контур), `floor`, `sand` (две полосы), `dark` (`Matte`), `marker` (`Unlit`); вид коробки арены — поле `look` в `*.layout.ron` (`Stone`, `Floor`, `Wall`, `Sand`), носы персонажей (`dark`) и столбы ориентиров (`marker`) ставит `visuals.rs` |
 | `characters/bodies.locomotion.ron` | как ходят игрок, скелет и страж |
 | `combat/player.action.ron` | комбо `light_1`–`light_3`, `heavy`, перекат (i-frames 0.18 с), блок с идеальным блоком, фляга |
 | `combat/warden.action.ron` | четыре атаки стража (`slash`, `slam`, `sweep`, `shockwave`), спокойные и в ярости |
@@ -4082,7 +4229,10 @@ saved crashes/crash-20261016-123456-tick30.json: tick 30, 120 log lines, 48 jour
 - `audio.scenario` (E9.5) — музыка арены идёт за игрой: в каньоне вдали от монстров `explore`, у стража `tension`, страж дерётся —
   `combat` сразу, успокоился — `tension` через пять секунд; `music_set` держит слой и учит на ошибках; 25 звуков на 24 голоса,
   сильный звук забирает голос слабого, голоса освобождаются; звук дальше `far` не запускается; громкость игрока применяется к
-  тому, что звучит; лечение и меню звучат звуками микшера.
+  тому, что звучит; лечение и меню звучат звуками микшера;
+- `looks.scenario` (E10.1) — без картинки `looks` говорит, что рисовать нечего, и перечисляет виды с пресетами (`extends`);
+  `content_get` вида, `Look` тел в `inspect`, `look_outlines` и переключатель меню разработчика (в конце контуры включены),
+  вид с ошибкой `content_apply` отклоняет.
 
 Сценарии начинают с `heal`/`teleport`/`set`/`npc_set_state … calm`, поэтому идут на свежей игре и после других, в любом порядке:
 CI гоняет их вперёд и потом назад в одной игре. Сессии шести из них записаны как эталонные реплеи в `tests/replays/`
@@ -4115,6 +4265,7 @@ cargo test --manifest-path template/Cargo.toml # шаблон отдельно: 
 | `shards_npc` | автомат поведения и его ошибки, зрение/слух/память, жетоны директора (включая смену числа игроков и приказы агента), планировщик (запреты, бюджет, отдых), запекание и сшивка (в том числе ступени на краю тайла), вырезание в любом порядке, маршруты и обход колонн, `path_to` и `clearance` по навсетке (`provider`, `closed`), поводок, `npc_state`, `npc_overlay`, реплей и снапшот на десяти тиках боя и в сгенерированном регионе |
 | `shards_save` | секции и реестр, конверт `shards-save/1` и контрольная сумма, атомарная запись, три копии и восстановление, матрица порчи, миграции, сохранения из более новой версии, слоты (в том числе слот клиента по имени), автосохранение, инструменты `save_*` и `load_game`, `SaveRouting` |
 | `shards_dev` | у каждого пункта списка GDD 32.8 есть пункт меню с живым инструментом и порядок разделов, пункты и строки идут через те же инструменты (переключатели, пункты с пропуском, пункты без дела, пункты игры из контента), консоль отвечает и помнит строки, `open` показывает панели, клавиши оверлеев ждут, пока панель открыта, Tab дописывает имена инструментов и аргументов, битый пункт — ошибка контента |
+| `shards_look` | вид меша: свой `Look`, предка, имя материала glTF; материал из исходного (цвет и прозрачность, свечение, `unlit`), пресеты `extends` и их ошибки, плоская копия и контур (слои, прозрачные материалы и морф-таргеты без контура), горячая перезагрузка и ассеты, изменённые на месте, без картинки ничего не стилизуется; картинка на GPU (`#[ignore]`): полосы и контур в пикселях |
 | `shards_net` | `src/`: без Bevy — транспорты (хаб в памяти, UDP), имитация связи, канал (надёжные и последние сообщения, блобы, подтверждения, RTT, потери, тайм-ауты), формат датаграмм; сессия (пределы кадров ввода и самого большого честного пакета, удерживаемое после мира заново, правила репликации, ожидание места в канале по числу и байтам, `NetDef`, ушедшие токены). Сессия целиком — в тестах песочницы `net*.rs` |
 | `shards` | сведение сети и сохранений (`coop`: что хост знает о персонаже игрока, как он едет текстом), секции движка (число, какого не бывает у тела), слот стенда, реплей со снапшота (`--verify`: тот же результат, код 2 для чужого снапшота), режим без окна — те же плагины и картинки нет (`display` и подсказка `shot`), `--offscreen` — плагины окна без окна (картинка для `shot`, в неё рисуют камеры, нацеленные на окно, и после смены цели), тестовое приложение, `testing::ok` на сбое геймплея, `testing::run_to` и `verify`, когда нарушенное правило совпало с началом загрузки, бюджет тика в командной строке, время кадра (`frames`: кадр — более медленный из двух миров, кадр с `step` не в счёт, отчёт GPU), автотест (`bench`: вердикты, проверка определения, `--perf` и его коды), `counts` без окна, анимационный мост на настоящей модели со скином |
 | `sandbox` | в одном бинарнике `tests/sandbox`: снапшоты (`snapshots.rs`: состояние после загрузки то же, что в исходной сессии, на перекате, комбо, телеграфе, планировании, плавании, флаконе, боях NPC и в сгенерированном регионе), тайл руины (`tiles.rs`: файл из тестового генератора glTF совпадает с закоммиченным), сценарии (`scenario_files`: каждый файл на свежей игре, все подряд в одной игре, бой-прототип после шести разных пауз), эталонные реплеи, действия, контент, полоса препятствий, детерминизм, видимость, права scope, реплеи, `kill` и SIGHUP; инварианты (`invariants.rs`: правила песочницы и их границы, сессии, остановка в реальном времени, реплей нарушения, снапшот; `net_seams.rs`: клиент правил не проверяет); кооператив на стенде (`net.rs`, `net_guards.rs`, `net_lifecycle.rs`, `net_sync.rs`, `net_predict.rs`, `net_seams.rs`, `net_coop.rs`, из них 2 замера под `#[ignore]`: вход и уход, пределы и текст пира, мир заново, ввод, рассинхрон, конец сессии и коды выхода, часы стенда, UDP на loopback, предсказание клиента, персонажи и сохранения); долгая игра (`soak.rs`: две минуты хоста и двух клиентов на 150 мс и 2 % со сменой региона и сохранениями, полчаса — под `#[ignore]`); снимок без окна (`offscreen.rs`, `#[ignore]`: нужен GPU или программный рендер); отдельно `system_failures` (сбой геймплея, краш-реплей, отчёт о падении, паника в другом потоке, `crash_report`, возврат снапшотом после сбоя), `log_capture` (строки лога в `step`) и `perf` (время тика: бюджет, журнал, `ai/status`; автотест на эталонной сцене без окна, с `offscreen` — под `#[ignore]`): у них свои процессы |
@@ -4164,8 +4315,10 @@ E9.1–3 в `shards_ui`, локализация E9.4 в `shards_locale`, зву�
 NPC в `shards_dev` и `shards_npc`, `path_to` и `clearance` по навсетке, проверка сокетов файла уровня) собраны, CI проверяет
 их на каждом пуше. Впереди:
 
-1. **Фаза E — платформа:** рендер и производительность, Steam, обработчик падений, скриншоты без окна (E10). Сборка под
-   Windows уже есть (`shards package`, раздел «Сборка для игроков и Windows»); не хватает запуска на настоящей чистой машине.
+1. **Фаза E — платформа (E10):** стилизованные материалы (раздел «Стилизованные материалы (E10.1)»), бюджеты и автотест
+   производительности, обработчик падений и скриншоты без окна уже есть. Сборка под Windows тоже есть (`shards package`, раздел
+   «Сборка для игроков и Windows»); не хватает запуска на настоящей чистой машине. Впереди растительность с инстансингом, эффекты
+   и декали, Steam.
 2. **Остатки фазы B:** стриминг геометрии тайлов для физики (сейчас по расстоянию грузится только картинка), навсетка под
    несколько тел.
 3. Горячая перезагрузка кода (`--features dynamic`, subsecond).
