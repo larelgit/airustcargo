@@ -470,7 +470,8 @@ Visual C++ Redistributable не нужен; `assets/icon.png` становитс
 Проводника это папка программы). Если туда писать нельзя (игра в `Program Files`), отчёт идёт в папку игрока:
 `%LOCALAPPDATA%\my_game\crashes` на Windows, `~/Library/Logs/my_game` на macOS, `~/.local/state/my_game/crashes` (или
 `$XDG_STATE_HOME/my_game/crashes`) на Linux; путь называет stderr. В отчёте — что упало и где, версия игры (`version` в
-`build_app` — версия из `Cargo.toml`), система, видеокарта, журнал, лог и реплей сессии. Его присылают с баг-репортом, а проигрывают как реплей:
+`build_app` — версия из `Cargo.toml`), система, видеокарта, журнал, лог и реплей сессии; в отчёте о панике, которая унесла
+игру, реплея нет. Его присылают с баг-репортом, а отчёт с реплеем проигрывают как реплей:
 `cargo run -- --replay crashes/crash-….json`. Подробно — README движка, «Отчёт о падении».
 
 ## Чего в шаблоне ещё нет
