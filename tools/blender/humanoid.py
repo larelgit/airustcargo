@@ -60,11 +60,12 @@ SANDBOX = {
 }
 
 # The template's hero has a quicker first swing and a slower second one, and no lunge on it.
-# 0.18 s is no whole frame at 60 fps: its clips are sampled at 50. No action of the template
-# uses `light_3`, `heavy` or `block`; they keep the sandbox's phases, moved to whole frames.
+# Its swing's 0.18 s is no whole frame at 60 fps, its roll's 0.35 s none at 50: its clips are
+# sampled at 100. No action of the template uses `light_3`, `heavy` or `block`; they keep
+# the sandbox's phases, moved to whole frames.
 TEMPLATE = dict(
     SANDBOX,
-    fps=50,
+    fps=100,
     light_1={"phases": [("windup", 0.18), ("active", 0.1), ("recovery", 0.3)], "lunge": (0.18, 0.3, 0.4)},
     light_2={"phases": [("windup", 0.2), ("active", 0.1), ("recovery", 0.4)], "lunge": (0.2, 0.3, 0.0)},
     light_3={"phases": [("windup", 0.24), ("active", 0.1), ("recovery", 0.46)], "lunge": (0.24, 0.34, 0.4)},
@@ -202,6 +203,8 @@ class Body:
         self.bm.to_mesh(self.mesh)
         self.bm.free()
         self.mesh.color_attributes.active_color_name = "Color"
+        # The exporter takes the render colour (`export_vertex_color="ACTIVE"`).
+        self.mesh.color_attributes.render_color_index = self.mesh.color_attributes.find("Color")
         material = bpy.data.materials.new("Humanoid")
         material.diffuse_color = (1.0, 1.0, 1.0, 1.0)
         self.mesh.materials.append(material)
@@ -325,7 +328,10 @@ class Clip:
         hip_bone.keyframe_insert("location", frame=self.frame(t))
 
     def root(self, t, forward, interpolation=None):
-        """The root `forward` meters ahead (Blender's -Y) at `t`."""
+        """The root `forward` meters ahead (Blender's -Y) at `t`, a whole frame: the action's
+        displacement is baked from it, and a key off the frame would move it in time."""
+        if abs(t * self.fps - round(t * self.fps)) > 1e-6:
+            raise ValueError(f"{self.action.name}: the root moves at {t} s, no whole frame at {self.fps} fps")
         bone = self.rig.pose.bones["root"]
         bone.location = bone.bone.matrix_local.to_quaternion().inverted() @ Vector((0.0, -forward, 0.0))
         bone.keyframe_insert("location", frame=self.frame(t))
@@ -651,7 +657,10 @@ def export(path):
         filepath=path,
         export_format="GLB",
         export_extras=True,
+        # Only the shades, as COLOR_0: with all colours on, the exporter adds a white COLOR_0
+        # (no material reads ours) and moves the shades to COLOR_1, which Bevy does not read.
         export_vertex_color="ACTIVE",
+        export_all_vertex_colors=False,
     )
     if result != {"FINISHED"}:
         raise RuntimeError(f"export of {path} failed: {result}")
