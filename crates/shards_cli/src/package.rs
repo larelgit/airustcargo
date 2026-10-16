@@ -359,7 +359,12 @@ fn place_libraries(libraries: &[PathBuf], folder: &Path) -> Result<Vec<String>, 
 /// Removes a `steam_appid.txt` from the package's folder: Steam starts a player's game with its
 /// app id, and the file would name another. Whether there was one.
 fn remove_steam_appid(folder: &Path) -> Result<bool, String> {
-    let file = folder.join(STEAM_APPID);
+    remove_from_package(folder, STEAM_APPID)
+}
+
+/// Removes file `name` from the package's folder; whether it was there.
+fn remove_from_package(folder: &Path, name: &str) -> Result<bool, String> {
+    let file = folder.join(name);
     if !file.exists() {
         return Ok(false);
     }
@@ -893,9 +898,12 @@ mod tests {
         assert_eq!(place_libraries(&[out.join("steam_api64.dll")], &package).unwrap(), ["steam_api64.dll"]);
         assert!(package.join("steam_api64.dll").is_file());
         assert!(!remove_steam_appid(&package).unwrap(), "none to remove");
-        std::fs::write(package.join(STEAM_APPID), "480").unwrap();
-        assert!(remove_steam_appid(&package).unwrap());
-        assert!(!package.join(STEAM_APPID).exists());
+        // A file of another name stands in for a steam_appid.txt: a test never writes one, where the
+        // Steamworks SDK of some run could read it.
+        assert_eq!(STEAM_APPID, "steam_appid.txt");
+        std::fs::write(package.join("stale.txt"), "480").unwrap();
+        assert!(remove_from_package(&package, "stale.txt").unwrap());
+        assert!(!package.join("stale.txt").exists());
 
         // The program's imports: the system's, one shipped beside it, one missing.
         let imports = ["KERNEL32.dll".to_owned(), "steam_api64.dll".to_owned(), "VCRUNTIME140.dll".to_owned()];
