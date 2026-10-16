@@ -785,4 +785,38 @@ mod tests {
         ];
         assert_eq!(errors, expected);
     }
+
+    #[test]
+    fn avoidance_numbers_are_checked_in_the_tuning_and_in_a_behaviour() {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<NpcTuning>();
+        kinds.register::<BehaviorDef>();
+        let source = |path: &str, text: &str| shards_content::db::Source { path: path.into(), text: text.into() };
+        let tuning = r#"{ "default": (avoidance: (weight: -1, horizon: 0, neighbours: 0)) }"#;
+        let behaviors = r#"{ "b": (initial: "idle", avoidance: (range: -2, margin: -0.5, horizon: 12, neighbours: 33), states: {"idle": ()}) }"#;
+        let db = ContentDb::build(&kinds, &[source("content/t.npc_tuning.ron", tuning), source("content/b.behavior.ron", behaviors)]);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        let expected = [
+            "content/b.behavior.ron: behavior `b`: avoidance.range must be a number >= 0 (is -2)",
+            "content/b.behavior.ron: behavior `b`: avoidance.margin must be a number >= 0 (is -0.5)",
+            "content/b.behavior.ron: behavior `b`: avoidance.horizon must be in (0, 10] seconds (is 12)",
+            "content/b.behavior.ron: behavior `b`: avoidance.neighbours must be 1 to 32 (is 33); set weight 0 to turn avoidance off",
+            "content/t.npc_tuning.ron: npc_tuning `default`: avoidance.weight must be a number >= 0 (is -1)",
+            "content/t.npc_tuning.ron: npc_tuning `default`: avoidance.horizon must be in (0, 10] seconds (is 0)",
+            "content/t.npc_tuning.ron: npc_tuning `default`: avoidance.neighbours must be 1 to 32 (is 0); set weight 0 to turn avoidance off",
+        ];
+        assert_eq!(errors, expected);
+        // The fields `avoidance` took the place of are gone: content that still has them is
+        // told which fields there are.
+        let old = r#"{ "default": (avoid_time: 0.5, avoid_margin: 0.3) }"#;
+        let db = ContentDb::build(&kinds, &[source("content/t.npc_tuning.ron", old)]);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        assert_eq!(
+            errors,
+            [
+                "content/t.npc_tuning.ron:1:15: npc_tuning `default`: Unexpected field named `avoid_time` in `NpcTuning`, expected one \
+                 of `hit_noise`, `sprint_noise`, `avoidance`, `repath`, or `waypoint_reach` instead"
+            ]
+        );
+    }
 }
