@@ -443,27 +443,32 @@ fn run_copy(copy: &Path, program: &Path, ticks: u64) -> Result<bool, String> {
             }
         }
     }
-    let after = files_in(copy);
-    let written: Vec<String> = after
-        .iter()
-        .filter(|(path, file)| before.get(*path) != Some(file))
-        .map(|(path, _)| path.display().to_string())
-        .collect();
+    let written = changed(&before, &files_in(copy));
     if written.is_empty() {
         say("writes: nothing in its own folder");
     } else {
         passed = false;
         say(format!(
-            "FAILED writes: the program wrote into its own folder, which a player may not be allowed to write to: {}",
+            "FAILED writes: the program changed its own folder, which a player may not be allowed to write to: {}",
             written.join(", ")
         ));
     }
     Ok(passed)
 }
 
-/// Every file and folder under `root`, with its size and when it was last written (folders: 0, none).
-fn files_in(root: &Path) -> BTreeMap<PathBuf, (u64, Option<SystemTime>)> {
-    fn walk(root: &Path, dir: &Path, into: &mut BTreeMap<PathBuf, (u64, Option<SystemTime>)>) {
+/// Paths under a folder, each with its size and when it was last written (folders: 0, none).
+type Listing = BTreeMap<PathBuf, (u64, Option<SystemTime>)>;
+
+/// What differs between two [`files_in`] listings: new and rewritten paths, then removed ones.
+fn changed(before: &Listing, after: &Listing) -> Vec<String> {
+    let written = after.iter().filter(|(path, file)| before.get(*path) != Some(file)).map(|(path, _)| path.display().to_string());
+    let removed = before.keys().filter(|path| !after.contains_key(*path)).map(|path| format!("{} (removed)", path.display()));
+    written.chain(removed).collect()
+}
+
+/// Every file and folder under `root`.
+fn files_in(root: &Path) -> Listing {
+    fn walk(root: &Path, dir: &Path, into: &mut Listing) {
         for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
             let path = entry.path();
             let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
@@ -758,6 +763,32 @@ mod tests {
         let err = refuse_link(&dir.join("linked")).unwrap_err();
         assert!(err.ends_with("linked is a link: put the files themselves in the asset folder"), "{err}");
         assert!(refuse_link(&dir.join("assets")).is_ok() && refuse_link(&dir.join("none")).is_ok());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_run_that_removes_files_changed_its_folder() {
+        let dir = std::env::temp_dir().join(format!("shards-package-changed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("assets/sounds")).unwrap();
+        std::fs::write(dir.join("assets/game.ron"), "()").unwrap();
+        std::fs::write(dir.join("assets/sounds/hit.ogg"), "ogg").unwrap();
+        std::fs::write(dir.join("settings.ron"), "()").unwrap();
+        let before = files_in(&dir);
+        assert!(changed(&before, &files_in(&dir)).is_empty());
+        std::fs::write(dir.join("settings.ron"), "(volume: 1.0)").unwrap();
+        std::fs::write(dir.join("new.log"), "").unwrap();
+        std::fs::remove_dir_all(dir.join("assets/sounds")).unwrap();
+        let sounds = Path::new("assets").join("sounds");
+        assert_eq!(
+            changed(&before, &files_in(&dir)),
+            [
+                "new.log".to_owned(),
+                "settings.ron".to_owned(),
+                format!("{} (removed)", sounds.display()),
+                format!("{} (removed)", sounds.join("hit.ogg").display()),
+            ]
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
