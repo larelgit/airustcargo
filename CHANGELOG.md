@@ -809,14 +809,23 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
 - `NavAgent`: поля `preferred` (скорость, которую просит маршрут), `avoiding` (кого обходит) и `side` (с какой стороны).
   `npc_state` → `nav.avoiding`, `npc_overlay` → `avoiding e7`, условие `step --until named:npc_avoiding`; журнал о
   уклонении молчит.
+- Прямой маршрут (цель на виду) больше не идёт вслепую, когда NPC сошёл с проверенной прямой: `NavAgent.planned_from` помнит,
+  откуда план строился, и NPC дальше своего радиуса от отрезка «оттуда — цель» (обходил тело, его толкнули или отбросили)
+  планирует заново с того места, где стоит. Раньше прямой маршрут к неподвижной цели не перепроверялся никогда, и NPC мог
+  уйти с края, которого `plain_sight` не видел. Запросов не прибавляется у тех, кто идёт по своей прямой: следующий план —
+  только после следующего радиуса в сторону (тест `an_npc_put_off_its_straight_line_plans_again_before_walking_off_a_ledge`).
 - Тесты `tests/npc/avoid.rs` (встреча в коридоре, стая у игрока с дуги и гуськом, без уклонения, детерминизм, `npc_state` и
-  оверлей), юнит-тесты `nav::avoid`; сценарий песочницы `npc_avoidance.scenario`.
+  оверлей), юнит-тесты `nav::avoid` и `avoidance_numbers_are_checked_in_the_tuning_and_in_a_behaviour` (границы `avoidance` у
+  `npc_tuning` и у поведения, убранные `avoid_time`/`avoid_margin`); сценарий песочницы `npc_avoidance.scenario`.
 
 **Классы тел навсетки (E6.1, `shards_npc`)** — навсетка больше не под одно тело:
 
 - У `nav` поле `bodies`: классы тел по имени (`"large": (locomotion: Some("warden"))`, `radius` и `height` поверх тела,
   `NavBodyDef`). Имя — строчные буквы, цифры и `_` (это и папка файлов), `agent` занято; ссылку на `locomotion` и числа
-  проверяет контент.
+  проверяет контент. Свои `radius` и `height` класса должны оставить капсулу, какую допускает `locomotion` (рост не меньше
+  диаметра, радиус больше двух `skin_width`): иначе ошибка называет класс и что поправить (``bodies.wide: height 1.8 is less
+  than the capsule's diameter 2.4; give the class a height of at least 2.4 m or a smaller radius``). Без этой проверки такой
+  класс пёкся под более высокое тело, чем называл, и не подходил телам, для которых его писали.
 - Каждый тайл печётся под `agent` и под каждый класс, файл класса — в своей папке (`assets/nav/large/<тайл>.navtile.ron`).
   Формат файла и `BAKE_VERSION` прежние, хэш файла класса берёт ещё его имя, а файлы `agent` байт в байт те же, что у игры без
   классов. `--bake-nav` и `nav_bake` пекут все классы (`baked 18 files for 2 body classes (agent, large) into nav/`; без
@@ -828,13 +837,18 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   `move_to path=true`, `path_to` и `clearance` — по телу ходока (`NavRegion::serving`). Тело шире всех классов планирует по
   локальной сетке.
 - Инструменты: `nav_path body=large` (`"body"` в ответе, на опечатку — ошибка с подсказкой и списком классов), `nav_info` →
-  `bodies` (тело и навсетка каждого класса), `npc_state` → `nav.routes` (`navmesh, body large` или `local grid: …` с причиной),
-  `npc_overlay` дописывает `body large` или `local grid`. Функции `region_nav`, `route_on`, `routes_for`.
+  `bodies` (тело и навсетка каждого класса), `npc_state` → `nav.routes` (`navmesh, body large` или `local grid: …` с причиной,
+  в том числе `the NPC stands outside the region`: регион не покрывает места, где NPC стоит, и его маршруты — локальной сетки;
+  со своими маршрутами игры — имя её поставщика), `npc_overlay` дописывает `body large` или `local grid` по тому же правилу, а
+  со своими маршрутами игры — ничего. Функции `region_nav`, `route_on`, `routes_for` (по радиусу), `routes_at` (по радиусу и
+  месту).
 - Песочница: класс `large` под тело стража (`content/region/wilds.nav.ron`), файлы `assets/nav/large/` (9 тайлов); сценарий
   `npc_bodies` (страж в пилонном зале wilds идёт к игроку по навсетке своего класса). У шаблона классов нет, его файлы прежние.
-- Тесты `tests/npc/bodies.rs` (5): большое тело идёт в широкую дверь, а не в проём под `agent`, и держит зазор; NPC шире
-  класса `agent` ходит по навсетке `large`, шире всех — по локальной сетке; байты файлов обоих классов стабильны, файлы `agent`
-  те же, что без классов; контент называет пропавший файл класса; проверка `bodies`.
+- Тесты `tests/npc/bodies.rs` (7): большое тело идёт в широкую дверь, а не в проём под `agent`, и держит зазор; NPC шире
+  класса `agent` ходит по навсетке `large`, шире всех — по локальной сетке; NPC вне региона — по локальной сетке, и
+  `npc_state`, `nav_path` и `npc_overlay` говорят одно; со своими маршрутами игры инструменты класса не называют; байты файлов
+  обоих классов стабильны, файлы `agent` те же, что без классов; контент называет пропавший файл класса; проверка `bodies`
+  (и капсулы классов со своими размерами).
 
 ### Исправлено
 
@@ -1136,8 +1150,9 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
 - `SaveRegistry::add`: секция другого крейта, которая заменяет секцию с тем же именем, начинает свою историю миграций — миграции
   заменённой удаляются вместе с ней (игра, заменившая `region`, регистрирует миграции своих версий после неё; иначе миграция движка
   `region` 1 → 2 уронила бы сборку её секции версии 1).
-- E6.2: `npc_tuning` больше не знает `avoid_time` и `avoid_margin` (контент с ними — ошибка `unknown field`): их место
-  заняла `avoidance`. У `NavAgent` новые поля, и NPC в толпе ходят иначе. Эталонные реплеи песочницы (все семь) нужно записать
+- E6.2: `npc_tuning` больше не знает `avoid_time` и `avoid_margin` (контент с ними — ошибка ``Unexpected field named
+  `avoid_time` in `NpcTuning`, expected one of …``): их место заняла `avoidance`. У `NavAgent` новые поля (и `planned_from`),
+  NPC в толпе ходят иначе, а сошедшие с прямой планируют маршрут заново. Эталонные реплеи песочницы (все семь) нужно записать
   заново, здесь они прежние; расходятся они двумя способами. `combat_prototype`, `npc_director`, `npc_navmesh`,
   `obstacle_course` и `region` — `DIVERGED at tick 60`: `NavAgent` у NPC (`e6`, `e7`, `e8`, `e14`, в регионе и `e25`; эта
   ветка) вместе с `Look` у всех тел и `replay check content` (контент сменился ещё в E10.x); `snapshot` и `saves` не стартуют
