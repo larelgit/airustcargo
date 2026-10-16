@@ -253,14 +253,21 @@ fn on_join_character(world: &mut World, body: Entity, value: &Value) {
         Ok(Ok(done)) => {
             journal::log(world, JournalKind::Sim, format!("save: {who} character applied ({})", done.applied.join(", ")));
         }
-        Ok(Err(e)) if e.applied.is_empty() => {
+        // A section's `check` refused: nothing ran, the body is as it was.
+        Ok(Err(e)) if !e.changed_anything() => {
             journal::emit(world, JournalKind::Warn, format!("save: {who} character could not be applied ({}); starting fresh", peer(&e.message)));
         }
+        // An `apply` (or `missing`) failed: it may have changed the body before it did.
         Ok(Err(e)) => {
+            let ran: Vec<&str> = e.applied.iter().chain(&e.missing).map(String::as_str).collect();
+            let before = if ran.is_empty() { "nothing before it".to_owned() } else { ran.join(", ") };
             journal::emit(
                 world,
                 JournalKind::Warn,
-                format!("save: {who} character could only be applied in part ({}); applied: {}; the body keeps the rest as it was", peer(&e.message), e.applied.join(", ")),
+                format!(
+                    "save: {who} character could only be applied in part ({}); applied: {before}; the failed section may have changed the body, which keeps the rest as it was",
+                    peer(&e.message)
+                ),
             );
         }
         Err(panic) => {
