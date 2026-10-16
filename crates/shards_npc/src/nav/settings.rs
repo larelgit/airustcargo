@@ -73,7 +73,9 @@ pub struct NavBodyDef {
     pub locomotion: Option<String>,
     /// Its radius instead of the locomotion's (m).
     pub radius: Option<f32>,
-    /// Its height instead of the locomotion's (m).
+    /// Its height instead of the locomotion's (m). With either, the body must still be a
+    /// capsule its locomotion allows: at least as tall as it is wide, and wider than twice
+    /// the skin width (content checks it).
     pub height: Option<f32>,
 }
 
@@ -120,6 +122,31 @@ impl ContentDef for NavSettingsDef {
             }
         }
         let db = refs.db();
+        let classes = NavSettings::classes(self, db);
+        // A class's own radius and height stand instead of its body's: they must still make a
+        // capsule its locomotion allows (the rest of the body is checked as a `locomotion`).
+        for ((name, body), class) in self.bodies.iter().zip(classes.iter().skip(1)) {
+            let sized = [body.radius, body.height].into_iter().flatten().all(|v| v.is_finite() && v > 0.0);
+            if !sized || (body.radius.is_none() && body.height.is_none()) {
+                continue;
+            }
+            let CharacterParams { radius, height, skin_width, .. } = class.agent;
+            if height < 2.0 * radius {
+                refs.error(format!(
+                    "bodies.{name}: height {height} is less than the capsule's diameter {}; give the class a height of at \
+                     least {} m or a smaller radius",
+                    2.0 * radius,
+                    2.0 * radius
+                ));
+            }
+            if body.radius.is_some() && skin_width >= radius * 0.5 {
+                refs.error(format!(
+                    "bodies.{name}: skin_width {skin_width} is too large for radius {radius}; give the class a radius \
+                     above {} m (twice its locomotion's skin_width)",
+                    2.0 * skin_width
+                ));
+            }
+        }
         for target in bake_targets(db) {
             for size in &target.sizes {
                 if !whole_cells(*size, self.cell) {
@@ -137,7 +164,7 @@ impl ContentDef for NavSettingsDef {
             return;
         }
         let Some(root) = refs.asset_root().map(Path::to_path_buf) else { return };
-        for settings in NavSettings::classes(self, db) {
+        for settings in classes {
             // The agent's files are named as ever; another class's say whose they are.
             let body = if settings.is_default() { String::new() } else { format!(" for the body `{}`", settings.body) };
             for target in bake_targets(db) {

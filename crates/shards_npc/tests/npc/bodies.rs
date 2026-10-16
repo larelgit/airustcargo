@@ -254,8 +254,11 @@ fn every_body_class_bakes_to_stable_bytes_and_content_checks_each() {
 
 #[test]
 fn body_classes_are_checked_like_any_content() {
+    // The agent is the code defaults: 0.4 m radius, 1.8 m tall, skin 0.02 m.
     let nav = "{ \"default\": (cell: 0.5, check_bakes: false, bodies: {\
-               \"agent\": (), \"Big\": (), \"thin\": (radius: Some(-1.0)), \"ogre\": (locomotion: Some(\"ogre\")) }) }\n";
+               \"agent\": (), \"Big\": (), \"thin\": (radius: Some(-1.0)), \"ogre\": (locomotion: Some(\"ogre\")), \
+               \"wide\": (radius: Some(1.2)), \"short\": (height: Some(0.5)), \"wisp\": (radius: Some(0.03)), \
+               \"tall\": (radius: Some(1.2), height: Some(2.4)) }) }\n";
     let dir = assets_with("checked", nav);
     let app = app_in(dir.to_str().unwrap(), 7, |_| {});
     let errors = errors(&app);
@@ -264,9 +267,16 @@ fn body_classes_are_checked_like_any_content() {
         "bodies: `Big` must be lowercase letters, digits and `_`",
         "bodies.thin.radius -1 must be more than 0 m",
         "bodies.ogre.locomotion",
+        // A size of its own still makes a capsule the locomotion would allow.
+        "bodies.wide: height 1.8 is less than the capsule's diameter 2.4; give the class a height of at least 2.4 m or a \
+         smaller radius",
+        "bodies.short: height 0.5 is less than the capsule's diameter 0.8",
+        "bodies.wisp: skin_width 0.02 is too large for radius 0.03; give the class a radius above 0.04 m",
     ] {
         assert!(errors.iter().any(|e| e.contains(needle)), "{needle}: {errors:#?}");
     }
+    // Said once, about the class that is wrong.
+    assert!(!errors.iter().any(|e| e.contains("bodies.tall") || e.contains("bodies.thin:")), "{errors:#?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
