@@ -34,6 +34,25 @@
     "watcher": (initial: "idle", states: {"idle": ()}),
     // Walks its patrol.
     "walker": (initial: "walk", states: {"walk": (kind: "patrol", params: {"speed": 1.0})}),
+    // The same, avoiding nobody: it walks its route as if alone.
+    "plough": (initial: "walk", avoidance: (weight: 0.0), states: {"walk": (kind: "patrol", params: {"speed": 1.0})}),
+    // Runs at what it knows and stands 1.5 m from it.
+    "chaser": (
+        initial: "idle",
+        states: {
+            "idle": (transitions: [(to: "chase", when: ["target_known"])]),
+            "chase": (params: {"within": 1.5}, transitions: [(to: "idle", when: ["target_lost"])]),
+        },
+    ),
+    // The same, avoiding nobody.
+    "chaser_plough": (
+        initial: "idle",
+        avoidance: (weight: 0.0),
+        states: {
+            "idle": (transitions: [(to: "chase", when: ["target_known"])]),
+            "chase": (params: {"within": 1.5}, transitions: [(to: "idle", when: ["target_lost"])]),
+        },
+    ),
     // The test's own condition and state.
     "flagged": (
         initial: "idle",

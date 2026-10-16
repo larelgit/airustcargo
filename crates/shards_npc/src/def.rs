@@ -12,7 +12,9 @@
 //!   which attack tags may overlap, what those without a token do.
 //! - `attack_plan` ([`AttackPlanDef`]): the attacks an NPC chooses from (weights, distance
 //!   windows, cooldowns, tags, costs) and the sequences it never plays.
-//! - `npc_tuning` ([`NpcTuning`], id `default`): engine-wide numbers (noise radii, avoidance).
+//! - `npc_tuning` ([`NpcTuning`], id `default`): engine-wide numbers (noise radii, avoidance
+//!   between bodies ([`AvoidanceDef`]), route following); a behaviour may bring its own
+//!   avoidance.
 //!
 //! ```ron
 //! // content/npc/grunt.behavior.ron
@@ -196,6 +198,11 @@ pub struct BehaviorDef {
     /// The state a new NPC starts in.
     pub initial: String,
     pub states: BTreeMap<String, StateDef>,
+    /// How its NPCs keep clear of other bodies, instead of the tuning's (`npc_tuning`
+    /// `avoidance`); fields left out keep the engine's defaults. `(weight: 0)`: a boss that
+    /// walks its way whoever stands there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avoidance: Option<AvoidanceDef>,
 }
 
 impl BehaviorDef {
@@ -216,6 +223,9 @@ impl ContentDef for BehaviorDef {
                 .unwrap_or_default();
             refs.error(format!("{field} names an unknown state `{state}`{hint}; states: {}", names.join(", ")));
         };
+        if let Some(avoidance) = &self.avoidance {
+            avoidance.check(refs, "avoidance");
+        }
         if self.states.is_empty() {
             refs.error("states is empty; give at least one, e.g. {\"idle\": ()}");
             return;
@@ -583,6 +593,61 @@ impl ContentDef for AttackPlanDef {
     }
 }
 
+/// How nav agents keep clear of other bodies, NPCs and players alike (in [`NpcTuning`] for
+/// every NPC, in a [`BehaviorDef`] for its own). Each tick an NPC on its way tries a fixed
+/// fan of velocities around the one its route asks for and takes the cheapest: straying
+/// from the route costs, and so does the first collision it would run into within
+/// `horizon` seconds, the sooner the more (`weight`). Another NPC that avoids too takes half
+/// of each sidestep (reciprocal velocity obstacles); players, NPCs standing or swinging and
+/// NPCs under an agent's orders are walked around. Missing fields keep their defaults.
+///
+/// ```ron
+/// "avoidance": (weight: 1.0, horizon: 1.5, range: 3.0, neighbours: 6, margin: 0.2),
+/// ```
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct AvoidanceDef {
+    /// How much a coming collision weighs against keeping to the route: one at half the
+    /// horizon costs `weight` times a full stop. 0 turns avoidance off: the NPC walks its
+    /// route as if alone, and bodies only push each other apart.
+    pub weight: f32,
+    /// Seconds it looks ahead for collisions (never past the moment it stops at its goal).
+    pub horizon: f32,
+    /// Bodies farther than this from its own (m, surface to surface) are not looked at.
+    pub range: f32,
+    /// At most this many bodies, the nearest first (by `AiId` among equals).
+    pub neighbours: u32,
+    /// Room kept between bodies, on top of their radii (m). None toward its own target,
+    /// which it walks up to in order to strike.
+    pub margin: f32,
+}
+
+impl Default for AvoidanceDef {
+    fn default() -> Self {
+        Self { weight: 1.0, horizon: 1.5, range: 3.0, neighbours: 6, margin: 0.2 }
+    }
+}
+
+impl AvoidanceDef {
+    /// Content errors in the numbers, the fields named under `at`.
+    pub fn check(&self, refs: &mut Refs, at: &str) {
+        for (name, v) in [("weight", self.weight), ("range", self.range), ("margin", self.margin)] {
+            non_negative(refs, &format!("{at}.{name}"), v);
+        }
+        if !(self.horizon > 0.0 && self.horizon <= 10.0) {
+            refs.error(format!("{at}.horizon must be in (0, 10] seconds (is {})", self.horizon));
+        }
+        if !(1..=32).contains(&self.neighbours) {
+            refs.error(format!("{at}.neighbours must be 1 to 32 (is {}); set weight 0 to turn avoidance off", self.neighbours));
+        }
+    }
+
+    /// Whether it steers at all.
+    pub fn on(&self) -> bool {
+        self.weight > 0.0
+    }
+}
+
 /// Engine-wide NPC numbers (content kind `npc_tuning`, id `default`). Missing fields keep
 /// their defaults.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -592,10 +657,8 @@ pub struct NpcTuning {
     pub hit_noise: f32,
     /// Radius of the noise a sprinting character makes (m); 0: silent.
     pub sprint_noise: f32,
-    /// Nav agents look this far ahead (s) for NPCs they would bump into.
-    pub avoid_time: f32,
-    /// Room kept between two NPCs' bodies when they pass (m).
-    pub avoid_margin: f32,
+    /// How nav agents keep clear of other bodies (a behaviour may bring its own).
+    pub avoidance: AvoidanceDef,
     /// Seconds between two route plans of one agent whose way is blocked.
     pub repath: f32,
     /// A waypoint counts as reached this close (m).
@@ -604,7 +667,7 @@ pub struct NpcTuning {
 
 impl Default for NpcTuning {
     fn default() -> Self {
-        Self { hit_noise: 10.0, sprint_noise: 8.0, avoid_time: 1.0, avoid_margin: 0.3, repath: 1.0, waypoint_reach: 0.4 }
+        Self { hit_noise: 10.0, sprint_noise: 8.0, avoidance: AvoidanceDef::default(), repath: 1.0, waypoint_reach: 0.4 }
     }
 }
 
@@ -628,13 +691,12 @@ impl ContentDef for NpcTuning {
         for (name, v) in [
             ("hit_noise", self.hit_noise),
             ("sprint_noise", self.sprint_noise),
-            ("avoid_time", self.avoid_time),
-            ("avoid_margin", self.avoid_margin),
             ("repath", self.repath),
             ("waypoint_reach", self.waypoint_reach),
         ] {
             non_negative(refs, name, v);
         }
+        self.avoidance.check(refs, "avoidance");
     }
 }
 

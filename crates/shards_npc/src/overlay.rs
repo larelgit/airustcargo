@@ -114,7 +114,7 @@ pub fn overlay_lines(world: &World) -> Vec<String> {
             let mut parts = vec![npc_line(brain, token, home, Some(tf)).unwrap_or_else(|| "(not started)".into())];
             if brain.active {
                 parts.extend(perceived.map(|p| senses(here, p)).unwrap_or_default());
-                parts.extend(agent.and_then(route));
+                parts.extend(agent.map(route).unwrap_or_default());
             }
             format!("{id} {}: {}", npc.behavior, parts.join(" · "))
         })
@@ -140,17 +140,21 @@ fn senses(here: Vec3, perceived: &Perceived) -> Vec<String> {
 }
 
 /// Its way to its goal, when it is not a straight walk: `detour, 3 waypoints left`, `no
-/// route`.
-fn route(agent: &NavAgent) -> Option<String> {
-    if agent.goal.is_none() || agent.direct || agent.arrived {
-        return None;
+/// route`; and the body it steers around: `avoiding e7`.
+fn route(agent: &NavAgent) -> Vec<String> {
+    let mut out = Vec::new();
+    if agent.goal.is_some() && !agent.direct && !agent.arrived {
+        let left = agent.path.len().saturating_sub(agent.index as usize);
+        match left {
+            0 if agent.path.is_empty() => out.push("no route".into()),
+            0 => {}
+            n => out.push(format!("detour, {n} waypoint{} left", if n == 1 { "" } else { "s" })),
+        }
     }
-    let left = agent.path.len().saturating_sub(agent.index as usize);
-    match left {
-        0 if agent.path.is_empty() => Some("no route".into()),
-        0 => None,
-        n => Some(format!("detour, {n} waypoint{} left", if n == 1 { "" } else { "s" })),
+    if let Some(other) = agent.avoiding {
+        out.push(format!("avoiding {other}"));
     }
+    out
 }
 
 #[cfg(feature = "render")]

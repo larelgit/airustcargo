@@ -24,9 +24,9 @@
 //!   loads ([`NavRegion`]), routes by A* over the tile graph, then over the grid of the
 //!   corridor, then string pulling; `--bake-nav` and `nav_bake` write the bake files.
 //! - **Nav agents** ([`nav`]): routes from a pluggable provider ([`NavPaths`]: the navmesh in
-//!   a loaded region, the motion module's local grid elsewhere), path following, avoidance
-//!   between NPCs, the leash around [`Home`]. Dormant NPCs (the world module's active zones)
-//!   do nothing.
+//!   a loaded region, the motion module's local grid elsewhere), path following, the leash
+//!   around [`Home`], avoidance between bodies (sampled reciprocal velocity obstacles, numbers
+//!   in content: [`AvoidanceDef`]). Dormant NPCs (the world module's active zones) do nothing.
 //!
 //! ```ron
 //! // content/npc/grunt.behavior.ron
@@ -63,8 +63,9 @@
 //! NpcSystems::Decide    each NPC: one transition at most, its state hook → NpcDrive
 //! NpcSystems::Direct    tokens: started attacks remembered, finished ones back, grants; waiting roles
 //! NpcSystems::Plan      token holders: choose an attack, close in, press it (budget, combinations)
-//! NpcSystems::Navigate  routes (NavPaths), following, avoidance, leash
-//! NpcSystems::Drive     → Intent: move_dir, aim, presses, held inputs
+//! NpcSystems::Navigate  routes (NavPaths), following, leash → the velocity the route asks for
+//! NpcSystems::Drive     avoidance between bodies (leash again), then → Intent: move_dir, aim,
+//!                       presses, held inputs
 //! ```
 //!
 //! Everything iterates in `AiId` order and draws randomness from `SimRng` streams keyed by the
@@ -77,7 +78,7 @@
 //! Tools: `npc_state {id}`, `nav_path {from?, to, radius?}` and `nav_info` (queries),
 //! `npc_set_state {id, state}`, `nav_bake {tile?}`, `nav_overlay {on?}` and `npc_overlay
 //! {on?}` ([`overlay`], F7 in a window) (dev). Stop conditions: `npc_attacking`, `npcs_calm`,
-//! `npc_beyond_leash`, `npc_detour`. Journal: `e7 idle → chase e5`, `e7 takes an attack token on e5 (2/2)`, `e7
+//! `npc_beyond_leash`, `npc_detour`, `npc_avoiding`. Journal: `e7 idle → chase e5`, `e7 takes an attack token on e5 (2/2)`, `e7
 //! returns its attack token after swipe (1/2)`. The NPC's line: `attack e5 · token · leash
 //! 6/15m`.
 
@@ -103,7 +104,7 @@ pub use brain::{
     NpcState, NpcStateChanged, Patrol, TargetView,
 };
 pub use def::{
-    AttackOption, AttackPlanDef, BehaviorDef, Cond, DirectorDef, NpcTuning, Param, Params, PerceptionDef, Role,
+    AttackOption, AttackPlanDef, AvoidanceDef, BehaviorDef, Cond, DirectorDef, NpcTuning, Param, Params, PerceptionDef, Role,
     SequenceBan, StateDef, TransitionDef, WaitRole,
 };
 pub use director::{AttackToken, Grant, TokenGranted, TokenReturned};
@@ -137,9 +138,9 @@ pub enum NpcSystems {
     Direct,
     /// The attack planner: choose, close in, press.
     Plan,
-    /// Nav agents: routes, following, avoidance, leash.
+    /// Nav agents: routes, following, leash.
     Navigate,
-    /// What NPCs decided goes into their `Intent`.
+    /// Avoidance between bodies, then what NPCs decided goes into their `Intent`.
     Drive,
 }
 
@@ -241,7 +242,7 @@ impl Plugin for NpcPlugin {
                     director::direct.in_set(NpcSystems::Direct),
                     planner::plan_attacks.in_set(NpcSystems::Plan),
                     (nav::nav_paths, nav::nav_steer).chain().in_set(NpcSystems::Navigate),
-                    nav::drive_intents.in_set(NpcSystems::Drive),
+                    (nav::nav_avoid, nav::drive_intents).chain().in_set(NpcSystems::Drive),
                 ),
             )
             .add_observer(perception::hear_noise)

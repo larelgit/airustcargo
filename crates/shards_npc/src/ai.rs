@@ -68,6 +68,11 @@ pub(crate) fn register(app: &mut App) {
             w.try_query::<(&NpcBrain, &NavAgent)>().is_some_and(|mut q| {
                 q.iter(w).any(|(b, a)| b.active && a.goal.is_some() && !a.direct && !a.arrived && a.path.len() >= 2)
             })
+        })
+        // `step --until named:npc_avoiding`: an active NPC steers off its route around another
+        // body (an NPC, a player) it would run into.
+        .add_ai_condition("npc_avoiding", |w| {
+            w.try_query::<(&NpcBrain, &NavAgent)>().is_some_and(|mut q| q.iter(w).any(|(b, a)| b.active && a.avoiding.is_some()))
         });
 }
 
@@ -194,6 +199,8 @@ fn npc_state(In(call): In<Call<NpcStateArgs>>, world: &World) -> ToolResult<Valu
             "arrived": a.arrived,
             // A goal with no way there: it holds until it plans again.
             "no_route": a.goal.is_some() && a.path.is_empty(),
+            // The body avoidance steers it around this tick (it walks off its route for it).
+            "avoiding": a.avoiding.map(|id| id.to_string()),
         })
     });
     let home = e.get::<Home>().map(|h| {

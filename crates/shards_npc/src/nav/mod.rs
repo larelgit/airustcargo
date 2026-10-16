@@ -43,17 +43,24 @@
 //!   holds its ground until the next plan (it never walks blindly at the goal).
 //! - **Following**: toward the next waypoint at the state's speed; arrived within `within`
 //!   meters of the goal.
-//! - **Avoidance** between NPCs: each looks [`NpcTuning::avoid_time`] seconds ahead at where
-//!   the others are going and steers away from the closest approach (to its right when it
-//!   would meet one head on, so two walkers pass each other), plus a push apart when already
-//!   close.
 //! - **Leash**: an NPC whose state keeps it leashed never steers out of its [`Home`] circle.
+//!   Following and the leash give the velocity the route asks for ([`NavAgent::preferred`]).
+//! - **Avoidance** between bodies ([`avoid`], in `NpcSystems::Drive`): sampled reciprocal
+//!   velocity obstacles. An NPC on its way tries a fan of velocities around the preferred one
+//!   and takes the cheapest: straying from the route costs, and so does the first collision
+//!   with another NPC or a player within the look-ahead; another NPC that avoids too takes
+//!   half of each sidestep; to its right when it would meet one head on, so two walkers pass
+//!   each other, and on the side it took until it is past; nearly at its goal behind a body
+//!   that does not make way, it waits there. The numbers are content ([`AvoidanceDef`](crate::AvoidanceDef): the
+//!   tuning's, or the behaviour's own); `weight: 0` turns it off. The leash holds after it
+//!   too, and the body it steers around is [`NavAgent::avoiding`].
 //!
 //! The result is `Intent.move_dir` (and `aim`, presses, held inputs): NPCs drive their body
 //! exactly as players do. `move_to path=true` follows navmesh routes too and `path_to`
 //! reports them (the motion module's [`RoutePlanner`] seam), `clearance` ends a direction
 //! where the navmesh does, and `nav_path` shows routes with their tiles.
 
+pub mod avoid;
 pub mod bake;
 #[cfg(feature = "render")]
 pub(crate) mod overlay;
@@ -71,6 +78,7 @@ pub use tools::{bake_files, BakeReport, NavOverlay};
 
 use ai_core::AiId;
 use bevy::prelude::*;
+use shards_action::Dead;
 use shards_content::ContentDb;
 use shards_core::{flat, Intent};
 use shards_motion::perception::{
@@ -82,7 +90,8 @@ use shards_motion::{
 };
 
 use crate::brain::{npcs_in_order, Home, Npc, NpcBrain, NpcDrive, LEASH_ROOM};
-use crate::def::NpcTuning;
+use crate::def::{BehaviorDef, NpcTuning};
+use avoid::{steer, Ask, Body};
 
 /// Pluggable routes: `find(world, from, to, body radius) -> waypoints` (the last one at
 /// `to`), `None` when there is no way. The default ([`navmesh_path`]) asks the navmesh in a
@@ -209,8 +218,16 @@ pub struct NavAgent {
     pub repath: f32,
     /// At the goal (or without one).
     pub arrived: bool,
+    /// The velocity its route asks for this tick (m/s, on the ground plane), the leash kept:
+    /// what it would walk alone. Zero when it stands.
+    pub preferred: Vec3,
     /// The movement input it asks for this tick: after avoidance and the leash.
     pub desired: Vec3,
+    /// The body avoidance steers it around this tick (the first it would have run into).
+    pub avoiding: Option<AiId>,
+    /// The side it goes round on while it avoids: 1 right, -1 left, 0 none. It keeps to it
+    /// from tick to tick.
+    pub side: i8,
 }
 
 /// The body numbers of an NPC: its controller's (or its own), else the defaults.
@@ -343,15 +360,6 @@ pub(crate) fn nav_paths(world: &mut World) {
     }
 }
 
-/// Another body an agent steers clear of.
-#[derive(Clone, Copy)]
-struct Other {
-    id: AiId,
-    pos: Vec3,
-    vel: Vec3,
-    radius: f32,
-}
-
 type Agents<'w, 's> = Query<
     'w,
     's,
@@ -363,35 +371,26 @@ type Agents<'w, 's> = Query<
         &'static NpcBrain,
         &'static Transform,
         Option<&'static Home>,
-        Option<&'static MotionState>,
         Option<&'static CharacterController>,
         Option<&'static CharacterParams>,
     ),
     With<Npc>,
 >;
 
-/// `NpcSystems::Navigate`, second: every agent follows its route, steers clear of the other
-/// NPCs and stays on its leash.
+/// `NpcSystems::Navigate`, second: every agent follows its route and stays on its leash:
+/// the velocity it would walk alone ([`NavAgent::preferred`]), and that as its movement
+/// input until avoidance has its say.
 pub(crate) fn nav_steer(db: Res<ContentDb>, mut agents: Agents) {
     let tuning = NpcTuning::of(&db);
-    let mut others: Vec<Other> = agents
-        .iter()
-        .map(|(_, id, _, _, _, tf, _, motion, controller, own)| Other {
-            id: *id,
-            pos: tf.translation,
-            vel: motion.map_or(Vec3::ZERO, |m| flat(m.velocity)),
-            radius: params_of(&db, controller, own).radius,
-        })
-        .collect();
-    others.sort_by_key(|o| o.id);
     let mut order: Vec<(AiId, Entity)> = agents.iter().map(|(e, id, ..)| (*id, e)).collect();
     order.sort();
-    for (id, entity) in order {
-        let Ok((_, _, mut agent, drive, brain, tf, home, _, controller, own)) = agents.get_mut(entity) else { continue };
+    for (_, entity) in order {
+        let Ok((_, _, mut agent, drive, brain, tf, home, controller, own)) = agents.get_mut(entity) else { continue };
         let params = params_of(&db, controller, own);
         let here = tf.translation;
         let mut next = agent.clone();
         next.desired = Vec3::ZERO;
+        next.preferred = Vec3::ZERO;
         match next.goal.filter(|_| brain.active) {
             None => next.arrived = true,
             Some(goal) if flat(goal - here).length() <= next.within.max(0.05) => next.arrived = true,
@@ -409,14 +408,14 @@ pub(crate) fn nav_steer(db: Res<ContentDb>, mut agents: Agents) {
                 let dir = flat(toward - here).try_normalize().unwrap_or(Vec3::ZERO);
                 let speed = next.speed.clamp(0.0, 1.0);
                 let (top, _) = params.ground_speed(speed, false);
-                let me = Other { id, pos: here, vel: dir * top, radius: params.radius };
-                let mut vel = avoid(&me, &others, &tuning);
+                let mut vel = dir * top;
                 if drive.leashed
                     && let Some(home) = home
                 {
                     vel = keep_on_leash(vel, here, home.pos.unwrap_or(here), home.leash);
                 }
-                next.desired = if top > 0.0 { (vel / top).clamp_length_max(1.0) * speed } else { Vec3::ZERO };
+                next.preferred = vel;
+                next.desired = input_of(vel, top, speed);
             }
         }
         if *agent != next {
@@ -425,46 +424,142 @@ pub(crate) fn nav_steer(db: Res<ContentDb>, mut agents: Agents) {
     }
 }
 
-/// `me.vel` bent away from the NPCs it would come too close to within the look-ahead.
-fn avoid(me: &Other, others: &[Other], tuning: &NpcTuning) -> Vec3 {
-    let speed = me.vel.length();
-    if speed <= 1e-4 {
-        return me.vel;
-    }
-    let ahead = tuning.avoid_time.max(0.05);
-    let right = Vec3::new(-me.vel.z, 0.0, me.vel.x) / speed;
-    let mut push = Vec3::ZERO;
-    for o in others.iter().filter(|o| o.id != me.id) {
-        let rel = flat(o.pos - me.pos);
-        let room = me.radius + o.radius + tuning.avoid_margin;
-        let reach = room + (speed + o.vel.length()) * ahead;
-        let d = rel.length();
-        if d > reach {
+/// The movement input for velocity `vel` of a walker whose input `speed` makes `top` m/s.
+fn input_of(vel: Vec3, top: f32, speed: f32) -> Vec3 {
+    if top > 0.0 { (vel / top).clamp_length_max(1.0) * speed } else { Vec3::ZERO }
+}
+
+type Bodies<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        (&'static AiId, &'static Transform, &'static CharacterController, Option<&'static CharacterParams>),
+        (Option<&'static MotionState>, Has<Dead>, Option<&'static Intent>),
+        (Option<&'static Npc>, Option<&'static NpcBrain>, Option<&'static NpcDrive>, Option<&'static Home>),
+        Option<&'static mut NavAgent>,
+    ),
+>;
+
+/// An agent avoidance steers this tick.
+struct Asking {
+    entity: Entity,
+    body: Body,
+    preferred: Vec3,
+    until_stop: f32,
+    target: Option<AiId>,
+    side: i8,
+    def: crate::def::AvoidanceDef,
+    /// Its input speed and the top speed it makes.
+    speed: f32,
+    top: f32,
+    /// Home and leash, while its state keeps it leashed.
+    leash: Option<(Vec3, f32)>,
+}
+
+/// `NpcSystems::Drive`, first: every NPC on its way keeps clear of the other character
+/// bodies ([`avoid`]), in `AiId` order, all against the bodies as they stand at the start of
+/// the system; the leash holds after it. Writes [`NavAgent::desired`] (the movement input),
+/// [`NavAgent::avoiding`] and [`NavAgent::side`].
+pub(crate) fn nav_avoid(db: Res<ContentDb>, mut bodies: Bodies) {
+    let tuning = NpcTuning::of(&db);
+    let mut all: Vec<Body> = Vec::new();
+    let mut asking: Vec<Asking> = Vec::new();
+    let mut idle: Vec<Entity> = Vec::new();
+    for (entity, (id, tf, controller, own), (motion, dead, intent), (npc, brain, drive, home), agent) in bodies.iter() {
+        let params = params_of(&db, Some(controller), own);
+        let def = npc
+            .and_then(|n| db.get::<BehaviorDef>(&n.behavior))
+            .and_then(|b| b.avoidance.clone())
+            .unwrap_or_else(|| tuning.avoidance.clone());
+        let steering = !dead
+            && def.on()
+            && npc.is_some()
+            && brain.is_some_and(|b| b.active)
+            && intent.is_none_or(|i| i.orders.is_empty())
+            && agent.is_some_and(|a| a.preferred != Vec3::ZERO);
+        let here = tf.translation;
+        let body = Body {
+            id: *id,
+            pos: here,
+            vel: motion.map_or(Vec3::ZERO, |m| flat(m.velocity)),
+            radius: params.radius,
+            height: params.height,
+            reciprocal: steering,
+        };
+        if !dead {
+            all.push(body);
+        }
+        let Some(agent) = agent else { continue };
+        if !steering {
+            if agent.avoiding.is_some() || agent.side != 0 {
+                idle.push(entity);
+            }
             continue;
         }
-        // Already close: straight apart.
-        if d < room {
-            let away = if d > 1e-4 { -rel / d } else { -right };
-            push += away * (room - d) / room * speed * 1.5;
+        let speed = agent.speed.clamp(0.0, 1.0);
+        let (top, _) = params.ground_speed(speed, false);
+        let pace = agent.preferred.length();
+        asking.push(Asking {
+            entity,
+            body,
+            preferred: agent.preferred,
+            until_stop: if pace > 1e-4 { (remaining(agent, here) - agent.within).max(0.0) / pace } else { 0.0 },
+            target: brain.and_then(|b| b.target),
+            side: agent.side,
+            def,
+            speed,
+            top,
+            leash: drive.filter(|d| d.leashed).and(home).map(|h| (h.pos.unwrap_or(here), h.leash)),
+        });
+    }
+    all.sort_by_key(|b| b.id);
+    asking.sort_by_key(|a| a.body.id);
+    let chosen: Vec<(Entity, Vec3, Option<AiId>, i8)> = asking
+        .iter()
+        .map(|a| {
+            let ask = Ask { me: a.body, preferred: a.preferred, until_stop: a.until_stop, target: a.target, side: a.side, def: &a.def };
+            let steered = steer(&ask, &all);
+            if steered.vel == a.preferred {
+                return (a.entity, Vec3::NAN, None, 0);
+            }
+            let vel = match a.leash {
+                Some((home, leash)) => keep_on_leash(steered.vel, a.body.pos, home, leash),
+                None => steered.vel,
+            };
+            (a.entity, input_of(vel, a.top, a.speed), steered.avoiding, steered.side)
+        })
+        .collect();
+    for (entity, desired, avoiding, side) in chosen {
+        let Ok((.., Some(mut agent))) = bodies.get_mut(entity) else { continue };
+        // NaN: the route's own input, set by `nav_steer`, stands.
+        if !desired.is_nan() && agent.desired != desired {
+            agent.desired = desired;
         }
-        // Where the two come closest within the look-ahead.
-        let rv = o.vel - me.vel;
-        let a = rv.length_squared();
-        let t = if a > 1e-6 { (-rel.dot(rv) / a).clamp(0.0, ahead) } else { 0.0 };
-        let closest = rel + rv * t;
-        let gap = closest.length();
-        if gap < room && t > 0.0 {
-            // Head on (the other right in its way): pass on the right.
-            let away = if gap > 0.05 * room { -closest / gap } else { right };
-            push += away * (room - gap) / room * (1.0 - t / ahead).max(0.15) * speed * 2.0;
+        if agent.avoiding != avoiding || agent.side != side {
+            agent.avoiding = avoiding;
+            agent.side = side;
         }
     }
-    let vel = me.vel + push;
-    // Never back up because of others: at worst stand aside.
-    let forward = me.vel / speed;
-    let along = vel.dot(forward);
-    let vel = if along < 0.0 { vel - forward * along } else { vel };
-    vel.clamp_length_max(speed)
+    for entity in idle {
+        if let Ok((.., Some(mut agent))) = bodies.get_mut(entity) {
+            agent.avoiding = None;
+            agent.side = 0;
+        }
+    }
+}
+
+/// How far an agent at `here` still walks along its path to its goal (m, on the ground
+/// plane).
+fn remaining(agent: &NavAgent, here: Vec3) -> f32 {
+    let index = agent.index as usize;
+    match agent.path.get(index) {
+        Some(next) => {
+            let rest: f32 = agent.path[index..].windows(2).map(|w| flat(w[1] - w[0]).length()).sum();
+            flat(*next - here).length() + rest
+        }
+        None => agent.goal.map_or(0.0, |g| flat(g - here).length()),
+    }
 }
 
 /// `vel` without the part that takes a body at `here` out of its leash.
@@ -527,20 +622,17 @@ pub(crate) fn drive_intents(mut npcs: Query<(&NpcBrain, &NavAgent, &mut NpcDrive
 mod tests {
     use super::*;
 
-    fn walker(id: u32, x: f32, vx: f32) -> Other {
-        Other { id: AiId(id), pos: Vec3::new(x, 0.0, 0.0), vel: Vec3::new(vx, 0.0, 0.0), radius: 0.4 }
-    }
-
     #[test]
-    fn head_on_walkers_each_pass_on_their_right() {
-        let tuning = NpcTuning::default();
-        let (a, b) = (walker(1, -2.0, 2.0), walker(2, 2.0, -2.0));
-        let (va, vb) = (avoid(&a, &[a, b], &tuning), avoid(&b, &[a, b], &tuning));
-        // Facing +X the right is +Z (south); facing -X it is -Z.
-        assert!(va.z > 0.1 && vb.z < -0.1, "{va} {vb}");
-        assert!(va.x > 0.0 && vb.x < 0.0, "neither backs up: {va} {vb}");
-        let far = walker(3, 40.0, -2.0);
-        assert_eq!(avoid(&a, &[a, far], &tuning), a.vel, "nobody near: straight on");
+    fn the_rest_of_a_route_is_measured_along_its_waypoints() {
+        let agent = NavAgent {
+            goal: Some(Vec3::new(4.0, 0.0, 3.0)),
+            path: vec![Vec3::new(0.0, 0.0, 5.0), Vec3::new(4.0, 0.0, 5.0), Vec3::new(4.0, 0.0, 3.0)],
+            index: 1,
+            ..default()
+        };
+        assert!((remaining(&agent, Vec3::new(1.0, 0.0, 5.0)) - (3.0 + 2.0)).abs() < 1e-5);
+        let straight = NavAgent { goal: Some(Vec3::new(3.0, 0.0, 4.0)), ..default() };
+        assert!((remaining(&straight, Vec3::ZERO) - 5.0).abs() < 1e-5, "no path: straight to the goal");
     }
 
     #[test]
