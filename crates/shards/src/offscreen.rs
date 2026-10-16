@@ -4,6 +4,10 @@
 //! draws into it, the camera that draws last shows the UI, as it would in the window, and `shot`
 //! captures it. Nothing reads the image back but `shot`.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
 use ai_core::display::Offscreen;
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::RenderTarget;
@@ -13,6 +17,10 @@ use bevy::render::renderer::RenderDevice;
 use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::ui::IsDefaultUiCamera;
 use bevy::window::WindowRef;
+
+/// The longest the GPU may take to draw a frame. Past it the GPU is stuck (a hung driver, a lost
+/// device it never reports), and the game ends instead of waiting forever.
+const FRAME_LIMIT: Duration = Duration::from_secs(30);
 
 /// The image and what aims the cameras at it.
 pub(crate) struct OffscreenPlugin {
@@ -27,22 +35,42 @@ impl Plugin for OffscreenPlugin {
         // Only the GPU reads it (`shot` copies it there): no copy in the main world.
         image.asset_usage = RenderAssetUsages::RENDER_WORLD;
         let image = app.world_mut().resource_mut::<Assets<Image>>().add(image);
+        let stuck = GpuStuck::default();
         app.insert_resource(Offscreen { image, size })
+            .insert_resource(stuck.clone())
             .add_observer(aim_at_the_image)
-            .add_systems(PostUpdate, show_the_ui.before(bevy::ui::UiSystems::Prepare));
+            .add_systems(PostUpdate, show_the_ui.before(bevy::ui::UiSystems::Prepare))
+            .add_systems(Last, end_when_stuck);
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.add_systems(Render, wait_for_the_gpu.in_set(RenderSystems::Cleanup));
+            render_app.insert_resource(stuck).add_systems(Render, wait_for_the_gpu.in_set(RenderSystems::Cleanup));
         }
     }
 }
 
+/// Set by the render world when a frame did not finish within [`FRAME_LIMIT`]; read by the main
+/// world, which ends the game.
+#[derive(Resource, Clone, Default)]
+struct GpuStuck(Arc<AtomicBool>);
+
 /// No window means no swapchain, and nothing else makes a frame wait for the one before it: a GPU
 /// slower than the run loop (a software one) would be handed frames faster than it draws them,
-/// until it runs out of memory. Each frame waits until the GPU has drawn it.
-fn wait_for_the_gpu(device: Res<RenderDevice>) {
-    if let Err(e) = device.poll(PollType::wait_indefinitely()) {
-        warn!("offscreen: waiting for the GPU failed: {e}");
+/// until it runs out of memory. Each frame waits until the GPU has drawn it, for
+/// [`FRAME_LIMIT`] at most: going on after that would pile frames up again.
+fn wait_for_the_gpu(device: Res<RenderDevice>, stuck: Res<GpuStuck>) {
+    if device.poll(PollType::Wait { submission_index: None, timeout: Some(FRAME_LIMIT) }).is_err() {
+        stuck.0.store(true, Ordering::Relaxed);
     }
+}
+
+/// A stuck GPU draws no more frames, and `shot` would wait for one forever: the game says why and
+/// ends (exit 1).
+fn end_when_stuck(stuck: Res<GpuStuck>, mut exit: MessageWriter<AppExit>, mut ended: Local<bool>) {
+    if *ended || !stuck.0.load(Ordering::Relaxed) {
+        return;
+    }
+    *ended = true;
+    error!("offscreen: the GPU did not finish a frame in {}s: the game ends", FRAME_LIMIT.as_secs());
+    exit.write(AppExit::error());
 }
 
 /// A camera aimed at the primary window is aimed at the image instead.
@@ -78,5 +106,22 @@ fn show_the_ui(mut commands: Commands, cameras: Query<UiCamera>, offscreen: Res<
         } else if !ours && Some(entity) == last {
             commands.entity(entity).insert((IsDefaultUiCamera, UiShownHere));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stuck_gpu_ends_the_game() {
+        let mut app = App::new();
+        let stuck = GpuStuck::default();
+        app.insert_resource(stuck.clone()).add_systems(Last, end_when_stuck);
+        app.update();
+        assert_eq!(app.should_exit(), None, "a GPU that keeps up");
+        stuck.0.store(true, Ordering::Relaxed);
+        app.update();
+        assert_eq!(app.should_exit(), Some(AppExit::error()));
     }
 }

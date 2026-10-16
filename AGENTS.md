@@ -33,7 +33,7 @@ cargo shards tools                      # инструменты и сигнат
 cargo shards act move_to target=e6      # действие → CHANGES и JOURNAL
 cargo shards step 120 --until journal:died
 cargo shards inspect e6                 # все компоненты сущности
-cargo sandbox --offscreen --paused --port 0 --port-file /tmp/o.port &   # как --headless, но GPU рисует: для shards shot
+cargo sandbox --offscreen --paused --port 0 --port-file /tmp/g.port &   # вместо первой строки: как --headless, но GPU рисует (для shards shot)
 cargo shards save-replay                # сессия с тика 0 → replays/tick<T>.json
 cargo shards save-snapshot              # состояние на этом тике → snapshots/tick<T>.json
 cargo shards load-snapshot snapshots/tick120.json   # вернуться к нему (регион и навсетка вернутся с ним); реплей дальше идёт с этого снапшота

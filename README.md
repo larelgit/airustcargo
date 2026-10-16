@@ -2433,7 +2433,8 @@ LEGEND (image pixels)
 
 ```bash
 cargo sandbox --offscreen --paused --port 0 --port-file /tmp/g.port &
-SHARDS_PORT_FILE=/tmp/g.port cargo shards wait && cargo shards step 30 && cargo shards shot -o shots/arena.png
+export SHARDS_PORT_FILE=/tmp/g.port
+cargo shards wait && cargo shards step 30 && cargo shards shot -o shots/arena.png
 ```
 
 - Вместо окна одна картинка размера `window` (1280×720) — ресурс `ai_core::display::Offscreen`. Камера, нацеленная на главное
@@ -2441,7 +2442,9 @@ SHARDS_PORT_FILE=/tmp/g.port cargo shards wait && cargo shards step 30 && cargo 
   рисует последней (наибольший `order`), как в окне; если игра сама пометила камеру `IsDefaultUiCamera`, — в неё. HUD,
   оверлеи и панель меню разработчика (`dev_menu open=true`) рисуются, как в окне. В картинку смотрит только `shot`.
 - Окна, которое ждало бы показа кадра, нет, поэтому каждый кадр ждёт, пока GPU его нарисует. Иначе медленный GPU
-  получал бы кадры быстрее, чем рисует, и кончилась бы память (так падал программный рендер Windows, WARP).
+  получал бы кадры быстрее, чем рисует, и кончилась бы память (так падал программный рендер Windows, WARP). Ждёт не дольше
+  30 с: GPU, который не дорисовал кадр за это время, завис, и игра выходит с кодом 1 (в журнале и логе — `offscreen: the GPU
+  did not finish a frame in 30s: the game ends`), а не ждёт вечно и не копит кадры дальше.
 - `ai/status` пишет, куда идёт картинка: `display` — `{"mode": "offscreen", "size": [1280, 720], "gpu": "NVIDIA GeForce RTX
   5080 (Vulkan, DiscreteGpu, driver NVIDIA 610.88)"}`; ещё бывают `window` и `headless` (без размера и GPU).
 - Без GPU `--offscreen` выходит с кодом 2: `error: --offscreen draws on the GPU, and there is none: … Run with --headless (no
