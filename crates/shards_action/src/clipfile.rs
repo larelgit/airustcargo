@@ -199,7 +199,7 @@ impl ClipFile {
     pub fn phases(&self, name: &str) -> Option<Result<Vec<(String, f32)>, String>> {
         let text = self.animations.get(name)?.phases.as_deref()?;
         let words: Vec<&str> = text.split_whitespace().collect();
-        let parsed = (words.len() % 2 == 0 && !words.is_empty())
+        let parsed = (words.len().is_multiple_of(2) && !words.is_empty())
             .then(|| {
                 words
                     .chunks(2)
@@ -274,9 +274,12 @@ pub(crate) mod tests {
         data.extend(values.iter().flat_map(|f| f.to_le_bytes()));
     }
 
+    /// A test animation: `(name, phases, times, root translations)`.
+    pub(crate) type TestClip<'a> = (&'a str, Option<&'a str>, &'a [f32], &'a [[f32; 3]]);
+
     /// A `.glb` with nodes `Rig` (its transform: `rig`, e.g. `{"scale": [2, 2, 2]}`) > `root` > `hips`
-    /// and one animation per `(name, phases, times, root translations)`; the root's track is linear.
-    pub(crate) fn glb(rig: serde_json::Value, animations: &[(&str, Option<&str>, &[f32], &[[f32; 3]])]) -> Vec<u8> {
+    /// and one animation per [`TestClip`]; the root's track is linear.
+    pub(crate) fn glb(rig: serde_json::Value, animations: &[TestClip]) -> Vec<u8> {
         let mut data = Vec::new();
         let (mut views, mut accessors, mut anims) = (Vec::new(), Vec::new(), Vec::new());
         for (name, phases, times, values) in animations {
@@ -324,10 +327,10 @@ pub(crate) mod tests {
             "accessors": accessors,
         });
         let mut json = serde_json::to_vec(&json).unwrap();
-        while json.len() % 4 != 0 {
+        while !json.len().is_multiple_of(4) {
             json.push(b' ');
         }
-        while data.len() % 4 != 0 {
+        while !data.len().is_multiple_of(4) {
             data.push(0);
         }
         let total = 12 + 8 + json.len() + 8 + data.len();

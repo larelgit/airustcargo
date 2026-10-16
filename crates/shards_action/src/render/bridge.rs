@@ -375,6 +375,7 @@ pub fn drive(
 /// `root_motion` bone back at its rest translation along the ground (its height stays, a roll
 /// still bobs). The body moves by the action's `displacement`, baked from this very bone, so
 /// the model would otherwise run ahead of its body. The rest comes from the set's glTF.
+#[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
 pub fn hold_root_motion(
     db: Option<Res<ContentDb>>,
     graphs: Res<AnimGraphs>,
