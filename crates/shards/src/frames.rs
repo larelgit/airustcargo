@@ -273,13 +273,16 @@ impl FrameClock {
         }
     }
 
-    /// The GPU reported a frame.
+    /// The GPU reported a frame. A report names no frame: it comes in at least one and at most
+    /// [`IN_FLIGHT`] frames after the one it measures, so the span takes the reports that come in
+    /// from its first frame + [`IN_FLIGHT`] to its last, which are surely of its own frames.
     fn gpu_report(&mut self, gpu: Gpu) {
         if self.gpu.len() == RECENT {
             self.gpu.pop_front();
         }
         self.gpu.push_back(gpu);
-        if self.frame <= self.span_frames.1 {
+        let (first, last) = self.span_frames;
+        if (first.saturating_add(IN_FLIGHT)..=last).contains(&self.frame) {
             self.span.add_gpu(&gpu);
         }
     }
@@ -333,8 +336,8 @@ pub fn end_span(app: &mut App) {
 }
 
 /// The frames between [`begin_span`] and [`end_span`] (the ones so far, while it is open); `None`
-/// when nothing is drawn. GPU reports carry no frame: those are the ones that came in while it was
-/// open, a few frames later than the frames.
+/// when nothing is drawn. GPU reports carry no frame: the span has those that came in late enough
+/// and early enough to be surely of its frames (all but its first [`IN_FLIGHT`] or so).
 pub fn span(world: &World) -> Option<FrameStats> {
     world.get_resource::<FrameClock>().map(|c| c.span)
 }
@@ -561,6 +564,33 @@ mod tests {
         let span = span(&world).unwrap();
         assert_eq!((span.frames, span.over_budget, span.worst_frame), (2, 1, 3), "frames 3 and 4 only");
         assert_eq!(world.resource::<FrameClock>().recent().count(), 5, "every frame is still recent");
+    }
+
+    #[test]
+    fn a_span_takes_only_the_gpu_reports_that_are_surely_of_its_frames() {
+        let mut world = World::new();
+        world.insert_resource(FrameClock::new(ms(16)));
+        let report = |clock: &mut FrameClock, gpu_ms: f64| clock.gpu_report(Gpu { ms: Some(gpu_ms), triangles: None });
+        let mut clock = world.resource_mut::<FrameClock>();
+        let mut at = frames(&mut clock, Instant::now(), &[(1, 1, false); 3]);
+        begin_span(&mut world);
+        let mut clock = world.resource_mut::<FrameClock>();
+        // A report that comes in on the span's first IN_FLIGHT frames may be a warmup frame's.
+        for _ in 0..IN_FLIGHT {
+            at = frames(&mut clock, at, &[(1, 1, false)]);
+            report(&mut clock, 100.0);
+        }
+        for _ in 0..4 {
+            at = frames(&mut clock, at, &[(1, 1, false)]);
+            report(&mut clock, 2.0);
+        }
+        clock.span_frames.1 = clock.frame;
+        // After the span's last frame, a report may be of the frames drawn to wait for it.
+        frames(&mut clock, at, &[(1, 0, true)]);
+        report(&mut clock, 100.0);
+        let span = span(&world).unwrap();
+        assert_eq!((span.gpu_frames, span.gpu_avg_ms()), (4, Some(2.0)));
+        assert_eq!(world.resource::<FrameClock>().recent_stats().gpu_frames, 13, "every report is recent");
     }
 
     #[test]
