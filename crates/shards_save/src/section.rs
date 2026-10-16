@@ -100,7 +100,8 @@ pub trait SaveSection: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// Key in the file and in the registry: lowercase letters, digits, `_`. Unique across
     /// the game. Registering a second section with a name replaces the first (a game
     /// replaces the engine's `position` with "restore at camp"), keeping its place in the
-    /// order sections are applied.
+    /// order sections are applied; the first one's migrations go with it when the second
+    /// comes from another crate (register the new one's migrations after it).
     const NAME: &'static str;
     /// The schema version, from 1. Raise it when the serde form changes in a way old files
     /// do not read, and add a migration from the version before.
@@ -335,7 +336,9 @@ pub struct SaveRegistry {
 }
 
 impl SaveRegistry {
-    /// Adds a section; one with the same name is replaced in place. Panics on a bad name,
+    /// Adds a section; one with the same name is replaced in place. A section of another crate
+    /// (a game's in place of the engine's) has data of its own: the migrations registered for
+    /// the one it replaces, which read that one's old data, go with it. Panics on a bad name,
     /// version 0, or a name that is already registered as the other kind.
     pub fn add(&mut self, entry: SectionEntry) {
         assert!(valid_name(&entry.name), "save section name `{}` must be lowercase letters, digits and `_`, at most 48", entry.name);
@@ -349,6 +352,9 @@ impl SaveRegistry {
                     old.kind,
                     entry.kind
                 );
+                if old.source != entry.source {
+                    self.migrations.retain(|(name, _), _| *name != entry.name);
+                }
                 *old = entry;
             }
             None => self.sections.push(entry),
@@ -471,6 +477,24 @@ mod tests {
         let order: Vec<(&str, u32)> = registry.sections().iter().map(|s| (s.name.as_str(), s.version)).collect();
         assert_eq!(order, [("a", 2), ("b", 1)]);
         assert_eq!(registry.sections()[0].source, "shards_save");
+    }
+
+    #[test]
+    fn a_section_of_another_crate_takes_the_name_without_the_old_ones_migrations() {
+        let mut registry = SaveRegistry::default();
+        registry.add(SectionEntry::of::<WalletData>());
+        registry.add_migration("wallet", 1, Ok);
+        registry.add_migration("wallet", 2, Ok);
+        registry.add(SectionEntry::of::<WalletData>());
+        assert_eq!(registry.migrations_of("wallet"), [1, 2], "the same crate's section again keeps its history");
+        // A game's own `wallet` at its version 1: the history of the one it replaces would never run.
+        let mut game = SectionEntry::character_component::<Purse>("wallet", 1);
+        game.source = "game".into();
+        registry.add(game);
+        assert!(registry.migrations_of("wallet").is_empty());
+        assert_eq!(registry.check_chains(), Ok(()));
+        registry.add_migration("wallet", 1, Ok);
+        assert!(registry.check_chains().unwrap_err().contains("would never run"), "the game's own migrations are its to keep in step");
     }
 
     #[test]
