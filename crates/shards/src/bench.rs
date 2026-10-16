@@ -24,8 +24,12 @@ const AGENT: &str = "perf";
 /// Ticks a warmup or a measurement may lag behind real time before the run gives up: several times
 /// their own duration, and a minute more.
 fn wall_limit(ticks: u64, timestep: Duration) -> Duration {
-    timestep.mul_f64(ticks as f64 * 4.0) + Duration::from_secs(60)
+    let lag = Duration::try_from_secs_f64(timestep.as_secs_f64() * ticks as f64 * 4.0).unwrap_or(Duration::MAX);
+    lag.saturating_add(Duration::from_secs(60))
 }
+
+/// The most ticks a warmup or a measurement plays: an hour at 60 Hz.
+pub const MAX_TICKS: u64 = 216_000;
 
 /// A performance autotest (`content/**/*.perf.ron`), played by `--perf ID`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -141,6 +145,11 @@ impl ContentDef for PerfDef {
         if self.ticks == 0 {
             refs.error("ticks: measure at least one tick (600 is ten seconds at 60 Hz)");
         }
+        for (name, ticks) in [("warmup", self.warmup), ("ticks", self.ticks)] {
+            if ticks > MAX_TICKS {
+                refs.error(format!("{name}: at most {MAX_TICKS} ticks (an hour at 60 Hz), not {ticks}"));
+            }
+        }
         let b = &self.budgets;
         for (name, value) in [
             ("tick_ms", b.tick_ms),
@@ -152,6 +161,14 @@ impl ContentDef for PerfDef {
         ] {
             if value.is_some_and(|v| !(v.is_finite() && v > 0.0)) {
                 refs.error(format!("budgets.{name}: a budget is a number above 0"));
+            }
+        }
+        // The game holds these two as durations, as `--tick-budget-ms` and `--frame-budget-ms` do.
+        for (name, value) in [("tick_ms", b.tick_ms), ("frame_ms", b.frame_ms)] {
+            match value.filter(|v| v.is_finite() && *v > 0.0).map(|v| Duration::try_from_secs_f64(v / 1000.0)) {
+                Some(Ok(budget)) if budget.is_zero() => refs.error(format!("budgets.{name}: the budget is below 1 ns")),
+                Some(Err(_)) => refs.error(format!("budgets.{name}: the budget is too large")),
+                _ => {}
             }
         }
         if b.over_share.is_some_and(|s| !(0.0..=1.0).contains(&s)) {
@@ -685,5 +702,19 @@ mod tests {
         }
         let no_region = self::errors(r#"{ "bench": (budgets: (region_load_s: Some(10.0))) }"#);
         assert!(no_region.len() == 1 && no_region[0].contains("no region is loaded"), "{no_region:#?}");
+        let huge = self::errors(
+            r#"{ "bench": (warmup: 300000, ticks: 1000000000, budgets: (frame_ms: Some(1e30), tick_ms: Some(1e-9))) }"#,
+        );
+        let expected = [
+            "warmup: at most 216000 ticks",
+            "ticks: at most 216000 ticks",
+            "budgets.tick_ms: the budget is below 1 ns",
+            "budgets.frame_ms: the budget is too large",
+        ];
+        assert_eq!(huge.len(), expected.len(), "{huge:#?}");
+        for (error, expected) in huge.iter().zip(expected) {
+            assert!(error.contains(expected), "{error} should say {expected}");
+        }
+        assert_eq!(wall_limit(u64::MAX, Duration::from_secs(1)), Duration::MAX, "no limit overflows");
     }
 }

@@ -49,7 +49,7 @@ cargo shards fuzz --seed 7 --steps 300  # случайные входы, пок�
 cargo shards soak --minutes 30 --regen wilds   # стенд: агенты с зерном играют за всех участников, до первого рассинхрона
 kill <pid>                              # pid из `wait`; на Windows (и где угодно) — cargo shards quit
 cargo shards package --manifest-path template/Cargo.toml   # сборка для игроков в template/dist/ и её проверка (`--smoke`, DLL)
-cargo run -p sandbox --release -- --perf reference --offscreen   # автотест производительности: строка на бюджет, код 0 или 1
+cargo run -p sandbox --release -- --perf reference --offscreen   # автотест производительности: строка на бюджет, код 0, 1 или 2 (нет GPU)
 ```
 
 - `shards` запускайте из папки игры или ниже: там лежит токен `.shards/<port>.token`, без него игра
@@ -273,7 +273,8 @@ cargo sandbox --replay replays/crash-tick<N>.json --verify   # код 1, пок�
   `--features trace_tracy` (см. README, «Время тика»).
 - Производительность целиком проверяет автотест: `cargo run -p sandbox --release -- --perf reference --offscreen` (сцена,
   прогрев, замер и бюджеты — контент вида `perf`, `*.perf.ron`; без `--offscreen` — только тики). Он печатает строку на бюджет
-  (`ok`, `OVER`, `-`) и выходит с кодом 0, 1 (бюджет превышен, игра не дошла до замера) или 2. Отладочная сборка не судит.
+  (`ok`, `OVER`, `-`) и выходит с кодом 0, 1 (бюджет превышен, игра не дошла до замера) или 2 (нет такого определения или у
+  `--offscreen` нет GPU). Отладочная сборка не судит.
 - Эталонные реплеи `tests/replays/*.json` (полоса препятствий, бой-прототип, директор жетонов, страж на навсетке, смена
   регионов и реплей со снапшота песочницы) проверяет `cargo test`. После намеренной правки геймплея или контента перезапишите их:
   `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays` (у шаблона —
