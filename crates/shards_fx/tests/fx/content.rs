@@ -30,6 +30,7 @@ fn a_broken_effect_says_what_and_where() {
             "nothing": (count: 0),
             "bad_colour": (color: "#12345"),
             "too_wide": (spread: 400.0),
+            "endless": (count: 16, rate: 5e9, duration: 1.0, max_live: 64),
         }"##,
     );
     assets.put("content/fx/more.fx.ron", r#"{"more": (effects: {"damged": "spark", "blocked": "sprak"}, cues: {"": "glow"})}"#);
@@ -41,6 +42,9 @@ fn a_broken_effect_says_what_and_where() {
         "it starts no particle: give `count`, or `rate` and `duration`",
         "#12345",
         "spread: ",
+        // A rate too big to count: named, not an overflow (a panic in a debug build, a pass in a
+        // release one).
+        "one play starts 4294967295 particles and max_live keeps 64",
         "broken.effect.ron",
         "a game has one table of effects, and this one has more",
         "no engine event `damged` (did you mean `damaged`?)",

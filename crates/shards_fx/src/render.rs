@@ -103,8 +103,9 @@ pub struct ZoneMaterial {
     /// How far the fill has grown (0 to 1), the flicker, the shape's kind, the stripes' spacing.
     #[uniform(0)]
     pub state: Vec4,
-    /// The quad's centre on the ground (`xy`: world x, z) and its facing (`zw`), for stripes that
-    /// stay put in the world.
+    /// What the stripes are measured from: the quad's centre seen from the point the fill grows
+    /// from, in world x and z (`xy`), and the quad's facing (`zw`). The stripes keep the world's
+    /// 45° and close in on that point as they tighten with the hit.
     #[uniform(0)]
     pub world: Vec4,
 }
@@ -262,7 +263,7 @@ fn sync_pools(world: &mut World) {
             ParticleShape::Cube => meshes[1].clone(),
             ParticleShape::Shard => meshes[2].clone(),
         };
-        let entities: Vec<Entity> = (0..def.max_live as usize)
+        let entities: Vec<Entity> = (0..def.pool_size())
             .map(|slot| {
                 world
                     .spawn((
@@ -421,13 +422,18 @@ pub fn zone_material(decal: &ZoneDecal, color: LinearRgba, fill: f32, flicker: f
         DecalShape::Stadium { a, b, radius } => (Vec4::new(radius, 0.0, 0.0, 0.0), Vec4::new(a.x, a.y, b.x, b.y)),
     };
     let half = decal.size * 0.5;
+    // The stripes are measured from where the fill grows from, not from the world's origin: their
+    // spacing tightens as the hit nears, and from the origin a zone 100 m out would race hundreds
+    // of stripes past in a second; from inside the zone no more go by than fit across it.
+    let right = Vec3::new(-decal.facing.z, 0.0, decal.facing.x);
+    let anchor = right * decal.grow_from.x + decal.facing * decal.grow_from.y;
     ZoneMaterial {
         color,
         shape,
         points,
         frame: Vec4::new(half.x, half.y, decal.grow_from.x, decal.grow_from.y),
         state: Vec4::new(fill, flicker, decal.shape.kind() as f32, spacing.max(0.05)),
-        world: Vec4::new(decal.center.x, decal.center.z, decal.facing.x, decal.facing.z),
+        world: Vec4::new(-anchor.x, -anchor.z, decal.facing.x, decal.facing.z),
     }
 }
 
@@ -485,5 +491,34 @@ mod tests {
         assert_eq!(material(ParticleShape::Shard, false).kind, 1);
         assert_eq!(material(ParticleShape::Cube, true).alpha_mode(), AlphaMode::Add);
         assert_eq!(material(ParticleShape::Cube, false).alpha_mode(), AlphaMode::Blend);
+    }
+
+    #[test]
+    fn the_stripes_are_measured_from_the_zone_not_from_the_worlds_origin() {
+        use shards_action::{HitShape, Local, WorldShape};
+        let cone = HitShape::Cone { range: 4.0, angle: 90.0, height: 2.0 };
+        let made = |at: Vec3| {
+            let decal = ZoneDecal::new(&WorldShape::new(cone, Local::default(), at, Vec3::new(0.6, 0.0, 0.8)), at.y);
+            (decal, zone_material(&decal, LinearRgba::RED, 0.5, 1.0, 0.5))
+        };
+        // The shader's stripe coordinate: a point of the quad (its frame), in world axes from the
+        // stripes' anchor, along the 45° diagonal.
+        let stripe = |m: &ZoneMaterial, p: Vec2| {
+            let facing = Vec2::new(m.world.z, m.world.w);
+            let w = Vec2::new(m.world.x, m.world.y) + Vec2::new(-facing.y, facing.x) * p.x + facing * p.y;
+            w.dot(Vec2::splat(std::f32::consts::FRAC_1_SQRT_2))
+        };
+        let (_, by_origin) = made(Vec3::new(0.0, 0.0, -2.0));
+        let (far, out_there) = made(Vec3::new(24.0, 0.0, 136.0));
+        assert!(by_origin.world.abs_diff_eq(out_there.world, 1e-4), "the same zone anywhere, the same stripes on it");
+        assert!(stripe(&out_there, far.grow_from).abs() < 1e-4, "measured from where the fill grows from");
+        // From the hit's horizon to the hit (1.1 m to 0.28 m apart) a point of the quad passes a few
+        // stripes; measured from the world's origin, 136 m out, it would pass hundreds.
+        let half = far.size * 0.5;
+        for corner in [Vec2::new(-half.x, -half.y), Vec2::new(half.x, -half.y), Vec2::new(-half.x, half.y), half] {
+            let s = stripe(&out_there, corner);
+            let passed = (s / 0.28 - s / 1.1).abs();
+            assert!(passed < 15.0, "{corner}: {passed} stripes go by");
+        }
     }
 }

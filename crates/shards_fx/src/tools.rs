@@ -47,7 +47,7 @@ fn effects(In(_): In<Call<EffectsArgs>>, world: &World) -> ToolResult {
     for (id, def) in &defs {
         let pool = match particles.and_then(|p| p.effects.get(*id)).filter(|_| drawn) {
             Some(playing) => format!("pool {}/{}", playing.pool.live(), playing.pool.size()),
-            None => format!("pool {}", def.max_live),
+            None => format!("pool {}", def.pool_size()),
         };
         out.push_str(&format!("  {id:<width$}  {} · {pool}\n", def.describe()));
     }

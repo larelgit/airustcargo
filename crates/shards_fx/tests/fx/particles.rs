@@ -31,6 +31,34 @@ fn every_effect_has_its_pool_of_hidden_meshes_from_the_start() {
 }
 
 #[test]
+fn an_effect_the_check_refuses_still_plays_within_the_limits() {
+    let assets = Folder::new("limits");
+    // Typos: a pool and a burst of four billion, five billion a second, a life of 30 years. The
+    // check names them, and the first load uses the definition anyway.
+    assets.put(
+        "content/fx/typo.effect.ron",
+        r#"{"typo": (count: 4000000000, rate: 5e9, duration: 1.0, lifetime: (0.5, 1e9), max_live: 4000000000)}"#,
+    );
+    let mut app = drawn(&assets);
+    app.update();
+    let check = text(&shards::testing::call(&mut app, "content_check", json!({})));
+    assert!(check.contains("count: at most 1024") && check.contains("max_live: 1 to 4096"), "{check}");
+    assert_eq!(meshes(&mut app, "typo"), (4096, 0), "a pool of MAX_LIVE meshes at most");
+    assert_eq!(
+        ok(&mut app, "effect_play", json!({"effect": "typo", "point": [0, 1, 0]})),
+        "played typo at a point (0.0, 1.0, 0.0): 1024 particles (+4096 as it goes on), 1024/4096 alive in its pool"
+    );
+    // A second on, the rate has emitted all it adds, no more than MAX_LIVE.
+    step(&mut app, 60);
+    app.update();
+    let particles = app.world().resource::<Particles>();
+    assert!(particles.emitters.is_empty(), "nothing left to emit");
+    let pool = &particles.effects["typo"].pool;
+    assert_eq!((pool.size(), pool.started), (4096, 1024 + 4096));
+    assert!(pool.slots.iter().flatten().all(|p| p.life <= 30.0), "a particle lives 30 s at most");
+}
+
+#[test]
 fn a_play_shows_particles_that_live_by_the_simulations_clock() {
     let assets = Folder::new("clock");
     let mut app = drawn(&assets);

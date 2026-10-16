@@ -162,9 +162,22 @@ impl EffectDef {
         (start, end)
     }
 
-    /// The most particles one play starts: the burst and what `rate` adds over `duration`.
+    /// The most particles one play starts: the burst and what `rate` adds over `duration`
+    /// (`u32::MAX` at most, for a rate too big to count: the check names it).
     pub fn per_play(&self) -> u32 {
-        self.count + (self.rate * self.duration).ceil() as u32
+        self.count.saturating_add(self.later())
+    }
+
+    /// The particles `rate` adds over `duration` after the burst (`u32::MAX` at most); 0 for a
+    /// burst alone.
+    pub fn later(&self) -> u32 {
+        if self.rate > 0.0 && self.duration > 0.0 { (self.rate * self.duration).ceil() as u32 } else { 0 }
+    }
+
+    /// Its pool's size: `max_live`, [`MAX_LIVE`] at most. A definition the check refuses is still
+    /// played at the first load, so what plays keeps to the limits the check names.
+    pub fn pool_size(&self) -> usize {
+        self.max_live.min(MAX_LIVE) as usize
     }
 
     /// `18 quad glow #fff2b3 → #ff6a1a00 · 0.18-0.35 s · aim hit` (the pool is the tool's to say).
@@ -346,5 +359,17 @@ mod tests {
         assert_eq!(glow.colors().1, [0x7d, 0xff, 0x9e, 0], "without color_end it fades out");
         assert_eq!(glow.per_play(), 19);
         assert!(ron::from_str::<EffectDef>("(colour: \"#fff\")").is_err(), "unknown fields are refused");
+    }
+
+    #[test]
+    fn a_typo_in_the_numbers_counts_without_overflow_and_plays_within_the_limits() {
+        // A rate too big to count saturates instead of overflowing (a panic in a debug build, 15
+        // particles that pass the check in a release one).
+        let endless = read("(count: 16, rate: 5e9, duration: 1.0)");
+        assert_eq!((endless.later(), endless.per_play()), (u32::MAX, u32::MAX));
+        assert_eq!(EffectDef { rate: f32::INFINITY, duration: 1.0, ..EffectDef::default() }.per_play(), u32::MAX);
+        assert_eq!(read("(rate: -3.0, duration: 1.0)").later(), 0);
+        assert_eq!(read("(max_live: 4000000000)").pool_size(), MAX_LIVE as usize);
+        assert_eq!(read("(max_live: 24)").pool_size(), 24);
     }
 }

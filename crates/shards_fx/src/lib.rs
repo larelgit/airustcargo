@@ -57,6 +57,7 @@ use shards_content::db::closest;
 use shards_content::{ContentAppExt, ContentDb};
 use shards_core::EngineAppExt;
 
+use crate::def::{MAX_COUNT, MAX_LIVE};
 pub use decal::{DecalShape, ZoneDecal};
 pub use def::{Aim, EffectDef, FxDef, ParticleShape, EVENTS};
 #[cfg(feature = "render")]
@@ -133,7 +134,7 @@ pub struct Playing {
 impl Playing {
     /// A pool for `def`, empty.
     pub fn new(def: &EffectDef) -> Self {
-        Self { def: def.clone(), colors: def.colors(), pool: Pool::new(def.max_live as usize) }
+        Self { def: def.clone(), colors: def.colors(), pool: Pool::new(def.pool_size()) }
     }
 }
 
@@ -294,15 +295,17 @@ pub fn play(world: &mut World, effect: &str, at: EffectAt, toward: Option<Vec3>)
         }
         effects.get_mut(effect).expect("just made")
     };
-    for _ in 0..def.count {
+    // A definition the check refuses still plays at the first load: within the limits it names.
+    let burst = def.count.min(MAX_COUNT);
+    for _ in 0..burst {
         playing.pool.add(sim::spawn(&def, position, aim, now, rng));
     }
-    let later = if def.rate > 0.0 && def.duration > 0.0 { (def.rate * def.duration).ceil() as u32 } else { 0 };
+    let later = def.later().min(MAX_LIVE);
     if later > 0 {
         emitters.push(Emitter { effect: effect.to_owned(), at, aim, born: now, rate: def.rate, emitted: 0, total: later });
     }
     *played += 1;
-    Ok(Played { particles: def.count, later, position, live: playing.pool.live(), pool: playing.pool.size() })
+    Ok(Played { particles: burst, later, position, live: playing.pool.live(), pool: playing.pool.size() })
 }
 
 /// [`play`] for what the engine plays (an event, a cue, [`PlayEffect`]): nothing while nothing is

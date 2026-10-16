@@ -8,7 +8,7 @@ use std::f32::consts::TAU;
 
 use bevy::prelude::*;
 
-use crate::def::{Aim, EffectDef};
+use crate::def::{Aim, EffectDef, MAX_LIFETIME};
 
 /// A small, fast random source (SplitMix64) for what effects pick: picture only, never gameplay.
 #[derive(Clone, Debug)]
@@ -141,7 +141,7 @@ pub fn spawn(def: &EffectDef, at: Vec3, aim: Vec3, born: f64, rng: &mut Rng) -> 
     let velocity = rng.in_cone(aim, def.spread) * rng.between(def.speed);
     Particle {
         born,
-        life: rng.between(def.lifetime).max(1e-3),
+        life: rng.between(def.lifetime).clamp(1e-3, MAX_LIFETIME),
         origin,
         velocity,
         size: rng.between(def.size),

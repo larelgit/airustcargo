@@ -1,9 +1,9 @@
 // A telegraph's decal (shards_fx): Bevy's forward decal projects the quad onto what lies under it
 // (the ground, the feet of who stands there), and this fills the zone's footprint in the quad: a
 // disc, a cone's sector, a box's or a line's rectangle, a capsule's stadium. The zone is faint,
-// with stripes that stay put in the world and a glow inside its edge; a copy of it grows from its
-// middle as the hit nears (`fill`, 0 to 1) with a bright rim, and covers it, flickering, while the
-// hit lands. The colour is the gizmo telegraph's: warm for an enemy, cool for an ally.
+// with stripes at the world's 45° that close in on its middle as the hit nears, and a glow inside
+// its edge; a copy of it grows from its middle as the hit nears (`fill`, 0 to 1) with a bright rim,
+// and covers it, flickering, while the hit lands. The colour is the gizmo telegraph's: warm for an enemy, cool for an ally.
 
 import bevy_pbr::render::forward_io::VertexOutput;
 import bevy_pbr::decal::forward::get_forward_decal_info;
@@ -19,7 +19,7 @@ struct Zone {
     frame: vec4<f32>,
     // The fill (x), the flicker (y), the shape's kind (z), the stripes' spacing (w).
     state: vec4<f32>,
-    // The quad's centre on the ground, world x and z (xy); its facing (zw).
+    // The quad's centre seen from where the fill grows from, world x and z (xy); its facing (zw).
     world: vec4<f32>,
 }
 
@@ -90,7 +90,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let origin = zone.frame.zw;
     let df = zone_distance(origin + (p - origin) / k) * k;
     let aaf = max(fwidth(df), 0.005);
-    // Stripes at 45°, anchored to the world: a zone that moves does not drag them along.
+    // Stripes at the world's 45°, measured from where the fill grows from: as their spacing
+    // tightens they close in on it, and no more go by than fit across the zone (measured from the
+    // world's origin, a zone far out would race hundreds past).
     let facing = zone.world.zw;
     let right = vec2<f32>(-facing.y, facing.x);
     let w = zone.world.xy + right * p.x + facing * p.y;
