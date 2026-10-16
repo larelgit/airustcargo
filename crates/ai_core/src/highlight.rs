@@ -96,6 +96,12 @@ fn visual_top(entity: Entity, bounds: &Query<(&GlobalTransform, &Aabb)>, childre
         .reduce(f32::max)
 }
 
+/// How large a highlight ring is at `now` seconds of real time: 1 ± 0.08, about once a second.
+/// The phase wraps in f64 before the cast, so after days of play the ring still moves every frame.
+fn pulse(now: f64) -> f32 {
+    1.0 + 0.08 * ops::sin(((now * 6.0) % std::f64::consts::TAU) as f32)
+}
+
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
 pub(crate) fn draw_highlights(
     mut gizmos: Gizmos<AiGizmos>,
@@ -123,8 +129,7 @@ pub(crate) fn draw_highlights(
         let Ok(gt) = targets.get(h.entity) else { continue };
         let p = gt.translation();
         let y = top(h.entity, p);
-        let pulse = 1.0 + 0.08 * ops::sin((now * 6.0) as f32);
-        gizmos.circle(Isometry3d::new(p + Vec3::Y * 0.05, ground), 1.1 * pulse, h.color);
+        gizmos.circle(Isometry3d::new(p + Vec3::Y * 0.05, ground), 1.1 * pulse(now), h.color);
         gizmos.line(p.with_y(y + 0.2), p.with_y(y + 0.8), h.color);
         gizmos.text(Isometry3d::new(p.with_y(y + 1.2), facing), &h.label, 0.45, Vec2::ZERO, h.color);
     }
@@ -150,4 +155,19 @@ pub(crate) fn plugin(app: &mut App) {
     }
     register_tool(app.world_mut(), "highlight", Scope::Player, ToolKind::Query, highlight_tool);
     register_tool(app.world_mut(), "overlay", Scope::Player, ToolKind::Query, overlay_tool);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pulse;
+
+    #[test]
+    fn the_ring_still_moves_every_frame_after_days_of_play() {
+        let start = 5.0 * 24.0 * 3600.0;
+        let frames: Vec<f32> = (0..120).map(|i| pulse(start + f64::from(i) / 60.0)).collect();
+        for pair in frames.windows(2) {
+            assert_ne!(pair[0], pair[1], "two frames with the same ring: {frames:?}");
+        }
+        assert!(frames.iter().all(|p| (0.92..=1.08).contains(p)), "{frames:?}");
+    }
 }
