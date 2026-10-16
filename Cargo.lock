@@ -5432,6 +5432,7 @@ dependencies = [
  "shards_net",
  "shards_npc",
  "shards_save",
+ "shards_scatter",
  "shards_script",
  "shards_settings",
  "shards_ui",
@@ -5635,6 +5636,25 @@ dependencies = [
  "shards",
  "shards_content",
  "shards_core",
+]
+
+[[package]]
+name = "shards_scatter"
+version = "0.2.0"
+dependencies = [
+ "ai_core",
+ "bevy",
+ "ron",
+ "schemars",
+ "serde",
+ "serde_json",
+ "shards",
+ "shards_content",
+ "shards_core",
+ "shards_look",
+ "shards_motion",
+ "shards_settings",
+ "shards_world",
 ]
 
 [[package]]

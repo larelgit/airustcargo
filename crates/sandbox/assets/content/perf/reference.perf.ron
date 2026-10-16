@@ -3,7 +3,8 @@
 // seed 42, 8 x 8 tiles of 16 m with their two camps and their den; the player (e5) immortal in the
 // pillar hall (cell (5, 5), centered at (24, 136)) south of the pillars, by the den, and twelve more
 // skeletons there with it: fifteen monsters in the region, thirteen of them in the fight (the camps
-// are 40 m away at least); 1080p.
+// are 40 m away at least); 1080p. The wilds' scatter (`region/wilds.scatter.ron`: about 7200 tufts,
+// bushes and rocks, 13900 mesh entities with their levels of detail) is drawn with them.
 {
     "reference": (
         region: Some((region: "wilds", seed: 42)),
@@ -35,8 +36,12 @@
             tick_avg_ms: Some(4.0),
             // A region loads in 10-15 s at most.
             region_load_s: Some(15.0),
+            // The scatter is most of the entities and of the meshes drawn (one per instance and level
+            // of detail, before Bevy batches them): 15400 and 1360 of them in a debug build.
             entities: Some(20000),
             visible_meshes: Some(2000),
+            // ...from a few dozen meshes (48: grass near and far, bushes, rocks, characters, boxes).
+            mesh_assets: Some(80),
         ),
     ),
 }

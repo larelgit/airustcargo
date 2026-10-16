@@ -17,6 +17,7 @@ use shards_look::LookPlugin;
 use shards_motion::MotionPlugin;
 use shards_net::NetPlugin;
 use shards_npc::NpcPlugin;
+use shards_scatter::ScatterPlugin;
 use shards_save::SavePlugin;
 use shards_locale::LocalePlugin;
 use shards_settings::ShardsSettingsPlugin;
@@ -127,6 +128,8 @@ impl PluginGroup for EnginePlugins {
             .add(EngineAudioPlugin)
             // Looks: how meshes are drawn (toon light, flat faces, outlines), from content.
             .add(LookPlugin)
+            // Scatter: foliage and small props strewn over the tiles, drawn in batches, by distance.
+            .add(ScatterPlugin)
             // Performance: the `perf` content kind (`--perf`), `counts` and `frames` in `ai/status`.
             .add(crate::bench::PerfPlugin)
             // The developer menu and console, last: every module above has added its entries.

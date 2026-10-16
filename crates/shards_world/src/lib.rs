@@ -20,7 +20,8 @@
 //! - [`region`]: building a manifest in the world, region changes through
 //!   `EngineState::RegionLoading`, the start region.
 //! - [`zones`]: [`ActiveZone`] / [`Dormant`] around players, every tick.
-//! - [`stream`]: tile visuals loaded and unloaded by distance (windows only).
+//! - [`stream`]: tile visuals loaded and unloaded by distance (when the game draws: a window
+//!   or `--offscreen`).
 //!
 //! Tile geometry is inline (boxes, solids, volumes, markers, prefabs in the RON) or a level
 //! file from Blender (`geometry: Level(path: "tiles/ruin.gltf")`), which this crate does not

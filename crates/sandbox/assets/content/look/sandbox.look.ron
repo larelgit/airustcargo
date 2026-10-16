@@ -17,4 +17,10 @@
     "sand": (extends: "cel", color: Some("#8c8061")),
     "dark": (color: Some("#1a1a1f"), shading: Matte),
     "marker": (color: Some("#ffd933"), shading: Unlit),
+    // What the wilds' scatter is drawn with (`region/wilds.scatter.ron`): no outline, so the
+    // instances of a look are drawn together. The tufts darken toward their feet by themselves.
+    "grass": (color: Some("#5fae45"), shading: Toon(bands: 2)),
+    "grass_dry": (color: Some("#a7b04e"), shading: Toon(bands: 2)),
+    "bush": (color: Some("#2f7a3a"), flat: true),
+    "rock": (color: Some("#8a867c"), flat: true),
 }

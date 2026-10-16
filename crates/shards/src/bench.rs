@@ -108,6 +108,11 @@ pub struct Budgets {
     /// draws before Bevy batches them.
     #[serde(default)]
     pub visible_meshes: Option<u64>,
+    /// Distinct meshes among those drawn at the end, at most: instances of one mesh (the scatter's
+    /// grass) with one material are one batch on the GPU, so this bounds the batches better than
+    /// `visible_meshes`.
+    #[serde(default)]
+    pub mesh_assets: Option<u64>,
     /// Triangles per frame, on average, at most (where the GPU counts them).
     #[serde(default)]
     pub triangles: Option<u64>,
@@ -200,26 +205,34 @@ pub fn counts(world: &World) -> Value {
         "meshes": meshes.all,
         "visible_meshes": meshes.visible,
         "camera_meshes": meshes.in_cameras,
+        "mesh_assets": meshes.assets,
     })
 }
 
-/// Meshes: all, those some view draws, those the active cameras draw.
+/// Meshes: all, those some view draws, those the active cameras draw, and the distinct mesh assets
+/// among those drawn (instances of one mesh with one material are one batch on the GPU).
 #[derive(Default)]
 struct MeshCounts {
     all: u64,
     visible: u64,
     in_cameras: u64,
+    assets: u64,
 }
 
 #[cfg(feature = "render")]
 fn mesh_counts(world: &World) -> MeshCounts {
     use bevy::camera::visibility::VisibleEntities;
     let mut counts = MeshCounts::default();
-    if let Some(mut meshes) = world.try_query_filtered::<Option<&ViewVisibility>, With<Mesh3d>>() {
-        for seen in meshes.iter(world) {
+    if let Some(mut meshes) = world.try_query::<(Option<&ViewVisibility>, &Mesh3d)>() {
+        let mut assets = std::collections::HashSet::new();
+        for (seen, mesh) in meshes.iter(world) {
             counts.all += 1;
-            counts.visible += u64::from(seen.is_some_and(|v| v.get()));
+            if seen.is_some_and(|v| v.get()) {
+                counts.visible += 1;
+                assets.insert(mesh.0.id());
+            }
         }
+        counts.assets = assets.len() as u64;
     }
     if let Some(mut cameras) = world.try_query::<(&Camera, &VisibleEntities)>() {
         let mesh = std::any::TypeId::of::<Mesh3d>();
@@ -318,6 +331,7 @@ pub struct Measured {
     pub meshes: u64,
     pub visible_meshes: u64,
     pub camera_meshes: u64,
+    pub mesh_assets: u64,
 }
 
 impl Measured {
@@ -350,8 +364,8 @@ impl Measured {
             }
         }
         line.push_str(&format!(
-            "; {} entities, {} meshes, {} drawn, {} in cameras",
-            self.entities, self.meshes, self.visible_meshes, self.camera_meshes
+            "; {} entities, {} meshes, {} drawn ({} distinct), {} in cameras",
+            self.entities, self.meshes, self.visible_meshes, self.mesh_assets, self.camera_meshes
         ));
         line
     }
@@ -452,6 +466,15 @@ pub fn judge(budgets: &Budgets, measured: &Measured, judged: bool) -> Vec<Verdic
             None => check(None, not_drawn("visible meshes")),
         }
     }
+    if let Some(budget) = budgets.mesh_assets {
+        match &frames {
+            Some(_) => check(
+                Some(measured.mesh_assets <= budget),
+                format!("distinct meshes drawn {} (at most {budget})", measured.mesh_assets),
+            ),
+            None => check(None, not_drawn("distinct meshes drawn")),
+        }
+    }
     verdicts
 }
 
@@ -503,6 +526,7 @@ pub fn play(app: &mut App, def: &PerfDef) -> Result<Measured, String> {
         meshes: count("meshes"),
         visible_meshes: count("visible_meshes"),
         camera_meshes: count("camera_meshes"),
+        mesh_assets: count("mesh_assets"),
     })
 }
 
@@ -650,6 +674,7 @@ mod tests {
             tick_budget: budget,
             frames: Some(frames),
             visible_meshes: 300,
+            mesh_assets: 12,
             ..Default::default()
         };
         let budgets = Budgets {
@@ -658,6 +683,7 @@ mod tests {
             gpu_avg_ms: Some(10.0),
             triangles: Some(100_000),
             visible_meshes: Some(500),
+            mesh_assets: Some(10),
             ..Default::default()
         };
         let lines: Vec<String> = judge(&budgets, &measured, true).iter().map(Verdict::line).collect();
@@ -671,6 +697,7 @@ mod tests {
                 "-     GPU time: this GPU (or build) measures none",
                 "OVER  triangles 120000 a frame (at most 100000)",
                 "ok    visible meshes 300 (at most 500)",
+                "OVER  distinct meshes drawn 12 (at most 10)",
             ]
         );
     }

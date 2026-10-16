@@ -8,7 +8,8 @@ publish.workspace = true
 
 [features]
 # The tile overlay (bounds and sockets drawn with gizmos). The streaming of tile visuals
-# itself is always built and runs whenever there is a window and a spawner.
+# itself is always built and runs whenever the game draws (a window, or --offscreen) and has a
+# spawner.
 render = ["ai_core/render", "shards_motion/render", "bevy/bevy_gizmos"]
 
 [dependencies]
