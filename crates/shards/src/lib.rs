@@ -47,6 +47,8 @@ mod audio_wiring;
 pub mod bench;
 pub mod coop;
 #[cfg(feature = "render")]
+mod draws;
+#[cfg(feature = "render")]
 pub mod frames;
 mod net_wiring;
 #[cfg(feature = "render")]

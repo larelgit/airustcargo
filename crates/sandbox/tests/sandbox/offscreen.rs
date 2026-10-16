@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use shards::ai_core::display::{Offscreen, SceneImage};
 use shards::ai_core::{AiCamera, AiJournal};
+use shards::frames::FrameClock;
 use shards::bevy::camera::RenderTarget;
 use shards::bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use shards::prelude::*;
@@ -216,4 +217,68 @@ fn render_scale_draws_the_world_at_a_fraction_of_the_picture_and_shows_it_over_a
     let again = capture_stable(&mut app, &picture);
     let difference = mean_difference(&whole, &again);
     assert!(difference < 1.0, "back at 1 the picture is the first one again: differs by {difference:.2}");
+}
+
+/// The draws of the newest frame the render world counted, once the game has drawn a while.
+fn newest_draws(app: &mut App) -> u64 {
+    settle(app, 40);
+    app.world().resource::<FrameClock>().recent().filter_map(|f| f.draws).last().expect("the render world counted the draws of a frame")
+}
+
+fn visible_meshes(app: &App) -> u64 {
+    shards::bench::counts(app.world())["visible_meshes"].as_u64().unwrap()
+}
+
+#[test]
+#[ignore = "needs a GPU, or a software one (WGPU_FORCE_FALLBACK_ADAPTER=1): cargo test -p sandbox --test sandbox -- --ignored draws"]
+fn draws_follow_how_bevy_batches_not_how_many_meshes_are_drawn() {
+    use shards::bevy::render::render_resource::Face;
+    const CUBES: u64 = 40;
+    let mut app = offscreen_app();
+    step(&mut app, 30);
+    // A shot first: it waits for the pipelines, and draws that are skipped for lack of one are not the number.
+    player_in_shot(&mut app, "draws");
+    let (base, meshes) = (newest_draws(&mut app), visible_meshes(&app));
+    assert!(base > 0, "a scene with a floor, a player and a HUD draws something");
+
+    let at = crate::common::get::<Transform>(&app, "e5").translation;
+    let cube = app.world_mut().resource_mut::<Assets<Mesh>>().add(Cuboid::new(0.25, 0.25, 0.25));
+    // Forty cubes in a grid beside the player, each with a material of its own, made by `material(i)`.
+    let add = |app: &mut App, material: &dyn Fn(u64) -> StandardMaterial| {
+        let world = app.world_mut();
+        let spawned: Vec<Entity> = (0..CUBES)
+            .map(|i| {
+                let at = at + Vec3::new((i % 8) as f32 * 0.4 - 1.4, 0.2, (i / 8) as f32 * 0.4 - 0.8);
+                let material = world.resource_mut::<Assets<StandardMaterial>>().add(material(i));
+                world.spawn((Mesh3d(cube.clone()), MeshMaterial3d(material), Transform::from_translation(at))).id()
+            })
+            .collect();
+        let (draws, visible) = (newest_draws(app), visible_meshes(app));
+        for cube in spawned {
+            app.world_mut().despawn(cube);
+        }
+        (draws as i64 - base as i64, visible as i64 - meshes as i64)
+    };
+
+    // Forty meshes with forty materials of one pipeline are forty meshes more drawn and (on a GPU that
+    // multi-draws, as Bevy 0.20 does here) no draw more: the count is of what is issued, not of what is shown.
+    let (draws, visible) = add(&mut app, &|i| StandardMaterial::from(Color::srgb(0.9, 0.3 + i as f32 * 0.01, 0.2)));
+    assert!(visible >= CUBES as i64 && draws.abs() <= 2, "{visible} meshes more drawn, {draws} draws more");
+
+    // Four pipelines (lit or unlit, culled or not) are draws more, though not one for a mesh.
+    let variety = |i: u64| StandardMaterial {
+        unlit: i.is_multiple_of(2),
+        cull_mode: if i % 4 < 2 { Some(Face::Back) } else { None },
+        ..default()
+    };
+    let (draws, visible) = add(&mut app, &variety);
+    assert!(visible >= CUBES as i64 && (4..CUBES as i64 / 2).contains(&draws), "{visible} meshes more drawn, {draws} draws more");
+
+    // Alpha blending goes to the sorted phase.
+    let (draws, _) = add(&mut app, &|i| StandardMaterial { base_color: Color::srgba(0.9, 0.3, 0.2, 0.5), alpha_mode: AlphaMode::Blend, perceptual_roughness: 0.3 + i as f32 * 0.01, ..default() });
+    assert!(draws >= 1 && draws < CUBES as i64 / 2, "{draws} draws more for blended cubes");
+    assert_eq!(newest_draws(&mut app), base, "the cubes gone, the scene's draws are as they were");
+
+    let frames = shards::ai_core::status::status(app.world())["frames"].clone();
+    assert!(frames["draws"].as_f64().is_some_and(|d| d >= base as f64) && frames["draws_max"].as_u64().is_some_and(|d| d > base), "{frames}");
 }
