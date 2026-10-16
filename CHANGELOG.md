@@ -529,6 +529,8 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
 
 ### Исправлено
 
+- Windows: `cargo clippy --workspace --all-targets -- -D warnings` молчит: помощники тестов `stand_udp`, которые нужны только
+  тестам с настоящим `sh` (unix), собираются только там.
 - D4: `clearance` по навсетке больше не проходит по диагонали мимо колонки, которую вырезал поставленный после загрузки
   предмет: диагональный шаг `NavRegion::reach` требует, чтобы обе колонки сбоку были открыты (тест
   `a_diagonal_reach_stops_where_a_side_column_is_switched_off`). Строки меню разработчика с ошибкой идут в журнал консоли

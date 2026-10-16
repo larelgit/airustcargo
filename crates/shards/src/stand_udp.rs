@@ -480,10 +480,12 @@ mod tests {
     }
 
     /// The exit status of a real process: `sh -c 'exit N'`, or killed by a signal.
+    #[cfg(unix)]
     fn status_of(script: &str) -> ExitStatus {
         Command::new("sh").args(["-c", script]).status().expect("sh runs")
     }
 
+    #[cfg(unix)]
     fn seen(ready: bool, joined: bool, session_over: bool) -> Seen {
         Seen { ready, joined, host_closed: false, session_over }
     }
@@ -625,14 +627,17 @@ mod tests {
 
     /// How many times the exit hooks ran in a pretend host's world: a count of its own, so tests that
     /// run side by side (the harness runs them on threads) never share one.
+    #[cfg(unix)]
     #[derive(Resource, Default)]
     struct Hooked(usize);
 
+    #[cfg(unix)]
     fn probe(world: &mut World) {
         world.resource_mut::<Hooked>().0 += 1;
     }
 
     /// What the host's session says about client `c1`.
+    #[cfg(unix)]
     #[derive(Clone, Copy, PartialEq)]
     enum Session {
         /// It never joined: no slot (the session was full).
@@ -691,6 +696,7 @@ mod tests {
         app
     }
 
+    #[cfg(unix)]
     fn exits_with(app: &App, code: u8) -> bool {
         matches!(app.should_exit(), Some(AppExit::Error(c)) if c.get() == code)
     }
