@@ -4,7 +4,7 @@ use std::fs;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use shards::ai_core::{call_tool, AgentSessions, AiId, JournalKind, Scope};
+use shards::ai_core::{call_tool, AgentSessions, AiId, JournalKind, Scope, WorldRebuilt};
 use shards::save::{SaveFile, SaveKind, SaveSection};
 
 use shards::prelude::*;
@@ -298,6 +298,8 @@ impl SaveSection for Brittle {
     const NAME: &'static str = "brittle";
     const VERSION: u32 = 1;
     const KIND: SaveKind = SaveKind::World;
+    // It refuses before it touches anything.
+    const FAILS_CLEANLY: bool = true;
 
     fn capture(_: &World, _: Option<Entity>) -> Result<Self, String> {
         Ok(Brittle { kept: true })
@@ -318,6 +320,8 @@ impl SaveSection for BrittleHero {
     const NAME: &'static str = "brittle_hero";
     const VERSION: u32 = 1;
     const KIND: SaveKind = SaveKind::Character;
+    // It refuses before it touches anything.
+    const FAILS_CLEANLY: bool = true;
 
     fn capture(_: &World, _: Option<Entity>) -> Result<Self, String> {
         Ok(BrittleHero { kept: true })
@@ -371,4 +375,138 @@ fn a_load_that_fails_part_way_says_what_it_applied_and_records_the_load() {
          The world is partly loaded: fix the cause and load again, or go back with snapshot_load"
     );
     assert_eq!((hero(&mut hero_fails).name, calendar(&hero_fails).day), ("Ada".to_owned(), 40));
+}
+
+/// What a section that fails half way leaves in the world.
+#[derive(Resource)]
+struct Scribbled;
+
+/// Changes the world, then refuses: what a section that does not check first does.
+fn stop_half_way(world: &mut World) -> Result<(), String> {
+    world.insert_resource(Scribbled);
+    Err("stopped half way".to_owned())
+}
+
+/// A world section named `region`: it takes the engine's place in the order, so nothing is
+/// applied before it. It changes the world and then refuses, and does not say it fails cleanly.
+#[derive(Serialize, Deserialize)]
+struct Scribbler {
+    kept: bool,
+}
+
+impl SaveSection for Scribbler {
+    const NAME: &'static str = "region";
+    const VERSION: u32 = 1;
+    const KIND: SaveKind = SaveKind::World;
+
+    fn capture(_: &World, _: Option<Entity>) -> Result<Self, String> {
+        Ok(Scribbler { kept: true })
+    }
+
+    fn apply(self, world: &mut World, _: Option<Entity>) -> Result<(), String> {
+        stop_half_way(world)
+    }
+}
+
+/// The same place in the order, and it refuses before it changes anything, and says so.
+#[derive(Serialize, Deserialize)]
+struct Tidy {
+    kept: bool,
+}
+
+impl SaveSection for Tidy {
+    const NAME: &'static str = "region";
+    const VERSION: u32 = 1;
+    const KIND: SaveKind = SaveKind::World;
+    const FAILS_CLEANLY: bool = true;
+
+    fn capture(_: &World, _: Option<Entity>) -> Result<Self, String> {
+        Ok(Tidy { kept: true })
+    }
+
+    fn apply(self, _: &mut World, _: Option<Entity>) -> Result<(), String> {
+        Err("refused up front".to_owned())
+    }
+}
+
+/// Like [`Scribbler`], but a section of its own, applied after the others.
+#[derive(Serialize, Deserialize)]
+struct LateScribbler {
+    kept: bool,
+}
+
+impl SaveSection for LateScribbler {
+    const NAME: &'static str = "scribbled_late";
+    const VERSION: u32 = 1;
+    const KIND: SaveKind = SaveKind::World;
+
+    fn capture(_: &World, _: Option<Entity>) -> Result<Self, String> {
+        Ok(LateScribbler { kept: true })
+    }
+
+    fn apply(self, world: &mut World, _: Option<Entity>) -> Result<(), String> {
+        stop_half_way(world)
+    }
+}
+
+/// The reasons the world was said to be built again (`WorldRebuilt`): a co-op host's clients take it whole then.
+#[derive(Resource, Default)]
+struct Rebuilt(Vec<String>);
+
+fn watch_rebuilds(app: &mut App) {
+    app.init_resource::<Rebuilt>().add_observer(|e: On<WorldRebuilt>, mut seen: ResMut<Rebuilt>| seen.0.push(e.reason.clone()));
+}
+
+#[test]
+fn a_section_that_fails_may_have_changed_the_world_unless_it_says_it_fails_cleanly() {
+    // It did change the world, and does not say it fails cleanly: the first to run, and the load
+    // does not claim that nothing was applied.
+    let dir = TempDir::new("scribbled");
+    let mut app = game_in(&dir, |app| {
+        app.add_save_section::<Scribbler>();
+        watch_rebuilds(app);
+    });
+    ok(&mut app, "save_game", json!({"what": "world", "slot": "camp"}));
+    assert!(shards::ai_core::replay::save(app.world()).start.is_none(), "the recording starts at tick 0");
+    let err = fails(&mut app, "load_game", json!({"what": "world", "slot": "camp"}));
+    assert_eq!(
+        err,
+        "loading world/camp failed at section region: stopped half way; no section before it was applied, but the failed section may have changed the world. \
+         The world is partly loaded: fix the cause and load again, or go back with snapshot_load"
+    );
+    assert!(app.world().contains_resource::<Scribbled>(), "the world did change");
+    assert!(shards::ai_core::replay::save(app.world()).start.is_some(), "the recording restarts from the world as it is, so a replay saved now verifies");
+    assert_eq!(app.world().resource::<Rebuilt>().0, ["save camp loaded"], "whoever mirrors the world takes it whole again");
+    assert_eq!(lines(&app, JournalKind::Error, "save: loading world/camp failed: section region: stopped half way").len(), 1);
+
+    // After sections that ran, it says both.
+    let dir = TempDir::new("scribbled_late");
+    let mut app = game_in(&dir, |app| {
+        app.add_save_section::<LateScribbler>();
+        watch_rebuilds(app);
+    });
+    ok(&mut app, "save_game", json!({"what": "world", "slot": "camp"}));
+    let err = fails(&mut app, "load_game", json!({"what": "world", "slot": "camp"}));
+    assert_eq!(
+        err,
+        "loading world/camp failed at section scribbled_late: stopped half way; applied before it: region, chests, calendar; \
+         the failed section may have changed the world too. The world is partly loaded: fix the cause and load again, or go back with snapshot_load"
+    );
+    assert!(app.world().contains_resource::<Scribbled>());
+
+    // The same place in the order, a section that checks first and says so: nothing was applied,
+    // the call leaves the recording and nobody is told the world was rebuilt.
+    let dir = TempDir::new("tidy");
+    let mut app = game_in(&dir, |app| {
+        app.add_save_section::<Tidy>();
+        watch_rebuilds(app);
+    });
+    ok(&mut app, "save_game", json!({"what": "world", "slot": "camp"}));
+    let events = shards::ai_core::replay::save(app.world()).events.len();
+    let err = fails(&mut app, "load_game", json!({"what": "world", "slot": "camp"}));
+    assert_eq!(err, "loading world/camp failed at section region: refused up front; nothing was applied: fix the cause and load again");
+    assert!(!app.world().contains_resource::<Scribbled>());
+    let recording = shards::ai_core::replay::save(app.world());
+    assert!(recording.start.is_none() && recording.events.len() == events, "the load that applied nothing is not in the recording");
+    assert!(app.world().resource::<Rebuilt>().0.is_empty());
 }

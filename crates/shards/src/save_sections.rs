@@ -145,6 +145,12 @@ impl SaveSection for RegionSave {
     const NAME: &'static str = "region";
     const VERSION: u32 = 2;
     const KIND: SaveKind = SaveKind::World;
+    // `apply` checks the save (`SavedRegion::check`) and everything content must still have
+    // (`check_manifest`; `generate` and the hash for a version 1 save) before `change_region`, which
+    // looks at the same again before it unloads the old region. Not covered: a build that fails after
+    // both looks passed (a prefab or a level that `plan` accepts and spawning then refuses) has
+    // unloaded the old region by then.
+    const FAILS_CLEANLY: bool = true;
 
     fn capture(world: &World, _: Option<Entity>) -> Result<Self, String> {
         let active = world.get_resource::<ActiveRegion>().map(|r| SavedRegion {
@@ -244,6 +250,9 @@ impl SaveSection for PositionSave {
     const NAME: &'static str = "position";
     const VERSION: u32 = 1;
     const KIND: SaveKind = SaveKind::Character;
+    // Every way to refuse (no body, a rotation or a position that is not one, no Transform) comes
+    // before the Transform is written.
+    const FAILS_CLEANLY: bool = true;
 
     fn capture(world: &World, body: Option<Entity>) -> Result<Self, String> {
         let body = body.ok_or("there is no body")?;
@@ -325,6 +334,9 @@ impl SaveSection for VitalsSave {
     const NAME: &'static str = "vitals";
     const VERSION: u32 = 1;
     const KIND: SaveKind = SaveKind::Character;
+    // Every way to refuse (no body, pools that are not pools, too many charges) comes before the
+    // first write, and the writes after it have no way to fail.
+    const FAILS_CLEANLY: bool = true;
 
     fn capture(world: &World, body: Option<Entity>) -> Result<Self, String> {
         let body = body.ok_or("there is no body")?;
@@ -362,13 +374,8 @@ impl SaveSection for VitalsSave {
             stamina.exhausted = false;
         }
         if !self.charges.is_empty() {
-            let mut charges = match entity.get_mut::<Charges>() {
-                Some(charges) => charges,
-                None => {
-                    entity.insert(Charges::default());
-                    entity.get_mut::<Charges>().ok_or("cannot give the body charges")?
-                }
-            };
+            // The body gets the component if it lacks it: no way to fail after the first write.
+            let mut charges = entity.entry::<Charges>().or_default().into_mut();
             for saved in self.charges {
                 match charges.get_mut(&saved.name) {
                     Some(charge) => {
@@ -395,6 +402,7 @@ impl SaveSection for VitalsSave {
 mod tests {
     use super::*;
     use serde_json::json;
+    use shards_save::SectionEntry;
     use shards_world::manifest::{ManifestPoi, PlacedTile};
 
     fn manifest() -> RegionManifest {
@@ -469,6 +477,36 @@ mod tests {
         assert_eq!((active.title(), active.manifest), ("wilds seed 42 v1".to_owned(), None));
         // Saved outside any region: nothing to add.
         assert_eq!(region_from_v1(json!({"active": null})).unwrap(), json!({"active": null}));
+    }
+
+    #[test]
+    fn the_engine_sections_that_promise_to_fail_cleanly_do() {
+        for entry in [SectionEntry::of::<RegionSave>(), SectionEntry::of::<PositionSave>(), SectionEntry::of::<VitalsSave>()] {
+            assert!(entry.fails_cleanly, "{} says it fails cleanly", entry.name);
+        }
+        let mut world = World::new();
+        let body = world.spawn((Transform::from_xyz(1.0, 2.0, 3.0), Health::new(100.0), Stamina::new(50.0, 5.0, 1.0))).id();
+
+        // A position and a rotation that are not ones: refused before the Transform is written.
+        for (feet, rotation, why) in [([f32::NAN, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0], "are not a position"), ([9.0, 9.0, 9.0], [0.0; 4], "is not a rotation")] {
+            let err = PositionSave { feet, rotation, region: None }.apply(&mut world, Some(body)).unwrap_err();
+            assert!(err.contains(why), "{err}");
+            assert_eq!(world.get::<Transform>(body).unwrap().translation, Vec3::new(1.0, 2.0, 3.0));
+        }
+
+        // A health that would be written and a stamina that is not a pool: neither is written, and the
+        // body is not given the charges.
+        let flask = || ChargeSave { name: "flask".into(), current: 1, max: 3 };
+        let refused = VitalsSave { health: Some(Pool { current: 10.0, max: 20.0 }), stamina: Some(Pool { current: f32::NAN, max: 5.0 }), charges: vec![flask()] };
+        assert!(refused.apply(&mut world, Some(body)).unwrap_err().starts_with("stamina "));
+        assert_eq!(*world.get::<Health>(body).unwrap(), Health::new(100.0));
+        assert!(world.get::<Charges>(body).is_none());
+
+        // Taken: a body that has no charges is given them.
+        let taken = VitalsSave { health: Some(Pool { current: 10.0, max: 20.0 }), stamina: None, charges: vec![flask()] };
+        taken.apply(&mut world, Some(body)).unwrap();
+        assert_eq!(world.get::<Health>(body).map(|h| (h.current, h.max)), Some((10.0, 20.0)));
+        assert_eq!(world.get::<Charges>(body).unwrap().0, vec![Charge { name: "flask".into(), current: 1, max: 3 }]);
     }
 
     #[test]

@@ -314,18 +314,23 @@ pub struct ApplyError {
     /// Sections the set lacked whose `missing` ran before the one that failed: they changed
     /// the world too.
     pub missing: Vec<String>,
+    /// The section that failed does not promise that its failure changes nothing
+    /// ([`FAILS_CLEANLY`](crate::SaveSection::FAILS_CLEANLY)), so it may have changed the world
+    /// before it failed.
+    pub failed_may_have_changed: bool,
     pub message: String,
 }
 
 impl ApplyError {
     /// A failure before any section ran.
     fn before(message: String) -> Self {
-        ApplyError { applied: Vec::new(), missing: Vec::new(), message }
+        ApplyError { applied: Vec::new(), missing: Vec::new(), failed_may_have_changed: false, message }
     }
 
-    /// Whether any section ran before the failure (its `apply` or its `missing`).
+    /// Whether the world may have changed: a section ran before the failure (its `apply` or its
+    /// `missing`), or the one that failed does not fail cleanly.
     pub fn changed_anything(&self) -> bool {
-        !self.applied.is_empty() || !self.missing.is_empty()
+        !self.applied.is_empty() || !self.missing.is_empty() || self.failed_may_have_changed
     }
 }
 
@@ -339,7 +344,8 @@ fn apply_prepared(world: &mut World, kind: SaveKind, body: Option<Entity>, prepa
             None => entry.missing(world, body).inspect(|()| done.missing.push(entry.name.clone())),
         };
         if let Err(message) = result {
-            return Err(ApplyError { applied: done.applied, missing: done.missing, message: format!("section {}: {message}", entry.name) });
+            let message = format!("section {}: {message}", entry.name);
+            return Err(ApplyError { applied: done.applied, missing: done.missing, failed_may_have_changed: !entry.fails_cleanly, message });
         }
     }
     Ok(done)
@@ -348,7 +354,9 @@ fn apply_prepared(world: &mut World, kind: SaveKind, body: Option<Entity>, prepa
 /// Puts `set` into the world: migrates it, then applies each section of `kind` in
 /// registration order (`missing` for the ones it lacks). Sections that are not registered
 /// are skipped with a warning in the journal. Nothing is applied if the set does not
-/// prepare; a section that fails when applied stops the rest.
+/// prepare; a section that fails when applied stops the rest, and the error says whether the
+/// world may have changed ([`ApplyError::changed_anything`]: a section ran before it, or the
+/// failed one does not fail cleanly).
 pub fn apply_sections(world: &mut World, kind: SaveKind, body: Option<Entity>, set: &SectionSet) -> Result<Applied, ApplyError> {
     if kind == SaveKind::Character && body.is_none() {
         return Err(ApplyError::before("there is no player body to put the character into".to_owned()));
@@ -639,7 +647,9 @@ impl std::fmt::Display for LoadReport {
 /// afterwards verifies. A section that fails when applied stops the load and the error says
 /// how far it got: what ran before it (`apply`, or `missing` for a section the file lacks, in
 /// this kind or a kind loaded before) stays, the world is partly loaded and the recording
-/// restarts from it; when nothing ran, nothing was applied and the call is not recorded.
+/// restarts from it; so does a world whose failed section may have changed it too (one that
+/// does not say it [fails cleanly](crate::SaveSection::FAILS_CLEANLY)). When nothing ran and
+/// the failed section fails cleanly, nothing was applied and the call is not recorded.
 pub fn load_slot(world: &mut World, what: SaveWhat, slot: &str) -> Result<Vec<LoadReport>, String> {
     let slots = SaveSlots { world: slot.to_owned(), character: slot.to_owned() };
     load_parts(world, &what.parts(), &slots)
@@ -695,7 +705,14 @@ pub fn load_parts(world: &mut World, parts: &[(SaveKind, Option<Entity>)], slots
                     ai_core::world_rebuilt(world, format!("save {slot} loaded"));
                 }
                 let before: Vec<String> = e.applied.iter().cloned().chain(e.missing.iter().map(|name| format!("{name} (missing from the file)"))).collect();
-                let mut done = vec![if before.is_empty() { "nothing of it was applied".to_owned() } else { format!("applied before it: {}", before.join(", ")) }];
+                let mut done = vec![match (before.is_empty(), e.failed_may_have_changed) {
+                    (true, true) => "no section before it was applied, but the failed section may have changed the world".to_owned(),
+                    (true, false) => "nothing of it was applied".to_owned(),
+                    (false, _) => format!("applied before it: {}", before.join(", ")),
+                }];
+                if e.failed_may_have_changed && !before.is_empty() {
+                    done.push("the failed section may have changed the world too".to_owned());
+                }
                 if !reports.is_empty() {
                     let loaded: Vec<String> = reports.iter().map(|r| format!("{}/{}", r.kind, r.slot)).collect();
                     done.push(format!("already loaded: {}", loaded.join(", ")));

@@ -807,8 +807,16 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   loaded`: ответ `loading world/gone failed at section region: …; nothing was applied: fix the cause and load again`, и вызова
   в записи нет. Когда что-то применилось, ошибка называет и секции, чей `missing` успел отработать (`weather (missing from the
   file)`), и виды, загруженные раньше (`already loaded: world/camp`); такая загрузка перезапускает запись, даже если до отказа
-  отработали только `missing`. У `ApplyError` новое поле `missing` и `changed_anything()` (тест
-  `a_load_that_fails_part_way_says_what_it_applied_and_records_the_load`).
+  отработали только `missing`. Отказавшая секция считается изменившей мир, если не обещала обратного: у `SaveSection` новая
+  константа `FAILS_CLEANLY` (по умолчанию `false`: «если мои `apply` или `missing` вернули ошибку, мир остался прежним»,
+  то есть сначала всё проверяется, потом меняется), у записи реестра поле `fails_cleanly`. Без обещания загрузка не пишет
+  `nothing was applied`, не выбрасывает вызов из записи, перезапускает её и сообщает хосту, что мир собран заново, а ошибка
+  добавляет `the failed section may have changed the world too` (или, когда до неё ничего не применилось, `no section
+  before it was applied, but the failed section may have changed the world`). Обещают `region`, `position`, `vitals` и
+  секции `save_component` и `save_resource` (`vitals` выдаёт телу `Charges` одним вызовом `entry`, без отказа после первой
+  записи). У `ApplyError` новые поля `missing` и `failed_may_have_changed` и `changed_anything()` (тесты
+  `a_load_that_fails_part_way_says_what_it_applied_and_records_the_load`,
+  `a_section_that_fails_may_have_changed_the_world_unless_it_says_it_fails_cleanly`).
 - Windows: `cargo clippy --workspace --all-targets -- -D warnings` молчит: помощники тестов `stand_udp`, которые нужны только
   тестам с настоящим `sh` (unix), собираются только там.
 - D4: `clearance` по навсетке больше не проходит по диагонали мимо колонки, которую вырезал поставленный после загрузки

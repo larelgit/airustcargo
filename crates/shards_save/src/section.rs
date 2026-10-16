@@ -122,6 +122,18 @@ pub trait SaveSection: Serialize + DeserializeOwned + Send + Sync + 'static {
         let _ = (world, body);
         Ok(())
     }
+
+    /// The promise "when my `apply` or `missing` returns `Err`, the world is exactly as it was":
+    /// the section checks everything first and changes the world after (a journal line is not a
+    /// change). A load that stops at such a section, with nothing applied before it, answers
+    /// `nothing was applied` and takes the call out of the recording.
+    ///
+    /// Default `false`: a section that fails may have changed the world before it did. The load
+    /// then says so (`the failed section may have changed the world too`), restarts the
+    /// recording from the world as it is and tells whoever mirrors it (a co-op host) to take it
+    /// whole again. Set it to `true` only when every `?` and `return Err` of `apply` and
+    /// `missing` comes before their first change.
+    const FAILS_CLEANLY: bool = false;
 }
 
 type CaptureFn = Arc<dyn Fn(&World, Option<Entity>) -> Result<Value, String> + Send + Sync>;
@@ -138,6 +150,8 @@ pub struct SectionEntry {
     /// The crate or game that registered it (`shards`, `sandbox`): the first path segment
     /// of the type.
     pub source: String,
+    /// [`SaveSection::FAILS_CLEANLY`]: when `apply` or `missing` fails, the world is as it was.
+    pub fails_cleanly: bool,
     capture: CaptureFn,
     apply: ApplyFn,
     missing: MissingFn,
@@ -187,6 +201,7 @@ impl SectionEntry {
             kind: S::KIND,
             version: S::VERSION,
             source: source_of::<S>(),
+            fails_cleanly: S::FAILS_CLEANLY,
             capture: Arc::new(|world, body| verified(&S::capture(world, body)?)),
             apply: Arc::new(|world, body, value| read::<S>(value)?.apply(world, body)),
             missing: Arc::new(|world, body| S::missing(world, body)),
@@ -226,6 +241,8 @@ impl SectionEntry {
             kind: SaveKind::Character,
             version,
             source: source_of::<C>(),
+            // Every way to fail (no body, data that does not read, no such entity) comes before the insert.
+            fails_cleanly: true,
             capture: Arc::new(move |world, body| {
                 let data: Option<C> = world.get::<C>(need(body)?).cloned();
                 verified(&data)
@@ -253,6 +270,8 @@ impl SectionEntry {
             kind: SaveKind::World,
             version,
             source: source_of::<C>(),
+            // The one way to fail is the data not reading, before any entity is touched.
+            fails_cleanly: true,
             capture: Arc::new(move |world, _| {
                 let mut map: BTreeMap<String, C> = BTreeMap::new();
                 if let Some(mut q) = world.try_query::<(&SaveKey, &C)>() {
@@ -305,6 +324,8 @@ impl SectionEntry {
             kind: SaveKind::World,
             version,
             source: source_of::<R>(),
+            // The one way to fail is the data not reading, before the resource is replaced.
+            fails_cleanly: true,
             capture: Arc::new(|world, _| {
                 let resource = world
                     .get_resource::<R>()
@@ -426,7 +447,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+    #[derive(Resource, Serialize, Deserialize, Clone, Debug, PartialEq)]
     struct Gold(u32);
 
     #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -447,6 +468,42 @@ mod tests {
         fn apply(self, _: &mut World, _: Option<Entity>) -> Result<(), String> {
             Ok(())
         }
+    }
+
+    // A section that checks everything before it changes anything, and says so.
+    #[derive(Serialize, Deserialize)]
+    struct Careful;
+    impl SaveSection for Careful {
+        const NAME: &'static str = "careful";
+        const VERSION: u32 = 1;
+        const KIND: SaveKind = SaveKind::World;
+        const FAILS_CLEANLY: bool = true;
+        fn capture(_: &World, _: Option<Entity>) -> Result<Self, String> {
+            Ok(Careful)
+        }
+        fn apply(self, _: &mut World, _: Option<Entity>) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_section_fails_cleanly_only_when_it_says_so() {
+        assert!(!SectionEntry::of::<WalletData>().fails_cleanly, "safe by default: a section that fails may have changed the world");
+        assert!(SectionEntry::of::<Careful>().fails_cleanly);
+        // The generic sections check everything before their first change.
+        assert!(SectionEntry::character_component::<Purse>("purse", 1).fails_cleanly);
+        assert!(SectionEntry::world_component::<Purse>("chests", 1).fails_cleanly);
+        assert!(SectionEntry::resource::<Gold>("gold", 1).fails_cleanly);
+        // A section registered again under the name replaces the promise too, in either direction.
+        let mut registry = SaveRegistry::default();
+        registry.add(SectionEntry::of::<Careful>());
+        let mut careless = SectionEntry::of::<WalletData>();
+        careless.name = "careful".to_owned();
+        careless.kind = SaveKind::World;
+        registry.add(careless);
+        assert!(!registry.get("careful").unwrap().fails_cleanly);
+        registry.add(SectionEntry::of::<Careful>());
+        assert!(registry.get("careful").unwrap().fails_cleanly);
     }
 
     #[test]

@@ -3323,8 +3323,15 @@ app.save_component::<Bag>(SaveKind::Character, "bag", 1)        // компон�
    .autosave_on::<CampRested>(SaveWhat::All);                    // пишется в конце тика
 ```
 
-- **Секции.** `SaveSection`: `NAME`, `VERSION`, `KIND`, `capture`, `apply`, `missing`. Секции применяются в порядке
-  регистрации. Неизвестная файлу секция получает `missing()`, неизвестная игре пропускается с предупреждением. Цепочка
+- **Секции.** `SaveSection`: `NAME`, `VERSION`, `KIND`, `capture`, `apply`, `missing`, `FAILS_CLEANLY`. Секции применяются в
+  порядке регистрации. `FAILS_CLEANLY` (по умолчанию `false`) — обещание секции: если её `apply` или `missing` вернули
+  ошибку, мир остался таким, каким был, потому что секция сначала всё проверяет, а меняет после (строка журнала не
+  изменение). Без обещания отказавшая секция считается изменившей мир: загрузка не скажет «ничего не применилось», не
+  выбросит вызов из записи и сообщит хосту кооператива, что мир собран заново. Ставьте `true` только там, где каждый `?` и
+  `return Err` в `apply` и `missing` стоит до первого изменения; пометка живёт в записи реестра, и секция того же имени
+  из другого места заменяет и её. Движок обещает так за `position`, `vitals`, `region` (отказ до `change_region`: если
+  сборка, которую пропустила проверка, всё же упадёт, старый регион уже выгружен) и секции из `save_component` и
+  `save_resource`. Неизвестная файлу секция получает `missing()`, неизвестная игре пропускается с предупреждением. Цепочка
   миграций с дырой (`add_save_migration` не хватает на шаг) роняет приложение при сборке с именем секции. Реестр —
   инструмент `save_registry`. Движок регистрирует свои: `region` (мир, версия 2: регион, зерно, версия генератора, хэш
   манифеста и сам манифест; мир, сохранённый вне региона (на арене), при загрузке ничего не выгружает: текущий регион
@@ -3343,11 +3350,14 @@ app.save_component::<Bag>(SaveKind::Character, "bag", 1)        // компон�
   backup 1 (tick 50110)`. Все копии плохи — ошибка называет каждую, мир не тронут. Остаток `.tmp` (сбой при записи)
   убирается.
 - **Секция отказала при загрузке.** Файлы прочитаны, секции применяются по порядку, и та, что вернула ошибку, останавливает
-  загрузку. Ничего до неё не применилось — `loading world/gone failed at section region: …; nothing was applied: fix the cause
-  and load again`, вызова в записи нет. Иначе мир загружен частично, и ошибка говорит, насколько: секции этого вида, которые
-  успели примениться или получить `missing`, и виды, загруженные раньше (`loading character/camp failed at section bag: …;
-  applied before it: position, vitals; already loaded: world/camp. The world is partly loaded: fix the cause and load again, or
-  go back with snapshot_load`); запись перезапускается от этого мира.
+  загрузку. Ничего до неё не применилось, и сама она отказывает чисто (`FAILS_CLEANLY`) — `loading world/gone failed at
+  section region: …; nothing was applied: fix the cause and load again`, вызова в записи нет. Иначе мир загружен частично, и
+  ошибка говорит, насколько: секции этого вида, которые успели примениться или получить `missing`, виды, загруженные раньше, и
+  то, что отказавшая секция сама могла изменить мир, если не обещала обратного (`loading character/camp failed at section
+  bag: …; applied before it: position, vitals; the failed section may have changed the world too; already loaded: world/camp.
+  The world is partly loaded: fix the cause and load again, or go back with snapshot_load`; когда до неё ничего не
+  применилось — `no section before it was applied, but the failed section may have changed the world`); запись
+  перезапускается от этого мира.
 - **Сохранение из более новой версии — не порча.** Секция выше версии этой сборки или конверт `shards-save/2`
   (`Fault::Newer`) отказывает с ясной ошибкой `world/slot1 was saved by a newer version of the game (section inventory v7
   > v5); nothing was changed`: без перехода к старой копии (потерялся бы прогресс), без `.damaged`, без перезаписи.
