@@ -639,7 +639,16 @@ fn write_file(dir: &Path, report: &CrashReport) -> Result<PathBuf, String> {
         match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(mut file) => {
                 use std::io::Write;
-                return file.write_all(text.as_bytes()).map(|()| path.clone()).map_err(|e| format!("cannot write {}: {e}", path.display()));
+                let written = file.write_all(text.as_bytes()).and_then(|()| file.flush());
+                drop(file);
+                return match written {
+                    Ok(()) => Ok(path),
+                    Err(e) => {
+                        // Half a report is no report: the caller tries another folder.
+                        let _ = std::fs::remove_file(&path);
+                        Err(format!("cannot write {}: {e}", path.display()))
+                    }
+                };
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(format!("cannot write {}: {e}", path.display())),
