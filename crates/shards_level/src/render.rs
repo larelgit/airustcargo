@@ -12,22 +12,23 @@ pub struct LevelVisual {
     pub instance: u32,
 }
 
-/// Loads scene 0 of `path` under a new root at `at`. `None` without the `render` feature,
-/// for a level that was not read from a file, and in an app that has no glTF scene support
-/// (the headless engine has it; a test app built from `MinimalPlugins` does not).
+/// Loads scene `scene` of `path` (the one the level's nodes come from) under a new root at
+/// `at`. `None` without the `render` feature, for a level that was not read from a file, and
+/// in an app that has no glTF scene support (the headless engine has it; a test app built
+/// from `MinimalPlugins` does not).
 #[cfg(feature = "render")]
-pub(crate) fn spawn_visual(world: &mut World, path: &str, at: Transform, instance: u32) -> Option<Entity> {
+pub(crate) fn spawn_visual(world: &mut World, path: &str, scene: usize, at: Transform, instance: u32) -> Option<Entity> {
     use bevy::gltf::GltfAssetLabel;
     use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
 
     if path.is_empty() || !world.contains_resource::<Assets<WorldAsset>>() {
         return None;
     }
-    let scene = world.get_resource::<AssetServer>()?.load(GltfAssetLabel::Scene(0).from_asset(path.to_owned()));
+    let scene = world.get_resource::<AssetServer>()?.load(GltfAssetLabel::Scene(scene).from_asset(path.to_owned()));
     Some(world.spawn((LevelVisual { instance }, WorldAssetRoot(scene), at)).id())
 }
 
 #[cfg(not(feature = "render"))]
-pub(crate) fn spawn_visual(_: &mut World, _: &str, _: Transform, _: u32) -> Option<Entity> {
+pub(crate) fn spawn_visual(_: &mut World, _: &str, _: usize, _: Transform, _: u32) -> Option<Entity> {
     None
 }

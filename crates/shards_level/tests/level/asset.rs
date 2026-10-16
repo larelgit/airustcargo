@@ -121,6 +121,58 @@ fn a_mesh_without_bounds_is_a_broken_file_not_a_panic() {
     assert!(err.starts_with("not a valid glTF file") && err.contains("POSITION") && err.contains("min: Missing data"), "{err}");
 }
 
+/// The arena as `.gltf` JSON, changed by `edit`, read back.
+fn arena_edited(edit: impl FnOnce(&mut serde_json::Value)) -> Result<LevelAsset, String> {
+    let mut doc: serde_json::Value = serde_json::from_str(&arena().gltf()).unwrap();
+    edit(&mut doc);
+    LevelAsset::from_slice("arena.gltf", doc.to_string().as_bytes())
+}
+
+#[test]
+fn required_extensions_are_no_reason_to_refuse_a_level_unless_meshes_are_compressed() {
+    let nodes = read(&arena()).nodes.len();
+    // What Blender marks required: punctual lights, texture mapping, WebP images. None of
+    // them changes a node, a name, an extra or a bound; drawing them is Bevy's business.
+    let required = ["KHR_lights_punctual", "KHR_texture_transform", "EXT_texture_webp", "KHR_materials_volume"];
+    let level = arena_edited(|doc| {
+        doc["extensionsUsed"] = json!(required);
+        doc["extensionsRequired"] = json!(required);
+    })
+    .unwrap();
+    assert_eq!(level.nodes.len(), nodes);
+    // Compressed meshes: the bounds are not in plain buffers and Bevy cannot draw them.
+    for (name, fix) in [
+        ("KHR_draco_mesh_compression", "untick *Data → Draco Compression*"),
+        ("EXT_meshopt_compression", "meshopt compression off"),
+        ("KHR_mesh_quantization", "without mesh quantization"),
+    ] {
+        let err = arena_edited(|doc| doc["extensionsRequired"] = json!(["KHR_lights_punctual", name])).unwrap_err();
+        assert!(err.starts_with(&format!("the meshes are compressed with `{name}`")) && err.contains(fix), "{err}");
+    }
+    // The rest of the validation still runs.
+    let err = arena_edited(|doc| doc["nodes"][0]["mesh"] = json!(99)).unwrap_err();
+    assert!(err.starts_with("not a valid glTF file") && err.contains("mesh"), "{err}");
+}
+
+#[test]
+fn the_level_is_the_default_scene_not_the_first() {
+    // Blender writes every scene of the `.blend`, sorted by name, and makes the active one
+    // the default: a kit of instanced collections in its own scene comes first.
+    let level = arena_edited(|doc| {
+        let nodes = doc["nodes"].as_array_mut().unwrap();
+        nodes.push(json!({"name": "KitPiece", "extras": {"collider": "box", "size": 1}}));
+        let kit = json!({"name": "Kit", "nodes": [nodes.len() - 1]});
+        let level = doc["scenes"][0].clone();
+        doc["scenes"] = json!([kit, level]);
+        doc["scene"] = json!(1);
+    })
+    .unwrap();
+    assert_eq!(level.scene, Some(1));
+    assert!(level.node("KitPiece").is_none());
+    assert_eq!(level.extras["theme"], "ruins", "the default scene's properties");
+    assert_eq!(read(&arena()).scene, Some(0));
+}
+
 #[test]
 fn extras_that_are_not_an_object_are_a_problem_of_the_node() {
     let mut g = Gltf::new();

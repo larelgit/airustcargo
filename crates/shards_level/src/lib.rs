@@ -14,15 +14,26 @@
 //!
 //! ## Making a level in Blender
 //!
-//! 1. Model the level in meters, +Y up (Blender's exporter converts from Z up by default).
-//!    Name objects as you like: names are unique within a `.blend` file, and errors quote
-//!    them as paths through the hierarchy (`Props/Crate.003`).
+//! Checked on real exports of Blender 5.2.2 LTS: `tools/blender/outpost_level.py` builds a
+//! level the way an artist does and exports it, and the tests read what it wrote.
+//!
+//! 1. Model the level in meters, Z up as Blender has it: the exporter turns it to +Y up
+//!    (Blender `(x, y, z)` is `(x, z, -y)` in the file). Name objects as you like (spaces
+//!    and any letters are fine): errors quote them as paths through the hierarchy
+//!    (`Props/Crate.003`). Objects of an instanced collection appear below each instancer
+//!    (`Barrels.A/Barrel`). Keep the collection itself in another scene: one only excluded
+//!    from the level's view layer is exported too, at its own place.
 //! 2. Select an object, open *Object Properties → Custom Properties*, add a property
-//!    (the `+` button), type its name and value. Text, numbers and lists of numbers
-//!    all export. Properties are read from **objects**, not from meshes.
+//!    (the `+` button), type its name and value. Every type of the panel exports: text,
+//!    numbers, booleans, arrays, *Data-Block* (written as `{"name": ..., "type": ...}`) and
+//!    *Python* (a dict or a list, written as JSON). Properties are read from **objects**;
+//!    ones put on the mesh data (*Object Data Properties*) are an error that says so.
 //! 3. *File → Export → glTF 2.0*. Under *Include*, tick **Custom Properties** (without it
-//!    every property is dropped). *Transform → +Y Up* stays on. `.gltf`, `.glb` and the
-//!    embedded variant all work; the engine reads only the JSON and the mesh bounds.
+//!    every property is dropped); under *Data → Mesh*, tick **Apply Modifiers** (without it
+//!    the file has the meshes before their modifiers, and `auto` colliders fit those).
+//!    *Transform → +Y Up* stays on. `.glb` and `.gltf` (separate or embedded) all work, and
+//!    so do lights and materials; *Draco Compression* does not (Bevy cannot draw it): the
+//!    error says so.
 //! 4. Put the file in the game's asset folder, list it in a content file
 //!    (`content/levels/arena.level.ron`, see [`LevelDef`]), and run `shards content check`.
 //!
@@ -36,7 +47,7 @@
 //! | `marker` | `spawn`, `socket`, `navlink`, `trigger`, `interactable`, `camp`, `landmark`, `custom:<name>` | the node is a [`LevelMarker`] of that kind |
 //! | `name` | text | the marker's name (`start`); the node's name when left out |
 //! | `socket` | text | shorthand for `marker = socket`; the value is the socket type (`road`) |
-//! | `to` | text | for a `navlink`: the name of the node where it ends |
+//! | `to` | text, or the object (*Data-Block*) | for a `navlink`: the node where it ends |
 //! | `collider` | `box`, `sphere`, `capsule`, `cylinder`, `cone`, `auto` | a solid [`Collider`](shards_motion::Collider); `auto` is a box fitted to the mesh |
 //! | `size` | `[x, y, z]` or one number | box size (full extents, meters); the mesh bounds when left out |
 //! | `radius`, `height` | numbers | sphere, capsule, cylinder, cone; the mesh bounds when left out |
@@ -133,9 +144,10 @@
 //!
 //! ## Visuals
 //!
-//! With the `render` feature each spawn also loads scene 0 of the same file through Bevy's
-//! glTF loader under one root entity ([`LevelVisual`]), placed like the level. The root has
-//! no gameplay components; gameplay entities are the same with and without it.
+//! With the `render` feature each spawn also loads the level's scene of the same file
+//! ([`LevelAsset::scene`], the file's default scene) through Bevy's glTF loader under one
+//! root entity ([`LevelVisual`]), placed like the level. The root has no gameplay components;
+//! gameplay entities are the same with and without it.
 
 mod asset;
 mod def;

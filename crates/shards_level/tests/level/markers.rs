@@ -103,6 +103,25 @@ fn a_navlink_needs_a_real_end() {
 }
 
 #[test]
+fn a_navlink_can_point_at_the_object_itself() {
+    // Blender's Data-Block property: the exporter writes the object as {"name", "type"}.
+    let mut app = app();
+    let mut g = Gltf::new();
+    g.root(NodeSpec::new("Top").at([0.0, 3.0, 0.0]));
+    g.root(NodeSpec::new("Bottom").props(json!({"marker": "navlink", "to": {"name": "Top", "type": "Object"}})));
+    let e = spawn(&mut app, &g).unwrap()[0];
+    assert!(close(marker(&app, e).to.unwrap(), Vec3::new(0.0, 3.0, 0.0)));
+
+    // Another kind of data-block, or something that names nothing: one problem each.
+    let err = spawn(&mut app, &one(json!({"marker": "navlink", "to": {"name": "Stone", "type": "Material"}}))).unwrap_err();
+    assert!(err.starts_with("level `test.gltf` has 1 problem:"), "{err}");
+    assert!(err.contains("`to` points at the Material `Stone`; pick the object (Data-Block type Object)"), "{err}");
+    let err = spawn(&mut app, &one(json!({"marker": "navlink", "to": 3}))).unwrap_err();
+    assert!(err.starts_with("level `test.gltf` has 1 problem:"), "{err}");
+    assert!(err.contains("`to` must be a node's name or the object itself (a Data-Block property), found a number"), "{err}");
+}
+
+#[test]
 fn marker_words_are_checked() {
     let mut app = app();
     let err = spawn(&mut app, &one(json!({"marker": "spawn", "socket": "road"}))).unwrap_err();
