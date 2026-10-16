@@ -9,13 +9,14 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use shards_content::db::closest;
 use shards_core::flat;
 use shards_motion::perception::{Leg, PathPlan, StepKind};
 use shards_motion::{physics::sync_physics, CharacterController, CharacterParams, LayerMask, PhysicsWorld, QueryFilter, TargetArg};
 
 use crate::brain::{force_state, Home, Npc, NpcBrain, NpcDrive, NpcStateChanged};
 use crate::director::{AttackToken, TokenGranted, TokenReturned};
-use crate::nav::{local_grid_path, local_grid_route, navmesh_route, NavAgent, NavPaths, NAVMESH};
+use crate::nav::{local_grid_path, local_grid_route, NavAgent, NavPaths, NAVMESH};
 use crate::perception::Perceived;
 use crate::planner::NpcPlan;
 
@@ -190,8 +191,12 @@ fn npc_state(In(call): In<Call<NpcStateArgs>>, world: &World) -> ToolResult<Valu
     let plan = e.get::<NpcPlan>().cloned().unwrap_or_default();
     let cooldowns: serde_json::Map<String, Value> =
         plan.cooldowns.iter().map(|c| (c.name.clone(), json!(round(c.left)))).collect();
+    let radius = body_of(world, entity).unwrap_or_default().radius;
     let nav = e.get::<NavAgent>().map(|a| {
         json!({
+            // Where its routes come from: the navmesh of its body class, or the local grid
+            // and why.
+            "routes": crate::nav::routes_for(world, radius),
             "goal": a.goal.map(fmt_pos),
             "waypoints": a.path.len(),
             "next": a.path.get(a.index as usize).map(|p| fmt_pos(*p)),
@@ -242,17 +247,27 @@ fn npc_state(In(call): In<Call<NpcStateArgs>>, world: &World) -> ToolResult<Valu
 
 /// The route an NPC would take, as `path_to` reports one: `path 23.5m, 4 turns: 6.0m NE →
 /// 4.5m N (mantle 1.1m) → ...`, with the waypoints. Inside a loaded region it comes from the
-/// navmesh (`provider: navmesh`, and the tiles it crosses), elsewhere from the local grid (or
-/// the game's own provider). From a point or an entity (default: you) to another, for a body
-/// of `radius` (default: the walker's). Read-only.
+/// navmesh (`provider: navmesh`, the body class it was walked as and the tiles it crosses),
+/// elsewhere from the local grid (or the game's own provider). From a point or an entity
+/// (default: you) to another, for a body of `radius` (default: the walker's) on the tightest
+/// body class it fits, or as a body of class `body`. Read-only.
 #[derive(Deserialize, JsonSchema)]
 pub struct NavPathArgs {
     /// Where the route starts: an entity id or a ground point {x, z}. Default: your body.
     pub from: Option<TargetArg>,
     /// Where it goes: an entity id or a ground point {x, z}.
     pub to: TargetArg,
-    /// Body radius in meters. Default: the walker's (0.4 for a point).
+    /// Body radius in meters. Default: the walker's (the body class's for a point).
     pub radius: Option<f32>,
+    /// A body class of the nav settings (`nav_info` lists them): the route on its navmesh,
+    /// for its body. Default: the tightest class the walker fits.
+    pub body: Option<String>,
+}
+
+/// An entity's body numbers: its controller's (or its own).
+fn body_of(world: &World, e: Entity) -> Option<CharacterParams> {
+    let own = world.get::<CharacterParams>(e);
+    world.get::<CharacterController>(e).map(|c| c.resolve(own, world.get_resource()).clone()).or(own.cloned())
 }
 
 fn nav_path(In(call): In<Call<NavPathArgs>>, world: &mut World) -> ToolResult<Value> {
@@ -291,17 +306,37 @@ fn nav_path(In(call): In<Call<NavPathArgs>>, world: &mut World) -> ToolResult<Va
     if target.is_none() {
         to.y = from.y;
     }
-    // A point, or an NPC (its routes know only its radius: `navmesh_path`), is taken to have
-    // the body the navmesh was baked for; anyone else (`move_to path=true`) its own.
-    let baked = world.get_resource::<crate::nav::NavRegion>().map_or_else(CharacterParams::default, |nav| nav.agent.clone());
-    let own = |w: Entity| {
-        let own = world.get::<CharacterParams>(w);
-        world.get::<CharacterController>(w).map(|c| c.resolve(own, world.get_resource()).clone()).or(own.cloned())
+    let region = crate::nav::region_nav(world);
+    // The body class asked for: its navmesh, and its body unless a radius is given.
+    let class = match &call.args.body {
+        None => None,
+        Some(name) => {
+            let Some(nav) = region else {
+                return Err(format!(
+                    "no navmesh to walk as the body `{name}`: no region is loaded (body classes are navmeshes of a region); \
+                     load one with `regen`, or leave out `body`"
+                ));
+            };
+            let names: Vec<&str> = nav.classes().map(|c| c.body.as_str()).collect();
+            let Some(class) = nav.class(name) else {
+                let hint = closest(name, names.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
+                return Err(format!("no body class `{name}` in the nav settings{hint}; classes: {}", names.join(", ")));
+            };
+            Some(class)
+        }
     };
+    // A point, or an NPC (its routes know only its radius: `navmesh_path`), is taken to have
+    // the body of the class it fits (or the one asked for); anyone else (`move_to
+    // path=true`) its own.
+    let npc_like = walker.is_none_or(|w| world.get::<crate::Npc>(w).is_some());
     let mut params = match walker {
-        Some(w) if world.get::<crate::Npc>(w).is_some() => CharacterParams { radius: own(w).unwrap_or_default().radius, ..baked },
-        Some(w) => own(w).unwrap_or_default(),
-        None => baked,
+        Some(w) if !npc_like && class.is_none() => body_of(world, w).unwrap_or_default(),
+        _ => {
+            let radius = call.args.radius.or_else(|| walker.and_then(|w| body_of(world, w)).map(|p| p.radius));
+            let base = class.or_else(|| radius.and_then(|r| region?.for_radius(r))).or(region);
+            let body = base.map_or_else(CharacterParams::default, |nav| nav.agent.clone());
+            CharacterParams { radius: radius.unwrap_or(body.radius), ..body }
+        }
     };
     if let Some(radius) = call.args.radius {
         params.radius = radius;
@@ -310,17 +345,31 @@ fn nav_path(In(call): In<Call<NavPathArgs>>, world: &mut World) -> ToolResult<Va
     if !(radius > 0.0 && radius.is_finite()) {
         return Err(format!("radius must be > 0 (is {radius})"));
     }
+    if let Some(class) = class
+        && !class.fits(radius, params.height)
+    {
+        return Err(format!(
+            "a body of {radius:.2} m radius does not fit the body class `{}` ({:.2} m); give a smaller `radius`, or another \
+             `body`",
+            class.body, class.agent_radius
+        ));
+    }
     let round = |v: f32| (v * 100.0).round() / 100.0;
     let paths = world.get_resource::<NavPaths>().copied().unwrap_or_default();
     let mut provider = paths.name;
     let mut find = paths.find;
     // Off the navmesh, a walker that is no NPC plans on the local grid with its own body.
     let mut own_body = None;
-    if provider == NAVMESH {
-        match navmesh_route(world, from, to, &params, target.is_some()) {
+    if provider == NAVMESH || class.is_some() {
+        // The class asked for, else the one an NPC's radius picks, else the tightest that
+        // serves the walker's body.
+        let on = class.or_else(|| region.and_then(|nav| if npc_like { nav.for_radius(radius) } else { nav.serving(&params) }));
+        let routed = on.and_then(|nav| crate::nav::route_on(world, nav, from, to, &params, target.is_some()));
+        match routed {
             Some(Ok(path)) => {
                 let mut out = path.to_plan().to_json();
                 out["provider"] = json!(NAVMESH);
+                out["body"] = json!(on.map(|nav| nav.body.clone()));
                 out["from"] = json!(fmt_pos(from));
                 out["to"] = json!(fmt_pos(to));
                 out["tiles"] = json!(path.tiles.iter().map(|[x, y]| format!("({x}, {y})")).collect::<Vec<_>>());

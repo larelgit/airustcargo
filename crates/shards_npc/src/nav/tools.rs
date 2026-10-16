@@ -15,7 +15,7 @@ use shards_content::{asset_root, ContentDb};
 
 use super::bake::bake;
 use super::region::{refresh, NavBakes, NavRegion};
-use super::settings::{bake_targets, file_name, NavSettings};
+use super::settings::{bake_targets, NavSettings};
 
 pub(crate) fn register(world: &mut World) {
     world.init_resource::<NavOverlay>();
@@ -29,9 +29,12 @@ pub(crate) fn register(world: &mut World) {
 pub struct BakeReport {
     /// The folder, relative to the assets: `nav`.
     pub dir: String,
-    /// `(id, file, summary)` of every file written.
+    /// The body classes baked for: `agent`, then the others.
+    pub bodies: Vec<String>,
+    /// `(id, file, summary)` of every file written, the file inside the folder
+    /// (`large/grass.navtile.ron` for the class `large`).
     pub written: Vec<(String, String, String)>,
-    /// `(id, why)` of the tiles that could not be baked.
+    /// `(id, why)` of the tiles that could not be baked (`grass (body large)` for a class).
     pub failed: Vec<(String, String)>,
 }
 
@@ -44,7 +47,12 @@ impl BakeReport {
 impl fmt::Display for BakeReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let n = self.written.len();
-        write!(f, "baked {n} {} into {}/", if n == 1 { "tile" } else { "tiles" }, self.dir)?;
+        if self.bodies.len() > 1 {
+            let files = if n == 1 { "file" } else { "files" };
+            write!(f, "baked {n} {files} for {} body classes ({}) into {}/", self.bodies.len(), self.bodies.join(", "), self.dir)?;
+        } else {
+            write!(f, "baked {n} {} into {}/", if n == 1 { "tile" } else { "tiles" }, self.dir)?;
+        }
         for (id, file, summary) in &self.written {
             write!(f, "\n  {id}: {file} ({summary})")?;
         }
@@ -55,16 +63,16 @@ impl fmt::Display for BakeReport {
     }
 }
 
-/// Bakes tiles and rooms into their bake files under the asset folder: `only` names ids
-/// (comma separated), `None` or `all` every tile a region uses and every room a dungeon
-/// uses, each at the first tile size its regions have. An unknown id is an error that names
-/// the known ones.
+/// Bakes tiles and rooms into their bake files under the asset folder, for every body class
+/// of the nav settings: `only` names ids (comma separated), `None` or `all` every tile a
+/// region uses and every room a dungeon uses, each at the first tile size its regions have.
+/// An unknown id is an error that names the known ones.
 pub fn bake_files(world: &mut World, only: Option<&str>) -> Result<BakeReport, String> {
     let db = world.get_resource::<ContentDb>().ok_or("content is not loaded")?;
     if !db.is_loaded() {
         return Err("content is still loading; wait with `shards wait`".into());
     }
-    let settings = NavSettings::of(db);
+    let classes = NavSettings::all(db);
     let targets = bake_targets(db);
     let wanted: Option<Vec<String>> = only.filter(|o| o.trim() != "all").map(|o| o.split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect());
     if let Some(ids) = &wanted {
@@ -80,30 +88,34 @@ pub fn bake_files(world: &mut World, only: Option<&str>) -> Result<BakeReport, S
         }
     }
     let root = asset_root(world);
-    let mut report = BakeReport { dir: settings.dir.clone(), ..default() };
+    let mut report = BakeReport { dir: classes[0].dir.clone(), bodies: classes.iter().map(|c| c.body.clone()).collect(), ..default() };
     for target in targets.into_iter().filter(|t| wanted.as_ref().is_none_or(|w| w.contains(&t.id))) {
         let size = target.sizes[0];
-        match bake(world, Some(&root), target.kind, &target.id, size, &settings) {
-            Ok(tile) => {
-                let path = settings.file(&root, target.kind, &target.id);
-                if let Some(dir) = path.parent() {
-                    std::fs::create_dir_all(dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
+        for settings in &classes {
+            match bake(world, Some(&root), target.kind, &target.id, size, settings) {
+                Ok(tile) => {
+                    let path = settings.file(&root, target.kind, &target.id);
+                    if let Some(dir) = path.parent() {
+                        std::fs::create_dir_all(dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
+                    }
+                    std::fs::write(&path, tile.to_file()).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+                    let summary = tile.summary();
+                    let hash = tile.hash.clone();
+                    world.get_resource_or_init::<NavBakes>().tiles.insert(hash, Arc::new(tile));
+                    report.written.push((target.id.clone(), settings.in_dir(target.kind, &target.id), summary));
                 }
-                std::fs::write(&path, tile.to_file()).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-                let summary = tile.summary();
-                let hash = tile.hash.clone();
-                world.get_resource_or_init::<NavBakes>().tiles.insert(hash, Arc::new(tile));
-                report.written.push((target.id.clone(), file_name(target.kind, &target.id), summary));
+                Err(why) if settings.is_default() => report.failed.push((target.id.clone(), why)),
+                Err(why) => report.failed.push((format!("{} (body {})", target.id, settings.body), why)),
             }
-            Err(why) => report.failed.push((target.id.clone(), why)),
         }
     }
     Ok(report)
 }
 
-/// Bake tiles into their navigation bake files (`<assets>/nav/<tile>.navtile.ron`), as
-/// `--bake-nav` does: one tile or room, or every tile a region uses. A region loaded after
-/// reads them; the one in the world keeps its navmesh.
+/// Bake tiles into their navigation bake files (`<assets>/nav/<tile>.navtile.ron`, and
+/// `<assets>/nav/<class>/<tile>.navtile.ron` for every other body class), as `--bake-nav`
+/// does: one tile or room, or every tile a region uses. A region loaded after reads them;
+/// the one in the world keeps its navmesh.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct NavBakeArgs {
     /// A tile or room id, or several separated by commas. Default: all.
@@ -141,7 +153,8 @@ fn nav_overlay(In(call): In<Call<NavOverlayArgs>>, world: &mut World) -> ToolRes
 }
 
 /// The navmesh of the region in the world: its tiles, nodes, links across tile edges,
-/// navlinks, carved cells, and which tiles were baked while loading. Read-only.
+/// navlinks, carved cells, and which tiles were baked while loading; and its body classes
+/// (`bodies`: each class's body and navmesh). Read-only.
 fn nav_info(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
     refresh(world);
     let Some(nav) = world.get_resource::<NavRegion>() else {
@@ -163,7 +176,23 @@ fn nav_info(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
             link
         })
         .collect();
+    // Meters to the centimeter, printed as written (`1.2`, not `1.2000000476837158`).
+    let cm = |v: f32| (f64::from(v) * 100.0).round() / 100.0;
     let r = &nav.report;
+    let bodies: Vec<Value> = nav
+        .classes()
+        .map(|c| {
+            json!({
+                "body": c.body,
+                "radius": cm(c.agent_radius),
+                "height": cm(c.agent_height),
+                "step_height": cm(c.agent.step_height),
+                "summary": c.summary(),
+                "baked_while_loading": c.report.missing.iter().chain(&c.report.stale).collect::<Vec<_>>(),
+                "failed": c.report.failed.iter().map(|(t, why)| format!("{t}: {why}")).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
     Ok(json!({
         "region": nav.title,
         "summary": nav.summary(),
@@ -175,5 +204,6 @@ fn nav_info(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
         "closed_edges": r.closed_edges,
         "carved_cells": r.carved,
         "navlinks": links,
+        "bodies": bodies,
     }))
 }

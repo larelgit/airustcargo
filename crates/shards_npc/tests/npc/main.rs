@@ -3,6 +3,7 @@
 
 mod common;
 mod avoid;
+mod bodies;
 mod director;
 mod fsm;
 mod nav;

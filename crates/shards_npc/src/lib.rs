@@ -22,7 +22,9 @@
 //! - **Navigation** ([`nav`]): every tile baked ahead of time into a walkable grid (the
 //!   motion module's own probe and move rule), stitched over the region's tile graph when it
 //!   loads ([`NavRegion`]), routes by A* over the tile graph, then over the grid of the
-//!   corridor, then string pulling; `--bake-nav` and `nav_bake` write the bake files.
+//!   corridor, then string pulling; `--bake-nav` and `nav_bake` write the bake files. Once
+//!   per body class: `agent` and the nav settings' `bodies` (a big enemy's body), a route on
+//!   the tightest class the walker fits ([`NavBodyDef`]).
 //! - **Nav agents** ([`nav`]): routes from a pluggable provider ([`NavPaths`]: the navmesh in
 //!   a loaded region, the motion module's local grid elsewhere), path following, the leash
 //!   around [`Home`], avoidance between bodies (sampled reciprocal velocity obstacles, numbers
@@ -75,7 +77,7 @@
 //! Seams: [`NavPaths`] (routes; the navmesh by default), [`NpcActivity`] (who is active; by
 //! default every NPC the world module has not marked [`Dormant`](shards_world::Dormant)).
 //!
-//! Tools: `npc_state {id}`, `nav_path {from?, to, radius?}` and `nav_info` (queries),
+//! Tools: `npc_state {id}`, `nav_path {from?, to, radius?, body?}` and `nav_info` (queries),
 //! `npc_set_state {id, state}`, `nav_bake {tile?}`, `nav_overlay {on?}` and `npc_overlay
 //! {on?}` ([`overlay`], F7 in a window) (dev). Stop conditions: `npc_attacking`, `npcs_calm`,
 //! `npc_beyond_leash`, `npc_detour`, `npc_avoiding`. Journal: `e7 idle → chase e5`, `e7 takes an attack token on e5 (2/2)`, `e7
@@ -109,8 +111,8 @@ pub use def::{
 };
 pub use director::{AttackToken, Grant, TokenGranted, TokenReturned};
 pub use nav::{
-    bake_files, find_path, local_grid_path, local_grid_route, navmesh_path, navmesh_route, plain_sight, straight_clear, NavAgent,
-    NavError, NavPath, NavPaths, NavQuery, NavRegion, NavSettingsDef, NavTile,
+    bake_files, find_path, local_grid_path, local_grid_route, navmesh_path, navmesh_route, plain_sight, region_nav, route_on, routes_for,
+    straight_clear, NavAgent, NavBodyDef, NavError, NavPath, NavPaths, NavQuery, NavRegion, NavSettingsDef, NavTile,
 };
 pub use overlay::NpcOverlay;
 pub use perception::{sees, sight_clear, HeardAt, Noise, Perceived, Sensed, Sound};

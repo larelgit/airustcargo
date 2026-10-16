@@ -11,7 +11,13 @@
 //! `<assets>/nav/<tile>.navtile.ron` (rooms `.navroom.ron`), hashed against everything they
 //! are made from: `--bake-nav [tiles|all]` (the game binary, [`bake_files`]) or the
 //! `nav_bake` tool writes them; with a `nav` content definition ([`NavSettingsDef`]: cell
-//! size, the body, the folder) a missing or stale one is a content error.
+//! size, the bodies, the folder) a missing or stale one is a content error.
+//!
+//! **Body classes**: the tiles are baked for the `agent` body and once more for every class
+//! of the nav settings' `bodies` (`large`, from the locomotion of a big enemy), each class in
+//! a folder of its own (`<assets>/nav/large/<tile>.navtile.ron`), and a region builds a
+//! navmesh per class. A route asks the tightest class its body fits; a body wider than every
+//! class plans on the local grid (`npc_state` says so).
 //!
 //! When a region loads, its tiles are placed and turned, **carved** where solids the bakes
 //! never saw stand (decor, props, colliders spawned later), **stitched** across every tile
@@ -25,7 +31,7 @@
 //!
 //! ```ron
 //! // content/nav/default.nav.ron
-//! { "default": (cell: 0.5, agent: Some("grunt"), safe_drop: 2.0) }
+//! { "default": (cell: 0.5, agent: Some("grunt"), safe_drop: 2.0, bodies: {"large": (locomotion: Some("ogre"))}) }
 //! ```
 //!
 //! ## Nav agents
@@ -33,8 +39,9 @@
 //! Where an NPC walks, by which way, without bumping into the others.
 //!
 //! - **Routes** come from [`NavPaths`], a seam: `fn(&World, from, to, radius) -> waypoints`.
-//!   The default asks the navmesh inside a loaded region and the motion module's local grid
-//!   planner ([`plan_path`]) everywhere else (and for bodies bigger than the baked one); a
+//!   The default asks the navmesh of the tightest body class inside a loaded region and the
+//!   motion module's local grid planner ([`plan_path`]) everywhere else (and for bodies wider
+//!   than every class); a
 //!   game may plug in its own. A goal in plain sight ([`plain_sight`]: on the navmesh a
 //!   straight line of walking links, so never over a drop or a ledge; elsewhere a body-wide
 //!   cast through the `WORLD` layer over ground without holes or deep drops) needs no route;
@@ -72,7 +79,7 @@ pub(crate) mod tools;
 
 pub use query::{NavError, NavPath, NavQuery};
 pub use region::{rebuild, refresh, NavBakes, NavRegion};
-pub use settings::{NavSettings, NavSettingsDef};
+pub use settings::{NavBodyDef, NavSettings, NavSettingsDef, DEFAULT_BODY};
 pub use tile::NavTile;
 pub use tools::{bake_files, BakeReport, NavOverlay};
 
@@ -113,11 +120,15 @@ impl Default for NavPaths {
 pub const NAVMESH: &str = "navmesh";
 
 /// What the navmesh says about a walk of a body of `params`: `None` when it does not cover
-/// it (no region, a goal or start outside it, a body bigger than the baked one or one that
-/// steps, climbs or swims less well, a walker off the ground), else the route or why there
-/// is none.
+/// it (no region, a goal or start outside it, a body no class serves: wider or taller than
+/// every class, or stepping, climbing or swimming less well, a walker off the ground), else
+/// the route on the tightest class that serves it, or why there is none.
 pub fn navmesh_route(world: &World, from: Vec3, to: Vec3, params: &CharacterParams, goal_level: bool) -> Option<Result<NavPath, String>> {
-    let nav = serving(world, params)?;
+    route_on(world, serving(world, params)?, from, to, params, goal_level)
+}
+
+/// [`navmesh_route`] on the navmesh of one body class.
+pub fn route_on(world: &World, nav: &NavRegion, from: Vec3, to: Vec3, params: &CharacterParams, goal_level: bool) -> Option<Result<NavPath, String>> {
     let physics = world.get_resource::<PhysicsWorld>()?;
     let query = NavQuery { from, to, goal_level, radius: params.radius, height: params.height, step_height: params.step_height };
     match nav.path(physics, &query) {
@@ -128,22 +139,47 @@ pub fn navmesh_route(world: &World, from: Vec3, to: Vec3, params: &CharacterPara
 }
 
 /// The engine's routes: the navmesh's where it covers the walk, else the local grid's. Only
-/// the radius is known here: the body is taken to be the baked one otherwise.
+/// the radius is known here: the walk is on the tightest body class at least that wide
+/// ([`NavRegion::for_radius`]), as a body of that class with this radius.
 pub fn navmesh_path(world: &World, from: Vec3, to: Vec3, radius: f32) -> Option<Vec<Vec3>> {
-    let body = world.get_resource::<NavRegion>().map_or_else(CharacterParams::default, |nav| nav.agent.clone());
-    let params = CharacterParams { radius, ..body };
-    match navmesh_route(world, from, to, &params, false) {
+    let routed = region_nav(world).and_then(|nav| nav.for_radius(radius)).and_then(|class| {
+        let params = CharacterParams { radius, ..class.agent.clone() };
+        route_on(world, class, from, to, &params, false)
+    });
+    match routed {
         Some(Ok(path)) => Some(path.points),
         Some(Err(_)) => None,
         None => local_grid_path(world, from, to, radius),
     }
 }
 
-/// The navmesh of the region in the world, when it is built for that region and serves a
-/// body of `params`.
-fn serving<'w>(world: &'w World, params: &CharacterParams) -> Option<&'w NavRegion> {
+/// The navmesh of the region in the world, when it is built for that region.
+pub fn region_nav(world: &World) -> Option<&NavRegion> {
     let nav = world.get_resource::<NavRegion>()?;
-    (world.get_resource::<ActiveRegion>().map(|r| r.hash) == Some(nav.hash) && nav.serves(params)).then_some(nav)
+    (world.get_resource::<ActiveRegion>().map(|r| r.hash) == Some(nav.hash)).then_some(nav)
+}
+
+/// The navmesh of the tightest body class that serves a body of `params`.
+fn serving<'w>(world: &'w World, params: &CharacterParams) -> Option<&'w NavRegion> {
+    region_nav(world)?.serving(params)
+}
+
+/// What an NPC of `radius` plans its routes on, for tools: `navmesh, body large`, or the
+/// local grid and why (`local grid: no region loaded`, `local grid: no body class fits a
+/// 1.60 m radius (the widest: large, 1.20 m)`), or a game's own provider by its name.
+pub fn routes_for(world: &World, radius: f32) -> String {
+    let paths = world.get_resource::<NavPaths>().copied().unwrap_or_default();
+    if paths.name != NAVMESH {
+        return paths.name.to_owned();
+    }
+    if world.get_resource::<ActiveRegion>().is_none() {
+        return "local grid: no region loaded".into();
+    }
+    let Some(nav) = region_nav(world) else { return "local grid: the region has no navmesh".into() };
+    match nav.for_radius(radius) {
+        Some(class) => format!("navmesh, body {}", class.body),
+        None => format!("local grid: {}", nav.too_wide(radius)),
+    }
 }
 
 /// The motion module's [`RoutePlanner`]: `move_to path=true` and `path_to` on the navmesh.
@@ -248,10 +284,8 @@ fn params_of<'a>(
 /// hole or a drop deeper than the safe drop all along.
 pub fn plain_sight(world: &World, from: Vec3, to: Vec3, params: &CharacterParams) -> bool {
     let Some(physics) = world.get_resource::<PhysicsWorld>() else { return true };
-    if let Some(nav) = world.get_resource::<NavRegion>()
-        && world.get_resource::<ActiveRegion>().map(|r| r.hash) == Some(nav.hash)
-    {
-        // Only the radius counts, as for routes (`navmesh_path`): the body is the baked one.
+    if let Some(nav) = region_nav(world).and_then(|nav| nav.for_radius(params.radius)) {
+        // Only the radius counts, as for routes (`navmesh_path`): the body is the class's.
         let query = NavQuery { from, to, goal_level: false, radius: params.radius, height: nav.agent_height, step_height: params.step_height };
         if let Some(straight) = nav.straight_walk(physics, &query) {
             return straight;
