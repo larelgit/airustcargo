@@ -2827,24 +2827,25 @@ ticks: avg 0.52 ms, max 2.60 ms (tick 540), budget 16.7 ms
 `region_load_s` без региона.
 
 ```text
-$ cargo sandbox --perf reference --offscreen
-perf reference: debug build, offscreen 1920x1080 on NVIDIA GeForce RTX 5080 (Vulkan, DiscreteGpu, driver NVIDIA 610.88)
-loaded in 0.12s, region wilds seed 42 in 0.04s of it
-600 ticks in 10.00s: avg 0.62 ms, max 2.91 ms (tick 360); 3425 frames, 342.5 fps: avg 2.70 ms, max 4.63 ms (main 1.42, render 2.69, GPU 0.43 ms), 52482 triangles; 15407 entities, 14239 meshes, 1364 drawn (48 distinct), 1053 in cameras
--     region load 0.04 s (at most 15.0 s)
--     tick avg 0.62 ms (at most 4.00 ms)
--     ticks over 16.7 ms: 0 of 600, 0.0% (at most 1.0%)
--     frame avg 2.70 ms (at most 10.00 ms)
--     frames over 16.7 ms: 0 of 3425, 0.0% (at most 1.0%)
--     entities 15407 (at most 20000)
--     visible meshes 1364 (at most 2000)
--     distinct meshes drawn 48 (at most 80)
-perf reference: not judged: a debug build runs slower than the players' (the budgets are for --release)
+$ cargo run -p sandbox --release -- --perf reference --offscreen
+perf reference: release build, offscreen 1920x1080 on NVIDIA GeForce RTX 5080 (Vulkan, DiscreteGpu, driver NVIDIA 610.88)
+loaded in 0.10s, region wilds seed 42 in 0.03s of it
+600 ticks in 10.00s: avg 0.50 ms, max 2.90 ms (tick 540); 3789 frames, 378.9 fps: avg 2.44 ms, max 4.17 ms (main 1.23, render 2.44, GPU 0.42 ms), 52481 triangles; 15407 entities, 14239 meshes, 1364 drawn (48 distinct), 1053 in cameras
+ok    region load 0.03 s (at most 15.0 s)
+ok    tick avg 0.50 ms (at most 4.00 ms)
+ok    ticks over 16.7 ms: 0 of 600, 0.0% (at most 1.0%)
+ok    frame avg 2.44 ms (at most 10.00 ms)
+ok    frames over 16.7 ms: 0 of 3789, 0.0% (at most 1.0%)
+ok    entities 15407 (at most 20000)
+ok    visible meshes 1364 (at most 2000)
+ok    distinct meshes drawn 48 (at most 80)
+perf reference: all 8 budgets met
 ```
 
-Это отладочная сборка с растительностью: она меряет, но не судит. Релизная (`cargo run -p sandbox --release -- --perf reference
---offscreen`) на той же машине до растительности давала 389 кадров в секунду, кадр 2.33 мс в среднем и 8.95 мс худший, 1132
-сущности и 217 рисуемых мешей и соблюдала все 7 бюджетов (`perf reference: all 7 budgets met`); с растительностью её ещё не мерили.
+Это релизная сборка с растительностью (около 7200 экземпляров, 14 000 мешей): 379 кадров в секунду в 1080p, ни одного кадра
+дольше 16.7 мс, GPU — 0.42 мс на кадр. RTX 5080 — не «средний ПК» из ТЗ: на нём сцену не мерили, запас по кадру — шестикратный.
+До растительности та же сцена давала 389 кадров в секунду (1132 сущности, 217 рисуемых мешей). Отладочная сборка меряет, но не
+судит: строки идут с `-`, с растительностью — 342 кадра в секунду.
 
 - Без `--offscreen` автотест меряет только тики и гонит их как можно быстрее (прогрев и замер — по одному `step`); бюджеты
   кадров идут строками `-` («nothing is drawn headless»). С `--offscreen` игра идёт в реальном времени, 60 тиков в секунду, а
@@ -4130,9 +4131,10 @@ content/region/wilds.scatter.ron: scatter `bushes`: lods[0].mesh: Gltf `foliage/
 
 **Чего нет.** Трава не колышется (ветра нет). Плотность задаётся тайлами и тегами, маски внутри тайла нет. Экземпляры не
 мешают ходить: что должно мешать, ставится в тайл коллайдером или префабом. На экземпляр и уровень детализации — своя сущность,
-пакеты собирает Bevy: в регионе 8×8 это около 14 000 сущностей. Эталонную сцену с растительностью мерили отладочной сборкой
-(`--offscreen`, 1080p, RTX 5080: 342 кадра в секунду, худший кадр 4.6 мс); релизной ещё нет. Меш `Gltf` проверен только проверкой
-контента, на настоящем файле не рисовался. В окне на дисплее глазами не смотрели, только картинки `--offscreen`.
+пакеты собирает Bevy: в регионе 8×8 это около 14 000 сущностей. Эталонная сцена с растительностью в релизной сборке
+(`--offscreen`, 1080p, RTX 5080) — 379 кадров в секунду, худший кадр 4.2 мс; на «среднем ПК» её не мерили. Меш `Gltf`
+проверен только проверкой контента, на настоящем файле не рисовался. В окне на дисплее глазами не смотрели, только картинки
+`--offscreen`.
 
 ## Сборка для игроков и Windows (E10.6)
 

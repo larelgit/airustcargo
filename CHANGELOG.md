@@ -614,6 +614,8 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
 - Песочница: `region/wilds.scatter.ron` (трава двух видов на всех тайлах, кусты, камни) и виды `grass`, `grass_dry`, `bush`,
   `rock`; эталонная сцена `reference` теперь с растительностью (бюджет `mesh_assets: 80`); сценарий `scatter.scenario`.
   Шаблон: `region/valley.scatter.ron` (трава на лугах, у ворот и колонн, камешки), виды `grass` и `pebble`.
+  Релизная `--perf reference --offscreen` с растительностью на RTX 5080: 379 кадров в секунду в 1080p, худший кадр 4.2 мс,
+  15 407 сущностей, 1364 рисуемых меша, все 8 бюджетов.
 
 ### Исправлено
 
