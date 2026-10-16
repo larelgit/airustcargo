@@ -4,7 +4,9 @@
 //! profile `dist` when its workspace defines one (else `release`) and, when the game has a
 //! feature `dist`, with `--no-default-features --features dist`: no `shards` server, no hot
 //! reload, no developer keys. On Windows (MSVC) the C runtime is linked in (`+crt-static`: no
-//! Visual C++ redistributable to install) and `assets/icon.png` becomes the program's icon.
+//! Visual C++ redistributable to install) and `assets/icon.png` becomes the program's icon. On
+//! Linux the program is linked with the run path `$ORIGIN`, so that the loader looks for the
+//! library shipped beside it (`libsteam_api.so`) in the program's own folder.
 //! The program and `assets/` go to `dist/<name>-<version>-<os>-<arch>/` beside the game's
 //! `Cargo.toml`, with the Steamworks SDK's library beside the program (`steam_api64.dll`, feature
 //! `steam_sdk`; no other library a build script links) and never a `steam_appid.txt`. Then that folder is
@@ -199,11 +201,40 @@ struct Built {
 
 /// Builds the game's program, says how, and returns it with the libraries it needs.
 fn build(game: &Game, profile: &str) -> Result<Built, String> {
+    let windows = cfg!(all(windows, target_env = "msvc"));
+    let (mut cargo, how) = build_command(game, profile, std::env::consts::OS, windows)?;
+    say(format!("building {} {} ({})", game.name, game.bin, how.join(", ")));
+    let mut child = cargo.stdout(Stdio::piped()).spawn().map_err(|e| format!("cargo: {e}"))?;
+    let mut exe = None;
+    let mut libraries = Vec::new();
+    for line in BufReader::new(child.stdout.take().ok_or("cargo: no output")?).lines() {
+        let Ok(message) = serde_json::from_str::<Value>(&line.unwrap_or_default()) else { continue };
+        for library in dynamic_libraries(&message, std::env::consts::OS) {
+            if !libraries.contains(&library) {
+                libraries.push(library);
+            }
+        }
+        if message["reason"] == "compiler-artifact" && message["target"]["name"] == game.bin.as_str() {
+            exe = message["executable"].as_str().map(PathBuf::from).or(exe);
+        }
+    }
+    let status = child.wait().map_err(|e| format!("cargo: {e}"))?;
+    if !status.success() {
+        return Err(format!("the build failed ({status}): see cargo's messages above"));
+    }
+    let exe = exe.ok_or("cargo built no program")?;
+    say(format!("built: {}", exe.display()));
+    Ok(Built { exe, libraries })
+}
+
+/// The `cargo` command that builds the game's program on `os` (`windows`: for the MSVC target), and
+/// what it says about how.
+fn build_command(game: &Game, profile: &str, os: &str, windows: bool) -> Result<(Command, Vec<String>), String> {
     let mut cargo = cargo(&game.dir);
     let mut how = vec![format!("profile {profile}")];
-    let windows = cfg!(all(windows, target_env = "msvc"));
-    if windows {
-        // `cargo rustc`: the icon is an argument for the program's link alone.
+    let origin = origin_link_args(os);
+    if windows || !origin.is_empty() {
+        // `cargo rustc`: the icon and the run path are arguments for the program's link alone.
         cargo.arg("rustc");
     } else {
         cargo.arg("build");
@@ -235,28 +266,23 @@ fn build(game: &Game, profile: &str) -> Result<Built, String> {
             how.push(format!("no {ASSETS}/{ICON}: the default icon"));
         }
     }
-    say(format!("building {} {} ({})", game.name, game.bin, how.join(", ")));
-    let mut child = cargo.stdout(Stdio::piped()).spawn().map_err(|e| format!("cargo: {e}"))?;
-    let mut exe = None;
-    let mut libraries = Vec::new();
-    for line in BufReader::new(child.stdout.take().ok_or("cargo: no output")?).lines() {
-        let Ok(message) = serde_json::from_str::<Value>(&line.unwrap_or_default()) else { continue };
-        for library in dynamic_libraries(&message, std::env::consts::OS) {
-            if !libraries.contains(&library) {
-                libraries.push(library);
-            }
-        }
-        if message["reason"] == "compiler-artifact" && message["target"]["name"] == game.bin.as_str() {
-            exe = message["executable"].as_str().map(PathBuf::from).or(exe);
-        }
+    if !origin.is_empty() {
+        // After `--`, rustc's arguments for the program alone: no `RUSTFLAGS` (which would replace the
+        // flags of the game's `.cargo/config.toml` and build every dependency again), and a build
+        // script of a dependency (`steamworks-sys`) cannot give the program a link argument.
+        cargo.arg("--").args(&origin);
+        how.push("run path $ORIGIN".into());
     }
-    let status = child.wait().map_err(|e| format!("cargo: {e}"))?;
-    if !status.success() {
-        return Err(format!("the build failed ({status}): see cargo's messages above"));
-    }
-    let exe = exe.ok_or("cargo built no program")?;
-    say(format!("built: {}", exe.display()));
-    Ok(Built { exe, libraries })
+    Ok((cargo, how))
+}
+
+/// The arguments for the link of the program on `os` that make the dynamic loader look in the
+/// program's own folder for the libraries it needs: on Linux the run path `$ORIGIN` (`DT_RUNPATH`),
+/// where `shards package` puts `libsteam_api.so`. Without it the loader looks only in the system's
+/// folders and `LD_LIBRARY_PATH`, and the program does not start from its package. Windows finds a
+/// DLL beside the program on its own; macOS is not packaged yet (it would want `@loader_path`).
+fn origin_link_args(os: &str) -> Vec<&'static str> {
+    if os == "linux" { vec!["-Clink-arg=-Wl,--enable-new-dtags", "-Clink-arg=-Wl,-rpath,$ORIGIN"] } else { Vec::new() }
 }
 
 /// The package whose build script brings the Steamworks SDK's library (`steam_api64.dll`,
@@ -1012,5 +1038,47 @@ mod tests {
         std::fs::write(dir.join("Cargo.toml"), "[workspace]\n# [profile.dist]\n[profile.distant]\n").unwrap();
         assert_eq!(default_profile(&dir), "release");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn game_in(dir: &Path, dist_feature: bool) -> Game {
+        Game {
+            name: "game".into(),
+            version: "0.1.0".into(),
+            manifest: dir.join("Cargo.toml"),
+            dir: dir.to_path_buf(),
+            bin: "game".into(),
+            dist_feature,
+            target_dir: dir.join("target"),
+            workspace_root: dir.to_path_buf(),
+        }
+    }
+
+    fn arguments(command: &Command) -> Vec<String> {
+        command.get_args().map(|a| a.to_string_lossy().into_owned()).collect()
+    }
+
+    #[test]
+    fn on_linux_the_program_is_linked_with_the_run_path_beside_it_and_no_rustflags_are_set() {
+        let game = game_in(Path::new("."), true);
+        let (linux, how) = build_command(&game, "dist", "linux", false).unwrap();
+        let args = arguments(&linux);
+        assert_eq!(args[0], "rustc", "`cargo rustc`: arguments after `--` are for the program alone, not for its dependencies");
+        assert_eq!(args.iter().filter(|a| *a == "--").count(), 1);
+        let after = args.iter().position(|a| a == "--").map(|at| &args[at + 1..]).unwrap();
+        assert_eq!(after, ["-Clink-arg=-Wl,--enable-new-dtags", "-Clink-arg=-Wl,-rpath,$ORIGIN"], "the loader looks in the program's folder: `$ORIGIN` reaches the linker as it is");
+        assert!(args.windows(2).any(|w| w == ["--profile", "dist"]) && args.windows(2).any(|w| w == ["--features", "dist"]), "{args:?}");
+        assert!(how.contains(&"run path $ORIGIN".to_owned()), "{how:?}");
+        // The game's own flags (its `.cargo/config.toml`) stay: nothing here sets the variables that replace them.
+        let set: Vec<String> = linux.get_envs().filter(|(_, value)| value.is_some()).map(|(name, _)| name.to_string_lossy().into_owned()).collect();
+        assert!(!set.iter().any(|name| name.contains("RUSTFLAGS")), "{set:?}");
+
+        // Another system: the build it had before.
+        for os in ["macos", "freebsd"] {
+            let (other, how) = build_command(&game, "release", os, false).unwrap();
+            let args = arguments(&other);
+            assert_eq!(args[0], "build", "{os}");
+            assert!(!args.contains(&"--".to_owned()) && !how.iter().any(|h| h.contains("run path")), "{os}: {args:?}");
+        }
+        assert!(origin_link_args("windows").is_empty() && origin_link_args("linux").len() == 2);
     }
 }

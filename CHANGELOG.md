@@ -776,6 +776,15 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   готовности такого клиента — `role client · joining: …`. Сценарий `crates/shards_steam/scenarios/lobby_search.scenario`:
   хост делает невидимое лобби, клиент ищет, находит, входит по id из ответа, оба играют 300 тиков, рассинхронов 0; он идёт
   в тесте (`tests/steam/scenarios.rs`) и против живого стенда. Тесты: `run` в `shards` (флаг и стенд, второй со `steam`).
+- Пакет для Linux (`shards package`): программа линкуется с `RUNPATH=$ORIGIN` (`cargo rustc … -- -Clink-arg=-Wl,--enable-new-dtags
+  -Clink-arg=-Wl,-rpath,$ORIGIN`), чтобы загрузчик нашёл `libsteam_api.so`, которая лежит рядом: без этого игра с `steam_sdk` из
+  пакета не стартовала. Аргументы после `--` относятся к одной программе: не `RUSTFLAGS` (он заменил бы `rustflags` из
+  `.cargo/config.toml` игры и пересобрал бы все зависимости) и не `cargo:rustc-link-arg` build-скрипта `steamworks-sys`
+  (до программы он не доходит). Результат проверяет запуск копии пакета в голом окружении. Проверено под WSL1 (Ubuntu 24.04) на
+  маленькой программе с `steamworks`: `readelf -d` — `RUNPATH [$ORIGIN]`, `ldd` копии пакета в другой папке при `env -i`
+  находит `libsteam_api.so` рядом (без неё — `not found`), флаги из `[build] rustflags` игры остаются (метка
+  `-Wl,-rpath,/opt/game-config-marker` в её конфиге — `RUNPATH [$ORIGIN:/opt/game-config-marker]`, а `--config
+  'target.<triple>.rustflags=[…]'` и `RUSTFLAGS` её теряют); до правки RUNPATH не было. Игра целиком с `steam_sdk` на Linux не собиралась. Тест: `package` в `shards_cli` (`build_command`).
 
 **Уровни из Blender проверены на настоящем экспорте (E4.2, `shards_level`)**
 

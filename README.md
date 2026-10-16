@@ -4973,7 +4973,6 @@ steam` даёт id лобби; на второй `--join steam:<лобби> --st
 статистик (кроме достижений), мастерской и rich presence нет (приглашение через rich presence Steam не приходит: `steamworks` 0.13
 падает на его разборе, поэтому обработчик не ставится). Сессия меняется только перезапуском: запущенная игра не становится хостом
 и не уходит в другое лобби.
-Пакет для Linux кладёт `libsteam_api.so` рядом, но программе нужен ещё `rpath=$ORIGIN` (не задан).
 
 ## Сборка для игроков и Windows (E10.6)
 
@@ -5005,6 +5004,20 @@ writes: nothing in its own folder
   сам пишет из неё ресурс `.res` и отдаёт его линкеру. Шаблон с `dist` собирается с `windows_subsystem = "windows"`, так что
   окно консоли рядом с игрой не открывается. Если игру запустили из терминала, `shards::run` пишет в него (`--check-content`,
   `--help`, ошибки).
+- **Linux.** Программа линкуется с `RUNPATH=$ORIGIN` (`-Clink-arg=-Wl,--enable-new-dtags` и `-Clink-arg=-Wl,-rpath,$ORIGIN`):
+  загрузчик ищет библиотеку, которая лежит рядом с программой (`libsteam_api.so`), в её собственной папке, а не только в
+  системных и в `LD_LIBRARY_PATH`; без этого игра с `steam_sdk` из пакета не стартует (`error while loading shared libraries:
+  libsteam_api.so: cannot open shared object file`). Аргументы идут после `--` команды `cargo rustc`, то есть относятся к
+  самой программе, а не к зависимостям: `RUSTFLAGS` заменил бы `rustflags` из `.cargo/config.toml` игры и пересобрал бы все
+  зависимости, а `cargo:rustc-link-arg` build-скрипта `steamworks-sys` до программы не доходит (у зависимости он только для
+  неё самой). Результат проверяет та же проверка, что и на Windows, запуск копии пакета в голом окружении (`env_clear`: нет
+  ни `LD_LIBRARY_PATH`, ни cargo): программа с `libsteam_api.so` рядом найдёт её только по `RUNPATH`. macOS (`@loader_path`)
+  `shards package` не собирает и не проверяет. Проверено под WSL1 (Ubuntu 24.04) на маленькой программе с `steamworks`
+  (`libsteam_api.so` в `NEEDED`, ничего из Steam не вызывается): после `shards package` `readelf -d` показывает `RUNPATH
+  [$ORIGIN]`, `ldd` копии пакета в другой папке при `env -i` находит `libsteam_api.so` рядом, а без неё говорит `not found`.
+  До правки RUNPATH не было и `ldd` говорил `not found`. Флаги игры из `[build] rustflags` остаются (метка
+  `-Wl,-rpath,/opt/game-config-marker` в её конфиге дала `RUNPATH [$ORIGIN:/opt/game-config-marker]`), а `--config
+  'target.<triple>.rustflags=[…]'` и `RUSTFLAGS` метку теряют. Игра целиком с `steam_sdk` на Linux не собиралась.
 - **Папка** `dist/<имя>-<версия>-<ОС>-<арх>/` рядом с `Cargo.toml` игры: программа и копия `assets/`. Библиотека Steamworks SDK
   у игры с `steam_sdk` (`steam_api64.dll`, `libsteam_api.so`, `libsteam_api.dylib`: копия, которую build-скрипт `steamworks-sys`
   кладёт в свою папку) ложится рядом с программой; других библиотек, которые линкуют build-скрипты, в пакете нет (ALSA и udev,
