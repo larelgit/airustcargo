@@ -58,10 +58,25 @@ pub fn config(configure: impl FnOnce(&mut EngineConfig)) -> EngineConfig {
 /// The engine with the Steam module on `user` of a fake Steam, its saves in `saves`: built and
 /// finished, not loaded yet.
 pub fn build(config: EngineConfig, user: FakeUser, saves: PathBuf) -> App {
+    build_on(config, Some(user), saves)
+}
+
+/// [`build`] on `user`, or (`None`) on the Steam the module chooses itself: with
+/// `config.steam.connect` and no SDK in the tests, none.
+pub fn build_on(config: EngineConfig, user: Option<FakeUser>, saves: PathBuf) -> App {
+    build_between(config, user, saves, |_| {})
+}
+
+/// [`build_on`], with `between` done after the engine's plugins and before the Steam module's
+/// (an exit hook there runs after the engine's and before Steam's).
+pub fn build_between(config: EngineConfig, user: Option<FakeUser>, saves: PathBuf, between: impl FnOnce(&mut App)) -> App {
     let mut app = App::new();
     app.add_plugins(EnginePlugins::new(config));
+    between(&mut app);
     app.add_plugins(SteamPlugin);
-    shards_steam::use_fake(&mut app, user);
+    if let Some(user) = user {
+        shards_steam::use_fake(&mut app, user);
+    }
     app.world_mut().resource_mut::<SaveConfig>().dir = saves.clone();
     app.insert_resource(Saves(saves));
     app.finish();

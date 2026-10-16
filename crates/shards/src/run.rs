@@ -12,7 +12,7 @@ use bevy::app::AppExit;
 use bevy::prelude::*;
 use clap::Parser;
 use shards_content::{asset_root, check_dir, ContentKinds};
-use shards_core::{EngineConfig, NetLaunch, SettingsStore, SteamLaunch};
+use shards_core::{EngineConfig, NetLaunch, SettingsStore, SteamLaunch, SteamLobby};
 
 /// A game on the Shards engine.
 #[derive(Parser, Debug)]
@@ -165,6 +165,11 @@ struct Args {
     /// through an invite, or with `--join steam:<lobby>`, over the Steam relay; no UDP port is opened.
     #[arg(long, conflicts_with_all = ["host", "join", "stand", "steam_server"])]
     steam_host: bool,
+    /// With --steam-host: who sees the lobby. `friends` (the default: friends see it and join),
+    /// `private` (only an invite brings a player in), `invisible` (friends do not see it),
+    /// `public` (Steam's lobby list shows it too).
+    #[arg(long, value_name = "TYPE", requires = "steam_host", conflicts_with = "steam_server", value_parser = steam_lobby)]
+    steam_lobby: Option<SteamLobby>,
     /// Host as an anonymous Steam game server: no lobby and no Steam user. Players join it by its
     /// Steam id (`--join steam:<id>`; `shards status` and the tool `steam` show it), over the relay.
     #[arg(long, conflicts_with_all = ["host", "join", "stand"])]
@@ -198,6 +203,11 @@ fn positive_ms(text: &str) -> Result<Duration, String> {
 /// clean link to a run that claims 150 ms).
 fn net_sim_spec(text: &str) -> Result<String, String> {
     text.parse::<shards_net::LinkConditions>().map(|_| text.to_owned())
+}
+
+/// `--steam-lobby`: one of Steam's lobby types.
+fn steam_lobby(text: &str) -> Result<SteamLobby, String> {
+    text.parse()
 }
 
 /// What the ready line says of the session: the role and, for a host, its UDP port. A host
@@ -236,11 +246,12 @@ fn command_line() -> Result<Args, String> {
     let args = Args::parse();
     let wants_steam = args.steam_host
         || args.steam_server
+        || args.steam_lobby.is_some()
         || args.steam_relay_only
         || args.steam_app.is_some()
         || args.join.as_deref().is_some_and(|a| a.starts_with("steam:"));
     if wants_steam && !cfg!(feature = "steam") {
-        return Err("this game is built without Steam: --steam-host, --steam-server, --steam-relay-only, --steam-app and --join steam:… need the \
+        return Err("this game is built without Steam: --steam-host, --steam-lobby, --steam-server, --steam-relay-only, --steam-app and --join steam:… need the \
                     `steam` feature of `shards` (and `steam_sdk` to reach the Steam client)"
             .into());
     }
@@ -312,6 +323,7 @@ impl Args {
                 host: self.steam_host,
                 server: self.steam_server,
                 relay_only: self.steam_relay_only,
+                lobby: self.steam_lobby.unwrap_or_default(),
             },
             ..EngineConfig::default()
         }
@@ -1437,7 +1449,7 @@ mod tests {
 
         let server = parse(&["game", "--steam-server", "--steam-relay-only", "--steam-app", "480"]).unwrap().config();
         assert_eq!(server.net, NetLaunch::Host { port: 0 });
-        assert_eq!(server.steam, SteamLaunch { connect: false, app_id: Some(480), host: false, server: true, relay_only: true });
+        assert_eq!(server.steam, SteamLaunch { connect: false, app_id: Some(480), host: false, server: true, relay_only: true, lobby: SteamLobby::Friends });
         assert_eq!(session_ready(&server, Some("srv")), " · member srv · role host · net steam game server");
 
         let client = parse(&["game", "--join", "steam:90071992547409921"]).unwrap().config();
@@ -1449,6 +1461,22 @@ mod tests {
             assert!(parse(clash).is_err(), "{clash:?}");
         }
         assert!(parse(&["game", "--steam-app", "0"]).is_err(), "no app 0");
+
+        // The lobby's type: friends only unless --steam-lobby says otherwise, and only for a lobby host.
+        assert_eq!(lobby.steam.lobby, SteamLobby::Friends);
+        for (name, kind) in [("friends", SteamLobby::Friends), ("private", SteamLobby::Private), ("invisible", SteamLobby::Invisible), ("public", SteamLobby::Public)] {
+            assert_eq!(parse(&["game", "--steam-host", "--steam-lobby", name]).unwrap().config().steam.lobby, kind);
+        }
+        let typo = parse(&["game", "--steam-host", "--steam-lobby", "secret"]).unwrap_err().to_string();
+        assert!(typo.contains("`secret` is no lobby type: friends, private, invisible, public"), "{typo}");
+        assert!(parse(&["game", "--steam-lobby", "private"]).is_err(), "a lobby type without a lobby host");
+        assert!(parse(&["game", "--steam-server", "--steam-lobby", "private"]).is_err(), "a game server has no lobby");
+
+        // Steam's `+connect_lobby` is no flag of the game's: with `steam` it becomes `--join
+        // steam:<lobby>` before this (`shards_steam::connect_lobby_args`), without it clap refuses it.
+        let steam_start = parse(&["game", "+connect_lobby", "109775240917319681"]).unwrap_err();
+        assert_eq!(steam_start.kind(), clap::error::ErrorKind::UnknownArgument);
+        assert!(steam_start.to_string().starts_with("error: unexpected argument '+connect_lobby' found"), "{steam_start}");
     }
 
     #[test]

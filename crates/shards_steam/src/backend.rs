@@ -2,6 +2,9 @@
 //! [`crate::real`]), the fake of this process ([`crate::fake`]), or none ([`Unavailable`]). Nothing
 //! here names a Steamworks type: the module's systems, tools and tests see only this.
 
+use std::panic::{catch_unwind, AssertUnwindSafe};
+
+use shards_core::SteamLobby;
 use shards_net::NetClock;
 
 /// A Steam id: a user's or a lobby's 64-bit number, as Steam shows it (`76561197960265729`).
@@ -32,8 +35,56 @@ pub(crate) enum Event {
     /// A game server logged on to Steam (anonymously): its Steam id, which clients join by.
     ServerLoggedOn(SteamId),
     /// A game server could not log on, and Steam stopped trying.
-    #[cfg_attr(not(feature = "sdk"), allow(dead_code))]
     ServerLogOnFailed(String),
+    /// Steam's callbacks stopped for this run (one panicked): nothing more comes from Steam.
+    CallbacksStopped(String),
+}
+
+/// Runs Steam's callbacks until one panics, then never again. A panic inside Steamworks' callback
+/// loop poisons the lock it holds: every later run would panic at once and lose what Steam queued
+/// behind it, so after the first the callbacks stay stopped, the journal says so once (an
+/// [`Event::CallbacksStopped`]), and `steam` shows why.
+#[derive(Debug, Default)]
+pub(crate) struct CallbackGuard {
+    stopped: Option<String>,
+}
+
+impl CallbackGuard {
+    /// Runs `callbacks` unless they stopped; the event that says they did, the first time.
+    pub fn run(&mut self, callbacks: impl FnOnce()) -> Option<Event> {
+        if self.stopped.is_some() {
+            return None;
+        }
+        let payload = catch_unwind(AssertUnwindSafe(callbacks)).err()?;
+        let message = ai_core::crash::panic_text(payload.as_ref());
+        // Caught here: no crash report of its own (the journal and `steam` say it).
+        ai_core::crash::handled(&message);
+        let why = format!(
+            "a Steam callback panicked ({message}), so Steam's callbacks stop for this run: lobbies, invites, relay sessions and \
+             achievement stores no longer answer; restart the game"
+        );
+        self.stopped = Some(why.clone());
+        Some(Event::CallbacksStopped(why))
+    }
+
+    /// Why the callbacks stopped, if they did.
+    pub fn stopped(&self) -> Option<&str> {
+        self.stopped.as_deref()
+    }
+
+    /// Ok while the callbacks run; once they stopped, why: a call whose answer comes through them
+    /// (a lobby made, a lobby entered) would wait for ever, so it is refused.
+    pub fn answering(&self) -> Result<(), String> {
+        self.stopped.as_ref().map_or(Ok(()), |why| Err(why.clone()))
+    }
+}
+
+/// Why Steam Cloud refused a file of `size` bytes, when its quota is the reason: `Steam Cloud has
+/// 105 B free of 4 KB; this save is 540 B`. `None`: it would fit (`quota`: total and free bytes).
+pub(crate) fn over_quota(quota: Option<(u64, u64)>, size: u64) -> Option<String> {
+    let (total, free) = quota?;
+    let text = shards_save::ops::size_text;
+    (size > free).then(|| format!("Steam Cloud has {} free of {}; this save is {}", text(free), text(total), text(size)))
 }
 
 /// Who this machine is on Steam.
@@ -46,7 +97,7 @@ pub(crate) struct Info {
     pub user: Option<SteamId>,
     pub name: String,
     pub app_id: Option<u32>,
-    /// Why there is no Steam (an unavailable backend), or what this one is not.
+    /// Why there is no Steam (an unavailable backend), or why its callbacks stopped ([`CallbackGuard`]).
     pub note: Option<String>,
     /// Direct routes are off: only Steam's relay carries sessions (`--steam-relay-only`).
     pub relay_only: bool,
@@ -97,9 +148,12 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn accept_session(&mut self, peer: SteamId) -> bool;
     /// Refuses `peer`: what it sent is dropped.
     fn reject_session(&mut self, peer: SteamId);
+    /// Closes the relay sessions with `peers` (the game is quitting: they hear it now, not when
+    /// the sessions time out) and refuses every request still waiting.
+    fn close_sessions(&mut self, peers: &[SteamId]);
 
-    /// Starts creating a lobby for `max_members` (friends only), owned by this user.
-    fn create_lobby(&mut self, max_members: u32) -> Result<(), String>;
+    /// Starts creating a lobby of type `kind` for `max_members`, owned by this user.
+    fn create_lobby(&mut self, max_members: u32, kind: SteamLobby) -> Result<(), String>;
     /// Starts entering `lobby`.
     fn join_lobby(&mut self, lobby: SteamId) -> Result<(), String>;
     fn leave_lobby(&mut self, lobby: SteamId);
@@ -122,6 +176,8 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn cloud_enabled(&self) -> Result<(), String>;
     /// Files in this user's Steam Cloud for the app: name and size.
     fn cloud_files(&self) -> Vec<(String, u64)>;
+    /// This user's Steam Cloud quota for the app: total and free bytes, when Steam says.
+    fn cloud_quota(&self) -> Option<(u64, u64)>;
     fn cloud_read(&self, name: &str) -> Result<Vec<u8>, String>;
     fn cloud_write(&mut self, name: &str, bytes: &[u8]) -> Result<(), String>;
     /// When the file was written, in seconds since 1970.
@@ -158,7 +214,8 @@ impl Backend for Unavailable {
         false
     }
     fn reject_session(&mut self, _: SteamId) {}
-    fn create_lobby(&mut self, _: u32) -> Result<(), String> {
+    fn close_sessions(&mut self, _: &[SteamId]) {}
+    fn create_lobby(&mut self, _: u32, _: SteamLobby) -> Result<(), String> {
         Err(self.reason.clone())
     }
     fn join_lobby(&mut self, _: SteamId) -> Result<(), String> {
@@ -195,6 +252,9 @@ impl Backend for Unavailable {
     fn cloud_files(&self) -> Vec<(String, u64)> {
         Vec::new()
     }
+    fn cloud_quota(&self) -> Option<(u64, u64)> {
+        None
+    }
     fn cloud_read(&self, _: &str) -> Result<Vec<u8>, String> {
         Err(self.reason.clone())
     }
@@ -203,5 +263,32 @@ impl Backend for Unavailable {
     }
     fn cloud_timestamp(&self, _: &str) -> Option<i64> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn callbacks_that_panic_once_stop_and_say_so_once() {
+        let mut guard = CallbackGuard::default();
+        let mut runs = 0;
+        assert_eq!(guard.run(|| runs += 1), None, "callbacks that return are run again");
+        let Some(Event::CallbacksStopped(why)) = guard.run(|| panic!("entered unreachable code")) else { panic!("no event") };
+        assert!(why.starts_with("a Steam callback panicked (entered unreachable code), so Steam's callbacks stop for this run"), "{why}");
+        assert_eq!(guard.stopped(), Some(why.as_str()));
+        for _ in 0..3 {
+            assert_eq!(guard.run(|| runs += 1), None, "not run again, and not said again");
+        }
+        assert_eq!(runs, 1);
+    }
+
+    #[test]
+    fn a_full_cloud_says_how_full_and_how_big_the_save_is() {
+        assert_eq!(over_quota(Some((4096, 105)), 540).as_deref(), Some("Steam Cloud has 105 B free of 4 KB; this save is 540 B"));
+        assert_eq!(over_quota(Some((102_400, 2_000)), 10_000).as_deref(), Some("Steam Cloud has 2 KB free of 100 KB; this save is 10 KB"));
+        assert_eq!(over_quota(Some((4096, 600)), 540), None, "it fits: something else refused it");
+        assert_eq!(over_quota(None, 540), None, "Steam did not say");
     }
 }

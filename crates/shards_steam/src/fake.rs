@@ -18,9 +18,10 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use shards_core::SteamLobby;
 use shards_net::{LinkConditions, LinkId, MemoryHub, MemoryTransport, NetClock, PeerId, Transport, WallClock};
 
-use crate::backend::{Backend, Event, Info, Relay, Route, SteamId};
+use crate::backend::{over_quota, Backend, CallbackGuard, Event, Info, Relay, Route, SteamId};
 
 /// The first user's id of a fake Steam that makes one itself (account 1 of the public universe).
 pub const FIRST_USER: SteamId = 76_561_197_960_265_729;
@@ -57,6 +58,8 @@ struct Universe {
     defined: Option<BTreeSet<String>>,
     /// The cloud's clock in seconds, when a test sets it; else the system's.
     cloud_time: Option<i64>,
+    /// Why the lobbies asked for from now on are not made (a test's failure), if they are not.
+    lobby_failure: Option<String>,
 }
 
 struct User {
@@ -77,9 +80,14 @@ struct User {
     stores: u32,
     cloud: BTreeMap<String, (Vec<u8>, i64)>,
     cloud_on: bool,
+    /// The bytes this user's cloud holds at most, when a test sets it.
+    cloud_quota: Option<u64>,
+    /// The next run of this user's callbacks panics (a test's failure).
+    callbacks_panic: bool,
 }
 
 struct Lobby {
+    kind: SteamLobby,
     owner: SteamId,
     members: Vec<SteamId>,
     max: u32,
@@ -117,6 +125,7 @@ impl FakeSteam {
             conditions: LinkConditions::NONE,
             defined: None,
             cloud_time: None,
+            lobby_failure: None,
         };
         Self { inner: Arc::new(Mutex::new(universe)) }
     }
@@ -161,10 +170,12 @@ impl FakeSteam {
                     stores: 0,
                     cloud: BTreeMap::new(),
                     cloud_on: true,
+                    cloud_quota: None,
+                    callbacks_panic: false,
                 },
             );
         }
-        FakeUser { steam: self.clone(), id }
+        FakeUser { steam: self.clone(), id, guard: CallbackGuard::default() }
     }
 
     /// The relay's hub.
@@ -198,6 +209,49 @@ impl FakeSteam {
 
     pub fn lobby_data(&self, lobby: SteamId, key: &str) -> Option<String> {
         self.lock().lobbies.get(&lobby).and_then(|l| l.data.get(key).cloned())
+    }
+
+    /// The type a lobby was made with.
+    pub fn lobby_type(&self, lobby: SteamId) -> Option<SteamLobby> {
+        self.lock().lobbies.get(&lobby).map(|l| l.kind)
+    }
+
+    /// From now on a lobby asked for is not made, and Steam says `why` (`None`: they are made again).
+    pub fn fail_lobbies(&self, why: Option<&str>) {
+        self.lock().lobby_failure = why.map(str::to_owned);
+    }
+
+    /// Game server `server` does not log on: Steam gives up and says `why`. Before its game's first frame.
+    pub fn fail_log_on(&self, server: SteamId, why: &str) {
+        if let Some(user) = self.lock().users.get_mut(&server) {
+            for event in &mut user.events {
+                if matches!(event, Event::ServerLoggedOn(_)) {
+                    *event = Event::ServerLogOnFailed(why.to_owned());
+                }
+            }
+        }
+    }
+
+    /// User `user`'s Steam Cloud holds at most `bytes` (`None`: no limit), as an app's quota does.
+    pub fn set_cloud_quota(&self, user: SteamId, bytes: Option<u64>) {
+        if let Some(user) = self.lock().users.get_mut(&user) {
+            user.cloud_quota = bytes;
+        }
+    }
+
+    /// The next run of user `user`'s callbacks panics, as a Steamworks decoder can: they stop for
+    /// the rest of the run.
+    pub fn panic_in_callbacks(&self, user: SteamId) {
+        if let Some(user) = self.lock().users.get_mut(&user) {
+            user.callbacks_panic = true;
+        }
+    }
+
+    /// Whether `a` and `b` have a relay session (each accepted the other).
+    pub fn in_session(&self, a: SteamId, b: SteamId) -> bool {
+        let u = self.lock();
+        let accepted = |x: SteamId, y: SteamId| u.users.get(&x).is_some_and(|user| user.accepted.contains(&y));
+        accepted(a, b) && accepted(b, a)
     }
 
     /// User `user`'s achievements.
@@ -303,6 +357,7 @@ impl Universe {
 pub struct FakeUser {
     steam: FakeSteam,
     id: SteamId,
+    guard: CallbackGuard,
 }
 
 impl FakeUser {
@@ -333,10 +388,18 @@ impl Backend for FakeUser {
     fn info(&self) -> Info {
         let u = self.steam.lock();
         let (name, server, relay_only) = u.users.get(&self.id).map_or((String::new(), false, false), |u| (u.name.clone(), u.server, u.relay_only));
-        Info { kind: if server { "fake server" } else { "fake" }, user: Some(self.id), name, app_id: None, note: None, relay_only }
+        let note = self.guard.stopped().map(str::to_owned);
+        Info { kind: if server { "fake server" } else { "fake" }, user: Some(self.id), name, app_id: None, note, relay_only }
     }
 
     fn pump(&mut self) -> Vec<Event> {
+        let panics = std::mem::take(&mut self.steam.lock().user(self.id).callbacks_panic);
+        if let Some(stopped) = self.guard.run(|| assert!(!panics, "a fake Steam callback panicked")) {
+            return vec![stopped];
+        }
+        if self.guard.stopped().is_some() {
+            return Vec::new();
+        }
         self.steam.lock().user(self.id).events.drain(..).collect()
     }
 
@@ -407,18 +470,41 @@ impl Backend for FakeUser {
         }
     }
 
-    fn create_lobby(&mut self, max_members: u32) -> Result<(), String> {
-        self.player_only()?;
+    fn close_sessions(&mut self, peers: &[SteamId]) {
         let mut u = self.steam.lock();
+        let me = self.id;
+        let waiting: Vec<SteamId> = u.user(me).requests.iter().copied().collect();
+        for peer in peers.iter().chain(&waiting).copied() {
+            let had = u.user(me).accepted.remove(&peer) | u.user(me).requests.remove(&peer);
+            u.user(me).held.retain(|(from, _)| *from != peer);
+            let Some(other) = u.users.get_mut(&peer) else { continue };
+            other.accepted.remove(&me);
+            other.requests.remove(&me);
+            other.held.retain(|(from, _)| *from != me);
+            if had {
+                other.events.push_back(Event::SessionFailed { peer: me, reason: "closed by the peer".into() });
+            }
+        }
+    }
+
+    fn create_lobby(&mut self, max_members: u32, kind: SteamLobby) -> Result<(), String> {
+        self.player_only()?;
+        self.guard.answering()?;
+        let mut u = self.steam.lock();
+        if let Some(why) = u.lobby_failure.clone() {
+            u.user(self.id).events.push_back(Event::LobbyCreated(Err(why)));
+            return Ok(());
+        }
         u.lobbies_made += 1;
         let lobby = LOBBY_BASE + u.lobbies_made;
-        u.lobbies.insert(lobby, Lobby { owner: self.id, members: vec![self.id], max: max_members.max(1), data: BTreeMap::new() });
+        u.lobbies.insert(lobby, Lobby { kind, owner: self.id, members: vec![self.id], max: max_members.max(1), data: BTreeMap::new() });
         u.user(self.id).events.push_back(Event::LobbyCreated(Ok(lobby)));
         Ok(())
     }
 
     fn join_lobby(&mut self, lobby: SteamId) -> Result<(), String> {
         self.player_only()?;
+        self.guard.answering()?;
         let mut u = self.steam.lock();
         let result = match u.lobbies.get_mut(&lobby) {
             None => Err("no such lobby (it closed, or the id is wrong)".to_owned()),
@@ -527,6 +613,14 @@ impl Backend for FakeUser {
         u.users.get(&self.id).map(|me| me.cloud.iter().map(|(name, (bytes, _))| (name.clone(), bytes.len() as u64)).collect()).unwrap_or_default()
     }
 
+    fn cloud_quota(&self) -> Option<(u64, u64)> {
+        let u = self.steam.lock();
+        let me = u.users.get(&self.id)?;
+        let total = me.cloud_quota?;
+        let used: u64 = me.cloud.values().map(|(bytes, _)| bytes.len() as u64).sum();
+        Some((total, total.saturating_sub(used)))
+    }
+
     fn cloud_read(&self, name: &str) -> Result<Vec<u8>, String> {
         let u = self.steam.lock();
         u.users.get(&self.id).and_then(|me| me.cloud.get(name)).map(|(bytes, _)| bytes.clone()).ok_or_else(|| format!("no cloud file `{name}`"))
@@ -534,6 +628,12 @@ impl Backend for FakeUser {
 
     fn cloud_write(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
         self.cloud_enabled()?;
+        // The file it replaces gives its room back (how Steam counts that is not written down).
+        let replaced = self.cloud_files().into_iter().find(|(file, _)| file == name).map_or(0, |(_, size)| size);
+        let quota = self.cloud_quota().map(|(total, free)| (total, free + replaced));
+        if let Some(full) = over_quota(quota, bytes.len() as u64) {
+            return Err(full);
+        }
         let mut u = self.steam.lock();
         let now = u.now_secs();
         u.user(self.id).cloud.insert(name.to_owned(), (bytes.to_vec(), now));
@@ -612,7 +712,7 @@ mod tests {
     fn a_lobby_is_made_entered_and_left_with_events_to_its_members() {
         let steam = FakeSteam::new(MemoryHub::new(1));
         let (mut a, mut b) = (steam.user(A, "a"), steam.user(B, "b"));
-        a.create_lobby(2).unwrap();
+        a.create_lobby(2, SteamLobby::Friends).unwrap();
         let Event::LobbyCreated(Ok(lobby)) = a.pump()[0].clone() else { panic!("no lobby") };
         assert_eq!(lobby, LOBBY_BASE + 1);
         b.join_lobby(lobby).unwrap();
@@ -731,7 +831,7 @@ mod tests {
         assert_eq!(server.pump(), [Event::ServerLoggedOn(FIRST_SERVER)]);
         assert_eq!(server.info().kind, "fake server");
         assert_eq!(a.info().kind, "fake");
-        for refused in [server.create_lobby(4), server.join_lobby(LOBBY_BASE + 1), server.achievement_set("ACH"), server.store_stats(), server.cloud_enabled()] {
+        for refused in [server.create_lobby(4, SteamLobby::Friends), server.join_lobby(LOBBY_BASE + 1), server.achievement_set("ACH"), server.store_stats(), server.cloud_enabled()] {
             assert_eq!(refused.unwrap_err(), SERVER_HAS_NO);
         }
         assert_eq!(server.achievement_get("ACH"), None);
@@ -751,5 +851,65 @@ mod tests {
         assert_eq!(received(&mut ra, &hub), [(FIRST_SERVER, b"welcome".to_vec())]);
         a.set_relay_only(true);
         assert!(a.info().relay_only);
+    }
+
+    #[test]
+    fn lobbies_keep_their_type_and_a_test_can_make_them_fail() {
+        let steam = FakeSteam::new(MemoryHub::new(1));
+        let mut a = steam.user(A, "a");
+        a.create_lobby(4, SteamLobby::Private).unwrap();
+        let Event::LobbyCreated(Ok(lobby)) = a.pump()[0].clone() else { panic!("no lobby") };
+        assert_eq!(steam.lobby_type(lobby), Some(SteamLobby::Private));
+        steam.fail_lobbies(Some("k_EResultFail"));
+        a.create_lobby(4, SteamLobby::Friends).unwrap();
+        assert_eq!(a.pump(), [Event::LobbyCreated(Err("k_EResultFail".into()))]);
+        assert_eq!(steam.lobbies(), [lobby], "none made");
+
+        let mut server = steam.server(FIRST_SERVER, "server");
+        steam.fail_log_on(FIRST_SERVER, "no connection");
+        assert_eq!(server.pump(), [Event::ServerLogOnFailed("no connection".into())]);
+    }
+
+    #[test]
+    fn a_full_cloud_refuses_a_file_and_says_how_full_it_is() {
+        let steam = FakeSteam::new(MemoryHub::new(1));
+        let mut a = steam.user(A, "a");
+        steam.set_cloud_quota(A, Some(1_000));
+        a.cloud_write("one", &[0; 600]).unwrap();
+        assert_eq!(a.cloud_quota(), Some((1_000, 400)));
+        assert_eq!(a.cloud_write("two", &[0; 540]).unwrap_err(), "Steam Cloud has 400 B free of 1000 B; this save is 540 B");
+        a.cloud_write("one", &[0; 900]).unwrap();
+        assert_eq!(a.cloud_files(), [("one".to_owned(), 900)], "a file that replaces another takes its room");
+    }
+
+    #[test]
+    fn closed_sessions_end_on_both_sides_and_a_waiting_request_is_refused() {
+        let hub = MemoryHub::new(1);
+        let steam = FakeSteam::new(hub.clone());
+        let (mut a, mut b, c) = (steam.user(A, "a"), steam.user(B, "b"), steam.user(C, "c"));
+        let (mut ra, mut rc) = (a.relay().unwrap(), c.relay().unwrap());
+        ra.send(B, b"hello").unwrap();
+        b.pump();
+        assert!(b.accept_session(A));
+        rc.send(B, b"me too").unwrap();
+        assert!(steam.in_session(A, B));
+        b.close_sessions(&[A]);
+        assert!(!steam.in_session(A, B));
+        assert_eq!(a.pump(), [Event::SessionFailed { peer: B, reason: "closed by the peer".into() }]);
+        assert_eq!(b.route(C), None, "c's request went with the rest");
+        drop(c);
+    }
+
+    #[test]
+    fn callbacks_that_panic_stop_and_nothing_comes_after() {
+        let steam = FakeSteam::new(MemoryHub::new(1));
+        let (mut a, b) = (steam.user(A, "a"), steam.user(B, "b"));
+        steam.request_join(A, 7, B);
+        steam.panic_in_callbacks(A);
+        assert!(matches!(&a.pump()[..], [Event::CallbacksStopped(why)] if why.contains("a fake Steam callback panicked")));
+        assert!(a.info().note.is_some_and(|n| n.contains("restart the game")));
+        steam.request_join(A, 8, B);
+        assert!(a.pump().is_empty(), "stopped for the rest of the run");
+        assert!(b.info().note.is_none(), "another user's Steam goes on");
     }
 }

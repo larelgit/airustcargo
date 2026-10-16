@@ -10,7 +10,11 @@
 //!   `<slot>-cloud` (which stays on this machine), and the journal says so.
 //!
 //! The files on disk stay the truth: a copy the cloud cannot take (quota, Steam Cloud off) changes
-//! nothing here, and a cloud copy that is damaged or from a newer version of the game is never taken.
+//! nothing here, and a damaged cloud copy is never taken (a good save here repairs it). A cloud copy
+//! from a newer version of the game (its format or a section newer than this build's) is neither
+//! taken nor overwritten: this run copies nothing into that slot. Taking a copy goes through the same
+//! guard as every save (a slot holding a newer save is not written). While a replay plays, nothing
+//! is held against anything.
 
 use std::path::Path;
 use std::time::UNIX_EPOCH;
@@ -18,7 +22,7 @@ use std::time::UNIX_EPOCH;
 use ai_core::journal::{self, JournalKind};
 use bevy::prelude::*;
 use shards_core::EngineConfig;
-use shards_save::{valid_slot, SaveConfig, SaveFile, SaveKind, SaveWritten, Store, Which};
+use shards_save::{newer_check, replay_playing, valid_slot, SaveConfig, SaveFile, SaveKind, SaveWritten, Store, Which};
 
 use crate::Steam;
 
@@ -36,9 +40,18 @@ pub struct Cloud {
     pub pulled: Vec<String>,
     pub pushed: Vec<String>,
     pub kept_both: Vec<String>,
+    /// Slots whose cloud copy is from a newer version of the game: not taken, and nothing is copied
+    /// over it in this run.
+    pub newer: Vec<String>,
     /// The last copy that failed, and why.
     pub last_error: Option<String>,
+    /// Saves written while the session had Steam out for a moment (answering its callbacks): copied
+    /// up when it is back.
+    waiting: Vec<(SaveKind, String, Vec<u8>)>,
 }
+
+/// Why the cloud's saves are not held against this machine's during a replay.
+pub const NOT_DURING_PLAYBACK: &str = "not used while a replay plays: the saves on this machine stay as they are";
 
 /// What to do with a slot that has a cloud copy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,6 +123,14 @@ pub(crate) fn on_save_written(event: On<SaveWritten>, mut commands: Commands) {
 }
 
 fn mirror(world: &mut World, kind: SaveKind, slot: &str, bytes: &[u8]) {
+    if !world.contains_resource::<Steam>() {
+        world.resource_mut::<Cloud>().waiting.push((kind, slot.to_owned(), bytes.to_vec()));
+        return;
+    }
+    // The cloud's copy is a newer version's: never overwritten (the journal said so at startup).
+    if replay_playing(world) || world.resource::<Cloud>().newer.contains(&format!("{kind}/{slot}")) {
+        return;
+    }
     let name = cloud_name(&prefix(world), kind, slot);
     let mut steam = world.resource_mut::<Steam>();
     if steam.backend.cloud_enabled().is_err() {
@@ -126,9 +147,21 @@ fn mirror(world: &mut World, kind: SaveKind, slot: &str, bytes: &[u8]) {
     }
 }
 
+/// The copies of saves written while Steam was out ([`mirror`]).
+pub(crate) fn send_waiting(world: &mut World) {
+    let waiting = world.get_resource_mut::<Cloud>().map(|mut c| std::mem::take(&mut c.waiting)).unwrap_or_default();
+    for (kind, slot, bytes) in waiting {
+        mirror(world, kind, &slot, &bytes);
+    }
+}
+
 /// `PreStartup`, before any slot is loaded: the cloud's saves held against this machine's.
 pub(crate) fn pull(world: &mut World) {
-    let enabled = world.resource::<Steam>().backend.cloud_enabled();
+    let mut enabled = world.resource::<Steam>().backend.cloud_enabled();
+    // A replay's run reads the saves as they are, and writes none (`shards_save`).
+    if enabled.is_ok() && replay_playing(world) {
+        enabled = Err(NOT_DURING_PLAYBACK.into());
+    }
     world.resource_mut::<Cloud>().enabled = Some(enabled.clone());
     if enabled.is_err() {
         return;
@@ -177,23 +210,42 @@ fn pull_one(world: &mut World, store: &Store, prefix: &str, name: &str, kind: Sa
     };
     let path = store.path(kind, slot, Which::Save);
     let local = std::fs::read(&path).ok().filter(|bytes| SaveFile::decode(bytes).is_ok());
-    if let Err(fault) = SaveFile::decode(&cloud_bytes) {
-        journal::emit(world, JournalKind::Warn, format!("steam: the cloud copy of {subject} is not used ({fault}); the save on this machine stays"));
-        // A good save here repairs the cloud's.
-        if let Some(bytes) = local {
-            push(world, prefix, kind, slot, &bytes);
+    let newer = match SaveFile::decode(&cloud_bytes) {
+        Err(fault) if fault.is_newer() => Some(fault.detail().to_owned()),
+        Err(fault) => {
+            journal::emit(world, JournalKind::Warn, format!("steam: the cloud copy of {subject} is not used ({fault}); the save on this machine stays"));
+            // A good save here repairs the cloud's damaged one.
+            if let Some(bytes) = local {
+                push(world, prefix, kind, slot, &bytes);
+            }
+            return;
         }
+        Ok(file) => newer_check(world, kind)(&file),
+    };
+    if let Some(detail) = newer {
+        journal::emit(
+            world,
+            JournalKind::Warn,
+            format!(
+                "steam: the cloud copy of {subject} is from a newer version of the game ({detail}): this build neither takes it nor \
+                 overwrites it, so the save on this machine stays and is not copied to Steam Cloud; update the game to have both"
+            ),
+        );
+        world.resource_mut::<Cloud>().newer.push(subject);
         return;
     }
+    // Written as a save is: not over a copy of the slot that is from a newer version.
+    let guarded = |world: &World, slot: &str| store.write_guarded(kind, slot, &cloud_bytes, &newer_check(world, kind));
     let local_at = written_at(&path).unwrap_or(0);
     match reconcile(local.as_deref().map(|b| (b, local_at)), (&cloud_bytes, at)) {
         Reconcile::Same => {}
-        Reconcile::Pull => match store.write(kind, slot, &cloud_bytes) {
+        Reconcile::Pull => match guarded(world, slot) {
             Ok(()) => {
                 let kept = if local.is_some() { format!(", this machine's older one kept as {subject}.save.bak1") } else { String::new() };
                 journal::log(world, JournalKind::Local, format!("steam: {subject} taken from Steam Cloud (newer){kept}"));
                 world.resource_mut::<Cloud>().pulled.push(subject);
             }
+            // This machine's stays, and the cloud keeps its own: neither is copied over the other.
             Err(e) => {
                 journal::emit(world, JournalKind::Warn, format!("steam: the cloud copy of {subject} was not taken: {e}"));
             }
@@ -205,7 +257,7 @@ fn pull_one(world: &mut World, store: &Store, prefix: &str, name: &str, kind: Sa
         }
         Reconcile::KeepBoth => {
             let beside = beside_slot(slot);
-            if let Err(e) = store.write(kind, &beside, &cloud_bytes) {
+            if let Err(e) = guarded(world, &beside) {
                 journal::emit(world, JournalKind::Warn, format!("steam: the cloud copy of {subject} could not be kept beside it: {e}"));
                 return;
             }

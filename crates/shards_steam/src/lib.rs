@@ -8,15 +8,16 @@
 //! a session over the relay is the same session as over UDP, an achievement changes nothing in the
 //! world, a cloud copy is only a copy of a save on disk.
 //!
-//! * `--steam-host`: a host in a new friends-only lobby; `--join steam:<lobby>` (and Steam's
-//!   `+connect_lobby <lobby>`, see [`launch`]) enters one, the lobby's owner is the host. Relay
-//!   sessions are taken only from the lobby ([`session`]).
+//! * `--steam-host`: a host in a new lobby (friends only, or `--steam-lobby private`, `invisible`,
+//!   `public`); `--join steam:<lobby>` (and Steam's `+connect_lobby <lobby>`, see [`launch`]) enters
+//!   one, the lobby's owner is the host. Relay sessions are taken only from the lobby ([`session`]).
 //! * `--steam-server`: a host logged on as an anonymous Steam game server, without a lobby;
 //!   `--join steam:<its id>` joins it over the relay. `--steam-relay-only` turns direct routes off,
 //!   `--steam-app N` names the app; `steam` shows each peer's route (relayed, which relay, ping).
 //! * `content/**/*.achievement.ron` ([`AchievementDef`]); the game unlocks them with
 //!   [`UnlockAchievement`] or [`unlock_achievement`] ([`achievements`]).
-//! * Every save written goes to Steam Cloud; at startup a newer cloud copy is taken ([`cloud`]).
+//! * Every save written goes to Steam Cloud; at startup a newer cloud copy is taken, one from a
+//!   newer version of the game never, and it is never overwritten ([`cloud`]).
 //! * Tools: `steam`, `steam_host`, `steam_join`, `steam_invite`, `achievement_unlock`; `ai/status`
 //!   field `steam`; the developer menu's `steam` section.
 
@@ -74,13 +75,45 @@ impl Steam {
     }
 }
 
+/// Starts the Steam client before Bevy makes its renderer, so that Steam's overlay (invites, the
+/// achievement popup, Shift+Tab) can hook the graphics device as it is created: a game a player
+/// plays (`SteamLaunch::connect`) built with the SDK. `shards::EnginePlugins` adds it ahead of
+/// `DefaultPlugins`' renderer; [`SteamPlugin`] then takes that client. Without it `SteamPlugin`
+/// starts Steam itself, later, and the overlay may miss the window. Anything else (no SDK, a test,
+/// a check) does nothing here.
+pub struct SteamClientPlugin {
+    #[cfg_attr(not(feature = "sdk"), allow(dead_code))]
+    config: EngineConfig,
+}
+
+impl SteamClientPlugin {
+    pub fn new(config: &EngineConfig) -> Self {
+        Self { config: config.clone() }
+    }
+}
+
+impl Plugin for SteamClientPlugin {
+    #[cfg_attr(not(feature = "sdk"), allow(unused_variables))]
+    fn build(&self, app: &mut App) {
+        #[cfg(feature = "sdk")]
+        if self.config.steam.connect && !app.world().contains_resource::<Started>() {
+            app.insert_resource(Started(start(&self.config)));
+        }
+    }
+}
+
+/// The Steam client [`SteamClientPlugin`] started (or why it did not), for [`SteamPlugin`].
+#[cfg(feature = "sdk")]
+#[derive(Resource)]
+struct Started(Result<real::RealBackend, String>);
+
 /// The Steam module: see the crate's documentation.
 pub struct SteamPlugin;
 
 impl Plugin for SteamPlugin {
     fn build(&self, app: &mut App) {
         let config = app.world().get_resource::<EngineConfig>().cloned().unwrap_or_default();
-        let backend = choose(&config);
+        let backend = choose(app.world_mut(), &config);
         if session::wants_relay(&config) {
             // `shards_net` opens no UDP socket: the relay's transport comes once the lobby is there.
             let real_time = !matches!(backend.clock(), NetClock::Hub(_));
@@ -112,9 +145,9 @@ impl Plugin for SteamPlugin {
 
 /// The Steam of this run: the real client (or a game server) when the game is played and built
 /// with the SDK, none (and why) when it should be and cannot, else a fake of its own.
-fn choose(config: &EngineConfig) -> Box<dyn Backend> {
+fn choose(world: &mut World, config: &EngineConfig) -> Box<dyn Backend> {
     if config.steam.connect {
-        return connect(config);
+        return connect(world, config);
     }
     let steam = FakeSteam::local(config.seed);
     let user = if config.steam.server {
@@ -126,23 +159,30 @@ fn choose(config: &EngineConfig) -> Box<dyn Backend> {
     Box::new(user)
 }
 
+/// The Steam client, or a game server: started now.
 #[cfg(feature = "sdk")]
-fn connect(config: &EngineConfig) -> Box<dyn Backend> {
+fn start(config: &EngineConfig) -> Result<real::RealBackend, String> {
     let launch = &config.steam;
-    let started = if launch.server {
+    if launch.server {
         let product = if config.title.is_empty() { "shards" } else { config.title.as_str() };
         real::RealBackend::init_server(launch.app_id, launch.relay_only, product)
     } else {
         real::RealBackend::init(launch.app_id, launch.relay_only)
-    };
+    }
+}
+
+/// The real Steam: the one [`SteamClientPlugin`] started before the renderer, else started now.
+#[cfg(feature = "sdk")]
+fn connect(world: &mut World, config: &EngineConfig) -> Box<dyn Backend> {
+    let started = world.remove_resource::<Started>().map_or_else(|| start(config), |s| s.0);
     match started {
         Ok(steam) => Box::new(steam),
-        Err(reason) => Box::new(Unavailable { reason, app_id: launch.app_id }),
+        Err(reason) => Box::new(Unavailable { reason, app_id: config.steam.app_id }),
     }
 }
 
 #[cfg(not(feature = "sdk"))]
-fn connect(config: &EngineConfig) -> Box<dyn Backend> {
+fn connect(_: &mut World, config: &EngineConfig) -> Box<dyn Backend> {
     Box::new(Unavailable { reason: NO_SDK.into(), app_id: config.steam.app_id })
 }
 

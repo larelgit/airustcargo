@@ -152,6 +152,65 @@ pub struct SteamLaunch {
     /// Only the Steam relay carries the session (`--steam-relay-only`): no direct route between the
     /// machines (ICE off), so a test proves the relay works.
     pub relay_only: bool,
+    /// Who sees the lobby a `--steam-host` game makes (`--steam-lobby`; friends only by default).
+    pub lobby: SteamLobby,
+}
+
+/// Who sees a Steam lobby and how players come in (`--steam-lobby friends|private|invisible|public`),
+/// as Steam's lobby types say.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SteamLobby {
+    /// Friends see it and join it; whoever is in invites their own friends.
+    #[default]
+    Friends,
+    /// Nobody sees it: only an invite brings a player in.
+    Private,
+    /// Not shown to friends (a lobby search finds it).
+    Invisible,
+    /// Friends see it, and so does Steam's lobby list.
+    Public,
+}
+
+impl SteamLobby {
+    /// Every type, as `--steam-lobby` names them.
+    pub const ALL: [SteamLobby; 4] = [SteamLobby::Friends, SteamLobby::Private, SteamLobby::Invisible, SteamLobby::Public];
+
+    /// `friends`, `private`, `invisible`, `public`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SteamLobby::Friends => "friends",
+            SteamLobby::Private => "private",
+            SteamLobby::Invisible => "invisible",
+            SteamLobby::Public => "public",
+        }
+    }
+
+    /// What the type means, for `steam`: `friends only`, `private: invite only`.
+    pub fn describe(self) -> &'static str {
+        match self {
+            SteamLobby::Friends => "friends only",
+            SteamLobby::Private => "private: invite only",
+            SteamLobby::Invisible => "invisible: friends do not see it",
+            SteamLobby::Public => "public: in Steam's lobby list too",
+        }
+    }
+}
+
+impl std::str::FromStr for SteamLobby {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, String> {
+        Self::ALL.into_iter().find(|t| t.as_str() == text).ok_or_else(|| {
+            let names: Vec<&str> = Self::ALL.iter().map(|t| t.as_str()).collect();
+            format!("`{text}` is no lobby type: {}", names.join(", "))
+        })
+    }
+}
+
+impl std::fmt::Display for SteamLobby {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// The UDP port of a hosted game unless `--host PORT` says otherwise.

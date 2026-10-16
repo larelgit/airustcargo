@@ -58,7 +58,7 @@ fn steam_on_a_lobby_host_and_its_client_shows_the_lobby_the_relay_and_the_routes
     println!("steam (lobby host):\n{host_said}");
     let lines: Vec<&str> = host_said.lines().collect();
     assert_eq!(lines[0], format!("steam: a fake Steam in this process (this run does not talk to Steam) · user host ({FIRST_USER})"));
-    assert_eq!(lines[1], format!("session: host · lobby {lobby}, host host ({FIRST_USER}) · 2 in it: host ({FIRST_USER}), c1 ({SECOND_USER})"));
+    assert_eq!(lines[1], format!("session: host · lobby {lobby} (friends only), host host ({FIRST_USER}) · 2 in it: host ({FIRST_USER}), c1 ({SECOND_USER})"));
     assert!(lines[2].starts_with("relay: ready (fake: an in-process hub) · sent "), "{}", lines[2]);
     assert_eq!(lines[3], format!("route to c1 ({SECOND_USER}): connected · relayed via fake · ping 40 ms"));
     assert!(lines[4].starts_with("achievements: 2 defined, 1 unlocked in this run: first_blood (First blood) at tick "), "{}", lines[4]);
@@ -75,7 +75,8 @@ fn steam_on_a_lobby_host_and_its_client_shows_the_lobby_the_relay_and_the_routes
     assert_eq!(text(&again), format!("hosting in lobby {lobby} (2 in it): invite friends with steam_invite"));
 
     let s = status::status(stand.world(0))["steam"].clone();
-    assert_eq!((s["role"].as_str(), s["lobby"].clone()), (Some("host"), json!(lobby.to_string())));
+    assert_eq!((s["role"].as_str(), s["lobby"].clone(), s["lobby_type"].as_str()), (Some("host"), json!(lobby.to_string()), Some("friends")));
+    assert_eq!(status::status(stand.world(c1))["steam"]["lobby_type"], json!(null), "a client does not choose the type");
     let route = &s["relay"]["routes"][0];
     assert_eq!((route["state"].as_str(), route["relayed"].as_bool(), route["pop"].as_str(), route["ping_ms"].as_i64()), (Some("connected"), Some(true), Some("fake"), Some(40)));
 }
@@ -111,4 +112,21 @@ fn steam_on_a_game_server_shows_its_id_and_what_it_has_not() {
     let unlock = stand.call(0, "achievement_unlock", json!({"id": "first_blood", "player": 0}));
     assert!(text(&unlock).contains("in this run only: an anonymous game server has no"), "{}", text(&unlock));
     assert_eq!(status::status(stand.world(0))["steam"]["role"], "server");
+}
+
+#[test]
+fn when_steam_s_callbacks_panic_they_stop_and_steam_says_so_once() {
+    let (mut app, steam) = single();
+    steam.panic_in_callbacks(FIRST_USER);
+    for _ in 0..5 {
+        app.update();
+    }
+    let why = "a Steam callback panicked (a fake Steam callback panicked), so Steam's callbacks stop for this run: lobbies, invites, \
+               relay sessions and achievement stores no longer answer; restart the game";
+    let errors = journal(app.world(), Some(shards::ai_core::journal::JournalKind::Error));
+    assert_eq!(errors.iter().filter(|l| l.starts_with("steam: a Steam callback panicked")).count(), 1, "said once, not every frame: {errors:#?}");
+    assert!(errors.contains(&format!("steam: {why}")), "{errors:#?}");
+    let said = ok(&mut app, "steam", json!({}));
+    assert_eq!(said.lines().nth(1), Some(format!("problem: {why}").as_str()), "{said}");
+    assert_eq!(status::status(app.world())["steam"]["note"], json!(why));
 }

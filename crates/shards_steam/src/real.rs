@@ -4,25 +4,30 @@
 //! stay in this file.
 //!
 //! Steam's callbacks run in [`RealBackend::pump`] (the module's frame and tick systems); each one
-//! the module listens to is turned into an [`Event`]. A relay session request is kept until the
-//! module decides on it: dropping Steam's request would refuse it.
+//! the module listens to is turned into an [`Event`] (those whose Steamworks decoder can panic are
+//! read as plain numbers here). One that panics stops them for the run ([`CallbackGuard`]):
+//! Steamworks' lock is poisoned then. A relay session request is kept until the module decides on
+//! it: dropping Steam's request would refuse it. Steam shuts down when the last Steamworks handle
+//! goes, with the game's world.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{Read, Write};
+use std::ffi::{c_void, CString};
+use std::io::Read;
 use std::net::Ipv4Addr;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use shards_core::SteamLobby;
 use shards_net::{NetClock, WallClock};
 use steamworks::networking_messages::{NetworkingMessages, SessionRequest};
 use steamworks::networking_types::{NetworkingIdentity, SendFlags};
 use steamworks::sys;
-use steamworks::{
-    CallbackHandle, ChatMemberStateChange, Client, GameLobbyJoinRequested, LobbyChatUpdate, LobbyId, LobbyType, Server, ServerMode, SteamAPIInitError,
-    SteamServerConnectFailure, SteamServersConnected, SteamServersDisconnected, UserStatsStored,
-};
+use steamworks::{Callback, CallbackHandle, Client, GameLobbyJoinRequested, LobbyId, LobbyType, Server, ServerMode, SteamAPIInitError, SteamServersConnected};
 
-use crate::backend::{Backend, Event, Info, Relay, Route, SteamId};
+use crate::backend::{over_quota, Backend, CallbackGuard, Event, Info, Relay, Route, SteamId};
+
+/// The largest file Steam Cloud takes in one write (`k_unMaxCloudFileChunkSize`).
+const MAX_CLOUD_FILE: usize = 100 * 1024 * 1024;
 
 /// The most members Steam allows in a lobby.
 const MAX_LOBBY: u32 = 250;
@@ -56,7 +61,18 @@ pub(crate) struct RealBackend {
     events: Shared<VecDeque<Event>>,
     requests: Shared<BTreeMap<SteamId, SessionRequest>>,
     wall: Arc<WallClock>,
+    /// Stops Steam's callbacks after one panics.
+    guard: CallbackGuard,
     _callbacks: Vec<CallbackHandle>,
+}
+
+impl Drop for RealBackend {
+    fn drop(&mut self) {
+        // A waiting request holds a Steamworks handle and sits in a callback Steamworks holds:
+        // dropped (refused) here, nothing keeps Steamworks up once the game's handles are gone,
+        // and Steam shuts down with the last of them.
+        lock(&self.requests).clear();
+    }
 }
 
 /// Why Steamworks did not start, as the player can act on it.
@@ -73,10 +89,93 @@ fn started<T>(start: impl FnOnce() -> Result<T, SteamAPIInitError>) -> Result<T,
     match catch_unwind(AssertUnwindSafe(start)) {
         Ok(Ok(started)) => Ok(started),
         Ok(Err(e)) => Err(init_error(e)),
-        Err(_) => {
-            ai_core::crash::handled("Steamworks panicked while starting");
-            Err("Steamworks failed while starting (an unknown error code)".into())
+        Err(payload) => {
+            let message = ai_core::crash::panic_text(payload.as_ref());
+            // Caught: the reason is the backend's (`steam` shows it), no crash report of its own.
+            ai_core::crash::handled(&message);
+            Err(format!("Steamworks failed while starting ({message})"))
         }
+    }
+}
+
+/// What a Steam result code says (`EResult`), from the number as Steam sent it.
+fn result_text(code: i32) -> String {
+    let name = match code {
+        2 => "failure",
+        3 => "no connection",
+        16 => "timeout",
+        20 => "service unavailable",
+        25 => "limit exceeded",
+        _ => return format!("EResult {code}"),
+    };
+    format!("{name}, EResult {code}")
+}
+
+// Steamworks' own decoders of these callbacks panic on values Steam may send (a result code its
+// table lacks, a member change with several bits), and a panic there stops every callback for the
+// run (`CallbackGuard`). These read the same structs as plain numbers instead.
+
+/// `LobbyChatUpdate_t`: `user` entered `lobby` (`entered`), or left it however (left,
+/// disconnected, kicked, banned).
+struct MemberUpdate {
+    lobby: SteamId,
+    user: SteamId,
+    entered: bool,
+}
+
+// SAFETY: `ID` is `LobbyChatUpdate_t`'s callback id, and `from_raw` reads that struct, plain
+// integers, from the pointer Steam passes with it.
+unsafe impl Callback for MemberUpdate {
+    const ID: i32 = sys::LobbyChatUpdate_t_k_iCallback as i32;
+
+    unsafe fn from_raw(raw: *mut c_void) -> Self {
+        // SAFETY: (caller) `raw` points to a `LobbyChatUpdate_t`.
+        let update = unsafe { raw.cast::<sys::LobbyChatUpdate_t>().read_unaligned() };
+        let entered = update.m_rgfChatMemberStateChange & sys::EChatMemberStateChange::k_EChatMemberStateChangeEntered as u32 != 0;
+        Self { lobby: update.m_ulSteamIDLobby, user: update.m_ulSteamIDUserChanged, entered }
+    }
+}
+
+/// `UserStatsStored_t`: Steam's answer to a store, its result code as a number.
+struct StatsStored {
+    result: i32,
+}
+
+// SAFETY: `ID` is `UserStatsStored_t`'s callback id; `from_raw` reads only the result's four bytes
+// as an integer (as an enum, a code Steamworks does not know would be undefined behaviour).
+unsafe impl Callback for StatsStored {
+    const ID: i32 = sys::UserStatsStored_t_k_iCallback as i32;
+
+    unsafe fn from_raw(raw: *mut c_void) -> Self {
+        let stored = raw.cast::<sys::UserStatsStored_t>();
+        // SAFETY: (caller) `raw` points to a `UserStatsStored_t`; `EResult` is `repr(i32)`.
+        let result = unsafe { std::ptr::addr_of!((*stored).m_eResult).cast::<i32>().read_unaligned() };
+        Self { result }
+    }
+}
+
+/// `SteamServerConnectFailure_t`: a game server could not reach Steam, and whether Steam retries.
+struct ConnectFailure {
+    result: i32,
+    retrying: bool,
+}
+
+// SAFETY: `ID` is `SteamServerConnectFailure_t`'s callback id; `from_raw` reads its result as an
+// integer and its flag as a byte.
+unsafe impl Callback for ConnectFailure {
+    const ID: i32 = sys::SteamServerConnectFailure_t_k_iCallback as i32;
+
+    unsafe fn from_raw(raw: *mut c_void) -> Self {
+        let failure = raw.cast::<sys::SteamServerConnectFailure_t>();
+        // SAFETY: (caller) `raw` points to a `SteamServerConnectFailure_t`; `EResult` is
+        // `repr(i32)`, and a C++ `bool` is one byte.
+        let (result, retrying) = unsafe {
+            (
+                std::ptr::addr_of!((*failure).m_eResult).cast::<i32>().read_unaligned(),
+                std::ptr::addr_of!((*failure).m_bStillRetrying).cast::<u8>().read_unaligned() != 0,
+            )
+        };
+        Self { result, retrying }
     }
 }
 
@@ -109,21 +208,17 @@ impl RealBackend {
         let messages = client.networking_messages();
         let mut steam = Self::with(client, None, Some(me), name, relay, &messages);
         let ev = steam.events.clone();
-        steam._callbacks.push(steam.client.register_callback(move |update: LobbyChatUpdate| {
-            let joined = matches!(update.member_state_change, ChatMemberStateChange::Entered);
-            lock(&ev).push_back(Event::MemberChanged { lobby: update.lobby.raw(), user: update.user_changed.raw(), joined });
+        steam._callbacks.push(steam.client.register_callback(move |update: MemberUpdate| {
+            lock(&ev).push_back(Event::MemberChanged { lobby: update.lobby, user: update.user, joined: update.entered });
         }));
         let ev = steam.events.clone();
         steam._callbacks.push(steam.client.register_callback(move |join: GameLobbyJoinRequested| {
             lock(&ev).push_back(Event::JoinRequested { lobby: join.lobby_steam_id.raw(), from: join.friend_steam_id.raw() });
         }));
         let ev = steam.events.clone();
-        steam._callbacks.push(steam.client.register_callback(move |stored: UserStatsStored| {
-            lock(&ev).push_back(Event::StatsStored(stored.result.map_err(|e| e.to_string())));
-        }));
-        let ev = steam.events.clone();
-        steam._callbacks.push(steam.client.register_callback(move |_: SteamServersConnected| {
-            lock(&ev).push_back(Event::Note("connected to the Steam servers".into()));
+        steam._callbacks.push(steam.client.register_callback(move |stored: StatsStored| {
+            let result = if stored.result == sys::EResult::k_EResultOK as i32 { Ok(()) } else { Err(result_text(stored.result)) };
+            lock(&ev).push_back(Event::StatsStored(result));
         }));
         Ok(steam)
     }
@@ -152,17 +247,18 @@ impl RealBackend {
             lock(&ev).push_back(Event::ServerLoggedOn(0));
         }));
         let ev = steam.events.clone();
-        steam._callbacks.push(steam.client.register_callback(move |failure: SteamServerConnectFailure| {
-            lock(&ev).push_back(if failure.still_retrying {
-                Event::Note(format!("the game server cannot reach Steam yet ({}); Steam retries", failure.reason))
+        steam._callbacks.push(steam.client.register_callback(move |failure: ConnectFailure| {
+            let why = result_text(failure.result);
+            lock(&ev).push_back(if failure.retrying {
+                Event::Note(format!("the game server cannot reach Steam yet ({why}); Steam retries"))
             } else {
-                Event::ServerLogOnFailed(failure.reason.to_string())
+                Event::ServerLogOnFailed(why)
             });
         }));
         Ok(steam)
     }
 
-    /// The parts both share: relay access, the session callbacks, losing the Steam servers.
+    /// The parts both share: relay access and the session callbacks.
     fn with(client: Client, server: Option<Server>, me: Option<SteamId>, name: String, relay: bool, messages: &NetworkingMessages) -> Self {
         if relay {
             relay_only();
@@ -177,7 +273,9 @@ impl RealBackend {
         let events: Shared<VecDeque<Event>> = Arc::default();
         let requests: Shared<BTreeMap<SteamId, SessionRequest>> = Arc::default();
         // Only the callbacks registered here are read: each turns Steam's struct into an event.
-        // (Reading every callback, as `process_callbacks` does, would decode ones that can panic.)
+        // (Reading every callback, as `process_callbacks` does, would decode ones that can panic;
+        // so would Steamworks' decoders of losing and finding the Steam servers, which only the
+        // journal would have heard.)
         let (ev, rq) = (events.clone(), requests.clone());
         messages.session_request_callback(move |request| {
             // A request with no Steam id behind it is dropped, which refuses it.
@@ -191,11 +289,39 @@ impl RealBackend {
             let state = info.state().map_or_else(|_| "an unknown state".to_owned(), |s| format!("{s:?}"));
             lock(&ev).push_back(Event::SessionFailed { peer, reason: format!("the relay session ended ({state})") });
         });
-        let ev = events.clone();
-        let lost = client.register_callback(move |lost: SteamServersDisconnected| {
-            lock(&ev).push_back(Event::Note(format!("lost the Steam servers ({}); sessions wait for them", lost.reason)));
-        });
-        Self { client, server, me, name, app_id, relay_only: relay, events, requests, wall: Arc::new(WallClock::new()), _callbacks: vec![lost] }
+        Self {
+            client,
+            server,
+            me,
+            name,
+            app_id,
+            relay_only: relay,
+            events,
+            requests,
+            wall: Arc::new(WallClock::new()),
+            guard: CallbackGuard::default(),
+            _callbacks: Vec::new(),
+        }
+    }
+
+    /// The session interface's raw pointer: the game server's or the player's; null without one.
+    fn raw_messages(&self) -> *mut sys::ISteamNetworkingMessages {
+        // SAFETY: Steamworks is running (this backend exists); the accessors only return pointers.
+        unsafe {
+            match self.server {
+                Some(_) => sys::SteamAPI_SteamGameServerNetworkingMessages_SteamAPI_v002(),
+                None => sys::SteamAPI_SteamNetworkingMessages_SteamAPI_v002(),
+            }
+        }
+    }
+
+    /// The player's Steam Cloud interface; null on a game server.
+    fn raw_storage(&self) -> *mut sys::ISteamRemoteStorage {
+        if self.server.is_some() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: Steamworks is running as the player; the accessor only returns a pointer.
+        unsafe { sys::SteamAPI_SteamRemoteStorage_v016() }
     }
 
     fn messages(&self) -> NetworkingMessages {
@@ -217,16 +343,15 @@ impl RealBackend {
 impl Backend for RealBackend {
     fn info(&self) -> Info {
         let kind = if self.server.is_some() { "steam server" } else { "steam" };
-        Info { kind, user: self.me, name: self.name.clone(), app_id: Some(self.app_id), note: None, relay_only: self.relay_only }
+        let note = self.guard.stopped().map(str::to_owned);
+        Info { kind, user: self.me, name: self.name.clone(), app_id: Some(self.app_id), note, relay_only: self.relay_only }
     }
 
     fn pump(&mut self) -> Vec<Event> {
         let client = &self.client;
-        if catch_unwind(AssertUnwindSafe(|| client.run_callbacks())).is_err() {
-            ai_core::crash::handled("a Steam callback panicked");
-            lock(&self.events).push_back(Event::Note("a Steam callback failed; its event is lost".into()));
-        }
+        let stopped = self.guard.run(|| client.run_callbacks());
         let mut events: Vec<Event> = lock(&self.events).drain(..).collect();
+        events.extend(stopped);
         for event in &mut events {
             if let (Event::ServerLoggedOn(id), Some(server)) = (&mut *event, &self.server) {
                 *id = server.steam_id().raw();
@@ -253,16 +378,13 @@ impl Backend for RealBackend {
 
     fn route(&self, peer: SteamId) -> Option<Route> {
         use sys::ESteamNetworkingConnectionState as State;
+        let messages = self.raw_messages();
+        if messages.is_null() {
+            return None;
+        }
         // SAFETY: Steamworks is running (this backend exists); the identity and both structs are
         // plain data Steam fills in, zeroed first as its headers do.
         let (state, info, status) = unsafe {
-            let messages = match self.server {
-                Some(_) => sys::SteamAPI_SteamGameServerNetworkingMessages_SteamAPI_v002(),
-                None => sys::SteamAPI_SteamNetworkingMessages_SteamAPI_v002(),
-            };
-            if messages.is_null() {
-                return None;
-            }
             let mut identity: sys::SteamNetworkingIdentity = std::mem::zeroed();
             sys::SteamAPI_SteamNetworkingIdentity_SetSteamID64(&mut identity, peer);
             let mut info: sys::SteamNetConnectionInfo_t = std::mem::zeroed();
@@ -299,10 +421,35 @@ impl Backend for RealBackend {
         }
     }
 
-    fn create_lobby(&mut self, max_members: u32) -> Result<(), String> {
+    fn close_sessions(&mut self, peers: &[SteamId]) {
+        // Dropping a waiting request refuses it.
+        lock(&self.requests).clear();
+        let messages = self.raw_messages();
+        if messages.is_null() {
+            return;
+        }
+        for peer in peers {
+            // SAFETY: Steamworks is running; the identity is plain data, zeroed first as Steam's
+            // headers do, and only read by the call.
+            unsafe {
+                let mut identity: sys::SteamNetworkingIdentity = std::mem::zeroed();
+                sys::SteamAPI_SteamNetworkingIdentity_SetSteamID64(&mut identity, *peer);
+                sys::SteamAPI_ISteamNetworkingMessages_CloseSessionWithUser(messages, &identity);
+            }
+        }
+    }
+
+    fn create_lobby(&mut self, max_members: u32, kind: SteamLobby) -> Result<(), String> {
         self.player_only()?;
+        self.guard.answering()?;
+        let kind = match kind {
+            SteamLobby::Friends => LobbyType::FriendsOnly,
+            SteamLobby::Private => LobbyType::Private,
+            SteamLobby::Invisible => LobbyType::Invisible,
+            SteamLobby::Public => LobbyType::Public,
+        };
         let ev = self.events.clone();
-        self.client.matchmaking().create_lobby(LobbyType::FriendsOnly, max_members.clamp(1, MAX_LOBBY), move |created| {
+        self.client.matchmaking().create_lobby(kind, max_members.clamp(1, MAX_LOBBY), move |created| {
             lock(&ev).push_back(Event::LobbyCreated(created.map(|lobby| lobby.raw()).map_err(|e| e.to_string())));
         });
         Ok(())
@@ -310,6 +457,7 @@ impl Backend for RealBackend {
 
     fn join_lobby(&mut self, lobby: SteamId) -> Result<(), String> {
         self.player_only()?;
+        self.guard.answering()?;
         let ev = self.events.clone();
         self.client.matchmaking().join_lobby(LobbyId::from_raw(lobby), move |entered| {
             let result = entered.map(|_| ()).map_err(|()| "Steam refused (the lobby is gone or full, or you may not enter it)".to_owned());
@@ -402,6 +550,17 @@ impl Backend for RealBackend {
         self.client.remote_storage().files().into_iter().map(|f| (f.name, f.size)).collect()
     }
 
+    fn cloud_quota(&self) -> Option<(u64, u64)> {
+        let storage = self.raw_storage();
+        if storage.is_null() {
+            return None;
+        }
+        let (mut total, mut free) = (0u64, 0u64);
+        // SAFETY: Steamworks is running as the player; Steam writes the two numbers.
+        let known = unsafe { sys::SteamAPI_ISteamRemoteStorage_GetQuota(storage, &mut total, &mut free) };
+        known.then_some((total, free))
+    }
+
     fn cloud_read(&self, name: &str) -> Result<Vec<u8>, String> {
         self.player_only()?;
         let file = self.client.remote_storage().file(name);
@@ -415,8 +574,24 @@ impl Backend for RealBackend {
 
     fn cloud_write(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
         self.player_only()?;
-        let mut writer = self.client.remote_storage().file(name).write();
-        writer.write_all(bytes).map_err(|e| format!("Steam Cloud did not take `{name}`: {e} (quota, or Steam Cloud off)"))
+        // One call that writes the whole file or nothing, and says which: a stream (Steamworks'
+        // `SteamFileWriter`) commits on drop and drops the answer.
+        let len = i32::try_from(bytes.len())
+            .ok()
+            .filter(|_| bytes.len() <= MAX_CLOUD_FILE)
+            .ok_or_else(|| format!("this save is {}: Steam Cloud takes files of up to 100 MB", shards_save::ops::size_text(bytes.len() as u64)))?;
+        let file = CString::new(name).map_err(|_| format!("`{name}` is no name Steam Cloud takes"))?;
+        let storage = self.raw_storage();
+        // SAFETY: Steamworks is running as the player (a game server's storage is null); the name
+        // is a C string and `bytes` holds `len` bytes, both alive for the call, which copies them.
+        let written = !storage.is_null() && unsafe { sys::SteamAPI_ISteamRemoteStorage_FileWrite(storage, file.as_ptr(), bytes.as_ptr().cast(), len) };
+        if written {
+            return Ok(());
+        }
+        // The file it replaces gives its room back (how Steam counts that is not written down).
+        let replaced = self.cloud_files().into_iter().find(|(f, _)| f == name).map_or(0, |(_, size)| size);
+        let quota = self.cloud_quota().map(|(total, free)| (total, free + replaced));
+        Err(over_quota(quota, bytes.len() as u64).unwrap_or_else(|| "Steam did not take it (Steam Cloud is off for the game or the account, or the file is busy)".into()))
     }
 
     fn cloud_timestamp(&self, name: &str) -> Option<i64> {

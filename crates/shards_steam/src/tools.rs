@@ -81,6 +81,10 @@ fn steam(In(_): In<Call<SteamArgs>>, world: &World) -> ToolResult {
         ("fake server", Some(id)) => format!("steam: a fake Steam game server in this process · id {id}\n"),
         _ => format!("steam: unavailable: {}\n", info.note.clone().unwrap_or_default()),
     };
+    // A Steam that is there but stopped answering (its callbacks panicked).
+    if let Some(note) = info.note.as_ref().filter(|_| steam.backend.available()) {
+        out.push_str(&format!("problem: {note}\n"));
+    }
     let s = world.resource::<SteamSession>();
     let members = |list: &[SteamId]| list.iter().map(|m| who(world, *m)).collect::<Vec<_>>().join(", ");
     let state = match &s.state {
@@ -91,7 +95,10 @@ fn steam(In(_): In<Call<SteamArgs>>, world: &World) -> ToolResult {
         SteamState::WaitingForInvite => "waiting for an invite (or steam_join lobby=ID)".to_owned(),
         SteamState::ToJoin(l) | SteamState::Joining(l) => format!("entering lobby {l}"),
         SteamState::ToConnect(host) => format!("joining {}", who(world, *host)),
-        SteamState::InLobby { lobby, owner } => format!("lobby {lobby}, host {} · {} in it: {}", who(world, *owner), s.members.len(), members(&s.members)),
+        SteamState::InLobby { lobby, owner } => {
+            let kind = s.lobby_type.map(|k| format!(" ({})", k.describe())).unwrap_or_default();
+            format!("lobby {lobby}{kind}, host {} · {} in it: {}", who(world, *owner), s.members.len(), members(&s.members))
+        }
         SteamState::Direct { host } => format!("on {} without a lobby", who(world, *host)),
         SteamState::Invalid(why) | SteamState::Failed(why) => format!("none: {why}"),
     };
@@ -172,7 +179,16 @@ fn steam(In(_): In<Call<SteamArgs>>, world: &World) -> ToolResult {
         Some(Err(why)) => format!("cloud: off ({why})"),
         None => "cloud: not checked yet".to_owned(),
     };
-    for (what, list) in [("taken from the cloud", &cloud.pulled), ("sent up", &cloud.pushed), ("kept both", &cloud.kept_both)] {
+    if let (Some(Ok(())), Some((total, free))) = (&cloud.enabled, steam.backend.cloud_quota()) {
+        let size = shards_save::ops::size_text;
+        line.push_str(&format!(" · {} free of {}", size(free), size(total)));
+    }
+    for (what, list) in [
+        ("taken from the cloud", &cloud.pulled),
+        ("sent up", &cloud.pushed),
+        ("kept both", &cloud.kept_both),
+        ("from a newer version of the game, left alone", &cloud.newer),
+    ] {
         if !list.is_empty() {
             line.push_str(&format!(" · at startup {what}: {}", list.join(", ")));
         }
@@ -292,6 +308,7 @@ pub(crate) fn status(world: &World) -> Value {
         "note": info.note,
         "role": role,
         "lobby": s.lobby_id().map(|l| l.to_string()),
+        "lobby_type": s.lobby_type.map(|k| k.as_str()),
         "host": s.host_id().map(|h| h.to_string()),
         "members": s.members.len(),
         "relay": relay,

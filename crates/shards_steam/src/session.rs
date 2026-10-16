@@ -1,6 +1,7 @@
-//! The co-op session over Steam. A lobby host (`--steam-host`) creates a friends-only lobby once its
-//! content is loaded and opens the relay transport; a game server (`--steam-server`) logs on to
-//! Steam anonymously and opens it with its own Steam id. A client enters a lobby (`--join
+//! The co-op session over Steam. A lobby host (`--steam-host`) creates a lobby (friends only, or the
+//! type `--steam-lobby` names) once its content is loaded and opens the relay transport; a game
+//! server (`--steam-server`) logs on to Steam anonymously and opens it with its own Steam id; each
+//! is a host like any other, with its own player 0. A client enters a lobby (`--join
 //! steam:<lobby>`, an invite, Steam's `+connect_lobby`) and opens the transport to the lobby's
 //! owner, or opens it straight to a host by its id (`--join steam:<id>`). From there on the session
 //! is `shards_net`'s, the same as over UDP or the in-memory hub.
@@ -15,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use ai_core::journal::{self, JournalKind};
 use bevy::prelude::*;
 use shards_content::ContentDb;
-use shards_core::{EngineConfig, NetLaunch};
+use shards_core::{EngineConfig, NetLaunch, SteamLobby};
 use shards_net::{net_def, ClientStage, NetClient, NetEndpoint, NetGame, NetState};
 
 use crate::backend::{Backend, Event, SteamId};
@@ -71,6 +72,8 @@ pub enum SteamState {
 pub struct SteamSession {
     pub role: SteamRole,
     pub state: SteamState,
+    /// The type of the lobby a lobby host makes (`--steam-lobby`); `None` for any other role.
+    pub lobby_type: Option<SteamLobby>,
     /// The lobby's members, the owner among them.
     pub members: Vec<SteamId>,
     /// Invites this game could not follow (a single game, a host, a client in a session): lobby
@@ -98,7 +101,8 @@ impl SteamSession {
             },
             _ => (SteamRole::None, SteamState::None),
         };
-        Self { role, state, members: Vec::new(), invites: Vec::new(), refused: 0, refused_peers: Default::default(), relay: None }
+        let lobby_type = (role == SteamRole::Host).then_some(config.steam.lobby);
+        Self { role, state, lobby_type, members: Vec::new(), invites: Vec::new(), refused: 0, refused_peers: Default::default(), relay: None }
     }
 
     /// The lobby this game is in.
@@ -153,6 +157,7 @@ pub(crate) fn pump(world: &mut World) {
         on_event(world, backend, event);
     }
     world.insert_resource(steam);
+    crate::cloud::send_waiting(world);
 }
 
 fn unavailable(backend: &dyn Backend) -> Option<String> {
@@ -169,7 +174,8 @@ fn start(world: &mut World, backend: &mut dyn Backend) {
             }
             set_state(world, SteamState::Creating);
             let max = u32::from(net_def(world).max_players.max(1));
-            if let Err(e) = backend.create_lobby(max) {
+            let kind = world.resource::<SteamSession>().lobby_type.unwrap_or_default();
+            if let Err(e) = backend.create_lobby(max, kind) {
                 host_failed(world, &format!("Steam could not create a lobby: {e}"));
             }
         }
@@ -220,6 +226,16 @@ fn on_event(world: &mut World, backend: &mut dyn Backend, event: Event) {
         Event::Note(text) => {
             journal::log(world, JournalKind::Local, format!("steam: {text}"));
         }
+        Event::CallbacksStopped(why) => {
+            journal::emit(world, JournalKind::Error, format!("steam: {why}"));
+            // What waited for Steam's answer gets none.
+            let stopped = "Steam's callbacks stopped (`steam` says why)";
+            match world.resource::<SteamSession>().state.clone() {
+                SteamState::Creating | SteamState::LoggingOn => host_failed(world, stopped),
+                SteamState::Joining(lobby) => client_failed(world, backend, Some(lobby), stopped),
+                _ => {}
+            }
+        }
         // A stray answer (a lobby this game no longer waits for, a log-on it did not ask for).
         Event::LobbyCreated(_) | Event::LobbyEntered { .. } | Event::ServerLoggedOn(_) | Event::ServerLogOnFailed(_) => {}
     }
@@ -257,7 +273,12 @@ fn hosting(world: &mut World, backend: &mut dyn Backend, lobby: SteamId) {
         return host_failed(world, &format!("the Steam relay did not open: {e}"));
     }
     host_open(world);
-    journal::log(world, JournalKind::Local, format!("steam: hosting in lobby {lobby}: friends join through an invite (steam_invite), or with --join steam:{lobby}"));
+    let kind = world.resource::<SteamSession>().lobby_type.unwrap_or_default();
+    let how = match kind {
+        SteamLobby::Private => "players come in only through an invite (steam_invite)".to_owned(),
+        _ => format!("friends join through an invite (steam_invite), or with --join steam:{lobby}"),
+    };
+    journal::log(world, JournalKind::Local, format!("steam: hosting in lobby {lobby} ({}): {how}", kind.describe()));
 }
 
 /// The game server logged on: its id is what clients join.
@@ -423,14 +444,24 @@ fn session_request(world: &mut World, backend: &mut dyn Backend, from: SteamId) 
     }
 }
 
-/// Exit hook: the unlocks stored, the lobby left.
+/// Exit hook, after the session's (its last words are out: the host's end, a client's goodbye and
+/// the character the host sent back): the cloud copies of what the hooks before this one saved, the
+/// unlocks stored, the relay sessions closed, the lobby left. Steam itself shuts down when the game's
+/// world goes, with the last Steamworks handle in it, after every hook.
 pub(crate) fn on_exit(world: &mut World) {
+    // A save written in an earlier hook queued its cloud copy (`SaveWritten`): it goes up now,
+    // before Steam is left.
+    world.flush();
+    crate::cloud::send_waiting(world);
     crate::achievements::flush_achievements(world);
-    let Some(mut steam) = world.remove_resource::<Steam>() else { return };
-    if let Some(lobby) = world.get_resource::<SteamSession>().and_then(SteamSession::lobby_id) {
+    let (lobby, peers) = world.get_resource::<SteamSession>().map_or((None, Vec::new()), |s| {
+        (s.lobby_id(), s.relay_stats().map(|r| r.peers.into_iter().collect::<Vec<_>>()).unwrap_or_default())
+    });
+    let Some(mut steam) = world.get_resource_mut::<Steam>() else { return };
+    steam.backend.close_sessions(&peers);
+    if let Some(lobby) = lobby {
         steam.backend.leave_lobby(lobby);
     }
-    world.insert_resource(steam);
 }
 
 /// `steam_host`: a lobby for a game started as a Steam lobby host (again, after a failure); a game
