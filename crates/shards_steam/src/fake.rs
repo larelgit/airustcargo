@@ -78,6 +78,8 @@ struct User {
     achieved: BTreeSet<String>,
     stored: BTreeSet<String>,
     stores: u32,
+    /// How many of this user's next stores Steam refuses, when a test sets it.
+    refused_stores: u32,
     cloud: BTreeMap<String, (Vec<u8>, i64)>,
     cloud_on: bool,
     /// The bytes this user's cloud holds at most, when a test sets it.
@@ -168,6 +170,7 @@ impl FakeSteam {
                     achieved: BTreeSet::new(),
                     stored: BTreeSet::new(),
                     stores: 0,
+                    refused_stores: 0,
                     cloud: BTreeMap::new(),
                     cloud_on: true,
                     cloud_quota: None,
@@ -236,6 +239,13 @@ impl FakeSteam {
     pub fn set_cloud_quota(&self, user: SteamId, bytes: Option<u64>) {
         if let Some(user) = self.lock().users.get_mut(&user) {
             user.cloud_quota = bytes;
+        }
+    }
+
+    /// Steam refuses user `user`'s next `times` stores of achievements, as it does while it is unreachable.
+    pub fn refuse_stores(&self, user: SteamId, times: u32) {
+        if let Some(user) = self.lock().users.get_mut(&user) {
+            user.refused_stores = times;
         }
     }
 
@@ -593,6 +603,10 @@ impl Backend for FakeUser {
         self.player_only()?;
         let mut u = self.steam.lock();
         let me = u.user(self.id);
+        if me.refused_stores > 0 {
+            me.refused_stores -= 1;
+            return Err("Steam did not answer (the fake refuses this store)".into());
+        }
         me.stored = me.achieved.clone();
         me.stores += 1;
         me.events.push_back(Event::StatsStored(Ok(())));

@@ -86,6 +86,33 @@ fn a_single_game_unlocks_once_and_steam_stores_it_a_moment_later() {
 }
 
 #[test]
+fn a_store_steam_refuses_is_tried_again_a_moment_later_and_at_exit() {
+    let (mut app, steam) = single();
+    steam.refuse_stores(FIRST_USER, 2);
+    unlock_achievement(app.world_mut(), "first_blood").unwrap();
+    std::thread::sleep(STORE_AFTER + Duration::from_millis(50));
+    app.update();
+    let a = achievements(app.world());
+    assert_eq!(steam.stats(FIRST_USER).stores, 0, "Steam refused the store");
+    assert!(a.store_pending(), "a refused store waits for the next try");
+    assert_eq!(a.store_error.as_deref(), Some("Steam did not answer (the fake refuses this store)"));
+
+    // The exit tries again; Steam refuses once more, and the store still waits.
+    flush_achievements(app.world_mut());
+    assert_eq!(steam.stats(FIRST_USER).stores, 0);
+    assert!(achievements(app.world()).store_pending());
+
+    // The next try goes through.
+    flush_achievements(app.world_mut());
+    let stats = steam.stats(FIRST_USER);
+    assert_eq!((stats.stored, stats.stores), (vec!["ACH_FIRST_BLOOD".to_owned()], 1));
+    let a = achievements(app.world());
+    assert_eq!((a.stores, a.store_pending(), a.store_error.as_deref()), (1, false, None));
+    let warned = journal(app.world(), Some(JournalKind::Warn)).iter().filter(|l| l.contains("achievements not stored")).count();
+    assert_eq!(warned, 1, "one warning for one reason, not one per try");
+}
+
+#[test]
 fn steam_keeps_an_unlock_from_an_earlier_run_and_one_it_does_not_know_stays_in_this_run() {
     let steam = FakeSteam::new(MemoryHub::new(1));
     steam.define_achievements(&["ACH_FIRST_BLOOD"]);

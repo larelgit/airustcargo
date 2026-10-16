@@ -255,25 +255,31 @@ pub fn flush_achievements(world: &mut World) {
 }
 
 fn store(world: &mut World) {
-    let result = world.resource_mut::<Steam>().backend.store_stats();
-    let mut achievements = world.resource_mut::<Achievements>();
-    achievements.store_due = None;
-    match result {
+    match world.resource_mut::<Steam>().backend.store_stats() {
         Ok(()) => {
+            let mut achievements = world.resource_mut::<Achievements>();
+            achievements.store_due = None;
             achievements.stores += 1;
             achievements.store_error = None;
         }
-        Err(e) => {
-            achievements.store_error = Some(e.clone());
-            journal::emit(world, JournalKind::Warn, format!("steam: achievements not stored: {e}"));
-        }
+        Err(e) => refused(world, e),
     }
 }
 
 /// What Steam said of a store.
 pub(crate) fn stored(world: &mut World, result: Result<(), String>) {
     if let Err(e) = result {
-        world.resource_mut::<Achievements>().store_error = Some(e.clone());
+        refused(world, e);
+    }
+}
+
+/// A store Steam refused is tried again a moment later, and at exit. The journal warns once per reason, not
+/// once a second while Steam keeps refusing.
+fn refused(world: &mut World, e: String) {
+    let mut achievements = world.resource_mut::<Achievements>();
+    achievements.store_due = Some(Instant::now() + STORE_AFTER);
+    if achievements.store_error.as_ref() != Some(&e) {
+        achievements.store_error = Some(e.clone());
         journal::emit(world, JournalKind::Warn, format!("steam: achievements not stored: {e}"));
     }
 }
