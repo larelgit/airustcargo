@@ -29,7 +29,7 @@ cargo test                          # тесты, сценарий и репле
 | `src/screens.rs` | своё в HUD и меню: трофеи на HUD (`add_ui_source`) и «сохранить и выйти» (`add_ui_action`) |
 | `src/visuals.rs` | меши, свет и камера, только с картинкой (feature `render`: окно или `--offscreen`); меши получают один белый материал, а цвет и свет им дают виды |
 | `assets/content/*.ron` | **все числа игры**: движение, действия, мувсеты, бойцы (префабы), уровень |
-| `assets/content/looks.look.ron` | как рисуются тела и стены (виды движка, E10.1): `hero`, `grunt`, `raider` — плоские грани и контур, `stone` — всё остальное; тело берёт вид из `"Look"` своего префаба. Не путать с `look.theme.ron` ниже: это тема экранов |
+| `assets/content/looks.look.ron` | как рисуются тела и стены (виды движка, E10.1): пресет `low_poly` — плоские грани и контур, `hero`, `grunt`, `raider` начинаются с него (`extends`), `stone` — всё остальное; тело берёт вид из `"Look"` своего префаба. Не путать с `look.theme.ron` ниже: это тема экранов |
 | `assets/content/session.net.ron` | кооператив на двоих: второй игрок играет героем того же префаба `hero`, остальное — числа движка |
 | `assets/content/screens.screen.ron` | HUD, пауза, настройки и вопрос перед выходом: экраны на виджетах движка |
 | `assets/content/languages.locale.ron`, `assets/locale/` | языки (английский, русский) и их тексты на Fluent: всё, что пишут HUD и меню; см. «Языки» |
@@ -182,7 +182,7 @@ Ctrl+C, не `kill -9`; на Windows — `shards quit`. Подробности (
 | `movesets.moveset.ron` | `moveset` | какой ввод запускает какое действие, действия `stagger` и `death` |
 | `tuning.combat_tuning.ron` | `combat_tuning` | буфер ввода, лимиты |
 | `characters.prefab.ron` | `prefab` | сущности: компоненты по именам, `extends`; у `hero`, `grunt` и `raider` компонент `Look` называет вид, которым тело рисует окно |
-| `looks.look.ron` | `look` | виды (E10.1): цвет, свет полосами (`Toon`), плоские грани, контур в пикселях; `hero`, `grunt`, `raider`, `stone` |
+| `looks.look.ron` | `look` | виды (E10.1): цвет, свет полосами (`Toon`), плоские грани, контур в пикселях; пресет `low_poly` и `hero`, `grunt`, `raider` с `extends: "low_poly"`, `stone` |
 | `arena.arena.ron` | `arena` | **свой вид игры**: пол, стены, кто где стоит |
 | `region/valley.tile.ron` | `tile` | тайлы: сокеты по краям, повороты, вес, слоты точек интереса, геометрия (`Inline` или `Level(path: …)`) |
 | `region/valley.socket_rules.ron` | `socket_rules` | какие края могут стоять рядом и по каким можно пройти |

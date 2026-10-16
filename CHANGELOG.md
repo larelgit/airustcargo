@@ -581,11 +581,12 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   которого нет (с подсказкой `did you mean …`; проверку добавляет к виду `prefab` `add_content_check`), `extends` на вид, которого
   нет, и цикл пресетов.
 - `shards_content::parse_color`: один разбор цвета контента для тем и видов (`shards_ui::parse_color` остался как реэкспорт).
-- Песочница: `content/look/sandbox.look.ron` (девять видов: игрок, скелет и страж с плоскими гранями и контуром, камень и стена с
-  контуром, пол и песок на двух полосах, `dark` — `Matte`, `marker` — `Unlit`), `Look` в префабах игрока, скелета, стража и колонны,
-  `visuals.rs` рисует всё одним белым материалом и видами. Шаблон: `content/looks.look.ron` (`hero`, `grunt`, `raider`, `stone`),
+- Песочница: `content/look/sandbox.look.ron` (пресеты `low_poly` и `cel` и девять видов: игрок, скелет и страж с плоскими гранями
+  и контуром, камень и стена с контуром, пол и песок на двух полосах, `dark` — `Matte`, `marker` — `Unlit`), `Look` в префабах
+  игрока, скелета, стража и колонны, `visuals.rs` рисует всё одним белым материалом и видами. Шаблон: `content/looks.look.ron`
+  (пресет `low_poly`, `hero`, `grunt`, `raider`, `stone`),
   `Look` в префабах, `visuals.rs` с одним белым материалом. Проверено на GPU с `--offscreen`: на картинке песочницы полосы света,
-  плоские грани и контуры, `looks` — `9 looks · 49 meshes styled (36 outlined) · 2 without a look · outlines on`.
+  плоские грани и контуры, `looks` — `11 looks · 49 meshes styled (36 outlined) · 2 without a look · outlines on`.
 
 ### Исправлено
 

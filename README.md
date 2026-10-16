@@ -3928,25 +3928,28 @@ which no `*.sound.ron` defines (did you mean `boom`?)``). Условие сло�
 
 ```text
 $ shards act looks
-9 looks · 49 meshes styled (36 outlined) · 2 without a look · outlines on
+11 looks · 49 meshes styled (36 outlined) · 2 without a look · outlines on
+  cel       toon 2 bands
   dark      #1a1a1f · matte · 5 meshes
-  floor     #2b303b · toon 2 bands · 2 meshes
+  floor     #2b303b · toon 2 bands · extends cel · 2 meshes
+  low_poly  toon 3 bands · flat · outline 2px #0b0f1a
   marker    #ffd933 · unlit · 4 meshes
-  player    #408cff · toon 3 bands · flat · outline 2px #0b1a33 · 1 mesh
-  sand      #8c8061 · toon 2 bands · 2 meshes
-  skeleton  #d9d1b3 · toon 3 bands · flat · outline 2px #2a2418 · 3 meshes
+  player    #408cff · toon 3 bands · flat · outline 2px #0b1a33 · extends low_poly · 1 mesh
+  sand      #8c8061 · toon 2 bands · extends cel · 2 meshes
+  skeleton  #d9d1b3 · toon 3 bands · flat · outline 2px #2a2418 · extends low_poly · 3 meshes
   stone     #61636e · toon 3 bands · outline 1.5px #16171c · 17 meshes
   wall      #454754 · toon 3 bands · outline 1.5px #16171c · 14 meshes
-  warden    #8cd9ff · toon 3 bands · flat · outline 3px #0a2433 · 1 mesh
+  warden    #8cd9ff · toon 3 bands · flat · outline 3px #0a2433 · extends low_poly · 1 mesh
 $ shards act look_outlines on=false
 outlines off: 36 drawn with an outline
 ```
 
-Без картинки инструмент говорит, почему нечего считать: `9 looks · nothing is drawn headless: looks style meshes in a window or
+Строка вида — то, чем он рисует на деле: значения пресета, которые вид не поменял, уже в ней, а `extends` называет пресет.
+Без картинки инструмент говорит, почему нечего считать: `11 looks · nothing is drawn headless: looks style meshes in a window or
 with --offscreen`, и дальше те же строки видов без числа мешей. Меши, которые ещё ждут материал или меш, названы последней строкой
 (`3 meshes wait for their material or mesh to load`).
 
-`ai/status` — поле `looks`: `{"looks": 9, "outlined": 36, "outlines": true, "styled": 49}` (видов, мешей с контуром, контуры включены,
+`ai/status` — поле `looks`: `{"looks": 11, "outlined": 36, "outlines": true, "styled": 49}` (видов, мешей с контуром, контуры включены,
 мешей в стиле видов). `inspect eN` показывает `Look` сущности. В меню разработчика (раздел `world`) два пункта: `looks` («Looks
 and what they draw») и `look_outlines` («Outlines of the looks»; пока контуры видны, он выполняет `look_outlines on=false`).
 
@@ -4159,7 +4162,7 @@ saved crashes/crash-20261016-123456-tick30.json: tick 30, 120 log lines, 48 jour
 | `world/arena.layout.ron` | арена 40×40 м: пол, стены, колонны, ворота на восток; кого и где спавнить |
 | `world/course.layout.ron` | полоса препятствий от x = 40: ступени, уступ 1.3 м, бассейн 10 м, пандус на обрыв 18 м над каньоном, площадка цели через 32 м пропасти, восходящий поток посередине |
 | `characters/characters.prefab.ron` | префабы `player`, `skeleton`, `skeleton_captain`, `frost_warden`, `pillar`; у тел и колонны `Look` — вид, которым их рисует окно |
-| `look/sandbox.look.ron` | виды (E10.1): `player`, `skeleton`, `warden` (плоские грани, контур), `stone`, `wall` (контур), `floor`, `sand` (две полосы), `dark` (`Matte`), `marker` (`Unlit`); вид коробки арены — поле `look` в `*.layout.ron` (`Stone`, `Floor`, `Wall`, `Sand`), носы персонажей (`dark`) и столбы ориентиров (`marker`) ставит `visuals.rs` |
+| `look/sandbox.look.ron` | виды (E10.1): пресеты `low_poly` (плоские грани, контур) и `cel` (две полосы); `player`, `skeleton`, `warden` (`extends: "low_poly"`), `stone`, `wall` (контур), `floor`, `sand` (две полосы), `dark` (`Matte`), `marker` (`Unlit`); вид коробки арены — поле `look` в `*.layout.ron` (`Stone`, `Floor`, `Wall`, `Sand`), носы персонажей (`dark`) и столбы ориентиров (`marker`) ставит `visuals.rs` |
 | `characters/bodies.locomotion.ron` | как ходят игрок, скелет и страж |
 | `combat/player.action.ron` | комбо `light_1`–`light_3`, `heavy`, перекат (i-frames 0.18 с), блок с идеальным блоком, фляга |
 | `combat/warden.action.ron` | четыре атаки стража (`slash`, `slam`, `sweep`, `shockwave`), спокойные и в ярости |
