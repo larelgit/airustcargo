@@ -23,6 +23,7 @@ use std::backtrace::{Backtrace, BacktraceStatus};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, Once, PoisonError};
+use std::thread::ThreadId;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy::platform::collections::HashSet;
@@ -156,6 +157,10 @@ pub struct GameInfo {
 struct Kept {
     what: What,
     backtrace: Arc<Backtrace>,
+    /// The thread it happened on.
+    thread: ThreadId,
+    /// The app active on that thread then ([`process::active`](crate::process::active)).
+    token: u64,
     /// The app that was working when it happened, as it was then.
     seen: Option<Seen>,
     handled: bool,
@@ -199,8 +204,8 @@ pub fn install_panic_hook() {
 }
 
 fn keep_panic(message: &str, location: Option<String>) {
-    let thread = std::thread::current();
-    let thread = thread.name().map_or_else(|| format!("{:?}", thread.id()), str::to_owned);
+    let current = std::thread::current();
+    let thread = current.name().map_or_else(|| format!("{:?}", current.id()), str::to_owned);
     let backtrace = Arc::new(Backtrace::force_capture());
     // A panic while this thread holds the memory must not wait for itself: after a while the
     // panic goes unkept.
@@ -229,7 +234,7 @@ fn keep_panic(message: &str, location: Option<String>) {
     if memory.panics.len() == PANICS_KEPT {
         memory.panics.pop_front();
     }
-    memory.panics.push_back(Kept { what, backtrace, seen, handled: false });
+    memory.panics.push_back(Kept { what, backtrace, thread: current.id(), token: active, seen, handled: false });
 }
 
 /// A log line for reports (the capture layer passes info, warnings and errors).
@@ -241,13 +246,23 @@ pub(crate) fn keep_log(line: String) {
     memory.log.push_back(line);
 }
 
-/// The newest unhandled panic with this message was handled where it happened (a tool answered
-/// with it, a rule was reported broken): no report is written for it. Returns what the hook kept
-/// of it, for a report of its own.
+/// An unhandled panic with this message was handled where it happened (a tool answered with it, a
+/// rule was reported broken): no report is written for it. Returns what the hook kept of it, for a
+/// report of its own.
+///
+/// Two threads or two apps of one process may panic with the same words at once. The caller
+/// handles its own: the newest one of this thread first, then the newest one of the app active
+/// here, then the newest one of all (a system panics on a worker thread, where the active app is
+/// whichever was activated last in the process).
 pub fn handled(message: &str) -> Option<What> {
+    let (thread, token) = (std::thread::current().id(), crate::process::active());
     let kept = {
         let mut memory = memory();
-        let kept = memory.panics.iter_mut().rev().find(|p| !p.handled && p.what.message == message)?;
+        let index = {
+            let open = || memory.panics.iter().enumerate().rev().filter(|(_, p)| !p.handled && p.what.message == message);
+            open().find(|(_, p)| p.thread == thread).or_else(|| open().find(|(_, p)| p.token == token)).or_else(|| open().next())?.0
+        };
+        let kept = &mut memory.panics[index];
         kept.handled = true;
         taken(kept)
     };
@@ -797,6 +812,24 @@ mod tests {
         let read: CrashReport = serde_json::from_str(&std::fs::read_to_string(&first).unwrap()).unwrap();
         assert_eq!(read, report);
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn each_thread_handles_its_own_panic_of_the_same_words() {
+        install_panic_hook();
+        let message = "crash test: the same words on two threads";
+        let here = std::thread::current().name().map(str::to_owned);
+        assert!(std::panic::catch_unwind(|| panic!("{message}")).is_err());
+        // Another thread panics with the same words after this one, and does not handle it yet.
+        std::thread::Builder::new()
+            .name("crash test: other".to_owned())
+            .spawn(move || assert!(std::panic::catch_unwind(|| panic!("{message}")).is_err()))
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(handled(message).and_then(|what| what.thread), here, "this thread's own, though the other is newer");
+        assert_eq!(handled(message).and_then(|what| what.thread).as_deref(), Some("crash test: other"));
+        assert!(handled(message).is_none(), "both are handled");
     }
 
     #[test]
