@@ -69,7 +69,7 @@ cargo shards observe                       # срез мира текстом + 
 cargo shards tools                         # что можно сделать (--json: со схемами аргументов)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # в ответе CHANGES и JOURNAL
-cargo shards content check                 # ok: 110 definitions in 32 files
+cargo shards content check                 # ok: 117 definitions in 33 files
 cargo shards act regen region=wilds seed=42   # сгенерированный регион к югу от арены; игрок у его ворот
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # маршрут к логову по навсетке: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # проверка генератора на тысяче зёрен
@@ -92,7 +92,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Контент без игры: читает и проверяет все файлы (в том числе файлы уровней тайлов и запечённую навигацию), код 0 или 1.
 cargo sandbox --check-content
-# ok: 110 definitions in 32 files
+# ok: 117 definitions in 33 files
 
 # 7. Мир без игры: генератор на тысяче зёрен (код 0, если прошли все) и запекание навигации тайлов.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -576,7 +576,7 @@ reflection, как в сценах Bevy; каждый компонент дол�
 
 ```text
 $ shards act content_list
-content: 110 definitions in 32 files
+content: 117 definitions in 33 files
   action  23
   animset  0
   attack_plan  3
@@ -3942,28 +3942,33 @@ which no `*.sound.ron` defines (did you mean `boom`?)``). Условие сло�
 
 ```text
 $ shards act looks
-11 looks · 49 meshes styled (36 outlined) · 2 without a look · outlines on
-  cel       toon 2 bands
-  dark      #1a1a1f · matte · 5 meshes
-  floor     #2b303b · toon 2 bands · extends cel · 2 meshes
-  low_poly  toon 3 bands · flat · outline 2px #0b0f1a
-  marker    #ffd933 · unlit · 4 meshes
-  player    #408cff · toon 3 bands · flat · outline 2px #0b1a33 · extends low_poly · 1 mesh
-  sand      #8c8061 · toon 2 bands · extends cel · 2 meshes
-  skeleton  #d9d1b3 · toon 3 bands · flat · outline 2px #2a2418 · extends low_poly · 3 meshes
-  stone     #61636e · toon 3 bands · outline 1.5px #16171c · 17 meshes
-  wall      #454754 · toon 3 bands · outline 1.5px #16171c · 14 meshes
-  warden    #8cd9ff · toon 3 bands · flat · outline 3px #0a2433 · extends low_poly · 1 mesh
+15 looks · 49 meshes styled (36 outlined) · 2 without a look · outlines on
+  bush       #2f7a3a · toon 3 bands · flat
+  cel        toon 2 bands
+  dark       #1a1a1f · matte · 5 meshes
+  floor      #2b303b · toon 2 bands · extends cel · 2 meshes
+  grass      #5fae45 · toon 2 bands
+  grass_dry  #a7b04e · toon 2 bands
+  low_poly   toon 3 bands · flat · outline 2px #0b0f1a
+  marker     #ffd933 · unlit · 4 meshes
+  player     #408cff · toon 3 bands · flat · outline 2px #0b1a33 · extends low_poly · 1 mesh
+  rock       #8a867c · toon 3 bands · flat
+  sand       #8c8061 · toon 2 bands · extends cel · 2 meshes
+  skeleton   #d9d1b3 · toon 3 bands · flat · outline 2px #2a2418 · extends low_poly · 3 meshes
+  stone      #61636e · toon 3 bands · outline 1.5px #16171c · 17 meshes
+  wall       #454754 · toon 3 bands · outline 1.5px #16171c · 14 meshes
+  warden     #8cd9ff · toon 3 bands · flat · outline 3px #0a2433 · extends low_poly · 1 mesh
 $ shards act look_outlines on=false
 outlines off: 36 drawn with an outline
 ```
 
-Строка вида — то, чем он рисует на деле: значения пресета, которые вид не поменял, уже в ней, а `extends` называет пресет.
-Без картинки инструмент говорит, почему нечего считать: `11 looks · nothing is drawn headless: looks style meshes in a window or
+Это арена песочницы. Виды растительности (`bush`, `grass`, `grass_dry`, `rock`) рисуют экземпляры `scatter` в регионе: после
+`regen region=wilds seed=42` — `15 looks · 14035 meshes styled (146 outlined) · 22 without a look`. Строка вида — то, чем он рисует на деле: значения пресета, которые вид не поменял, уже в ней, а `extends` называет пресет.
+Без картинки инструмент говорит, почему нечего считать: `15 looks · nothing is drawn headless: looks style meshes in a window or
 with --offscreen`, и дальше те же строки видов без числа мешей. Меши, которые ещё ждут материал или меш, названы последней строкой
 (`3 meshes wait for their material or mesh to load`).
 
-`ai/status` — поле `looks`: `{"looks": 11, "outlined": 36, "outlines": true, "styled": 49}` (видов, мешей с контуром, контуры включены,
+`ai/status` — поле `looks`: `{"looks": 15, "outlined": 36, "outlines": true, "styled": 49}` (видов, мешей с контуром, контуры включены,
 мешей в стиле видов). `inspect eN` показывает `Look` сущности. В меню разработчика (раздел `world`) два пункта: `looks` («Looks
 and what they draw») и `look_outlines` («Outlines of the looks»; пока контуры видны, он выполняет `look_outlines on=false`).
 
@@ -4142,7 +4147,7 @@ built: …\target\x86_64-pc-windows-msvc\dist\my_game.exe
 package: …\my_game\dist\my_game-0.1.0-windows-x86_64 (program 123.6 MB, assets/ 52 files, 1.3 MB)
 subsystem: windows (no console window)
 imports: system DLLs only (kernel32.dll, oleaut32.dll, uiautomationcore.dll, user32.dll, …, dxgi.dll, ws2_32.dll)
-check-content: ok: 63 definitions in 26 files
+check-content: ok: 67 definitions in 27 files
 smoke: ok: loaded in 0.05s, 300 ticks in 0.07s
 writes: nothing in its own folder
 ```
