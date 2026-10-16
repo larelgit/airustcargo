@@ -113,8 +113,8 @@
         anim: "block",
     ),
     // A healing flask: one charge, a short animation lock (walking slowly), 45 health at 0.7 s. It
-    // has no `anim`: the model has no drinking clip, so the character walks on with its locomotion
-    // clip (an `anim` no animset has is a content error).
+    // has no `anim`: the animset maps it to its drinking clip on the upper body (`actions` of
+    // anim/humanoid.animset.ron), so the legs keep their walk while the arm raises the flask.
     "drink": (
         net_id: 7,
         phases: [("drink", 1.0), ("recover", 0.3)],

@@ -36,13 +36,20 @@
             "sweep": (name: "light_3"),
             "shockwave": (name: "heavy"),
             // Clips of a second file made for the same skeleton: any character of this set can
-            // play them, though no action of the sandbox asks for them yet.
+            // play them. The drink is the flask's (see `actions`); no action of the sandbox asks
+            // for the bow or the taunt yet.
             "bow": (source: "models/humanoid_gestures.glb"),
             "taunt": (source: "models/humanoid_gestures.glb"),
+            "drink": (source: "models/humanoid_gestures.glb", blend: 0.12),
         },
         locomotion: {"idle": "idle", "walk": "walk", "run": "run", "stagger": "stagger", "dead": "death"},
-        // Actions find their clips by their `anim` (light_1, roll, claw, slash, ...); the drink names
-        // none (the model has no drinking clip) and walks on.
+        // The upper body: the spine and everything on it (the head, the arms). The legs are the rest.
+        layers: {"upper": (root: "spine")},
+        // Actions find their clips by their `anim` (light_1, roll, claw, slash, ...) and play on the
+        // whole body. The flask's drink is mapped here, and on the layer `upper`: the player drinks
+        // while the legs go on walking or running (the drink asks for no `anim`: the action's state
+        // is the simulation's, and the picture decides how to show it).
+        actions: {"drink": (clip: "drink", layer: "upper")},
         blend: 0.2,
         action_blend: 0.06,
         // The walk's feet keep pace at 2 m/s, the run's at 4.5 m/s.
