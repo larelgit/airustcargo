@@ -31,7 +31,7 @@ cargo test                          # тесты, сценарий и репле
 | `assets/content/*.ron` | **все числа игры**: движение, действия, мувсеты, бойцы (префабы), уровень |
 | `assets/content/looks.look.ron` | как рисуются тела и стены (виды движка, E10.1): пресет `low_poly` — плоские грани и контур, `hero`, `grunt`, `raider` начинаются с него (`extends`), `stone` — всё остальное; тело берёт вид из `"Look"` своего префаба. Не путать с `look.theme.ron` ниже: это тема экранов |
 | `assets/content/effects.effect.ron`, `assets/content/effects.fx.ron` | эффекты (движок, E10.3): искры удара и блока (осколки), пыль смерти и шагов (кубики); таблица — какое событие боя (`damaged`, `blocked`, `died`) и какая метка клипа (`footstep`) что играет. Только картинка: в окне или с `--offscreen` |
-| `assets/models/humanoid.glb`, `assets/content/anim.animset.ron` | персонаж: low-poly гуманоид со скелетом и клипами (`idle`, `walk`, `run`, `light_1`, `light_2`, `light_3`, `heavy`, `roll`, `block`, `hit`, `death`), его строит скрипт движка `tools/blender/humanoid.py` (`-- template`); набор говорит, какой клип показывает какое состояние и действие, и где в клипах шаги и свист удара |
+| `assets/models/humanoid.glb`, `assets/content/anim.animset.ron` | персонаж: low-poly гуманоид со скелетом и клипами (`idle`, `walk`, `run`, `light_1`, `light_2`, `light_3`, `heavy`, `roll`, `block`, `hit`, `death`), его строит скрипт движка `tools/blender/humanoid.py` (`-- template`); набор говорит, какой клип показывает какое состояние и действие, и где в клипах шаги |
 | `assets/content/session.net.ron` | кооператив на двоих: второй игрок играет героем того же префаба `hero`, остальное — числа движка |
 | `assets/content/screens.screen.ron` | HUD, пауза, настройки и вопрос перед выходом: экраны на виджетах движка |
 | `assets/content/languages.locale.ron`, `assets/locale/` | языки (английский, русский) и их тексты на Fluent: всё, что пишут HUD и меню; см. «Языки» |
@@ -66,7 +66,8 @@ cargo test                          # тесты, сценарий и репле
   зацикливаются по скорости тела, `hit` — пробитие стойкости, `death` — смерть (тело больше не прячется). Без окна модели нет и
   ничего не играет: реплей и тесты те же. Смещение выпадов и переката (`displacement` в `hero.action.ron`) запечено из
   корневой кости клипов: поменяли клип — `cargo game --bake-motion`, иначе `--check-content` назовёт устаревшую кривую.
-  Метки клипов: шаг — пыль (`effects.fx.ron`, `cues`), начало удара — звук `whoosh`.
+  Метка клипа: шаг — пыль (`effects.fx.ron`, `cues`). Звук взмаха `whoosh` — эффект действия `Sound` в `hero.action.ron`:
+  он звучит и без окна.
 - **Эффекты**: искры удара и блока и пыль смерти — эффекты движка (`shards::fx`, раздел «Эффекты и декали (E10.3)» README
   движка) из `effects.effect.ron`, а таблица `effects.fx.ron` говорит, какое событие боя что играет; кода у игры для них нет.
   Телеграфы атак на земле движок рисует декалями.

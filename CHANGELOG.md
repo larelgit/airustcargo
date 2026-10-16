@@ -869,8 +869,8 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   только вперёд (вбок — в отчёт, вертикаль — картинке), прореживает (0.5 мм) и правит `displacement` в файле действия на месте
   (комментарии остаются; нет поля — встаёт перед `bake`). Тайминг клипа (`phases` или длина) должен совпадать с действием, иначе
   ошибка с обоими. `--bake-motion [ДЕЙСТВИЯ]` (`shards::run`, код 0 или 1, без тиков) и инструмент `motion_bake` (Dev, control).
-  Проверка контента запекает заново и называет устаревшую кривую: `displacement is stale: clip `roll` of `models/humanoid.glb`
-  bakes to 21 keys (4.0 m forward); bake it again with `--bake-motion roll` (or the motion_bake tool)`.
+  Проверка контента запекает заново и называет устаревшую кривую: ``displacement is stale: clip `roll` of `models/humanoid.glb`
+  bakes to 21 keys (4.0 m forward); bake it again with `--bake-motion roll` (or the motion_bake tool)``.
 - Песочница: `content/anim/humanoid.animset.ron` (клипы движения, удары игрока, скелетов и стража на клипах героя, поклон и
   насмешка из второго файла, метка `footstep`), персонажи носят гуманоида вместо капсулы с носом, удары и перекат
   игрока (`light_1`–`light_3`, `heavy`, `roll`) запечены, эффект `step_dust` на метке шага. Шаблон: `content/anim.animset.ron`,
