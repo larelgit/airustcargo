@@ -2,13 +2,22 @@
 //! and the phases they were timed to (for content checks of an [`AnimSet`](crate::AnimSet)),
 //! and a bone's translation track (for the displacement bake, [`crate::bake`]).
 //!
-//! `.glb` and `.gltf` files are read; a `.gltf`'s buffers may be files next to it or
-//! `data:` URIs. The `gltf` crate stays inside this module: nothing of it is public.
+//! `.glb` and `.gltf` files are read; a `.gltf`'s buffers may be files next to it (their names
+//! percent-decoded, as the glTF spec writes them and Bevy's loader reads them) or `data:` URIs.
+//! The `gltf` crate stays inside this module: nothing of it is public.
+//!
+//! A file is content, and a content check must not hang or panic on a broken one. The node
+//! graph is checked for cycles, and every accessor the reader will iterate (key times and
+//! translations) is checked before the `gltf` crate's iterator sees it: float type, scalar or
+//! vec3, at least one element, a `byteStride` that fits one, and all of it inside its buffer
+//! view and buffer. Sparse accessors are not read (no exporter writes them for animations):
+//! the error says so.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use bevy::math::{Quat, Vec3};
+use gltf::accessor::{DataType, Dimensions};
 
 /// The parts of a glTF file the animation checks and the bake need.
 #[derive(Debug)]
@@ -107,7 +116,8 @@ impl ClipFile {
                         decode_base64(encoded).ok_or("has a data: URI that is not valid base64")?
                     }
                     None => {
-                        let file = dir.unwrap_or(Path::new(".")).join(uri);
+                        let name = percent_decode(uri).ok_or_else(|| format!("names buffer `{uri}`, which is not UTF-8 once decoded"))?;
+                        let file = dir.unwrap_or(Path::new(".")).join(name);
                         std::fs::read(&file).map_err(|e| format!("names buffer `{uri}`, which cannot be read ({e})"))?
                     }
                 },
@@ -134,6 +144,10 @@ impl ClipFile {
             let mut parents = Vec::new();
             let mut at = node.index();
             while let Some(&p) = parent_of.get(&at) {
+                // A chain has fewer parents than the file has nodes; more means it loops.
+                if parents.len() >= all.len() {
+                    return Err(format!("has nodes that form a cycle (`{}` is its own ancestor)", name_of(p)));
+                }
                 let (_, r, s) = all[p].transform().decomposed();
                 parents.push((name_of(p), Quat::from_array(r), Vec3::from_array(s)));
                 at = p;
@@ -148,12 +162,17 @@ impl ClipFile {
             let mut duration: f32 = 0.0;
             let mut translations = BTreeMap::new();
             for channel in animation.channels() {
+                let sampler = channel.sampler();
+                check_accessor(&sampler.input(), Dimensions::Scalar, &buffers)
+                    .map_err(|e| format!("animation `{name}` has key times that {e}"))?;
                 let reader = channel.reader(data);
                 let times: Vec<f32> = reader.read_inputs().ok_or_else(|| format!("animation `{name}` has a channel without key times"))?.collect();
                 duration = times.iter().copied().fold(duration, f32::max);
                 if channel.target().property() != gltf::animation::Property::Translation {
                     continue;
                 }
+                check_accessor(&sampler.output(), Dimensions::Vec3, &buffers)
+                    .map_err(|e| format!("animation `{name}` has translations that {e}"))?;
                 let Some(gltf::animation::util::ReadOutputs::Translations(values)) = reader.read_outputs() else {
                     return Err(format!("animation `{name}` has a translation channel without values"));
                 };
@@ -241,6 +260,69 @@ impl ClipFile {
     }
 }
 
+/// Whether the `gltf` crate can iterate `accessor` as floats of `dimensions` without a panic
+/// (it asserts on a type, a stride or a count it does not expect, and subtracts 1 from the
+/// count): `Err` is the end of a sentence about the accessor, saying what is wrong with it.
+fn check_accessor(accessor: &gltf::Accessor, dimensions: Dimensions, buffers: &[Vec<u8>]) -> Result<(), String> {
+    let (found_type, found_dims) = (accessor.data_type(), accessor.dimensions());
+    if found_type != DataType::F32 || found_dims != dimensions {
+        return Err(format!("are {found_dims:?} of {found_type:?}, not {dimensions:?} of F32"));
+    }
+    if accessor.sparse().is_some() {
+        return Err("are a sparse accessor, which this reader does not read".into());
+    }
+    let count = accessor.count();
+    if count == 0 {
+        return Err("are an accessor with a count of 0".into());
+    }
+    let Some(view) = accessor.view() else { return Err("are an accessor without a buffer view".into()) };
+    let element = accessor.size();
+    let stride = match view.stride() {
+        Some(stride) if stride < element => {
+            return Err(format!("have a byteStride of {stride}, less than the {element} bytes of one element"));
+        }
+        Some(stride) => stride,
+        None => element,
+    };
+    let buffer_len = buffers.get(view.buffer().index()).map_or(0, Vec::len);
+    if view.offset().checked_add(view.length()).is_none_or(|end| end > buffer_len) {
+        return Err(format!("sit in a buffer view of {} bytes at {}, past the {buffer_len} bytes of its buffer", view.length(), view.offset()));
+    }
+    // The last element ends where the iterator expects it, inside the view.
+    let end = stride.checked_mul(count - 1).and_then(|n| n.checked_add(accessor.offset())).and_then(|n| n.checked_add(element));
+    if end.is_none_or(|end| end > view.length()) {
+        return Err(format!("read {count} elements from {} bytes of buffer view", view.length()));
+    }
+    Ok(())
+}
+
+/// `My%20Rig.bin` -> `My Rig.bin`: the `%XX` escapes of a URI reference decoded, as Bevy's loader
+/// does before it reads a buffer file (the glTF spec has file names percent-encoded). An escape
+/// that is not two hex digits stays as written; `None` when the bytes are not UTF-8.
+fn percent_decode(uri: &str) -> Option<String> {
+    let bytes = uri.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let escape = if bytes[i] == b'%' && i + 2 < bytes.len() { hex(bytes[i + 1]).zip(hex(bytes[i + 2])) } else { None };
+        match escape {
+            Some((high, low)) => {
+                out.push(high * 16 + low);
+                i += 3;
+            }
+            None => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+fn hex(c: u8) -> Option<u8> {
+    char::from(c).to_digit(16).map(|d| d as u8)
+}
+
 /// Standard base64 (with or without padding); `None` on anything else.
 fn decode_base64(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(text.len() / 4 * 3);
@@ -326,7 +408,12 @@ pub(crate) mod tests {
             "bufferViews": views,
             "accessors": accessors,
         });
-        let mut json = serde_json::to_vec(&json).unwrap();
+        pack(&json, data)
+    }
+
+    /// A `.glb` of `json` (the document) and `data` (its binary chunk).
+    fn pack(json: &serde_json::Value, mut data: Vec<u8>) -> Vec<u8> {
+        let mut json = serde_json::to_vec(json).unwrap();
         while !json.len().is_multiple_of(4) {
             json.push(b' ');
         }
@@ -345,6 +432,43 @@ pub(crate) mod tests {
         out.extend(b"BIN\0");
         out.extend(data);
         out
+    }
+
+    /// The smallest document with a translation animation `a` on node `root` (key times 0 and 1
+    /// in a 8-byte view, two translations in a 24-byte view, 32 bytes of binary): the tests of
+    /// broken files change one thing in it.
+    fn tiny() -> serde_json::Value {
+        serde_json::json!({
+            "asset": {"version": "2.0"},
+            "scene": 0,
+            "scenes": [{"nodes": [0]}],
+            "nodes": [{"name": "root", "children": [1]}, {"name": "hips"}],
+            "animations": [{
+                "name": "a",
+                "channels": [{"sampler": 0, "target": {"node": 0, "path": "translation"}}],
+                "samplers": [{"input": 0, "output": 1, "interpolation": "LINEAR"}],
+            }],
+            "buffers": [{"byteLength": 32}],
+            "bufferViews": [
+                {"buffer": 0, "byteOffset": 0, "byteLength": 8},
+                {"buffer": 0, "byteOffset": 8, "byteLength": 24},
+            ],
+            "accessors": [
+                {"bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0.0], "max": [1.0]},
+                {"bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC3"},
+            ],
+        })
+    }
+
+    fn tiny_data() -> Vec<u8> {
+        let mut data = Vec::new();
+        floats(&mut data, &[0.0, 1.0]);
+        floats(&mut data, &[0.0, 0.0, 0.0, 0.0, 0.0, 2.0]);
+        data
+    }
+
+    fn parse_tiny(json: &serde_json::Value) -> Result<ClipFile, String> {
+        ClipFile::parse(&pack(json, tiny_data()), None)
     }
 
     #[test]
@@ -385,5 +509,93 @@ pub(crate) mod tests {
         assert_eq!(decode_base64("aGVsbG8=").unwrap(), b"hello");
         assert_eq!(decode_base64("AAEC").unwrap(), [0, 1, 2]);
         assert!(decode_base64("a*b").is_none());
+    }
+
+    #[test]
+    fn the_smallest_document_reads() {
+        let file = parse_tiny(&tiny()).unwrap();
+        assert_eq!(file.animation_names(), ["a"]);
+        assert_eq!(file.duration("a"), Some(1.0));
+        assert_eq!(file.translation("a", "root").unwrap().sample(0.5).z, 1.0);
+    }
+
+    #[test]
+    fn nodes_that_form_a_cycle_are_an_error_not_a_hang() {
+        for nodes in [
+            // A node that is its own child.
+            serde_json::json!([{"name": "root", "children": [0]}]),
+            // Two that are each other's.
+            serde_json::json!([{"name": "root", "children": [1]}, {"name": "hips", "children": [0]}]),
+            // One hanging off a loop it is not in.
+            serde_json::json!([{"name": "root", "children": [1]}, {"name": "hips", "children": [2]}, {"name": "tail", "children": [1]}]),
+        ] {
+            let mut json = tiny();
+            json["nodes"] = nodes.clone();
+            let error = parse_tiny(&json).unwrap_err();
+            assert!(error.contains("form a cycle"), "{nodes}: {error}");
+        }
+    }
+
+    #[test]
+    fn an_accessor_the_gltf_crate_would_panic_on_is_an_error() {
+        // Each change breaks the document one way; the `gltf` crate's iterator panics on the
+        // first three in a debug build (a count of 0, a stride under the element, a wrong type).
+        let cases: [(&str, serde_json::Value, &str); 8] = [
+            ("/accessors/0/count", serde_json::json!(0), "key times that are an accessor with a count of 0"),
+            ("/accessors/1/count", serde_json::json!(0), "translations that are an accessor with a count of 0"),
+            ("/bufferViews/1/byteStride", serde_json::json!(4), "translations that have a byteStride of 4, less than the 12 bytes"),
+            ("/accessors/0/type", serde_json::json!("VEC3"), "key times that are Vec3 of F32, not Scalar of F32"),
+            ("/accessors/1/componentType", serde_json::json!(5123), "translations that are Vec3 of U16, not Vec3 of F32"),
+            ("/accessors/1/count", serde_json::json!(3), "translations that read 3 elements from 24 bytes"),
+            ("/accessors/1/count", serde_json::json!(u64::MAX), "translations that read"),
+            ("/bufferViews/1/byteOffset", serde_json::json!(4096), "translations that sit in a buffer view of 24 bytes at 4096"),
+        ];
+        for (pointer, value, expected) in cases {
+            let mut json = tiny();
+            let (parent, key) = pointer.rsplit_once('/').unwrap();
+            json.pointer_mut(parent).unwrap()[key] = value.clone();
+            let error = parse_tiny(&json).unwrap_err();
+            assert!(error.contains(expected), "{pointer} = {value}: {error}");
+        }
+        let mut sparse = tiny();
+        sparse["accessors"][0]["sparse"] = serde_json::json!({
+            "count": 1,
+            "indices": {"bufferView": 0, "componentType": 5123},
+            "values": {"bufferView": 0},
+        });
+        assert!(parse_tiny(&sparse).unwrap_err().contains("sparse accessor"));
+    }
+
+    #[test]
+    fn percent_escapes_decode_as_bevy_does() {
+        assert_eq!(percent_decode("My%20Rig.bin").as_deref(), Some("My Rig.bin"));
+        assert_eq!(percent_decode("caf%C3%A9.bin").as_deref(), Some("café.bin"));
+        assert_eq!(percent_decode("plain.bin").as_deref(), Some("plain.bin"));
+        // What is not an escape stays as written.
+        assert_eq!(percent_decode("100%").as_deref(), Some("100%"));
+        assert_eq!(percent_decode("a%2").as_deref(), Some("a%2"));
+        assert_eq!(percent_decode("a%zzb").as_deref(), Some("a%zzb"));
+        assert_eq!(percent_decode("a%2/b").as_deref(), Some("a%2/b"));
+        // Bytes that are not UTF-8 once decoded.
+        assert_eq!(percent_decode("%ff.bin"), None);
+    }
+
+    #[test]
+    fn a_gltf_reads_a_buffer_file_with_an_escaped_name() {
+        let dir = std::env::temp_dir().join(format!("shards_action_clipfile_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut json = tiny();
+        json["buffers"][0]["uri"] = serde_json::json!("My%20Rig.bin");
+        std::fs::write(dir.join("My Rig.gltf"), serde_json::to_vec(&json).unwrap()).unwrap();
+        std::fs::write(dir.join("My Rig.bin"), tiny_data()).unwrap();
+        let read = ClipFile::read(&dir.join("My Rig.gltf"));
+        // A buffer that is not there is reported under the name the file gives it.
+        json["buffers"][0]["uri"] = serde_json::json!("Missing%20Rig.bin");
+        std::fs::write(dir.join("Missing.gltf"), serde_json::to_vec(&json).unwrap()).unwrap();
+        let missing = ClipFile::read(&dir.join("Missing.gltf"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = read.unwrap();
+        assert_eq!(file.duration("a"), Some(1.0));
+        assert!(missing.unwrap_err().contains("names buffer `Missing%20Rig.bin`, which cannot be read"));
     }
 }
