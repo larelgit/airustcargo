@@ -6,7 +6,7 @@
   "check_detail": "components",
   "end": {
     "tick": 258,
-    "hash": "d30164e8835b4f7e",
+    "hash": "80c6f7ef19f37e53",
     "parts": {
       "entities": {
         "e1": {
@@ -24,14 +24,17 @@
           "Intent": "efc21f5a2e526384",
           "LocalPlayer": "9649be778570e9b6",
           "LocomotionInput": "4f1a93feb56560a8",
+          "Look": "ecf6fef6b7ff4e12",
           "MotionState": "eb4bb2e42f164025",
           "Name": "ce1e47879de8c7a1",
           "PlayerId": "881ccf3ad5b62384",
           "Poise": "ca3929246ff27a75",
+          "SaveKey": "5c40d418d81eb331",
           "Stamina": "6f212cdc865a2f25",
           "Statuses": "3fb30d18ef67d4e2",
           "Team": "165e6b65a6b6cead",
-          "Transform": "3975a056ff596f13"
+          "Transform": "3975a056ff596f13",
+          "Trophies": "6b7f655af8ee3e0b"
         },
         "e2": {
           "ActionState": "40ba1e72bdfd5c39",
@@ -49,9 +52,11 @@
           "Intent": "46b74b4f65dfc167",
           "LockOnTarget": "8e7e24c8d091cff2",
           "LocomotionInput": "031944208650e41a",
+          "Look": "6c7e5a70b01a07f9",
           "MotionState": "9449d231e0a3f008",
           "Name": "ff2e9aef750f28b8",
           "Poise": "18588f6e549ca032",
+          "SaveKey": "efc5178c8a6b8c55",
           "Statuses": "3fb30d18ef67d4e2",
           "Team": "e1125bce710d6b86",
           "Transform": "c039350ce30a3d1e"
@@ -82,7 +87,7 @@
         }
       },
       "game": {
-        "content": "6a88c3374f9874b6"
+        "content": "493fd4ba604fc3b9"
       }
     }
   },
@@ -191,7 +196,7 @@
   "checks": [
     {
       "tick": 60,
-      "hash": "c1484b9e1d104f4d",
+      "hash": "833cec2ee465569b",
       "parts": {
         "entities": {
           "e1": {
@@ -209,14 +214,17 @@
             "Intent": "0d3bfe20d042f5a6",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "0c2da60b72c10b32",
+            "Look": "ecf6fef6b7ff4e12",
             "MotionState": "c34882907a8125ee",
             "Name": "ce1e47879de8c7a1",
             "PlayerId": "881ccf3ad5b62384",
             "Poise": "53546dce4d2b9cfb",
+            "SaveKey": "5c40d418d81eb331",
             "Stamina": "b87a70e945624bac",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "bf58b76e5fe846aa"
+            "Transform": "bf58b76e5fe846aa",
+            "Trophies": "71f365e74b8ecd7e"
           },
           "e2": {
             "ActionState": "a414b3792e392e19",
@@ -233,9 +241,11 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "6c7e5a70b01a07f9",
             "MotionState": "f356552503cd2cb2",
             "Name": "ff2e9aef750f28b8",
             "Poise": "8c2609fc4557aa39",
+            "SaveKey": "efc5178c8a6b8c55",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
             "Transform": "d9cd696730878f70"
@@ -266,13 +276,13 @@
           }
         },
         "game": {
-          "content": "6a88c3374f9874b6"
+          "content": "493fd4ba604fc3b9"
         }
       }
     },
     {
       "tick": 120,
-      "hash": "9d4f02df32ef40ef",
+      "hash": "fafc7af5b93197e1",
       "parts": {
         "entities": {
           "e1": {
@@ -290,14 +300,17 @@
             "Intent": "0d3bfe20d042f5a6",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "0c2da60b72c10b32",
+            "Look": "ecf6fef6b7ff4e12",
             "MotionState": "d0137a10b1814f0e",
             "Name": "ce1e47879de8c7a1",
             "PlayerId": "881ccf3ad5b62384",
             "Poise": "53546dce4d2b9cfb",
+            "SaveKey": "5c40d418d81eb331",
             "Stamina": "b87a70e945624bac",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "105d2a42d8671cce"
+            "Transform": "105d2a42d8671cce",
+            "Trophies": "71f365e74b8ecd7e"
           },
           "e2": {
             "ActionState": "a414b3792e392e19",
@@ -314,9 +327,11 @@
             "Intent": "520703a08c1a3178",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "6bd74f2753bd97b8",
+            "Look": "6c7e5a70b01a07f9",
             "MotionState": "5319055c7fc0c45b",
             "Name": "ff2e9aef750f28b8",
             "Poise": "8c2609fc4557aa39",
+            "SaveKey": "efc5178c8a6b8c55",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
             "Transform": "d4f52ee5d7c32652"
@@ -347,13 +362,13 @@
           }
         },
         "game": {
-          "content": "6a88c3374f9874b6"
+          "content": "493fd4ba604fc3b9"
         }
       }
     },
     {
       "tick": 180,
-      "hash": "16791cbeb174249b",
+      "hash": "780442715aabd517",
       "parts": {
         "entities": {
           "e1": {
@@ -371,14 +386,17 @@
             "Intent": "efc21f5a2e526384",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "6801e5f3a113f594",
+            "Look": "ecf6fef6b7ff4e12",
             "MotionState": "8a07eade4fd582f3",
             "Name": "ce1e47879de8c7a1",
             "PlayerId": "881ccf3ad5b62384",
             "Poise": "53546dce4d2b9cfb",
+            "SaveKey": "5c40d418d81eb331",
             "Stamina": "1eaea83a32c7ba43",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "01b7c8fc47b4b44c"
+            "Transform": "01b7c8fc47b4b44c",
+            "Trophies": "71f365e74b8ecd7e"
           },
           "e2": {
             "ActionState": "b27b4dfb8865e20a",
@@ -395,9 +413,11 @@
             "Intent": "e0ca250c59da9840",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "031944208650e41a",
+            "Look": "6c7e5a70b01a07f9",
             "MotionState": "9449d231e0a3f008",
             "Name": "ff2e9aef750f28b8",
             "Poise": "994a570eda8dfe0a",
+            "SaveKey": "efc5178c8a6b8c55",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
             "Transform": "c039350ce30a3d1e"
@@ -428,13 +448,13 @@
           }
         },
         "game": {
-          "content": "6a88c3374f9874b6"
+          "content": "493fd4ba604fc3b9"
         }
       }
     },
     {
       "tick": 240,
-      "hash": "09b20541fd23a63f",
+      "hash": "3a12652fd5e4d50b",
       "parts": {
         "entities": {
           "e1": {
@@ -452,14 +472,17 @@
             "Intent": "efc21f5a2e526384",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "6801e5f3a113f594",
+            "Look": "ecf6fef6b7ff4e12",
             "MotionState": "5f8d878223e91a0d",
             "Name": "ce1e47879de8c7a1",
             "PlayerId": "881ccf3ad5b62384",
             "Poise": "aa1f84b9b4abbcf2",
+            "SaveKey": "5c40d418d81eb331",
             "Stamina": "465a9306298f0df4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "27a6a28247bc676b"
+            "Transform": "27a6a28247bc676b",
+            "Trophies": "71f365e74b8ecd7e"
           },
           "e2": {
             "ActionState": "a7764145801dc900",
@@ -476,9 +499,11 @@
             "Intent": "db2ac61006d7c4f3",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "031944208650e41a",
+            "Look": "6c7e5a70b01a07f9",
             "MotionState": "9449d231e0a3f008",
             "Name": "ff2e9aef750f28b8",
             "Poise": "4d686ea02a3f4a47",
+            "SaveKey": "efc5178c8a6b8c55",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
             "Transform": "c039350ce30a3d1e"
@@ -509,7 +534,7 @@
           }
         },
         "game": {
-          "content": "6a88c3374f9874b6"
+          "content": "493fd4ba604fc3b9"
         }
       }
     }

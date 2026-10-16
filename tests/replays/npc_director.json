@@ -6,13 +6,14 @@
   "check_detail": "components",
   "end": {
     "tick": 1923,
-    "hash": "b909e9a4b9447c7f",
+    "hash": "d50787de62fa9434",
     "parts": {
       "entities": {
         "e1": {
           "Body": "e406ed6e99cc6b9a",
           "Collider": "fe3aec64863beaa5",
           "ColliderId": "bed2f67298c5d4b8",
+          "Look": "d739ebcc02ffd834",
           "Name": "061aaa57a4d625c3",
           "Pillar": "aaf80ef159585437",
           "Transform": "041e2e43567b55d9"
@@ -21,6 +22,7 @@
           "Body": "e406ed6e99cc6b9a",
           "Collider": "fe3aec64863beaa5",
           "ColliderId": "ce2867f4591df34f",
+          "Look": "d739ebcc02ffd834",
           "Name": "061aaa57a4d625c3",
           "Pillar": "aaf80ef159585437",
           "Transform": "280926ac8df55015"
@@ -29,6 +31,7 @@
           "Body": "e406ed6e99cc6b9a",
           "Collider": "fe3aec64863beaa5",
           "ColliderId": "13e967db9b4d1116",
+          "Look": "d739ebcc02ffd834",
           "Name": "061aaa57a4d625c3",
           "Pillar": "aaf80ef159585437",
           "Transform": "d80cde9f049c660f"
@@ -37,6 +40,7 @@
           "Body": "e406ed6e99cc6b9a",
           "Collider": "fe3aec64863beaa5",
           "ColliderId": "2b68a115042adea5",
+          "Look": "d739ebcc02ffd834",
           "Name": "061aaa57a4d625c3",
           "Pillar": "aaf80ef159585437",
           "Transform": "ea2d4533c2f7918b"
@@ -56,6 +60,7 @@
           "Intent": "38dab3b75de55ab8",
           "LocalPlayer": "9649be778570e9b6",
           "LocomotionInput": "39e4de9fd83ac7a7",
+          "Look": "e44906346a412547",
           "MotionState": "180d43affed10091",
           "Name": "34a01a235b960c38",
           "Player": "d4e87c7e9cc60712",
@@ -83,6 +88,7 @@
           "Intent": "38dab3b75de55ab8",
           "LockOnTarget": "8e7e24c8d091cff2",
           "LocomotionInput": "39e4de9fd83ac7a7",
+          "Look": "69d0ee91f082244b",
           "MotionState": "1b0f39eab5831839",
           "Name": "c60481842b5403a4",
           "NavAgent": "59682c99cad9d12c",
@@ -112,7 +118,8 @@
           "Intent": "56c0e6442de46bcc",
           "LockOnTarget": "8e7e24c8d091cff2",
           "LocomotionInput": "555ca5022db308d5",
-          "MotionState": "c1871e624cdae6bf",
+          "Look": "f94c630656387237",
+          "MotionState": "46ea562760adb0d9",
           "Name": "69a7067b825ad410",
           "NavAgent": "2dbce6f8cc54a7d0",
           "Npc": "5261f0cbfc256463",
@@ -125,7 +132,7 @@
           "Skeleton": "fa92b4aa8d957e72",
           "Statuses": "3fb30d18ef67d4e2",
           "Team": "e1125bce710d6b86",
-          "Transform": "41da62258d340ef0"
+          "Transform": "bcfc2edf496cb25f"
         },
         "e8": {
           "ActionState": "249fb957d17efba4",
@@ -140,12 +147,13 @@
           "Health": "912481d4b2622c56",
           "Home": "bdbfb97f2809c9b0",
           "InputBuffer": "ef38bf400db90191",
-          "Intent": "0ee0409b9b12963d",
+          "Intent": "8acb1bbe47aa19bc",
           "LockOnTarget": "8e7e24c8d091cff2",
-          "LocomotionInput": "8cc89e398b2cc7bb",
-          "MotionState": "b4748cef4ae5d124",
+          "LocomotionInput": "4defb1ad9725c85a",
+          "Look": "f94c630656387237",
+          "MotionState": "54813c374053c309",
           "Name": "69a7067b825ad410",
-          "NavAgent": "d315ceee79d178f5",
+          "NavAgent": "2998ca723bdce794",
           "Npc": "5261f0cbfc256463",
           "NpcBrain": "38165966003c2021",
           "NpcDrive": "85d4bed7492acd1f",
@@ -156,7 +164,7 @@
           "Skeleton": "fa92b4aa8d957e72",
           "Statuses": "3fb30d18ef67d4e2",
           "Team": "e1125bce710d6b86",
-          "Transform": "8f892a73ee616673"
+          "Transform": "183c9eda8cf4cc7d"
         },
         "e9": {
           "LayoutPiece": "83e361eaafe2d570",
@@ -203,6 +211,7 @@
           "Intent": "c0e275451a0febb4",
           "LockOnTarget": "8e7e24c8d091cff2",
           "LocomotionInput": "263192c5f8f0a81f",
+          "Look": "f94c630656387237",
           "MotionState": "d30199a013cd73f6",
           "Name": "69a7067b825ad410",
           "NavAgent": "b2f0740640d9a3f7",
@@ -220,7 +229,7 @@
         }
       },
       "game": {
-        "content": "ad91af3fc5344219"
+        "content": "1900c86b0f5759af"
       }
     }
   },
@@ -633,13 +642,14 @@
   "checks": [
     {
       "tick": 60,
-      "hash": "4983e65791866da6",
+      "hash": "8b4def94dc4c4aa8",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -648,6 +658,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -656,6 +667,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -664,6 +676,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -683,6 +696,7 @@
             "Intent": "38dab3b75de55ab8",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "e0e9647bb7b53e44",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -710,6 +724,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -739,6 +754,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "f94c630656387237",
             "MotionState": "a479ec98c2ca52a5",
             "Name": "69a7067b825ad410",
             "NavAgent": "59682c99cad9d12c",
@@ -770,6 +786,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "f94c630656387237",
             "MotionState": "45b7aeb32aeb0ff5",
             "Name": "69a7067b825ad410",
             "NavAgent": "59682c99cad9d12c",
@@ -830,6 +847,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "f94c630656387237",
             "MotionState": "9a431375471c8d4d",
             "Name": "69a7067b825ad410",
             "NavAgent": "59682c99cad9d12c",
@@ -847,19 +865,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 120,
-      "hash": "b76518e093ef60fe",
+      "hash": "92942463286eaeb0",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -868,6 +887,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -876,6 +896,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -884,6 +905,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -903,6 +925,7 @@
             "Intent": "38dab3b75de55ab8",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "e0e9647bb7b53e44",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -930,6 +953,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -959,6 +983,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "f94c630656387237",
             "MotionState": "a479ec98c2ca52a5",
             "Name": "69a7067b825ad410",
             "NavAgent": "59682c99cad9d12c",
@@ -990,6 +1015,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "f94c630656387237",
             "MotionState": "45b7aeb32aeb0ff5",
             "Name": "69a7067b825ad410",
             "NavAgent": "59682c99cad9d12c",
@@ -1050,6 +1076,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "f94c630656387237",
             "MotionState": "9a431375471c8d4d",
             "Name": "69a7067b825ad410",
             "NavAgent": "59682c99cad9d12c",
@@ -1067,19 +1094,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 180,
-      "hash": "770ee88a955b02c0",
+      "hash": "90ae18e2ea71f887",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -1088,6 +1116,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -1096,6 +1125,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -1104,6 +1134,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -1124,6 +1155,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -1151,6 +1183,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -1180,6 +1213,7 @@
             "Intent": "168ac55380a96ac5",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "89f716d44f96518c",
+            "Look": "f94c630656387237",
             "MotionState": "759b6df1b2330a3b",
             "Name": "69a7067b825ad410",
             "NavAgent": "2af0337fea937f9d",
@@ -1211,6 +1245,7 @@
             "Intent": "15e3ab4cfb18ff5b",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "ab63ab161cc6ca72",
+            "Look": "f94c630656387237",
             "MotionState": "1961fc3889ace06b",
             "Name": "69a7067b825ad410",
             "NavAgent": "3a961315430aa9ab",
@@ -1271,6 +1306,7 @@
             "Intent": "7a62f3dc3d3e5d47",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "09d73b6eba6600ba",
+            "Look": "f94c630656387237",
             "MotionState": "e2e7cb436d341fdf",
             "Name": "69a7067b825ad410",
             "NavAgent": "b7463127acc71e0a",
@@ -1284,23 +1320,24 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "4ad37e0281f846ff"
+            "Transform": "b5f13b197ab638b4"
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 240,
-      "hash": "ed13112a1db92f81",
+      "hash": "3af24fec5f9738cf",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -1309,6 +1346,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -1317,6 +1355,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -1325,6 +1364,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -1345,6 +1385,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -1372,6 +1413,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -1401,6 +1443,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "3f76f1dd9236057a",
+            "Look": "f94c630656387237",
             "MotionState": "603fbd12f4e97ba7",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
@@ -1432,6 +1475,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "b7c347416c1fcae5",
+            "Look": "f94c630656387237",
             "MotionState": "71fa1e7f5fbe96b8",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
@@ -1492,6 +1536,7 @@
             "Intent": "e6c9553da5652b6c",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "b05e8c9bbfe46856",
+            "Look": "f94c630656387237",
             "MotionState": "6dd5d2557a6f7c0e",
             "Name": "69a7067b825ad410",
             "NavAgent": "a5d0d88082f688b9",
@@ -1509,19 +1554,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 300,
-      "hash": "e7c9ca29f6adedb6",
+      "hash": "956d6995b5809992",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -1530,6 +1576,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -1538,6 +1585,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -1546,6 +1594,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -1566,6 +1615,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -1593,6 +1643,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -1622,6 +1673,7 @@
             "Intent": "ba254f53263e5b6a",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "639a29fc68088bf7",
+            "Look": "f94c630656387237",
             "MotionState": "65d14540048be197",
             "Name": "69a7067b825ad410",
             "NavAgent": "05a89169fb2e092b",
@@ -1653,6 +1705,7 @@
             "Intent": "7d73177f5b755710",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "684a648206235d98",
+            "Look": "f94c630656387237",
             "MotionState": "f1c11d6022b578c6",
             "Name": "69a7067b825ad410",
             "NavAgent": "849ff19bea6d11a1",
@@ -1713,6 +1766,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "4b4b576b33455784",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "1b5274ad9dc91229",
@@ -1730,19 +1784,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 360,
-      "hash": "b3b1fe761884f003",
+      "hash": "41f68e2fb8dc15af",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -1751,6 +1806,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -1759,6 +1815,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -1767,6 +1824,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -1787,6 +1845,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -1814,6 +1873,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -1843,6 +1903,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "57ca0f7222ace4e7",
+            "Look": "f94c630656387237",
             "MotionState": "f17ab31cb37dedb2",
             "Name": "69a7067b825ad410",
             "NavAgent": "cc7bace870ab59f3",
@@ -1874,6 +1935,7 @@
             "Intent": "086b7eca3ee75b2c",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "e6444bb19f6f6704",
+            "Look": "f94c630656387237",
             "MotionState": "5bae3f1fcb6d511e",
             "Name": "69a7067b825ad410",
             "NavAgent": "86e6d52b652a95ac",
@@ -1934,6 +1996,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -1951,19 +2014,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 420,
-      "hash": "08487906b22a5ebf",
+      "hash": "c686275c0dc599ab",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -1972,6 +2036,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -1980,6 +2045,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -1988,6 +2054,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -2008,6 +2075,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -2035,6 +2103,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -2064,6 +2133,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "6b9bed55be4e27cb",
+            "Look": "f94c630656387237",
             "MotionState": "0832c2beb01beffd",
             "Name": "69a7067b825ad410",
             "NavAgent": "e783faaefd92952f",
@@ -2095,6 +2165,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "818e0c75db0701ca",
+            "Look": "f94c630656387237",
             "MotionState": "1aedd15ff32b1121",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
@@ -2155,6 +2226,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -2172,19 +2244,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 480,
-      "hash": "7a5d4586a7cb0e0c",
+      "hash": "8ce0ee2c8982d076",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -2193,6 +2266,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -2201,6 +2275,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -2209,6 +2284,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -2229,6 +2305,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -2256,6 +2333,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -2285,6 +2363,7 @@
             "Intent": "e700b424e09709d8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "de7ccbd5e67d5ea8",
+            "Look": "f94c630656387237",
             "MotionState": "748b345c6df7a531",
             "Name": "69a7067b825ad410",
             "NavAgent": "7b80caf4b257dfc7",
@@ -2316,6 +2395,7 @@
             "Intent": "9e511fb5bef4ed3b",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "d33e78c34b176006",
+            "Look": "f94c630656387237",
             "MotionState": "175aceeccbc45829",
             "Name": "69a7067b825ad410",
             "NavAgent": "eac791b1f16b0b25",
@@ -2376,6 +2456,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "4b4b576b33455784",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
@@ -2393,19 +2474,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 540,
-      "hash": "feb561e79e4a8c6c",
+      "hash": "01d396c9cc8d635e",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -2414,6 +2496,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -2422,6 +2505,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -2430,6 +2514,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -2450,6 +2535,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -2477,6 +2563,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -2506,6 +2593,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "79dee2a6c64e5e8d",
+            "Look": "f94c630656387237",
             "MotionState": "0c861768c2123bb7",
             "Name": "69a7067b825ad410",
             "NavAgent": "abe8e9083fa13417",
@@ -2537,6 +2625,7 @@
             "Intent": "2b955f0c2897f4d8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "cd61c457c6ea7f97",
+            "Look": "f94c630656387237",
             "MotionState": "7e36df5da4b26702",
             "Name": "69a7067b825ad410",
             "NavAgent": "0201eb587386ad04",
@@ -2597,6 +2686,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -2614,19 +2704,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 600,
-      "hash": "b39ab44586a14a7e",
+      "hash": "f79c4642fd9f619c",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -2635,6 +2726,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -2643,6 +2735,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -2651,6 +2744,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -2671,6 +2765,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -2698,6 +2793,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -2727,6 +2823,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "4cefd62d0939c542",
+            "Look": "f94c630656387237",
             "MotionState": "97dae39fa3daf13e",
             "Name": "69a7067b825ad410",
             "NavAgent": "014b724f03216de3",
@@ -2758,6 +2855,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "6df633c6534f412a",
+            "Look": "f94c630656387237",
             "MotionState": "8ed879950f4f9a1a",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
@@ -2818,6 +2916,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -2835,19 +2934,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 660,
-      "hash": "cd06acd462820d8c",
+      "hash": "4da6dfd45d87ac32",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -2856,6 +2956,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -2864,6 +2965,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -2872,6 +2974,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -2892,6 +2995,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -2919,6 +3023,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -2948,6 +3053,7 @@
             "Intent": "52c2b7e33c138234",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "bfc74f8c9db12d45",
+            "Look": "f94c630656387237",
             "MotionState": "e7eadb7a5d35ff48",
             "Name": "69a7067b825ad410",
             "NavAgent": "ce98d54275315116",
@@ -2979,6 +3085,7 @@
             "Intent": "16428a179b50a859",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "60f5e9f950e00d48",
+            "Look": "f94c630656387237",
             "MotionState": "76af3bc0f8118db7",
             "Name": "69a7067b825ad410",
             "NavAgent": "f0bec188f2b3ae25",
@@ -3039,6 +3146,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "4b4b576b33455784",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
@@ -3056,19 +3164,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 720,
-      "hash": "4fd7c2e7da7608c2",
+      "hash": "ea08cb4a97da4732",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -3077,6 +3186,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -3085,6 +3195,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -3093,6 +3204,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -3113,6 +3225,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -3140,6 +3253,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -3169,6 +3283,7 @@
             "Intent": "136b96cff7005003",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "0189d2acc0dd7ba4",
+            "Look": "f94c630656387237",
             "MotionState": "c492866793a8d0bd",
             "Name": "69a7067b825ad410",
             "NavAgent": "ea193f7d33d86b70",
@@ -3200,6 +3315,7 @@
             "Intent": "5a44599b601ef812",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "dc904dfcbad37512",
+            "Look": "f94c630656387237",
             "MotionState": "adbcd02a8a56f939",
             "Name": "69a7067b825ad410",
             "NavAgent": "704b88d0c8fd3321",
@@ -3260,6 +3376,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -3277,19 +3394,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 780,
-      "hash": "9b07e8391e7897d8",
+      "hash": "ec33aed54c444f2e",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -3298,6 +3416,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -3306,6 +3425,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -3314,6 +3434,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -3334,6 +3455,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -3361,6 +3483,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -3390,6 +3513,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "fa81d357d5196a49",
+            "Look": "f94c630656387237",
             "MotionState": "ae1b8ef0d2eafa32",
             "Name": "69a7067b825ad410",
             "NavAgent": "79d84d89b0a5ef0f",
@@ -3421,6 +3545,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "f96dad4ed0ec34fb",
+            "Look": "f94c630656387237",
             "MotionState": "82dbbbd26b71222f",
             "Name": "69a7067b825ad410",
             "NavAgent": "fa284b3abc611145",
@@ -3434,7 +3559,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "6693580d9491927e"
+            "Transform": "4a7590ae2404b5cc"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -3481,6 +3606,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -3498,19 +3624,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 840,
-      "hash": "09f5cc589d94d0c9",
+      "hash": "3e58c710bf992c3f",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -3519,6 +3646,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -3527,6 +3655,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -3535,6 +3664,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -3555,6 +3685,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -3582,6 +3713,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -3611,6 +3743,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "fa81d357d5196a49",
+            "Look": "f94c630656387237",
             "MotionState": "ae1b8ef0d2eafa32",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
@@ -3642,6 +3775,7 @@
             "Intent": "7abf1460415f32d3",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "c688aa69a07802d6",
+            "Look": "f94c630656387237",
             "MotionState": "9319900c737849eb",
             "Name": "69a7067b825ad410",
             "NavAgent": "045af33685e22d94",
@@ -3655,7 +3789,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "0f518a065ac9cd10"
+            "Transform": "bfcfb2abed01665e"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -3702,6 +3836,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "4b4b576b33455784",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
@@ -3719,19 +3854,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 900,
-      "hash": "94835bdf95aebe86",
+      "hash": "95429554d184682e",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -3740,6 +3876,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -3748,6 +3885,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -3756,6 +3894,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -3776,6 +3915,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -3803,6 +3943,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -3829,12 +3970,13 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "d12f7daed29e52df",
+            "Intent": "fb633957142d4653",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "dfda6289c1f722d0",
-            "MotionState": "38e93c1f342a5eb2",
+            "LocomotionInput": "3c001fdf0f9ca631",
+            "Look": "f94c630656387237",
+            "MotionState": "dae8d3298c297865",
             "Name": "69a7067b825ad410",
-            "NavAgent": "a4d5e5cab3c5ed09",
+            "NavAgent": "4dd2fb0791ffcc73",
             "Npc": "5261f0cbfc256463",
             "NpcBrain": "44654633dfd09192",
             "NpcDrive": "09975bace063168e",
@@ -3845,7 +3987,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "f86bcdd94bfc0b85"
+            "Transform": "4c31e83e0c3b0a9d"
           },
           "e8": {
             "ActionState": "d0cca6b305806f35",
@@ -3863,7 +4005,8 @@
             "Intent": "ea4df0d828a36c90",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "eca5989db35c02df",
-            "MotionState": "c71bbe8ec8d499e3",
+            "Look": "f94c630656387237",
+            "MotionState": "ccc3de2cfc511c38",
             "Name": "69a7067b825ad410",
             "NavAgent": "8fd85729e7436a83",
             "Npc": "5261f0cbfc256463",
@@ -3876,7 +4019,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "de1a396f3c804918"
+            "Transform": "7b7f2aa234ac8cd5"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -3923,6 +4066,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -3940,19 +4084,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 960,
-      "hash": "f4ff8514a979057b",
+      "hash": "c85696a21349f2fc",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -3961,6 +4106,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -3969,6 +4115,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -3977,6 +4124,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -3997,6 +4145,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -4024,6 +4173,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -4053,7 +4203,8 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "d4e19d8cbd1123d1",
-            "MotionState": "87ea20e8c0dd7e83",
+            "Look": "f94c630656387237",
+            "MotionState": "a08daee14ad9559c",
             "Name": "69a7067b825ad410",
             "NavAgent": "77ceb6aed97215ab",
             "Npc": "5261f0cbfc256463",
@@ -4066,7 +4217,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "33e6269403bf320e"
+            "Transform": "b085398004d11c59"
           },
           "e8": {
             "ActionState": "d0cca6b305806f35",
@@ -4081,12 +4232,13 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "8aa032b951c8e3a0",
+            "Intent": "b2d1489077c5026b",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "dde0a90780f7a2c9",
-            "MotionState": "9d5afc914a45a66a",
+            "LocomotionInput": "8e19660051406d0d",
+            "Look": "f94c630656387237",
+            "MotionState": "3b8d8795ffc7d6aa",
             "Name": "69a7067b825ad410",
-            "NavAgent": "71d4b08a88b16b7e",
+            "NavAgent": "54b6d6eeb69fb919",
             "Npc": "5261f0cbfc256463",
             "NpcBrain": "0785dc7f53df72e2",
             "NpcDrive": "d74056390428a287",
@@ -4097,7 +4249,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "f19fe190e95f4485"
+            "Transform": "9997aa46f8baa040"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -4144,6 +4296,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -4161,19 +4314,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 1020,
-      "hash": "dd5a99751a0c00e5",
+      "hash": "d2b333988818a53f",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -4182,6 +4336,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -4190,6 +4345,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -4198,6 +4354,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -4218,6 +4375,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -4245,6 +4403,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -4259,7 +4418,7 @@
             "Transform": "2dc2e23c7b44514e"
           },
           "e7": {
-            "ActionState": "8f38623e547e1021",
+            "ActionState": "4dc0c17efb3f378a",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "833f302447b6c1ec",
             "Body": "c5fb29ebf3188250",
@@ -4273,8 +4432,9 @@
             "InputBuffer": "ef38bf400db90191",
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "64deb3a2d7fe1321",
-            "MotionState": "824472372501a69a",
+            "LocomotionInput": "3e1998cceefcc706",
+            "Look": "f94c630656387237",
+            "MotionState": "23d51a34ff6983e4",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
             "Npc": "5261f0cbfc256463",
@@ -4287,10 +4447,10 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "90bddb77b2d6d523"
+            "Transform": "662b6f8a322d02ad"
           },
           "e8": {
-            "ActionState": "2b197b1bfc503f3b",
+            "ActionState": "2090b6b0c35f639f",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "60cc55dca93935ba",
             "Body": "c5fb29ebf3188250",
@@ -4304,8 +4464,9 @@
             "InputBuffer": "ef38bf400db90191",
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "da47edebaa9142dd",
-            "MotionState": "232620a467e53b5c",
+            "LocomotionInput": "60164d9304c895cf",
+            "Look": "f94c630656387237",
+            "MotionState": "2e9c171c627c8085",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
             "Npc": "5261f0cbfc256463",
@@ -4318,7 +4479,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "ece3bab6de0b9dd0"
+            "Transform": "82df10d5e9a68f03"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -4365,6 +4526,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -4382,19 +4544,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 1080,
-      "hash": "12f3e6ce6b2e6ed2",
+      "hash": "6daabe24a6a936b5",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -4403,6 +4566,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -4411,6 +4575,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -4419,6 +4584,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -4439,6 +4605,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -4466,6 +4633,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -4495,7 +4663,8 @@
             "Intent": "8a3e4257a1cb5a38",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "b158d2974e094f58",
-            "MotionState": "3e0cec4139290fad",
+            "Look": "f94c630656387237",
+            "MotionState": "f587d2dadf796dea",
             "Name": "69a7067b825ad410",
             "NavAgent": "ba10e8ed9eaa706b",
             "Npc": "5261f0cbfc256463",
@@ -4508,7 +4677,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "d6aa69403df6dbbb"
+            "Transform": "000645e2b54471f6"
           },
           "e8": {
             "ActionState": "f7e7c61dfa37ba88",
@@ -4526,9 +4695,10 @@
             "Intent": "dfafa846706a0bf3",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "3014eb8701375a95",
-            "MotionState": "581d35893305b1f0",
+            "Look": "f94c630656387237",
+            "MotionState": "630420f01caba2db",
             "Name": "69a7067b825ad410",
-            "NavAgent": "8ee502db50efa447",
+            "NavAgent": "8da47883b244d9ea",
             "Npc": "5261f0cbfc256463",
             "NpcBrain": "f865db75816d2f8e",
             "NpcDrive": "d9bfeebbcfaf6983",
@@ -4539,7 +4709,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "09f6c72dcd2652e8"
+            "Transform": "ffe6a3120fff78f1"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -4586,6 +4756,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "4b4b576b33455784",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
@@ -4603,19 +4774,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 1140,
-      "hash": "96b76c38deaf60e7",
+      "hash": "ec3adbd5c0cfeacb",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -4624,6 +4796,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -4632,6 +4805,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -4640,6 +4814,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -4660,6 +4835,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -4687,6 +4863,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -4716,7 +4893,8 @@
             "Intent": "a856264b3ef47bd5",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "88f62ebf82fc23ab",
-            "MotionState": "50794b64c7c388e2",
+            "Look": "f94c630656387237",
+            "MotionState": "2d36cb159c535a80",
             "Name": "69a7067b825ad410",
             "NavAgent": "2ae47bc86ff06c81",
             "Npc": "5261f0cbfc256463",
@@ -4729,7 +4907,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "8c8266cd87a3dddd"
+            "Transform": "7a846ccf4d79e553"
           },
           "e8": {
             "ActionState": "f7e7c61dfa37ba88",
@@ -4747,7 +4925,8 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "a507dc9191aef600",
-            "MotionState": "deae60f150b9df10",
+            "Look": "f94c630656387237",
+            "MotionState": "90deb6a8f87f450b",
             "Name": "69a7067b825ad410",
             "NavAgent": "e7edd4c70788ce9c",
             "Npc": "5261f0cbfc256463",
@@ -4760,7 +4939,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "438c6b6a88872cc3"
+            "Transform": "cf1cbc98a66ecfcc"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -4807,6 +4986,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -4824,19 +5004,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 1200,
-      "hash": "23098612574115bb",
+      "hash": "32590471de3dc7ad",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -4845,6 +5026,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -4853,6 +5035,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -4861,6 +5044,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -4881,6 +5065,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -4908,6 +5093,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -4937,7 +5123,8 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "e479419c8395d5b4",
-            "MotionState": "aef9a112dd2a6cf3",
+            "Look": "f94c630656387237",
+            "MotionState": "597ba562535b6cda",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
             "Npc": "5261f0cbfc256463",
@@ -4950,7 +5137,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "d5ed0e3278a6bad0"
+            "Transform": "58234bd9f5344bbf"
           },
           "e8": {
             "ActionState": "9cbcb352cfa01e7a",
@@ -4968,7 +5155,8 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "2bd0b564d64d1da3",
-            "MotionState": "b84770ea16152d3b",
+            "Look": "f94c630656387237",
+            "MotionState": "0ecce38cf1ab8175",
             "Name": "69a7067b825ad410",
             "NavAgent": "71bcb79800641699",
             "Npc": "5261f0cbfc256463",
@@ -4981,7 +5169,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "28f988f4755f19c2"
+            "Transform": "60c60515217cdcd6"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -5028,6 +5216,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -5045,19 +5234,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 1260,
-      "hash": "ba78181ae4a55572",
+      "hash": "ccaacf43acdfce0e",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -5066,6 +5256,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -5074,6 +5265,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -5082,6 +5274,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -5102,6 +5295,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -5129,6 +5323,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -5158,7 +5353,8 @@
             "Intent": "16c8e0af9feb359f",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "5a98dbed6a5af882",
-            "MotionState": "2787afb314cc258a",
+            "Look": "f94c630656387237",
+            "MotionState": "27487823b850915a",
             "Name": "69a7067b825ad410",
             "NavAgent": "1bb5ac95ea010b1b",
             "Npc": "5261f0cbfc256463",
@@ -5171,7 +5367,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "ee70a059b86aee6e"
+            "Transform": "79e89b60a2e7095a"
           },
           "e8": {
             "ActionState": "68697feb25800573",
@@ -5189,7 +5385,8 @@
             "Intent": "3eb4bca2b5f861a4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "c944161cfc8dabee",
-            "MotionState": "83d5c887b319f727",
+            "Look": "f94c630656387237",
+            "MotionState": "f42b2fa7fef57e41",
             "Name": "69a7067b825ad410",
             "NavAgent": "03a47e59c89a68d2",
             "Npc": "5261f0cbfc256463",
@@ -5202,7 +5399,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "aa3cd42793780da9"
+            "Transform": "3c85fc7029e5c80b"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -5249,6 +5446,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "4b4b576b33455784",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
@@ -5266,19 +5464,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 1320,
-      "hash": "8c3d23a48cab9f4e",
+      "hash": "c4492b909d6add1a",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -5287,6 +5486,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -5295,6 +5495,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -5303,6 +5504,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -5323,6 +5525,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -5350,6 +5553,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -5379,7 +5583,8 @@
             "Intent": "8cda0718fc1d7dc1",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "83970e8d9bac3cac",
-            "MotionState": "0cd1fb7001d64b8a",
+            "Look": "f94c630656387237",
+            "MotionState": "808beae592d89cf7",
             "Name": "69a7067b825ad410",
             "NavAgent": "991c9e699ad73b2f",
             "Npc": "5261f0cbfc256463",
@@ -5392,7 +5597,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "fdda09bb0745a4e9"
+            "Transform": "50db1f968648f294"
           },
           "e8": {
             "ActionState": "68697feb25800573",
@@ -5410,7 +5615,8 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "ec8763e22a2bffcf",
-            "MotionState": "02c2615062d88193",
+            "Look": "f94c630656387237",
+            "MotionState": "4089e1d17095c1c2",
             "Name": "69a7067b825ad410",
             "NavAgent": "f09326d8f761f776",
             "Npc": "5261f0cbfc256463",
@@ -5423,7 +5629,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "dc5c3bc5f5eabdf6"
+            "Transform": "965771fe9b9545eb"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -5470,6 +5676,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -5487,19 +5694,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 1380,
-      "hash": "b9370f31d4ccfa27",
+      "hash": "df53e2de5198ae9c",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -5508,6 +5716,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -5516,6 +5725,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -5524,6 +5734,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -5544,6 +5755,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -5571,6 +5783,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -5600,7 +5813,8 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "951652b0cebe6771",
-            "MotionState": "3a8c5ecb8f482bdc",
+            "Look": "f94c630656387237",
+            "MotionState": "6e59b1678295864b",
             "Name": "69a7067b825ad410",
             "NavAgent": "11a9db889c902d77",
             "Npc": "5261f0cbfc256463",
@@ -5613,7 +5827,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "bc8d2530d7b7a64a"
+            "Transform": "18d643003b5f237b"
           },
           "e8": {
             "ActionState": "09fa6f8cc927ef15",
@@ -5631,7 +5845,8 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "777ea9f86dd9c517",
-            "MotionState": "c5dd92e2ea210b17",
+            "Look": "f94c630656387237",
+            "MotionState": "f84b2a77b93c61f9",
             "Name": "69a7067b825ad410",
             "NavAgent": "871f640c16803921",
             "Npc": "5261f0cbfc256463",
@@ -5644,7 +5859,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "aa97e30ebae2df8e"
+            "Transform": "b6b62f959d950afd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -5691,6 +5906,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -5708,19 +5924,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 1440,
-      "hash": "fd06a84c001ee162",
+      "hash": "c89ad4616ce0c105",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -5729,6 +5946,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -5737,6 +5955,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -5745,6 +5964,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -5765,6 +5985,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -5792,6 +6013,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -5821,7 +6043,8 @@
             "Intent": "723c76854682cd43",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "3b637c975b3e90d7",
-            "MotionState": "3726cde078cc4f61",
+            "Look": "f94c630656387237",
+            "MotionState": "7e8e109b47c74dd0",
             "Name": "69a7067b825ad410",
             "NavAgent": "5e7002b628f61e0b",
             "Npc": "5261f0cbfc256463",
@@ -5834,7 +6057,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "6eeab39fb026f05b"
+            "Transform": "baf4ffb09d1e1f3b"
           },
           "e8": {
             "ActionState": "1a83bad36e03a36e",
@@ -5852,7 +6075,8 @@
             "Intent": "8dd6cea456d9dae4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "710e6741e8a6422a",
-            "MotionState": "58a3255c6c0e1f34",
+            "Look": "f94c630656387237",
+            "MotionState": "5bed6fa95d254536",
             "Name": "69a7067b825ad410",
             "NavAgent": "3b423016b13e81d1",
             "Npc": "5261f0cbfc256463",
@@ -5865,7 +6089,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "ab6801fb864f4c17"
+            "Transform": "b19c4c0e56b2d159"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -5912,6 +6136,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "4b4b576b33455784",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
@@ -5929,19 +6154,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 1500,
-      "hash": "590b14d6d45662f2",
+      "hash": "bd07eded97d8408a",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -5950,6 +6176,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -5958,6 +6185,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -5966,6 +6194,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -5986,6 +6215,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -6013,6 +6243,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -6042,7 +6273,8 @@
             "Intent": "68646b98215a3240",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "ca33f8370ba7b7b9",
-            "MotionState": "f046e6ca9eb965a7",
+            "Look": "f94c630656387237",
+            "MotionState": "9615a1144273ec55",
             "Name": "69a7067b825ad410",
             "NavAgent": "f7a048f2fb894505",
             "Npc": "5261f0cbfc256463",
@@ -6055,7 +6287,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "15f2a6e5506fb1cb"
+            "Transform": "48a7a3f8e15dc29e"
           },
           "e8": {
             "ActionState": "1a83bad36e03a36e",
@@ -6073,7 +6305,8 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "a29fddb3379b994c",
-            "MotionState": "34313ef5925b7ae8",
+            "Look": "f94c630656387237",
+            "MotionState": "30a8db0d4144eee9",
             "Name": "69a7067b825ad410",
             "NavAgent": "6817ba53d51160cd",
             "Npc": "5261f0cbfc256463",
@@ -6086,7 +6319,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "188e9302faaf2f24"
+            "Transform": "ee0a4aa48221468e"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -6133,6 +6366,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -6150,19 +6384,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 1560,
-      "hash": "5546aa8b573402ff",
+      "hash": "b278d82a23f0e11d",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -6171,6 +6406,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -6179,6 +6415,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -6187,6 +6424,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -6207,6 +6445,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -6234,6 +6473,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -6263,7 +6503,8 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "7725df523bb4871c",
-            "MotionState": "93efbd6c78e317a3",
+            "Look": "f94c630656387237",
+            "MotionState": "4ff069267c28bde9",
             "Name": "69a7067b825ad410",
             "NavAgent": "048e92e004af8554",
             "Npc": "5261f0cbfc256463",
@@ -6276,7 +6517,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "0a59a44661bb24a4"
+            "Transform": "d3758e3f2e9b0fbe"
           },
           "e8": {
             "ActionState": "1a83bad36e03a36e",
@@ -6294,7 +6535,8 @@
             "Intent": "5efaa7f910a49508",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "f30ac71e16d98069",
-            "MotionState": "1fd5de1707c79839",
+            "Look": "f94c630656387237",
+            "MotionState": "30cd60638fb1dfc3",
             "Name": "69a7067b825ad410",
             "NavAgent": "4eae36fa2f46b258",
             "Npc": "5261f0cbfc256463",
@@ -6307,7 +6549,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "35e92b81dc9f938d"
+            "Transform": "58b15f4405db96e9"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -6354,6 +6596,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -6371,19 +6614,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 1620,
-      "hash": "dda890f029a59d6e",
+      "hash": "0887980afa190920",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -6392,6 +6636,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -6400,6 +6645,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -6408,6 +6654,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -6428,6 +6675,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -6455,6 +6703,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -6484,7 +6733,8 @@
             "Intent": "d00cf3395bca88f4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "2adb69656325c7fb",
-            "MotionState": "c45fe34063141d39",
+            "Look": "f94c630656387237",
+            "MotionState": "0a4d045c2a64395f",
             "Name": "69a7067b825ad410",
             "NavAgent": "bca19cd4a21d841d",
             "Npc": "5261f0cbfc256463",
@@ -6497,7 +6747,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "53c6a44a6e74e15a"
+            "Transform": "e5ba2937d6ee411c"
           },
           "e8": {
             "ActionState": "196cba7034802a48",
@@ -6515,7 +6765,8 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "fe57be2f43502e43",
-            "MotionState": "3bf77f9de7e9a3b1",
+            "Look": "f94c630656387237",
+            "MotionState": "0de201fb9de1272e",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
             "Npc": "5261f0cbfc256463",
@@ -6528,7 +6779,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "dc74f0e70d49250f"
+            "Transform": "3072c940d02cf39a"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -6575,6 +6826,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "4b4b576b33455784",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
@@ -6592,19 +6844,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 1680,
-      "hash": "6f3a47b39d6f07b3",
+      "hash": "da9a1f7cac5cc4d1",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -6613,6 +6866,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -6621,6 +6875,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -6629,6 +6884,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -6649,6 +6905,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -6676,6 +6933,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -6705,7 +6963,8 @@
             "Intent": "fa180937eb5615c5",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "8d78238077e93a73",
-            "MotionState": "81612e4f763dfe8a",
+            "Look": "f94c630656387237",
+            "MotionState": "a7a3f4eb246f4bb0",
             "Name": "69a7067b825ad410",
             "NavAgent": "2316f9d8f069e75f",
             "Npc": "5261f0cbfc256463",
@@ -6718,7 +6977,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "15fe41d1ddf47838"
+            "Transform": "4c52023daf8cf4e0"
           },
           "e8": {
             "ActionState": "932f3c5841d19d51",
@@ -6736,7 +6995,8 @@
             "Intent": "ae059c460a754770",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "2612e60bb2f4f251",
-            "MotionState": "9f1327bf27fd9b6b",
+            "Look": "f94c630656387237",
+            "MotionState": "5bc2410700eb616d",
             "Name": "69a7067b825ad410",
             "NavAgent": "3a9d30b2581506af",
             "Npc": "5261f0cbfc256463",
@@ -6749,7 +7009,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "de92052b16673995"
+            "Transform": "3eb0c9651fe81873"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -6796,6 +7056,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "4b4b576b33455784",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
@@ -6813,19 +7074,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 1740,
-      "hash": "645a44246205ec42",
+      "hash": "7e1cc2d7417f2ad8",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -6834,6 +7096,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -6842,6 +7105,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -6850,6 +7114,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -6870,6 +7135,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -6897,6 +7163,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -6926,7 +7193,8 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "d4cf04216a3554af",
-            "MotionState": "0fff0c6f0d12ef7e",
+            "Look": "f94c630656387237",
+            "MotionState": "1907bf962cbcabd2",
             "Name": "69a7067b825ad410",
             "NavAgent": "f66d3e94232221d3",
             "Npc": "5261f0cbfc256463",
@@ -6939,7 +7207,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "93ac8c478c325188"
+            "Transform": "7ebbb2892536af84"
           },
           "e8": {
             "ActionState": "932f3c5841d19d51",
@@ -6957,7 +7225,8 @@
             "Intent": "2174c419980cc2d8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "ecd9290bc10da2a3",
-            "MotionState": "acf061020e0f1c90",
+            "Look": "f94c630656387237",
+            "MotionState": "de102b38dea1ae5e",
             "Name": "69a7067b825ad410",
             "NavAgent": "6a1e7207feb7fc08",
             "Npc": "5261f0cbfc256463",
@@ -6970,7 +7239,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "cde9f11bb656bd12"
+            "Transform": "cc1e84e0254c76bc"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -7017,6 +7286,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -7034,19 +7304,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 1800,
-      "hash": "c5bb59a6d248fb74",
+      "hash": "cb5c33eb7bcd2488",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -7055,6 +7326,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -7063,6 +7335,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -7071,6 +7344,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -7091,6 +7365,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -7118,6 +7393,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -7147,7 +7423,8 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "3968d11fbb29189d",
-            "MotionState": "2e66f8b31b154939",
+            "Look": "f94c630656387237",
+            "MotionState": "013b453f71534d18",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
             "Npc": "5261f0cbfc256463",
@@ -7160,7 +7437,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "ff33d7415bbdd48c"
+            "Transform": "8c60f66707b31bb3"
           },
           "e8": {
             "ActionState": "afe8d1ded122ae43",
@@ -7178,7 +7455,8 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "66cbe8699372021b",
-            "MotionState": "999dbcef0040fdaf",
+            "Look": "f94c630656387237",
+            "MotionState": "95c40b621af6bbe5",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
             "Npc": "5261f0cbfc256463",
@@ -7191,7 +7469,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "a0d4442317d26371"
+            "Transform": "3cee48620572f513"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -7238,6 +7516,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -7255,19 +7534,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 1860,
-      "hash": "10d99ef79f7fd1b1",
+      "hash": "55d898ce90ba150f",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -7276,6 +7556,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -7284,6 +7565,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -7292,6 +7574,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -7312,6 +7595,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -7339,6 +7623,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -7368,7 +7653,8 @@
             "Intent": "82e1364de2801b1a",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "7d0f62fba1ed9a29",
-            "MotionState": "dd9e0c80865ac928",
+            "Look": "f94c630656387237",
+            "MotionState": "0b09ac88b9d9cf7b",
             "Name": "69a7067b825ad410",
             "NavAgent": "13f9d1217abdfd6e",
             "Npc": "5261f0cbfc256463",
@@ -7381,7 +7667,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "eeae3e6760f4cadc"
+            "Transform": "80c8dcd38bdf87fb"
           },
           "e8": {
             "ActionState": "249fb957d17efba4",
@@ -7399,7 +7685,8 @@
             "Intent": "01631e4ffc57503a",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "6348b035fc857771",
-            "MotionState": "e673c700e9202b82",
+            "Look": "f94c630656387237",
+            "MotionState": "361e9e2a47dc953c",
             "Name": "69a7067b825ad410",
             "NavAgent": "88f076da50d53aa6",
             "Npc": "5261f0cbfc256463",
@@ -7412,7 +7699,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "66e8ef6ba57b8e83"
+            "Transform": "ec6be519df44fad1"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -7459,6 +7746,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "4b4b576b33455784",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "6098113898efd569",
@@ -7476,19 +7764,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 1920,
-      "hash": "f628ffc7f278cb2e",
+      "hash": "13edbedb5e7ea4aa",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -7497,6 +7786,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -7505,6 +7795,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -7513,6 +7804,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -7533,6 +7825,7 @@
             "Invulnerable": "376c006ddda2a695",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "180d43affed10091",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -7560,6 +7853,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -7586,12 +7880,13 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "3ce0f38e83833712",
+            "Intent": "cc47b8e9e29b50f6",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "e6cd2e13cd91cf10",
-            "MotionState": "bd1b0f227707485c",
+            "LocomotionInput": "34e796298c5ee58e",
+            "Look": "f94c630656387237",
+            "MotionState": "e61916082bba50a4",
             "Name": "69a7067b825ad410",
-            "NavAgent": "18b0205cc90dfd89",
+            "NavAgent": "b60fb166a2875ebf",
             "Npc": "5261f0cbfc256463",
             "NpcBrain": "b575380a673a9c8a",
             "NpcDrive": "064fee3e9914e5b4",
@@ -7602,7 +7897,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "232e5531716fbb77"
+            "Transform": "05a04d7efceb6078"
           },
           "e8": {
             "ActionState": "249fb957d17efba4",
@@ -7620,7 +7915,8 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "f8d72d0426643f3d",
-            "MotionState": "68ccfbd931fa8aba",
+            "Look": "f94c630656387237",
+            "MotionState": "bcc3a579c80863d1",
             "Name": "69a7067b825ad410",
             "NavAgent": "16cc02c28b90a531",
             "Npc": "5261f0cbfc256463",
@@ -7633,7 +7929,7 @@
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "e475a495009e6cb8"
+            "Transform": "07b86325a6f8603e"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -7680,6 +7976,7 @@
             "Intent": "c0e275451a0febb4",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "263192c5f8f0a81f",
+            "Look": "f94c630656387237",
             "MotionState": "d30199a013cd73f6",
             "Name": "69a7067b825ad410",
             "NavAgent": "b2f0740640d9a3f7",
@@ -7697,7 +7994,7 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     }

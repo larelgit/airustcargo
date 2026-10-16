@@ -66,7 +66,9 @@ crc32fast = "=1.5.2"
 # minimum 176") and rendering stops. `shards` refuses that build at compile time (`crates/shards/src/lib.rs`).
 # What glam's SIMD gives: the same bits on every OS of one CPU architecture (x86_64: Windows, Linux, Steam Deck),
 # because glam's SSE2 code is the same instructions there and only transcendental functions (sin, exp, powf)
-# differ between C runtimes, and those come from `libm` (not yet checked by a run on Linux). Across
+# differ between C runtimes, and those come from `libm` (checked by a run: Windows 11 and Ubuntu 24.04 under
+# WSL1 record the same reference replays byte for byte, on one machine, so one CPU; other x86_64 CPUs, macOS,
+# ARM and Steam Deck hardware are not checked). Across
 # architectures (x86_64 against ARM, Apple Silicon) it is not promised: NEON fuses multiply-adds where SSE2
 # rounds twice. Nor with `-C target-cpu=native` or `+fma`: under `target_feature = "fma"` glam's SSE2 code
 # fuses them too (`Quat` products and `slerp`, `Vec3A::cross` and `slerp`, `lerp_monotonic` and `mul_add` of

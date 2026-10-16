@@ -170,8 +170,11 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
   `x.exp()`, `x.powf(y)` зовут математику платформы, а у MSVC, glibc и macOS последние биты разные: реплеи и кооператив
   разошлись бы между Windows, Linux и Steam Deck (Proton). Движок собран с `libm` (в `[workspace.dependencies]`: `bevy/libm`, у
   parry3d `indexmap`, а `glamx` с `libm` — ради `simba/libm_force`), поэтому `ops`, glam (`Quat`, `Vec3::normalize`, `slerp`) и
-  коллизии должны давать одни и те же биты на всех ОС одной архитектуры (x86_64: Windows, Linux, Steam Deck; прогоном между ОС
-  ещё не проверено). SIMD у glam остаётся: SSE2 — одни и те же инструкции на любой ОС x86_64. Между архитектурами (x86_64 ↔
+  коллизии должны давать одни и те же биты на всех ОС одной архитектуры (x86_64: Windows, Linux, Steam Deck). Прогоном проверено
+  на Windows 11 и Ubuntu 24.04 под WSL1 на одной машине (одном процессоре): девять эталонных реплеев записаны на обеих ОС
+  побайтово одинаково, и каждая ОС прошла `--verify` на записях другой; другие процессоры x86_64, macOS, ARM и железо Steam
+  Deck не проверены. SIMD у glam остаётся: SSE2 — одни и те же инструкции на любой ОС x86_64; не собирайте с
+  `-C target-cpu=native` и `+fma` (с ними glam сливает умножение и сложение, биты другие). Между архитектурами (x86_64 ↔
   ARM) детерминизм не обещан. Не включайте `scalar-math` у glam (его включает `enhanced-determinism` у parry3d): `Vec4` и `Mat4`
   теряют выравнивание в 16 байт, `MeshUniform` Bevy 0.20 становится 168 байт против 176 у шейдера, и рендер встаёт; `shards`
   такую сборку не собирает (`const` с `align_of` в `crates/shards/src/lib.rs`; README, «Время и детерминизм»). Правило держит `clippy.toml` (в корне и в `template/`:
@@ -313,7 +316,7 @@ cargo sandbox --replay replays/crash-tick<N>.json --verify   # код 1, пок�
   (`ok`, `OVER`, `-`) и выходит с кодом 0, 1 (бюджет превышен, игра не дошла до замера) или 2 (нет такого определения или у
   `--offscreen` нет GPU). Отладочная сборка не судит.
 - Эталонные реплеи `tests/replays/*.json` (полоса препятствий, бой-прототип, директор жетонов, страж на навсетке, смена
-  регионов и реплей со снапшота песочницы) проверяет `cargo test`. После намеренной правки геймплея или контента перезапишите их:
+  регионов, реплей со снапшота и сохранения песочницы) проверяет `cargo test`. После намеренной правки геймплея или контента перезапишите их:
   `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays` (у шаблона —
   `cargo test --test game record_reference_replays -- --ignored` в `template/`).
 - Изменили поведение модуля — обновите его раздел в README, `docs/engine-progress.md` (статусы) и `CHANGELOG.md`
