@@ -123,11 +123,11 @@ fn a_blender_export_shows_the_scene_its_level_comes_from() {
         let world = app.world_mut();
         world.query_filtered::<Entity, With<LevelVisual>>().single(world).unwrap()
     };
-    // The level's eleven meshes, the barrel of each collection instance among them.
+    // The level's fourteen meshes, the barrel of each collection instance among them.
     update_until(&mut app, "the scene is instantiated", |app| {
         let world = app.world_mut();
         let meshes: Vec<Entity> = world.query_filtered::<Entity, With<Mesh3d>>().iter(world).collect();
-        meshes.iter().filter(|m| is_below(world, **m, root)).count() == 11
+        meshes.iter().filter(|m| is_below(world, **m, root)).count() == 14
     });
     let world = app.world_mut();
     let names: Vec<String> = world

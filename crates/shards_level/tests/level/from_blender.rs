@@ -84,6 +84,7 @@ fn nodes_are_named_by_their_path_through_the_blender_hierarchy() {
             "Barrels.A",
             "Barrels.B/Barrel",
             "Barrels.B",
+            "Boulder",
             "Crate.001",
             "Edge E",
             "Edge N",
@@ -103,6 +104,8 @@ fn nodes_are_named_by_their_path_through_the_blender_hierarchy() {
             "Ruins/Shrine",
             "Ruins/Säule",
             "Ruins",
+            "Spire",
+            "Totem Pole",
             "Vendor",
             "Vent",
             "Wall North",
@@ -185,6 +188,18 @@ fn colliders_have_the_size_the_artist_sees() {
     assert_eq!(crate_.shape, Shape::Cuboid { half: Vec3::splat(0.5) });
     assert_eq!(crate_.layers, CollisionLayers::new(LayerMask::WORLD | LayerMask::game(3), LayerMask::ALL));
 
+    // The other shapes take their sizes from the mesh: a UV sphere of radius 1, a cylinder of
+    // radius 0.3 and depth 3 as a capsule (3 m tall, caps included), a cone of radius 1, depth 2.
+    let Shape::Sphere { radius } = collider(&app, nodes["Boulder"]).shape else { panic!("Boulder") };
+    assert!(close_f(radius, 1.0), "{radius}");
+    let totem = collider(&app, nodes["Totem Pole"]).shape;
+    let Shape::Capsule { half_height, radius } = totem else { panic!("{totem:?}") };
+    assert!(close_f(radius, 0.3) && close_f(half_height + radius, 1.5), "{totem:?}");
+    let spire = collider(&app, nodes["Spire"]).shape;
+    let Shape::Cone { half_height, radius } = spire else { panic!("{spire:?}") };
+    assert!(close_f(half_height, 1.0) && close_f(radius, 1.0), "{spire:?}");
+    assert!(close(at("Spire").translation, Vec3::new(-10.0, 1.0, -10.0)));
+
     // Both instances of the barrel collection, the second turned with its instancer.
     for path in ["Barrels.A/Barrel", "Barrels.B/Barrel"] {
         let barrel = collider(&app, nodes[path]);
@@ -246,7 +261,7 @@ fn every_marker_kind_comes_through() {
     for path in ["Ruins", "Markers", "Barrels.A", "Barrels.B", "Ladder Top", "Lamp Post", "Rock"] {
         assert!(!nodes.contains_key(path), "{path} should not spawn");
     }
-    assert_eq!(nodes.len(), 19);
+    assert_eq!(nodes.len(), 22);
 }
 
 #[test]
@@ -279,9 +294,19 @@ fn content_check_and_level_info_read_the_real_export() {
     let mut app = app_in(&blender());
     assert_eq!(ok(&mut app, "content_check", json!({})), "ok: 2 definitions in 2 files");
     let info = ok(&mut app, "level_info", json!({"id": "outpost"}));
-    assert!(info.starts_with("level outpost: outpost.glb, at (0.0, 0.0)\n26 nodes, 10 markers\n"), "{info}");
+    assert!(info.starts_with("level outpost: outpost.glb, at (0.0, 0.0)\n29 nodes, 10 markers\n"), "{info}");
     assert!(info.contains("camp \"bandits\" at (-8.0, 6.0)  Markers/Костёр"), "{info}");
     assert!(info.ends_with("checks: ok"), "{info}");
+
+    // Placed by the tool, and replaced from the file in place.
+    let placed = ok(&mut app, "spawn_level", json!({"id": "outpost", "x": 50.0}));
+    assert!(placed.starts_with("spawned level `outpost` as instance 1 at (50.0, 0.0): 22 entities"), "{placed}");
+    let ground = |app: &mut App| by_node(app)["Ground"];
+    let before = ground(&mut app);
+    ok(&mut app, "level_reload", json!({"id": "outpost"}));
+    let after = ground(&mut app);
+    assert_ne!(before, after, "the entities are new");
+    assert_eq!(app.world().get::<Transform>(after).unwrap().translation, Vec3::new(50.0, -0.25, 0.0));
 }
 
 #[test]
@@ -292,7 +317,7 @@ fn a_file_with_punctual_lights_reads_without_the_render_feature() {
     assert!(sun.extras.is_empty() && sun.mesh.is_none());
     let mut app = app_in(&blender());
     let spawned = shards_level::spawn_level(app.world_mut(), &level, Transform::default()).unwrap();
-    assert_eq!(spawned.len(), 19);
+    assert_eq!(spawned.len(), 22);
 }
 
 #[test]

@@ -64,6 +64,26 @@ def cylinder_mesh(name, radius=1.0, depth=2.0):
     return mesh
 
 
+def cone_mesh(name, radius=1.0, depth=2.0):
+    """A cone around its origin along Z, like *Add -> Mesh -> Cone*."""
+    mesh = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=16, radius1=radius, radius2=0.0, depth=depth)
+    bm.to_mesh(mesh)
+    bm.free()
+    return mesh
+
+
+def sphere_mesh(name, radius=1.0):
+    """A UV sphere around its origin, like *Add -> Mesh -> UV Sphere*."""
+    mesh = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=16, v_segments=8, radius=radius)
+    bm.to_mesh(mesh)
+    bm.free()
+    return mesh
+
+
 def add(collection, name, data=None, location=(0.0, 0.0, 0.0), rotation=(0.0, 0.0, 0.0), scale=(1.0, 1.0, 1.0)):
     """An object in `collection`; `data=None` makes an empty. Rotation in degrees (XYZ Euler)."""
     obj = bpy.data.objects.new(name, data)
@@ -195,6 +215,14 @@ def build():
         instance = add(root, name, location=location, rotation=(0.0, 0.0, turn))
         instance.instance_type = "COLLECTION"
         instance.instance_collection = kit
+
+    # The other collider shapes, sized by their meshes.
+    boulder = add(root, "Boulder", sphere_mesh("Boulder"), location=(-2.0, -10.0, 1.0))
+    boulder["collider"] = "sphere"
+    totem = add(root, "Totem Pole", cylinder_mesh("Totem", radius=0.3, depth=3.0), location=(8.0, 4.0, 1.5))
+    totem["collider"] = "capsule"
+    spire = add(root, "Spire", cone_mesh("Spire"), location=(-10.0, 10.0, 1.0))
+    spire["collider"] = "cone"
 
     # A rock, visual only (the broken variant puts a property on its mesh).
     add(root, "Rock", box_mesh("Rock"), location=(-10.0, -10.0, 0.5), scale=(1.0, 1.5, 0.5))
