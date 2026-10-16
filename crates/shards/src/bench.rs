@@ -337,7 +337,7 @@ pub struct Measured {
 impl Measured {
     /// `600 ticks in 10.02s: avg 0.84 ms, max 3.10 ms (tick 712); 1431 frames, 142.8 fps: avg 6.90
     /// ms, max 14.20 ms (main 2.10, render 6.90, GPU 5.50 ms), 123456 triangles; 4211 entities, 1022
-    /// meshes, 312 drawn, 140 in cameras`.
+    /// meshes, 312 drawn (41 distinct), 140 in cameras`.
     pub fn line(&self) -> String {
         let t = &self.ticks;
         let mut line = format!(

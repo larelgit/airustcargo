@@ -20,8 +20,9 @@ const HEADLESS: &str = "nothing is strewn headless: scatter is drawn in a window
 
 /// The scatters (`content/**/*.scatter.ron`): each one's density, levels of detail, looks and
 /// tiles, and how many instances it has strewn on how many tiles now, with those that found no
-/// place (ground out of the height band or inside a solid, too steep, too close to a solid).
-/// Headless nothing is strewn: scatter is drawn in a window or with --offscreen.
+/// place (ground out of the height band or inside a solid, too steep, too close to a solid), and
+/// how long the last strewing took. Headless nothing is strewn: scatter is drawn in a window or
+/// with --offscreen.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct ScatterArgs {}
 
@@ -30,7 +31,7 @@ fn scatter(In(_): In<Call<ScatterArgs>>, world: &World) -> ToolResult {
     let state = world.get_resource::<ScatterState>().ok_or("this game has no scatter module")?;
     let defs: Vec<(&str, &ScatterDef)> = db.iter::<ScatterDef>().collect();
     let s = |n: usize| if n == 1 { "" } else { "s" };
-    let strewn = crate::strewn(world);
+    let (strewn, skipped) = (crate::strewn(world), crate::skipped(world));
     let mut out = format!("{} scatter{} · ", defs.len(), s(defs.len()));
     if !crate::draws(world) {
         out.push_str(HEADLESS);
@@ -59,7 +60,7 @@ fn scatter(In(_): In<Call<ScatterArgs>>, world: &World) -> ToolResult {
             let tiles = strewn.tiles.get(*id).map_or(0, |t| t.len());
             out.push_str(&format!(" · {instances} on {tiles} tile{}", s(tiles)));
         }
-        if let Some(skipped) = state.skipped.get(*id).filter(|k| k.total() > 0) {
+        if let Some(skipped) = skipped.get(*id).filter(|k| k.total() > 0) {
             let mut why = Vec::new();
             for (n, what) in [(skipped.ground, "no ground in the band"), (skipped.steep, "too steep"), (skipped.crowded, "too close to a solid")] {
                 if n > 0 {
@@ -69,6 +70,18 @@ fn scatter(In(_): In<Call<ScatterArgs>>, world: &World) -> ToolResult {
             out.push_str(&format!(" · {} found no place ({})", skipped.total(), why.join(", ")));
         }
         out.push('\n');
+    }
+    if let Some(pass) = state.last_pass.filter(|_| crate::draws(world)) {
+        let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+        out.push_str(&format!(
+            "last pass: {} tile{}, {} instance{} in {:.1} ms ({:.1} ms finding their ground)\n",
+            pass.tiles,
+            s(pass.tiles),
+            pass.instances,
+            s(pass.instances),
+            ms(pass.total),
+            ms(pass.placing)
+        ));
     }
     Ok(out.trim_end().to_owned())
 }

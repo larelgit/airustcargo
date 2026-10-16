@@ -5,18 +5,20 @@
 //! density is fixed, and the player's `graphics.foliage` keeps its first part: a thinner scatter
 //! is the same scatter with fewer instances. Then each instance is dropped onto the ground
 //! straight below the top of its `height` band: none where that ground is too steep, out of the
-//! band (a column's top), inside a solid (a wall) or too close to one (`clearance`).
+//! band (a column's top), inside a solid (a wall) or too close to one (`clearance`, a ball on the
+//! ground along its normal).
 //!
-//! Nothing here touches the world: [`Ground`] answers the rays, and the physics world is one.
+//! Nothing here touches the world: [`Ground`] answers the rays, and the physics world is one;
+//! the strewing asks [`solids`], the static colliders around one tile.
 
 use std::collections::HashMap;
 use std::f32::consts::TAU;
 
 use ai_core::DetRng;
 use bevy::prelude::*;
-use shards_motion::{LayerMask, PhysicsWorld, QueryFilter, Shape};
+use shards_motion::{Body, LayerMask, PhysicsWorld, QueryFilter, Shape};
 
-use crate::def::ScatterDef;
+use crate::def::{ScatterDef, MAX_TILE_ENTITIES, MIN_SPACING};
 
 /// One thrown point, in the tile's square, at full density.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -61,20 +63,36 @@ pub fn rng_for(seed: u64, region: &str, (x, y): (i32, i32), scatter: &str) -> De
     DetRng::from_keys(&[seed, fnv64(region), x as i64 as u64, y as i64 as u64, fnv64(scatter)])
 }
 
+/// How many instances the scatter asks for on a tile `extent` meters across (X, Z) at full
+/// density: `density × area`, before [`most`] caps it.
+pub fn wanted(def: &ScatterDef, extent: Vec2) -> usize {
+    let wanted = f64::from(def.density.max(0.0)) * f64::from(extent.x) * f64::from(extent.y);
+    // Saturating: NaN is 0, too many is `usize::MAX`.
+    wanted.round() as usize
+}
+
+/// The most instances of the scatter on one tile: [`MAX_TILE_ENTITIES`] mesh entities with its
+/// levels of detail.
+pub fn most(def: &ScatterDef) -> usize {
+    MAX_TILE_ENTITIES / def.lods.len().max(1)
+}
+
 /// The scatter's instances on a tile `extent` meters across (X, Z) at full density, in the order
-/// they were thrown: `density × area` of them, fewer when `spacing` leaves no room (four throws
-/// per instance at most).
+/// they were thrown: `density × area` of them, at most [`most`], fewer when `spacing` leaves no
+/// room (four throws per instance at most).
 pub fn candidates(def: &ScatterDef, rng: &mut DetRng, extent: Vec2) -> Vec<Candidate> {
-    let wanted = (def.density.max(0.0) * extent.x * extent.y).round() as usize;
+    let wanted = wanted(def, extent).min(most(def));
     if wanted == 0 || def.looks.is_empty() {
         return Vec::new();
     }
     let (small, large) = def.scale;
     let tilt = def.tilt.to_radians();
     let looks = def.looks.len() as u32;
-    let spacing = def.spacing.max(0.0);
+    // Content keeps it 0 or a centimeter at least (a smaller one is an error, read as that).
+    let spacing = if def.spacing > 0.0 { def.spacing.max(MIN_SPACING) } else { 0.0 };
     // Instances by cell of `spacing`: lookups only, never iterated.
     let mut near: HashMap<(i32, i32), Vec<Vec2>> = HashMap::new();
+    // Float to int saturates; so do the neighbours below.
     let cell = |p: Vec2| ((p.x / spacing).floor() as i32, (p.y / spacing).floor() as i32);
     let mut kept = Vec::with_capacity(wanted);
     for _ in 0..wanted * 4 {
@@ -89,8 +107,8 @@ pub fn candidates(def: &ScatterDef, rng: &mut DetRng, extent: Vec2) -> Vec<Candi
         let look = rng.below(looks) as usize;
         if spacing > 0.0 {
             let (cx, cz) = cell(offset);
-            let crowded = (cx - 1..=cx + 1)
-                .flat_map(|x| (cz - 1..=cz + 1).map(move |z| (x, z)))
+            let crowded = (cx.saturating_sub(1)..=cx.saturating_add(1))
+                .flat_map(|x| (cz.saturating_sub(1)..=cz.saturating_add(1)).map(move |z| (x, z)))
                 .filter_map(|c| near.get(&c))
                 .flatten()
                 .any(|other| other.distance_squared(offset) < spacing * spacing);
@@ -120,7 +138,8 @@ pub trait Ground {
     fn blocked(&self, at: Vec3, radius: f32) -> bool;
 }
 
-/// The static world: what [`LayerMask::WORLD`] collides with (not characters, not volumes).
+/// The colliders of a physics world in [`LayerMask::WORLD`] (not characters, not volumes); the
+/// strewing asks the part [`solids`] keeps.
 impl Ground for PhysicsWorld {
     fn down(&self, from: Vec3, max: f32) -> Option<(f32, Vec3, Vec3)> {
         let hit = self.raycast(from, Dir3::NEG_Y, max, &QueryFilter::new(LayerMask::WORLD))?;
@@ -130,6 +149,29 @@ impl Ground for PhysicsWorld {
     fn blocked(&self, at: Vec3, radius: f32) -> bool {
         !self.overlaps(&Shape::Sphere { radius }, at, Quat::IDENTITY, &QueryFilter::new(LayerMask::WORLD)).is_empty()
     }
+}
+
+/// What a scatter's instances on a tile centered at `center`, `extent` meters across (X, Z), can
+/// stand on or bump into: the static colliders of the world ([`Body::Static`], in
+/// [`LayerMask::WORLD`], no volume) that reach into the tile's column, where its rays and
+/// clearance checks go. A collider that moves (a platform, a door on rails) is never ground nor a
+/// solid: an instance would stay where it no longer is. And the queries scan the few colliders of
+/// the tile, not the whole world's.
+pub fn solids(physics: &PhysicsWorld, def: &ScatterDef, center: Vec3, extent: Vec2) -> PhysicsWorld {
+    let (low, high) = def.height;
+    // A clearance ball touches what is within twice its radius (and the 5 cm under it) of the
+    // ground; the rays go 5 cm past the band.
+    let pad = 2.0 * def.clearance.max(0.0) + 0.1;
+    let half = extent * 0.5;
+    let min = Vec3::new(center.x - half.x - pad, center.y + low - pad, center.z - half.y - pad);
+    let max = Vec3::new(center.x + half.x + pad, center.y + high + pad, center.z + half.y + pad);
+    physics.subset(|c| {
+        c.body == Body::Static
+            && c.volume.is_none()
+            && c.layers.memberships.intersects(LayerMask::WORLD)
+            && c.aabb_min.cmple(max).all()
+            && min.cmple(c.aabb_max).all()
+    })
 }
 
 /// Why instances found no place.
@@ -175,7 +217,10 @@ pub fn settle(def: &ScatterDef, center: Vec3, candidates: &[Candidate], ground: 
             skipped.steep += 1;
             continue;
         }
-        if def.clearance > 0.0 && ground.blocked(point + Vec3::Y * (def.clearance + 0.05), def.clearance) {
+        // The ball sits on the ground along its normal: on a slope it clears the slope itself
+        // (straight up, it would sink into the slope above anything steeper than ~20°).
+        let up = normal.try_normalize().unwrap_or(Vec3::Y);
+        if def.clearance > 0.0 && ground.blocked(point + up * (def.clearance + 0.05), def.clearance) {
             skipped.crowded += 1;
             continue;
         }
@@ -275,5 +320,85 @@ mod tests {
         let raised = ScatterDef { height: (3.5, 4.5), ..def };
         let (placed, _) = settle(&raised, Vec3::ZERO, &points, &Fake);
         assert_eq!(placed.iter().map(|p| p.at).collect::<Vec<_>>(), [Vec3::new(0.0, 4.0, 0.0)], "a band at the column's top: only there");
+    }
+
+    #[test]
+    fn a_tiny_spacing_and_a_dense_scatter_stay_within_bounds() {
+        // Below a centimeter (an error in content) it is read as one: no overflow, no crowd of
+        // instances in one saturated cell.
+        let tiny = scatter(1.0, 1e-9);
+        let thrown = thrown(&tiny, 7, (0, 0));
+        assert_eq!(thrown.len(), 256, "a centimeter apart, all of them fit");
+        // At most MAX_TILE_ENTITIES mesh entities a tile: the first instances of the same list.
+        let mut dense = scatter(20.0, 0.0);
+        dense.lods = vec![crate::def::ScatterLod { mesh: crate::def::ScatterMesh::Box { size: Vec3::ONE }, until: 10.0 }; 4];
+        let big = Vec2::splat(64.0);
+        assert_eq!((wanted(&dense, big), most(&dense)), (81920, 2500));
+        let capped = candidates(&dense, &mut rng_for(1, "meadow", (0, 0), "grass"), big);
+        assert_eq!(capped.len(), 2500);
+        let fewer = ScatterDef { density: 0.5, ..dense.clone() };
+        let first = candidates(&fewer, &mut rng_for(1, "meadow", (0, 0), "grass"), big);
+        assert_eq!(first.len(), 2048);
+        assert_eq!(first[..10], capped[..10], "the same throws");
+        let broken = ScatterDef { density: f32::INFINITY, ..dense.clone() };
+        assert_eq!((wanted(&broken, big), candidates(&broken, &mut rng_for(1, "m", (0, 0), "g"), big).len()), (usize::MAX, 2500));
+        assert_eq!(wanted(&ScatterDef { density: f32::NAN, ..dense }, big), 0);
+    }
+
+    /// A physics world of `colliders` (shape, pose, body), synced as the engine syncs it.
+    fn physics(colliders: &[(Shape, Transform, Body)]) -> PhysicsWorld {
+        let mut world = World::new();
+        world.init_resource::<PhysicsWorld>();
+        world.init_resource::<shards_motion::ColliderIds>();
+        for (shape, tf, body) in colliders {
+            world.spawn((shards_motion::Collider::new(*shape), *tf, *body));
+        }
+        world.run_system_cached(shards_motion::physics::sync_physics).unwrap();
+        world.remove_resource::<PhysicsWorld>().unwrap()
+    }
+
+    #[test]
+    fn clearance_is_room_above_the_slope_underfoot_and_walls_still_take_it() {
+        // Ground 25° steep rising toward +x (its surface 5 cm over the origin), and bushes that
+        // need 0.7 m of room: straight up, a ball that size sinks into any slope over ~21°.
+        let slope = (Shape::cuboid(Vec3::new(10.0, 0.5, 10.0)), Transform::from_xyz(0.0, -0.5, 0.0).with_rotation(Quat::from_rotation_z(25f32.to_radians())), Body::Static);
+        let def = ScatterDef { looks: vec!["a".into()], clearance: 0.7, height: (-2.0, 2.0), ..ScatterDef::default() };
+        let at = |x: f32, z: f32| Candidate { offset: Vec2::new(x, z), yaw: 0.0, lean: (0.0, 0.0), scale: 1.0, look: 0 };
+        let (placed, skipped) = settle(&def, Vec3::ZERO, &[at(0.0, 0.0), at(0.0, 3.0)], &physics(&[slope]));
+        assert_eq!((placed.len(), skipped), (2, Skipped::default()), "the slope is ground, not a wall");
+        assert!((placed[0].at.y - 0.05).abs() < 0.01, "{:?}", placed[0]);
+        // A wall along the slope, 0.5 m to the side of the second: too close for it.
+        let wall = (Shape::cuboid(Vec3::new(5.0, 3.0, 0.1)), Transform::from_xyz(0.0, 0.0, 3.6), Body::Static);
+        let (placed, skipped) = settle(&def, Vec3::ZERO, &[at(0.0, 0.0), at(0.0, 3.0)], &physics(&[slope, wall]));
+        assert_eq!((placed.len(), skipped.crowded), (1, 1));
+        assert_eq!(placed[0].at.z, 0.0);
+        // Steeper than max_slope: none, whatever the room.
+        let steep = (slope.0, Transform::from_xyz(0.0, -0.5, 0.0).with_rotation(Quat::from_rotation_z(35f32.to_radians())), Body::Static);
+        assert_eq!(settle(&def, Vec3::ZERO, &[at(0.0, 0.0)], &physics(&[steep])).1.steep, 1);
+    }
+
+    #[test]
+    fn only_static_colliders_near_the_tile_are_its_solids() {
+        let floor = (Shape::cuboid(Vec3::new(8.0, 0.5, 8.0)), Transform::from_xyz(0.0, -0.5, 0.0), Body::Static);
+        // A platform over the middle, in the height band: it moves, so it is neither ground nor
+        // in the way. The same slab static is ground.
+        let slab = |body| (Shape::cuboid(Vec3::new(2.0, 0.05, 2.0)), Transform::from_xyz(0.0, 0.3, 0.0), body);
+        let far = (Shape::cuboid(Vec3::ONE), Transform::from_xyz(40.0, 0.0, 0.0), Body::Static);
+        let def = ScatterDef { looks: vec!["a".into()], clearance: 0.5, ..ScatterDef::default() };
+        let extent = Vec2::splat(16.0);
+        let thrown = candidates(&def, &mut rng_for(3, "meadow", (0, 0), "grass"), extent);
+        let strew = |colliders: &[(Shape, Transform, Body)]| {
+            let solids = solids(&physics(colliders), &def, Vec3::ZERO, extent);
+            (solids.len(), settle(&def, Vec3::ZERO, &thrown, &solids))
+        };
+        let (n, alone) = strew(&[floor]);
+        assert_eq!(n, 1);
+        let (n, moving) = strew(&[floor, slab(Body::Kinematic), far]);
+        assert_eq!(n, 1, "neither the platform nor what is 40 m away");
+        assert_eq!(moving, alone, "a moving collider changes nothing");
+        let (n, still) = strew(&[floor, slab(Body::Static), far]);
+        assert_eq!(n, 2);
+        let on_slab = still.0.iter().filter(|p| (p.at.y - 0.35).abs() < 1e-3).count();
+        assert!(on_slab > 0 && still.0 != alone.0, "the static slab is ground: {on_slab} on it");
     }
 }

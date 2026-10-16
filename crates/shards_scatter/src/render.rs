@@ -13,7 +13,7 @@ use shards_look::Look;
 use shards_world::{ActiveRegion, RegionTile, TileDef, TileId, RoomDef};
 
 use crate::def::{ScatterDef, ScatterMesh};
-use crate::place::{self, Placed, Skipped};
+use crate::place::{self, Placed};
 use crate::{ScatterInstance, ScatterRoot, ScatterState, ScatterSystems, ScatterTile};
 
 pub(crate) fn plugin(app: &mut App) {
@@ -51,6 +51,7 @@ pub(crate) fn place(world: &mut World) {
     if !world.contains_resource::<Assets<StandardMaterial>>() || !world.contains_resource::<Assets<Mesh>>() {
         return;
     }
+    let started = std::time::Instant::now();
     if std::mem::take(&mut world.resource_mut::<ScatterState>().redo) {
         clear(world);
     }
@@ -73,8 +74,11 @@ pub(crate) fn place(world: &mut World) {
     // pure function of the ECS the ticks run, so it changes no tick.
     let _ = world.run_system_cached(shards_motion::physics::sync_physics);
 
+    let finding = std::time::Instant::now();
     let mut plans = Vec::new();
-    let mut skipped_by: BTreeMap<String, Skipped> = BTreeMap::new();
+    let mut marks: Vec<(Entity, ScatterTile)> = Vec::with_capacity(tiles.len());
+    // Scatters that asked for more than a tile takes: on how many tiles, and the most they asked.
+    let mut capped: BTreeMap<String, (usize, usize)> = BTreeMap::new();
     if on {
         let db = world.resource::<ContentDb>();
         let physics = world.resource::<shards_motion::PhysicsWorld>();
@@ -87,30 +91,55 @@ pub(crate) fn place(world: &mut World) {
             let extent = Vec2::new(tile.size.x as f32, tile.size.y as f32) * tile_size;
             // A room's north-west cell: where it is in the region.
             let cell = (id.x, id.y);
+            let mut mark = ScatterTile::default();
             for (scatter, def) in &defs {
                 if !def.in_region(&region_id) || !def.on_tile(&tile.tile, tags) || def.lods.is_empty() {
                     continue;
                 }
+                let wanted = place::wanted(def, extent);
+                if wanted > place::most(def) {
+                    let (tiles, most) = capped.entry(scatter.clone()).or_default();
+                    (*tiles, *most) = (*tiles + 1, (*most).max(wanted));
+                }
                 let thrown = place::candidates(def, &mut place::rng_for(seed, &region_id, cell, scatter), extent);
                 let kept = place::thinned(thrown.len(), foliage);
-                let (placed, skipped) = place::settle(def, tf.translation, &thrown[..kept], physics);
-                skipped_by.entry(scatter.clone()).or_default().add(skipped);
+                let solids = place::solids(physics, def, tf.translation, extent);
+                let (placed, skipped) = place::settle(def, tf.translation, &thrown[..kept], &solids);
+                if skipped.total() > 0 {
+                    mark.skipped.push((scatter.clone(), skipped));
+                }
                 if !placed.is_empty() {
                     plans.push((*entity, *id, *tf, scatter.clone(), def.clone(), placed));
                 }
             }
+            marks.push((*entity, mark));
         }
+    } else {
+        marks.extend(tiles.iter().map(|(entity, ..)| (*entity, ScatterTile::default())));
     }
-    let mut state = world.resource_mut::<ScatterState>();
-    for (scatter, skipped) in skipped_by {
-        state.skipped.entry(scatter).or_default().add(skipped);
+    let placing = finding.elapsed();
+    for (scatter, (n, wanted)) in capped {
+        let def = &defs.iter().find(|(id, _)| *id == scatter).expect("a scatter that was strewn").1;
+        let s = if n == 1 { "" } else { "s" };
+        let text = format!(
+            "scatter `{scatter}`: {n} tile{s} would get {wanted} instances × {} levels of detail, more than {} mesh entities a \
+             tile; each keeps its first {} (lower its density: --check-content names it)",
+            def.lods.len(),
+            crate::def::MAX_TILE_ENTITIES,
+            place::most(def)
+        );
+        // In the journal whether or not a logger runs (a warning of this machine's picture).
+        ai_core::journal::emit(world, ai_core::journal::JournalKind::Warn, text);
     }
-    for (entity, ..) in &tiles {
-        world.entity_mut(*entity).insert(ScatterTile);
+    let instances = plans.iter().map(|plan| plan.5.len()).sum();
+    for (entity, mark) in marks {
+        world.entity_mut(entity).insert(mark);
     }
     for (tile, id, tf, scatter, def, placed) in plans {
         spawn(world, tile, id, tf, &scatter, &def, &placed);
     }
+    let pass = crate::Pass { tiles: tiles.len(), instances, placing, total: started.elapsed() };
+    world.resource_mut::<ScatterState>().last_pass = Some(pass);
 }
 
 /// Takes every instance away and marks every tile to be strewn again.
@@ -125,7 +154,6 @@ fn clear(world: &mut World) {
     for tile in tiles {
         world.entity_mut(tile).remove::<ScatterTile>();
     }
-    world.resource_mut::<ScatterState>().skipped.clear();
 }
 
 /// The mesh of `shape`, made or loaded once.

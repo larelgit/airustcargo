@@ -16,6 +16,11 @@ pub const MAX_LODS: usize = 4;
 pub const MAX_TILT: f32 = 60.0;
 /// The most blades in a tuft.
 pub const MAX_BLADES: u32 = 16;
+/// The least `spacing` (m) above 0.
+pub const MIN_SPACING: f32 = 0.01;
+/// The most mesh entities (instances times levels of detail) a scatter strews on one tile or
+/// room: content that asks for more is in error, and the strewing keeps the first instances.
+pub const MAX_TILE_ENTITIES: usize = 10_000;
 
 fn one() -> f32 {
     1.0
@@ -48,9 +53,11 @@ pub struct ScatterDef {
     /// Region and dungeon ids it is strewn in; empty: all of them.
     pub regions: Vec<String>,
     /// Instances per square meter of a tile, before the player's `graphics.foliage` (0 to 1)
-    /// thins them out. At most 20.
+    /// thins them out. At most 20, and at most 10 000 mesh entities (instances times levels of
+    /// detail) on the largest tile or room it is strewn on.
     pub density: f32,
-    /// The least distance (m) between two instances of this scatter in a tile; 0: any.
+    /// The least distance (m) between two instances of this scatter in a tile: 0 (any), or
+    /// 0.01 or more.
     pub spacing: f32,
     /// Each instance's size, times the mesh: uniform between the two.
     pub scale: (f32, f32),
@@ -62,12 +69,14 @@ pub struct ScatterDef {
     /// the default keeps it on the tile's floor and off the tops of columns and walls. Ground
     /// inside a solid (a wall reaching above the top of the band) gets none either.
     pub height: (f32, f32),
-    /// The room (m) an instance needs around it, above the ground: none closer to a wall or a
-    /// column than this. 0: only where it stands is checked.
+    /// The room (m) an instance needs around it, above the ground (along its normal, so the
+    /// slope it stands on is not in the way): none closer to a wall or a column than this. 0:
+    /// only where it stands is checked.
     pub clearance: f32,
     /// The looks (`content/**/*.look.ron`) instances are drawn with, one picked for each; a look
-    /// gives the colour (the meshes are white) and the light. Give them no outline: it would
-    /// give every instance a hull of its own and keep them from being drawn together.
+    /// gives the colour (the meshes are white) and the light. A look with an outline (its own or
+    /// one it extends) is an error: it would give every instance and level of detail a hull of
+    /// its own, and a fading level's hull does not fade.
     pub looks: Vec<String>,
     /// Instances cast shadows. Off by default: grass and pebbles do not need them.
     pub shadows: bool,
@@ -271,8 +280,8 @@ impl ContentDef for ScatterDef {
         if !(self.density.is_finite() && (0.0..=MAX_DENSITY).contains(&self.density)) {
             refs.error(format!("density: 0 to {MAX_DENSITY} instances per square meter, not {}", self.density));
         }
-        if !(self.spacing.is_finite() && self.spacing >= 0.0) {
-            refs.error(format!("spacing: meters, 0 or more, not {}", self.spacing));
+        if !(self.spacing.is_finite() && (self.spacing == 0.0 || self.spacing >= MIN_SPACING)) {
+            refs.error(format!("spacing: meters, 0 (any) or {MIN_SPACING} or more, not {}", self.spacing));
         }
         let (small, large) = self.scale;
         if !(small.is_finite() && large.is_finite() && small > 0.0 && small <= large) {
@@ -295,10 +304,21 @@ impl ContentDef for ScatterDef {
             refs.error("looks is empty; name at least one look (content/**/*.look.ron), it gives the colour");
         }
         for (i, look) in self.looks.iter().enumerate() {
-            refs.require::<LookDef>(look, &format!("looks[{i}]"));
+            if !refs.require::<LookDef>(look, &format!("looks[{i}]")) {
+                continue;
+            }
+            let db = refs.db();
+            let drawn = db.get::<LookDef>(look).map(|def| def.resolve(|id| db.get::<LookDef>(id)));
+            if drawn.is_some_and(|def| def.outline.is_some()) {
+                refs.error(format!(
+                    "looks[{i}]: look `{look}` has an outline: foliage looks are drawn without outlines (one hull per \
+                     instance); give the scatter a look without `outline` (nor one it extends)"
+                ));
+            }
         }
         self.check_lods(refs);
         self.check_tiles(refs);
+        self.check_size(refs);
         for (i, region) in self.regions.iter().enumerate() {
             let db = refs.db();
             if db.get::<RegionDef>(region).is_none() && db.get::<DungeonDef>(region).is_none() {
@@ -332,6 +352,59 @@ impl ScatterDef {
         }
     }
 
+    /// The largest tile or room it is strewn on: its area (m²) and what it is (`a tile of
+    /// `wilds``, `room `hall` of `crypt``). Rooms are those a dungeon can use and the scatter is
+    /// strewn on.
+    pub fn largest_tile(&self, db: &shards_content::ContentDb) -> Option<(f32, String)> {
+        let mut largest: Option<(f32, String)> = None;
+        let mut offer = |area: f32, what: String| {
+            if area.is_finite() && largest.as_ref().is_none_or(|(most, _)| area > *most) {
+                largest = Some((area, what));
+            }
+        };
+        for (id, region) in db.iter::<RegionDef>().filter(|(id, _)| self.in_region(id)) {
+            offer(region.tile_size * region.tile_size, format!("a tile of `{id}`"));
+        }
+        for (id, dungeon) in db.iter::<DungeonDef>().filter(|(id, _)| self.in_region(id)) {
+            let cell = dungeon.cell_size * dungeon.cell_size;
+            let named = |room: &str, tags: &[String]| {
+                room == dungeon.entrance
+                    || room == dungeon.goal
+                    || dungeon.fixed.iter().any(|f| f == room)
+                    || dungeon.rooms.iter().any(|entry| match entry.strip_prefix('#') {
+                        Some(tag) => tags.iter().any(|t| t == tag),
+                        None => entry == room,
+                    })
+            };
+            for (room, def) in db.iter::<RoomDef>() {
+                if named(room, &def.tags) && self.on_tile(room, &def.tags) {
+                    offer(cell * def.size.0 as f32 * def.size.1 as f32, format!("room `{room}` of `{id}`"));
+                }
+            }
+        }
+        largest
+    }
+
+    /// Density times the largest tile or room times the levels of detail: within
+    /// [`MAX_TILE_ENTITIES`].
+    fn check_size(&self, refs: &mut Refs) {
+        if !(self.density.is_finite() && self.density > 0.0) || self.lods.is_empty() {
+            return;
+        }
+        let Some((area, what)) = self.largest_tile(refs.db()) else { return };
+        let lods = self.lods.len();
+        let entities = (f64::from(self.density) * f64::from(area)).round() * lods as f64;
+        if entities > MAX_TILE_ENTITIES as f64 {
+            let s = if lods == 1 { "" } else { "s" };
+            refs.error(format!(
+                "density: {}/m² on {what} ({area} m²) with {lods} level{s} of detail is {entities} mesh entities a tile, more \
+                 than {MAX_TILE_ENTITIES}; lower the density or the levels (each tile keeps its first {} instances)",
+                self.density,
+                MAX_TILE_ENTITIES / lods
+            ));
+        }
+    }
+
     fn check_tiles(&self, refs: &mut Refs) {
         let db = refs.db();
         let tags = || db.iter::<TileDef>().flat_map(|(_, t)| t.tags.iter()).chain(db.iter::<RoomDef>().flat_map(|(_, r)| r.tags.iter()));
@@ -362,6 +435,12 @@ mod tests {
     use shards_content::{ContentDb, ContentKinds};
 
     fn errors(scatter: &str) -> Vec<String> {
+        errors_with(scatter, &[])
+    }
+
+    /// The scatter errors of `scatter` beside two looks (`stone` outlined), a tile and `more`
+    /// files (path under content/, text).
+    fn errors_with(scatter: &str, more: &[(&str, &str)]) -> Vec<String> {
         let mut kinds = ContentKinds::default();
         for register in [
             ContentKinds::register::<ScatterDef>,
@@ -374,7 +453,7 @@ mod tests {
             register(&mut kinds);
         }
         let file = |path: &str, text: &str| Source { path: format!("content/{path}"), text: text.to_owned() };
-        let sources = [
+        let mut sources = vec![
             file("a.scatter.ron", scatter),
             file("a.look.ron", r##"{ "grass": (color: Some("#40a040")), "stone": (outline: Some((width: 1.0))) }"##),
             file(
@@ -382,6 +461,7 @@ mod tests {
                 r#"{ "field": (sockets: (n: "g", e: "g", s: "g", w: "g"), tags: ["meadow"]) }"#,
             ),
         ];
+        sources.extend(more.iter().map(|(path, text)| file(path, text)));
         ContentDb::build(&kinds, &sources).errors().filter(|e| e.kind.as_deref() == Some("scatter")).map(|e| e.message.clone()).collect()
     }
 
@@ -426,11 +506,12 @@ mod tests {
         let errors = errors(bad);
         let expected = [
             "density: 0 to 20",
-            "spacing: meters, 0 or more",
+            "spacing: meters, 0 (any) or 0.01 or more, not -1",
             "scale: (2, 1) is not two sizes",
             "tilt: 0 to 60 degrees",
             "max_slope: 0 to 90 degrees",
             "height: (1, 0) is not two heights",
+            "looks[0]: look `stone` has an outline: foliage looks are drawn without outlines (one hull per instance)",
             "looks[1] -> unknown look `gras` (did you mean `grass`?)",
             "lods: 1 to 4 levels of detail, not 5",
             "lods[0].mesh: width is a length above 0",
@@ -452,5 +533,47 @@ mod tests {
         assert_eq!(errors.len(), expected.len(), "{errors:#?}");
         let no_looks = self::errors("{ \"bare\": () }");
         assert!(no_looks.iter().any(|e| e.contains("looks is empty")) && no_looks.iter().any(|e| e.contains("lods: 1 to 4")), "{no_looks:#?}");
+    }
+
+    #[test]
+    fn spacing_is_none_or_a_centimeter_at_least() {
+        let with = |spacing: &str| errors(&format!(r#"{{ "s": (spacing: {spacing}, looks: ["grass"], lods: [{TUFT}]) }}"#));
+        assert_eq!(with("0.0"), Vec::<String>::new());
+        assert_eq!(with("0.01"), Vec::<String>::new());
+        assert_eq!(with("0.000000001"), ["spacing: meters, 0 (any) or 0.01 or more, not 0.000000001"]);
+    }
+
+    #[test]
+    fn a_look_with_an_outline_is_refused_also_through_the_look_it_extends() {
+        let looks = ("b.look.ron", r##"{ "inked": (outline: Some((width: 2.0))), "leaf": (extends: "inked", color: Some("#30a030")) }"##);
+        let errors = errors_with(&format!(r#"{{ "s": (looks: ["grass", "leaf"], lods: [{TUFT}]) }}"#), &[looks]);
+        assert_eq!(errors.len(), 1, "{errors:#?}");
+        assert!(errors[0].starts_with("looks[1]: look `leaf` has an outline: "), "{errors:#?}");
+    }
+
+    #[test]
+    fn more_mesh_entities_a_tile_than_the_most_is_an_error() {
+        let region = ("a.region.ron", r#"{ "big": (size: (1, 1), tile_size: 64.0, version: 1), "small": (size: (1, 1), tile_size: 16.0, version: 1) }"#);
+        let rooms = ("a.room.ron", r#"{ "hall": (size: (4, 2), doors: [], tags: ["meadow"]), "cell": (doors: []) }"#);
+        let dungeon = ("a.dungeon.ron", r##"{ "crypt": (version: 1, cell_size: 16.0, entrance: "cell", goal: "cell", rooms: ["#meadow"], path: (1, 1)) }"##);
+        let scatter = |density: f32, lods: usize, regions: &str| {
+            let lods: Vec<String> = (1..=lods).map(|i| format!("(mesh: Rock(radius: 0.1, detail: 0), until: {}.0)", 10 * i)).collect();
+            format!(r#"{{ "s": (density: {density:?}, regions: [{regions}], looks: ["grass"], lods: [{}]) }}"#, lods.join(", "))
+        };
+        let check = |text: String| errors_with(&text, &[region, rooms, dungeon]);
+        // 64 m tiles: 4096 m², 2 a square meter, 2 levels: 16384.
+        let big = check(scatter(2.0, 2, ""));
+        assert_eq!(
+            big,
+            ["density: 2/m² on a tile of `big` (4096 m²) with 2 levels of detail is 16384 mesh entities a tile, more than 10000; \
+              lower the density or the levels (each tile keeps its first 5000 instances)"]
+        );
+        assert_eq!(check(scatter(2.0, 1, "")), Vec::<String>::new(), "8192 with one level");
+        assert_eq!(check(scatter(2.0, 2, r#""small""#)), Vec::<String>::new(), "16 m tiles: 1024");
+        // The crypt's `hall` (4 × 2 cells of 16 m, by its tag) is its largest room: 2048 m².
+        let crypt = check(scatter(3.0, 2, r#""crypt""#));
+        assert!(crypt.len() == 1 && crypt[0].contains("3/m² on room `hall` of `crypt` (2048 m²)"), "{crypt:#?}");
+        let only_cells = format!(r#"{{ "s": (density: 3.0, tiles: ["cell"], regions: ["crypt"], looks: ["grass"], lods: [{TUFT}]) }}"#);
+        assert_eq!(check(only_cells), Vec::<String>::new(), "strewn on the one-cell rooms alone");
     }
 }

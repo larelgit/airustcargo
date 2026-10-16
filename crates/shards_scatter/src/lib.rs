@@ -8,7 +8,10 @@
 //!   seed, the tile's cell and the scatter's id as keys ([`place`]), kept `spacing` apart, then
 //!   dropped onto the ground under them: none where the ground is too steep (`max_slope`), out of
 //!   the `height` band (a column's top), inside a solid or closer to one than `clearance` (a
-//!   wall). The player's `graphics.foliage` (0 to 1) keeps the first part of the same list.
+//!   wall; a ball resting on the ground along its normal, so a slope is not a wall). Ground and
+//!   solids are the static colliders of the world when the tile is strewn ([`place::solids`]):
+//!   what moves (`Body::Kinematic`) never counts. The player's `graphics.foliage` (0 to 1) keeps
+//!   the first part of the same list. A tile gets at most 10 000 mesh entities of a scatter.
 //! - **Drawn together**: the instances of a scatter share one mesh per level of detail and,
 //!   through their look ([`shards_look`]), one material per look, so Bevy draws each (mesh,
 //!   look) as one batch on the GPU. Each level of detail is an entity per instance with a
@@ -17,12 +20,15 @@
 //! - **The picture's, not the simulation's** (feature `render`): placed only when the game draws,
 //!   in a window or with `--offscreen`; headless nothing is strewn. No `AiId`, no collider, not in
 //!   replays or snapshots: a tile's instances hang under the tile's root entity.
-//! - **Agents**: `scatter` lists the scatters and what each has strewn; `scatter_set on=false`
-//!   takes everything away, `on=true` strews it again (both in the developer menu, under
-//!   `world`); `ai/status` has `scatter: {scatters, instances, entities, tiles, on}`; the
-//!   density is `settings_set group=graphics key=foliage value=0.5`.
-//! - **Checks**: `--check-content` finds tiles, tags, regions and looks no file defines, levels of
-//!   detail out of order, a `fade` longer than a level, glTF meshes missing from the asset folder.
+//! - **Agents**: `scatter` lists the scatters, what each has strewn and what found no place on
+//!   the tiles there are, and how long the last strewing took; `scatter_set on=false` takes
+//!   everything away, `on=true` strews it again (both in the developer menu, under `world`);
+//!   `ai/status` has `scatter: {scatters, instances, entities, tiles, on}`; the density is
+//!   `settings_set group=graphics key=foliage value=0.5`.
+//! - **Checks**: `--check-content` finds tiles, tags, regions and looks no file defines, looks
+//!   with an outline, levels of detail out of order, a `fade` longer than a level, a `spacing`
+//!   under a centimeter, more than 10 000 mesh entities on the largest tile or room, glTF meshes
+//!   missing from the asset folder.
 
 pub mod def;
 #[cfg(feature = "render")]
@@ -39,7 +45,7 @@ use bevy::prelude::*;
 use serde_json::{json, Value};
 use shards_content::{ContentAppExt, ContentDb};
 use shards_core::EngineAppExt;
-use shards_world::TileId;
+use shards_world::{RoomDef, TileDef, TileId};
 
 pub use def::{ScatterDef, ScatterLod, ScatterMesh};
 pub use place::{Candidate, Ground, Placed, Skipped};
@@ -55,23 +61,42 @@ pub struct ScatterState {
     pub on: bool,
     /// The scatters as content had them when they were strewn, by id.
     pub defs: Vec<(String, ScatterDef)>,
+    /// The tags of the tiles and rooms (tiles first, by id), as content had them when they were
+    /// strewn: `#tag` entries pick tiles by them.
+    pub tags: Vec<(String, Vec<String>)>,
     /// `graphics.foliage` when they were strewn.
     pub foliage: f32,
     /// Everything is taken away and strewn again on the next placement.
     pub redo: bool,
-    /// Instances that found no place, by scatter, on the tiles strewn since the last redo.
-    pub skipped: BTreeMap<String, Skipped>,
+    /// The last time tiles were strewn.
+    pub last_pass: Option<Pass>,
 }
 
 impl Default for ScatterState {
     fn default() -> Self {
-        Self { on: true, defs: Vec::new(), foliage: 1.0, redo: false, skipped: BTreeMap::new() }
+        Self { on: true, defs: Vec::new(), tags: Vec::new(), foliage: 1.0, redo: false, last_pass: None }
     }
 }
 
-/// On a tile's root: its scatters are strewn (even if none of them found a place there).
-#[derive(Component, Clone, Copy, Debug, Default)]
-pub struct ScatterTile;
+/// One strewing of the tiles that waited (all of them after a redo): how many, and how long it
+/// took. Wall-clock time: it differs from run to run and from machine to machine.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Pass {
+    pub tiles: usize,
+    pub instances: usize,
+    /// Throwing the points and finding their ground (the rays and the clearance checks).
+    pub placing: std::time::Duration,
+    /// All of it, spawning the entities included.
+    pub total: std::time::Duration,
+}
+
+/// On a tile's root: its scatters are strewn (even if none of them found a place there), and
+/// how many instances of each found no place on it. It goes with the tile, and so do its counts.
+#[derive(Component, Clone, Debug, Default, PartialEq)]
+pub struct ScatterTile {
+    /// By scatter id, those with any.
+    pub skipped: Vec<(String, Skipped)>,
+}
 
 /// The instances of one scatter with one look on one tile: a child of the tile's root, their
 /// parent, carrying the `Look` they are drawn with.
@@ -96,8 +121,9 @@ pub struct ScatterInstance {
 /// The scatter systems other modules order against.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ScatterSystems {
-    /// `Update`, when something is drawn: tiles that are new get their scatters; content, the
-    /// player's `graphics.foliage` or `scatter_set` changing strews everything again.
+    /// `Update`, when something is drawn: tiles that are new get their scatters; a scatter, a
+    /// tile's or room's tags, the player's `graphics.foliage` or `scatter_set` changing strews
+    /// everything again.
     Place,
 }
 
@@ -136,12 +162,19 @@ pub fn draws(world: &World) -> bool {
     shards_look::draws(world)
 }
 
-/// Content's scatters and the player's foliage, against what was strewn: a change strews again.
+/// Content's scatters, the tiles' and rooms' tags and the player's foliage, against what was
+/// strewn: a change strews again.
 fn watch(db: Res<ContentDb>, settings: Option<Res<shards_settings::GraphicsSettings>>, mut state: ResMut<ScatterState>) {
     if db.is_changed() {
         let defs: Vec<(String, ScatterDef)> = db.iter::<ScatterDef>().map(|(id, def)| (id.to_owned(), def.clone())).collect();
         if defs != state.defs {
             state.defs = defs;
+            state.redo = true;
+        }
+        let tiles = db.iter::<TileDef>().map(|(id, def)| (id.to_owned(), def.tags.clone()));
+        let tags: Vec<(String, Vec<String>)> = tiles.chain(db.iter::<RoomDef>().map(|(id, def)| (id.to_owned(), def.tags.clone()))).collect();
+        if tags != state.tags {
+            state.tags = tags;
             state.redo = true;
         }
     }
@@ -185,6 +218,19 @@ pub fn strewn(world: &World) -> Strewn {
         }
     }
     strewn
+}
+
+/// Instances that found no place, by scatter, on the tiles there are now.
+pub fn skipped(world: &World) -> BTreeMap<String, Skipped> {
+    let mut all: BTreeMap<String, Skipped> = BTreeMap::new();
+    if let Some(mut tiles) = world.try_query::<&ScatterTile>() {
+        for tile in tiles.iter(world) {
+            for (scatter, skipped) in &tile.skipped {
+                all.entry(scatter.clone()).or_default().add(*skipped);
+            }
+        }
+    }
+    all
 }
 
 /// `ai/status` → `scatter: {scatters, instances, entities, tiles, on}`.

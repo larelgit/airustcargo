@@ -7,6 +7,7 @@ use shards::ai_core::AiJournal;
 use shards::bevy::camera::visibility::VisibilityRange;
 use shards::bevy::light::NotShadowCaster;
 use shards::look::Looked;
+use shards::motion::{Body, Shape};
 use shards::scatter::{ScatterRoot, ScatterTile};
 use shards::world::RegionTile;
 
@@ -84,6 +85,100 @@ fn every_tile_gets_its_scatters_where_the_ground_allows_the_same_every_run() {
     let stones = said.lines().find(|l| l.starts_with("  stones")).unwrap();
     assert!(stones.contains(" on 3 tiles · ") && stones.contains("found no place (") && stones.contains("too steep"), "{stones}");
     assert_eq!(status(&app)["entities"], json!(all.len()));
+    let last = said.lines().last().unwrap();
+    assert!(last.starts_with(&format!("last pass: 4 tiles, {total} instances in ")) && last.ends_with(" ms finding their ground)"), "{last}");
+}
+
+/// Bushes that need half a meter of room: on the mound (its side 26.6° steep) and by the wall.
+const ROOMY: &str = r##"{
+    "bushes": (
+        tiles: ["mound", "wall"],
+        density: 2.0,
+        max_slope: 30.0,
+        height: (-0.5, 1.5),
+        clearance: 0.5,
+        looks: ["green"],
+        lods: [(mesh: Rock(radius: 0.3, detail: 0), until: 30.0)],
+    ),
+}"##;
+
+#[test]
+fn clearance_keeps_off_walls_and_not_off_the_slope_underfoot() {
+    let assets = Folder::new("slope");
+    assets.put("content/world/test.scatter.ron", ROOMY);
+    let mut app = drawn(&assets);
+    let all = seen(&mut app);
+    // Up the side, below the top (where the cone falls away on every side): the room above the
+    // slope is measured along its normal, so the slope itself is not too close.
+    let side = instances(&all, "bushes", MOUND).into_iter().filter(|p| p.y > 0.2 && p.y < 0.8).count();
+    assert!(side > 0, "bushes up the mound's side");
+    let by_wall = instances(&all, "bushes", WALL);
+    assert!(by_wall.len() > 300, "{}", by_wall.len());
+    for p in by_wall {
+        assert!(clear_of(p, 6.0, 0.3) > 0.49, "half a meter clear of the wall: {p}");
+    }
+    let line = scatter_lines(&mut app).into_iter().find(|l| l.starts_with("  bushes")).unwrap();
+    assert!(line.contains("too close to a solid"), "the wall still turns some away: {line}");
+}
+
+#[test]
+fn only_static_colliders_are_ground_and_solids() {
+    let assets = Folder::new("moving");
+    let mut app = drawn(&assets);
+    let transforms = |seen: &[Seen]| seen.iter().map(|s| (s.cell, s.scatter.clone(), s.lod, s.transform)).collect::<Vec<_>>();
+    let before = transforms(&seen(&mut app));
+    let lines = scatter_lines(&mut app);
+    // A slab 4 m across over the field's middle, its top 0.35 m up, in the tufts' height band:
+    // moving (a platform), it is neither ground nor in the way.
+    let slab = (Collider::new(Shape::cuboid(Vec3::new(2.0, 0.05, 2.0))), Transform::from_xyz(8.0, 0.3, 8.0));
+    let platform = app.world_mut().spawn((slab, Body::Kinematic)).id();
+    ok(&mut app, "scatter_set", json!({"on": true}));
+    assert_eq!(transforms(&seen(&mut app)), before, "a moving collider changes nothing");
+    assert_eq!(scatter_lines(&mut app), lines);
+    // Static, the next strewing stands tufts on it.
+    app.world_mut().entity_mut(platform).insert(Body::Static);
+    ok(&mut app, "scatter_set", json!({"on": true}));
+    let on_slab = instances(&seen(&mut app), "tufts", FIELD).into_iter().filter(|p| (p.y - 0.35).abs() < 0.01).count();
+    assert!(on_slab > 8, "tufts on a static slab's top (about 16 on its 16 m²): {on_slab}");
+}
+
+#[test]
+fn a_tile_tag_change_strews_again() {
+    let assets = Folder::new("tags");
+    let mut app = drawn(&assets);
+    assert!(instances(&seen(&mut app), "stones", FIELD).is_empty(), "the field is not `#stone`");
+    let before = testing::ok(&mut app, "content_get", json!({"kind": "tile", "id": "field"})).result["def"].clone();
+    let mut def = before.clone();
+    def["tags"] = json!(["stone"]);
+    let change = json!({"kind": "tile", "id": "field", "def": def, "before": before});
+    ok(&mut app, "content_apply", json!({"changes": [change]}));
+    app.update();
+    assert!(!instances(&seen(&mut app), "stones", FIELD).is_empty(), "stones on the field once it is `#stone`");
+}
+
+#[test]
+fn a_scatter_too_dense_for_its_tiles_is_an_error_and_strews_no_more_than_the_cap() {
+    let assets = Folder::new("dense");
+    let lod = |until: f32| format!("(mesh: Rock(radius: 0.05, detail: 0), until: {until:.1})");
+    let dense = format!(
+        r#"{{ "dense": (tiles: ["field"], density: 20.0, looks: ["green"], lods: [{}, {}, {}, {}]) }}"#,
+        lod(5.0),
+        lod(10.0),
+        lod(15.0),
+        lod(20.0)
+    );
+    assets.put("content/world/test.scatter.ron", &dense);
+    let mut app = unchecked(&assets, 7, true);
+    let errors = content_errors(&app);
+    let named = "density: 20/m² on a tile of `plain` (256 m²) with 4 levels of detail is 20480 mesh entities a tile";
+    assert!(errors.iter().any(|e| e.contains("scatter `dense`") && e.contains(named)), "{errors:#?}");
+    // Strewn all the same, the first quarter of the cap's entities (four levels each).
+    let most = shards::scatter::def::MAX_TILE_ENTITIES / 4;
+    assert_eq!(instances(&seen(&mut app), "dense", FIELD).len(), most);
+    let journal = app.world().resource::<AiJournal>();
+    let warned: Vec<String> = journal.after(0).0.map(|e| e.text.clone()).filter(|t| t.contains("scatter `dense`: 1 tile would get 5120 instances")).collect();
+    assert_eq!(warned.len(), 1, "{warned:#?}");
+    assert!(warned[0].contains(&format!("each keeps its first {most}")), "{warned:#?}");
 }
 
 #[test]
@@ -182,8 +277,11 @@ fn a_region_change_takes_the_old_tiles_scatter_with_them() {
     let assets = Folder::new("regions");
     let mut app = drawn(&assets);
     let before = instances(&seen(&mut app), "tufts", FIELD);
+    let first = scatter_lines(&mut app);
     ok(&mut app, "regen", json!({"region": "plain", "seed": 9}));
     app.update();
+    // What found no place is the new region's alone: as a game that started there counts it.
+    assert_eq!(scatter_lines(&mut app), scatter_lines(&mut build(&assets, 9, true)));
     let all = seen(&mut app);
     assert_eq!(status(&app)["tiles"], json!(4), "the new region's four tiles, not eight");
     assert_ne!(instances(&all, "tufts", FIELD), before, "another seed, another scatter");
@@ -196,6 +294,9 @@ fn a_region_change_takes_the_old_tiles_scatter_with_them() {
     let journal = app.world().resource::<AiJournal>();
     let warned: Vec<String> = journal.after(0).0.map(|e| e.text.clone()).filter(|t| t.contains("B0004")).collect();
     assert!(warned.is_empty(), "nothing to warn about: {warned:#?}");
+    ok(&mut app, "regen", json!({"region": "plain", "seed": 7}));
+    app.update();
+    assert_eq!(scatter_lines(&mut app), first, "back where it started: the same counts, not twice them");
 }
 
 /// How far `p` is, across the ground, from a solid `half_x` by `half_z` around the tile's middle.

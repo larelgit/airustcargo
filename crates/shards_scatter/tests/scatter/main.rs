@@ -1,8 +1,9 @@
 //! Scatter end to end on the whole engine: a 2×2 region of test tiles (a field, a column, a
 //! mound, a wall) with three scatters. Headless nothing is strewn; on the headless engine counted
 //! as drawn (its render plugins stay registered without a GPU) the instances, where they stand
-//! and where not, their levels of detail, looks and batches, the same every run, and what
-//! `graphics.foliage`, `scatter_set`, a content change and a region change do. `offscreen` draws
+//! and where not, their levels of detail, looks and batches, the same every run, what counts as
+//! ground and as a solid, and what `graphics.foliage`, `scatter_set`, a content change (a scatter's
+//! or a tile's tags) and a region change do. `offscreen` draws
 //! them on a GPU and reads the pixels back (`--ignored`). Every test writes its own asset folder
 //! and removes it after.
 
@@ -165,8 +166,16 @@ pub fn drawn(assets: &Folder) -> App {
 }
 
 pub fn build(assets: &Folder, seed: u64, drawn: bool) -> App {
+    let app = unchecked(assets, seed, drawn);
+    let errors = content_errors(&app);
+    assert!(errors.is_empty(), "test content has errors: {errors:#?}");
+    app
+}
+
+/// [`build`], whatever errors the content has.
+pub fn unchecked(assets: &Folder, seed: u64, drawn: bool) -> App {
     let dir = assets.path().to_string_lossy().into_owned();
-    let app = testing::test_app(
+    testing::test_app(
         move |config| (config.asset_dir, config.seed) = (dir, seed),
         |app| {
             app.start_region("plain");
@@ -174,10 +183,16 @@ pub fn build(assets: &Folder, seed: u64, drawn: bool) -> App {
                 app.insert_resource(Offscreen { image: Handle::default(), size: UVec2::new(320, 240) });
             }
         },
-    );
-    let errors: Vec<String> = app.world().resource::<shards::content::ContentDb>().errors().map(ToString::to_string).collect();
-    assert!(errors.is_empty(), "test content has errors: {errors:#?}");
-    app
+    )
+}
+
+pub fn content_errors(app: &App) -> Vec<String> {
+    app.world().resource::<shards::content::ContentDb>().errors().map(ToString::to_string).collect()
+}
+
+/// The `scatter` tool's lines, without the last pass's (its time differs from run to run).
+pub fn scatter_lines(app: &mut App) -> Vec<String> {
+    ok(app, "scatter", serde_json::json!({})).lines().filter(|l| !l.starts_with("last pass: ")).map(str::to_owned).collect()
 }
 
 /// The text of a call that must succeed.
