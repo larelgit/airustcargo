@@ -1,0 +1,27 @@
+// The performance autotest (content kind `perf`): `cargo run --release -- --perf valley --offscreen`
+// (headless, without --offscreen, it measures the ticks alone). The valley at seed 42, the hero
+// immortal at the gate (cell (1, 1), centered at (-40, 56)) and six raiders there with it, besides
+// the three of the camps; then 600 ticks in 1080p against the budgets. A debug build measures without
+// judging: the budgets are for --release.
+{
+    "valley": (
+        region: Some((region: "valley", seed: 42)),
+        setup: [
+            "god",
+            "spawn_prefab id=raider x=-44 z=62",
+            "spawn_prefab id=raider x=-40 z=62",
+            "spawn_prefab id=raider x=-36 z=62",
+            "spawn_prefab id=raider x=-44 z=65",
+            "spawn_prefab id=raider x=-40 z=65",
+            "spawn_prefab id=raider x=-36 z=65",
+        ],
+        size: Some((1920, 1080)),
+        budgets: (
+            // 60 frames a second: a frame within 16.7 ms, 99 in 100 of them at least.
+            frame_ms: Some(16.7),
+            frame_avg_ms: Some(10.0),
+            tick_avg_ms: Some(4.0),
+            region_load_s: Some(15.0),
+        ),
+    ),
+}

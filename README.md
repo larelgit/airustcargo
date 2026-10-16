@@ -67,7 +67,7 @@ cargo shards observe                       # срез мира текстом + 
 cargo shards tools                         # что можно сделать (--json: со схемами аргументов)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # в ответе CHANGES и JOURNAL
-cargo shards content check                 # ok: 98 definitions in 30 files
+cargo shards content check                 # ok: 99 definitions in 31 files
 cargo shards act regen region=wilds seed=42   # сгенерированный регион к югу от арены; игрок у его ворот
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # маршрут к логову по навсетке: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # проверка генератора на тысяче зёрен
@@ -90,7 +90,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Контент без игры: читает и проверяет все файлы (в том числе файлы уровней тайлов и запечённую навигацию), код 0 или 1.
 cargo sandbox --check-content
-# ok: 98 definitions in 30 files
+# ok: 99 definitions in 31 files
 
 # 7. Мир без игры: генератор на тысяче зёрен (код 0, если прошли все) и запекание навигации тайлов.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -145,8 +145,8 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
    зависимостей нет: Bevy, serde и schemars приходят через `shards` (`shards::prelude::*`, `shards::serde`,
    `shards::schemars`). CLI ставится той же версии: `cargo install shards_cli --git … --rev <хэш>` (после выпуска — `--tag v0.3.0`).
 3. **`main` — одна строка.** `shards::run` читает командную строку (`--headless --seed --port --port-file --no-remote
-   --paused --hz --replay --verify --windowed --check-every --check-detail --tick-budget-ms --check-content
-   --worldgen-report --seeds --bake-nav`), ловит `kill` и закрытый терминал:
+   --paused --hz --replay --verify --windowed --check-every --check-detail --tick-budget-ms --frame-budget-ms --check-content
+   --worldgen-report --seeds --bake-nav --smoke --perf`), ловит `kill` и закрытый терминал:
    ```rust
    fn main() -> std::process::ExitCode {
        shards::run(pit::build_app)
@@ -391,6 +391,7 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 | `crash_replays` | сбой геймплея сохраняет `replays/crash-tick<N>.json` и отчёт о падении в `crashes/`, нарушенный инвариант — `replays/invariant-<name>-tick<N>.json` (см. «Отчёт о падении») |
 | `check_every`, `check_detail` | тиков между проверками реплея (60, `--check-every`) и что проверка хранит, чтобы назвать разошедшееся: `components`, `entities` или `none` (`--check-detail`); оба пишутся в файл реплея |
 | `tick_budget` | тик дольше этого — «сверх бюджета» (`--tick-budget-ms`); `None` — длительность самого тика |
+| `frame_budget` | кадр дольше этого — «сверх бюджета» (`--frame-budget-ms`; поле `frames` в `ai/status`); `None` — 1/60 с. Кадры есть только у игры, которая рисует |
 | `report_perf` | строка `ticks:` под ответом `step` и записи `perf` в журнале; в `shards::testing::config()` выключено |
 | `after_loading` | куда идёт `Loading` после загрузки (`InGame`; `MainMenu` для игры с меню) |
 | `hot_reload` | применять файлы контента по мере правки (нужна cargo feature `hot_reload`; в тестах и `--verify` выключено) |
@@ -416,8 +417,8 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 см. «Звук»), `gamepad`, `wayland`, `dynamic`, `trace_tracy`; у `shards` и шаблона ещё `dist` — сборка для игроков (см. «Сборка для игроков и Windows»).
 
 **`shards::run`** — стандартный `main`. Флаги: `--headless | --offscreen --seed N --port N|0 --port-file F --no-remote --paused --hz N
---replay FILE --verify [--windowed] --check-every N --check-detail components|entities|none --tick-budget-ms MS --check-content
---worldgen-report REGION [--seeds S] --bake-nav [TILES] --smoke TICKS`; для фазы C:
+--replay FILE --verify [--windowed] --check-every N --check-detail components|entities|none --tick-budget-ms MS --frame-budget-ms MS
+--check-content --worldgen-report REGION [--seeds S] --bake-nav [TILES] --smoke TICKS --perf ID`; для фазы C:
 `--host [PORT] | --join ADDR | --stand N [--stand-udp]` (взаимоисключающие, `--stand` только с `--headless`), `--name`,
 `--net-sim SPEC`, `--save-dir DIR`, `--settings-dir DIR | --no-settings`, `--character SLOT`, `--world SLOT` (слот —
 1–32 символа `a-z0-9_-`), `--exit-with-host`. `--host`, `--join` и `--stand` начинают сессию (раздел «Сессия
@@ -432,7 +433,8 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 `kill` и закрытый терминал завершают игру через `AppExit`: токен и файл порта удаляются.
 Паника, которая уносит игру, оставляет отчёт `crashes/crash-…json` и код выхода 101 (см. «Отчёт о падении»).
 `--offscreen` не сочетается с `--headless`, `--stand`, `--verify` и проверками (`--check-content`, `--worldgen-report`,
-`--bake-nav`, `--smoke`); без GPU он выходит с кодом 2 и советом, без фичи `render` — тоже.
+`--bake-nav`, `--smoke`); без GPU он выходит с кодом 2 и советом, без фичи `render` — тоже. С `--perf` (автотест
+производительности, см. «Время кадра и автотест производительности») он сочетается: тогда автотест меряет и кадры.
 
 **Состояния** (`EngineState`, Bevy States): `Loading` → `InGame` (или `MainMenu`, если так задал `after_loading`),
 `RegionLoading` — экран загрузки региона: через него идёт `regen` (см. «Мир и генерация»). Внутри `InGame` — `PauseState::{Running, Paused}`: игровая пауза,
@@ -562,7 +564,7 @@ reflection, как в сценах Bevy; каждый компонент дол�
 
 ```text
 $ shards act content_list
-content: 98 definitions in 30 files
+content: 99 definitions in 31 files
   action  23
   animset  0
   attack_plan  3
@@ -2352,9 +2354,9 @@ SHARDS_PORT_FILE=/tmp/shards-a.port cargo shards step 600 --until named:player_d
 
 | код | значит |
 |---|---|
-| 0 | игра закрыта; с `--verify` — реплей совпал с записью, ничего не сломалось; `--check-content`, `--worldgen-report` — ошибок нет; `--smoke` — тики прошли |
-| 1 | `--verify`: игра разошлась с записью, упала система геймплея или нарушен инвариант; `--check-content`, `--worldgen-report` — нашли ошибки; `--smoke` — не загрузилась, упала система или нарушен инвариант |
-| 2 | реплей не читается или не подходит к игре; `--port-file` не записать |
+| 0 | игра закрыта; с `--verify` — реплей совпал с записью, ничего не сломалось; `--check-content`, `--worldgen-report` — ошибок нет; `--smoke` — тики прошли; `--perf` — все бюджеты соблюдены (или отладочная сборка, которая не судит) |
+| 1 | `--verify`: игра разошлась с записью, упала система геймплея или нарушен инвариант; `--check-content`, `--worldgen-report` — нашли ошибки; `--smoke` — не загрузилась, упала система или нарушен инвариант; `--perf` — бюджет превышен или игра не дошла до замера |
+| 2 | реплей не читается или не подходит к игре; `--port-file` не записать; `--perf` — нет такого определения, с `--offscreen` нет GPU |
 | 3 | порт занят (`port 15711 is busy (another game?)`) |
 | 128 + N | остановлена сигналом N: 130 — Ctrl+C, 143 — `kill`, 129 — закрытый терминал (SIGHUP) |
 
@@ -2745,6 +2747,94 @@ ticks: avg 0.52 ms, max 2.60 ms (tick 540), budget 16.7 ms
   к `127.0.0.1`. Версия GUI должна совпадать с клиентом, который тянет Bevy 0.20: в `Cargo.lock` это `tracy-client` 0.19.0
   и `tracy-client-sys` 0.30.0 с Tracy 0.14.1 (протокол 82), значит, нужен GUI 0.14.1. С `--paused` тики идут по
   `shards step`, и зоны появляются на них. Фича добавляет накладные расходы, поэтому бюджет (`ticks:`, `perf`) меряйте без неё.
+
+## Время кадра и автотест производительности (E10)
+
+Игра, которая рисует (окно или `--offscreen`), меряет и кадры (`shards::frames`). Кадр — это обновление основного мира
+(`First` … `Last`: ввод, тики этого кадра, системы игры) и кадр мира рендера для него (расписание `Render`). Bevy ведёт их
+рядом, в двух потоках, поэтому кадр стоит столько, сколько более медленный из двух. Не считаются извлечение между ними и
+ожидание дисплея (образ swapchain при vsync); без окна каждый кадр ждёт, пока GPU его нарисует, и это ожидание считается.
+Кадр, в котором вызов прогнал тики на паузе (`step`), игрок не видит: он не идёт в счёт.
+
+`ai/status` и `shards status` показывают поле `frames` за последние 600 кадров (без окна и GPU — `null`):
+
+```text
+"frames": {"avg_ms": 2.33, "budget_ms": 16.667, "fps": 389.0, "frames": 600, "gpu_ms": 0.45, "main_ms": 1.26,
+           "max_ms": 8.95, "over_budget": 0, "render_ms": 2.33, "triangles": 21421.0, "worst_frame": 3120}
+```
+
+- `budget_ms` — бюджет кадра: 1/60 с по умолчанию, свой — `--frame-budget-ms 8` или `EngineConfig::frame_budget`.
+  `over_budget` — сколько из этих кадров дольше него, `worst_frame` — номер самого долгого.
+- `fps` — кадров в секунду реального времени между первым и последним из них: в окне с vsync это частота дисплея, без окна —
+  сколько успевает GPU (у игры, запущенной самой, цикл без окна идёт не чаще 60 раз в секунду).
+- `main_ms` и `render_ms` — среднее основного мира и мира рендера. `gpu_ms` и `triangles` — время проходов на GPU и
+  треугольники, дошедшие до растеризации (тени тоже), в среднем на кадр. Их дают диагностики рендера Bevy
+  (`RenderDiagnosticsPlugin`: запросы timestamp и pipeline statistics, Vulkan и DX12), с опозданием на несколько кадров. GPU,
+  который их не меряет, и сборка `dist` (в ней диагностик нет) дают `null`: WARP меряет время, но не треугольники.
+- Поле `counts` есть всегда: `entities` — все сущности мира (с `AiId` — поле `entities` рядом), `meshes` — сущности с
+  `Mesh3d`, `visible_meshes` — меши, которые рисует хоть какой-то вид (камера или карта теней света; направленный свет видит
+  весь регион), `camera_meshes` — меши активных камер, у каждой свои: отрисовки картинки до того, как Bevy соберёт их в пакеты.
+  Без окна ничего не рисуется, там 0.
+- Кадры, как и тики, не входят ни в хэш, ни в реплей, ни в снапшот; в журнал они не пишутся.
+
+**Автотест** — `--perf ID` у любой игры на `shards::run`. Сцену, прогрев, замер и бюджеты называет определение контента вида
+`perf` (`content/**/*.perf.ron`, `shards::bench::PerfDef`). Эталонная сцена песочницы — регион 8×8 с 15 врагами из ТЗ
+(растительности ещё нет, она — E10.2):
+
+```ron
+// crates/sandbox/assets/content/perf/reference.perf.ron (сокращено)
+{
+    "reference": (
+        region: Some((region: "wilds", seed: 42)),   // сгенерировать регион и перейти в него; загрузка — по времени
+        setup: ["god", "goto_tile x=5 y=5", "teleport id=e5 x=24 z=138", "spawn_prefab id=camp_skeleton x=17 z=141", …],
+        size: Some((1920, 1080)),                     // картинка --offscreen; по умолчанию — окно игры
+        warmup: 120,                                  // тиков до замера (шейдеры, кэши); по умолчанию 120
+        ticks: 600,                                   // тиков замера; по умолчанию 600
+        budgets: (
+            frame_ms: Some(16.7),        // кадр дольше — сверх бюджета (по умолчанию 1/60 с)
+            frame_avg_ms: Some(10.0),    // средний кадр, не больше
+            tick_avg_ms: Some(4.0),      // средний тик, не больше
+            region_load_s: Some(15.0),   // генерация и загрузка региона, не дольше
+            entities: Some(20000),
+            visible_meshes: Some(2000),
+        ),
+    ),
+}
+```
+
+Ещё бюджеты: `tick_ms` (тик дольше — сверх бюджета; по умолчанию длительность тика), `over_share` (доля тиков и кадров,
+которым можно выйти за бюджет; 0.01), `gpu_avg_ms` и `triangles` (в среднем на кадр). Бюджет, которого нет, не проверяется;
+тики (и кадры с `--offscreen`) держатся своего бюджета всегда. Строки `setup` — как у `shards act` и консоли, выполняются по
+порядку от агента `perf`, каждая должна пройти; загрузку, которую строка начала, автотест дожидается. Определение проверяет
+`--check-content`: регион, которого нет, пустая строка, бюджет не больше нуля, доля вне 0…1, `region_load_s` без региона.
+
+```text
+$ cargo run -p sandbox --release -- --perf reference --offscreen
+perf reference: release build, offscreen 1920x1080 on NVIDIA GeForce RTX 5080 (Vulkan, DiscreteGpu, driver NVIDIA 610.88)
+loaded in 0.18s, region wilds seed 42 in 0.04s of it
+600 ticks in 10.00s: avg 0.72 ms, max 7.13 ms (tick 180); 3890 frames, 389.0 fps: avg 2.33 ms, max 8.95 ms (main 1.26, render 2.33, GPU 0.45 ms), 21421 triangles; 1132 entities, 217 meshes, 217 drawn, 156 in cameras
+ok    region load 0.04 s (at most 15.0 s)
+ok    tick avg 0.72 ms (at most 4.00 ms)
+ok    ticks over 16.7 ms: 0 of 600, 0.0% (at most 1.0%)
+ok    frame avg 2.33 ms (at most 10.00 ms)
+ok    frames over 16.7 ms: 0 of 3890, 0.0% (at most 1.0%)
+ok    entities 1132 (at most 20000)
+ok    visible meshes 217 (at most 2000)
+perf reference: all 7 budgets met
+```
+
+- Без `--offscreen` автотест меряет только тики и гонит их как можно быстрее (прогрев и замер — по одному `step`); бюджеты
+  кадров идут строками `-` («nothing is drawn headless»). С `--offscreen` игра идёт в реальном времени, 60 тиков в секунду, а
+  кадры — так быстро, как рисует GPU, без vsync. Тот же замер на WARP (`WGPU_FORCE_FALLBACK_ADAPTER=1`) — 0.9 кадра в секунду
+  в 1080p, два бюджета кадра превышены, код 1.
+- Код выхода: 0 — все бюджеты соблюдены; 1 — какой-то превышен или игра не дошла до конца замера (не загрузилась, строка
+  `setup` не прошла, упала система геймплея, нарушен инвариант, тики не прошли и за вчетверо большее время плюс минуту); 2 — нет
+  такого определения (с `did you mean`) или с `--offscreen` нет GPU.
+- Отладочная сборка меряет, но не судит: строки идут с `-`, код 0, а последняя строка говорит, что бюджеты — для `--release`.
+- Автотест ничего не пишет: ни настроек, ни реплеев, ни отчётов о падении; сервера `shards` у него нет. С `--host`, `--join`,
+  `--stand` и другими проверками (`--smoke`, `--verify`, …) он не сочетается.
+- Из теста: `shards::bench::play(&mut app, &def)` на тестовом приложении (без окна или с `offscreen`) возвращает `Measured`,
+  `shards::bench::judge` — строку на бюджет (`crates/sandbox/tests/perf.rs`; замер с `offscreen` — под `#[ignore]`: нужен GPU).
 
 ## Меню и консоль разработчика (E11)
 
@@ -3757,7 +3847,7 @@ built: …\target\x86_64-pc-windows-msvc\dist\my_game.exe
 package: …\my_game\dist\my_game-0.1.0-windows-x86_64 (program 123.6 MB, assets/ 52 files, 1.3 MB)
 subsystem: windows (no console window)
 imports: system DLLs only (kernel32.dll, oleaut32.dll, uiautomationcore.dll, user32.dll, …, dxgi.dll, ws2_32.dll)
-check-content: ok: 57 definitions in 24 files
+check-content: ok: 58 definitions in 25 files
 smoke: ok: loaded in 0.05s, 300 ticks in 0.07s
 writes: nothing in its own folder
 ```
@@ -4021,8 +4111,8 @@ cargo test --manifest-path template/Cargo.toml # шаблон отдельно: 
 | `shards_save` | секции и реестр, конверт `shards-save/1` и контрольная сумма, атомарная запись, три копии и восстановление, матрица порчи, миграции, сохранения из более новой версии, слоты (в том числе слот клиента по имени), автосохранение, инструменты `save_*` и `load_game`, `SaveRouting` |
 | `shards_dev` | у каждого пункта списка GDD 32.8 есть пункт меню с живым инструментом и порядок разделов, пункты и строки идут через те же инструменты (переключатели, пункты с пропуском, пункты без дела, пункты игры из контента), консоль отвечает и помнит строки, `open` показывает панели, клавиши оверлеев ждут, пока панель открыта, Tab дописывает имена инструментов и аргументов, битый пункт — ошибка контента |
 | `shards_net` | `src/`: без Bevy — транспорты (хаб в памяти, UDP), имитация связи, канал (надёжные и последние сообщения, блобы, подтверждения, RTT, потери, тайм-ауты), формат датаграмм; сессия (пределы кадров ввода и самого большого честного пакета, удерживаемое после мира заново, правила репликации, ожидание места в канале по числу и байтам, `NetDef`, ушедшие токены). Сессия целиком — в тестах песочницы `net*.rs` |
-| `shards` | сведение сети и сохранений (`coop`: что хост знает о персонаже игрока, как он едет текстом), секции движка (число, какого не бывает у тела), слот стенда, реплей со снапшота (`--verify`: тот же результат, код 2 для чужого снапшота), режим без окна — те же плагины и картинки нет (`display` и подсказка `shot`), `--offscreen` — плагины окна без окна (картинка для `shot`, в неё рисуют камеры, нацеленные на окно, и после смены цели), тестовое приложение, `testing::ok` на сбое геймплея, `testing::run_to` и `verify`, когда нарушенное правило совпало с началом загрузки, бюджет тика в командной строке, анимационный мост на настоящей модели со скином |
-| `sandbox` | в одном бинарнике `tests/sandbox`: снапшоты (`snapshots.rs`: состояние после загрузки то же, что в исходной сессии, на перекате, комбо, телеграфе, планировании, плавании, флаконе, боях NPC и в сгенерированном регионе), тайл руины (`tiles.rs`: файл из тестового генератора glTF совпадает с закоммиченным), сценарии (`scenario_files`: каждый файл на свежей игре, все подряд в одной игре, бой-прототип после шести разных пауз), эталонные реплеи, действия, контент, полоса препятствий, детерминизм, видимость, права scope, реплеи, `kill` и SIGHUP; инварианты (`invariants.rs`: правила песочницы и их границы, сессии, остановка в реальном времени, реплей нарушения, снапшот; `net_seams.rs`: клиент правил не проверяет); кооператив на стенде (`net.rs`, `net_guards.rs`, `net_lifecycle.rs`, `net_sync.rs`, `net_predict.rs`, `net_seams.rs`, `net_coop.rs`, из них 2 замера под `#[ignore]`: вход и уход, пределы и текст пира, мир заново, ввод, рассинхрон, конец сессии и коды выхода, часы стенда, UDP на loopback, предсказание клиента, персонажи и сохранения); долгая игра (`soak.rs`: две минуты хоста и двух клиентов на 150 мс и 2 % со сменой региона и сохранениями, полчаса — под `#[ignore]`); снимок без окна (`offscreen.rs`, `#[ignore]`: нужен GPU или программный рендер); отдельно `system_failures` (сбой геймплея, краш-реплей, отчёт о падении, паника в другом потоке, `crash_report`, возврат снапшотом после сбоя), `log_capture` (строки лога в `step`) и `perf` (время тика: бюджет, журнал, `ai/status`): у них свои процессы |
+| `shards` | сведение сети и сохранений (`coop`: что хост знает о персонаже игрока, как он едет текстом), секции движка (число, какого не бывает у тела), слот стенда, реплей со снапшота (`--verify`: тот же результат, код 2 для чужого снапшота), режим без окна — те же плагины и картинки нет (`display` и подсказка `shot`), `--offscreen` — плагины окна без окна (картинка для `shot`, в неё рисуют камеры, нацеленные на окно, и после смены цели), тестовое приложение, `testing::ok` на сбое геймплея, `testing::run_to` и `verify`, когда нарушенное правило совпало с началом загрузки, бюджет тика в командной строке, время кадра (`frames`: кадр — более медленный из двух миров, кадр с `step` не в счёт, отчёт GPU), автотест (`bench`: вердикты, проверка определения, `--perf` и его коды), `counts` без окна, анимационный мост на настоящей модели со скином |
+| `sandbox` | в одном бинарнике `tests/sandbox`: снапшоты (`snapshots.rs`: состояние после загрузки то же, что в исходной сессии, на перекате, комбо, телеграфе, планировании, плавании, флаконе, боях NPC и в сгенерированном регионе), тайл руины (`tiles.rs`: файл из тестового генератора glTF совпадает с закоммиченным), сценарии (`scenario_files`: каждый файл на свежей игре, все подряд в одной игре, бой-прототип после шести разных пауз), эталонные реплеи, действия, контент, полоса препятствий, детерминизм, видимость, права scope, реплеи, `kill` и SIGHUP; инварианты (`invariants.rs`: правила песочницы и их границы, сессии, остановка в реальном времени, реплей нарушения, снапшот; `net_seams.rs`: клиент правил не проверяет); кооператив на стенде (`net.rs`, `net_guards.rs`, `net_lifecycle.rs`, `net_sync.rs`, `net_predict.rs`, `net_seams.rs`, `net_coop.rs`, из них 2 замера под `#[ignore]`: вход и уход, пределы и текст пира, мир заново, ввод, рассинхрон, конец сессии и коды выхода, часы стенда, UDP на loopback, предсказание клиента, персонажи и сохранения); долгая игра (`soak.rs`: две минуты хоста и двух клиентов на 150 мс и 2 % со сменой региона и сохранениями, полчаса — под `#[ignore]`); снимок без окна (`offscreen.rs`, `#[ignore]`: нужен GPU или программный рендер); отдельно `system_failures` (сбой геймплея, краш-реплей, отчёт о падении, паника в другом потоке, `crash_report`, возврат снапшотом после сбоя), `log_capture` (строки лога в `step`) и `perf` (время тика: бюджет, журнал, `ai/status`; автотест на эталонной сцене без окна, с `offscreen` — под `#[ignore]`): у них свои процессы |
 
 Тесты шаблона (`template/tests/game`, 28 и один `#[ignore]`) собираются в одном бинарнике: сценарии (и сценарий стенда), детерминизм,
 реплеи, контент, кооператив (хост и гость на 150 мс и 2 %: трофей гостя на каждой копии и в его файле, следующая игра с ним,

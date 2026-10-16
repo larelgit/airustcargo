@@ -1,0 +1,42 @@
+// The reference scene of the performance autotest: `cargo run -p sandbox --release -- --perf
+// reference --offscreen` (headless, without --offscreen, it measures the ticks alone). The wilds at
+// seed 42, 8 x 8 tiles of 16 m with their two camps and their den; the player (e5) immortal in the
+// pillar hall (cell (5, 5), centered at (24, 136)) south of the pillars, by the den, and twelve more
+// skeletons there with it: fifteen monsters in the region, thirteen of them in the fight (the camps
+// are 40 m away at least); 1080p.
+{
+    "reference": (
+        region: Some((region: "wilds", seed: 42)),
+        setup: [
+            "god",
+            "goto_tile x=5 y=5",
+            "teleport id=e5 x=24 z=138",
+            "spawn_prefab id=camp_skeleton x=17 z=141",
+            "spawn_prefab id=camp_skeleton x=20 z=141",
+            "spawn_prefab id=camp_skeleton x=23 z=141",
+            "spawn_prefab id=camp_skeleton x=26 z=141",
+            "spawn_prefab id=camp_skeleton x=29 z=141",
+            "spawn_prefab id=camp_skeleton x=31 z=141",
+            "spawn_prefab id=camp_skeleton x=17 z=143",
+            "spawn_prefab id=camp_skeleton x=20 z=143",
+            "spawn_prefab id=camp_skeleton x=23 z=143",
+            "spawn_prefab id=camp_skeleton x=26 z=143",
+            "spawn_prefab id=camp_skeleton x=29 z=143",
+            "spawn_prefab id=camp_skeleton x=31 z=143",
+        ],
+        size: Some((1920, 1080)),
+        warmup: 120,
+        ticks: 600,
+        budgets: (
+            // Players see 60 frames a second: a frame within 16.7 ms, 99 in 100 of them at least.
+            frame_ms: Some(16.7),
+            frame_avg_ms: Some(10.0),
+            // The simulation leaves the frame room to draw.
+            tick_avg_ms: Some(4.0),
+            // A region loads in 10-15 s at most.
+            region_load_s: Some(15.0),
+            entities: Some(20000),
+            visible_meshes: Some(2000),
+        ),
+    ),
+}
