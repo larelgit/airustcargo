@@ -18,7 +18,7 @@ use crate::common::*;
 const LIGHT_1: &str = "hits: [(span: Phase(\"active\"), shape: Cone(range: 2.2, angle: 110), damage: 20, poise: 12)],";
 
 /// A copy of the sandbox's assets, to edit without touching the repository.
-fn assets_copy(name: &str) -> PathBuf {
+pub(crate) fn assets_copy(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("sandbox_content_{name}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     copy_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("assets"), &dir);
@@ -38,7 +38,8 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
-fn app_on(dir: &Path) -> App {
+/// A sandbox on the assets in `dir`.
+pub(crate) fn app_on(dir: &Path) -> App {
     let asset_dir = dir.to_string_lossy().into_owned();
     shards::testing::test_app(
         move |config| config.asset_dir = asset_dir,

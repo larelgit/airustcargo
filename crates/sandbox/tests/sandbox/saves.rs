@@ -1,6 +1,9 @@
 //! Saves (E8) on the sandbox: the engine's own sections. Where the player stands and how
-//! healthy they are come back from a file, in a fresh game too; the region of the wilds is made
-//! again from its seed; a region that no longer comes out the same is refused.
+//! healthy they are come back from a file, in a fresh game too; the region of the wilds comes
+//! back from the manifest the save keeps, as it was, after an update that changes the generator
+//! too; content the manifest names and the game lost is refused, a manifest that is not the one
+//! its hash names is damage; a save of the section's version 1 (no manifest) is made again from
+//! its seed and refused when it no longer comes out the same.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,9 +12,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use shards::action::{ActionState, Charges, Dead, Health, Stamina};
 use shards::ai_core::{AiIndex, JournalKind};
 use shards::prelude::*;
-use shards::save::{SaveConfig, SaveFile};
+use shards::save::{SaveConfig, SaveFile, SectionData};
 use shards::serde_json::{json, Value};
-use shards::world::ActiveRegion;
+use shards::world::{ActiveRegion, RegionManifest, RegionPart};
 
 use crate::common::*;
 
@@ -44,6 +47,56 @@ impl Drop for Saves {
     }
 }
 
+/// The sandbox after an update that changes the wilds' generator: its definition at version 2,
+/// grass half as likely. A copy of the assets, removed when the test ends.
+pub(crate) struct Updated(PathBuf);
+
+impl Updated {
+    pub(crate) fn new(tag: &str) -> Self {
+        let dir = crate::content::assets_copy(&format!("update_{tag}"));
+        let edit = |file: &str, from: &str, to: &str| {
+            let path = dir.join("content/region").join(file);
+            let text = fs::read_to_string(&path).unwrap();
+            assert_eq!(text.matches(from).count(), 1, "{file}: the update edits `{from}`");
+            fs::write(&path, text.replacen(from, to, 1)).unwrap();
+        };
+        edit("wilds.region.ron", "version: 1,", "version: 2,");
+        edit("wilds.tile.ron", "weight: 6.0,", "weight: 3.0,");
+        Self(dir)
+    }
+
+    /// The updated sandbox, saving in `dir`.
+    pub(crate) fn game_in(&self, dir: &Path) -> App {
+        let mut app = crate::content::app_on(&self.0);
+        app.world_mut().resource_mut::<SaveConfig>().dir = dir.to_owned();
+        app
+    }
+}
+
+impl Drop for Updated {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn read_save(path: &Path) -> SaveFile {
+    SaveFile::decode(&fs::read(path).unwrap()).unwrap()
+}
+
+/// Rewrites the file's region section as the section's version 1 wrote it: the region's names
+/// and hash, no manifest.
+fn as_version_1(path: &Path) {
+    let mut file = read_save(path);
+    let mut active = file.sections.0["region"].data["active"].clone();
+    active.as_object_mut().unwrap().remove("manifest");
+    file.sections.0.insert("region".into(), SectionData { version: 1, data: json!({ "active": active }) });
+    fs::write(path, file.encode()).unwrap();
+}
+
+fn parts(app: &mut App) -> usize {
+    app.world_mut().query_filtered::<(), With<RegionPart>>().iter(app.world()).count()
+}
+
 fn player_entity(app: &App) -> Entity {
     app.world().resource::<AiIndex>().get(AiId::parse(PLAYER).unwrap()).unwrap()
 }
@@ -71,7 +124,8 @@ fn the_engine_registers_what_it_saves() {
         .iter()
         .map(|s| (s["name"].as_str().unwrap(), s["kind"].as_str().unwrap(), s["version"].as_u64().unwrap(), s["source"].as_str().unwrap()))
         .collect();
-    assert_eq!(sections, [("region", "world", 1, "shards"), ("position", "character", 1, "shards"), ("vitals", "character", 1, "shards")]);
+    assert_eq!(sections, [("region", "world", 2, "shards"), ("position", "character", 1, "shards"), ("vitals", "character", 1, "shards")]);
+    assert_eq!(out["sections"][0]["migrations_from"], json!([1]), "a region of version 1 (no manifest) still reads");
     let status = shards::ai_core::status::status(app.world());
     assert!(status["engine"]["modules"].as_array().unwrap().iter().any(|m| m["name"] == "save"));
 }
@@ -139,16 +193,26 @@ fn in_the_wilds(app: &mut App, seed: u64) {
 }
 
 #[test]
-fn the_region_of_the_wilds_is_made_again_from_its_seed() {
+fn the_region_of_the_wilds_comes_back_from_the_manifest_the_save_keeps() {
     let saves = Saves::new("wilds");
     let mut app = saves.game();
     in_the_wilds(&mut app, 42);
     let (wilds, at) = (region(&app).unwrap(), feet(&app));
     assert_eq!((wilds.0.as_str(), wilds.1), ("wilds", 42));
     ok(&mut app, "save_game", json!({"what": "all", "slot": "wild"}));
-    let file = SaveFile::decode(&fs::read(saves.path().join("world/wild.save")).unwrap()).unwrap();
-    assert_eq!(file.sections.0["region"].data["active"]["id"], "wilds");
-    assert_eq!(file.sections.0["region"].data["active"]["manifest_hash"], json!(format!("{:016x}", wilds.2)));
+    let path = saves.path().join("world/wild.save");
+    let file = read_save(&path);
+    let section = &file.sections.0["region"];
+    assert_eq!(section.version, 2);
+    assert_eq!(section.data["active"]["id"], "wilds");
+    assert_eq!(section.data["active"]["manifest_hash"], json!(format!("{:016x}", wilds.2)));
+    let manifest: RegionManifest = shards::serde_json::from_value(section.data["active"]["manifest"].clone()).unwrap();
+    assert_eq!(&manifest, &app.world().resource::<ActiveRegion>().manifest, "the manifest itself, as it was built");
+    // What it weighs: the section in the file's canonical JSON, and the whole world file.
+    let bytes = shards::save::canon::to_string(&section.data).len();
+    let file_bytes = fs::metadata(&path).unwrap().len();
+    // 3151 B in a file of 3392 B when this was written: the manifest is most of a world file.
+    assert!(bytes < 8 * 1024 && file_bytes < 8 * 1024, "an 8×8 region: {bytes} B in a file of {file_bytes} B");
 
     // A fresh game has no region at all: the load builds it, and the player stands where they stood.
     let mut fresh = saves.game();
@@ -158,6 +222,8 @@ fn the_region_of_the_wilds_is_made_again_from_its_seed() {
     assert_eq!(region(&fresh), Some(wilds.clone()), "the same manifest, byte for byte");
     assert_eq!(feet(&fresh), at, "the position is applied after the region is built");
     assert!(!lines(&fresh, "region loaded: wilds seed 42 v1").is_empty(), "{:?}", story(&fresh));
+    assert_eq!(lines(&fresh, "region wilds seed 42 v1: built from the save's manifest").len(), 1, "{:?}", story(&fresh));
+    assert!(lines(&fresh, "region generated").is_empty(), "nothing is generated: {:?}", story(&fresh));
     let check = act(&mut fresh, "save_check", json!({"slot": "wild"})).result;
     assert_eq!((check["world"]["file"]["same"].as_bool(), check["character"]["file"]["same"].as_bool()), (Some(true), Some(true)), "{check}");
 
@@ -199,14 +265,84 @@ fn a_position_saved_in_another_region_does_not_move_the_body() {
 }
 
 #[test]
+fn a_saved_world_stays_as_it_was_after_an_update_changes_the_generator() {
+    let saves = Saves::new("update");
+    let mut app = saves.game();
+    in_the_wilds(&mut app, 42);
+    let (wilds, at) = (region(&app).unwrap(), feet(&app));
+    let tiles = app.world().resource::<ActiveRegion>().manifest.tiles.clone();
+    ok(&mut app, "save_game", json!({"what": "all", "slot": "wild"}));
+
+    // The update: the same seed makes another world now.
+    let updated = Updated::new("update");
+    let mut later = updated.game_in(saves.path());
+    ok(&mut later, "regen", json!({"region": "wilds", "seed": 42}));
+    assert!(!lines(&later, "region generated: wilds seed 42 v2").is_empty(), "{:?}", story(&later));
+    assert_ne!(region(&later).unwrap().2, wilds.2, "the update changes what seed 42 makes");
+    assert_ne!(later.world().resource::<ActiveRegion>().manifest.tiles, tiles);
+
+    // The save brings back its own world, and the player where they stood in it.
+    let out = text(&ok(&mut later, "load_game", json!({"what": "all", "slot": "wild"}))).to_owned();
+    assert!(out.starts_with("ok: world/wild loaded"), "{out}");
+    assert_eq!(region(&later), Some(wilds.clone()), "the same manifest hash");
+    assert_eq!(later.world().resource::<ActiveRegion>().manifest.tiles, tiles, "the same tiles, turned the same way");
+    assert_eq!(feet(&later), at);
+    let said = lines(&later, "region wilds seed 42 v1: built from the save's manifest (the generator is v2 now)");
+    assert_eq!(said.len(), 1, "{:?}", story(&later));
+    assert!(lines(&later, "region generated: wilds seed 42 v1").is_empty(), "the generator did not run for it");
+    let check = act(&mut later, "save_check", json!({"slot": "wild"})).result;
+    assert_eq!((check["world"]["file"]["same"].as_bool(), check["character"]["file"]["same"].as_bool()), (Some(true), Some(true)), "{check}");
+
+    // Saved again, it is still the world of version 1, kept for good.
+    ok(&mut later, "save_game", json!({"what": "world", "slot": "again"}));
+    let again = read_save(&saves.path().join("world/again.save"));
+    assert_eq!(again.sections.0["region"].data["active"]["version"], 1);
+    assert_eq!(again.sections.0["region"].data["active"]["manifest_hash"], json!(format!("{:016x}", wilds.2)));
+}
+
+#[test]
+fn a_save_of_version_1_is_made_again_from_its_seed_and_saved_with_its_manifest_next_time() {
+    let saves = Saves::new("v1");
+    let mut app = saves.game();
+    in_the_wilds(&mut app, 42);
+    let wilds = region(&app).unwrap();
+    ok(&mut app, "save_game", json!({"what": "world", "slot": "old"}));
+    let path = saves.path().join("world/old.save");
+    as_version_1(&path);
+
+    // The content it was made with: the generator makes the same world again.
+    let mut fresh = saves.game();
+    ok(&mut fresh, "load_game", json!({"what": "world", "slot": "old"}));
+    assert_eq!(region(&fresh), Some(wilds.clone()));
+    assert!(!lines(&fresh, "region generated: wilds seed 42 v1").is_empty(), "{:?}", story(&fresh));
+    assert!(lines(&fresh, "built from the save's manifest").is_empty());
+    let check = act(&mut fresh, "save_check", json!({"what": "world", "slot": "old"})).result;
+    assert_eq!(check["world"]["file"]["differing"], json!(["region"]), "the file has no manifest yet: {check}");
+    ok(&mut fresh, "save_game", json!({"what": "world", "slot": "old"}));
+    let file = read_save(&path);
+    assert_eq!(file.sections.0["region"].version, 2, "the next save is a version 2 one");
+    assert_eq!(file.sections.0["region"].data["active"]["manifest"]["region"], "wilds");
+
+    // After an update, the old save describes a world the generator no longer makes: refused, as before.
+    as_version_1(&path);
+    let updated = Updated::new("v1");
+    let mut later = updated.game_in(saves.path());
+    let err = fails(&mut later, "load_game", json!({"what": "world", "slot": "old"}));
+    assert!(err.contains("section region: wilds seed 42 v1 comes out differently now") && err.contains(&format!("{:016x} when saved", wilds.2)), "{err}");
+    assert!(err.contains("generator v2") && err.contains("write a migration for `region` or keep the old content"), "{err}");
+    assert_eq!(region(&later), None, "nothing was built");
+}
+
+#[test]
 fn a_region_that_no_longer_comes_out_the_same_is_refused_and_nothing_is_built() {
     let saves = Saves::new("changed");
     let mut app = saves.game();
     in_the_wilds(&mut app, 42);
     ok(&mut app, "save_game", json!({"what": "world", "slot": "wild"}));
-    // The save of a generator that made another manifest: same region and seed, another hash.
+    // A save of version 1 by a generator that made another manifest: same region and seed, another hash.
     let path = saves.path().join("world/wild.save");
-    let mut file = SaveFile::decode(&fs::read(&path).unwrap()).unwrap();
+    as_version_1(&path);
+    let mut file = read_save(&path);
     file.sections.0.get_mut("region").unwrap().data["active"]["manifest_hash"] = Value::String("0000000000000001".into());
     fs::write(&path, file.encode()).unwrap();
 
@@ -217,6 +353,67 @@ fn a_region_that_no_longer_comes_out_the_same_is_refused_and_nothing_is_built() 
     // An apply failure is not a damaged file: it does not look for a backup, and does not touch the file.
     assert_eq!(fs::read(&path).unwrap(), file.encode());
     assert!(warns(&fresh, "restored from backup").is_empty());
+}
+
+#[test]
+fn a_saved_manifest_naming_a_tile_the_game_no_longer_has_is_refused_and_nothing_changes() {
+    let saves = Saves::new("gone");
+    let mut app = saves.game();
+    in_the_wilds(&mut app, 42);
+    ok(&mut app, "save_game", json!({"what": "world", "slot": "gone"}));
+    // The save of an older game, whose wilds had a tile `old_ruin`: whole (its hash is its manifest's).
+    let path = saves.path().join("world/gone.save");
+    let mut file = read_save(&path);
+    let active = &mut file.sections.0.get_mut("region").unwrap().data["active"];
+    active["manifest"]["tiles"][0]["tile"] = json!("old_ruin");
+    let manifest: RegionManifest = shards::serde_json::from_value(active["manifest"].clone()).unwrap();
+    active["manifest_hash"] = json!(format!("{:016x}", manifest.hash()));
+    fs::write(&path, file.encode()).unwrap();
+
+    let mut other = saves.game();
+    in_the_wilds(&mut other, 43);
+    let (before, built) = (region(&other), parts(&mut other));
+    let err = fails(&mut other, "load_game", json!({"what": "world", "slot": "gone"}));
+    assert!(err.contains("section region: the save's world cannot be built: the manifest of wilds seed 42 v1 names tiles content does not have: old_ruin"), "{err}");
+    assert!(err.contains("keep that content in the game, or write a migration for `region`"), "{err}");
+    assert_eq!(region(&other), before, "the region there stays");
+    assert_eq!(parts(&mut other), built, "with every entity of it");
+    assert!(lines(&other, "region unloaded").is_empty() && lines(&other, "built from the save's manifest").is_empty(), "{:?}", story(&other));
+    assert!(warns(&other, "restored from backup").is_empty(), "missing content is not damage");
+}
+
+#[test]
+fn a_manifest_that_does_not_match_its_hash_is_damage_and_a_backup_stands_in() {
+    let saves = Saves::new("tampered");
+    let mut app = saves.game();
+    in_the_wilds(&mut app, 42);
+    let wilds = region(&app).unwrap();
+    // One save of `once`, two of `twice` (the first is its backup).
+    for slot in ["once", "twice", "twice"] {
+        ok(&mut app, "save_game", json!({"what": "world", "slot": slot}));
+    }
+    let turn = |slot: &str| {
+        let path = saves.path().join(format!("world/{slot}.save"));
+        let mut file = read_save(&path);
+        let rot = &mut file.sections.0.get_mut("region").unwrap().data["active"]["manifest"]["tiles"][0]["rot"];
+        *rot = json!((rot.as_u64().unwrap() + 90) % 360);
+        fs::write(&path, file.encode()).unwrap();
+    };
+    turn("once");
+    turn("twice");
+    let damage = "section region does not read: the manifest of wilds seed 42 v1 is damaged: it hashes to ";
+
+    let mut fresh = saves.game();
+    let err = fails(&mut fresh, "load_game", json!({"what": "world", "slot": "once"}));
+    assert!(err.contains("cannot load world/once, every copy is unusable, nothing was applied") && err.contains(damage), "{err}");
+    assert!(err.contains(&format!("the save says {:016x}", wilds.2)), "{err}");
+    assert_eq!(region(&fresh), None, "nothing was built");
+
+    let out = text(&ok(&mut fresh, "load_game", json!({"what": "world", "slot": "twice"}))).to_owned();
+    assert!(out.contains("from backup 1"), "{out}");
+    assert_eq!(region(&fresh), Some(wilds));
+    let said = warns(&fresh, "save: world/twice.save is damaged (");
+    assert!(said.len() == 1 && said[0].contains(damage), "{said:?}");
 }
 
 fn dead(app: &App) -> bool {
