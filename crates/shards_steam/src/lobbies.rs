@@ -174,7 +174,7 @@ fn describe(world: &World, build: &Build, any_build: bool, found: &[LobbyInfo]) 
             format!("build differs: {}", differences.join(", "))
         };
         let here = if Some(lobby.lobby) == own { " · this game's lobby" } else { "" };
-        out.push_str(&format!("lobby {} · host {host} · {} of {} · {build_says}{here}\n", lobby.lobby, lobby.members, lobby.max));
+        out.push_str(&format!("lobby {} · host {host} · {} · {build_says}{here}\n", lobby.lobby, size(lobby.members, lobby.max)));
     }
     if joinable && session.role == SteamRole::Client {
         out.push_str("enter one with steam_join lobby=ID\n");
@@ -191,6 +191,12 @@ fn describe(world: &World, build: &Build, any_build: bool, found: &[LobbyInfo]) 
     }
     out.truncate(out.trim_end().len());
     out
+}
+
+/// `1 of 3`; `2 of ?` when Steam does not say how many fit (it may know a lobby's limit only once the
+/// player is in it).
+fn size(members: u32, max: u32) -> String {
+    if max == 0 { format!("{members} of ?") } else { format!("{members} of {max}") }
 }
 
 /// Why the lobby this game hosts is not in the answer, when it is not.
@@ -212,4 +218,44 @@ fn own_lobby_note(session: &SteamSession, found: &[LobbyInfo]) -> Option<String>
             kind.as_str()
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build() -> Build {
+        Build { game: "g 1".into(), engine: "0.2.0".into(), content: "aa".into(), rules: "bb".into() }
+    }
+
+    fn lobby(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect()
+    }
+
+    #[test]
+    fn a_search_filters_on_the_build_or_on_the_game_alone() {
+        let build = build();
+        assert_eq!(build.filter(false), [("game", "g 1"), ("engine", "0.2.0"), ("content", "aa"), ("rules", "bb")], "what a host's hello compares");
+        assert_eq!(build.filter(true), [("game", "g 1")], "any build of the game");
+        assert_eq!(build.lobby_data().to_vec(), build.filter(false), "a host writes what a search asks for");
+    }
+
+    #[test]
+    fn a_lobby_says_where_its_build_differs() {
+        let build = build();
+        assert!(build.differences(&lobby(&[("game", "g 1"), ("engine", "0.2.0"), ("content", "aa"), ("rules", "bb"), ("host", "h")])).is_empty());
+        assert_eq!(
+            build.differences(&lobby(&[("game", "g 1"), ("engine", "0.1.0"), ("content", "aa")])),
+            ["engine 0.1.0 (yours 0.2.0)", "rules not set (yours bb)"],
+            "a value that differs, and one the host never wrote"
+        );
+        assert_eq!(build.differences(&lobby(&[("game", "g 2"), ("engine", "0.2.0"), ("content", "aa"), ("rules", "bb")])), ["game g 2 (yours g 1)"]);
+    }
+
+    #[test]
+    fn a_lobby_size_says_when_steam_does_not_know_how_many_fit() {
+        assert_eq!((size(1, 3), size(3, 3), size(2, 0)), ("1 of 3".to_owned(), "3 of 3".to_owned(), "2 of ?".to_owned()));
+        assert_eq!(lobbies(1), "1 lobby");
+        assert_eq!(lobbies(0), "0 lobbies");
+    }
 }
