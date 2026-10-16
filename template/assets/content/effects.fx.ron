@@ -1,5 +1,9 @@
 // Which effect each engine event plays (content kind `fx`, one per game): a hit at the one hit,
-// a guard's at the defender, a death's at who died.
+// a guard's at the defender, a death's at who died; and each clip's cue (anim.animset.ron): a
+// footstep's from the body.
 {
-    "arena": (effects: {"damaged": "hit_spark", "blocked": "block_spark", "died": "death_dust"}),
+    "arena": (
+        effects: {"damaged": "hit_spark", "blocked": "block_spark", "died": "death_dust"},
+        cues: {"footstep": "step_dust"},
+    ),
 }

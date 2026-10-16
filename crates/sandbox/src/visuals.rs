@@ -8,10 +8,19 @@
 //! `EnginePlugins`): ground telegraphs with their symbols, the F2 combat overlay and the
 //! markers for attacks off screen, drawn for the `LocalPlayer` (the player prefab has it)
 //! through the active camera (the `AiCamera` below). Nothing of that is drawn here.
+//!
+//! Characters wear the humanoid made in Blender (`tools/blender/humanoid.py`,
+//! `models/humanoid.glb`) and are `Animated` by `content/anim/humanoid.animset.ron`: the engine's
+//! animation bridge plays the clip the action machine and the controller call for. `Animated` is
+//! a picture-only component (replays ignore it), put on the body only here, with a window.
 
 use std::collections::HashSet;
+use std::f32::consts::PI;
 
+use shards::action::Animated;
 use shards::ai_core::highlight::AiOverlay;
+use shards::bevy::gltf::GltfAssetLabel;
+use shards::bevy::world_serialization::{WorldAsset, WorldAssetRoot};
 use shards::ai_core::sim;
 use shards::motion::{CharacterController, Collider, Shape, Volume, VolumeKind};
 use shards::prelude::*;
@@ -32,25 +41,34 @@ impl Plugin for VisualsPlugin {
     }
 }
 
+/// How tall the humanoid stands in its file (m): it is scaled to each body's capsule.
+const MODEL_HEIGHT: f32 = 1.8;
+
 #[derive(Resource)]
 struct Palette {
     cube: Handle<Mesh>,
     post: Handle<Mesh>,
-    nose: Handle<Mesh>,
+    /// The humanoid's scene.
+    humanoid: Handle<WorldAsset>,
     /// Under every look (`content/look/sandbox.look.ron`): the look gives the colour and the light.
     base: Handle<StandardMaterial>,
     water: Handle<StandardMaterial>,
     goal: Handle<StandardMaterial>,
 }
 
-fn setup_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
+fn setup_assets(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+    assets: Res<AssetServer>,
+) {
     let base = mats.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
     let mut glass = |c: Color| mats.add(StandardMaterial { base_color: c, alpha_mode: AlphaMode::Blend, ..default() });
     let (water, goal) = (glass(Color::srgba(0.15, 0.4, 0.95, 0.45)), glass(Color::srgba(0.3, 1.0, 0.4, 0.3)));
     commands.insert_resource(Palette {
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         post: meshes.add(Cylinder::new(0.08, 1.6)),
-        nose: meshes.add(Cuboid::new(0.25, 0.25, 0.5)),
+        humanoid: assets.load(GltfAssetLabel::Scene(0).from_asset("models/humanoid.glb")),
         base,
         water,
         goal,
@@ -83,15 +101,13 @@ type Undressed<'a> = (
     Has<Look>,
 );
 
-/// Gives what collides its meshes and looks (`content/look/sandbox.look.ron`): characters a
-/// capsule with a nose (a character's prefab names its look, the rest are stone), boxes and
-/// ramps their surface's look, volumes a see-through box; landmarks without a body a post. A
-/// layout piece whose collider changed (a hot edit) is dressed anew.
-#[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
+/// Gives what collides its meshes and looks (`content/look/sandbox.look.ron`): characters the
+/// humanoid, as tall as their capsule and animated (a character's prefab names its look, the
+/// rest are stone), boxes and ramps their surface's look, volumes a see-through box; landmarks
+/// without a body a post. A layout piece whose collider changed (a hot edit) is dressed anew.
 fn dress(
     mut commands: Commands,
     palette: Res<Palette>,
-    mut meshes: ResMut<Assets<Mesh>>,
     mut dressed: ResMut<Dressed>,
     bodies: Query<Undressed>,
     changed: Query<Entity, (With<LayoutPiece>, Changed<Collider>)>,
@@ -116,14 +132,19 @@ fn dress(
         if character.is_some() {
             let Shape::Capsule { half_height, radius } = collider.shape else { continue };
             let height = 2.0 * (half_height + radius);
-            let body = meshes.add(Capsule3d::new(radius, half_height * 2.0));
+            // On the capsule's foot, turned to face where the body faces (a glTF faces +Z, a
+            // body -Z), as tall as the body.
+            let model = Transform {
+                translation: collider.offset - Vec3::Y * height * 0.5,
+                rotation: Quat::from_rotation_y(PI),
+                scale: Vec3::splat(height / MODEL_HEIGHT),
+            };
+            e.insert(Animated::new("humanoid"));
             e.with_children(|c| {
-                let mut body = c.spawn((Mesh3d(body), base(), at));
+                let mut model = c.spawn((WorldAssetRoot(palette.humanoid.clone()), model));
                 if !looked {
-                    body.insert(Look::new("stone"));
+                    model.insert(Look::new("stone"));
                 }
-                let nose = Transform::from_xyz(0.0, height * 0.8, -radius - 0.15);
-                c.spawn((Mesh3d(palette.nose.clone()), base(), nose, Look::new("dark")));
             });
             continue;
         }

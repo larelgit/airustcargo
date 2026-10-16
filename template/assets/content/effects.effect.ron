@@ -11,6 +11,10 @@
     "block_spark": (count: 8, lifetime: (0.3, 0.5), speed: (2.5, 5.0), spread: 80.0, aim: Hit, lift: 35.0,
         gravity: -12.0, size: (0.18, 0.3), size_end: 0.4, color: "#bfe6ff", color_end: "#4d9fff00", shape: Shard,
         spin: 720.0, offset: (0.0, 1.1, 0.0), max_live: 48),
+    // A footstep (a clip's cue): a little dust that puffs off the ground and settles.
+    "step_dust": (count: 4, lifetime: (0.3, 0.5), speed: (0.3, 0.8), spread: 160.0, lift: 20.0, gravity: -1.0,
+        drag: 3.0, size: (0.06, 0.1), size_end: 1.8, color: "#8c806199", color_end: "#5c554400", shape: Cube,
+        radius: 0.15, offset: (0.0, 0.05, 0.0), max_live: 48),
     // A death: dust that rises from the body, slows and settles.
     "death_dust": (count: 14, rate: 20.0, duration: 0.6, lifetime: (0.8, 1.3), speed: (0.4, 1.2), spread: 120.0,
         gravity: -0.6, drag: 1.5, size: (0.12, 0.2), size_end: 1.6, color: "#8c8061cc", color_end: "#5c554400",
