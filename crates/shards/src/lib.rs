@@ -7,8 +7,9 @@
 //! generated regions ([`world`]), enemy AI ([`npc`]), saves ([`save`]), the player's settings
 //! ([`settings`]), screens and menus ([`ui`]) and their languages ([`locale`]), sound and music
 //! ([`audio`]), how meshes look ([`look`]), foliage over the tiles ([`scatter`]), effects and
-//! telegraph decals ([`fx`]), the developer menu and console ([`dev`]); Bevy and serde come
-//! re-exported.
+//! telegraph decals ([`fx`]), the developer menu and console ([`dev`]), and with the `steam`
+//! feature Steam (lobbies, the relay, achievements and cloud saves: `steam`); Bevy and serde
+//! come re-exported.
 //!
 //! ```ignore
 //! use shards::prelude::*;
