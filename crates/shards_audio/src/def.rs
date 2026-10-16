@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
-use shards_action::ActionDef;
+use shards_action::{ActionDef, Effect};
 use shards_content::db::closest;
 use shards_content::{ContentDef, Refs};
 
@@ -379,16 +379,28 @@ impl ContentDef for AudioDef {
                 refs.error(format!("sounds: no engine event `{event}`{hint}; events: {}", names.collect::<Vec<_>>().join(", ")));
             }
         }
-        // What the game's attacks warn with is heard only if it is a sound: every telegraph's
-        // `sound` is checked here, where the mixer is.
+        // What the game's attacks warn with and its actions play is heard only if it is a sound:
+        // every telegraph's `sound` and every `Sound` effect is checked here, where the mixer is.
         let sounds: Vec<&str> = refs.iter::<SoundDef>().map(|(sound, _)| sound).collect();
+        let hint = |sound: &str| {
+            closest(sound, sounds.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default()
+        };
         let mut missing = Vec::new();
         for (action, def) in refs.iter::<ActionDef>() {
             if let Some(sound) = def.telegraph.as_ref().and_then(|t| t.sound.as_deref())
                 && !sounds.contains(&sound)
             {
-                let hint = closest(sound, sounds.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
-                missing.push(format!("action `{action}` warns with sound `{sound}`, which no `*.sound.ron` defines{hint}"));
+                missing.push(format!("action `{action}` warns with sound `{sound}`, which no `*.sound.ron` defines{}", hint(sound)));
+            }
+            for (i, effect) in def.effects.iter().enumerate() {
+                if let Effect::Sound(sound) = &effect.effect
+                    && !sounds.contains(&sound.as_str())
+                {
+                    missing.push(format!(
+                        "action `{action}` effects[{i}] plays sound `{sound}`, which no `*.sound.ron` defines{}",
+                        hint(sound)
+                    ));
+                }
             }
         }
         for line in missing {

@@ -14,9 +14,10 @@
             "idle": (),
             "walk": (cues: [(at: 0.0, cue: "footstep"), (at: 0.4, cue: "footstep")]),
             "run": (cues: [(at: 0.0, cue: "footstep"), (at: 0.3, cue: "footstep")]),
-            // The hero's swings whoosh as their active phase starts.
-            "light_1": (cues: [(at: 0.18, cue: "whoosh")]),
-            "light_2": (cues: [(at: 0.2, cue: "whoosh")]),
+            // The hero's swings whoosh by the `Sound("whoosh")` effect of the actions (hero.action.ron),
+            // not by a cue: a cue sounds only where a model is drawn. Cues here are for the picture.
+            "light_1": (),
+            "light_2": (),
             "roll": (blend: 0.04),
             "hit": (blend: 0.04),
             "death": (),

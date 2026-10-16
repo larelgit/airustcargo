@@ -10,9 +10,11 @@
 //!   player's volume (`audio.<bus>` times `audio.master`, the settings group `audio`). A volume
 //!   changed in the settings menu applies to what is playing.
 //! - **Sounds** ([`SoundDef`]): an attack's telegraph plays the sound it names where the attack
-//!   will land; a clip's cue plays a sound of that name from the body; the mixer gives the
-//!   engine's events (`damaged`, `blocked`, `died`, `ui_pressed`, …) the sounds it names; a game
-//!   plays its own with [`play`] or the [`PlaySound`] event.
+//!   will land; an action's `Sound` effect plays one from its actor at its time (a swing's
+//!   whoosh); a clip's cue plays a sound of that name from the body, but only where a model is
+//!   drawn and plays the clip; the mixer gives the engine's events (`damaged`, `blocked`, `died`,
+//!   `ui_pressed`, …) the sounds it names; a game plays its own with [`play`] or the [`PlaySound`]
+//!   event.
 //! - **Voices** ([`Mixer`]): at most the mixer's `voices` play at once. One more takes the voice of
 //!   the weakest (lowest priority, then quietest, then oldest) when it is stronger, else it is not
 //!   heard; a sound with `max_instances` takes its own oldest voice. A spatial sound is heard from
@@ -29,12 +31,15 @@
 //!   `ai/status` has `audio: {track, layer, voices, limit}`.
 //! - **This machine's, not the simulation's**: the mixer decides on the simulation's clock (a
 //!   `step` runs it, a pause stops it, menu sounds keep real time), the same headless and in a
-//!   window, from cues and conditions that only read the world, so a co-op client hears its own
-//!   copy of the fight. Nothing of it is in the replay hash, its journal lines are `local` (a host
-//!   does not send them), and the music's state is in snapshots.
+//!   window, from events and conditions that only read the world (a clip's cue is the one
+//!   exception: it needs the model that plays the clip, so give the sounds the game must hear on
+//!   every machine to the action's `Sound` effect), so a co-op client hears its own copy of the
+//!   fight (a host forwards the effect's event as it does a hit's). Nothing of it is in the replay
+//!   hash, its journal lines are `local` (a host does not send them), and the music's state is in
+//!   snapshots.
 //! - **Checks**: `--check-content` finds files that are missing or are no WAV or Ogg Vorbis,
 //!   stems of different lengths, layers no stem plays, conditions missing, and attacks that warn
-//!   with a sound no `*.sound.ron` defines.
+//!   with a sound, or actions that play one, that no `*.sound.ron` defines.
 
 pub mod def;
 pub mod length;
@@ -47,7 +52,9 @@ mod tools;
 use ai_core::AiAppExt;
 use bevy::prelude::*;
 use serde_json::{json, Value};
-use shards_action::{AnimationCue, Blocked, Damaged, Died, Evaded, GuardBroken, Healed, Parried, SoundCue, Staggered};
+use shards_action::{
+    ActionSound, AnimationCue, Blocked, Damaged, Died, Evaded, GuardBroken, Healed, Parried, SoundCue, Staggered,
+};
 use shards_content::{ContentAppExt, ContentDb};
 use shards_core::EngineAppExt;
 use shards_ui::{Layer, ScreenDef, UiChanged, UiFocusMoved, UiPressed, UiScreenChanged};
@@ -102,6 +109,7 @@ impl Plugin for AudioPlugin {
             .configure_sets(Update, AudioSystems::Play.after(AudioSystems::Mix))
             .add_observer(on_play_sound)
             .add_observer(on_sound_cue)
+            .add_observer(on_action_sound)
             .add_observer(on_animation_cue)
             .add_observer(|e: On<Damaged>, c: Commands| event_sound(c, "damaged", e.target))
             .add_observer(|e: On<Blocked>, c: Commands| event_sound(c, "blocked", e.defender))
@@ -153,6 +161,16 @@ fn on_sound_cue(cue: On<SoundCue>, mut commands: Commands) {
     commands.queue(move |world: &mut World| {
         let why = format!("{} warns", ai_core::label(world, entity));
         mixer::play_quietly(world, &cue, SoundAt::Point { position, source: Some(entity) }, &why);
+    });
+}
+
+/// An action's `Sound` effect: that sound from the body doing it. The effect runs on the
+/// simulation's clock (a client gets the host's event), so this is the same headless, in a window
+/// and on a client.
+fn on_action_sound(sound: On<ActionSound>, mut commands: Commands) {
+    let ActionSound { entity, action, sound } = sound.event().clone();
+    commands.queue(move |world: &mut World| {
+        mixer::play_quietly(world, &sound, SoundAt::Entity(entity), &format!("action `{action}` plays it"));
     });
 }
 

@@ -296,6 +296,12 @@ pub enum Effect {
     RestoreStamina(f32),
     /// Status buildup on the actor itself: `Status("regen", 100)`.
     Status(String, f32),
+    /// A sound from the actor (the audio module plays the `*.sound.ron` of that name from the
+    /// body): `Sound("whoosh")`. Decided with the rest of the action on the simulation's clock, so
+    /// it is the same headless and in a window, and a co-op client hears the host's
+    /// ([`ActionSound`](crate::ActionSound)); a clip's cue sounds only where a model is drawn.
+    /// The audio module's content check names a sound that is not defined.
+    Sound(String),
     /// A game hook registered with `add_action_effect`: `Custom("spawn_fireball")`.
     Custom(String),
 }
@@ -654,7 +660,8 @@ impl ContentDef for ActionDef {
                     check.refs.require::<StatusDef>(status, &format!("effects[{i}]"));
                     check.number(&format!("effects[{i}]"), *v);
                 }
-                Effect::Custom(_) => {}
+                // The sound is checked where the mixer is (`AudioDef`), as a telegraph's is.
+                Effect::Sound(_) | Effect::Custom(_) => {}
             }
         }
         if let Some(telegraph) = &self.telegraph {

@@ -7,12 +7,16 @@
 // `net_id` names the action on the wire for co-op later: unique among all actions.
 // `displacement` (the lunge, the roll's distance) is baked from the root bone of the clip `bake`
 // names (anim.animset.ron): after changing the clip, `cargo game --bake-motion`.
+//
+// The swings whoosh as their active phase starts: a `Sound("whoosh")` effect, decided on the
+// simulation's clock (the same headless, in a window and on a co-op client), not a clip's cue.
 {
     "light_1": (
         net_id: 1,
         phases: [("windup", 0.18), ("active", 0.1), ("recovery", 0.3)],
         cost: (stamina: 10),
         hits: [(span: Phase("active"), shape: Cone(range: 2.2, angle: 110), damage: 20, poise: 12)],
+        effects: [(at: 0.18, effect: Sound("whoosh"))],
         // Pressing `light` again in this window chains into light_2, `dodge` rolls out of it.
         cancels: [(span: Secs(0.3, 0.55), into: [Combo("light", "light_2"), Input("dodge")])],
         displacement: [(0.1667, 0.0), (0.1833, 0.003), (0.2, 0.03), (0.2167, 0.09), (0.2333, 0.167), (0.25, 0.25), (0.2667, 0.324), (0.2833, 0.378), (0.3, 0.4)],
@@ -24,6 +28,7 @@
         phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.4)],
         cost: (stamina: 12),
         hits: [(span: Phase("active"), shape: Cone(range: 2.2, angle: 110), damage: 28, poise: 20)],
+        effects: [(at: 0.2, effect: Sound("whoosh"))],
         cancels: [(span: Secs(0.35, 0.6), into: [Input("dodge")])],
         anim: "light_2",
         bake: (animset: "humanoid", clip: "light_2"),

@@ -37,6 +37,10 @@ fn the_content_check_names_what_would_not_play() {
     );
     assets.put("content/audio/second.audio.ron", r#"{"other": (voices: 0, music: "thme", sounds: {"damagd": "beep"})}"#);
     assets.put("content/bite.action.ron", r#"{"bite": (net_id: 1, phases: [("windup", 0.5), ("active", 0.1)], telegraph: (at: 0.1, sound: "boon"))}"#);
+    assets.put(
+        "content/swing.action.ron",
+        r#"{"swing": (net_id: 2, phases: [("windup", 0.2), ("active", 0.1)], effects: [(at: 0.2, effect: Sound("bom")), (at: 0.2, effect: Sound("beep"))])}"#,
+    );
     let errors: Vec<String> = check_dir(assets.path(), &kinds).unwrap_err().iter().map(ToString::to_string).collect();
     let has = |needle: &str| assert!(errors.iter().any(|e| e.contains(needle)), "no `{needle}` in:\n{}", errors.join("\n"));
     has("files: no file `sounds/hiss.wav` under the asset folder");
@@ -56,4 +60,6 @@ fn the_content_check_names_what_would_not_play() {
     has("thme");
     has("sounds: no engine event `damagd` (did you mean `damaged`?)");
     has("action `bite` warns with sound `boon`, which no `*.sound.ron` defines (did you mean `boom`?)");
+    has("action `swing` effects[0] plays sound `bom`, which no `*.sound.ron` defines (did you mean `boom`?)");
+    assert!(!errors.iter().any(|e| e.contains("effects[1]")), "a defined sound is fine: {errors:#?}");
 }

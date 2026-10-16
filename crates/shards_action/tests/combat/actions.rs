@@ -226,3 +226,45 @@ fn errors_teach_the_fix() {
     let none = fails(&mut app, "stagger", json!({"id": 99}));
     assert!(none.contains("e99"), "{none}");
 }
+
+/// The `ActionSound`s the app heard: `(tick, actor, action, sound)`.
+#[derive(Resource, Default)]
+struct Said(Vec<(u64, Entity, String, String)>);
+
+#[test]
+fn a_sound_effect_is_an_event_on_its_frame_with_nothing_drawn_or_heard() {
+    use ai_core::SimTick;
+    use shards_action::ActionSound;
+    // No window, no audio module, no model: the event is the action's own, on the sim clock.
+    let mut app = app_with(|app| {
+        app.init_resource::<Said>();
+        app.add_observer(|e: On<ActionSound>, tick: Res<SimTick>, mut said: ResMut<Said>| {
+            let e = e.event();
+            said.0.push((tick.0, e.entity, e.action.clone(), e.sound.clone()));
+        });
+    });
+    let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    assert_eq!(ok(&mut app, "use_item", json!({"item": "flask"})), "ok: drink");
+    step(&mut app, 40);
+    let said = &app.world().resource::<Said>().0;
+    let [(started, a, action, pop), (later, b, _, gulp)] = &said[..] else { panic!("two sounds expected: {said:?}") };
+    assert_eq!((a, b), (&hero, &hero), "from the actor");
+    assert_eq!((action.as_str(), pop.as_str(), gulp.as_str()), ("drink", "pop", "gulp"));
+    // The tick that starts an action already moves it on by one, so 0.3 s in is 17 ticks after the
+    // first sound; the heal at 0.5 s is 0.2 s (12 ticks) after the second.
+    let heal: u64 = lines(&app, "healed")[0].split_whitespace().next().unwrap().parse().unwrap();
+    assert_eq!((later - started, heal - later), (17, 12), "on the action's own frames: {said:?}");
+}
+
+#[test]
+fn a_sound_effect_reflects_for_the_network_layer() {
+    use shards_action::{ActionSound, Effect};
+    let app = app();
+    let registered = app.world().resource::<AppTypeRegistry>().read().contains(std::any::TypeId::of::<ActionSound>());
+    assert!(registered, "the host forwards it to clients (`net_event`), which needs the type registered");
+    let sound = ActionSound { entity: Entity::PLACEHOLDER, action: "light_1".into(), sound: "whoosh".into() };
+    assert_eq!(sound.reflect_clone().unwrap().take::<ActionSound>().unwrap(), sound);
+    // Content writes it `Sound("whoosh")`.
+    let effect: Effect = ron::from_str(r#"Sound("whoosh")"#).unwrap();
+    assert_eq!(effect, Effect::Sound("whoosh".into()));
+}

@@ -644,6 +644,44 @@ fn the_hosts_typed_events_reach_a_client_with_its_entities() {
     assert!(!client_entities.contains(&Entity::PLACEHOLDER));
 }
 
+/// The `ActionSound`s a member heard: `(actor, action, sound)`.
+#[derive(Resource, Default)]
+struct Sounds(Vec<(Entity, String, String)>);
+
+fn watch_sounds(world: &mut World) {
+    world.init_resource::<Sounds>();
+    world.add_observer(|event: On<shards::action::ActionSound>, mut heard: ResMut<Sounds>| {
+        let e = event.event();
+        heard.0.push((e.entity, e.action.clone(), e.sound.clone()));
+    });
+}
+
+#[test]
+fn a_swings_whoosh_is_the_hosts_event_and_a_client_hears_it_once_in_its_own_mixer() {
+    use shards::audio::Mixer;
+    let mut stand = stand_with(1, lossy());
+    watch_sounds(stand.world_mut(HOST));
+    watch_sounds(stand.world_mut(C1));
+    let me = body(&stand, C1);
+    assert!(stand.call(C1, "light_attack", json!({})).ok);
+    // The mixer's voices as they play: each whoosh voice of the body, by its id, once.
+    let mut whooshes: [std::collections::BTreeSet<u64>; 2] = Default::default();
+    for _ in 0..180 {
+        stand.run(1);
+        for (set, member) in whooshes.iter_mut().zip([HOST, C1]) {
+            let mixer = stand.world(member).resource::<Mixer>();
+            set.extend(mixer.voices().iter().filter(|v| v.sound == "whoosh" && v.source_id.is_some_and(|i| i.to_string() == me)).map(|v| v.id));
+        }
+    }
+    for member in [HOST, C1] {
+        let heard = &stand.world(member).resource::<Sounds>().0;
+        let actor = entity(&stand, member, &me).expect("the body is in every world");
+        assert_eq!(heard, &[(actor, "light_1".to_owned(), "whoosh".to_owned())], "member {member}: the swing's one sound, from the body");
+    }
+    assert_eq!(whooshes.clone().map(|set| set.len()), [1, 1], "one voice on the host, one on the client: {whooshes:?}");
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+}
+
 // --- determinism, soak ---------------------------------------------------------------------
 
 /// One scripted session: the host's replay as JSON and both clients' journals.

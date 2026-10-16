@@ -16,17 +16,19 @@
             // The left heel strikes at 0, the right half a stride later.
             "walk": (cues: [(at: 0.0, cue: "footstep"), (at: 0.4, cue: "footstep")]),
             "run": (cues: [(at: 0.0, cue: "footstep"), (at: 0.3, cue: "footstep")]),
-            // The swings whoosh as their active phase starts (the `whoosh` sound).
-            "light_1": (cues: [(at: 0.2, cue: "whoosh")]),
-            "light_2": (cues: [(at: 0.2, cue: "whoosh")]),
-            "light_3": (cues: [(at: 0.25, cue: "whoosh")]),
-            "heavy": (cues: [(at: 0.55, cue: "whoosh")]),
+            // The swings' whoosh is not a cue: a cue sounds only where a model is drawn, and the
+            // `Sound("whoosh")` effect of the actions (combat/player.action.ron) is decided on the
+            // simulation's clock. Cues here are for the picture (the footsteps' dust).
+            "light_1": (),
+            "light_2": (),
+            "light_3": (),
+            "heavy": (),
             "roll": (blend: 0.04),
             "block": (),
             "stagger": (name: "hit", blend: 0.04),
             "death": (),
-            // The monsters' moves: the same swings without the player's whoosh (their telegraphs
-            // have sounds of their own), on their own timelines.
+            // The monsters' moves: the same swings on their own timelines (their telegraphs have
+            // sounds of their own).
             "claw": (name: "light_2"),
             "flinch": (name: "hit", blend: 0.04),
             "slash": (name: "light_1"),

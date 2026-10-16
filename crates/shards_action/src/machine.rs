@@ -22,6 +22,7 @@ use shards_core::input_names::SPRINT;
 use shards_core::{flat, Intent};
 use shards_motion::LocomotionInput;
 
+use crate::cue::ActionSound;
 use crate::def::{touches, ActionDef, CancelTo, CombatTuning, Effect, MovesetDef, Steer, EPS};
 use crate::fighter::{report_once, Charges, Cooldowns, Dead, Fighter, Health, Stamina};
 use crate::status::add_status_buildup;
@@ -975,6 +976,7 @@ pub fn apply_effect(world: &mut World, entity: Entity, action: &str, effect: &Ef
             }
         }
         Effect::Status(status, amount) => add_status_buildup(world, entity, status, *amount),
+        Effect::Sound(sound) => world.trigger(ActionSound { entity, action: action.to_owned(), sound: sound.clone() }),
         Effect::Custom(name) => {
             let hook = world.resource::<ActionEffects>().0.iter().find(|(n, _)| n == name).map(|(_, f)| *f);
             match hook {

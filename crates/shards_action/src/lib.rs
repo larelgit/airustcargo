@@ -34,7 +34,8 @@
 //! - **Drawing** ([`draw`]): the geometry of what the `render` feature puts on screen, as
 //!   plain data: ground telegraphs with symbols, the combat overlay, edge markers for
 //!   attacks off screen.
-//! - **Cues** ([`cue`]): [`SoundCue`] for the audio module, [`AnimationCue`] for effects.
+//! - **Cues** ([`cue`]): [`SoundCue`] (a telegraph's) and [`ActionSound`] (an action's `Sound`
+//!   effect) for the audio module, [`AnimationCue`] for effects.
 //!
 //! The controller stays the only thing that moves a body: an action's displacement
 //! curve goes into `LocomotionInput::external`, so a wall stops a lunge.
@@ -133,7 +134,7 @@ pub use combat::{
     kill, revive, stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died, Evaded, GuardBroken, Outcome, Parried,
     StaggerCause, Staggered,
 };
-pub use cue::SoundCue;
+pub use cue::{ActionSound, SoundCue};
 pub use def::{
     ActionDef, CancelDef, CombatTuning, Cost, Effect, GuardDef, HitDef, HitFlag, HitShape, HoldDef, Local, MotionBake,
     MovesetDef, Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
@@ -264,6 +265,7 @@ impl Plugin for ActionPlugin {
             .register_type::<ActionStarted>()
             .register_type::<ActionRejected>()
             .register_type::<Telegraph>()
+            .register_type::<ActionSound>()
             .register_type::<Healed>()
             .register_type::<Damaged>()
             .register_type::<Blocked>()
