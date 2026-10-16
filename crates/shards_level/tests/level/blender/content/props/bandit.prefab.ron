@@ -1,0 +1,11 @@
+// The prefab the `Guard` empty of the Blender level names.
+{
+    "bandit": (
+        components: {
+            "Name": "Bandit",
+            "AiKind": ("Bandit"),
+            "Health": (current: 40.0, max: 40.0),
+            "Team": ("bandits"),
+        },
+    ),
+}
