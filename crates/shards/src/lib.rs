@@ -6,8 +6,9 @@
 //! camera ([`motion`]), data-driven combat ([`action`]), levels from Blender ([`level`]),
 //! generated regions ([`world`]), enemy AI ([`npc`]), saves ([`save`]), the player's settings
 //! ([`settings`]), screens and menus ([`ui`]) and their languages ([`locale`]), sound and music
-//! ([`audio`]), how meshes look ([`look`]), effects and telegraph decals ([`fx`]), the developer
-//! menu and console ([`dev`]); Bevy and serde come re-exported.
+//! ([`audio`]), how meshes look ([`look`]), foliage over the tiles ([`scatter`]), effects and
+//! telegraph decals ([`fx`]), the developer menu and console ([`dev`]); Bevy and serde come
+//! re-exported.
 //!
 //! ```ignore
 //! use shards::prelude::*;
