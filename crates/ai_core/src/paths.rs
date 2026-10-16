@@ -69,9 +69,9 @@ pub fn canonical(path: &Path) -> std::io::Result<PathBuf> {
 }
 
 /// `path` without Windows' verbatim prefix, where the plain form means the same: a drive or a
-/// share, and names that read the same without the prefix (none holds `/`, none is `.` or `..`).
-/// Names are kept as they are, unpaired surrogates and all. Other paths, and every path off
-/// Windows, are left as they are.
+/// share, and names that read the same without the prefix (see [`reads_the_same`]). Names are
+/// kept as they are, unpaired surrogates and all. Other paths, and every path off Windows, are
+/// left as they are.
 pub fn without_verbatim(path: &Path) -> PathBuf {
     use std::path::Prefix;
     let mut parts = path.components();
@@ -91,12 +91,29 @@ pub fn without_verbatim(path: &Path) -> PathBuf {
     for part in parts {
         match part {
             Component::RootDir => {}
-            Component::Normal(name) if !name.as_encoded_bytes().contains(&b'/') => plain.push(name),
+            Component::Normal(name) if reads_the_same(name) => plain.push(name),
             // Without the prefix it would read as something else.
             _ => return path.to_path_buf(),
         }
     }
     plain
+}
+
+/// A name that a plain Windows path reads as it is. Not so: one that holds `/` (a separator
+/// there), one that ends in a period or a space (`.` and `..` among them: Windows trims those off),
+/// and a device name, with any extension (`NUL`, `con.txt`, `COM1.log`, `LPT¹`: the device opens).
+fn reads_the_same(name: &std::ffi::OsStr) -> bool {
+    let bytes = name.as_encoded_bytes();
+    if bytes.contains(&b'/') || bytes.ends_with(b".") || bytes.ends_with(b" ") {
+        return false;
+    }
+    let stem = bytes.split(|b| *b == b'.').next().unwrap_or_default();
+    let stem = String::from_utf8_lossy(stem).trim_end().to_ascii_uppercase();
+    let numbered = |prefix: &str| {
+        stem.strip_prefix(prefix).is_some_and(|n| matches!(n, "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"))
+    };
+    let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$") || numbered("COM") || numbered("LPT");
+    !device
 }
 
 #[cfg(test)]
@@ -112,10 +129,25 @@ mod tests {
             assert_eq!(plain(r"\\?\UNC\server\share\a.json"), r"\\server\share\a.json");
             // A device or a volume by its GUID has no plain form.
             assert_eq!(plain(r"\\?\Volume{1234}\a.json"), r"\\?\Volume{1234}\a.json");
-            // Names that the plain form would read otherwise.
-            for kept in [r"\\?\E:\game\a/b.json", r"\\?\E:\game\..\a.json", r"\\?\E:\game\.\a.json"] {
+            // Names that the plain form would read otherwise: a separator, `.` and `..`, a period or
+            // a space at the end (trimmed), a device whatever its extension.
+            for kept in [
+                r"\\?\E:\game\a/b.json",
+                r"\\?\E:\game\..\a.json",
+                r"\\?\E:\game\.\a.json",
+                r"\\?\E:\game\replays.\a.json",
+                r"\\?\E:\game\a.json ",
+                r"\\?\E:\game\NUL",
+                r"\\?\E:\game\con.txt",
+                r"\\?\E:\game\Com1.log",
+                r"\\?\E:\game\lpt¹",
+                r"\\?\E:\game\aux .json",
+            ] {
                 assert_eq!(plain(kept), kept);
             }
+            // Names that only look like those.
+            assert_eq!(plain(r"\\?\E:\game\console\COM10.txt"), r"E:\game\console\COM10.txt");
+            assert_eq!(plain(r"\\?\E:\game\.shards\nul_ish.json"), r"E:\game\.shards\nul_ish.json");
         } else {
             // Off Windows a backslash is part of a name.
             assert_eq!(plain(r"\\?\E:\game"), r"\\?\E:\game");

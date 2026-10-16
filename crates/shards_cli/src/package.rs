@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::Value;
@@ -264,6 +265,9 @@ fn add_rustflag(cargo: &mut Command, flag: &str) {
 /// stays). Says what went in.
 fn place(game: &Game, exe: &Path, folder: &Path) -> Result<String, String> {
     let assets = game.dir.join(ASSETS);
+    // Before anything in the folder changes: the asset folder is no link either (the links in it
+    // are refused by `copy_dir`).
+    refuse_link(&assets)?;
     let target = folder.join(ASSETS);
     if target.exists() {
         std::fs::remove_dir_all(&target).map_err(|e| format!("{}: {e}", target.display()))?;
@@ -280,6 +284,15 @@ fn megabytes(bytes: u64) -> String {
     format!("{:.1} MB", bytes as f64 / 1_048_576.0)
 }
 
+/// A package holds files: a link (a symlink, a junction) could bring in anything it points to, or
+/// nothing on the player's machine.
+fn refuse_link(path: &Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(format!("{} is a link: put the files themselves in the asset folder", path.display())),
+        _ => Ok(()),
+    }
+}
+
 /// Copies `from` into `to` (created), every file and folder; the number of files and their bytes.
 fn copy_dir(from: &Path, to: &Path) -> Result<(u64, u64), String> {
     std::fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
@@ -289,11 +302,7 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(u64, u64), String> {
         let entry = entry.map_err(|e| format!("{}: {e}", from.display()))?;
         let (source, target) = (entry.path(), to.join(entry.file_name()));
         let kind = entry.file_type().map_err(|e| format!("{}: {e}", source.display()))?;
-        if kind.is_symlink() {
-            // A package holds files: a link could bring in anything it points to, or nothing on the
-            // player's machine.
-            return Err(format!("{} is a link: put the files themselves in the asset folder", source.display()));
-        }
+        refuse_link(&source)?;
         if kind.is_dir() {
             let (f, b) = copy_dir(&source, &target)?;
             files += f;
@@ -482,6 +491,11 @@ struct Run {
 
 /// Runs `program` in `dir` with only the environment a player's machine has.
 fn run_bare(program: &Path, dir: &Path, args: &[String]) -> Result<Run, String> {
+    run_bare_for(program, dir, args, RUN_TIMEOUT)
+}
+
+/// [`run_bare`], ending the program and every process it started after `timeout`.
+fn run_bare_for(program: &Path, dir: &Path, args: &[String], timeout: Duration) -> Result<Run, String> {
     let mut command = Command::new(program);
     command.args(args).current_dir(dir).env_clear().stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     if cfg!(windows) {
@@ -499,18 +513,24 @@ fn run_bare(program: &Path, dir: &Path, args: &[String]) -> Result<Run, String> 
             }
         }
         command.env("PATH", "/usr/bin:/bin");
+        // Its own process group, to be ended with everything it started.
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
     }
     let mut child = command.spawn().map_err(|e| format!("{}: {e}", program.display()))?;
     let read = |pipe: Option<Box<dyn Read + Send>>| {
-        std::thread::spawn(move || {
-            let mut text = String::new();
-            if let Some(mut pipe) = pipe {
-                let mut bytes = Vec::new();
-                let _ = pipe.read_to_end(&mut bytes);
-                text = String::from_utf8_lossy(&bytes).into_owned();
+        let text = Arc::new(Mutex::new(Vec::new()));
+        let sink = text.clone();
+        let reader = std::thread::spawn(move || {
+            let Some(mut pipe) = pipe else { return };
+            let mut chunk = [0; 8192];
+            while let Ok(n @ 1..) = pipe.read(&mut chunk) {
+                if let Ok(mut text) = sink.lock() {
+                    text.extend_from_slice(&chunk[..n]);
+                }
             }
-            text
-        })
+        });
+        (reader, text)
     };
     let stdout = read(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
     let stderr = read(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
@@ -519,18 +539,52 @@ fn run_bare(program: &Path, dir: &Path, args: &[String]) -> Result<Run, String> 
         if let Some(status) = child.try_wait().map_err(|e| format!("{}: {e}", program.display()))? {
             break Some(status);
         }
-        if started.elapsed() > RUN_TIMEOUT {
-            let _ = child.kill();
+        if started.elapsed() > timeout {
+            end_tree(&mut child);
             let _ = child.wait();
             break None;
         }
         std::thread::sleep(Duration::from_millis(50));
     };
-    let (stdout, mut stderr) = (stdout.join().unwrap_or_default(), stderr.join().unwrap_or_default());
+    // A process the program started may still hold its output open: wait a while, no longer.
+    let until = Instant::now() + OUTPUT_GRACE;
+    let (stdout, mut stderr) = (read_until(stdout, until), read_until(stderr, until));
     if status.is_none() {
-        stderr.push_str(&format!("\n(still running after {}s: ended)", RUN_TIMEOUT.as_secs()));
+        stderr.push_str(&format!("\n(still running after {}s: ended)", timeout.as_secs()));
     }
     Ok(Run { ok: status.is_some_and(|s| s.success()), stdout, stderr })
+}
+
+/// How long the output of a program that ended may stay open (held by a process it started).
+const OUTPUT_GRACE: Duration = Duration::from_secs(5);
+
+/// Ends `child` and every process it started.
+fn end_tree(child: &mut std::process::Child) {
+    #[cfg(windows)]
+    {
+        // `/T` follows the processes it started.
+        let system = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned());
+        let _ = Command::new(format!(r"{system}\System32\taskkill.exe"))
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(unix)]
+    if let Ok(group) = libc::pid_t::try_from(child.id()) {
+        // SAFETY: a plain call; the group is the child's own (`process_group(0)`).
+        unsafe { libc::kill(-group, libc::SIGKILL) };
+    }
+    let _ = child.kill();
+}
+
+/// What a reader read: all of it once the pipe closed, or what came before `until`.
+fn read_until((reader, text): (std::thread::JoinHandle<()>, Arc<Mutex<Vec<u8>>>), until: Instant) -> String {
+    while !reader.is_finished() && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let bytes = text.lock().map(|t| t.clone()).unwrap_or_default();
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// `.res` resource types.
@@ -657,6 +711,23 @@ mod tests {
     }
 
     #[test]
+    fn a_run_that_hangs_is_ended_with_what_it_started() {
+        // A shell that waits for a program of its own, which holds the output too.
+        let (program, args) = if cfg!(windows) {
+            let system = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned());
+            (PathBuf::from(format!(r"{system}\System32\cmd.exe")), ["/c", "ping -n 60 127.0.0.1"])
+        } else {
+            (PathBuf::from("/bin/sh"), ["-c", "sleep 60; true"])
+        };
+        let args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
+        let started = Instant::now();
+        let run = run_bare_for(&program, &std::env::temp_dir(), &args, Duration::from_secs(1)).unwrap();
+        assert!(!run.ok);
+        assert!(run.stderr.ends_with("(still running after 1s: ended)"), "{}", run.stderr);
+        assert!(started.elapsed() < Duration::from_secs(4), "what it started ended with it: {:?}", started.elapsed());
+    }
+
+    #[test]
     fn a_program_names_the_dlls_it_imports() {
         assert_eq!(read_pe(b"not a program").unwrap_err(), "not a Windows program (a PE file)");
         // This test's own program: on Windows a PE file that imports kernel32.
@@ -682,6 +753,11 @@ mod tests {
         let err = copy_dir(&dir.join("assets"), &dir.join("copy")).unwrap_err();
         assert!(err.ends_with("notes.txt is a link: put the files themselves in the asset folder"), "{err}");
         assert!(!dir.join("copy/notes.txt").exists());
+        // The asset folder itself, too.
+        std::os::unix::fs::symlink(dir.join("assets"), dir.join("linked")).unwrap();
+        let err = refuse_link(&dir.join("linked")).unwrap_err();
+        assert!(err.ends_with("linked is a link: put the files themselves in the asset folder"), "{err}");
+        assert!(refuse_link(&dir.join("assets")).is_ok() && refuse_link(&dir.join("none")).is_ok());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
