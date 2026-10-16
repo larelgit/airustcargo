@@ -82,6 +82,10 @@ pub struct CrashReport {
     /// Why there is no replay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub no_replay: Option<String>,
+    /// The kept panics it holds (the one it is about, its other panics). They are in a report once
+    /// it is written: a report that cannot be written leaves them to the next.
+    #[serde(skip)]
+    pub(crate) claimed: Vec<u64>,
 }
 
 /// What went wrong.
@@ -156,6 +160,8 @@ pub struct GameInfo {
 
 /// A panic as the hook saw it.
 struct Kept {
+    /// Names it in the reports that hold it ([`CrashReport::claimed`]).
+    id: u64,
     what: What,
     backtrace: Arc<Backtrace>,
     /// The thread it happened on.
@@ -166,7 +172,8 @@ struct Kept {
     seen: Option<Seen>,
     /// Caught where it happened, or reported: no report of its own is written for it.
     handled: bool,
-    /// In a report already (as what it is about, or among its other panics).
+    /// In a report already (as what it is about, or among its other panics), or in one being
+    /// written.
     reported: bool,
 }
 
@@ -183,10 +190,12 @@ struct Seen {
 struct Memory {
     log: VecDeque<String>,
     panics: VecDeque<Kept>,
+    /// The next panic's id.
+    next: u64,
     seen: Vec<Seen>,
 }
 
-static MEMORY: Mutex<Memory> = Mutex::new(Memory { log: VecDeque::new(), panics: VecDeque::new(), seen: Vec::new() });
+static MEMORY: Mutex<Memory> = Mutex::new(Memory { log: VecDeque::new(), panics: VecDeque::new(), next: 0, seen: Vec::new() });
 
 fn memory() -> MutexGuard<'static, Memory> {
     // A report is wanted most when something already went wrong.
@@ -238,7 +247,9 @@ fn keep_panic(message: &str, location: Option<String>) {
     if memory.panics.len() == PANICS_KEPT {
         memory.panics.pop_front();
     }
-    memory.panics.push_back(Kept { what, backtrace, thread: current.id(), token: active, seen, handled: false, reported: false });
+    let id = memory.next;
+    memory.next += 1;
+    memory.panics.push_back(Kept { id, what, backtrace, thread: current.id(), token: active, seen, handled: false, reported: false });
 }
 
 /// A log line for reports (the capture layer passes info, warnings and errors).
@@ -259,18 +270,18 @@ pub(crate) fn keep_log(line: String) {
 /// here, then the newest one of all (a system panics on a worker thread, where the active app is
 /// whichever was activated last in the process).
 pub fn handled(message: &str) -> Option<What> {
-    claim(message, false)
+    claim(message, false).map(|(_, what)| what)
 }
 
 /// [`handled`] for the panic a report is about: the report does not list it again among its other
-/// panics.
-pub(crate) fn reported(message: &str) -> Option<What> {
+/// panics. Returns its id too, for the report's [`CrashReport::claimed`].
+pub(crate) fn reported(message: &str) -> Option<(u64, What)> {
     claim(message, true)
 }
 
-fn claim(message: &str, reported: bool) -> Option<What> {
+fn claim(message: &str, reported: bool) -> Option<(u64, What)> {
     let (thread, token) = (std::thread::current().id(), crate::process::active());
-    let kept = {
+    let (id, kept) = {
         let mut memory = memory();
         let index = {
             let open = || memory.panics.iter().enumerate().rev().filter(|(_, p)| !p.handled && p.what.message == message);
@@ -279,9 +290,15 @@ fn claim(message: &str, reported: bool) -> Option<What> {
         let kept = &mut memory.panics[index];
         kept.handled = true;
         kept.reported |= reported;
-        taken(kept)
+        (kept.id, taken(kept))
     };
-    Some(with_backtrace(kept))
+    Some((id, with_backtrace(kept)))
+}
+
+/// A report that could not be written leaves the panics it held to the next one.
+fn release(report: &CrashReport) {
+    let mut memory = memory();
+    memory.panics.iter_mut().filter(|p| report.claimed.contains(&p.id)).for_each(|p| p.reported = false);
 }
 
 /// A kept panic, to be written out once the memory is let go.
@@ -500,19 +517,19 @@ pub fn report(world: &World, what: What, replay: Option<Replay>) -> CrashReport 
         lines[lines.len().saturating_sub(JOURNAL_LINES)..].to_vec()
     });
     let info = world.get_resource::<GameInfo>().cloned().unwrap_or_default();
-    let (kept, log) = {
+    let (claimed, kept, log): (Vec<_>, Vec<_>, _) = {
         let mut memory = memory();
-        let kept: Vec<_> = memory
+        let (claimed, kept) = memory
             .panics
             .iter_mut()
             .filter(|p| !p.reported)
             .map(|p| {
                 p.handled = true;
                 p.reported = true;
-                taken(p)
+                (p.id, taken(p))
             })
-            .collect();
-        (kept, memory.log.iter().cloned().collect())
+            .unzip();
+        (claimed, kept, memory.log.iter().cloned().collect())
     };
     let panics = kept.into_iter().map(with_backtrace).filter(|p| *p != what).collect();
     CrashReport {
@@ -529,6 +546,7 @@ pub fn report(world: &World, what: What, replay: Option<Replay>) -> CrashReport 
         replay_file: None,
         replay,
         no_replay,
+        claimed,
     }
 }
 
@@ -559,7 +577,7 @@ pub fn fatal(payload: &(dyn std::any::Any + Send)) -> CrashReport {
     let message = panic_text(payload);
     let current = std::thread::current();
     let thread = current.name().map_or_else(|| format!("{:?}", current.id()), str::to_owned);
-    let (this, others, seen, log) = {
+    let (this, others, claimed, seen, log) = {
         let mut memory = memory();
         let index = memory
             .panics
@@ -574,12 +592,13 @@ pub fn fatal(payload: &(dyn std::any::Any + Send)) -> CrashReport {
             .filter(|(i, p)| Some(*i) != index && !p.reported)
             .map(|(_, p)| taken(p))
             .collect();
+        let claimed = memory.panics.iter().enumerate().filter(|(i, p)| Some(*i) == index || !p.reported).map(|(_, p)| p.id).collect();
         memory.panics.iter_mut().for_each(|p| {
             p.handled = true;
             p.reported = true;
         });
         let last = memory.seen.last().cloned();
-        (this, others, last, memory.log.iter().cloned().collect())
+        (this, others, claimed, last, memory.log.iter().cloned().collect())
     };
     let (what, seen) = match this {
         Some((kept, then)) => (with_backtrace(kept), then.or(seen)),
@@ -599,6 +618,7 @@ pub fn fatal(payload: &(dyn std::any::Any + Send)) -> CrashReport {
         replay_file: None,
         replay: None,
         no_replay: Some("the panic unwound out of the game and took the world with it".to_owned()),
+        claimed,
     }
 }
 
@@ -616,7 +636,15 @@ impl CrashReport {
 /// (a game installed where its player may not write), into the player's own folder for the game
 /// (see [`user_dir`]). Returns where.
 pub fn write(report: &CrashReport) -> Result<PathBuf, String> {
-    let here = std::env::current_dir().map_err(|e| format!("no working directory: {e}")).and_then(|dir| write_in(&dir, report));
+    let written = write_here_or_home(report);
+    if written.is_err() {
+        release(report);
+    }
+    written
+}
+
+fn write_here_or_home(report: &CrashReport) -> Result<PathBuf, String> {
+    let here = std::env::current_dir().map_err(|e| format!("no working directory: {e}")).and_then(|dir| write_into(&dir, report));
     let Err(here) = here else { return here };
     let Some(dir) = user_dir() else { return Err(here) };
     write_file(&dir, report).map_err(|e| format!("{here}; {e}"))
@@ -624,6 +652,14 @@ pub fn write(report: &CrashReport) -> Result<PathBuf, String> {
 
 /// Writes the report into `<base>/crashes/`. Returns where.
 pub fn write_in(base: &Path, report: &CrashReport) -> Result<PathBuf, String> {
+    let written = write_into(base, report);
+    if written.is_err() {
+        release(report);
+    }
+    written
+}
+
+fn write_into(base: &Path, report: &CrashReport) -> Result<PathBuf, String> {
     let example = format!("{CRASHES_DIR}/crash.json");
     let probe = crate::paths::inside_of(base, CRASHES_DIR, &format!("{CRASHES_DIR}/{}", report.file_name()), &example)?;
     write_file(probe.parent().unwrap_or(base), report)
@@ -748,19 +784,22 @@ fn watch(world: &mut World) {
         found.map(|p| {
             p.handled = true;
             p.reported = true;
-            taken(p)
+            (p.id, taken(p))
         })
     };
-    let Some(kept) = unhandled else { return };
+    let Some((id, kept)) = unhandled else { return };
     let place = kept.0.location.clone().unwrap_or_else(|| kept.0.message.clone());
-    if !world.get_resource_or_init::<Reported>().0.insert(place) {
+    if world.get_resource_or_init::<Reported>().0.contains(&place) {
         return;
     }
     let what = with_backtrace(kept);
     let headline = format!("{}: {}", what.headline, what.message);
     journal::log(world, JournalKind::Error, headline.clone());
-    let report = report(world, what, None);
+    let mut report = report(world, what, None);
+    report.claimed.push(id);
+    // A place whose report could not be written gets one the next time it panics.
     if let Some(path) = save(world, &report) {
+        world.get_resource_or_init::<Reported>().0.insert(place);
         eprintln!("error: {headline}; crash report: {path}");
     }
 }
@@ -824,6 +863,7 @@ mod tests {
             replay_file: None,
             replay: None,
             no_replay: Some("this game does not record its session".to_owned()),
+            claimed: Vec::new(),
         }
     }
 
@@ -845,8 +885,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 
+    /// The kept panics are the process's: a report built by one test claims the panics another is
+    /// about to handle. Tests that read them take turns.
+    fn alone() -> MutexGuard<'static, ()> {
+        static TURN: Mutex<()> = Mutex::new(());
+        TURN.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     #[test]
     fn each_thread_handles_its_own_panic_of_the_same_words() {
+        let _alone = alone();
         install_panic_hook();
         let message = "crash test: the same words on two threads";
         let here = std::thread::current().name().map(str::to_owned);
@@ -861,6 +909,34 @@ mod tests {
         assert_eq!(handled(message).and_then(|what| what.thread), here, "this thread's own, though the other is newer");
         assert_eq!(handled(message).and_then(|what| what.thread).as_deref(), Some("crash test: other"));
         assert!(handled(message).is_none(), "both are handled");
+    }
+
+    #[test]
+    fn a_report_that_cannot_be_written_leaves_its_panics_to_the_next() {
+        let _alone = alone();
+        install_panic_hook();
+        let message = "crash test: a panic in a report that is never written";
+        assert!(std::panic::catch_unwind(|| panic!("{message}")).is_err());
+        // Caught here, as a tool's answer is: no report of its own, a line in the next one.
+        assert!(handled(message).is_some());
+        let mut world = World::new();
+        world.init_resource::<crate::sim::SimTick>();
+        let bug = || report(&world, What { headline: "bug report".to_owned(), ..default() }, None);
+        let lists = |report: &CrashReport| report.panics.iter().any(|p| p.message == message);
+        let first = bug();
+        assert!(lists(&first));
+        // A file where the folder would be: nothing can be written under it.
+        let blocked = std::env::temp_dir().join(format!("ai_core_crash_blocked_{}", std::process::id()));
+        std::fs::write(&blocked, "").unwrap();
+        assert!(write_in(&blocked, &first).is_err());
+        let second = bug();
+        assert!(lists(&second), "the report that was not written left it to the next");
+        let base = std::env::temp_dir().join(format!("ai_core_crash_written_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        write_in(&base, &second).unwrap();
+        assert!(!lists(&bug()), "the written one holds it");
+        let _ = std::fs::remove_file(blocked);
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]

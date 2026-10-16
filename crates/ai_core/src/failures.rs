@@ -266,15 +266,16 @@ pub(crate) fn blame_tool(world: &mut World, tool: &str) {
     }
 }
 
-/// The crash replay and the crash report of a failure, once per failing system, while the game
-/// writes them. What the panic hook kept of the panic (where, the call stack) goes into the report.
+/// The crash replay and the crash report of a failure, once per failing system (again at its next
+/// failure when the report could not be written), while the game writes them. What the panic hook
+/// kept of the panic (where, the call stack) goes into the report.
 fn save_crash_files(world: &mut World, failure: &mut SystemFailure) {
-    let kept = failure.panicked.then(|| crash::reported(&failure.message)).flatten();
+    let (id, kept) = failure.panicked.then(|| crash::reported(&failure.message)).flatten().unzip();
     let key = format!("{} {}", failure.kind, failure.name);
     let Some(mut state) = world.get_resource_mut::<AiFailures>() else {
         return;
     };
-    if !state.crash_replays || !state.saved.insert(key) {
+    if !state.crash_replays || !state.saved.insert(key.clone()) {
         return;
     }
     let recording = world.get_resource::<replay::AiReplay>().is_some_and(replay::AiReplay::is_recording).then(|| replay::save(world));
@@ -293,5 +294,12 @@ fn save_crash_files(world: &mut World, failure: &mut SystemFailure) {
     let what = crash::What { headline: failure.headline(), message: failure.message.clone(), ..kept.unwrap_or_default() };
     let mut report = crash::report(world, what, recording);
     report.replay_file = failure.crash_replay.clone();
+    report.claimed.extend(id);
     failure.crash_report = crash::save(world, &report);
+    if failure.crash_report.is_none() {
+        // No report: the system's next failure tries again.
+        if let Some(mut state) = world.get_resource_mut::<AiFailures>() {
+            state.saved.remove(&key);
+        }
+    }
 }
