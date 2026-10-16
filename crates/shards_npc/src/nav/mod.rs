@@ -44,8 +44,10 @@
 //!   than every class); a
 //!   game may plug in its own. A goal in plain sight ([`plain_sight`]: on the navmesh a
 //!   straight line of walking links, so never over a drop or a ledge; elsewhere a body-wide
-//!   cast through the `WORLD` layer over ground without holes or deep drops) needs no route;
-//!   another is planned again when the goal moves or every [`NpcTuning::repath`] seconds,
+//!   cast through the `WORLD` layer over ground without holes or deep drops) needs no route,
+//!   until the body strays farther than its radius from the line that was checked (pushed,
+//!   knocked back, sidestepping another): then it is looked at again from where it stands.
+//!   Another is planned again when the goal moves or every [`NpcTuning::repath`] seconds,
 //!   which keeps route queries few however many NPCs chase. Where there is no route the NPC
 //!   holds its ground until the next plan (it never walks blindly at the goal).
 //! - **Following**: toward the next waypoint at the state's speed; arrived within `within`
@@ -248,6 +250,10 @@ pub struct NavAgent {
     pub index: u32,
     /// The goal the path was planned for.
     pub planned_to: Option<Vec3>,
+    /// Where it stood when the path was planned. A direct route is planned again once the
+    /// body is farther than its radius from the line between there and the goal: pushed,
+    /// knocked back or sidestepping, it would walk ground [`plain_sight`] never looked at.
+    pub planned_from: Option<Vec3>,
     /// The goal was in plain sight: no route needed.
     pub direct: bool,
     /// Seconds before a blocked route is planned again.
@@ -353,9 +359,10 @@ pub(crate) fn nav_paths(world: &mut World) {
             next.speed = drive.speed;
             next.repath = (next.repath - dt).max(0.0);
             let Some(goal) = next.goal else {
-                if !next.path.is_empty() || next.planned_to.is_some() {
+                if !next.path.is_empty() || next.planned_to.is_some() || next.planned_from.is_some() {
                     next.path.clear();
                     next.planned_to = None;
+                    next.planned_from = None;
                     next.index = 0;
                 }
                 if next != *agent {
@@ -367,7 +374,11 @@ pub(crate) fn nav_paths(world: &mut World) {
             let params = params_of(db, e.get::<CharacterController>(), e.get::<CharacterParams>());
             let away = flat(goal - here).length();
             let moved = next.planned_to.is_none_or(|p| flat(p - goal).length() > (0.2 * away).max(0.75));
-            if moved || (!next.direct && next.repath <= 0.0) {
+            // A straight walk was checked along one line only: off it by more than its
+            // radius, the body plans again from where it stands (once per radius strayed, so
+            // an NPC that keeps to its line asks nothing more).
+            let strayed = next.direct && next.planned_from.is_some_and(|from| off_line(here, from, goal) > params.radius);
+            if moved || strayed || (!next.direct && next.repath <= 0.0) {
                 next.direct = plain_sight(world, here, goal, &params);
                 // No route: no path, and it holds where it is until it plans again.
                 next.path = if next.direct {
@@ -377,6 +388,7 @@ pub(crate) fn nav_paths(world: &mut World) {
                 };
                 next.index = 0;
                 next.planned_to = Some(goal);
+                next.planned_from = Some(here);
                 next.repath = tuning.repath;
             } else if let Some(last) = next.path.last_mut() {
                 // A goal that moved a little: the last leg follows it.
@@ -596,6 +608,14 @@ fn remaining(agent: &NavAgent, here: Vec3) -> f32 {
     }
 }
 
+/// How far `p` is from the segment from `a` to `b`, on the ground plane (m).
+fn off_line(p: Vec3, a: Vec3, b: Vec3) -> f32 {
+    let (ab, ap) = (flat(b - a), flat(p - a));
+    let len2 = ab.length_squared();
+    let t = if len2 > 1e-8 { (ap.dot(ab) / len2).clamp(0.0, 1.0) } else { 0.0 };
+    (ap - ab * t).length()
+}
+
 /// `vel` without the part that takes a body at `here` out of its leash.
 fn keep_on_leash(vel: Vec3, here: Vec3, home: Vec3, leash: f32) -> Vec3 {
     let out = flat(here - home);
@@ -667,6 +687,15 @@ mod tests {
         assert!((remaining(&agent, Vec3::new(1.0, 0.0, 5.0)) - (3.0 + 2.0)).abs() < 1e-5);
         let straight = NavAgent { goal: Some(Vec3::new(3.0, 0.0, 4.0)), ..default() };
         assert!((remaining(&straight, Vec3::ZERO) - 5.0).abs() < 1e-5, "no path: straight to the goal");
+    }
+
+    #[test]
+    fn straying_is_measured_from_the_checked_segment_on_the_ground() {
+        let (a, b) = (Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0));
+        assert!((off_line(Vec3::new(4.0, 3.0, 0.5), a, b) - 0.5).abs() < 1e-5, "beside it, any height");
+        assert!((off_line(Vec3::new(-2.0, 0.0, 0.0), a, b) - 2.0).abs() < 1e-5, "behind where it was planned");
+        assert!((off_line(Vec3::new(13.0, 0.0, 4.0), a, b) - 5.0).abs() < 1e-5, "past the goal");
+        assert!((off_line(Vec3::new(3.0, 0.0, 4.0), a, a) - 5.0).abs() < 1e-5, "planned at the goal");
     }
 
     #[test]
