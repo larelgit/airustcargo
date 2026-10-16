@@ -595,20 +595,20 @@ mod stand {
         /// The stand's in-memory hub: a client says hello to the host at once.
         Hub,
         /// A fake Steam of this process whose relay is the hub (`--stand-steam`): the host makes a lobby,
-        /// and a client waits for one (`steam_lobbies`, then `steam_join`).
+        /// and a client waits for one (`steam_lobbies`, then `steam_join`). The hub's links add no
+        /// delay: `--net-sim` conditions the session's transport over the relay (`conditioner_from`), as
+        /// it does over the real Steam, and once.
         #[cfg(feature = "steam")]
         Steam(shards_steam::FakeSteam),
     }
 
     impl Wire {
-        /// The wire a stand with `config` has, on `hub` with `links` on every link.
+        /// The wire a stand with `config` has, on `hub`.
         #[cfg_attr(not(feature = "steam"), allow(unused_variables))]
-        fn of(config: &EngineConfig, hub: &MemoryHub, links: LinkConditions) -> Self {
+        fn of(config: &EngineConfig, hub: &MemoryHub) -> Self {
             #[cfg(feature = "steam")]
             if config.steam.host {
-                let steam = shards_steam::FakeSteam::new(hub.clone());
-                steam.set_conditions(links);
-                return Wire::Steam(steam);
+                return Wire::Steam(shards_steam::FakeSteam::new(hub.clone()));
             }
             Wire::Hub
         }
@@ -623,7 +623,7 @@ mod stand {
         }
 
         /// Gives member `n` (0: the host) of the stand, `app`, called `name`, its way to the others;
-        /// the client's link to the host, when the wire has one.
+        /// the client's link to the host, when the wire has one (`links` conditions it).
         #[cfg_attr(not(feature = "steam"), allow(unused_variables))]
         fn attach(&self, app: &mut App, hub: &MemoryHub, n: usize, name: &str, links: LinkConditions) -> Option<shards_net::LinkId> {
             match self {
@@ -726,7 +726,7 @@ mod stand {
         // The stand owns time: every member is paused and ticks when it says.
         let host_config = EngineConfig { paused: true, player_name: host_name.to_owned(), port: ports[0], ..config.clone() };
         let hub = MemoryHub::new(config.seed);
-        let wire = Wire::of(config, &hub, links);
+        let wire = Wire::of(config, &hub);
         let mut host = build(&host_config);
         // The host is the player at this machine: its settings are read as a game's of its own
         // are (`--settings-dir`, `--no-settings`). The clients keep none (`SettingsStore::Off`).
@@ -1545,6 +1545,8 @@ mod tests {
         let config = EngineConfig {
             net: NetLaunch::Stand { clients: 1, udp: false },
             steam: SteamLaunch { host: true, lobby: SteamLobby::Invisible, ..SteamLaunch::default() },
+            // 50 ms each way, over the relay.
+            net_sim: Some("latency=50".into()),
             ..content("stand_steam", "totem")
         };
         // The body a joining player gets.
@@ -1565,8 +1567,12 @@ mod tests {
         let joined = stand.call(1, "steam_join", serde_json::json!({ "lobby": lobby }));
         assert!(joined.ok, "{}", joined.result);
         stand.settle().unwrap();
-        stand.run(120);
+        stand.run(240);
         assert!(matches!(stand.world(1).resource::<NetState>(), NetState::Connected { player: 1, .. }), "{:?}", stand.world(1).resource::<NetState>());
+        // `--net-sim` conditions the transport once: a round trip is twice the one way, not four times.
+        let status = stand.call(1, "net_status", serde_json::json!({})).result;
+        let rtt = status["rtt_ms"].as_f64().unwrap_or_else(|| panic!("no rtt in: {status}"));
+        assert!((80.0..=140.0).contains(&rtt), "50 ms each way is a round trip of about 100 ms, not {rtt}: {status}");
         assert_eq!(ai_core::status::status(stand.world(1))["net"]["desyncs"], 0);
     }
 

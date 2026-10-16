@@ -770,7 +770,7 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   `SteamLobby::in_search`. Тесты: 4 в `src/fake.rs`, 3 в `src/lobbies.rs`, 7 в `tests/steam/lobbies.rs`. Размер лобби, которого Steam не назвал, строка показывает как `2 of ?`. На настоящем Steam поиск не проверен.
 - Стенд поверх поддельного Steam (`shards`, `shards_net`, `shards_steam`): `--stand N --stand-steam [--steam-lobby TYPE]` (игра
   со feature `steam`; без неё код 2) строит тот же стенд в одном процессе, но участники встречаются по `FakeSteam` с реле на
-  сети в памяти стенда: хост делает лобби, клиенты ждут лобби (`--join steam:`), ищут его `steam_lobbies` и входят
+  сети в памяти стенда без задержки (`--net-sim` работает поверх реле один раз, как у настоящего Steam): хост делает лобби, клиенты ждут лобби (`--join steam:`), ищут его `steam_lobbies` и входят
   `steam_join`. `Stand::settle` и `loading_locally` не ждут клиента, которому нужен чужой транспорт
   (`shards_net::client::waits_for_transport`), `SteamSession::from_launch` берёт хозяина лобби и из `NetLaunch::Stand`, строка
   готовности такого клиента — `role client · joining: …`. Сценарий `crates/shards_steam/scenarios/lobby_search.scenario`:

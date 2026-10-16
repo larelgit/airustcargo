@@ -2447,7 +2447,8 @@ cargo sandbox --headless --paused --stand 2 --net-sim latency=150,loss=0.02 --po
   (по времени сети), пока клиенты получат конец сессии; хуки выхода каждого участника пишут в его журнал. Настройки игрока (`--settings-dir`, `--no-settings`) у стенда —
   настройки хоста, клиенты стенда своих не хранят.
 - **Стенд поверх поддельного Steam** (`--stand N --stand-steam [--steam-lobby TYPE]`, игра со feature `steam`): те же
-  участники в одном процессе, но встречаются они по `FakeSteam` (реле — сеть в памяти стенда, у неё те же `--net-sim`), а не
+  участники в одном процессе, но встречаются они по `FakeSteam` (реле — сеть в памяти стенда без задержки; `--net-sim` работает поверх реле, как у настоящего
+  Steam, и один раз: `latency=50` — это 100 мс туда и обратно, а маршрут `route to` у подделки пишет `ping 0 ms`), а не
   напрямую: хост делает лобби (по умолчанию `friends`), клиенты запущены как `--join steam:` и ждут лобби (строка готовности
   `role client · joining: …`), которое ищет `steam_lobbies` и в которое входит `steam_join`. `Stand::settle` ждёт загрузку клиентов, а
   не их вход: входа у них нет, пока лобби не выбрано. Поэтому `shards wait --peer all` и `--peer c1` (они ждут, пока клиент
@@ -4779,7 +4780,7 @@ note: this game's own lobby 109775240917319681 (friends) is not in the answer: S
 - **Пока контент не загружен**, сборка неизвестна (хэш контента неполный): `steam_lobbies` отвечает `this game is still loading
   its content`.
 - Без Steam и у игрового сервера ответ — причина (`Steam is unavailable (…)`, `an anonymous game server has no lobbies, …`).
-- **Стенд.** Поиск идёт и на стенде поверх поддельного Steam (`cargo sandbox --features shards/steam --stand 1 --stand-steam
+- **Стенд.** Поиск идёт и на стенде поверх поддельного Steam (`cargo run -p sandbox --features shards/steam -- --stand 1 --stand-steam
   --steam-lobby invisible --headless --paused --port 0 --port-file F &`, см. «Стенд поверх поддельного Steam» в «Сессии
   кооператива»): хост делает невидимое лобби, клиент ждёт, ищет, входит по id из ответа и играет.
   `crates/shards_steam/scenarios/lobby_search.scenario` — этот сценарий: в тесте (`tests/steam/scenarios.rs`) он идёт на стенде,

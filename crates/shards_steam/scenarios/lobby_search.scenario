@@ -6,7 +6,7 @@
 # lobby is `invisible` (a lobby search finds invisible and public lobbies, never friends-only or private
 # ones). The first lobby of a fake Steam always has the id below. In process (cargo test --test steam)
 # the stand is built by crates/shards_steam/tests/steam/scenarios.rs; against a live one:
-#   cargo sandbox --features shards/steam --stand 1 --stand-steam --steam-lobby invisible --headless --paused --port 0 --port-file F &
+#   cargo run -p sandbox --features shards/steam -- --stand 1 --stand-steam --steam-lobby invisible --headless --paused --port 0 --port-file F &
 #   SHARDS_PORT_FILE=F cargo shards wait              # the host: `wait --peer all` waits for the clients to join, and they wait for a lobby
 #   SHARDS_PORT_FILE=F cargo shards scenario crates/shards_steam/scenarios/lobby_search.scenario
 #   SHARDS_PORT_FILE=F cargo shards stand stop
