@@ -168,7 +168,12 @@ impl RealBackend {
             relay_only();
         }
         client.networking_utils().init_relay_network_access();
-        let app_id = client.utils().app_id().0;
+        let app_id = match server {
+            // SAFETY: the game server is running. A game-server process has no user, so its
+            // `SteamUtils` is null (`client.utils()` would panic or crash); it has its own.
+            Some(_) => unsafe { sys::SteamAPI_ISteamUtils_GetAppID(sys::SteamAPI_SteamGameServerUtils_v010()) },
+            None => client.utils().app_id().0,
+        };
         let events: Shared<VecDeque<Event>> = Arc::default();
         let requests: Shared<BTreeMap<SteamId, SessionRequest>> = Arc::default();
         // Only the callbacks registered here are read: each turns Steam's struct into an event.
