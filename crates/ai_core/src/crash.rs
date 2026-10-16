@@ -7,7 +7,7 @@
 //! - the session: `ai/status`, the journal's last entries and the log's last lines;
 //! - the session's replay, to play it again: `--replay` takes the report as it is.
 //!
-//! Reports are written when a gameplay system fails (next to its crash replay, once per
+//! Reports are written when a gameplay system fails (with its crash replay, once per
 //! system), when a panic nobody handled happens on another thread (the render thread, a task),
 //! on request (the `crash_report` tool: a bug report), and by `shards::run` when a panic unwinds
 //! out of the game. The world goes with that last one, so its report has what the panic hook
@@ -73,7 +73,8 @@ pub struct CrashReport {
     /// Other panics the hook kept, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub panics: Vec<What>,
-    /// The crash replay saved next to the report, relative to the working directory.
+    /// The crash replay saved with the report, relative to the working directory; `None` when it
+    /// could not be written (the report, which may then be in the player's folder, still holds the replay).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay_file: Option<String>,
     /// The session from its start: `--replay` plays it.
