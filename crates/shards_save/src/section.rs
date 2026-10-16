@@ -123,23 +123,32 @@ pub trait SaveSection: Serialize + DeserializeOwned + Send + Sync + 'static {
         Ok(())
     }
 
-    /// The promise "when my `apply` or `missing` returns `Err`, the world is exactly as it was":
-    /// the section checks everything first and changes the world after (a journal line is not a
-    /// change). A load that stops at such a section, with nothing applied before it, answers
-    /// `nothing was applied` and takes the call out of the recording.
+    /// Looks at the saved state and the world before **any** section of the load is applied,
+    /// and refuses what cannot be applied: the place for every refusal that must leave the
+    /// world untouched (content a manifest names that the game no longer has, a body that must
+    /// exist, a number out of its range). Every `check` of the load, of every kind, runs after
+    /// all files are read and before the first [`apply`](Self::apply); one that fails stops the
+    /// load there: nothing was applied, and the call leaves the recording.
     ///
-    /// Default `false`: a section that fails may have changed the world before it did. The load
-    /// then says so (`the failed section may have changed the world too`), restarts the
-    /// recording from the world as it is and tells whoever mirrors it (a co-op host) to take it
-    /// whole again. Set it to `true` only when every `?` and `return Err` of `apply` and
-    /// `missing` comes before their first change.
-    const FAILS_CLEANLY: bool = false;
+    /// It only reads the world (`&World`), so it cannot change it, and it sees the world as it
+    /// is before the load: a refusal that depends on what an earlier section does belongs in
+    /// `apply`. Not run for a section the file lacks ([`missing`](Self::missing) has no data to
+    /// look at). Default: accept.
+    ///
+    /// An `Err` from [`apply`](Self::apply) or [`missing`](Self::missing) is another thing: the
+    /// section ran, so the world counts as possibly changed (the load says so, restarts the
+    /// recording from the world as it is and tells whoever mirrors it to take it whole again).
+    fn check(&self, world: &World, body: Option<Entity>) -> Result<(), String> {
+        let _ = (world, body);
+        Ok(())
+    }
 }
 
 type CaptureFn = Arc<dyn Fn(&World, Option<Entity>) -> Result<Value, String> + Send + Sync>;
 type ApplyFn = Arc<dyn Fn(&mut World, Option<Entity>, Value) -> Result<(), String> + Send + Sync>;
 type MissingFn = Arc<dyn Fn(&mut World, Option<Entity>) -> Result<(), String> + Send + Sync>;
 type CheckFn = Arc<dyn Fn(&Value) -> Result<(), String> + Send + Sync>;
+type CheckInFn = Arc<dyn Fn(&World, Option<Entity>, &Value) -> Result<(), String> + Send + Sync>;
 
 /// A registered section, type-erased.
 #[derive(Clone)]
@@ -150,12 +159,11 @@ pub struct SectionEntry {
     /// The crate or game that registered it (`shards`, `sandbox`): the first path segment
     /// of the type.
     pub source: String,
-    /// [`SaveSection::FAILS_CLEANLY`]: when `apply` or `missing` fails, the world is as it was.
-    pub fails_cleanly: bool,
     capture: CaptureFn,
     apply: ApplyFn,
     missing: MissingFn,
     check: CheckFn,
+    check_in: CheckInFn,
 }
 
 impl std::fmt::Debug for SectionEntry {
@@ -201,11 +209,11 @@ impl SectionEntry {
             kind: S::KIND,
             version: S::VERSION,
             source: source_of::<S>(),
-            fails_cleanly: S::FAILS_CLEANLY,
             capture: Arc::new(|world, body| verified(&S::capture(world, body)?)),
             apply: Arc::new(|world, body, value| read::<S>(value)?.apply(world, body)),
             missing: Arc::new(|world, body| S::missing(world, body)),
             check: Arc::new(|value| read::<S>(value.clone()).map(drop)),
+            check_in: Arc::new(|world, body, value| read::<S>(value.clone())?.check(world, body)),
         }
     }
 
@@ -214,9 +222,17 @@ impl SectionEntry {
         (self.capture)(world, body)
     }
 
-    /// Puts `data` (at this entry's version) into the world.
+    /// Puts `data` (at this entry's version) into the world. It does not look first: whoever
+    /// applies calls [`check_in`](Self::check_in) before (`load_parts` and `apply_sections` do),
+    /// and an `Err` from here means the world may have changed.
     pub fn apply(&self, world: &mut World, body: Option<Entity>, data: Value) -> Result<(), String> {
         (self.apply)(world, body, data)
+    }
+
+    /// [`SaveSection::check`] on `data` (at this entry's version): whether the world can take it,
+    /// asked before anything of the load is applied. Changes nothing.
+    pub fn check_in(&self, world: &World, body: Option<Entity>, data: &Value) -> Result<(), String> {
+        (self.check_in)(world, body, data)
     }
 
     /// What to do for a file that has no such section.
@@ -241,8 +257,6 @@ impl SectionEntry {
             kind: SaveKind::Character,
             version,
             source: source_of::<C>(),
-            // Every way to fail (no body, data that does not read, no such entity) comes before the insert.
-            fails_cleanly: true,
             capture: Arc::new(move |world, body| {
                 let data: Option<C> = world.get::<C>(need(body)?).cloned();
                 verified(&data)
@@ -256,6 +270,8 @@ impl SectionEntry {
             }),
             missing: Arc::new(|_, _| Ok(())),
             check: Arc::new(|value| read::<Option<C>>(value.clone()).map(drop)),
+            // A body that must be there to take the component.
+            check_in: Arc::new(move |world, body, _| world.get_entity(need(body)?).map(drop).map_err(|e| e.to_string())),
         }
     }
 
@@ -270,8 +286,6 @@ impl SectionEntry {
             kind: SaveKind::World,
             version,
             source: source_of::<C>(),
-            // The one way to fail is the data not reading, before any entity is touched.
-            fails_cleanly: true,
             capture: Arc::new(move |world, _| {
                 let mut map: BTreeMap<String, C> = BTreeMap::new();
                 if let Some(mut q) = world.try_query::<(&SaveKey, &C)>() {
@@ -310,6 +324,7 @@ impl SectionEntry {
             }),
             missing: Arc::new(|_, _| Ok(())),
             check: Arc::new(|value| read::<BTreeMap<String, C>>(value.clone()).map(drop)),
+            check_in: Arc::new(|_, _, _| Ok(())),
         }
     }
 
@@ -324,8 +339,6 @@ impl SectionEntry {
             kind: SaveKind::World,
             version,
             source: source_of::<R>(),
-            // The one way to fail is the data not reading, before the resource is replaced.
-            fails_cleanly: true,
             capture: Arc::new(|world, _| {
                 let resource = world
                     .get_resource::<R>()
@@ -338,6 +351,7 @@ impl SectionEntry {
             }),
             missing: Arc::new(|_, _| Ok(())),
             check: Arc::new(|value| read::<R>(value.clone()).map(drop)),
+            check_in: Arc::new(|_, _, _| Ok(())),
         }
     }
 }
@@ -447,7 +461,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[derive(Resource, Serialize, Deserialize, Clone, Debug, PartialEq)]
+    #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
     struct Gold(u32);
 
     #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -470,40 +484,53 @@ mod tests {
         }
     }
 
-    // A section that checks everything before it changes anything, and says so.
+    #[derive(Resource)]
+    struct Closed;
+
+    // A section that looks at its data and the world before it is applied.
     #[derive(Serialize, Deserialize)]
-    struct Careful;
-    impl SaveSection for Careful {
-        const NAME: &'static str = "careful";
+    struct Picky {
+        limit: u32,
+    }
+    impl SaveSection for Picky {
+        const NAME: &'static str = "picky";
         const VERSION: u32 = 1;
         const KIND: SaveKind = SaveKind::World;
-        const FAILS_CLEANLY: bool = true;
         fn capture(_: &World, _: Option<Entity>) -> Result<Self, String> {
-            Ok(Careful)
+            Ok(Picky { limit: 1 })
         }
         fn apply(self, _: &mut World, _: Option<Entity>) -> Result<(), String> {
+            Ok(())
+        }
+        fn check(&self, world: &World, _: Option<Entity>) -> Result<(), String> {
+            if self.limit > 10 {
+                return Err(format!("limit {} is above 10", self.limit));
+            }
+            if world.contains_resource::<Closed>() {
+                return Err("the world is closed".to_owned());
+            }
             Ok(())
         }
     }
 
     #[test]
-    fn a_section_fails_cleanly_only_when_it_says_so() {
-        assert!(!SectionEntry::of::<WalletData>().fails_cleanly, "safe by default: a section that fails may have changed the world");
-        assert!(SectionEntry::of::<Careful>().fails_cleanly);
-        // The generic sections check everything before their first change.
-        assert!(SectionEntry::character_component::<Purse>("purse", 1).fails_cleanly);
-        assert!(SectionEntry::world_component::<Purse>("chests", 1).fails_cleanly);
-        assert!(SectionEntry::resource::<Gold>("gold", 1).fails_cleanly);
-        // A section registered again under the name replaces the promise too, in either direction.
-        let mut registry = SaveRegistry::default();
-        registry.add(SectionEntry::of::<Careful>());
-        let mut careless = SectionEntry::of::<WalletData>();
-        careless.name = "careful".to_owned();
-        careless.kind = SaveKind::World;
-        registry.add(careless);
-        assert!(!registry.get("careful").unwrap().fails_cleanly);
-        registry.add(SectionEntry::of::<Careful>());
-        assert!(registry.get("careful").unwrap().fails_cleanly);
+    fn an_entry_asks_the_section_whether_the_world_can_take_its_data() {
+        let mut world = World::new();
+        let picky = SectionEntry::of::<Picky>();
+        assert_eq!(picky.check_in(&world, None, &json!({"limit": 3})), Ok(()));
+        assert_eq!(picky.check_in(&world, None, &json!({"limit": 30})), Err("limit 30 is above 10".to_owned()));
+        world.insert_resource(Closed);
+        assert_eq!(picky.check_in(&world, None, &json!({"limit": 3})), Err("the world is closed".to_owned()));
+        assert!(picky.check_in(&world, None, &json!("nonsense")).is_err(), "data that does not read is not accepted");
+        // The default accepts; a character component wants a body that exists.
+        assert_eq!(SectionEntry::of::<WalletData>().check_in(&world, None, &json!({"gold": 1})), Ok(()));
+        let purse = SectionEntry::character_component::<Purse>("purse", 1);
+        let body = world.spawn(Purse(1)).id();
+        assert_eq!(purse.check_in(&world, Some(body), &json!(7)), Ok(()));
+        assert!(purse.check_in(&world, None, &json!(7)).unwrap_err().contains("no player body"));
+        world.despawn(body);
+        assert!(purse.check_in(&world, Some(body), &json!(7)).is_err(), "the body is gone");
+        assert_eq!(SectionEntry::world_component::<Purse>("chests", 1).check_in(&world, None, &json!({})), Ok(()));
     }
 
     #[test]

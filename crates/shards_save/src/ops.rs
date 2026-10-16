@@ -314,24 +314,38 @@ pub struct ApplyError {
     /// Sections the set lacked whose `missing` ran before the one that failed: they changed
     /// the world too.
     pub missing: Vec<String>,
-    /// The section that failed does not promise that its failure changes nothing
-    /// ([`FAILS_CLEANLY`](crate::SaveSection::FAILS_CLEANLY)), so it may have changed the world
-    /// before it failed.
-    pub failed_may_have_changed: bool,
+    /// The section whose `apply` or `missing` ran and failed. A handler that fails may have
+    /// changed the world before it did, so the world counts as changed. `None`: the failure
+    /// came before any section ran (a refusal of [`SaveSection::check`](crate::SaveSection::check)
+    /// is one), and nothing was applied.
+    pub failed_section: Option<String>,
     pub message: String,
 }
 
 impl ApplyError {
     /// A failure before any section ran.
     fn before(message: String) -> Self {
-        ApplyError { applied: Vec::new(), missing: Vec::new(), failed_may_have_changed: false, message }
+        ApplyError { applied: Vec::new(), missing: Vec::new(), failed_section: None, message }
     }
 
     /// Whether the world may have changed: a section ran before the failure (its `apply` or its
-    /// `missing`), or the one that failed does not fail cleanly.
+    /// `missing`), or the one that failed did (it may have changed the world before it failed).
     pub fn changed_anything(&self) -> bool {
-        !self.applied.is_empty() || !self.missing.is_empty() || self.failed_may_have_changed
+        !self.applied.is_empty() || !self.missing.is_empty() || self.failed_section.is_some()
     }
+}
+
+/// Asks the sections of `kind` that have data in `prepared` whether the world can take it
+/// ([`SaveSection::check`](crate::SaveSection::check)), in registration order, and names the
+/// first to refuse (`section region: …`). The world is only read.
+fn check_sections(world: &World, kind: SaveKind, body: Option<Entity>, prepared: &Prepared) -> Result<(), String> {
+    let Some(registry) = world.get_resource::<SaveRegistry>() else { return Ok(()) };
+    for entry in registry.of_kind(kind) {
+        if let Some(data) = prepared.sections.get(&entry.name) {
+            entry.check_in(world, body, data).map_err(|e| format!("section {}: {e}", entry.name))?;
+        }
+    }
+    Ok(())
 }
 
 fn apply_prepared(world: &mut World, kind: SaveKind, body: Option<Entity>, prepared: Prepared) -> Result<Applied, ApplyError> {
@@ -345,18 +359,19 @@ fn apply_prepared(world: &mut World, kind: SaveKind, body: Option<Entity>, prepa
         };
         if let Err(message) = result {
             let message = format!("section {}: {message}", entry.name);
-            return Err(ApplyError { applied: done.applied, missing: done.missing, failed_may_have_changed: !entry.fails_cleanly, message });
+            return Err(ApplyError { applied: done.applied, missing: done.missing, failed_section: Some(entry.name.clone()), message });
         }
     }
     Ok(done)
 }
 
-/// Puts `set` into the world: migrates it, then applies each section of `kind` in
-/// registration order (`missing` for the ones it lacks). Sections that are not registered
-/// are skipped with a warning in the journal. Nothing is applied if the set does not
-/// prepare; a section that fails when applied stops the rest, and the error says whether the
-/// world may have changed ([`ApplyError::changed_anything`]: a section ran before it, or the
-/// failed one does not fail cleanly).
+/// Puts `set` into the world: migrates it, asks every section whether the world can take its
+/// data ([`SaveSection::check`](crate::SaveSection::check)), then applies each section of
+/// `kind` in registration order (`missing` for the ones it lacks). Sections that are not
+/// registered are skipped with a warning in the journal. Nothing is applied if the set does
+/// not prepare or a section refuses it ([`ApplyError::changed_anything`] is `false`); a
+/// section whose `apply` or `missing` fails stops the rest, and the world may have changed
+/// (`changed_anything` is `true`, whatever ran before).
 pub fn apply_sections(world: &mut World, kind: SaveKind, body: Option<Entity>, set: &SectionSet) -> Result<Applied, ApplyError> {
     if kind == SaveKind::Character && body.is_none() {
         return Err(ApplyError::before("there is no player body to put the character into".to_owned()));
@@ -366,6 +381,7 @@ pub fn apply_sections(world: &mut World, kind: SaveKind, body: Option<Entity>, s
             world.get_resource::<SaveRegistry>().ok_or_else(|| ApplyError::before("the save module is not installed (add SavePlugin)".to_owned()))?;
         prepare(registry, kind, set).map_err(|fault| ApplyError::before(format!("the save was {fault}")))?
     };
+    check_sections(world, kind, body, &prepared).map_err(ApplyError::before)?;
     for name in &prepared.unknown {
         journal_warn(world, format!("save: unknown {kind} section {name} skipped (this game does not save it)"));
     }
@@ -641,15 +657,16 @@ impl std::fmt::Display for LoadReport {
 }
 
 /// Loads `what` from `slot` into the world (a world built afresh, the usual way). Every
-/// file is read and checked before anything is applied; a slot whose copies are all damaged
-/// changes nothing and the error names each copy's problem. Then the sections apply in
-/// registration order, and the recording restarts from the loaded state, so a replay saved
-/// afterwards verifies. A section that fails when applied stops the load and the error says
-/// how far it got: what ran before it (`apply`, or `missing` for a section the file lacks, in
-/// this kind or a kind loaded before) stays, the world is partly loaded and the recording
-/// restarts from it; so does a world whose failed section may have changed it too (one that
-/// does not say it [fails cleanly](crate::SaveSection::FAILS_CLEANLY)). When nothing ran and
-/// the failed section fails cleanly, nothing was applied and the call is not recorded.
+/// file is read and checked, and every section asked whether the world can take its data
+/// ([`SaveSection::check`](crate::SaveSection::check), every kind, before the first is
+/// applied), before anything is applied; a slot whose copies are all damaged, or a section
+/// that refuses, changes nothing: the error says nothing was applied and the call is not
+/// recorded. Then the sections apply in registration order, and the recording restarts from
+/// the loaded state, so a replay saved afterwards verifies. A section whose `apply` (or
+/// `missing`) fails stops the load, and the world may have changed: the error says how far it
+/// got (what ran before it, in this kind or a kind loaded before, stays, and the failed
+/// section may have changed the world too), the world is partly loaded and the recording
+/// restarts from it.
 pub fn load_slot(world: &mut World, what: SaveWhat, slot: &str) -> Result<Vec<LoadReport>, String> {
     let slots = SaveSlots { world: slot.to_owned(), character: slot.to_owned() };
     load_parts(world, &what.parts(), &slots)
@@ -658,8 +675,8 @@ pub fn load_slot(world: &mut World, what: SaveWhat, slot: &str) -> Result<Vec<Lo
 /// [`load_slot`] for the parts given, each from its kind's slot of `slots`; a character part
 /// names its body.
 pub fn load_parts(world: &mut World, parts: &[(SaveKind, Option<Entity>)], slots: &SaveSlots) -> Result<Vec<LoadReport>, String> {
-    // Nothing is applied before every file is read: a refusal changes nothing, and the call
-    // that made it is not part of the recording.
+    // Nothing is applied before every file is read and every section has looked at its data: a
+    // refusal changes nothing, and the call that made it is not part of the recording.
     let refuse = |world: &mut World, message: String| {
         ai_core::replay::forget_call(world);
         message
@@ -677,8 +694,16 @@ pub fn load_parts(world: &mut World, parts: &[(SaveKind, Option<Entity>)], slots
         let message = format!("cannot load {}/{}: there is no player body to put the character into", reads[i].kind, reads[i].slot);
         return Err(refuse(world, message));
     }
+    // Every section of every kind is asked before the first is applied: a refusal changes
+    // nothing, however late in the load its section comes.
+    for (read, body) in reads.iter().zip(&bodies) {
+        if let Err(e) = check_sections(world, read.kind, *body, &read.prepared) {
+            journal::emit(world, JournalKind::Error, format!("save: loading {}/{} failed: {e}", read.kind, read.slot));
+            let message = format!("loading {}/{} failed at {e}; nothing was applied: fix the cause and load again", read.kind, read.slot);
+            return Err(refuse(world, message));
+        }
+    }
     let mut reports = Vec::new();
-    let mut applied_anything = false;
     let mut world_applied = false;
     for (read, body) in reads.into_iter().zip(bodies) {
         let Read { kind, slot, file, prepared, recovery } = read;
@@ -688,29 +713,23 @@ pub fn load_parts(world: &mut World, parts: &[(SaveKind, Option<Entity>)], slots
         let unknown = prepared.unknown.clone();
         match apply_prepared(world, kind, body, prepared) {
             Ok(done) => {
-                applied_anything |= !done.applied.is_empty() || !done.missing.is_empty();
                 world_applied |= kind == SaveKind::World && (!done.applied.is_empty() || !done.missing.is_empty());
                 reports.push(LoadReport { kind, slot, tick: file.tick, label: file.label, applied: done.applied.len(), missing: done.missing.len(), unknown, recovery });
             }
             Err(e) => {
-                applied_anything |= e.changed_anything();
-                world_applied |= kind == SaveKind::World && e.changed_anything();
+                // A section that ran and failed may have changed the world, whatever ran before it.
+                world_applied |= kind == SaveKind::World;
                 journal::emit(world, JournalKind::Error, format!("save: loading {kind}/{slot} failed: {}", e.message));
-                if !applied_anything {
-                    ai_core::replay::forget_call(world);
-                    return Err(format!("loading {kind}/{slot} failed at {}; nothing was applied: fix the cause and load again", e.message));
-                }
                 restart_recording(world, "load_game");
                 if world_applied {
                     ai_core::world_rebuilt(world, format!("save {slot} loaded"));
                 }
                 let before: Vec<String> = e.applied.iter().cloned().chain(e.missing.iter().map(|name| format!("{name} (missing from the file)"))).collect();
-                let mut done = vec![match (before.is_empty(), e.failed_may_have_changed) {
-                    (true, true) => "no section before it was applied, but the failed section may have changed the world".to_owned(),
-                    (true, false) => "nothing of it was applied".to_owned(),
-                    (false, _) => format!("applied before it: {}", before.join(", ")),
-                }];
-                if e.failed_may_have_changed && !before.is_empty() {
+                let mut done = Vec::new();
+                if before.is_empty() {
+                    done.push("no section before it was applied, but the failed section may have changed the world".to_owned());
+                } else {
+                    done.push(format!("applied before it: {}", before.join(", ")));
                     done.push("the failed section may have changed the world too".to_owned());
                 }
                 if !reports.is_empty() {

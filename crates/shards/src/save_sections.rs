@@ -145,12 +145,6 @@ impl SaveSection for RegionSave {
     const NAME: &'static str = "region";
     const VERSION: u32 = 2;
     const KIND: SaveKind = SaveKind::World;
-    // `apply` checks the save (`SavedRegion::check`) and everything content must still have
-    // (`check_manifest`; `generate` and the hash for a version 1 save) before `change_region`, which
-    // looks at the same again before it unloads the old region. Not covered: a build that fails after
-    // both looks passed (a prefab or a level that `plan` accepts and spawning then refuses) has
-    // unloaded the old region by then.
-    const FAILS_CLEANLY: bool = true;
 
     fn capture(world: &World, _: Option<Entity>) -> Result<Self, String> {
         let active = world.get_resource::<ActiveRegion>().map(|r| SavedRegion {
@@ -161,6 +155,24 @@ impl SaveSection for RegionSave {
             manifest: Some(r.manifest.clone()),
         });
         Ok(RegionSave { active })
+    }
+
+    /// Everything that can refuse the region, before the load touches anything: the save is
+    /// whole (`SavedRegion::check`), and content still has everything the manifest names
+    /// (`check_manifest`), or, for a version 1 save, generates the same region again.
+    fn check(&self, world: &World, _: Option<Entity>) -> Result<(), String> {
+        // Saved outside any region, or in the one that stands: nothing to build.
+        let Some(saved) = &self.active else {
+            return Ok(());
+        };
+        let want = saved.check()?;
+        if world.get_resource::<ActiveRegion>().is_some_and(|r| r.hash == want) {
+            return Ok(());
+        }
+        match &saved.manifest {
+            Some(manifest) => check_saved(world, manifest),
+            None => regenerate(world, &saved.id, saved.seed, &saved.title(), want).map(drop),
+        }
     }
 
     fn apply(self, world: &mut World, _: Option<Entity>) -> Result<(), String> {
@@ -191,14 +203,18 @@ fn generator_version(db: &ContentDb, manifest: &RegionManifest) -> Option<u32> {
     }
 }
 
+/// Whether content still has everything the manifest names. Changes nothing.
+fn check_saved(world: &World, manifest: &RegionManifest) -> Result<(), String> {
+    region::check_manifest(world, manifest).map_err(|e| {
+        format!("the save's world cannot be built: {e}; keep that content in the game, or write a migration for `region` that replaces it in the saved manifest")
+    })
+}
+
 /// A region from the save's own manifest: the world it was, whatever the generator makes of
-/// that seed now. Content must still have everything the manifest names; checked before
-/// anything changes.
+/// that seed now. Content must still have everything the manifest names (`check` asked before
+/// the load applied anything; `change_region` looks again before it unloads the old region).
 fn build_saved(world: &mut World, manifest: RegionManifest) -> Result<(), String> {
     let title = manifest.title();
-    region::check_manifest(world, &manifest).map_err(|e| {
-        format!("the save's world cannot be built: {e}; keep that content in the game, or write a migration for `region` that replaces it in the saved manifest")
-    })?;
     let now = match generator_version(world.resource::<ContentDb>(), &manifest) {
         Some(version) if version == manifest.version => String::new(),
         Some(version) => format!(" (the generator is v{version} now)"),
@@ -210,12 +226,12 @@ fn build_saved(world: &mut World, manifest: RegionManifest) -> Result<(), String
     Ok(())
 }
 
-/// A region of a version 1 save, which kept no manifest: generated again from its seed, and
-/// refused, changing nothing, unless it comes out as it was (`want`, its manifest hash).
-fn generate_again(world: &mut World, id: &str, seed: u64, title: &str, want: u64) -> Result<(), String> {
-    let worldgen = world.get_resource::<WorldGen>().ok_or("the world module is not installed")?.clone();
-    // Pure: the same seed and content make the same manifest. Checked before anything changes.
-    let generated = generate::generate(world.resource::<ContentDb>(), &worldgen, id, seed).map_err(|e| {
+/// A region of a version 1 save, which kept no manifest, generated again from its seed: pure
+/// (the same seed and content make the same manifest), and refused unless it comes out as it
+/// was (`want`, its manifest hash). Changes nothing.
+fn regenerate(world: &World, id: &str, seed: u64, title: &str, want: u64) -> Result<generate::Generated, String> {
+    let worldgen = world.get_resource::<WorldGen>().ok_or("the world module is not installed")?;
+    let generated = generate::generate(world.resource::<ContentDb>(), worldgen, id, seed).map_err(|e| {
         let attempts: Vec<String> = e.failures.iter().map(|f| format!("  {f}")).collect();
         if attempts.is_empty() { format!("cannot generate {title}: {}", e.message) } else { format!("cannot generate {title}: {}\n{}", e.message, attempts.join("\n")) }
     })?;
@@ -227,6 +243,13 @@ fn generate_again(world: &mut World, id: &str, seed: u64, title: &str, want: u64
             generated.manifest.version
         ));
     }
+    Ok(generated)
+}
+
+/// A region of a version 1 save: generated again (`regenerate`, which `check` asked before the
+/// load applied anything) and changed to.
+fn generate_again(world: &mut World, id: &str, seed: u64, title: &str, want: u64) -> Result<(), String> {
+    let generated = regenerate(world, id, seed, title, want)?;
     region::journal_generated(world, &generated);
     region::change_region(world, generated.manifest).map_err(|e| format!("cannot change to {title}: {e}"))?;
     Ok(())
@@ -250,14 +273,27 @@ impl SaveSection for PositionSave {
     const NAME: &'static str = "position";
     const VERSION: u32 = 1;
     const KIND: SaveKind = SaveKind::Character;
-    // Every way to refuse (no body, a rotation or a position that is not one, no Transform) comes
-    // before the Transform is written.
-    const FAILS_CLEANLY: bool = true;
 
     fn capture(world: &World, body: Option<Entity>) -> Result<Self, String> {
         let body = body.ok_or("there is no body")?;
         let tf = world.get::<Transform>(body).ok_or("the body has no Transform")?;
         Ok(PositionSave { feet: tf.translation.to_array(), rotation: tf.rotation.to_array(), region: RegionRef::current(world) })
+    }
+
+    fn check(&self, world: &World, body: Option<Entity>) -> Result<(), String> {
+        let body = body.ok_or("there is no body")?;
+        if world.get::<Transform>(body).is_none() {
+            return Err("the body has no Transform".to_owned());
+        }
+        let rotation = Quat::from_array(self.rotation);
+        if !rotation.is_finite() || rotation.length_squared() < 1e-6 {
+            return Err(format!("rotation {:?} is not a rotation", self.rotation));
+        }
+        // A character may come from another machine (co-op): a body at infinity is not a position.
+        if self.feet.iter().any(|v| !v.is_finite()) {
+            return Err(format!("feet {:?} are not a position", self.feet));
+        }
+        Ok(())
     }
 
     fn apply(self, world: &mut World, body: Option<Entity>) -> Result<(), String> {
@@ -275,13 +311,6 @@ impl SaveSection for PositionSave {
             }
         }
         let rotation = Quat::from_array(self.rotation);
-        if !rotation.is_finite() || rotation.length_squared() < 1e-6 {
-            return Err(format!("rotation {:?} is not a rotation", self.rotation));
-        }
-        // A character may come from another machine (co-op): a body at infinity is not a position.
-        if self.feet.iter().any(|v| !v.is_finite()) {
-            return Err(format!("feet {:?} are not a position", self.feet));
-        }
         let mut tf = world.get_mut::<Transform>(body).ok_or("the body has no Transform")?;
         tf.translation = Vec3::from_array(self.feet);
         tf.rotation = rotation;
@@ -334,9 +363,6 @@ impl SaveSection for VitalsSave {
     const NAME: &'static str = "vitals";
     const VERSION: u32 = 1;
     const KIND: SaveKind = SaveKind::Character;
-    // Every way to refuse (no body, pools that are not pools, too many charges) comes before the
-    // first write, and the writes after it have no way to fail.
-    const FAILS_CLEANLY: bool = true;
 
     fn capture(world: &World, body: Option<Entity>) -> Result<Self, String> {
         let body = body.ok_or("there is no body")?;
@@ -350,9 +376,9 @@ impl SaveSection for VitalsSave {
         })
     }
 
-    fn apply(self, world: &mut World, body: Option<Entity>) -> Result<(), String> {
+    fn check(&self, world: &World, body: Option<Entity>) -> Result<(), String> {
         let body = body.ok_or("there is no body")?;
-        // Everything is checked first, so a section that is refused changes nothing.
+        world.get_entity(body).map_err(|e| e.to_string())?;
         for (what, pool) in [("health", &self.health), ("stamina", &self.stamina)] {
             if let Some(pool) = pool {
                 pool.check(what)?;
@@ -361,6 +387,11 @@ impl SaveSection for VitalsSave {
         if self.charges.len() > MAX_CHARGES || self.charges.iter().any(|c| c.name.len() > MAX_CHARGE_NAME || c.name.chars().any(char::is_control)) {
             return Err(format!("at most {MAX_CHARGES} charges, named in {MAX_CHARGE_NAME} characters without control characters"));
         }
+        Ok(())
+    }
+
+    fn apply(self, world: &mut World, body: Option<Entity>) -> Result<(), String> {
+        let body = body.ok_or("there is no body")?;
         let mut entity = world.get_entity_mut(body).map_err(|e| e.to_string())?;
         let mut hp = None;
         if let (Some(saved), Some(mut health)) = (self.health, entity.get_mut::<Health>()) {
@@ -374,7 +405,7 @@ impl SaveSection for VitalsSave {
             stamina.exhausted = false;
         }
         if !self.charges.is_empty() {
-            // The body gets the component if it lacks it: no way to fail after the first write.
+            // The body gets the component if it lacks it.
             let mut charges = entity.entry::<Charges>().or_default().into_mut();
             for saved in self.charges {
                 match charges.get_mut(&saved.name) {
@@ -402,7 +433,6 @@ impl SaveSection for VitalsSave {
 mod tests {
     use super::*;
     use serde_json::json;
-    use shards_save::SectionEntry;
     use shards_world::manifest::{ManifestPoi, PlacedTile};
 
     fn manifest() -> RegionManifest {
@@ -480,33 +510,70 @@ mod tests {
     }
 
     #[test]
-    fn the_engine_sections_that_promise_to_fail_cleanly_do() {
-        for entry in [SectionEntry::of::<RegionSave>(), SectionEntry::of::<PositionSave>(), SectionEntry::of::<VitalsSave>()] {
-            assert!(entry.fails_cleanly, "{} says it fails cleanly", entry.name);
-        }
+    fn a_position_that_is_not_one_is_refused_in_check_and_a_good_one_is_applied() {
         let mut world = World::new();
-        let body = world.spawn((Transform::from_xyz(1.0, 2.0, 3.0), Health::new(100.0), Stamina::new(50.0, 5.0, 1.0))).id();
+        let body = world.spawn((Transform::from_xyz(1.0, 2.0, 3.0), Health::new(100.0))).id();
+        let at = |feet: [f32; 3], rotation: [f32; 4]| PositionSave { feet, rotation, region: None };
 
-        // A position and a rotation that are not ones: refused before the Transform is written.
-        for (feet, rotation, why) in [([f32::NAN, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0], "are not a position"), ([9.0, 9.0, 9.0], [0.0; 4], "is not a rotation")] {
-            let err = PositionSave { feet, rotation, region: None }.apply(&mut world, Some(body)).unwrap_err();
+        // A position and a rotation that are not ones, and a body that cannot take one.
+        for (saved, on, why) in [
+            (at([f32::NAN, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]), Some(body), "are not a position"),
+            (at([9.0, 9.0, 9.0], [0.0; 4]), Some(body), "is not a rotation"),
+            (at([9.0, 9.0, 9.0], [0.0, 0.0, 0.0, 1.0]), None, "there is no body"),
+        ] {
+            let err = saved.check(&world, on).unwrap_err();
             assert!(err.contains(why), "{err}");
-            assert_eq!(world.get::<Transform>(body).unwrap().translation, Vec3::new(1.0, 2.0, 3.0));
         }
+        let bare = world.spawn_empty().id();
+        assert_eq!(at([9.0; 3], [0.0, 0.0, 0.0, 1.0]).check(&world, Some(bare)), Err("the body has no Transform".to_owned()));
 
-        // A health that would be written and a stamina that is not a pool: neither is written, and the
-        // body is not given the charges.
+        let good = at([9.0, 8.0, 7.0], [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(good.check(&world, Some(body)), Ok(()));
+        good.apply(&mut world, Some(body)).unwrap();
+        assert_eq!(world.get::<Transform>(body).unwrap().translation, Vec3::new(9.0, 8.0, 7.0));
+    }
+
+    #[test]
+    fn vitals_that_are_not_pools_are_refused_in_check_and_a_body_without_charges_is_given_them() {
+        let mut world = World::new();
+        let body = world.spawn((Health::new(100.0), Stamina::new(50.0, 5.0, 1.0))).id();
         let flask = || ChargeSave { name: "flask".into(), current: 1, max: 3 };
-        let refused = VitalsSave { health: Some(Pool { current: 10.0, max: 20.0 }), stamina: Some(Pool { current: f32::NAN, max: 5.0 }), charges: vec![flask()] };
-        assert!(refused.apply(&mut world, Some(body)).unwrap_err().starts_with("stamina "));
-        assert_eq!(*world.get::<Health>(body).unwrap(), Health::new(100.0));
-        assert!(world.get::<Charges>(body).is_none());
 
-        // Taken: a body that has no charges is given them.
+        let refused = VitalsSave { health: Some(Pool { current: 10.0, max: 20.0 }), stamina: Some(Pool { current: f32::NAN, max: 5.0 }), charges: vec![flask()] };
+        assert!(refused.check(&world, Some(body)).unwrap_err().starts_with("stamina "));
+        let many = VitalsSave { charges: (0..=MAX_CHARGES).map(|n| ChargeSave { name: format!("c{n}"), current: 0, max: 1 }).collect(), ..VitalsSave::default() };
+        assert!(many.check(&world, Some(body)).unwrap_err().starts_with("at most 64 charges"));
+        assert_eq!(VitalsSave::default().check(&world, None), Err("there is no body".to_owned()));
+        world.despawn(body);
+        assert!(VitalsSave::default().check(&world, Some(body)).is_err(), "the body is gone");
+
+        let body = world.spawn((Health::new(100.0), Stamina::new(50.0, 5.0, 1.0))).id();
         let taken = VitalsSave { health: Some(Pool { current: 10.0, max: 20.0 }), stamina: None, charges: vec![flask()] };
+        assert_eq!(taken.check(&world, Some(body)), Ok(()));
         taken.apply(&mut world, Some(body)).unwrap();
         assert_eq!(world.get::<Health>(body).map(|h| (h.current, h.max)), Some((10.0, 20.0)));
-        assert_eq!(world.get::<Charges>(body).unwrap().0, vec![Charge { name: "flask".into(), current: 1, max: 3 }]);
+        assert_eq!(world.get::<Charges>(body).unwrap().0, vec![Charge { name: "flask".into(), current: 1, max: 3 }], "a body without charges is given them");
+    }
+
+    #[test]
+    fn a_region_content_cannot_build_is_refused_in_check_before_the_one_standing_is_touched() {
+        // A world with a region standing and no content at all: the manifest's tiles are gone.
+        let mut world = World::new();
+        world.init_resource::<ContentDb>();
+        let mut standing = manifest();
+        standing.seed = 7;
+        world.insert_resource(ActiveRegion::new(standing.clone(), None, None, 0));
+        let hash = world.resource::<ActiveRegion>().hash;
+
+        let err = read(saved(manifest())).unwrap().check(&world, None).unwrap_err();
+        assert!(err.contains("the save's world cannot be built: the manifest of meadow seed 42 v3 names tiles content does not have: gate, grass"), "{err}");
+        assert!(err.contains("keep that content in the game, or write a migration for `region`"), "{err}");
+        let still = world.resource::<ActiveRegion>();
+        assert_eq!((still.hash, still.manifest.seed), (hash, 7), "the region there stays: a check only reads the world");
+
+        // The region that stands, and a world saved outside any region, need nothing from content.
+        assert_eq!(read(saved(standing)).unwrap().check(&world, None), Ok(()));
+        assert_eq!(RegionSave { active: None }.check(&world, None), Ok(()));
     }
 
     #[test]
