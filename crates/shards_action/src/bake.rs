@@ -2,12 +2,13 @@
 //!
 //! An action names the clip it is baked from (`bake: (animset: "humanoid", clip: "light_1")`);
 //! the animset names the root bone (`root_motion: "root"`). [`bake_action`] samples that bone's
-//! translation at [`SAMPLE_HZ`], keeps the move along the model's forward axis (glTF +Z: the
-//! clip's own forward), drops the vertical (a roll's bob is the picture's) and reports the
-//! sideways drift it cannot keep, then thins the samples to the keys a straight line between
-//! neighbours does not already give. [`bake_files`] writes the keys into the action's file in
-//! place (comments and the rest of the file stay as they are): `--bake-motion [ACTIONS]` and the
-//! `motion_bake` tool run it. Same file, same clip, same bytes.
+//! translation at [`SAMPLE_HZ`] (and at the action's end, when that falls between ticks), keeps
+//! the move along the model's forward axis (glTF +Z: the clip's own forward), drops the
+//! vertical (a roll's bob is the picture's) and reports the sideways drift it cannot keep, then
+//! thins the samples to the keys a straight line between neighbours does not already give.
+//! [`bake_files`] writes the keys into the action's file in place (comments and the rest of the
+//! file stay as they are): `--bake-motion [ACTIONS]` and the `motion_bake` tool run it. Same file,
+//! same clip, same bytes.
 //!
 //! The clip must be timed to the action: its `phases` extra (Blender exports an action's
 //! custom property `phases` as the animation's extras) names the same phases with the same
@@ -123,9 +124,14 @@ pub fn bake_clip(file: &ClipFile, source: &str, animation: &str, bone: &str, pha
     let at = |t: f32| track.map_or(Vec3::ZERO, |track| track.sample(t)) * scale;
     let origin = at(0.0);
     let (mut sideways, mut vertical) = (0.0f32, 0.0f32);
-    let mut points = Vec::with_capacity(ticks + 1);
-    for i in 0..=ticks {
-        let t = (i as f32 / SAMPLE_HZ).min(length);
+    // Every tick, and the action's own end when that is not on a tick (a last tick of 0.57 s ends at
+    // 0.57 s, not at the tick before): the move the clip still makes there is the body's too.
+    let mut times: Vec<f32> = (0..=ticks).map(|i| (i as f32 / SAMPLE_HZ).min(length)).collect();
+    if times.last().is_some_and(|&t| t < length - 1e-4) {
+        times.push(length);
+    }
+    let mut points = Vec::with_capacity(times.len());
+    for t in times {
         let d = at(t) - origin;
         sideways = sideways.max(d.x.abs());
         vertical = vertical.max(d.y.abs());
@@ -584,6 +590,22 @@ mod tests {
         // The same clip, the same bytes.
         let again = bake_clip(&file, "h.glb", "lunge", "root", &phases(&[("windup", 0.2), ("active", 0.1), ("recovery", 0.3)]));
         assert_eq!(again.unwrap(), baked);
+    }
+
+    #[test]
+    fn an_action_that_ends_between_ticks_is_sampled_at_its_end() {
+        // The root ramps to 0.5 m by 0.57 s; 0.57 s is 34.2 ticks, which rounds down to 34 and a
+        // last tick sample at 0.5667 s, 0.49 m, 0.0033 s short of the end.
+        let bytes = glb(serde_json::json!({}), &[("ramp", None, &[0.0, 0.4, 0.57], &[[0.0; 3], [0.0; 3], [0.0, 0.0, 0.5]])]);
+        let file = ClipFile::parse(&bytes, None).unwrap();
+        let baked = bake_clip(&file, "h.glb", "ramp", "root", &phases(&[("go", 0.57)])).unwrap();
+        assert_eq!(baked.samples, 36, "35 ticks and the end");
+        assert_eq!(baked.forward, 0.5, "{baked:?}");
+        assert_eq!(baked.text(), "[(0.4, 0.0), (0.57, 0.5)]");
+        // A length on a tick gets no sample beyond its last tick.
+        let aligned = lunge(Some("windup 0.2 active 0.1 recovery 0.3"));
+        let every = phases(&[("windup", 0.2), ("active", 0.1), ("recovery", 0.3)]);
+        assert_eq!(bake_clip(&aligned, "h.glb", "lunge", "root", &every).unwrap().samples, 37, "no extra sample at 0.6 s");
     }
 
     #[test]
