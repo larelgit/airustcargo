@@ -25,6 +25,8 @@
             "Poise": (current: 60.0, max: 60.0, regen: 20.0, delay: 2.0, since_hit: 2.0, broken: 0.0),
             "Charges": ([(name: "flask", current: 3, max: 3)]),
             "CharacterController": (params: "player"),
+            // Drawn with look `player` (content/look/sandbox.look.ron), its body and what it carries.
+            "Look": ("player"),
         },
     ),
     "skeleton": (
@@ -38,6 +40,7 @@
             "Health": (current: 40.0, max: 40.0),
             "Poise": (current: 20.0, max: 20.0, regen: 10.0, delay: 2.0, since_hit: 2.0, broken: 0.0),
             "CharacterController": (params: "skeleton"),
+            "Look": ("skeleton"),
             // Sees 18 m around; chases up to 30 m from where it first stood.
             "Npc": (behavior: "skeleton", perception: "skeleton", plan: Some("skeleton"), director: ""),
             "Home": (pos: None, leash: 30.0),
@@ -69,6 +72,7 @@
             "Health": (current: 600.0, max: 600.0),
             "Poise": (current: 140.0, max: 140.0, regen: 25.0, delay: 3.0, since_hit: 3.0, broken: 0.0),
             "CharacterController": (params: "warden"),
+            "Look": ("warden"),
             // Fights players within 26 m of where it stands guard, alone (director `boss`);
             // its attack plan rests 1.2-1.8 s between attacks (1.0-1.4 s enraged).
             "Npc": (behavior: "warden", perception: "boss", plan: Some("warden"), director: "boss"),
@@ -83,6 +87,7 @@
             "Pillar": (),
             "AiKind": ("Pillar"),
             "AiLandmark": (),
+            "Look": ("stone"),
             "Collider": (
                 shape: Cuboid(half: (1.0, 2.0, 1.0)),
                 offset: (0.0, 2.0, 0.0),

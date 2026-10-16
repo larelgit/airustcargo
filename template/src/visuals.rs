@@ -6,11 +6,10 @@
 //! content changes what you see. Real art goes in the same place: an observer or a system
 //! that dresses an entity once it exists.
 
+use shards::look::Look;
 use shards::motion::Shape;
 use shards::prelude::*;
 use shards::world::RegionEdge;
-
-use crate::brain::Grunt;
 
 pub struct VisualsPlugin;
 
@@ -35,14 +34,18 @@ fn setup_scene(mut commands: Commands) {
 }
 
 /// Gives every collider a mesh of its own shape, once: an entity without `Visibility` has
-/// not been dressed yet. The wall around a region's edge stays invisible.
+/// not been dressed yet. The wall around a region's edge stays invisible. The engine's looks
+/// (content/looks.look.ron) give the colour and the light: a body's prefab names its look,
+/// everything else is stone.
 fn dress(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut white: Local<Option<Handle<StandardMaterial>>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    undressed: Query<(Entity, &Collider, Has<PlayerId>, Has<Grunt>), (Without<Visibility>, Without<RegionEdge>)>,
+    undressed: Query<(Entity, &Collider, Has<Look>), (Without<Visibility>, Without<RegionEdge>)>,
 ) {
-    for (entity, collider, is_hero, is_grunt) in &undressed {
+    let white = white.get_or_insert_with(|| materials.add(StandardMaterial::default())).clone();
+    for (entity, collider, looked) in &undressed {
         let mesh = match collider.shape {
             Shape::Cuboid { half } => meshes.add(Cuboid::new(half.x * 2.0, half.y * 2.0, half.z * 2.0)),
             Shape::Sphere { radius } => meshes.add(Sphere::new(radius)),
@@ -50,18 +53,11 @@ fn dress(
             Shape::Cylinder { half_height, radius } => meshes.add(Cylinder::new(radius, half_height * 2.0)),
             Shape::Cone { half_height, radius } => meshes.add(Cone::new(radius, half_height * 2.0)),
         };
-        let color = if is_hero {
-            Color::srgb(0.25, 0.55, 1.0)
-        } else if is_grunt {
-            Color::srgb(0.85, 0.35, 0.3)
-        } else {
-            Color::srgb(0.3, 0.32, 0.38)
-        };
-        let material = materials.add(StandardMaterial { base_color: color, perceptual_roughness: 0.8, ..default() });
-        commands
-            .entity(entity)
-            .insert(Visibility::default())
-            .with_child((Mesh3d(mesh), MeshMaterial3d(material), Transform::from_translation(collider.offset)));
+        let body = (Mesh3d(mesh), MeshMaterial3d(white.clone()), Transform::from_translation(collider.offset));
+        let mut e = commands.entity(entity);
+        e.insert(Visibility::default());
+        // On the mesh, not the body: the picture adds nothing the simulation keeps.
+        if looked { e.with_child(body) } else { e.with_child((body, Look::new("stone"))) };
     }
 }
 
