@@ -47,6 +47,14 @@ trace_tracy = ["bevy/trace_tracy"]
 # A build for players (`shards package`): the developer's keys (console, menu, overlays) do nothing.
 # Build it without `remote` and `hot_reload`.
 dist = []
+# Steam (E10.5): lobbies and invites, co-op over the Steam relay (`--steam-host`, `--steam-server`,
+# `--join steam:<id>`), achievements (`*.achievement.ron`), saves mirrored to Steam Cloud. On its own the
+# module runs on a fake Steam in the process (tests; a game a player runs says it has no Steam);
+# `steam_sdk` adds the real one.
+steam = ["dep:shards_steam"]
+# `steam` on the real Steam client: links Valve's steam_api64 (a program that does not start without
+# the DLL beside it; `shards package` puts it there). A game a player plays then talks to Steam.
+steam_sdk = ["steam", "shards_steam/sdk"]
 
 [dependencies]
 ai_core.workspace = true
@@ -68,6 +76,7 @@ shards_dev.workspace = true
 shards_look.workspace = true
 shards_scatter.workspace = true
 shards_fx.workspace = true
+shards_steam = { workspace = true, optional = true }
 bevy = { workspace = true, features = ["default_app", "std", "multi_threaded", "serialize"] }
 serde.workspace = true
 serde_json.workspace = true

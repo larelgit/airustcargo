@@ -1,0 +1,33 @@
+[package]
+name = "shards_steam"
+description = "Shards on Steam (E10.5): lobbies and invites, the Steam relay as a co-op transport, achievements as content, saves mirrored to Steam Cloud; behind the engine's API, with a fake Steam of its own for tests and builds without the SDK."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# The real Steam client through Steamworks (the `steamworks` crate, Valve's SDK 1.64): the program
+# links `steam_api64.dll` / `libsteam_api.so` and does not start without it beside it (`shards
+# package` puts it there). Without it the module runs on its fake Steam: lobbies, relay,
+# achievements and cloud in this process only.
+sdk = ["dep:steamworks"]
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+shards_locale.workspace = true
+shards_net.workspace = true
+shards_save.workspace = true
+bevy = { workspace = true, features = ["std", "serialize"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+steamworks = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Integration tests build apps the way a game does: the whole engine (`shards::EnginePlugins`), plus
+# the module on its fake Steam. Not the `steam` feature of `shards`: a workspace test run would turn it
+# on for every game. Never with `sdk`: a test never reaches the real Steam.
+shards = { workspace = true, features = ["render", "remote", "hot_reload"] }

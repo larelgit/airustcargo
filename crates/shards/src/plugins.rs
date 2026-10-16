@@ -98,7 +98,7 @@ impl PluginGroup for EnginePlugins {
             group = group.add(EmbeddedLogCapture);
         }
         // The engine's modules, in dependency order. A new module is one more line.
-        group
+        let group = group
             .add(config.ai_core_plugin())
             .add(CorePlugin { config: config.clone() })
             .add(ContentPlugin)
@@ -132,7 +132,11 @@ impl PluginGroup for EnginePlugins {
             // Scatter: foliage and small props strewn over the tiles, drawn in batches, by distance.
             .add(ScatterPlugin)
             // Effects: particles from content in pools, the telegraphs on the ground as decals.
-            .add(FxPlugin)
+            .add(FxPlugin);
+        // Steam (feature `steam`): lobbies, the relay as a transport, achievements, cloud saves.
+        #[cfg(feature = "steam")]
+        let group = group.add(shards_steam::SteamPlugin);
+        group
             // Performance: the `perf` content kind (`--perf`), `counts` and `frames` in `ai/status`.
             .add(crate::bench::PerfPlugin)
             // The developer menu and console, last: every module above has added its entries.

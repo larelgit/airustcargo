@@ -245,3 +245,33 @@ fn a_load_keeps_the_recording_verifiable() {
     let report = shards::testing::verify(&mut fresh, recording).unwrap();
     assert!(report.identical(), "{report}");
 }
+
+/// What `SaveWritten` said, in order.
+#[derive(Resource, Default)]
+struct Written(Vec<(shards::save::SaveKind, String, Vec<u8>)>);
+
+#[test]
+fn every_save_written_is_announced_with_its_bytes_and_a_refused_one_is_not() {
+    let dir = TempDir::new("written");
+    let mut app = game_in(&dir, |app| {
+        app.init_resource::<Written>().add_observer(|event: On<shards::save::SaveWritten>, mut written: ResMut<Written>| {
+            let e = event.event();
+            written.0.push((e.kind, e.slot.clone(), e.bytes.clone()));
+        });
+    });
+    some_state(&mut app);
+    ok(&mut app, "save_game", json!({"what": "all", "slot": "camp"}));
+    ok(&mut app, "save_game", json!({"what": "world", "slot": "camp"}));
+    let store = app.world().resource::<shards::save::SaveConfig>().store();
+    let written = &app.world().resource::<Written>().0;
+    let said: Vec<(shards::save::SaveKind, &str)> = written.iter().map(|(kind, slot, _)| (*kind, slot.as_str())).collect();
+    use shards::save::SaveKind::{Character, World};
+    assert_eq!(said, [(World, "camp"), (Character, "camp"), (World, "camp")]);
+    // The bytes are the slot's new primary file, the older one is its backup.
+    let primary = fs::read(store.path(World, "camp", shards::save::Which::Save)).unwrap();
+    assert_eq!(written[2].2, primary);
+    assert_eq!(fs::read(store.path(World, "camp", shards::save::Which::Backup(1))).unwrap(), written[0].2);
+    // A save that is refused writes nothing and says nothing.
+    fails(&mut app, "save_game", json!({"what": "world", "slot": "Not A Slot"}));
+    assert_eq!(app.world().resource::<Written>().0.len(), 3);
+}

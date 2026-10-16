@@ -80,6 +80,18 @@ pub struct NetEndpoint {
     pub host: Option<PeerId>,
 }
 
+/// Another module opens this game's transport itself, later: the Steam relay, once the lobby is
+/// created or entered. [`open_endpoint`] then opens no UDP socket, and the module inserts the
+/// [`NetEndpoint`] when it has one (until then the session waits). `real_time`: the transport's
+/// clock is the wall's, so a client cannot `pause`, `resume` or `speed` (the host owns time); a
+/// stand's driver, which runs every member's time, inserts it with `false`.
+#[derive(Resource, Clone, Debug, PartialEq, Eq)]
+pub struct ExternalTransport {
+    /// What opens it, for messages: `"steam"`.
+    pub name: &'static str,
+    pub real_time: bool,
+}
+
 /// Where this game is in the session, for tools and conditions.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub enum NetState {
@@ -235,7 +247,8 @@ impl Plugin for NetPlugin {
 /// port it cannot host on, an address it cannot reach).
 pub const NO_SESSION_EXIT: u8 = 2;
 
-/// `Startup`: the session's agent, and a UDP socket unless a stand put a transport in already.
+/// `Startup`: the session's agent, and a UDP socket unless a stand put a transport in already
+/// or another module opens one ([`ExternalTransport`]).
 fn open_endpoint(world: &mut World) {
     world.resource_mut::<AgentSessions>().configure(NET_AGENT, Scope::Dev, None);
     client::install_forwarder(world);
@@ -243,6 +256,12 @@ fn open_endpoint(world: &mut World) {
         return;
     }
     let config = world.get_resource::<EngineConfig>().cloned().unwrap_or_default();
+    if let Some(external) = world.get_resource::<ExternalTransport>() {
+        if external.real_time && matches!(config.net, NetLaunch::Join { .. }) {
+            host_owns_time(world);
+        }
+        return;
+    }
     let clock = NetClock::Wall(Arc::new(WallClock::new()));
     match &config.net {
         // `--stand N --stand-udp` is a UDP host on a free port; its clients are child processes.
@@ -274,29 +293,37 @@ fn open_endpoint(world: &mut World) {
                 Ok((udp, host)) => {
                     let transport = crate::conditioner_from(&config, udp);
                     world.insert_resource(NetEndpoint { transport, clock, host: Some(host) });
-                    // Over a real network the host owns time (in a stand, its driver runs every
-                    // member's: a stand's client keeps them).
-                    let mut tools = world.resource_mut::<AiTools>();
-                    for tool in ["pause", "resume", "speed"] {
-                        if let Err(e) = tools.set_route(tool, NetRoute::HostOnly(HOST_OWNS_TIME)) {
-                            warn!("net: {e}");
-                        }
-                    }
+                    host_owns_time(world);
                 }
                 Err(e) => {
                     journal::emit(world, JournalKind::Error, format!("net: cannot reach {addr}: {e}; give it as HOST:PORT"));
-                    // Nothing will come: the world waits with the reason (`status`), or the game
-                    // exits (`--exit-with-host`).
-                    let reason = format!("cannot reach {addr}: {e}");
-                    shards_core::seed::hold_seed(world, &format!("net: {reason}"));
-                    if let Some(mut client) = world.remove_resource::<NetClient>() {
-                        client::end(world, &mut client, &reason, AppExit::from_code(NO_SESSION_EXIT));
-                        world.insert_resource(client);
-                    }
+                    unopened(world, &format!("cannot reach {addr}: {e}"));
                 }
             }
         }
         _ => {}
+    }
+}
+
+/// Over a real network the host owns time: a client refuses `pause`, `resume` and `speed` (in a
+/// stand, its driver runs every member's: a stand's client keeps them).
+fn host_owns_time(world: &mut World) {
+    let mut tools = world.resource_mut::<AiTools>();
+    for tool in ["pause", "resume", "speed"] {
+        if let Err(e) = tools.set_route(tool, NetRoute::HostOnly(HOST_OWNS_TIME)) {
+            warn!("net: {e}");
+        }
+    }
+}
+
+/// A client whose session cannot be opened (an address that does not resolve, a Steam lobby it
+/// cannot enter): nothing will come, so the world waits with `reason` (`status`), or the game
+/// exits with [`NO_SESSION_EXIT`] (`--exit-with-host`). The caller journals why.
+pub fn unopened(world: &mut World, reason: &str) {
+    shards_core::seed::hold_seed(world, &format!("net: {reason}"));
+    if let Some(mut client) = world.remove_resource::<NetClient>() {
+        client::end(world, &mut client, reason, AppExit::from_code(NO_SESSION_EXIT));
+        world.insert_resource(client);
     }
 }
 

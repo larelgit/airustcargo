@@ -81,6 +81,8 @@ pub use shards_save as save;
 pub use shards_scatter as scatter;
 pub use shards_script as script;
 pub use shards_settings as settings;
+#[cfg(feature = "steam")]
+pub use shards_steam as steam;
 pub use shards_ui as ui;
 pub use shards_world as world;
 

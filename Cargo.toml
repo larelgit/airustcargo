@@ -20,6 +20,7 @@ members = [
     "crates/shards_npc",
     "crates/shards_world",
     "crates/shards_net",
+    "crates/shards_steam",
     "crates/shards",
     "crates/sandbox",
     "crates/shards_cli",
@@ -100,6 +101,11 @@ unic-langid = "=0.9.6"
 # Sets the window's icon inside `shards` only (`window_icon.rs`); never part of a public API. The version
 # Bevy 0.20 opens its windows with (`bevy_winit`): one copy, its features.
 winit = { version = "=0.30.13", default-features = false }
+# Steamworks (lobbies, the relay, achievements, cloud) inside shards_steam only, behind its feature
+# `sdk` (`shards/steam_sdk`); never part of a public API, never in a default build. Pins
+# steamworks-sys 0.13 (Valve's SDK 1.64, bindings pre-generated: no bindgen, no libclang). `raw-bindings`: the
+# one call the crate does not wrap (inviting a friend into a lobby).
+steamworks = { version = "=0.13.1", default-features = false, features = ["raw-bindings"] }
 
 ai_core = { path = "crates/ai_core", default-features = false }
 shards_script = { path = "crates/shards_script" }
@@ -120,7 +126,8 @@ shards_scatter = { path = "crates/shards_scatter" }
 shards_fx = { path = "crates/shards_fx" }
 shards_world = { path = "crates/shards_world" }
 shards_net = { path = "crates/shards_net" }
-shards = { path = "crates/shards", default-features = false }
+shards_steam = { path = "crates/shards_steam" }
+shards ={ path = "crates/shards", default-features = false }
 
 # Bevy's recommended dev setup: optimise dependencies, keep our own code fast to compile.
 [profile.dev]

@@ -125,6 +125,33 @@ pub struct EngineConfig {
     /// be opened: an address that does not resolve, or the port of a host that is taken. A
     /// host does not exit when it ends the session.
     pub exit_with_host: bool,
+    /// Steam (the `steam` feature of `shards`): whether to talk to the Steam client, the game's app
+    /// id, a session hosted in a Steam lobby or as a Steam game server. Without the feature nothing
+    /// reads it.
+    pub steam: SteamLaunch,
+}
+
+/// What a game asks of Steam at launch (the `steam` feature of `shards`: the `shards_steam` module).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SteamLaunch {
+    /// Talk to the Steam client (a build with the feature `steam_sdk`): a game a player plays does
+    /// (`shards::run` sets it). Off, as in tests, `--check-content`, `--smoke`, `--verify`, `--perf` and
+    /// the in-process stand, the module runs on a fake Steam of its own and never reaches the real one.
+    pub connect: bool,
+    /// The game's Steam app id (`--steam-app 480`). `None`: the one Steam started the game with, or
+    /// the `SteamAppId` environment variable (`steam_appid.txt` is never needed, and never shipped).
+    pub app_id: Option<u32>,
+    /// Host the session in a Steam lobby (`--steam-host`; [`net`](EngineConfig::net) is then
+    /// [`NetLaunch::Host`]): clients join it through the Steam relay (`--join steam:<lobby>`, an
+    /// invite), and no UDP port is opened.
+    pub host: bool,
+    /// Host as an anonymous Steam game server (`--steam-server`; [`net`](EngineConfig::net) is
+    /// [`NetLaunch::Host`]): no lobby and no Steam user; clients join it by its Steam id
+    /// (`--join steam:<id>`) through the relay.
+    pub server: bool,
+    /// Only the Steam relay carries the session (`--steam-relay-only`): no direct route between the
+    /// machines (ICE off), so a test proves the relay works.
+    pub relay_only: bool,
 }
 
 /// The UDP port of a hosted game unless `--host PORT` says otherwise.
@@ -188,6 +215,7 @@ impl Default for EngineConfig {
             character_slot: None,
             world_slot: None,
             exit_with_host: false,
+            steam: SteamLaunch::default(),
         }
     }
 }

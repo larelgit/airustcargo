@@ -1,0 +1,5 @@
+// The tests' achievements: one shown, one hidden until it is unlocked.
+{
+    "first_blood": (steam: "ACH_FIRST_BLOOD", name: "@ach-first-blood", description: "@ach-first-blood-desc"),
+    "warden_down": (steam: "ACH_WARDEN", name: "@ach-warden", description: "@ach-warden-desc", hidden: true),
+}
