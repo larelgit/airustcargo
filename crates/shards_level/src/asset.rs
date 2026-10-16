@@ -174,7 +174,8 @@ impl LevelAsset {
         Self::from_slice(file, &bytes).map_err(|e| format!("`{file}`: {e}"))
     }
 
-    /// The first node called `name` (Blender object names are unique within a file).
+    /// The first node called `name`. Names repeat below instanced collections (each instancer
+    /// holds its own `Barrel`); [`node_at`](Self::node_at) tells those apart by path.
     pub fn node(&self, name: &str) -> Option<&LevelNode> {
         self.nodes.iter().find(|n| n.name == name)
     }
@@ -198,7 +199,8 @@ impl LevelAsset {
 }
 
 /// Required extensions that store meshes compressed or quantized: Bevy's glTF loader has no
-/// decoder for them, so the level could not be drawn. With the fix. Blender 5.2's exporter
+/// decoder for them, so the level could not be drawn. Each entry says how to export without
+/// it. Blender 5.2's exporter
 /// writes Draco and both meshopt variants (*Data → Meshopt Compression* chooses which), but
 /// never `KHR_mesh_quantization`: a file with it went through another tool.
 const COMPRESSED_MESHES: [(&str, &str); 4] = [

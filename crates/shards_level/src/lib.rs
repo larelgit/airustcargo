@@ -24,15 +24,16 @@
 //!    (`Barrels.A/Barrel`). Keep the collection itself in another scene: one only excluded
 //!    from the level's view layer is exported too, at its own place.
 //! 2. Select an object, open *Object Properties → Custom Properties*, add a property
-//!    (the `+` button), type its name and value. Every type of the panel exports: text,
-//!    numbers, booleans, arrays, *Data-Block* (written as `{"name": ..., "type": ...}`) and
-//!    *Python* (a dict or a list, written as JSON). Properties are read from **objects**;
+//!    (the `+` button), type its name and value. A Blender 5.2.2 export was checked with text,
+//!    numbers, booleans, float and text arrays, *Data-Block* (written as
+//!    `{"name": ..., "type": ...}`) and *Python* (a dict or a list, written as JSON); integer
+//!    and boolean arrays were not exported. Properties are read from **objects**;
 //!    ones put on the mesh data (*Object Data Properties*) are an error that says so.
 //! 3. *File → Export → glTF 2.0*. Under *Include*, tick **Custom Properties** (without it
 //!    every property is dropped); under *Data → Mesh*, tick **Apply Modifiers** (without it
 //!    the file has the meshes before their modifiers, and `auto` colliders fit those).
-//!    *Transform → +Y Up* stays on. `.glb` and `.gltf` (separate or embedded) all work, and
-//!    so do lights and materials; *Draco Compression* and *Meshopt Compression* (either of
+//!    *Transform → +Y Up* stays on. `.glb` and `.gltf` *Separate* work (*Embedded*, hidden
+//!    behind an add-on setting in Blender 5.2, was not exported), and so do lights and materials; *Draco Compression* and *Meshopt Compression* (either of
 //!    its extensions) do not (Bevy cannot draw them): the error says which box to untick.
 //! 4. Put the file in the game's asset folder, list it in a content file
 //!    (`content/levels/arena.level.ron`, see [`LevelDef`]), and run `shards content check`.

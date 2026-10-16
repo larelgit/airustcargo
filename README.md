@@ -993,14 +993,15 @@ Blender (.blend) ── экспорт glTF ──► tiles/ruin.gltf ──► 
    (`Ruin/Column`). Объекты коллекции-инстанса (*Add → Collection Instance*) попадают в файл потомками каждого инстансера
    (`Barrels.A/Barrel`). Саму коллекцию держите в отдельной сцене: исключённая из view layer сцены уровня, она всё равно
    экспортируется на своём месте и окажется в уровне ещё раз.
-2. Выберите объект, *Object Properties → Custom Properties*, кнопка `+`: имя и значение. Экспортируется любой тип панели:
-   текст, числа, флажок, массив, *Data-Block* (ссылка на объект) и *Python* (словарь или список, в файле — JSON). Свойства
+2. Выберите объект, *Object Properties → Custom Properties*, кнопка `+`: имя и значение. На экспорте Blender 5.2.2
+   проверены текст, числа, флажок, массивы чисел и строк, *Data-Block* (ссылка на объект) и *Python* (словарь или список,
+   в файле — JSON); массивы целых и флажков не экспортировали. Свойства
    читаются с **объектов**: свойства на данных меша (*Object Data Properties*) движок не читает, и проверка называет их
    ошибкой.
 3. *File → Export → glTF 2.0*. В разделе *Include* отметьте **Custom Properties**: без этого все свойства теряются. В *Data
    → Mesh* отметьте **Apply Modifiers**: без этого в файл уходят меши до модификаторов, и `auto`-коллайдер обнимет их, а не
-   то, что видно в Blender. *Transform → +Y Up* оставьте. Подходят `.glb` и `.gltf` (отдельный или со встроенными
-   данными), лампы (*Include → Punctual Lights*) и материалы. *Data → Draco Compression* и *Data → Meshopt Compression*
+   то, что видно в Blender. *Transform → +Y Up* оставьте. Подходят `.glb` и `.gltf` *Separate* (вариант *Embedded* в
+   Blender 5.2 спрятан за настройкой аддона и не проверен), лампы (*Include → Punctual Lights*) и материалы. *Data → Draco Compression* и *Data → Meshopt Compression*
    (с любым из двух её расширений) не подходят: Bevy такие меши не
    рисует, и движок отказывает с подсказкой, какую галочку снять.
 4. Положите файл в папку ассетов игры (`assets/tiles/ruin.gltf`), назовите его в контенте (вид `level`, ниже) и выполните
@@ -1064,8 +1065,8 @@ Locked  = true                           (компонент без полей)
 `.bin` с лампой; `outpost_draco.glb` с Draco; `outpost_meshopt.glb` и `outpost_meshopt_khr.glb` с meshopt,
 `EXT_meshopt_compression` и `KHR_meshopt_compression`; `outpost_broken.glb` с ошибками художника), тесты
 `crates/shards_level/tests/level/from_blender.rs` читают их без Blender, а `crates/shards/tests/level_render.rs` рисует
-`outpost.glb` загрузчиком Bevy. Байт в байт экспорт не повторяется (двоичные данные мешей от запуска к запуску немного
-разные), поэтому после правки скрипта перепишите только те файлы, которые она меняет (только без окна):
+`outpost.glb` загрузчиком Bevy. Байт в байт экспорт не повторяется (порядок треугольников меша `Boulder` от запуска к запуску
+бывает разным, геометрия та же), поэтому после правки скрипта перепишите только те файлы, которые она меняет (только без окна):
 
 ```text
 blender -b --factory-startup --python-exit-code 1 -P tools/blender/outpost_level.py -- crates/shards_level/tests/level/blender

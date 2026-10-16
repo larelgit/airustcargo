@@ -765,7 +765,7 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   родители через Ctrl+P, пустышки-маркеры всех видов, датчики, коллайдеры всех форм, префаб, компоненты из текста, словаря и
   флажка, коллекция-инстанс, лампа, имена с пробелами и не латиницей), экспортируется Blender 5.2.2 LTS без окна
   (`blender -b --factory-startup --python-exit-code 1 -P tools/blender/outpost_level.py -- <папка>`; байт в байт экспорт не
-  повторяется, двоичные данные мешей от запуска к запуску немного разные). Файлы — `crates/shards_level/tests/level/blender/`:
+  повторяется: порядок треугольников меша `Boulder` от запуска к запуску бывает разным, геометрия та же). Файлы — `crates/shards_level/tests/level/blender/`:
   `outpost.glb`, `outpost_lights.gltf` + `.bin` (с лампой), `outpost_draco.glb`, `outpost_meshopt.glb` и
   `outpost_meshopt_khr.glb` (meshopt с `EXT_` и с `KHR_`), `outpost_broken.glb` (ошибки художника).
 - Тесты `tests/level/from_blender.rs` (14) читают эти файлы: пути узлов, мировые позиции после Z-up → Y-up, формы и размеры
