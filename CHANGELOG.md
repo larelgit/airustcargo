@@ -1152,13 +1152,8 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   `region` 1 → 2 уронила бы сборку её секции версии 1).
 - E6.2: `npc_tuning` больше не знает `avoid_time` и `avoid_margin` (контент с ними — ошибка ``Unexpected field named
   `avoid_time` in `NpcTuning`, expected one of …``): их место заняла `avoidance`. У `NavAgent` новые поля (и `planned_from`),
-  NPC в толпе ходят иначе, а сошедшие с прямой планируют маршрут заново. Эталонные реплеи песочницы (все семь) нужно записать
-  заново, здесь они прежние; расходятся они двумя способами. `combat_prototype`, `npc_director`, `npc_navmesh`,
-  `obstacle_course` и `region` — `DIVERGED at tick 60`: `NavAgent` у NPC (`e6`, `e7`, `e8`, `e14`, в регионе и `e25`; эта
-  ветка) вместе с `Look` у всех тел и `replay check content` (контент сменился ещё в E10.x); `snapshot` и `saves` не стартуют
-  со своего снапшота: `this game is not the one the snapshot was taken in: content differs` (хэш контента, тоже раньше этой
-  ветки). У шаблона `smoke` расходится на `Look`, `SaveKey`, `Trophies` и контенте (раньше этой ветки), `valley` — ещё и на
-  `NavAgent` рейдеров (эта ветка).
+  NPC в толпе ходят иначе, а сошедшие с прямой планируют маршрут заново. Эталонные реплеи песочницы (все семь) и шаблона
+  (`smoke`, `valley`) записаны на этой ветке заново: `NavAgent` у NPC другой, а `avoidance` в `npc_tuning` меняет хэш контента.
 - E6.1: классы тел меняют контент песочницы (`wilds.nav.ron` с классом `large`), и хэш контента снова другой; новых
   расходящихся компонентов они не добавляют: NPC в реплеях — скелеты, они идут по классу `agent`, а его навсетка и файлы
   прежние. Журнал региона прибавил строку `navmesh (body large): …`.

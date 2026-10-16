@@ -10,9 +10,9 @@
     "seed": 42,
     "tick_hz": 59.99999880000003,
     "engine": "0.2.0",
-    "state_hash": "4cc6e6e4a27d6ff0",
+    "state_hash": "b6074819bb645c73",
     "checks": {
-      "content": "1900c86b0f5759af",
+      "content": "5a4407369ab97ba6",
       "levels": "cbf29ce484222325",
       "static_colliders": "b16a4682932b69b4"
     },
@@ -607,6 +607,7 @@
           },
           "shards_npc::nav::NavAgent": {
             "arrived": true,
+            "avoiding": null,
             "desired": [
               0.0,
               0.0,
@@ -616,8 +617,15 @@
             "goal": null,
             "index": 0,
             "path": [],
+            "planned_from": null,
             "planned_to": null,
+            "preferred": [
+              0.0,
+              0.0,
+              0.0
+            ],
             "repath": 0.0,
+            "side": 0,
             "speed": 0.0,
             "within": 0.0
           },
@@ -817,6 +825,7 @@
           },
           "shards_npc::nav::NavAgent": {
             "arrived": true,
+            "avoiding": null,
             "desired": [
               0.0,
               0.0,
@@ -826,8 +835,15 @@
             "goal": null,
             "index": 0,
             "path": [],
+            "planned_from": null,
             "planned_to": null,
+            "preferred": [
+              0.0,
+              0.0,
+              0.0
+            ],
             "repath": 0.0,
+            "side": 0,
             "speed": 0.0,
             "within": 0.0
           },
@@ -1027,6 +1043,7 @@
           },
           "shards_npc::nav::NavAgent": {
             "arrived": true,
+            "avoiding": null,
             "desired": [
               0.0,
               0.0,
@@ -1036,8 +1053,15 @@
             "goal": null,
             "index": 0,
             "path": [],
+            "planned_from": null,
             "planned_to": null,
+            "preferred": [
+              0.0,
+              0.0,
+              0.0
+            ],
             "repath": 0.0,
+            "side": 0,
             "speed": 0.0,
             "within": 0.0
           },
@@ -1431,6 +1455,7 @@
           },
           "shards_npc::nav::NavAgent": {
             "arrived": true,
+            "avoiding": null,
             "desired": [
               0.0,
               0.0,
@@ -1440,8 +1465,15 @@
             "goal": null,
             "index": 0,
             "path": [],
+            "planned_from": null,
             "planned_to": null,
+            "preferred": [
+              0.0,
+              0.0,
+              0.0
+            ],
             "repath": 0.0,
+            "side": 0,
             "speed": 0.0,
             "within": 0.0
           },
@@ -1463,7 +1495,7 @@
   },
   "end": {
     "tick": 157,
-    "hash": "7865076622dc0f12",
+    "hash": "6d44d2facd07825d",
     "parts": {
       "entities": {
         "e1": {
@@ -1548,7 +1580,7 @@
           "Look": "69d0ee91f082244b",
           "MotionState": "1b0f39eab5831839",
           "Name": "c60481842b5403a4",
-          "NavAgent": "59682c99cad9d12c",
+          "NavAgent": "95dc2458f9e438d1",
           "Npc": "ab29948735442598",
           "NpcBrain": "622dd88de1c6e708",
           "NpcDrive": "86e42107c9ecae6a",
@@ -1578,7 +1610,7 @@
           "Look": "f94c630656387237",
           "MotionState": "a479ec98c2ca52a5",
           "Name": "69a7067b825ad410",
-          "NavAgent": "59682c99cad9d12c",
+          "NavAgent": "95dc2458f9e438d1",
           "Npc": "5261f0cbfc256463",
           "NpcBrain": "463d244646f69abb",
           "NpcDrive": "86e42107c9ecae6a",
@@ -1610,7 +1642,7 @@
           "Look": "f94c630656387237",
           "MotionState": "45b7aeb32aeb0ff5",
           "Name": "69a7067b825ad410",
-          "NavAgent": "59682c99cad9d12c",
+          "NavAgent": "95dc2458f9e438d1",
           "Npc": "5261f0cbfc256463",
           "NpcBrain": "463d244646f69abb",
           "NpcDrive": "86e42107c9ecae6a",
@@ -1671,7 +1703,7 @@
           "Look": "f94c630656387237",
           "MotionState": "9a431375471c8d4d",
           "Name": "69a7067b825ad410",
-          "NavAgent": "59682c99cad9d12c",
+          "NavAgent": "95dc2458f9e438d1",
           "Npc": "5261f0cbfc256463",
           "NpcBrain": "463d244646f69abb",
           "NpcDrive": "86e42107c9ecae6a",
@@ -1686,7 +1718,7 @@
         }
       },
       "game": {
-        "content": "1900c86b0f5759af"
+        "content": "5a4407369ab97ba6"
       }
     }
   },
@@ -1801,7 +1833,7 @@
   "checks": [
     {
       "tick": 60,
-      "hash": "f96bc69df90bb8a5",
+      "hash": "9d804614da6828fc",
       "parts": {
         "entities": {
           "e1": {
@@ -1886,7 +1918,7 @@
             "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
-            "NavAgent": "59682c99cad9d12c",
+            "NavAgent": "95dc2458f9e438d1",
             "Npc": "ab29948735442598",
             "NpcBrain": "5417b98ab121c2fe",
             "NpcDrive": "86e42107c9ecae6a",
@@ -1916,7 +1948,7 @@
             "Look": "f94c630656387237",
             "MotionState": "a479ec98c2ca52a5",
             "Name": "69a7067b825ad410",
-            "NavAgent": "59682c99cad9d12c",
+            "NavAgent": "95dc2458f9e438d1",
             "Npc": "5261f0cbfc256463",
             "NpcBrain": "0dc9ac0165aff591",
             "NpcDrive": "86e42107c9ecae6a",
@@ -1948,7 +1980,7 @@
             "Look": "f94c630656387237",
             "MotionState": "45b7aeb32aeb0ff5",
             "Name": "69a7067b825ad410",
-            "NavAgent": "59682c99cad9d12c",
+            "NavAgent": "95dc2458f9e438d1",
             "Npc": "5261f0cbfc256463",
             "NpcBrain": "0dc9ac0165aff591",
             "NpcDrive": "86e42107c9ecae6a",
@@ -2009,7 +2041,7 @@
             "Look": "f94c630656387237",
             "MotionState": "9a431375471c8d4d",
             "Name": "69a7067b825ad410",
-            "NavAgent": "59682c99cad9d12c",
+            "NavAgent": "95dc2458f9e438d1",
             "Npc": "5261f0cbfc256463",
             "NpcBrain": "0dc9ac0165aff591",
             "NpcDrive": "86e42107c9ecae6a",
@@ -2024,13 +2056,13 @@
           }
         },
         "game": {
-          "content": "1900c86b0f5759af"
+          "content": "5a4407369ab97ba6"
         }
       }
     },
     {
       "tick": 120,
-      "hash": "b1373c1f34f7d66f",
+      "hash": "966ec25db58f61b8",
       "parts": {
         "entities": {
           "e1": {
@@ -2115,7 +2147,7 @@
             "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
-            "NavAgent": "59682c99cad9d12c",
+            "NavAgent": "95dc2458f9e438d1",
             "Npc": "ab29948735442598",
             "NpcBrain": "fb3e1e0390a4ce6b",
             "NpcDrive": "86e42107c9ecae6a",
@@ -2145,7 +2177,7 @@
             "Look": "f94c630656387237",
             "MotionState": "a479ec98c2ca52a5",
             "Name": "69a7067b825ad410",
-            "NavAgent": "59682c99cad9d12c",
+            "NavAgent": "95dc2458f9e438d1",
             "Npc": "5261f0cbfc256463",
             "NpcBrain": "bea0cc97d0c5d196",
             "NpcDrive": "86e42107c9ecae6a",
@@ -2177,7 +2209,7 @@
             "Look": "f94c630656387237",
             "MotionState": "45b7aeb32aeb0ff5",
             "Name": "69a7067b825ad410",
-            "NavAgent": "59682c99cad9d12c",
+            "NavAgent": "95dc2458f9e438d1",
             "Npc": "5261f0cbfc256463",
             "NpcBrain": "bea0cc97d0c5d196",
             "NpcDrive": "86e42107c9ecae6a",
@@ -2238,7 +2270,7 @@
             "Look": "f94c630656387237",
             "MotionState": "9a431375471c8d4d",
             "Name": "69a7067b825ad410",
-            "NavAgent": "59682c99cad9d12c",
+            "NavAgent": "95dc2458f9e438d1",
             "Npc": "5261f0cbfc256463",
             "NpcBrain": "bea0cc97d0c5d196",
             "NpcDrive": "86e42107c9ecae6a",
@@ -2253,7 +2285,7 @@
           }
         },
         "game": {
-          "content": "1900c86b0f5759af"
+          "content": "5a4407369ab97ba6"
         }
       }
     }
