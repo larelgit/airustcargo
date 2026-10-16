@@ -101,34 +101,44 @@ struct StandChildren(Vec<StandChild>);
 impl Drop for StandChildren {
     /// A host that goes without its exit hook (a panic) still lets its clients go.
     fn drop(&mut self) {
-        for child in &self.0 {
-            signal(&child.child);
+        for child in &mut self.0 {
+            signal(&mut child.child, &child.name);
         }
     }
 }
 
 /// SIGTERM, which a game turns into a normal exit (token and port file removed).
 #[cfg(unix)]
-fn signal(child: &Child) {
+fn signal(child: &mut Child, _name: &str) {
     // SAFETY: `kill` with a pid and a signal number takes no pointers.
     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
 }
 
 /// Ctrl+Break to the child's own process group (it leads one: see [`start_children`]), which Bevy's
-/// Ctrl+C handler turns into a normal exit, as SIGTERM is on unix.
+/// Ctrl+C handler turns into a normal exit, as SIGTERM is on unix. It reaches only a child that
+/// shares the host's console: a host started without one ends the child's process instead (its
+/// port file and token stay behind; the next stand removes the port file) and says so.
 #[cfg(windows)]
-fn signal(child: &Child) {
+fn signal(child: &mut Child, name: &str) {
     #[link(name = "kernel32")]
     unsafe extern "system" {
         fn GenerateConsoleCtrlEvent(event: u32, group: u32) -> i32;
     }
     const CTRL_BREAK_EVENT: u32 = 1;
     // SAFETY: takes no pointers; a host without a console only gets an error back.
-    unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child.id()) };
+    if unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child.id()) } != 0 {
+        return;
+    }
+    let why = std::io::Error::last_os_error();
+    let ended = match child.kill() {
+        Ok(()) => "ended its process; its port file and token stay behind".to_owned(),
+        Err(e) => format!("could not end it either: {e}"),
+    };
+    warn!("stand client {name} (pid {}) cannot be asked to leave (Ctrl+Break: {why}): {ended}", child.id());
 }
 
 #[cfg(not(any(unix, windows)))]
-fn signal(_: &Child) {}
+fn signal(_: &mut Child, _: &str) {}
 
 /// Makes `app` the host of a stand over UDP: its clients start once its content is loaded (and
 /// the session has room for them) and are let go when it exits.
@@ -404,8 +414,8 @@ fn end_children(world: &mut World) {
     let Some(mut children) = world.remove_resource::<StandChildren>() else { return };
     let left = |children: &mut StandChildren| children.0.retain_mut(|c| c.child.try_wait().map(|status| status.is_none()).unwrap_or(false));
     wait_until(&mut children, LEAVE_WAIT, left);
-    for c in &children.0 {
-        signal(&c.child);
+    for c in &mut children.0 {
+        signal(&mut c.child, &c.name);
     }
     wait_until(&mut children, TERM_WAIT, left);
     for c in &children.0 {

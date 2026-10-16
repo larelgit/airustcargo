@@ -177,7 +177,12 @@ fn same_file(a: &str, b: &str) -> bool {
 /// `dist` when the workspace's `Cargo.toml` defines that profile, else `release`.
 fn default_profile(workspace_root: &Path) -> String {
     let text = std::fs::read_to_string(workspace_root.join("Cargo.toml")).unwrap_or_default();
-    let defined = text.lines().any(|line| line.trim() == "[profile.dist]");
+    // The table header, however it is spelled: `[profile.dist]  # for players`, `[ profile."dist" ]`.
+    let header = |line: &str| {
+        let before_comment = line.split('#').next().unwrap_or_default();
+        before_comment.chars().filter(|c| !c.is_whitespace() && *c != '"').collect::<String>()
+    };
+    let defined = text.lines().any(|line| header(line) == "[profile.dist]");
     if defined { "dist" } else { "release" }.to_owned()
 }
 
@@ -283,7 +288,13 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(u64, u64), String> {
     for entry in entries {
         let entry = entry.map_err(|e| format!("{}: {e}", from.display()))?;
         let (source, target) = (entry.path(), to.join(entry.file_name()));
-        if entry.file_type().map_err(|e| format!("{}: {e}", source.display()))?.is_dir() {
+        let kind = entry.file_type().map_err(|e| format!("{}: {e}", source.display()))?;
+        if kind.is_symlink() {
+            // A package holds files: a link could bring in anything it points to, or nothing on the
+            // player's machine.
+            return Err(format!("{} is a link: put the files themselves in the asset folder", source.display()));
+        }
+        if kind.is_dir() {
             let (f, b) = copy_dir(&source, &target)?;
             files += f;
             bytes += b;
@@ -660,6 +671,20 @@ mod tests {
         assert!(!system_dll("libgcc_s_seh-1.dll"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_the_assets_is_refused() {
+        let dir = std::env::temp_dir().join(format!("shards-package-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        std::fs::write(dir.join("secret.txt"), "not for players").unwrap();
+        std::os::unix::fs::symlink(dir.join("secret.txt"), dir.join("assets/notes.txt")).unwrap();
+        let err = copy_dir(&dir.join("assets"), &dir.join("copy")).unwrap_err();
+        assert!(err.ends_with("notes.txt is a link: put the files themselves in the asset folder"), "{err}");
+        assert!(!dir.join("copy/notes.txt").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn the_dist_profile_is_used_when_the_workspace_defines_it() {
         let dir = std::env::temp_dir().join(format!("shards-package-profile-{}", std::process::id()));
@@ -668,6 +693,10 @@ mod tests {
         assert_eq!(default_profile(&dir), "release");
         std::fs::write(dir.join("Cargo.toml"), "[workspace]\n\n[profile.dist]\ninherits = \"release\"\n").unwrap();
         assert_eq!(default_profile(&dir), "dist");
+        std::fs::write(dir.join("Cargo.toml"), "[workspace]\n\n[ profile.\"dist\" ]  # for players\ninherits = \"release\"\n").unwrap();
+        assert_eq!(default_profile(&dir), "dist");
+        std::fs::write(dir.join("Cargo.toml"), "[workspace]\n# [profile.dist]\n[profile.distant]\n").unwrap();
+        assert_eq!(default_profile(&dir), "release");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

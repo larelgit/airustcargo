@@ -864,7 +864,10 @@ fn smoke(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, ticks: u64
     }
     let loaded = started.elapsed();
     let started = Instant::now();
-    let end = ai_core::sim::tick(app.world()) + ticks;
+    let Some(end) = ai_core::sim::tick(app.world()).checked_add(ticks) else {
+        println!("error: --smoke {ticks}: the game cannot count that many ticks");
+        return ExitCode::FAILURE;
+    };
     let stops = match crate::testing::run_to(&mut app, end, crate::testing::LOAD_TIMEOUT) {
         Ok(stops) => stops,
         Err(e) => {

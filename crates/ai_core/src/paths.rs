@@ -62,22 +62,41 @@ pub fn inside_of(base: &Path, dir: &str, requested: &str, example: &str) -> Resu
 /// `path` made absolute with every link followed, written the way people write it: on Windows
 /// without the `\\?\` that [`Path::canonicalize`] puts in front (`\\?\C:\game` → `C:\game`,
 /// `\\?\UNC\server\share` → `\\server\share`), so the answers of tools show a path one can paste.
+/// It opens the same file: the standard library puts the prefix back on an absolute path too
+/// long for the plain form when it calls Windows.
 pub fn canonical(path: &Path) -> std::io::Result<PathBuf> {
     path.canonicalize().map(|p| without_verbatim(&p))
 }
 
 /// `path` without Windows' verbatim prefix, where the plain form means the same: a drive or a
-/// share. Other paths are left as they are.
+/// share, and names that read the same without the prefix (none holds `/`, none is `.` or `..`).
+/// Names are kept as they are, unpaired surrogates and all. Other paths, and every path off
+/// Windows, are left as they are.
 pub fn without_verbatim(path: &Path) -> PathBuf {
-    let text = path.as_os_str().to_string_lossy();
-    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
-        return PathBuf::from(format!(r"\\{rest}"));
+    use std::path::Prefix;
+    let mut parts = path.components();
+    let Some(Component::Prefix(prefix)) = parts.next() else { return path.to_path_buf() };
+    let mut plain = match prefix.kind() {
+        Prefix::VerbatimDisk(drive) => PathBuf::from(format!(r"{}:\", drive as char)),
+        Prefix::VerbatimUNC(server, share) => {
+            let mut root = std::ffi::OsString::from(r"\\");
+            for (part, then) in [(server, r"\"), (share, r"\")] {
+                root.push(part);
+                root.push(then);
+            }
+            PathBuf::from(root)
+        }
+        _ => return path.to_path_buf(),
+    };
+    for part in parts {
+        match part {
+            Component::RootDir => {}
+            Component::Normal(name) if !name.as_encoded_bytes().contains(&b'/') => plain.push(name),
+            // Without the prefix it would read as something else.
+            _ => return path.to_path_buf(),
+        }
     }
-    match text.strip_prefix(r"\\?\") {
-        // `C:\…`: a drive letter, a colon, a separator.
-        Some(rest) if rest.len() >= 3 && rest.as_bytes()[0].is_ascii_alphabetic() && &rest[1..3] == r":\" => PathBuf::from(rest),
-        _ => path.to_path_buf(),
-    }
+    plain
 }
 
 #[cfg(test)]
@@ -87,11 +106,33 @@ mod tests {
     #[test]
     fn the_verbatim_prefix_goes_where_the_plain_path_means_the_same() {
         let plain = |p: &str| without_verbatim(Path::new(p)).display().to_string();
-        assert_eq!(plain(r"\\?\E:\game\replays\a.json"), r"E:\game\replays\a.json");
-        assert_eq!(plain(r"\\?\UNC\server\share\a.json"), r"\\server\share\a.json");
-        // A device or a volume by its GUID has no plain form.
-        assert_eq!(plain(r"\\?\Volume{1234}\a.json"), r"\\?\Volume{1234}\a.json");
         assert_eq!(plain("/home/me/game/replays/a.json"), "/home/me/game/replays/a.json");
+        if cfg!(windows) {
+            assert_eq!(plain(r"\\?\E:\game\replays\a.json"), r"E:\game\replays\a.json");
+            assert_eq!(plain(r"\\?\UNC\server\share\a.json"), r"\\server\share\a.json");
+            // A device or a volume by its GUID has no plain form.
+            assert_eq!(plain(r"\\?\Volume{1234}\a.json"), r"\\?\Volume{1234}\a.json");
+            // Names that the plain form would read otherwise.
+            for kept in [r"\\?\E:\game\a/b.json", r"\\?\E:\game\..\a.json", r"\\?\E:\game\.\a.json"] {
+                assert_eq!(plain(kept), kept);
+            }
+        } else {
+            // Off Windows a backslash is part of a name.
+            assert_eq!(plain(r"\\?\E:\game"), r"\\?\E:\game");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_name_that_is_no_unicode_keeps_its_units() {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        let wide = |s: &str| s.encode_utf16().collect::<Vec<u16>>();
+        // `\\?\E:\` and a name with an unpaired surrogate, which no `String` can hold.
+        let name = [0xd800, u16::from(b'a')];
+        let verbatim = OsString::from_wide(&[wide(r"\\?\E:\"), name.to_vec()].concat());
+        let plain: Vec<u16> = without_verbatim(Path::new(&verbatim)).as_os_str().encode_wide().collect();
+        assert_eq!(plain, [wide(r"E:\"), name.to_vec()].concat());
     }
 
     fn base(name: &str) -> PathBuf {
