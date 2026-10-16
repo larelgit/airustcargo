@@ -683,9 +683,9 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   `align_of::<Mat4>() == 16` и называет причину, в том числе в игре, которая включит `scalar-math` своей зависимостью. Сборка с
   `-C target-cpu=native` или `+fma` тоже даёт другие биты: под `target_feature = "fma"` код SSE2 у glam сливает умножение и
   сложение (`Quat`, `Vec3A::cross`, `slerp`, `lerp_monotonic`, `mul_add`).
-- Одинаковые биты проверены прогоном между ОС: девять эталонных реплеев (семь песочницы — `obstacle_course` на 1010 тиков,
+- Одинаковые биты проверены прогоном между ОС: девять эталонных реплеев (семь из песочницы — `obstacle_course` на 1010 тиков,
   `combat_prototype` на 2307, `npc_director` на 1923, `npc_navmesh` на 1261, `region` на 353, `snapshot` на 369, `saves` на 157, — и
-  два шаблона, `smoke` и `valley`) записаны на Windows 11 (`x86_64-pc-windows-msvc`) и на Ubuntu 24.04 (glibc 2.39) под WSL1
+  два из шаблона, `smoke` и `valley`) записаны на Windows 11 (`x86_64-pc-windows-msvc`) и на Ubuntu 24.04 (glibc 2.39) под WSL1
   (`x86_64-unknown-linux-gnu`), Rust 1.99.0 с обеих сторон, и файлы совпали побайтово, все девять. Каждая ОС проверила записи
   другой (`every_reference_replay_verifies_headless` у движка, `reference_replays_still_match` у шаблона): расхождений нет. Обе
   стороны проверяли на `e635768` (тогда вершина ветки); запись на Linux сделана на `5d1dbfe` (код симуляции тот же, коммиты между ними

@@ -2002,8 +2002,8 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
   - тест `ai_core::determinism` держит несколько результатов `ops` побитово (`f32::to_bits`): `libm` написана на Rust, поэтому
     они одинаковы на каждой ОС, и платформенная математика, вернувшаяся при смене features, ломает тест, а не реплеи.
   **Между ОС проверено прогоном (E10.6): Windows и Linux на x86_64 записывают одни и те же байты.** Девять эталонных
-  реплеев (семь песочницы: `obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`;
-  два шаблона: `smoke`, `valley`) записаны на каждой ОС (`record_reference_replays`), и файлы совпали побайтово. Потом каждая ОС
+  реплеев (семь из песочницы: `obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`;
+  два из шаблона: `smoke`, `valley`) записаны на каждой ОС (`record_reference_replays`), и файлы совпали побайтово. Потом каждая ОС
   проверила записи другой (`every_reference_replay_verifies_headless` у движка, `reference_replays_still_match` у шаблона):
   расхождений нет. Обе ОС шли с коммита `e635768` (запись на Linux сделана на `5d1dbfe`: код симуляции тот же, коммиты между ними
   меняют только подсветку, которая лишь рисует, и документы). Windows — Windows 11 (`x86_64-pc-windows-msvc`), Linux — Ubuntu
