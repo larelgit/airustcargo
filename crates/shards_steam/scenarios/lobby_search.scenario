@@ -1,0 +1,47 @@
+# Lobby search over a fake Steam (H1): the host of the stand makes an invisible Steam lobby, the client
+# waits for one, searches, finds the lobby, enters it by the id the search listed, and both play a few
+# seconds: no member may report a desync.
+#
+# The stand's members meet over a fake Steam of the process, not the plain in-memory transport, and the
+# lobby is `invisible` (a lobby search finds invisible and public lobbies, never friends-only or private
+# ones). The first lobby of a fake Steam always has the id below. In process (cargo test --test steam)
+# the stand is built by crates/shards_steam/tests/steam/scenarios.rs; against a live one:
+#   cargo sandbox --features shards/steam --stand 1 --stand-steam --steam-lobby invisible --headless --paused --port 0 --port-file F &
+#   SHARDS_PORT_FILE=F cargo shards wait              # the host: `wait --peer all` waits for the clients to join, and they wait for a lobby
+#   SHARDS_PORT_FILE=F cargo shards scenario crates/shards_steam/scenarios/lobby_search.scenario
+#   SHARDS_PORT_FILE=F cargo shards stand stop
+stand clients=1
+invariant !journal "desync"
+
+# --- the stand: a lobby host (invisible), and a client that waits for a lobby
+@host act steam
+@host expect result contains "session: host · lobby 109775240917319681 (invisible: friends do not see it)"
+@c1 act steam
+@c1 expect result contains "waiting for an invite (or steam_join lobby=ID)"
+
+# --- the client searches: the host's lobby is there, of its build, with room
+@c1 act steam_lobbies
+@c1 expect result contains "1 lobby of"
+@c1 expect result contains "lobby 109775240917319681 · host"
+@c1 expect result contains "build matches"
+@c1 expect result contains "enter one with steam_join lobby=ID"
+@c1 expect result !contains "note:"
+
+# --- and enters it by that id
+@c1 act steam_join lobby=109775240917319681
+@c1 expect result contains "entered lobby 109775240917319681"
+step 60
+@c1 act steam
+@c1 expect result contains "session: client · lobby 109775240917319681"
+@host act steam
+@host expect result contains "2 in it"
+@host act steam_lobbies
+@host expect result contains "· this game's lobby"
+
+# --- both play a few seconds (the host's tick is the stand's): nobody left, nobody out of step
+step 300
+@host act net_status
+@host expect result contains "\"desyncs\": 0"
+@c1 act net_status
+@c1 expect result contains "\"role\": \"client\""
+@c1 expect result contains "\"desyncs\": 0"

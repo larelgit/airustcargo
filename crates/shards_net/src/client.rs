@@ -22,7 +22,7 @@ use crate::link::{Delivered, Link, Role};
 use crate::msg::{self, CallMsg, Hello, Inputs, Msg, StateDelta, Welcome, PROTO};
 use crate::predict::NetCorrection;
 use crate::replicate::{apply, changes_between, first_difference, world_hash, ClientRing, Fnv, LOCAL_BASE};
-use crate::session::{NetClock, NetEndpoint, NetGame, NetMarks, NetState, Ticked};
+use crate::session::{ExternalTransport, NetClock, NetEndpoint, NetGame, NetMarks, NetState, Ticked};
 
 /// Where a client is in the session.
 #[derive(Clone, Debug, PartialEq)]
@@ -222,7 +222,17 @@ pub fn clock_ticks(world: &mut World) -> u32 {
 /// Whether the client is busy with its own loading (the stand waits for it, the hub's clock
 /// stands still meanwhile).
 pub fn loading_locally(world: &World) -> bool {
-    world.get_resource::<NetClient>().is_some_and(|c| !c.stage.waits_on_network())
+    world.get_resource::<NetClient>().is_some_and(|c| !c.stage.waits_on_network()) && !waits_for_transport(world)
+}
+
+/// Whether the client has loaded and waits for the module that opens its transport
+/// ([`ExternalTransport`]: the Steam relay, once a lobby is entered) to open it. It says nothing to
+/// a host until then, and is neither loading nor in the session: a stand does not wait for it.
+pub fn waits_for_transport(world: &World) -> bool {
+    world.get_resource::<NetClient>().is_some_and(|c| c.stage == ClientStage::Connecting)
+        && world.contains_resource::<ExternalTransport>()
+        && !world.contains_resource::<NetEndpoint>()
+        && world.get_resource::<ContentDb>().is_some_and(ContentDb::is_loaded)
 }
 
 // --- systems -----------------------------------------------------------------------------

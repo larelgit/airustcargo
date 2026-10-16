@@ -144,7 +144,12 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
   `crates/sandbox/scenarios/stand/`: `shards scenario crates/sandbox/scenarios/stand/*.scenario`. `--stand 2 --stand-udp` —
   то же по настоящему UDP, клиентами-процессами, только в реальном времени; клиент, не вошедший в сессию или упавший,
   останавливает стенд (ушедший сам или тот, с кем связь закрыл хост, `net_kick`, — нет), а `--stand N` не больше
-  `max_players - 1`.
+  `max_players - 1`. `--stand N --stand-steam [--steam-lobby TYPE]` (игра с feature `steam`: `cargo sandbox --features shards/steam
+  --stand 1 --stand-steam --steam-lobby invisible --headless --paused --port 0 --port-file F &`) — стенд в одном процессе, но
+  участники встречаются по поддельному Steam, а не по сети в памяти: хост делает лобби (по умолчанию `friends`), клиенты ждут
+  лобби (`steam_lobbies` ищет, `steam_join` входит; `wait --peer all` ждёт входа клиентов, поэтому здесь ждите хоста: `cargo shards
+  wait`), настоящего Steam стенд не касается. Сценарий такого стенда —
+  `crates/shards_steam/scenarios/lobby_search.scenario`.
 - Проверить, как игра играется честно: `shards session --scope player`. Тогда доступны только
   инструменты игрока, и они действуют через `Intent`, как человек.
 

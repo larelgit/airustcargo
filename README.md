@@ -440,9 +440,9 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 **`shards::run`** — стандартный `main`. Флаги: `--headless | --offscreen --seed N --port N|0 --port-file F --no-remote --paused --hz N
 --replay FILE --verify [--windowed] --check-every N --check-detail components|entities|none --tick-budget-ms MS --frame-budget-ms MS
 --check-content --worldgen-report REGION [--seeds S] --bake-nav [TILES] --bake-motion [ACTIONS] --smoke TICKS --perf ID`; для фазы C:
-`--host [PORT] | --join ADDR | --stand N [--stand-udp]` (взаимоисключающие, `--stand` только с `--headless`), `--name`,
+`--host [PORT] | --join ADDR | --stand N [--stand-udp | --stand-steam]` (взаимоисключающие, `--stand` только с `--headless`), `--name`,
 `--net-sim SPEC`, `--save-dir DIR`, `--settings-dir DIR | --no-settings`, `--character SLOT`, `--world SLOT` (слот —
-1–32 символа `a-z0-9_-`), `--exit-with-host`; для Steam (feature `steam`, см. «Steam (E10.5)»): `--steam-host | --steam-server`,
+1–32 символа `a-z0-9_-`), `--exit-with-host`; для Steam (feature `steam`, см. «Steam (E10.5)»): `--steam-host | --steam-server`, `--steam-lobby TYPE`,
 `--join steam:<id>`, `--steam-relay-only`, `--steam-app N`, а `+connect_lobby <id>` становится `--join steam:<id>`; игра без
 feature `steam` на них выходит с кодом 2. `--host`, `--join` и `--stand` начинают сессию (раздел «Сессия
 кооператива»); `--stand-udp` вместо стенда в одном процессе запускает хост по UDP и N клиентов дочерними процессами (только
@@ -2446,6 +2446,14 @@ cargo sandbox --headless --paused --stand 2 --net-sim latency=150,loss=0.02 --po
   (`--exit-with-host`), выходит из сессии, остальные играют дальше. Ctrl+C завершает сессию как выход хоста и ждёт
   (по времени сети), пока клиенты получат конец сессии; хуки выхода каждого участника пишут в его журнал. Настройки игрока (`--settings-dir`, `--no-settings`) у стенда —
   настройки хоста, клиенты стенда своих не хранят.
+- **Стенд поверх поддельного Steam** (`--stand N --stand-steam [--steam-lobby TYPE]`, игра со feature `steam`): те же
+  участники в одном процессе, но встречаются они по `FakeSteam` (реле — сеть в памяти стенда, у неё те же `--net-sim`), а не
+  напрямую: хост делает лобби (по умолчанию `friends`), клиенты запущены как `--join steam:` и ждут лобби (строка готовности
+  `role client · joining: …`), которое ищет `steam_lobbies` и в которое входит `steam_join`. `Stand::settle` ждёт загрузку клиентов, а
+  не их вход: входа у них нет, пока лобби не выбрано. Поэтому `shards wait --peer all` и `--peer c1` (они ждут, пока клиент
+  войдёт) здесь не вернутся, пока клиент не в лобби: ждите хоста (`shards wait`); `shards scenario` и `shards stand` стенд
+  видят и так. Настоящего Steam стенд никогда не касается, и с `steam_sdk` тоже: `connect` у стенда выключен. Сценарий —
+  `crates/shards_steam/scenarios/lobby_search.scenario` (см. «Поиск лобби»).
 - **Стенд по UDP** (`--stand N --stand-udp`, только с `--headless`, только в реальном времени): процесс — хост на свободном
   UDP-порту (как `--host 0`), а клиенты — дочерние процессы той же игры: `--join 127.0.0.1:ПОРТ --headless --port 0
   --port-file F.cK --name cK --no-settings --exit-with-host --save-dir <save-dir>/stand-cK` с теми же `--seed`, `--hz`,
@@ -4771,6 +4779,12 @@ note: this game's own lobby 109775240917319681 (friends) is not in the answer: S
 - **Пока контент не загружен**, сборка неизвестна (хэш контента неполный): `steam_lobbies` отвечает `this game is still loading
   its content`.
 - Без Steam и у игрового сервера ответ — причина (`Steam is unavailable (…)`, `an anonymous game server has no lobbies, …`).
+- **Стенд.** Поиск идёт и на стенде поверх поддельного Steam (`cargo sandbox --features shards/steam --stand 1 --stand-steam
+  --steam-lobby invisible --headless --paused --port 0 --port-file F &`, см. «Стенд поверх поддельного Steam» в «Сессии
+  кооператива»): хост делает невидимое лобби, клиент ждёт, ищет, входит по id из ответа и играет.
+  `crates/shards_steam/scenarios/lobby_search.scenario` — этот сценарий: в тесте (`tests/steam/scenarios.rs`) он идёт на стенде,
+  который строит тест, а против живого — `SHARDS_PORT_FILE=F shards scenario crates/shards_steam/scenarios/lobby_search.scenario`.
+  Лобби в нём всегда первое лобби поддельного Steam, `109775240917319681`: сценарий называет его id.
 
 ### Достижения
 

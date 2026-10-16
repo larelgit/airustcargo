@@ -94,7 +94,8 @@ impl SteamSession {
     pub fn from_launch(config: &EngineConfig) -> Self {
         let (role, state) = match &config.net {
             NetLaunch::Host { .. } if config.steam.server => (SteamRole::Server, SteamState::LoggingOn),
-            NetLaunch::Host { .. } if config.steam.host => (SteamRole::Host, SteamState::ToCreate),
+            // A stand over a fake Steam (`--stand-steam`): its host is a lobby host, with the stand's net launch.
+            NetLaunch::Host { .. } | NetLaunch::Stand { udp: false, .. } if config.steam.host => (SteamRole::Host, SteamState::ToCreate),
             NetLaunch::Join { addr } => match parse_address(addr) {
                 Some(Ok(SteamAddress::Lobby(id))) => (SteamRole::Client, SteamState::ToJoin(id)),
                 Some(Ok(SteamAddress::Host(id))) => (SteamRole::Client, SteamState::ToConnect(id)),

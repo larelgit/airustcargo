@@ -204,9 +204,11 @@ impl Stand {
                 }
             }
             let local = (0..self.len()).any(|i| self.loading(i));
+            // A client that waits for its transport (a Steam lobby to enter) has nothing to settle: its
+            // game has loaded, and joining is what a tool or an invite does next.
             let joined = self.members.iter().skip(1).all(|m| {
                 let stage = m.app.world().get_resource::<NetClient>().map(|c| c.stage.clone());
-                matches!(stage, None | Some(client::ClientStage::Connected | client::ClientStage::Ended(_)))
+                matches!(stage, None | Some(client::ClientStage::Connected | client::ClientStage::Ended(_))) || client::waits_for_transport(m.app.world())
             });
             if !local && joined {
                 return Ok(());

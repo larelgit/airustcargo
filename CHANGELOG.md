@@ -768,6 +768,14 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   поддельный с `FakeSteam::hold_searches`, `fail_searches` и `set_lobby_data` для тестов, настоящий — `RequestLobbyList` с
   равенствами по строкам, одним свободным местом и дальностью «весь мир», подробности лобби читаются в `pump`);
   `SteamLobby::in_search`. Тесты: 4 в `src/fake.rs`, 7 в `tests/steam/lobbies.rs`. На настоящем Steam поиск не проверен.
+- Стенд поверх поддельного Steam (`shards`, `shards_net`, `shards_steam`): `--stand N --stand-steam [--steam-lobby TYPE]` (игра
+  со feature `steam`; без неё код 2) строит тот же стенд в одном процессе, но участники встречаются по `FakeSteam` с реле на
+  сети в памяти стенда: хост делает лобби, клиенты ждут лобби (`--join steam:`), ищут его `steam_lobbies` и входят
+  `steam_join`. `Stand::settle` и `loading_locally` не ждут клиента, которому нужен чужой транспорт
+  (`shards_net::client::waits_for_transport`), `SteamSession::from_launch` берёт хозяина лобби и из `NetLaunch::Stand`, строка
+  готовности такого клиента — `role client · joining: …`. Сценарий `crates/shards_steam/scenarios/lobby_search.scenario`:
+  хост делает невидимое лобби, клиент ищет, находит, входит по id из ответа, оба играют 300 тиков, рассинхронов 0; он идёт
+  в тесте (`tests/steam/scenarios.rs`) и против живого стенда. Тесты: `run` в `shards` (флаг и стенд, второй со `steam`).
 
 **Уровни из Blender проверены на настоящем экспорте (E4.2, `shards_level`)**
 

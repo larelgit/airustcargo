@@ -14,7 +14,7 @@ use crate::*;
 const MAX: u32 = 3;
 
 /// A stand on `steam` with a lobby host of lobby type `kind`, and its lobby.
-fn hosted(steam: &FakeSteam, kind: SteamLobby) -> (Stand, u64) {
+pub(crate) fn hosted(steam: &FakeSteam, kind: SteamLobby) -> (Stand, u64) {
     let host = build(
         config(|c| {
             lobby_host(c);
@@ -29,7 +29,7 @@ fn hosted(steam: &FakeSteam, kind: SteamLobby) -> (Stand, u64) {
 }
 
 /// A client that waits for a lobby (`--join steam:`), as member `c1`, once its content is loaded.
-fn waiting(stand: &mut Stand, steam: &FakeSteam) -> usize {
+pub(crate) fn waiting(stand: &mut Stand, steam: &FakeSteam) -> usize {
     let app = build(config(|c| client(c, "c1", None)), steam.user(SECOND_USER, "c1"), save_folder());
     let c1 = stand.add("c1", app, None);
     frames_until(stand.app(c1), |world| world.resource::<ContentDb>().is_loaded());
