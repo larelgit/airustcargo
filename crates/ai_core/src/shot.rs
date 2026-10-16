@@ -194,12 +194,27 @@ fn target(world: &World) -> Option<Screenshot> {
     world.get_resource::<Offscreen>().map(|offscreen| Screenshot::image(offscreen.image.clone()))
 }
 
+/// Image pixels per logical pixel of the camera's viewport, along each axis. The captured picture is
+/// the window's (or the offscreen image), and the camera's logical viewport is the picture's logical
+/// size, so this is the picture's pixels over it: the picture's scale factor, whether the camera draws
+/// into the picture itself or, at another `render_scale`, into an image of its own that is shown
+/// over the whole picture. `factor` (the camera's target scale factor) stands in when a size is not
+/// known yet.
+fn pixels_per_logical(picture: Option<UVec2>, logical_viewport: Option<Vec2>, factor: f32) -> Vec2 {
+    match (picture, logical_viewport) {
+        (Some(picture), Some(logical)) if logical.x > 0.0 && logical.y > 0.0 => picture.as_vec2() / logical,
+        _ => Vec2::splat(factor),
+    }
+}
+
 /// Where every AI-visible entity is in the image, in physical pixels.
 fn legend(world: &World) -> Vec<String> {
-    let scale = world
-        .try_query_filtered::<&Camera, With<AiCamera>>()
-        .and_then(|mut q| q.iter(world).find(|c| c.is_active).and_then(Camera::target_scaling_factor))
-        .unwrap_or(1.0);
+    let camera = world.try_query_filtered::<&Camera, With<AiCamera>>().and_then(|mut q| q.iter(world).find(|c| c.is_active).cloned());
+    let scale = pixels_per_logical(
+        crate::display::picture_size(world),
+        camera.as_ref().and_then(Camera::logical_viewport_size),
+        camera.as_ref().and_then(Camera::target_scaling_factor).unwrap_or(1.0),
+    );
     on_screen(world)
         .into_iter()
         .map(|s| {
@@ -364,5 +379,22 @@ mod tests {
         assert_eq!(part_path(&prepared), dir.join("a.part.png"));
         assert_eq!(part_path(&legend_path(&prepared)), dir.join("a.png.legend.part.json"));
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn marks_are_in_the_pictures_pixels_whatever_the_camera_draws_into() {
+        let hd = Some(UVec2::new(1280, 720));
+        // The camera draws into the picture: logical 1280x720 on a picture of the same pixels.
+        assert_eq!(pixels_per_logical(hd, Some(Vec2::new(1280.0, 720.0)), 1.0), Vec2::ONE);
+        // A window at the system's scale 2: 640x360 logical, twice the pixels.
+        assert_eq!(pixels_per_logical(hd, Some(Vec2::new(640.0, 360.0)), 2.0), Vec2::splat(2.0));
+        // `render_scale` 0.5: the camera draws into 640x360 pixels whose scale factor is 0.5, so its logical
+        // viewport is still 1280x720: the factor of the camera's target (0.5) would put marks half way.
+        assert_eq!(pixels_per_logical(hd, Some(Vec2::new(1280.0, 720.0)), 0.5), Vec2::ONE);
+        // Odd sizes: each axis on its own.
+        let odd = pixels_per_logical(Some(UVec2::new(1001, 601)), Some(Vec2::new(1000.0, 600.0)), 1.0);
+        assert!((odd - Vec2::new(1.001, 1.00167)).abs().max_element() < 1e-3, "{odd}");
+        // Nothing known: the factor.
+        assert_eq!(pixels_per_logical(None, None, 1.5), Vec2::splat(1.5));
     }
 }

@@ -208,7 +208,10 @@ fn with_window(group: PluginGroupBuilder, config: &EngineConfig) -> PluginGroupB
     let group = group.set(WindowPlugin { primary_window: Some(window), ..default() });
     // `<assets>/icon.png`, if the game has one, in the title bar and the taskbar; how long frames take.
     #[cfg(feature = "render")]
-    let group = group.add(crate::window_icon::WindowIconPlugin).add(crate::frames::FramesPlugin { budget: config.frame_budget });
+    let group = group
+        .add(crate::window_icon::WindowIconPlugin)
+        .add(crate::frames::FramesPlugin { budget: config.frame_budget })
+        .add(crate::render_scale::RenderScalePlugin);
     group
 }
 
@@ -249,7 +252,8 @@ fn offscreen(group: PluginGroupBuilder, config: &EngineConfig, driven: bool) -> 
     #[cfg(feature = "render")]
     let group = group
         .add(crate::offscreen::OffscreenPlugin { size: config.window })
-        .add(crate::frames::FramesPlugin { budget: config.frame_budget });
+        .add(crate::frames::FramesPlugin { budget: config.frame_budget })
+        .add(crate::render_scale::RenderScalePlugin);
     group
 }
 

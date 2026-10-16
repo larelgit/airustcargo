@@ -9,7 +9,9 @@ use bevy::window::{MonitorSelection, PresentMode, PrimaryWindow, Window, WindowM
 
 use crate::GraphicsSettings;
 
-/// `Update`: fullscreen, vsync, resolution and scale onto the primary window.
+/// `Update`: fullscreen, vsync and resolution onto the primary window. `render_scale` is not the
+/// window's: it is the resolution the 3D world is drawn at, which the `shards` crate applies to the
+/// cameras (the window, and the UI in it, stay at the display's own pixels).
 pub fn apply_graphics(settings: Res<GraphicsSettings>, mut windows: Query<&mut Window, With<PrimaryWindow>>, mut applied: Local<Option<GraphicsSettings>>) {
     let Ok(mut window) = windows.single_mut() else {
         // No window (yet): try again when one exists.
@@ -29,22 +31,13 @@ pub fn apply_graphics(settings: Res<GraphicsSettings>, mut windows: Query<&mut W
     if window.present_mode != present {
         window.present_mode = present;
     }
-    // The scale factor first, so a size set after it is the logical size the player asked for
-    // (Bevy sets the physical size to logical x factor). A change of the factor alone keeps the
-    // logical size where it was: the window gets more or fewer pixels, not more or less room.
-    let scale = settings.scale();
-    let wanted = (scale != 1.0).then_some(scale);
-    let (logical_w, logical_h) = (window.resolution.width(), window.resolution.height());
-    let scale_changed = window.resolution.scale_factor_override() != wanted;
-    if scale_changed {
-        window.resolution.set_scale_factor_override(wanted);
-    }
     // The size is the player's to set once it was chosen: only a changed `resolution` resizes.
     let resolution_changed = before.as_ref().is_none_or(|b| b.resolution != settings.resolution);
-    match settings.window_size() {
-        Some((w, h)) if resolution_changed && !settings.fullscreen => window.resolution.set(w as f32, h as f32),
-        _ if scale_changed && !settings.fullscreen => window.resolution.set(logical_w, logical_h),
-        _ => {}
+    if let Some((w, h)) = settings.window_size()
+        && resolution_changed
+        && !settings.fullscreen
+    {
+        window.resolution.set(w as f32, h as f32);
     }
 }
 
@@ -69,9 +62,10 @@ mod tests {
         app.update();
         let w = window(&mut app);
         assert_eq!((w.resolution.width(), w.resolution.height()), (1600.0, 900.0), "the logical size asked for");
-        assert_eq!((w.resolution.physical_width(), w.resolution.physical_height()), (1200, 675), "at the scale factor's pixels");
+        // `render_scale` is the 3D picture's resolution, not the window's: the window keeps the display's pixels.
+        assert_eq!((w.resolution.physical_width(), w.resolution.physical_height()), (1600, 900));
+        assert_eq!(w.resolution.scale_factor_override(), None);
         assert_eq!(w.present_mode, PresentMode::AutoNoVsync);
-        assert_eq!(w.resolution.scale_factor_override(), Some(0.75));
         assert_eq!(w.mode, WindowMode::Windowed);
 
         app.world_mut().resource_mut::<GraphicsSettings>().fullscreen = true;

@@ -52,6 +52,8 @@ mod net_wiring;
 #[cfg(feature = "render")]
 mod offscreen;
 mod plugins;
+#[cfg(feature = "render")]
+pub mod render_scale;
 mod run;
 pub mod save_sections;
 mod stand_udp;

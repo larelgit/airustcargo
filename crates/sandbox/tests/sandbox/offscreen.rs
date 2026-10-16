@@ -1,9 +1,14 @@
 //! Pictures without a window (`--offscreen`): the GPU draws the sandbox into an image, the HUD and
 //! the `eN` marks included, and `shot` saves it.
 
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use shards::ai_core::AiJournal;
+use shards::ai_core::display::{Offscreen, SceneImage};
+use shards::ai_core::{AiCamera, AiJournal};
+use shards::bevy::camera::RenderTarget;
+use shards::bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+use shards::prelude::*;
 use shards::serde_json::json;
 
 use crate::common::{ok, step};
@@ -45,4 +50,170 @@ fn an_offscreen_game_takes_shots_without_a_window() {
     assert!(marks.iter().any(|l| l.starts_with("e5 Player  px(")), "{marks:?}");
     let _ = std::fs::remove_file(&png);
     let _ = std::fs::remove_file(ticket["legend_path"].as_str().unwrap());
+}
+
+fn offscreen_app() -> App {
+    shards::testing::test_app(
+        |config| (config.headless, config.offscreen) = (false, true),
+        |app| {
+            app.add_plugins((sandbox::SandboxPlugin, sandbox::visuals::VisualsPlugin));
+        },
+    )
+}
+
+/// Frames drawn, so pipelines compile and the follow camera settles.
+fn settle(app: &mut App, frames: u32) {
+    for _ in 0..frames {
+        app.update();
+    }
+}
+
+/// `image` as the GPU drew it, read back.
+fn capture(app: &mut App, image: Handle<Image>) -> Image {
+    let slot: Arc<Mutex<Option<Image>>> = Arc::default();
+    let into = slot.clone();
+    app.world_mut().spawn(Screenshot::image(image)).observe(move |captured: On<ScreenshotCaptured>| {
+        *into.lock().unwrap() = Some(captured.image.clone());
+    });
+    let started = Instant::now();
+    loop {
+        app.update();
+        if let Some(image) = slot.lock().unwrap().take() {
+            return image;
+        }
+        assert!(started.elapsed() < Duration::from_secs(60), "no capture within a minute");
+    }
+}
+
+/// [`capture`] until two captures in a row are alike: pipelines compile a few frames in (and, in a
+/// debug build, many), and a picture taken before they are ready is not the world's.
+fn capture_stable(app: &mut App, image: &Handle<Image>) -> Image {
+    let started = Instant::now();
+    let mut before = capture(app, image.clone());
+    loop {
+        let now = capture(app, image.clone());
+        if mean_difference(&before, &now) < 0.2 {
+            return now;
+        }
+        assert!(started.elapsed() < Duration::from_secs(120), "the picture never settled");
+        before = now;
+    }
+}
+
+/// The picture's colour bytes (RGBA, row by row).
+fn bytes(image: &Image) -> &[u8] {
+    image.data.as_deref().expect("a captured image has its data")
+}
+
+/// The mean absolute difference between two pictures of one size, per colour byte (0 to 255). The
+/// alpha byte is left out: a screenshot drops it, and what the camera leaves in it is no part of
+/// the picture.
+fn mean_difference(a: &Image, b: &Image) -> f64 {
+    assert_eq!(a.size(), b.size());
+    let (a, b) = (bytes(a).as_chunks::<4>().0, bytes(b).as_chunks::<4>().0);
+    let sum: u64 = a.iter().zip(b).flat_map(|(x, y)| (0..3).map(move |c| u64::from(x[c].abs_diff(y[c])))).sum();
+    sum as f64 / (a.len() * 3) as f64
+}
+
+/// The mean RGB of the `w` x `h` block at (`x`, `y`).
+fn block(image: &Image, x: u32, y: u32, w: u32, h: u32) -> [f64; 3] {
+    let (data, width) = (bytes(image), image.width() as usize);
+    let mut sum = [0u64; 3];
+    for row in y..y + h {
+        for col in x..x + w {
+            let at = (row as usize * width + col as usize) * 4;
+            for (c, s) in sum.iter_mut().enumerate() {
+                *s += u64::from(data[at + c]);
+            }
+        }
+    }
+    sum.map(|s| s as f64 / f64::from(w * h))
+}
+
+/// A `shot` of the game: the PNG's size and where `e5` is in it.
+fn player_in_shot(app: &mut App, name: &str) -> ((u32, u32), Vec2) {
+    let path = format!("shots/{name}-{}.png", std::process::id());
+    let ticket = ok(app, "shot", json!({"path": path})).result;
+    let (png, legend_path) = (ticket["path"].as_str().unwrap().to_owned(), ticket["legend_path"].as_str().unwrap().to_owned());
+    let started = Instant::now();
+    while !std::path::Path::new(&png).exists() {
+        app.update();
+        assert!(started.elapsed() < Duration::from_secs(120), "no screenshot within two minutes");
+    }
+    let legend: shards::serde_json::Value = shards::serde_json::from_str(&std::fs::read_to_string(&legend_path).unwrap()).unwrap();
+    let size = (legend["width"].as_u64().unwrap() as u32, legend["height"].as_u64().unwrap() as u32);
+    let line = legend["legend"].as_array().unwrap().iter().filter_map(|l| l.as_str()).find(|l| l.starts_with("e5 Player  px(")).expect("the player is in the picture").to_owned();
+    let (x, y) = line.trim_start_matches("e5 Player  px(").split(')').next().unwrap().split_once(',').unwrap();
+    let _ = std::fs::remove_file(&png);
+    let _ = std::fs::remove_file(&legend_path);
+    (size, Vec2::new(x.parse().unwrap(), y.parse().unwrap()))
+}
+
+#[test]
+#[ignore = "needs a GPU, or a software one (WGPU_FORCE_FALLBACK_ADAPTER=1): cargo test -p sandbox --test sandbox -- --ignored render_scale"]
+fn render_scale_draws_the_world_at_a_fraction_of_the_picture_and_shows_it_over_all_of_it() {
+    let mut app = offscreen_app();
+    let picture = app.world().resource::<Offscreen>().image.clone();
+    step(&mut app, 30);
+    settle(&mut app, 120);
+
+    // At 1: the world is drawn into the picture itself.
+    let camera = |app: &mut App| {
+        let world = app.world_mut();
+        let (camera, target) = world.query_filtered::<(&Camera, &RenderTarget), With<AiCamera>>().single(world).unwrap();
+        (camera.physical_viewport_size(), camera.logical_viewport_size(), target.as_image().cloned())
+    };
+    let (physical, logical, target) = camera(&mut app);
+    assert_eq!((physical, logical), (Some(UVec2::new(1280, 720)), Some(Vec2::new(1280.0, 720.0))));
+    assert_eq!(target.as_ref(), Some(&picture));
+    assert!(app.world().get_resource::<SceneImage>().is_none());
+    let scene = shards::ai_core::status::status(app.world())["display"]["scene"].clone();
+    assert_eq!(scene, json!({"size": [1280, 720], "scale": 1.0}));
+    // A `shot` first: it waits for the pipelines to compile, which a raw capture does not (it would be the void).
+    let (shot_size, player_whole) = player_in_shot(&mut app, "render-scale-1");
+    let whole = capture_stable(&mut app, &picture);
+    let counts = |app: &App| {
+        let counts = shards::bench::counts(app.world());
+        (counts["visible_meshes"].as_u64(), counts["camera_meshes"].as_u64())
+    };
+    let meshes_whole = counts(&app);
+    assert_eq!(shot_size, (1280, 720));
+
+    // `settings_set` applies it to the running game.
+    ok(&mut app, "settings_set", json!({"group": "graphics", "key": "render_scale", "value": 0.5}));
+    settle(&mut app, 60);
+    assert_eq!(counts(&app), meshes_whole, "the camera that shows the scene sees no 3D mesh: the counters are the 3D camera's alone");
+    let (physical, logical, target) = camera(&mut app);
+    assert_eq!(physical, Some(UVec2::new(640, 360)), "the 3D target is half the picture's size");
+    assert_eq!(logical, Some(Vec2::new(1280.0, 720.0)), "and its logical size the picture's");
+    let scene_image = app.world().resource::<SceneImage>().image.clone();
+    assert_eq!(target.as_ref(), Some(&scene_image), "the 3D camera draws into the scene image, not the picture");
+    assert_eq!(app.world().resource::<Assets<Image>>().get(&picture).unwrap().size(), UVec2::new(1280, 720), "the picture is whole");
+    let scene = shards::ai_core::status::status(app.world())["display"]["scene"].clone();
+    assert_eq!(scene, json!({"size": [640, 360], "scale": 0.5}));
+    let seen = capture(&mut app, scene_image.clone());
+    assert_eq!((seen.width(), seen.height()), (640, 360), "the GPU's own image of the world");
+    let half = capture_stable(&mut app, &picture);
+    assert_eq!((half.width(), half.height()), (1280, 720));
+
+    // The world fills the whole picture (not a corner of it), and looks like the world at 1.
+    let difference = mean_difference(&whole, &half);
+    assert!(difference < 12.0, "the picture at 0.5 differs from the one at 1 by {difference:.1} of 255 a byte");
+    let corner = |image: &Image| block(image, 1200, 640, 60, 60);
+    for (here, there) in corner(&half).iter().zip(corner(&whole)) {
+        assert!((here - there).abs() < 25.0, "the bottom right corner: {:?} against {:?}", corner(&half), corner(&whole));
+    }
+    let (shot_size, player_half) = player_in_shot(&mut app, "render-scale-half");
+    assert_eq!(shot_size, (1280, 720), "a shot is the picture's size, not the scene's");
+    assert!(player_half.distance(player_whole) < 1.5, "e5 at {player_half} against {player_whole}: the marks are on the right pixels");
+
+    // And back.
+    ok(&mut app, "settings_set", json!({"group": "graphics", "key": "render_scale", "value": 1.0}));
+    settle(&mut app, 60);
+    let (physical, _, target) = camera(&mut app);
+    assert_eq!((physical, target.as_ref()), (Some(UVec2::new(1280, 720)), Some(&picture)));
+    assert!(app.world().get_resource::<SceneImage>().is_none());
+    let again = capture_stable(&mut app, &picture);
+    let difference = mean_difference(&whole, &again);
+    assert!(difference < 1.0, "back at 1 the picture is the first one again: differs by {difference:.2}");
 }

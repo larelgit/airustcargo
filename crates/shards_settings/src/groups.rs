@@ -88,8 +88,10 @@ pub struct GraphicsSettings {
     /// Window size when not fullscreen: `auto` keeps the game's own, `1920x1080` sets it
     /// (logical pixels, 320x200 to 16384x16384).
     pub resolution: String,
-    /// The window's scale factor: 1 keeps the display's own, 0.5 to 2 overrides it (Bevy's
-    /// `scale_factor_override`: the window gets logical size times this many pixels).
+    /// The resolution the 3D world is drawn at, as a multiple of the window's pixels (0.5 to 2:
+    /// below 1 is cheaper and softer, above 1 supersamples). The picture is scaled to the window; the
+    /// UI and the HUD stay at the window's own resolution. The `shards` crate applies it
+    /// ([`GraphicsSettings::scale`]).
     pub render_scale: f64,
     /// `off`, `low`, `medium` or `high`. The game's lights read it ([`GraphicsSettings::shadow_quality`]).
     pub shadows: String,
