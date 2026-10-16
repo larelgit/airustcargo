@@ -419,7 +419,9 @@ pub struct ActionDef {
     /// speed meanwhile (0.5 for a raised block).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub move_speed: Option<f32>,
-    /// Animation clip; the animation follows the action, never the other way round.
+    /// Animation clip; the animation follows the action, never the other way round. In a game
+    /// with animsets the content check wants one of them to play it ([`AnimSet`](crate::AnimSet)):
+    /// leave it out for an action that shows no clip of its own (the locomotion clip plays on).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anim: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -627,6 +629,9 @@ impl ContentDef for ActionDef {
         check.displacement();
         if let Some(bake) = &self.bake {
             crate::bake::check(self, id, bake, check.refs);
+        }
+        if let Some(anim) = &self.anim {
+            crate::anim::check_action_clip(id, anim, &self.tags, check.refs);
         }
         if let Some(hold) = &self.hold {
             check.span("hold.span", &hold.span);

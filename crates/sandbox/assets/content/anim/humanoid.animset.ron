@@ -39,8 +39,8 @@
             "taunt": (source: "models/humanoid_gestures.glb"),
         },
         locomotion: {"idle": "idle", "walk": "walk", "run": "run", "stagger": "stagger", "dead": "death"},
-        // Actions find their clips by their `anim` (light_1, roll, claw, slash, ...); the drink has
-        // none and walks on.
+        // Actions find their clips by their `anim` (light_1, roll, claw, slash, ...); the drink names
+        // none (the model has no drinking clip) and walks on.
         blend: 0.2,
         action_blend: 0.06,
         // The walk's feet keep pace at 2 m/s, the run's at 4.5 m/s.

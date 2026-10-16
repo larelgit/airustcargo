@@ -581,6 +581,28 @@ fn unknown_clip(refs: &mut Refs, names: &[&str], field: &str, clip: &str) {
     refs.error(format!("{field} -> unknown clip `{clip}`{hint}; clips: {}", names.join(", ")));
 }
 
+/// The content check of an action's `anim`: in a game with animsets, one of them plays it (a
+/// clip of that name, or one its `actions` or `tags` give the action). A game with none shows
+/// its actions another way, and `anim` is then only a name for it.
+pub(crate) fn check_action_clip(id: &str, anim: &str, tags: &[String], refs: &mut Refs) {
+    let sets: Vec<&AnimSet> = refs.iter::<AnimSet>().map(|(_, set)| set).collect();
+    if sets.is_empty() || sets.iter().any(|set| set.action_clip(set.action_key(id, Some(anim), tags)).is_some()) {
+        return;
+    }
+    let mut clips: Vec<&str> = sets.iter().flat_map(|set| set.clips.keys().map(String::as_str)).collect();
+    clips.sort_unstable();
+    clips.dedup();
+    let hint = shards_content::db::closest(anim, clips.iter().copied())
+        .map(|c| format!(" (did you mean `{c}`?)"))
+        .unwrap_or_default();
+    let message = format!(
+        "anim `{anim}` is no clip of any animset{hint}; clips: {}; name one of them, or leave `anim` out and the \
+         character keeps its locomotion clip meanwhile",
+        clips.join(", ")
+    );
+    refs.error(message);
+}
+
 impl ContentDef for AnimSet {
     const KIND: &'static str = "animset";
 
@@ -924,17 +946,48 @@ mod tests {
     }
 
     fn build(animsets: &str) -> Vec<String> {
+        let actions = r#"{ "light_1": (net_id: 1, phases: [("active", 0.3)]), "roll": (net_id: 2, phases: [("roll", 0.4)]) }"#;
+        build_with(actions, animsets)
+    }
+
+    fn build_with(actions: &str, animsets: &str) -> Vec<String> {
         let mut kinds = ContentKinds::default();
         kinds.register::<ActionDef>();
         kinds.register::<AnimSet>();
         kinds.register::<crate::def::MovesetDef>();
         kinds.register::<crate::status::StatusDef>();
-        let actions = r#"{ "light_1": (net_id: 1, phases: [("active", 0.3)]), "roll": (net_id: 2, phases: [("roll", 0.4)]) }"#;
         let sources = [
             shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
             shards_content::db::Source { path: "content/h.animset.ron".into(), text: animsets.into() },
         ];
         ContentDb::build(&kinds, &sources).errors().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn an_action_clip_no_animset_has_is_an_error_but_a_mapped_one_is_not() {
+        let set = r#"{ "h": (source: "models/h.glb", clips: {"idle": (), "slash": (name: "Slash")},
+            actions: {"light_1": "slash"}, tags: {"fire": "slash"}) }"#;
+        let actions = r#"{
+            "light_1": (net_id: 1, phases: [("active", 0.3)], anim: "nothing"),
+            "a": (net_id: 2, phases: [("a", 0.3)], anim: "idle"),
+            "b": (net_id: 3, phases: [("a", 0.3)], anim: "swing", tags: ["fire"]),
+            "c": (net_id: 4, phases: [("a", 0.3)], anim: "slsh"),
+            "d": (net_id: 5, phases: [("a", 0.3)]),
+        }"#;
+        assert_eq!(
+            build_with(actions, set),
+            [
+                "content/a.action.ron: action `c`: anim `slsh` is no clip of any animset (did you mean `slash`?); clips: \
+                 idle, slash; name one of them, or leave `anim` out and the character keeps its locomotion clip meanwhile"
+            ],
+            "a clip, a mapped id and a tag are played; a typo is not; no `anim` asks for nothing"
+        );
+        // A game with no animset shows its actions another way: `anim` is only a name there.
+        let alone = shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() };
+        let mut kinds = ContentKinds::default();
+        kinds.register::<ActionDef>();
+        let errors: Vec<String> = ContentDb::build(&kinds, &[alone]).errors().map(ToString::to_string).collect();
+        assert!(errors.is_empty(), "{errors:#?}");
     }
 
     #[test]
