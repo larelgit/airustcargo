@@ -376,10 +376,46 @@ fn a_saved_manifest_naming_a_tile_the_game_no_longer_has_is_refused_and_nothing_
     let err = fails(&mut other, "load_game", json!({"what": "world", "slot": "gone"}));
     assert!(err.contains("section region: the save's world cannot be built: the manifest of wilds seed 42 v1 names tiles content does not have: old_ruin"), "{err}");
     assert!(err.contains("keep that content in the game, or write a migration for `region`"), "{err}");
+    assert!(err.ends_with("; nothing was applied: fix the cause and load again") && !err.contains("partly loaded"), "{err}");
+    let recording = shards::ai_core::replay::save(other.world());
+    let events = shards::serde_json::to_string(&recording.events).unwrap();
+    assert!(recording.start.is_none() && !events.contains("load_game"), "a load that applied nothing is not recorded: {events}");
     assert_eq!(region(&other), before, "the region there stays");
     assert_eq!(parts(&mut other), built, "with every entity of it");
     assert!(lines(&other, "region unloaded").is_empty() && lines(&other, "built from the save's manifest").is_empty(), "{:?}", story(&other));
     assert!(warns(&other, "restored from backup").is_empty(), "missing content is not damage");
+}
+
+#[test]
+fn a_saved_region_content_no_longer_defines_is_built_from_its_manifest_and_the_journal_says_so() {
+    let saves = Saves::new("renamed");
+    let mut app = saves.game();
+    in_the_wilds(&mut app, 42);
+    let tiles = app.world().resource::<ActiveRegion>().manifest.tiles.clone();
+    ok(&mut app, "save_game", json!({"what": "world", "slot": "renamed"}));
+    // The save of an older game whose region was called `old_wilds`: content has no such region
+    // now, but every tile of it is still there. Whole (its hash is its manifest's).
+    let path = saves.path().join("world/renamed.save");
+    let mut file = read_save(&path);
+    let active = &mut file.sections.0.get_mut("region").unwrap().data["active"];
+    active["id"] = json!("old_wilds");
+    active["manifest"]["region"] = json!("old_wilds");
+    let manifest: RegionManifest = shards::serde_json::from_value(active["manifest"].clone()).unwrap();
+    active["manifest_hash"] = json!(format!("{:016x}", manifest.hash()));
+    fs::write(&path, file.encode()).unwrap();
+
+    let mut fresh = saves.game();
+    ok(&mut fresh, "load_game", json!({"what": "world", "slot": "renamed"}));
+    assert_eq!(region(&fresh), Some(("old_wilds".to_owned(), 42, manifest.hash())));
+    assert_eq!(fresh.world().resource::<ActiveRegion>().manifest.tiles, tiles, "the saved tiles, turned the same way");
+    let said = lines(&fresh, "region old_wilds seed 42 v1: built from the save's manifest (`old_wilds` is no longer in the content)");
+    assert_eq!(said.len(), 1, "{:?}", story(&fresh));
+    assert!(lines(&fresh, "region generated").is_empty(), "nothing is generated: {:?}", story(&fresh));
+    // The journal says where the region came from once it stands.
+    let events = events(&fresh);
+    let loaded = events.iter().position(|l| l.contains("region loaded: old_wilds seed 42 v1"));
+    let built = events.iter().position(|l| l.contains("built from the save's manifest"));
+    assert!(loaded.is_some() && loaded < built, "{events:?}");
 }
 
 #[test]

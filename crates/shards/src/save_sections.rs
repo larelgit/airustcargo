@@ -198,8 +198,9 @@ fn build_saved(world: &mut World, manifest: RegionManifest) -> Result<(), String
         Some(version) => format!(" (the generator is v{version} now)"),
         None => format!(" (`{}` is no longer in the content)", manifest.region),
     };
-    journal::emit(world, JournalKind::Event, format!("region {title}: built from the save's manifest{now}"));
     region::change_region(world, manifest).map_err(|e| format!("cannot change to {title}: {e}"))?;
+    // Said once the region stands: a build that fails says so instead.
+    journal::emit(world, JournalKind::Event, format!("region {title}: built from the save's manifest{now}"));
     Ok(())
 }
 
