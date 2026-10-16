@@ -8,6 +8,8 @@ mod colliders;
 mod common;
 mod content;
 mod fixture;
+// `gltf` takes its math from `ops` (each includer reaches Bevy by its own path).
+use bevy::math::ops;
 mod gltf;
 mod markers;
 mod props;

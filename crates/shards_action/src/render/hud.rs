@@ -86,7 +86,7 @@ pub fn indicator_point(here: Vec3, view_forward: Vec3, indicator: &Indicator) ->
     let fwd = Vec3::new(view_forward.x, 0.0, view_forward.z).try_normalize().unwrap_or(Vec3::NEG_Z);
     let right = Vec3::new(-fwd.z, 0.0, fwd.x);
     let a = indicator.angle_deg.to_radians();
-    here + (right * a.sin() + fwd * a.cos()) * indicator.distance + Vec3::Y
+    here + (right * ops::sin(a) + fwd * ops::cos(a)) * indicator.distance + Vec3::Y
 }
 
 /// `Update`: the threats the player cannot see.
@@ -282,7 +282,7 @@ mod tests {
                 let p = indicator_point(here, forward, &indicator(angle, 7.0));
                 let to = Vec3::new(p.x - here.x, 0.0, p.z - here.z);
                 assert!((to.length() - 7.0).abs() < 1e-4);
-                let back = to.dot(right).atan2(to.dot(flat_fwd)).to_degrees();
+                let back = ops::atan2(to.dot(right), to.dot(flat_fwd)).to_degrees();
                 assert!((back - angle).abs() < 1e-2, "{forward}: {angle} -> {back}");
                 assert!((p.y - 1.0).abs() < 1e-6, "chest height");
             }

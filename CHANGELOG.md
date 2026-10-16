@@ -664,6 +664,37 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   растительность (около 13 900 сущностей-мешей), и 400 спрятанных мешей пулов песочницы (в `drawn` их нет), рисуется 1382 меша из
   50 разных; без эффектов было 378.9 кадра в секунду (пример в README обновлён).
 
+**Одни и те же биты на всех ОС одной архитектуры процессора, на x86_64 — Windows, Linux и Steam Deck (E10.6; `ai_core`,
+`shards_action`, `shards_motion`, `shards_npc`, `shards_scatter`, `shards_fx`, `shards_net`, `shards`):**
+
+- Трансцендентная математика симуляции идёт через чистую Rust-библиотеку `libm`, а не через математику платформы (у MSVC, glibc и
+  macOS последние биты `sin`, `exp`, `powf` разные, и реплей, записанный на одной ОС, расходился на другой): в Bevy, glam, simba и
+  коде движка. В `[workspace.dependencies]` у Bevy включена feature `libm` (`bevy_math`, glam: `Quat`, `normalize`, `slerp`,
+  кривые, цвета), у `parry3d` — `indexmap` (`IndexMap` вместо хэш-карт), а прямая зависимость `glamx =0.3.1` (только в
+  `shards_motion`, в коде не используется) с feature `libm` переводит на `libm` glamx и `simba` (`libm_force`). Это всё из
+  `enhanced-determinism` у parry3d, кроме `scalar-math`: SIMD у glam остаётся (SSE2 — одни и те же инструкции на любой ОС x86_64).
+  Шаблон получает это через `shards`.
+- Между архитектурами (x86_64 ↔ ARM, Apple Silicon) детерминизм не обещан: NEON у glam сливает умножение и сложение там, где
+  SSE2 округляет дважды. `enhanced-determinism` целиком дал бы его через `scalar-math` (glam без SIMD), но со `scalar-math`
+  у `Vec4` и `Mat4` нет выравнивания в 16 байт, и `MeshUniform` Bevy 0.20 становится 168 байт против 176 у шейдера: wgpu
+  отвечает `Binding size 168 of Buffer with '' label is less than minimum 176`, рендер встаёт (GPU-тест `shards_fx` не
+  дождался кадра).
+- `shards` не собирается с glam без SIMD: `const` в `crates/shards/src/lib.rs` проверяет `align_of::<Vec4>() == 16` и
+  `align_of::<Mat4>() == 16` и называет причину, в том числе в игре, которая включит `scalar-math` своей зависимостью. Сборка с
+  `-C target-cpu=native` или `+fma` тоже даёт другие биты: под `target_feature = "fma"` код SSE2 у glam сливает умножение и
+  сложение (`Quat`, `Vec3A::cross`, `slerp`, `lerp_monotonic`, `mul_add`).
+- Прогоном между ОС одинаковые биты ещё не проверены (тесты шли на Windows): проверка — реплеи, записанные на одной ОС, и `--verify`
+  на другой.
+- Все прямые вызовы `sin`, `cos`, `atan2`, `exp`, `powf`, `powi` и родни заменены на `bevy::math::ops` (`ops::sin(x)`,
+  `FloatPow::squared`): 148 вызовов. В коде крейтов: `ai_core` 2, `shards` 1, `shards_action` 33, `shards_motion` 16, `shards_net` 1,
+  `shards_npc` 4, `shards_scatter` 7, `shards_fx` 12 (частицы и декали: картинка, но правило одно для всех); в тестах:
+  `shards_motion` 18, `shards_npc` 5, `sandbox` 2, `shards_audio` 2, `shards_level` 2, `shards_fx` 2, `shards` 1, `shards_look` 1;
+  в примере `make_sounds` песочницы 39. Шейдеры WESL (`shards_fx`, `shards_look`) — не Rust, правило их не касается.
+- `clippy.toml` (в корне и в `template/`, это отдельные файлы: clippy берёт ближайший) запрещает методы `f32` и `f64` из std
+  (`disallowed-methods`, как у самого Bevy) и называет замену из `ops`; `cargo clippy --workspace --all-targets -- -D warnings`
+  падает на прямом вызове.
+- Тест `ai_core::determinism` держит несколько результатов `ops` побитово.
+
 ### Исправлено
 
 - Windows: `cargo clippy --workspace --all-targets -- -D warnings` молчит: помощники тестов `stand_udp`, которые нужны только
@@ -926,6 +957,12 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   песочницы и шаблона прибавил эффекты и таблицу (с растительностью: песочница — `ok: 123 definitions in 35 files`, шаблон —
   `ok: 71 definitions in 29 files`), хэш базы контента изменился, поэтому эталонные реплеи обеих
   игр нужно записать заново: здесь они ещё прежние, их запишут на Linux и Windows на вершине этой цепочки веток.
+- E10.6: математика идёт через `libm` (см. «Добавлено»), поэтому числа `f32` в игре могут отличаться от прежних в последних битах:
+  эталонные реплеи песочницы и шаблона, записанные с математикой glibc, расходятся на любой ОС и записываются заново
+  (`record_reference_replays`, `record-replays.yml`; запись должна годиться на любой ОС x86_64, но прогоном это ещё не
+  проверено, CI проверяет её на Linux). Игра, которая
+  звала `x.sin()` и подобные в симуляции, получает ошибку `clippy::disallowed_methods`, если скопирует `clippy.toml` шаблона:
+  заменить на `ops::sin(x)` (`ops` есть в `shards::prelude`).
 
 ### Планируется
 

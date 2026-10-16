@@ -59,7 +59,7 @@ impl DecalShape {
                 }
                 // Mirror to the right half; the edge ray at `half_angle` from +y.
                 let q = Vec2::new(q.x.abs(), q.y);
-                let edge = Vec2::new(half_angle.sin(), half_angle.cos());
+                let edge = Vec2::new(ops::sin(half_angle), ops::cos(half_angle));
                 let along = q.dot(edge).clamp(0.0, range);
                 let to_edge = (q - edge * along).length();
                 // Inside the wedge: the angle from +y is below the half angle.
@@ -142,7 +142,7 @@ impl ZoneDecal {
 
     /// The quad's rotation: its -Z (Bevy's forward) along the facing, its +X to the right.
     pub fn rotation(&self) -> Quat {
-        Quat::from_rotation_y((-self.facing.x).atan2(-self.facing.z))
+        Quat::from_rotation_y(ops::atan2(-self.facing.x, -self.facing.z))
     }
 
     /// A world point in the quad's frame.
@@ -192,7 +192,7 @@ mod tests {
         assert!(decal.shape.distance(decal.local(wide)) > 0.0, "outside the 45° each side");
         assert!(matches!(decal.shape, DecalShape::Sector { .. }));
         // The quad is the sector's bounds and a margin: 4 m deep, 2·4·sin 45° wide.
-        let wanted = Vec2::new(8.0 * 45f32.to_radians().sin(), 4.0) + Vec2::splat(2.0 * (MARGIN + 0.08));
+        let wanted = Vec2::new(8.0 * ops::sin(45f32.to_radians()), 4.0) + Vec2::splat(2.0 * (MARGIN + 0.08));
         assert!(decal.size.abs_diff_eq(wanted, 0.05), "{} vs {wanted}", decal.size);
     }
 

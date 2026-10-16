@@ -164,6 +164,20 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
   кладите на сущности верхнего уровня, размер задавайте в `Shape`, не в `Transform::scale`.
 - **Порядок — по `AiId` или `ColliderId`, никогда по `Entity`** и не по порядку запроса: окно добавляет сущности рендера и
   сдвигает индексы `Entity`, а реплей должен совпасть с окном и без него.
+- **Математика симуляции — через `bevy::math::ops` (libm), никогда через методы `f32` из std.** `ops::sin(x)`,
+  `ops::cos`, `ops::atan2(y, x)`, `ops::exp`, `ops::powf`, `ops::sin_cos` и остальные (в прелюдии Bevy `ops` уже есть; у игры
+  это `shards::prelude::*`), вместо `x.powi(2)` — `FloatPow::squared` (`bevy::math::FloatPow`). `x.sin()`, `x.atan2(y)`,
+  `x.exp()`, `x.powf(y)` зовут математику платформы, а у MSVC, glibc и macOS последние биты разные: реплеи и кооператив
+  разошлись бы между Windows, Linux и Steam Deck (Proton). Движок собран с `libm` (в `[workspace.dependencies]`: `bevy/libm`, у
+  parry3d `indexmap`, а `glamx` с `libm` — ради `simba/libm_force`), поэтому `ops`, glam (`Quat`, `Vec3::normalize`, `slerp`) и
+  коллизии должны давать одни и те же биты на всех ОС одной архитектуры (x86_64: Windows, Linux, Steam Deck; прогоном между ОС
+  ещё не проверено). SIMD у glam остаётся: SSE2 — одни и те же инструкции на любой ОС x86_64. Между архитектурами (x86_64 ↔
+  ARM) детерминизм не обещан. Не включайте `scalar-math` у glam (его включает `enhanced-determinism` у parry3d): `Vec4` и `Mat4`
+  теряют выравнивание в 16 байт, `MeshUniform` Bevy 0.20 становится 168 байт против 176 у шейдера, и рендер встаёт; `shards`
+  такую сборку не собирает (`const` с `align_of` в `crates/shards/src/lib.rs`; README, «Время и детерминизм»). Правило держит `clippy.toml` (в корне и в `template/`:
+  `disallowed-methods`): `cargo clippy … -D warnings` падает на
+  прямом вызове (и в тестах, и в примерах). `ops` есть только для `f32`: в `f64` такие функции не считают, приводят к `f32`.
+  Точные операции (`sqrt`, `abs`, `floor`, `round`, `mul_add`, `rem_euclid`, `to_radians`) остаются методами.
 - Персонажами управляют только через `Intent`: клавиатура, инструменты агента, мозги врагов и реплей пишут в него.
   Новый компонент-вход регистрируйте через `replay_input::<C>()`, иначе реплеи разойдутся.
 - Новое состояние симуляции вне сущностей с `AiId` (ресурс, счётчик) снапшот не увидит: зарегистрируйте его

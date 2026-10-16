@@ -112,7 +112,7 @@ pub fn ring(center: Vec3, radius: f32, y: f32, n: usize) -> Vec<Vec3> {
     (0..=n)
         .map(|i| {
             let a = TAU * i as f32 / n as f32;
-            Vec3::new(center.x + radius * a.cos(), y, center.z + radius * a.sin())
+            Vec3::new(center.x + radius * ops::cos(a), y, center.z + radius * ops::sin(a))
         })
         .collect()
 }
@@ -126,7 +126,7 @@ pub fn footprint(shape: &WorldShape, y: f32) -> Vec<Vec3> {
     let arc = |from: f32, to: f32, center: Vec3, radius: f32, n: usize, out: &mut Vec<Vec3>| {
         for i in 0..=n {
             let a = from + (to - from) * i as f32 / n as f32;
-            out.push(at(center + r * (radius * a.cos()) + f * (radius * a.sin())));
+            out.push(at(center + r * (radius * ops::cos(a)) + f * (radius * ops::sin(a))));
         }
     };
     let mut out = Vec::new();
@@ -149,7 +149,7 @@ pub fn footprint(shape: &WorldShape, y: f32) -> Vec<Vec3> {
                 let n = ((angle / 6.0).ceil() as usize).clamp(4, 60);
                 for i in 0..=n {
                     let phi = -half + 2.0 * half * i as f32 / n as f32;
-                    out.push(at(o + f * (range * phi.cos()) + r * (range * phi.sin())));
+                    out.push(at(o + f * (range * ops::cos(phi)) + r * (range * ops::sin(phi))));
                 }
             }
         }
@@ -195,7 +195,7 @@ pub fn hatch(ring: &[Vec3], spacing: f32, angle: f32) -> Vec<(Vec3, Vec3)> {
     if ring.len() < 3 {
         return Vec::new();
     }
-    let (dir, normal) = (Vec2::new(angle.cos(), angle.sin()), Vec2::new(-angle.sin(), angle.cos()));
+    let (dir, normal) = (Vec2::new(ops::cos(angle), ops::sin(angle)), Vec2::new(-ops::sin(angle), ops::cos(angle)));
     let pts: Vec<Vec2> = ring.iter().map(|p| Vec2::new(p.x, p.z)).collect();
     let (lo, hi) = pts.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p.dot(normal)), hi.max(p.dot(normal))));
     let spacing = spacing.max((hi - lo) / 80.0).max(0.02);
@@ -234,7 +234,7 @@ fn circle_in(center: Vec3, u: Vec3, v: Vec3, radius: f32, n: usize) -> Vec<Vec3>
     (0..=n)
         .map(|i| {
             let a = TAU * i as f32 / n as f32;
-            center + u * (radius * a.cos()) + v * (radius * a.sin())
+            center + u * (radius * ops::cos(a)) + v * (radius * ops::sin(a))
         })
         .collect()
 }
@@ -243,7 +243,7 @@ fn semicircle_in(center: Vec3, u: Vec3, v: Vec3, radius: f32, n: usize) -> Vec<V
     (0..=n)
         .map(|i| {
             let a = PI * i as f32 / n as f32;
-            center + u * (radius * a.cos()) + v * (radius * a.sin())
+            center + u * (radius * ops::cos(a)) + v * (radius * ops::sin(a))
         })
         .collect()
 }
@@ -472,10 +472,10 @@ pub fn pulse(intensity: f32, time: f32) -> f32 {
 /// `Off` a steady 1.
 pub fn pulse_at(intensity: f32, time: f32, flashes: FlashLevel) -> f32 {
     match flashes {
-        FlashLevel::Full => 0.875 + 0.125 * (time * (4.0 + 14.0 * intensity) * TAU * 0.5).sin(),
+        FlashLevel::Full => 0.875 + 0.125 * ops::sin(time * (4.0 + 14.0 * intensity) * TAU * 0.5),
         FlashLevel::Reduced => {
             let rate = ((4.0 + 14.0 * intensity) * 0.5).min(2.0);
-            0.9375 + 0.0625 * (time * rate * TAU).sin()
+            0.9375 + 0.0625 * ops::sin(time * rate * TAU)
         }
         FlashLevel::Off => 1.0,
     }
@@ -629,7 +629,7 @@ fn guard_arc(feet: Vec3, facing: Vec3, degrees: f32, radius: f32, y: f32) -> Vec
     let mut points = vec![centre];
     points.extend((0..=n).map(|i| {
         let phi = -half + 2.0 * half * i as f32 / n as f32;
-        centre + f * (radius * phi.cos()) + r * (radius * phi.sin())
+        centre + f * (radius * ops::cos(phi)) + r * (radius * ops::sin(phi))
     }));
     if half < PI - 1e-3 {
         points.push(centre);
@@ -761,7 +761,7 @@ pub struct EdgeMarker {
 impl EdgeMarker {
     /// The direction as degrees clockwise from straight up.
     pub fn angle_deg(&self) -> f32 {
-        self.direction.x.atan2(-self.direction.y).to_degrees()
+        ops::atan2(self.direction.x, -self.direction.y).to_degrees()
     }
 }
 
@@ -771,7 +771,7 @@ impl EdgeMarker {
 /// the right edge, behind the bottom.
 pub fn edge_marker(angle_deg: f32, viewport: Vec2, margin: f32) -> EdgeMarker {
     let a = angle_deg.to_radians();
-    let direction = Vec2::new(a.sin(), -a.cos());
+    let direction = Vec2::new(ops::sin(a), -ops::cos(a));
     let half = (viewport * 0.5 - Vec2::splat(margin)).max(Vec2::splat(1.0));
     let reach = |d: f32, h: f32| if d.abs() > 1e-5 { h / d.abs() } else { f32::INFINITY };
     let t = reach(direction.x, half.x).min(reach(direction.y, half.y));
@@ -852,7 +852,7 @@ mod tests {
         assert!(ring.iter().skip(1).all(|p| ((p.x * p.x + p.z * p.z).sqrt() - 3.0).abs() < 1e-3 && p.y == 0.5));
         // The arc spans +-45 degrees about -Z.
         let (first, last) = (ring[1], *ring.last().unwrap());
-        assert!((first.x.abs() - 3.0 * 45f32.to_radians().sin()).abs() < 1e-3 && first.z < 0.0, "{first}");
+        assert!((first.x.abs() - 3.0 * ops::sin(45f32.to_radians())).abs() < 1e-3 && first.z < 0.0, "{first}");
         assert!((first.x + last.x).abs() < 1e-3, "symmetric about the facing");
     }
 
@@ -1108,7 +1108,7 @@ mod tests {
         let (lo, hi) = lines.iter().flatten().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
         assert!(hi.z <= 1e-4 && (lo.z + 3.0).abs() < 0.01, "forward is -Z: {lo} {hi}");
         assert!((hi.y - 2.0).abs() < 1e-3 && lo.y.abs() < 1e-4);
-        assert!((hi.x - 3.0 * 45f32.to_radians().sin()).abs() < 1e-3);
+        assert!((hi.x - 3.0 * ops::sin(45f32.to_radians())).abs() < 1e-3);
     }
 
     #[test]

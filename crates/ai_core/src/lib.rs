@@ -44,6 +44,8 @@ pub mod crash;
 pub mod describe;
 pub mod dev;
 pub mod display;
+#[cfg(test)]
+mod determinism;
 pub mod failures;
 #[cfg(feature = "render")]
 pub mod highlight;

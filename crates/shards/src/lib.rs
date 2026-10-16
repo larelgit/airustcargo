@@ -91,6 +91,21 @@ pub use tile_levels::TileLevelsPlugin;
 pub use audio_wiring::EngineAudioPlugin;
 pub use ui_wiring::{EngineUiPlugin, PAUSE_SCREEN};
 
+// glam keeps its SIMD. Its `scalar-math` feature (parry3d's `enhanced-determinism` turns it on, and
+// a feature is on for the whole build once any crate asks) drops the 16-byte alignment of `Vec4` and
+// `Mat4`. Bevy 0.20 sizes its GPU mesh buffers by the Rust layout (`size_of::<MeshUniform>()` in
+// `UninitBufferVec`), so the buffers stop matching the shader's struct, 168 bytes against 176, and
+// wgpu stops the renderer: "Binding size 168 of Buffer with '' label is less than minimum 176". A
+// headless build would run, but replays and co-op need every build of a game to compute alike, so
+// the build is refused here. README, "Время и детерминизм": what determinism the engine promises
+// without `scalar-math`.
+const _: () = assert!(
+    std::mem::align_of::<bevy::math::Vec4>() == 16 && std::mem::align_of::<bevy::math::Mat4>() == 16,
+    "glam is built with `scalar-math` (parry3d's `enhanced-determinism` turns it on): Vec4 and Mat4 lose their \
+     16-byte alignment, Bevy 0.20's MeshUniform no longer matches its shader (168 bytes against 176) and \
+     rendering stops. Keep glam's SIMD: see `parry3d` in the engine's Cargo.toml."
+);
+
 /// Everything a game module needs in scope.
 pub mod prelude {
     pub use ai_core::prelude::*;

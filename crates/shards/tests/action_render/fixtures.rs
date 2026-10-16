@@ -45,7 +45,7 @@ pub fn skinned_gltf(animated: bool) -> String {
     floats(&mut data, &[0.0, 1.0]); // 232..240: key times
     for degrees in [10.0f32, 90.0] {
         // 240..272 and 272..304: the rotations about Z at the two keys
-        let (s, c) = (degrees.to_radians() * 0.5).sin_cos();
+        let (s, c) = shards::bevy::math::ops::sin_cos(degrees.to_radians() * 0.5);
         floats(&mut data, &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, s, c]);
     }
     assert_eq!(data.len(), 304);

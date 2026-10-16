@@ -6,13 +6,15 @@
 //! ```
 //!
 //! Mono 16-bit WAV: effects at 22 050 Hz, music at 16 000 Hz. The noise is seeded, so the files
-//! come out the same every time. A track's stems are one length, and what rings past the end of
+//! come out the same every time, on every OS (`sin` and `exp` are `bevy::math::ops`, that is `libm`, not the
+//! platform's math library). A track's stems are one length, and what rings past the end of
 //! the loop is added back at its start, so they loop without a seam.
 
 use std::f32::consts::{PI, TAU};
 use std::path::{Path, PathBuf};
 
 use shards::audio::length::wav_bytes;
+use shards::bevy::math::ops::{self, FloatPow};
 
 const SFX_RATE: u32 = 22_050;
 const MUSIC_RATE: u32 = 16_000;
@@ -79,9 +81,9 @@ fn whoosh(n: &mut Noise, seconds: f32, low: f32, high: f32) -> Vec<f32> {
     (0..count)
         .map(|i| {
             let x = i as f32 / count as f32;
-            let centre = low + (high - low) * (PI * x).sin();
+            let centre = low + (high - low) * ops::sin(PI * x);
             let band = hi.run(n.next(), centre * 1.6, SFX_RATE) - lo.run(n.last, centre * 0.6, SFX_RATE);
-            band * (PI * x).sin().powi(2)
+            band * ops::sin(PI * x).squared()
         })
         .collect()
 }
@@ -94,10 +96,10 @@ fn slam(n: &mut Noise) -> Vec<f32> {
     (0..count)
         .map(|i| {
             let t = time(i);
-            phase += TAU * 55.0 * (1.0 + 2.5 * (-t * 25.0).exp()) / SFX_RATE as f32;
-            let tone = phase.sin() * (-t * 5.0).exp();
-            let burst = n.next() * (-t * 40.0).exp() * 0.6;
-            let low = rumble.run(n.last, 180.0, SFX_RATE) * (-t * 3.0).exp() * 2.5;
+            phase += TAU * 55.0 * (1.0 + 2.5 * ops::exp(-t * 25.0)) / SFX_RATE as f32;
+            let tone = ops::sin(phase) * ops::exp(-t * 5.0);
+            let burst = n.next() * ops::exp(-t * 40.0) * 0.6;
+            let low = rumble.run(n.last, 180.0, SFX_RATE) * ops::exp(-t * 3.0) * 2.5;
             tone + burst + low
         })
         .collect()
@@ -110,7 +112,7 @@ fn shockwave(n: &mut Noise) -> Vec<f32> {
     let mut rumble = Lowpass::default();
     for (i, s) in out.iter_mut().enumerate() {
         let t = time(i);
-        let swell = (t / 0.35).min(1.0) * (-(t - 0.35).max(0.0) * 3.5).exp();
+        let swell = (t / 0.35).min(1.0) * ops::exp(-(t - 0.35).max(0.0) * 3.5);
         *s += rumble.run(n.next(), 120.0 + 260.0 * swell, SFX_RATE) * swell * 3.0;
     }
     out
@@ -123,8 +125,8 @@ fn hit(n: &mut Noise, pitch: f32) -> Vec<f32> {
     (0..count)
         .map(|i| {
             let t = time(i);
-            let thump = (TAU * 95.0 * pitch * t * (1.0 + (-t * 60.0).exp())).sin() * (-t * 22.0).exp();
-            thump + slap.run(n.next(), 2400.0 * pitch, SFX_RATE) * (-t * 45.0).exp() * 1.4
+            let thump = ops::sin(TAU * 95.0 * pitch * t * (1.0 + ops::exp(-t * 60.0))) * ops::exp(-t * 22.0);
+            thump + slap.run(n.next(), 2400.0 * pitch, SFX_RATE) * ops::exp(-t * 45.0) * 1.4
         })
         .collect()
 }
@@ -136,15 +138,15 @@ fn clang(n: &mut Noise, base: f32, ring: f32) -> Vec<f32> {
     (0..count)
         .map(|i| {
             let t = time(i);
-            let tone: f32 = partials.iter().map(|(r, a, d)| a * (TAU * base * r * t).sin() * (-t * d / ring).exp()).sum();
-            tone + n.next() * (-t * 120.0).exp() * 0.8
+            let tone: f32 = partials.iter().map(|(r, a, d)| a * ops::sin(TAU * base * r * t) * ops::exp(-t * d / ring)).sum();
+            tone + n.next() * ops::exp(-t * 120.0) * 0.8
         })
         .collect()
 }
 
 /// A guard giving way: a crack, then a dull clang.
 fn guard_break(n: &mut Noise) -> Vec<f32> {
-    let mut out: Vec<f32> = (0..len(0.06, SFX_RATE)).map(|i| n.next() * (-time(i) * 50.0).exp()).collect();
+    let mut out: Vec<f32> = (0..len(0.06, SFX_RATE)).map(|i| n.next() * ops::exp(-time(i) * 50.0)).collect();
     out.extend(clang(n, 260.0, 0.4).into_iter().map(|s| s * 0.9));
     out
 }
@@ -158,8 +160,8 @@ fn death(n: &mut Noise) -> Vec<f32> {
         .map(|i| {
             let t = time(i);
             phase += TAU * (220.0 * (1.0 - 0.6 * t)) / SFX_RATE as f32;
-            let env = (t / 0.05).min(1.0) * (-t * 3.0).exp();
-            (phase.sin() + 0.3 * (2.0 * phase).sin()) * env + breath.run(n.next(), 900.0, SFX_RATE) * env * 1.5
+            let env = (t / 0.05).min(1.0) * ops::exp(-t * 3.0);
+            (ops::sin(phase) + 0.3 * ops::sin(2.0 * phase)) * env + breath.run(n.next(), 900.0, SFX_RATE) * env * 1.5
         })
         .collect()
 }
@@ -175,7 +177,7 @@ fn chime(notes: &[f32], gap: f32, ring: f32) -> Vec<f32> {
                 .enumerate()
                 .map(|(k, f)| {
                     let at = t - gap * k as f32;
-                    if at < 0.0 { 0.0 } else { ((TAU * f * at).sin() + 0.3 * (TAU * 2.0 * f * at).sin()) * (-at * 5.0 / ring).exp() }
+                    if at < 0.0 { 0.0 } else { (ops::sin(TAU * f * at) + 0.3 * ops::sin(TAU * 2.0 * f * at)) * ops::exp(-at * 5.0 / ring) }
                 })
                 .sum()
         })
@@ -185,7 +187,7 @@ fn chime(notes: &[f32], gap: f32, ring: f32) -> Vec<f32> {
 /// A short tick.
 fn blip(freq: f32, seconds: f32) -> Vec<f32> {
     let count = len(seconds, SFX_RATE);
-    (0..count).map(|i| (TAU * freq * time(i)).sin() * (1.0 - i as f32 / count as f32).powi(2)).collect()
+    (0..count).map(|i| ops::sin(TAU * freq * time(i)) * (1.0 - i as f32 / count as f32).squared()).collect()
 }
 
 /// A tone sliding from one pitch to another.
@@ -196,7 +198,7 @@ fn glide(from: f32, to: f32, seconds: f32) -> Vec<f32> {
         .map(|i| {
             let x = i as f32 / count as f32;
             phase += TAU * (from + (to - from) * x) / SFX_RATE as f32;
-            phase.sin() * (PI * x).sin()
+            ops::sin(phase) * ops::sin(PI * x)
         })
         .collect()
 }
@@ -218,7 +220,7 @@ const ARENA: Track = Track { bpm: 80.0, chords: [[57, 60, 64], [53, 57, 60], [48
 const YARD: Track = Track { bpm: 90.0, chords: [[50, 53, 57], [46, 50, 53], [53, 57, 60], [48, 52, 55]] };
 
 fn hz(note: u8) -> f32 {
-    440.0 * 2f32.powf((f32::from(note) - 69.0) / 12.0)
+    440.0 * ops::powf(2f32, (f32::from(note) - 69.0) / 12.0)
 }
 
 /// Three stems of one loop: a pad (every layer), a bass pulse (tension and combat) and drums
@@ -267,8 +269,8 @@ fn pulse(track: &Track, beat: f32, count: usize) -> Vec<f32> {
         let f = hz(root - 12);
         let accent = if step % 2 == 0 { 1.0 } else { 0.7 };
         add(&mut out, eighth * step as f32, eighth, |t| {
-            let saw: f32 = (1..=5).map(|h| (TAU * f * h as f32 * t).sin() / h as f32).sum();
-            saw * (-t * 9.0).exp() * (1.0 - t / eighth).max(0.0) * accent
+            let saw: f32 = (1..=5).map(|h| ops::sin(TAU * f * h as f32 * t) / h as f32).sum();
+            saw * ops::exp(-t * 9.0) * (1.0 - t / eighth).max(0.0) * accent
         });
     }
     out
@@ -280,12 +282,12 @@ fn drums(n: &mut Noise, beat: f32, count: usize) -> Vec<f32> {
     for b in 0..8 {
         let at = beat * b as f32;
         if b % 2 == 0 {
-            add(&mut out, at, 0.45, |t| (TAU * 50.0 * t * (1.0 + 1.6 * (-t * 18.0).exp())).sin() * (-t * 7.0).exp() * 1.2);
+            add(&mut out, at, 0.45, |t| ops::sin(TAU * 50.0 * t * (1.0 + 1.6 * ops::exp(-t * 18.0))) * ops::exp(-t * 7.0) * 1.2);
         } else {
             let hiss: Vec<f32> = (0..len(0.25, MUSIC_RATE)).map(|_| n.next()).collect();
             add(&mut out, at, 0.25, |t| {
                 let i = ((t * MUSIC_RATE as f32) as usize).min(hiss.len() - 1);
-                hiss[i] * (-t * 16.0).exp() * 0.7 + (TAU * 190.0 * t).sin() * (-t * 25.0).exp() * 0.5
+                hiss[i] * ops::exp(-t * 16.0) * 0.7 + ops::sin(TAU * 190.0 * t) * ops::exp(-t * 25.0) * 0.5
             });
         }
     }
@@ -295,7 +297,7 @@ fn drums(n: &mut Noise, beat: f32, count: usize) -> Vec<f32> {
         let accent = if e % 2 == 0 { 0.35 } else { 0.22 };
         add(&mut out, beat / 2.0 * e as f32, 0.06, |t| {
             let i = ((t * MUSIC_RATE as f32) as usize).min(tick.len() - 1);
-            tick[i] * (-t * 70.0).exp() * accent
+            tick[i] * ops::exp(-t * 70.0) * accent
         });
     }
     out
@@ -337,7 +339,7 @@ struct Lowpass(f32);
 
 impl Lowpass {
     fn run(&mut self, x: f32, cutoff: f32, rate: u32) -> f32 {
-        let a = 1.0 - (-TAU * cutoff / rate as f32).exp();
+        let a = 1.0 - ops::exp(-TAU * cutoff / rate as f32);
         self.0 += a * (x - self.0);
         self.0
     }
@@ -349,6 +351,6 @@ fn write(path: &Path, rate: u32, samples: &[f32], peak: f32) {
     let pcm: Vec<i16> = samples.iter().map(|s| (s / loudest * peak * f32::from(i16::MAX)).round() as i16).collect();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, wav_bytes(rate, &pcm)).unwrap();
-    let rms = (pcm.iter().map(|s| (f32::from(*s) / f32::from(i16::MAX)).powi(2)).sum::<f32>() / pcm.len().max(1) as f32).sqrt();
+    let rms = (pcm.iter().map(|s| (f32::from(*s) / f32::from(i16::MAX)).squared()).sum::<f32>() / pcm.len().max(1) as f32).sqrt();
     println!("{} ({:.2} s, rms {rms:.3})", path.display(), samples.len() as f32 / rate as f32);
 }

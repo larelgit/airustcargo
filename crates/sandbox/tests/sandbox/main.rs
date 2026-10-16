@@ -7,6 +7,8 @@ mod actions;
 mod common;
 mod content;
 mod course;
+// `gltf` takes its math from `ops` (each includer reaches Bevy by its own path).
+use shards::bevy::math::ops;
 // The glTF writer of shards_level's tests: the region's level files are made with it.
 #[path = "../../../shards_level/tests/level/gltf.rs"]
 mod gltf;

@@ -35,7 +35,7 @@ fn blades(width: f32, height: f32, count: u32, rng: &mut DetRng) -> Mesh {
     let foot = [0.45, 0.45, 0.45, 1.0];
     for i in 0..count {
         let angle = (i as f32 + rng.range(-0.3, 0.3)) / count as f32 * TAU;
-        let out = Vec3::new(angle.cos(), 0.0, angle.sin());
+        let out = Vec3::new(ops::cos(angle), 0.0, ops::sin(angle));
         let across = Vec3::new(-out.z, 0.0, out.x) * width * 0.5;
         let base = if count == 1 { Vec3::ZERO } else { out * width * 0.6 };
         let tall = height * rng.range(0.7, 1.0);
@@ -56,7 +56,7 @@ fn cone(radius: f32, height: f32, sides: u32) -> Mesh {
     let apex = Vec3::Y * height;
     let ring = |i: u32| {
         let angle = i as f32 / sides as f32 * TAU;
-        Vec3::new(angle.cos() * radius, 0.0, angle.sin() * radius)
+        Vec3::new(ops::cos(angle) * radius, 0.0, ops::sin(angle) * radius)
     };
     let mut triangles = Vec::with_capacity(sides as usize);
     for i in 0..sides {

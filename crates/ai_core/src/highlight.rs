@@ -123,7 +123,7 @@ pub(crate) fn draw_highlights(
         let Ok(gt) = targets.get(h.entity) else { continue };
         let p = gt.translation();
         let y = top(h.entity, p);
-        let pulse = 1.0 + 0.08 * ((now * 6.0).sin() as f32);
+        let pulse = 1.0 + 0.08 * ops::sin((now * 6.0) as f32);
         gizmos.circle(Isometry3d::new(p + Vec3::Y * 0.05, ground), 1.1 * pulse, h.color);
         gizmos.line(p.with_y(y + 0.2), p.with_y(y + 0.8), h.color);
         gizmos.text(Isometry3d::new(p.with_y(y + 1.2), facing), &h.label, 0.45, Vec2::ZERO, h.color);

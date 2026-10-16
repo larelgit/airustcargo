@@ -123,7 +123,7 @@ pub fn sees(physics: &PhysicsWorld, def: &PerceptionDef, feet: Vec3, facing: Vec
     }
     if distance > def.near && def.fov_deg < 360.0 {
         let cos = to.normalize_or_zero().dot(flat(facing).normalize_or_zero());
-        if cos < (def.fov_deg * 0.5).to_radians().cos() - 1e-5 {
+        if cos < ops::cos((def.fov_deg * 0.5).to_radians()) - 1e-5 {
             return false;
         }
     }

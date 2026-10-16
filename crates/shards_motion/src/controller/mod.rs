@@ -396,7 +396,7 @@ fn turn(tf: &mut Mut<Transform>, dir: Option<Vec3>, speed_deg: f32, dt: f32) {
         return;
     };
     let forward = tf.forward();
-    let yaw = |d: Vec3| (-d.x).atan2(-d.z);
+    let yaw = |d: Vec3| ops::atan2(-d.x, -d.z);
     let (current, target) = (yaw(*forward), yaw(dir));
     let mut delta = target - current;
     delta = (delta + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;

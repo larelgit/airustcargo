@@ -95,7 +95,7 @@ fn banded(drawn: &[(usize, usize, Px)], n: usize) -> (f32, usize) {
     let mut shades: HashMap<[u8; 3], usize> = HashMap::new();
     for &(x, y, px) in drawn {
         if let Px::Surface(rgb) = px
-            && (x as f32 - cx as f32).hypot(y as f32 - cy as f32) < inner
+            && ops::hypot(x as f32 - cx as f32, y as f32 - cy as f32) < inner
         {
             *shades.entry(rgb).or_default() += 1;
         }

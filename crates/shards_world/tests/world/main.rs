@@ -8,6 +8,8 @@ mod checks;
 mod common;
 mod dungeon;
 mod generation;
+// `gltf` takes its math from `ops` (each includer reaches Bevy by its own path).
+use bevy::math::ops;
 // The writer of the glTF files Blender would export, from `shards_level`'s tests: the level
 // tiles here are generated, not committed.
 #[path = "../../../shards_level/tests/level/gltf.rs"]

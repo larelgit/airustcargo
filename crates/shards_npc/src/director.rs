@@ -444,9 +444,9 @@ fn wait_in_role(f: &mut FightingItem, role: &WaitRole, center: Vec3, home: Optio
     let fresh = f.brain.role.as_deref() != Some(role.role.name());
     if fresh {
         f.brain.role = Some(role.role.name().to_owned());
-        f.brain.orbit = bearing.z.atan2(bearing.x);
+        f.brain.orbit = ops::atan2(bearing.z, bearing.x);
     }
-    let around = |angle: f32| center + Vec3::new(angle.cos(), 0.0, angle.sin()) * distance;
+    let around = |angle: f32| center + Vec3::new(ops::cos(angle), 0.0, ops::sin(angle)) * distance;
     let (goal, within) = match role.role {
         Role::Hold => {
             let out = bearing.try_normalize().unwrap_or(Vec3::Z);

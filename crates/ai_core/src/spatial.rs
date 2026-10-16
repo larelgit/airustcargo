@@ -95,7 +95,7 @@ pub fn compass(offset: Vec3) -> &'static str {
     if x.abs() < 1e-4 && z.abs() < 1e-4 {
         return "here";
     }
-    let angle = x.atan2(-z).to_degrees().rem_euclid(360.0);
+    let angle = ops::atan2(x, -z).to_degrees().rem_euclid(360.0);
     const NAMES: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
     NAMES[(((angle + 22.5) / 45.0) as usize) % 8]
 }

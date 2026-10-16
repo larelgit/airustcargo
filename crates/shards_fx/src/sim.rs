@@ -41,10 +41,10 @@ impl Rng {
     /// direction of it as likely.
     pub fn in_cone(&mut self, axis: Vec3, spread: f32) -> Vec3 {
         let half = (spread.clamp(0.0, 360.0) * 0.5).to_radians();
-        let cos = 1.0 - self.unit() * (1.0 - half.cos());
+        let cos = 1.0 - self.unit() * (1.0 - ops::cos(half));
         let sin = (1.0 - cos * cos).max(0.0).sqrt();
         let phi = TAU * self.unit();
-        let local = Vec3::new(sin * phi.cos(), cos, sin * phi.sin());
+        let local = Vec3::new(sin * ops::cos(phi), cos, sin * ops::sin(phi));
         Quat::from_rotation_arc(Vec3::Y, axis.normalize_or(Vec3::Y)) * local
     }
 
@@ -53,7 +53,7 @@ impl Rng {
         if radius <= 0.0 {
             return Vec3::ZERO;
         }
-        radius * self.unit().cbrt() * self.in_cone(Vec3::Y, 360.0)
+        radius * ops::cbrt(self.unit()) * self.in_cone(Vec3::Y, 360.0)
     }
 }
 
@@ -103,7 +103,7 @@ impl Particle {
         }
         // v(t) = g/k + (v0 - g/k)·e^(-kt); x(t) = x0 + g/k·t + (v0 - g/k)·(1 - e^(-kt))/k.
         let terminal = g / drag;
-        self.origin + terminal * age + (self.velocity - terminal) * ((1.0 - (-drag * age).exp()) / drag)
+        self.origin + terminal * age + (self.velocity - terminal) * ((1.0 - ops::exp(-drag * age)) / drag)
     }
 
     /// How it looks at clock `now`, as `def` draws it (colours from [`EffectDef::colors`]).
@@ -127,7 +127,7 @@ pub fn aim_of(def: &EffectDef, toward: Option<Vec3>) -> Vec3 {
     match (def.aim, toward.map(|d| Vec3::new(d.x, 0.0, d.z)).and_then(Vec3::try_normalize)) {
         (Aim::Hit, Some(level)) => {
             let lift = def.lift.to_radians();
-            (level * lift.cos() + Vec3::Y * lift.sin()).normalize_or(Vec3::Y)
+            (level * ops::cos(lift) + Vec3::Y * ops::sin(lift)).normalize_or(Vec3::Y)
         }
         _ => Vec3::Y,
     }
@@ -272,7 +272,7 @@ mod tests {
     fn a_hit_sends_its_particles_the_way_given_level_and_tilted_up() {
         let hit = EffectDef { aim: Aim::Hit, lift: 30.0, ..EffectDef::default() };
         let aim = aim_of(&hit, Some(Vec3::new(0.0, -5.0, 2.0)));
-        assert!(aim.abs_diff_eq(Vec3::new(0.0, 0.5, 30f32.to_radians().cos()), 1e-5), "{aim}");
+        assert!(aim.abs_diff_eq(Vec3::new(0.0, 0.5, ops::cos(30f32.to_radians())), 1e-5), "{aim}");
         assert_eq!(aim_of(&hit, None), Vec3::Y, "no attacker: up");
         assert_eq!(aim_of(&hit, Some(Vec3::Y)), Vec3::Y, "straight above: up");
         assert_eq!(aim_of(&EffectDef::default(), Some(Vec3::X)), Vec3::Y, "`Up` ignores the hit");

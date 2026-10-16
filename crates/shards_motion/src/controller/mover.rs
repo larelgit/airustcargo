@@ -87,7 +87,7 @@ impl<'a> Mover<'a> {
             center: height * 0.5,
             radius,
             skin,
-            min_ground_y: params.max_slope_deg.clamp(0.0, 89.9).to_radians().cos(),
+            min_ground_y: ops::cos(params.max_slope_deg.clamp(0.0, 89.9).to_radians()),
         }
     }
 

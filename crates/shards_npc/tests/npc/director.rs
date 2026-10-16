@@ -11,7 +11,7 @@ fn ring(app: &mut App, n: usize, center: Vec3, behavior: &str, plan: &str, direc
     (0..n)
         .map(|i| {
             let angle = i as f32 / n as f32 * std::f32::consts::TAU + 0.3;
-            let at = center + Vec3::new(angle.cos(), 0.0, angle.sin()) * 6.0;
+            let at = center + Vec3::new(ops::cos(angle), 0.0, ops::sin(angle)) * 6.0;
             grunt(app.world_mut(), behavior, plan, director, at)
         })
         .collect()
@@ -161,7 +161,7 @@ fn a_cast_without_hits_holds_its_token_to_the_end() {
     let casters: Vec<Entity> = (0..3)
         .map(|i| {
             let angle = i as f32 / 3.0 * std::f32::consts::TAU + 0.3;
-            let at = Vec3::new(angle.cos(), 0.0, angle.sin()) * 6.0;
+            let at = Vec3::new(ops::cos(angle), 0.0, ops::sin(angle)) * 6.0;
             let npc = Npc::new("grunt", "grunt").with_plan("caster").with_director("single");
             crate::common::npc(app.world_mut(), "caster", npc, at, (-at).normalize())
         })
@@ -325,7 +325,7 @@ fn those_without_a_token_wait_in_their_roles() {
             match role.as_str() {
                 "circle" => {
                     assert!(d < 4.0 + 1.0, "a circler keeps about 4 m: {d:.2}");
-                    let angle = at.z.atan2(at.x);
+                    let angle = ops::atan2(at.z, at.x);
                     if let Some(prev) = last_angle[i]
                         && (angle - prev).abs() > 1e-3
                     {

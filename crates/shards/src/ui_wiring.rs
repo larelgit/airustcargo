@@ -51,7 +51,7 @@ fn ratio(value: f32, max: f32) -> UiValue {
 
 /// Degrees clockwise from north (-Z) of a direction on the ground.
 fn bearing(dir: Vec3) -> f32 {
-    dir.x.atan2(-dir.z).to_degrees().rem_euclid(360.0)
+    ops::atan2(dir.x, -dir.z).to_degrees().rem_euclid(360.0)
 }
 
 /// Where the viewer faces, and the four nearest landmarks.

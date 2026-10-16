@@ -759,7 +759,7 @@ fn a_view_that_stops_being_capped_through_the_hysteresis_gives_the_world_once_no
     let ring: Vec<String> = (0..70)
         .map(|i| {
             let angle = i as f32 / 70.0 * std::f32::consts::TAU;
-            let (x, z) = (centre.x + 65.0 * angle.cos(), centre.z + 65.0 * angle.sin());
+            let (x, z) = (centre.x + 65.0 * ops::cos(angle), centre.z + 65.0 * ops::sin(angle));
             spawned(&stand.call(HOST, "spawn_prefab", json!({"id": "pillar", "x": x, "z": z})))
         })
         .collect();

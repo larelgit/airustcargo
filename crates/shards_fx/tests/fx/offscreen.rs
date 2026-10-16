@@ -148,7 +148,7 @@ fn offscreen_a_telegraph_colours_the_floor_inside_its_zone_and_particles_glow() 
     let rim: Vec<Vec2> = (0..16)
         .map(|i| {
             let a = i as f32 / 16.0 * std::f32::consts::TAU;
-            on_screen(&mut app, camera, Vec3::new(3.0 * a.cos(), 0.0, -2.0 + 3.0 * a.sin()))
+            on_screen(&mut app, camera, Vec3::new(3.0 * ops::cos(a), 0.0, -2.0 + 3.0 * ops::sin(a)))
         })
         .collect();
     let (lo, hi) = rim.iter().fold((Vec2::MAX, Vec2::MIN), |(l, h), p| (l.min(*p), h.max(*p)));
