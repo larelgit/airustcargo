@@ -127,8 +127,8 @@ use shards_core::{CoreSystems, EngineAppExt, NetSet};
 use shards_motion::{ControllerSystems, MotionPlugin, MotionSystems};
 
 pub use anim::{
-    crossed_cues, locomotion_state, select_clip, select_clip_for, AnimSet, Animated, AnimationCue, BodyStatus,
-    ClipChoice, ClipDef, CueDef, GroundSpeeds, Locomotion,
+    crossed_cues, locomotion_state, select_clip, select_clip_for, select_layer, ActionClip, AnimSet, Animated,
+    AnimationCue, BodyStatus, ClipChoice, ClipDef, CueDef, GroundSpeeds, LayerChoice, LayerDef, Locomotion, MAX_LAYERS,
 };
 pub use combat::{
     kill, revive, stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died, Evaded, GuardBroken, Outcome, Parried,

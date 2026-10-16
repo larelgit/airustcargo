@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 use shards::action::render::{AnimGraphs, AnimationBound};
 use shards::action::{ActionState, Animated, AnimationCue};
 use shards::bevy::animation::graph::AnimationGraphHandle;
-use shards::bevy::animation::AnimationPlayer;
+use shards::bevy::animation::graph::AnimationNodeIndex;
+use shards::bevy::animation::{AnimationClip, AnimationPlayer, AnimationTargetId};
+use shards::bevy::gltf::Gltf;
 use shards::bevy::gltf::GltfAssetLabel;
 use shards::bevy::world_serialization::WorldAssetRoot;
 use shards::motion::{character, Collider, Shape};
@@ -13,7 +15,7 @@ use shards::prelude::*;
 use shards::serde_json::json;
 use shards::testing::ok;
 
-use crate::fixtures::{assets, humanoid_assets};
+use crate::fixtures::{assets, humanoid_assets, humanoid_assets_with, HUMANOID_LAYERED};
 
 #[derive(Resource, Default)]
 struct Cues(Vec<AnimationCue>);
@@ -196,4 +198,124 @@ fn the_blender_humanoid_rolls_in_place_and_bows_with_a_clip_of_its_second_file()
     assert_eq!(app.world().get::<AnimationBound>(hero).unwrap().clip(), Some("bow"));
     let bent = bone(&mut app, hero, "spine").rotation.angle_between(spine).to_degrees();
     assert!(bent > 20.0, "the spine bends in the bow: {bent:.0} degrees");
+}
+
+/// The entity of bone `name` of `character`'s model.
+fn bone_entity(app: &mut App, character: Entity, name: &str) -> Entity {
+    let world = app.world_mut();
+    let mut names = world.query::<(Entity, &Name)>();
+    names
+        .iter(world)
+        .find(|(e, n)| n.as_str() == name && is_below(world, *e, character))
+        .map(|(e, _)| e)
+        .unwrap_or_else(|| panic!("the model has no {name}"))
+}
+
+/// The clip `name` of the loaded glTF files (the humanoid's, or its second file's).
+fn library_clip(app: &App, name: &str) -> Handle<AnimationClip> {
+    let gltfs = app.world().resource::<Assets<Gltf>>();
+    gltfs.iter().find_map(|(_, gltf)| gltf.named_animations.get(name).cloned()).unwrap_or_else(|| panic!("no clip {name}"))
+}
+
+/// The rotation clip `clip` gives `bone` at `seconds`, sampled straight from its curves.
+fn sampled(app: &App, clip: &Handle<AnimationClip>, bone: Entity, seconds: f32) -> Quat {
+    let target = *app.world().get::<AnimationTargetId>(bone).expect("a bone is an animation target");
+    let clip = app.world().resource::<Assets<AnimationClip>>().get(clip).expect("the clip is loaded");
+    let curves = clip.curves_for_target(target).expect("the clip animates the bone");
+    curves
+        .iter()
+        .find_map(|curve| curve.0.sample_clamped(seconds).downcast::<Quat>().ok())
+        .map(|rotation| *rotation)
+        .expect("a rotation curve")
+}
+
+/// How far (degrees) bone `name` of `character` is from what `clip` gives it at `seconds`.
+fn off_by(app: &mut App, character: Entity, name: &str, clip: &Handle<AnimationClip>, seconds: f32) -> f32 {
+    let bone = bone_entity(app, character, name);
+    let rotation = app.world().get::<Transform>(bone).unwrap().rotation;
+    rotation.angle_between(sampled(app, clip, bone, seconds)).to_degrees()
+}
+
+/// Seconds on the clock of the clip at graph node `node` of `character`'s player.
+fn seek_time(app: &App, character: Entity, node: AnimationNodeIndex) -> f32 {
+    let player = app.world().get::<AnimationBound>(character).unwrap().player;
+    app.world().get::<AnimationPlayer>(player).unwrap().animation(node).expect("the clip is playing").seek_time()
+}
+
+const LEGS: [&str; 7] = ["hips", "thigh.L", "shin.L", "foot.L", "thigh.R", "shin.R", "foot.R"];
+const UPPER: [&str; 8] = ["spine", "head", "upper_arm.L", "forearm.L", "hand.L", "upper_arm.R", "forearm.R", "hand.R"];
+
+#[test]
+fn the_blender_humanoid_drinks_with_its_arm_while_its_legs_keep_walking() {
+    let dir = humanoid_assets_with("action_render_layers", HUMANOID_LAYERED);
+    let mut app = shards::testing::test_app(|config| config.asset_dir = dir.to_string_lossy().into_owned(), |_| {});
+    let errors: Vec<String> = app.world().resource::<ContentDb>().errors().map(ToString::to_string).collect();
+    assert!(errors.is_empty(), "the set's files have its clips and the layer's bone: {errors:#?}");
+    app.world_mut().spawn((Collider::new(Shape::cuboid(Vec3::new(30.0, 0.5, 30.0))), Transform::from_xyz(0.0, -0.5, 0.0)));
+    let hero = spawn_model(&mut app, Vec3::ZERO, "models/humanoid.glb");
+    update_until(&mut app, "the humanoid bound", |app| {
+        app.world().get::<AnimationBound>(hero).is_some_and(|b| b.layer_clip("upper").is_none())
+            && app.world().resource::<AnimGraphs>().built("humanoid").is_some()
+    });
+    let (walk_node, drink_node) = {
+        let built = app.world().resource::<AnimGraphs>().built("humanoid").unwrap();
+        assert_eq!(built.clips(), ["drink", "idle", "walk"]);
+        (built.node("walk").unwrap(), built.layer_node("upper", "drink").expect("the drink has a node for its layer"))
+    };
+    let (walk, drink) = (library_clip(&app, "walk"), library_clip(&app, "drink"));
+
+    // Walking: every bone follows the walk clip.
+    app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = Vec3::new(0.0, 0.0, 0.5);
+    ok(&mut app, "step", json!({"ticks": 20}));
+    app.update();
+    app.update();
+    assert_eq!(app.world().get::<AnimationBound>(hero).unwrap().clip(), Some("walk"));
+    let at = seek_time(&app, hero, walk_node);
+    for bone in LEGS.into_iter().chain(UPPER) {
+        let off = off_by(&mut app, hero, bone, &walk, at);
+        assert!(off < 0.1, "{bone} follows the walk: {off:.3} degrees off");
+    }
+
+    // The flask: the upper body drinks, the legs keep their walk.
+    app.world_mut().get_mut::<Intent>(hero).unwrap().press("drink");
+    ok(&mut app, "step", json!({"ticks": 30}));
+    app.update();
+    app.update();
+    let p = progress(&app, hero).expect("the drink is running");
+    assert!(p > 0.2 && p < 0.6, "{p}");
+    let bound = app.world().get::<AnimationBound>(hero).unwrap();
+    assert_eq!(bound.clip(), Some("walk"), "locomotion goes on");
+    assert_eq!(bound.layer_clip("upper"), Some("drink"));
+    let length = app.world().resource::<Assets<AnimationClip>>().get(&drink).unwrap().duration();
+    let (drink_at, walk_at) = (seek_time(&app, hero, drink_node), seek_time(&app, hero, walk_node));
+    assert!((drink_at / length - p).abs() < 0.02, "gameplay leads: the clip is at {:.3}, the action at {p:.3}", drink_at / length);
+    for bone in LEGS {
+        let off = off_by(&mut app, hero, bone, &walk, walk_at);
+        assert!(off < 0.1, "{bone} still walks: {off:.3} degrees off the walk clip");
+    }
+    for bone in UPPER {
+        let off = off_by(&mut app, hero, bone, &drink, drink_at);
+        assert!(off < 0.1, "{bone} drinks: {off:.3} degrees off the drink clip");
+    }
+    // And the two clips are not the same pose, so the checks above tell them apart.
+    let (arm, thigh) = (bone_entity(&mut app, hero, "upper_arm.R"), bone_entity(&mut app, hero, "thigh.L"));
+    let (arm_walks, thigh_drinks) = (sampled(&app, &walk, arm, drink_at), sampled(&app, &drink, thigh, walk_at));
+    let drinking_arm = app.world().get::<Transform>(arm).unwrap().rotation;
+    let walking_thigh = app.world().get::<Transform>(thigh).unwrap().rotation;
+    assert!(drinking_arm.angle_between(arm_walks).to_degrees() > 30.0, "the walk swings the arm, the drink raises it");
+    assert!(walking_thigh.angle_between(thigh_drinks).to_degrees() > 10.0, "the walk swings the leg, the drink stands");
+
+    // The drink ends: the arms are the walk's again.
+    ok(&mut app, "step", json!({"ticks": 60}));
+    app.update();
+    app.update();
+    assert!(progress(&app, hero).is_none());
+    let bound = app.world().get::<AnimationBound>(hero).unwrap();
+    assert_eq!(bound.layer_clip("upper"), None);
+    assert_eq!(bound.layer_share("upper"), 0.0);
+    let at = seek_time(&app, hero, walk_node);
+    for bone in LEGS.into_iter().chain(UPPER) {
+        let off = off_by(&mut app, hero, bone, &walk, at);
+        assert!(off < 0.1, "{bone} walks again: {off:.3} degrees off");
+    }
 }

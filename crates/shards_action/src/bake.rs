@@ -738,6 +738,28 @@ mod tests {
     }
 
     #[test]
+    fn a_layer_must_start_at_a_bone_of_the_model() {
+        // The model has `root` and `hips` (the helper's skeleton).
+        let set = r#"{ "h": (source: "models/h.glb", clips: {"idle": (), "lunge": ()},
+            layers: {"upper": (root: "spine"), "legs": (root: "hips"), "blank": (root: "")},
+            actions: {"light_1": (clip: "lunge", layer: "upper")}) }"#;
+        let actions = r#"{ "light_1": (net_id: 1, phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)]) }"#;
+        let root = assets("layers", &[("content/h.animset.ron", set), ("content/a.action.ron", actions)]);
+        let errors = errors(&build(&root));
+        assert_eq!(
+            errors,
+            [
+                "content/h.animset.ron: animset `h`: layers.blank.root is empty; name the bone the layer starts at, \
+                 e.g. `layers: {\"blank\": (root: \"spine\")}`",
+                "content/h.animset.ron: animset `h`: layers.upper.root -> `models/h.glb` has no node `spine`; \
+                 name the bone the layer starts at",
+            ],
+            "`hips` is a node of the file; an empty root is reported once, by the field check"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn a_baked_curve_must_match_its_clip() {
         let actions = r#"{
             "fresh": (net_id: 1, phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)],
