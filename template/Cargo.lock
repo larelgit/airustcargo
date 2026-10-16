@@ -5369,6 +5369,7 @@ version = "0.2.0"
 dependencies = [
  "ai_core",
  "bevy",
+ "gltf",
  "schemars",
  "serde",
  "serde_json",

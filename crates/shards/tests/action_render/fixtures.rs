@@ -1,5 +1,6 @@
 //! Test content written to a fresh assets folder: combat definitions, an animset and a
-//! skinned glTF model in two files that share the skeleton.
+//! skinned glTF model in two files that share the skeleton; or the humanoid made in Blender
+//! (`tools/blender/humanoid.py`, the sandbox's `models/`) with its second file of clips.
 
 use std::path::{Path, PathBuf};
 
@@ -122,6 +123,37 @@ pub const ANIMSETS: &str = r#"{ "humanoid": (
     locomotion: {"idle": "idle"},
     actions: {"light_1": "slash"},
 ) }"#;
+
+/// The humanoid's set: its clips, one (`bow`) from the second file, which the block shows.
+pub const HUMANOID: &str = r#"{ "humanoid": (
+    source: "models/humanoid.glb",
+    clips: {"idle": (), "light_1": (), "roll": (), "bow": (source: "models/humanoid_gestures.glb")},
+    locomotion: {"idle": "idle"},
+    actions: {"light_1": "light_1", "roll": "roll", "block": "bow"},
+    root_motion: "root",
+) }"#;
+
+/// A fresh assets folder with the combat content, the humanoid (`models/humanoid.glb`) and its
+/// clips for the same skeleton in a second file (`models/humanoid_gestures.glb`).
+pub fn humanoid_assets(name: &str) -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("../sandbox/assets/models");
+    std::fs::create_dir_all(dir.join("models")).unwrap();
+    for file in ["humanoid.glb", "humanoid_gestures.glb"] {
+        std::fs::copy(models.join(file), dir.join("models").join(file)).unwrap();
+    }
+    for (path, text) in [
+        ("content/combat/actions.action.ron", ACTIONS),
+        ("content/combat/movesets.moveset.ron", MOVESETS),
+        ("content/anim/humanoid.animset.ron", HUMANOID),
+    ] {
+        let path: &Path = path.as_ref();
+        std::fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(path), text).unwrap();
+    }
+    dir
+}
 
 /// A fresh assets folder under the test temp dir: content, the model (no animations) and the
 /// library (the same skeleton with its clips).

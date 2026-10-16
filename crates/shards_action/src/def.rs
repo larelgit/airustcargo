@@ -22,6 +22,11 @@
 //!     ),
 //! }
 //! ```
+//!
+//! The `displacement` curve can come from the clip: `bake: (animset: "humanoid", clip: "light_1")`
+//! names the clip whose root bone moves the body, `--bake-motion` (or the `motion_bake` tool)
+//! writes the curve, and content checks say when the clip changed and the curve is stale
+//! ([`crate::bake`]).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -340,6 +345,15 @@ pub enum Steer {
     Move,
 }
 
+/// Where an action's `displacement` is baked from: clip `clip` of animset `animset`, whose
+/// `root_motion` bone moves along the ground ([`crate::bake`]).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MotionBake {
+    pub animset: String,
+    pub clip: String,
+}
+
 /// What starting an action costs.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(default, deny_unknown_fields)]
@@ -386,6 +400,10 @@ pub struct ActionDef {
     /// controller moves the body, so a wall stops a lunge.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub displacement: Vec<(f32, f32)>,
+    /// The clip `displacement` is baked from (`--bake-motion`); content checks that the curve
+    /// is not stale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bake: Option<MotionBake>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hold: Option<HoldDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -607,6 +625,9 @@ impl ContentDef for ActionDef {
             }
         }
         check.displacement();
+        if let Some(bake) = &self.bake {
+            crate::bake::check(self, id, bake, check.refs);
+        }
         if let Some(hold) = &self.hold {
             check.span("hold.span", &hold.span);
             if let Some((a, b)) = self.span(&hold.span)

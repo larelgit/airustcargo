@@ -27,6 +27,10 @@
 //!   locomotion state or action, blends, cues) and [`select_clip`], the pure choice of the
 //!   clip a character shows: gameplay leads, the animation is seeked to the action's
 //!   progress. [`Animated`] characters are driven by the bridge of the `render` feature.
+//! - **Displacement bake** ([`bake`]): an action's `displacement` read off the root bone of its
+//!   clip (`bake: (animset, clip)`), written into its file by `--bake-motion` or `motion_bake`;
+//!   content checks call a curve stale when its clip changed. [`clipfile`] reads glTF clips
+//!   without a window.
 //! - **Drawing** ([`draw`]): the geometry of what the `render` feature puts on screen, as
 //!   plain data: ground telegraphs with symbols, the combat overlay, edge markers for
 //!   attacks off screen.
@@ -77,7 +81,7 @@
 //! ```
 //!
 //! Tools: `light_attack`, `heavy_attack`, `block`, `parry`, `dodge`, `use_technique`,
-//! `use_item`, `lock_on`, `attack` (player); `god`, `heal`, `stagger` (dev);
+//! `use_item`, `lock_on`, `attack` (player); `god`, `heal`, `stagger`, `motion_bake` (dev);
 //! `combat_overlay` (dev, with the `render` feature).
 //!
 //! ## The render feature
@@ -99,6 +103,8 @@
 
 pub mod ai;
 pub mod anim;
+pub mod bake;
+pub mod clipfile;
 pub mod combat;
 pub mod cue;
 pub mod def;
@@ -129,8 +135,8 @@ pub use combat::{
 };
 pub use cue::SoundCue;
 pub use def::{
-    ActionDef, CancelDef, CombatTuning, Cost, Effect, GuardDef, HitDef, HitFlag, HitShape, HoldDef, Local, MovesetDef,
-    Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
+    ActionDef, CancelDef, CombatTuning, Cost, Effect, GuardDef, HitDef, HitFlag, HitShape, HoldDef, Local, MotionBake,
+    MovesetDef, Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
 };
 pub use fighter::{
     Armor, Charge, Charges, Cooldown, Cooldowns, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team,
@@ -325,6 +331,7 @@ impl Plugin for ActionPlugin {
         predict::plugin(app);
         ai::register(app);
         tools::register(app);
+        bake::register(app);
         cue::plugin(app);
         #[cfg(feature = "render")]
         render::plugin(app);
