@@ -669,6 +669,43 @@ fn signal(pid: u32) -> Result<(), String> {
     Err(format!("pid {pid} has no `quit`, and Windows has no signal for another console's process: close its window"))
 }
 
+/// Whether a process with this pid runs: `None` when that cannot be found out here.
+#[cfg(unix)]
+pub fn running(pid: u32) -> Option<bool> {
+    // 0 would ask about this process's group.
+    let pid = libc::pid_t::try_from(pid).ok().filter(|&pid| pid > 0)?;
+    // SAFETY: `kill` with a pid and signal 0 takes no pointers and sends nothing.
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return Some(true);
+    }
+    match std::io::Error::last_os_error().raw_os_error() {
+        Some(libc::ESRCH) => Some(false),
+        // There, but another user's.
+        Some(libc::EPERM) => Some(true),
+        _ => None,
+    }
+}
+
+/// `std` cannot ask Windows about another process: `tasklist` lists it while it runs.
+#[cfg(windows)]
+pub fn running(pid: u32) -> Option<bool> {
+    let out = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|out| out.status.success())?;
+    // `"sandbox.exe","4242","Console","1","123,456 K"`, or a line saying no task matches.
+    let field = format!("\",\"{pid}\",\"");
+    Some(String::from_utf8_lossy(&out.stdout).lines().any(|line| line.contains(&field)))
+}
+
+#[cfg(not(any(unix, windows)))]
+pub fn running(_pid: u32) -> Option<bool> {
+    None
+}
+
 /// `shards stand stop`: the host ends the session (every client is told and keeps its
 /// character), then the host is asked to quit (`end`: [`end_game`]), and the command waits until
 /// no member answers. A stand of child processes (`--stand-udp`) is ended by its host; a child

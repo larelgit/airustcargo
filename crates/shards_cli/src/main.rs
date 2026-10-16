@@ -297,8 +297,8 @@ enum Cmd {
     /// session. Gives up after --timeout seconds (60).
     Wait,
     /// End the game the way Ctrl+C does (its tool `quit`): its exit hooks run, its token and port
-    /// file go. Waits until it answers no more (--timeout, 15 s). How a game is stopped on Windows;
-    /// on unix `kill PID` does the same.
+    /// file go. Waits until it answers no more and its process is gone (--timeout, 15 s). How a
+    /// game is stopped on Windows; on unix `kill PID` does the same.
     Quit,
     /// Build the game for players and check the build. Profile `dist` (else `release`), the
     /// game's feature `dist` when it has one (no `shards` server, no developer keys), on Windows
@@ -803,15 +803,38 @@ fn quit(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
     }
     let game = pid.map_or_else(|| "the game".to_owned(), |pid| format!("the game (pid {pid})"));
     let limit = cli.timeout_or(15);
-    let started = Instant::now();
-    while client.call("ai/status", Value::Null).is_ok() {
-        if started.elapsed() >= limit {
-            return Err(format!("{game} still answers {}s after `quit`: see `shards journal`, or end it yourself", limit.as_secs()));
+    match until_ended(client, pid.and_then(|pid| u32::try_from(pid).ok()), limit, Duration::from_millis(100)) {
+        Ok(true) => say(format!("{game} ended")),
+        Ok(false) => say(format!("{game} answers no more (whether its process is gone cannot be checked here)")),
+        Err(state) => {
+            return Err(format!("{game} {state} {}s after `quit`: see `shards journal`, or end it yourself", limit.as_secs()));
         }
-        std::thread::sleep(Duration::from_millis(100));
     }
-    say(format!("{game} ended"));
     Ok(ExitCode::SUCCESS)
+}
+
+/// Waits until a game asked to quit has ended: nothing answers at its port as it (`unauthorized`:
+/// another game took the port), then no process has its `pid`. An error or a broken answer
+/// while it shuts down proves nothing: it is asked again. `Ok(false)`: it answers no more, and
+/// whether its process is gone is unknown (no pid, or no way to look here). `Err`: what it still
+/// does when `limit` is up.
+fn until_ended(client: &Client, pid: Option<u32>, limit: Duration, every: Duration) -> Result<bool, &'static str> {
+    let started = Instant::now();
+    while !matches!(client.try_call("ai/status", Value::Null), Err(CallError::Unreachable(_) | CallError::Unauthorized(_))) {
+        if started.elapsed() >= limit {
+            return Err("still answers");
+        }
+        std::thread::sleep(every);
+    }
+    let Some(pid) = pid else { return Ok(false) };
+    loop {
+        match peer::running(pid) {
+            Some(false) => return Ok(true),
+            None => return Ok(false),
+            Some(true) if started.elapsed() >= limit => return Err("answers no more, but its process still runs"),
+            Some(true) => std::thread::sleep(every),
+        }
+    }
 }
 
 /// The game writes the PNG under a temporary name and renames it when complete, so
@@ -1184,6 +1207,54 @@ mod tests {
             let out = client.act("dev", tool, args).unwrap();
             assert_eq!(out["result"], format!("{tool} done as request {id}"));
         }
+    }
+
+    /// `quit` waits through answers that prove nothing (an error while the game shuts down) until
+    /// nothing answers, then until its process is gone; a process that stays is an error.
+    #[test]
+    fn quit_waits_until_the_game_answers_no_more_and_its_process_is_gone() {
+        use crate::fake::{error, reply, serve};
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+
+        let calls = Arc::new(AtomicU32::new(0));
+        let ending = || {
+            let calls = calls.clone();
+            calls.store(0, Ordering::SeqCst);
+            serve(move |_, _| match calls.fetch_add(1, Ordering::SeqCst) {
+                0 => Some(reply(json!({"instance": {"pid": 4242}}))),
+                1 => Some(error("ai/status: the world is being torn down")),
+                // The connection drops unanswered: the game is gone.
+                _ => None,
+            })
+        };
+        let sleeper = || {
+            let mut command = if cfg!(windows) { std::process::Command::new("ping") } else { std::process::Command::new("sleep") };
+            if cfg!(windows) {
+                command.args(["-n", "30", "127.0.0.1"]);
+            } else {
+                command.arg("30");
+            }
+            command.stdout(std::process::Stdio::null()).spawn().unwrap()
+        };
+        let (limit, every) = (Duration::from_secs(10), Duration::from_millis(10));
+
+        // No pid: that it answers no more is all there is to know.
+        assert_eq!(until_ended(&Client::new(ending(), None), None, limit, every), Ok(false));
+        assert!(calls.load(Ordering::SeqCst) >= 3, "the error was no proof: it was asked again");
+        let mut child = sleeper();
+        let gone = child.id();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        drop(child);
+        assert_eq!(until_ended(&Client::new(ending(), None), Some(gone), limit, every), Ok(true));
+        let mut child = sleeper();
+        let stays = until_ended(&Client::new(ending(), None), Some(child.id()), Duration::from_millis(300), every);
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert_eq!(stays, Err("answers no more, but its process still runs"));
+        let answering = serve(|_, _| Some(reply(json!({"instance": {"pid": 4242}}))));
+        assert_eq!(until_ended(&Client::new(answering, None), None, Duration::from_millis(100), every), Err("still answers"));
     }
 
     #[test]

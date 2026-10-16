@@ -407,7 +407,7 @@ Windows, где тестов меньше (часть только для Unix) 
 |---|---|---|
 | `ai_core` | 93 | `crates/ai_core/src/*` (снапшоты 22, строки и пункты меню разработчика `dev` 2) |
 | `shards_script` | 59 | `crates/shards_script/src/*` (разбор, условия, запуск сценариев 30, долгая игра `soak` 7, входы 2) |
-| `shards_cli` | 53 | `crates/shards_cli/src/*` (клиент игры-пира `peer` 25, сценарии 12, команды 16) |
+| `shards_cli` | 62 | `crates/shards_cli/src/*` (клиент игры-пира `peer` 26, сценарии 12, команды 17, сборка `package` 7; один только на unix) |
 | `shards_core` | 14 | `src/` и `tests/core.rs` |
 | `shards_content` | 23 | `src/` и `tests/content.rs` (проверки, которые другой модуль добавляет к виду) |
 | `shards_motion` | 175 | `src/` и `tests/motion/` (контроллер 28, перцепция 29, ввод 30, физика 11, …) |
