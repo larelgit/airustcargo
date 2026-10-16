@@ -353,3 +353,33 @@ fn the_mistakes_of_a_broken_export_name_their_nodes() {
     assert!(err.starts_with("level `outpost_broken.glb` has 6 problems:"), "{err}");
     assert!(err.contains("\n  node `Ruins/Säule`: ") && !err.contains("Markers/Костёр"), "{err}");
 }
+
+#[test]
+fn a_broken_re_export_is_refused_and_the_fixed_one_replaces_the_level() {
+    let file = |path: &str| std::fs::read(blender().join(path)).unwrap();
+    let (good, broken) = (file("outpost.glb"), file("outpost_broken.glb"));
+    let (level, prefab) = (file("content/levels/outpost.level.ron"), file("content/props/bandit.prefab.ron"));
+    let dir = temp_assets(
+        "blender_reload",
+        &[("outpost.glb", &good), ("content/levels/outpost.level.ron", &level), ("content/props/bandit.prefab.ron", &prefab)],
+    );
+    let mut app = app_in(&dir);
+    ok(&mut app, "spawn_level", json!({"id": "outpost"}));
+    let ground = by_node(&mut app)["Ground"];
+
+    // The artist exports the version with mistakes over the file: the asset server reloads it,
+    // and the level stays as it was.
+    std::fs::write(dir.join("outpost.glb"), &broken).unwrap();
+    app.world().resource::<AssetServer>().reload("outpost.glb");
+    update_until(&mut app, "the refusal", |app| errors(app).iter().any(|e| e.contains("kept as it was")));
+    let refusal = errors(&app).into_iter().find(|e| e.contains("kept as it was")).unwrap();
+    assert!(refusal.contains("outpost (instance 1) kept as it was"), "{refusal}");
+    assert!(refusal.contains("node `Crate.001`: unknown component `Helth` (did you mean `Health`?)"), "{refusal}");
+    assert_eq!(by_node(&mut app)["Ground"], ground);
+
+    // Fixed and exported again: the instance follows the file.
+    std::fs::write(dir.join("outpost.glb"), &good).unwrap();
+    app.world().resource::<AssetServer>().reload("outpost.glb");
+    update_until(&mut app, "the fixed file", |app| journal(app).iter().any(|l| l.contains("level reloaded: outpost (instance 1, 22 entities)")));
+    assert_ne!(by_node(&mut app)["Ground"], ground, "replaced");
+}
