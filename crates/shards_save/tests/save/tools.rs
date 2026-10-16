@@ -2,9 +2,10 @@
 
 use std::fs;
 
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use shards::ai_core::{call_tool, AgentSessions, AiId, Scope};
-use shards::save::SaveFile;
+use shards::ai_core::{call_tool, AgentSessions, AiId, JournalKind, Scope};
+use shards::save::{SaveFile, SaveKind, SaveSection};
 
 use shards::prelude::*;
 
@@ -274,4 +275,100 @@ fn every_save_written_is_announced_with_its_bytes_and_a_refused_one_is_not() {
     // A save that is refused writes nothing and says nothing.
     fails(&mut app, "save_game", json!({"what": "world", "slot": "Not A Slot"}));
     assert_eq!(app.world().resource::<Written>().0.len(), 3);
+}
+
+/// The kind whose [`Brittle`] section refuses to load while the world has this.
+#[derive(Resource)]
+struct Refuse(SaveKind);
+
+fn refused(world: &World, kind: SaveKind) -> Result<(), String> {
+    match world.get_resource::<Refuse>() {
+        Some(refuse) if refuse.0 == kind => Err("refused on purpose".to_owned()),
+        _ => Ok(()),
+    }
+}
+
+/// A world section that loads unless the world has `Refuse(World)`.
+#[derive(Serialize, Deserialize)]
+struct Brittle {
+    kept: bool,
+}
+
+impl SaveSection for Brittle {
+    const NAME: &'static str = "brittle";
+    const VERSION: u32 = 1;
+    const KIND: SaveKind = SaveKind::World;
+
+    fn capture(_: &World, _: Option<Entity>) -> Result<Self, String> {
+        Ok(Brittle { kept: true })
+    }
+
+    fn apply(self, world: &mut World, _: Option<Entity>) -> Result<(), String> {
+        refused(world, Self::KIND)
+    }
+}
+
+/// A character section that loads unless the world has `Refuse(Character)`.
+#[derive(Serialize, Deserialize)]
+struct BrittleHero {
+    kept: bool,
+}
+
+impl SaveSection for BrittleHero {
+    const NAME: &'static str = "brittle_hero";
+    const VERSION: u32 = 1;
+    const KIND: SaveKind = SaveKind::Character;
+
+    fn capture(_: &World, _: Option<Entity>) -> Result<Self, String> {
+        Ok(BrittleHero { kept: true })
+    }
+
+    fn apply(self, world: &mut World, _: Option<Entity>) -> Result<(), String> {
+        refused(world, Self::KIND)
+    }
+}
+
+/// The game with both brittle sections, and the weather when `later` (a newer game: files
+/// of the older one lack it, so its `missing` runs on load).
+fn brittle_game(dir: &TempDir, later: Option<SaveKind>) -> App {
+    game_in(dir, |app| {
+        if let Some(refuse) = later {
+            app.insert_resource(Weather("rain".into())).add_save_section::<WeatherSave>().insert_resource(Refuse(refuse));
+        }
+        app.add_save_section::<Brittle>().add_save_section::<BrittleHero>();
+    })
+}
+
+#[test]
+fn a_load_that_fails_part_way_says_what_it_applied_and_records_the_load() {
+    let dir = TempDir::new("partway");
+    let mut app = brittle_game(&dir, None);
+    some_state(&mut app);
+    ok(&mut app, "save_game", json!({"what": "all", "slot": "camp"}));
+
+    // The world's last section refuses: what ran before it stays, the weather's `missing` too.
+    let mut world_fails = brittle_game(&dir, Some(SaveKind::World));
+    other_state(&mut world_fails);
+    let err = fails(&mut world_fails, "load_game", json!({"what": "all", "slot": "camp"}));
+    assert_eq!(
+        err,
+        "loading world/camp failed at section brittle: refused on purpose; applied before it: region, chests, calendar, weather (missing from the file). \
+         The world is partly loaded: fix the cause and load again, or go back with snapshot_load"
+    );
+    assert_eq!(calendar(&world_fails).day, 40);
+    assert_eq!(world_fails.world().resource::<Weather>().0, "clear", "its `missing` ran");
+    assert_eq!(hero(&mut world_fails).name, "Bob", "the character was not reached");
+    assert_eq!(lines(&world_fails, JournalKind::Error, "save: loading world/camp failed: section brittle: refused on purpose").len(), 1);
+    assert!(shards::ai_core::replay::save(world_fails.world()).start.is_some(), "the recording restarts from the partly loaded world");
+
+    // The character's last section refuses after the world was loaded.
+    let mut hero_fails = brittle_game(&dir, Some(SaveKind::Character));
+    other_state(&mut hero_fails);
+    let err = fails(&mut hero_fails, "load_game", json!({"what": "all", "slot": "camp"}));
+    assert_eq!(
+        err,
+        "loading character/camp failed at section brittle_hero: refused on purpose; applied before it: position, vitals, hero; already loaded: world/camp. \
+         The world is partly loaded: fix the cause and load again, or go back with snapshot_load"
+    );
+    assert_eq!((hero(&mut hero_fails).name, calendar(&hero_fails).day), ("Ada".to_owned(), 40));
 }

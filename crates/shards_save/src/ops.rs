@@ -309,8 +309,24 @@ pub struct Applied {
 /// A failed apply: how far it got.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApplyError {
+    /// Sections put into the world before the one that failed, in order.
     pub applied: Vec<String>,
+    /// Sections the set lacked whose `missing` ran before the one that failed: they changed
+    /// the world too.
+    pub missing: Vec<String>,
     pub message: String,
+}
+
+impl ApplyError {
+    /// A failure before any section ran.
+    fn before(message: String) -> Self {
+        ApplyError { applied: Vec::new(), missing: Vec::new(), message }
+    }
+
+    /// Whether any section ran before the failure (its `apply` or its `missing`).
+    pub fn changed_anything(&self) -> bool {
+        !self.applied.is_empty() || !self.missing.is_empty()
+    }
 }
 
 fn apply_prepared(world: &mut World, kind: SaveKind, body: Option<Entity>, prepared: Prepared) -> Result<Applied, ApplyError> {
@@ -323,7 +339,7 @@ fn apply_prepared(world: &mut World, kind: SaveKind, body: Option<Entity>, prepa
             None => entry.missing(world, body).inspect(|()| done.missing.push(entry.name.clone())),
         };
         if let Err(message) = result {
-            return Err(ApplyError { applied: done.applied, message: format!("section {}: {message}", entry.name) });
+            return Err(ApplyError { applied: done.applied, missing: done.missing, message: format!("section {}: {message}", entry.name) });
         }
     }
     Ok(done)
@@ -335,14 +351,12 @@ fn apply_prepared(world: &mut World, kind: SaveKind, body: Option<Entity>, prepa
 /// prepare; a section that fails when applied stops the rest.
 pub fn apply_sections(world: &mut World, kind: SaveKind, body: Option<Entity>, set: &SectionSet) -> Result<Applied, ApplyError> {
     if kind == SaveKind::Character && body.is_none() {
-        return Err(ApplyError { applied: Vec::new(), message: "there is no player body to put the character into".to_owned() });
+        return Err(ApplyError::before("there is no player body to put the character into".to_owned()));
     }
     let prepared = {
-        let registry = world.get_resource::<SaveRegistry>().ok_or_else(|| ApplyError {
-            applied: Vec::new(),
-            message: "the save module is not installed (add SavePlugin)".to_owned(),
-        })?;
-        prepare(registry, kind, set).map_err(|fault| ApplyError { applied: Vec::new(), message: format!("the save was {fault}") })?
+        let registry =
+            world.get_resource::<SaveRegistry>().ok_or_else(|| ApplyError::before("the save module is not installed (add SavePlugin)".to_owned()))?;
+        prepare(registry, kind, set).map_err(|fault| ApplyError::before(format!("the save was {fault}")))?
     };
     for name in &prepared.unknown {
         journal_warn(world, format!("save: unknown {kind} section {name} skipped (this game does not save it)"));
@@ -622,8 +636,10 @@ impl std::fmt::Display for LoadReport {
 /// file is read and checked before anything is applied; a slot whose copies are all damaged
 /// changes nothing and the error names each copy's problem. Then the sections apply in
 /// registration order, and the recording restarts from the loaded state, so a replay saved
-/// afterwards verifies. A section that fails when applied leaves the world partly loaded
-/// and says how far it got.
+/// afterwards verifies. A section that fails when applied stops the load and the error says
+/// how far it got: what ran before it (`apply`, or `missing` for a section the file lacks, in
+/// this kind or a kind loaded before) stays, the world is partly loaded and the recording
+/// restarts from it; when nothing ran, nothing was applied and the call is not recorded.
 pub fn load_slot(world: &mut World, what: SaveWhat, slot: &str) -> Result<Vec<LoadReport>, String> {
     let slots = SaveSlots { world: slot.to_owned(), character: slot.to_owned() };
     load_parts(world, &what.parts(), &slots)
@@ -667,21 +683,27 @@ pub fn load_parts(world: &mut World, parts: &[(SaveKind, Option<Entity>)], slots
                 reports.push(LoadReport { kind, slot, tick: file.tick, label: file.label, applied: done.applied.len(), missing: done.missing.len(), unknown, recovery });
             }
             Err(e) => {
-                applied_anything |= !e.applied.is_empty();
-                world_applied |= kind == SaveKind::World && !e.applied.is_empty();
+                applied_anything |= e.changed_anything();
+                world_applied |= kind == SaveKind::World && e.changed_anything();
                 journal::emit(world, JournalKind::Error, format!("save: loading {kind}/{slot} failed: {}", e.message));
-                let done = if e.applied.is_empty() { "nothing of it was applied".to_owned() } else { format!("applied before it: {}", e.applied.join(", ")) };
-                if applied_anything {
-                    restart_recording(world, "load_game");
-                    if world_applied {
-                        ai_core::world_rebuilt(world, format!("save {slot} loaded"));
-                    }
-                } else {
+                if !applied_anything {
                     ai_core::replay::forget_call(world);
+                    return Err(format!("loading {kind}/{slot} failed at {}; nothing was applied: fix the cause and load again", e.message));
+                }
+                restart_recording(world, "load_game");
+                if world_applied {
+                    ai_core::world_rebuilt(world, format!("save {slot} loaded"));
+                }
+                let before: Vec<String> = e.applied.iter().cloned().chain(e.missing.iter().map(|name| format!("{name} (missing from the file)"))).collect();
+                let mut done = vec![if before.is_empty() { "nothing of it was applied".to_owned() } else { format!("applied before it: {}", before.join(", ")) }];
+                if !reports.is_empty() {
+                    let loaded: Vec<String> = reports.iter().map(|r| format!("{}/{}", r.kind, r.slot)).collect();
+                    done.push(format!("already loaded: {}", loaded.join(", ")));
                 }
                 return Err(format!(
-                    "loading {kind}/{slot} failed at {}; {done}. The world is partly loaded: fix the cause and load again, or go back with snapshot_load",
-                    e.message
+                    "loading {kind}/{slot} failed at {}; {}. The world is partly loaded: fix the cause and load again, or go back with snapshot_load",
+                    e.message,
+                    done.join("; ")
                 ));
             }
         }
