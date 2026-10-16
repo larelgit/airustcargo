@@ -6,8 +6,8 @@
 //! reload, no developer keys. On Windows (MSVC) the C runtime is linked in (`+crt-static`: no
 //! Visual C++ redistributable to install) and `assets/icon.png` becomes the program's icon.
 //! The program and `assets/` go to `dist/<name>-<version>-<os>-<arch>/` beside the game's
-//! `Cargo.toml`, with the dynamic libraries build scripts link beside the program (the Steamworks
-//! SDK's `steam_api64.dll`, feature `steam_sdk`) and never a `steam_appid.txt`. Then that folder is
+//! `Cargo.toml`, with the Steamworks SDK's library beside the program (`steam_api64.dll`, feature
+//! `steam_sdk`; no other library a build script links) and never a `steam_appid.txt`. Then that folder is
 //! checked: on Windows the DLLs it imports are the system's or shipped beside it;
 //! a copy of it in a temporary folder, started with an environment as bare as a player's (no
 //! cargo, no `BEVY_ASSET_ROOT`), passes `--check-content` and `--smoke`, and writes nothing into
@@ -192,8 +192,8 @@ fn default_profile(workspace_root: &Path) -> String {
 /// What a build made: the program, and the dynamic libraries it needs beside it.
 struct Built {
     exe: PathBuf,
-    /// The libraries build scripts link dynamically (`dylib=`), found where they link them from:
-    /// the Steamworks SDK's `steam_api64.dll` (feature `steam_sdk` of `shards`).
+    /// The Steamworks SDK's library its package's build script copied (`steam_api64.dll`, feature
+    /// `steam_sdk` of `shards`); none without it.
     libraries: Vec<PathBuf>,
 }
 
@@ -259,12 +259,33 @@ fn build(game: &Game, profile: &str) -> Result<Built, String> {
     Ok(Built { exe, libraries })
 }
 
-/// The libraries a `build-script-executed` message links dynamically (`dylib=steam_api64`), as the
-/// files of `os` found in the paths it links from; none for any other message.
+/// The package whose build script brings the Steamworks SDK's library (`steam_api64.dll`,
+/// `libsteam_api.so`, `libsteam_api.dylib`): the one dynamic library a package ships.
+const STEAM_SDK_PACKAGE: &str = "steamworks-sys";
+
+/// A package id's name: `steamworks-sys` of `registry+https://…#steamworks-sys@0.13.0` (cargo's
+/// form since 1.77; `path+file:///…/name#0.1.0` when the name is the folder's) or of
+/// `steamworks-sys 0.13.0 (registry+https://…)` (before).
+fn package_name(id: &str) -> Option<&str> {
+    if let Some((name, _)) = id.split_once(' ') {
+        return Some(name);
+    }
+    let (source, fragment) = id.rsplit_once('#')?;
+    match fragment.split_once('@') {
+        Some((name, _)) => Some(name),
+        None => source.split(['?', '#']).next()?.trim_end_matches('/').rsplit('/').next(),
+    }
+}
+
+/// The Steamworks SDK's library, as the file of `os`, from the `build-script-executed` message of
+/// its package ([`STEAM_SDK_PACKAGE`]): the copy its build script put in its own folder
+/// (`out_dir`). Nothing for any other message: the libraries other build scripts link (ALSA and
+/// udev through pkg-config on Linux) are the system's, and the player's system has its own.
 fn dynamic_libraries(message: &Value, os: &str) -> Vec<PathBuf> {
-    if message["reason"] != "build-script-executed" {
+    if message["reason"] != "build-script-executed" || message["package_id"].as_str().and_then(package_name) != Some(STEAM_SDK_PACKAGE) {
         return Vec::new();
     }
+    let Some(out_dir) = message["out_dir"].as_str().map(PathBuf::from) else { return Vec::new() };
     let strings = |key: &str| -> Vec<String> { message[key].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect() };
     let paths: Vec<PathBuf> = strings("linked_paths")
         .iter()
@@ -272,6 +293,7 @@ fn dynamic_libraries(message: &Value, os: &str) -> Vec<PathBuf> {
             let kinds = ["native", "dependency", "crate", "framework", "all"];
             PathBuf::from(p.split_once('=').filter(|(kind, _)| kinds.contains(kind)).map_or(p.as_str(), |(_, path)| path))
         })
+        .filter(|dir| dir.starts_with(&out_dir))
         .collect();
     let mut found = Vec::new();
     for lib in strings("linked_libs") {
@@ -871,7 +893,7 @@ mod tests {
     }
 
     #[test]
-    fn the_dynamic_libraries_build_scripts_link_go_beside_the_program_and_steam_appid_txt_never_does() {
+    fn only_the_steamworks_sdk_s_library_goes_beside_the_program_and_steam_appid_txt_never_does() {
         let dir = std::env::temp_dir().join(format!("shards-package-libraries-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let (out, package) = (dir.join("out"), dir.join("package"));
@@ -889,11 +911,50 @@ mod tests {
             "out_dir": out.display().to_string(),
         });
         assert_eq!(dynamic_libraries(&message, "windows"), [out.join("steam_api64.dll")], "the static one and one not found are not shipped");
-        let unix = serde_json::json!({"reason": "build-script-executed", "linked_libs": ["dylib=steam_api"], "linked_paths": [out.display().to_string()]});
+        // Cargo before 1.77 named packages `name version (source)`.
+        let unix = serde_json::json!({
+            "reason": "build-script-executed",
+            "package_id": "steamworks-sys 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
+            "linked_libs": ["dylib=steam_api"],
+            "linked_paths": [out.display().to_string()],
+            "out_dir": out.display().to_string(),
+        });
         assert_eq!(dynamic_libraries(&unix, "linux"), [out.join("libsteam_api.so")]);
         assert_eq!(dynamic_libraries(&unix, "macos"), [out.join("libsteam_api.dylib")]);
         let artifact = serde_json::json!({"reason": "compiler-artifact", "linked_libs": ["dylib=steam_api64"], "linked_paths": [out.display().to_string()]});
         assert!(dynamic_libraries(&artifact, "windows").is_empty());
+
+        // What alsa-sys's build script tells cargo on Linux (pkg-config): a system library, and the
+        // player's system has its own: not shipped.
+        let system = dir.join("usr-lib");
+        std::fs::create_dir_all(&system).unwrap();
+        std::fs::write(system.join("libasound.so"), "alsa").unwrap();
+        let alsa = serde_json::json!({
+            "reason": "build-script-executed",
+            "package_id": "registry+https://github.com/rust-lang/crates.io-index#alsa-sys@0.3.1",
+            "linked_libs": ["asound"],
+            "linked_paths": [format!("native={}", system.display())],
+            "out_dir": dir.join("alsa-out").display().to_string(),
+        });
+        assert!(dynamic_libraries(&alsa, "linux").is_empty());
+        // The SDK's package linking a system library too: only its own copy of the SDK's goes.
+        let elsewhere = serde_json::json!({
+            "reason": "build-script-executed",
+            "package_id": "registry+https://github.com/rust-lang/crates.io-index#steamworks-sys@0.13.0",
+            "linked_libs": ["asound", "dylib=steam_api"],
+            "linked_paths": [format!("native={}", system.display()), format!("native={}", out.display())],
+            "out_dir": out.display().to_string(),
+        });
+        assert_eq!(dynamic_libraries(&elsewhere, "linux"), [out.join("libsteam_api.so")]);
+        for (id, name) in [
+            ("registry+https://github.com/rust-lang/crates.io-index#steamworks-sys@0.13.0", Some("steamworks-sys")),
+            ("steamworks-sys 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)", Some("steamworks-sys")),
+            ("path+file:///E:/game/crates/steamworks-sys#0.13.0", Some("steamworks-sys")),
+            ("git+https://github.com/x/steamworks-rs?branch=main#steamworks-sys@0.13.0", Some("steamworks-sys")),
+            ("nothing", None),
+        ] {
+            assert_eq!(package_name(id), name, "{id}");
+        }
 
         assert_eq!(place_libraries(&[out.join("steam_api64.dll")], &package).unwrap(), ["steam_api64.dll"]);
         assert!(package.join("steam_api64.dll").is_file());
