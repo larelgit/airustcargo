@@ -104,7 +104,8 @@ winit = { version = "=0.30.13", default-features = false }
 # Steamworks (lobbies, the relay, achievements, cloud) inside shards_steam only, behind its feature
 # `sdk` (`shards/steam_sdk`); never part of a public API, never in a default build. Pins
 # steamworks-sys 0.13 (Valve's SDK 1.64, bindings pre-generated: no bindgen, no libclang). `raw-bindings`: the
-# one call the crate does not wrap (inviting a friend into a lobby).
+# calls the crate does not wrap, or wraps so that an answer is lost or a value Steam sends panics (a friend
+# invited into a lobby, a session's route, sessions closed, a cloud file written whole, the quota, callbacks).
 steamworks = { version = "=0.13.1", default-features = false, features = ["raw-bindings"] }
 
 ai_core = { path = "crates/ai_core", default-features = false }
@@ -127,7 +128,7 @@ shards_fx = { path = "crates/shards_fx" }
 shards_world = { path = "crates/shards_world" }
 shards_net = { path = "crates/shards_net" }
 shards_steam = { path = "crates/shards_steam" }
-shards ={ path = "crates/shards", default-features = false }
+shards = { path = "crates/shards", default-features = false }
 
 # Bevy's recommended dev setup: optimise dependencies, keep our own code fast to compile.
 [profile.dev]
