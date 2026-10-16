@@ -2,6 +2,7 @@
 //! [`crate::real`]), the fake of this process ([`crate::fake`]), or none ([`Unavailable`]). Nothing
 //! here names a Steamworks type: the module's systems, tools and tests see only this.
 
+use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use shards_core::SteamLobby;
@@ -10,6 +11,37 @@ use shards_net::NetClock;
 /// A Steam id: a user's or a lobby's 64-bit number, as Steam shows it (`76561197960265729`).
 pub type SteamId = u64;
 
+/// The lobby data a host writes ([`crate::session`]) and a search reads back and filters on
+/// ([`Backend::find_lobbies`]).
+pub(crate) mod data {
+    /// The game's name and version (`NetGame`): a lobby of another game is none of ours.
+    pub const GAME: &str = "game";
+    /// The engine's version.
+    pub const ENGINE: &str = "engine";
+    /// `ContentDb::hash`, in hex.
+    pub const CONTENT: &str = "content";
+    /// `net_rules::rules_hash`, in hex.
+    pub const RULES: &str = "rules";
+    /// The host's name on Steam, when it made the lobby.
+    pub const HOST: &str = "host";
+    /// Every key a search reads back.
+    pub const ALL: [&str; 5] = [GAME, ENGINE, CONTENT, RULES, HOST];
+}
+
+/// The most lobbies one search answers with.
+pub(crate) const MAX_FOUND: usize = 50;
+
+/// One lobby in the answer to a search.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LobbyInfo {
+    pub lobby: SteamId,
+    pub owner: Option<SteamId>,
+    pub members: u32,
+    pub max: u32,
+    /// The lobby data of [`data::ALL`] it has set.
+    pub data: BTreeMap<String, String>,
+}
+
 /// What a backend says happened since the last [`Backend::pump`], in order.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Event {
@@ -17,6 +49,8 @@ pub(crate) enum Event {
     LobbyCreated(Result<SteamId, String>),
     /// This machine entered `lobby` (or why it could not).
     LobbyEntered { lobby: SteamId, result: Result<(), String> },
+    /// The answer to [`Backend::find_lobbies`]: the lobbies it found (or why Steam could not search).
+    LobbiesFound(Result<Vec<LobbyInfo>, String>),
     /// `user` entered or left (`joined: false`: left, disconnected, kicked) a lobby this machine is in.
     MemberChanged { lobby: SteamId, user: SteamId, joined: bool },
     /// The player accepted an invite to `lobby` from `from` (the overlay, a friend's "join game"),
@@ -156,6 +190,11 @@ pub(crate) trait Backend: Send + Sync + 'static {
     fn create_lobby(&mut self, max_members: u32, kind: SteamLobby) -> Result<(), String>;
     /// Starts entering `lobby`.
     fn join_lobby(&mut self, lobby: SteamId) -> Result<(), String>;
+    /// Starts a search for the lobbies of this app that anyone may join: those with a free slot whose
+    /// data holds every `equal` pair, at most [`MAX_FOUND`] of them. Steam lists only `public` and
+    /// `invisible` lobbies: `friends` and `private` ones never appear in a search. The answer comes
+    /// as an [`Event::LobbiesFound`].
+    fn find_lobbies(&mut self, equal: &[(&str, &str)]) -> Result<(), String>;
     fn leave_lobby(&mut self, lobby: SteamId);
     fn lobby_owner(&self, lobby: SteamId) -> Option<SteamId>;
     fn lobby_members(&self, lobby: SteamId) -> Vec<SteamId>;
@@ -219,6 +258,9 @@ impl Backend for Unavailable {
         Err(self.reason.clone())
     }
     fn join_lobby(&mut self, _: SteamId) -> Result<(), String> {
+        Err(self.reason.clone())
+    }
+    fn find_lobbies(&mut self, _: &[(&str, &str)]) -> Result<(), String> {
         Err(self.reason.clone())
     }
     fn leave_lobby(&mut self, _: SteamId) {}

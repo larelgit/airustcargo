@@ -22,9 +22,12 @@ use shards_net::{NetClock, WallClock};
 use steamworks::networking_messages::{NetworkingMessages, SessionRequest};
 use steamworks::networking_types::{NetworkingIdentity, SendFlags};
 use steamworks::sys;
-use steamworks::{Callback, CallbackHandle, Client, GameLobbyJoinRequested, LobbyId, LobbyType, Server, ServerMode, SteamAPIInitError, SteamServersConnected};
+use steamworks::{
+    Callback, CallbackHandle, Client, DistanceFilter, GameLobbyJoinRequested, LobbyId, LobbyKey, LobbyListFilter, LobbyType, Server, ServerMode, SteamAPIInitError,
+    SteamServersConnected, StringFilter, StringFilterKind,
+};
 
-use crate::backend::{over_quota, Backend, CallbackGuard, Event, Info, Relay, Route, SteamId};
+use crate::backend::{data, over_quota, Backend, CallbackGuard, Event, Info, LobbyInfo, Relay, Route, SteamId, MAX_FOUND};
 
 /// The largest file Steam Cloud takes in one write (`k_unMaxCloudFileChunkSize`).
 const MAX_CLOUD_FILE: usize = 100 * 1024 * 1024;
@@ -59,6 +62,9 @@ pub(crate) struct RealBackend {
     app_id: u32,
     relay_only: bool,
     events: Shared<VecDeque<Event>>,
+    /// Lobby searches Steam answered, as the lobby ids it listed: [`RealBackend::pump`] reads each
+    /// lobby's details, so the callback holds no Steamworks handle that would keep Steam up.
+    found: Shared<VecDeque<Result<Vec<SteamId>, String>>>,
     requests: Shared<BTreeMap<SteamId, SessionRequest>>,
     wall: Arc<WallClock>,
     /// Stops Steam's callbacks after one panics.
@@ -297,6 +303,7 @@ impl RealBackend {
             app_id,
             relay_only: relay,
             events,
+            found: Arc::default(),
             requests,
             wall: Arc::new(WallClock::new()),
             guard: CallbackGuard::default(),
@@ -331,6 +338,25 @@ impl RealBackend {
         }
     }
 
+    /// What Steam holds on the lobbies a search listed (it caches them with the list).
+    fn lobby_infos(&self, lobbies: &[SteamId]) -> Vec<LobbyInfo> {
+        let matchmaking = self.client.matchmaking();
+        lobbies
+            .iter()
+            .map(|lobby| {
+                let id = LobbyId::from_raw(*lobby);
+                let owner = matchmaking.lobby_owner(id).raw();
+                LobbyInfo {
+                    lobby: *lobby,
+                    owner: (owner != 0).then_some(owner),
+                    members: u32::try_from(matchmaking.lobby_member_count(id)).unwrap_or(u32::MAX),
+                    max: matchmaking.lobby_member_limit(id).and_then(|max| u32::try_from(max).ok()).unwrap_or(0),
+                    data: data::ALL.iter().filter_map(|key| Some(((*key).to_owned(), matchmaking.lobby_data(id, key)?))).collect(),
+                }
+            })
+            .collect()
+    }
+
     /// A player's call on a game server: refused.
     fn player_only(&self) -> Result<(), String> {
         match self.server {
@@ -351,6 +377,8 @@ impl Backend for RealBackend {
         let client = &self.client;
         let stopped = self.guard.run(|| client.run_callbacks());
         let mut events: Vec<Event> = lock(&self.events).drain(..).collect();
+        let found: Vec<_> = lock(&self.found).drain(..).collect();
+        events.extend(found.into_iter().map(|answer| Event::LobbiesFound(answer.map(|ids| self.lobby_infos(&ids)))));
         events.extend(stopped);
         for event in &mut events {
             if let (Event::ServerLoggedOn(id), Some(server)) = (&mut *event, &self.server) {
@@ -462,6 +490,25 @@ impl Backend for RealBackend {
         self.client.matchmaking().join_lobby(LobbyId::from_raw(lobby), move |entered| {
             let result = entered.map(|_| ()).map_err(|()| "Steam refused (the lobby is gone or full, or you may not enter it)".to_owned());
             lock(&ev).push_back(Event::LobbyEntered { lobby, result });
+        });
+        Ok(())
+    }
+
+    fn find_lobbies(&mut self, equal: &[(&str, &str)]) -> Result<(), String> {
+        self.player_only()?;
+        self.guard.answering()?;
+        // Steamworks panics on a key over 255 bytes and on a NUL inside a string.
+        if let Some((key, value)) = equal.iter().find(|(key, value)| key.len() > 255 || key.contains('\0') || value.contains('\0')) {
+            return Err(format!("`{key}={value}` is no lobby filter Steam takes (a key is up to 255 bytes, and no text holds a NUL)"));
+        }
+        let strings: Vec<StringFilter> = equal.iter().map(|(key, value)| StringFilter(LobbyKey::new(key), value, StringFilterKind::Equal)).collect();
+        // One free slot: only lobbies a player can still enter. Worldwide: the friends of a player
+        // may be anywhere, and the build filters leave few lobbies.
+        let filter = LobbyListFilter::default().set_string(Some(strings)).set_open_slots(Some(1)).set_distance(Some(DistanceFilter::Worldwide)).set_count(Some(MAX_FOUND as u64));
+        let found = self.found.clone();
+        let matchmaking = self.client.matchmaking();
+        matchmaking.set_lobby_list_filter(filter).request_lobby_list(move |answer| {
+            lock(&found).push_back(answer.map(|lobbies| lobbies.into_iter().map(|lobby| lobby.raw()).collect()).map_err(|e| format!("Steam could not list lobbies ({e})")));
         });
         Ok(())
     }

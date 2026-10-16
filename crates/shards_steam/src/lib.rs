@@ -18,14 +18,18 @@
 //!   [`UnlockAchievement`] or [`unlock_achievement`] ([`achievements`]).
 //! * Every save written goes to Steam Cloud; at startup a newer cloud copy is taken, one from a
 //!   newer version of the game never, and it is never overwritten ([`cloud`]).
-//! * Tools: `steam`, `steam_host`, `steam_join`, `steam_invite`, `achievement_unlock`; `ai/status`
-//!   field `steam`; the developer menu's `steam` section.
+//! * `steam_lobbies` searches for the lobbies of this game and build that a player can join: the
+//!   host writes the game, engine, content and rules into its lobby's data, and Steam lists only
+//!   `public` and `invisible` lobbies ([`lobbies`]).
+//! * Tools: `steam`, `steam_lobbies`, `steam_host`, `steam_join`, `steam_invite`, `achievement_unlock`;
+//!   `ai/status` field `steam`; the developer menu's `steam` section.
 
 pub mod achievements;
 mod backend;
 pub mod cloud;
 pub mod fake;
 pub mod launch;
+mod lobbies;
 #[cfg(feature = "sdk")]
 mod real;
 pub mod session;
@@ -136,6 +140,7 @@ impl Plugin for SteamPlugin {
             .add_exit_hook("steam: store the achievements, leave the lobby", session::on_exit)
             .add_ai_status("steam", tools::status)
             .add_dev_entry("steam", "steam", "Steam: who, lobby, relay", DevCommand::Run("steam".into()))
+            .add_dev_entry("steam", "steam_lobbies", "Find lobbies", DevCommand::Run("steam_lobbies".into()))
             .add_dev_entry("steam", "steam_invite", "Invite a friend", DevCommand::Run("steam_invite".into()))
             .add_dev_entry("steam", "steam_join", "Enter a lobby...", DevCommand::Fill("steam_join lobby=".into()))
             .add_dev_entry("steam", "achievement_unlock", "Unlock an achievement...", DevCommand::Fill("achievement_unlock id=".into()));

@@ -17,10 +17,11 @@ use ai_core::journal::{self, JournalKind};
 use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::{EngineConfig, NetLaunch, SteamLobby};
-use shards_net::{net_def, ClientStage, NetClient, NetEndpoint, NetGame, NetState};
+use shards_net::{net_def, ClientStage, NetClient, NetEndpoint, NetState};
 
-use crate::backend::{Backend, Event, SteamId};
+use crate::backend::{data, Backend, Event, SteamId};
 use crate::launch::{classify, parse_address, SteamAddress};
+use crate::lobbies::{self, Build, Search};
 use crate::transport::{RelayStats, SteamTransport};
 use crate::Steam;
 
@@ -84,6 +85,8 @@ pub struct SteamSession {
     /// Who was refused: the journal says it once per peer (a refused game keeps asking).
     refused_peers: std::collections::BTreeSet<SteamId>,
     pub(crate) relay: Option<Arc<Mutex<RelayStats>>>,
+    /// The lobby search `steam_lobbies` runs ([`lobbies`]).
+    pub(crate) search: Search,
 }
 
 impl SteamSession {
@@ -102,7 +105,7 @@ impl SteamSession {
             _ => (SteamRole::None, SteamState::None),
         };
         let lobby_type = (role == SteamRole::Host).then_some(config.steam.lobby);
-        Self { role, state, lobby_type, members: Vec::new(), invites: Vec::new(), refused: 0, refused_peers: Default::default(), relay: None }
+        Self { role, state, lobby_type, members: Vec::new(), invites: Vec::new(), refused: 0, refused_peers: Default::default(), relay: None, search: Search::default() }
     }
 
     /// The lobby this game is in.
@@ -160,7 +163,7 @@ pub(crate) fn pump(world: &mut World) {
     crate::cloud::send_waiting(world);
 }
 
-fn unavailable(backend: &dyn Backend) -> Option<String> {
+pub(crate) fn unavailable(backend: &dyn Backend) -> Option<String> {
     (!backend.available()).then(|| format!("Steam is unavailable ({})", backend.info().note.unwrap_or_else(|| "no Steam".into())))
 }
 
@@ -215,6 +218,7 @@ fn on_event(world: &mut World, backend: &mut dyn Backend, event: Event) {
                 Err(e) => client_failed(world, backend, Some(lobby), &e),
             }
         }
+        Event::LobbiesFound(answer) => lobbies::answered(world, answer),
         Event::MemberChanged { lobby, user, joined } => member_changed(world, backend, lobby, user, joined),
         Event::JoinRequested { lobby, from } => join_requested(world, backend, lobby, from),
         Event::SessionRequest { from } => session_request(world, backend, from),
@@ -230,6 +234,7 @@ fn on_event(world: &mut World, backend: &mut dyn Backend, event: Event) {
             journal::emit(world, JournalKind::Error, format!("steam: {why}"));
             // What waited for Steam's answer gets none.
             let stopped = "Steam's callbacks stopped (`steam` says why)";
+            lobbies::answered(world, Err(stopped.to_owned()));
             match world.resource::<SteamSession>().state.clone() {
                 SteamState::Creating | SteamState::LoggingOn => host_failed(world, stopped),
                 SteamState::Joining(lobby) => client_failed(world, backend, Some(lobby), stopped),
@@ -256,13 +261,14 @@ fn host_open(world: &mut World) {
     }
 }
 
-/// The host's lobby exists: its data (what the game is, who hosts), the relay.
+/// The host's lobby exists: its data (what the game and its build are, who hosts: what a lobby
+/// search filters on), the relay.
 fn hosting(world: &mut World, backend: &mut dyn Backend, lobby: SteamId) {
     let Some(me) = backend.info().user else { return };
-    let game = world.get_resource::<NetGame>().cloned().unwrap_or_default().0;
-    backend.set_lobby_data(lobby, "game", &game);
-    backend.set_lobby_data(lobby, "engine", crate::VERSION);
-    backend.set_lobby_data(lobby, "host", &backend.info().name);
+    for (key, value) in Build::of(world).lobby_data() {
+        backend.set_lobby_data(lobby, key, value);
+    }
+    backend.set_lobby_data(lobby, data::HOST, &backend.info().name);
     let members = backend.lobby_members(lobby);
     {
         let mut s = session(world);

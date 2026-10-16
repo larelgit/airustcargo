@@ -4703,8 +4703,8 @@ shards = { git = "…", tag = "…", features = ["steam_sdk"] }   # настоя
 
 | флаг | что делает |
 |---|---|
-| `--steam-host` | хост в новом лобби на `max_players` игроков (из `NetDef`), по умолчанию «только друзья». В данных лобби — `game`, `engine` и `host`. Друзей зовут `steam_invite friend=ID` или оверлеем Steam |
-| `--steam-lobby TYPE` | с `--steam-host`: кто видит лобби, как типы лобби Steam. `friends` (по умолчанию: друзья видят и входят), `private` (войти можно только по приглашению), `invisible` (друзья его не видят), `public` (ещё и список лобби Steam). Тип называют журнал (`steam: hosting in lobby … (private: invite only): …`), `steam` (`lobby … (friends only)`) и `ai/status` (`lobby_type`). Без `--steam-host` (в том числе с `--steam-server`) флаг — ошибка разбора |
+| `--steam-host` | хост в новом лобби на `max_players` игроков (из `NetDef`), по умолчанию «только друзья». В данных лобби — `game`, `engine`, `content` и `rules` (сборка: то, что сверяет `hello` хоста), и `host`; по ним лобби ищут (`steam_lobbies`). Друзей зовут `steam_invite friend=ID` или оверлеем Steam |
+| `--steam-lobby TYPE` | с `--steam-host`: кто видит лобби, как типы лобби Steam. `friends` (по умолчанию: друзья видят и входят), `private` (войти можно только по приглашению), `invisible` (друзья его не видят, поиск находит), `public` (друзья видят, и поиск находит). `friends` и `private` поиск не находит никогда. Тип называют журнал (`steam: hosting in lobby … (private: invite only): …`), `steam` (`lobby … (friends only)`) и `ai/status` (`lobby_type`). Без `--steam-host` (в том числе с `--steam-server`) флаг — ошибка разбора |
 | `--steam-server` | хост — анонимный игровой сервер Steam (`127.0.0.1`, порты 27215 и 27216, без аутентификации): без лобби и без пользователя Steam, поэтому идёт рядом с клиентом Steam на той же машине. Это хост, как любой другой: у него свой игрок 0 с телом (выделенного сервера без игрока в `shards_net` нет). Его id (тип 4) называют журнал (`steam: game server logged on as 90071992547409921: players join with --join steam:90071992547409921`), `steam` и `ai/status` |
 | `--join steam:<id>` | id лобби (тип 8) — войти в лобби, хост — его владелец; id игрока или сервера (типы 1, 3, 4) — к хосту напрямую, без лобби. Другой тип — ошибка с его номером |
 | `--join steam:` | ждать приглашения (или `steam_join`) |
@@ -4735,6 +4735,42 @@ lobbies, invites, relay sessions and achievement stores no longer answer; restar
 host` или ошибку входа; `steam_host` и `steam_join` отвечают той же причиной. Отчёта о падении нет: паника поймана. Колбэки,
 разбор которых в `steamworks` 0.13 может упасть на значении от Steam (код `EResult`, которого нет в его таблице, несколько битов
 смены участника лобби), движок читает сам, как числа.
+
+### Поиск лобби
+
+Игрок входит по приглашению или по id лобби; `steam_lobbies` добавляет третий путь: найти лобби этой игры самому. Хост пишет в
+данные лобби `game` (название и версия игры, `NetGame`), `engine` (версия движка), `content` (хэш контента, `ContentDb::hash`),
+`rules` (хэш сетевых правил, `net_rules::rules_hash`; оба в шестнадцатеричном виде) и `host` (своё имя в Steam). Первые четыре
+сверяет `hello` хоста при входе клиента, поэтому лобби «этой сборки» — то, куда хост клиента пустит. Поиск
+(`ISteamMatchmaking::RequestLobbyList`) просит у Steam лобби, у которых `game`, `engine`, `content` и `rules` равны своим, со
+свободным местом (`AddRequestLobbyListFilterSlotsAvailable(1)`), по всему миру (`k_ELobbyDistanceFilterWorldwide`: друзья могут
+быть где угодно) и не больше 50. С `all=true` равенства проверяет только `game`, а лобби другой сборки в ответе называет, чем
+оно отличается (`build differs: engine 0.8.0 (yours 0.9.0), content … (yours …)`): хост такого лобби отказал бы `hello`.
+
+```text
+$ shards --peer c1 act steam_lobbies          # тест lobbies.rs: поддельный Steam, хост с --steam-lobby invisible
+1 lobby of `game` of this build with a free slot:
+lobby 109775240917319681 · host host (76561197960265729) · 1 of 3 · build matches
+enter one with steam_join lobby=ID
+$ shards act steam_lobbies                    # хост с лобби по умолчанию (friends)
+no lobby of `game` of this build with a free slot answers the search
+Steam's search lists public and invisible lobbies only: a host started with --steam-lobby friends (the default) or private is never in it
+all=true lists the lobbies of other builds of this game too
+note: this game's own lobby 109775240917319681 (friends) is not in the answer: Steam's search never lists friends-only or private lobbies; host with --steam-lobby public or invisible to be found
+```
+
+- **Какие лобби находит Steam.** Только `public` и `invisible`: `friends` и `private` в поиске не появляются никогда, лобби
+  самого хоста тоже (так сказано в документации Steam; подделка ведёт себя так же). Когда лобби хоста в ответ не попало, ответ
+  говорит почему: тип `friends` или `private` (запустите хост с `--steam-lobby public` или `invisible`) или нет свободного
+  места. Такое лобби не закрыто для друзей: в него входят по приглашению или по id (`steam_join`, `--join steam:<id>`), поиск
+  его просто не показывает.
+- **Ждать ответа.** Steam отвечает колбэком, позже. Инструмент сам крутит колбэки (так же, как кадр игры), пока ответ не
+  придёт или не выйдет `wait_ms` (по умолчанию 5000, не больше 30000). Не дождавшись, он отвечает ошибкой `Steam has not
+  answered the lobby search within … ms; it goes on: call steam_lobbies again`, и поиск не бросается: следующий вызов получит
+  ответ. Второй поиск, пока идёт первый, не начинается (с другим `all` вызов отказывает и называет, с каким ждать).
+- **Пока контент не загружен**, сборка неизвестна (хэш контента неполный): `steam_lobbies` отвечает `this game is still loading
+  its content`.
+- Без Steam и у игрового сервера ответ — причина (`Steam is unavailable (…)`, `an anonymous game server has no lobbies, …`).
 
 ### Достижения
 
@@ -4821,17 +4857,19 @@ server · serving as 90071992547409921: players join with --join steam:900719925
   «недоступен» с причиной), строка `problem:`, если колбэки Steam остановились, сессия (у хоста лобби — и тип лобби), реле (что
   ушло и пришло, ошибки отправки, отказанные сессии, `relay only`), маршрут до каждого пира, приглашения, которым игра не
   последовала, достижения этого запуска и записи в Steam, облако (свободное место, что сделано при запуске, последняя ошибка).
+- `steam_lobbies [all=true] [wait_ms=N]` (Player, query) — поиск лобби этой игры, куда можно войти (см. «Поиск лобби»): строка на
+  лобби — id, хост, сколько в нём и сколько мест, совпадает ли сборка. Ждёт ответа Steam (по умолчанию 5 с, не больше 30 с).
 - `steam_host` (Dev, control) — хост лобби создаёт лобби заново после сбоя; сервер говорит, вошёл ли он. Запущенная игра хостом
   не становится: только флагами.
 - `steam_join lobby=ID` или `host=ID` (Dev, control) — клиент, запущенный с `--join steam:` или не вошедший в свою сессию, входит в
-  лобби или к хосту. Игра в сессии её не меняет.
+  лобби (id — из `steam_lobbies`, `steam` или журнала хоста) или к хосту. Игра в сессии её не меняет.
 - `steam_invite friend=ID` (Player, control) — пригласить друга в лобби; без `friend` открывается окно приглашений оверлея.
 - `achievement_unlock id=… [player=N]` (Dev, control, только хост) — открыть, как открыла бы игра; на хосте событие уходит и
   клиентам.
 - `ai/status` — поле `steam`: `kind`, `user`, `note` (почему Steam нет или почему его колбэки остановились), `role`, `lobby`,
   `lobby_type` (`friends`, `private`, `invisible`, `public`; только у хоста лобби), `host`, `members`, `relay` (`sent`,
   `received`, `errors`, `relay_only`, `routes`: `peer`, `state`, `relayed`, `pop`, `ping_ms`), `achievements`, `cloud`. Меню
-  разработчика — раздел `steam`: `steam`, `steam_invite`, `steam_join`, `achievement_unlock`.
+  разработчика — раздел `steam`: `steam`, `steam_lobbies`, `steam_invite`, `steam_join`, `achievement_unlock`.
 
 ### Что проверено на настоящем Steam
 
@@ -4869,16 +4907,16 @@ server · serving as 90071992547409921: players join with --join steam:900719925
 ### Что проверено только подделкой
 
 Тесты (`crates/shards_steam/tests/steam/`, юнит-тесты в `src/`) идут на `FakeSteam`: лобби, хост и два друга по реле стенда,
-тип лобби, игровой сервер и игрок, вошедший по id, приглашение, отказ чужому (хосту и клиенту), неудачный вход (нет лобби, свой
+тип лобби, поиск лобби (фильтры по данным, `public` и `invisible` в ответе и `friends` и `private` нет, полное лобби, медленный и отказавший Steam, чужая сборка), игровой сервер и игрок, вошедший по id, приглашение, отказ чужому (хосту и клиенту), неудачный вход (нет лобби, свой
 же id, id не того типа, `--exit-with-host` с кодом 2) и вход после него через `steam_join` (в лобби и к серверу), лобби, которое
 Steam не создал (и `steam_host` после), сервер, который не вошёл в Steam, игра без Steam (хост и клиент), колбэки, которые упали,
 выход (копии в облако, закрытые сессии, выход из лобби — в этом порядке), достижения (проверка контента, запись через секунду,
 прошлый запуск, имя, которого Steam не знает, реплей, кооператив), облако (копия каждой записи, выключенное облако, сверка при
 запуске до загрузки слота, копии из более новой версии, реплей, квота), ответы инструментов и `ai/status`. Правил входа в лобби
 разных типов подделка не знает: что в `private` входят только по приглашению, а `invisible` не видно друзьям, — поведение Steam
-по его документации, движок только передаёт тип. Настоящий бэкенд (`src/real.rs`) в тестах только собирается и проходит clippy
+по его документации, движок только передаёт тип; что поиск находит `public` и `invisible` и не находит `friends` и `private`, подделка повторяет по ней же. Настоящий бэкенд (`src/real.rs`) в тестах только собирается и проходит clippy
 (`cargo clippy -p shards_steam --all-targets --features sdk`). Только у настоящего Steam проверяются: лобби любого типа и вход в
-него, `+connect_lobby`, оверлей (приглашения, всплывающее достижение) в окне, запись в Steam Cloud у приложения, где хватает
+него, поиск лобби (как Steam разбирает фильтры по данным, попадает ли в ответ лобби самого хоста, дальность), `+connect_lobby`, оверлей (приглашения, всплывающее достижение) в окне, запись в Steam Cloud у приложения, где хватает
 квоты, а также приёмка ТЗ «два игрока соединяются через Steam relay» на двух машинах.
 
 **Ручная проверка на одной машине с одним аккаунтом** (клиент Steam запущен и вошёл; тестовое приложение 480; игра собрана с
@@ -4903,6 +4941,13 @@ SHARDS_PORT_FILE=/tmp/one.port cargo shards quit
 cargo run -p sandbox --features shards/steam_sdk -- --headless --steam-host --steam-lobby private --steam-app 480 --port 0 --port-file /tmp/host.port &
 SHARDS_PORT_FILE=/tmp/host.port cargo shards act steam   # session: host · lobby <id> (private: invite only), host <имя> (<id>) · 1 in it: …
 SHARDS_PORT_FILE=/tmp/host.port cargo shards quit
+# 5. Поиск лобби (лобби первого процесса ищет второй, тот же аккаунт; войти в него нельзя — нужен второй аккаунт):
+cargo run -p sandbox --features shards/steam_sdk -- --headless --steam-host --steam-lobby invisible --steam-app 480 --port 0 --port-file /tmp/host.port &
+cargo run -p sandbox --features shards/steam_sdk -- --headless --join steam: --steam-app 480 --port 0 --port-file /tmp/cli.port &
+SHARDS_PORT_FILE=/tmp/cli.port cargo shards act steam_lobbies    # 1 lobby of `…` of this build …: lobby <id> · host <имя> (<id>) · 1 of 3 · build matches
+SHARDS_PORT_FILE=/tmp/host.port cargo shards act steam_lobbies   # то же; нет — смотрите note: в ответе (лобби самого хоста Steam в список мог не включить)
+SHARDS_PORT_FILE=/tmp/cli.port cargo shards act steam_join lobby=<id из ответа>   # без второго аккаунта Steam откажет: «the lobby is gone or full, or you may not enter it»
+SHARDS_PORT_FILE=/tmp/cli.port cargo shards quit; SHARDS_PORT_FILE=/tmp/host.port cargo shards quit
 ```
 
 С двумя аккаунтами на двух машинах — лобби: на первой `--steam-host --steam-app 480` (или с `--steam-lobby private`), `shards act
@@ -4910,7 +4955,7 @@ steam` даёт id лобби; на второй `--join steam:<лобби> --st
 и «Принять» в оверлее второй), затем `shards act steam` на обеих: `lobby …, host …`, `route to …: connected`. Достижения
 проверяются только у приложения со своими достижениями в Steamworks: у 480 их имена другие (`ACH_WIN_ONE_GAME` и соседние).
 
-**Чего нет.** Тип лобби задаётся только при запуске (`--steam-lobby`); поиска лобби и списка серверов нет. Голосового чата,
+**Чего нет.** Тип лобби задаётся только при запуске (`--steam-lobby`); списка игровых серверов нет (лобби ищет `steam_lobbies`). Голосового чата,
 статистик (кроме достижений), мастерской и rich presence нет (приглашение через rich presence Steam не приходит: `steamworks` 0.13
 падает на его разборе, поэтому обработчик не ставится). Сессия меняется только перезапуском: запущенная игра не становится хостом
 и не уходит в другое лобби.

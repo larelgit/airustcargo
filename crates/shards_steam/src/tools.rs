@@ -1,6 +1,8 @@
 //! The Steam module's tools: `steam` (who this machine is on Steam, its lobby, the relay,
-//! achievements, cloud), `steam_host`, `steam_join`, `steam_invite`, `achievement_unlock`; the
-//! `ai/status` field `steam`.
+//! achievements, cloud), `steam_lobbies`, `steam_host`, `steam_join`, `steam_invite`,
+//! `achievement_unlock`; the `ai/status` field `steam`.
+
+use std::time::Duration;
 
 use ai_core::tools::{register_tool, NetRoute, ToolKind};
 use ai_core::{AiTools, Call, Scope, ToolResult};
@@ -15,11 +17,13 @@ use shards_net::NetHost;
 use crate::achievements::{self, AchievementDef, Achievements, UnlockAchievement};
 use crate::backend::SteamId;
 use crate::cloud::Cloud;
+use crate::lobbies;
 use crate::session::{self, SteamRole, SteamSession, SteamState};
 use crate::Steam;
 
 pub(crate) fn register(world: &mut World) {
     register_tool(world, "steam", Scope::Player, ToolKind::Query, steam);
+    register_tool(world, "steam_lobbies", Scope::Player, ToolKind::Query, steam_lobbies);
     register_tool(world, "steam_host", Scope::Dev, ToolKind::Control, steam_host);
     register_tool(world, "steam_join", Scope::Dev, ToolKind::Control, steam_join);
     register_tool(world, "steam_invite", Scope::Player, ToolKind::Control, steam_invite);
@@ -200,6 +204,25 @@ fn steam(In(_): In<Call<SteamArgs>>, world: &World) -> ToolResult {
     Ok(out)
 }
 
+/// Search Steam for lobbies of this game that a player can join: one with a free slot, of this
+/// build (the same engine version, content and network rules: the host's checks), one line each:
+/// the lobby's id, its host, how many are in it and how many fit, and whether its build matches.
+/// Enter one with steam_join lobby=ID. Steam's search lists only public and invisible lobbies (the
+/// host's --steam-lobby): a friends-only or private lobby never appears, this game's own included,
+/// and the answer says so when its own is not found. Waits for Steam's answer.
+#[derive(Deserialize, JsonSchema, Default)]
+pub struct SteamLobbiesArgs {
+    /// Also list the lobbies of this game on another build (they would refuse you), saying what differs.
+    pub all: Option<bool>,
+    /// How long to wait for Steam's answer, in milliseconds (default 5000, at most 30000).
+    pub wait_ms: Option<u32>,
+}
+
+fn steam_lobbies(In(call): In<Call<SteamLobbiesArgs>>, world: &mut World) -> ToolResult {
+    let wait = call.args.wait_ms.unwrap_or(lobbies::DEFAULT_WAIT_MS).min(lobbies::MAX_WAIT_MS);
+    lobbies::search(world, call.args.all.unwrap_or(false), Duration::from_millis(u64::from(wait)))
+}
+
 /// Host in a Steam lobby: a game started with --steam-host makes its lobby again after a failure
 /// (no Steam then, a lost connection); a game server (--steam-server) says whether it is on. A
 /// running game does not become a host: start it with --steam-host or --steam-server.
@@ -215,7 +238,7 @@ fn steam_host(In(_): In<Call<SteamHostArgs>>, world: &mut World) -> ToolResult {
 /// get into its session.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct SteamJoinArgs {
-    /// The lobby's id, as `steam` shows it on the host (`109775240917319681`).
+    /// The lobby's id, as `steam` shows it on the host (`109775240917319681`) or `steam_lobbies` lists it.
     pub lobby: Option<IdArg>,
     /// The host's own Steam id, as `steam` shows it on a game server (`90071992547409921`).
     pub host: Option<IdArg>,

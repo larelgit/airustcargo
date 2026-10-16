@@ -185,6 +185,12 @@ impl SteamLobby {
         }
     }
 
+    /// Whether a lobby search lists a lobby of this type: Steam's search finds `public` and
+    /// `invisible` lobbies, and never a `friends` or a `private` one.
+    pub fn in_search(self) -> bool {
+        matches!(self, SteamLobby::Invisible | SteamLobby::Public)
+    }
+
     /// What the type means, for `steam`: `friends only`, `private: invite only`.
     pub fn describe(self) -> &'static str {
         match self {

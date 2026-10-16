@@ -1,6 +1,7 @@
-//! A fake Steam in this process: users, friends-only lobbies, invites, relay sessions, achievements
-//! and cloud files, kept in memory, deterministic. Tests and a stand run Steam's flows on it (host,
-//! invite, join, the relay, an unlock, a cloud copy) without the Steam client; a game that does not
+//! A fake Steam in this process: users, lobbies of the four types (a search lists the public and
+//! invisible ones, as Steam's does), invites, relay sessions, achievements and cloud files, kept in
+//! memory, deterministic. Tests and a stand run Steam's flows on it (host, invite, search, join, the
+//! relay, an unlock, a cloud copy) without the Steam client; a game that does not
 //! talk to Steam (no [`shards_core::SteamLaunch::connect`]: a test, a check) runs on a fake of its
 //! own with one user.
 //!
@@ -21,7 +22,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use shards_core::SteamLobby;
 use shards_net::{LinkConditions, LinkId, MemoryHub, MemoryTransport, NetClock, PeerId, Transport, WallClock};
 
-use crate::backend::{over_quota, Backend, CallbackGuard, Event, Info, Relay, Route, SteamId};
+use crate::backend::{data, over_quota, Backend, CallbackGuard, Event, Info, LobbyInfo, Relay, Route, SteamId, MAX_FOUND};
 
 /// The first user's id of a fake Steam that makes one itself (account 1 of the public universe).
 pub const FIRST_USER: SteamId = 76_561_197_960_265_729;
@@ -37,6 +38,9 @@ const SERVER_HAS_NO: &str = "an anonymous game server has no lobbies, invites, a
 
 /// Datagrams one user keeps from another before its session is decided.
 const HELD_MAX: usize = 256;
+
+/// The data pairs a lobby search filters on.
+type Filter = Vec<(String, String)>;
 
 /// A fake Steam. Cloning it clones the handle: every [`FakeUser`] of it sees the same lobbies.
 #[derive(Clone)]
@@ -60,6 +64,10 @@ struct Universe {
     cloud_time: Option<i64>,
     /// Why the lobbies asked for from now on are not made (a test's failure), if they are not.
     lobby_failure: Option<String>,
+    /// Why the lobby searches from now on get no list (a test's failure), if they get none.
+    search_failure: Option<String>,
+    /// Searches are asked but not answered until a test lets them go (Steam is slow).
+    searches_held: bool,
 }
 
 struct User {
@@ -86,6 +94,8 @@ struct User {
     cloud_quota: Option<u64>,
     /// The next run of this user's callbacks panics (a test's failure).
     callbacks_panic: bool,
+    /// Searches asked while they were held, each as the data pairs it filters on.
+    held_searches: Vec<Filter>,
 }
 
 struct Lobby {
@@ -128,6 +138,8 @@ impl FakeSteam {
             defined: None,
             cloud_time: None,
             lobby_failure: None,
+            search_failure: None,
+            searches_held: false,
         };
         Self { inner: Arc::new(Mutex::new(universe)) }
     }
@@ -175,6 +187,7 @@ impl FakeSteam {
                     cloud_on: true,
                     cloud_quota: None,
                     callbacks_panic: false,
+                    held_searches: Vec::new(),
                 },
             );
         }
@@ -219,9 +232,38 @@ impl FakeSteam {
         self.lock().lobbies.get(&lobby).map(|l| l.kind)
     }
 
+    /// Sets `key` in `lobby`'s data as its owner would: a test's way to give a lobby another build.
+    /// Whether the lobby exists.
+    pub fn set_lobby_data(&self, lobby: SteamId, key: &str, value: &str) -> bool {
+        self.lock().lobbies.get_mut(&lobby).map(|l| l.data.insert(key.to_owned(), value.to_owned())).is_some()
+    }
+
     /// From now on a lobby asked for is not made, and Steam says `why` (`None`: they are made again).
     pub fn fail_lobbies(&self, why: Option<&str>) {
         self.lock().lobby_failure = why.map(str::to_owned);
+    }
+
+    /// From now on a lobby search gets no list, and Steam says `why` (`None`: they are answered again).
+    pub fn fail_searches(&self, why: Option<&str>) {
+        self.lock().search_failure = why.map(str::to_owned);
+    }
+
+    /// Lobby searches are asked but left unanswered (`true`) until they are let go (`false`): Steam
+    /// takes its time. A search let go is answered with the lobbies there are by then.
+    pub fn hold_searches(&self, held: bool) {
+        let mut u = self.lock();
+        u.searches_held = held;
+        if held {
+            return;
+        }
+        let waiting: Vec<(SteamId, Vec<Filter>)> =
+            u.users.iter_mut().map(|(id, user)| (*id, std::mem::take(&mut user.held_searches))).filter(|(_, searches)| !searches.is_empty()).collect();
+        for (id, searches) in waiting {
+            for equal in searches {
+                let answer = u.answer_search(&equal);
+                u.user(id).events.push_back(answer);
+            }
+        }
     }
 
     /// Game server `server` does not log on: Steam gives up and says `why`. Before its game's first frame.
@@ -339,6 +381,31 @@ impl Universe {
         let (Some(ea), Some(eb)) = (self.endpoint(key.0), self.endpoint(key.1)) else { return };
         let link = self.hub.connect_both(ea, eb, self.conditions);
         self.links.insert(key, link);
+    }
+
+    /// What Steam answers a lobby search with: the lobbies it lists (public and invisible ones: a
+    /// friends-only or a private lobby is never in a search) that have a free slot and every pair
+    /// of `equal` in their data.
+    fn answer_search(&self, equal: &[(String, String)]) -> Event {
+        if let Some(why) = &self.search_failure {
+            return Event::LobbiesFound(Err(why.clone()));
+        }
+        let found = self
+            .lobbies
+            .iter()
+            .filter(|(_, l)| matches!(l.kind, SteamLobby::Public | SteamLobby::Invisible))
+            .filter(|(_, l)| (l.members.len() as u32) < l.max)
+            .filter(|(_, l)| equal.iter().all(|(key, value)| l.data.get(key) == Some(value)))
+            .take(MAX_FOUND)
+            .map(|(id, l)| LobbyInfo {
+                lobby: *id,
+                owner: Some(l.owner),
+                members: l.members.len() as u32,
+                max: l.max,
+                data: l.data.iter().filter(|(key, _)| data::ALL.contains(&key.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect(),
+            })
+            .collect();
+        Event::LobbiesFound(Ok(found))
     }
 
     fn leave(&mut self, user: SteamId, lobby: SteamId) {
@@ -532,6 +599,20 @@ impl Backend for FakeUser {
             }
         }
         u.user(self.id).events.push_back(Event::LobbyEntered { lobby, result: entered });
+        Ok(())
+    }
+
+    fn find_lobbies(&mut self, equal: &[(&str, &str)]) -> Result<(), String> {
+        self.player_only()?;
+        self.guard.answering()?;
+        let equal: Filter = equal.iter().map(|(key, value)| ((*key).to_owned(), (*value).to_owned())).collect();
+        let mut u = self.steam.lock();
+        if u.searches_held {
+            u.user(self.id).held_searches.push(equal);
+        } else {
+            let answer = u.answer_search(&equal);
+            u.user(self.id).events.push_back(answer);
+        }
         Ok(())
     }
 
@@ -925,5 +1006,114 @@ mod tests {
         steam.request_join(A, 8, B);
         assert!(a.pump().is_empty(), "stopped for the rest of the run");
         assert!(b.info().note.is_none(), "another user's Steam goes on");
+    }
+
+    const D: SteamId = FIRST_USER + 3;
+    const E: SteamId = FIRST_USER + 4;
+
+    /// A lobby of `kind` for `max` made by `owner`, with `data` set as its host would.
+    fn lobby(steam: &FakeSteam, owner: SteamId, kind: SteamLobby, max: u32, data: &[(&str, &str)]) -> SteamId {
+        let mut host = steam.user(owner, "host");
+        host.create_lobby(max, kind).unwrap();
+        let Event::LobbyCreated(Ok(lobby)) = host.pump()[0].clone() else { panic!("no lobby") };
+        for (key, value) in data {
+            assert!(host.set_lobby_data(lobby, key, value));
+        }
+        lobby
+    }
+
+    /// What `user`'s search for lobbies whose data holds `equal` answers.
+    fn found(user: &mut FakeUser, equal: &[(&str, &str)]) -> Vec<LobbyInfo> {
+        user.find_lobbies(equal).unwrap();
+        match &user.pump()[..] {
+            [Event::LobbiesFound(Ok(found))] => found.clone(),
+            other => panic!("not a list: {other:?}"),
+        }
+    }
+
+    fn ids(found: &[LobbyInfo]) -> Vec<SteamId> {
+        found.iter().map(|l| l.lobby).collect()
+    }
+
+    #[test]
+    fn a_search_lists_the_lobbies_with_room_whose_data_holds_what_it_asks_for() {
+        let steam = FakeSteam::new(MemoryHub::new(1));
+        let a = lobby(&steam, A, SteamLobby::Public, 4, &[("game", "g 1"), ("content", "aa"), ("host", "a"), ("note", "not read back")]);
+        let b = lobby(&steam, B, SteamLobby::Invisible, 2, &[("game", "g 1"), ("content", "bb"), ("host", "b")]);
+        let c = lobby(&steam, C, SteamLobby::Public, 4, &[("game", "another game")]);
+        let mut me = steam.user(D, "d");
+
+        let g1 = found(&mut me, &[("game", "g 1")]);
+        assert_eq!(ids(&g1), [a, b], "the other game's lobby is none of ours, and they come in the order they were made");
+        let data = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            g1[0],
+            LobbyInfo { lobby: a, owner: Some(A), members: 1, max: 4, data: data(&[("content", "aa"), ("game", "g 1"), ("host", "a")]) },
+            "the lobby's size and the data a search reads (not every key)"
+        );
+        assert_eq!((g1[1].members, g1[1].max, g1[1].owner), (1, 2, Some(B)));
+        assert_eq!(ids(&found(&mut me, &[("game", "g 1"), ("content", "bb")])), [b], "every pair must hold");
+        assert_eq!(ids(&found(&mut me, &[("game", "g 1"), ("content", "cc")])), Vec::<SteamId>::new(), "a value no lobby has");
+        assert_eq!(ids(&found(&mut me, &[("game", "g 1"), ("rules", "aa")])), Vec::<SteamId>::new(), "a key no lobby has set");
+        assert_eq!(ids(&found(&mut me, &[])), [a, b, c], "no filter, every lobby the search lists");
+    }
+
+    #[test]
+    fn only_public_and_invisible_lobbies_are_ever_found() {
+        let steam = FakeSteam::new(MemoryHub::new(1));
+        let made: Vec<(SteamLobby, SteamId)> =
+            SteamLobby::ALL.iter().zip([A, B, C, D]).map(|(kind, owner)| (*kind, lobby(&steam, owner, *kind, 4, &[("game", "g")]))).collect();
+        let mut me = steam.user(E, "e");
+        let listed = ids(&found(&mut me, &[("game", "g")]));
+        let expected: Vec<SteamId> = made.iter().filter(|(kind, _)| kind.in_search()).map(|(_, id)| *id).collect();
+        assert_eq!(listed, expected);
+        assert_eq!(expected.len(), 2);
+        for (kind, id) in &made {
+            assert_eq!(listed.contains(id), matches!(kind, SteamLobby::Public | SteamLobby::Invisible), "{kind}: Steam's search lists public and invisible lobbies only");
+            // The type is the lobby's, not the search's: a friend can still enter a friends-only lobby by its id.
+            assert_eq!(steam.lobby_type(*id), Some(*kind));
+        }
+    }
+
+    #[test]
+    fn a_full_lobby_is_not_listed_and_is_again_when_someone_leaves() {
+        let steam = FakeSteam::new(MemoryHub::new(1));
+        let lobby_id = lobby(&steam, A, SteamLobby::Public, 2, &[("game", "g")]);
+        let mut me = steam.user(C, "c");
+        assert_eq!(ids(&found(&mut me, &[("game", "g")])), [lobby_id], "one of two");
+        let mut b = steam.user(B, "b");
+        b.join_lobby(lobby_id).unwrap();
+        b.pump();
+        assert_eq!(ids(&found(&mut me, &[("game", "g")])), Vec::<SteamId>::new(), "two of two: nobody else can enter");
+        b.leave_lobby(lobby_id);
+        let again = found(&mut me, &[("game", "g")]);
+        assert_eq!((ids(&again), again[0].members), ([lobby_id].to_vec(), 1));
+    }
+
+    #[test]
+    fn a_search_can_be_held_or_fail_and_a_game_server_cannot_search() {
+        let steam = FakeSteam::new(MemoryHub::new(1));
+        let lobby_id = lobby(&steam, A, SteamLobby::Invisible, 4, &[("game", "g")]);
+        let mut me = steam.user(B, "b");
+
+        // Steam takes its time: nothing comes until it does, and then what is there by then.
+        steam.hold_searches(true);
+        me.find_lobbies(&[("game", "g")]).unwrap();
+        assert!(me.pump().is_empty());
+        let late = lobby(&steam, C, SteamLobby::Public, 4, &[("game", "g")]);
+        steam.hold_searches(false);
+        let Event::LobbiesFound(Ok(list)) = me.pump()[0].clone() else { panic!("no list") };
+        assert_eq!(ids(&list), [lobby_id, late]);
+
+        steam.fail_searches(Some("k_EResultTimeout"));
+        me.find_lobbies(&[]).unwrap();
+        assert_eq!(me.pump(), [Event::LobbiesFound(Err("k_EResultTimeout".into()))]);
+        steam.fail_searches(None);
+
+        let mut server = steam.server(FIRST_SERVER, "server");
+        assert_eq!(server.find_lobbies(&[]).unwrap_err(), SERVER_HAS_NO);
+        steam.panic_in_callbacks(B);
+        me.pump();
+        assert!(me.find_lobbies(&[]).unwrap_err().contains("callbacks stop for this run"), "no answer would come");
     }
 }
