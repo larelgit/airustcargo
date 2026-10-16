@@ -79,7 +79,7 @@
 | E3. Действия, бой, анимация | A | ✅ бой на данных, анимационный мост, телеграфы |
 | E4. Контент и уровни | A (часть), B, D | ✅ база, префабы, `content check`, уровни из Blender (конвейер проверен на настоящем экспорте Blender 5.2.2 LTS; `ruin.gltf` песочницы и шаблона пишет тестовый генератор) |
 | E5. Генерация мира | B | 🟡 генератор, решатель, проверки, манифест, подземелья, отчёты, смена региона, активные зоны — ✅; стримится только картинка тайлов |
-| E6. Навигация и ИИ врагов | B | ✅ навсетка по тайлам, поведение, восприятие, директор, планировщик; 🟡 уклонение простое, навсетка под одно тело |
+| E6. Навигация и ИИ врагов | B | ✅ навсетка по тайлам, поведение, восприятие, директор, планировщик, уклонение от тел (выборочные RVO); 🟡 навсетка под одно тело |
 | E7. Сеть и кооператив | C | ✅ транспорт, сессия, ввод, репликация, подключение и отключение, предсказание и сглаживание, оверлей сети (`shards_net`), CLI сети и сценарии стенда, долгая игра `shards soak`; приёмка — полчаса трёх игроков на 150 мс и 2 % без рассинхрона |
 | E8. Сохранения и настройки | C | ✅ сохранения (1–5, `shards_save`), настройки игрока (6, `shards_settings`) и сохранения в кооперативе (7, `shards::coop`) |
 | E9. Интерфейс, звук, локализация | D | ✅ интерфейс, локализация и звук |
@@ -221,19 +221,19 @@ Xvfb показывает его вместе с оверлеем навсетк
 
 ## E6. Навигация и ИИ противников (фаза B)
 
-Крейт `shards_npc`. Тесты: `crates/shards_npc/tests/npc/` (60) и юнит-тесты (19); `crates/shards_world/tests/world/nav.rs`.
+Крейт `shards_npc`. Тесты: `crates/shards_npc/tests/npc/` (70) и юнит-тесты (27); `crates/shards_world/tests/world/nav.rs`.
 
 | № | что сделать | статус | где и чем проверено |
 |---|---|---|---|
 | 1 | навсетка по тайлам, глобальный маршрут | ✅ | `src/nav/`: тайлы и комнаты запекаются заранее (`--bake-nav`, `nav_bake`, файлы `assets/nav/*.navtile.ron`, хэш против определения, префабов и файла уровня, `BAKE_VERSION`), при загрузке региона сшиваются по открытым сокетам и `navlink`, вырезаются твёрдыми телами, которых запекание не видело; маршрут: A* по графу тайлов → A* по сетке коридора → натягивание нити. Запросы без окна. Правило движения — то же `step_onto`, что у `path_to` и контроллера. Своя навсетка, не vleue_navigator/oxidized_navigation/landmass. Тесты `navmesh.rs`: `a_tile_bakes_to_the_same_bytes_every_time`, `bakes_are_checked_against_their_tiles_and_baked_again_when_stale`, `stitching_turns_tiles_with_them_and_follows_open_sockets`, `carving_is_the_solids_standing_now_not_their_history`, `routes_go_around_a_pillar_inside_a_tile_and_across_three_tiles`, `a_hundred_routes_on_an_8x8_region_stay_within_budget`; `generated_regions_get_a_navmesh_that_routes_between_their_points` (`shards_world`) |
-| 2 | агенты: следование пути, уклонение, ограничение зоны погони | 🟡 | следование и поводок `Home` — ✅ (`a_sentry_chases_to_its_leash_goes_home_healing_and_never_crosses`); уклонение между NPC простое (упреждающий поворот, расталкивание; `two_npcs_walking_into_each_other_pass_without_touching`); цель на виду — прямая только там, где навсетка подтверждает шаги по земле, нет маршрута — NPC стоит (`an_npc_does_not_walk_off_a_cliff_toward_a_target_in_plain_sight`, `an_unreachable_goal_is_a_clear_error`) |
+| 2 | агенты: следование пути, уклонение, ограничение зоны погони | ✅ | следование и поводок `Home` — ✅ (`a_sentry_chases_to_its_leash_goes_home_healing_and_never_crosses`); уклонение от тел — ✅: выборочные взаимные препятствия скоростей (`src/nav/avoid.rs`, система `nav_avoid` в `NpcSystems::Drive`, только `Intent`), числа — `avoidance` в `npc_tuning` или поведении, `npc_state` → `nav.avoiding`, `npc_overlay` → `avoiding e7`, условие `npc_avoiding`; тесты `avoid.rs`: `two_npcs_meeting_head_on_in_a_corridor_pass_without_touching_or_stopping`, `four_npcs_closing_in_on_a_player_keep_their_bodies_apart`, `without_avoidance_npcs_walk_their_routes_as_if_alone`, `the_same_pack_ends_in_the_same_places_twice`, `npc_state_and_the_overlay_say_whom_an_npc_steers_around`, юнит-тесты `nav::avoid` (8), `two_npcs_walking_into_each_other_pass_without_touching`; сценарий `npc_avoidance`; цель на виду — прямая только там, где навсетка подтверждает шаги по земле, нет маршрута — NPC стоит (`an_npc_does_not_walk_off_a_cliff_toward_a_target_in_plain_sight`, `an_unreachable_goal_is_a_clear_error`) |
 | 3 | каркас поведения NPC, восприятие | ✅ | `behavior` (автомат состояний в контенте; utility-оценки нет), хуки `add_npc_condition` и `add_npc_state`; зрение лучами физики, слух (`Noise`), память; случайность через `SimRng`. Тесты `fsm.rs` (4), `perception.rs` (5), `warden::the_warden_as_data` |
 | 4 | режиссёр сражений: жетоны атаки | ✅ | `director`: жетоны по числу игроков (в данных), бюджет, разрешённые сочетания, роли ждущих; жетон возвращается по окончании атаки, терпению, смерти, сну, потере цели, приказу агента, снижению предела. Тесты `director.rs` (10), сценарий `npc_director` |
 | 5 | планировщик атак | ✅ | `attack_plan`: веса, окна дистанции, откаты, запреты последовательностей, бюджет; общий для скелетов и стража песочницы (страж полностью на нём). Тесты `planner.rs` (8 юнит), `the_written_out_states_wait_then_strike`, сценарии `combat_prototype` и `boss_fight` на NPC |
 
 Для ИИ: строка состояния NPC в `observe` (`fight e5 · token · leash 9/10m`, `idle (dormant)`) — ✅; переходы, выдача и возврат жетонов
 в журнале — ✅; инструменты `nav_path`, `npc_state`, `npc_set_state`, `nav_info`, `nav_bake`; условия `npc_attacking`, `npcs_calm`,
-`npc_beyond_leash`, `npc_detour`. Оверлей навсетки (`nav_overlay`: клетки, связи через края, navlink, маршруты NPC; E11) — ✅:
+`npc_beyond_leash`, `npc_detour`, `npc_avoiding`. Оверлей навсетки (`nav_overlay`: клетки, связи через края, navlink, маршруты NPC; E11) — ✅:
 тестов на него нет, но `shards shot` под Xvfb показывает его вместе с `world_overlay`. Оверлей NPC (`npc_overlay`, F7; D4) — ✅:
 строка на NPC рядом с игроками (состояние, цель, жетон, поводок, что видит и слышит, маршрут) и гизмо в окне; тест
 `npc_overlay_answers_a_line_per_npc_near_the_players`, сценарий `npc_navmesh`, окно проверено глазами.
@@ -396,7 +396,7 @@ Xvfb показывает его вместе с оверлеем навсетк
 
 Тесты по крейтам, `cargo test -p <крейт>`: все строки, кроме шаблона, взяты из одного полного прогона `cargo test --workspace`
 15 октября 2026 (после слияния C7, `3b2d359`, и правок шестого круга ревью; сборка этого дерева, 0 падают). Строки `shards_script`,
-`shards_cli`, `shards_world` и `sandbox` после C9, `shards_ui` и `shards` после D1, `shards_locale` после D2, `shards_audio` после D3, `ai_core`, `shards_content`, `shards_world`, `shards_npc` и `shards_dev` после D4, `ai_core`, `shards`, `shards_cli`, `shards_core` и `sandbox` после E1–E3 фазы E, `ai_core` после E10.6, `shards`, `shards_cli`, `shards_save` и `shards_steam` после E10.5, `shards_save`, `shards` и `sandbox` после манифеста в сохранении (секция `region` v2), `shards_save` и `shards` после `SaveSection::check` (отказ до первого `apply`; ошибка из `apply` — мир мог измениться) пересчитаны по разнице: тесты добавлены и убраны в этих крейтах, а прогон C9 шёл на
+`shards_cli`, `shards_world` и `sandbox` после C9, `shards_ui` и `shards` после D1, `shards_locale` после D2, `shards_audio` после D3, `ai_core`, `shards_content`, `shards_world`, `shards_npc` и `shards_dev` после D4, `ai_core`, `shards`, `shards_cli`, `shards_core` и `sandbox` после E1–E3 фазы E, `ai_core` после E10.6, `shards`, `shards_cli`, `shards_save` и `shards_steam` после E10.5, `shards_save`, `shards` и `sandbox` после манифеста в сохранении (секция `region` v2), `shards_save` и `shards` после `SaveSection::check` (отказ до первого `apply`; ошибка из `apply` — мир мог измениться), `shards_npc` после уклонения от тел (E6.2) пересчитаны по разнице: тесты добавлены и убраны в этих крейтах, а прогон C9 шёл на
 Windows, где тестов меньше (часть только для Unix) и тогда падали девять (теперь на Windows не падает ни один: полный прогон `cargo test --workspace` и тесты шаблона 16 октября, после того как эталонные реплеи записаны заново, шли без падений; см. «Известные ограничения»). У шаблона — счёт `#[test]` и
 `#[ignore]` в `template/tests/game`, его прогон отдельный. Общего числа здесь и в README нет: оно расходилось с таблицами при
 каждой правке, а проверить его можно только полным прогоном. Помечены `#[ignore]`: запись эталонных реплеев, проверка окна под Xvfb,
@@ -422,7 +422,7 @@ Windows, где тестов меньше (часть только для Unix) 
 | `shards_action` | 146 | `src/` и `tests/combat/` |
 | `shards_level` | 98 | `src/` (3) и `tests/level/` (95: файл и узлы, свойства, коллайдеры, маркеры, спавн, `level` в контенте, реплей, картинка, настоящий экспорт Blender `from_blender.rs` 14) |
 | `shards_world` | 75 | `src/` (17) и `tests/world/` (58: генерация, проверки, подземелья, регионы, смена региона, стена по краю, уровни-тайлы и их маркеры-сокеты, зоны, навсетка региона) |
-| `shards_npc` | 83 | `src/` (19) и `tests/npc/` (64: поведение, восприятие, директор, навсетка и `path_to`/`clearance` по ней, реплей, снапшот, инструменты и `npc_overlay`, страж данными) |
+| `shards_npc` | 97 | `src/` (27: уклонение `nav::avoid` 8) и `tests/npc/` (70: поведение, восприятие, директор, навсетка и `path_to`/`clearance` по ней, уклонение от тел 5, реплей, снапшот, инструменты и `npc_overlay`, страж данными) |
 | `shards_dev` | 8 | `src/` (2: пункт игры, общее начало слов) и `tests/dev/` (6: список GDD 32.8 и порядок разделов, пункты и строки через инструменты, консоль и история, клавиши оверлеев ждут открытую панель, Tab, битый пункт в контенте) |
 | `shards_save` | 98 | `src/` (35: секция другого крейта под тем же именем забирает миграции заменённой; запись спрашивает секцию через `check_in`, `SaveSection::check`) и `tests/save/` (63, один `#[ignore]`; с E10.5 — `SaveWritten`; отказ секции при загрузке называет, что успело примениться, и считает отказавшую секцию изменившей мир; отказ в `check` не применяет ничего); прогон 16 октября 2026 на Windows, вместе с манифестом в сохранении, и тесты `check` по разнице |
 | `shards_net` | 127 | `src/` (82 — канальный слой без Bevy, 45 — сессия) |
@@ -441,7 +441,9 @@ Windows, где тестов меньше (часть только для Unix) 
   которому движения этого тела не под силу (шире, выше, ступенька ниже, хуже перелезает или плавает), планирует по локальной
   сетке (страж песочницы так и ходит). У тел нет прыжка и лестниц: `navlink` годится для спуска, подъёма в пределах
   перелезания и шага. Вырезание (`solids` позже запекания) умеет только выключать клетки, а не добавлять ступеньки.
-  Уклонение между NPC простое (упреждающий поворот, расталкивание). Навсетку нужно запекать после правки тайла
+  Уклонение от тел локальное (веер скоростей на горизонт `horizon`): оно не ищет мест вокруг цели, поэтому стая, пришедшая
+  гуськом, встаёт вторым рядом за первыми, а не расходится по кругу (места раздаёт директор ролями ждущих). Навсетку нужно
+  запекать после правки тайла
   (`--bake-nav`), иначе контент называет устаревший файл, а регион запекает тайл при загрузке.
 - **Физика — линейный перебор.** Широкая фаза — проход по всем коллайдерам с предфильтром по AABB, O(n) на запрос.
   BVH встанет за тем же API, когда миры вырастут: регион 8 × 8 в песочнице (около 150 коллайдеров) играется без заметных

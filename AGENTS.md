@@ -96,8 +96,8 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
   `region_check`), `console line="speed x=0.25"` (строка как у `shards act`); в окне это F10 и `` ` ``, `open=true` показывает
   панель для `shot`. Свои пункты игра кладёт в контент (`*.devmenu.ron`), модуль — `add_dev_entry`. **Выход** — `quit`
   (`shards quit`: хуки выхода, токен и файл порта убраны). Условия для
-  `step --until named:…`: `near_poi`, `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_engaged`,
-  `npc_near`; свои у игры (в песочнице `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`, в шаблоне
+  `step --until named:…`: `near_poi`, `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`,
+  `npc_engaged`, `npc_near`; свои у игры (в песочнице `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`, в шаблоне
   `arena_cleared`, `foe_near`, `in_fight`).
 - Звук решается на часах симуляции и одинаков без окна: слушайте игру через `audio` и строку `MUSIC` в `observe`, а не через
   динамики. Смены музыки идут в журнал строками `[local] music: arena explore → combat` (не игровые события). Файлы звуков
@@ -253,7 +253,9 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
 - **NPC действуют только через `Intent`** (как игрок и агент): мозг NPC движка пишет в него в `NpcSystems::Drive`, а не двигает
   тело. Поведение, восприятие, директор и планы атак — контент (`*.behavior.ron`, `*.perception.ron`, `*.director.ron`,
   `*.attack_plan.ron`); свою логику добавляют как `add_npc_condition` / `add_npc_state` по имени, а не копией мозга. Состояние NPC
-  живёт в его компонентах (они входят в реплей и снапшот), не в ресурсах.
+  живёт в его компонентах (они входят в реплей и снапшот), не в ресурсах. Уклонение от других тел тоже пишет только в `Intent`
+  (в `NpcSystems::Drive`, перед `drive_intents`): соседи по `AiId`, без случайности; его числа — `avoidance` в `npc_tuning` или
+  в поведении, не константы в коде.
 - **Состояние мира в снапшоте.** Новое состояние региона, уровня или навигации вне сущностей с `AiId` — `add_snapshot_resource`;
   то, что строится из сохранённого (регион из манифеста, навсетка), — `add_snapshot_prepare` / `add_snapshot_rebuild`; то,
   вокруг чего построен мир, — `add_snapshot_check`. Покройте его тестом по образцу `crates/sandbox/tests/sandbox/snapshots.rs`
