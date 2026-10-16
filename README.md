@@ -4394,14 +4394,18 @@ shards = { git = "…", tag = "…", features = ["steam_sdk"] }   # настоя
 - **`steam_sdk`** — ещё и настоящий клиент: `steamworks = "=0.13.1"` (SDK лежит в крейте `steamworks-sys`, качать ничего не
   нужно), программа импортирует `steam_api64.dll`, и без неё рядом не запустится (`shards package` кладёт её туда). К Steam
   подключается только запущенная игра (`shards::run`): `--check-content`, `--verify`, `--smoke`, тесты и стенд в одном процессе
-  работают на поддельном Steam. Типов `steamworks` в публичном API нет.
+  работают на поддельном Steam. Типов `steamworks` в публичном API нет. Клиент Steam такая игра запускает раньше, чем Bevy
+  создаёт рендер (`shards_steam::SteamClientPlugin` встаёт в `EnginePlugins` сразу за `TaskPoolPlugin`): оверлей Steam
+  (приглашения, всплывающее достижение, Shift+Tab) цепляется к графическому устройству, пока его создают. Порядок плагинов
+  проверяет тест; что оверлей и правда появляется в окне, не проверено.
 
 ### Сессия по реле
 
 | флаг | что делает |
 |---|---|
-| `--steam-host` | хост в новом лобби «только друзья» на `max_players` игроков (из `NetDef`). В данных лобби — `game`, `engine` и `host`. Друзей зовут `steam_invite friend=ID` или оверлеем Steam |
-| `--steam-server` | хост — анонимный игровой сервер Steam (`127.0.0.1`, порты 27215 и 27216, без аутентификации): без лобби и без пользователя Steam, поэтому идёт рядом с клиентом Steam на той же машине. Его id (тип 4) называют журнал (`steam: game server logged on as 90071992547409921: players join with --join steam:90071992547409921`), `steam` и `ai/status` |
+| `--steam-host` | хост в новом лобби на `max_players` игроков (из `NetDef`), по умолчанию «только друзья». В данных лобби — `game`, `engine` и `host`. Друзей зовут `steam_invite friend=ID` или оверлеем Steam |
+| `--steam-lobby TYPE` | с `--steam-host`: кто видит лобби, как типы лобби Steam. `friends` (по умолчанию: друзья видят и входят), `private` (войти можно только по приглашению), `invisible` (друзья его не видят), `public` (ещё и список лобби Steam). Тип называют журнал (`steam: hosting in lobby … (private: invite only): …`), `steam` (`lobby … (friends only)`) и `ai/status` (`lobby_type`). Без `--steam-host` (в том числе с `--steam-server`) флаг — ошибка разбора |
+| `--steam-server` | хост — анонимный игровой сервер Steam (`127.0.0.1`, порты 27215 и 27216, без аутентификации): без лобби и без пользователя Steam, поэтому идёт рядом с клиентом Steam на той же машине. Это хост, как любой другой: у него свой игрок 0 с телом (выделенного сервера без игрока в `shards_net` нет). Его id (тип 4) называют журнал (`steam: game server logged on as 90071992547409921: players join with --join steam:90071992547409921`), `steam` и `ai/status` |
 | `--join steam:<id>` | id лобби (тип 8) — войти в лобби, хост — его владелец; id игрока или сервера (типы 1, 3, 4) — к хосту напрямую, без лобби. Другой тип — ошибка с его номером |
 | `--join steam:` | ждать приглашения (или `steam_join`) |
 | `+connect_lobby <id>` | так Steam запускает игру в лобби друга; `shards::run` превращает это в `--join steam:<id>` до разбора флагов |
@@ -4419,9 +4423,18 @@ UDP при этом не открывается: транспорт сессии
 Если сессия не открылась: хост пишет `steam: cannot host: …` (`NetState::Ended`; хост лобби пробует снова инструментом
 `steam_host`), с `--exit-with-host` — код 2. Клиент, который не вошёл в лобби (его нет, оно полное), пишет
 причину и ждёт другого (`steam_join`, приглашение); без Steam его сессия кончается (`NetState::Ended`), с `--exit-with-host` — код 2
-(так ведёт себя и игра без SDK, запущенная Steam с `+connect_lobby`). Приглашение, пришедшее игре
+(так ведёт себя и игра с feature `steam`, но без SDK, запущенная Steam с `+connect_lobby`). Приглашение, пришедшее игре
 в сессии, не уводит её: `steam` показывает его строкой `invite not followed`. Игра без feature `steam` на флаги Steam отвечает
-кодом 2 и говорит, какую feature включить.
+кодом 2 и говорит, какую feature включить; `+connect_lobby` она не знает вовсе, и отвечает разбор флагов (clap): `error:
+unexpected argument '+connect_lobby' found`, тоже код 2.
+
+Если обработчик колбэка Steam падает (паника), колбэки Steam останавливаются до конца запуска: замок внутри `steamworks` после
+неё отравлен. Журнал пишет одну строку `error` (`steam: a Steam callback panicked (…), so Steam's callbacks stop for this run:
+lobbies, invites, relay sessions and achievement stores no longer answer; restart the game`), `steam` — строку `problem: …`,
+`ai/status` — то же в `note`. Хост, который ждал лобби, и клиент, который входил в лобби, ответа не получат и сразу пишут `cannot
+host` или ошибку входа; `steam_host` и `steam_join` отвечают той же причиной. Отчёта о падении нет: паника поймана. Колбэки,
+разбор которых в `steamworks` 0.13 может упасть на значении от Steam (код `EResult`, которого нет в его таблице, несколько битов
+смены участника лобби), движок читает сам, как числа.
 
 ### Достижения
 
@@ -4458,18 +4471,33 @@ UDP при этом не открывается: транспорт сессии
 | копия облака новее больше чем на 2 с (или файла нет) | она становится сохранением, старое — первой копией (`slot1.save.bak1`) |
 | файл на диске новее | он уходит в облако |
 | ни один не новее явно | файл на диске остаётся, копия облака ложится рядом слотом `<слот>-cloud`, журнал (`warn`) говорит об этом; облако получает файл с диска |
-| копия облака битая или из более новой версии игры | не берётся; хороший файл на диске чинит её |
+| копия облака битая | не берётся; хороший файл на диске чинит её |
+| копия облака из более новой версии игры (формат `shards-save/2` или секция новее этой сборки) | не берётся и не перезаписывается: в этом запуске в этот слот облака ничего не копируется, даже новое сохранение. Журнал (`warn`): `steam: the cloud copy of world/slot1 is from a newer version of the game (…): this build neither takes it nor overwrites it, …`; `steam`: `at startup from a newer version of the game, left alone: world/slot1` |
+| файл на диске из более новой версии игры | копия облака не ложится поверх него, как не легло бы сохранение (`steam: the cloud copy of world/slot1 was not taken: world/slot1 was saved by a newer version …`) |
 | сохранение есть только на диске | уходит в облако (кроме слотов `…-cloud`) |
 
+Копия облака ложится на диск той же записью, что сохранение (`write_guarded`): слот, в котором лежит сохранение более новой
+версии (основной файл или его копия), она не трогает. Пока проигрывается реплей, облако не сверяется и не пишется (`cloud: off
+(not used while a replay plays: the saves on this machine stay as they are)`): сохранения на диске остаются как есть.
+
 Файлы на диске остаются правдой: копия, которую облако не приняло (квота, Steam Cloud выключен), ничего здесь не меняет, а
-`steam` говорит почему.
+`steam` говорит почему. Файл уходит в облако одним вызовом `ISteamRemoteStorage::FileWrite` (целиком или никак, до 100 МБ), и
+его ответ проверяется. Когда не хватает квоты, ошибка говорит, сколько места: `Steam Cloud has 105 B free of 4 KB; this save is
+540 B` (место, которое освобождает заменяемый файл, считается свободным; как это считает Steam, не описано). Строка `cloud`
+в `steam` показывает свободное место: `cloud: on · 3 saves copied as they were written · 2 KB free of 4 KB`.
+
+На выходе хук Steam идёт после хуков сессии и сохранений. Сначала уходят в облако копии того, что записали они (персонаж, которого
+хост возвращает уходящему клиенту, отложенные автосохранения), потом пишутся достижения, закрываются сессии реле с пирами
+(`CloseSessionWithUser`; пир видит `the relay session with … failed: closed by the peer`) и игра выходит из лобби. Сам Steam
+(`SteamAPI_Shutdown`) закрывается, когда уходит мир игры с последним объектом `steamworks` в нём. Порядок проверен на поддельном
+Steam.
 
 ### Для агента
 
 ```text
 $ shards act steam          # хост лобби (тест tools.rs: поддельный Steam, клиент c1, 20 мс в одну сторону)
 steam: a fake Steam in this process (this run does not talk to Steam) · user host (76561197960265729)
-session: host · lobby 109775240917319681, host host (76561197960265729) · 2 in it: host (76561197960265729), c1 (76561197960265730)
+session: host · lobby 109775240917319681 (friends only), host host (76561197960265729) · 2 in it: host (76561197960265729), c1 (76561197960265730)
 relay: ready (fake: an in-process hub) · sent 36 (5.5 KB), received 37 (3.2 KB)
 route to c1 (76561197960265730): connected · relayed via fake · ping 40 ms
 achievements: 2 defined, 1 unlocked in this run: first_blood (First blood) at tick 30 · stored on Steam 0 times, a store waits
@@ -4485,12 +4513,13 @@ cloud: on · 0 saves copied as they were written
 
 У игрового сервера первая строка `steam: an anonymous Steam game server · id 90071992547409921 · app 480`, вторая `session: game
 server · serving as 90071992547409921: players join with --join steam:90071992547409921`; строка `route to` у настоящего Steam
-берётся из `GetSessionConnectionInfo`: `connected · relayed via <pop> · ping 26 ms` (`<pop>` — код дата-центра реле, `direct` — без
+берётся из `GetSessionConnectionInfo`: `connected · relayed via <pop> · ping 16 ms` (`<pop>` — код дата-центра реле, `direct` — без
 реле).
 
 - `steam` (Player, query) — кто эта машина в Steam (клиент Steam как игрок, анонимный игровой сервер, подделка этого процесса или
-  «недоступен» с причиной), сессия, реле (что ушло и пришло, ошибки отправки, отказанные сессии, `relay only`), маршрут до
-  каждого пира, приглашения, которым игра не последовала, достижения этого запуска и записи в Steam, облако.
+  «недоступен» с причиной), строка `problem:`, если колбэки Steam остановились, сессия (у хоста лобби — и тип лобби), реле (что
+  ушло и пришло, ошибки отправки, отказанные сессии, `relay only`), маршрут до каждого пира, приглашения, которым игра не
+  последовала, достижения этого запуска и записи в Steam, облако (свободное место, что сделано при запуске, последняя ошибка).
 - `steam_host` (Dev, control) — хост лобби создаёт лобби заново после сбоя; сервер говорит, вошёл ли он. Запущенная игра хостом
   не становится: только флагами.
 - `steam_join lobby=ID` или `host=ID` (Dev, control) — клиент, запущенный с `--join steam:` или не вошедший в свою сессию, входит в
@@ -4498,20 +4527,45 @@ server · serving as 90071992547409921: players join with --join steam:900719925
 - `steam_invite friend=ID` (Player, control) — пригласить друга в лобби; без `friend` открывается окно приглашений оверлея.
 - `achievement_unlock id=… [player=N]` (Dev, control, только хост) — открыть, как открыла бы игра; на хосте событие уходит и
   клиентам.
-- `ai/status` — поле `steam`: `kind`, `user`, `role`, `lobby`, `host`, `members`, `relay` (`sent`, `received`, `errors`,
-  `relay_only`, `routes`: `peer`, `state`, `relayed`, `pop`, `ping_ms`), `achievements`, `cloud`. Меню разработчика — раздел
-  `steam`: `steam`, `steam_invite`, `steam_join`, `achievement_unlock`.
+- `ai/status` — поле `steam`: `kind`, `user`, `note` (почему Steam нет или почему его колбэки остановились), `role`, `lobby`,
+  `lobby_type` (`friends`, `private`, `invisible`, `public`; только у хоста лобби), `host`, `members`, `relay` (`sent`,
+  `received`, `errors`, `relay_only`, `routes`: `peer`, `state`, `relayed`, `pop`, `ping_ms`), `achievements`, `cloud`. Меню
+  разработчика — раздел `steam`: `steam`, `steam_invite`, `steam_join`, `achievement_unlock`.
+
+### Что проверено на настоящем Steam
+
+Один раз, 2026-10-16, на тестовом приложении 480 с одним аккаунтом, сборкой этой ветки до исправлений ниже (песочница с
+`steam_sdk`, обе игры на одной машине):
+
+- игровой сервер (`--steam-server --steam-relay-only`) и игрок, вошедший к нему по id (`--join steam:<id сервера>
+  --steam-relay-only`), — только через реле: `route to …: connected · relayed via <pop> · ping 16 ms` у клиента и 17 мс у сервера,
+  клиент — игрок 1, рассинхронов 0, после приказа двигаться на клиенте обе машины видят тело в одной точке;
+- достижение, открытое на сервере (`achievement_unlock`), ушло клиенту, тот открыл его своему аккаунту и записал (`stored on Steam
+  1 times`), и Steam показал его открытым на аккаунте;
+- копию облака, которая не сохранение, игра при запуске не берёт (`the cloud copy of … is not used (no header …)`);
+- у приложения 480 квота Steam Cloud — 4 КБ на всё, и свободно было около 100 байт: ни одна копия сохранения не легла. Отсюда
+  сообщение о квоте выше: прежнее (`other error (quota, or Steam Cloud off)`) причину не называло.
+
+Поправлено после этой проверки и на настоящем Steam ещё не запускалось: запись в облако одним `FileWrite`, сообщение о квоте,
+закрытие сессий реле и порядок на выходе, тип лобби (`--steam-lobby`), запуск клиента Steam до рендера, свои разборщики
+колбэков и их остановка после паники. На выходе клиента `steam_api` печатает `IPC call to
+IClientNetworkingUtilsSerialized::PostConnectionStateMsg failed`; то же печатает и программа, которая только подключается к
+Steam и ничего не закрывает, так что это, похоже, не порядок выхода движка, но после правки выхода это не проверялось.
 
 ### Что проверено только подделкой
 
 Тесты (`crates/shards_steam/tests/steam/`, юнит-тесты в `src/`) идут на `FakeSteam`: лобби, хост и два друга по реле стенда,
-игровой сервер и игрок, вошедший по id, приглашение, отказ чужому (хосту и клиенту), неудачный вход (нет лобби, свой же id, id
-не того типа, `--exit-with-host`), достижения (проверка контента, запись через секунду, прошлый запуск, имя, которого Steam не
-знает, реплей, кооператив), облако (копия каждой записи, выключенное облако, сверка при запуске до загрузки слота), ответы
-инструментов и `ai/status`. Настоящий бэкенд (`src/real.rs`) здесь только собирается и проходит clippy (`cargo clippy -p
-shards_steam --all-targets --features sdk`): с настоящим Steam его не запускали. Только у настоящего Steam проверяются:
-`Server::init` и анонимный вход, создание лобби и `+connect_lobby`, оверлей приглашений, маршрут через реле, выключенный ICE,
-запись достижений и Steam Cloud, а также приёмка ТЗ «два игрока соединяются через Steam relay».
+тип лобби, игровой сервер и игрок, вошедший по id, приглашение, отказ чужому (хосту и клиенту), неудачный вход (нет лобби, свой
+же id, id не того типа, `--exit-with-host` с кодом 2) и вход после него через `steam_join` (в лобби и к серверу), лобби, которое
+Steam не создал (и `steam_host` после), сервер, который не вошёл в Steam, игра без Steam (хост и клиент), колбэки, которые упали,
+выход (копии в облако, закрытые сессии, выход из лобби — в этом порядке), достижения (проверка контента, запись через секунду,
+прошлый запуск, имя, которого Steam не знает, реплей, кооператив), облако (копия каждой записи, выключенное облако, сверка при
+запуске до загрузки слота, копии из более новой версии, реплей, квота), ответы инструментов и `ai/status`. Правил входа в лобби
+разных типов подделка не знает: что в `private` входят только по приглашению, а `invisible` не видно друзьям, — поведение Steam
+по его документации, движок только передаёт тип. Настоящий бэкенд (`src/real.rs`) в тестах только собирается и проходит clippy
+(`cargo clippy -p shards_steam --all-targets --features sdk`). Только у настоящего Steam проверяются: лобби любого типа и вход в
+него, `+connect_lobby`, оверлей (приглашения, всплывающее достижение) в окне, запись в Steam Cloud у приложения, где хватает
+квоты, а также приёмка ТЗ «два игрока соединяются через Steam relay» на двух машинах.
 
 **Ручная проверка на одной машине с одним аккаунтом** (клиент Steam запущен и вошёл; тестовое приложение 480; игра собрана с
 `steam_sdk`, например песочница с `--features shards/steam_sdk`):
@@ -4524,16 +4578,28 @@ SHARDS_PORT_FILE=/tmp/srv.port cargo shards act steam    # строка 1: id с
 cargo run -p sandbox --features shards/steam_sdk -- --headless --join steam:<id сервера> --steam-app 480 --steam-relay-only --port 0 --port-file /tmp/cli.port &
 SHARDS_PORT_FILE=/tmp/cli.port cargo shards act steam    # route to …: connected · relayed via <код> · ping N ms
 SHARDS_PORT_FILE=/tmp/cli.port cargo shards status       # net: connected, player 1
+SHARDS_PORT_FILE=/tmp/cli.port cargo shards quit; SHARDS_PORT_FILE=/tmp/srv.port cargo shards quit
+# 3. Облако — одиночная игра (игрок Steam): копия сохранения и место в облаке.
+cargo run -p sandbox --features shards/steam_sdk -- --headless --steam-app 480 --port 0 --port-file /tmp/one.port &
+SHARDS_PORT_FILE=/tmp/one.port cargo shards act save_game what=world slot=cloud1
+SHARDS_PORT_FILE=/tmp/one.port cargo shards act steam    # cloud: on · 1 saves copied … · N B free of 4 KB
+#    или, если места нет: … · the last copy failed: saves/world/cloud1.save: Steam Cloud has N B free of 4 KB; this save is M KB
+SHARDS_PORT_FILE=/tmp/one.port cargo shards quit
+# 4. Лобби, в которое входят только по приглашению (войти в своё же лобби нельзя: для входа нужен второй аккаунт):
+cargo run -p sandbox --features shards/steam_sdk -- --headless --steam-host --steam-lobby private --steam-app 480 --port 0 --port-file /tmp/host.port &
+SHARDS_PORT_FILE=/tmp/host.port cargo shards act steam   # session: host · lobby <id> (private: invite only), host <имя> (<id>) · 1 in it: …
+SHARDS_PORT_FILE=/tmp/host.port cargo shards quit
 ```
 
-С двумя аккаунтами на двух машинах — лобби: на первой `--steam-host --steam-app 480`, `shards act steam` даёт id лобби; на второй
-`--join steam:<лобби> --steam-app 480` (или `shards act steam_invite friend=<id второго>` на первой и «Принять» в оверлее второй),
-затем `shards act steam` на обеих: `lobby …, host …`, `route to …: connected`. Достижения и облако проверяются только у приложения
-со своими достижениями в Steamworks: у 480 их имена другие (`ACH_WIN_ONE_GAME` и соседние).
+С двумя аккаунтами на двух машинах — лобби: на первой `--steam-host --steam-app 480` (или с `--steam-lobby private`), `shards act
+steam` даёт id лобби; на второй `--join steam:<лобби> --steam-app 480` (или `shards act steam_invite friend=<id второго>` на первой
+и «Принять» в оверлее второй), затем `shards act steam` на обеих: `lobby …, host …`, `route to …: connected`. Достижения
+проверяются только у приложения со своими достижениями в Steamworks: у 480 их имена другие (`ACH_WIN_ONE_GAME` и соседние).
 
-**Чего нет.** Лобби только «только друзья», без поиска лобби и списка серверов. Голосового чата, статистик (кроме достижений),
-мастерской и rich presence нет (приглашение через rich presence Steam не приходит: `steamworks` 0.13 падает на его разборе, поэтому
-обработчик не ставится). Сессия меняется только перезапуском: запущенная игра не становится хостом и не уходит в другое лобби.
+**Чего нет.** Тип лобби задаётся только при запуске (`--steam-lobby`); поиска лобби и списка серверов нет. Голосового чата,
+статистик (кроме достижений), мастерской и rich presence нет (приглашение через rich presence Steam не приходит: `steamworks` 0.13
+падает на его разборе, поэтому обработчик не ставится). Сессия меняется только перезапуском: запущенная игра не становится хостом
+и не уходит в другое лобби.
 Пакет для Linux кладёт `libsteam_api.so` рядом, но программе нужен ещё `rpath=$ORIGIN` (не задан).
 
 ## Сборка для игроков и Windows (E10.6)
@@ -4566,9 +4632,11 @@ writes: nothing in its own folder
   сам пишет из неё ресурс `.res` и отдаёт его линкеру. Шаблон с `dist` собирается с `windows_subsystem = "windows"`, так что
   окно консоли рядом с игрой не открывается. Если игру запустили из терминала, `shards::run` пишет в него (`--check-content`,
   `--help`, ошибки).
-- **Папка** `dist/<имя>-<версия>-<ОС>-<арх>/` рядом с `Cargo.toml` игры: программа и копия `assets/`. Динамические библиотеки,
-  которые программе дают build-скрипты (`dylib=` в их выводе: `steam_api64.dll` у игры с `steam_sdk`), ложатся рядом с ней, а
-  `steam_appid.txt` из папки удаляется: игру игрока запускает Steam с её app id. Их она заменяет,
+- **Папка** `dist/<имя>-<версия>-<ОС>-<арх>/` рядом с `Cargo.toml` игры: программа и копия `assets/`. Библиотека Steamworks SDK
+  у игры с `steam_sdk` (`steam_api64.dll`, `libsteam_api.so`, `libsteam_api.dylib`: копия, которую build-скрипт `steamworks-sys`
+  кладёт в свою папку) ложится рядом с программой; других библиотек, которые линкуют build-скрипты, в пакете нет (ALSA и udev,
+  которые на Linux находит pkg-config, у игрока свои). `steam_appid.txt` из папки удаляется: игру игрока запускает Steam с её
+  app id. Их она заменяет,
   остальное в папке не трогает. Другое место задаёт `--out DIR`. Ссылку (symlink, junction) в `assets/` и саму `assets/`,
   если это ссылка, команда не копирует, а отказывает: в пакет попало бы то, на что она указывает.
 - **Проверки** (`--no-check` их пропускает):
