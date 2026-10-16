@@ -45,7 +45,7 @@ cargo shards content check              # контент запущенной и
 cargo shards act regen region=wilds seed=42    # сгенерировать регион и перейти в него (экран загрузки, игрок у ворот)
 cargo shards act nav_path to=e6         # маршрут по навсетке региона; npc_state id=eN — что у NPC на уме
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # пакетная проверка генератора; без игры: cargo sandbox --worldgen-report wilds --seeds 1..1000
-cargo sandbox --bake-nav                # запечь навигацию тайлов в assets/nav/ (после правки тайла, его файла уровня или тела agent)
+cargo sandbox --bake-nav                # запечь навигацию тайлов в assets/nav/ под все классы тел (после правки тайла, его файла уровня или тела любого класса)
 cargo sandbox --replay FILE --verify    # реплей без окна; добавьте --windowed (под xvfb-run -a) для окна
 cargo shards assert add hp 'field:6:Health.current<300'   # правило: игра встанет, когда оно нарушено (`step` → код выхода 3)
 cargo shards fuzz --seed 7 --steps 300  # случайные входы, пока не нарушится правило
@@ -74,7 +74,9 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
   `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on`, `attack`, `god`, `heal`, `stagger`; **контент** —
   `content_list`, `content_get`, `content_check`, `content_reload`, `spawn_prefab`; **мир** — `regen`, `region_load`,
   `goto_tile`, `region_info`, `worldgen_report`, `spawn_level`, `level_info`, `level_reload`; **NPC и навигация** —
-  `npc_state`, `npc_set_state`, `nav_path`, `nav_info`, `nav_bake`, оверлеи `world_overlay` и `nav_overlay` (окно),
+  `npc_state` (`nav.routes`: по навсетке какого класса тел NPC планирует или почему по локальной сетке), `npc_set_state`,
+  `nav_path` (`body=large` — по навсетке класса тел), `nav_info` (`bodies` — классы тел и их навсетки), `nav_bake`, оверлеи
+  `world_overlay` и `nav_overlay` (окно),
   `npc_overlay` (строка на NPC рядом с игроками: состояние, цель, жетон, поводок, что видит и слышит; в окне — F7); **правила** —
   `assert_add`, `assert_list`, `assert_remove`, `assert_reset` (`shards assert`); **интерфейс** — `ui_read` (дерево экранов: id
   виджетов, значения, фокус), `ui_open`, `ui_close`, `ui_navigate`, `ui_click`, `ui_set`; **язык** — `locale` (языки, на каком
@@ -249,7 +251,10 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
 - **Навсетка.** Запечённые тайлы лежат в `assets/nav/` (`cargo sandbox --bake-nav`, tool `nav_bake`) и коммитятся; с
   определением `nav` их проверяет `--check-content` (устаревший файл — ошибка с командой). Поменяли то, чем запекается тайл
   (зонд земли и правило шага в `shards_motion`, сэмплирование в `shards_npc::nav`), — поднимите `BAKE_VERSION` и запеките всё.
-  Правка тайла, его файла уровня или префаба геометрии — запечь заново.
+  Правка тайла, его файла уровня или префаба геометрии — запечь заново. Классы тел (`bodies` в `*.nav.ron`: `agent` и,
+  например, `large` для большого врага) пекутся каждый в свою папку (`assets/nav/large/`); правка `locomotion` любого класса,
+  новый класс или его `radius`/`height` — тоже запечь заново (`--bake-nav` печёт все классы) и закоммитить файлы класса.
+  `--check-content` называет пропавший или устаревший файл каждого класса (``… for the body `large` (nav/large/…)``).
 - **NPC действуют только через `Intent`** (как игрок и агент): мозг NPC движка пишет в него в `NpcSystems::Drive`, а не двигает
   тело. Поведение, восприятие, директор и планы атак — контент (`*.behavior.ron`, `*.perception.ron`, `*.director.ron`,
   `*.attack_plan.ron`); свою логику добавляют как `add_npc_condition` / `add_npc_state` по имени, а не копией мозга. Состояние NPC

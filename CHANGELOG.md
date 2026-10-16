@@ -812,6 +812,30 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
 - Тесты `tests/npc/avoid.rs` (встреча в коридоре, стая у игрока с дуги и гуськом, без уклонения, детерминизм, `npc_state` и
   оверлей), юнит-тесты `nav::avoid`; сценарий песочницы `npc_avoidance.scenario`.
 
+**Классы тел навсетки (E6.1, `shards_npc`)** — навсетка больше не под одно тело:
+
+- У `nav` поле `bodies`: классы тел по имени (`"large": (locomotion: Some("warden"))`, `radius` и `height` поверх тела,
+  `NavBodyDef`). Имя — строчные буквы, цифры и `_` (это и папка файлов), `agent` занято; ссылку на `locomotion` и числа
+  проверяет контент.
+- Каждый тайл печётся под `agent` и под каждый класс, файл класса — в своей папке (`assets/nav/large/<тайл>.navtile.ron`).
+  Формат файла и `BAKE_VERSION` прежние, хэш файла класса берёт ещё его имя, а файлы `agent` байт в байт те же, что у игры без
+  классов. `--bake-nav` и `nav_bake` пекут все классы (`baked 18 files for 2 body classes (agent, large) into nav/`; без
+  классов — прежнее `baked 9 tiles into nav/`), `--check-content` называет пропавший или устаревший файл каждого класса
+  (``tile `pillars` has no bake file for the body `large` (nav/large/pillars.navtile.ron)``).
+- Регион строит навсетку каждого класса (`NavRegion::bodies`, `classes()`, `class(name)`) с вырезанием по телу класса;
+  журнал — строкой на класс (`navmesh (body large): 64 tiles, …`, предупреждения с той же меткой).
+- Маршрут идёт по самому тесному классу: у NPC — по радиусу (`NavRegion::for_radius`: `navmesh_path`, `plain_sight`), у
+  `move_to path=true`, `path_to` и `clearance` — по телу ходока (`NavRegion::serving`). Тело шире всех классов планирует по
+  локальной сетке.
+- Инструменты: `nav_path body=large` (`"body"` в ответе, на опечатку — ошибка с подсказкой и списком классов), `nav_info` →
+  `bodies` (тело и навсетка каждого класса), `npc_state` → `nav.routes` (`navmesh, body large` или `local grid: …` с причиной),
+  `npc_overlay` дописывает `body large` или `local grid`. Функции `region_nav`, `route_on`, `routes_for`.
+- Песочница: класс `large` под тело стража (`content/region/wilds.nav.ron`), файлы `assets/nav/large/` (9 тайлов); сценарий
+  `npc_bodies` (страж в пилонном зале wilds идёт к игроку по навсетке своего класса). У шаблона классов нет, его файлы прежние.
+- Тесты `tests/npc/bodies.rs` (5): большое тело идёт в широкую дверь, а не в проём под `agent`, и держит зазор; NPC шире
+  класса `agent` ходит по навсетке `large`, шире всех — по локальной сетке; байты файлов обоих классов стабильны, файлы `agent`
+  те же, что без классов; контент называет пропавший файл класса; проверка `bodies`.
+
 ### Исправлено
 
 - Уровни (найдено настоящим экспортом Blender): `to` у `navlink` принимает и свойство *Data-Block* (объект, который экспортёр
@@ -1113,9 +1137,16 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   заменённой удаляются вместе с ней (игра, заменившая `region`, регистрирует миграции своих версий после неё; иначе миграция движка
   `region` 1 → 2 уронила бы сборку её секции версии 1).
 - E6.2: `npc_tuning` больше не знает `avoid_time` и `avoid_margin` (контент с ними — ошибка `unknown field`): их место
-  заняла `avoidance`. У `NavAgent` новые поля, NPC в толпе ходят иначе, поэтому эталонные реплеи с NPC (`npc_director`,
-  `npc_navmesh`, `combat_prototype`, `region`, `snapshot`, `saves` песочницы и реплеи шаблона) расходятся и записываются заново
-  (здесь они прежние).
+  заняла `avoidance`. У `NavAgent` новые поля, и NPC в толпе ходят иначе. Эталонные реплеи песочницы (все семь) нужно записать
+  заново, здесь они прежние; расходятся они двумя способами. `combat_prototype`, `npc_director`, `npc_navmesh`,
+  `obstacle_course` и `region` — `DIVERGED at tick 60`: `NavAgent` у NPC (`e6`, `e7`, `e8`, `e14`, в регионе и `e25`; эта
+  ветка) вместе с `Look` у всех тел и `replay check content` (контент сменился ещё в E10.x); `snapshot` и `saves` не стартуют
+  со своего снапшота: `this game is not the one the snapshot was taken in: content differs` (хэш контента, тоже раньше этой
+  ветки). У шаблона `smoke` расходится на `Look`, `SaveKey`, `Trophies` и контенте (раньше этой ветки), `valley` — ещё и на
+  `NavAgent` рейдеров (эта ветка).
+- E6.1: классы тел меняют контент песочницы (`wilds.nav.ron` с классом `large`), и хэш контента снова другой; новых
+  расходящихся компонентов они не добавляют: NPC в реплеях — скелеты, они идут по классу `agent`, а его навсетка и файлы
+  прежние. Журнал региона прибавил строку `navmesh (body large): …`.
 
 ### Планируется
 

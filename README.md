@@ -99,7 +99,7 @@ cargo sandbox --check-content
 # 7. Мир без игры: генератор на тысяче зёрен (код 0, если прошли все) и запекание навигации тайлов.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
 # ok: worldgen wilds v1, seeds 1..1000: 1000/1000 passed (42 after a retry), 0 fell back, 0 failed, 0 panicked [1000 seeds in 0.31s, 0.3 ms/seed]
-cargo sandbox --bake-nav               # baked 9 tiles into nav/ (после правки тайла; без правок файлы не меняются)
+cargo sandbox --bake-nav               # baked 18 files for 2 body classes (agent, large) into nav/ (после правки тайла; без правок файлы не меняются)
 ```
 
 `cargo sandbox` — это `cargo run -p sandbox --`, `cargo shards` — `cargo run -q -p shards_cli --` (алиасы в
@@ -1471,8 +1471,9 @@ CHANGES
   …
 JOURNAL
   0 region generated: wilds seed 42 v1 (attempt 1, 64 tiles, 5 POIs)
-  0 region loaded: wilds seed 42 v1 (64 tiles, 199 entities, players at (-40.0, 72.0))
-  0 navmesh: wilds seed 42 v1 (64 tiles, 65012 nodes, 7168 links across edges, 0 navlinks)
+  0 region loaded: wilds seed 42 v1 (64 tiles, 203 entities, players at (-40.0, 72.0))
+  0 navmesh: wilds seed 42 v1 (64 tiles, 65012 nodes, 7112 links across edges, 0 navlinks)
+  0 navmesh (body large): 64 tiles, 64180 nodes, 7056 links across edges, 0 navlinks
 ```
 
 Манифест из `region_info manifest=true` возвращает регион таким, каким он был, ничего не генерируя (хэш тот же):
@@ -1735,39 +1736,47 @@ $ shards scenario crates/sandbox/scenarios/npc_director.scenario   # три ск
 
 ```text
 $ cargo sandbox --bake-nav               # все тайлы, которые используют регионы (или --bake-nav grass,ruin; в игре: tool nav_bake)
-baked 9 tiles into nav/
+baked 18 files for 2 body classes (agent, large) into nav/
   gate: gate.navtile.ron (1000 nodes, 3 areas, 4 portals)
+  gate: large/gate.navtile.ron (968 nodes, 3 areas, 4 portals)
   grass: grass.navtile.ron (1024 nodes, 1 area, 4 portals)
+  grass: large/grass.navtile.ron (1024 nodes, 1 area, 4 portals)
   hall: hall.navtile.ron (972 nodes, 2 areas, 4 portals)
+  hall: large/hall.navtile.ron (916 nodes, 2 areas, 4 portals)
   pillars: pillars.navtile.ron (944 nodes, 5 areas, 4 portals)
-  ruin: ruin.navtile.ron (992 nodes, 4 areas, 4 portals)
+  pillars: large/pillars.navtile.ron (848 nodes, 5 areas, 4 portals)
   …
 ```
 
-Запеканка загружает игру без окна и без тиков, пишет файлы `assets/nav/<тайл>.navtile.ron` (комнаты — `.navroom.ron`) и
-завершается кодом 0 (все запеклись) или 1 (нельзя запечь или нет такого тайла: `no tile or room `grss` to bake (did you
-mean `grass`?)`). Файл — заголовок RON с числами, которые читает человек, и хэш того, из чего он запечён, вокруг
-упакованной сетки в base64. Тот же тайл — те же байты: повторный `--bake-nav` ничего не меняет в git.
+Запеканка загружает игру без окна и без тиков, пишет файлы `assets/nav/<тайл>.navtile.ron` (комнаты — `.navroom.ron`), для
+каждого класса тел кроме `agent` — в его папку, `assets/nav/<класс>/<тайл>.navtile.ron`, и завершается кодом 0 (все
+запеклись) или 1 (нельзя запечь или нет такого тайла: `no tile or room `grss` to bake (did you mean `grass`?)`). Файл —
+заголовок RON с числами, которые читает человек, и хэш того, из чего он запечён, вокруг упакованной сетки в base64. Тот же
+тайл — те же байты: повторный `--bake-nav` ничего не меняет в git. Игра без классов тел пишет только файлы `agent` и
+отвечает, как раньше: `baked 9 tiles into nav/`.
 
 Настройки — вид `nav` (id `default`):
 
 ```ron
 // content/region/wilds.nav.ron
-{ "default": (cell: 0.5, agent: Some("skeleton"), safe_drop: 2.0) }
+{ "default": (cell: 0.5, agent: Some("skeleton"), safe_drop: 2.0, bodies: {"large": (locomotion: Some("warden"))}) }
 ```
 
 `cell` — ребро клетки в метрах (ребро тайла должно делиться на неё), `agent` — id `locomotion` тела, под которое пекутся
-тайлы (радиус, рост, высота ступеньки, склон, перелезание), `safe_drop` — глубже этого спуск считается обрывом, `dir` — папка
-файлов (`nav`), `check_bakes` — проверять ли файлы контентом. **С определением `nav` отсутствующий или устаревший файл — ошибка
-контента**, и `shards content check` / `--check-content` называют его:
+тайлы (радиус, рост, высота ступеньки, склон, перелезание), `bodies` — ещё классы тел (см. ниже), `safe_drop` — глубже этого
+спуск считается обрывом, `dir` — папка файлов (`nav`), `check_bakes` — проверять ли файлы контентом. **С определением `nav`
+отсутствующий или устаревший файл — ошибка контента**, у каждого класса свой, и `shards content check` / `--check-content`
+называют его:
 
 ```text
 content/region/wilds.nav.ron: nav `default`: the bake of tile `grass` (nav/grass.navtile.ron) is stale: the tile, its prefabs or level file, or the nav settings changed since it was baked; bake it again with `--bake-nav grass`
+content/region/wilds.nav.ron: nav `default`: tile `pillars` has no bake file for the body `large` (nav/large/pillars.navtile.ron); bake it with `--bake-nav pillars` (or `--bake-nav all`)
 ```
 
 Хэш файла берёт формат и версию запеканки, определение тайла, префабы его геометрии с теми, что они расширяют (в том числе
-префабы узлов файла уровня), байты файла уровня, размер тайла и настройки с телом. Тайл без свежего файла при загрузке региона
-всё равно запекается на месте, а в журнале предупреждение с именами:
+префабы узлов файла уровня), байты файла уровня, размер тайла и настройки с телом (у класса — и его имя). Тайл без свежего
+файла при загрузке региона всё равно запекается на месте, а в журнале предупреждение с именами (у класса — `navmesh (body
+large): …`):
 
 ```text
   0 [warn] navmesh: 5 tiles baked while loading (stale: grass, road_bend, road_end, road_straight, road_t); bake them with `--bake-nav all` (or the nav_bake tool)
@@ -1776,6 +1785,25 @@ content/region/wilds.nav.ron: nav `default`: the bake of tile `grass` (nav/grass
 **Версия запеканки.** `BAKE_VERSION` в `shards_npc::nav::tile` входит в хэш каждого файла. Если вы меняете то, чем запекается
 тайл (сэмплирование, зонд земли или правило шага в `shards_motion`), поднимите её: все файлы станут устаревшими, и контент
 назовёт каждый. Файлы лежат в репозитории игры.
+
+**Классы тел.** Тайлы пекутся под тело `agent` и ещё раз под каждый класс из `bodies`: так большой враг ходит по своей
+навсетке, а не по локальной сетке. Класс — имя (строчные буквы, цифры, `_`; это и папка его файлов) и тело: `locomotion`
+(без него — тело `agent`), а `radius` и `height` заменяют его радиус и рост. Регион собирает навсетку каждого класса так же
+(файлы, вырезание, сшивка, navlink), и журнал говорит о каждой (`navmesh (body large): 64 tiles, …`). Маршрут идёт по самому
+тесному классу, в который тело влезает:
+
+- NPC знает о себе только радиус (`NavPaths`, `navmesh_path`): его класс — с наименьшим радиусом не меньше его собственного
+  (из равных — первый: `agent`, потом по имени), и идёт он телом этого класса. Тело шире всех классов планирует по локальной
+  сетке, и `npc_state` (`nav.routes`) и `npc_overlay` говорят это;
+- `move_to path=true`, `path_to` и `clearance` берут самый тесный класс, движения тела которого ходоку под силу
+  (`NavRegion::serving`): кто шире, выше, перелезает или плавает хуже всех классов — по локальной сетке;
+- `nav_path body=large` идёт по навсетке названного класса его телом (`radius` — ещё уже; шире класса — ошибка).
+
+Страж песочницы (`locomotion` `warden`: радиус 0.8 м, рост 3.2 м) шире скелета — для него класс `large`. Песочница
+печёт 9 тайлов дважды; у шаблона классов нет, и его файлы те же. **Правили тайл, его файл уровня, префаб геометрии или
+`locomotion` любого класса — запеките заново** (`--bake-nav` печёт все классы сразу): иначе контент назовёт устаревший файл
+класса, а регион запечёт его при загрузке. Формат файла класса тот же, `BAKE_VERSION` от классов не меняется, а файлы `agent`
+байт в байт те же, что у игры без классов.
 
 **Регион собирает навсетку при загрузке** (`NavRegion`, строится внутри вызова, который его грузит, так что ни один тик не видит
 регион без неё):
@@ -1795,19 +1823,19 @@ content/region/wilds.nav.ron: nav `default`: the bake of tile `grass` (nav/grass
 
 Маршрут (`NavRegion::path`): A* по графу тайлов, потом A* по сетке тайлов коридора, потом «натягивание нити» с проверкой по
 сетке и телесным ощупыванием физики. Стоимости целые, ничья — меньший id: тот же регион даёт тот же маршрут, и NPC в реплее
-идут одинаково. Маршруты не требуют окна. Навсетка рассчитана на одно тело (`agent`): ходок, которому движения этого тела не
-под силу (шире или выше, ступенька ниже, перелезает или плавает хуже; `NavRegion::serves`), планирует по локальной сетке,
-поэтому `move_to path=true` не ведёт его через перелезание, которое он не сделает (`nav_path from=<он>` планирует так же, по его
-собственному телу, а не по телу по умолчанию). Страж песочницы шире скелета и ходит так.
+идут одинаково. Маршруты не требуют окна. Ходок, которому движения ни одного класса тел не под силу (шире или выше, ступенька
+ниже, перелезает или плавает хуже; `NavRegion::serves`), планирует по локальной сетке, поэтому `move_to path=true` не ведёт
+его через перелезание, которое он не сделает (`nav_path from=<он>` планирует так же, по его собственному телу, а не по телу
+класса). Страж песочницы в регионе идёт по навсетке класса `large`, на арене (вне региона) — по локальной сетке.
 Навсетка, которую не удалось построить, не пробуется заново каждый тик, а только когда сменился регион или контент.
 
 **Запросы и инструменты.**
 
 | инструмент | что делает |
 |---|---|
-| `nav_path` (игрок, запрос) | маршрут, который выбрал бы NPC, в формате `path_to` плюс тайлы, через которые он идёт (`"provider": "navmesh"`) |
-| `nav_info` (разработчик, запрос) | навсетка региона: тайлы, узлы, связи, вырезанное, navlink и какие тайлы запеклись при загрузке |
-| `nav_bake` (разработчик, `control`) | то же, что `--bake-nav`: один тайл, несколько или все |
+| `nav_path` (игрок, запрос) | маршрут, который выбрал бы NPC, в формате `path_to` плюс класс тела (`"body"`) и тайлы, через которые он идёт (`"provider": "navmesh"`); `body=large` — по навсетке этого класса |
+| `nav_info` (разработчик, запрос) | навсетка региона: тайлы, узлы, связи, вырезанное, navlink и какие тайлы запеклись при загрузке; `bodies` — каждый класс тел: тело и его навсетка |
+| `nav_bake` (разработчик, `control`) | то же, что `--bake-nav`: один тайл, несколько или все, под все классы тел |
 | `nav_overlay` (разработчик, окно) | рисует клетки (зелёные; вода синяя, вырезанное красное), связи через края, navlink, маршруты NPC и границы тайлов |
 | `npc_overlay` (разработчик, запрос; окно — F7) | что на уме у каждого NPC рядом с игроками: строкой в ответе и метками в окне (см. «Оверлей NPC») |
 | `npc_state` (игрок, запрос) | всё об уме NPC: состояние, цель, жетон, план, маршрут, поводок |
@@ -1818,21 +1846,40 @@ content/region/wilds.nav.ron: nav `default`: the bake of tile `grass` (nav/grass
 ```text
 $ shards act nav_path from='{"x": 24, "z": 140}' to=e5          # от логова стража к игроку за колоннами
 {
+  "body": "agent",
   "distance": 16.8,
   "path": "path 16.8m, 3 turns: 6.2m E → 3.5m N → 7.2m NW",
   "provider": "navmesh",
   "tiles": ["(5, 5)"],
   …
 }
+$ shards act nav_path from='{"x": 24, "z": 150}' to=e5 body=large   # тот же обход колоннады телом стража
+{
+  "body": "large",
+  "distance": 24.76,
+  "path": "path 24.8m, 3 turns: 14.2m NE → 3.0m N → 7.6m NW",
+  "provider": "navmesh",
+  …
+}
+$ shards act nav_path from='{"x": 24, "z": 150}' to=e5 body=larg
+error: no body class `larg` in the nav settings (did you mean `large`?); classes: agent, large
 $ shards act nav_info
-{ "agent": {"height": 1.8, "radius": 0.4}, "baked_while_loading": [], "from_files": ["gate", "grass", "hall", …],
-  "region": "wilds seed 42 v1", "summary": "64 tiles, 65012 nodes, 7168 links across edges, 0 navlinks", … }
+{ "agent": {"height": 1.8, "radius": 0.4}, "baked_while_loading": [],
+  "bodies": [
+    {"baked_while_loading": [], "body": "agent", "failed": [], "height": 1.8, "radius": 0.4, "step_height": 0.35,
+     "summary": "64 tiles, 65012 nodes, 7112 links across edges, 0 navlinks"},
+    {"baked_while_loading": [], "body": "large", "failed": [], "height": 3.2, "radius": 0.8, "step_height": 0.4,
+     "summary": "64 tiles, 64180 nodes, 7056 links across edges, 0 navlinks"}
+  ],
+  "from_files": ["gate", "grass", "hall", …], "region": "wilds seed 42 v1",
+  "summary": "64 tiles, 65012 nodes, 7112 links across edges, 0 navlinks", … }
 ```
 
 Инструменты движения спрашивают навсетку через планировщика маршрутов движения (`RoutePlanner`, его ставит `shards_npc`):
 `move_to path=true` и `path_to` получают от него маршрут (в регионе и для тела, которое навсетка обслуживает; иначе — локальная
-сетка в 0.5 м), а `clearance` — докуда в каждую сторону доходит навсетка (`reach`). Снапшот навсетку не сохраняет: после
-загрузки снапшота она строится заново для региона и тел, которые снапшот вернул.
+сетка в 0.5 м), а `clearance` — докуда в каждую сторону доходит навсетка (`reach`); оба — по самому тесному классу тел, который
+обслуживает тело ходока. Снапшот навсетку не сохраняет: после загрузки снапшота она строится заново (каждого класса) для
+региона и тел, которые снапшот вернул.
 
 ### Агенты навигации
 
@@ -1915,14 +1962,28 @@ e8 skeleton: fight e5 · token · leash 0/30m · sees e5 9.2m S · avoiding e7
 e14 skeleton: fight e5 · circle · leash 0/30m · sees e5 10.4m S · avoiding e8
 $ shards act npc_state id=e8      # фрагмент
   "nav": {"arrived": false, "avoiding": "e7", "direct": true, "goal": "(0.0, 12.0)", "next": "(0.0, 12.0)",
-          "no_route": false, "waypoints": 1},
+          "no_route": false, "routes": "local grid: no region loaded", "waypoints": 1},
+```
+
+`nav.routes` говорит, по чему NPC планирует маршруты: `navmesh, body agent` (или другого класса тел), а вне навсетки —
+`local grid` и почему: `no region loaded`, `the region has no navmesh`, `no body class fits a 1.60 m radius (the widest:
+large, 1.20 m)`. Страж в пилонном зале wilds (сценарий `npc_bodies`), идёт к игроку в обход колоннады:
+
+```text
+$ shards act npc_overlay
+e6 warden: fight e5 · token · leash 1/26m · sees e5 19.2m N · detour, 3 waypoints left · body large
+e25 skeleton: fight e5 · token · leash 6/10m · sees e5 9.3m NW · detour, 2 waypoints left
+$ shards act npc_state id=e6      # фрагмент
+  "nav": {"arrived": false, "avoiding": null, "direct": false, "goal": "(24.0, 130.0)", "next": "(30.2, 137.2)",
+          "no_route": false, "routes": "navmesh, body large", "waypoints": 3},
 ```
 
 ### Оверлей NPC
 
 `npc_overlay` (разработчик; в окне — F7, `NpcOverlay::key`) показывает, что на уме у каждого NPC ближе 40 м к игроку, по
 порядку id. Ответ инструмента — строка на NPC: состояние и цель, жетон или роль в ожидании, поводок, кого видит и слышит, где
-потерял цель, шум, маршрут:
+потерял цель, шум, маршрут (и класс тел, по навсетке которого он идёт, если это не `agent`: `body large`; `local grid`, если
+ни один класс ему не по размеру):
 
 ```text
 $ shards act npc_overlay
@@ -1937,13 +1998,17 @@ e26 skeleton: idle · leash 2/10m · lost e5 4.0s ago at (31.0, 120.5)
 
 ### Ограничения
 
-- Навсетка запекается под одно тело; другим планирует локальная сетка (это дольше и с ограничением по области поиска).
+- Навсетка запекается под тело `agent` и классы `bodies`; NPC знает о себе только радиус и идёт телом своего класса (ступенька
+  и перелезание — класса, а не свои). Тело шире всех классов планирует по локальной сетке (это дольше и с ограничением по
+  области поиска). Каждый класс — ещё одна запеканка всех тайлов и ещё одна навсетка региона в памяти и при загрузке;
+  `nav_overlay` рисует только навсетку `agent`.
 - У тел нет прыжка и лестниц: `navlink` годится для спуска, подъёма в пределах перелезания и шага.
 - Геометрия, которая появляется позже запеканки, вырезается, а не запекается: вырезание умеет только выключать клетки.
   Ступеньку, которой не было в запеканке, навсетка не узнает, пока тайл не запечён заново.
-- Правка тайла, файла уровня, префаба его геометрии, тела `agent` или настроек `nav` требует `--bake-nav`; без него контент
-  называет устаревший файл, а игра запекает его при загрузке региона.
-- Уклонение между NPC простое: упреждающий поворот и расталкивание, без согласованного планирования.
+- Правка тайла, файла уровня, префаба его геометрии, тела `agent`, тела любого класса или настроек `nav` требует `--bake-nav`
+  (он печёт все классы); без него контент называет устаревший файл каждого класса, а игра запекает его при загрузке региона.
+- Уклонение между NPC локальное (веер скоростей на горизонт `horizon`), без согласованного планирования: стая, пришедшая
+  гуськом, встаёт вторым рядом за первыми.
 
 ## Слой ИИ
 
