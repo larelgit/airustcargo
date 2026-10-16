@@ -112,6 +112,19 @@ fn take_report(app: &App) -> (crash::CrashReport, std::path::PathBuf) {
     (report, path)
 }
 
+/// Hands the panics the process kept so far to a report nobody reads: the panic hook's memory is
+/// the process's, so every test of this file shares it, and the panics earlier tests left in it are
+/// no longer unreported.
+///
+/// `without_the_handler_the_lost_schedules_are_named` leaves one by design: its game has no
+/// handler, so the panic of `cracking_ice` is never collected, and the next report written in the
+/// process, whichever test writes it, lists it among its other panics. The tests run in any order
+/// (the lock only keeps them one at a time), so a test that reads `CrashReport::panics` starts
+/// from an empty memory.
+fn forget_unreported_panics(app: &App) {
+    let _ = crash::report(app.world(), crash::What::default(), None);
+}
+
 #[test]
 fn the_crash_replay_reproduces_the_failure() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
@@ -123,6 +136,7 @@ fn the_crash_replay_reproduces_the_failure() {
     });
     app.add_systems(FixedUpdate, cracking_ice.in_set(SimSet::Resolve));
     app.world_mut().resource_mut::<AiFailures>().crash_replays = true;
+    forget_unreported_panics(&app);
     ok(&mut app, "attack", json!({"target": "e6", "repeat": true}));
     let out = ok(&mut app, "step", json!({"ticks": 100}));
     assert!(text(&out).ends_with("; crash replay: replays/crash-tick50.json"), "{}", text(&out));
