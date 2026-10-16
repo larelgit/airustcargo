@@ -111,7 +111,7 @@ pub fn install(app: &mut App, config: &EngineConfig) -> Result<Installed, String
     let config = app.world().get_resource::<EngineConfig>().unwrap_or(config).clone();
     let name = match &config.settings {
         SettingsStore::Off => return Ok(Installed::No),
-        SettingsStore::Default if config.headless || config.testing || config.embedded => return Ok(Installed::No),
+        SettingsStore::Default if config.headless || config.offscreen || config.testing || config.embedded => return Ok(Installed::No),
         SettingsStore::Default => match app.world().get_resource::<SettingsAppId>() {
             Some(id) => id.0.clone(),
             None => SettingsAppId::from_title(&config.title).0,

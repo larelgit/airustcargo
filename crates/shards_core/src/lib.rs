@@ -58,6 +58,10 @@ pub struct EngineConfig {
     /// No window, no GPU, no audio: CI, servers, parallel playtests. Gameplay is the
     /// same plugins, so a game plays the same with a window or without.
     pub headless: bool,
+    /// No window, but the GPU draws: the cameras render into an image of [`window`](Self::window)
+    /// size, which `shot` captures (`--offscreen`). For CI and agents on a machine with a GPU (or a
+    /// software one). Not headless: the game adds its looks ([`draws`](Self::draws)).
+    pub offscreen: bool,
     /// World seed: same seed + same inputs = same game.
     pub seed: u64,
     /// BRP port for `shards` (`remote` feature). `None`: no HTTP server.
@@ -156,6 +160,7 @@ impl Default for EngineConfig {
             title: "Shards".into(),
             version: None,
             headless: false,
+            offscreen: false,
             seed: 42,
             port: Some(ai_core::DEFAULT_PORT),
             paused: false,
@@ -184,6 +189,12 @@ impl Default for EngineConfig {
 }
 
 impl EngineConfig {
+    /// Something is drawn: a window, or an offscreen image. A game adds its looks (meshes, lights,
+    /// cameras) only then.
+    pub fn draws(&self) -> bool {
+        self.offscreen || !(self.headless || self.testing || self.embedded)
+    }
+
     /// The AI layer as this config wants it.
     pub fn ai_core_plugin(&self) -> AiCorePlugin {
         AiCorePlugin {

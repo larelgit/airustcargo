@@ -1,4 +1,5 @@
-//! `shot`: a screenshot of the game window with every `eN` mark drawn on it.
+//! `shot`: a screenshot of the game window (or of the image an offscreen game draws into, see
+//! [`display`](crate::display)) with every `eN` mark drawn on it.
 //!
 //! Pixels are a side channel for visual bugs (a mesh in the wrong place, a telegraph
 //! that does not match its hitbox, a label drawn over the wrong thing); numbers still
@@ -31,6 +32,7 @@ use bevy::window::PrimaryWindow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::display::Offscreen;
 use crate::highlight::AiOverlay;
 use crate::journal::{self, JournalKind};
 use crate::observe::{on_screen, AiCamera};
@@ -121,12 +123,10 @@ pub struct AiShots {
 }
 
 fn shot_tool(In(call): In<Call<ShotArgs>>, world: &mut World) -> ToolResult<ShotTicket> {
-    let has_window = world
-        .try_query_filtered::<(), With<PrimaryWindow>>()
-        .is_some_and(|mut q| q.iter(world).next().is_some());
-    if !has_window {
-        return Err("no window to capture: this game runs headless. Use `observe` for the world as text, \
-                    or run it with a window (`cargo sandbox`)"
+    if target(world).is_none() {
+        return Err("nothing to capture: this game runs headless. Use `observe` for the world as text, \
+                    or run it with a window (`cargo sandbox`) or offscreen, on the GPU without a window \
+                    (`cargo sandbox --offscreen`)"
             .into());
     }
     let marks = call.args.marks.unwrap_or(true);
@@ -183,6 +183,15 @@ fn part_path(path: &Path) -> PathBuf {
     let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let ext = path.extension().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     path.with_file_name(format!("{stem}.part.{ext}"))
+}
+
+/// What a shot captures: the primary window, else the offscreen image; `None` headless.
+fn target(world: &World) -> Option<Screenshot> {
+    let window = world.try_query_filtered::<(), With<PrimaryWindow>>().is_some_and(|mut q| q.iter(world).next().is_some());
+    if window {
+        return Some(Screenshot::primary_window());
+    }
+    world.get_resource::<Offscreen>().map(|offscreen| Screenshot::image(offscreen.image.clone()))
 }
 
 /// Where every AI-visible entity is in the image, in physical pixels.
@@ -242,7 +251,15 @@ fn run_shots(world: &mut World) {
             marks: p.marks,
             legend: legend(world),
         };
-        let screenshot = world.spawn(Screenshot::primary_window()).observe(save_when_captured(p.path.clone(), info)).id();
+        let Some(target) = target(world) else {
+            journal::log(world, JournalKind::Error, format!("screenshot {} not saved: the window is gone", p.path.display()));
+            if p.marks {
+                let mut overlay = world.resource_mut::<AiOverlay>();
+                overlay.shots = overlay.shots.saturating_sub(1);
+            }
+            continue;
+        };
+        let screenshot = world.spawn(target).observe(save_when_captured(p.path.clone(), info)).id();
         world.resource_mut::<AiShots>().in_flight.push(InFlight { screenshot, path: p.path, marks: p.marks, frames: 0 });
     }
 

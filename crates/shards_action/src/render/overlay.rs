@@ -17,7 +17,6 @@ use bevy::gizmos::config::{GizmoConfig, GizmoConfigGroup, GizmoLineConfig};
 use bevy::gizmos::AppGizmoBuilder;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
-use bevy::window::Window;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -91,7 +90,7 @@ pub(crate) fn plugin(app: &mut App) {
         .add_systems(Update, toggle_with_key.run_if(ai_core::dev::keys_free))
         .add_systems(
             PostUpdate,
-            (collect, (flush_telegraphs, flush_overlay)).chain().after(TransformSystems::Propagate).run_if(any_with_component::<Window>),
+            (collect, (flush_telegraphs, flush_overlay)).chain().after(TransformSystems::Propagate).run_if(ai_core::display::drawn),
         );
     }
 }
@@ -117,7 +116,7 @@ fn overlay_tool(In(call): In<Call<OverlayArgs>>, world: &mut World) -> ToolResul
         return Ok("combat overlay off".into());
     }
     let counts = draw::overlay(world, parts, Quat::IDENTITY).1;
-    Ok(format!("combat overlay on (drawn in the window only): {}", counts.describe()))
+    Ok(format!("combat overlay on (drawn in the window or offscreen only): {}", counts.describe()))
 }
 
 fn toggle_with_key(keys: Option<Res<ButtonInput<KeyCode>>>, mut overlay: ResMut<CombatOverlay>) {

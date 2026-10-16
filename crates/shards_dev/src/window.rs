@@ -44,7 +44,7 @@ pub(crate) fn plugin(app: &mut App) {
             Update,
             (toggle, type_into_console, choose_in_menu, run_pending, take_keyboard, show_console, show_menu)
                 .chain()
-                .run_if(any_with_component::<Window>),
+                .run_if(ai_core::display::drawn),
         );
 }
 

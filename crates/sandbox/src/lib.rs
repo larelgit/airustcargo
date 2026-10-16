@@ -45,13 +45,13 @@ impl Plugin for SandboxPlugin {
 }
 
 /// The app `shards::run` runs: the engine from `config`, the sandbox, and its looks
-/// when there is a window.
+/// when something is drawn (a window, `--offscreen`).
 pub fn build_app(config: &EngineConfig) -> App {
     let title = format!("Shards sandbox · seed {} · BRP :{}", config.seed, config.port.unwrap_or(0));
     let mut app = App::new();
     let version = Some(env!("CARGO_PKG_VERSION").into());
     app.add_plugins(EnginePlugins::new(EngineConfig { title, version, ..config.clone() })).add_plugins(SandboxPlugin);
-    if !config.headless && !config.testing {
+    if config.draws() {
         #[cfg(feature = "render")]
         app.add_plugins(visuals::VisualsPlugin);
         #[cfg(not(feature = "render"))]

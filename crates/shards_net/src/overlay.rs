@@ -1,7 +1,7 @@
 //! The net overlay: the session's links on screen, one line per peer (ping, loss, kbps in
 //! and out, the input margin, desyncs) and, on a client, its prediction (error, snaps,
 //! mispredicted actions). Toggle it with the `net_overlay` tool or F6; it draws in a window
-//! only (`render` feature), the tool answers the same lines anywhere.
+//! or offscreen only (`render` feature), the tool answers the same lines anywhere.
 
 use ai_core::dev::toggle_line;
 use ai_core::tools::{register_tool, ToolKind};
@@ -124,7 +124,7 @@ mod window {
     struct NetOverlayText;
 
     pub(super) fn plugin(app: &mut App) {
-        app.add_systems(Update, (toggle_with_key.run_if(ai_core::dev::keys_free), show).chain().run_if(any_with_component::<Window>));
+        app.add_systems(Update, (toggle_with_key.run_if(ai_core::dev::keys_free), show).chain().run_if(ai_core::display::drawn));
     }
 
     fn toggle_with_key(keys: Option<Res<ButtonInput<KeyCode>>>, mut overlay: ResMut<NetOverlay>) {

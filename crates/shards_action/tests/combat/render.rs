@@ -84,7 +84,7 @@ fn a_telegraph_is_handed_to_the_gizmos_every_frame_and_the_overlay_only_when_ask
     assert_eq!(overlay, 0, "the overlay is off until asked for");
 
     let said = ok(&mut app, "combat_overlay", json!({}));
-    assert!(said.starts_with("combat overlay on (drawn in the window only): "), "{said}");
+    assert!(said.starts_with("combat overlay on (drawn in the window or offscreen only): "), "{said}");
     assert!(said.contains("2 hurtboxes") && said.contains("1 zone"), "{said}");
     frames(&mut app, 2);
     assert!(drawn(&app).1 > 20, "hurtboxes, the zone and its label: {:?}", drawn(&app));

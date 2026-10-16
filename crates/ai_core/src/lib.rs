@@ -43,6 +43,7 @@ pub mod builtin;
 pub mod crash;
 pub mod describe;
 pub mod dev;
+pub mod display;
 pub mod failures;
 #[cfg(feature = "render")]
 pub mod highlight;

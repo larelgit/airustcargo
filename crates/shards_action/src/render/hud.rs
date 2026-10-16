@@ -10,7 +10,6 @@
 
 use bevy::prelude::*;
 use bevy::text::{Font, FontSize, FontSource};
-use bevy::window::Window;
 
 use shards_settings::FlashLevel;
 
@@ -72,7 +71,7 @@ pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<ThreatHud>()
         .init_resource::<Threats>()
         .init_resource::<ThreatPool>()
-        .add_systems(Update, (compute, update_ui).chain().run_if(any_with_component::<Window>));
+        .add_systems(Update, (compute, update_ui).chain().run_if(ai_core::display::drawn));
 }
 
 /// Whether `p` lies inside a viewport of `size` (logical pixels).

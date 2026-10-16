@@ -1,4 +1,4 @@
-//! Window-only layer: meshes for what the physics layer collides with, the engine's
+//! Picture-only layer (a window or `--offscreen`): meshes for what the physics layer collides with, the engine's
 //! third-person camera, a HUD, the updrafts' wireframes. Keyboard, mouse and gamepad reach
 //! the player through the engine's input map (into `Intent`), like an agent's tools do.
 //! Gameplay never depends on anything here, so the same game runs headless; nothing here

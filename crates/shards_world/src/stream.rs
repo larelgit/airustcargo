@@ -47,10 +47,11 @@ pub struct TileVisual {
     pub entity: Option<Entity>,
 }
 
-/// Whether visuals stream: a spawner exists and there is a window (or the settings say so).
+/// Whether visuals stream: a spawner exists and something is drawn, a window or offscreen (or the
+/// settings say so).
 pub fn streaming(settings: Res<WorldSettings>, config: Option<Res<EngineConfig>>, spawner: Option<Res<TileVisualSpawner>>) -> bool {
-    let window = config.is_none_or(|c| !c.headless && !c.testing);
-    spawner.is_some() && settings.stream_visuals.unwrap_or(window)
+    let drawn = config.is_none_or(|c| c.draws());
+    spawner.is_some() && settings.stream_visuals.unwrap_or(drawn)
 }
 
 /// `Update`: every tile's LOD from the nearest player; changed ones respawn their visual.

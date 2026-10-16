@@ -346,7 +346,7 @@ fn game(info: &GameInfo) -> Game {
 }
 
 /// The adapter this world renders with, if it has one.
-fn gpu(world: &World) -> Option<String> {
+pub(crate) fn gpu(world: &World) -> Option<String> {
     #[cfg(feature = "render")]
     if let Some(info) = world.get_resource::<bevy::render::renderer::RenderAdapterInfo>() {
         let driver = [info.driver.as_str(), info.driver_info.as_str()].join(" ");
