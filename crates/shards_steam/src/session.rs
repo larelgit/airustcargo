@@ -323,7 +323,11 @@ fn entered(world: &mut World, backend: &mut dyn Backend, lobby: SteamId) {
     let owner = match lobby_host(backend.lobby_owner(lobby), backend.info().user) {
         Ok(owner) => owner,
         Err(why) => {
-            backend.leave_lobby(lobby);
+            // Steam keeps lobby membership per account: leaving a lobby this account owns would
+            // take its host, a game of the same account, out of it too.
+            if why != SAME_ACCOUNT {
+                backend.leave_lobby(lobby);
+            }
             return client_failed(world, backend, Some(lobby), why);
         }
     };

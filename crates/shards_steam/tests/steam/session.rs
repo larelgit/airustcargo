@@ -203,6 +203,9 @@ fn a_lobby_of_this_same_account_is_refused_and_says_so() {
     assert_eq!(session(app.world()).state, SteamState::Failed(why.clone()));
     assert!(journal(app.world(), Some(JournalKind::Error)).contains(&format!("steam: {why}")), "{:?}", journal(app.world(), None));
     assert!(matches!(app.world().resource::<NetState>(), NetState::Joining(w) if w.contains("steam_join lobby=ID")));
+    // Steam keeps membership per account: leaving would take the host out of its own lobby.
+    assert!(steam.lobbies().contains(&lobby), "the lobby stands");
+    assert!(steam.lobby_members(lobby).contains(&FIRST_USER), "its owner is still in it");
 }
 
 #[test]
