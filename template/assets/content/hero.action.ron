@@ -5,6 +5,8 @@
 // An action is a timeline: `phases` are named stretches (their lengths add up to the
 // action), and windows on it (`hits`, `iframes`, `cancels`) say what happens when.
 // `net_id` names the action on the wire for co-op later: unique among all actions.
+// `displacement` (the lunge, the roll's distance) is baked from the root bone of the clip `bake`
+// names (anim.animset.ron): after changing the clip, `cargo game --bake-motion`.
 {
     "light_1": (
         net_id: 1,
@@ -13,8 +15,9 @@
         hits: [(span: Phase("active"), shape: Cone(range: 2.2, angle: 110), damage: 20, poise: 12)],
         // Pressing `light` again in this window chains into light_2, `dodge` rolls out of it.
         cancels: [(span: Secs(0.3, 0.55), into: [Combo("light", "light_2"), Input("dodge")])],
-        displacement: [(0.18, 0.0), (0.3, 0.4)],
+        displacement: [(0.1667, 0.0), (0.1833, 0.003), (0.2, 0.03), (0.2167, 0.09), (0.2333, 0.167), (0.25, 0.25), (0.2667, 0.324), (0.2833, 0.378), (0.3, 0.4)],
         anim: "light_1",
+        bake: (animset: "humanoid", clip: "light_1"),
     ),
     "light_2": (
         net_id: 2,
@@ -23,6 +26,7 @@
         hits: [(span: Phase("active"), shape: Cone(range: 2.2, angle: 110), damage: 28, poise: 20)],
         cancels: [(span: Secs(0.35, 0.6), into: [Input("dodge")])],
         anim: "light_2",
+        bake: (animset: "humanoid", clip: "light_2"),
     ),
     // A roll: invulnerable at the start, moves 4 m along the stick (or the way it faces).
     "roll": (
@@ -30,9 +34,10 @@
         phases: [("roll", 0.4), ("recover", 0.1)],
         cost: (stamina: 25),
         iframes: [Secs(0.0, 0.2)],
-        displacement: [(0.35, 4.0)],
+        displacement: [(0.0167, 0.371), (0.0333, 0.725), (0.05, 1.061), (0.0667, 1.378), (0.0833, 1.677), (0.1, 1.959), (0.1167, 2.221), (0.1333, 2.466), (0.15, 2.694), (0.1667, 2.902), (0.1833, 3.092), (0.2, 3.265), (0.2167, 3.419), (0.2333, 3.555), (0.25, 3.673), (0.2667, 3.773), (0.2833, 3.854), (0.3, 3.918), (0.3167, 3.963), (0.3333, 3.99), (0.35, 4.0)],
         steer: Move,
         anim: "roll",
+        bake: (animset: "humanoid", clip: "roll"),
     ),
     "hero_stagger": (net_id: 4, phases: [("stagger", 0.7)]),
     "hero_death": (net_id: 5, phases: [("fall", 1.0)]),
