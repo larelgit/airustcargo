@@ -24,9 +24,10 @@ Run it headless, never with a window, once per game:
 It writes into the folder given after the game:
 
 - `humanoid.glb`: the skinned body, the armature and every clip;
-- `humanoid_gestures.glb` (sandbox only): the armature alone, with two more clips (`bow`,
-  `taunt`). Clips of another file for the same skeleton: same node names, so they play on the
-  body of `humanoid.glb`.
+- `humanoid_gestures.glb` (sandbox only): the armature alone, with three more clips (`bow`,
+  `taunt`, `drink`). Clips of another file for the same skeleton: same node names, so they play
+  on the body of `humanoid.glb`. `drink` moves only the arms, the head and the spine: the
+  sandbox's animset plays it on the layer `upper` while the legs keep walking.
 
 Every export ticks *Include -> Custom Properties* (the phases) and exports the active colour
 attribute; the rest keeps the exporter's defaults (animations sampled at every frame, one glTF
@@ -56,6 +57,7 @@ SANDBOX = {
     "heavy": {"phases": [("windup", 0.55), ("active", 0.15), ("recovery", 0.6)], "lunge": (0.5, 0.7, 0.6)},
     "roll": {"phases": [("roll", 0.4), ("recover", 0.1)], "lunge": (0.0, 0.35, 4.0)},
     "block": {"phases": [("raise", 0.15), ("hold", 0.3), ("lower", 0.1)]},
+    "drink": {"phases": [("drink", 1.0), ("recover", 0.3)]},
     "gestures": True,
 }
 
@@ -642,6 +644,23 @@ def taunt(rig, fps):
     clip.finish()
 
 
+def drink(rig, game):
+    """A swig from a flask: the right hand comes up to the mouth, the head tips back, the hand
+    goes down. Only the spine, the head and the arms move; the legs stand as at rest, so a game
+    plays it on a layer (the animset's `layers`) over whatever the legs do, a walk or a run. Timed
+    to the sandbox's `drink` action: the swig is at 0.7 s, where its heal lands."""
+    timing = game["drink"]
+    clip = Clip(rig, "drink", game["fps"], timing["phases"])
+    at = ends(timing["phases"])
+    raised = merge(STAND, spine=(4.0, 0.0, 0.0), upper_arm_R=(-50.0, 45.0, 45.0), forearm_R=(-125.0, 0.0, 0.0))
+    clip.pose(0.0, STAND)
+    clip.pose(0.4, raised)
+    clip.pose(0.7, merge(raised, spine=(-2.0, 0.0, 0.0), head=(-14.0, 0.0, 0.0)))
+    clip.pose(at["drink"], raised)
+    clip.pose(at["recover"], STAND)
+    clip.finish()
+
+
 # --- export ------------------------------------------------------------------------------
 
 
@@ -687,6 +706,7 @@ def main():
         rig = build_armature(root)
         bow(rig, fps)
         taunt(rig, fps)
+        drink(rig, game)
         export(os.path.join(folder, "humanoid_gestures.glb"))
 
 
