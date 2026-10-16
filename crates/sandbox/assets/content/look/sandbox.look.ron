@@ -4,13 +4,17 @@
 // give it (layout pieces by their `look`, noses, markers). Edit a colour here and the window
 // changes as the file is saved; `shards act looks` lists what each look draws.
 {
-    "player": (color: Some("#408cff"), flat: true, outline: Some((width: 2.0, color: "#0b1a33"))),
-    "skeleton": (color: Some("#d9d1b3"), flat: true, outline: Some((width: 2.0, color: "#2a2418"))),
-    "warden": (color: Some("#8cd9ff"), flat: true, outline: Some((width: 3.0, color: "#0a2433"))),
+    // Presets the others extend: what a look leaves out comes from the one it extends.
+    "low_poly": (flat: true, outline: Some((width: 2.0, color: "#0b0f1a"))),
+    "cel": (shading: Toon(bands: 2)),
+
+    "player": (extends: "low_poly", color: Some("#408cff"), outline: Some((width: 2.0, color: "#0b1a33"))),
+    "skeleton": (extends: "low_poly", color: Some("#d9d1b3"), outline: Some((width: 2.0, color: "#2a2418"))),
+    "warden": (extends: "low_poly", color: Some("#8cd9ff"), outline: Some((width: 3.0, color: "#0a2433"))),
     "stone": (color: Some("#61636e"), outline: Some((width: 1.5, color: "#16171c"))),
     "wall": (color: Some("#454754"), outline: Some((width: 1.5, color: "#16171c"))),
-    "floor": (color: Some("#2b303b"), shading: Toon(bands: 2)),
-    "sand": (color: Some("#8c8061"), shading: Toon(bands: 2)),
+    "floor": (extends: "cel", color: Some("#2b303b")),
+    "sand": (extends: "cel", color: Some("#8c8061")),
     "dark": (color: Some("#1a1a1f"), shading: Matte),
     "marker": (color: Some("#ffd933"), shading: Unlit),
 }

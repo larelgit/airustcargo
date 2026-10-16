@@ -3,8 +3,11 @@
 // other collider is stone (src/visuals.rs). Edit a colour and the window changes as the file is
 // saved; `shards act looks` lists the looks and what each draws.
 {
-    "hero": (color: Some("#408cff"), flat: true, outline: Some((width: 2.0, color: "#0b1a33"))),
-    "grunt": (color: Some("#d9594d"), flat: true, outline: Some((width: 2.0, color: "#2a0f0b"))),
-    "raider": (color: Some("#d98c4d"), flat: true, outline: Some((width: 2.0, color: "#2a1a0b"))),
+    // A preset the fighters extend: what a look leaves out comes from the one it extends.
+    "low_poly": (flat: true, outline: Some((width: 2.0, color: "#0b0f1a"))),
+
+    "hero": (extends: "low_poly", color: Some("#408cff"), outline: Some((width: 2.0, color: "#0b1a33"))),
+    "grunt": (extends: "low_poly", color: Some("#d9594d"), outline: Some((width: 2.0, color: "#2a0f0b"))),
+    "raider": (extends: "low_poly", color: Some("#d98c4d"), outline: Some((width: 2.0, color: "#2a1a0b"))),
     "stone": (color: Some("#4d5261"), outline: Some((width: 1.5, color: "#16171c"))),
 }

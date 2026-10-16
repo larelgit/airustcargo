@@ -1,6 +1,7 @@
 //! The `look` content kind: how a surface is drawn. A look names a colour (or keeps the mesh's
 //! own), how light falls on it, flat faces, an outline and a glow; the glTF materials it stands
-//! for come with it.
+//! for come with it. A look can extend another (a preset such as `low_poly`): what it leaves out
+//! comes from that one.
 
 use std::collections::HashMap;
 
@@ -17,33 +18,41 @@ pub const MAX_OUTLINE: f32 = 16.0;
 ///
 /// ```ron
 /// {
+///     "low_poly": (flat: true, outline: Some((width: 2.0, color: "#0b0f1a"))),
 ///     "stone": (color: Some("#6b6f78"), shading: Toon(bands: 3), outline: Some((width: 1.5))),
+///     "hero": (extends: "low_poly", color: Some("#408cff")),
 ///     "crystal": (shading: Unlit, glow: Some("#7fe0ff"), materials: ["Crystal", "Crystal.001"]),
 /// }
 /// ```
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LookDef {
-    /// The surface's colour, `#rrggbb`, times the mesh's texture and vertex colours. Left out, the
-    /// mesh keeps its own: the colour its material has (a game's, a glTF file's).
+    /// The look this one starts from (a preset): every field this one leaves out comes from it,
+    /// and from the look it extends in turn; `materials` excepted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extends: Option<String>,
+    /// The surface's colour, times the mesh's texture and vertex colours: `#rrggbb` keeps the
+    /// alpha of the mesh's material (glass stays see-through), `#rrggbbaa` gives one. Left out,
+    /// the mesh keeps its own: the colour its material has (a game's, a glTF file's).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
-    /// How light falls on it.
-    pub shading: Shading,
-    /// Faces drawn flat, one normal per triangle: the facets of low-poly art, on any mesh.
-    pub flat: bool,
-    /// A line of a few pixels around the silhouette, the same width near and far.
+    /// How light falls on it: `Toon(bands: 3)` unless this look or one it extends says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shading: Option<Shading>,
+    /// Faces drawn flat, one normal per triangle: the facets of low-poly art, on any mesh. Off
+    /// unless this look or one it extends says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flat: Option<bool>,
+    /// A line of a few pixels around the silhouette, the same width near and far. A mesh whose
+    /// material is see-through (any alpha mode but `Opaque`) gets none.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub outline: Option<OutlineDef>,
     /// Light of its own, `#rrggbb` (lamps, eyes, crystals): shown whatever the light around.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub glow: Option<String>,
     /// The glTF materials (as Blender names them) drawn with this look, besides the material
-    /// named like the look itself.
+    /// named like the look itself. Not taken from the look it extends: a material has one look.
     pub materials: Vec<String>,
-}
-
-impl Default for LookDef {
-    fn default() -> Self {
-        Self { color: None, shading: Shading::default(), flat: false, outline: None, glow: None, materials: Vec::new() }
-    }
 }
 
 /// How light falls on a surface.
@@ -103,13 +112,41 @@ impl Default for OutlineDef {
 }
 
 impl LookDef {
-    /// `toon 3 bands · flat · outline 2px #000000 · glow #ffd933 · materials Rock, Rock.001`.
+    /// The look as drawn: each field it leaves out taken from the look it extends (the nearest
+    /// in the chain that sets it), then the defaults (toon in 3 bands, not flat). `extends` and
+    /// `materials` stay its own. A chain that names a look `looks` does not have, or goes round
+    /// in a circle, stops there (the content check names it).
+    pub fn resolve<'a>(&self, looks: impl Fn(&str) -> Option<&'a LookDef>) -> LookDef {
+        let mut look = self.clone();
+        let mut seen: Vec<String> = Vec::new();
+        let mut next = self.extends.clone();
+        while let Some(id) = next.take() {
+            if seen.contains(&id) {
+                break;
+            }
+            let Some(base) = looks(&id) else { break };
+            seen.push(id);
+            look.color = look.color.or_else(|| base.color.clone());
+            look.shading = look.shading.or(base.shading);
+            look.flat = look.flat.or(base.flat);
+            look.outline = look.outline.or_else(|| base.outline.clone());
+            look.glow = look.glow.or_else(|| base.glow.clone());
+            next = base.extends.clone();
+        }
+        look.shading.get_or_insert_default();
+        look.flat.get_or_insert(false);
+        look
+    }
+
+    /// `#61636e · toon 3 bands · flat · outline 2px #000000 · glow #ffd933 · materials Rock,
+    /// Rock.001 · extends low_poly`: the fields it sets, with the defaults for those it leaves
+    /// out. [`resolve`](Self::resolve) it first to say how it is drawn.
     pub fn describe(&self) -> String {
-        let mut parts = vec![self.shading.describe()];
+        let mut parts = vec![self.shading.unwrap_or_default().describe()];
         if let Some(color) = &self.color {
             parts.insert(0, color.clone());
         }
-        if self.flat {
+        if self.flat == Some(true) {
             parts.push("flat".into());
         }
         if let Some(outline) = &self.outline {
@@ -121,6 +158,9 @@ impl LookDef {
         if !self.materials.is_empty() {
             parts.push(format!("materials {}", self.materials.join(", ")));
         }
+        if let Some(base) = &self.extends {
+            parts.push(format!("extends {base}"));
+        }
         parts.join(" · ")
     }
 }
@@ -129,6 +169,22 @@ impl ContentDef for LookDef {
     const KIND: &'static str = "look";
 
     fn validate(&self, id: &str, refs: &mut Refs) {
+        if let Some(base) = &self.extends
+            && refs.require::<LookDef>(base, "extends")
+        {
+            let mut chain = vec![id.to_owned()];
+            let mut next = Some(base.clone());
+            while let Some(name) = next {
+                if chain.contains(&name) {
+                    chain.push(name);
+                    refs.error(format!("extends goes round in a circle: {}", chain.join(" -> ")));
+                    break;
+                }
+                next = refs.get::<LookDef>(&name).and_then(|look| look.extends.clone());
+                chain.push(name);
+            }
+        }
+        // Each value is checked where it is set: a look that extends a broken one is not broken too.
         for (field, color) in [("color", &self.color), ("glow", &self.glow)] {
             if let Some(color) = color
                 && let Err(e) = parse_color(color)
@@ -137,10 +193,10 @@ impl ContentDef for LookDef {
             }
         }
         match self.shading {
-            Shading::Toon { bands } if !(2..=MAX_BANDS).contains(&bands) => {
+            Some(Shading::Toon { bands }) if !(2..=MAX_BANDS).contains(&bands) => {
                 refs.error(format!("shading: Toon has 2 to {MAX_BANDS} bands, not {bands}"));
             }
-            Shading::Lit { roughness, metallic } => {
+            Some(Shading::Lit { roughness, metallic }) => {
                 for (field, value) in [("roughness", roughness), ("metallic", metallic)] {
                     if !(0.0..=1.0).contains(&value) {
                         refs.error(format!("shading: Lit {field} is 0 to 1, not {value}"));
@@ -187,17 +243,59 @@ pub fn material_looks<'a>(looks: impl IntoIterator<Item = (&'a str, &'a LookDef)
 mod tests {
     use super::*;
 
+    /// A look as content reads it (`Some` may be left out).
+    fn read(text: &str) -> LookDef {
+        options().from_str(text).unwrap()
+    }
+
+    fn options() -> ron::Options {
+        ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+    }
+
     #[test]
     fn a_look_reads_short_and_says_what_it_is() {
-        let look: LookDef = ron::from_str(r##"(color: Some("#6b6f78"), outline: Some((width: 1.5)), flat: true)"##).unwrap();
-        assert_eq!(look.shading, Shading::Toon { bands: 3 }, "toon in three bands unless it says");
+        let look = read(r##"(color: Some("#6b6f78"), outline: Some((width: 1.5)), flat: true)"##);
+        assert_eq!(look.shading, None);
+        assert_eq!(look.resolve(|_| None).shading, Some(Shading::Toon { bands: 3 }), "toon in three bands unless it says");
         assert_eq!(look.outline, Some(OutlineDef { width: 1.5, color: "#000000".into() }));
         assert_eq!(look.describe(), "#6b6f78 · toon 3 bands · flat · outline 1.5px #000000");
-        let lit: LookDef = ron::from_str("(shading: Lit(roughness: 0.4, metallic: 1.0), materials: [\"Metal\"])").unwrap();
+        let lit = read("(shading: Lit(roughness: 0.4, metallic: 1.0), materials: [\"Metal\"])");
         assert_eq!(lit.describe(), "lit roughness 0.4 metallic 1 · materials Metal");
-        let two: LookDef = ron::from_str("(shading: Toon(bands: 2))").unwrap();
-        assert_eq!(two.shading, Shading::Toon { bands: 2 });
-        assert!(ron::from_str::<LookDef>("(colour: Some(\"#fff\"))").is_err(), "unknown fields are refused");
+        assert_eq!(read("(shading: Toon(bands: 2))").shading, Some(Shading::Toon { bands: 2 }));
+        assert_eq!(read("(shading: Some(Matte), flat: Some(false))").flat, Some(false), "`Some` may be written too");
+        assert!(options().from_str::<LookDef>("(colour: Some(\"#fff\"))").is_err(), "unknown fields are refused");
+    }
+
+    #[test]
+    fn a_look_takes_what_it_leaves_out_from_the_looks_it_extends() {
+        let looks: HashMap<&str, LookDef> = HashMap::from([
+            ("low_poly", read(r##"(flat: true, outline: Some((width: 2.0, color: "#0b0f1a")), glow: Some("#ffffff"), materials: ["Rock"])"##)),
+            ("hero", read(r##"(extends: "low_poly", color: Some("#408cff"), outline: Some((width: 3.0, color: "#0b1a33")))"##)),
+            ("captain", read(r#"(extends: "hero", shading: Matte, flat: false)"#)),
+        ]);
+        let find = |id: &str| looks.get(id);
+        // One step: its own colour and outline, the preset's flat faces and glow; never its materials.
+        let hero = looks["hero"].resolve(find);
+        let outline = OutlineDef { width: 3.0, color: "#0b1a33".into() };
+        assert_eq!((hero.flat, hero.outline.as_ref(), hero.glow.as_deref()), (Some(true), Some(&outline), Some("#ffffff")));
+        assert_eq!((hero.shading, hero.materials.len(), hero.extends.as_deref()), (Some(Shading::Toon { bands: 3 }), 0, Some("low_poly")));
+        assert_eq!(hero.describe(), "#408cff · toon 3 bands · flat · outline 3px #0b1a33 · glow #ffffff · extends low_poly");
+        // Two steps, and what it sets wins, `false` too.
+        let captain = looks["captain"].resolve(find);
+        assert_eq!((captain.color.as_deref(), captain.shading, captain.flat), (Some("#408cff"), Some(Shading::Matte), Some(false)));
+        assert_eq!(captain.outline, Some(outline));
+        assert_eq!(captain.describe(), "#408cff · matte · outline 3px #0b1a33 · glow #ffffff · extends hero");
+        // The defaults where nothing in the chain says, and a look it extends that is not there.
+        let alone = read(r#"(extends: "nowhere")"#).resolve(find);
+        assert_eq!((alone.shading, alone.flat, alone.outline), (Some(Shading::default()), Some(false), None));
+    }
+
+    #[test]
+    fn a_circle_of_looks_ends_where_it_comes_round() {
+        let looks: HashMap<&str, LookDef> =
+            HashMap::from([("a", read(r##"(extends: "b", color: Some("#ff0000"))"##)), ("b", read(r#"(extends: "a", flat: true)"#))]);
+        let a = looks["a"].resolve(|id| looks.get(id));
+        assert_eq!((a.color.as_deref(), a.flat), (Some("#ff0000"), Some(true)));
     }
 
     #[test]

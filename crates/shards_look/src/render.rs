@@ -1,22 +1,27 @@
 //! The looks drawn (feature `render`). Each mesh with a look gets the look's material, made from
 //! its own once per look and material; a flat copy of its mesh for a `flat` look; and an outline
 //! hull as its child for a look with an outline. A look edited in content, a [`Look`] put on,
-//! changed or taken off, and a game giving a styled mesh a material of its own restyle what they
-//! concern. Nothing here touches the simulation: the meshes are the picture's.
+//! changed or taken off, a game giving a styled mesh a material, a mesh or render layers of its
+//! own, and a material or mesh changed in place restyle what they concern; what was made from a
+//! mesh or a material that is gone goes with it. Only while something is drawn (a window or
+//! `--offscreen`). Nothing here touches the simulation: the meshes are the picture's.
 
 use std::collections::{BTreeMap, HashMap};
 
-use bevy::asset::embedded_asset;
-use bevy::camera::visibility::VisibilitySystems;
+use bevy::asset::{embedded_asset, AssetEventSystems};
+use bevy::camera::visibility::{NoFrustumCulling, RenderLayers, VisibilityRange};
+use bevy::ecs::entity::EntityHashMap;
 use bevy::ecs::system::SystemParam;
 use bevy::gltf::GltfMaterialName;
 use bevy::light::NotShadowCaster;
+use bevy::material::OpaqueRendererMethod;
 use bevy::mesh::skinning::SkinnedMesh;
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPipeline, MaterialPipelineKey, MaterialPlugin};
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, Face, RenderPipelineDescriptor, SpecializedMeshPipelineError};
 use bevy::shader::ShaderRef;
+use bevy::transform::TransformSystems;
 use shards_content::{parse_color, ContentDb};
 
 use crate::def::{material_looks, LookDef, OutlineDef, Shading};
@@ -90,10 +95,20 @@ pub struct Looked {
     /// The StandardMaterial the look draws it with (none for a toon look): a different one later
     /// is the game's, and the mesh is styled from it anew.
     drawn: Option<Handle<StandardMaterial>>,
+    /// The mesh the look draws it with (its own or the flat copy): a different one later is the
+    /// game's, and the mesh is styled from it anew.
+    mesh: Handle<Mesh>,
     /// The mesh it had, when the look draws a flat copy instead.
     pub flattened: Option<Handle<Mesh>>,
     /// Its outline, a child.
     pub hull: Option<Entity>,
+}
+
+impl Looked {
+    /// The game's mesh: the one the flat copy was made from, else the one drawn.
+    fn own_mesh(&self) -> &Handle<Mesh> {
+        self.flattened.as_ref().unwrap_or(&self.mesh)
+    }
 }
 
 /// An outline: a styled mesh again, inside out and a few pixels wider, as its child.
@@ -101,11 +116,13 @@ pub struct Looked {
 pub struct OutlineHull;
 
 /// What the looks made, kept so that a mesh drawn again with the same look and material shares
-/// them; emptied when the looks change.
+/// them. A change of the looks drops the materials; the flat copies and hulls depend on the mesh
+/// alone and stay (a mesh whose data went to the GPU could not make them again). What was made
+/// from a mesh or a material is dropped when that one changes or is gone ([`forget`]).
 #[derive(Resource, Default)]
 struct Styles {
-    /// The looks the meshes were styled with.
-    looks: Vec<(String, LookDef)>,
+    /// The looks the meshes were styled with, as drawn (`extends` resolved).
+    looks: BTreeMap<String, LookDef>,
     /// glTF material name → look.
     by_material: HashMap<String, String>,
     /// (look, the mesh's own material) → what it is drawn with.
@@ -116,7 +133,7 @@ struct Styles {
     hulls: HashMap<AssetId<Mesh>, Option<Handle<Mesh>>>,
     /// Look → its outline's material.
     outlines: HashMap<String, Handle<OutlineMaterial>>,
-    /// Meshes to look at again: under a `Look` that changed.
+    /// Meshes to look at again: under a `Look` that changed, or put back.
     revisit: Vec<Entity>,
     /// Meshes whose look waits for their material or mesh (a glTF file still loading).
     waiting: Vec<Entity>,
@@ -136,19 +153,41 @@ pub(crate) fn plugin(app: &mut App) {
     embedded_asset!(app, "shaders/outline.wesl");
     app.add_plugins((MaterialPlugin::<ToonMaterial>::default(), MaterialPlugin::<OutlineMaterial>::default()))
         .init_resource::<Styles>()
-        .add_systems(PostUpdate, (restyle, apply, show_outlines).chain().in_set(LookSystems::Apply))
-        // New hulls get their bounds and visibility in the frame they appear.
-        .configure_sets(PostUpdate, LookSystems::Apply.before(VisibilitySystems::CalculateBounds));
+        .add_systems(
+            PostUpdate,
+            (forget, restyle, apply, show_outlines).chain().in_set(LookSystems::Apply).run_if(ai_core::display::drawn),
+        )
+        // Before transforms propagate, and so before visibility and bounds: a new hull is placed,
+        // shown and bounded in the frame it appears. Before the asset events go out: the render
+        // world gets the looks' new meshes and materials in that frame too.
+        .configure_sets(PostUpdate, LookSystems::Apply.before(TransformSystems::Propagate).before(AssetEventSystems));
 }
 
 /// Meshes drawn with a StandardMaterial and no look yet.
 type Unstyled = (With<Mesh3d>, With<MeshMaterial3d<StandardMaterial>>, Without<Looked>, Without<OutlineHull>);
 
-/// What [`restyle`] reads: the styled meshes, the looks that changed, the tree under them.
+/// Unstyled meshes new this frame or with a material new to them.
+type Fresh = (Or<(Added<Mesh3d>, Changed<MeshMaterial3d<StandardMaterial>>)>, Unstyled);
+
+/// What a mesh is drawn from: its mesh, its material, its glTF material's name.
+type Drawable = (&'static Mesh3d, &'static MeshMaterial3d<StandardMaterial>, Option<&'static GltfMaterialName>);
+
+/// What an outline takes from its mesh: the skin, the render layers, no frustum culling, a
+/// visibility range.
+type Carried = (Option<&'static SkinnedMesh>, Option<&'static RenderLayers>, Has<NoFrustumCulling>, Option<&'static VisibilityRange>);
+
+/// A styled mesh and its StandardMaterial: the look's own, or one the game gave it.
+type StyledMaterial = (Entity, &'static Looked, &'static MeshMaterial3d<StandardMaterial>);
+
+/// What [`restyle`] reads: the styled meshes, what the game gave them since, the looks that
+/// changed, the tree under them.
 #[derive(SystemParam)]
 struct Restyling<'w, 's> {
     styled: Query<'w, 's, (Entity, &'static Looked)>,
-    regiven: Query<'w, 's, (Entity, &'static Looked, &'static MeshMaterial3d<StandardMaterial>), Changed<MeshMaterial3d<StandardMaterial>>>,
+    regiven: Query<'w, 's, StyledMaterial, Changed<MeshMaterial3d<StandardMaterial>>>,
+    reshaped: Query<'w, 's, (Entity, &'static Looked, &'static Mesh3d), Changed<Mesh3d>>,
+    layered: Query<'w, 's, (Entity, &'static Looked), Changed<RenderLayers>>,
+    unlayered: RemovedComponents<'w, 's, RenderLayers>,
     changed: Query<'w, 's, Entity, Changed<Look>>,
     removed: RemovedComponents<'w, 's, Look>,
     children: Query<'w, 's, &'static Children>,
@@ -156,33 +195,98 @@ struct Restyling<'w, 's> {
 
 /// Puts back what the looks changed where they no longer hold: every mesh when the looks in
 /// content changed, the meshes under a `Look` that changed or went, a styled mesh the game gave a
-/// material of its own. [`apply`] styles them again in the same frame.
+/// material or a mesh of its own (the look starts from that one, and it stays when the look goes),
+/// an outlined mesh whose render layers changed (its outline takes them). [`apply`] styles them
+/// again in the same frame.
 fn restyle(mut commands: Commands, db: Res<ContentDb>, mut styles: ResMut<Styles>, mut find: Restyling) {
-    if db.is_changed() {
-        let looks: Vec<(String, LookDef)> = db.iter::<LookDef>().map(|(id, def)| (id.to_owned(), def.clone())).collect();
-        if looks != styles.looks {
-            for (entity, looked) in &find.styled {
-                undo(&mut commands, entity, looked);
-            }
-            let by_material = material_looks(looks.iter().map(|(id, def)| (id.as_str(), def)));
-            *styles = Styles { looks, by_material, everything: true, ..Styles::default() };
-            return;
-        }
-    }
+    let mut undone: EntityHashMap<Looked> = EntityHashMap::default();
     for (entity, looked, material) in &find.regiven {
         if looked.drawn.as_ref() != Some(&material.0) {
-            // The game's own material now: the look starts from it.
-            let looked = Looked { source: material.0.clone(), ..looked.clone() };
-            undo(&mut commands, entity, &looked);
-            styles.revisit.push(entity);
+            undone.entry(entity).or_insert_with(|| looked.clone()).source = material.0.clone();
+        }
+    }
+    for (entity, looked, mesh) in &find.reshaped {
+        if looked.mesh != mesh.0 {
+            undone.entry(entity).or_insert_with(|| looked.clone()).flattened = None;
+        }
+    }
+    let unlayered: Vec<Entity> = find.unlayered.read().collect();
+    for (entity, looked) in find.layered.iter().chain(find.styled.iter_many(unlayered).flatten()) {
+        if looked.hull.is_some() {
+            undone.entry(entity).or_insert_with(|| looked.clone());
         }
     }
     let roots: Vec<Entity> = find.changed.iter().chain(find.removed.read()).collect();
-    for root in roots {
-        for entity in std::iter::once(root).chain(find.children.iter_descendants(root)) {
-            if let Ok((_, looked)) = find.styled.get(entity) {
-                undo(&mut commands, entity, looked);
+    let looks: Option<BTreeMap<String, LookDef>> = db
+        .is_changed()
+        .then(|| db.iter::<LookDef>().map(|(id, def)| (id.to_owned(), def.resolve(|base| db.get::<LookDef>(base)))).collect())
+        .filter(|looks| *looks != styles.looks);
+    if let Some(looks) = looks {
+        for (entity, looked) in &find.styled {
+            undone.entry(entity).or_insert_with(|| looked.clone());
+        }
+        styles.by_material = material_looks(looks.iter().map(|(id, def)| (id.as_str(), def)));
+        styles.looks = looks;
+        styles.materials.clear();
+        styles.outlines.clear();
+        styles.everything = true;
+    } else {
+        for root in roots {
+            for entity in std::iter::once(root).chain(find.children.iter_descendants(root)) {
+                if let Ok((_, looked)) = find.styled.get(entity) {
+                    undone.entry(entity).or_insert_with(|| looked.clone());
+                }
+                styles.revisit.push(entity);
             }
+        }
+    }
+    for (entity, looked) in &undone {
+        undo(&mut commands, *entity, looked);
+        styles.revisit.push(*entity);
+    }
+}
+
+/// Forgets what the looks made from a mesh or a material that is gone, or changed in place
+/// (`Assets::get_mut`, a glTF file reloaded), and puts back the meshes drawn from a changed one:
+/// [`apply`] styles them from it anew. Asset events go out after the look systems, so a change
+/// shows the frame after. The looks' own meshes and materials are new assets, and drawing them
+/// changes none (the render world takes them untracked): a restyle does not come round again.
+fn forget(
+    mut commands: Commands,
+    mut styles: ResMut<Styles>,
+    mut meshes: MessageReader<AssetEvent<Mesh>>,
+    mut materials: MessageReader<AssetEvent<StandardMaterial>>,
+    styled: Query<(Entity, &Looked)>,
+) {
+    let mut reshaped = Vec::new();
+    for event in meshes.read() {
+        if let AssetEvent::Unused { id } | AssetEvent::Removed { id } | AssetEvent::Modified { id } = event {
+            styles.flat.remove(id);
+            styles.hulls.remove(id);
+        }
+        if let AssetEvent::Modified { id } = event {
+            reshaped.push(*id);
+        }
+    }
+    let mut gone = Vec::new();
+    let mut recolored = Vec::new();
+    for event in materials.read() {
+        if let AssetEvent::Unused { id } | AssetEvent::Removed { id } | AssetEvent::Modified { id } = event {
+            gone.push(*id);
+        }
+        if let AssetEvent::Modified { id } = event {
+            recolored.push(*id);
+        }
+    }
+    if !gone.is_empty() {
+        styles.materials.retain(|(_, source), _| !gone.contains(source));
+    }
+    if reshaped.is_empty() && recolored.is_empty() {
+        return;
+    }
+    for (entity, looked) in &styled {
+        if reshaped.contains(&looked.own_mesh().id()) || recolored.contains(&looked.source.id()) {
+            undo(&mut commands, entity, looked);
             styles.revisit.push(entity);
         }
     }
@@ -214,28 +318,17 @@ struct LookAssets<'w> {
 /// What [`apply`] reads of the meshes and the tree above them.
 #[derive(SystemParam)]
 struct Meshes<'w, 's> {
-    fresh: Query<'w, 's, Entity, (Or<(Added<Mesh3d>, Changed<MeshMaterial3d<StandardMaterial>>)>, Unstyled)>,
+    fresh: Query<'w, 's, Entity, Fresh>,
     all: Query<'w, 's, Entity, Unstyled>,
-    meshes: Query<
-        'w,
-        's,
-        (&'static Mesh3d, &'static MeshMaterial3d<StandardMaterial>, Option<&'static GltfMaterialName>, Option<&'static SkinnedMesh>),
-        Unstyled,
-    >,
+    meshes: Query<'w, 's, Drawable, Unstyled>,
+    carried: Query<'w, 's, Carried>,
     looks: Query<'w, 's, &'static Look>,
     parents: Query<'w, 's, &'static ChildOf>,
 }
 
 /// Styles the meshes that have a look and none yet: new ones, ones whose material changed, ones
-/// [`restyle`] put back, ones that waited for their files.
-fn apply(
-    mut commands: Commands,
-    db: Res<ContentDb>,
-    settings: Res<LookSettings>,
-    mut styles: ResMut<Styles>,
-    mut assets: LookAssets,
-    found: Meshes,
-) {
+/// [`restyle`] or [`forget`] put back, ones that waited for their files.
+fn apply(mut commands: Commands, settings: Res<LookSettings>, mut styles: ResMut<Styles>, mut assets: LookAssets, found: Meshes) {
     let mut candidates: Vec<Entity> = if std::mem::take(&mut styles.everything) {
         found.all.iter().collect()
     } else {
@@ -246,40 +339,57 @@ fn apply(
     candidates.sort_unstable();
     candidates.dedup();
     for entity in candidates {
-        let Ok((mesh, material, gltf, skin)) = found.meshes.get(entity) else { continue };
+        let Ok((mesh, material, gltf)) = found.meshes.get(entity) else { continue };
         let Some(id) = look_of(entity, gltf, &found, &styles.by_material) else { continue };
         // A look no content defines: the content check names the prefab that wants it.
-        let Some(def) = db.get::<LookDef>(&id) else { continue };
-        let needs_mesh = def.flat || def.outline.is_some();
+        let Some(def) = styles.looks.get(&id).cloned() else { continue };
+        let flat = def.flat == Some(true);
+        let needs_mesh = flat || def.outline.is_some();
         let (Some(source), true) = (assets.standard.get(&material.0).cloned(), !needs_mesh || assets.meshes.contains(&mesh.0)) else {
             styles.waiting.push(entity);
             continue;
         };
+        // A see-through surface shows the hull behind it, and a cut-out one is outlined whole.
+        let opaque = source.alpha_mode == AlphaMode::Opaque;
         let key = (id.clone(), material.0.id());
         let drawn = match styles.materials.get(&key) {
             Some(drawn) => drawn.clone(),
             None => {
-                let drawn = material_for(def, source, &mut assets);
+                let drawn = material_for(&def, source, &mut assets);
                 styles.materials.insert(key, drawn.clone());
                 drawn
             }
         };
-        let flat = if def.flat { flat_copy(&mut styles, &mut assets.meshes, &mesh.0) } else { None };
-        let hull = def.outline.as_ref().and_then(|outline| {
+        let flat = if flat { flat_copy(&mut styles, &mut assets.meshes, &mesh.0) } else { None };
+        let hull = def.outline.as_ref().filter(|_| opaque).and_then(|outline| {
             let hull = hull_of(&mut styles, &mut assets.meshes, &mesh.0)?;
             let material = outline_of(&mut styles, &mut assets.outlines, &id, outline);
             let shown = if settings.outlines { Visibility::Inherited } else { Visibility::Hidden };
             let mut child = commands.spawn((OutlineHull, Mesh3d(hull), MeshMaterial3d(material), Transform::IDENTITY, shown, NotShadowCaster, ChildOf(entity)));
-            if let Some(skin) = skin {
-                child.insert(skin.clone());
+            if let Ok((skin, layers, unculled, range)) = found.carried.get(entity) {
+                if let Some(skin) = skin {
+                    child.insert(skin.clone());
+                }
+                if let Some(layers) = layers {
+                    child.insert(layers.clone());
+                }
+                if unculled {
+                    child.insert(NoFrustumCulling);
+                }
+                if let Some(range) = range {
+                    child.insert(range.clone());
+                }
             }
             Some(child.id())
         });
         let mut styled = commands.entity(entity);
-        let flattened = flat.map(|flat| {
-            styled.insert(Mesh3d(flat));
-            mesh.0.clone()
-        });
+        let (drawn_mesh, flattened) = match flat {
+            Some(flat) => {
+                styled.insert(Mesh3d(flat.clone()));
+                (flat, Some(mesh.0.clone()))
+            }
+            None => (mesh.0.clone(), None),
+        };
         let drawn_standard = match drawn {
             Drawn::Standard(handle) => {
                 styled.insert(MeshMaterial3d(handle.clone()));
@@ -290,7 +400,7 @@ fn apply(
                 None
             }
         };
-        styled.insert(Looked { look: id, source: material.0.clone(), drawn: drawn_standard, flattened, hull });
+        styled.insert(Looked { look: id, source: material.0.clone(), drawn: drawn_standard, mesh: drawn_mesh, flattened, hull });
     }
 }
 
@@ -306,35 +416,56 @@ fn look_of(entity: Entity, gltf: Option<&GltfMaterialName>, found: &Meshes, by_m
     gltf.and_then(|name| by_material.get(&name.0)).cloned()
 }
 
-/// The look's material, from the mesh's own: its colour (unless the look has one), texture,
-/// vertex colours and transparency stay.
+/// The look's material (`def` resolved), from the mesh's own: its colour (unless the look has
+/// one), alpha (unless the look's colour has one), texture, vertex colours and alpha mode stay.
 fn material_for(def: &LookDef, mut material: StandardMaterial, assets: &mut LookAssets) -> Drawn {
-    if let Some([r, g, b, a]) = def.color.as_deref().and_then(|c| parse_color(c).ok()) {
-        material.base_color = Color::srgba_u8(r, g, b, a);
+    if let Some(color) = &def.color {
+        material.base_color = recolor(material.base_color, color);
     }
+    let shading = def.shading.unwrap_or_default();
     if let Some([r, g, b, _]) = def.glow.as_deref().and_then(|c| parse_color(c).ok()) {
-        // Alpha 0: shown as it is, whatever the camera's exposure.
-        material.emissive = LinearRgba { alpha: 0.0, ..Color::srgb_u8(r, g, b).to_linear() };
+        let glow = Color::srgb_u8(r, g, b).to_linear();
+        if shading == Shading::Unlit {
+            // Bevy draws an unlit surface without its emissive light: the glow is in its colour.
+            let base = material.base_color.to_linear();
+            material.base_color = LinearRgba { alpha: base.alpha, ..base + glow }.into();
+        } else {
+            material.emissive = glow;
+            // Shown as it is, whatever the camera's exposure.
+            material.emissive_exposure_weight = 0.0;
+        }
     }
     let no_shine = |m: &mut StandardMaterial| {
         m.perceptual_roughness = 1.0;
         m.metallic = 0.0;
         m.reflectance = 0.0;
     };
-    match def.shading {
+    // A glTF file's material may be unlit (KHR_materials_unlit): the look says.
+    material.unlit = shading == Shading::Unlit;
+    match shading {
         Shading::Toon { bands } => {
             no_shine(&mut material);
+            // Deferred light is Bevy's own: the bands are drawn in the forward pass.
+            material.opaque_render_method = OpaqueRendererMethod::Forward;
             Drawn::Toon(assets.toon.add(ExtendedMaterial { base: material, extension: Toon { bands } }))
         }
         Shading::Matte => {
             no_shine(&mut material);
             Drawn::Standard(assets.standard.add(material))
         }
-        Shading::Unlit => Drawn::Standard(assets.standard.add(StandardMaterial { unlit: true, ..material })),
+        Shading::Unlit => Drawn::Standard(assets.standard.add(material)),
         Shading::Lit { roughness, metallic } => {
             Drawn::Standard(assets.standard.add(StandardMaterial { perceptual_roughness: roughness, metallic, ..material }))
         }
     }
+}
+
+/// A look's colour over the mesh's own `color`: `#rrggbb` keeps its alpha, `#rrggbbaa` gives one.
+fn recolor(own: Color, text: &str) -> Color {
+    let Ok([r, g, b, a]) = parse_color(text) else { return own };
+    // `parse_color` gives 255 for a colour without alpha: only the eight digits say.
+    let alpha = if text.len() == 9 { f32::from(a) / 255.0 } else { own.alpha() };
+    Color::srgb_u8(r, g, b).with_alpha(alpha)
 }
 
 fn flat_copy(styles: &mut Styles, meshes: &mut Assets<Mesh>, mesh: &Handle<Mesh>) -> Option<Handle<Mesh>> {
@@ -413,23 +544,67 @@ pub fn usage(world: &World) -> Usage {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_look_keeps_the_mesh_s_colour_unless_it_has_one() {
+    /// `material_for` on its own, in a bare app.
+    fn with_assets(test: impl Fn(&mut LookAssets) + Send + Sync + 'static) {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins).add_plugins(AssetPlugin::default());
         app.init_asset::<StandardMaterial>().init_asset::<ToonMaterial>().init_asset::<Mesh>().init_asset::<OutlineMaterial>();
-        app.add_systems(Update, |mut assets: LookAssets| {
-            let red = StandardMaterial { base_color: Color::srgb(1.0, 0.0, 0.0), ..default() };
-            let own = LookDef { shading: Shading::Matte, ..LookDef::default() };
-            let Drawn::Standard(kept) = material_for(&own, red.clone(), &mut assets) else { panic!("matte is a StandardMaterial") };
+        app.add_systems(Update, move |mut assets: LookAssets| test(&mut assets));
+        app.update();
+    }
+
+    fn look(text: &str) -> LookDef {
+        let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        options.from_str::<LookDef>(text).unwrap().resolve(|_| None)
+    }
+
+    #[test]
+    fn a_look_keeps_the_mesh_s_colour_unless_it_has_one() {
+        with_assets(|assets| {
+            let red = StandardMaterial { base_color: Color::srgb(1.0, 0.0, 0.0), unlit: true, ..default() };
+            let Drawn::Standard(kept) = material_for(&look("(shading: Matte)"), red.clone(), assets) else { panic!("matte is a StandardMaterial") };
             let kept = assets.standard.get(&kept).unwrap();
             assert_eq!((kept.base_color, kept.perceptual_roughness, kept.reflectance), (Color::srgb(1.0, 0.0, 0.0), 1.0, 0.0));
-            let blue = LookDef { color: Some("#0000ff".into()), glow: Some("#ffffff".into()), ..LookDef::default() };
-            let Drawn::Toon(toon) = material_for(&blue, red, &mut assets) else { panic!("toon is the default") };
+            assert!(!kept.unlit, "lit, though the mesh's own material was unlit (a glTF file's KHR_materials_unlit)");
+            let blue = look(r##"(color: Some("#0000ff"), glow: Some("#ffffff"))"##);
+            let Drawn::Toon(toon) = material_for(&blue, red, assets) else { panic!("toon is the default") };
             let toon = assets.toon.get(&toon).unwrap();
             assert_eq!(toon.base.base_color, Color::srgba_u8(0, 0, 255, 255));
-            assert_eq!((toon.extension.bands, toon.base.emissive.alpha), (3, 0.0));
+            assert_eq!((toon.extension.bands, toon.base.emissive, toon.base.emissive_exposure_weight), (3, LinearRgba::WHITE, 0.0));
+            assert!(!toon.base.unlit);
+            assert_eq!(toon.base.opaque_render_method, OpaqueRendererMethod::Forward, "bands need the forward pass");
         });
-        app.update();
+    }
+
+    #[test]
+    fn a_look_s_colour_keeps_the_mesh_s_alpha_unless_it_gives_one() {
+        with_assets(|assets| {
+            let glass = StandardMaterial { base_color: Color::srgba(1.0, 1.0, 1.0, 0.25), alpha_mode: AlphaMode::Blend, ..default() };
+            let mut alpha = |text: &str| {
+                let Drawn::Standard(drawn) = material_for(&look(text), glass.clone(), assets) else { panic!("matte") };
+                let drawn = assets.standard.get(&drawn).unwrap();
+                assert_eq!(drawn.alpha_mode, AlphaMode::Blend);
+                (drawn.base_color.to_srgba().to_u8_array_no_alpha(), drawn.base_color.alpha())
+            };
+            assert_eq!(alpha(r##"(color: Some("#ff8000"), shading: Matte)"##), ([255, 128, 0], 0.25));
+            assert_eq!(alpha(r##"(color: Some("#f80"), shading: Matte)"##), ([255, 136, 0], 0.25));
+            assert_eq!(alpha(r##"(color: Some("#ff800080"), shading: Matte)"##), ([255, 128, 0], 128.0 / 255.0));
+            assert_eq!(alpha(r##"(color: Some("#ff8000ff"), shading: Matte)"##), ([255, 128, 0], 1.0));
+        });
+    }
+
+    #[test]
+    fn an_unlit_look_s_glow_is_in_its_colour() {
+        with_assets(|assets| {
+            let dim = StandardMaterial { base_color: Color::srgba(0.2, 0.0, 0.0, 0.5), ..default() };
+            let Drawn::Standard(drawn) = material_for(&look(r##"(shading: Unlit, glow: Some("#7fe0ff"))"##), dim, assets) else { panic!("unlit") };
+            let drawn = assets.standard.get(&drawn).unwrap();
+            let glow = Color::srgb_u8(0x7f, 0xe0, 0xff).to_linear();
+            let base = Color::srgb(0.2, 0.0, 0.0).to_linear();
+            let colour = drawn.base_color.to_linear();
+            assert!(drawn.unlit);
+            assert_eq!((colour.red, colour.green, colour.blue, colour.alpha), (base.red + glow.red, glow.green, glow.blue, 0.5));
+            assert_eq!(drawn.emissive, LinearRgba::BLACK, "Bevy would not show it");
+        });
     }
 }

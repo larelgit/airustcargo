@@ -1,19 +1,12 @@
 // A look's `Toon` shading (shards_look): Bevy's StandardMaterial for everything but the light.
 // The sun (every directional light, with its shadows) lights the surface in flat bands; ambient
-// light, point lights and spot lights light it evenly; nothing shines.
+// light, point lights and spot lights light it evenly; nothing shines. Only the forward pass
+// draws with it: the look sets its material's render method to `Forward` (deferred light is
+// Bevy's own), and the prepass and the deferred pass take the StandardMaterial's shaders.
 
 import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::alpha_discard,
-};
-
-@if(PREPASS_PIPELINE)
-import bevy_pbr::{
-    prepass::io::{VertexOutput, FragmentOutput},
-    deferred::functions::deferred_output,
-};
-@else
-import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_functions::main_pass_post_lighting_processing,
     pbr_types::PbrInput,
@@ -39,7 +32,6 @@ const FRAC_1_PI: f32 = 0.3183098862;
 /// `t` (0 unlit, 1 fully lit) in `n` flat steps: 0, 1/(n-1), ..., 1. Any light at all is the
 /// first step up, so light and shadow part where the light ends. Each step's edge is smoothed
 /// over what `t` changes in one pixel, so it is not jagged.
-@if(!PREPASS_PIPELINE)
 fn band(t: f32, n: u32) -> f32 {
     let steps = f32(max(n, 2u) - 1u);
     let x = clamp(t, 0.0, 1.0) * steps;
@@ -47,7 +39,6 @@ fn band(t: f32, n: u32) -> f32 {
     return (floor(x) + smoothstep(0.0, w, fract(x))) / steps;
 }
 
-@if(!PREPASS_PIPELINE)
 fn toon_light(in: PbrInput) -> vec4<f32> {
     let base = in.material.base_color;
     let N = in.N;
@@ -118,6 +109,8 @@ fn toon_light(in: PbrInput) -> vec4<f32> {
     // The light all around, evenly.
     let ambient = ambient_light(in.world_position, N, V, NdotV, vec3<f32>(1.0), vec3<f32>(0.0), 1.0, in.diffuse_occlusion);
 
+    // Its `a` is the material's `emissive_exposure_weight` (0 for a look's glow): how much the
+    // camera's exposure scales it.
     let emissive = in.material.emissive;
     let glow = emissive.rgb * base.a * mix(1.0, view_bindings::view.exposure, emissive.a);
     let lit = view_bindings::view.exposure * (sun * FRAC_1_PI + lamps + ambient);
@@ -137,11 +130,6 @@ fn fragment(
     );
 
     var out: FragmentOutput;
-@if(PREPASS_PIPELINE) {
-    // Deferred light is Bevy's own: bands need the forward pass.
-    out = deferred_output(in, pbr_input);
-} @else {
     out.color = main_pass_post_lighting_processing(pbr_input, toon_light(pbr_input));
-}
     return out;
 }

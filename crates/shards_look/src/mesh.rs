@@ -24,10 +24,10 @@ pub fn flat(mesh: &Mesh) -> Option<Mesh> {
 
 /// The outline's hull: `mesh`'s positions, triangles and skin, with normals averaged over every
 /// vertex at the same place, so pushing the vertices out along them opens no gap where faces
-/// meet at an edge (a cube's corners, a flat-shaded mesh). `None` as for [`flat`], or for no
-/// triangles at all.
+/// meet at an edge (a cube's corners, a flat-shaded mesh). `None` as for [`flat`] (morph targets
+/// would move the mesh away from its hull), or for no triangles at all.
 pub fn hull(mesh: &Mesh) -> Option<Mesh> {
-    if mesh.primitive_topology() != PrimitiveTopology::TriangleList {
+    if mesh.primitive_topology() != PrimitiveTopology::TriangleList || mesh.try_has_morph_targets().unwrap_or(true) {
         return None;
     }
     let positions = mesh.try_attribute(Mesh::ATTRIBUTE_POSITION).ok()?.as_float3()?.to_vec();
@@ -59,8 +59,8 @@ pub fn hull(mesh: &Mesh) -> Option<Mesh> {
 fn welded_normals(positions: &[[f32; 3]], indices: &[usize]) -> Vec<[f32; 3]> {
     let place = |p: [f32; 3]| p.map(|c| (c * 1e4).round() as i64);
     let mut places: HashMap<[i64; 3], Vec3> = HashMap::new();
-    for triangle in indices.chunks_exact(3) {
-        let corners = [triangle[0], triangle[1], triangle[2]].map(|i| Vec3::from(positions[i]));
+    for triangle in indices.as_chunks::<3>().0 {
+        let corners = triangle.map(|i| Vec3::from(positions[i]));
         let Some(face) = (corners[1] - corners[0]).cross(corners[2] - corners[0]).try_normalize() else {
             continue;
         };
@@ -103,7 +103,7 @@ mod tests {
         assert!(flat.try_indices_option().unwrap().is_none());
         let positions = flat.try_attribute(Mesh::ATTRIBUTE_POSITION).unwrap().as_float3().unwrap();
         let normals = normals(&flat).unwrap();
-        for (corners, faces) in positions.chunks_exact(3).zip(normals.chunks_exact(3)) {
+        for (corners, faces) in positions.as_chunks::<3>().0.iter().zip(normals.as_chunks::<3>().0) {
             assert!(faces[0] == faces[1] && faces[1] == faces[2], "one normal a face");
             let centre = (Vec3::from(corners[0]) + Vec3::from(corners[1]) + Vec3::from(corners[2])) / 3.0;
             assert!(Vec3::from(faces[0]).dot(centre) > 0.0, "facing out");
@@ -132,5 +132,20 @@ mod tests {
         assert!(flat(&lines).is_none() && hull(&lines).is_none());
         let empty = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
         assert!(flat(&empty).is_none() && hull(&empty).is_none());
+    }
+
+    #[test]
+    fn a_mesh_with_morph_targets_is_not_flattened_or_outlined() {
+        let mut face = Mesh::from(Cuboid::new(1.0, 1.0, 1.0));
+        assert!(flat(&face).is_some() && hull(&face).is_some());
+        face.set_morph_targets(vec![bevy::mesh::morph::MorphAttributes::default(); face.count_vertices()]);
+        assert!(flat(&face).is_none() && hull(&face).is_none());
+    }
+
+    #[test]
+    fn a_mesh_whose_data_went_to_the_gpu_is_not_flattened_or_outlined() {
+        let mut sphere = Mesh::from(Sphere::new(1.0));
+        sphere.take_gpu_data().unwrap();
+        assert!(flat(&sphere).is_none() && hull(&sphere).is_none());
     }
 }

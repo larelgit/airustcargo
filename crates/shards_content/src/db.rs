@@ -65,8 +65,10 @@ pub struct ContentError {
 }
 
 impl ContentError {
+    /// In `file`; none for a definition from no file (one `content_apply` added without `files`).
     fn in_file(file: &str, message: impl Into<String>) -> Self {
-        Self { file: Some(file.to_owned()), position: None, kind: None, id: None, message: message.into() }
+        let file = (!file.is_empty()).then(|| file.to_owned());
+        Self { file, position: None, kind: None, id: None, message: message.into() }
     }
 }
 

@@ -17,7 +17,8 @@ pub(crate) fn register(world: &mut World) {
 }
 
 /// The looks (`content/**/*.look.ron`): each one's colour, shading, flat faces, outline, glow and
-/// glTF materials, and how many meshes it draws now; then the meshes drawn without a look and
+/// glTF materials as drawn (with what it takes from the look it extends, and which that is), and
+/// how many meshes it draws now; then the meshes drawn without a look and
 /// those waiting for their files. Headless nothing is drawn: looks style meshes in a window or
 /// with --offscreen.
 #[derive(Deserialize, JsonSchema, Default)]
@@ -50,12 +51,16 @@ fn looks(In(_): In<Call<LooksArgs>>, world: &World) -> ToolResult {
             1 => " · 1 mesh".into(),
             n => format!(" · {n} meshes"),
         };
-        out.push_str(&format!("  {id:<width$}  {}{meshes}\n", def.describe()));
+        // As drawn: what it takes from the looks it extends too.
+        let drawn = def.resolve(|base| db.get::<LookDef>(base));
+        out.push_str(&format!("  {id:<width$}  {}{meshes}\n", drawn.describe()));
     }
-    if usage.waiting > 0 {
-        out.push_str(&format!("{} meshes wait for their material or mesh to load\n", usage.waiting));
+    match usage.waiting {
+        0 => {}
+        1 => out.push_str("1 mesh waits for its material or mesh to load\n"),
+        n => out.push_str(&format!("{n} meshes wait for their material or mesh to load\n")),
     }
-    Ok(out.trim_end().to_owned().into())
+    Ok(out.trim_end().to_owned())
 }
 
 /// Show or hide the looks' outlines (they stay made: showing them again is free). Answers how many
@@ -70,5 +75,5 @@ fn look_outlines(In(call): In<Call<LookOutlinesArgs>>, world: &mut World) -> Too
     let on = call.args.on.unwrap_or(true);
     world.resource_mut::<LookSettings>().outlines = on;
     let outlined = crate::usage(world).outlined;
-    Ok(format!("outlines {}: {outlined} drawn with an outline", if on { "on" } else { "off" }).into())
+    Ok(format!("outlines {}: {outlined} drawn with an outline", if on { "on" } else { "off" }))
 }

@@ -1,0 +1,46 @@
+# Looks (E10.1): how the sandbox is drawn is content (`content/look/sandbox.look.ron`): the player,
+# the skeletons and the warden flat with an outline (they extend the preset `low_poly`), stone and
+# walls in toon bands with an outline, floor and sand in two bands (preset `cel`), markers unlit. A
+# prefab gives its body a look (`"Look": ("player")`). Meshes are the picture's: headless nothing
+# is drawn and the tools say so, but the looks, their checks and the `Look` of each body are the
+# same. It puts the outlines back on.
+
+# --- the outlines on, as shipped
+act look_outlines on=true
+
+# --- the sandbox's looks as drawn, with what each takes from its preset; headless nothing is styled
+act looks
+expect result contains "11 looks · nothing is drawn headless: looks style meshes in a window or with --offscreen"
+expect result contains "  low_poly  toon 3 bands · flat · outline 2px #0b0f1a"
+expect result contains "  player    #408cff · toon 3 bands · flat · outline 2px #0b1a33 · extends low_poly"
+expect result contains "  floor     #2b303b · toon 2 bands · extends cel"
+expect result contains "  marker    #ffd933 · unlit"
+act content_get kind=look id=warden
+expect result contains "sandbox.look.ron"
+expect result contains "#8cd9ff"
+expect result contains "low_poly"
+
+# --- a body's look comes from its prefab
+expect shows e5 "look: player"
+expect shows e6 "look: warden"
+
+# --- the outlines off and on again, by the tool and by the developer menu's switch
+act look_outlines on=false
+expect result contains "outlines off: 0 drawn with an outline"
+act dev_menu
+expect result contains "look_outlines on=true"
+expect result contains "Looks and what they draw"
+act dev_menu run=look_outlines
+expect result contains "outlines on"
+act dev_menu
+expect result contains "look_outlines on=false"
+
+# --- a look that would not draw is refused, and the error says why
+act? content_apply changes='[{"kind": "look", "id": "neon", "def": {"color": "pink", "shading": {"Toon": {"bands": 12}}}}]'
+expect result contains "refused, it would break content: look `neon`: "
+expect result contains "color: `pink` is not a colour: `#rrggbb` or `#rrggbbaa`"
+expect result contains "shading: Toon has 2 to 8 bands, not 12"
+act? content_apply changes='[{"kind": "look", "id": "neon", "def": {"extends": "low_pol"}}]'
+expect result contains "extends -> unknown look `low_pol` (did you mean `low_poly`?)"
+act looks
+expect result contains "11 looks · "

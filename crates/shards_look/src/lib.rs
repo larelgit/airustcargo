@@ -13,6 +13,9 @@
 //!   normals averaged at its corners (no gaps), bending with a skinned mesh.
 //! - A **glow** of its own: lamps, eyes, crystals.
 //!
+//! A look can **extend** another, a preset (`low_poly`: flat with an outline; `cel`: two bands):
+//! what it leaves out comes from that one, and from the one that extends in turn.
+//!
 //! Which meshes: a [`Look`] on an entity draws its meshes and its descendants' (a prefab carries
 //! it: `"Look": ("stone")`; a mesh's own wins over one above it), and a mesh without one takes
 //! the look that names its glTF material (`materials`, or a look called like the material), so
@@ -23,11 +26,12 @@
 //!   hides the outlines (the developer menu has both, under `world`); `ai/status` has
 //!   `looks: {looks, styled, outlined, outlines}`; `inspect` shows an entity's `Look`.
 //! - **The picture's, not the simulation's**: only meshes change (feature `render`), the same in a
-//!   window and with `--offscreen`; headless nothing is drawn and nothing is styled. A `Look` is
-//!   left out of replay checks.
-//! - **Checks**: `--check-content` finds colours that are not `#rrggbb`, bands out of 2..8,
-//!   outlines out of 0..16 px, a glTF material two looks claim, and prefabs that name a look no
-//!   file defines.
+//!   window and with `--offscreen`; headless nothing is drawn and nothing is styled. A `Look` on
+//!   a body is a component like any other: replays check it, co-op clients get it with the body.
+//! - **Checks**: `--check-content` finds colours that are not `#rrggbb` or `#rrggbbaa`, bands out
+//!   of 2..8, outlines out of 0..16 px, a glTF material two looks claim, a look that extends one
+//!   no file defines or extends itself round a circle, and prefabs that name a look no file
+//!   defines.
 
 pub mod def;
 #[cfg(feature = "render")]
@@ -78,7 +82,8 @@ impl Default for LookSettings {
 /// The look systems other modules order against.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LookSystems {
-    /// `PostUpdate`, before visibility and bounds: meshes get their looks' materials, flat
+    /// `PostUpdate`, before transforms propagate (and so before visibility and bounds) and before
+    /// the asset events go out, while something is drawn: meshes get their looks' materials, flat
     /// copies and outlines; looks that changed are undone first.
     Apply,
 }
@@ -98,7 +103,6 @@ impl Plugin for LookPlugin {
         app.add_content::<LookDef>()
             .add_content_check::<PrefabDef>("look", check_prefab)
             .register_type::<Look>()
-            .replay_ignore::<Look>()
             .register_ai_component::<Look>(|look| look.0.clone())
             .init_resource::<LookSettings>()
             .add_engine_module("look", VERSION)
