@@ -780,7 +780,8 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   генератора и хэшем. Загрузка строит регион из него (`change_region`), генератор не запускается: обновление игры, которое
   меняет генератор (новая `version` региона, веса, шаги), сохранённый мир не перестраивает. Журнал говорит, откуда регион:
   `region wilds seed 42 v1: built from the save's manifest (the generator is v2 now)` (скобки — когда версия генератора в
-  контенте другая или региона в контенте больше нет).
+  контенте другая; региона с таким id в контенте больше нет — `` (`old_wilds` is no longer in the content) ``). Строка
+  пишется, когда регион уже построен (после `region loaded`), а не перед сборкой, которая ещё может не удаться.
 - Тайл, комната или префаб из манифеста, которых контент уже не знает, — отказ до любых изменений мира с именами и выходом:
   `the save's world cannot be built: the manifest of wilds seed 42 v1 names tiles content does not have: old_ruin (…); keep that
   content in the game, or write a migration for `region` that replaces it in the saved manifest`.
@@ -790,8 +791,8 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
 - `shards_world::check_manifest` (`region::check_manifest`): может ли контент построить манифест, ничего не меняя в мире (то, что
   `change_region` проверяет до изменений).
 - Сценарий песочницы `world_save.scenario`; тесты в `saves.rs` (тот же мир после обновления, которое меняет генератор; тайла
-  нет; порча и резервная копия; сохранение версии 1) и `net_coop.rs` (мир другой версии генератора: хост строит его из
-  манифеста, гость получает тот же).
+  нет; региона нет в контенте; порча и резервная копия; сохранение версии 1) и `net_coop.rs` (мир другой версии генератора:
+  хост строит его из манифеста, гость получает тот же).
 
 ### Исправлено
 
@@ -802,6 +803,12 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   с галочкой, которую снять (у квантования — с тем, что его писал не Blender); свойства движка на данных меша
   вместо объекта — ошибка узла, а не молчание; картинка уровня — сцена по умолчанию файла, а не нулевая (Blender пишет все
   сцены `.blend`, и сцена с коллекцией-инстансом шла первой).
+- Сохранения: `load_game`, у которого секция отказала до того, как что-то применилось, больше не пишет `The world is partly
+  loaded`: ответ `loading world/gone failed at section region: …; nothing was applied: fix the cause and load again`, и вызова
+  в записи нет. Когда что-то применилось, ошибка называет и секции, чей `missing` успел отработать (`weather (missing from the
+  file)`), и виды, загруженные раньше (`already loaded: world/camp`); такая загрузка перезапускает запись, даже если до отказа
+  отработали только `missing`. У `ApplyError` новое поле `missing` и `changed_anything()` (тест
+  `a_load_that_fails_part_way_says_what_it_applied_and_records_the_load`).
 - Windows: `cargo clippy --workspace --all-targets -- -D warnings` молчит: помощники тестов `stand_udp`, которые нужны только
   тестам с настоящим `sh` (unix), собираются только там.
 - D4: `clearance` по навсетке больше не проходит по диагонали мимо колонки, которую вырезал поставленный после загрузки

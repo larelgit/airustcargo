@@ -3342,6 +3342,12 @@ app.save_component::<Bag>(SaveKind::Character, "bag", 1)        // компон�
   копия; основной файл переписывается из неё, журнал: `save: world/slot1.save is damaged (checksum mismatch); restored from
   backup 1 (tick 50110)`. Все копии плохи — ошибка называет каждую, мир не тронут. Остаток `.tmp` (сбой при записи)
   убирается.
+- **Секция отказала при загрузке.** Файлы прочитаны, секции применяются по порядку, и та, что вернула ошибку, останавливает
+  загрузку. Ничего до неё не применилось — `loading world/gone failed at section region: …; nothing was applied: fix the cause
+  and load again`, вызова в записи нет. Иначе мир загружен частично, и ошибка говорит, насколько: секции этого вида, которые
+  успели примениться или получить `missing`, и виды, загруженные раньше (`loading character/camp failed at section bag: …;
+  applied before it: position, vitals; already loaded: world/camp. The world is partly loaded: fix the cause and load again, or
+  go back with snapshot_load`); запись перезапускается от этого мира.
 - **Сохранение из более новой версии — не порча.** Секция выше версии этой сборки или конверт `shards-save/2`
   (`Fault::Newer`) отказывает с ясной ошибкой `world/slot1 was saved by a newer version of the game (section inventory v7
   > v5); nothing was changed`: без перехода к старой копии (потерялся бы прогресс), без `.damaged`, без перезаписи.
@@ -3364,8 +3370,9 @@ app.save_component::<Bag>(SaveKind::Character, "bag", 1)        // компон�
 хэшем манифеста (`{"active": {id, seed, version, manifest_hash, manifest}}`, `null` — мир вне региона). Загрузка строит регион
 из этого манифеста, генератор не запускается, поэтому обновление игры, которое меняет генератор (новая `version` региона,
 другие веса, шаги), сохранённый мир не трогает. Журнал говорит, откуда регион: `region wilds seed 42 v1: built from the save's
-manifest`, а если версия генератора в контенте уже другая — ещё и `(the generator is v2 now)`. Тот же регион уже в мире (тот же
-хэш) — ничего не строится.
+manifest`, а если версия генератора в контенте уже другая — ещё и `(the generator is v2 now)`, если региона с таким id в
+контенте больше нет — `` (`old_wilds` is no longer in the content) `` (тайлы его манифеста контент знает, и он строится).
+Строка пишется, когда регион уже построен, после `region loaded`. Тот же регион уже в мире (тот же хэш) — ничего не строится.
 
 - **Контента нет.** Тайл, комната или префаб (кусок тайла, декор, префаб точки интереса), которые называет манифест, а контент
   уже не знает, — отказ до любых изменений, мир остаётся как был: `section region: the save's world cannot be built: the
