@@ -263,7 +263,9 @@ fn on_join_character(world: &mut World, body: Entity, value: &Value) {
                 format!("save: {who} character could only be applied in part ({}); applied: {}; the body keeps the rest as it was", peer(&e.message), e.applied.join(", ")),
             );
         }
-        Err(_) => {
+        Err(panic) => {
+            // The journal says it and the join goes on: no crash report.
+            ai_core::crash::handled(&ai_core::crash::panic_text(panic.as_ref()));
             journal::emit(world, JournalKind::Warn, format!("save: {who} character could not be applied (a section panicked); the body keeps what it has"));
         }
     }

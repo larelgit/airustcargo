@@ -1467,9 +1467,25 @@ pub fn save(world: &World) -> Replay {
     }
 }
 
-/// Reads a replay file.
+/// Reads a replay file, or the replay inside a [crash report](crate::crash).
 pub fn load(path: &std::path::Path) -> Result<Replay, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    #[derive(Deserialize)]
+    struct Format {
+        format: String,
+    }
+    #[derive(Deserialize)]
+    struct Report {
+        replay: Option<Replay>,
+        no_replay: Option<String>,
+    }
+    if serde_json::from_str::<Format>(&text).is_ok_and(|f| f.format == crate::crash::FORMAT) {
+        let report: Report = serde_json::from_str(&text).map_err(|e| format!("{} is a crash report whose replay cannot be read: {e}", path.display()))?;
+        return report.replay.ok_or_else(|| {
+            let why = report.no_replay.unwrap_or_else(|| "none was recorded".to_owned());
+            format!("{} is a crash report without a replay ({why})", path.display())
+        });
+    }
     serde_json::from_str(&text).map_err(|e| format!("{} is not a replay: {e}", path.display()))
 }
 

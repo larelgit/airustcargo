@@ -238,6 +238,8 @@ pub fn run(db: &ContentDb, worldgen: &WorldGen, region: &str, seeds_text: &str) 
                     .map(|s| (*s).to_owned())
                     .or_else(|| panic.downcast_ref::<String>().cloned())
                     .unwrap_or_else(|| "unknown panic".to_owned());
+                // The report names it with its seed: no crash report.
+                ai_core::crash::handled(&message);
                 report.panics.push((seed, message));
                 report.failed.push(seed);
             }

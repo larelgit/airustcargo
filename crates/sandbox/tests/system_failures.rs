@@ -5,7 +5,7 @@
 
 use std::sync::Mutex;
 
-use shards::ai_core::replay;
+use shards::ai_core::{crash, replay};
 use shards::ai_core::{call_tool, AiFailures, AiJournal, AiReplay, CallOutcome, JournalKind};
 use shards::bevy::app::FixedMain;
 use shards::bevy::time::TimeUpdateStrategy;
@@ -98,10 +98,30 @@ fn real_time_play_pauses_on_a_failure() {
     assert!(has_fixed_schedules(&app));
 }
 
+/// The crash report a journal line names (`crash report saved: crashes/…`), read and removed.
+fn take_report(app: &App) -> (crash::CrashReport, std::path::PathBuf) {
+    let saved = journal(app, JournalKind::Sim);
+    let line = saved.iter().rev().find_map(|l| l.split_once("crash report saved: ")).map(|(_, rest)| rest.to_owned());
+    let line = line.unwrap_or_else(|| panic!("no crash report in {saved:?}"));
+    let file = line.split_once(' ').map_or(line.as_str(), |(file, _)| file);
+    assert!(file.starts_with("crashes/crash-") && file.ends_with(".json"), "{file}");
+    let path = std::env::current_dir().unwrap().join(file);
+    let report = shards::serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_dir("crashes");
+    (report, path)
+}
+
 #[test]
 fn the_crash_replay_reproduces_the_failure() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
-    let mut app = icy_app();
+    crash::install_panic_hook();
+    // The game a report names.
+    let mut app = sandbox::test_app_with(|config| {
+        config.seed = 42;
+        (config.title, config.version) = ("Icy".into(), Some("1.2.3".into()));
+    });
+    app.add_systems(FixedUpdate, cracking_ice.in_set(SimSet::Resolve));
     app.world_mut().resource_mut::<AiFailures>().crash_replays = true;
     ok(&mut app, "attack", json!({"target": "e6", "repeat": true}));
     let out = ok(&mut app, "step", json!({"ticks": 100}));
@@ -111,6 +131,28 @@ fn the_crash_replay_reproduces_the_failure() {
     let recording = replay::load(&path).unwrap();
     let _ = std::fs::remove_file(&path);
     assert_eq!(recording.end.tick, 50);
+
+    // The report next to it: what happened and where, the game, the machine, the session and
+    // its replay, in one file that `--replay` reads too.
+    let (report, file) = take_report(&app);
+    assert_eq!(report.format, crash::FORMAT);
+    assert_eq!(report.what.headline, format!("system {SYSTEM} panicked at tick 50"));
+    assert_eq!(report.what.message, "the ice gave way");
+    assert!(report.what.location.as_deref().is_some_and(|l| l.contains("system_failures.rs")), "{:?}", report.what);
+    assert!(!report.what.backtrace.is_empty(), "the panic hook kept the call stack");
+    assert_eq!((report.game.title.as_str(), report.game.version.as_deref()), ("Icy", Some("1.2.3")));
+    assert!(report.system.gpu.starts_with("none") && !report.system.os.is_empty(), "{:?}", report.system);
+    assert_eq!(report.session.as_ref().map(|s| (s.tick, s.seed)), Some((50, 42)));
+    assert_eq!(report.status["tick"], 50);
+    let line = format!("50 [error] system {SYSTEM} panicked at tick 50: the ice gave way");
+    assert!(report.journal.contains(&line), "{:?}", report.journal);
+    assert_eq!(report.replay_file.as_deref(), Some("replays/crash-tick50.json"));
+    assert_eq!(report.replay.as_ref(), Some(&recording));
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, shards::serde_json::to_string(&report).unwrap()).unwrap();
+    assert_eq!(replay::load(&file), Ok(recording.clone()), "--replay takes the report as it is");
+    let _ = std::fs::remove_file(&file);
+    let _ = std::fs::remove_dir("crashes");
 
     // The same build plays it back into the same failure, at the same tick.
     let mut again = icy_app();
@@ -178,6 +220,58 @@ fn a_rewind_past_a_failure_checks_the_rules_of_the_tick_that_failed() {
     shards::ai_core::snapshot::restore(app.world_mut(), &before, false).unwrap();
     let out = ok(&mut app, "step", json!({"ticks": 5}));
     assert_eq!(text(&out), "ran 2 ticks (1 → 3), stopped: invariant only_at_three violated at tick 3");
+}
+
+fn fall_over() {
+    panic!("the worker fell over");
+}
+
+#[test]
+fn a_panic_nobody_handled_on_another_thread_gets_a_report() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    crash::install_panic_hook();
+    let mut app = icy_app();
+    app.world_mut().resource_mut::<AiFailures>().crash_replays = true;
+    ok(&mut app, "step", json!({"ticks": 10}));
+    // A panicking tool answers with its panic: no report for it.
+    app.add_ai_tool("boom", Scope::Dev, |_: In<Call<NoArgs>>| -> ToolResult { panic!("kaboom") });
+    assert!(!act(&mut app, "boom", json!({})).ok);
+    app.update();
+    assert!(!journal(&app, JournalKind::Sim).iter().any(|l| l.contains("crash report")), "{:?}", journal(&app, JournalKind::Sim));
+
+    // The render thread, a task: the game goes on, and the next frame writes the report.
+    let worker = || std::thread::Builder::new().name("worker".into()).spawn(fall_over).unwrap();
+    assert!(worker().join().is_err());
+    app.update();
+    let errors = journal(&app, JournalKind::Error);
+    assert!(errors.contains(&"10 [error] thread 'worker' panicked: the worker fell over".to_owned()), "{errors:?}");
+    let (report, _) = take_report(&app);
+    assert_eq!(report.what.headline, "thread 'worker' panicked");
+    assert_eq!(report.what.thread.as_deref(), Some("worker"));
+    assert!(report.replay.as_ref().is_some_and(|r| r.end.tick == 10), "the world is there: so is the replay");
+    // Once per place.
+    assert!(worker().join().is_err());
+    app.update();
+    let reports = journal(&app, JournalKind::Sim).into_iter().filter(|l| l.contains("crash report saved")).count();
+    assert_eq!(reports, 1, "one report per place");
+}
+
+#[test]
+fn a_bug_report_is_a_crash_report_on_request() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let mut app = sandbox::test_app(42);
+    ok(&mut app, "step", json!({"ticks": 30}));
+    let out = ok(&mut app, "crash_report", json!({"note": "the boss fell through the floor"}));
+    let answer = text(&out).to_owned();
+    assert!(answer.starts_with("saved crashes/crash-") && answer.contains("-tick30.json: tick 30, "), "{answer}");
+    assert!(answer.contains(", a replay of 30 ticks and "), "{answer}");
+    let file = answer.trim_start_matches("saved ").split_once(':').unwrap().0;
+    let path = std::env::current_dir().unwrap().join(file);
+    let report: crash::CrashReport = shards::serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_dir("crashes");
+    assert_eq!(report.what.headline, "bug report: the boss fell through the floor");
+    assert_eq!(report.replay.as_ref().map(|r| r.end.tick), Some(30));
 }
 
 #[test]

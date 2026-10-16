@@ -279,18 +279,25 @@ struct CaptureLayer;
 impl<S: Subscriber> Layer<S> for CaptureLayer {
     fn on_event(&self, event: &TracingEvent<'_>, _ctx: Context<'_, S>) {
         let level = *event.metadata().level();
+        if level > Level::INFO {
+            return;
+        }
+        let target = event.metadata().target();
+        let capture = capture_target();
+        let mut visitor = MessageVisitor(String::new());
+        event.record(&mut visitor);
+        let tick = capture.as_ref().map(|(_, clock)| clock.get());
+        // Crash reports keep the newest lines of the log, info and up.
+        let at = tick.map_or_else(|| "-".to_owned(), |t| t.to_string());
+        crate::crash::keep_log(format!("{at} {level} {target}: {}", visitor.0));
         // Failures are journaled by `failures::collect`, with their tick, and `emit`
         // journals its own lines; once is enough.
-        let target = event.metadata().target();
         if level > Level::WARN || target == crate::failures::LOG_TARGET || target == EMIT_TARGET {
             return;
         }
-        let Some((capture, clock)) = capture_target() else {
+        let (Some((capture, _)), Some(tick)) = (capture, tick) else {
             return;
         };
-        let mut visitor = MessageVisitor(String::new());
-        event.record(&mut visitor);
-        let tick = clock.get();
         let Ok(mut buf) = capture.0.lock() else {
             return;
         };

@@ -91,7 +91,7 @@ pub fn toggle_line(tool: &str, on: bool) -> String {
     format!("{tool} on={}", !on)
 }
 
-/// The engine core's entries: time and snapshots.
+/// The engine core's entries: time, snapshots and a bug report.
 pub(crate) fn register(app: &mut App) {
     use crate::AiAppExt;
     let run = |line: &str| DevCommand::Run(line.into());
@@ -101,7 +101,8 @@ pub(crate) fn register(app: &mut App) {
         .add_dev_entry("time", "slow", "Slow motion x0.25", run("speed x=0.25"))
         .add_dev_entry("time", "normal_speed", "Normal speed", run("speed x=1"))
         .add_dev_entry("time", "snapshot_save", "Save a snapshot of this tick", run("snapshot_save"))
-        .add_dev_entry("time", "snapshot_load", "Load a snapshot...", DevCommand::Fill("snapshot_load path=snapshots/".into()));
+        .add_dev_entry("time", "snapshot_load", "Load a snapshot...", DevCommand::Fill("snapshot_load path=snapshots/".into()))
+        .add_dev_entry("time", "crash_report", "Save a bug report...", DevCommand::Fill("crash_report note=".into()));
 }
 
 /// A line as `shards act` takes it: the tool, then `key=value` words or one JSON object.

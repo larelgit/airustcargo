@@ -49,7 +49,8 @@ impl Plugin for SandboxPlugin {
 pub fn build_app(config: &EngineConfig) -> App {
     let title = format!("Shards sandbox · seed {} · BRP :{}", config.seed, config.port.unwrap_or(0));
     let mut app = App::new();
-    app.add_plugins(EnginePlugins::new(EngineConfig { title, ..config.clone() })).add_plugins(SandboxPlugin);
+    let version = Some(env!("CARGO_PKG_VERSION").into());
+    app.add_plugins(EnginePlugins::new(EngineConfig { title, version, ..config.clone() })).add_plugins(SandboxPlugin);
     if !config.headless && !config.testing {
         #[cfg(feature = "render")]
         app.add_plugins(visuals::VisualsPlugin);

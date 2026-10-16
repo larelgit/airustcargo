@@ -11,8 +11,9 @@
 //! the queue is global). The queue is collected after every tick, once per frame and
 //! after every tool call: the failure is journaled (`system <name> panicked at tick N:
 //! <msg>`), the game halts (it pauses), the session is saved as a crash
-//! replay (`replays/crash-tick<N>.json`, once per failing system) to reproduce it with,
-//! and a `step` in progress stops there.
+//! replay (`replays/crash-tick<N>.json`, once per failing system) to reproduce it with
+//! and as a [crash report](crate::crash) for a bug report (`crashes/…`), and a `step` in
+//! progress stops there.
 //!
 //! Several apps in one process share the queue: each app's handler queues its failures
 //! under the app's [token](crate::process::AppToken), and an app collects only its own
@@ -25,6 +26,7 @@ use bevy::ecs::error::{BevyError, ErrorContext, ErrorHandler, FallbackErrorHandl
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 
+use crate::crash;
 use crate::journal::{self, JournalKind};
 use crate::replay;
 use crate::sim;
@@ -59,6 +61,8 @@ pub struct SystemFailure {
     pub tick: u64,
     /// The crash replay saved for it, relative to the game's working directory.
     pub crash_replay: Option<String>,
+    /// The crash report saved for it (`crashes/…`, or the player's own folder).
+    pub crash_report: Option<String>,
 }
 
 impl SystemFailure {
@@ -226,11 +230,12 @@ pub fn collect(world: &mut World) -> Vec<SystemFailure> {
             panicked: q.panicked,
             tick,
             crash_replay: None,
+            crash_report: None,
         })
         .collect();
     for failure in &mut failures {
         journal::log(world, JournalKind::Error, format!("{}: {}", failure.headline(), failure.message));
-        failure.crash_replay = save_crash_replay(world, failure);
+        save_crash_files(world, failure);
     }
     if let Some(mut state) = world.get_resource_mut::<AiFailures>() {
         state.unreported.extend(failures.iter().cloned());
@@ -247,7 +252,7 @@ pub fn take_unreported(world: &mut World) -> Vec<SystemFailure> {
 
 /// Once per frame: failures outside ticks (or after this tick's collection). Nobody is
 /// stepping here, so they are journaled and the game is paused, nothing more.
-fn collect_between_ticks(world: &mut World) {
+pub(crate) fn collect_between_ticks(world: &mut World) {
     collect(world);
     take_unreported(world);
 }
@@ -261,25 +266,32 @@ pub(crate) fn blame_tool(world: &mut World, tool: &str) {
     }
 }
 
-fn save_crash_replay(world: &mut World, failure: &SystemFailure) -> Option<String> {
+/// The crash replay and the crash report of a failure, once per failing system, while the game
+/// writes them. What the panic hook kept of the panic (where, the call stack) goes into the report.
+fn save_crash_files(world: &mut World, failure: &mut SystemFailure) {
+    let kept = failure.panicked.then(|| crash::handled(&failure.message)).flatten();
     let key = format!("{} {}", failure.kind, failure.name);
-    if !world.get_resource::<replay::AiReplay>().is_some_and(replay::AiReplay::is_recording) {
-        return None;
-    }
-    let mut state = world.get_resource_mut::<AiFailures>()?;
+    let Some(mut state) = world.get_resource_mut::<AiFailures>() else {
+        return;
+    };
     if !state.crash_replays || !state.saved.insert(key) {
-        return None;
+        return;
     }
-    let recording = replay::save(world);
-    let path = format!("{}/crash-tick{}.json", replay::REPLAYS_DIR, recording.end.tick);
-    match replay::write(&recording, &path) {
-        Ok(_) => {
-            journal::log(world, JournalKind::Sim, format!("crash replay saved: {path} (play it with --replay to reproduce)"));
-            Some(path)
-        }
-        Err(e) => {
-            journal::log(world, JournalKind::Error, format!("crash replay not saved: {e}"));
-            None
+    let recording = world.get_resource::<replay::AiReplay>().is_some_and(replay::AiReplay::is_recording).then(|| replay::save(world));
+    if let Some(recording) = &recording {
+        let path = format!("{}/crash-tick{}.json", replay::REPLAYS_DIR, recording.end.tick);
+        match replay::write(recording, &path) {
+            Ok(_) => {
+                journal::log(world, JournalKind::Sim, format!("crash replay saved: {path} (play it with --replay to reproduce)"));
+                failure.crash_replay = Some(path);
+            }
+            Err(e) => {
+                journal::log(world, JournalKind::Error, format!("crash replay not saved: {e}"));
+            }
         }
     }
+    let what = crash::What { headline: failure.headline(), message: failure.message.clone(), ..kept.unwrap_or_default() };
+    let mut report = crash::report(world, what, recording);
+    report.replay_file = failure.crash_replay.clone();
+    failure.crash_report = crash::save(world, &report);
 }
