@@ -46,6 +46,7 @@ cargo shards act regen region=wilds seed=42    # сгенерировать ре
 cargo shards act nav_path to=e6         # маршрут по навсетке региона; npc_state id=eN — что у NPC на уме
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # пакетная проверка генератора; без игры: cargo sandbox --worldgen-report wilds --seeds 1..1000
 cargo sandbox --bake-nav                # запечь навигацию тайлов в assets/nav/ под все классы тел (после правки тайла, его файла уровня или тела любого класса)
+cargo sandbox --bake-motion             # запечь смещение действий (`bake` у действия) из корневой кости клипа (после правки клипа)
 cargo sandbox --replay FILE --verify    # реплей без окна; добавьте --windowed (под xvfb-run -a) для окна
 cargo shards assert add hp 'field:6:Health.current<300'   # правило: игра встанет, когда оно нарушено (`step` → код выхода 3)
 cargo shards fuzz --seed 7 --steps 300  # случайные входы, пока не нарушится правило
@@ -71,7 +72,8 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
 - Инструменты движка (`shards tools`): **движение** — `move_to` (`path=true` ведёт по `path_to`), `move`, `stop`, `jump`,
   `sprint`, `glide`, запросы `clearance` и `path_to` (в регионе по навсетке: `path_to` называет `provider`, `clearance` —
   `closed`, где навсетка кончается раньше физики), `input_bindings`, `rebind`; **бой** — `light_attack`, `heavy_attack`,
-  `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on`, `attack`, `god`, `heal`, `stagger`; **контент** —
+  `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on`, `attack`, `god`, `heal`, `stagger`, `motion_bake`
+  (то же, что `--bake-motion`); **контент** —
   `content_list`, `content_get`, `content_check`, `content_reload`, `spawn_prefab`; **мир** — `regen`, `region_load`,
   `goto_tile`, `region_info`, `worldgen_report`, `spawn_level`, `level_info`, `level_reload`; **NPC и навигация** —
   `npc_state` (`nav.routes`: по навсетке какого класса тел NPC планирует или почему по локальной сетке), `npc_set_state`,
@@ -233,6 +235,13 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
   эффект, событие боя (`damaged`, `died`, …) или метка клипа выбирает его в таблице, а свой момент игра играет
   `PlayEffect`. Эффекты и декали — только картинка (feature `render`, окно или `--offscreen`): они не меняют мир, их сущности без
   `AiId`, часы частиц — часы симуляции (пауза их замораживает). Числа эффектов в код игры не кладут.
+- **Анимация — контент** (`*.animset.ron`): какой клип какого файла glTF показывает состояние и действие, смешивание и метки
+  (`cues` → звук и эффект) называет набор; модели и клипы строит скрипт Blender (`tools/blender/humanoid.py`, только `-b
+  --factory-startup`, без окна), его вывод коммитится. `Animated` и модель — только картинка: игра ставит их телу, когда
+  `config.draws()`, реплей `Animated` не сверяет, геймплей от клипа не зависит. Смещение действия (`displacement`) с `bake:
+  (animset, clip)` запекается из корневой кости клипа: **поменяли клип — запеките заново** (`cargo sandbox --bake-motion`, tool
+  `motion_bake`), иначе `--check-content` назовёт устаревшую кривую; руками такую кривую не правят. Новая запеканка меняет
+  геймплей: эталонные реплеи тогда расходятся и перезаписываются.
 - **Новый модуль движка** — крейт с плагином, который называет себя `add_engine_module(name, version)` (так он виден в
   `ai/status`), с наборами систем для упорядочивания и одной строкой в `EnginePlugins`. Состояние он описывает для ИИ
   (describe, `journal_event`), действия отдаёт инструментами (то, что разработчику нужно под рукой в окне, — ещё и пунктом

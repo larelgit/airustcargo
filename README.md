@@ -71,7 +71,7 @@ cargo shards observe                       # срез мира текстом + 
 cargo shards tools                         # что можно сделать (--json: со схемами аргументов)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # в ответе CHANGES и JOURNAL
-cargo shards content check                 # ok: 123 definitions in 35 files
+cargo shards content check                 # ok: 125 definitions in 36 files
 cargo shards act regen region=wilds seed=42   # сгенерированный регион к югу от арены; игрок у его ворот
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # маршрут к логову по навсетке: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # проверка генератора на тысяче зёрен
@@ -94,12 +94,13 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Контент без игры: читает и проверяет все файлы (в том числе файлы уровней тайлов и запечённую навигацию), код 0 или 1.
 cargo sandbox --check-content
-# ok: 123 definitions in 35 files
+# ok: 125 definitions in 36 files
 
 # 7. Мир без игры: генератор на тысяче зёрен (код 0, если прошли все) и запекание навигации тайлов.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
 # ok: worldgen wilds v1, seeds 1..1000: 1000/1000 passed (42 after a retry), 0 fell back, 0 failed, 0 panicked [1000 seeds in 0.31s, 0.3 ms/seed]
 cargo sandbox --bake-nav               # baked 18 files for 2 body classes (agent, large) into nav/ (после правки тайла; без правок файлы не меняются)
+cargo sandbox --bake-motion            # смещение ударов и переката из клипов (после правки клипа; см. «Смещение из клипа»)
 ```
 
 `cargo sandbox` — это `cargo run -p sandbox --`, `cargo shards` — `cargo run -q -p shards_cli --` (алиасы в
@@ -288,11 +289,11 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 
 | крейт | что это |
 |---|---|
-| `crates/shards` | **единственная зависимость игры.** `EnginePlugins`, `EngineConfig`, `run` (стандартный `main`: ещё `--worldgen-report` и `--bake-nav`), `testing` (тестовые приложения), `TileLevelsPlugin` (уровни как тайлы), `coop` (сеть и сохранения вместе: персонаж едет с игроком, мир хранит хост), `prelude`, реэкспорт `bevy`, `serde`, `schemars`, `serde_json` и модулей (`shards::world`, `shards::npc`, …) |
+| `crates/shards` | **единственная зависимость игры.** `EnginePlugins`, `EngineConfig`, `run` (стандартный `main`: ещё `--worldgen-report`, `--bake-nav` и `--bake-motion`), `testing` (тестовые приложения), `TileLevelsPlugin` (уровни как тайлы), `coop` (сеть и сохранения вместе: персонаж едет с игроком, мир хранит хост), `prelude`, реэкспорт `bevy`, `serde`, `schemars`, `serde_json` и модулей (`shards::world`, `shards::npc`, …) |
 | `crates/shards_core` | ядро (E1): `EngineConfig`, состояния, шлюз загрузки, `Intent`, `PlayerId`/`LocalPlayer`/`NetRole`, реестр модулей |
 | `crates/shards_content` | контент (E4): `ContentDef`, база, загрузка и горячая перезагрузка, префабы, инструменты контента, `check_dir` |
 | `crates/shards_motion` | движение (E2): физика на parry3d, контроллер, карта ввода, камера, инструменты и запросы движения |
-| `crates/shards_action` | бой (E3): действия, мувсеты, машина, попадания, ресурсы, статусы, телеграфы, анимационный мост, оверлеи |
+| `crates/shards_action` | бой (E3): действия, мувсеты, машина, попадания, ресурсы, статусы, телеграфы, анимационный мост, запекание смещения из клипов, оверлеи |
 | `crates/shards_level` | уровни из Blender (E4.2): glTF с custom properties → коллайдеры, датчики, маркеры, префабы, компоненты; вид `level`, инструменты |
 | `crates/shards_world` | мир (E5): тайлы, регионы и подземелья в контенте, генератор с решателем сокетов и проверками, манифест, пакетные отчёты, загрузка и смена региона, активные зоны, стриминг картинки |
 | `crates/shards_net` | сеть и кооператив (E7). Канальный слой (E7.2) без Bevy: транспорты `Transport` (в памяти — `MemoryHub`, детерминированный; UDP для LAN), имитация задержки и потерь (`LinkConditions`, `--net-sim`), `Link` — надёжные и ненадёжные сообщения, блобы, сжатие, подтверждения, RTT и статистика. Поверх него на Bevy — сессия кооператива (`NetPlugin`: хост, клиент, репликация, инструменты `net_*`) и стенд «хост + клиенты» в одном процессе (`Stand`) |
@@ -438,7 +439,7 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 
 **`shards::run`** — стандартный `main`. Флаги: `--headless | --offscreen --seed N --port N|0 --port-file F --no-remote --paused --hz N
 --replay FILE --verify [--windowed] --check-every N --check-detail components|entities|none --tick-budget-ms MS --frame-budget-ms MS
---check-content --worldgen-report REGION [--seeds S] --bake-nav [TILES] --smoke TICKS --perf ID`; для фазы C:
+--check-content --worldgen-report REGION [--seeds S] --bake-nav [TILES] --bake-motion [ACTIONS] --smoke TICKS --perf ID`; для фазы C:
 `--host [PORT] | --join ADDR | --stand N [--stand-udp]` (взаимоисключающие, `--stand` только с `--headless`), `--name`,
 `--net-sim SPEC`, `--save-dir DIR`, `--settings-dir DIR | --no-settings`, `--character SLOT`, `--world SLOT` (слот —
 1–32 символа `a-z0-9_-`), `--exit-with-host`; для Steam (feature `steam`, см. «Steam (E10.5)»): `--steam-host | --steam-server`,
@@ -450,12 +451,13 @@ feature `steam` на них выходит с кодом 2. `--host`, `--join` �
 выход с кодом 3 до того, как собрано хоть что-то. `--check-every` и `--check-detail` задают запись реплея, поэтому с `--replay`
 не сочетаются. `--tick-budget-ms` — число миллисекунд, которое помещается в `Duration` и не меньше 1 нс; `inf`, `1e30` и `1e-10`
 дают ошибку командной строки (код 2), а не панику. `--verify` выходит с кодом 0 (совпало, ничего не нарушено), 1 (разошлось,
-упала система геймплея или нарушен инвариант) или 2 (реплей или его снапшот не читаются); `--check-content`, `--worldgen-report` (все зёрна прошли) и `--bake-nav`
-(все тайлы запеклись) — 0 или 1. Эти три режима ничего не запускают (`--bake-nav` грузит игру без окна, но не делает ни тика).
+упала система геймплея или нарушен инвариант) или 2 (реплей или его снапшот не читаются); `--check-content`, `--worldgen-report` (все зёрна прошли), `--bake-nav`
+(все тайлы запеклись) и `--bake-motion` (все действия запеклись) — 0 или 1. Эти режимы ничего не запускают (`--bake-nav` и
+`--bake-motion` грузят игру без окна, но не делают ни тика).
 `kill` и закрытый терминал завершают игру через `AppExit`: токен и файл порта удаляются.
 Паника, которая уносит игру, оставляет отчёт `crashes/crash-…json` и код выхода 101 (см. «Отчёт о падении»).
 `--offscreen` не сочетается с `--headless`, `--stand`, `--verify` и проверками (`--check-content`, `--worldgen-report`,
-`--bake-nav`, `--smoke`); без GPU он выходит с кодом 2 и советом, без фичи `render` — тоже. С `--perf` (автотест
+`--bake-nav`, `--bake-motion`, `--smoke`); без GPU он выходит с кодом 2 и советом, без фичи `render` — тоже. С `--perf` (автотест
 производительности, см. «Время кадра и автотест производительности») он сочетается: тогда автотест меряет и кадры.
 
 **Состояния** (`EngineState`, Bevy States): `Loading` → `InGame` (или `MainMenu`, если так задал `after_loading`),
@@ -590,9 +592,9 @@ reflection, как в сценах Bevy; каждый компонент дол�
 
 ```text
 $ shards act content_list
-content: 123 definitions in 35 files
+content: 125 definitions in 36 files
   action  23
-  animset  0
+  animset  1
   attack_plan  3
   audio  1
   behavior  2
@@ -601,7 +603,7 @@ content: 123 definitions in 35 files
   devmenu  4
   director  2
   dungeon  0
-  effect  5
+  effect  6
   fx  1
   input_map  0
   layout  3
@@ -884,7 +886,8 @@ $ shards act path_to target=e12              # e12 — ориентир «Cliff�
 - Тик, в котором действие кончается, ещё его часть: окна удара и защиты его видят. Окно защиты, которое начинается до
   промежутка удержания и кончается внутри него, валидация отвергает: оно открывалось бы на каждом круге.
 - Смещение (`displacement`) действие отдаёт контроллеру через `LocomotionInput::external`: двигает тело только
-  контроллер, поэтому выпад останавливается о стену.
+  контроллер, поэтому выпад останавливается о стену. Его можно не писать руками, а запечь из клипа (`bake`, см. «Смещение из
+  клипа» ниже).
 - Анимация и звук — только имена: `anim: "light_1"` (клип) и `telegraph.sound` (звук из `*.sound.ron`: модуль звука играет
   его там, куда придётся удар, см. «Звук»).
 
@@ -922,23 +925,38 @@ $ shards act path_to target=e12              # e12 — ориентир «Cliff�
   движения и какое действие, смешивание, метки по времени (`cues` → `AnimationCue`, только для эффектов и звука, геймплей
   от них не зависит). **Геймплей ведёт, анимация догоняет:** клип действия подматывается на его прогресс (время геймплея в
   масштабе длины клипа), клипы движения зацикливаются со скоростью по скорости тела. Один `AnimationGraph` на набор,
-  общий для всех `Animated` персонажей; персонажи с тем же скелетом (одинаковые имена узлов) делят клипы. Модель — дочерняя
-  сущность персонажа (`WorldAssetRoot`). Один `AnimationPlayer` на персонажа: слоёв (верх/низ тела) нет.
+  общий для всех `Animated` персонажей; персонажи с тем же скелетом (одинаковые имена узлов) делят клипы, и клип может лежать
+  в другом файле с тем же скелетом (`source` у клипа): граф ждёт все файлы набора. Модель — дочерняя сущность персонажа
+  (`WorldAssetRoot`). Один `AnimationPlayer` на персонажа: слоёв (верх/низ тела) нет. `root_motion` называет корневую кость:
+  мост держит её на месте по земле (x и z — как в позе покоя, после `AnimationSystems`), а тело двигает смещение действия,
+  которое из той же кости запекается (см. «Смещение из клипа»). С папкой ассетов (`--check-content`, `content_check`) набор
+  проверяется по файлам: нет файла, анимации (ошибка перечисляет те, что есть) или корневой кости — ошибка контента.
+  `Animated` и модель игра ставит телу только с картинкой (`config.draws()`): реплей `Animated` не сверяет, геймплей от клипа
+  не зависит, без окна ничего не грузится.
   ```ron
-  // content/anim/humanoid.animset.ron
+  // content/anim/humanoid.animset.ron (песочница, сокращено)
   { "humanoid": (
       source: "models/humanoid.glb",
       clips: {
-          "idle": (), "walk": (), "run": (speed: 1.0), "fall": (name: "Armature|Falling"),
-          "swing_1": (name: "Armature|Slash1", cues: [(at: 0.28, cue: "swoosh")]),
-          "roll": (blend: 0.04), "hit": (), "die": (),
+          "idle": (), "walk": (cues: [(at: 0.0, cue: "footstep"), (at: 0.4, cue: "footstep")]), "run": (),
+          "light_1": (cues: [(at: 0.2, cue: "whoosh")]), "roll": (blend: 0.04), "death": (),
+          "stagger": (name: "hit", blend: 0.04),                     // анимация `hit` файла под своим именем
+          "slam": (name: "heavy"),                                   // удар стража — клип героя на своей шкале
+          "bow": (source: "models/humanoid_gestures.glb"),           // клип из второго файла с тем же скелетом
       },
-      locomotion: {"idle": "idle", "walk": "walk", "run": "run", "air": "fall", "stagger": "hit", "dead": "die"},
-      actions: {"light_1": "swing_1", "roll": "roll"},
+      locomotion: {"idle": "idle", "walk": "walk", "run": "run", "stagger": "stagger", "dead": "death"},
+      // действия находят клип по своему `anim`; `actions: {"swipe": "swipe"}` (шаблон) — по id действия
       blend: 0.2, action_blend: 0.06,
-      speeds: (walk: 2.0, run: 5.0, sprint: 8.0),
+      speeds: (walk: 2.0, run: 4.5, sprint: 7.5),
+      root_motion: "root",
   ) }
   ```
+  **Модель.** Песочница и шаблон носят low-poly гуманоида, которого строит скрипт `tools/blender/humanoid.py` в Blender без
+  окна: `blender -b --factory-startup --python-exit-code 1 -P tools/blender/humanoid.py -- sandbox crates/sandbox/assets/models`
+  (или `-- template template/assets/models`). 16 костей со скином, клипы `idle`, `walk`, `run`, `light_1`, `light_2`,
+  `light_3`, `heavy`, `roll`, `block`, `hit`, `death` (у песочницы ещё `bow` и `taunt` в `humanoid_gestures.glb`); удары и
+  перекат сделаны по фазам действий своей игры, фазы клипа уходят в glTF свойством `phases`. Тот же скрипт — те же байты.
+  Метки клипов играют звук с тем же именем (`whoosh`) и эффект из таблицы `fx` (`footstep` → `step_dust`).
 - **Телеграфы на земле** (`render::overlay`) рисуются всегда (не только в оверлее): контур зоны, штриховка, кольцо,
   которое заполняется по мере удара, и **символ** из контента как табличка на камеру, чтобы опасность читалась без цвета.
   Предупреждения врагов — тёплого цвета, союзников — холодного; рисуется всё, что направлено на локального игрока. Символ шире
@@ -949,6 +967,27 @@ $ shards act path_to target=e12              # e12 — ориентир «Cliff�
   (синий, идеальная ярче), i-frames контуром, каждая зона с оставшимся временем.
 - **Маркеры за кадром** (`render::hud`): стрелка и символ на краю экрана в сторону атаки, которая вот-вот ударит там, где
   камера не смотрит; растёт и мигает чаще по мере удара. Для `LocalPlayer`.
+
+**Смещение из клипа** (`bake`, `shards_action::bake`). Действие с `bake: (animset: "humanoid", clip: "roll")` берёт
+`displacement` из корневой кости (`root_motion` набора) своего клипа: `--bake-motion [ДЕЙСТВИЯ]` (или инструмент
+`motion_bake action=…`, Dev, `control`) читает её перенос с частотой тика (60 Гц), оставляет только движение вперёд (glTF
++Z модели; вбок — в отчёт, вертикаль — картинке), выкидывает ключи, которые прямая между соседями даёт с точностью 0.5 мм,
+и правит поле `displacement` в файле действия на месте (комментарии и порядок полей остаются; нет поля — оно встаёт перед
+`bake`). Тот же клип — те же байты. Клип должен идти по фазам действия: его свойство `phases` (или длина) сверяется с
+`phases` действия с точностью полтика, иначе ошибка называет оба тайминга. Проверка контента с папкой ассетов запекает
+заново и называет устаревшую кривую и команду. Без окна, без тиков:
+```text
+$ cargo sandbox --bake-motion
+baked the displacement of 5 actions at 60 Hz
+  heavy: clip `heavy`, 12 keys, 0.6 m forward by 0.7 s -> content/combat/player.action.ron
+  light_1: clip `light_1`, 6 keys, 0.3 m forward by 0.3 s -> content/combat/player.action.ron
+  light_2: clip `light_2`, 6 keys, 0.3 m forward by 0.3 s -> content/combat/player.action.ron
+  light_3: clip `light_3`, 6 keys, 0.4 m forward by 0.35 s -> content/combat/player.action.ron
+  roll: clip `roll`, 21 keys, 4.0 m forward by 0.35 s -> content/combat/player.action.ron
+$ cargo sandbox --check-content        # после правки клипа без --bake-motion
+content/combat/player.action.ron: action `roll`: displacement is stale: clip `roll` of `models/humanoid.glb` bakes to 21 keys (4.0 m forward); bake it again with `--bake-motion roll` (or the motion_bake tool)
+```
+Новая кривая меняет геймплей (выпад, перекат): реплеи, записанные со старой, расходятся.
 
 **Что видит ИИ.** В describe: `windup slam 0.78s (zone circle 4.5m) hyper-armor`, `stam 75/100`, `poise broken 0.8s`,
 `bleed 60%`, `queued light 0.13s`, `roll roll 0.33s i-frames`; под строкой `YOU` — подсказка
@@ -2079,7 +2118,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 | scope | инструменты |
 |---|---|
 | **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; движение: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; бой: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack; мир: region_info, level_info, nav_path, npc_state; настройки: settings, settings_set (как меню настроек у человека); звук: audio; Steam (feature `steam`): steam, steam_invite |
-| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset; мир: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; звук: sound_play, music_set; вид мешей: looks, look_outlines; растительность: scatter, scatter_set; эффекты: effects, effect_play, telegraph_decals; Steam (feature `steam`): steam_host, steam_join, achievement_unlock; меню и консоль разработчика: dev_menu, console |
+| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset, motion_bake; мир: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; звук: sound_play, music_set; вид мешей: looks, look_outlines; растительность: scatter, scatter_set; эффекты: effects, effect_play, telegraph_decals; Steam (feature `steam`): steam_host, steam_join, achievement_unlock; меню и консоль разработчика: dev_menu, console |
 
 Игра добавляет свои (в шаблоне `taunt` и условия `arena_cleared`, `foe_near`, `in_fight`, в песочнице условия `boss_phase_2`,
 `boss_dead`, `player_dead`, `three_attacking`). Модули добавляют условия для `step --until named:…`: `near_poi` (мир, появляется
@@ -2090,7 +2129,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 - `query` только читает мир: без записи в журнал и без диффа;
 - `action` меняет мир: пишет в журнал, возвращает `CHANGES` и попадает в реплей;
 - `control` управляет временем или сессией (pause, resume, speed, step, possess, content_reload, rebind, settings_set,
-  snapshot_save, snapshot_load, nav_bake, sound_play, music_set): журнал и дифф
+  snapshot_save, snapshot_load, nav_bake, motion_bake, sound_play, music_set): журнал и дифф
   как у action, но в реплей не попадает. Он меняет, *когда* что-то происходит, а не *что*.
   Исключение — правила (`assert_add`, `assert_remove`, `assert_reset`): мир они не меняют, но
   решают, где игра остановится, поэтому реплей записывает их отдельными событиями.
@@ -5161,7 +5200,7 @@ cargo test --manifest-path template/Cargo.toml # шаблон отдельно: 
 | `shards_core` | загрузка не сдвигает тики, пауза, `after_loading`, нажатия живут один тик, `move_to`, `ai/status` называет модули |
 | `shards_content` | определения и их файлы, повторы и ссылки называют файл и поле, `check_dir`, префабы (`extends`, переопределения), перезагрузка пишется в реплей и проигрывается, сломанная правка отклоняется, правка файла в работающей игре |
 | `shards_motion` | физика (запросы, слои, порядок по `ColliderId`), контроллер (ступени, перелезание, плавание, планер, прыжок, стены), числа из контента, ввод (режимы, контексты, переназначение, сохранение), камера, `clearance` и `path_to`, инструменты, реплей и независимость от индексов `Entity` |
-| `shards_action` | действия, буфер, отмены и комбо, `can_start`, попадания и конвейер урона (уклонение, блок, парирование, стойкость, гиперброня), статусы, зоны и подсказка «выйди», анимация (`select_clip`), геометрия телеграфов, инструменты и их ошибки, реплей боя |
+| `shards_action` | действия, буфер, отмены и комбо, `can_start`, попадания и конвейер урона (уклонение, блок, парирование, стойкость, гиперброня), статусы, зоны и подсказка «выйди», анимация (`select_clip`, файлы набора: клип, источник, корневая кость), запекание смещения (тайминг клипа, прореживание, правка файла на месте, устаревшая кривая), чтение клипов glTF, геометрия телеграфов, инструменты и их ошибки, реплей боя |
 | `shards_level` | glTF и узлы, свойства (`collider`, `volume`, `prefab`, компоненты по имени, текстовый JSON), маркеры и их ошибки, коллайдеры нужных размеров и слоёв, вид `level` и его проверка в `content check`, спавн (мировые позиции, порядок, id), горячая перезагрузка, реплей и хэш `level`, картинка уровня; настоящий экспорт Blender 5.2.2 (`from_blender.rs`: маркеры, формы коллайдеров, префабы, компоненты, ошибки художника, лампы, Draco и оба meshopt, сцена по умолчанию) |
 | `shards_world` | формат тайлов, регионов, комнат (ошибки называют файл и ближайший id); решатель, проверки (недоступность, уклон, расстояния, дорога никуда), сотни и тысяча зёрен, `worldgen_report` с одним зерном числом, манифест байт в байт, запасная карта, паника шага игры с номером зерна; подземелья; смена региона через `RegionLoading`, стартовый регион, `goto_tile`, реплей со сменами регионов, снапшот в регионе; тайлы из файлов уровней во всех четвертях оборота; маркеры-сокеты файла уровня против сокетов тайла; активные зоны; стена по краю региона (держит тело, открытый край его роняет; номера коллайдеров тайлов прежние, уходит с регионом) |
 | `shards_npc` | автомат поведения и его ошибки, зрение/слух/память, жетоны директора (включая смену числа игроков и приказы агента), планировщик (запреты, бюджет, отдых), запекание и сшивка (в том числе ступени на краю тайла), вырезание в любом порядке, маршруты и обход колонн, `path_to` и `clearance` по навсетке (`provider`, `closed`), поводок, `npc_state`, `npc_overlay`, реплей и снапшот на десяти тиках боя и в сгенерированном регионе |
@@ -5172,7 +5211,7 @@ cargo test --manifest-path template/Cargo.toml # шаблон отдельно: 
 | `shards_fx` | эффекты и таблица в контенте и их ошибки (пул меньше одного запуска, событие с опечаткой, вторая таблица), инструменты, меню и статус без картинки; пулы мешей из контента (один меш и материал на эффект), запуск, переполнение пула (старые уступают), часы симуляции (пауза замораживает, `step` двигает), `rate` и `duration`, эффекты событий (на стороне удара), меток и `PlayEffect`; декаль на зону (круг, сектор), заливка растёт к удару, цвет врага и союзника, гизмо отдают заливку, `DepthPrepass` камере и обратно; картинка на GPU (`#[ignore]`): декаль красит пол только в зоне, частицы светятся там, где играют |
 | `shards_steam` | на поддельном Steam: лобби и приглашения, сессии реле (удержанные датаграммы, отказ, задержка хаба), игровой сервер, достижения и облако подделки, адреса `steam:` и `+connect_lobby`, сверка облака и имена его файлов; `tests/steam/`: хост лобби и два друга по реле стенда, игровой сервер и клиент по id, приглашение, отказ чужому, неудачный вход и `--exit-with-host`, проверка контента достижений, запись в Steam через секунду и повтор отказанной записи, прошлый запуск, реплей, кооператив (хост решает, каждый открывает себе), копия каждой записи, выключенное облако, сверка при запуске до загрузки слота, ответы `steam` и `ai/status`. Настоящий бэкенд только собирается (`--features sdk`) |
 | `shards_net` | `src/`: без Bevy — транспорты (хаб в памяти, UDP), имитация связи, канал (надёжные и последние сообщения, блобы, подтверждения, RTT, потери, тайм-ауты), формат датаграмм; сессия (пределы кадров ввода и самого большого честного пакета, удерживаемое после мира заново, правила репликации, ожидание места в канале по числу и байтам, `NetDef`, ушедшие токены). Сессия целиком — в тестах песочницы `net*.rs` |
-| `shards` | сведение сети и сохранений (`coop`: что хост знает о персонаже игрока, как он едет текстом), секции движка (число, какого не бывает у тела), слот стенда, реплей со снапшота (`--verify`: тот же результат, код 2 для чужого снапшота), режим без окна — те же плагины и картинки нет (`display` и подсказка `shot`), `--offscreen` — плагины окна без окна (картинка для `shot`, в неё рисуют камеры, нацеленные на окно, и после смены цели), тестовое приложение, `testing::ok` на сбое геймплея, `testing::run_to` и `verify`, когда нарушенное правило совпало с началом загрузки, бюджет тика в командной строке, время кадра (`frames`: кадр — более медленный из двух миров, кадр с `step` не в счёт, отчёт GPU), автотест (`bench`: вердикты, проверка определения, `--perf` и его коды), `counts` без окна, анимационный мост на настоящей модели со скином |
+| `shards` | сведение сети и сохранений (`coop`: что хост знает о персонаже игрока, как он едет текстом), секции движка (число, какого не бывает у тела), слот стенда, реплей со снапшота (`--verify`: тот же результат, код 2 для чужого снапшота), режим без окна — те же плагины и картинки нет (`display` и подсказка `shot`), `--offscreen` — плагины окна без окна (картинка для `shot`, в неё рисуют камеры, нацеленные на окно, и после смены цели), тестовое приложение, `testing::ok` на сбое геймплея, `testing::run_to` и `verify`, когда нарушенное правило совпало с началом загрузки, бюджет тика в командной строке, время кадра (`frames`: кадр — более медленный из двух миров, кадр с `step` не в счёт, отчёт GPU), автотест (`bench`: вердикты, проверка определения, `--perf` и его коды), `counts` без окна, анимационный мост на настоящей модели со скином и на гуманоиде из Blender (перекат на месте, клип из второго файла), `--bake-motion` |
 | `sandbox` | в одном бинарнике `tests/sandbox`: снапшоты (`snapshots.rs`: состояние после загрузки то же, что в исходной сессии, на перекате, комбо, телеграфе, планировании, плавании, флаконе, боях NPC и в сгенерированном регионе), тайл руины (`tiles.rs`: файл из тестового генератора glTF совпадает с закоммиченным), сценарии (`scenario_files`: каждый файл на свежей игре, все подряд в одной игре, бой-прототип после шести разных пауз), эталонные реплеи, действия, контент, полоса препятствий, детерминизм, видимость, права scope, реплеи, `kill` и SIGHUP; инварианты (`invariants.rs`: правила песочницы и их границы, сессии, остановка в реальном времени, реплей нарушения, снапшот; `net_seams.rs`: клиент правил не проверяет); кооператив на стенде (`net.rs`, `net_guards.rs`, `net_lifecycle.rs`, `net_sync.rs`, `net_predict.rs`, `net_seams.rs`, `net_coop.rs`, из них 2 замера под `#[ignore]`: вход и уход, пределы и текст пира, мир заново, ввод, рассинхрон, конец сессии и коды выхода, часы стенда, UDP на loopback, предсказание клиента, персонажи и сохранения); долгая игра (`soak.rs`: две минуты хоста и двух клиентов на 150 мс и 2 % со сменой региона и сохранениями, полчаса — под `#[ignore]`); снимок без окна (`offscreen.rs`, `#[ignore]`: нужен GPU или программный рендер); отдельно `system_failures` (сбой геймплея, краш-реплей, отчёт о падении, паника в другом потоке, `crash_report`, возврат снапшотом после сбоя), `log_capture` (строки лога в `step`) и `perf` (время тика: бюджет, журнал, `ai/status`; автотест на эталонной сцене без окна, с `offscreen` — под `#[ignore]`): у них свои процессы |
 
 Тесты шаблона (`template/tests/game`, 36 и один `#[ignore]`) собираются в одном бинарнике: сценарии (и сценарий стенда), детерминизм,
