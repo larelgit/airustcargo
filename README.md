@@ -4636,7 +4636,9 @@ xvfb-run -a cargo test -p shards --test action_render -- --ignored --nocapture  
 2 %), со сменой региона каждые 5 минут и сохранением каждые 3; по понедельникам, руками (`minutes`, `seed`) и на пуше с
 `[soak]` в сообщении коммита. `record-replays.yml` записывает эталонные реплеи песочницы и шаблона заново на Linux (там их
 проверяет CI; запись на другой ОС может разойтись в последних битах float) и отдаёт артефактом `reference-replays`: пуш с
-`[record replays]` в сообщении, потом `gh run download <id> --name reference-replays --dir .` в корне репозитория.
+`[record replays]` в сообщении, потом `gh run download <id> --name reference-replays --dir .` в корне репозитория. В этом
+дереве обоих файлов пока нет (в `.github/workflows/` только `ci.yml`), а эталонные реплеи после E10.1–E10.3 (виды, растительность,
+эффекты меняют хэш контента) не перезаписаны: их нужно записать заново на Linux и Windows на вершине этой цепочки веток.
 
 ## Что дальше
 
