@@ -2438,8 +2438,8 @@ cargo shards wait && cargo shards step 30 && cargo shards shot -o shots/arena.pn
 ```
 
 - Вместо окна одна картинка размера `window` (1280×720) — ресурс `ai_core::display::Offscreen`. Камера, нацеленная на главное
-  окно (так у камеры по умолчанию), перенацеливается на неё (`RenderTarget::Image`): при появлении и когда система игры
-  меняет её цель на окно позже (до того, как Bevy считает цели камер в `PostUpdate`). UI идёт в камеру, которая
+  окно (так у камеры по умолчанию), перенацеливается на неё (`RenderTarget::Image`): при появлении и позже, когда система игры
+  меняет её цель на окно (до того, как Bevy считает цели камер в `PostUpdate`). UI идёт в камеру, которая
   рисует последней (наибольший `order`), как в окне; если игра сама пометила камеру `IsDefaultUiCamera`, — в неё. HUD,
   оверлеи и панель меню разработчика (`dev_menu open=true`) рисуются, как в окне. В картинку смотрит только `shot`.
 - Окна, которое ждало бы показа кадра, нет, поэтому каждый кадр ждёт, пока GPU его нарисует. Иначе медленный GPU
@@ -2452,8 +2452,8 @@ cargo shards wait && cargo shards step 30 && cargo shards shot -o shots/arena.pn
   pictures), or let a software renderer draw: WGPU_FORCE_FALLBACK_ADAPTER=1`. Программный рендер выбирает
   `WGPU_FORCE_FALLBACK_ADAPTER=1`: на Windows это WARP (`Microsoft Basic Render Driver`, проверено: та же картинка,
   только медленнее), на Linux — Mesa lavapipe (`mesa-vulkan-drivers`; здесь не проверялся).
-- Игра без окна та же: геймплей, `observe` и реплей не зависят от того, куда идёт картинка. Настройки игрока `--offscreen`,
-  как и `--headless`, не читает (картинка не зависит от машины), если не задан `--settings-dir`.
+- Игра без окна та же: геймплей, `observe` и реплей не зависят от того, куда идёт картинка. С `--offscreen`, как и с `--headless`,
+  игра читает настройки игрока только из `--settings-dir`: картинка не зависит от машины.
 - Тест `offscreen::an_offscreen_game_takes_shots_without_a_window` песочницы (`#[ignore]`: нужен GPU или программный рендер):
   `cargo test -p sandbox --test sandbox -- --ignored offscreen`.
 
