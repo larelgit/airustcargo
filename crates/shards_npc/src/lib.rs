@@ -111,8 +111,9 @@ pub use def::{
 };
 pub use director::{AttackToken, Grant, TokenGranted, TokenReturned};
 pub use nav::{
-    bake_files, find_path, local_grid_path, local_grid_route, navmesh_path, navmesh_route, plain_sight, region_nav, route_on, routes_for,
-    straight_clear, NavAgent, NavBodyDef, NavError, NavPath, NavPaths, NavQuery, NavRegion, NavSettingsDef, NavTile,
+    bake_files, find_path, local_grid_path, local_grid_route, navmesh_path, navmesh_route, plain_sight, region_nav, route_on,
+    routes_at, routes_for, straight_clear, NavAgent, NavBodyDef, NavError, NavPath, NavPaths, NavQuery, NavRegion, NavSettingsDef,
+    NavTile,
 };
 pub use overlay::NpcOverlay;
 pub use perception::{sees, sight_clear, HeardAt, Noise, Perceived, Sensed, Sound};

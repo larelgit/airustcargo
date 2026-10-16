@@ -168,19 +168,59 @@ fn serving<'w>(world: &'w World, params: &CharacterParams) -> Option<&'w NavRegi
 
 /// What an NPC of `radius` plans its routes on, for tools: `navmesh, body large`, or the
 /// local grid and why (`local grid: no region loaded`, `local grid: no body class fits a
-/// 1.60 m radius (the widest: large, 1.20 m)`), or a game's own provider by its name.
+/// 1.60 m radius (the widest: large, 1.20 m)`), or a game's own provider by its name. Where it
+/// stands is not known here: [`routes_at`] knows it.
 pub fn routes_for(world: &World, radius: f32) -> String {
+    route_source(world, radius, None).to_string()
+}
+
+/// [`routes_for`] an NPC standing at `at`: outside the region it plans on the local grid
+/// (`local grid: the NPC stands outside the region`), whatever its class. What `npc_state`
+/// says (`nav.routes`).
+pub fn routes_at(world: &World, radius: f32, at: Vec3) -> String {
+    route_source(world, radius, Some(at)).to_string()
+}
+
+/// Where an NPC's routes come from, for tools: `npc_state` and `npc_overlay` both ask this.
+pub(crate) enum RouteSource<'w> {
+    /// A game's own provider ([`NavPaths`] by another name), by its name.
+    Provider(&'static str),
+    /// The navmesh of a body class.
+    Navmesh(&'w NavRegion),
+    /// The engine's local grid, and why. `region`: the region in the world has a navmesh,
+    /// only not for this NPC (no class fits it, it stands outside).
+    LocalGrid { why: String, region: bool },
+}
+
+impl std::fmt::Display for RouteSource<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Provider(name) => f.write_str(name),
+            Self::Navmesh(class) => write!(f, "navmesh, body {}", class.body),
+            Self::LocalGrid { why, .. } => write!(f, "local grid: {why}"),
+        }
+    }
+}
+
+/// What an NPC of `radius` (standing at `at`, when known) plans its routes on: the route
+/// provider ([`NavPaths`]), then the region's navmesh as [`navmesh_path`] asks it.
+pub(crate) fn route_source(world: &World, radius: f32, at: Option<Vec3>) -> RouteSource<'_> {
     let paths = world.get_resource::<NavPaths>().copied().unwrap_or_default();
     if paths.name != NAVMESH {
-        return paths.name.to_owned();
+        return RouteSource::Provider(paths.name);
     }
+    let grid = |why: &str, region: bool| RouteSource::LocalGrid { why: why.to_owned(), region };
     if world.get_resource::<ActiveRegion>().is_none() {
-        return "local grid: no region loaded".into();
+        return grid("no region loaded", false);
     }
-    let Some(nav) = region_nav(world) else { return "local grid: the region has no navmesh".into() };
+    let Some(nav) = region_nav(world) else { return grid("the region has no navmesh", false) };
+    // A start the region does not cover is the local grid's (`NavError::NotCovered`).
+    if at.is_some_and(|at| nav.instance_at(nav.column_of(at)).is_none()) {
+        return grid("the NPC stands outside the region", true);
+    }
     match nav.for_radius(radius) {
-        Some(class) => format!("navmesh, body {}", class.body),
-        None => format!("local grid: {}", nav.too_wide(radius)),
+        Some(class) => RouteSource::Navmesh(class),
+        None => grid(&nav.too_wide(radius), true),
     }
 }
 

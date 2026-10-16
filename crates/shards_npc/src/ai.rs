@@ -196,7 +196,7 @@ fn npc_state(In(call): In<Call<NpcStateArgs>>, world: &World) -> ToolResult<Valu
         json!({
             // Where its routes come from: the navmesh of its body class, or the local grid
             // and why.
-            "routes": crate::nav::routes_for(world, radius),
+            "routes": crate::nav::routes_at(world, radius, here),
             "goal": a.goal.map(fmt_pos),
             "waypoints": a.path.len(),
             "next": a.path.get(a.index as usize).map(|p| fmt_pos(*p)),

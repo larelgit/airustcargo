@@ -202,6 +202,73 @@ fn an_npc_as_wide_as_the_large_class_walks_its_navmesh_and_says_so() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The NPC's line in `npc_overlay`.
+fn overlay_line(app: &mut App, id: &str) -> String {
+    let lines = text(&ok(app, "npc_overlay", json!({})));
+    lines.lines().find(|l| l.starts_with(&format!("{id} "))).unwrap_or_else(|| panic!("no line of {id}: {lines}")).to_owned()
+}
+
+#[test]
+fn an_npc_outside_the_region_plans_on_the_local_grid_and_the_tools_say_so() {
+    let dir = assets_with("outside", LARGE);
+    let mut app = app_in(dir.to_str().unwrap(), 7, |_| {});
+    load_region(&mut app, &["floor gates floor"]);
+    // The strip is x 0..24, z 0..8; this ground is south of it, outside.
+    let world = app.world_mut();
+    wall(world, Vec3::new(0.0, -1.0, 12.0), Vec3::new(24.0, 0.0, 20.0));
+    let (from, to) = (Vec3::new(4.0, 0.0, 16.0), Vec3::new(20.0, 0.0, 16.0));
+    let big = npc(world, "grunt", Npc::new("walker", "eyes"), from, E);
+    world.entity_mut(big).insert((Patrol { points: vec![to] }, CharacterParams { radius: 1.2, height: 2.4, ..default() }));
+    step(&mut app, 2);
+    let big_id = id(&app, big);
+    let state = ok(&mut app, "npc_state", json!({"id": big_id}));
+    assert_eq!(state.result["nav"]["routes"], "local grid: the NPC stands outside the region", "{}", state.result);
+    // Its routes from there come from the local grid, as `nav_path` shows.
+    let route = ok(&mut app, "nav_path", json!({"from": big_id, "to": {"x": 20.0, "z": 16.0}}));
+    assert_eq!(route.result["provider"], "local grid", "{}", route.result);
+    let line = overlay_line(&mut app, &big_id);
+    assert!(line.ends_with(" · local grid") && !line.contains("body "), "{line}");
+    // Without a position, only the radius counts: the class it fits.
+    assert_eq!(routes_for(app.world(), 1.2), "navmesh, body large");
+    // Back in the region, it is on its class's navmesh again.
+    teleport(&mut app, big, Vec3::new(4.0, 0.0, 6.0));
+    step(&mut app, 2);
+    let state = ok(&mut app, "npc_state", json!({"id": big_id}));
+    assert_eq!(state.result["nav"]["routes"], "navmesh, body large", "{}", state.result);
+    assert!(overlay_line(&mut app, &big_id).ends_with(" · body large"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A game's routes: straight to the goal.
+fn straight(_: &World, _: Vec3, to: Vec3, _: f32) -> Option<Vec<Vec3>> {
+    Some(vec![to])
+}
+
+#[test]
+fn under_a_games_own_route_provider_the_tools_name_no_body_class() {
+    let dir = assets_with("provider", LARGE);
+    let mut app = app_in(dir.to_str().unwrap(), 7, |app| {
+        app.insert_resource(NavPaths { name: "straight", find: straight });
+    });
+    load_region(&mut app, &["floor gates floor"]);
+    let world = app.world_mut();
+    // As wide as the class `large`, and wider than every class.
+    let big = npc(world, "grunt", Npc::new("walker", "eyes"), Vec3::new(4.0, 0.0, 6.0), E);
+    world.entity_mut(big).insert((Patrol { points: vec![Vec3::new(20.0, 0.0, 6.0)] }, CharacterParams { radius: 1.2, height: 2.4, ..default() }));
+    let wide = npc(world, "grunt", Npc::new("walker", "eyes"), Vec3::new(4.0, 0.0, 2.0), E);
+    world.entity_mut(wide).insert((Patrol { points: vec![Vec3::new(20.0, 0.0, 2.0)] }, CharacterParams { radius: 1.6, height: 3.2, ..default() }));
+    step(&mut app, 2);
+    for e in [big, wide] {
+        let me = id(&app, e);
+        let state = ok(&mut app, "npc_state", json!({"id": me}));
+        assert_eq!(state.result["nav"]["routes"], "straight", "{}", state.result);
+        assert!(!state.result["nav"]["arrived"].as_bool().unwrap(), "on its way: {}", state.result);
+        let line = overlay_line(&mut app, &me);
+        assert!(!line.contains(" · body ") && !line.contains("local grid"), "the game's provider plans its routes: {line}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn every_body_class_bakes_to_stable_bytes_and_content_checks_each() {
     let dir = assets_with("bake", LARGE);
