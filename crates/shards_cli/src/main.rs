@@ -376,6 +376,8 @@ enum CallError {
     Unreachable(String),
     /// The game answered `unauthorized`: the token sent is not its own.
     Unauthorized(String),
+    /// Something took the call and did not answer in time.
+    Silent(String),
     /// Anything else: the game refused the call, or its answer makes no sense.
     Other(String),
 }
@@ -383,7 +385,7 @@ enum CallError {
 impl CallError {
     fn into_message(self) -> String {
         match self {
-            CallError::Unreachable(m) | CallError::Unauthorized(m) | CallError::Other(m) => m,
+            CallError::Unreachable(m) | CallError::Unauthorized(m) | CallError::Silent(m) | CallError::Other(m) => m,
         }
     }
 }
@@ -446,15 +448,27 @@ impl Client {
 
     /// [`Client::call`] that says what kind of failure it was.
     fn try_call(&self, method: &str, params: Value) -> Result<Value, CallError> {
+        self.try_call_within(method, params, None)
+    }
+
+    /// [`Client::try_call`] that gives up after `within` (else after the agent's 300 s): a game
+    /// that takes the connection and never answers holds a call no longer than that.
+    fn try_call_within(&self, method: &str, params: Value, within: Option<Duration>) -> Result<Value, CallError> {
         let params = with_token(params, self.token.as_deref()).map_err(CallError::Other)?;
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
-        let mut resp = self.agent.post(&self.url).send_json(&body).map_err(|e| match e {
+        let request = self.agent.post(&self.url);
+        let request = match within {
+            Some(within) => request.config().timeout_global(Some(within)).build(),
+            None => request,
+        };
+        let mut resp = request.send_json(&body).map_err(|e| match e {
             ureq::Error::Io(_)
             | ureq::Error::ConnectionFailed
             | ureq::Error::HostNotFound
             | ureq::Error::Timeout(ureq::Timeout::Connect) => {
                 CallError::Unreachable(format!("cannot reach the game at {} ({e}). Is it running? Try `cargo sandbox`.", self.url))
             }
+            ureq::Error::Timeout(_) => CallError::Silent(format!("the game at {} took the call and did not answer in time ({e})", self.url)),
             e => CallError::Other(format!("request failed: {e}")),
         })?;
         let reply: Value = resp.body_mut().read_json().map_err(|e| CallError::Other(format!("bad response: {e}")))?;
@@ -817,14 +831,22 @@ fn quit(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
 /// another game took the port), then no process has its `pid`. An error or a broken answer
 /// while it shuts down proves nothing: it is asked again. `Ok(false)`: it answers no more, and
 /// whether its process is gone is unknown (no pid, or no way to look here). `Err`: what it still
-/// does when `limit` is up.
+/// does when `limit` is up. No call outlasts the time left, an unanswered one included.
 fn until_ended(client: &Client, pid: Option<u32>, limit: Duration, every: Duration) -> Result<bool, &'static str> {
     let started = Instant::now();
-    while !matches!(client.try_call("ai/status", Value::Null), Err(CallError::Unreachable(_) | CallError::Unauthorized(_))) {
-        if started.elapsed() >= limit {
-            return Err("still answers");
+    let left = || limit.saturating_sub(started.elapsed());
+    let mut silent = false;
+    loop {
+        if left().is_zero() {
+            return Err(if silent { "still holds its port, but answers nothing" } else { "still answers" });
         }
-        std::thread::sleep(every);
+        match client.try_call_within("ai/status", Value::Null, Some(left())) {
+            Err(CallError::Unreachable(_) | CallError::Unauthorized(_)) => break,
+            outcome => {
+                silent = matches!(outcome, Err(CallError::Silent(_)));
+                std::thread::sleep(every.min(left()));
+            }
+        }
     }
     let Some(pid) = pid else { return Ok(false) };
     loop {
@@ -1255,6 +1277,14 @@ mod tests {
         assert_eq!(stays, Err("answers no more, but its process still runs"));
         let answering = serve(|_, _| Some(reply(json!({"instance": {"pid": 4242}}))));
         assert_eq!(until_ended(&Client::new(answering, None), None, Duration::from_millis(100), every), Err("still answers"));
+        // Something that takes the connection and never answers holds a call no longer than the time left.
+        let silent = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = silent.local_addr().unwrap().port();
+        std::thread::spawn(move || silent.incoming().flatten().collect::<Vec<_>>());
+        let started = Instant::now();
+        let held = until_ended(&Client::new(port, None), None, Duration::from_millis(300), every);
+        assert_eq!(held, Err("still holds its port, but answers nothing"));
+        assert!(started.elapsed() < Duration::from_secs(5), "the call gave up with the time: {:?}", started.elapsed());
     }
 
     #[test]

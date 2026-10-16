@@ -3757,7 +3757,8 @@ writes: nothing in its own folder
 отвечает и процесса с её pid больше нет (`--timeout`, 15 с), и печатает `the game (pid 4242) ended`. Ошибка или оборванный
 ответ, пока игра выходит, доказательством не считаются: `shards` спрашивает снова. Процесс проверяет `kill(pid, 0)` на unix и
 `tasklist` на Windows; где проверить нельзя, строка честнее: `the game (pid 4242) answers no more (whether its process is gone
-cannot be checked here)`. Процесс, который жив после `--timeout`, — ошибка (код 2). На unix это работает так же.
+cannot be checked here)`. Процесс, который жив после `--timeout`, — ошибка (код 2). Ни один запрос не ждёт дольше оставшегося времени:
+игра, которая держит соединение и молчит, — та же ошибка, `still holds its port, but answers nothing`. На unix это работает так же.
 - Клиент стенда в одном процессе (`--stand`) отказывает: его процесс кончается вместе с хостом (`shards quit` хоста или
   `shards stand stop`).
 - `shards stand stop` тоже просит хост выйти через `quit`; игра без этого инструмента получает сигнал.

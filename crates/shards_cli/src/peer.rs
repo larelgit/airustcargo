@@ -237,7 +237,7 @@ impl Watch {
             }
             Err(CallError::Unauthorized(e)) if std::mem::replace(&mut self.refused, true) => Look::Refused(e),
             Err(CallError::Unreachable(e)) if self.seen => Look::Gone(format!("the game was there and is gone ({e}); its own output says why")),
-            Err(CallError::Unauthorized(e) | CallError::Unreachable(e) | CallError::Other(e)) => Look::Waiting(e),
+            Err(CallError::Unauthorized(e) | CallError::Unreachable(e) | CallError::Silent(e) | CallError::Other(e)) => Look::Waiting(e),
         }
     }
 }
