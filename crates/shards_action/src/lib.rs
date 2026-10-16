@@ -73,7 +73,7 @@
 //! ```text
 //! SimSet::Input    ActionSystems::Orders    Order::Attack → Intent (after core's follow_orders)
 //! SimSet::Act      ActionSystems::Machine   presses → buffer → start/advance → LocomotionInput
-//!                  ActionSystems::Effects   heal, stamina, statuses, game effects
+//!                  ActionSystems::Effects   heal, stamina, statuses, sounds, game effects
 //! SimSet::Move     (controller)             integrates LocomotionInput, external included
 //! SimSet::Resolve  ActionSystems::Hits      overlaps → damage pipeline → events
 //!                  ActionSystems::Fighters  sprint drain, regeneration, cooldowns, finished actions end
