@@ -26,7 +26,7 @@ fn files_in(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// The folder of the single-game scenarios: what `shards scenario crates/sandbox/scenarios/*.scenario`
-/// (README, CI) feeds to one live game.
+/// (docs/manual.md, CI) feeds to one live game.
 fn single_game_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios")
 }

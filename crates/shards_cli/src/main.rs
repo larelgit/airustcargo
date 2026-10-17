@@ -165,7 +165,7 @@ enum Cmd {
         force: bool,
     },
     /// Run scenario files against the game: shards commands with expectations and
-    /// invariants, one command per line (format: see shards_script, README "Сценарии").
+    /// invariants, one command per line (format: see shards_script, docs/manual.md "Сценарии").
     /// Exit code 0 all passed, 1 a scenario failed, 2 usage or connection error.
     Scenario {
         #[arg(required = true, value_name = "FILE")]
@@ -1030,7 +1030,7 @@ mod tests {
         assert_eq!(outcome_code(&step(json!({"halted": {"reason": "system x panicked at tick 50"}}))), exit::HALTED);
         assert_eq!(outcome_code(&step(json!({"halted": null}))), 0);
         let codes = [0, exit::TOOL_ERROR, exit::SHARDS_ERROR, exit::HALTED];
-        assert_eq!(codes, [0, 1, 2, 3], "README lists these");
+        assert_eq!(codes, [0, 1, 2, 3], "docs/manual.md lists these");
     }
 
     #[test]
@@ -1328,7 +1328,7 @@ mod tests {
         assert_eq!(pending_id("observe", &json!({"ok": true, "result": {"pending": 3}})), None);
     }
 
-    /// The options that `README`, AGENTS.md and the stand workflow say can come from the
+    /// The options that `docs/manual.md`, AGENTS.md and the stand workflow say can come from the
     /// environment do read their variable; `fake::parse` switches them off for the other tests.
     #[test]
     fn every_option_has_its_variable() {

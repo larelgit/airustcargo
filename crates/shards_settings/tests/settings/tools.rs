@@ -142,7 +142,7 @@ fn reset_reads_its_key_as_carefully_as_set_does() {
         assert!(err.contains(needle), "{group}.{key}: {err}");
     }
     assert_eq!(ok(&mut app, "settings", json!({})), before, "nothing moved");
-    // An entry of a real table that is not there is already so, as the README says.
+    // An entry of a real table that is not there is already so, as the manual (docs/manual.md) says.
     let out = ok(&mut app, "settings_set", json!({"group": "controls", "key": "bindings.gameplay.nope", "reset": true}));
     assert!(out.contains("nothing changed"), "{out}");
 }

@@ -23,7 +23,7 @@
   полосами, плоские грани, контуры из контента), `shards_scatter` (растительность и мелкие объекты по тайлам), `shards_fx`
   (эффекты: частицы из пулов, декали телеграфов), `shards_steam` (Steam: лобби, реле для кооператива, достижения, облако;
   feature `steam` зонтика, по умолчанию выключена), `shards_dev` (меню и консоль разработчика), `ai_core`, `shards_script`,
-  `shards_cli`, `sandbox` (арена движка). Карта — в README, «Архитектура».
+  `shards_cli`, `sandbox` (арена движка). Карта — в `docs/manual.md`, «Архитектура».
 
 ## Как смотреть на игру и действовать в ней
 
@@ -40,7 +40,7 @@ cargo sandbox --offscreen --paused --port 0 --port-file /tmp/g.port &   # вме
 cargo shards save-replay                # сессия с тика 0 → replays/tick<T>.json
 cargo shards save-snapshot              # состояние на этом тике → snapshots/tick<T>.json
 cargo shards load-snapshot snapshots/tick120.json   # вернуться к нему (регион и навсетка вернутся с ним); реплей дальше идёт с этого снапшота
-cargo shards scenario FILE...           # файл сценария: команды, ожидания, инварианты (README, «Сценарии»)
+cargo shards scenario FILE...           # файл сценария: команды, ожидания, инварианты (`docs/manual.md`, «Сценарии»)
 cargo shards content check              # контент запущенной игры; без игры: cargo sandbox --check-content
 cargo shards act regen region=wilds seed=42    # сгенерировать регион и перейти в него (экран загрузки, игрок у ворот)
 cargo shards act nav_path to=e6         # маршрут по навсетке региона; npc_state id=eN — что у NPC на уме
@@ -158,7 +158,9 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
 
 ## Правила кода
 
-- Код и комментарии на английском, документация (README, этот файл, `docs/`) на русском.
+- Код и комментарии на английском. `README.md` — короткая страница о проекте на английском (что это, быстрый старт, игра
+  по шагам, ссылки); подробная документация (`docs/manual.md` — руководство, этот файл, остальное в `docs/`, `CHANGELOG.md`,
+  `template/README.md`) на русском.
 - Bevy закреплён на 0.20.0; не обновляйте его попутно с другой задачей.
 - **Граница.** Игра (шаблон, песочница) зависит только от крейта `shards` и не меняет код движка. В движке нет имён
   из конкретной игры: если механизм пригодится второй игре с другим сюжетом, он в движке, если это конкретное
@@ -193,7 +195,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
   `-C target-cpu=native` и `+fma` (с ними glam сливает умножение и сложение, биты другие). Между архитектурами (x86_64 ↔
   ARM) детерминизм не обещан. Не включайте `scalar-math` у glam (его включает `enhanced-determinism` у parry3d): `Vec4` и `Mat4`
   теряют выравнивание в 16 байт, `MeshUniform` Bevy 0.20 становится 168 байт против 176 у шейдера, и рендер встаёт; `shards`
-  такую сборку не собирает (`const` с `align_of` в `crates/shards/src/lib.rs`; README, «Время и детерминизм»). Правило держит `clippy.toml` (в корне и в `template/`:
+  такую сборку не собирает (`const` с `align_of` в `crates/shards/src/lib.rs`; `docs/manual.md`, «Время и детерминизм»). Правило держит `clippy.toml` (в корне и в `template/`:
   `disallowed-methods`): `cargo clippy … -D warnings` падает на
   прямом вызове (и в тестах, и в примерах). `ops` есть только для `f32`: в `f64` такие функции не считают, приводят к `f32`;
   большое `f64` сначала сводят к малому, пока оно ещё `f64` (фазу — по модулю `TAU`): у `f32` всего 24 бита.
@@ -257,7 +259,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
   `ai/status`), с наборами систем для упорядочивания и одной строкой в `EnginePlugins`. Состояние он описывает для ИИ
   (describe, `journal_event`), действия отдаёт инструментами (то, что разработчику нужно под рукой в окне, — ещё и пунктом
   меню разработчика `add_dev_entry`, который зовёт тот же инструмент), числа берёт из контента; у него юнит-тесты, сценарий в
-  песочнице, реплей и раздел README.
+  песочнице, реплей и раздел руководства (`docs/manual.md`).
 - **Мир, регионы и уровни (фаза B).** Всё, что геймплей берёт из тайлов, комнат и уровней (коллайдеры, маркеры, префабы,
   точки интереса), — сущности **верхнего уровня с мировым `Transform`**: так их читает физика и так их создают
   `spawn_region` и `spawn_level`. Регион меняют инструментами (`regen`, `region_load`) или `change_region`, через
@@ -323,14 +325,14 @@ cargo sandbox --replay replays/crash-tick<N>.json --verify   # код 1, пок�
 `error: the game crashed: …; crash report: …`; в таком отчёте реплея нет), и инструмент `crash_report note="…"` по запросу.
 Отчёт с реплеем, который прислал игрок, проигрывается как реплей: `--replay crashes/crash-….json` (на отчёт без реплея —
 `… is a crash report without a replay (<почему>)`). Ловите панику сами и идёте дальше —
-зовите `ai_core::crash::handled(&message)`, иначе о ней будет отчёт (README, «Отчёт о падении»).
+зовите `ai_core::crash::handled(&message)`, иначе о ней будет отчёт (`docs/manual.md`, «Отчёт о падении»).
 
 ## Проверка изменений
 
 - `cargo test --workspace`: юнит-тесты и сценарии в `crates/sandbox/tests/`; `cargo clippy --workspace --all-targets
   -- -D warnings` должен молчать. Менялось что-то, что видит шаблон, — `cargo test --manifest-path template/Cargo.toml`.
 - Поведение, которое можно описать командами `shards`, оформляйте файлом сценария в `<crate>/scenarios/`
-  (`*.scenario`, формат в README, «Сценарии»). `tests/scenario_files.rs` песочницы гоняет каждый файл
+  (`*.scenario`, формат в `docs/manual.md`, «Сценарии»). `tests/scenario_files.rs` песочницы гоняет каждый файл
   в процессе (вперёд, потом назад в одной игре), `shards scenario` — против живой игры; нужен файл, который идёт и на свежей игре, и после
   других: начинайте его с `heal`/`teleport`/`set`/`npc_set_state … calm`/`regen`, возвращающих мир к исходному.
 - Контент: `cargo sandbox --check-content` (или `cargo run -- --check-content` в шаблоне) находит битые ссылки и
@@ -349,7 +351,7 @@ cargo sandbox --replay replays/crash-tick<N>.json --verify   # код 1, пок�
 - Скорость тика проверяйте релизной сборкой: отладочная компилирует свой код с `opt-level = 1`.
   `cargo run -p sandbox --release -- --headless --paused --tick-budget-ms 5`, затем `shards step 600`:
   строка `ticks:` назовёт среднее, худший тик и число тиков за бюджетом. Профайлер Tracy включается фичей
-  `--features trace_tracy` (см. README, «Время тика»).
+  `--features trace_tracy` (см. `docs/manual.md`, «Время тика»).
 - Производительность целиком проверяет автотест: `cargo run -p sandbox --release -- --perf reference --offscreen` (сцена,
   прогрев, замер и бюджеты — контент вида `perf`, `*.perf.ron`; без `--offscreen` — только тики). Он печатает строку на бюджет
   (`ok`, `OVER`, `-`) и выходит с кодом 0, 1 (бюджет превышен, игра не дошла до замера) или 2 (нет такого определения или у
@@ -358,5 +360,5 @@ cargo sandbox --replay replays/crash-tick<N>.json --verify   # код 1, пок�
   регионов, реплей со снапшота и сохранения песочницы) проверяет `cargo test`. После намеренной правки геймплея или контента перезапишите их:
   `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays` (у шаблона —
   `cargo test --test game record_reference_replays -- --ignored` в `template/`).
-- Изменили поведение модуля — обновите его раздел в README, `docs/engine-progress.md` (статусы) и `CHANGELOG.md`
-  (`Unreleased`).
+- Изменили поведение модуля — обновите его раздел в `docs/manual.md`, `docs/engine-progress.md` (статусы) и `CHANGELOG.md`
+  (`Unreleased`); `README.md` — только если меняется то, что он говорит о проекте (возможности, быстрый старт, шаги).
