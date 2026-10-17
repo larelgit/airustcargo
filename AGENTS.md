@@ -94,7 +94,8 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
   at=eN` (или `point=[x,y,z]`), `telegraph_decals on=false` (заливка телеграфов снова гизмо); без окна и `--offscreen` эффекты
   не играют, и инструменты так и говорят; **Steam** (игра с feature `steam`) — `steam` (кто эта машина в Steam, лобби и
   его тип — `--steam-lobby friends|private|invisible|public` — или игровой сервер, реле и маршрут до каждого пира, достижения,
-  облако), `steam_host`, `steam_join lobby=ID` или `host=ID`,
+  облако), `steam_lobbies` (лобби этой сборки со свободным местом; `all=true` — и других), `steam_host`, `steam_join lobby=ID`
+  или `host=ID`,
   `steam_invite friend=ID`, `achievement_unlock id=…` (только хост); **меню и консоль разработчика** — `dev_menu` (пункты по разделам со строкой
   каждого; `run=<id>` выполняет пункт: `boss_phase_2`, `god`,
   `region_check`), `console line="speed x=0.25"` (строка как у `shards act`); в окне это F10 и `` ` ``, `open=true` показывает

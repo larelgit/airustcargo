@@ -349,7 +349,7 @@ impl RealBackend {
                 LobbyInfo {
                     lobby: *lobby,
                     owner: (owner != 0).then_some(owner),
-                    members: u32::try_from(matchmaking.lobby_member_count(id)).unwrap_or(u32::MAX),
+                    members: u32::try_from(matchmaking.lobby_member_count(id)).unwrap_or(0),
                     max: matchmaking.lobby_member_limit(id).and_then(|max| u32::try_from(max).ok()).unwrap_or(0),
                     data: data::ALL.iter().filter_map(|key| Some(((*key).to_owned(), matchmaking.lobby_data(id, key)?))).collect(),
                 }
