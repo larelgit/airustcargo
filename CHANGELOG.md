@@ -1132,8 +1132,8 @@ E2.4, E1.3; `shards_ui`, `shards_motion`, `shards_core`, `shards_save`, `shards_
   (`engine.modules`), и `EnginePlugins` не добавляет их плагинов. Убрать можно 14 модулей (`shards::modules::OPTIONAL_MODULES`:
   `level`, `world`, `npc`, `net`, `save`, `coop`, `locale`, `ui`, `audio`, `look`, `scatter`, `fx`, `steam`, `dev`), модуль,
   нужный другому, — только вместе с ним (`ui` нужен `locale`, `steam` — `net`), а соединяющие (`coop`, уровни как тайлы)
-  уходят с любым из своих модулей. `--without net` с `--host`/`--join`/`--stand`, `--without save` с `--character`/`--world`
-  и `--without steam` с флагами Steam — ошибка с кодом 2. Клиенты стенда по UDP (`--stand-udp`, дочерние процессы) получают
+  уходят с любым из своих модулей. `--without net` с `--host`/`--join`/`--stand`, `--without save` с `--character`/`--world`,
+  `--without steam` с флагами Steam и `--without world` с `--worldgen-report` — ошибка с кодом 2. Клиенты стенда по UDP (`--stand-udp`, дочерние процессы) получают
   `--without` хоста, как его настройку берут клиенты `--stand N`. Тесты: `shards` (+4: `modules` 2, `tests/engine.rs` 2 —
   движок без каждого модуля и отказ без нужного; разбор `--without` в тесте флагов, `--without` у клиентов стенда в
   `stand_udp`).
@@ -1166,6 +1166,9 @@ E2.4, E1.3; `shards_ui`, `shards_motion`, `shards_core`, `shards_save`, `shards_
 
 ### Исправлено
 
+- Контент: правка файла, в котором определение выпало без позиции ошибки (его id уже занят другим файлом, у него нет
+  вида JSON), применялась, хотя файл применяется целиком или никак. Теперь её держит любая ошибка файла, а ошибка проверки
+  (битая ссылка) — только новая. Тест `a_file_loaded_with_a_taken_id_applies_no_edit_until_it_is_renamed`.
 - NPC (`shards_npc`): маршрут знает всё тело NPC, а не только радиус. Раньше `NavPaths::find`, `find_path` и `navmesh_path`
   получали радиус, класс навсетки выбирался по нему (`NavRegion::for_radius`), и NPC шёл телом этого класса: NPC выше класса,
   в который он влезает по радиусу, получал маршрут под навес или перемычку, под которыми его капсула не проходит, и упирался в

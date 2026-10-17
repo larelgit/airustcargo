@@ -437,7 +437,7 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 neither``, `steam` (в сборке с ним) нужен `net`. То, что только соединяет два модуля, уходит с любым из них: `coop` — с
 `net` или `save`, уровни как тайлы — с `level` или `world`. Командная строка проверяет и остальное: `--without net` с
 `--host`, `--join` или `--stand`, `--without save` с `--character` или `--world`, `--without steam` с флагами Steam
-(`--steam-host`, `--steam-lobby`, `--stand-steam`, `--steam-server`, `--steam-relay-only`, `--steam-app`, `--join steam:…`)
+(`--steam-host`, `--steam-lobby`, `--stand-steam`, `--steam-server`, `--steam-relay-only`, `--steam-app`, `--join steam:…`) и `--without world` с `--worldgen-report`
 — ошибка с кодом 2; `EnginePlugins` с неверным `without` паникует с тем же текстом. Участники стенда оставляют за бортом те
 же модули, что и хост: клиенты `--stand N` берут его настройку, а дочерние процессы `--stand-udp` получают его `--without`. Игра, которая сама зовёт API выключенного модуля (`add_ui_action` без `ui`),
 сама за это отвечает. Без `ui` главное меню по умолчанию пропускается: его нечем нарисовать (`--menu` всё равно ставит
