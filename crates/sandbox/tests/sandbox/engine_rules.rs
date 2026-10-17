@@ -225,3 +225,13 @@ fn the_engine_registers_its_rules_first_and_the_switch_turns_them_off() {
     called(&mut app, "set", json!({"id": "e5", "component": "Stamina", "path": "current", "value": -5}));
     assert_eq!(step(&mut app, 5), "ran 5 ticks (0 → 5)", "nothing judges a stamina below 0");
 }
+
+#[test]
+fn the_rules_keep_their_query_states_in_the_world() {
+    let mut app = sandbox::test_app(42);
+    assert!(app.world().resource::<ai_core::RuleQueries>().is_empty());
+    step(&mut app, 3);
+    assert!(app.world().resource::<ai_core::RuleQueries>().len() >= 7, "the engine rules' queries are kept");
+    let again = sandbox::test_app(42);
+    assert!(again.world().resource::<ai_core::RuleQueries>().is_empty(), "another app starts empty: nothing is shared");
+}

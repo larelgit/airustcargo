@@ -86,7 +86,7 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   reference replay), and a stand whose host is checked.
 - Engine invariants: seven rules every game gets for free, checked after every tick like a game rule and listed by `shards assert list` as `engine rule`: `ai.index_consistent`, `core.intent_sane`, `motion.finite`, `action.resources_in_range`, `action.running_sane`, `npc.state_known` and `npc.tokens_within_limit`. Names are `<module>.<rule>`; an engine rule cannot be removed, replaced or shadowed by a session or game rule, and `assert_reset` re-arms it. Modules register them with `add_engine_invariant` (shards_core). Each has a control test that breaks the state on purpose and expects `stopped: invariant <name> violated at tick N`.
 - `EngineConfig::engine_invariants` and the `--no-engine-invariants` flag. The default is on, and off in a build with the `dist` feature (new in `shards_core`, forwarded by `shards`): a shipped game does not pause on a rule. `shards::testing::config()` and `--verify` always check them.
-- `ai_core::Offenders`: collects the entities that break a rule and reports the lowest id first with `(+N more)`, without allocating while nothing is broken. `ai_core::with_query` keeps a rule's query state between ticks (by world), which is what keeps the rules under 1 % of a tick.
+- `ai_core::Offenders`: collects the entities that break a rule and reports the lowest id first with `(+N more)`, without allocating while nothing is broken. `ai_core::with_query` keeps a rule's query state between ticks in the world (the resource `RuleQueries`, dropped with it), which is what keeps the rules under 1 % of a tick.
 - `template`: an example game rule, `grunt_chance` (`src/ai.rs`), with a control test.
 
 ### Changed

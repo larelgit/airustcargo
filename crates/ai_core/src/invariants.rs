@@ -31,12 +31,11 @@
 //! `assert_list` is a query, which runs where it is called.)
 
 use std::any::{Any, TypeId};
-use std::cell::RefCell;
+use std::sync::Mutex;
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use bevy::ecs::query::{QueryData, QueryFilter};
-use bevy::ecs::world::WorldId;
 
 use bevy::prelude::*;
 use schemars::JsonSchema;
@@ -180,35 +179,49 @@ pub(crate) fn check_name(name: &str) -> Result<(), String> {
     }
 }
 
-/// Runs `f` on a query state for `world` that is kept between calls, or returns `None` when
-/// a component the query names is not registered in the world (the query state of a rule is
-/// built again on the next call, and then it is kept).
+/// The query states the engine rules keep between ticks ([`with_query`]); lives in the world, so
+/// it goes when the world does. Not simulation state: a cache that is rebuilt on demand, so it is
+/// not part of a snapshot, a replay or a replay check.
+#[derive(Resource, Default)]
+pub struct RuleQueries(Mutex<HashMap<TypeId, Box<dyn Any + Send + Sync>>>);
+
+impl RuleQueries {
+    /// How many query states are kept.
+    pub fn len(&self) -> usize {
+        self.0.lock().map_or(0, |m| m.len())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Runs `f` on a query state for `world` that is kept between calls (in the world's
+/// [`RuleQueries`]), or returns `None` when a component the query names is not registered in the
+/// world (the state is built again on the next call, and then it is kept). A world without
+/// `RuleQueries` (a bare `World` in a unit test) builds the state on every call.
 ///
 /// The rules run after every tick and cannot hold state of their own (they are `fn(&World)`),
 /// and building a `QueryState` walks every archetype of the world, which costs more than a rule
-/// that finds nothing wrong. The state lives in a thread-local cache keyed by the world, so apps
-/// side by side in one process (a stand) keep their own; it picks up new archetypes by itself.
+/// that finds nothing wrong. The state is taken out of the cache while `f` runs, so a rule may
+/// call `with_query` again inside, and a panic in `f` drops it, to be built again by the next call.
 pub fn with_query<D, F, R>(world: &World, f: impl FnOnce(&mut QueryState<D, F>) -> R) -> Option<R>
 where
     D: QueryData + 'static,
     F: QueryFilter + 'static,
 {
-    thread_local! {
-        static STATES: RefCell<HashMap<(TypeId, WorldId), Box<dyn Any>>> = RefCell::new(HashMap::new());
+    let cache = world.get_resource::<RuleQueries>();
+    let key = TypeId::of::<QueryState<D, F>>();
+    let kept = cache.and_then(|c| c.0.lock().ok()?.remove(&key));
+    let mut state = match kept.and_then(|b| b.downcast::<QueryState<D, F>>().ok()) {
+        Some(state) => state,
+        None => Box::new(world.try_query_filtered::<D, F>()?),
+    };
+    let out = f(&mut state);
+    if let Some(Ok(mut states)) = cache.map(|c| c.0.lock()) {
+        states.insert(key, state);
     }
-    STATES.with(|states| {
-        let key = (TypeId::of::<QueryState<D, F>>(), world.id());
-        // Taken out while `f` runs: a rule may call `with_query` again inside, and a panic in
-        // `f` drops the state, which the next call builds again.
-        let kept = states.borrow_mut().remove(&key);
-        let mut state = match kept.and_then(|b| b.downcast::<QueryState<D, F>>().ok()) {
-            Some(state) => state,
-            None => Box::new(world.try_query_filtered::<D, F>()?),
-        };
-        let out = f(&mut state);
-        states.borrow_mut().insert(key, state);
-        Some(out)
-    })
+    Some(out)
 }
 
 /// Collects the entities that break a rule, to report the lowest [`AiId`] first and
@@ -262,6 +275,7 @@ pub struct InvariantSystems;
 
 pub(crate) fn plugin(app: &mut App, replays: bool) {
     app.world_mut().get_resource_or_init::<AiInvariants>().replays = replays;
+    app.world_mut().init_resource::<RuleQueries>();
     // Last in the tick: its log lines and its failures are in the journal by now.
     app.configure_sets(FixedLast, InvariantSystems.after(crate::failures::collect_after_tick))
         .add_systems(FixedLast, check_after_tick.in_set(InvariantSystems));
@@ -646,6 +660,7 @@ mod tests {
     fn a_kept_query_sees_new_entities_and_belongs_to_its_world() {
         let count = |world: &World| with_query::<&AiId, (), _>(world, |q| q.iter(world).count());
         let mut a = World::new();
+        a.init_resource::<RuleQueries>();
         a.init_resource::<crate::AiIndex>();
         let mut b = World::new();
         b.init_resource::<crate::AiIndex>();
@@ -664,6 +679,7 @@ mod tests {
     #[test]
     fn a_rule_may_nest_queries_and_a_panic_inside_loses_only_the_kept_state() {
         let mut w = World::new();
+        w.init_resource::<RuleQueries>();
         w.init_resource::<crate::AiIndex>();
         w.spawn(crate::AiVisible);
         let nested = with_query::<&AiId, (), _>(&w, |outer| {
@@ -673,6 +689,26 @@ mod tests {
         let panicked = catch_unwind(AssertUnwindSafe(|| with_query::<&AiId, (), _>(&w, |_| panic!("the rule has a bug"))));
         assert!(panicked.is_err());
         assert_eq!(with_query::<&AiId, (), _>(&w, |q| q.iter(&w).count()), Some(1), "built again");
+    }
+
+    #[test]
+    fn kept_states_live_in_the_world_and_go_with_it() {
+        let count = |world: &World| with_query::<&AiId, (), _>(world, |q| q.iter(world).count());
+        for _ in 0..50 {
+            let mut w = World::new();
+            w.init_resource::<crate::AiIndex>();
+            w.init_resource::<RuleQueries>();
+            w.spawn(crate::AiVisible);
+            assert!(w.resource::<RuleQueries>().is_empty(), "a new world starts empty");
+            assert_eq!(count(&w), Some(1));
+            assert_eq!(count(&w), Some(1));
+            assert_eq!(w.resource::<RuleQueries>().len(), 1, "kept once, not once per call");
+        }
+        // Without the resource nothing is kept, and nothing breaks.
+        let mut bare = World::new();
+        bare.init_resource::<crate::AiIndex>();
+        bare.spawn(crate::AiVisible);
+        assert_eq!(count(&bare), Some(1));
     }
 
     #[test]
