@@ -1,0 +1,60 @@
+# cargo-nextest: https://nexte.st. `cargo test --workspace` stays a supported local command; CI runs
+# `cargo nextest run --workspace --locked --profile ci` (see "Tests and CI" in docs/manual.md).
+#
+# nextest runs every test in its own process, and runs many at once. A lock inside a test binary
+# (a `static Mutex`) then stops serialising anything, so each lock is kept for `cargo test` (one
+# process per binary) and is backed here by a test group where the tests share something on disk.
+#
+# The locks and where they stand under nextest:
+#   - sandbox `scenario_files::SNAPSHOT_FILE`, `snapshots::Scratch`: fixed names in crates/sandbox/
+#     (snapshots/boss_phase2.json, crashes/scenario.json) and `remove_dir("snapshots")`: group `snapshot-file`.
+#   - sandbox `system_failures` `ONE_AT_A_TIME`: the process-global panic memory, which a process of
+#     its own per test makes harmless; but the same tests write crashes/ and replays/crash-tick50.json
+#     in crates/sandbox/: group `snapshot-file`.
+#   - sandbox `log_capture` `ONE_AT_A_TIME`: the process-global tracing subscriber; a process per
+#     test needs no group.
+#   - `ai_core` crash `TURN`: the kept panics of the process; the same, no group.
+#   - sandbox `perf` `CLOCK`: wall-time measurements; it is not a file but the machine, so the
+#     binary is left out of the main run and runs alone (`ci-perf`, `-j 1`).
+#   - `shards` run `FOLDER`: snapshots/ in crates/shards/: group `shards-snapshots`.
+
+[test-groups]
+snapshot-file = { max-threads = 1 }
+shards-snapshots = { max-threads = 1 }
+
+# Everything in the sandbox package that shares a fixed file name or a folder that is removed after
+# a test (the working directory of these binaries is crates/sandbox/).
+[[profile.default.overrides]]
+filter = '''
+binary_id(sandbox::system_failures)
+| (binary_id(sandbox::sandbox) & (
+    test(/^scenario_files::(every_scenario_file_passes|the_scenarios_also_pass)/)
+    | test(/^snapshots::/)
+    | test(=invariants::a_snapshot_restart_rearms_the_rules_and_keeps_the_session_ones)
+    | test(=invariants::the_replay_saved_at_a_violation_breaks_the_rule_at_the_same_tick)
+    | test(=reference_replays::record_reference_replays)
+  ))
+'''
+test-group = 'snapshot-file'
+
+# `Scratch` in crates/shards/src/run.rs: the last test out removes snapshots/ of crates/shards/.
+[[profile.default.overrides]]
+filter = 'binary_id(=shards) & test(/^run::tests::verify_.*snapshot/)'
+test-group = 'shards-snapshots'
+
+[profile.ci]
+# A test that passes only on a retry is a bug in the test or in the game: it fails the run, and
+# the JUnit file names it.
+retries = 2
+flaky-result = "fail"
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"
+
+# The sandbox's tick-time tests, run alone with `-j 1` (their own store, so the file of `ci` stays).
+[profile.ci-perf]
+inherits = "ci"
+
+[profile.ci-perf.junit]
+path = "junit.xml"

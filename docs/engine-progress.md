@@ -8,7 +8,7 @@ levels placed by id, an agent player on the stand, and scenarios for the modules
 machine, a second Steam account, 60 FPS on the target PC — the maintainer has these), streaming of tile geometry for physics (not needed yet,
 see "Known limitations") and mini-dumps with a window for the player beyond the crash report (E10.7: this stage is postponed by the owner's decision).
 CI on GitHub (`.github/workflows/ci.yml`) runs on every push and pull request (jobs `test`, `clippy`, `template`, `headless-cli` with a
-three-minute soak on a live stand, and `replays-window`). `soak.yml` plays the half hour of E7 every week, and `record-replays.yml`
+three-minute soak on a live stand, and `replays-window`); `test` and `template` run their tests with cargo-nextest (profile `ci`: a test that passes only on a retry fails the run). `soak.yml` plays the half hour of E7 every week, and `record-replays.yml`
 records the reference replays on Linux on demand.
 
 Statuses:
@@ -37,8 +37,8 @@ What was checked for the acceptance of phase A (all commands were run from the r
 
 | what | how it was checked |
 |---|---|
-| engine build and tests | `cargo test --workspace` (0 failing; the number of tests per crate is in "Tests"); `cargo clippy --workspace --all-targets --locked -- -D warnings` and the same for the template, with no warnings; `template/Cargo.lock` does not differ from the root one |
-| the template apart from the engine | `cargo test --manifest-path template/Cargo.toml` (the number of tests is in "Tests"); a copy of `template/` outside the repository, renamed, with a `path` dependency on `crates/shards`: `cargo test`, a run without a window, `shards scenario`, re-recording of a replay (a separate repository with a tag cannot be checked this way: there is no tag yet) |
+| engine build and tests | `cargo test --workspace`, in CI `cargo nextest run --workspace --profile ci` and `cargo test --workspace --doc` (0 failing; the number of tests per crate is in "Tests"); `cargo clippy --workspace --all-targets --locked -- -D warnings` and the same for the template, with no warnings; `template/Cargo.lock` does not differ from the root one |
+| the template apart from the engine | `cargo test --manifest-path template/Cargo.toml` (in CI `cargo nextest run --manifest-path template/Cargo.toml --profile ci`) (the number of tests is in "Tests"); a copy of `template/` outside the repository, renamed, with a `path` dependency on `crates/shards`: `cargo test`, a run without a window, `shards scenario`, re-recording of a replay (a separate repository with a tag cannot be checked this way: there is no tag yet) |
 | scenarios against a live game | `cargo sandbox --headless --paused --port 0 --port-file F`, `SHARDS_PORT_FILE=F cargo shards scenario crates/sandbox/scenarios/*.scenario` → `5 of 5 scenarios passed` |
 | content | `cargo sandbox --check-content` → `ok: 38 definitions in 9 files`; a broken copy of the content gives errors with the file, the line and a hint (`docs/manual.md`, "Content") |
 | reference replays without a window | `cargo sandbox --replay tests/replays/combat_prototype.json --verify` → `identical to the recording (39 checks)`; the same for `obstacle_course.json` (17 checks) and for the template's replay (5 checks) |
