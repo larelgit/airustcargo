@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bevy::prelude::*;
 use shards_action::Health;
+use shards_motion::CharacterParams;
+use shards_npc::plain_sight;
 use shards_npc::prelude::*;
 
 use crate::common::*;
@@ -61,7 +63,7 @@ fn routes_go_around_a_pillar() {
 static CALLS: AtomicUsize = AtomicUsize::new(0);
 
 /// A game's (or a navmesh's) routes: always by way of (3, 0, 0).
-fn detour(_: &World, _: Vec3, to: Vec3, _: f32) -> Option<Vec<Vec3>> {
+fn detour(_: &World, _: Vec3, to: Vec3, _: &CharacterParams) -> Option<Vec<Vec3>> {
     CALLS.fetch_add(1, Ordering::SeqCst);
     Some(vec![Vec3::new(3.0, 0.0, 0.0), to])
 }
@@ -141,6 +143,39 @@ fn an_npc_off_the_navmesh_does_not_walk_off_a_ledge_either() {
         assert!(at.y > 3.9, "tick {t}: it went over the edge: {at}");
     }
     assert_eq!(state(&app, sentry), "chase");
+}
+
+/// Outside any region: a wall east to west with an arch, 1.5 m wide under a lintel 2 m up, and
+/// an open end 4 m east of it. A goal through the arch is in plain sight for a body that
+/// clears the lintel; a taller one plans a route round the end of the wall and walks it.
+#[test]
+fn a_goal_through_an_arch_is_in_plain_sight_only_for_a_body_that_clears_it() {
+    let mut app = app();
+    let world = app.world_mut();
+    wall(world, Vec3::new(-8.0, 0.0, -0.25), Vec3::new(-0.75, 3.0, 0.25));
+    wall(world, Vec3::new(-0.75, 2.0, -0.25), Vec3::new(0.75, 3.0, 0.25));
+    wall(world, Vec3::new(0.75, 0.0, -0.25), Vec3::new(4.0, 3.0, 0.25));
+    let (from, goal) = (Vec3::new(0.0, 0.0, -5.0), Vec3::new(0.0, 0.0, 5.0));
+    let tall = CharacterParams { height: 2.4, ..default() };
+    let e = walker(&mut app, from, goal);
+    app.world_mut().entity_mut(e).insert(tall.clone());
+    step(&mut app, 1);
+    assert!(plain_sight(app.world(), from, goal, &CharacterParams::default()), "1.8 m clears the lintel");
+    assert!(!plain_sight(app.world(), from, goal, &tall), "2.4 m does not");
+    let agent = app.world().get::<NavAgent>(e).unwrap().clone();
+    assert!(!agent.direct && agent.path.len() > 1, "a route, not a straight line: {agent:?}");
+    let mut crossed = None;
+    for _ in 0..600 {
+        let before = feet(&app, e);
+        step(&mut app, 1);
+        let after = feet(&app, e);
+        if before.z < 0.0 && after.z >= 0.0 {
+            crossed = Some(after.x);
+        }
+    }
+    let crossed = crossed.expect("it crossed the wall's line");
+    assert!(!(-8.0..4.0).contains(&crossed), "round the end of the wall, not under the lintel: at x {crossed:.2}");
+    assert!(flat_distance(feet(&app, e), goal) < 0.6, "arrived: {}", feet(&app, e));
 }
 
 /// Outside any region: a walker on a direct route (its goal in plain sight along a 4 m high

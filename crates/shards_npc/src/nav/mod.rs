@@ -16,8 +16,9 @@
 //! **Body classes**: the tiles are baked for the `agent` body and once more for every class
 //! of the nav settings' `bodies` (`large`, from the locomotion of a big enemy), each class in
 //! a folder of its own (`<assets>/nav/large/<tile>.navtile.ron`), and a region builds a
-//! navmesh per class. A route asks the tightest class its body fits; a body wider than every
-//! class plans on the local grid (`npc_state` says so).
+//! navmesh per class. A route asks the tightest class that serves the whole body (as wide, as
+//! tall, stepping, climbing and swimming as it: [`NavRegion::serving`]); a body no class
+//! serves plans on the local grid with its own numbers (`npc_state` says why).
 //!
 //! When a region loads, its tiles are placed and turned, **carved** where solids the bakes
 //! never saw stand (decor, props, colliders spawned later), **stitched** across every tile
@@ -38,13 +39,14 @@
 //!
 //! Where an NPC walks, by which way, without bumping into the others.
 //!
-//! - **Routes** come from [`NavPaths`], a seam: `fn(&World, from, to, radius) -> waypoints`.
-//!   The default asks the navmesh of the tightest body class inside a loaded region and the
-//!   motion module's local grid planner ([`plan_path`]) everywhere else (and for bodies wider
-//!   than every class); a
-//!   game may plug in its own. A goal in plain sight ([`plain_sight`]: on the navmesh a
-//!   straight line of walking links, so never over a drop or a ledge; elsewhere a body-wide
-//!   cast through the `WORLD` layer over ground without holes or deep drops) needs no route,
+//! - **Routes** come from [`NavPaths`], a seam: `fn(&World, from, to, body) -> waypoints`,
+//!   the body being the NPC's own [`CharacterParams`]. The default asks the navmesh of the
+//!   tightest body class that serves the body inside a loaded region and the motion module's
+//!   local grid planner ([`plan_path`]) with that body everywhere else (and for bodies no class
+//!   serves); a game may plug in its own. A goal in plain sight ([`plain_sight`]: on the
+//!   navmesh of the same class a straight line of walking links, so never over a drop or a
+//!   ledge; elsewhere a cast of the body, step height to head, through the `WORLD` layer over
+//!   ground without holes or deep drops) needs no route,
 //!   until the body strays farther than its radius from the line that was checked (pushed,
 //!   knocked back, sidestepping another): then it is looked at again from where it stands.
 //!   Another is planned again when the goal moves or every [`NpcTuning::repath`] seconds,
@@ -102,14 +104,15 @@ use crate::brain::{npcs_in_order, Home, Npc, NpcBrain, NpcDrive, LEASH_ROOM};
 use crate::def::{BehaviorDef, NpcTuning};
 use avoid::{steer, Ask, Body};
 
-/// Pluggable routes: `find(world, from, to, body radius) -> waypoints` (the last one at
-/// `to`), `None` when there is no way. The default ([`navmesh_path`]) asks the navmesh in a
-/// loaded region and the motion module's local grid planner elsewhere.
+/// Pluggable routes: `find(world, from, to, body) -> waypoints` (the last one at `to`), `None`
+/// when there is no way; `body` is the walker's own numbers (radius, height, step, climb,
+/// slope, swim). The default ([`navmesh_path`]) asks the navmesh in a loaded region and the
+/// motion module's local grid planner elsewhere.
 #[derive(Resource, Clone, Copy)]
 pub struct NavPaths {
     /// Who answers, for tools: `local grid`, `navmesh`.
     pub name: &'static str,
-    pub find: fn(&World, Vec3, Vec3, f32) -> Option<Vec<Vec3>>,
+    pub find: fn(&World, Vec3, Vec3, &CharacterParams) -> Option<Vec<Vec3>>,
 }
 
 impl Default for NavPaths {
@@ -140,18 +143,14 @@ pub fn route_on(world: &World, nav: &NavRegion, from: Vec3, to: Vec3, params: &C
     }
 }
 
-/// The engine's routes: the navmesh's where it covers the walk, else the local grid's. Only
-/// the radius is known here: the walk is on the tightest body class at least that wide
-/// ([`NavRegion::for_radius`]), as a body of that class with this radius.
-pub fn navmesh_path(world: &World, from: Vec3, to: Vec3, radius: f32) -> Option<Vec<Vec3>> {
-    let routed = region_nav(world).and_then(|nav| nav.for_radius(radius)).and_then(|class| {
-        let params = CharacterParams { radius, ..class.agent.clone() };
-        route_on(world, class, from, to, &params, false)
-    });
-    match routed {
+/// The engine's routes for a body of `params`: on the navmesh of the tightest class that
+/// serves it ([`navmesh_route`]) where that covers the walk, else on the local grid with the
+/// same body. A body taller than the class its radius fits is never walked as that class.
+pub fn navmesh_path(world: &World, from: Vec3, to: Vec3, params: &CharacterParams) -> Option<Vec<Vec3>> {
+    match navmesh_route(world, from, to, params, false) {
         Some(Ok(path)) => Some(path.points),
         Some(Err(_)) => None,
-        None => local_grid_path(world, from, to, radius),
+        None => local_grid_path(world, from, to, params),
     }
 }
 
@@ -166,19 +165,20 @@ fn serving<'w>(world: &'w World, params: &CharacterParams) -> Option<&'w NavRegi
     region_nav(world)?.serving(params)
 }
 
-/// What an NPC of `radius` plans its routes on, for tools: `navmesh, body large`, or the
+/// What an NPC of body `params` plans its routes on, for tools: `navmesh, body large`, or the
 /// local grid and why (`local grid: no region loaded`, `local grid: no body class fits a
-/// 1.60 m radius (the widest: large, 1.20 m)`), or a game's own provider by its name. Where it
+/// 1.60 m radius (the widest: large, 1.20 m)`, `local grid: no body class serves the body:
+/// agent has height 1.80 m, the body 2.40 m`), or a game's own provider by its name. Where it
 /// stands is not known here: [`routes_at`] knows it.
-pub fn routes_for(world: &World, radius: f32) -> String {
-    route_source(world, radius, None).to_string()
+pub fn routes_for(world: &World, params: &CharacterParams) -> String {
+    route_source(world, params, None).to_string()
 }
 
 /// [`routes_for`] an NPC standing at `at`: outside the region it plans on the local grid
 /// (`local grid: the NPC stands outside the region`), whatever its class. What `npc_state`
 /// says (`nav.routes`).
-pub fn routes_at(world: &World, radius: f32, at: Vec3) -> String {
-    route_source(world, radius, Some(at)).to_string()
+pub fn routes_at(world: &World, params: &CharacterParams, at: Vec3) -> String {
+    route_source(world, params, Some(at)).to_string()
 }
 
 /// Where an NPC's routes come from, for tools: `npc_state` and `npc_overlay` both ask this.
@@ -188,7 +188,7 @@ pub(crate) enum RouteSource<'w> {
     /// The navmesh of a body class.
     Navmesh(&'w NavRegion),
     /// The engine's local grid, and why. `region`: the region in the world has a navmesh,
-    /// only not for this NPC (no class fits it, it stands outside).
+    /// only not for this NPC (no class serves its body, it stands outside).
     LocalGrid { why: String, region: bool },
 }
 
@@ -202,9 +202,9 @@ impl std::fmt::Display for RouteSource<'_> {
     }
 }
 
-/// What an NPC of `radius` (standing at `at`, when known) plans its routes on: the route
+/// What an NPC of body `params` (standing at `at`, when known) plans its routes on: the route
 /// provider ([`NavPaths`]), then the region's navmesh as [`navmesh_path`] asks it.
-pub(crate) fn route_source(world: &World, radius: f32, at: Option<Vec3>) -> RouteSource<'_> {
+pub(crate) fn route_source<'w>(world: &'w World, params: &CharacterParams, at: Option<Vec3>) -> RouteSource<'w> {
     let paths = world.get_resource::<NavPaths>().copied().unwrap_or_default();
     if paths.name != NAVMESH {
         return RouteSource::Provider(paths.name);
@@ -218,9 +218,9 @@ pub(crate) fn route_source(world: &World, radius: f32, at: Option<Vec3>) -> Rout
     if at.is_some_and(|at| nav.instance_at(nav.column_of(at)).is_none()) {
         return grid("the NPC stands outside the region", true);
     }
-    match nav.for_radius(radius) {
+    match nav.serving(params) {
         Some(class) => RouteSource::Navmesh(class),
-        None => grid(&nav.too_wide(radius), true),
+        None => grid(&nav.unserved(params), true),
     }
 }
 
@@ -238,16 +238,17 @@ pub(crate) fn route_reach(world: &World, request: &ReachRequest) -> Option<f32> 
 /// The navmesh as the motion module's route planner.
 pub(crate) const ROUTE_PLANNER: RoutePlanner = RoutePlanner { name: NAVMESH, plan: route_plan, reach: route_reach };
 
-/// The route [`NavPaths`] gives right now (tools, tests).
-pub fn find_path(world: &World, from: Vec3, to: Vec3, radius: f32) -> Option<Vec<Vec3>> {
+/// The route [`NavPaths`] gives right now for a body of `params` (tools, tests).
+pub fn find_path(world: &World, from: Vec3, to: Vec3, params: &CharacterParams) -> Option<Vec<Vec3>> {
     let paths = world.get_resource::<NavPaths>().copied().unwrap_or_default();
-    (paths.find)(world, from, to, radius)
+    (paths.find)(world, from, to, params)
 }
 
-/// The default route: `shards_motion`'s grid A* (0.5 m cells) for a body of `radius` and the
-/// controller's default numbers, searching up to twice the straight distance (plus 20 m).
-pub fn local_grid_path(world: &World, from: Vec3, to: Vec3, radius: f32) -> Option<Vec<Vec3>> {
-    local_grid_route(world, from, to, &CharacterParams { radius, ..default() }, None)
+/// The default route off the navmesh: `shards_motion`'s grid A* (0.5 m cells) for a body of
+/// `params` (its radius and height, step height, mantle height, slope, swim depth), searching
+/// up to twice the straight distance (plus 20 m).
+pub fn local_grid_path(world: &World, from: Vec3, to: Vec3, params: &CharacterParams) -> Option<Vec<Vec3>> {
+    local_grid_route(world, from, to, params, None)
 }
 
 /// [`local_grid_path`] for a body of its own numbers (its step height, mantle height, slope,
@@ -325,20 +326,20 @@ fn params_of<'a>(
 }
 
 /// Whether a body of `params` walks from `from` straight to `to`, so it needs no route: on
-/// the navmesh where it covers the walk, a line of walking links (no drop, no ledge, nothing
-/// carved) a body-wide sweep agrees with; elsewhere [`straight_clear`] over ground without a
-/// hole or a drop deeper than the safe drop all along.
+/// the navmesh of the class that serves it ([`NavRegion::serving`], the one its routes are
+/// planned on) where that covers the walk, a line of walking links (no drop, no ledge, no
+/// headroom it lacks, nothing carved) a body-wide sweep agrees with; elsewhere
+/// [`straight_clear`] over ground without a hole or a drop deeper than the safe drop all along.
 pub fn plain_sight(world: &World, from: Vec3, to: Vec3, params: &CharacterParams) -> bool {
     let Some(physics) = world.get_resource::<PhysicsWorld>() else { return true };
-    if let Some(nav) = region_nav(world).and_then(|nav| nav.for_radius(params.radius)) {
-        // Only the radius counts, as for routes (`navmesh_path`): the body is the class's.
-        let query = NavQuery { from, to, goal_level: false, radius: params.radius, height: nav.agent_height, step_height: params.step_height };
+    if let Some(nav) = serving(world, params) {
+        let query = NavQuery { from, to, goal_level: false, radius: params.radius, height: params.height, step_height: params.step_height };
         if let Some(straight) = nav.straight_walk(physics, &query) {
             return straight;
         }
     }
     let safe_drop = world.get_resource::<MotionAi>().map_or(2.0, |m| m.safe_drop);
-    straight_clear(physics, from, to, params.radius, params.step_height) && ground_along(physics, from, to, params, safe_drop)
+    straight_clear(physics, from, to, params) && ground_along(physics, from, to, params, safe_drop)
 }
 
 /// Whether there is ground all along the line from `from` to `to` for a body of `params`:
@@ -361,16 +362,30 @@ fn ground_along(physics: &PhysicsWorld, from: Vec3, to: Vec3, params: &Character
     true
 }
 
-/// Whether a body of `radius` walks from `from` straight to `to` without touching the
-/// `WORLD` layer (above its step height).
-pub fn straight_clear(physics: &PhysicsWorld, from: Vec3, to: Vec3, radius: f32, step_height: f32) -> bool {
+/// The margin over a walker's head, on top of the skin it rests on, as the motion module's
+/// room test reckons it (m).
+const HEAD_GRAZE: f32 = 0.02;
+
+/// Whether a body of `params` walks from `from` straight to `to` without touching the
+/// `WORLD` layer: a capsule a little narrower than the body, from above its step height up to
+/// its head, so a lintel or an overhang it does not pass under is in the way.
+pub fn straight_clear(physics: &PhysicsWorld, from: Vec3, to: Vec3, params: &CharacterParams) -> bool {
     let delta = flat(to - from);
     let distance = delta.length();
     let Ok(dir) = Dir3::new(delta) else { return true };
-    let lift = Vec3::Y * (step_height + radius + 0.05);
+    let ball = (params.radius * 0.95).max(0.05);
+    // Centers of the lowest and the highest ball of the capsule above the feet; a body whose
+    // head is no higher than the lowest ball's center is that ball alone.
+    let low = params.step_height + params.radius + 0.05;
+    let high = params.skin_width + HEAD_GRAZE + params.height - ball;
     let filter = QueryFilter::new(LayerMask::WORLD);
-    let ball = Shape::sphere((radius * 0.95).max(0.05));
-    physics.shapecast(&ball, from + lift, Quat::IDENTITY, dir, distance, &filter).is_none_or(|hit| hit.distance >= distance - 0.05)
+    let (body, center) = if high > low {
+        (Shape::capsule(ball, high - low + 2.0 * ball), (low + high) * 0.5)
+    } else {
+        (Shape::sphere(ball), low)
+    };
+    let center = from + Vec3::Y * center;
+    physics.shapecast(&body, center, Quat::IDENTITY, dir, distance, &filter).is_none_or(|hit| hit.distance >= distance - 0.05)
 }
 
 /// `NpcSystems::Navigate`, first: routes for the agents whose goal is new, moved or blocked.
@@ -424,7 +439,7 @@ pub(crate) fn nav_paths(world: &mut World) {
                 next.path = if next.direct {
                     vec![goal]
                 } else {
-                    find_path(world, here, goal, params.radius).filter(|p| !p.is_empty()).unwrap_or_default()
+                    find_path(world, here, goal, &params).filter(|p| !p.is_empty()).unwrap_or_default()
                 };
                 next.index = 0;
                 next.planned_to = Some(goal);

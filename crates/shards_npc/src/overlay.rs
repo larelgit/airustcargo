@@ -92,7 +92,7 @@ fn near_players(players: &[Vec3], at: Vec3) -> bool {
 /// The overlay's lines: one per NPC near a player, in id order. `e7 grunt: fight e5 · token
 /// · leash 6/15m · sees e5 4.2m NE · detour, 3 waypoints left`. An NPC on its way in a region
 /// says the body class it walks by when it is not `agent` (`body large`), or `local grid` when
-/// no class is wide enough for it or it stands outside the region; under a game's own route
+/// no class serves its body or it stands outside the region; under a game's own route
 /// provider, neither.
 pub fn overlay_lines(world: &World) -> Vec<String> {
     let players: Vec<Vec3> = world
@@ -123,12 +123,12 @@ pub fn overlay_lines(world: &World) -> Vec<String> {
             if brain.active {
                 parts.extend(perceived.map(|p| senses(here, p)).unwrap_or_default());
                 parts.extend(agent.map(route).unwrap_or_default());
-                let radius = controller.map_or_else(|| own.cloned().unwrap_or_default().radius, |c| c.resolve(own, db).radius);
+                let body = controller.map_or_else(|| own.cloned().unwrap_or_default(), |c| c.resolve(own, db).clone());
                 let walking = agent.is_some_and(|a| a.goal.is_some() && !a.arrived);
                 // As `npc_state` says it (`nav.routes`); nothing under a game's own provider.
-                match walking.then(|| route_source(world, radius, Some(here))) {
+                match walking.then(|| route_source(world, &body, Some(here))) {
                     Some(RouteSource::Navmesh(class)) if class.body != DEFAULT_BODY => parts.push(format!("body {}", class.body)),
-                    // In a region with a navmesh, but wider than every class or outside it.
+                    // In a region with a navmesh, but no class serves its body or it stands outside.
                     Some(RouteSource::LocalGrid { region: true, .. }) => parts.push("local grid".into()),
                     _ => {}
                 }

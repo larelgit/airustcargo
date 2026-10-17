@@ -11,7 +11,7 @@ use shards_npc::nav::bake::bake;
 use shards_npc::nav::settings::NavSettings;
 use shards_npc::nav::tile::TileKind;
 use shards_npc::prelude::*;
-use shards_npc::{navmesh_path, routes_for, NavQuery};
+use shards_npc::{navmesh_path, plain_sight, routes_for, NavQuery};
 
 use crate::common::*;
 
@@ -38,12 +38,35 @@ const WALLS: [(Vec2, Vec2); 3] = [
     (Vec2::new(11.75, 7.75), Vec2::new(12.25, 8.0)),
 ];
 
+/// `gates` with a lintel over the slot, 2 m above the ground: a body of the default 1.8 m
+/// walks under it, a taller one goes by the door.
+const ARCH: &str = r#"
+    "arch": (
+        sockets: (n: "open", e: "open", s: "open", w: "open"),
+        geometry: Inline([
+            Box(min: (-4.0, -1.0, -4.0), max: (4.0, 0.0, 4.0)),
+            Box(min: (-0.25, 0.0, -4.0), max: (0.25, 3.0, -2.75)),
+            Box(min: (-0.25, 2.0, -2.75), max: (0.25, 3.0, -1.25)),
+            Box(min: (-0.25, 0.0, -1.25), max: (0.25, 3.0, 0.25)),
+            Box(min: (-0.25, 0.0, 3.75), max: (0.25, 3.0, 4.0)),
+        ]),
+    ),
+"#;
+
 /// The class `large`: a 1.2 m radius, too wide for the slot.
 const LARGE: &str = "{ \"default\": (cell: 0.5, bodies: {\"large\": (radius: Some(1.2), height: Some(2.4))}) }\n";
+
+/// The class `tall`: as wide as `agent`, 2.6 m tall.
+const TALL: &str = "{ \"default\": (cell: 0.5, bodies: {\"tall\": (height: Some(2.6))}) }\n";
 
 /// A temporary asset folder with the navigation test world, the `gates` tile and the nav
 /// definition `nav`.
 fn assets_with(name: &str, nav: &str) -> PathBuf {
+    assets_with_tiles(name, nav, &[GATES])
+}
+
+/// [`assets_with`] the test tiles and `tiles` (definitions of `nav.tile.ron`).
+fn assets_with_tiles(name: &str, nav: &str, tiles: &[&str]) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("bodies_{name}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("content/world")).unwrap();
@@ -61,9 +84,9 @@ fn assets_with(name: &str, nav: &str) -> PathBuf {
     ] {
         std::fs::copy(Path::new(ASSETS).join("content").join(file), dir.join("content").join(file)).unwrap();
     }
-    let tiles = std::fs::read_to_string(Path::new(ASSETS).join("content/world/nav.tile.ron")).unwrap();
-    let end = tiles.rfind('}').unwrap();
-    std::fs::write(dir.join("content/world/nav.tile.ron"), format!("{}{GATES}}}\n", &tiles[..end])).unwrap();
+    let base = std::fs::read_to_string(Path::new(ASSETS).join("content/world/nav.tile.ron")).unwrap();
+    let end = base.rfind('}').unwrap();
+    std::fs::write(dir.join("content/world/nav.tile.ron"), format!("{}{}}}\n", &base[..end], tiles.concat())).unwrap();
     std::fs::write(dir.join("content/world/default.nav.ron"), nav).unwrap();
     dir
 }
@@ -140,13 +163,14 @@ fn a_large_body_routes_on_its_own_navmesh_through_the_door_it_fits() {
     assert!(through.len() == 1 && (5.4..6.6).contains(&through[0]), "through the door: {through:?} {}", large.result);
     let clearance = closest_to_walls(start, &large_points);
     assert!(clearance >= 1.2 - 0.05, "{clearance:.2} m from a wall: {}", large.result);
-    // The same as an NPC's routes (they know only its radius): the tightest class it fits.
-    let npc_route = navmesh_path(app.world(), start, Vec3::new(20.0, 0.0, 3.0), 1.1).unwrap();
+    // The same for an NPC's routes (its whole body): the tightest class that serves it.
+    let wide = |radius: f32| CharacterParams { radius, ..default() };
+    let npc_route = navmesh_path(app.world(), start, Vec3::new(20.0, 0.0, 3.0), &wide(1.1)).unwrap();
     let through = crossings(start, &npc_route);
     assert!(through.len() == 1 && (5.4..6.6).contains(&through[0]), "an NPC of 1.1 m by the door: {npc_route:?}");
-    assert_eq!(routes_for(app.world(), 0.4), "navmesh, body agent");
-    assert_eq!(routes_for(app.world(), 0.9), "navmesh, body large");
-    assert_eq!(routes_for(app.world(), 1.5), "local grid: no body class fits a 1.50 m radius (the widest: large, 1.20 m)");
+    assert_eq!(routes_for(app.world(), &wide(0.4)), "navmesh, body agent");
+    assert_eq!(routes_for(app.world(), &wide(0.9)), "navmesh, body large");
+    assert_eq!(routes_for(app.world(), &wide(1.5)), "local grid: no body class fits a 1.50 m radius (the widest: large, 1.20 m)");
 
     // Asking wrong is answered.
     let unknown = fails(&mut app, "nav_path", json!({"from": from, "to": to, "body": "larg"}));
@@ -228,8 +252,8 @@ fn an_npc_outside_the_region_plans_on_the_local_grid_and_the_tools_say_so() {
     assert_eq!(route.result["provider"], "local grid", "{}", route.result);
     let line = overlay_line(&mut app, &big_id);
     assert!(line.ends_with(" · local grid") && !line.contains("body "), "{line}");
-    // Without a position, only the radius counts: the class it fits.
-    assert_eq!(routes_for(app.world(), 1.2), "navmesh, body large");
+    // Without a position, only its body counts: the class that serves it.
+    assert_eq!(routes_for(app.world(), &CharacterParams { radius: 1.2, height: 2.4, ..default() }), "navmesh, body large");
     // Back in the region, it is on its class's navmesh again.
     teleport(&mut app, big, Vec3::new(4.0, 0.0, 6.0));
     step(&mut app, 2);
@@ -240,7 +264,7 @@ fn an_npc_outside_the_region_plans_on_the_local_grid_and_the_tools_say_so() {
 }
 
 /// A game's routes: straight to the goal.
-fn straight(_: &World, _: Vec3, to: Vec3, _: f32) -> Option<Vec<Vec3>> {
+fn straight(_: &World, _: Vec3, to: Vec3, _: &CharacterParams) -> Option<Vec<Vec3>> {
     Some(vec![to])
 }
 
@@ -364,5 +388,103 @@ fn the_classes_of_a_region_are_its_navmeshes_by_name() {
     let physics = app.world().resource::<PhysicsWorld>();
     let query = NavQuery { from: Vec3::new(4.0, 0.0, 3.0), to: Vec3::new(20.0, 0.0, 3.0), goal_level: false, radius: 1.3, height: 2.4, step_height: 0.35 };
     assert!(large.path(physics, &query).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A body as wide as `agent` and taller than the arch's lintel (2.0 m): `agent` is the class
+/// its radius alone would pick.
+fn tall() -> CharacterParams {
+    CharacterParams { height: 2.4, ..default() }
+}
+
+/// Steps `ticks` ticks: the z where `e` last crossed the wall's line (x = 12) going east.
+fn crossing(app: &mut App, e: Entity, ticks: u32) -> Option<f32> {
+    let mut crossed = None;
+    for _ in 0..ticks {
+        let before = feet(app, e);
+        step(app, 1);
+        let after = feet(app, e);
+        if before.x < 12.0 && after.x >= 12.0 {
+            crossed = Some(after.z);
+        }
+    }
+    crossed
+}
+
+/// The slot (z 1.25..2.75) and the door (z 4.25..7.75) of the wall at x = 12.
+const SLOT: std::ops::Range<f32> = 1.25..2.75;
+const DOOR: std::ops::Range<f32> = 4.25..7.75;
+
+#[test]
+fn a_tall_npc_routes_on_a_class_as_tall_and_never_under_a_lintel_it_does_not_clear() {
+    let dir = assets_with_tiles("tall", TALL, &[GATES, ARCH]);
+    let mut app = app_in(dir.to_str().unwrap(), 7, |_| {});
+    load_region(&mut app, &["floor arch floor"]);
+    let (start, goal) = (Vec3::new(4.0, 0.0, 3.0), Vec3::new(20.0, 0.0, 3.0));
+    // The agent's body walks under the lintel, the short way.
+    let short = navmesh_path(app.world(), start, goal, &CharacterParams::default()).unwrap();
+    let through = crossings(start, &short);
+    assert!(through.len() == 1 && SLOT.contains(&through[0]), "under the lintel: {through:?} {short:?}");
+    assert_eq!(routes_for(app.world(), &CharacterParams::default()), "navmesh, body agent");
+    // As wide and taller: on `tall`, by the door, though `agent` is as wide.
+    let long = navmesh_path(app.world(), start, goal, &tall()).unwrap();
+    let through = crossings(start, &long);
+    assert!(through.len() == 1 && DOOR.contains(&through[0]), "by the door: {through:?} {long:?}");
+    assert_eq!(routes_for(app.world(), &tall()), "navmesh, body tall");
+    // A line under the lintel is a straight walk only for the body that clears it.
+    let (a, b) = (Vec3::new(4.0, 0.0, 2.25), Vec3::new(20.0, 0.0, 2.25));
+    assert!(plain_sight(app.world(), a, b, &CharacterParams::default()), "the agent's body walks it");
+    assert!(!plain_sight(app.world(), a, b, &tall()), "the tall body does not");
+
+    // An NPC of that body: `npc_state` and `nav_path` name its class, and it walks by the door.
+    let world = app.world_mut();
+    let walker = npc(world, "grunt", Npc::new("walker", "eyes"), start, E);
+    world.entity_mut(walker).insert((Patrol { points: vec![goal] }, tall()));
+    step(&mut app, 2);
+    let me = id(&app, walker);
+    let state = ok(&mut app, "npc_state", json!({"id": me}));
+    assert_eq!(state.result["nav"]["routes"], "navmesh, body tall", "{}", state.result);
+    let preview = ok(&mut app, "nav_path", json!({"from": me, "to": {"x": 20.0, "z": 3.0}}));
+    assert_eq!(preview.result["body"], "tall", "{}", preview.result);
+    let through = crossings(feet(&app, walker), &points(&preview.result));
+    assert!(through.len() == 1 && DOOR.contains(&through[0]), "{}", preview.result);
+    let crossed = crossing(&mut app, walker, 900).expect("it crossed the wall's line");
+    assert!(DOOR.contains(&crossed), "by the door: at z {crossed:.2}");
+    assert!(flat_distance(feet(&app, walker), goal) < 0.6, "arrived: {}", feet(&app, walker));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_tall_npc_no_class_serves_plans_on_the_local_grid_with_its_whole_body() {
+    let dir = assets_with_tiles("untall", "{ \"default\": (cell: 0.5) }\n", &[GATES, ARCH]);
+    let mut app = app_in(dir.to_str().unwrap(), 7, |_| {});
+    load_region(&mut app, &["floor arch floor"]);
+    let (start, goal) = (Vec3::new(4.0, 0.0, 3.0), Vec3::new(20.0, 0.0, 3.0));
+    // `agent` is as wide, but lower: the body is not walked as `agent` under the lintel.
+    let why = "local grid: no body class serves the body: agent has height 1.80 m, the body 2.40 m";
+    assert_eq!(routes_for(app.world(), &tall()), why);
+    let route = navmesh_path(app.world(), start, goal, &tall()).unwrap();
+    let through = crossings(start, &route);
+    assert!(through.len() == 1 && DOOR.contains(&through[0]), "the local grid knows its height: {through:?} {route:?}");
+    // The straight walk under the lintel: the agent's on the navmesh, not the tall body's cast.
+    let (a, b) = (Vec3::new(4.0, 0.0, 2.25), Vec3::new(20.0, 0.0, 2.25));
+    assert!(plain_sight(app.world(), a, b, &CharacterParams::default()), "the agent's body walks it");
+    assert!(!plain_sight(app.world(), a, b, &tall()), "the tall body's cast meets the lintel");
+
+    let world = app.world_mut();
+    let walker = npc(world, "grunt", Npc::new("walker", "eyes"), start, E);
+    world.entity_mut(walker).insert((Patrol { points: vec![goal] }, tall()));
+    step(&mut app, 2);
+    let me = id(&app, walker);
+    let state = ok(&mut app, "npc_state", json!({"id": me}));
+    assert_eq!(state.result["nav"]["routes"], why, "{}", state.result);
+    assert!(overlay_line(&mut app, &me).ends_with(" · local grid"));
+    let preview = ok(&mut app, "nav_path", json!({"from": me, "to": {"x": 20.0, "z": 3.0}}));
+    assert_eq!(preview.result["provider"], "local grid", "{}", preview.result);
+    let through = crossings(feet(&app, walker), &points(&preview.result));
+    assert!(through.len() == 1 && DOOR.contains(&through[0]), "{}", preview.result);
+    let crossed = crossing(&mut app, walker, 900).expect("it crossed the wall's line");
+    assert!(DOOR.contains(&crossed), "by the door: at z {crossed:.2}");
+    assert!(flat_distance(feet(&app, walker), goal) < 0.6, "arrived: {}", feet(&app, walker));
     let _ = std::fs::remove_dir_all(&dir);
 }

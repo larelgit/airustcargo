@@ -27,8 +27,8 @@ pub const DEFAULT_BODY: &str = "agent";
 /// ```
 ///
 /// Every tile is baked once per body class: `agent`, then each of `bodies`. An NPC routes on
-/// the tightest class its body fits (the smallest radius at least its own); a body wider
-/// than every class plans on the local grid.
+/// the tightest class that serves its body (as wide and as tall at least, stepping, climbing
+/// and swimming as it); a body no class serves plans on the local grid.
 ///
 /// With a `nav` definition, content checks every bake file: a missing or stale one is a
 /// content error (`content check`, `--check-content`). Either way a region bakes what has

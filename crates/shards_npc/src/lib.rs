@@ -24,11 +24,12 @@
 //!   loads ([`NavRegion`]), routes by A* over the tile graph, then over the grid of the
 //!   corridor, then string pulling; `--bake-nav` and `nav_bake` write the bake files. Once
 //!   per body class: `agent` and the nav settings' `bodies` (a big enemy's body), a route on
-//!   the tightest class the walker fits ([`NavBodyDef`]).
-//! - **Nav agents** ([`nav`]): routes from a pluggable provider ([`NavPaths`]: the navmesh in
-//!   a loaded region, the motion module's local grid elsewhere), path following, the leash
-//!   around [`Home`], avoidance between bodies (sampled reciprocal velocity obstacles, numbers
-//!   in content: [`AvoidanceDef`]). Dormant NPCs (the world module's active zones) do nothing.
+//!   the tightest class that serves the walker's whole body ([`NavBodyDef`]).
+//! - **Nav agents** ([`nav`]): routes for the NPC's own body from a pluggable provider
+//!   ([`NavPaths`]: the navmesh in a loaded region, the motion module's local grid
+//!   elsewhere), path following, the leash around [`Home`], avoidance between bodies
+//!   (sampled reciprocal velocity obstacles, numbers in content: [`AvoidanceDef`]). Dormant
+//!   NPCs (the world module's active zones) do nothing.
 //!
 //! ```ron
 //! // content/npc/grunt.behavior.ron
