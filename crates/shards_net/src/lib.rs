@@ -71,15 +71,16 @@ pub use link::{Delivered, Footprint, Link, LinkConfig, Role, SendError, Verdict}
 pub use overlay::NetOverlay;
 pub use predict::NetCorrection;
 pub use replicate::NetAlways;
-pub use session::{NetClock, NetEndpoint, NetGame, NetMarks, NetPlugin, NetState, NetSystems};
+pub use session::{ExternalTransport, NetClock, NetEndpoint, NetGame, NetMarks, NetPlugin, NetState, NetSystems};
 pub use stand::Stand;
 pub use stats::{DirStats, LinkStats};
 pub use transport::{MTU, PeerId, Transport};
 pub use udp::{UdpTransport, WallClock};
 pub use wire::Reject;
 
-/// `transport` with the conditions of `--net-sim`, when given (else as it is).
-pub(crate) fn conditioner_from<T: Transport>(config: &shards_core::EngineConfig, transport: T) -> Box<dyn Transport> {
+/// `transport` with the conditions of `--net-sim`, when given (else none, and `net_sim` can set
+/// them later). For a module that opens a transport of its own (Steam's relay).
+pub fn conditioner_from<T: Transport>(config: &shards_core::EngineConfig, transport: T) -> Box<dyn Transport> {
     match config.net_sim.as_deref().map(str::parse::<LinkConditions>) {
         Some(Ok(conditions)) => Box::new(Conditioned::new(transport, config.seed, 0, conditions)),
         Some(Err(e)) => {

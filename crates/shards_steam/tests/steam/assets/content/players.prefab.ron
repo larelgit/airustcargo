@@ -1,0 +1,4 @@
+// The body a joining player gets.
+{
+    "player": (components: {"AiKind": ("Player")}),
+}

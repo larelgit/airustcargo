@@ -6,7 +6,9 @@
 //! reload, no developer keys. On Windows (MSVC) the C runtime is linked in (`+crt-static`: no
 //! Visual C++ redistributable to install) and `assets/icon.png` becomes the program's icon.
 //! The program and `assets/` go to `dist/<name>-<version>-<os>-<arch>/` beside the game's
-//! `Cargo.toml`. Then that folder is checked: on Windows the DLLs it imports are the system's;
+//! `Cargo.toml`, with the Steamworks SDK's library beside the program (`steam_api64.dll`, feature
+//! `steam_sdk`; no other library a build script links) and never a `steam_appid.txt`. Then that folder is
+//! checked: on Windows the DLLs it imports are the system's or shipped beside it;
 //! a copy of it in a temporary folder, started with an environment as bare as a player's (no
 //! cargo, no `BEVY_ASSET_ROOT`), passes `--check-content` and `--smoke`, and writes nothing into
 //! its own folder.
@@ -60,7 +62,7 @@ struct Game {
 pub fn run(options: &Options) -> Result<ExitCode, String> {
     let game = find_game(options)?;
     let profile = options.profile.clone().unwrap_or_else(|| default_profile(&game.workspace_root));
-    let exe = build(&game, &profile)?;
+    let Built { exe, libraries } = build(&game, &profile)?;
     let folder = options.out.clone().unwrap_or_else(|| game.dir.join("dist")).join(format!(
         "{}-{}-{}-{}",
         game.name,
@@ -68,7 +70,7 @@ pub fn run(options: &Options) -> Result<ExitCode, String> {
         std::env::consts::OS,
         std::env::consts::ARCH
     ));
-    let placed = place(&game, &exe, &folder)?;
+    let placed = place(&game, &exe, &libraries, &folder)?;
     say(format!("package: {} ({})", folder.display(), placed));
     if !options.check {
         return Ok(ExitCode::SUCCESS);
@@ -187,8 +189,16 @@ fn default_profile(workspace_root: &Path) -> String {
     if defined { "dist" } else { "release" }.to_owned()
 }
 
-/// Builds the game's program, says how, and returns its path.
-fn build(game: &Game, profile: &str) -> Result<PathBuf, String> {
+/// What a build made: the program, and the dynamic libraries it needs beside it.
+struct Built {
+    exe: PathBuf,
+    /// The Steamworks SDK's library its package's build script copied (`steam_api64.dll`, feature
+    /// `steam_sdk` of `shards`); none without it.
+    libraries: Vec<PathBuf>,
+}
+
+/// Builds the game's program, says how, and returns it with the libraries it needs.
+fn build(game: &Game, profile: &str) -> Result<Built, String> {
     let mut cargo = cargo(&game.dir);
     let mut how = vec![format!("profile {profile}")];
     let windows = cfg!(all(windows, target_env = "msvc"));
@@ -228,8 +238,14 @@ fn build(game: &Game, profile: &str) -> Result<PathBuf, String> {
     say(format!("building {} {} ({})", game.name, game.bin, how.join(", ")));
     let mut child = cargo.stdout(Stdio::piped()).spawn().map_err(|e| format!("cargo: {e}"))?;
     let mut exe = None;
+    let mut libraries = Vec::new();
     for line in BufReader::new(child.stdout.take().ok_or("cargo: no output")?).lines() {
         let Ok(message) = serde_json::from_str::<Value>(&line.unwrap_or_default()) else { continue };
+        for library in dynamic_libraries(&message, std::env::consts::OS) {
+            if !libraries.contains(&library) {
+                libraries.push(library);
+            }
+        }
         if message["reason"] == "compiler-artifact" && message["target"]["name"] == game.bin.as_str() {
             exe = message["executable"].as_str().map(PathBuf::from).or(exe);
         }
@@ -240,7 +256,65 @@ fn build(game: &Game, profile: &str) -> Result<PathBuf, String> {
     }
     let exe = exe.ok_or("cargo built no program")?;
     say(format!("built: {}", exe.display()));
-    Ok(exe)
+    Ok(Built { exe, libraries })
+}
+
+/// The package whose build script brings the Steamworks SDK's library (`steam_api64.dll`,
+/// `libsteam_api.so`, `libsteam_api.dylib`): the one dynamic library a package ships.
+const STEAM_SDK_PACKAGE: &str = "steamworks-sys";
+
+/// A package id's name: `steamworks-sys` of `registry+https://…#steamworks-sys@0.13.0` (cargo's
+/// form since 1.77; `path+file:///…/name#0.1.0` when the name is the folder's) or of
+/// `steamworks-sys 0.13.0 (registry+https://…)` (before).
+fn package_name(id: &str) -> Option<&str> {
+    if let Some((name, _)) = id.split_once(' ') {
+        return Some(name);
+    }
+    let (source, fragment) = id.rsplit_once('#')?;
+    match fragment.split_once('@') {
+        Some((name, _)) => Some(name),
+        None => source.split(['?', '#']).next()?.trim_end_matches('/').rsplit('/').next(),
+    }
+}
+
+/// The Steamworks SDK's library, as the file of `os`, from the `build-script-executed` message of
+/// its package ([`STEAM_SDK_PACKAGE`]): the copy its build script put in its own folder
+/// (`out_dir`). Nothing for any other message: the libraries other build scripts link (ALSA and
+/// udev through pkg-config on Linux) are the system's, and the player's system has its own.
+fn dynamic_libraries(message: &Value, os: &str) -> Vec<PathBuf> {
+    if message["reason"] != "build-script-executed" || message["package_id"].as_str().and_then(package_name) != Some(STEAM_SDK_PACKAGE) {
+        return Vec::new();
+    }
+    let Some(out_dir) = message["out_dir"].as_str().map(PathBuf::from) else { return Vec::new() };
+    let strings = |key: &str| -> Vec<String> { message[key].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect() };
+    let paths: Vec<PathBuf> = strings("linked_paths")
+        .iter()
+        .map(|p| {
+            let kinds = ["native", "dependency", "crate", "framework", "all"];
+            PathBuf::from(p.split_once('=').filter(|(kind, _)| kinds.contains(kind)).map_or(p.as_str(), |(_, path)| path))
+        })
+        .filter(|dir| dir.starts_with(&out_dir))
+        .collect();
+    let mut found = Vec::new();
+    for lib in strings("linked_libs") {
+        // `dylib=name`, or a bare name (dynamic is rustc's default); not `static=`, `framework=`.
+        let name = match lib.split_once('=') {
+            Some(("dylib", name)) => name,
+            None => lib.as_str(),
+            Some(_) => continue,
+        };
+        // `name:rename` links `rename`'s file.
+        let name = name.rsplit(':').next().unwrap_or(name);
+        let file = match os {
+            "windows" => format!("{name}.dll"),
+            "macos" => format!("lib{name}.dylib"),
+            _ => format!("lib{name}.so"),
+        };
+        if let Some(path) = paths.iter().map(|dir| dir.join(&file)).find(|path| path.is_file()) {
+            found.push(path);
+        }
+    }
+    found
 }
 
 /// Adds a flag for rustc to the ones the environment already gives (a variable replaces those of
@@ -261,9 +335,13 @@ fn add_rustflag(cargo: &mut Command, flag: &str) {
     }
 }
 
-/// The program and `assets/` into `folder`, in place of the ones there (anything else in it
-/// stays). Says what went in.
-fn place(game: &Game, exe: &Path, folder: &Path) -> Result<String, String> {
+/// A file the Steamworks SDK reads beside the program when Steam did not start it: a developer's
+/// (it names the app to be), never a player's.
+const STEAM_APPID: &str = "steam_appid.txt";
+
+/// The program, the libraries it needs beside it and `assets/` into `folder`, in place of the ones
+/// there (anything else in it stays, but a `steam_appid.txt`). Says what went in.
+fn place(game: &Game, exe: &Path, libraries: &[PathBuf], folder: &Path) -> Result<String, String> {
     let assets = game.dir.join(ASSETS);
     // Before anything in the folder changes: the asset folder is no link either (the links in it
     // are refused by `copy_dir`).
@@ -277,7 +355,43 @@ fn place(game: &Game, exe: &Path, folder: &Path) -> Result<String, String> {
     std::fs::copy(exe, &program).map_err(|e| format!("{} → {}: {e}", exe.display(), program.display()))?;
     let size = std::fs::metadata(&program).map(|m| m.len()).unwrap_or(0);
     let (files, bytes) = if assets.is_dir() { copy_dir(&assets, &target)? } else { (0, 0) };
-    Ok(format!("program {}, {ASSETS}/ {files} files, {}", megabytes(size), megabytes(bytes)))
+    let mut placed = format!("program {}, {ASSETS}/ {files} files, {}", megabytes(size), megabytes(bytes));
+    let shipped = place_libraries(libraries, folder)?;
+    if !shipped.is_empty() {
+        placed.push_str(&format!(", beside it {}", shipped.join(", ")));
+    }
+    if remove_steam_appid(folder)? {
+        say(format!("removed {STEAM_APPID} from the package: a game for players never ships it (Steam starts it with its app id)"));
+    }
+    Ok(placed)
+}
+
+/// Copies `libraries` into `folder`; their file names.
+fn place_libraries(libraries: &[PathBuf], folder: &Path) -> Result<Vec<String>, String> {
+    let mut names = Vec::new();
+    for library in libraries {
+        let name = library.file_name().ok_or_else(|| format!("{}: no file name", library.display()))?;
+        let to = folder.join(name);
+        std::fs::copy(library, &to).map_err(|e| format!("{} → {}: {e}", library.display(), to.display()))?;
+        names.push(name.to_string_lossy().into_owned());
+    }
+    Ok(names)
+}
+
+/// Removes a `steam_appid.txt` from the package's folder: Steam starts a player's game with its
+/// app id, and the file would name another. Whether there was one.
+fn remove_steam_appid(folder: &Path) -> Result<bool, String> {
+    remove_from_package(folder, STEAM_APPID)
+}
+
+/// Removes file `name` from the package's folder; whether it was there.
+fn remove_from_package(folder: &Path, name: &str) -> Result<bool, String> {
+    let file = folder.join(name);
+    if !file.exists() {
+        return Ok(false);
+    }
+    std::fs::remove_file(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    Ok(true)
 }
 
 fn megabytes(bytes: u64) -> String {
@@ -324,9 +438,14 @@ fn check_imports(program: &Path) -> Result<bool, String> {
         "subsystem: {}",
         if pe.gui { "windows (no console window)" } else { "console (a console window opens with it)" }
     ));
-    let foreign: Vec<&String> = pe.imports.iter().filter(|dll| !system_dll(dll)).collect();
+    let folder = program.parent().unwrap_or(Path::new("."));
+    let (foreign, shipped) = foreign_imports(&pe.imports, folder, system_dll);
     if foreign.is_empty() {
-        say(format!("imports: system DLLs only ({})", pe.imports.join(", ")));
+        if shipped.is_empty() {
+            say(format!("imports: system DLLs only ({})", pe.imports.join(", ")));
+        } else {
+            say(format!("imports: system DLLs and, beside the program, {} ({})", shipped.join(", "), pe.imports.join(", ")));
+        }
         return Ok(true);
     }
     say(format!(
@@ -335,6 +454,13 @@ fn check_imports(program: &Path) -> Result<bool, String> {
         if foreign.len() == 1 { "is" } else { "are" }
     ));
     Ok(false)
+}
+
+/// The imports that are no system DLL (by `system`), split into those not in `folder` (a clean
+/// machine cannot start the program) and those shipped there (the Steamworks SDK's).
+fn foreign_imports<'a>(imports: &'a [String], folder: &Path, system: impl Fn(&str) -> bool) -> (Vec<&'a String>, Vec<&'a str>) {
+    let (shipped, foreign): (Vec<&String>, Vec<&String>) = imports.iter().filter(|dll| !system(dll)).partition(|dll| folder.join(dll).is_file());
+    (foreign, shipped.into_iter().map(String::as_str).collect())
 }
 
 /// A DLL every Windows has: not a redistributable runtime, and in `System32` here (or an API set).
@@ -763,6 +889,87 @@ mod tests {
         let err = refuse_link(&dir.join("linked")).unwrap_err();
         assert!(err.ends_with("linked is a link: put the files themselves in the asset folder"), "{err}");
         assert!(refuse_link(&dir.join("assets")).is_ok() && refuse_link(&dir.join("none")).is_ok());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn only_the_steamworks_sdk_s_library_goes_beside_the_program_and_steam_appid_txt_never_does() {
+        let dir = std::env::temp_dir().join(format!("shards-package-libraries-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (out, package) = (dir.join("out"), dir.join("package"));
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::create_dir_all(&package).unwrap();
+        for file in ["steam_api64.dll", "steam_api64.lib", "libsteam_api.so", "libsteam_api.dylib"] {
+            std::fs::write(out.join(file), file).unwrap();
+        }
+        // What steamworks-sys's build script tells cargo.
+        let message = serde_json::json!({
+            "reason": "build-script-executed",
+            "package_id": "registry+https://github.com/rust-lang/crates.io-index#steamworks-sys@0.13.0",
+            "linked_libs": ["dylib=steam_api64", "static=other", "dylib=missing"],
+            "linked_paths": [format!("native={}", out.display())],
+            "out_dir": out.display().to_string(),
+        });
+        assert_eq!(dynamic_libraries(&message, "windows"), [out.join("steam_api64.dll")], "the static one and one not found are not shipped");
+        // Cargo before 1.77 named packages `name version (source)`.
+        let unix = serde_json::json!({
+            "reason": "build-script-executed",
+            "package_id": "steamworks-sys 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
+            "linked_libs": ["dylib=steam_api"],
+            "linked_paths": [out.display().to_string()],
+            "out_dir": out.display().to_string(),
+        });
+        assert_eq!(dynamic_libraries(&unix, "linux"), [out.join("libsteam_api.so")]);
+        assert_eq!(dynamic_libraries(&unix, "macos"), [out.join("libsteam_api.dylib")]);
+        let artifact = serde_json::json!({"reason": "compiler-artifact", "linked_libs": ["dylib=steam_api64"], "linked_paths": [out.display().to_string()]});
+        assert!(dynamic_libraries(&artifact, "windows").is_empty());
+
+        // What alsa-sys's build script tells cargo on Linux (pkg-config): a system library, and the
+        // player's system has its own: not shipped.
+        let system = dir.join("usr-lib");
+        std::fs::create_dir_all(&system).unwrap();
+        std::fs::write(system.join("libasound.so"), "alsa").unwrap();
+        let alsa = serde_json::json!({
+            "reason": "build-script-executed",
+            "package_id": "registry+https://github.com/rust-lang/crates.io-index#alsa-sys@0.3.1",
+            "linked_libs": ["asound"],
+            "linked_paths": [format!("native={}", system.display())],
+            "out_dir": dir.join("alsa-out").display().to_string(),
+        });
+        assert!(dynamic_libraries(&alsa, "linux").is_empty());
+        // The SDK's package linking a system library too: only its own copy of the SDK's goes.
+        let elsewhere = serde_json::json!({
+            "reason": "build-script-executed",
+            "package_id": "registry+https://github.com/rust-lang/crates.io-index#steamworks-sys@0.13.0",
+            "linked_libs": ["asound", "dylib=steam_api"],
+            "linked_paths": [format!("native={}", system.display()), format!("native={}", out.display())],
+            "out_dir": out.display().to_string(),
+        });
+        assert_eq!(dynamic_libraries(&elsewhere, "linux"), [out.join("libsteam_api.so")]);
+        for (id, name) in [
+            ("registry+https://github.com/rust-lang/crates.io-index#steamworks-sys@0.13.0", Some("steamworks-sys")),
+            ("steamworks-sys 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)", Some("steamworks-sys")),
+            ("path+file:///E:/game/crates/steamworks-sys#0.13.0", Some("steamworks-sys")),
+            ("git+https://github.com/x/steamworks-rs?branch=main#steamworks-sys@0.13.0", Some("steamworks-sys")),
+            ("nothing", None),
+        ] {
+            assert_eq!(package_name(id), name, "{id}");
+        }
+
+        assert_eq!(place_libraries(&[out.join("steam_api64.dll")], &package).unwrap(), ["steam_api64.dll"]);
+        assert!(package.join("steam_api64.dll").is_file());
+        assert!(!remove_steam_appid(&package).unwrap(), "none to remove");
+        // A file of another name stands in for a steam_appid.txt: a test never writes one, where the
+        // Steamworks SDK of some run could read it.
+        assert_eq!(STEAM_APPID, "steam_appid.txt");
+        std::fs::write(package.join("stale.txt"), "480").unwrap();
+        assert!(remove_from_package(&package, "stale.txt").unwrap());
+        assert!(!package.join("stale.txt").exists());
+
+        // The program's imports: the system's, one shipped beside it, one missing.
+        let imports = ["KERNEL32.dll".to_owned(), "steam_api64.dll".to_owned(), "VCRUNTIME140.dll".to_owned()];
+        let (foreign, shipped) = foreign_imports(&imports, &package, |dll| dll == "KERNEL32.dll");
+        assert_eq!((foreign, shipped), (vec![&imports[2]], vec!["steam_api64.dll"]));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

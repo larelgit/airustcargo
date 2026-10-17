@@ -445,7 +445,19 @@ pub fn write_sections(world: &mut World, kind: SaveKind, slot: &str, label: &str
     })?;
     let report = SaveReport { kind, slot: slot.to_owned(), tick, bytes: bytes.len(), sections: file.sections.len(), reason: reason.to_owned(), written: true, target: None };
     journal::log(world, JournalKind::Sim, format!("save: {report}"));
+    world.trigger(SaveWritten { kind, slot: slot.to_owned(), bytes });
     Ok(report)
+}
+
+/// A save file was written: `bytes` are now the primary of `kind/slot` (the older one is the first
+/// backup). Triggered after every successful write of [`write_sections`] (saves, autosaves, the
+/// characters co-op writes), never for a repair from a backup, never during replay playback. A copy
+/// elsewhere follows it (Steam Cloud, `shards_steam`); the saves themselves do not wait for it.
+#[derive(Event, Clone, Debug)]
+pub struct SaveWritten {
+    pub kind: SaveKind,
+    pub slot: String,
+    pub bytes: Vec<u8>,
 }
 
 /// Reads `kind/slot` as a file: the primary, or the newest good backup (rewriting the

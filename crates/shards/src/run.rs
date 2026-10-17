@@ -12,7 +12,7 @@ use bevy::app::AppExit;
 use bevy::prelude::*;
 use clap::Parser;
 use shards_content::{asset_root, check_dir, ContentKinds};
-use shards_core::{EngineConfig, NetLaunch, SettingsStore};
+use shards_core::{EngineConfig, NetLaunch, SettingsStore, SteamLaunch, SteamLobby};
 
 /// A game on the Shards engine.
 #[derive(Parser, Debug)]
@@ -161,6 +161,26 @@ struct Args {
     /// when it ends the session.
     #[arg(long)]
     exit_with_host: bool,
+    /// Host the session in a Steam lobby (a game built with the `steam` feature): friends join
+    /// through an invite, or with `--join steam:<lobby>`, over the Steam relay; no UDP port is opened.
+    #[arg(long, conflicts_with_all = ["host", "join", "stand", "steam_server"])]
+    steam_host: bool,
+    /// With --steam-host: who sees the lobby. `friends` (the default: friends see it and join),
+    /// `private` (only an invite brings a player in), `invisible` (friends do not see it),
+    /// `public` (Steam's lobby list shows it too).
+    #[arg(long, value_name = "TYPE", requires = "steam_host", conflicts_with = "steam_server", value_parser = steam_lobby)]
+    steam_lobby: Option<SteamLobby>,
+    /// Host as an anonymous Steam game server: no lobby and no Steam user. Players join it by its
+    /// Steam id (`--join steam:<id>`; `shards status` and the tool `steam` show it), over the relay.
+    #[arg(long, conflicts_with_all = ["host", "join", "stand"])]
+    steam_server: bool,
+    /// Only Steam's relays carry the session: no direct route between the machines (ICE off).
+    #[arg(long)]
+    steam_relay_only: bool,
+    /// The game's Steam app id (480: Valve's test app), when Steam did not start the game: instead
+    /// of a `steam_appid.txt`, which a game never ships.
+    #[arg(long, value_name = "ID", value_parser = clap::value_parser!(u32).range(1..))]
+    steam_app: Option<u32>,
 }
 
 /// `--tick-budget-ms`, `--frame-budget-ms`: milliseconds, as a `Duration` that cannot be zero or too big to hold.
@@ -185,6 +205,11 @@ fn net_sim_spec(text: &str) -> Result<String, String> {
     text.parse::<shards_net::LinkConditions>().map(|_| text.to_owned())
 }
 
+/// `--steam-lobby`: one of Steam's lobby types.
+fn steam_lobby(text: &str) -> Result<SteamLobby, String> {
+    text.parse()
+}
+
 /// What the ready line says of the session: the role and, for a host, its UDP port. A host
 /// on port 0 has none yet (a free one is bound at startup; `shards wait` prints it).
 fn net_ready(net: &NetLaunch, name: Option<&str>) -> String {
@@ -197,6 +222,44 @@ fn net_ready(net: &NetLaunch, name: Option<&str>) -> String {
         NetLaunch::Stand { clients, udp: true } => format!("{member} · role host · stand of {clients} over UDP (clients are child processes)"),
         _ => String::new(),
     }
+}
+
+/// [`net_ready`], for a session over Steam too: its host has no UDP port, and its client's address
+/// is a Steam one (`net steam:109775240917319681`).
+fn session_ready(config: &EngineConfig, name: Option<&str>) -> String {
+    let member = name.map_or_else(String::new, |name| format!(" · member {name}"));
+    match &config.net {
+        NetLaunch::Host { .. } if config.steam.server => format!("{member} · role host · net steam game server"),
+        NetLaunch::Host { .. } if config.steam.host => format!("{member} · role host · net steam lobby"),
+        NetLaunch::Join { addr } if addr.starts_with("steam:") => format!("{member} · role client · net {addr}"),
+        net => net_ready(net, name),
+    }
+}
+
+/// The command line as the game's options read it: with the `steam` feature, Steam's
+/// `+connect_lobby <lobby>` (a game Steam starts into a friend's lobby) becomes `--join
+/// steam:<lobby>`. Without it, a Steam session is refused with what to build.
+fn command_line() -> Result<Args, String> {
+    #[cfg(feature = "steam")]
+    let args = Args::parse_from(shards_steam::connect_lobby_args(std::env::args_os())?);
+    #[cfg(not(feature = "steam"))]
+    let args = Args::parse();
+    let wants_steam = args.steam_host
+        || args.steam_server
+        || args.steam_lobby.is_some()
+        || args.steam_relay_only
+        || args.steam_app.is_some()
+        || args.join.as_deref().is_some_and(|a| a.starts_with("steam:"));
+    if wants_steam && !cfg!(feature = "steam") {
+        return Err("this game is built without Steam: --steam-host, --steam-lobby, --steam-server, --steam-relay-only, --steam-app and --join steam:… need the \
+                    `steam` feature of `shards` (and `steam_sdk` to reach the Steam client)"
+            .into());
+    }
+    #[cfg(feature = "steam")]
+    if let Some(Err(e)) = args.join.as_deref().and_then(shards_steam::parse_address) {
+        return Err(e);
+    }
+    Ok(args)
 }
 
 /// The save folder: inside the game's folder, like `replays/`.
@@ -214,6 +277,10 @@ fn slot_name(slot: &str) -> Result<String, String> {
 impl Args {
     /// What the command line says about networking.
     fn net(&self) -> NetLaunch {
+        if self.steam_host || self.steam_server {
+            // The Steam relay carries the session: no UDP port.
+            return NetLaunch::Host { port: 0 };
+        }
         match (self.host, &self.join, self.stand) {
             (Some(port), _, _) => NetLaunch::Host { port },
             (_, Some(addr), _) => NetLaunch::Join { addr: addr.clone() },
@@ -249,6 +316,15 @@ impl Args {
             check_detail: self.check_detail,
             tick_budget: self.tick_budget_ms,
             frame_budget: self.frame_budget_ms,
+            // `connect` is set for a game that is played, not checked (`run`).
+            steam: SteamLaunch {
+                connect: false,
+                app_id: self.steam_app,
+                host: self.steam_host,
+                server: self.steam_server,
+                relay_only: self.steam_relay_only,
+                lobby: self.steam_lobby.unwrap_or_default(),
+            },
             ..EngineConfig::default()
         }
     }
@@ -284,7 +360,13 @@ fn attach_console() {}
 /// `AppExit` like Ctrl+C, so the token and the port file go away with the game.
 pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
     attach_console();
-    let args = Args::parse();
+    let args = match command_line() {
+        Ok(args) => args,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(2);
+        }
+    };
     let mut recording = match args.replay.as_deref().map(replay::load).transpose() {
         Ok(r) => r,
         Err(e) => {
@@ -315,7 +397,9 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
         || args.smoke.is_some()
         || args.perf.is_some();
     if config.net != NetLaunch::Off && checks {
-        eprintln!("error: --host, --join and --stand start a session; drop them to verify, check, bake, --smoke or --perf");
+        eprintln!(
+            "error: --host, --join, --stand, --steam-host and --steam-server start a session; drop them to verify, check, bake, --smoke or --perf"
+        );
         return ExitCode::from(2);
     }
     if let Some(r) = &recording {
@@ -361,6 +445,9 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
     if let NetLaunch::Stand { clients, udp: false } = config.net {
         return guarded(reports, None, || stand::run(&build, &args, config, clients));
     }
+    // A game that is played talks to Steam (with the `steam_sdk` feature): checks, tests and the
+    // in-process stand never do.
+    config.steam.connect = true;
     guarded(reports, None, || play(&build, &args, config, recording))
 }
 
@@ -430,7 +517,7 @@ fn play(build: &impl Fn(&EngineConfig) -> App, args: &Args, config: EngineConfig
             return ExitCode::from(2);
         }
     };
-    let net = net_ready(&config.net, args.name.as_deref().or(matches!(config.net, NetLaunch::Stand { .. }).then_some("host")));
+    let net = session_ready(&config, args.name.as_deref().or(matches!(config.net, NetLaunch::Stand { .. }).then_some("host")));
     println!("{}{net}", ai_core::ready_line(0, std::process::id(), config.seed, config.port));
     exit_code(app.run())
 }
@@ -1350,6 +1437,46 @@ mod tests {
             " · member host · role host · stand of 2 over UDP (clients are child processes)"
         );
         assert_eq!(net_ready(&NetLaunch::Stand { clients: 2, udp: false }, Some("host")), "", "an in-process stand prints a line per member itself");
+    }
+
+    #[test]
+    fn steam_sessions_host_without_a_port_and_say_so_in_the_ready_line() {
+        let parse = |args: &[&str]| Args::try_parse_from(args.iter().copied());
+        let lobby = parse(&["game", "--steam-host"]).unwrap().config();
+        assert_eq!((lobby.net.clone(), lobby.steam.host, lobby.steam.server), (NetLaunch::Host { port: 0 }, true, false));
+        assert!(!lobby.steam.connect, "only `run` connects, for a game that is played");
+        assert_eq!(session_ready(&lobby, None), " · role host · net steam lobby");
+
+        let server = parse(&["game", "--steam-server", "--steam-relay-only", "--steam-app", "480"]).unwrap().config();
+        assert_eq!(server.net, NetLaunch::Host { port: 0 });
+        assert_eq!(server.steam, SteamLaunch { connect: false, app_id: Some(480), host: false, server: true, relay_only: true, lobby: SteamLobby::Friends });
+        assert_eq!(session_ready(&server, Some("srv")), " · member srv · role host · net steam game server");
+
+        let client = parse(&["game", "--join", "steam:90071992547409921"]).unwrap().config();
+        assert_eq!(session_ready(&client, None), " · role client · net steam:90071992547409921");
+        let udp = parse(&["game", "--join", "1.2.3.4:7777"]).unwrap().config();
+        assert_eq!(session_ready(&udp, None), " · role client · net udp:1.2.3.4:7777", "a UDP session reads as before");
+
+        for clash in [&["game", "--steam-host", "--host"][..], &["game", "--steam-host", "--steam-server"], &["game", "--steam-server", "--join", "x:1"]] {
+            assert!(parse(clash).is_err(), "{clash:?}");
+        }
+        assert!(parse(&["game", "--steam-app", "0"]).is_err(), "no app 0");
+
+        // The lobby's type: friends only unless --steam-lobby says otherwise, and only for a lobby host.
+        assert_eq!(lobby.steam.lobby, SteamLobby::Friends);
+        for (name, kind) in [("friends", SteamLobby::Friends), ("private", SteamLobby::Private), ("invisible", SteamLobby::Invisible), ("public", SteamLobby::Public)] {
+            assert_eq!(parse(&["game", "--steam-host", "--steam-lobby", name]).unwrap().config().steam.lobby, kind);
+        }
+        let typo = parse(&["game", "--steam-host", "--steam-lobby", "secret"]).unwrap_err().to_string();
+        assert!(typo.contains("`secret` is no lobby type: friends, private, invisible, public"), "{typo}");
+        assert!(parse(&["game", "--steam-lobby", "private"]).is_err(), "a lobby type without a lobby host");
+        assert!(parse(&["game", "--steam-server", "--steam-lobby", "private"]).is_err(), "a game server has no lobby");
+
+        // Steam's `+connect_lobby` is no flag of the game's: with `steam` it becomes `--join
+        // steam:<lobby>` before this (`shards_steam::connect_lobby_args`), without it clap refuses it.
+        let steam_start = parse(&["game", "+connect_lobby", "109775240917319681"]).unwrap_err();
+        assert_eq!(steam_start.kind(), clap::error::ErrorKind::UnknownArgument);
+        assert!(steam_start.to_string().starts_with("error: unexpected argument '+connect_lobby' found"), "{steam_start}");
     }
 
     #[test]

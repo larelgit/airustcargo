@@ -46,12 +46,13 @@ Remote Protocol на 127.0.0.1), без MCP-прослоек. Тем же CLI п
 23. [Стилизованные материалы (E10.1)](#стилизованные-материалы-e101)
 24. [Растительность и мелкие объекты (E10.2)](#растительность-и-мелкие-объекты-e102)
 25. [Эффекты и декали (E10.3)](#эффекты-и-декали-e103)
-26. [Сборка для игроков и Windows (E10.6)](#сборка-для-игроков-и-windows-e106)
-27. [Отчёт о падении (E10.7)](#отчёт-о-падении-e107)
-28. [Песочница](#песочница)
-29. [Тесты и CI](#тесты-и-ci)
-30. [Что дальше](#что-дальше)
-31. [Соглашения и сборка](#соглашения-и-сборка)
+26. [Steam (E10.5)](#steam-e105)
+27. [Сборка для игроков и Windows (E10.6)](#сборка-для-игроков-и-windows-e106)
+28. [Отчёт о падении (E10.7)](#отчёт-о-падении-e107)
+29. [Песочница](#песочница)
+30. [Тесты и CI](#тесты-и-ci)
+31. [Что дальше](#что-дальше)
+32. [Соглашения и сборка](#соглашения-и-сборка)
 
 ## Быстрый старт
 
@@ -304,6 +305,7 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 | `crates/shards_look` | вид мешей (E10.1): виды в контенте (`look`, `*.look.ron`) — цвет, свет полосами (`Toon`), `Matte`, `Unlit`, `Lit`, плоские грани, контур одной ширины в пикселях, свечение, материалы glTF; компонент `Look`, материал и шейдеры на WESL, инструменты `looks` и `look_outlines`, поле `looks` в `ai/status`, два пункта меню разработчика; с feature `render` — стилизация мешей (окно или `--offscreen`) |
 | `crates/shards_scatter` | растительность и мелкие объекты (E10.2): вид контента `scatter` (`*.scatter.ron`) — что рассыпать по тайлам каких регионов, как густо, на какой земле, какими видами, какие меши вблизи и вдали; раскладка по зерну региона (одинаковая в каждом запуске), меши-примитивы (пучок травы, конус, камень, коробка) или glTF, уровни детализации через `VisibilityRange`, настройка `graphics.foliage`, инструменты `scatter` и `scatter_set`, поле `scatter` в `ai/status`, два пункта меню разработчика; с feature `render` — экземпляры под тайлами (окно или `--offscreen`) |
 | `crates/shards_fx` | эффекты (E10.3): эффекты в контенте (`effect`, `*.effect.ron`) и таблица событий (`fx`, `*.fx.ron`) — частицы из пулов (`max_live` мешей на эффект, один меш и один материал, цвет в `MeshTag`), квадраты к камере, кубики и осколки, свечение, полёт по формуле на часах симуляции; `PlayEffect`, эффекты событий боя и меток клипов; декали телеграфов (`ForwardDecal` с материалом зоны на WESL: круг, сектор, прямоугольник, «стадион», заливка растёт к удару), `DepthPrepass` камерам `AiCamera`; инструменты `effects`, `effect_play`, `telegraph_decals`, поле `fx` в `ai/status`, два пункта меню разработчика; с feature `render` — рисование (окно или `--offscreen`) |
+| `crates/shards_steam` | Steam (E10.5), за feature `steam` зонтика (по умолчанию выключена; `steam_sdk` — настоящий клиент на `steamworks`): кооператив по реле Steam (`--steam-host` — лобби с приглашениями, `--steam-server` — анонимный игровой сервер, `--join steam:<id>`, `+connect_lobby`), транспорт `SteamTransport` для `shards_net`, достижения из контента (`achievement`, `UnlockAchievement`), копии сохранений в Steam Cloud и их сверка при запуске, поддельный Steam процесса (`FakeSteam`) для тестов, инструменты `steam`, `steam_host`, `steam_join`, `steam_invite`, `achievement_unlock`, поле `steam` в `ai/status`, раздел `steam` меню разработчика |
 | `crates/shards_dev` | меню и консоль разработчика (E11): пункты модулей (`add_dev_entry`) и игры (вид контента `devmenu`), консоль строк `tool key=value`, инструменты `dev_menu` и `console`; с feature `render` — панели в окне (F10 и `` ` ``), Tab дописывает имена из схем, контекст ввода `dev` |
 | `crates/ai_core` | слой ИИ, не зависит от конкретной игры: id, срез мира, журнал, инструменты, время, реплеи, транспорт |
 | `crates/shards_script` | без Bevy: формат сценариев, их запуск, разбор условий `--until`, долгая игра агентов (`soak`) и их случайные входы; общий для `shards` и тестов |
@@ -432,14 +434,16 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 `ai_core::display::drawn`. Cargo features у `shards`, `sandbox` и шаблона: `render`
 (окно, 3D, UI, клавиатура и мышь; без неё игра собирается только для `--headless`), `remote` (методы `ai/*`),
 `hot_reload` (по умолчанию все три), `audio` (звук через устройство вывода; песочница и шаблон включают его по умолчанию,
-см. «Звук»), `gamepad`, `wayland`, `dynamic`, `trace_tracy`; у `shards` и шаблона ещё `dist` — сборка для игроков (см. «Сборка для игроков и Windows»).
+см. «Звук»), `gamepad`, `wayland`, `dynamic`, `trace_tracy`; у `shards` и шаблона ещё `dist` — сборка для игроков (см. «Сборка для игроков и Windows»), у `shards` — `steam` и `steam_sdk` (см. «Steam (E10.5)»).
 
 **`shards::run`** — стандартный `main`. Флаги: `--headless | --offscreen --seed N --port N|0 --port-file F --no-remote --paused --hz N
 --replay FILE --verify [--windowed] --check-every N --check-detail components|entities|none --tick-budget-ms MS --frame-budget-ms MS
 --check-content --worldgen-report REGION [--seeds S] --bake-nav [TILES] --smoke TICKS --perf ID`; для фазы C:
 `--host [PORT] | --join ADDR | --stand N [--stand-udp]` (взаимоисключающие, `--stand` только с `--headless`), `--name`,
 `--net-sim SPEC`, `--save-dir DIR`, `--settings-dir DIR | --no-settings`, `--character SLOT`, `--world SLOT` (слот —
-1–32 символа `a-z0-9_-`), `--exit-with-host`. `--host`, `--join` и `--stand` начинают сессию (раздел «Сессия
+1–32 символа `a-z0-9_-`), `--exit-with-host`; для Steam (feature `steam`, см. «Steam (E10.5)»): `--steam-host | --steam-server`,
+`--join steam:<id>`, `--steam-relay-only`, `--steam-app N`, а `+connect_lobby <id>` становится `--join steam:<id>`; игра без
+feature `steam` на них выходит с кодом 2. `--host`, `--join` и `--stand` начинают сессию (раздел «Сессия
 кооператива»); `--stand-udp` вместо стенда в одном процессе запускает хост по UDP и N клиентов дочерними процессами (только
 в реальном времени: с `--paused` выход с кодом 2), опечатка в `--net-sim` — тоже код 2 (`latency=15O` не запускает игру без
 задержки). Занятый порт —
@@ -519,7 +523,8 @@ world, npc, net, save, coop, locale, ui, audio, look, scatter, fx, dev], state: 
   `input_map`, уровни `level`, мир `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`, враги `behavior`,
   `perception`, `director`, `attack_plan`, `npc_tuning` и `nav`, вид мешей `look` (см. «Стилизованные материалы (E10.1)»),
   растительность `scatter` (см. «Растительность и мелкие объекты (E10.2)»), эффекты `effect` и `fx` (см. «Эффекты и декали
-  (E10.3)»). Игра добавляет свои: у песочницы `layout`, у шаблона `arena`.
+  (E10.3)»), с feature `steam` — достижения `achievement` (см. «Steam (E10.5)»). Игра добавляет свои: у песочницы `layout`, у
+  шаблона `arena`.
   `content_list` (инструмент) показывает виды и число определений.
 - `#[serde(deny_unknown_fields)]` на структуре превращает опечатку в ошибку со строкой; без него опечатка в необязательном
   поле молча оставит значение по умолчанию.
@@ -1889,8 +1894,8 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 
 | scope | инструменты |
 |---|---|
-| **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; движение: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; бой: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack; мир: region_info, level_info, nav_path, npc_state; настройки: settings, settings_set (как меню настроек у человека); звук: audio |
-| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset; мир: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; звук: sound_play, music_set; вид мешей: looks, look_outlines; растительность: scatter, scatter_set; эффекты: effects, effect_play, telegraph_decals; меню и консоль разработчика: dev_menu, console |
+| **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; движение: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; бой: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack; мир: region_info, level_info, nav_path, npc_state; настройки: settings, settings_set (как меню настроек у человека); звук: audio; Steam (feature `steam`): steam, steam_invite |
+| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset; мир: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; звук: sound_play, music_set; вид мешей: looks, look_outlines; растительность: scatter, scatter_set; эффекты: effects, effect_play, telegraph_decals; Steam (feature `steam`): steam_host, steam_join, achievement_unlock; меню и консоль разработчика: dev_menu, console |
 
 Игра добавляет свои (в шаблоне `taunt` и условия `arena_cleared`, `foe_near`, `in_fight`, в песочнице условия `boss_phase_2`,
 `boss_dead`, `player_dead`, `three_attacking`). Модули добавляют условия для `step --until named:…`: `near_poi` (мир, появляется
@@ -4370,6 +4375,247 @@ content/fx/sandbox.fx.ron: fx `sandbox`: effects.damaged -> unknown effect `hit_
 телеграфы: общего API пятен (кровь, следы) нет. Декаль проецируется сверху вниз в пределах 0.6 м: на крутом склоне её край бледнеет.
 Проверено на GPU с `--offscreen` (тест `offscreen` в пикселях и снимки песочницы); в окне на дисплее глазами не проверяли.
 
+## Steam (E10.5)
+
+Модуль `shards_steam` даёт игре Steam: кооператив через реле Steam (лобби с приглашениями или игровой сервер), достижения из
+контента и сохранения в Steam Cloud. Он за feature `steam` зонтика и по умолчанию выключен: шаблон и песочница собираются без
+него, и в их `ai/status` модуля `steam` нет. От Steam не зависит ничего, что влияет на геймплей: сессия по реле — та же сессия
+`shards_net`, что по UDP, достижение мир не меняет, копия в облаке — только копия файла на диске.
+
+```toml
+# Cargo.toml игры
+shards = { git = "…", tag = "…", features = ["steam_sdk"] }   # настоящий клиент Steam
+# features = ["steam"] — модуль на поддельном Steam процесса: для тестов игры, без steam_api64.dll
+```
+
+- **`steam`** — модуль, инструменты, контент `achievement`. Steam в нём поддельный (`shards_steam::FakeSteam`: пользователи,
+  лобби, приглашения, реле на `MemoryHub` с его задержкой и потерями, достижения, облако), а игра, которую запустил игрок, отвечает
+  `steam: unavailable: this build has no Steamworks SDK …`.
+- **`steam_sdk`** — ещё и настоящий клиент: `steamworks = "=0.13.1"` (SDK лежит в крейте `steamworks-sys`, качать ничего не
+  нужно), программа импортирует `steam_api64.dll`, и без неё рядом не запустится (`shards package` кладёт её туда). К Steam
+  подключается только запущенная игра (`shards::run`): `--check-content`, `--verify`, `--smoke`, тесты и стенд в одном процессе
+  работают на поддельном Steam. Типов `steamworks` в публичном API нет. Клиент Steam такая игра запускает раньше, чем Bevy
+  создаёт рендер (`shards_steam::SteamClientPlugin` встаёт в `EnginePlugins` сразу за `TaskPoolPlugin`): оверлей Steam
+  (приглашения, всплывающее достижение, Shift+Tab) цепляется к графическому устройству, пока его создают. Порядок плагинов
+  проверяет тест; что оверлей и правда появляется в окне, не проверено.
+
+### Сессия по реле
+
+| флаг | что делает |
+|---|---|
+| `--steam-host` | хост в новом лобби на `max_players` игроков (из `NetDef`), по умолчанию «только друзья». В данных лобби — `game`, `engine` и `host`. Друзей зовут `steam_invite friend=ID` или оверлеем Steam |
+| `--steam-lobby TYPE` | с `--steam-host`: кто видит лобби, как типы лобби Steam. `friends` (по умолчанию: друзья видят и входят), `private` (войти можно только по приглашению), `invisible` (друзья его не видят), `public` (ещё и список лобби Steam). Тип называют журнал (`steam: hosting in lobby … (private: invite only): …`), `steam` (`lobby … (friends only)`) и `ai/status` (`lobby_type`). Без `--steam-host` (в том числе с `--steam-server`) флаг — ошибка разбора |
+| `--steam-server` | хост — анонимный игровой сервер Steam (`127.0.0.1`, порты 27215 и 27216, без аутентификации): без лобби и без пользователя Steam, поэтому идёт рядом с клиентом Steam на той же машине. Это хост, как любой другой: у него свой игрок 0 с телом (выделенного сервера без игрока в `shards_net` нет). Его id (тип 4) называют журнал (`steam: game server logged on as 90071992547409921: players join with --join steam:90071992547409921`), `steam` и `ai/status` |
+| `--join steam:<id>` | id лобби (тип 8) — войти в лобби, хост — его владелец; id игрока или сервера (типы 1, 3, 4) — к хосту напрямую, без лобби. Другой тип — ошибка с его номером |
+| `--join steam:` | ждать приглашения (или `steam_join`) |
+| `+connect_lobby <id>` | так Steam запускает игру в лобби друга; `shards::run` превращает это в `--join steam:<id>` до разбора флагов |
+| `--steam-relay-only` | только реле Steam: прямые маршруты (ICE) выключены |
+| `--steam-app N` | app id игры (`480` — тестовое приложение Valve), когда игру запустил не Steam: ставит `SteamAppId` и `SteamGameId`. `steam_appid.txt` движок не пишет и в пакет не кладёт |
+
+UDP при этом не открывается: транспорт сессии — `ISteamNetworkingMessages`, канал 0, ненадёжные сообщения без Nagle с
+перезапуском оборванной сессии; надёжность, порядок и блобы, как и по UDP, — у канального слоя `shards_net`, а `--net-sim`
+работает поверх реле. Сессию реле принимают только у тех, кто может играть: хост лобби — у участников лобби, игровой сервер —
+у всех, кто знает его id (дальше решают правила входа сессии), клиент — только у своего хоста. Отказ попадает в журнал
+(`steam: refused a relay session from intruder (76561197960265731): not in lobby 109775240917319681`) один раз на пира, а
+счёт — в `steam`. Строка готовности называет сессию: `role host · net steam lobby`, `role host · net steam game server`,
+`role client · net steam:109775240917319681`.
+
+Если сессия не открылась: хост пишет `steam: cannot host: …` (`NetState::Ended`; хост лобби пробует снова инструментом
+`steam_host`), с `--exit-with-host` — код 2. Клиент, который не вошёл в лобби (его нет, оно полное), пишет
+причину и ждёт другого (`steam_join`, приглашение); без Steam его сессия кончается (`NetState::Ended`), с `--exit-with-host` — код 2
+(так ведёт себя и игра с feature `steam`, но без SDK, запущенная Steam с `+connect_lobby`). Приглашение, пришедшее игре
+в сессии, не уводит её: `steam` показывает его строкой `invite not followed`. Игра без feature `steam` на флаги Steam отвечает
+кодом 2 и говорит, какую feature включить; `+connect_lobby` она не знает вовсе, и отвечает разбор флагов (clap): `error:
+unexpected argument '+connect_lobby' found`, тоже код 2.
+
+Если обработчик колбэка Steam падает (паника), колбэки Steam останавливаются до конца запуска: замок внутри `steamworks` после
+неё отравлен. Журнал пишет одну строку `error` (`steam: a Steam callback panicked (…), so Steam's callbacks stop for this run:
+lobbies, invites, relay sessions and achievement stores no longer answer; restart the game`), `steam` — строку `problem: …`,
+`ai/status` — то же в `note`. Хост, который ждал лобби, и клиент, который входил в лобби, ответа не получат и сразу пишут `cannot
+host` или ошибку входа; `steam_host` и `steam_join` отвечают той же причиной. Отчёта о падении нет: паника поймана. Колбэки,
+разбор которых в `steamworks` 0.13 может упасть на значении от Steam (код `EResult`, которого нет в его таблице, несколько битов
+смены участника лобби), движок читает сам, как числа.
+
+### Достижения
+
+Контент `*.achievement.ron`. Имя и описание — сообщения Fluent (`@ach-…`), игрок читает их на своём языке:
+
+```ron
+{
+    "first_blood": (steam: "ACH_FIRST_BLOOD", name: "@ach-first-blood", description: "@ach-first-blood-desc"),
+    "warden_down": (steam: "ACH_WARDEN", name: "@ach-warden", description: "@ach-warden-desc", hidden: true),
+}
+```
+
+- `steam` — имя API в Steamworks (буквы, цифры, `_`, до 128); одно имя — одно достижение. `hidden` — Steam показывает его только
+  открытым. Проверка контента называет пустое или неверное имя API, его повтор, текст вместо сообщения и сообщение, которого нет
+  в каком-то языке (с `did you mean`).
+- Открывает игра там, где решает её симуляция: `commands.trigger(UnlockAchievement::everyone("first_blood"))` (или
+  `UnlockAchievement::player(id, n)` — одному игроку) или `shards::steam::unlock_achievement(world, id)` — игроку этой машины.
+  В кооперативе событие идёт от хоста клиентам, и каждая машина открывает достижение своему игроку на своём аккаунте; клиент
+  сам не открывает (`unlock_achievement` и инструмент отвечают ему ошибкой). Во время реплея не открывается ничего.
+- Steam узнаёт об открытии сразу, а запись (`StoreStats`, после неё оверлей показывает достижение) идёт через секунду после первого
+  открытия, одна на несколько, и на выходе. Запись, от которой Steam отказался, повторяется через секунду и на выходе (журнал
+  предупреждает один раз на причину). Достижение, которое Steam уже знает с прошлого запуска, не пишется заново.
+- Это не состояние симуляции: в журнале строка `local` (`achievement unlocked: First blood (first_blood)`), ресурс
+  `Achievements` — запись этого запуска (есть и без Steam), ни в хэше реплея, ни в снапшоте их нет.
+
+### Облако
+
+Каждое записанное сохранение (новый основной файл слота, событие `shards_save::SaveWritten`) копируется в Steam Cloud как
+`<папка сохранений>/<вид>/<слот>.save`, например `saves/world/slot1.save`; копии `.bak`, `.tmp` и `.damaged` — никогда. При
+запуске, в `PreStartup`, до того как `--world` и `--character` загрузят слот, каждая копия облака сверяется с файлом на диске:
+
+| случай | что происходит |
+|---|---|
+| одинаковые байты | ничего |
+| копия облака новее больше чем на 2 с (или файла нет) | она становится сохранением, старое — первой копией (`slot1.save.bak1`) |
+| файл на диске новее | он уходит в облако |
+| ни один не новее явно | файл на диске остаётся, копия облака ложится рядом слотом `<слот>-cloud`, журнал (`warn`) говорит об этом; облако получает файл с диска |
+| копия облака битая | не берётся; хороший файл на диске чинит её |
+| копия облака из более новой версии игры (формат `shards-save/2` или секция новее этой сборки) | не берётся и не перезаписывается: в этом запуске в этот слот облака ничего не копируется, даже новое сохранение. Журнал (`warn`): `steam: the cloud copy of world/slot1 is from a newer version of the game (…): this build neither takes it nor overwrites it, …`; `steam`: `at startup from a newer version of the game, left alone: world/slot1` |
+| файл на диске из более новой версии игры | копия облака не ложится поверх него, как не легло бы сохранение (`steam: the cloud copy of world/slot1 was not taken: world/slot1 was saved by a newer version …`) |
+| сохранение есть только на диске | уходит в облако (кроме слотов `…-cloud`) |
+
+Копия облака ложится на диск той же записью, что сохранение (`write_guarded`): слот, в котором лежит сохранение более новой
+версии (основной файл или его копия), она не трогает. Пока проигрывается реплей, облако не сверяется и не пишется (`cloud: off
+(not used while a replay plays: the saves on this machine stay as they are)`): сохранения на диске остаются как есть.
+
+Файлы на диске остаются правдой: копия, которую облако не приняло (квота, Steam Cloud выключен), ничего здесь не меняет, а
+`steam` говорит почему. Файл уходит в облако одним вызовом `ISteamRemoteStorage::FileWrite` (целиком или никак, до 100 МБ), и
+его ответ проверяется. Когда не хватает квоты, ошибка говорит, сколько места: `Steam Cloud has 105 B free of 4 KB; this save is
+540 B` (место, которое освобождает заменяемый файл, считается свободным; как это считает Steam, не описано). Строка `cloud`
+в `steam` показывает свободное место: `cloud: on · 3 saves copied as they were written · 2 KB free of 4 KB`.
+
+На выходе хук Steam идёт после хуков сессии и сохранений. Сначала уходят в облако копии того, что записали они (персонаж, которого
+хост возвращает уходящему клиенту, отложенные автосохранения), потом пишутся достижения, закрываются сессии реле с пирами
+(`CloseSessionWithUser`; пир видит `the relay session with … failed: closed by the peer`) и игра выходит из лобби. Сам Steam
+(`SteamAPI_Shutdown`) закрывается, когда уходит мир игры с последним объектом `steamworks` в нём. Порядок проверен на поддельном
+Steam.
+
+### Для агента
+
+```text
+$ shards act steam          # хост лобби (тест tools.rs: поддельный Steam, клиент c1, 20 мс в одну сторону)
+steam: a fake Steam in this process (this run does not talk to Steam) · user host (76561197960265729)
+session: host · lobby 109775240917319681 (friends only), host host (76561197960265729) · 2 in it: host (76561197960265729), c1 (76561197960265730)
+relay: ready (fake: an in-process hub) · sent 36 (5.5 KB), received 37 (3.2 KB)
+route to c1 (76561197960265730): connected · relayed via fake · ping 40 ms
+achievements: 2 defined, 1 unlocked in this run: first_blood (First blood) at tick 30 · stored on Steam 0 times, a store waits
+cloud: on · 0 saves copied as they were written
+$ shards --peer c1 act steam
+steam: a fake Steam in this process (this run does not talk to Steam) · user c1 (76561197960265730)
+session: client · lobby 109775240917319681, host host (76561197960265729) · 2 in it: host (76561197960265729), c1 (76561197960265730)
+relay: ready (fake: an in-process hub) · sent 39 (3.4 KB), received 34 (5.2 KB)
+route to host (76561197960265729): connected · relayed via fake · ping 40 ms
+achievements: 2 defined, 1 unlocked in this run: first_blood (First blood) at tick 41 · stored on Steam 0 times, a store waits
+cloud: on · 0 saves copied as they were written
+```
+
+У игрового сервера первая строка `steam: an anonymous Steam game server · id 90071992547409921 · app 480`, вторая `session: game
+server · serving as 90071992547409921: players join with --join steam:90071992547409921`; строка `route to` у настоящего Steam
+берётся из `GetSessionConnectionInfo`: `connected · relayed via <pop> · ping 16 ms` (`<pop>` — код дата-центра реле, `direct` — без
+реле).
+
+- `steam` (Player, query) — кто эта машина в Steam (клиент Steam как игрок, анонимный игровой сервер, подделка этого процесса или
+  «недоступен» с причиной), строка `problem:`, если колбэки Steam остановились, сессия (у хоста лобби — и тип лобби), реле (что
+  ушло и пришло, ошибки отправки, отказанные сессии, `relay only`), маршрут до каждого пира, приглашения, которым игра не
+  последовала, достижения этого запуска и записи в Steam, облако (свободное место, что сделано при запуске, последняя ошибка).
+- `steam_host` (Dev, control) — хост лобби создаёт лобби заново после сбоя; сервер говорит, вошёл ли он. Запущенная игра хостом
+  не становится: только флагами.
+- `steam_join lobby=ID` или `host=ID` (Dev, control) — клиент, запущенный с `--join steam:` или не вошедший в свою сессию, входит в
+  лобби или к хосту. Игра в сессии её не меняет.
+- `steam_invite friend=ID` (Player, control) — пригласить друга в лобби; без `friend` открывается окно приглашений оверлея.
+- `achievement_unlock id=… [player=N]` (Dev, control, только хост) — открыть, как открыла бы игра; на хосте событие уходит и
+  клиентам.
+- `ai/status` — поле `steam`: `kind`, `user`, `note` (почему Steam нет или почему его колбэки остановились), `role`, `lobby`,
+  `lobby_type` (`friends`, `private`, `invisible`, `public`; только у хоста лобби), `host`, `members`, `relay` (`sent`,
+  `received`, `errors`, `relay_only`, `routes`: `peer`, `state`, `relayed`, `pop`, `ping_ms`), `achievements`, `cloud`. Меню
+  разработчика — раздел `steam`: `steam`, `steam_invite`, `steam_join`, `achievement_unlock`.
+
+### Что проверено на настоящем Steam
+
+Один раз, 2026-10-16, на тестовом приложении 480 с одним аккаунтом, сборкой этой ветки до исправлений ниже (песочница с
+`steam_sdk`, обе игры на одной машине):
+
+- игровой сервер (`--steam-server --steam-relay-only`) и игрок, вошедший к нему по id (`--join steam:<id сервера>
+  --steam-relay-only`), — только через реле: `route to …: connected · relayed via <pop> · ping 16 ms` у клиента и 17 мс у сервера,
+  клиент — игрок 1, рассинхронов 0, после приказа двигаться на клиенте обе машины видят тело в одной точке;
+- достижение, открытое на сервере (`achievement_unlock`), ушло клиенту, тот открыл его своему аккаунту и записал (`stored on Steam
+  1 times`), и Steam показал его открытым на аккаунте;
+- копию облака, которая не сохранение, игра при запуске не берёт (`the cloud copy of … is not used (no header …)`);
+- у приложения 480 квота Steam Cloud — 4 КБ на всё, и свободно было около 100 байт: ни одна копия сохранения не легла. Отсюда
+  сообщение о квоте выше: прежнее (`other error (quota, or Steam Cloud off)`) причину не называло.
+
+Второй раз, в тот же день, — сборкой с исправлениями ниже (запись в облако одним `FileWrite`, сообщение о квоте, закрытие
+сессий реле и порядок на выходе, тип лобби, запуск клиента Steam до рендера, свои разборщики колбэков):
+
+- хост с `--steam-host --steam-lobby private`: Steam создал лобби, `steam` пишет `lobby <id> (private: invite only)`, журнал —
+  `hosting in lobby <id> (private: invite only): players come in only through an invite (steam_invite)`, `ai/status` —
+  `"lobby_type": "private"`; войти в него вторым аккаунтом не пробовали (его нет);
+- копия сохранения в облако при 105 свободных байтах: `the cloud copy of world/cloud1 was not written: Steam Cloud has 105 B
+  free of 4 KB; this save is 292 B; the save on this machine is fine`, сохранение на диске на месте; на выходе — те же строки
+  для копий, которые делают хуки выхода;
+- достижение на хосте лобби открыто и на выходе записано: Steam показал его открытым на аккаунте;
+- игровой сервер и игрок по id снова только через реле: `relayed via <pop> · ping 18 ms`, рассинхронов 0, тело в одной точке на
+  обеих машинах; сервер видит выход клиента (`p1 left (quit)`).
+
+На выходе клиента `steam_api` и после исправлений печатает `ipcclient.cpp (98) : !"Invalid pipe handle specified"` и
+`IPC call to IClientNetworkingUtilsSerialized::PostConnectionStateMsg failed to read result code` — уже после последней строки
+игры, когда сессии закрыты. То же печатает программа, которая только подключается к Steam через реле и ничего не закрывает:
+это сообщение самой библиотеки Steam при выходе процесса, игре и серверу оно не мешает. Не проверены в окне: оверлей
+(приглашения, всплывающее достижение) и то, что клиент Steam теперь запускается до рендера.
+
+### Что проверено только подделкой
+
+Тесты (`crates/shards_steam/tests/steam/`, юнит-тесты в `src/`) идут на `FakeSteam`: лобби, хост и два друга по реле стенда,
+тип лобби, игровой сервер и игрок, вошедший по id, приглашение, отказ чужому (хосту и клиенту), неудачный вход (нет лобби, свой
+же id, id не того типа, `--exit-with-host` с кодом 2) и вход после него через `steam_join` (в лобби и к серверу), лобби, которое
+Steam не создал (и `steam_host` после), сервер, который не вошёл в Steam, игра без Steam (хост и клиент), колбэки, которые упали,
+выход (копии в облако, закрытые сессии, выход из лобби — в этом порядке), достижения (проверка контента, запись через секунду,
+прошлый запуск, имя, которого Steam не знает, реплей, кооператив), облако (копия каждой записи, выключенное облако, сверка при
+запуске до загрузки слота, копии из более новой версии, реплей, квота), ответы инструментов и `ai/status`. Правил входа в лобби
+разных типов подделка не знает: что в `private` входят только по приглашению, а `invisible` не видно друзьям, — поведение Steam
+по его документации, движок только передаёт тип. Настоящий бэкенд (`src/real.rs`) в тестах только собирается и проходит clippy
+(`cargo clippy -p shards_steam --all-targets --features sdk`). Только у настоящего Steam проверяются: лобби любого типа и вход в
+него, `+connect_lobby`, оверлей (приглашения, всплывающее достижение) в окне, запись в Steam Cloud у приложения, где хватает
+квоты, а также приёмка ТЗ «два игрока соединяются через Steam relay» на двух машинах.
+
+**Ручная проверка на одной машине с одним аккаунтом** (клиент Steam запущен и вошёл; тестовое приложение 480; игра собрана с
+`steam_sdk`, например песочница с `--features shards/steam_sdk`):
+
+```bash
+# 1. Хост — анонимный игровой сервер, только реле:
+cargo run -p sandbox --features shards/steam_sdk -- --headless --steam-server --steam-app 480 --steam-relay-only --port 0 --port-file /tmp/srv.port &
+SHARDS_PORT_FILE=/tmp/srv.port cargo shards act steam    # строка 1: id сервера, 9007…
+# 2. Клиент — пользователь Steam, по id сервера:
+cargo run -p sandbox --features shards/steam_sdk -- --headless --join steam:<id сервера> --steam-app 480 --steam-relay-only --port 0 --port-file /tmp/cli.port &
+SHARDS_PORT_FILE=/tmp/cli.port cargo shards act steam    # route to …: connected · relayed via <код> · ping N ms
+SHARDS_PORT_FILE=/tmp/cli.port cargo shards status       # net: connected, player 1
+SHARDS_PORT_FILE=/tmp/cli.port cargo shards quit; SHARDS_PORT_FILE=/tmp/srv.port cargo shards quit
+# 3. Облако — одиночная игра (игрок Steam): копия сохранения и место в облаке.
+cargo run -p sandbox --features shards/steam_sdk -- --headless --steam-app 480 --port 0 --port-file /tmp/one.port &
+SHARDS_PORT_FILE=/tmp/one.port cargo shards act save_game what=world slot=cloud1
+SHARDS_PORT_FILE=/tmp/one.port cargo shards act steam    # cloud: on · 1 saves copied … · N B free of 4 KB
+#    или, если места нет: … · the last copy failed: saves/world/cloud1.save: Steam Cloud has N B free of 4 KB; this save is M KB
+SHARDS_PORT_FILE=/tmp/one.port cargo shards quit
+# 4. Лобби, в которое входят только по приглашению (войти в своё же лобби нельзя: для входа нужен второй аккаунт):
+cargo run -p sandbox --features shards/steam_sdk -- --headless --steam-host --steam-lobby private --steam-app 480 --port 0 --port-file /tmp/host.port &
+SHARDS_PORT_FILE=/tmp/host.port cargo shards act steam   # session: host · lobby <id> (private: invite only), host <имя> (<id>) · 1 in it: …
+SHARDS_PORT_FILE=/tmp/host.port cargo shards quit
+```
+
+С двумя аккаунтами на двух машинах — лобби: на первой `--steam-host --steam-app 480` (или с `--steam-lobby private`), `shards act
+steam` даёт id лобби; на второй `--join steam:<лобби> --steam-app 480` (или `shards act steam_invite friend=<id второго>` на первой
+и «Принять» в оверлее второй), затем `shards act steam` на обеих: `lobby …, host …`, `route to …: connected`. Достижения
+проверяются только у приложения со своими достижениями в Steamworks: у 480 их имена другие (`ACH_WIN_ONE_GAME` и соседние).
+
+**Чего нет.** Тип лобби задаётся только при запуске (`--steam-lobby`); поиска лобби и списка серверов нет. Голосового чата,
+статистик (кроме достижений), мастерской и rich presence нет (приглашение через rich presence Steam не приходит: `steamworks` 0.13
+падает на его разборе, поэтому обработчик не ставится). Сессия меняется только перезапуском: запущенная игра не становится хостом
+и не уходит в другое лобби.
+Пакет для Linux кладёт `libsteam_api.so` рядом, но программе нужен ещё `rpath=$ORIGIN` (не задан).
+
 ## Сборка для игроков и Windows (E10.6)
 
 `shards package` собирает игру для игроков и проверяет сборку так, как её запустит чужая машина. Запущенная игра не нужна.
@@ -4400,12 +4646,16 @@ writes: nothing in its own folder
   сам пишет из неё ресурс `.res` и отдаёт его линкеру. Шаблон с `dist` собирается с `windows_subsystem = "windows"`, так что
   окно консоли рядом с игрой не открывается. Если игру запустили из терминала, `shards::run` пишет в него (`--check-content`,
   `--help`, ошибки).
-- **Папка** `dist/<имя>-<версия>-<ОС>-<арх>/` рядом с `Cargo.toml` игры: программа и копия `assets/`. Их она заменяет,
+- **Папка** `dist/<имя>-<версия>-<ОС>-<арх>/` рядом с `Cargo.toml` игры: программа и копия `assets/`. Библиотека Steamworks SDK
+  у игры с `steam_sdk` (`steam_api64.dll`, `libsteam_api.so`, `libsteam_api.dylib`: копия, которую build-скрипт `steamworks-sys`
+  кладёт в свою папку) ложится рядом с программой; других библиотек, которые линкуют build-скрипты, в пакете нет (ALSA и udev,
+  которые на Linux находит pkg-config, у игрока свои). `steam_appid.txt` из папки удаляется: игру игрока запускает Steam с её
+  app id. Их она заменяет,
   остальное в папке не трогает. Другое место задаёт `--out DIR`. Ссылку (symlink, junction) в `assets/` и саму `assets/`,
   если это ссылка, команда не копирует, а отказывает: в пакет попало бы то, на что она указывает.
 - **Проверки** (`--no-check` их пропускает):
-  - на Windows — таблица импорта программы: только DLL системы, без `vcruntime*` и `msvcp*` и без DLL, которой нет в `System32`;
-    плюс подсистема программы;
+  - на Windows — таблица импорта программы: только DLL системы (или лежащие рядом с программой, как `steam_api64.dll`), без
+    `vcruntime*` и `msvcp*` и без DLL, которой нет ни в `System32`, ни рядом; плюс подсистема программы;
   - копию папки кладут во временную папку и запускают с окружением как у игрока: только системные переменные, `PATH` — это
     `System32`, нет ни cargo, ни `BEVY_ASSET_ROOT`. Там `--check-content` и `--smoke 300` (`--smoke-ticks N`) должны выйти с
     кодом 0, а программа не должна ничего менять в своей папке (ни писать, ни удалять). Запуск дольше 5 минут прерывается вместе со всем, что
@@ -4445,8 +4695,8 @@ cannot be checked here)`. Процесс, который жив после `--ti
 
 **Ограничения.**
 - Реплеи, снимки, снапшоты и сохранения игра пишет в рабочую папку, а при запуске из Проводника это папка игры. В
-  `C:\Program Files` писать нельзя, поэтому пока ставьте игру туда, где запись разрешена. Папка данных игрока и облачные
-  сохранения Steam появятся на этапе Steam (E10.5). Отчёт о падении, если в рабочую папку писать нельзя, уже идёт в папку игрока
+  `C:\Program Files` писать нельзя, поэтому пока ставьте игру туда, где запись разрешена. Папки данных игрока ещё нет; копии
+  сохранений в Steam Cloud делает модуль Steam (см. «Steam (E10.5)»). Отчёт о падении, если в рабочую папку писать нельзя, уже идёт в папку игрока
   (см. «Отчёт о падении»).
 - На настоящей чистой Windows (VM) сборку не запускали: проверка выше это лишь приближение.
 - Детерминизм между Windows и Linux на x86_64 проверен прогоном, но на одной машине: `sin`, `exp`, `powf` и остальные идут через
@@ -4666,6 +4916,7 @@ cargo test --manifest-path template/Cargo.toml # шаблон отдельно: 
 | `shards_look` | вид меша: свой `Look`, предка, имя материала glTF; материал из исходного (цвет и прозрачность, свечение, `unlit`), пресеты `extends` и их ошибки, плоская копия и контур (слои, прозрачные материалы и морф-таргеты без контура), горячая перезагрузка и ассеты, изменённые на месте, без картинки ничего не стилизуется; картинка на GPU (`#[ignore]`): полосы и контур в пикселях |
 | `shards_scatter` | раскладка: одно зерно — одни точки, `spacing`, `graphics.foliage` оставляет начало того же списка, земля, крутизна, полоса высот и `clearance`; проверка контента называет каждую ошибку; в игре без картинки ничего, на каждом тайле тестового региона, не на колонне, не в стене, одинаково в двух запусках; пакеты (два меша на тысячи сущностей), `VisibilityRange` уровней, тени; `graphics.foliage`, `scatter_set` и меню разработчика, правка контента и смена региона (без предупреждения B0004); картинка на GPU (`#[ignore]`): трава зелёная в пикселях, выключенная и дальше последнего уровня не рисуется |
 | `shards_fx` | эффекты и таблица в контенте и их ошибки (пул меньше одного запуска, событие с опечаткой, вторая таблица), инструменты, меню и статус без картинки; пулы мешей из контента (один меш и материал на эффект), запуск, переполнение пула (старые уступают), часы симуляции (пауза замораживает, `step` двигает), `rate` и `duration`, эффекты событий (на стороне удара), меток и `PlayEffect`; декаль на зону (круг, сектор), заливка растёт к удару, цвет врага и союзника, гизмо отдают заливку, `DepthPrepass` камере и обратно; картинка на GPU (`#[ignore]`): декаль красит пол только в зоне, частицы светятся там, где играют |
+| `shards_steam` | на поддельном Steam: лобби и приглашения, сессии реле (удержанные датаграммы, отказ, задержка хаба), игровой сервер, достижения и облако подделки, адреса `steam:` и `+connect_lobby`, сверка облака и имена его файлов; `tests/steam/`: хост лобби и два друга по реле стенда, игровой сервер и клиент по id, приглашение, отказ чужому, неудачный вход и `--exit-with-host`, проверка контента достижений, запись в Steam через секунду и повтор отказанной записи, прошлый запуск, реплей, кооператив (хост решает, каждый открывает себе), копия каждой записи, выключенное облако, сверка при запуске до загрузки слота, ответы `steam` и `ai/status`. Настоящий бэкенд только собирается (`--features sdk`) |
 | `shards_net` | `src/`: без Bevy — транспорты (хаб в памяти, UDP), имитация связи, канал (надёжные и последние сообщения, блобы, подтверждения, RTT, потери, тайм-ауты), формат датаграмм; сессия (пределы кадров ввода и самого большого честного пакета, удерживаемое после мира заново, правила репликации, ожидание места в канале по числу и байтам, `NetDef`, ушедшие токены). Сессия целиком — в тестах песочницы `net*.rs` |
 | `shards` | сведение сети и сохранений (`coop`: что хост знает о персонаже игрока, как он едет текстом), секции движка (число, какого не бывает у тела), слот стенда, реплей со снапшота (`--verify`: тот же результат, код 2 для чужого снапшота), режим без окна — те же плагины и картинки нет (`display` и подсказка `shot`), `--offscreen` — плагины окна без окна (картинка для `shot`, в неё рисуют камеры, нацеленные на окно, и после смены цели), тестовое приложение, `testing::ok` на сбое геймплея, `testing::run_to` и `verify`, когда нарушенное правило совпало с началом загрузки, бюджет тика в командной строке, время кадра (`frames`: кадр — более медленный из двух миров, кадр с `step` не в счёт, отчёт GPU), автотест (`bench`: вердикты, проверка определения, `--perf` и его коды), `counts` без окна, анимационный мост на настоящей модели со скином |
 | `sandbox` | в одном бинарнике `tests/sandbox`: снапшоты (`snapshots.rs`: состояние после загрузки то же, что в исходной сессии, на перекате, комбо, телеграфе, планировании, плавании, флаконе, боях NPC и в сгенерированном регионе), тайл руины (`tiles.rs`: файл из тестового генератора glTF совпадает с закоммиченным), сценарии (`scenario_files`: каждый файл на свежей игре, все подряд в одной игре, бой-прототип после шести разных пауз), эталонные реплеи, действия, контент, полоса препятствий, детерминизм, видимость, права scope, реплеи, `kill` и SIGHUP; инварианты (`invariants.rs`: правила песочницы и их границы, сессии, остановка в реальном времени, реплей нарушения, снапшот; `net_seams.rs`: клиент правил не проверяет); кооператив на стенде (`net.rs`, `net_guards.rs`, `net_lifecycle.rs`, `net_sync.rs`, `net_predict.rs`, `net_seams.rs`, `net_coop.rs`, из них 2 замера под `#[ignore]`: вход и уход, пределы и текст пира, мир заново, ввод, рассинхрон, конец сессии и коды выхода, часы стенда, UDP на loopback, предсказание клиента, персонажи и сохранения); долгая игра (`soak.rs`: две минуты хоста и двух клиентов на 150 мс и 2 % со сменой региона и сохранениями, полчаса — под `#[ignore]`); снимок без окна (`offscreen.rs`, `#[ignore]`: нужен GPU или программный рендер); отдельно `system_failures` (сбой геймплея, краш-реплей, отчёт о падении, паника в другом потоке, `crash_report`, возврат снапшотом после сбоя), `log_capture` (строки лога в `step`) и `perf` (время тика: бюджет, журнал, `ai/status`; автотест на эталонной сцене без окна, с `offscreen` — под `#[ignore]`): у них свои процессы |
@@ -4721,7 +4972,12 @@ NPC в `shards_dev` и `shards_npc`, `path_to` и `clearance` по навсет�
 1. **Фаза E — платформа (E10):** стилизованные материалы (раздел «Стилизованные материалы (E10.1)»), растительность с уровнями
    детализации (раздел «Растительность и мелкие объекты (E10.2)»), эффекты и декали (раздел «Эффекты и декали (E10.3)»), бюджеты
    и автотест производительности, обработчик падений и скриншоты без окна уже есть. Сборка под Windows тоже есть
-   (`shards package`, раздел «Сборка для игроков и Windows»); не хватает запуска на настоящей чистой машине. Впереди Steam.
+   (`shards package`, раздел «Сборка для игроков и Windows»); не хватает запуска на настоящей чистой машине. Математика
+   симуляции идёт через `libm`, одну на все ОС x86_64 (раздел «Время и детерминизм»): Windows и Linux записывают эталонные
+   реплеи побайтово одинаково и проверяют записи друг друга.
+   Steam (раздел «Steam (E10.5)») проверен на поддельном Steam процесса, а на настоящем — игровой сервер и игрок по реле и
+   достижения (тестовое приложение, один аккаунт, одна машина); вход в лобби вторым аккаунтом, оверлей и удачная запись в
+   облако — ещё нет.
 2. **Остатки фазы B:** стриминг геометрии тайлов для физики (сейчас по расстоянию грузится только картинка), навсетка под
    несколько тел.
 3. Горячая перезагрузка кода (`--features dynamic`, subsecond).

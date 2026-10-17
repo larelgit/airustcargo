@@ -97,8 +97,14 @@ impl PluginGroup for EnginePlugins {
         if config.embedded {
             group = group.add(EmbeddedLogCapture);
         }
+        // A played game on the Steam client starts it before the renderer exists: Steam's overlay
+        // hooks the graphics device as it is made (the module itself comes with the others below).
+        #[cfg(feature = "steam")]
+        if config.steam.connect {
+            group = group.add_after::<bevy::app::TaskPoolPlugin>(shards_steam::SteamClientPlugin::new(&config));
+        }
         // The engine's modules, in dependency order. A new module is one more line.
-        group
+        let group = group
             .add(config.ai_core_plugin())
             .add(CorePlugin { config: config.clone() })
             .add(ContentPlugin)
@@ -132,7 +138,11 @@ impl PluginGroup for EnginePlugins {
             // Scatter: foliage and small props strewn over the tiles, drawn in batches, by distance.
             .add(ScatterPlugin)
             // Effects: particles from content in pools, the telegraphs on the ground as decals.
-            .add(FxPlugin)
+            .add(FxPlugin);
+        // Steam (feature `steam`): lobbies, the relay as a transport, achievements, cloud saves.
+        #[cfg(feature = "steam")]
+        let group = group.add(shards_steam::SteamPlugin);
+        group
             // Performance: the `perf` content kind (`--perf`), `counts` and `frames` in `ai/status`.
             .add(crate::bench::PerfPlugin)
             // The developer menu and console, last: every module above has added its entries.
@@ -297,5 +307,36 @@ mod tests {
         let absolute = cwd.join("elsewhere").display().to_string();
         assert_eq!(resolve_asset_path(&absolute, Some("crates/sandbox"), &cwd), absolute);
         assert_eq!(resolve_asset_path(&absolute, None, &cwd), absolute);
+    }
+
+    /// A game played on Steam (`connect`) starts it right after the task pools, before the assets
+    /// and the renderer after them, and the module takes that Steam. Without the SDK (never run
+    /// with it: a test does not talk to Steam) there is none, and the game says why.
+    #[cfg(all(feature = "steam", not(feature = "steam_sdk")))]
+    #[test]
+    fn a_game_played_on_steam_starts_it_before_the_renderer() {
+        #[derive(Resource)]
+        struct BuiltBefore {
+            task_pools: bool,
+            assets: bool,
+        }
+        struct Probe;
+        impl Plugin for Probe {
+            fn build(&self, app: &mut App) {
+                let task_pools = app.is_plugin_added::<bevy::app::TaskPoolPlugin>();
+                let assets = app.is_plugin_added::<AssetPlugin>();
+                app.insert_resource(BuiltBefore { task_pools, assets });
+            }
+        }
+        let config = EngineConfig { steam: shards_core::SteamLaunch { connect: true, ..default() }, ..crate::testing::config() };
+        let mut app = App::new();
+        app.add_plugins(EnginePlugins::new(config).build().add_after::<shards_steam::SteamClientPlugin>(Probe));
+        let seen = app.world().resource::<BuiltBefore>();
+        assert!(seen.task_pools && !seen.assets, "after the task pools, before the assets (and the renderer after them)");
+        app.finish();
+        app.cleanup();
+        app.update();
+        let steam = app.world().resource::<shards_steam::Steam>();
+        assert_eq!((steam.kind(), steam.unavailable().as_deref()), ("none", Some(shards_steam::NO_SDK)));
     }
 }
