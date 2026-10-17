@@ -1284,8 +1284,17 @@ pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
         from => format!("replay started: ticks {from} to {end}, from a snapshot"),
     };
     journal::log(world, JournalKind::Sim, text);
+    // Before any frame or tick: modules ask for what the recording will need, and hold the gate.
+    let hooks = world.get_resource::<PlaybackHooks>().map(|h| h.0.clone()).unwrap_or_default();
+    for hook in hooks {
+        hook(world);
+    }
     Ok(())
 }
+
+/// What modules run when a playback is armed ([`AiAppExt::add_playback_hook`](crate::AiAppExt::add_playback_hook)).
+#[derive(Resource, Default, Clone)]
+pub(crate) struct PlaybackHooks(pub(crate) Vec<fn(&mut World)>);
 
 /// Applies the calls due after the current tick and queues its inputs; at the end
 /// of the recording, compares the final state and finishes. Runs before every tick
@@ -1813,6 +1822,31 @@ mod tests {
         assert!(!state.is_playing(), "the action interrupted the playback");
         assert_eq!(state.report().and_then(|r| r.interrupted.as_deref()), Some("dev took over (teleport)"));
         assert_eq!(state.recorded_events(), 0, "and nothing was recorded");
+    }
+
+    /// A hook sees the recording as the playback is armed, and what it holds the gate for keeps
+    /// the ticks until it lets go: in a game that had loaded already, too.
+    #[test]
+    fn a_playback_hook_runs_as_the_playback_is_armed_and_its_hold_keeps_the_ticks() {
+        fn ask(world: &mut World) {
+            let end = world.resource::<AiReplay>().playing().map_or(0, |r| r.end.tick);
+            world.resource_mut::<crate::SimGate>().hold("files", format!("what ticks to {end} need"));
+        }
+        let mut original = game();
+        turn_and_run(&mut original, 3, 30);
+        let recording = save(original.world());
+        let mut app = game();
+        crate::AiAppExt::add_playback_hook(&mut app, ask);
+        play(app.world_mut(), recording).unwrap();
+        let held = sim::step(app.world_mut(), 5, std::time::Duration::from_secs(5), |_| None).unwrap_err();
+        assert!(held.contains("files: what ticks to 30 need"), "{held}");
+        assert_eq!(sim::tick(app.world()), 0);
+
+        app.world_mut().resource_mut::<crate::SimGate>().release("files");
+        sim::step(app.world_mut(), 30, std::time::Duration::from_secs(5), |_| None).unwrap();
+        app.update();
+        let report = app.world().resource::<AiReplay>().report().cloned().expect("finished");
+        assert!(report.identical(), "{report}");
     }
 
     #[derive(Component)]

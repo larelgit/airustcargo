@@ -340,6 +340,13 @@ pub trait AiAppExt {
     /// without placed levels hashes as one without the module).
     fn add_optional_replay_check(&mut self, name: &str, check: fn(&World) -> Option<u64>) -> &mut Self;
 
+    /// Runs `hook` when a playback is armed ([`replay::play`]), before its first frame or tick:
+    /// a module asks for what the recording will need and the game has not loaded (the files its
+    /// content edits name, [`AiReplay::playing`]) and holds [`SimGate`] under the name of its
+    /// loading requirement while they load. The start snapshot goes in, and the first tick runs,
+    /// once the gate lets go, also in a game that had loaded before the playback was armed.
+    fn add_playback_hook(&mut self, hook: fn(&mut World)) -> &mut Self;
+
     /// Adds field `key` to `ai/status` (`shards status`), computed on every call, e.g.
     /// the engine's version and modules. A second field with the same key replaces
     /// the first.
@@ -485,6 +492,11 @@ impl AiAppExt for App {
 
     fn add_optional_replay_check(&mut self, name: &str, check: fn(&World) -> Option<u64>) -> &mut Self {
         self.world_mut().get_resource_or_init::<replay::ReplayHashing>().add_optional_check(name, check);
+        self
+    }
+
+    fn add_playback_hook(&mut self, hook: fn(&mut World)) -> &mut Self {
+        self.world_mut().get_resource_or_init::<replay::PlaybackHooks>().0.push(hook);
         self
     }
 
