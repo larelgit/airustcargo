@@ -100,6 +100,14 @@ fn a_player_waiting_for_an_invite_follows_it_and_a_busy_one_keeps_it() {
     let out = stand.call(0, "steam_invite", serde_json::json!({ "friend": SECOND_USER }));
     assert!(out.ok, "{}", out.result);
     assert_eq!(text(&out), format!("invited c1 ({SECOND_USER}) to lobby {lobby}"));
+    // The client takes the invite at one frame and enters the lobby at a later one, while its content
+    // may still be loading; `settle` has nothing to wait for until the client has a transport.
+    let started = std::time::Instant::now();
+    while !matches!(session(stand.world(member)).state, SteamState::InLobby { .. }) {
+        assert!(started.elapsed() < testing::LOAD_TIMEOUT, "{:?}", session(stand.world(member)).state);
+        stand.frame();
+        std::thread::sleep(Duration::from_millis(1));
+    }
     stand.settle().unwrap();
     let world = stand.world(member);
     assert_eq!(connected(world), Some(1), "{:?}", world.resource::<NetState>());
@@ -179,6 +187,25 @@ fn a_game_that_is_its_own_host_is_refused() {
     let mut app = build(config(|c| client(c, "me", Some(FIRST_USER))), steam.user(FIRST_USER, "me"), save_folder());
     frames_until(&mut app, |w| matches!(session(w).state, SteamState::Failed(_)));
     assert_eq!(session(app.world()).state, SteamState::Failed(format!("{FIRST_USER} is this machine's own Steam id")));
+}
+
+#[test]
+fn a_lobby_of_this_same_account_is_refused_and_says_so() {
+    // The host is another game on the account the client plays on: Steam hands the client its own
+    // id as the lobby's owner, which is no one to play against.
+    let steam = FakeSteam::new(MemoryHub::new(19));
+    let lobby = steam.lobby_of(FIRST_USER, SteamLobby::Invisible, 3);
+    let mut app = build(config(|c| client(c, "me", Some(lobby))), steam.user(FIRST_USER, "me"), save_folder());
+    frames_until(&mut app, |w| matches!(session(w).state, SteamState::Failed(_)));
+    let why = format!(
+        "cannot enter Steam lobby {lobby}: this Steam account owns the lobby: a second game on the same account cannot join it (join from another account)"
+    );
+    assert_eq!(session(app.world()).state, SteamState::Failed(why.clone()));
+    assert!(journal(app.world(), Some(JournalKind::Error)).contains(&format!("steam: {why}")), "{:?}", journal(app.world(), None));
+    assert!(matches!(app.world().resource::<NetState>(), NetState::Joining(w) if w.contains("steam_join lobby=ID")));
+    // Steam keeps membership per account: leaving would take the host out of its own lobby.
+    assert!(steam.lobbies().contains(&lobby), "the lobby stands");
+    assert!(steam.lobby_members(lobby).contains(&FIRST_USER), "its owner is still in it");
 }
 
 #[test]

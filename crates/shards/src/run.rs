@@ -16,7 +16,7 @@ use shards_core::{EngineConfig, NetLaunch, SettingsStore, SteamLaunch, SteamLobb
 
 /// A game on the Shards engine.
 #[derive(Parser, Debug)]
-#[command(version)]
+#[command(version, group(clap::ArgGroup::new("lobby_host").args(["steam_host", "stand_steam"])))]
 struct Args {
     /// No window and no rendering (CI, parallel playtests, servers).
     #[arg(long)]
@@ -141,6 +141,12 @@ struct Args {
     /// time, instead of apps in this process.
     #[arg(long, requires = "stand")]
     stand_udp: bool,
+    /// With --stand: the members meet over a fake Steam of this process instead of the plain in-memory
+    /// transport (a game built with the `steam` feature; the real Steam is never reached): the host
+    /// makes a Steam lobby (friends only, or --steam-lobby TYPE), and the clients wait for one, so
+    /// `steam_lobbies` finds the lobby and `steam_join` enters it.
+    #[arg(long, requires = "stand", conflicts_with = "stand_udp")]
+    stand_steam: bool,
     /// Network conditions this game's links simulate: `latency=150,loss=0.02` (also
     /// `jitter=`, `duplicate=`).
     #[arg(long, value_name = "SPEC", value_parser = net_sim_spec)]
@@ -171,10 +177,11 @@ struct Args {
     /// through an invite, or with `--join steam:<lobby>`, over the Steam relay; no UDP port is opened.
     #[arg(long, conflicts_with_all = ["host", "join", "stand", "steam_server"])]
     steam_host: bool,
-    /// With --steam-host: who sees the lobby. `friends` (the default: friends see it and join),
-    /// `private` (only an invite brings a player in), `invisible` (friends do not see it),
-    /// `public` (Steam's lobby list shows it too).
-    #[arg(long, value_name = "TYPE", requires = "steam_host", conflicts_with = "steam_server", value_parser = steam_lobby)]
+    /// With --steam-host (or --stand-steam): who sees the lobby. `friends` (the default: friends see
+    /// it and join), `private` (only an invite brings a player in), `invisible` (friends do not see
+    /// it, a lobby search finds it), `public` (friends see it, and a lobby search finds it). A search
+    /// never finds a `friends` or a `private` lobby.
+    #[arg(long, value_name = "TYPE", requires = "lobby_host", conflicts_with = "steam_server", value_parser = steam_lobby)]
     steam_lobby: Option<SteamLobby>,
     /// Host as an anonymous Steam game server: no lobby and no Steam user. Players join it by its
     /// Steam id (`--join steam:<id>`; `shards status` and the tool `steam` show it), over the relay.
@@ -253,12 +260,13 @@ fn command_line() -> Result<Args, String> {
     let wants_steam = args.steam_host
         || args.steam_server
         || args.steam_lobby.is_some()
+        || args.stand_steam
         || args.steam_relay_only
         || args.steam_app.is_some()
         || args.join.as_deref().is_some_and(|a| a.starts_with("steam:"));
     if wants_steam && !cfg!(feature = "steam") {
-        return Err("this game is built without Steam: --steam-host, --steam-lobby, --steam-server, --steam-relay-only, --steam-app and --join steam:… need the \
-                    `steam` feature of `shards` (and `steam_sdk` to reach the Steam client)"
+        return Err("this game is built without Steam: --steam-host, --steam-lobby, --stand-steam, --steam-server, --steam-relay-only, --steam-app and --join steam:… need \
+                    the `steam` feature of `shards` (and `steam_sdk` to reach the Steam client; --stand-steam never does)"
             .into());
     }
     #[cfg(feature = "steam")]
@@ -326,7 +334,8 @@ impl Args {
             steam: SteamLaunch {
                 connect: false,
                 app_id: self.steam_app,
-                host: self.steam_host,
+                // A stand over a fake Steam has a lobby host too; its net launch stays the stand's.
+                host: self.steam_host || self.stand_steam,
                 server: self.steam_server,
                 relay_only: self.steam_relay_only,
                 lobby: self.steam_lobby.unwrap_or_default(),
@@ -581,6 +590,56 @@ mod stand {
         })
     }
 
+    /// How a stand's members reach one another.
+    enum Wire {
+        /// The stand's in-memory hub: a client says hello to the host at once.
+        Hub,
+        /// A fake Steam of this process whose relay is the hub (`--stand-steam`): the host makes a lobby,
+        /// and a client waits for one (`steam_lobbies`, then `steam_join`). The hub's links add no
+        /// delay: `--net-sim` conditions the session's transport over the relay (`conditioner_from`), as
+        /// it does over the real Steam, and once.
+        #[cfg(feature = "steam")]
+        Steam(shards_steam::FakeSteam),
+    }
+
+    impl Wire {
+        /// The wire a stand with `config` has, on `hub`.
+        #[cfg_attr(not(feature = "steam"), allow(unused_variables))]
+        fn of(config: &EngineConfig, hub: &MemoryHub) -> Self {
+            #[cfg(feature = "steam")]
+            if config.steam.host {
+                return Wire::Steam(shards_steam::FakeSteam::new(hub.clone()));
+            }
+            Wire::Hub
+        }
+
+        /// What a client's `--join` names.
+        fn host_address(&self) -> &'static str {
+            match self {
+                Wire::Hub => "host",
+                #[cfg(feature = "steam")]
+                Wire::Steam(_) => "steam:",
+            }
+        }
+
+        /// Gives member `n` (0: the host) of the stand, `app`, called `name`, its way to the others;
+        /// the client's link to the host, when the wire has one (`links` conditions it).
+        #[cfg_attr(not(feature = "steam"), allow(unused_variables))]
+        fn attach(&self, app: &mut App, hub: &MemoryHub, n: usize, name: &str, links: LinkConditions) -> Option<shards_net::LinkId> {
+            match self {
+                Wire::Hub => {
+                    let id = shards_net::stand::attach(app, hub, name, (n > 0).then_some(0));
+                    (n > 0).then(|| hub.connect_both(0, id, links))
+                }
+                #[cfg(feature = "steam")]
+                Wire::Steam(steam) => {
+                    shards_steam::use_fake(app, steam.user(shards_steam::fake::FIRST_USER + n as u64, name));
+                    None
+                }
+            }
+        }
+    }
+
     pub fn run(build: &impl Fn(&EngineConfig) -> App, args: &Args, config: EngineConfig, clients: u8) -> ExitCode {
         if let Some(clash) = slot_clash(config.character_slot.as_deref(), clients) {
             eprintln!("error: {clash}");
@@ -634,6 +693,8 @@ mod stand {
                     format!("role client · player {player}{}", body.map_or_else(String::new, |b| format!(" · body e{b}")))
                 }
                 Some(NetState::Ended(why)) => format!("role client · ended: {why}"),
+                // A client over Steam that has no lobby yet: `steam_lobbies` finds one, `steam_join` enters it.
+                Some(NetState::Joining(why)) => format!("role client · joining: {why}"),
                 _ => "role host · player 0".to_owned(),
             };
             let line = ai_core::ready_line(ai_core::sim::tick(world), std::process::id(), config.seed, ports[i]);
@@ -665,12 +726,13 @@ mod stand {
         // The stand owns time: every member is paused and ticks when it says.
         let host_config = EngineConfig { paused: true, player_name: host_name.to_owned(), port: ports[0], ..config.clone() };
         let hub = MemoryHub::new(config.seed);
+        let wire = Wire::of(config, &hub);
         let mut host = build(&host_config);
         // The host is the player at this machine: its settings are read as a game's of its own
         // are (`--settings-dir`, `--no-settings`). The clients keep none (`SettingsStore::Off`).
         shards_settings::install(&mut host, &host_config)?;
         host.add_systems(First, termination::exit_when_signalled);
-        shards_net::stand::attach(&mut host, &hub, "host", None);
+        wire.attach(&mut host, &hub, 0, "host", links);
         host.finish();
         host.cleanup();
         let mut apps = vec![("host".to_owned(), host)];
@@ -683,24 +745,25 @@ mod stand {
                 headless: true,
                 paused: true,
                 port: *port,
-                net: NetLaunch::Join { addr: "host".into() },
+                net: NetLaunch::Join { addr: wire.host_address().into() },
                 player_name: name.clone(),
                 settings: SettingsStore::Off,
                 // Its own character file, named after it: members share the save folder.
                 character_slot: Some(client_slot(number)),
                 world_slot: None,
+                // The lobby is the host's: a client has none to make.
+                steam: SteamLaunch { lobby: SteamLobby::default(), host: false, ..config.steam.clone() },
                 ..config.clone()
             };
             let mut app = build(&client_config);
-            let id = shards_net::stand::attach(&mut app, &hub, &name, Some(0));
-            client_links.push(hub.connect_both(0, id, links));
+            client_links.push(wire.attach(&mut app, &hub, n, &name, links));
             app.finish();
             app.cleanup();
             apps.push((name, app));
         }
         let mut stand = Stand::new(hub, apps);
         for (i, link) in client_links.into_iter().enumerate() {
-            stand.members[i + 1].link = Some(link);
+            stand.members[i + 1].link = link;
         }
         stand.load_timeout = Duration::from_secs(120);
         Ok(stand)
@@ -1453,6 +1516,64 @@ mod tests {
         let file = |member: usize| stand.world(member).get_resource::<shards_settings::SettingsStorage>().map(|s| s.file.clone());
         assert_eq!(file(0), Some(Some(dir.join("settings.toml"))), "the host's settings live in --settings-dir");
         assert_eq!(file(1), None, "a client of the stand keeps none");
+    }
+
+    #[test]
+    fn a_stand_over_a_fake_steam_is_asked_for_with_its_own_flag_and_takes_the_lobby_type() {
+        let parse = |args: &[&str]| Args::try_parse_from(args.iter().copied());
+        let stand = parse(&["game", "--headless", "--stand", "2", "--stand-steam", "--steam-lobby", "invisible"]).unwrap().config();
+        assert_eq!((stand.net, stand.steam.host, stand.steam.lobby), (NetLaunch::Stand { clients: 2, udp: false }, true, SteamLobby::Invisible));
+        assert!(!stand.steam.connect, "a stand never reaches the real Steam");
+        let plain = parse(&["game", "--headless", "--stand", "2"]).unwrap().config();
+        assert!(!plain.steam.host, "a plain stand makes no lobby");
+        for refused in [
+            &["game", "--stand-steam"][..],
+            &["game", "--headless", "--stand", "1", "--stand-udp", "--stand-steam"],
+            &["game", "--headless", "--stand", "1", "--steam-lobby", "public"],
+            &["game", "--headless", "--stand", "1", "--stand-steam", "--steam-host"],
+        ] {
+            assert!(parse(refused).is_err(), "{refused:?}");
+        }
+    }
+
+    /// `--stand-steam`: the host of the stand makes a lobby over the fake Steam, the client waits for
+    /// one, finds it with `steam_lobbies`, enters it with `steam_join` and plays without a desync.
+    #[cfg(feature = "steam")]
+    #[test]
+    fn a_stand_over_a_fake_steam_has_a_lobby_host_and_a_client_that_finds_and_enters_it() {
+        use shards_net::{NetState, Stand};
+        let config = EngineConfig {
+            net: NetLaunch::Stand { clients: 1, udp: false },
+            steam: SteamLaunch { host: true, lobby: SteamLobby::Invisible, ..SteamLaunch::default() },
+            // 50 ms each way, over the relay.
+            net_sim: Some("latency=50".into()),
+            ..content("stand_steam", "totem")
+        };
+        // The body a joining player gets.
+        std::fs::write(std::path::Path::new(&config.asset_dir).join("content/players.prefab.ron"), r#"{ "player": (components: { "AiKind": ("Player") }) }"#).unwrap();
+        let mut stand = stand::members(&game, &config, "host", shards_net::LinkConditions::NONE, &[None, None]).unwrap();
+        stand.settle().unwrap();
+        fn session(stand: &Stand, member: usize) -> &shards_steam::SteamSession {
+            stand.world(member).resource::<shards_steam::SteamSession>()
+        }
+        let lobby = session(&stand, 0).lobby_id().expect("the host made its lobby");
+        assert_eq!((session(&stand, 0).role, session(&stand, 0).lobby_type), (shards_steam::SteamRole::Host, Some(SteamLobby::Invisible)));
+        assert_eq!(session(&stand, 1).role, shards_steam::SteamRole::Client);
+        assert_eq!(session(&stand, 1).lobby_id(), None, "the client waits for a lobby");
+        assert_eq!(ai_core::status::status(stand.world(0))["net"]["stand"]["clients"], 1, "`shards wait --peer all` counts the stand's clients");
+
+        let found = stand.call(1, "steam_lobbies", serde_json::json!({}));
+        assert!(found.ok && found.result.as_str().unwrap().contains(&format!("lobby {lobby} ")), "{}", found.result);
+        let joined = stand.call(1, "steam_join", serde_json::json!({ "lobby": lobby }));
+        assert!(joined.ok, "{}", joined.result);
+        stand.settle().unwrap();
+        stand.run(240);
+        assert!(matches!(stand.world(1).resource::<NetState>(), NetState::Connected { player: 1, .. }), "{:?}", stand.world(1).resource::<NetState>());
+        // `--net-sim` conditions the transport once: a round trip is twice the one way, not four times.
+        let status = stand.call(1, "net_status", serde_json::json!({})).result;
+        let rtt = status["rtt_ms"].as_f64().unwrap_or_else(|| panic!("no rtt in: {status}"));
+        assert!((80.0..=140.0).contains(&rtt), "50 ms each way is a round trip of about 100 ms, not {rtt}: {status}");
+        assert_eq!(ai_core::status::status(stand.world(1))["net"]["desyncs"], 0);
     }
 
     #[test]

@@ -5,6 +5,8 @@
 
 mod achievements;
 mod cloud;
+mod lobbies;
+mod scenarios;
 mod session;
 mod tools;
 
