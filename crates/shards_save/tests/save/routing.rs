@@ -19,10 +19,10 @@ struct Asked(Vec<String>);
 struct Saved(Vec<String>);
 
 /// Every character save goes to "elsewhere" (a remote player's machine), the world is written here.
-fn elsewhere(world: &mut World, kind: SaveKind, _: Option<Entity>, reason: &str) -> Routed {
+fn elsewhere(world: &mut World, kind: SaveKind, _: Option<Entity>, _slot: &str, reason: &str) -> Routed {
     world.get_resource_or_init::<Asked>().0.push(format!("{kind}:{reason}"));
     (kind == SaveKind::Character).then(|| {
-        Ok(SaveReport { kind, slot: "p1".into(), tick: 7, bytes: 10, sections: 1, reason: reason.to_owned(), written: true, target: Some("elsewhere".into()) })
+        Ok(SaveReport { kind, slot: "p1".into(), tick: 7, bytes: 10, sections: 1, reason: reason.to_owned(), written: true, target: Some("elsewhere".into()), asked: None })
     })
 }
 

@@ -143,6 +143,8 @@ fn hello(stand: &Stand, name: &str) -> Hello {
         name: name.to_owned(),
         token: String::new(),
         character: None,
+        character_parts: 0,
+        character_bytes: 0,
         tick_hz: 1.0 / sim::tick_seconds(world) as f64,
     }
 }

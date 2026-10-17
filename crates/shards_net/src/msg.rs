@@ -12,7 +12,8 @@ use serde_json::Value;
 
 use crate::inputs::InputFrame;
 
-/// Session protocol version: a client with another one is refused. 2: the join's cookie.
+/// Session protocol version: a client with another one is refused. 2: the join's cookie, and a
+/// character too big for the hello in parts after it.
 pub const PROTO: u32 = 2;
 
 /// A reliable message.
@@ -53,6 +54,14 @@ pub enum Msg {
     /// A player's character, captured by the host (co-op saves).
     CharacterSave { tick: u64, reason: String, sections: Value },
     Paused(bool),
+    /// Part `index` of a character too big for the hello ([`Hello::character_parts`]): a piece of
+    /// its JSON text, in order.
+    CharacterPart { index: u32, text: String },
+    /// A player asks for its character now (`save_game what=character` on a client): the host
+    /// answers with a [`Msg::CharacterSave`] (reason `save_game`), or why not.
+    CharacterAsk,
+    /// Why the host did not send the character a player asked for.
+    CharacterNotSent { reason: String },
 }
 
 /// The first thing a client says.
@@ -71,10 +80,33 @@ pub struct Hello {
     /// The token the host issued this player at an earlier join (kept beside the client's
     /// saves), empty the first time: a rejoin with it keeps the slot and the body.
     pub token: String,
-    /// The character the player brings (`--character`), as the game's save sections.
+    /// The character the player brings (`--character`), as the game's save sections, when its
+    /// JSON is small enough to come in the hello (`host::MAX_INLINE_CHARACTER`).
     pub character: Option<Value>,
+    /// A bigger character: its JSON comes after the hello in this many [`Msg::CharacterPart`]s.
+    pub character_parts: u32,
+    /// The bytes of that JSON, all parts together.
+    pub character_bytes: u64,
     /// Tick rate, so a mismatch is named before the seed is adopted.
     pub tick_hz: f64,
+}
+
+/// The JSON text of `character` cut into pieces of at most `part` bytes, at character boundaries:
+/// what a character too big for the hello travels in. Joined, they decode to it again.
+pub fn split_character(character: &Value, part: usize) -> Vec<String> {
+    let text = serde_json::to_string(character).expect("a JSON value serializes");
+    let mut parts = Vec::new();
+    let mut rest = text.as_str();
+    while !rest.is_empty() {
+        let mut at = rest.len().min(part.max(4));
+        while !rest.is_char_boundary(at) {
+            at -= 1;
+        }
+        let (piece, tail) = rest.split_at(at);
+        parts.push(piece.to_owned());
+        rest = tail;
+    }
+    parts
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

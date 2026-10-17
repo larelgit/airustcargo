@@ -616,8 +616,21 @@ fn knock(world: &mut World, client: &mut NetClient, endpoint: &mut NetEndpoint, 
     }
 }
 
-/// The cookie came: the hello.
+/// The cookie came: the hello, and the character after it in parts when it is too big for it.
 fn say_hello(world: &mut World, client: &mut NetClient) {
+    let mut character = client.character.clone();
+    let mut parts = Vec::new();
+    if let Some(value) = &character
+        && msg::encode(value).len() > crate::host::MAX_INLINE_CHARACTER
+    {
+        parts = msg::split_character(value, crate::host::CHARACTER_PART_BYTES);
+        character = None;
+    }
+    let bytes: usize = parts.iter().map(String::len).sum();
+    if bytes > crate::host::MAX_CHARACTER_BYTES {
+        // The host refuses it at the hello and says so; the parts are not worth sending.
+        journal::emit(world, JournalKind::Error, format!("net: your character is {} KB, over the {} KB a host takes", bytes.div_ceil(1024), crate::host::MAX_CHARACTER_BYTES / 1024));
+    }
     let hello = Hello {
         proto: PROTO,
         engine: ENGINE_VERSION.to_owned(),
@@ -626,10 +639,17 @@ fn say_hello(world: &mut World, client: &mut NetClient) {
         net_rules_hash: net_rules::rules_hash(world),
         name: client.name.clone(),
         token: client.token.clone(),
-        character: client.character.clone(),
+        character,
+        character_parts: parts.len() as u32,
+        character_bytes: bytes as u64,
         tick_hz: 1.0 / sim::tick_seconds(world) as f64,
     };
     client.send(&Msg::Hello(hello));
+    if bytes <= crate::host::MAX_CHARACTER_BYTES {
+        for (index, text) in parts.into_iter().enumerate() {
+            client.send(&Msg::CharacterPart { index: index as u32, text });
+        }
+    }
     client.stage = ClientStage::HelloSent;
 }
 
@@ -682,6 +702,9 @@ fn on_message(world: &mut World, client: &mut NetClient, clock: &NetClock, messa
         Msg::CharacterSave { tick, reason, sections } => {
             let save = hooks(world).on_character_save;
             save(world, tick, &reason, &sections);
+        }
+        Msg::CharacterNotSent { reason } => {
+            journal::emit(world, JournalKind::Error, format!("save: the host did not send your character: {}", crate::host::clip(&reason, crate::host::MAX_PEER_TEXT)));
         }
         Msg::SessionEnd { reason, saved_slot } => {
             let saved = saved_slot.map(|slot| format!(", world saved: {}", crate::host::clip(&slot, 40))).unwrap_or_default();
@@ -904,6 +927,22 @@ fn apply_pending(world: &mut World, client: &mut NetClient) {
             client.send(&Msg::Desync { tick: delta.tick, here, host: host_hash, first, epoch: client.rebases });
         }
     }
+}
+
+/// Asks the host for this player's character now: it captures the body it plays and sends it
+/// back (`Msg::CharacterSave`, reason `save_game`), which the game writes like any it is sent
+/// (co-op saves: into the current character slot). Answers the host's address.
+pub fn ask_character(world: &mut World) -> Result<String, String> {
+    let Some(mut client) = world.get_resource_mut::<NetClient>() else {
+        return Err("this game is not a client of a host".into());
+    };
+    match &client.stage {
+        ClientStage::Connected => {}
+        ClientStage::Ended(why) => return Err(format!("not in a session any more ({why}); the host sends a player their character when they leave")),
+        other => return Err(format!("not connected to the host yet ({other:?}); wait for `net_joined`")),
+    }
+    client.send(&Msg::CharacterAsk);
+    Ok(client.address.clone())
 }
 
 // --- forwarded calls -----------------------------------------------------------------------

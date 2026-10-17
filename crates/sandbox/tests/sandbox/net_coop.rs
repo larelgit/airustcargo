@@ -10,12 +10,13 @@ use std::time::{Duration, Instant};
 
 use shards::action::Health;
 use shards::ai_core::{sim, snapshot, AiIndex, AiJournal, NoArgs, Scope, ToolResult};
-use shards::net::host::{MAX_CHARACTER_BYTES, MAX_JOINING_MESSAGE};
+use shards::net::host::{CHARACTER_PART_BYTES, MAX_CHARACTER_BYTES, MAX_CHARACTER_PARTS, MAX_INLINE_CHARACTER, MAX_JOINING_MESSAGE};
 use shards::net::msg::{Hello, Msg, PROTO};
 use shards::net::{LinkConditions, NetClient, NetDef, NetDefaults, NetHooks, NetLeft, NetSeat, NetState, Stand};
 use shards::prelude::*;
 use shards::save::{
-    save_now, Damage, GameInfo, LaunchLoaded, SaveConfig, SaveFile, SaveKey, SaveKind, SaveWhat, SectionData, SectionSet, Store, Which,
+    save_now, Damage, GameInfo, LaunchLoaded, SaveConfig, SaveFile, SaveKey, SaveKind, SaveSlots, SaveWhat, SectionData, SectionSet, Store,
+    Which,
 };
 use shards::serde_json::{json, Value};
 
@@ -397,19 +398,34 @@ fn a_rejoin_that_fails_leaves_the_body_waiting_for_the_player_again() {
     assert!(stand.world(HOST).get::<NetSeat>(waiting).is_some());
 }
 
+/// Character sections whose text, as the host measures it (the JSON of the string it travels as),
+/// grows one byte with each byte of `pad`.
+fn padded(pad: usize) -> Vec<(&'static str, u32, Value)> {
+    vec![("vitals", 1, vitals(61.5)), ("bag", 2, json!({"coins": 5, "pad": letters(pad)}))]
+}
+
+/// The bytes of [`padded`]`(pad)` as a character travels.
+fn measured(pad: usize) -> usize {
+    let set = SectionSet(padded(pad).into_iter().map(|(n, v, d)| (n.to_owned(), SectionData { version: v, data: d })).collect());
+    serde_json::to_string(&shards::coop::character_value(&set)).unwrap().len()
+}
+
+/// Letters that hardly compress: a character of this size is that many bytes on the wire too.
+fn letters(len: usize) -> String {
+    let mut x = 0x9E37_79B9_7F4A_7C15u64;
+    (0..len)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            char::from(b'a' + (x % 26) as u8)
+        })
+        .collect()
+}
+
 #[test]
-fn the_largest_character_a_host_takes_joins_under_the_pre_play_cap_and_one_byte_more_is_refused() {
-    let folders = Folders::new("largest");
-    // A character whose text, as the host measures it (the JSON of the string it travels as), is
-    // exactly the cap: `pad` fills the `bag` section up to it.
-    let sections = |pad: usize| vec![("vitals", 1, vitals(61.5)), ("bag", 2, json!({"coins": 5, "pad": "x".repeat(pad)}))];
-    let measured = |pad: usize| {
-        let set = SectionSet(sections(pad).into_iter().map(|(n, v, d)| (n.to_owned(), SectionData { version: v, data: d })).collect());
-        serde_json::to_string(&shards::coop::character_value(&set)).unwrap().len()
-    };
-    let pad = MAX_CHARACTER_BYTES - measured(0);
-    assert_eq!(measured(pad), MAX_CHARACTER_BYTES);
-    // That character in a `Hello` with every other field as long as the host takes it: under what the host reads before play.
+fn the_largest_hello_and_the_largest_part_of_a_character_fit_under_the_pre_play_cap() {
+    // The largest character a hello carries itself, with every other field as long as the host takes it.
     let hello = Msg::Hello(Hello {
         proto: PROTO,
         engine: "0.2.0-with-a-long-suffix".repeat(3),
@@ -418,22 +434,47 @@ fn the_largest_character_a_host_takes_joins_under_the_pre_play_cap_and_one_byte_
         net_rules_hash: u64::MAX,
         name: "n".repeat(32),
         token: "t".repeat(64),
-        character: Some(shards::serde_json::from_str(&format!("\"{}\"", "x".repeat(MAX_CHARACTER_BYTES - 2))).unwrap()),
+        character: Some(shards::serde_json::from_str(&format!("\"{}\"", "x".repeat(MAX_INLINE_CHARACTER - 2))).unwrap()),
+        character_parts: 0,
+        character_bytes: 0,
         tick_hz: 60.0,
     });
     let size = shards::net::msg::encode(&hello).len();
-    assert!(size < MAX_JOINING_MESSAGE, "a Hello with the largest character is {size} bytes, over the {MAX_JOINING_MESSAGE} the host reads before play");
+    assert!(size < MAX_JOINING_MESSAGE, "a Hello with the largest inline character is {size} bytes, over the {MAX_JOINING_MESSAGE} the host reads before play");
+    // A part of the text that escapes the most: every byte a quote, twice its size once escaped.
+    let part = Msg::CharacterPart { index: MAX_CHARACTER_PARTS, text: "\"".repeat(CHARACTER_PART_BYTES) };
+    let size = shards::net::msg::encode(&part).len();
+    assert!(size < MAX_JOINING_MESSAGE, "the largest part is {size} bytes, over the {MAX_JOINING_MESSAGE} the host reads before play");
+    // The parts of the largest character are as many as a host takes.
+    let largest = Value::String(letters(MAX_CHARACTER_BYTES - 2));
+    let parts = shards::net::msg::split_character(&largest, CHARACTER_PART_BYTES);
+    assert!(parts.len() as u32 <= MAX_CHARACTER_PARTS && parts.iter().all(|p| p.len() <= CHARACTER_PART_BYTES), "{} parts", parts.len());
+    assert_eq!(parts.concat(), serde_json::to_string(&largest).unwrap());
+}
 
+#[test]
+fn a_character_too_big_for_the_hello_comes_in_parts_over_a_lossy_link_and_one_byte_over_the_cap_is_refused() {
+    let folders = Folders::new("largest");
+    let pad = MAX_CHARACTER_BYTES - measured(0);
+    assert_eq!(measured(pad), MAX_CHARACTER_BYTES);
     let def = NetDef::default();
     let mut stand = host_stand(&folders, &def);
     let big = "c".repeat(32);
-    write_sections(&folders.of(&big), &big, 900, sections(pad));
-    write_sections(&folders.of("c2"), "c2", 900, sections(pad + 1));
+    write_sections(&folders.of(&big), &big, 900, padded(pad));
+    write_sections(&folders.of("c2"), "c2", 900, padded(pad + 1));
+    // c1's character is the largest a host takes: 33 parts after its hello, over 150 ms and 2 % loss.
     let (c1, c2) = (add_client(&mut stand, &folders, &big, &def, lossy()), add_client(&mut stand, &folders, "c2", &def, lossy()));
-    run_until(&mut stand, 400, "both are answered", |s| connected(s, c1) && matches!(net_state(s, c2), NetState::Ended(_)));
+    // A part is a message of its own, each a round trip of 300 ms at least.
+    run_until(&mut stand, 2400, "both are answered", |s| connected(s, c1) && matches!(net_state(s, c2), NetState::Ended(_)));
     let me = body(&stand, c1);
     assert_eq!(bag(&stand, HOST, &me), Some(5), "the largest character is applied");
-    assert!(matches!(net_state(&stand, c2), NetState::Ended(why) if why.contains("the character is over 64 KB")), "one byte more: {:?}", net_state(&stand, c2));
+    let why = match net_state(&stand, c2) {
+        NetState::Ended(why) => why,
+        other => panic!("{other:?}"),
+    };
+    assert!(why.contains("the character is 1025 KB, over the 1024 KB a host takes"), "one byte more: {why}");
+    // Refused at its hello: it held no seat.
+    assert!(!has_line(&stand, HOST, "(c2) accepted"), "{:#?}", journal(&stand, HOST));
 }
 
 // --- progress goes back to its player -------------------------------------------------------
@@ -707,8 +748,8 @@ fn a_client_writes_only_a_character_it_can_read_and_keeps_its_file_otherwise() {
     tell_client(&mut stand, c1, "camp", set(vec![("x", 1, json!({}))]));
     said(&stand, "has none of the sections this game saves");
     tell_client(&mut stand, c1, "camp", set(vec![]));
-    tell_client(&mut stand, c1, "camp", set(vec![("bag", 2, json!({"coins": 1, "pad": "x".repeat(70_000)}))]));
-    said(&stand, "is over 64 KB, which no host takes");
+    tell_client(&mut stand, c1, "camp", set(vec![("bag", 2, json!({"coins": 1, "pad": "x".repeat(MAX_CHARACTER_BYTES)}))]));
+    said(&stand, "is over 1024 KB, which no host takes");
     unchanged(&stand);
 
     // A good one goes in: its foreign sections are left out, and the reason is no forged line.
@@ -891,8 +932,6 @@ fn a_client_cannot_save_the_world_or_load_anything_and_a_loaded_world_goes_to_it
     stand.run(20);
     let world = stand.call(c1, "save_game", json!({"what": "world"}));
     assert!(!world.ok && text(&world).contains("the host keeps the world; ask the host (host)"), "{}", text(&world));
-    let character = stand.call(c1, "save_game", json!({"what": "character"}));
-    assert!(!character.ok && text(&character).contains("your character is saved by the host"), "{}", text(&character));
     let load = stand.call(c1, "load_game", json!({"what": "world"}));
     assert!(!load.ok && text(&load).contains("runs on the host only") && text(&load).contains("the host keeps the world"), "{}", text(&load));
     assert!(!folders.of("c1").join("world").exists(), "no world was written on the client");
@@ -906,6 +945,50 @@ fn a_client_cannot_save_the_world_or_load_anything_and_a_loaded_world_goes_to_it
     assert_eq!(stand.world(c1).resource::<NetClient>().rebases, 1);
     assert_eq!(desyncs(&stand, c1), 0, "{:#?}", journal(&stand, c1));
     assert!(connected(&stand, c1));
+}
+
+#[test]
+fn a_client_saves_its_character_by_asking_the_host_for_the_body_it_plays() {
+    let folders = Folders::new("asked");
+    let (mut stand, c1, me) = joined_with_file(&folders, &NetDef::default());
+    // Progress on the host: the body there is the one that is saved.
+    give(&mut stand, &me, 9);
+    stand.run(20);
+    let asked = stand.call(c1, "save_game", json!({"what": "character", "slot": "mine"}));
+    assert!(asked.ok, "{}", text(&asked));
+    assert!(text(&asked).contains("ok: character/mine asked of the host host: written here when it comes (save_game, tick "), "{}", text(&asked));
+    run_until(&mut stand, 90, "the file is written", |_| folders.of("c1").join("character/mine.save").exists());
+    let file = read_file(&folders.of("c1"), SaveKind::Character, "mine");
+    assert_eq!(file.sections.0["bag"].data["coins"], 9, "what the host's body has");
+    assert_eq!(file.label, "save_game");
+    assert!(has_line(&stand, c1, "save: character/mine saved (save_game, "), "{:#?}", journal(&stand, c1));
+    assert!(has_line(&stand, HOST, "net: p1 asked for its character: sent ("), "{:#?}", journal(&stand, HOST));
+    // The slot it named is its slot now: what the host sends next goes there too.
+    assert_eq!(stand.world(c1).resource::<SaveSlots>().character, "mine");
+    give(&mut stand, &me, 12);
+    stand.world_mut(HOST).trigger(Camp);
+    stand.run(60);
+    assert_eq!(coins_in(&folders.of("c1"), "mine"), 12);
+    // At most once a second: asked twice at once, the second is told to wait (and nothing more).
+    assert!(stand.call(c1, "save_game", json!({"what": "character"})).ok);
+    assert!(stand.call(c1, "save_game", json!({"what": "character"})).ok);
+    assert!(stand.call(c1, "save_game", json!({"what": "character"})).ok);
+    stand.run(30);
+    let waits = journal(&stand, c1).into_iter().filter(|l| l.contains("save: the host did not send your character: it was sent less than a second ago; ask again in ")).count();
+    assert_eq!(waits, 1, "{:#?}", journal(&stand, c1));
+    // Asking saves nothing on the host and changes nothing of the game.
+    assert!(!folders.of("host").join("character/mine.save").exists());
+    verify(&stand, &NetDef::default());
+}
+
+#[test]
+fn a_client_that_is_not_in_a_session_cannot_ask_for_its_character() {
+    let folders = Folders::new("asked_late");
+    let (mut stand, c1, _) = joined_with_file(&folders, &NetDef::default());
+    assert!(stand.call(HOST, "net_end", json!({})).ok);
+    run_until(&mut stand, 90, "the session ends", |s| matches!(net_state(s, c1), NetState::Ended(_)));
+    let asked = stand.call(c1, "save_game", json!({"what": "character"}));
+    assert!(!asked.ok && text(&asked).contains("not in a session any more (session ended by host"), "{}", text(&asked));
 }
 
 #[test]

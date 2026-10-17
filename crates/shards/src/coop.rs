@@ -9,7 +9,8 @@
 //!   `load_game` is refused (the host loads, and every client is sent the new world).
 //! * **A character** is its player's, in a file on their machine (`--character SLOT`). The
 //!   host captures it from the authoritative body and sends it (`CharacterSave`, reliable);
-//!   the client writes its slot through the normal store (atomic, three backups).
+//!   the client writes its slot through the normal store (atomic, three backups). A client
+//!   never captures its own: its copy of the body is not the whole of it.
 //!
 //! How a character travels:
 //!
@@ -17,6 +18,7 @@
 //! |---|---|
 //! | join | the client reads its slot (a damaged file is restored from its backup, the journal says so) and puts the sections in `Hello`; the host applies them to the new body inside the recorded `player_join`, so a replay builds the same body. A version older than this build's is migrated; an unreadable payload is journaled and the player starts fresh |
 //! | the game saves (`save_now`, an autosave event, `save_game` for a remote player's body) | the host writes its own character and sends every remote player theirs |
+//! | the player saves (`save_game what=character` on their game) | the client asks the host (`CharacterAsk`), which captures the body it plays and sends it (at most once a second); the slot named, now the current one, is written when it comes |
 //! | leave, kick, timeout | the host captures the body and sends it to the leaver's own link; the body waits for a rejoin |
 //! | the session ends | the host saves the world and its character, then each client gets a final `CharacterSave`, then `SessionEnd` (which names the world slot) |
 //!
@@ -29,7 +31,8 @@
 //! played elsewhere meanwhile) is theirs and is applied.
 //!
 //! A character travels as one string: the canonical JSON of its sections
-//! ([`character_value`]), which reads back exactly, floats included.
+//! ([`character_value`]), which reads back exactly, floats included. Up to 64 KB of it rides in
+//! the `Hello`; a bigger one (up to 1 MB) follows it in parts.
 
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -316,7 +319,7 @@ fn send_to_player(world: &mut World, player: u8, body: Entity, reason: &str) -> 
             format!("p{player}'s machine (when the session next sends)")
         }
     };
-    let report = SaveReport { kind: SaveKind::Character, slot: format!("p{player}"), tick, bytes, sections, reason: reason.to_owned(), written: true, target: Some(target) };
+    let report = SaveReport { kind: SaveKind::Character, slot: format!("p{player}"), tick, bytes, sections, reason: reason.to_owned(), written: true, target: Some(target), asked: None };
     journal::log(world, JournalKind::Sim, format!("save: {report}"));
     Ok(report)
 }
@@ -357,18 +360,23 @@ fn remote_players(world: &World) -> Vec<(u8, Entity)> {
 
 // --- where a save goes -----------------------------------------------------------------
 
-/// `SaveRouting::route`: a client writes no world and no character of its own; the host sends
-/// a remote player's character to their machine instead of writing it into its own slot.
-fn route(world: &mut World, kind: SaveKind, body: Option<Entity>, reason: &str) -> Routed {
+/// `SaveRouting::route`: a client writes no world and no character it captured itself (its copy
+/// of its body is not the whole of it): its `save_game` of the character asks the host, which
+/// captures the body it plays and sends it here, into `slot`. The host sends a remote player's
+/// character to their machine instead of writing it into its own slot.
+fn route(world: &mut World, kind: SaveKind, body: Option<Entity>, slot: &str, reason: &str) -> Routed {
     match world.get_resource::<NetRole>().copied().unwrap_or_default() {
         NetRole::Single => None,
         NetRole::Client => {
+            if kind == SaveKind::Character && reason == "save_game" {
+                return Some(ask_host(world, slot));
+            }
             let host = world.get_resource::<NetClient>().map_or_else(|| "the host".to_owned(), |c| c.address.clone());
             let why = match kind {
                 SaveKind::World => format!("the host keeps the world; ask the host ({host})"),
                 SaveKind::Character => format!(
                     "your character is saved by the host and sent here (at camps and rewards, when you leave, when the session ends); \
-                     the host asks for one now with save_game what=character bound to your player ({host})"
+                     save_game what=character asks the host for it now ({host})"
                 ),
             };
             if reason != "save_game" {
@@ -399,11 +407,31 @@ fn route(world: &mut World, kind: SaveKind, body: Option<Entity>, reason: &str) 
                     reason: reason.to_owned(),
                     written: false,
                     target: None,
+                    asked: None,
                 }));
             }
             Some(send_to_player(world, player, body, reason))
         }
     }
+}
+
+/// A client's `save_game` of its character: the host is asked for it, and `slot` (now the current
+/// one) is written when its capture comes back (`on_character_save`).
+fn ask_host(world: &mut World, slot: &str) -> Result<SaveReport, String> {
+    let host = shards_net::client::ask_character(world)?;
+    let report = SaveReport {
+        kind: SaveKind::Character,
+        slot: slot.to_owned(),
+        tick: sim::tick(world),
+        bytes: 0,
+        sections: 0,
+        reason: "save_game".into(),
+        written: true,
+        target: None,
+        asked: Some(host),
+    };
+    journal::log(world, JournalKind::Sim, format!("save: {report}"));
+    Ok(report)
 }
 
 /// `SaveRouting::saved`: the host saved its own character because the game decided to; every

@@ -45,15 +45,28 @@ pub const MAX_NAME: usize = 32;
 /// Longest token a `Hello` may carry (the host issues 32 hex digits).
 pub const MAX_TOKEN: usize = 64;
 
-/// Largest character (save sections) a `Hello` may carry, as JSON bytes.
-pub const MAX_CHARACTER_BYTES: usize = 64 * 1024;
+/// Largest character (save sections) a player may bring, as JSON bytes: a bigger one is refused
+/// at the hello, before any of it is read, and a client does not write one.
+pub const MAX_CHARACTER_BYTES: usize = 1024 * 1024;
+
+/// Largest character a `Hello` carries itself, as JSON bytes; a bigger one comes after it in
+/// parts ([`CHARACTER_PART_BYTES`] each, `Msg::CharacterPart`).
+pub const MAX_INLINE_CHARACTER: usize = 64 * 1024;
+
+/// Bytes of JSON in one part of a character: escaped into its message, at most twice that, under
+/// what the host reads of a peer that does not play yet ([`MAX_JOINING_MESSAGE`]).
+pub const CHARACTER_PART_BYTES: usize = 32 * 1024;
+
+/// Parts a character may come in: the largest one at the smallest a part can be (a part ends at a
+/// character boundary, at most three bytes short).
+pub const MAX_CHARACTER_PARTS: u32 = MAX_CHARACTER_BYTES.div_ceil(CHARACTER_PART_BYTES - 3) as u32;
 
 /// Longest peer text (a desync's first difference, a version string) put into the journal.
 pub const MAX_PEER_TEXT: usize = 200;
 
 /// Largest message a peer that does not play yet is read, in bytes: a `Hello` with the
-/// largest character. A larger one is refused unread.
-pub const MAX_JOINING_MESSAGE: usize = MAX_CHARACTER_BYTES + 16 * 1024;
+/// largest character it carries itself, or a part of a bigger one. A larger one is refused unread.
+pub const MAX_JOINING_MESSAGE: usize = MAX_INLINE_CHARACTER + 16 * 1024;
 
 /// Answers to games of an older build (wire protocol 1) a second, all told: a refusal is bigger
 /// than some hellos, and anyone can claim to be one.
@@ -108,6 +121,8 @@ const NEW_PEER_GRACE_MS: u64 = 5_000;
 pub enum PeerStage {
     /// Heard from, no `Hello` yet.
     New,
+    /// Said hello and holds a player number; its character comes in parts (`got` of `parts`).
+    Character { got: u32, parts: u32 },
     /// The game said "not now": asked again every tick.
     Waiting(String),
     /// Told the seed; building its world.
@@ -192,6 +207,11 @@ pub struct Peer {
     gone_since: Option<u64>,
     /// What its link had acknowledged when it last did (`Link::reliable_acked`), and when.
     gone_progress: (u64, u64),
+    /// The JSON of its character so far, while it comes in parts (`PeerStage::Character`).
+    character_text: String,
+    /// When it was last sent the character it asked for (host clock, ms), and whether it was told
+    /// to wait since: asks beyond that until the next second are not answered.
+    character_asked: Option<(u64, bool)>,
 }
 
 impl Peer {
@@ -203,6 +223,8 @@ impl Peer {
             stage_mark: (std::mem::discriminant(&PeerStage::New), now),
             gone_since: None,
             gone_progress: (0, 0),
+            character_text: String::new(),
+            character_asked: None,
             unread: 0,
             skipped: 0,
             admitted: false,
@@ -305,7 +327,13 @@ enum Task {
     /// Player `player` left through `peer` (its character goes there, not to a newer link).
     Leave { player: u8, peer: PeerId, reason: String },
     Call { peer: PeerId, call: CallMsg },
+    /// The player of `peer` asked for its character.
+    SendCharacter(PeerId),
 }
+
+/// How often a player is sent the character it asks for, milliseconds: a capture is the size of
+/// the character, and asking costs a message of a few bytes.
+pub const CHARACTER_ASK_EVERY_MS: u64 = 1000;
 
 /// The host's session.
 #[derive(Resource)]
@@ -350,6 +378,8 @@ pub struct NetHost {
     /// (ms) and how many it has had.
     pub older_builds: u64,
     older_window: (u64, u32),
+    /// The session's clock at the last receive (ms).
+    now: u64,
 }
 
 impl NetHost {
@@ -360,6 +390,7 @@ impl NetHost {
             cookieless: 0,
             older_builds: 0,
             older_window: (0, 0),
+            now: 0,
             peers: BTreeMap::new(),
             slots: BTreeMap::new(),
             retired: Vec::new(),
@@ -712,6 +743,7 @@ fn io_in_links(host: &mut NetHost, endpoint: &mut NetEndpoint) {
 
 fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
     let now = endpoint.clock.now();
+    host.now = now;
     host.wall_clock = endpoint.clock.is_wall();
     // Before the tasks of this frame: a peer admitted in it gets the world as it is after the
     // jump, and starts with its ticks not moved.
@@ -864,8 +896,15 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
         if peer.stage_mark.0 != mark {
             peer.stage_mark = (mark, now);
         }
-        if matches!(peer.stage, PeerStage::New | PeerStage::Accepted | PeerStage::Ready) && now.saturating_sub(peer.stage_mark.1) > handshake_ms {
-            stuck.push((*id, format!("joining did not go on in {} s ({:?}); join again", handshake_ms / 1000, peer.stage)));
+        if matches!(peer.stage, PeerStage::New | PeerStage::Character { .. } | PeerStage::Accepted | PeerStage::Ready)
+            && now.saturating_sub(peer.stage_mark.1) > handshake_ms
+        {
+            let secs = handshake_ms / 1000;
+            let why = match peer.stage {
+                PeerStage::Character { got, parts } => format!("your character did not arrive in {secs} s ({got} of {parts} parts); join again"),
+                _ => format!("joining did not go on in {secs} s ({:?}); join again", peer.stage),
+            };
+            stuck.push((*id, why));
         }
     }
     for (id, reason) in stuck {
@@ -969,7 +1008,15 @@ fn oversized(world: &mut World, host: &mut NetHost, id: PeerId, len: usize, max:
             crate::hooks::net_line(world, &format!("oversized p{player}"), JournalKind::Warn, format!("p{player} sent a message of {kb} KB, over {max_kb} KB: dropped unread"));
         }
         PeerStage::Gone => {}
-        _ => refuse(world, host, id, &format!("a message of {kb} KB before you play is over the {max_kb} KB the host reads (a character takes at most {} KB)", MAX_CHARACTER_BYTES / 1024)),
+        _ => refuse(
+            world,
+            host,
+            id,
+            &format!(
+                "a message of {kb} KB before you play is over the {max_kb} KB the host reads (a hello carries a character of at most {} KB; a bigger one comes in parts after it)",
+                MAX_INLINE_CHARACTER / 1024
+            ),
+        ),
     }
 }
 
@@ -998,6 +1045,26 @@ fn on_message(world: &mut World, host: &mut NetHost, id: PeerId, message: Msg) {
     }
     match message {
         Msg::Hello(hello) => on_hello(world, host, id, hello),
+        Msg::CharacterPart { index, text } => on_character_part(world, host, id, index, text),
+        Msg::CharacterAsk => {
+            let now = host.now;
+            let Some(peer) = host.peers.get_mut(&id).filter(|p| p.stage == PeerStage::Connected) else { return };
+            match peer.character_asked {
+                Some((at, told)) if now.saturating_sub(at) < CHARACTER_ASK_EVERY_MS => {
+                    // Once a second, and told so once: more asks in that second cost nothing.
+                    if !told {
+                        let wait = (CHARACTER_ASK_EVERY_MS - now.saturating_sub(at)) as f64 / 1000.0;
+                        let reason = format!("it was sent less than a second ago; ask again in {wait:.1} s");
+                        let _ = peer.send(&Msg::CharacterNotSent { reason });
+                        peer.character_asked = Some((at, true));
+                    }
+                }
+                _ => {
+                    peer.character_asked = Some((now, false));
+                    host.tasks.push(Task::SendCharacter(id));
+                }
+            }
+        }
         Msg::Ready { .. } => {
             if let Some(peer) = host.peers.get_mut(&id)
                 && peer.stage == PeerStage::Accepted
@@ -1096,9 +1163,26 @@ fn refusal(world: &World, hello: &Hello) -> Option<String> {
         return Some(format!("the token is over {MAX_TOKEN} bytes; delete the kept one (saves/net/) to join as a new player"));
     }
     if let Some(character) = &hello.character
-        && msg::encode(character).len() > MAX_CHARACTER_BYTES
+        && msg::encode(character).len() > MAX_INLINE_CHARACTER
     {
-        return Some(format!("the character is over {} KB; the host takes at most that", MAX_CHARACTER_BYTES / 1024));
+        return Some(format!(
+            "the character is over {} KB in the hello; a bigger one comes in parts after it (at most {} KB)",
+            MAX_INLINE_CHARACTER / 1024,
+            MAX_CHARACTER_BYTES / 1024
+        ));
+    }
+    if hello.character_parts > 0 || hello.character_bytes > 0 {
+        let bytes = hello.character_bytes;
+        if hello.character.is_some() {
+            return Some("a hello brings its character or the parts of one, not both; run the same build".into());
+        }
+        if bytes > MAX_CHARACTER_BYTES as u64 {
+            return Some(format!("the character is {} KB, over the {} KB a host takes", bytes.div_ceil(1024), MAX_CHARACTER_BYTES / 1024));
+        }
+        let parts = hello.character_parts;
+        if parts == 0 || bytes == 0 || parts > MAX_CHARACTER_PARTS || u64::from(parts) > bytes {
+            return Some(format!("a character of {bytes} bytes cannot come in {parts} parts; run the same build"));
+        }
     }
     let content = world.get_resource::<ContentDb>().map_or(0, ContentDb::hash);
     if hello.content_hash != content {
@@ -1173,9 +1257,59 @@ fn on_hello(world: &mut World, host: &mut NetHost, id: PeerId, hello: Hello) {
     host.slots.insert(player, Slot { token, name: hello.name.clone(), peer: Some(id), left_at: None, closed_by: None, admitted });
     let peer = host.peers.get_mut(&id).expect("known peer");
     peer.player = player;
+    let parts = hello.character_parts;
     peer.hello = Some(hello);
+    if parts > 0 {
+        // Its seat is held while the character comes: one of at most `max_players` such peers.
+        peer.stage = PeerStage::Character { got: 0, parts };
+        return;
+    }
     peer.stage = PeerStage::Waiting(String::new());
     decide(world, host, id);
+}
+
+/// Part `index` of the character of a peer that said hello with one too big for it: in order,
+/// none bigger than [`CHARACTER_PART_BYTES`], together the bytes the hello said. The last one
+/// puts the character in the hello, and the join goes on.
+fn on_character_part(world: &mut World, host: &mut NetHost, id: PeerId, index: u32, text: String) {
+    let Some(peer) = host.peers.get_mut(&id) else { return };
+    let PeerStage::Character { got, parts } = peer.stage else {
+        if peer.stage != PeerStage::Gone {
+            refuse(world, host, id, "a part of a character that the hello did not announce; run the same build");
+        }
+        return;
+    };
+    let declared = peer.hello.as_ref().map_or(0, |h| h.character_bytes) as usize;
+    let why = if index != got {
+        Some(format!("part {index} of the character came when part {got} was due; run the same build"))
+    } else if text.len() > CHARACTER_PART_BYTES {
+        Some(format!("a part of the character is {} KB, over the {} KB of one", text.len().div_ceil(1024), CHARACTER_PART_BYTES / 1024))
+    } else if peer.character_text.len() + text.len() > declared || (index + 1 == parts && peer.character_text.len() + text.len() != declared) {
+        Some(format!("the parts of the character are not the {declared} bytes the hello said"))
+    } else {
+        None
+    };
+    if let Some(why) = why {
+        peer.character_text = String::new();
+        refuse(world, host, id, &why);
+        return;
+    }
+    peer.character_text.push_str(&text);
+    if index + 1 < parts {
+        peer.stage = PeerStage::Character { got: got + 1, parts };
+        return;
+    }
+    let text = std::mem::take(&mut peer.character_text);
+    match serde_json::from_str::<Value>(&text) {
+        Ok(character) => {
+            if let Some(hello) = peer.hello.as_mut() {
+                hello.character = Some(character);
+            }
+            peer.stage = PeerStage::Waiting(String::new());
+            decide(world, host, id);
+        }
+        Err(e) => refuse(world, host, id, &format!("the character does not decode ({}); run the same build", clip(&e.to_string(), 80))),
+    }
 }
 
 /// The lowest player number nobody holds: no connected peer, no body waiting for a rejoin.
@@ -1262,6 +1396,7 @@ fn run_tasks(world: &mut World, host: &mut NetHost) {
             Task::Admit(id) => admit(world, host, id),
             Task::Leave { player, peer, reason } => leave(world, host, player, peer, &reason, true),
             Task::Call { peer, call } => forwarded(world, host, peer, call),
+            Task::SendCharacter(peer) => character_asked(world, host, peer),
         }
     }
     for peer in host.peers.values_mut() {
@@ -1388,6 +1523,30 @@ fn join_call(world: &mut World, host: &NetHost, player: u8, hello: &Hello) -> (V
         args["character"] = character.clone();
     }
     (args, chosen != hello.character)
+}
+
+/// A player asked for its character (`save_game what=character` on its game): the host captures
+/// the body it plays, the authoritative one, and sends it with the reason `save_game`; their
+/// machine writes it into the slot it asked for. A body that is gone or a capture that fails is
+/// said to them instead.
+fn character_asked(world: &mut World, host: &mut NetHost, id: PeerId) {
+    let Some(peer) = host.peers.get(&id).filter(|p| p.stage == PeerStage::Connected) else { return };
+    let (player, body) = (peer.player, peer.body);
+    let entity = body.and_then(|b| world.resource::<AiIndex>().get(AiId(b)));
+    let captured = entity.and_then(|e| (hooks(world).capture_character)(world, e));
+    let Some(peer) = host.peers.get_mut(&id) else { return };
+    let Some(sections) = captured else {
+        let reason = if entity.is_none() { "you have no body in the host's world" } else { "the host could not capture it (its journal says why)" };
+        let _ = peer.send(&Msg::CharacterNotSent { reason: reason.to_owned() });
+        return;
+    };
+    let kb = msg::encode(&sections).len().div_ceil(1024);
+    let tick = sim::tick(world);
+    if let Err(e) = peer.send(&Msg::CharacterSave { tick, reason: "save_game".into(), sections }) {
+        let _ = peer.send(&Msg::CharacterNotSent { reason: format!("the host could not send it ({e})") });
+        return;
+    }
+    journal::log(world, JournalKind::Sim, format!("net: p{player} asked for its character: sent ({kb} KB, tick {tick})"));
 }
 
 /// Sends `player` their character as the host has it now.
@@ -1949,6 +2108,8 @@ mod tests {
             name: name.into(),
             token: token.into(),
             character: None,
+            character_parts: 0,
+            character_bytes: 0,
             tick_hz: 1.0 / ai_core::sim::tick_seconds(world) as f64,
         }
     }
@@ -2137,7 +2298,7 @@ mod tests {
 
     // --- the join's cookie ------------------------------------------------------------------
 
-    use super::PeerStage;
+    use super::{PeerStage, MAX_CHARACTER_BYTES};
     use crate::hub::{MemoryHub, MemoryTransport};
     use crate::link::{Delivered, Link, Role, Verdict};
     use crate::msg::{self, Msg};
@@ -2314,5 +2475,108 @@ mod tests {
         s.send(0, &sent[0]);
         h.receive();
         assert_eq!(heard(&h.hub, &mut s).len(), 1);
+    }
+
+    // --- a character in parts ---------------------------------------------------------------
+
+    /// What the host queued for peer `id` (its session is 1): every message, decoded.
+    fn told(host: &mut NetHost, id: u64) -> Vec<Msg> {
+        let mut client = Link::new(1, Role::Client);
+        host.peers.get_mut(&id).unwrap().link.flush(0, &mut |d| {
+            client.on_datagram(0, d);
+        });
+        client.poll(0).into_iter().filter_map(|m| if let Delivered::Reliable(b) = m { msg::decode::<Msg>(&b).ok() } else { None }).collect()
+    }
+
+    fn refusal_of(host: &mut NetHost, id: u64) -> String {
+        told(host, id).into_iter().find_map(|m| if let Msg::Refused { reason } = m { Some(reason) } else { None }).unwrap_or_default()
+    }
+
+    /// A hello whose character comes in parts, and the parts.
+    fn hello_in_parts(world: &World, character: &serde_json::Value) -> (crate::msg::Hello, Vec<String>) {
+        let parts = msg::split_character(character, super::CHARACTER_PART_BYTES);
+        let mut hello = hello_of(world, "c1", "");
+        hello.character_parts = parts.len() as u32;
+        hello.character_bytes = parts.iter().map(String::len).sum::<usize>() as u64;
+        (hello, parts)
+    }
+
+    #[test]
+    fn a_character_in_parts_holds_a_seat_and_joins_when_its_last_part_is_in() {
+        use super::{on_character_part, on_hello, Peer};
+        let mut world = bare_world();
+        let mut host = NetHost::new();
+        host.peers.insert(7, Peer::new(7, 1, 0));
+        let character = serde_json::json!("x".repeat(100_000));
+        let (hello, parts) = hello_in_parts(&world, &character);
+        assert_eq!(parts.len(), 4);
+        assert_eq!(super::refusal(&world, &hello), None);
+        on_hello(&mut world, &mut host, 7, hello);
+        assert_eq!(host.peers[&7].stage, PeerStage::Character { got: 0, parts: 4 });
+        assert_eq!(host.slots[&host.peers[&7].player].peer, Some(7), "it holds its seat meanwhile");
+        for (i, text) in parts.iter().enumerate() {
+            on_character_part(&mut world, &mut host, 7, i as u32, text.clone());
+        }
+        assert_eq!(host.peers[&7].stage, PeerStage::Accepted);
+        assert_eq!(host.peers[&7].hello.as_ref().and_then(|h| h.character.clone()), Some(character));
+    }
+
+    #[test]
+    fn parts_out_of_order_too_big_unannounced_or_short_of_the_hello_are_refused() {
+        use super::{on_character_part, on_hello, Peer};
+        let mut world = bare_world();
+        let mut host = NetHost::new();
+        let character = serde_json::json!("y".repeat(70_000));
+        let join = |host: &mut NetHost, world: &mut World, id: u64| {
+            host.peers.insert(id, Peer::new(id, 1, 0));
+            let (hello, parts) = hello_in_parts(world, &character);
+            on_hello(world, host, id, hello);
+            parts
+        };
+        let parts = join(&mut host, &mut world, 1);
+        on_character_part(&mut world, &mut host, 1, 1, parts[1].clone());
+        assert!(refusal_of(&mut host, 1).contains("part 1 of the character came when part 0 was due"));
+        let _ = join(&mut host, &mut world, 2);
+        on_character_part(&mut world, &mut host, 2, 0, "z".repeat(super::CHARACTER_PART_BYTES + 1));
+        assert!(refusal_of(&mut host, 2).contains("over the 32 KB of one"));
+        let parts = join(&mut host, &mut world, 3);
+        on_character_part(&mut world, &mut host, 3, 0, parts[0].clone());
+        on_character_part(&mut world, &mut host, 3, 1, parts[1].clone());
+        on_character_part(&mut world, &mut host, 3, 2, parts[2][1..].to_owned());
+        assert!(refusal_of(&mut host, 3).contains("are not the 70002 bytes the hello said"));
+        // A peer whose hello brought no parts, or that sent nothing yet.
+        host.peers.insert(4, Peer::new(4, 1, 0));
+        let plain = hello_of(&world, "c4", "");
+        on_hello(&mut world, &mut host, 4, plain);
+        on_character_part(&mut world, &mut host, 4, 0, "x".into());
+        assert!(refusal_of(&mut host, 4).contains("a part of a character that the hello did not announce"));
+        for id in 1..=4 {
+            assert_eq!(host.peers[&id].stage, PeerStage::Gone, "peer {id}");
+        }
+        // Parts that do not decode, joined.
+        host.peers.insert(5, Peer::new(5, 1, 0));
+        let mut hello = hello_of(&world, "c5", "");
+        (hello.character_parts, hello.character_bytes) = (1, 9);
+        on_hello(&mut world, &mut host, 5, hello);
+        on_character_part(&mut world, &mut host, 5, 0, "{not json".into());
+        assert!(refusal_of(&mut host, 5).contains("the character does not decode"));
+    }
+
+    #[test]
+    fn a_hello_says_how_big_its_character_is_and_too_big_is_refused_before_any_part() {
+        let world = bare_world();
+        let mut hello = hello_of(&world, "c1", "");
+        (hello.character_parts, hello.character_bytes) = (40, MAX_CHARACTER_BYTES as u64 + 1);
+        assert_eq!(super::refusal(&world, &hello).unwrap(), "the character is 1025 KB, over the 1024 KB a host takes");
+        (hello.character_parts, hello.character_bytes) = (super::MAX_CHARACTER_PARTS + 1, MAX_CHARACTER_BYTES as u64);
+        assert!(super::refusal(&world, &hello).unwrap().contains("cannot come in"));
+        (hello.character_parts, hello.character_bytes) = (0, 10);
+        assert!(super::refusal(&world, &hello).unwrap().contains("cannot come in 0 parts"));
+        let mut inline = hello_of(&world, "c1", "");
+        inline.character = Some(serde_json::json!("x".repeat(70_000)));
+        assert!(super::refusal(&world, &inline).unwrap().starts_with("the character is over 64 KB in the hello"));
+        inline.character = Some(serde_json::json!("x"));
+        (inline.character_parts, inline.character_bytes) = (1, 5);
+        assert!(super::refusal(&world, &inline).unwrap().contains("its character or the parts of one, not both"));
     }
 }
