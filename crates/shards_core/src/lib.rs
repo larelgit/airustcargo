@@ -5,7 +5,8 @@
 //! - [`Intent`]: the only input of a character, written by keyboard, agents, network
 //!   and replays, read by gameplay. One-shot [`Press`]es are consumed during a tick;
 //!   [`Order`]s are carried out over many ([`follow_orders`] walks).
-//! - [`EngineState`] / [`PauseState`]: loading, menu, game, pause.
+//! - [`EngineState`] / [`PauseState`]: loading, menu, game, pause. A game with a main menu
+//!   ([`menu`]) shows it only in runs a person may be at ([`MenuLaunch`]); time stands there.
 //! - [`LoadingGate`]: the simulation starts only once everything is loaded, so loading
 //!   never shifts a tick.
 //! - [`EngineModules`]: which engine modules run, shown in `ai/status` under `engine`.
@@ -16,6 +17,7 @@
 pub mod exit;
 pub mod intent;
 pub mod loading;
+pub mod menu;
 pub mod seed;
 pub mod state;
 
@@ -29,6 +31,7 @@ use serde_json::{json, Value};
 pub use exit::{run_exit_hooks, ExitHook, ExitHooks};
 pub use intent::{flat, follow_orders, input_names, Intent, Order, Press, Target};
 pub use loading::{statuses as loading_statuses, LoadCheck, LoadStatus, LoadingGate};
+pub use menu::{can_start_game, start_game};
 pub use seed::{adopt_seed, hold_seed, seed_ready, SeedLock};
 pub use state::{
     player_body, predicts, simulates, EngineState, LocalPlayer, NetPrediction, NetRole, NetSet, PauseState, PlayerId, Predicted,
@@ -41,7 +44,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The types a game module uses most.
 pub mod prelude {
     pub use crate::{
-        input_names, CoreSystems, EngineAppExt, EngineConfig, EngineState, Intent, LoadStatus, LocalPlayer, NetRole, NetSet,
+        input_names, CoreSystems, EngineAppExt, EngineConfig, EngineState, Intent, LoadStatus, LocalPlayer, MenuLaunch, NetRole, NetSet,
         Order, PauseState, PlayerId, Predicted, Press, Target,
     };
 }
@@ -89,8 +92,18 @@ pub struct EngineConfig {
     pub report_perf: bool,
     /// Window size in logical pixels.
     pub window: (u32, u32),
-    /// Where `EngineState::Loading` goes once everything is loaded.
+    /// Where `EngineState::Loading` goes once everything is loaded: `InGame`, or `MainMenu` for a
+    /// game with a main menu. Whether a run shows that menu is [`menu`](Self::menu)'s to say
+    /// ([`start_state`](Self::start_state)).
     pub after_loading: EngineState,
+    /// Whether a game whose [`after_loading`](Self::after_loading) is `MainMenu` shows it in this run
+    /// (`--menu`, `--no-menu`): by default only when a person may be there to use it.
+    pub menu: MenuLaunch,
+    /// A picture under the asset folder (`ui/loading.png`) shown full screen while the game loads
+    /// (`EngineState::Loading`) and while a region loads across frames (`RegionLoading`), when
+    /// something is drawn. Content is not loaded yet when it is first needed, so the game names it
+    /// here, not in content. `None`: nothing is shown.
+    pub loading_image: Option<String>,
     /// Apply content files as they change on disk. Needs the `hot_reload` cargo feature
     /// (Bevy's file watcher); on by default, off in tests and `--verify`.
     pub hot_reload: bool,
@@ -237,6 +250,21 @@ pub enum NetLaunch {
     Stand { clients: u8, udp: bool },
 }
 
+/// Whether a run shows the game's main menu (a game whose [`EngineConfig::after_loading`] is
+/// `MainMenu`), or goes straight into the game as one without a menu does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MenuLaunch {
+    /// Only when a person may be there to use it: something is drawn (a window, `--offscreen`),
+    /// and the launch says nothing of what to play (no session: `--host`, `--join`, `--stand`; no
+    /// save slot: `--world`, `--character`). Headless runs, tests, replays and checks go straight in.
+    #[default]
+    Auto,
+    /// Always (`--menu`): an agent goes through it headless, with `ui_*` tools.
+    Show,
+    /// Never (`--no-menu`): straight into the game.
+    Skip,
+}
+
 /// Where player settings (graphics, audio, controls) are kept.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum SettingsStore {
@@ -268,6 +296,8 @@ impl Default for EngineConfig {
             report_perf: true,
             window: (1280, 720),
             after_loading: EngineState::InGame,
+            menu: MenuLaunch::Auto,
+            loading_image: None,
             hot_reload: true,
             asset_dir: "assets".into(),
             testing: false,
@@ -290,6 +320,23 @@ impl EngineConfig {
     /// cameras) only then.
     pub fn draws(&self) -> bool {
         self.offscreen || !(self.headless || self.testing || self.embedded)
+    }
+
+    /// Where `Loading` goes in this run: [`after_loading`](Self::after_loading), except that a
+    /// main menu is passed over (`InGame`) when [`menu`](Self::menu) says this run does not show it,
+    /// so a game that goes straight in builds exactly the world it builds without a menu.
+    pub fn start_state(&self) -> EngineState {
+        if self.after_loading != EngineState::MainMenu {
+            return self.after_loading;
+        }
+        let show = match self.menu {
+            MenuLaunch::Show => true,
+            MenuLaunch::Skip => false,
+            MenuLaunch::Auto => {
+                self.draws() && self.net == NetLaunch::Off && self.world_slot.is_none() && self.character_slot.is_none()
+            }
+        };
+        if show { EngineState::MainMenu } else { EngineState::InGame }
     }
 
     /// The AI layer as this config wants it.
@@ -408,11 +455,13 @@ impl Plugin for CorePlugin {
         // `ai/session {player: N}`, `possess player=N`: the body with `PlayerId(N)`.
         app.world_mut().get_resource_or_init::<ai_core::AgentSessions>().set_player_resolver(state::player_body);
         exit::register(app.world_mut());
+        menu::register(app.world_mut());
         app.insert_resource(self.config.clone())
             .init_resource::<NetRole>()
             .init_resource::<LoadingGate>()
             .init_resource::<state::MenuPaused>()
             .init_resource::<state::RegionTrip>()
+            .init_resource::<menu::MainMenuClock>()
             .init_resource::<ExitHooks>()
             .init_resource::<SeedLock>()
             .init_state::<EngineState>()
@@ -469,6 +518,9 @@ impl Plugin for CorePlugin {
                         .after(EnterSchedules::<EngineState>::default()),
                 ),
             )
+            .add_systems(OnEnter(EngineState::MainMenu), menu::enter_menu)
+            .add_systems(OnExit(EngineState::MainMenu), menu::leave_menu)
+            .add_systems(RunFixedMainLoop, menu::restart_when_due.in_set(RunFixedMainLoopSystems::BeforeFixedMainLoop))
             .add_systems(OnEnter(PauseState::Paused), state::pause_simulation)
             .add_systems(OnExit(PauseState::Paused), state::resume_simulation)
             .add_systems(Update, (state::journal_transitions::<EngineState>, state::journal_transitions::<PauseState>));

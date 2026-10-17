@@ -5,7 +5,7 @@
 //! requirement; while one is pending it holds [`SimGate`], so no tick runs, in real
 //! time or through `step`, and loading never shifts a tick: tick 1 always runs on the
 //! same world. Once all are ready, `Loading` moves on to
-//! [`EngineConfig::after_loading`](crate::EngineConfig::after_loading) (and
+//! [`EngineConfig::start_state`](crate::EngineConfig::start_state) (and
 //! `RegionLoading` back to `InGame`); the simulation is released the frame after, when
 //! `OnEnter` has spawned the world.
 
@@ -88,7 +88,7 @@ pub(crate) fn update_loading(world: &mut World) {
             }
         }
     }
-    let after_loading = world.get_resource::<EngineConfig>().map_or(EngineState::InGame, |c| c.after_loading);
+    let after_loading = world.get_resource::<EngineConfig>().map_or(EngineState::InGame, EngineConfig::start_state);
     let next = match world.resource::<State<EngineState>>().get() {
         EngineState::Loading => Some(after_loading),
         EngineState::RegionLoading => Some(EngineState::InGame),

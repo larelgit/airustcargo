@@ -1,7 +1,8 @@
 //! Engine states and who plays.
 //!
 //! ```text
-//! Loading ──(loading gate open)──► EngineConfig::after_loading: InGame (default) or MainMenu
+//! Loading ──(loading gate open)──► EngineConfig::start_state: InGame (default) or MainMenu
+//! MainMenu ──(new_game, continue_game, the game's own)──► InGame
 //! InGame ─► PauseState: Running ⇄ Paused        RegionLoading ──(gate open)──► InGame
 //! ```
 //!
@@ -27,7 +28,8 @@ pub enum EngineState {
     /// Waiting for the loading gate (content, ...). No ticks run.
     #[default]
     Loading,
-    /// The game's menu; the engine leaves it to the game.
+    /// The game's main menu (see [`menu`](crate::menu)): time stands; `new_game`, `continue_game`
+    /// or the game itself goes on to `InGame`.
     MainMenu,
     /// Playing: games spawn their world on entering it.
     InGame,
