@@ -80,3 +80,37 @@ fn a_menu_button_is_refused_while_a_question_is_open() {
     let err = fails(&mut app, "ui_click", json!({"id": "pause/resume"}));
     assert_eq!(err, "pause/resume is under confirm_quit: answer or close that first");
 }
+
+#[test]
+fn a_key_changed_on_the_controls_page_is_a_controls_setting_and_a_taken_one_is_refused() {
+    let mut app = my_game::test_app(SEED);
+    say(&mut app, "ui_open", json!({"screen": "pause"}));
+    say(&mut app, "ui_click", json!({"id": "pause/settings"}));
+    say(&mut app, "ui_set", json!({"id": "settings/tabs", "value": "controls"}));
+    let tree = say(&mut app, "ui_read", json!({"screen": "settings"}));
+    assert_eq!(line(&tree, "settings/jump"), "settings/jump  binding \"Jump\" Space · Pad South = Key(Space), GamepadButton(South) [controls.bindings.gameplay.jump]");
+    for row in ["dodge", "light", "heavy", "block", "parry", "interact", "use_item", "lock_on", "sprint", "glide"] {
+        assert!(!line(&tree, &format!("settings/{row}")).contains("no action"), "every row names one of the hero's actions:\n{tree}");
+    }
+
+    // Confirming the row waits for a key; an agent gives it with `ui_set`, and the controls keep it.
+    say(&mut app, "ui_click", json!({"id": "settings/jump"}));
+    assert!(line(&say(&mut app, "ui_read", json!({"screen": "settings"})), "settings/jump").contains("waiting for an input"));
+    assert_eq!(say(&mut app, "ui_set", json!({"id": "settings/jump", "value": "Key(KeyK)"})), "settings/jump Space · Pad South → K · Pad South");
+    let controls = say(&mut app, "settings", json!({"group": "controls"}));
+    assert!(controls.contains("controls.bindings.gameplay.jump = [\"Key(KeyK)\",\"GamepadButton(South)\"]"), "{controls}");
+
+    // An input the hero's interact reads is refused, and the row says so in the language played.
+    let err = fails(&mut app, "ui_set", json!({"id": "settings/dodge", "value": "Key(KeyE)"}));
+    assert!(err.contains("Key(KeyE) is already bound to `interact`") && err.ends_with("(on this screen: settings/interact)"), "{err}");
+    say(&mut app, "settings_set", json!({"group": "locale", "key": "language", "value": "ru"}));
+    let row = line(&say(&mut app, "ui_read", json!({"screen": "settings"})), "settings/dodge");
+    assert!(row.starts_with("settings/dodge  binding \"Уклонение\" "), "{row}");
+    fails(&mut app, "ui_set", json!({"id": "settings/dodge", "value": "Key(KeyE)"}));
+    let row = line(&say(&mut app, "ui_read", json!({"screen": "settings"})), "settings/dodge");
+    assert!(row.contains("[controls.bindings.gameplay.dodge] · E уже используется для «Взаимодействие»"), "{row}");
+
+    // `default` gives the defaults back, and the controls keep nothing.
+    say(&mut app, "ui_set", json!({"id": "settings/jump", "value": "default"}));
+    assert!(app.world().resource::<ControlSettings>().bindings.is_empty());
+}
