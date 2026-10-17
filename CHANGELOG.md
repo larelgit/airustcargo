@@ -180,7 +180,7 @@ single-player nothing changes (the reference replays are unchanged):
   of an earlier stand before it starts the children; `wait` on a client's port file (`--port-file F.c1`) does not end when that file disappears;
   `ai/status.net.stand = {clients, udp}`.
 - The port files `F.c1` and `F.c2` are written through their own temporary files (`F.c1.part`): two clients that start together do not share one.
-- The scenario names a member that the driver lost (`c2: cannot reach the game at …`), both at start and when checking an invariant (with its line); the verdict on the stand's links (`this scenario's \`stand\` line wants links …`) stays in the scenario's own words. The stand scenario does not depend on `--peer`/`SHARDS_PEER` (including `all`).
+- The scenario names a member that the driver lost (`c2: cannot reach the game at …`), both at start and when checking an invariant (with its line); the verdict on the stand's links (``this scenario's `stand` line wants links …``) stays in the scenario's own words. The stand scenario does not depend on `--peer`/`SHARDS_PEER` (including `all`).
 
 **Prediction, smoothing and the network overlay (C4: E7.4, E7.5, E7.8; `shards_net`, `shards_core`, `shards_motion`,
 `shards_action`)** — the client does not wait for the host to move its own body; in single-player and on the host nothing changes (the reference

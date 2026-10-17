@@ -31,7 +31,7 @@ Shards is built on Bevy 0.20. A game depends on one crate, `shards`, and gets a 
 
 - **Agents are first-class players.** `observe` describes the world as text, `act` calls typed tools, `step` moves time. An agent does not need to read pixels.
 - **No AI inside.** The engine has no LLM, built-in agent, model call or API key. The game is an environment; an agent, a person, a script or CI drives it from outside.
-- **Deterministic by design.** The same seed and inputs give the same game, on Windows and on Linux. Every session is a replay that checks the next build.
+- **Deterministic by design.** The same seed and inputs give the same game; replays recorded on Windows 11 match on Linux (Ubuntu 24.04 under WSL1, the same x86_64 machine). Every session is a replay that checks the next build.
 - **Content, not code.** Numbers, attacks, enemies, screens, texts, sounds, looks and effects are files that reload while the game runs.
 - **Bugs stop where they happen.** A broken invariant, a panicking system or a co-op desync stops the game on that tick, with a replay saved.
 - **One dependency.** A game never changes engine code. The template game shows the whole path, from a copy to a build for players.
@@ -112,7 +112,7 @@ The roll is an ordinary player input: the agent's tools go through the same `Int
 **World**
 
 - Procedural regions: tiles with sockets on their edges, rotations, weights and points of interest, assembled by a solver with checks, retries and a fallback map.
-- The same seed and generator version give the same region byte for byte; `shards worldgen` checks a thousand seeds in one command.
+- The same seed, generator version and content give the same region byte for byte; `shards worldgen` checks a thousand seeds in one command.
 - Dungeons from the same generator.
 - Levels from Blender: glTF with custom properties becomes colliders, sensors, markers, prefabs and components.
 - Regions load through a loading screen; active zones around the players keep the rest dormant, and tile visuals stream in by distance.
@@ -206,8 +206,9 @@ A game is a separate repository with one dependency, `shards`. The starting poin
        let mut app = App::new();
        app.add_plugins(EnginePlugins::new(EngineConfig { title: "My game".into(), ..config.clone() }))
            .add_plugins(GamePlugin);
-       if !config.headless && !config.testing {
-           app.add_plugins(visuals::VisualsPlugin);   // meshes, light, camera: window only
+       if config.draws() {
+           #[cfg(feature = "render")]
+           app.add_plugins(visuals::VisualsPlugin);   // meshes, light, camera: only when drawing
        }
        app
    }
@@ -265,7 +266,7 @@ The rules that keep a game deterministic (gameplay in `FixedUpdate`, randomness 
 
 ## Status
 
-All five phases of the engine spec are built and checked:
+All five phases of the engine spec are built, and the repository's tests and checks pass:
 
 - **A:** the combat prototype;
 - **B:** the world: regions, NPCs, navmesh and Blender levels;

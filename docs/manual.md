@@ -173,7 +173,8 @@ are in [template/README.md](../template/README.md).
        let mut app = App::new();
        app.add_plugins(EnginePlugins::new(EngineConfig { title: "My game".into(), ..config.clone() }))
            .add_plugins(GamePlugin);
-       if !config.headless && !config.testing {
+       if config.draws() {
+           #[cfg(feature = "render")]
            app.add_plugins(visuals::VisualsPlugin);
        }
        app
@@ -222,9 +223,8 @@ are in [template/README.md](../template/README.md).
     # replay finished at tick 258: identical to the recording (5 checks) [258 ticks in 0.05s]
     ```
 12. **Tests.** One binary, `tests/game`: scenarios on a fresh game, determinism (the same seed gives the same journal, and
-    `step
-    300` equals 5 × `step 60`), replays, content, regions, the manifest (the only dependency is `shards`). The
-    template passes 23 tests in seconds.
+    `step 300` equals 5 × `step 60`), replays, content, regions, the manifest (the only dependency is `shards`). The
+    template's tests take seconds.
 13. **CI.** `cargo test --locked`, `cargo run --locked -- --check-content` (it reads the tile level files and the baked
     navigation too), `--worldgen-report REGION --seeds 1..1000`, and `--verify` for each file in `tests/replays/`. The
     working `ci.yml` is in "The game's CI" in the template, and in `.github/workflows/ci.yml` of the engine.
@@ -527,7 +527,7 @@ content/characters/characters.prefab.ron: prefab `skeleton`: unknown component `
 3 content errors in /tmp/broken/assets
 ```
 
-A repeated id names both files (`content/b.attack.ron: attack `sword`: already defined in content/a.attack.ron`), and a file with a wrong content kind names the nearest registered kind (`no content kind `atack` (did you mean `attack`?); registered: …`).
+A repeated id names both files (``content/b.attack.ron: attack `sword`: already defined in content/a.attack.ron``), and a file with a wrong content kind names the nearest registered kind (``no content kind `atack` (did you mean `attack`?); registered: …``).
 
 A definition that does not fit its type (an extra or missing field, a wrong value) is an error of its own: it has the line and column inside the file, the kind and the id. The file's other definitions still load, so the list has no errors about references to them, and a reference to the broken one is reported as missing. A typo `dmage` for `damage` in one `light_1` attack from
 `player.action.ron` (the file still has `light_2`, `heavy` and others, and the same moveset refers to them):
@@ -1295,7 +1295,7 @@ distances between points (m, min / median / max):
   shrine–spawn  12.0 / 70.3 / 140.0
 ```
 
-The exit code is 0 if all seeds passed, otherwise 1. An unknown region also gives 1, with the hint `unknown region `wild` (did you mean `wilds`?)`. Seeds: `1..1000` (both ends included), `7`, `1,5,10..20`; no more than a million. The running game gives the same report: `shards worldgen --region wilds --seeds 1..1000 --report` (tool `worldgen_report`). A dungeon is checked the same way (`--worldgen-report crypt`): a thousand seeds pass in 0.17 s. CI runs this report for the sandbox and the template.
+The exit code is 0 if all seeds passed, otherwise 1. An unknown region also gives 1, with the hint ``unknown region `wild` (did you mean `wilds`?)``. Seeds: `1..1000` (both ends included), `7`, `1,5,10..20`; no more than a million. The running game gives the same report: `shards worldgen --region wilds --seeds 1..1000 --report` (tool `worldgen_report`). A dungeon is checked the same way (`--worldgen-report crypt`): a thousand seeds pass in 0.17 s. CI runs this report for the sandbox and the template.
 
 ### Loading a region
 
@@ -1525,7 +1525,7 @@ baked 18 files for 2 body classes (agent, large) into nav/
   …
 ```
 
-The bake command loads the game without a window and without ticks. It writes the files `assets/nav/<tile>.navtile.ron` (rooms: `.navroom.ron`). For each body class except `agent`, it writes into that class's folder, `assets/nav/<class>/<tile>.navtile.ron`. It exits with code 0 (all baked) or 1 (something cannot be baked, or there is no such tile: `no tile or room `grss` to bake (did you mean `grass`?)`). The file is a RON header with numbers a person can read, and a hash of what it was baked from, around the packed grid in base64. The same tile gives the same bytes: running `--bake-nav` again changes nothing in git. A game without body classes writes only the `agent` files and reports as before: `baked 9 tiles into nav/`.
+The bake command loads the game without a window and without ticks. It writes the files `assets/nav/<tile>.navtile.ron` (rooms: `.navroom.ron`). For each body class except `agent`, it writes into that class's folder, `assets/nav/<class>/<tile>.navtile.ron`. It exits with code 0 (all baked) or 1 (something cannot be baked, or there is no such tile: ``no tile or room `grss` to bake (did you mean `grass`?)``). The file is a RON header with numbers a person can read, and a hash of what it was baked from, around the packed grid in base64. The same tile gives the same bytes: running `--bake-nav` again changes nothing in git. A game without body classes writes only the `agent` files and reports as before: `baked 9 tiles into nav/`.
 
 The settings are the `nav` content kind (id `default`):
 
@@ -2456,8 +2456,8 @@ invariant field e5 Health.current > 0      # any expectation; checked after each
 - **Case.** `expect result` is case-sensitive, so you can check the exact text of an error (`Expected: teleport(`).
   `journal`, `stopped` and `shows` are not case-sensitive, as with `--until journal:`/`shows:`.
 - **Invariants** are checked after each following `act`, `act?` and `step` command, not between the ticks of one `step`.
-  The first violation fails the scenario and names the command that caused it: `invariant `field e5 Health.current > 0`
-  (line 12) broke: e5 Health.current is 0, which is not > 0`. Split a long step into parts, or guard it with a condition: `step 600
+  The first violation fails the scenario and names the command that caused it: ``invariant `field e5 Health.current > 0`
+  (line 12) broke: e5 Health.current is 0, which is not > 0``. Split a long step into parts, or guard it with a condition: `step 600
   --until field:e5:Health.current<1`.
 - **A step cut short** fails the scenario even though the `step` call itself succeeded: a gameplay system crashed (`stopped: gameplay system …
   panicked`), an invariant was broken (`stopped: invariant … violated`, see "Invariants (E11)"), or the ticks did not finish within 20 s of
@@ -3130,8 +3130,8 @@ loaded, its exit does not write over them). A client loads nothing: the world be
 `shards::save::load_launch_slot(world, kind, slot)` and `load_launch_slots(world)`.
 
 **The main menu's "Continue".** The tool `continue_game` (player, action) leaves the main menu, like `new_game`, and loads the newest save of each kind into the game being started, the same way `--world` and `--character` do: the slot whose good copy was written last (by the file's time); a slot none of whose copies can be read is skipped. These slots become the current ones, and the replay recording starts from the loaded state. The reply: `the game starts at tick 0; loaded world/camp,
-character/camp`. If there are no saves, it is refused and nothing changes, and the game stays in the menu: `there is no save to continue yet (none in
-saves): \`new_game\` starts a game, and saving it makes one`. `shards::save::newest_slot(world, kind)` reads the copies, `any_save(world)` only looks into the folder (a slot whose copies are all damaged also counts), and `can_continue(world)` says whether there is anything for `continue_game` to load: it reads the copies again only when the files in the folder have changed (name, size, time), so the menu can ask it every frame.
+character/camp`. If there are no saves, it is refused and nothing changes, and the game stays in the menu: ``there is no save to continue yet (none in
+saves): `new_game` starts a game, and saving it makes one``. `shards::save::newest_slot(world, kind)` reads the copies, `any_save(world)` only looks into the folder (a slot whose copies are all damaged also counts), and `can_continue(world)` says whether there is anything for `continue_game` to load: it reads the copies again only when the files in the folder have changed (name, size, time), so the menu can ask it every frame.
 
 **Co-op (`shards::coop`, `CoopPlugin` in `EnginePlugins`).** The network (`shards_net`) and the saves (`shards_save`) know nothing of each other; the umbrella crate brings them together: it fills in `NetHooks` (`join_character`, `on_join_character`, `capture_character`,
 `on_character_save`, `on_session_end`) and `SaveRouting` (`route`: where a save goes, `saved`: the game has decided to save).
@@ -3441,7 +3441,7 @@ focus. `ui_open screen=` and `ui_close {screen?}` open and close; `ui_navigate d
 toggle, choice and tabs change the value; `confirm` presses, `back` closes); `ui_click id=` presses (a button
 runs its action, a toggle and a choice move on); `ui_set id= value=` sets a value (a number, `on`/`off`, a choice option, a page
 by id, title or number). Errors say how to fix the call: ``no screen `setting` (did you mean `settings`?)``,
-`pause/resume is under confirm_quit: answer or close that first`, ``settings/text_size is a slider: a number from 0.5 to 3, not `big` ``.
+`pause/resume is under confirm_quit: answer or close that first`, `` settings/text_size is a slider: a number from 0.5 to 3, not `big` ``.
 While a menu is open, `observe` prints a `UI` section after `LANDMARKS` (the top screen, up to 20 lines, and which tools to act with);
 the HUD does not appear in `observe`. Journal: `ui: opened pause`, `ui: pause/resume pressed (close)`, `ui: settings/text_size
 1 → 1.25`, `ui: closed pause`; the code listens for the events `UiFocusMoved`, `UiPressed`, `UiChanged`, `UiScreenChanged` (the audio module plays sounds for them).
@@ -3582,10 +3582,10 @@ the titles of screens and panels, labels, texts, hints, `Compare` rows and the l
 accepts both an option and its label. `@@` starts a text with `@`. A game source (`add_ui_source`) returns finished text:
 the template formats `hud-trophies` with the number of trophies, and the HUD writes `1 trophy` or `5 трофеев`.
 
-**Player language** is the `locale.language` setting (the `locale` group in `settings.toml`). It changes like any other setting: in the menu (`Choice` with `setting: "locale.language"`) or with `settings_set group=locale key=language value=ru`. An empty value means the game's own language: the first language by id that has no `fallback`. A language the game does not have is rejected: ``` `de` is not a language of this game: en (English), ru (Русский)```.
+**Player language** is the `locale.language` setting (the `locale` group in `settings.toml`). It changes like any other setting: in the menu (`Choice` with `setting: "locale.language"`) or with `settings_set group=locale key=language value=ru`. An empty value means the game's own language: the first language by id that has no `fallback`. A language the game does not have is rejected: ``` `de` is not a language of this game: en (English), ru (Русский) ```.
 The change applies before the call returns (the `SettingsChanged` event of the settings module). The journal writes `locale: language en → ru`, the module sends `TextChanged`, and the UI rewrites the labels of the open screens, without touching values, focus and pages.
 
-**What is missing.** A message that the language does not have is taken from `fallback`. If it is not there either, its id is shown. The journal names each such case and each forgotten parameter once: `locale: ru has no message `settings-fov`; it is shown in en`, ``locale: en `leave`:
+**What is missing.** A message that the language does not have is taken from `fallback`. If it is not there either, its id is shown. The journal names each such case and each forgotten parameter once: ``locale: ru has no message `settings-fov`; it is shown in en``, ``locale: en `leave`:
 Unknown variable: $place``. The content check (`--check-content`, `content_check`) reads the files of each language and names each error by file, line and column (`locale/ru/menus.ftl:9:15: Expected a token starting with "="`). It also finds a message that is in two files of one language, a `fallback` chain that loops back on itself, a language with no files, and a screen `@id` that is in neither the language nor its fallbacks: ``screen `pause`: widget `resume` label names message `pause-resum`, which en and ru have not, nor their fallbacks (did you mean
 `@pause-resume`?)``.
 
@@ -3968,9 +3968,9 @@ telegraph decals off: the gizmos draw the fill
 ```
 
 Without rendering, `effects` says `6 effects · nothing is drawn headless: effects play in a window or with --offscreen · telegraph
-decals on` and lists the effects with their pool sizes, and `effect_play` refuses: `nothing is drawn headless: effects play in a window
-or with --offscreen (effect `hit_spark` is known)`; events then play nothing. For an effect that is not in the content, `effect_play`
-suggests the nearest name (`no effect `hit_sprak` (did you mean `hit_spark`?)`), and `PlayEffect` writes to the journal once
+decals on` and lists the effects with their pool sizes, and `effect_play` refuses: ``nothing is drawn headless: effects play in a window
+or with --offscreen (effect `hit_spark` is known)``; events then play nothing. For an effect that is not in the content, `effect_play`
+suggests the nearest name (``no effect `hit_sprak` (did you mean `hit_spark`?)``), and `PlayEffect` writes to the journal once
 (`fx: PlayEffect: no effect …`). `ai/status` has the field `fx`: `{"effects": 6, "live": 36, "decals": 2, "telegraph_decals": true}`. In the developer menu there is the item `effects` ("Effects, their pools and decals", section `world`) and the switch `telegraph_decals` ("Telegraphs as
 decals on the ground", section `combat`).
 
@@ -4420,7 +4420,7 @@ a separate workspace; one `#[ignore]`: recording its references).
 | `shards` | how networking and saves fit together (`coop`: what the host knows about the player's character, how it travels as text), engine sections (a number that a body never has), the stand's slot, a replay from a snapshot (`--verify`: the same result, code 2 for a foreign snapshot), the mode without a window: the same plugins, but no image (`display` and the `shot` hint), `--offscreen`: the window's plugins without a window (an image for `shot`, into which the cameras aimed at the window draw, also after a change of target), the internal 3D resolution (`render_scale`: an image of the right size, the cameras into it and back, shown on the whole window, the window changes size, the system scale, the game camera with its own image), the test app, `testing::ok` on a gameplay failure, `testing::run_to` and `verify`, when a violated rule matched the start of loading, the tick budget on the command line, frame time (`frames`: a frame is the slower of the two worlds, a frame with `step` does not count, the GPU report, draw commands travel with their own frame), the performance test (`bench`: verdicts, including `draws` and `nav_bake_s`, a definition check, `--perf` and its codes), `counts` without a window, the animation bridge on a real model with a skin and on a humanoid from Blender (a roll in place, a clip from a second file), `--bake-motion` |
 | `sandbox` | in one binary, `tests/sandbox`: snapshots (`snapshots.rs`: the state after loading is the same as in the original session, during a roll, a combo, a telegraph, planning, swimming, a flask, NPC fights and in a generated region), the ruin tile (`tiles.rs`: the file from the test glTF generator matches the one committed), scenarios (`scenario_files`: each file on a fresh game, all of them in a row in one game, the combat prototype after six different pauses), reference replays, actions, content, the obstacle course, determinism, visibility, scope permissions, replays, `kill` and SIGHUP; invariants (`invariants.rs`: the sandbox rules and their limits, sessions, a stop in real time, the replay of a violation, a snapshot; `net_seams.rs`: the client does not check the rules); co-op on a stand (`net.rs`, `net_guards.rs`, `net_lifecycle.rs`, `net_sync.rs`, `net_predict.rs`, `net_seams.rs`, `net_coop.rs`, of which 2 are measurements under `#[ignore]`: joining and leaving, limits and the peer's text, the world reloaded, input, desync, the end of a session and exit codes, stand clocks, UDP on loopback, client prediction, characters and saves); a long game (`soak.rs`: two minutes with a host and two clients at 150 ms and 2 % with a region change and saves, half an hour under `#[ignore]`); the screenshot without a window (`offscreen.rs`, `#[ignore]`: needs a GPU or software rendering); separately `system_failures` (a gameplay failure, a crash replay, a crash report, a panic in another thread, `crash_report`, a return to a snapshot after a failure), `log_capture` (log lines in `step`) and `perf` (tick time: budget, journal, `ai/status`; the performance test on the reference scene without a window, with `offscreen` under `#[ignore]`): these run in their own processes |
 
-The template's tests (`template/tests/game`, 36 and one `#[ignore]`) are built into one binary: scenarios (and the stand scenario), determinism,
+The template's tests (`template/tests/game`, 44 and one `#[ignore]`) are built into one binary: scenarios (and the stand scenario), determinism,
 replays, content, co-op (host and guest at 150 ms and 2 %: the guest's trophy on each copy and in its file, the next game with it,
 the host's replay in a single-player game), the region
 (a thousand seeds of the valley, the manifest byte for byte, the loading screen without a window, the column of the ruin, the raider on the navmesh), the manifest (its only
