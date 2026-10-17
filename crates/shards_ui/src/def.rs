@@ -85,6 +85,10 @@ pub struct ScreenDef {
     /// Opened when the game starts (`OnEnter(EngineState::InGame)`): a HUD.
     #[serde(default)]
     pub open_at_start: bool,
+    /// The game's main menu: opened on entering `EngineState::MainMenu` (after loading, in a run
+    /// that shows the menu); leaving it for the game closes it and every screen opened over it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub main_menu: bool,
     /// `back` closes it. A screen that must be answered says `false`, and closes from a button.
     #[serde(default = "yes")]
     pub closable: bool,
@@ -100,6 +104,10 @@ pub struct ScreenDef {
 
 fn yes() -> bool {
     true
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 fn one() -> f32 {
@@ -148,6 +156,20 @@ pub enum WidgetDef {
         text: String,
         #[serde(default)]
         bind: Option<String>,
+    },
+    /// A picture: a file under the asset folder (`ui/key_art.png`), `width` or `height` in
+    /// logical pixels (one of them: the other keeps the picture's proportions; neither: its own
+    /// size). `label` is what it shows, for screen readers and agents.
+    Image {
+        #[serde(default)]
+        id: Option<String>,
+        path: String,
+        #[serde(default)]
+        label: String,
+        #[serde(default)]
+        width: Option<f32>,
+        #[serde(default)]
+        height: Option<f32>,
     },
     /// A hint (`[E] Open the gate`): hidden while its text, or its source's, is empty.
     Hint {
@@ -322,6 +344,7 @@ impl WidgetDef {
             | WidgetDef::List { id, .. }
             | WidgetDef::Grid { id, .. }
             | WidgetDef::Text { id, .. }
+            | WidgetDef::Image { id, .. }
             | WidgetDef::Hint { id, .. }
             | WidgetDef::Bar { id, .. }
             | WidgetDef::Cooldown { id, .. }
@@ -339,6 +362,7 @@ impl WidgetDef {
             WidgetDef::Grid { .. } => "grid",
             WidgetDef::Tabs { .. } => "tabs",
             WidgetDef::Text { .. } => "text",
+            WidgetDef::Image { .. } => "image",
             WidgetDef::Hint { .. } => "hint",
             WidgetDef::Button { .. } => "button",
             WidgetDef::Bar { .. } => "bar",
@@ -381,6 +405,7 @@ impl WidgetDef {
         match self {
             WidgetDef::Text { text, .. } | WidgetDef::Hint { text, .. } => texts.push((text, "text")),
             WidgetDef::Button { label, .. }
+            | WidgetDef::Image { label, .. }
             | WidgetDef::Bar { label, .. }
             | WidgetDef::Cooldown { label, .. }
             | WidgetDef::Slider { label, .. }
@@ -463,6 +488,9 @@ impl ContentDef for ScreenDef {
         if self.layer == Layer::Hud && self.pauses {
             refs.error("a HUD never pauses the game: `pauses: true` needs `layer: Menu` or `Modal`");
         }
+        if self.layer == Layer::Hud && self.main_menu {
+            refs.error("a HUD takes no input, so it cannot be the main menu: `main_menu: true` needs `layer: Menu` or `Modal`");
+        }
         let mut seen = BTreeSet::new();
         let mut counters = BTreeMap::new();
         for widget in &self.widgets {
@@ -503,6 +531,20 @@ fn check_widget(widget: &WidgetDef, refs: &mut Refs, seen: &mut BTreeSet<String>
             Err(e) => refs.error(format!("button `{id}`: {e}")),
         },
         WidgetDef::Grid { columns: 0, .. } => refs.error(format!("grid `{id}`: `columns` is at least 1")),
+        WidgetDef::Image { path, width, height, .. } => {
+            for (field, size) in [("width", width), ("height", height)] {
+                if let Some(size) = size
+                    && (!size.is_finite() || *size <= 0.0)
+                {
+                    refs.error(format!("image `{id}`: `{field}` is a size above 0, not {size}"));
+                }
+            }
+            if let Some(root) = refs.asset_root()
+                && !root.join(path).is_file()
+            {
+                refs.error(format!("image `{id}`: no file `{path}` under the asset folder (a .png, `ui/key_art.png`)"));
+            }
+        }
         WidgetDef::Tabs { children, .. } => {
             if children.is_empty() {
                 refs.error(format!("tabs `{id}`: no pages; each child is a page"));
@@ -808,5 +850,23 @@ mod tests {
         assert_eq!(json, serde_json::json!({"Binding": {"id": "jump", "label": "@controls-jump", "action": "jump"}}));
         let menu = serde_json::to_value(&widgets[1]).unwrap();
         assert_eq!(menu["Binding"]["context"], "menu");
+    }
+
+    #[test]
+    fn a_main_menu_and_its_picture_read_from_ron_and_a_plain_screen_writes_no_main_menu() {
+        let opts = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        let menu: ScreenDef = opts
+            .from_str(r#"(main_menu: true, closable: false, widgets: [Image(path: "ui/key_art.png", label: "@menu-art", width: 400.0)])"#)
+            .unwrap();
+        assert!(menu.main_menu && !menu.closable);
+        assert!(matches!(
+            &menu.widgets[0],
+            WidgetDef::Image { id: None, path, label, width: Some(w), height: None } if path == "ui/key_art.png" && label == "@menu-art" && *w == 400.0
+        ));
+        assert_eq!(menu.widgets[0].kind(), "image");
+        assert_eq!(assign_id(&menu.widgets[0], &mut BTreeMap::new()), "image1");
+        let plain: ScreenDef = opts.from_str(r#"(widgets: [Image(path: "a.png")])"#).unwrap();
+        assert!(!plain.main_menu);
+        assert!(!ron::to_string(&plain).unwrap().contains("main_menu"), "a screen that is no main menu says nothing of it");
     }
 }

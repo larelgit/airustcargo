@@ -55,6 +55,9 @@ pub enum WidgetKind {
     /// Its children are its pages; [`UiValue::Page`] is the one shown.
     Tabs,
     Text,
+    /// A picture under the asset folder, drawn `width` × `height` logical pixels (one of them: the
+    /// picture's proportions give the other).
+    Image { path: String, width: Option<f32>, height: Option<f32> },
     Hint,
     Button { action: String },
     Bar { color: Option<String> },
@@ -81,6 +84,7 @@ impl WidgetKind {
             WidgetKind::Grid { .. } => "grid",
             WidgetKind::Tabs => "tabs",
             WidgetKind::Text => "text",
+            WidgetKind::Image { .. } => "image",
             WidgetKind::Hint => "hint",
             WidgetKind::Button { .. } => "button",
             WidgetKind::Bar { .. } => "bar",
@@ -489,6 +493,9 @@ impl UiWidget {
             WidgetDef::Grid { columns, .. } => plain(WidgetKind::Grid { columns: (*columns).max(1) }, title, UiValue::None),
             WidgetDef::Tabs { .. } => plain(WidgetKind::Tabs, "", UiValue::Page(0)),
             WidgetDef::Text { text, bind, .. } => UiWidget { bind: bind.clone(), ..plain(WidgetKind::Text, "", UiValue::Text(tr(text))) },
+            WidgetDef::Image { path, label, width, height, .. } => {
+                plain(WidgetKind::Image { path: path.clone(), width: *width, height: *height }, label, UiValue::None)
+            }
             WidgetDef::Hint { text, bind, .. } => UiWidget { bind: bind.clone(), ..plain(WidgetKind::Hint, "", UiValue::Text(tr(text))) },
             WidgetDef::Button { label, action, enabled, .. } => {
                 UiWidget { enabled: *enabled, ..plain(WidgetKind::Button { action: action.clone() }, label, UiValue::None) }
@@ -1138,6 +1145,29 @@ pub(crate) fn open_start_screens(world: &mut World) {
         if let Err(e) = open(world, &name) {
             warn!("ui: {e}");
         }
+    }
+}
+
+/// `OnEnter(EngineState::MainMenu)`: the game's main menu (`main_menu: true`), by id.
+pub(crate) fn open_main_menu(world: &mut World) {
+    let Some(db) = world.get_resource::<ContentDb>() else { return };
+    let menus: Vec<String> = db.iter::<ScreenDef>().filter(|(_, d)| d.main_menu).map(|(id, _)| id.to_owned()).collect();
+    if menus.is_empty() {
+        warn!("ui: the game is in its main menu, and no screen is one (`main_menu: true` in a `*.screen.ron`)");
+    }
+    for name in menus {
+        if let Err(e) = open(world, &name) {
+            warn!("ui: {e}");
+        }
+    }
+}
+
+/// `OnExit(EngineState::MainMenu)`: the game starts, so the main menu closes, and every screen
+/// opened over it (settings) with it, the newest first.
+pub(crate) fn close_main_menu(world: &mut World) {
+    let open: Vec<Entity> = world.resource::<UiStack>().screens().map(|(_, e)| e).collect();
+    for root in open.into_iter().rev() {
+        close(world, root);
     }
 }
 

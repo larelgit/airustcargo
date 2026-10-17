@@ -323,6 +323,7 @@ fn role(w: &UiWidget, screen: Option<Layer>) -> Role {
         (WidgetKind::Tabs, _) => Role::TabList,
         (WidgetKind::Text | WidgetKind::Compass | WidgetKind::Cooldown | WidgetKind::Compare, _) => Role::Label,
         (WidgetKind::Hint, _) => Role::Status,
+        (WidgetKind::Image { .. }, _) => Role::Image,
         (WidgetKind::Button { .. }, _) => Role::Button,
         (WidgetKind::Bar { .. }, _) => Role::ProgressIndicator,
         (WidgetKind::Allies, _) => Role::List,
@@ -400,6 +401,20 @@ fn redraw(world: &mut World, e: Entity, state: &Drawn) {
             let rgba = if w.kind == WidgetKind::Hint { t.color(&t.dim_text) } else { text_rgba };
             let font = font(world, size);
             world.entity_mut(e).insert((Node { display, ..default() }, Text::new(value_text(w)), font, TextColor(color(rgba))));
+        }
+        WidgetKind::Image { path, width, height } => {
+            // One of the sizes alone: the picture's proportions give the other.
+            let size = |v: &Option<f32>| v.map_or(Val::Auto, Val::Px);
+            world.entity_mut(e).insert(Node { display, width: size(width), height: size(height), ..default() });
+            // The picture is a part: Bevy names an image node from its text, and it has none, so on
+            // the widget it would take the widget's label away. Screen readers skip the part.
+            let fill = |v: &Option<f32>| if v.is_some() { Val::Percent(100.0) } else { Val::Auto };
+            let image = world.resource::<AssetServer>().load(path.clone());
+            let mut unseen = A11yNode::new(Role::Image);
+            unseen.set_hidden();
+            let picture = (Part, Node { width: fill(width), height: fill(height), ..default() }, ImageNode::new(image), AccessibilityNode(unseen));
+            let picture = world.spawn((picture, ChildOf(e))).id();
+            parts.all.push(picture);
         }
         WidgetKind::Button { .. } => {
             let node = Node {

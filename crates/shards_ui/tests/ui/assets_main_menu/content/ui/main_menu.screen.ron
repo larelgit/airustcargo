@@ -1,0 +1,28 @@
+// The screens of the main-menu tests (tests/ui/main_menu.rs): a main menu, opened on entering
+// `EngineState::MainMenu` (a run with `--menu`) and closed with everything over it when the game
+// starts; a screen it opens; a HUD that waits for the game.
+{
+    "title": (
+        main_menu: true,
+        closable: false,
+        title: "Untitled",
+        widgets: [
+            Image(id: "art", path: "ui/picture.png", label: "A shard of glass", width: 200.0),
+            Button(id: "play", label: "Play", action: "tool new_game"),
+            Button(id: "options", label: "Options", action: "open options"),
+        ],
+    ),
+    "options": (
+        title: "Options",
+        widgets: [
+            Toggle(id: "hold", label: "Hold to toggle", setting: "accessibility.hold_to_toggle"),
+            Button(id: "back", label: "Back", action: "back"),
+        ],
+    ),
+    "hud": (
+        layer: Hud,
+        open_at_start: true,
+        anchor: TopLeft,
+        widgets: [Bar(id: "health", label: "HP", bind: "you.health")],
+    ),
+}

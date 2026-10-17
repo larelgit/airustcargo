@@ -34,6 +34,15 @@ pub fn widget_line(world: &World, e: Entity, focus: Option<Entity>) -> String {
         (WidgetKind::Hint, UiValue::Text(t)) => {
             let _ = write!(line, " \"{t}\"");
         }
+        (WidgetKind::Image { path, width, height }, _) => {
+            let size = match (width, height) {
+                (Some(w), Some(h)) => format!(" {}×{}", format_number(*w), format_number(*h)),
+                (Some(w), None) => format!(" {} wide", format_number(*w)),
+                (None, Some(h)) => format!(" {} high", format_number(*h)),
+                (None, None) => String::new(),
+            };
+            let _ = write!(line, " {path}{size}");
+        }
         (WidgetKind::Button { action }, _) => {
             let _ = write!(line, " → {action}");
         }

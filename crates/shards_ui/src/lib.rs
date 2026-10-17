@@ -8,9 +8,10 @@
 //! - **Screens** ([`ScreenDef`]): a layer ([`Layer`]: `Hud` takes no input, `Menu` takes the
 //!   controls, `Modal` sits over menus), `pauses` (single player: `PauseState::Paused` while it
 //!   is open, so the simulation stops; in co-op the world goes on), `open_at_start` (a HUD),
-//!   `closable` (whether `back` closes it), a title, where it sits and its widgets.
-//! - **Widgets** ([`WidgetDef`]): panels, lists, grids and tabs hold others; text, hints, bars,
-//!   cooldowns, a compass, ally frames and a before → after comparison show values; buttons,
+//!   `main_menu` (opened on entering `EngineState::MainMenu`, closed with all on it when the game
+//!   starts), `closable` (whether `back` closes it), a title, where it sits and its widgets.
+//! - **Widgets** ([`WidgetDef`]): panels, lists, grids and tabs hold others; text, hints, pictures,
+//!   bars, cooldowns, a compass, ally frames and a before → after comparison show values; buttons,
 //!   sliders, toggles, choices and bindings take input. A binding shows an action's inputs (source
 //!   [`BINDINGS_SOURCE`], which the `shards` crate gives from the input map); confirming it waits
 //!   for the next key, mouse or gamepad button ([`capturing`]), and the input it gets (or an
@@ -42,10 +43,16 @@
 //!   that names no font draws with the engine's ([`DEFAULT_FONT`]: Fira Sans, Latin, Greek and
 //!   Cyrillic); a theme names its own (`font`). The keyboard and gamepad reach the UI through
 //!   the engine's input map (`menu` context), which the `shards` crate joins to it.
+//! - **The loading picture** (`EngineConfig::loading_image`, with a window or offscreen): full screen
+//!   on every frame drawn while the game loads (`Loading`) or a region loads (`RegionLoading`). A
+//!   region change that finishes inside the call that made it draws no frame in between, so there
+//!   it is not seen.
 
 pub mod bind;
 pub mod def;
 pub mod model;
+#[cfg(feature = "render")]
+mod loading;
 #[cfg(feature = "render")]
 mod render;
 pub mod text;
@@ -59,6 +66,8 @@ use shards_core::{EngineAppExt, EngineState, PauseState};
 
 pub use bind::{live_value, read_source, viewer, UiActionFn, UiActions, UiPress, UiSourceFn, UiSources};
 pub use def::{Anchor, ButtonAction, CompareRow, Layer, Layout, ScreenDef, ThemeDef, WidgetDef};
+#[cfg(feature = "render")]
+pub use loading::LoadingScreen;
 pub use model::{
     capturing, focused, top_screen, Ally, BoundInput, BoundInputs, Mark, Nav, UiChanged, UiFocusMoved, UiPressed, UiScreen, UiScreenChanged,
     UiStack, UiValue, UiWidget, WidgetKind, BINDINGS_SOURCE, DEFAULT_PROMPT,
@@ -139,6 +148,8 @@ impl Plugin for UiPlugin {
             .add_ai_status("ui", status)
             .register_ai_observe_section(text::observe_section)
             .add_systems(OnEnter(EngineState::InGame), model::open_start_screens)
+            .add_systems(OnEnter(EngineState::MainMenu), model::open_main_menu)
+            .add_systems(OnExit(EngineState::MainMenu), model::close_main_menu)
             .add_systems(OnExit(PauseState::Paused), model::close_pausing_screens)
             .configure_sets(Update, UiSystems::Model.after(shards_locale::LocaleSystems::Build))
             .add_systems(Update, (model::rebuild_edited_screens, model::retell_screens, bind::refresh_values).chain().in_set(UiSystems::Model))
@@ -146,7 +157,10 @@ impl Plugin for UiPlugin {
             .add_observer(|_: On<shards_locale::TextChanged>, mut commands: Commands| commands.queue(model::retell_screens));
         tools::register(app.world_mut());
         #[cfg(feature = "render")]
-        render::plugin(app);
+        {
+            render::plugin(app);
+            loading::plugin(app);
+        }
     }
 
     fn finish(&self, app: &mut App) {
