@@ -5427,6 +5427,7 @@ dependencies = [
  "shards_dev",
  "shards_level",
  "shards_locale",
+ "shards_look",
  "shards_motion",
  "shards_net",
  "shards_npc",
@@ -5556,6 +5557,21 @@ dependencies = [
  "shards_core",
  "shards_settings",
  "unic-langid",
+]
+
+[[package]]
+name = "shards_look"
+version = "0.2.0"
+dependencies = [
+ "ai_core",
+ "bevy",
+ "ron",
+ "schemars",
+ "serde",
+ "serde_json",
+ "shards",
+ "shards_content",
+ "shards_core",
 ]
 
 [[package]]

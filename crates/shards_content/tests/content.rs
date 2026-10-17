@@ -495,6 +495,19 @@ fn content_apply_checks_before_and_a_refused_call_stays_out_of_the_replay() {
 }
 
 #[test]
+fn a_refused_definition_from_no_file_names_no_file() {
+    let dir = assets("no_file", &[("content/combat/attacks.attack.ron", ATTACKS)]);
+    let mut app = app(&dir);
+    let kick = json!({"changes": [{"kind": "attack", "id": "kick", "def": {"damage": -1.0}}]});
+    let refused = act(&mut app, "content_apply", kick);
+    assert_eq!(text(&refused), "refused, it would break content: attack `kick`: damage cannot be negative");
+    // From a file, the error names it.
+    let kick = json!({"files": ["content/kicks.attack.ron"], "changes": [{"kind": "attack", "id": "kick", "file": "content/kicks.attack.ron", "def": {"damage": -1.0}}]});
+    let refused = act(&mut app, "content_apply", kick);
+    assert_eq!(text(&refused), "refused, it would break content: content/kicks.attack.ron: attack `kick`: damage cannot be negative");
+}
+
+#[test]
 fn a_required_id_is_an_error_and_cannot_be_deleted() {
     let dir = assets("required", &[("content/combat/attacks.attack.ron", ATTACKS)]);
     let mut app = unloaded(&dir, false, |app| {

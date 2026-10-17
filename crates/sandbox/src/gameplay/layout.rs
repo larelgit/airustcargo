@@ -16,12 +16,24 @@ use shards::prelude::*;
 /// What a solid looks like in a window; nothing else depends on it.
 #[derive(Serialize, Deserialize, Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[serde(crate = "shards::serde")]
-pub enum Look {
+pub enum Surface {
     #[default]
     Stone,
     Floor,
     Wall,
     Sand,
+}
+
+impl Surface {
+    /// The look it is drawn with (`content/look/sandbox.look.ron`).
+    pub fn look(self) -> &'static str {
+        match self {
+            Surface::Stone => "stone",
+            Surface::Floor => "floor",
+            Surface::Wall => "wall",
+            Surface::Sand => "sand",
+        }
+    }
 }
 
 /// A static box between two corners.
@@ -31,7 +43,7 @@ pub struct Solid {
     pub min: Vec3,
     pub max: Vec3,
     #[serde(default)]
-    pub look: Look,
+    pub look: Surface,
 }
 
 /// A slope: its top surface runs from `from` to `to` (the middles of its low and high
@@ -186,7 +198,7 @@ pub struct LayoutPiece {
 /// What a [`LayoutPiece`] is, for rebuilding and for the window's looks.
 #[derive(Reflect, Clone, Copy, Debug, PartialEq)]
 pub enum PieceKind {
-    Solid(Look),
+    Solid(Surface),
     Ramp,
     /// The n-th landmark (`landmarks`, then volumes with a `landmark`): keeps its id.
     Landmark(usize),

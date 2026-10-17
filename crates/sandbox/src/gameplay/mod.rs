@@ -15,7 +15,7 @@ pub mod layout;
 use shards::core::CoreSystems;
 use shards::prelude::*;
 
-pub use layout::{BoundsDef, LayoutDef, LayoutPiece, Look, PieceKind};
+pub use layout::{BoundsDef, LayoutDef, LayoutPiece, PieceKind, Surface};
 
 /// Half size of the square arena (meters).
 pub const ARENA_HALF: f32 = 20.0;

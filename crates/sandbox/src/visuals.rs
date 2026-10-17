@@ -16,7 +16,9 @@ use shards::ai_core::sim;
 use shards::motion::{CharacterController, Collider, Shape, Volume, VolumeKind};
 use shards::prelude::*;
 
-use crate::gameplay::{Boss, LayoutPiece, Look, PieceKind, Player, Skeleton};
+use shards::look::Look;
+
+use crate::gameplay::{Boss, LayoutPiece, PieceKind, Player};
 
 pub struct VisualsPlugin;
 
@@ -35,47 +37,23 @@ struct Palette {
     cube: Handle<Mesh>,
     post: Handle<Mesh>,
     nose: Handle<Mesh>,
-    player: Handle<StandardMaterial>,
-    skeleton: Handle<StandardMaterial>,
-    boss: Handle<StandardMaterial>,
-    stone: Handle<StandardMaterial>,
-    floor: Handle<StandardMaterial>,
-    wall: Handle<StandardMaterial>,
-    sand: Handle<StandardMaterial>,
-    dark: Handle<StandardMaterial>,
+    /// Under every look (`content/look/sandbox.look.ron`): the look gives the colour and the light.
+    base: Handle<StandardMaterial>,
     water: Handle<StandardMaterial>,
     goal: Handle<StandardMaterial>,
-    marker: Handle<StandardMaterial>,
 }
 
 fn setup_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<StandardMaterial>>) {
-    let mut solid = |c: Color| mats.add(StandardMaterial { base_color: c, perceptual_roughness: 0.85, ..default() });
-    let (player, skeleton, boss) =
-        (solid(Color::srgb(0.25, 0.55, 1.0)), solid(Color::srgb(0.85, 0.82, 0.7)), solid(Color::srgb(0.55, 0.85, 1.0)));
-    let (stone, floor, wall) = (
-        solid(Color::srgb(0.38, 0.39, 0.43)),
-        solid(Color::srgb(0.17, 0.19, 0.23)),
-        solid(Color::srgb(0.27, 0.28, 0.33)),
-    );
-    let (sand, dark, marker) =
-        (solid(Color::srgb(0.55, 0.5, 0.38)), solid(Color::srgb(0.1, 0.1, 0.12)), solid(Color::srgb(1.0, 0.85, 0.2)));
+    let base = mats.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
     let mut glass = |c: Color| mats.add(StandardMaterial { base_color: c, alpha_mode: AlphaMode::Blend, ..default() });
     let (water, goal) = (glass(Color::srgba(0.15, 0.4, 0.95, 0.45)), glass(Color::srgba(0.3, 1.0, 0.4, 0.3)));
     commands.insert_resource(Palette {
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         post: meshes.add(Cylinder::new(0.08, 1.6)),
         nose: meshes.add(Cuboid::new(0.25, 0.25, 0.5)),
-        player,
-        skeleton,
-        boss,
-        stone,
-        floor,
-        wall,
-        sand,
-        dark,
+        base,
         water,
         goal,
-        marker,
     });
 }
 
@@ -102,14 +80,13 @@ type Undressed<'a> = (
     Option<&'a CharacterController>,
     Option<&'a Volume>,
     Option<&'a LayoutPiece>,
-    Has<Player>,
-    Has<Skeleton>,
-    Has<Boss>,
+    Has<Look>,
 );
 
-/// Gives what collides its looks: characters a capsule with a nose, boxes and ramps their
-/// stone, volumes a see-through box; landmarks without a body a post. A layout piece whose
-/// collider changed (a hot edit) is dressed anew.
+/// Gives what collides its meshes and looks (`content/look/sandbox.look.ron`): characters a
+/// capsule with a nose (a character's prefab names its look, the rest are stone), boxes and
+/// ramps their surface's look, volumes a see-through box; landmarks without a body a post. A
+/// layout piece whose collider changed (a hot edit) is dressed anew.
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
 fn dress(
     mut commands: Commands,
@@ -128,7 +105,8 @@ fn dress(
             }
         }
     }
-    for (entity, collider, character, volume, piece, player, skeleton, boss) in &bodies {
+    let base = || MeshMaterial3d(palette.base.clone());
+    for (entity, collider, character, volume, piece, looked) in &bodies {
         if !dressed.0.insert(entity) {
             continue;
         }
@@ -137,45 +115,33 @@ fn dress(
         e.insert(Visibility::default());
         if character.is_some() {
             let Shape::Capsule { half_height, radius } = collider.shape else { continue };
-            let mat = if player {
-                palette.player.clone()
-            } else if skeleton {
-                palette.skeleton.clone()
-            } else if boss {
-                palette.boss.clone()
-            } else {
-                palette.stone.clone()
-            };
             let height = 2.0 * (half_height + radius);
             let body = meshes.add(Capsule3d::new(radius, half_height * 2.0));
             e.with_children(|c| {
-                c.spawn((Mesh3d(body), MeshMaterial3d(mat), at));
+                let mut body = c.spawn((Mesh3d(body), base(), at));
+                if !looked {
+                    body.insert(Look::new("stone"));
+                }
                 let nose = Transform::from_xyz(0.0, height * 0.8, -radius - 0.15);
-                c.spawn((Mesh3d(palette.nose.clone()), MeshMaterial3d(palette.dark.clone()), nose));
+                c.spawn((Mesh3d(palette.nose.clone()), base(), nose, Look::new("dark")));
             });
             continue;
         }
         let Shape::Cuboid { half } = collider.shape else { continue };
-        let mat = match (volume.map(|v| &v.kind), piece.map(|p| p.kind)) {
-            (Some(VolumeKind::Water), _) => palette.water.clone(),
+        let cube = (Mesh3d(palette.cube.clone()), Transform { scale: half * 2.0, ..at });
+        match (volume.map(|v| &v.kind), piece.map(|p| p.kind)) {
+            (Some(VolumeKind::Water), _) => e.with_child((cube, MeshMaterial3d(palette.water.clone()))),
             // Drawn as a wireframe (`draw_updrafts`): a glider inside one sees through.
             (Some(VolumeKind::Updraft { .. }), _) => continue,
-            (Some(VolumeKind::Trigger { .. }), _) => palette.goal.clone(),
-            (None, Some(PieceKind::Solid(Look::Floor))) => palette.floor.clone(),
-            (None, Some(PieceKind::Solid(Look::Wall))) => palette.wall.clone(),
-            (None, Some(PieceKind::Solid(Look::Sand))) => palette.sand.clone(),
-            _ => palette.stone.clone(),
+            (Some(VolumeKind::Trigger { .. }), _) => e.with_child((cube, MeshMaterial3d(palette.goal.clone()))),
+            (None, Some(PieceKind::Solid(surface))) => e.with_child((cube, base(), Look::new(surface.look()))),
+            _ if looked => e.with_child((cube, base())),
+            _ => e.with_child((cube, base(), Look::new("stone"))),
         };
-        let cube = Transform { scale: half * 2.0, ..at };
-        e.with_child((Mesh3d(palette.cube.clone()), MeshMaterial3d(mat), cube));
     }
     for entity in &posts {
         if dressed.0.insert(entity) {
-            let post = (
-                Mesh3d(palette.post.clone()),
-                MeshMaterial3d(palette.marker.clone()),
-                Transform::from_xyz(0.0, 0.8, 0.0),
-            );
+            let post = (Mesh3d(palette.post.clone()), base(), Look::new("marker"), Transform::from_xyz(0.0, 0.8, 0.0));
             commands.entity(entity).insert(Visibility::default()).with_child(post);
         }
     }

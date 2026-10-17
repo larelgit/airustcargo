@@ -1,0 +1,27 @@
+[package]
+name = "shards_look"
+description = "Shards looks (E10.1): stylised materials as content (colours, toon bands, flat low-poly faces, outlines) for the meshes a game and its levels draw."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# Styling the meshes: the toon and outline materials, their shaders, flat and hull meshes, glTF
+# material names. Without it the kind, its checks and the tools are still there: a headless game
+# draws nothing to style.
+render = ["ai_core/render", "bevy/3d_bevy_render", "bevy/bevy_pbr", "bevy/bevy_gltf"]
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+bevy = { workspace = true, features = ["std", "serialize", "bevy_asset"] }
+ron.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+# Integration tests build apps the way a game does: the whole engine (`shards::testing`).
+shards = { workspace = true, features = ["render", "remote", "hot_reload"] }

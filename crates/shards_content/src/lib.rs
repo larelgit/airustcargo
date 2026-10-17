@@ -29,6 +29,7 @@
 //! Tools: `content_list`, `content_get`, `content_check`, `content_reload`,
 //! `content_apply`, `spawn_prefab`.
 
+pub mod color;
 pub mod db;
 pub mod load;
 pub mod prefab;
@@ -42,6 +43,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use shards_core::EngineAppExt;
 
+pub use color::parse_color;
 pub use db::{check_dir, ContentDb, ContentDef, ContentError, ContentKinds, DefChange, Refs, Summary};
 pub use load::{asset_root, ContentText};
 pub use prefab::{spawn_prefab, PrefabDef};

@@ -17,6 +17,8 @@
             "LocalPlayer": (),
             // Moves by `hero` in characters.locomotion.ron; fights by `hero` in movesets.moveset.ron.
             "CharacterController": (params: "hero"),
+            // Drawn with look `hero` (looks.look.ron).
+            "Look": ("hero"),
             "Fighter": (moveset: "hero"),
             "Team": ("heroes"),
             "Health": (current: 100.0, max: 100.0),
@@ -37,6 +39,7 @@
             "Grunt": (aggro: 14.0, heavy_chance: 0.25),
             "CharacterController": (params: "grunt"),
             "Fighter": (moveset: "grunt"),
+            "Look": ("grunt"),
             "Team": ("monsters"),
             "Health": (current: 80.0, max: 80.0),
             "Poise": (current: 45.0, max: 45.0, regen: 8.0, delay: 2.0, since_hit: 2.0, broken: 0.0),
@@ -55,6 +58,7 @@
             "Home": (pos: None, leash: 10.0),
             "CharacterController": (params: "grunt"),
             "Fighter": (moveset: "grunt"),
+            "Look": ("raider"),
             "Team": ("monsters"),
             "Health": (current: 60.0, max: 60.0),
             "Poise": (current: 35.0, max: 35.0, regen: 8.0, delay: 2.0, since_hit: 2.0, broken: 0.0),

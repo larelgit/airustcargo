@@ -4,6 +4,7 @@
 use shards::ai_core::journal::{self, JournalKind};
 use shards::ai_core::replay::ReplayEvent;
 use shards::ai_core::{sim, snapshot};
+use shards::look::Look;
 use shards::net::{LinkConditions, NetClient, NetDef, NetDefaults, NetHost, NetLeft, NetState};
 use shards::npc::Home;
 use shards::prelude::*;
@@ -132,6 +133,18 @@ fn the_encode_cache_forgets_despawned_entities() {
     stand.run(300);
     let after = cache(&stand);
     assert!(after + 20 <= peak && after <= before + 10, "{before} → {peak} → {after}");
+}
+
+#[test]
+fn a_client_gets_each_body_with_the_look_its_prefab_gives() {
+    let mut stand = stand(1);
+    stand.run(10);
+    let skeleton = spawned(&stand.call(HOST, "spawn_prefab", json!({"id": "skeleton", "x": -6.0, "z": 18.0})));
+    stand.run(10);
+    for (id, look) in [(BOSS, "warden"), (skeleton.as_str(), "skeleton")] {
+        let theirs = entity(&stand, C1, id).unwrap_or_else(|| panic!("no {id} on the client"));
+        assert_eq!(stand.world(C1).get::<Look>(theirs), Some(&Look::new(look)), "{id}");
+    }
 }
 
 // --- rebuilt worlds, new bodies ------------------------------------------------------------
