@@ -113,6 +113,18 @@ pub fn level_asset<'a>(world: &'a World, path: &str) -> Result<&'a LevelAsset, S
     }
 }
 
+/// Why no level may be spawned from `path` now: the file changed on disk while content is held
+/// ([`shards_content::content_held`], a co-op session). The asset server has read the new version
+/// already, the other machines play the old one: what is spawned from it would desync them. What
+/// was spawned from it before stays as it was until the change applies.
+pub fn held_change(world: &World, path: &str) -> Option<String> {
+    if !world.get_resource::<LevelLibrary>()?.changed.contains(&path.replace('\\', "/")) {
+        return None;
+    }
+    let why = shards_content::content_held(world)?;
+    Some(format!("refused: `{path}` changed on disk, and a level spawn from the changed file {why}"))
+}
+
 /// The loading gate's view: ready once the content database is built and its levels are in.
 pub(crate) fn level_status(world: &World) -> LoadStatus {
     let library = world.resource::<LevelLibrary>();

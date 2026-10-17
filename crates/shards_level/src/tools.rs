@@ -13,7 +13,7 @@ use shards_content::ContentDb;
 use shards_motion::{Collider, Volume};
 
 use crate::def::LevelDef;
-use crate::library::level_asset;
+use crate::library::{held_change, level_asset};
 use crate::marker::{LevelMarker, MarkerKind};
 use crate::props::check_level;
 use crate::spawn::{reload_level, spawn_level_as, FromLevel, LevelInstances, SpawnedLevel};
@@ -74,6 +74,9 @@ pub fn spawn_level_by_id(world: &mut World, id: &str, at: Option<Transform>) -> 
 /// Spawns the already loaded level file `path` (see [`request_level`]) under `label`.
 /// For games that place level files the content does not list: the tiles of a region.
 pub fn spawn_level_file(world: &mut World, path: &str, at: Transform, label: &str) -> Result<SpawnedLevel, String> {
+    if let Some(refusal) = held_change(world, path) {
+        return Err(refusal);
+    }
     let level = level_asset(world, path)?.clone();
     spawn_level_as(world, &level, at, label)
 }
@@ -96,6 +99,11 @@ pub struct SpawnLevelArgs {
 fn spawn_level_tool(In(call): In<Call<SpawnLevelArgs>>, world: &mut World) -> ToolResult {
     let SpawnLevelArgs { id, x, y, z } = call.args;
     let def = def_of(world, &id)?;
+    if let Some(refusal) = held_change(world, &def.file) {
+        // Nothing changed: not part of the recording (a replay plays without the session).
+        ai_core::replay::forget_call(world);
+        return Err(refusal);
+    }
     let at = Vec3::new(x.unwrap_or(def.at.x), y.unwrap_or(def.at.y), z.unwrap_or(def.at.z));
     let spawned = spawn_level_by_id(world, &id, Some(Transform::from_translation(at)))?;
     Ok(summarize(world, &id, at, &spawned))

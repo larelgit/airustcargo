@@ -166,7 +166,7 @@ use shards_core::EngineAppExt;
 
 pub use asset::{Bounds, LevelAsset, LevelLoadError, LevelLoader, LevelNode, MarkerInfo};
 pub use def::LevelDef;
-pub use library::{level_asset, request_level, LevelLibrary};
+pub use library::{held_change, level_asset, request_level, LevelLibrary};
 pub use marker::{LevelMarker, MarkerKind, RequiredMarker};
 pub use props::{check_level, LevelProblem, PROPERTIES};
 pub use render::LevelVisual;

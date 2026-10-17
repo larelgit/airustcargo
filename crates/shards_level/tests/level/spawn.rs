@@ -3,6 +3,7 @@
 use ai_core::AiId;
 use bevy::prelude::*;
 use serde_json::json;
+use shards_content::ContentAppExt;
 use shards_level::{despawn_level, level_asset, spawn_level, FromLevel, LevelAsset, LevelInstances, LevelMarker};
 use shards_motion::{Collider, ColliderId, PhysicsWorld};
 
@@ -217,6 +218,51 @@ fn an_edited_file_replaces_the_spawned_level_through_a_recorded_action() {
         })
         .collect();
     assert_eq!(tools, [r#"spawn_level {"id":"arena"}"#, r#"level_reload {"file":"arena.gltf"}"#]);
+}
+
+/// Holds content while present, as a co-op session does.
+#[derive(Resource)]
+struct Held;
+
+fn held(world: &World) -> Option<String> {
+    world.contains_resource::<Held>().then(|| "during the test's session would desync it".to_owned())
+}
+
+#[test]
+fn a_file_changed_while_content_is_held_is_not_spawned_until_the_change_applies() {
+    let mut level = arena();
+    let dir = arena_assets("held", &level);
+    let mut app = app_with(&dir, |app| {
+        app.add_content_guard(held);
+    });
+    ok(&mut app, "spawn_level", json!({"id": "arena"}));
+    app.world_mut().insert_resource(Held);
+    level.node_mut("Pillar.001").translation = Some([7.5, 2.0, 6.0]);
+    std::fs::write(dir.join("arena.gltf"), level.gltf()).unwrap();
+    app.world().resource::<AssetServer>().reload("arena.gltf");
+    update_until(&mut app, "the change waits", |app| journal(app).iter().any(|l| l.contains("a level file changed on disk and waits")));
+
+    // The asset server has the new file, the other machines the old one: no spawn from it.
+    let refused = fails(&mut app, "spawn_level", json!({"id": "arena"}));
+    assert_eq!(refused, "refused: `arena.gltf` changed on disk, and a level spawn from the changed file during the test's session would desync it");
+    let at = Transform::from_xyz(40.0, 0.0, 0.0);
+    assert_eq!(shards_level::spawn_level_file(app.world_mut(), "arena.gltf", at, "tile").err(), Some(refused), "a region's tile neither");
+    assert_eq!(app.world().resource::<LevelInstances>().iter().count(), 1);
+
+    // Held no more: the change applies, and the file spawns again.
+    app.world_mut().remove_resource::<Held>();
+    update_until(&mut app, "the change applies", |app| journal(app).iter().any(|l| l.contains("level reloaded")));
+    ok(&mut app, "spawn_level", json!({"id": "arena"}));
+    let recording = ai_core::replay::save(app.world());
+    let tools: Vec<&str> = recording
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            ai_core::replay::ReplayEvent::Call { tool, .. } => Some(tool.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tools, ["spawn_level", "level_reload", "spawn_level"], "the refusal is not recorded");
 }
 
 #[test]
