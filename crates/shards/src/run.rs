@@ -304,6 +304,9 @@ fn check_without(args: &Args) -> Result<(), String> {
     if (args.character.is_some() || args.world.is_some()) && without.contains(&"save") {
         return Err("--without save leaves out saves: drop --character and --world, or keep `save`".into());
     }
+    if args.worldgen_report.is_some() && without.contains(&"world") {
+        return Err("--without world leaves out the region generator: drop --worldgen-report, or keep `world`".into());
+    }
     Ok(())
 }
 
@@ -1534,6 +1537,7 @@ mod tests {
             assert!(modules(&["game", "--without", "net"]).contains("`steam` (") && modules(&["game", "--without", "net"]).contains("needs `net`"));
         }
         assert!(modules(&["game", "--without", "save", "--character", "ann"]).starts_with("--without save leaves out saves"));
+        assert!(modules(&["game", "--without", "world", "--worldgen-report", "wilds"]).starts_with("--without world leaves out the region generator"));
         for steam in [&["--steam-host"][..], &["--steam-server"], &["--headless", "--stand", "1", "--stand-steam"], &["--join", "steam:90071992547409921"], &["--steam-app", "480"]] {
             let args: Vec<&str> = ["game", "--without", "steam"].into_iter().chain(steam.iter().copied()).collect();
             assert!(modules(&args).starts_with("--without steam leaves out Steam"), "{steam:?}: {}", modules(&args));
