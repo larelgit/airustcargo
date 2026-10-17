@@ -402,6 +402,10 @@ impl Devices<'_> {
             Binding::Keys2D { up, down, left, right } => {
                 Vec2::new(key(right) - key(left), key(up) - key(down)).normalize_or_zero()
             }
+            Binding::Buttons2D { up, down, left, right } => {
+                let pad = |b: &GamepadButton| self.pads.iter().any(|p| p.pressed(*b)) as i32 as f32;
+                Vec2::new(pad(right) - pad(left), pad(up) - pad(down)).normalize_or_zero()
+            }
             Binding::GamepadAxis { axis, deadzone, scale } => {
                 let raw = self.pads.iter().filter_map(|p| p.get(*axis)).fold(0.0, |best: f32, v| if v.abs() > best.abs() { v } else { best });
                 let live = if raw.abs() < *deadzone { 0.0 } else { raw };

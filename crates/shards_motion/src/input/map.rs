@@ -45,6 +45,8 @@ pub enum Binding {
     KeyAxis { neg: KeyCode, pos: KeyCode },
     /// Four keys as a 2D axis (WASD): `up` is +y.
     Keys2D { up: KeyCode, down: KeyCode, left: KeyCode, right: KeyCode },
+    /// Four gamepad buttons as a 2D axis (the D-pad): `up` is +y.
+    Buttons2D { up: GamepadButton, down: GamepadButton, left: GamepadButton, right: GamepadButton },
     /// A gamepad stick as a 2D axis, its dead zone cut out of the middle.
     Stick {
         stick: Stick,
@@ -82,6 +84,9 @@ impl Binding {
             Binding::Keys2D { up, down, left, right } => {
                 vec![Physical::Key(up), Physical::Key(down), Physical::Key(left), Physical::Key(right)]
             }
+            Binding::Buttons2D { up, down, left, right } => {
+                vec![Physical::Pad(up), Physical::Pad(down), Physical::Pad(left), Physical::Pad(right)]
+            }
             Binding::Stick { stick, .. } => vec![Physical::Stick(stick)],
             Binding::MouseMotion { .. } => vec![Physical::MouseMotion],
         }
@@ -101,6 +106,7 @@ impl Binding {
             Binding::GamepadAxis { .. }
                 | Binding::KeyAxis { .. }
                 | Binding::Keys2D { .. }
+                | Binding::Buttons2D { .. }
                 | Binding::Stick { .. }
                 | Binding::MouseMotion { .. }
         )
@@ -118,7 +124,7 @@ impl Binding {
             format!(
                 "`{text}` is not a binding ({e}); write Key(KeyE), Mouse(Left), GamepadButton(South), \
                  GamepadAxis(axis: LeftStickX), KeyAxis(neg: KeyA, pos: KeyD), \
-                 Keys2D(up: KeyW, down: KeyS, left: KeyA, right: KeyD), Stick(stick: Left) or MouseMotion()"
+                 Keys2D(up: KeyW, down: KeyS, left: KeyA, right: KeyD), \n                 Buttons2D(up: DPadUp, down: DPadDown, left: DPadLeft, right: DPadRight), Stick(stick: Left) or MouseMotion()"
             )
         })
     }
@@ -479,6 +485,12 @@ impl InputMap {
                     keys(KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD),
                     keys(KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft, KeyCode::ArrowRight),
                     Binding::Stick { stick: Stick::Left, deadzone: 0.3, scale: 1.0 },
+                    Binding::Buttons2D {
+                        up: GamepadButton::DPadUp,
+                        down: GamepadButton::DPadDown,
+                        left: GamepadButton::DPadLeft,
+                        right: GamepadButton::DPadRight,
+                    },
                 ],
             ),
             ActionBinding::new("confirm", [Key(KeyCode::Enter), Pad(GamepadButton::South)]),
@@ -519,10 +531,19 @@ mod tests {
             Binding::Stick { stick: Stick::Left, deadzone: 0.2, scale: 1.0 },
             Binding::Keys2D { up: KeyCode::KeyW, down: KeyCode::KeyS, left: KeyCode::KeyA, right: KeyCode::KeyD },
             Binding::KeyAxis { neg: KeyCode::KeyA, pos: KeyCode::KeyD },
+            Binding::Buttons2D {
+                up: GamepadButton::DPadUp,
+                down: GamepadButton::DPadDown,
+                left: GamepadButton::DPadLeft,
+                right: GamepadButton::DPadRight,
+            },
         ] {
             assert_eq!(Binding::parse(&binding.text()), Ok(binding.clone()), "{}", binding.text());
         }
         assert_eq!(Binding::parse("GamepadAxis(axis: LeftStickX)").unwrap(), Binding::GamepadAxis { axis: GamepadAxis::LeftStickX, deadzone: 0.15, scale: 1.0 });
+        // A D-pad button inside the menu's D-pad is the same input.
+        let d_pad = Binding::parse("Buttons2D(up: DPadUp, down: DPadDown, left: DPadLeft, right: DPadRight)").unwrap();
+        assert!(d_pad.is_axis() && d_pad.overlaps(&Binding::GamepadButton(GamepadButton::DPadLeft)));
         let err = Binding::parse("Space").unwrap_err();
         assert!(err.contains("not a binding") && err.contains("Key(KeyE)"), "{err}");
     }

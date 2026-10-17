@@ -77,7 +77,8 @@ pub struct RebindArgs {
     /// Action name, e.g. `jump`, `sprint`, `light`.
     pub action: String,
     /// The new input as text: `Key(KeyE)`, `Mouse(Right)`, `GamepadButton(South)`,
-    /// `Keys2D(up: KeyW, down: KeyS, left: KeyA, right: KeyD)`, `Stick(stick: Left)`.
+    /// `Keys2D(up: KeyW, down: KeyS, left: KeyA, right: KeyD)`, `Stick(stick: Left)`,
+    /// `Buttons2D(up: DPadUp, down: DPadDown, left: DPadLeft, right: DPadRight)`.
     pub binding: Option<String>,
     /// Which binding to replace: 0 is the primary; one past the last adds an alternative.
     #[serde(default)]
