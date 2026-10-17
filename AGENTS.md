@@ -52,7 +52,6 @@ cargo sandbox --replay FILE --verify    # replay without a window; add --windowe
 cargo sandbox --replay FILE --verify --heavy 30   # also: from every 30th tick's snapshot, a fresh game goes on the same (heavy mode)
 cargo shards assert add hp 'field:6:Health.current<300'   # rule: the game stops when it is broken (`step` → exit code 3)
 cargo shards fuzz --seed 7 --steps 300 --chaos 0.02 --invalid 0.05  # random player inputs from the tool schemas, 2% developer calls, 5% broken on purpose, until a rule is broken
-cargo shards fuzz --seed 7 --steps 300  # random inputs until a rule is broken
 cargo sandbox --coverage --headless --paused --port 0 --port-file /tmp/g.port &   # also counts the states the session reaches
 cargo shards coverage [--since K]       # distinct signatures, the rarest, what is new since K, what content declares and was never reached; `coverage reset` clears it
 cargo shards soak --minutes 30 --regen wilds   # stand: agents with a seed play for all participants, until the first desync
