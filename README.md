@@ -227,7 +227,7 @@ A game is a separate repository with one dependency, `shards`. The starting poin
    ```
    The build uses the `dist` profile and feature: window, sound and gamepads, without the `shards` server, hot reload and developer keys. The check runs a copy of the package in a bare environment (`--check-content`, `--smoke 300`) and confirms that the program writes nothing to its own folder.
 
-The rules that keep a game deterministic (gameplay in `FixedUpdate`, randomness only through `SimRng`, order by `AiId`, control only through `Intent`) are in the template's guide, section "Детерминизм: правила игры" (determinism: the rules of the game). Regions, NPC enemies, Blender levels, looks, effects and moving to a newer engine version continue in the [full step list](docs/manual.md#как-сделать-игру-на-shards-по-шагам) of the manual.
+The rules that keep a game deterministic (gameplay in `FixedUpdate`, randomness only through `SimRng`, order by `AiId`, control only through `Intent`) are in the template's guide, section ["Determinism: rules for the game"](template/README.md#determinism-rules-for-the-game). Regions, NPC enemies, Blender levels, looks, effects and moving to a newer engine version continue in the [full step list](docs/manual.md#make-a-game-on-shards-step-by-step) of the manual.
 
 ## How it works
 
@@ -285,16 +285,16 @@ Shards is being built for the game *Осколки Предела*, which lives 
 
 ## Documentation
 
-- [docs/manual.md](docs/manual.md): the full reference, every module, its tools, content formats and checks (Russian)
-- [template/README.md](template/README.md): the game template's guide (Russian)
-- [docs/engine-tz.md](docs/engine-tz.md): the engine specification (Russian)
-- [docs/engine-progress.md](docs/engine-progress.md): progress against the specification (Russian)
-- [CHANGELOG.md](CHANGELOG.md): versions and changes (Russian)
-- [AGENTS.md](AGENTS.md): rules for coding agents that work in this repository (Russian)
+- [docs/manual.md](docs/manual.md): the full reference, every module, its tools, content formats and checks
+- [template/README.md](template/README.md): the game template's guide
+- [docs/engine-tz.md](docs/engine-tz.md): the engine specification
+- [docs/engine-progress.md](docs/engine-progress.md): progress against the specification
+- [CHANGELOG.md](CHANGELOG.md): versions and changes
+- [AGENTS.md](AGENTS.md): rules for coding agents that work in this repository
 
 ## Working on the engine with a coding agent
 
 - There is no LLM in the engine and there must not be one: no built-in or local agents, no model API calls, no API keys. What an agent needs is added as a tool (`add_ai_tool` / `add_ai_query`) or a `shards` command, not as code that thinks for the agent.
-- Code and comments are in English; the detailed documentation is in Russian.
+- Code, comments and documentation are in English.
 - Bevy is pinned at `0.20.0`; do not upgrade it as a side effect of another task.
 - Check changes with `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings`; if the template can see the change, also `cargo test --manifest-path template/Cargo.toml`.

@@ -1,333 +1,286 @@
-# Шаблон игры на Shards
+# Shards game template
 
-Минимальная игра на движке Shards: персонаж с движением и боем, враг, арена с препятствиями и сгенерированная
-долина с лагерями рейдеров (враги-NPC движка ходят по навсетке и не уходят от своего лагеря). Игра зависит
-**только от крейта `shards`** (в `Cargo.toml` одна зависимость, а `tests/game/manifest.rs` следит, чтобы так и
-осталось), числа лежат в файлах контента, а управлять ею можно из терминала через CLI `shards`, как это делают
-агенты-кодеры. Шаблон растёт вместе с модулями движка: что в нём пока нет, смотрите в разделе
-«Чего в шаблоне ещё нет».
+A minimal game on the Shards engine: a character with movement and combat, an enemy, an arena with obstacles, and a generated valley with raider camps (the engine's NPC enemies walk the navmesh and do not leave their camp). The game depends
+**only on the `shards` crate** (`Cargo.toml` has one dependency, and `tests/game/manifest.rs` makes sure it stays that way). The numbers live in content files. You can drive the game from a terminal with the `shards` CLI, as coding agents do. The template grows with the engine's modules. For what it does not have yet, see
+"What the template does not have yet".
 
 ```text
-cargo game                          # окно: WASD, мышь, Space, Shift, Ctrl, левая кнопка, Escape — меню
-cargo game --headless --paused &    # без окна, время стоит, пока вы не сделаете `shards step`
-cargo game --offscreen --paused &   # тоже без окна, но GPU рисует: `shards shot` снимает картинку
-shards wait && shards observe       # что в мире, текстом
+cargo game                          # window: WASD, mouse, Space, Shift, Ctrl, left button, Escape for the menu
+cargo game --headless --paused &    # without a window; time stands still until you run `shards step`
+cargo game --offscreen --paused &   # also without a window, but the GPU draws: `shards shot` takes a picture
+shards wait && shards observe       # what is in the world, as text
 shards scenario scenarios/smoke.scenario
-cargo test                          # тесты, сценарий и реплей: без окна, секунды
+cargo test                          # tests, scenario and replay: no window, a few seconds
 ```
 
-## Что внутри
+## What's inside
 
-| где | что |
+| where | what |
 |---|---|
-| `src/main.rs` | `shards::run(my_game::build_app)`: стандартный `main` (разбор командной строки, `--headless`, `--replay`, `--verify`, `--check-content`) |
-| `src/lib.rs` | `GamePlugin` (всё, что делает игру этой игрой), `build_app` (движок + игра + картинка), `test_app` (то же без окна, для тестов) |
-| `src/arena.rs` | свой вид контента `arena` (`ContentDef`) и система, которая строит мир в `OnEnter(EngineState::InGame)` |
-| `src/brain.rs` | мозг врага: пишет приказ в `Intent`, остальное делает движок |
-| `src/ai.rs` | то, что агент умеет в этой игре сверх движка: инструмент `taunt`, условие `arena_cleared` и условия музыки `foe_near` и `in_fight` |
-| `src/progress.rs` | что игра кладёт в сохранение сверх движка: трофеи героя (раздел персонажа) и павшие грунты двора (раздел мира) |
-| `src/screens.rs` | своё в HUD и меню: трофеи на HUD и подсказка главного меню, когда продолжать нечего (`add_ui_source`), «сохранить и выйти» (`add_ui_action`) |
-| `src/visuals.rs` | меши, свет и камера, только с картинкой (feature `render`: окно или `--offscreen`); меши получают один белый материал, а цвет и свет им дают виды; персонажи — модель гуманоида с `Animated` |
-| `assets/content/*.ron` | **все числа игры**: движение, действия, мувсеты, бойцы (префабы), уровень |
-| `assets/content/looks.look.ron` | как рисуются тела и стены (виды движка, E10.1): пресет `low_poly` — плоские грани и контур, `hero`, `grunt`, `raider` начинаются с него (`extends`), `stone` — всё остальное; тело берёт вид из `"Look"` своего префаба |
-| `assets/content/effects.effect.ron`, `assets/content/effects.fx.ron` | эффекты (движок, E10.3): искры удара и блока (осколки), пыль смерти и шагов (кубики); таблица — какое событие боя (`damaged`, `blocked`, `died`) и какая метка клипа (`footstep`) что играет. Только картинка: в окне или с `--offscreen` |
-| `assets/models/humanoid.glb`, `assets/content/anim.animset.ron` | персонаж: low-poly гуманоид со скелетом и клипами (`idle`, `walk`, `run`, `light_1`, `light_2`, `light_3`, `heavy`, `roll`, `block`, `hit`, `death`), его строит скрипт движка `tools/blender/humanoid.py` (`-- template`); набор говорит, какой клип показывает какое состояние и действие, и где в клипах шаги |
-| `assets/content/session.net.ron` | кооператив на двоих: второй игрок играет героем того же префаба `hero`, остальное — числа движка |
-| `assets/content/screens.screen.ron` | главное меню, HUD, пауза, настройки и вопрос перед выходом: экраны на виджетах движка |
-| `assets/ui/loading.png` | картинка загрузки (1280×720): во весь экран, пока игра грузится, и в главном меню; её рисует пример движка `cargo run -p sandbox --example make_art` |
-| `assets/content/languages.locale.ron`, `assets/locale/` | языки (английский, русский) и их тексты на Fluent: всё, что пишут HUD и меню; см. «Языки» |
-| `assets/content/audio/`, `assets/sounds/`, `assets/music/` | звуки, музыка двора в трёх слоях и микшер; см. «Звук» |
-| `assets/content/region/` | сгенерированная долина `valley`: тайлы 16 м, сокеты, точки интереса, регион 8×8, запасная карта, настройки навсетки |
-| `assets/content/npc/` | рейдер: поведение (машина состояний), восприятие, план атак: NPC движка без строчки кода игры |
-| `assets/tiles/ruin.gltf` | тайл-руина из Blender: пол, стены, колонна, маркеры (лагерь, ориентир, сокеты) |
-| `assets/nav/` | запечённая навигация тайлов (`cargo game --bake-nav`) |
-| `assets/content/hero.action.ron` (`displacement`) | выпады и перекат героя запечены из корневой кости клипов (`bake`): после правки клипа — `cargo game --bake-motion` |
-| `scenarios/smoke.scenario` | герой идёт к врагу и побеждает его |
-| `scenarios/valley.scenario` | долина из seed 42, путь к лагерю по навсетке, рейдер нападает и возвращается к лагерю |
-| `scenarios/saves.scenario` | очищенный двор сохраняется сам; загрузка возвращает трофей и павшего грунта, вторая загрузка трофея не добавляет |
-| `scenarios/menus.scenario` | HUD с числами героя; агент-игрок проходит паузу и настройки только инструментами `ui_*` |
-| `scenarios/stand/coop.scenario` | хост и гость на канале 150 мс с потерей 2 %: гость побеждает грунта, трофей его на каждой копии двора, персонаж уходит к нему |
-| `tests/game/` | тесты: сценарии (и стенда), детерминизм, реплеи, контент, кооператив, регион, звук, экраны, манифест |
-| `tests/replays/*.json` | эталонные реплеи (`smoke`, `valley`): CI проверяет, что игра по-прежнему совпадает с ними |
+| `src/main.rs` | `shards::run(my_game::build_app)`: the standard `main` (command-line parsing, `--headless`, `--replay`, `--verify`, `--check-content`) |
+| `src/lib.rs` | `GamePlugin` (everything that makes the game this game), `build_app` (engine + game + rendering), `test_app` (the same without a window, for tests) |
+| `src/arena.rs` | its own content kind `arena` (`ContentDef`), and a system that builds the world in `OnEnter(EngineState::InGame)` |
+| `src/brain.rs` | the enemy's brain: it writes an order into `Intent`, and the engine does the rest |
+| `src/ai.rs` | what the agent can do in this game beyond the engine: the `taunt` tool, the `arena_cleared` condition, and the music conditions `foe_near` and `in_fight` |
+| `src/progress.rs` | what the game puts into a save beyond the engine: the hero's trophies (the character section) and the fallen grunts in the yard (the world section) |
+| `src/screens.rs` | the game's own parts of the HUD and menus: trophies on the HUD, a main-menu hint when there is nothing to continue (`add_ui_source`), and "save and quit" (`add_ui_action`) |
+| `src/visuals.rs` | meshes, light and camera, only with rendering (feature `render`: a window or `--offscreen`); meshes get one white material, and their colour and light come from looks; characters are a humanoid model with `Animated` |
+| `assets/content/*.ron` | **all the game's numbers**: movement, actions, movesets, fighters (prefabs), the level |
+| `assets/content/looks.look.ron` | how bodies and walls are drawn (the engine's looks, E10.1): the preset `low_poly` gives flat faces and an outline; `hero`, `grunt` and `raider` start from it (`extends`); `stone` covers everything else; a body takes its look from `"Look"` in its own prefab |
+| `assets/content/effects.effect.ron`, `assets/content/effects.fx.ron` | effects (the engine, E10.3): sparks from hits and blocks (fragments), dust from deaths and steps (cubes); the table says which combat event (`damaged`, `blocked`, `died`) and which clip label (`footstep`) plays which effect. Rendering only: in a window or with `--offscreen` |
+| `assets/models/humanoid.glb`, `assets/content/anim.animset.ron` | the character: a low-poly humanoid with a skeleton and clips (`idle`, `walk`, `run`, `light_1`, `light_2`, `light_3`, `heavy`, `roll`, `block`, `hit`, `death`), built by the engine's script `tools/blender/humanoid.py` (`-- template`); the set says which clip shows which state and action, and where the steps are in the clips |
+| `assets/content/session.net.ron` | co-op for two: the second player plays the hero from the same prefab `hero`; the rest are the engine's numbers |
+| `assets/content/screens.screen.ron` | the main menu, HUD, pause, settings and the question before quitting: screens built from the engine's widgets |
+| `assets/ui/loading.png` | the loading picture (1280×720): full screen while the game loads, and in the main menu; the engine's example `cargo run -p sandbox --example make_art` draws it |
+| `assets/content/languages.locale.ron`, `assets/locale/` | languages (English, Russian) and their Fluent texts: everything the HUD and menus write; see "Languages" |
+| `assets/content/audio/`, `assets/sounds/`, `assets/music/` | sounds, the yard music in three layers, and the mixer; see "Audio" |
+| `assets/content/region/` | the generated valley `valley`: 16 m tiles, sockets, points of interest, an 8×8 region, a fallback map, navmesh settings |
+| `assets/content/npc/` | the raider: behaviour (a state machine), perception, attack plan: the engine's NPC with no line of game code |
+| `assets/tiles/ruin.gltf` | a ruin tile from Blender: floor, walls, column, markers (camp, landmark, sockets) |
+| `assets/nav/` | baked tile navigation (`cargo game --bake-nav`) |
+| `assets/content/hero.action.ron` (`displacement`) | the hero's lunges and roll are baked from the root bone of the clips (`bake`): after you edit a clip, run `cargo game --bake-motion` |
+| `scenarios/smoke.scenario` | the hero walks to the enemy and beats it |
+| `scenarios/valley.scenario` | the valley from seed 42, a path to the camp over the navmesh, a raider attacks and returns to the camp |
+| `scenarios/saves.scenario` | a cleared yard saves itself; a load restores the trophy and the fallen grunt, and a second load adds no extra trophy |
+| `scenarios/menus.scenario` | the HUD with the hero's numbers; the player agent goes through the pause menu and settings using only the `ui_*` tools |
+| `scenarios/stand/coop.scenario` | a host and a guest on a 150 ms channel with 2 % loss: the guest beats the grunt, the guest's trophy is in every copy of the yard, and the character walks to the guest |
+| `tests/game/` | tests: scenarios (and the stand's), determinism, replays, content, co-op, region, audio, screens, manifest |
+| `tests/replays/*.json` | reference replays (`smoke`, `valley`): CI checks that the game still matches them |
 
-Что даёт движок, а что игра:
+What the engine gives, and what the game does:
 
-- **Герой**: контроллер персонажа (ходьба, бег, спринт, прыжок, лазание на уступ, плавание), карта ввода
-  (клавиатура, мышь, геймпад → `Intent`), камера от третьего лица, действия (`light_1` → `light_2`, перекат) на
-  данных. В коде игры для этого нет ни строки: герой описан префабом `hero` в `characters.prefab.ron`.
-- **Враг**: тот же боец (`Fighter`), что и герой, с другим мувсетом. Мозг (`brain.rs`) выбирает цель и атаку, а
-  идти, смотреть и бить будет `Order::Attack` движка по тем же правилам, что у игрока: стамина, замах, откат.
-- **Арена**: пол, забор, стены и расстановка бойцов описаны в `arena.arena.ron`.
-- **Вид**: цвет и свет полосами, плоские грани и контуры дают виды движка (`shards::look`, раздел «Стилизованные материалы
-  (E10.1)» руководства движка). Игра называет вид в префабе (`"Look": ("hero")`) и в `visuals.rs` кладёт мешу один белый материал; в
-  коде нет ни одного цвета тела.
-- **Анимация**: герой и враги носят одну модель (`models/humanoid.glb`) с окном или `--offscreen`; что она показывает, говорит
-  набор `anim.animset.ron`: клип действия движок подматывает на прогресс действия (геймплей ведёт), клипы ходьбы и бега
-  зацикливаются по скорости тела, `hit` — пробитие стойкости, `death` — смерть (тело больше не прячется). Без окна модели нет и
-  ничего не играет: реплей и тесты те же. Смещение выпадов и переката (`displacement` в `hero.action.ron`) запечено из
-  корневой кости клипов: поменяли клип — `cargo game --bake-motion`, иначе `--check-content` назовёт устаревшую кривую.
-  Метка клипа: шаг — пыль (`effects.fx.ron`, `cues`). Звук взмаха `whoosh` — эффект действия `Sound` в `hero.action.ron`:
-  он звучит и без окна.
-- **Эффекты**: искры удара и блока и пыль смерти — эффекты движка (`shards::fx`, раздел «Эффекты и декали (E10.3)» руководства
-  движка) из `effects.effect.ron`, а таблица `effects.fx.ron` говорит, какое событие боя что играет; кода у игры для них нет.
-  Телеграфы атак на земле движок рисует декалями.
-- **Долина**: регион, который генерирует движок (`shards::world`) по правилам из контента: тайлы с сокетами на
-  краях, повороты, точки интереса, проверки (всё достижимо, лагеря не у ворот), запасная карта. Тот же seed и та
-  же версия генератора дают тот же регион байт в байт. Один тайл — файл из Blender (`assets/tiles/ruin.gltf`): его
-  объекты с custom properties становятся коллайдерами и маркерами. Туда ведёт `shards act regen region=valley
-  seed=42`: экран загрузки, старый регион уходит, герой появляется у ворот, тики не сдвигаются. Регион стоит рядом
-  с ареной (`origin` его северо-западного угла), а не вместо неё.
-- **Рейдеры**: NPC движка (`shards::npc`): поведение, восприятие и план атак лежат в контенте, маршруты идут по
-  навсетке (обходят колонны), директор боя раздаёт токены атаки, `Home` держит рейдера в 10 м от лагеря. Мозг
-  грунта на арене (`brain.rs`) — пример своего мозга игры; рейдер — пример того же без кода.
-- **Агент**: все инструменты движка (`move_to`, `attack`, `dodge`, `step`, `spawn_prefab`, `inspect`, `regen`,
-  `nav_path`, `npc_state`, `snapshot_save`, …) и два свои.
-- **Сохранения**: позиция, здоровье и регион — разделы движка; трофеи героя и павшие грунты игра добавляет своими
-  разделами (`src/progress.rs`), очищенный двор сохраняется сам. См. «Сохранения».
-- **Кооператив**: второй игрок по сети (`--host`, `--join`) или на стенде (`--stand 1`) с героем из того же префаба; его персонаж уходит
-  с ним. Из игры нужен один файл контента. См. «Кооператив на двоих».
-- **HUD и меню**: экраны в контенте, рисует, водит фокус и показывает агенту движок; игра даёт трофеи на HUD и кнопку
-  «сохранить и выйти» (`src/screens.rs`). См. «HUD и меню».
-- **Языки**: английский и русский на Fluent, переключаются на лету из настроек; трофеи на HUD — фраза с формой
-  множественного числа. См. «Языки».
+- **Hero**: the character controller (walking, running, sprinting, jumping, climbing a ledge, swimming), the input map
+  (keyboard, mouse, gamepad → `Intent`), a third-person camera, and actions (`light_1` → `light_2`, roll) from data.
+  The game code has no line for this: the hero is described by the prefab `hero` in `characters.prefab.ron`.
+- **Enemy**: the same fighter (`Fighter`) as the hero, with a different moveset. The brain (`brain.rs`) picks a target and an attack, and the engine's `Order::Attack` does the walking, looking and hitting under the same rules as the player: stamina, wind-up, cooldown.
+- **Arena**: the floor, fence, walls and the placement of fighters are described in `arena.arena.ron`.
+- **Look**: colour and banded light, flat faces and outlines come from the engine's looks (`shards::look`, the "Stylised materials (E10.1)" section of the engine manual). The game names the look in the prefab (`"Look": ("hero")`), and in `visuals.rs` it gives the mesh one white material; there is not a single body colour in the code.
+- **Animation**: the hero and the enemies share one model (`models/humanoid.glb`) with a window or `--offscreen`; the set `anim.animset.ron` says what it shows. The engine scrubs an action's clip to the action's progress (gameplay drives it), walk and run clips loop with the body's speed, `hit` plays on a poise break, and `death` plays when the body dies (the body is no longer hidden). Without a window there is no model and nothing plays: the replay and the tests are the same. The lunge and roll offsets (`displacement` in `hero.action.ron`) are baked from the root bone of the clips: if you change a clip, run `cargo game --bake-motion`, otherwise `--check-content` will report a stale curve. A clip label: a step makes dust (`effects.fx.ron`, `cues`). The swing sound `whoosh` is the action's `Sound` effect in `hero.action.ron`: it sounds without a window too.
+- **Effects**: the sparks from hits and blocks and the dust from deaths are the engine's effects (`shards::fx`, the "Effects and decals (E10.3)" section of the engine manual) from `effects.effect.ron`; the table `effects.fx.ron` says which combat event plays what. The game has no code for them. The engine draws attack telegraphs on the ground as decals.
+- **Valley**: the region the engine generates (`shards::world`) from the rules in the content: tiles with sockets on their edges, rotations, points of interest, and checks (everything is reachable, camps are not at the gate), plus a fallback map. The same seed and the same generator version give the same region, byte for byte. One tile is a file from Blender (`assets/tiles/ruin.gltf`): its objects with custom properties become colliders and markers. To get there, run `shards act regen region=valley
+  seed=42`: a loading screen appears, the old region goes away, the hero appears at the gate, and the ticks do not shift. The region stands next to the arena (`origin` is its north-west corner), not in place of it.
+- **Raiders**: the engine's NPCs (`shards::npc`): behaviour, perception and attack plans live in the content, routes go over the navmesh (they walk around the columns), the combat director hands out attack tokens, and `Home` keeps the raider within 10 m of its camp. The grunt's brain in the arena (`brain.rs`) is an example of the game's own brain; the raider is an example of the same thing with no code.
+- **Agent**: all the engine's tools (`move_to`, `attack`, `dodge`, `step`, `spawn_prefab`, `inspect`, `regen`,
+  `nav_path`, `npc_state`, `snapshot_save`, …) and two of its own.
+- **Saves**: position, health and region are the engine's sections; the game adds the hero's trophies and the fallen grunts as its own sections (`src/progress.rs`), and a cleared yard saves itself. See "Saves".
+- **Co-op**: a second player over the network (`--host`, `--join`) or on a stand (`--stand 1`), with the hero from the same prefab; their character goes with them. The game needs one content file for this. See "Two-player co-op".
+- **HUD and menus**: the screens are in the content; the engine draws them, moves the focus and shows them to the agent. The game puts trophies on the HUD and a "save and quit" button (`src/screens.rs`). See "HUD and menus".
+- **Languages**: English and Russian in Fluent, switched on the fly from the settings; the trophies on the HUD are a phrase with a plural form. See "Languages".
 
-## Запуск из репозитория движка
+## Running it from the engine repository
 
-Шаблон лежит в `template/` репозитория движка, там он указывает на движок по пути (`path = "../crates/shards"`).
-Системные пакеты (Linux): `sudo apt install pkg-config libasound2-dev libudev-dev` (для окна под Xvfb ещё
-`xvfb mesa-vulkan-drivers libxkbcommon-x11-0`). Rust берётся из `rust-toolchain.toml`.
+The template lives in `template/` in the engine repository, and there it points to the engine by path (`path = "../crates/shards"`).
+System packages (Linux): `sudo apt install pkg-config libasound2-dev libudev-dev` (for a window under Xvfb, also
+`xvfb mesa-vulkan-drivers libxkbcommon-x11-0`). The Rust version comes from `rust-toolchain.toml`.
 
 ```bash
 cd template
-cargo test                 # тесты шаблона (первая сборка Bevy долгая)
-cargo game                 # окно (`cargo game` = `cargo run --`, см. .cargo/config.toml)
+cargo test                 # tests for the template (the first Bevy build is slow)
+cargo game                 # window (`cargo game` = `cargo run --`, see .cargo/config.toml)
 ```
 
-Шаблон это **отдельный workspace** со своим `Cargo.lock`: корневой workspace движка его не затрагивает
-(`exclude = ["template"]`). Не задавайте в `.cargo/config.toml` шаблона `target-dir`: `target/` игры лежит рядом с её
-`Cargo.toml`.
+The template is a **separate workspace** with its own `Cargo.lock`: the engine's root workspace does not touch it (`exclude = ["template"]`). Do not set `target-dir` in the template's `.cargo/config.toml`: the game's `target/` sits next to its `Cargo.toml`.
 
-## Как начать свою игру: по шагам
+## Start your own game, step by step
 
-1. **Скопируйте папку.**
+1. **Copy the folder.**
    ```bash
    cp -r template ~/games/my-game && cd ~/games/my-game
    git init
    ```
-2. **Переименуйте пакет.** Имя `my_game` встречается в `Cargo.toml` (`name`, `[[bin]]`), `src/main.rs`
+2. **Rename the package.** The name `my_game` appears in `Cargo.toml` (`name`, `[[bin]]`), `src/main.rs`
    (`my_game::build_app`), `src/lib.rs` (`SettingsAppId::new("my_game")`, `InputSettings::for_game("my_game")`,
-   заголовок окна), `src/arena.rs` (`require_content … "my_game"`) и в `tests/` (`my_game::test_app`). Найти все места:
-   `grep -rn my_game .`. `SettingsAppId::new("my_game")` называет папку настроек игрока (`~/.config/my-game/`; `_`
-   становится `-`): её нужно переименовать вместе с пакетом, иначе игры, сделанные из шаблона, хранят настройки в одной
-   папке и затирают друг другу клавиши и громкость (тест `the_settings_folder_is_named_after_the_package_the_way_a_rename_finds_it`
-   напомнит). Строка `InputSettings::for_game` переносит клавиши из старого `~/.config/my_game/input.ron`,
-   который писали прежние версии шаблона; новой игре она не нужна, её можно удалить.
-3. **Подключите движок.** В `Cargo.toml` замените путь на git-зависимость. Шаблон использует сохранения, кооператив,
-   экраны и тексты фаз C–E, поэтому нужен движок этих фаз (будущий `0.4.0`); теги `v0.2.0` и `v0.3.0` не подойдут.
-   Пока тегов в репозитории нет (`v0.4.0` ставит мейнтейнер, см. `CHANGELOG.md` движка), закрепите коммит:
+   the window title), `src/arena.rs` (`require_content … "my_game"`), and in `tests/` (`my_game::test_app`). To find every place, run
+   `grep -rn my_game .`. `SettingsAppId::new("my_game")` names the player's settings folder (`~/.config/my-game/`; `_`
+   becomes `-`). Rename it together with the package. Otherwise, games made from the template store their settings in one
+   folder and overwrite each other's keys and volume (the test `the_settings_folder_is_named_after_the_package_the_way_a_rename_finds_it`
+   will remind you). The line `InputSettings::for_game` migrates the keys from the old `~/.config/my_game/input.ron`,
+   which earlier versions of the template wrote. A new game does not need it, and you can delete it.
+3. **Connect the engine.** In `Cargo.toml`, replace the path with a git dependency. The template uses saves, co-op, screens and the texts of phases C–E, so you need the engine of those phases (the coming `0.4.0`); the tags `v0.2.0` and `v0.3.0` will not do.
+   Until the repository has any tags (the maintainer adds `v0.4.0`, see the engine's `CHANGELOG.md`), pin a commit:
    ```toml
    [dependencies]
-   shards = { git = "https://github.com/larelgit/airustcargo", rev = "<хэш коммита>", default-features = false }
+   shards = { git = "https://github.com/larelgit/airustcargo", rev = "<hash>", default-features = false }
    ```
-   Затем `cargo update`. Когда `v0.4.0` будет выпущен, замените `rev = "<хэш коммита>"` на `tag = "v0.4.0"`. Сборка не
-   меняется, пока вы сами не поменяете `rev` (или `tag`). Чтобы перейти на новую версию, поменяйте `rev` (или `tag`),
-   выполните `cargo update -p shards`, прочитайте раздел «Изменено» в `CHANGELOG.md` и прогоните тесты и реплеи.
-   Список `[features]` (`render`, `remote`, `hot_reload`, …) пробрасывает features движка;
-   `default-features = false` нужен, чтобы ими управляли они.
-4. **Соберите и запустите.** `cargo test`, потом `cargo game`. Если игра запущена не через `cargo` (прямо
-   `target/debug/my_game`), она ищет `assets/` рядом с исполняемым файлом; укажите `BEVY_ASSET_ROOT=$PWD`.
-5. **Установите CLI `shards`** (один раз; берите ту же версию, что и у движка в игре, тот же `rev`):
+   Then run `cargo update`. When `v0.4.0` is released, replace `rev = "<hash>"` with `tag = "v0.4.0"`. The build does not change until you change `rev` (or `tag`) yourself. To move to a new version, change `rev` (or `tag`), run `cargo update -p shards`, read the "Changed" section of `CHANGELOG.md`, and run the tests and replays.
+   The `[features]` list (`render`, `remote`, `hot_reload`, …) passes the engine's features through; `default-features = false` is needed so that the game's own list chooses them.
+4. **Build and run it.** `cargo test`, then `cargo game`. If the game is run without `cargo` (directly, as `target/debug/my_game`), it looks for `assets/` next to the executable; set `BEVY_ASSET_ROOT=$PWD`.
+5. **Install the `shards` CLI** (once; use the same version of the engine as the game, the same `rev`):
    ```bash
-   cargo install shards_cli --git https://github.com/larelgit/airustcargo --rev <хэш коммита>   # после выпуска: --tag v0.4.0
+   cargo install shards_cli --git https://github.com/larelgit/airustcargo --rev <hash>   # after the release: --tag v0.4.0
    ```
-   Внутри репозитория движка можно так: `cargo install --path ../crates/shards_cli`.
-6. **Меняйте контент, потом код.** Сначала посмотрите, нельзя ли обойтись файлами (раздел «Контент»).
-7. **Добавьте своё в `GamePlugin`**: свой вид контента (`arena.rs`), мозг (`brain.rs`), инструмент (`ai.rs`).
-8. **Пишите сценарии и записывайте реплеи** (разделы ниже) и подключите CI (раздел «CI игры»).
+   Inside the engine repository, you can do it this way: `cargo install --path ../crates/shards_cli`.
+6. **Change the content first, then the code.** First check whether files can do the job (section "Content").
+7. **Add your own things to `GamePlugin`**: your own content kind (`arena.rs`), brain (`brain.rs`), tool (`ai.rs`).
+8. **Write scenarios and record replays** (sections below), and set up CI (section "The game's CI").
 
-## Управление через `shards`
+## Driving the game with `shards`
 
-Игра без окна и на паузе: время идёт только по `step`, поэтому агент (или вы) успевает подумать.
+The game runs without a window and paused: time moves only with `step`, so the agent (or you) has time to think.
 
 ```bash
 cargo game --headless --paused --port 0 --port-file /tmp/my-game.port &
 export SHARDS_PORT_FILE=/tmp/my-game.port
-shards wait                                   # ждёт загрузку, печатает pid, seed и порт
-shards observe                                # срез мира текстом + журнал с прошлого раза
-shards tools                                  # инструменты и сигнатуры (--json: схемы аргументов)
-shards act move_to target=e2 within=3         # герой идёт к врагу
-shards step 200 --until near:e1:e2:3.5        # шаг до условия; в ответе CHANGES и JOURNAL
-shards act attack target=e2 repeat=true       # бить, пока цель не умрёт
-shards step 1800 --until named:arena_cleared  # условие игры (src/ai.rs)
-shards act taunt target=e2                    # инструмент игры (src/ai.rs)
-shards inspect e2                             # все компоненты сущности
-shards save-replay                            # сессия с тика 0 → replays/tick<T>.json
+shards wait                                   # waits for the load, prints the pid, seed and port
+shards observe                                # a text slice of the world + the journal since last time
+shards tools                                  # tools and signatures (--json: argument schemas)
+shards act move_to target=e2 within=3         # the hero walks to the enemy
+shards step 200 --until near:e1:e2:3.5        # step until the condition; the reply has CHANGES and JOURNAL
+shards act attack target=e2 repeat=true       # hit until the target dies
+shards step 1800 --until named:arena_cleared  # a game condition (src/ai.rs)
+shards act taunt target=e2                    # a game tool (src/ai.rs)
+shards inspect e2                             # all components of the entity
+shards save-replay                            # the session from tick 0 → replays/tick<T>.json
 ```
 
-`shards` запускайте из папки игры или ниже: токен лежит в `.shards/<порт>.token`. Останавливайте игру `kill` или
-Ctrl+C, не `kill -9`; на Windows — `shards quit`. Подробности (транспорт, параллельные инстансы, скриншоты `shards shot`,
-в том числе без окна с `--offscreen`, права `Player` и `Dev`) в руководстве движка (`docs/manual.md`). Чтобы проверить игру честно, как человек,
-переключите агента на игрока:
+Run `shards` from the game's folder or below it: the token is in `.shards/<port>.token`. Stop the game with `kill` or
+Ctrl+C, not `kill -9`; on Windows, use `shards quit`. For details (the transport, parallel instances, screenshots with `shards shot`,
+including without a window with `--offscreen`, and the `Player` and `Dev` permissions), see the engine manual (`docs/manual.md`). To test the game honestly, as a person would,
+switch the agent to the player:
 `shards session --scope player`.
 
-Управление в окне: WASD или стрелки: ходьба; мышь: камера; Space: прыжок; Shift: спринт; Ctrl: перекат;
-левая кнопка: удар (повторное нажатие в окне `cancels` даёт второй удар); Tab: захват цели. Раскладка живёт в
-движке (`InputMap::standard`); свою можно задать контентом (`*.input_map.ron`, id `default`) или переназначить
-клавиши инструментом `rebind` (сохраняется в папке настроек пользователя под именем игры).
+Controls in the window: WASD or the arrow keys: walking; mouse: camera; Space: jump; Shift: sprint; Ctrl: roll;
+left button: attack (a repeated press within the `cancels` window gives a second hit); Tab: lock-on. The layout lives in the
+engine (`InputMap::standard`). You can set your own in the content (`*.input_map.ron`, id `default`), or rebind keys with the
+`rebind` tool (it is saved in the user's settings folder under the game's name).
 
-Для разработчика движок даёт в окне меню (F10: пауза и замедление, снапшоты, зерно региона и его проверка, бессмертие,
-хитбоксы, умы NPC, лаг сети, проверка сохранений) и консоль (`` ` ``: строка как у `shards act`, Tab дописывает имена).
-Агенту то же доступно инструментами `dev_menu` и `console`. Свои пункты игра кладёт в контент
-(`assets/content/dev/*.devmenu.ron`: `run` — строка, которую пункт выполняет, `fill` — строка, которую он даёт дописать в
-консоли); подробности — в руководстве движка (`docs/manual.md`), «Меню и консоль разработчика».
+For the developer, the engine gives a menu in the window (F10: pause and slow motion, snapshots, the region seed and its check, invulnerability,
+hitboxes, NPC minds, network lag, save check) and a console (`` ` ``: a line like `shards act`; Tab completes names).
+The agent has the same through the `dev_menu` and `console` tools. The game puts its own items into the content
+(`assets/content/dev/*.devmenu.ron`: `run` is the line the item runs, `fill` is the line it lets you complete in the
+console); for details, see the engine manual (`docs/manual.md`), "Developer menu and console (E11)".
 
-## Контент
+## Content
 
-Числа и определения лежат в `assets/content/**/*.<вид>.ron`, и пересборка для их правки не нужна: в окне и
-без него (`hot_reload` включён по умолчанию) файл применяется, как только вы его сохранили. Правка попадает
-в журнал (`content reloaded: …`) и в реплей. Ошибка в файле называет файл, строку и идентификатор, а прежняя
-версия остаётся в силе.
+The numbers and definitions live in `assets/content/**/*.<kind>.ron`. You do not need to rebuild to edit them: with or
+without a window (`hot_reload` is on by default), the file applies as soon as you save it. The change goes into the
+journal (`content reloaded: …`) and into the replay. An error in the file names the file, the line and the identifier,
+and the previous version stays in force.
 
-| файл | вид | что |
+| file | kind | what |
 |---|---|---|
-| `characters.locomotion.ron` | `locomotion` | скорость, прыжок, радиус капсулы, поворот |
-| `hero.action.ron`, `grunt.action.ron` | `action` | временная шкала: фазы, окна ударов, неуязвимость, отмены, смещение, стоимость |
-| `movesets.moveset.ron` | `moveset` | какой ввод запускает какое действие, действия `stagger` и `death` |
-| `tuning.combat_tuning.ron` | `combat_tuning` | буфер ввода, лимиты |
-| `characters.prefab.ron` | `prefab` | сущности: компоненты по именам, `extends`; у `hero`, `grunt` и `raider` компонент `Look` называет вид, которым тело рисует окно |
-| `looks.look.ron` | `look` | виды (E10.1): цвет, свет полосами (`Toon`), плоские грани, контур в пикселях; пресет `low_poly` и `hero`, `grunt`, `raider` с `extends: "low_poly"`, `stone` |
-| `effects.effect.ron`, `effects.fx.ron` | `effect`, `fx` | эффекты (E10.3): частицы, их жизнь, полёт, цвета и пул (`max_live`); таблица событий боя → эффект |
-| `arena.arena.ron` | `arena` | **свой вид игры**: пол, стены, кто где стоит |
-| `region/valley.tile.ron` | `tile` | тайлы: сокеты по краям, повороты, вес, слоты точек интереса, геометрия (`Inline` или `Level(path: …)`) |
-| `region/valley.socket_rules.ron` | `socket_rules` | какие края могут стоять рядом и по каким можно пройти |
-| `region/valley.poi.ron` | `poi` | точки интереса: метка для AI и префаб (лагерь спавнит рейдера) |
-| `region/valley.region.ron` | `region` | размер, тайлы, фиксированные клетки, точки, проверки, `origin`, запасная карта |
-| `region/valley_safe.tile_map.ron` | `tile_map` | запасная карта, если ни одна попытка генератора не прошла проверки |
-| `region/ruin.level.ron` | `level` | файл уровня руины и маркеры, без которых он не пройдёт `content check` |
-| `region/valley.nav.ron` | `nav` | ячейка навсетки и тело, под которое пекутся тайлы |
-| `region/valley.perf.ron` | `perf` | автотест производительности (`--perf valley`): долина с зерном 42, герой и шесть рейдеров у ворот, бюджеты тика, кадра и загрузки региона |
-| `region/valley.scatter.ron` | `scatter` | растительность долины (движок, E10.2): трава на лугах, у ворот и колонн, камешки на всех тайлах; густота, полоса высот, меши вблизи и вдали, виды `grass` и `pebble` из `looks.look.ron`. Только картинка (окно или `--offscreen`); `shards act scatter` показывает, сколько рассыпано |
-| `npc/raider.*.ron` | `behavior`, `perception`, `attack_plan` | рейдер: состояния и переходы, зрение, выбор атак |
-| `audio/*.ron` | `sound`, `music`, `audio` | звуки (файл, шина, громкость, приоритет, расстояния), музыка в слоях, микшер: голоса и звуки событий |
+| `characters.locomotion.ron` | `locomotion` | speed, jump, capsule radius, turning |
+| `hero.action.ron`, `grunt.action.ron` | `action` | a timeline: phases, hit windows, invulnerability, cancels, displacement, cost |
+| `movesets.moveset.ron` | `moveset` | which input starts which action, the `stagger` and `death` actions |
+| `tuning.combat_tuning.ron` | `combat_tuning` | input buffer, limits |
+| `characters.prefab.ron` | `prefab` | entities: components by name, `extends`; for `hero`, `grunt` and `raider`, the `Look` component names the look the window draws the body with |
+| `looks.look.ron` | `look` | looks (E10.1): colour, banded light (`Toon`), flat faces, outline in pixels; the preset `low_poly`, and `hero`, `grunt` and `raider` with `extends: "low_poly"`, and `stone` |
+| `effects.effect.ron`, `effects.fx.ron` | `effect`, `fx` | effects (E10.3): particles, their lifetime, flight, colours and pool (`max_live`); the table of combat events → effect |
+| `arena.arena.ron` | `arena` | **the game's own content kind**: floor, walls, who stands where |
+| `region/valley.tile.ron` | `tile` | tiles: sockets on the edges, rotations, weight, points-of-interest slots, geometry (`Inline` or `Level(path: …)`) |
+| `region/valley.socket_rules.ron` | `socket_rules` | which edges may sit next to each other, and which ones can be walked over |
+| `region/valley.poi.ron` | `poi` | points of interest: a label for the AI and a prefab (the camp spawns a raider) |
+| `region/valley.region.ron` | `region` | size, tiles, fixed cells, points, checks, `origin`, fallback map |
+| `region/valley_safe.tile_map.ron` | `tile_map` | the fallback map, used if no generator attempt passes the checks |
+| `region/ruin.level.ron` | `level` | the ruin's level file and its markers; without them it will not pass `content check` |
+| `region/valley.nav.ron` | `nav` | the navmesh cell and the body that the tiles are baked for |
+| `region/valley.perf.ron` | `perf` | the performance test (`--perf valley`): the valley with seed 42, the hero and six raiders at the gate, the budgets for tick, frame and region loading |
+| `region/valley.scatter.ron` | `scatter` | the valley's foliage (the engine, E10.2): grass in the meadows, at the gate and the columns, pebbles on all tiles; density, height band, meshes near and far, the `grass` and `pebble` looks from `looks.look.ron`. Rendering only (a window or `--offscreen`); `shards act scatter` shows how much is scattered |
+| `npc/raider.*.ron` | `behavior`, `perception`, `attack_plan` | the raider: states and transitions, sight, choice of attacks |
+| `audio/*.ron` | `sound`, `music`, `audio` | sounds (file, bus, volume, priority, distances), music in layers, the mixer: voices and event sounds |
 
-Что подхватывается на лету, а что нет: числа движения и боя (`locomotion`, `action`, `moveset`, `combat_tuning`),
-поведение и планы атак NPC действуют со следующего тика; растительность (`scatter`) рассыпается заново в том же кадре. Уровень
-(`arena`) и префабы читаются при создании сущностей: правка видна после перезапуска игры (или на новых сущностях, например после
-`spawn_prefab`). Виды (`looks.look.ron`) меняют картинку сразу: правленый цвет или контур виден сразу после сохранения файла
-(с окном или `--offscreen`). Эффекты (`effects.effect.ron`) — со следующего запуска эффекта.
+What applies without a restart, and what does not: the movement and combat numbers (`locomotion`, `action`, `moveset`,
+`combat_tuning`), and the NPC behaviour and attack plans take effect from the next tick. Foliage (`scatter`) is scattered again
+in the same frame. The level (`arena`) and the prefabs are read when entities are created: an edit shows after the game
+restarts (or on new entities, for example after `spawn_prefab`). Looks (`looks.look.ron`) change the picture at once: an
+edited colour or outline shows as soon as you save the file (with a window or `--offscreen`). Effects (`effects.effect.ron`)
+take effect at the next start of the effect.
 
-Проверка без игры, для CI: `cargo game --check-content` (читает все файлы, ничего не запускает; код 0 или 1) или
-`shards content check` против запущенной игры. Она читает и файл уровня руины (каждый узел, компонент и маркер) и
-сверяет запечённую навигацию с тайлами: правка тайла без `cargo game --bake-nav` — ошибка с именем файла. Так же она
-сверяет смещение действий героя с клипами модели: правка клипа без `cargo game --bake-motion` — ошибка `displacement is
-stale` с командой; файлы набора `anim.animset.ron` (модель, клипы, корневая кость) она тоже читает.
-Генератор проверяется на тысяче зёрен без игры: `cargo game --worldgen-report valley --seeds 1..1000` (код 0, если
-прошли все).
+A check without the game, for CI: `cargo game --check-content` (it reads all the files and starts nothing; exit code 0 or 1), or
+`shards content check` against a running game. It also reads the ruin's level file (every node, component and marker), and checks the
+baked navigation against the tiles: an edited tile without `cargo game --bake-nav` is an error with the file name. It also checks
+the hero's action displacement against the model's clips: an edited clip without `cargo game --bake-motion` is an error,
+`displacement is
+stale`, with the command to run; it also reads the files of the `anim.animset.ron` set (model, clips, root bone).
+The generator is checked on a thousand seeds, without the game: `cargo game --worldgen-report valley --seeds 1..1000`
+(exit code 0 if all of them pass).
 
-Производительность проверяет автотест: `cargo run --release -- --perf valley --offscreen` (без `--offscreen` — только тики, как
-можно быстрее). Он загружает долину, ставит сцену строками из `region/valley.perf.ron`, меряет 600 тиков и кадры в 1080p и
-печатает строку на бюджет: `ok`, `OVER` или `-` (не меряется здесь), код 0 — все соблюдены, 1 — нет, 2 — у `--offscreen` нет GPU. Отладочная сборка меряет, но
-не судит. Время кадров живой игры — поле `frames` в `shards status` (см. руководство движка, «Время кадра и автотест
-производительности»).
+An automatic test checks performance: `cargo run --release -- --perf valley --offscreen` (without `--offscreen`, it runs only the
+ticks, as fast as possible). It loads the valley, sets up the scene from the lines in `region/valley.perf.ron`, measures 600 ticks
+and frames at 1080p, and prints a line per budget: `ok`, `OVER` or `-` (not measured here). Exit code 0 means all the budgets are
+met, 1 means not, 2 means `--offscreen` has no GPU. A debug build measures but does not judge. The frame times of a running game
+are in the `frames` field of `shards status` (see the engine manual, "Frame time and the performance test (E10)").
 
-**Добавить врага.** Скопируйте префаб `grunt` в `characters.prefab.ron` под новым id (или `extends: "grunt"` с
-отличиями), добавьте мувсет и действия, расставьте в `arena.arena.ron` в `spawns`. Опечатка в имени префаба или
-действия это ошибка контента с подсказкой `did you mean …`, а не падение в бою. Спавн на лету:
+**Add an enemy.** Copy the `grunt` prefab into `characters.prefab.ron` under a new id (or use `extends: "grunt"` with
+changes), add a moveset and actions, and place it in `spawns` in `arena.arena.ron`. A typo in a prefab or action name is a content error with a `did you mean …` hint, not a crash in combat. Spawn it on the fly:
 `shards act spawn_prefab id=grunt_brute x=3 z=-4`.
 
-**Добавить вид.** Строка в `looks.look.ron`, например `"brute": (color: Some("#a04dd9"), flat: true, outline: Some((width: 2.0)))`
-(цвет `#rrggbb`; контур по умолчанию чёрный; `shading: Toon(bands: 2)` — две полосы света), и `"Look": ("brute")` в префабе. Опечатка
-в имени вида в префабе — ошибка контента с `did you mean …`. Что рисуется и сколько мешей берёт каждый вид, говорит `shards act
-looks` (в игре с окном или `--offscreen`; без картинки он так и пишет). В `src/visuals.rs` у тела без `Look` в префабе вид `stone`;
-цвета тел в коде игры не задают.
+**Add a look.** A line in `looks.look.ron`, for example `"brute": (color: Some("#a04dd9"), flat: true, outline: Some((width: 2.0)))`
+(colour `#rrggbb`; the outline is black by default; `shading: Toon(bands: 2)` gives two bands of light), and `"Look": ("brute")` in the prefab. A typo
+in a look name in a prefab is a content error with a `did you mean …` hint. What is drawn, and how many meshes each look takes, `shards act
+looks` shows (in a game with a window or `--offscreen`; without a picture it says so). In `src/visuals.rs`, a body without a `Look` in its prefab gets the `stone` look;
+the game code does not set body colours.
 
-**Добавить эффект.** Строка в `effects.effect.ron`, например `"heal_glow": (count: 8, rate: 30.0, duration: 0.6, color: "#7dff9e",
-glow: true, radius: 0.8, max_live: 48)`, и событие в `effects.fx.ron` (`"healed": "heal_glow"`); свой момент игра играет
-`commands.trigger(PlayEffect::new("heal_glow", EffectAt::Entity(body)))` (`shards::fx::{PlayEffect, EffectAt}`). Пул меньше одного запуска, цвет не по формату или
-событие с опечаткой — ошибка контента. Посмотреть: `shards act effect_play effect=hit_spark at=e1` и `shards shot` в игре с
-`--offscreen`; `shards act effects` перечисляет эффекты и пулы.
+**Add an effect.** A line in `effects.effect.ron`, for example `"heal_glow": (count: 8, rate: 30.0, duration: 0.6, color: "#7dff9e",
+glow: true, radius: 0.8, max_live: 48)`, and an event in `effects.fx.ron` (`"healed": "heal_glow"`). The game plays its own moment with
+`commands.trigger(PlayEffect::new("heal_glow", EffectAt::Entity(body)))` (`shards::fx::{PlayEffect, EffectAt}`). A pool smaller than one burst, a colour that is not in the right format, or a misspelled event is a content error. To see it: `shards act effect_play effect=hit_spark at=e1` and `shards shot` in a game with
+`--offscreen`; `shards act effects` lists the effects and their pools.
 
-**Добавить свой вид контента.** Структура с `Serialize`, `Deserialize` и реализацией `ContentDef` (как `ArenaDef` в
-`src/arena.rs`), `app.add_content::<T>()`, файлы `*.<kind>.ron`. `validate` проверяет числа и ссылки на другой
-контент (`refs.require::<PrefabDef>(…)`).
+**Add your own content kind.** A struct with `Serialize`, `Deserialize` and an implementation of `ContentDef` (like `ArenaDef` in
+`src/arena.rs`), `app.add_content::<T>()`, and files `*.<kind>.ron`. `validate` checks the numbers and the references to other
+content (`refs.require::<PrefabDef>(…)`).
 
-## Свой инструмент и своё условие
+## Your own tool and condition
 
-`src/ai.rs`: структура аргументов с doc-комментариями (они становятся описанием схемы, `shards tools --json`) и
-система `In<Call<Args>> -> ToolResult`. Вид задаёт регистрация:
+`src/ai.rs`: an argument struct with doc comments (they become the schema description, `shards tools --json`) and
+a system `In<Call<Args>> -> ToolResult`. The registration call sets the kind:
 
-- `add_ai_tool(name, scope, system)`: **действие**, меняет мир, попадает в журнал, в `CHANGES` и в реплей;
-- `add_ai_query(…)`: читает, без журнала и без записи в реплей;
-- `add_ai_condition(name, |world| bool)`: имя для `step --until named:NAME`.
+- `add_ai_tool(name, scope, system)`: an **action**. It changes the world, and it goes into the journal, into `CHANGES` and into the replay;
+- `add_ai_query(…)`: reads only, with no journal entry and no replay entry;
+- `add_ai_condition(name, |world| bool)`: a name for `step --until named:NAME`.
 
-`Scope::Player` для того, что мог бы сделать человек (инструмент работает через `Intent` и игровые правила),
-`Scope::Dev` для читов и отладки. Ошибка инструмента должна объяснять, как исправить вызов (см. `taunt`).
-Новый компонент, который агент должен видеть, показывается через `register_ai_component` или
-`register_ai_describer`; события игры попадают в журнал через `journal_event`.
+`Scope::Player` is for what a person could do (the tool works through `Intent` and the game rules).
+`Scope::Dev` is for cheats and debugging. A tool error must say how to fix the call (see `taunt`).
+A new component that the agent should see is exposed through `register_ai_component` or
+`register_ai_describer`. Game events go into the journal through `journal_event`.
 
-## Сохранения
+## Saves
 
-Движок сам сохраняет, где стоит герой и сколько у него здоровья (разделы `position` и `vitals`, они у персонажа),
-и в каком регионе мир (`region`). Игра добавляет только своё, явными структурами, а не слепком мира
+The engine saves on its own where the hero stands and how much health they have (the `position` and `vitals` sections, both belong to the character),
+and which region the world is in (`region`). The game adds only its own data, as explicit structures, not a copy of the world
 (`src/progress.rs`):
 
-- `Trophies` — раздел **персонажа** `trophies`: сколько грунтов победил этот герой. Компонент лежит в префабе `hero`,
-  в сохранение его кладёт одна строка `save_component::<Trophies>(SaveKind::Character, "trophies", 1)`.
-- `Fallen` — раздел **мира** `fallen`: какие грунты двора лежат. Это `SaveSection` с `capture`/`apply`: грунты узнаются
-  по `SaveKey` (`yard.gate_grunt` — ключ `key` спавна в `arena.arena.ron`: он остаётся с персонажем, когда спавны
-  добавляют, убирают и переставляют; повтор ключа — ошибка контента), загрузка кладёт
-  названных снова (без убийцы: трофея второй раз никто не получит), а лежащих, но не названных, поднимает.
-- Двор очищен (`YardCleared`): — `autosave_on::<YardCleared>(SaveWhat::All)` пишет мир и персонажа в конце этого тика.
+- `Trophies` is the **character** section `trophies`: how many grunts this hero has defeated. The component is in the `hero` prefab,
+  and one line puts it into the save: `save_component::<Trophies>(SaveKind::Character, "trophies", 1)`.
+- `Fallen` is the **world** section `fallen`: which of the yard's grunts are down. It is a `SaveSection` with `capture`/`apply`. Grunts are identified by their `SaveKey` (`yard.gate_grunt` is the `key` of a spawn in `arena.arena.ron`: it stays with the character when spawns are added, removed and reordered; a repeated key is a content error). Loading puts the named ones down again (without the killer: nobody gets a trophy a second time), and stands up the ones that are down but not named.
+- The yard is cleared (`YardCleared`): `autosave_on::<YardCleared>(SaveWhat::All)` writes the world and the character at the end of this tick.
 
 ```bash
-cargo game --world slot1 --character slot1          # загрузить при старте; автосохранения пишут туда же
-shards act save_game what=all                       # сохранить сейчас (в текущие слоты)
-shards act save_check what=all slot=slot1           # чем мир сейчас отличается от файла, по разделам
-shards act load_game what=all slot=slot1            # загрузить без перезапуска
-shards act save_registry                            # разделы этой игры: движка и свои
+cargo game --world slot1 --character slot1          # load at start; autosaves write to the same slots
+shards act save_game what=all                       # save now (into the current slots)
+shards act save_check what=all slot=slot1           # how the world now differs from the file, by section
+shards act load_game what=all slot=slot1            # load without restarting
+shards act save_registry                            # this game's sections: the engine's and its own
 ```
 
-Файлы лежат в `saves/` рядом с `Cargo.toml` (в `.gitignore`), в тестах — во временной папке каждой игры.
-`scenarios/saves.scenario` проверяет всё это одним файлом. Раздел меняет формат — поднимите его версию и добавьте
-миграцию (`add_save_migration`), как описано в руководстве движка (`docs/manual.md`), «Сохранения».
+The files are in `saves/` next to `Cargo.toml` (in `.gitignore`). In tests, each game gets a temporary folder.
+`scenarios/saves.scenario` checks all of this in one file. When a section changes its format, raise its version and add a migration (`add_save_migration`), as the engine manual (`docs/manual.md`) describes in "Saves (E8.1–5)".
 
-## Кооператив на двоих
+## Two-player co-op
 
-Второй игрок приходит к хосту со своим персонажем и уходит с ним. В коде игры для этого ничего нет: хватает
-`assets/content/session.net.ron` (два места, второй герой из префаба `hero`; он встаёт в 2 м от первого) и правил
-детерминизма ниже. Хост ведёт мир и решает всё; клиент шлёт входы с метками тиков и предсказывает своё тело.
+A second player joins the host with their own character and leaves with it. The game code has nothing for this. `assets/content/session.net.ron` is enough (two spots: the second hero comes from the `hero` prefab and stands 2 m from the first), together with the determinism rules below. The host runs the world and decides everything. The client sends its inputs with tick stamps and predicts its own body.
 
 ```bash
-# хост и клиент в одном процессе, у каждого свой порт `shards`; канал 150 мс в одну сторону и 2 % потерь
+# host and client in one process, each with its own `shards` port; a channel with 150 ms one way and 2 % loss
 cargo game --stand 1 --headless --paused --port 0 --port-file F --net-sim latency=150,loss=0.02 &
 SHARDS_PORT_FILE=F shards wait --peer all
-SHARDS_PORT_FILE=F shards --peer c1 act move_to target=e2           # тело гостя — e7
+SHARDS_PORT_FILE=F shards --peer c1 act move_to target=e2           # the guest's body is e7
 SHARDS_PORT_FILE=F shards scenario scenarios/stand/coop.scenario
-cargo game --host                       # по сети: хост на UDP-порту 7777 (`--host PORT` — на другом)
-cargo game --join 192.168.1.5:7777 --character slot1   # второй компьютер, со своим персонажем
+cargo game --host                       # over the network: the host listens on UDP port 7777 (`--host PORT` to use another)
+cargo game --join 192.168.1.5:7777 --character slot1   # a second computer, with its own character
 ```
 
-Трофеи гостя — раздел его персонажа: хост шлёт их гостю, когда двор очищен, когда гость уходит и когда сессия
-кончается, а гость приносит их на следующую игру (`tests/game/coop.rs`). Двор (`fallen`) хранит только хост.
+The guest's trophies are a section of the guest's character. The host sends them to the guest when the yard is cleared, when the guest leaves and when the session ends. The guest brings them to the next game (`tests/game/coop.rs`). Only the host stores the yard (`fallen`).
 
-Одно правило, которое легко нарушить: **наблюдатель, который меняет геймплей, на клиенте сразу возвращается**.
-Клиент ничего не симулирует, но события боя (`Died`, `Damaged`, …) хост пересылает ему для эффектов, и
-наблюдатель сработает и там. `count_the_fallen` в `progress.rs` начинается с `shards::core::simulates(role)`;
-без этой проверки гость получал бы трофей дважды, и проверка рассинхрона назвала бы это сама:
+One rule is easy to break: **an observer that changes gameplay returns at once on the client**. The client simulates nothing, but the host forwards combat events (`Died`, `Damaged`, …) to it for effects, and the observer would fire there as well. `count_the_fallen` in `progress.rs` starts with `shards::core::simulates(role)`. Without this check, the guest would get a trophy twice, and the desync check would itself report it:
 `net: desync at host tick 300: e7 Trophies: here {"defeated":2}, host {"defeated":1}`.
 
-## HUD и меню
+## HUD and menus
 
-Экраны — контент (`assets/content/screens.screen.ron`), рисует и водит по ним движок (`shards::ui`, раздел «Интерфейс» руководства
-движка).
+Screens are content (`assets/content/screens.screen.ron`). The engine draws them and handles their input (`shards::ui`, the section "UI (E9)" of the engine manual).
 
-**Главное меню** `main_menu` (`main_menu: true`) встречает игрока после загрузки: картинка, «New game» (`tool new_game`),
-«Continue» (`tool continue_game`: самое новое сохранение мира и героя; пока нет сохранения, которое читается, под
-кнопкой подсказка `menu-no-save` из источника игры `continue_note` (`shards::save::can_continue`), а нажатие отказывает и говорит почему), «Settings» и «Quit». В меню время
-стоит; мир (двор, герой, грунт) появляется, когда игра начата. `build_app` ставит `after_loading: EngineState::MainMenu`, а
-показывает меню только запуск с окном или `--offscreen`: `--headless`, тесты (`test_app`), реплеи, `--check-content`,
-`--smoke` и кооператив идут прямо в игру и играют ту же игру, что и раньше. Флаги `--menu` (меню и без окна: агент проходит
-его `ui_*`) и `--no-menu` (сразу в игру и с окном) решают это явно:
+**The main menu** `main_menu` (`main_menu: true`) greets the player after loading: a picture, "New game" (`tool new_game`),
+"Continue" (`tool continue_game`: the newest save of the world and the hero; while there is no readable save, a hint `menu-no-save` from the game's `continue_note` source (`shards::save::can_continue`) appears under the button, and pressing it is refused and the game says why), "Settings" and "Quit". Time stands still in the menu. The world (yard, hero, grunt) appears once the game has started. `build_app` sets `after_loading: EngineState::MainMenu`, but only a run with a window or `--offscreen` shows the menu. `--headless`, tests (`test_app`), replays, `--check-content`, `--smoke` and co-op go straight into the game and play the same game as before. The flags `--menu` (the menu, also without a window: the agent goes through it with `ui_*`) and `--no-menu` (straight into the game, also with a window) set this explicitly:
 
 ```bash
 cargo game --headless --paused --menu &
@@ -335,46 +288,30 @@ shards wait && shards observe                   # UI  main_menu "My game" … ma
 shards act ui_click id=main_menu/new_game       # pressed main_menu/new_game: new_game: the game starts at tick 0
 ```
 
-Пока игра грузится, окно показывает картинку `assets/ui/loading.png` (её называет `loading_image` в `build_app`). При смене
-региона (`regen`) её не видно: регион встаёт внутри одного вызова, и между кадрами старого и нового региона другого кадра
-нет.
+While the game loads, the window shows the picture `assets/ui/loading.png` (`loading_image` in `build_app` names it). When the region changes (`regen`), the picture is not shown: the region is set up within one call, and there is no other frame between the old region and the new one.
 
-HUD `hud` открыт с начала игры: полосы здоровья и стамины героя (источники движка `you.health`, `you.stamina`),
-трофеи (источник игры `trophies`) и подсказка. Escape (Start на геймпаде) открывает `pause`: «Resume», «Settings» (вкладки
-Display, Sound, Controls: каждый виджет меняет настройку игрока) и «Save and quit» с вопросом. По меню ходят стрелки, WASD и
-стик, Enter и Escape, мышь.
+The HUD `hud` is open from the start of the game: bars for the hero's health and stamina (engine sources `you.health`, `you.stamina`), the trophies (game source `trophies`) and a hint. Escape (Start on a gamepad) opens `pause`: "Resume", "Settings" (tabs Display, Sound, Controls: each widget changes a player setting) and "Save and quit", with a confirmation prompt. The menus work with the arrow keys, WASD, the stick, Enter, Escape and the mouse.
 
-Своё у игры — две функции в `src/screens.rs`: источник `trophies` (что показать: `UiValue::Text`, `Ratio` для полосы, …;
-чьё — `shards::ui::viewer`) и действие кнопки `save_and_quit` (сохраняет всё инструментом `save_game` от имени нажавшего и
-кончает игру; агент с областью `player` сохраняет только героя, мир — хозяина; гость кооператива просто уходит, и героя ему
-присылает хозяин; несохранённое не теряется: при ошибке
-игра идёт дальше). Всё остальное — файл экранов, его правят на лету.
+The game adds two functions of its own in `src/screens.rs`: the source `trophies` (what to show: `UiValue::Text`, `Ratio` for a bar, …; whose it is: `shards::ui::viewer`) and the action of the `save_and_quit` button. The button saves everything through the `save_game` tool, on behalf of the player who pressed it, and then ends the game. An agent with the `player` scope saves only the hero; the world is saved by the host. A co-op guest simply leaves, and the host sends the guest their hero. Unsaved progress is not lost: if saving fails, the game keeps running. Everything else lives in the screen file, which is edited live.
 
-Агент проходит меню так же, по дереву, без картинки:
+The agent goes through the menus the same way, using the tree, without a picture:
 
 ```bash
 shards act ui_open screen=pause                 # opened pause (menu, pauses the game) · focus pause/resume
-shards act ui_read                              # каждый виджет: id, значение, фокус
-shards act ui_navigate dir=down                 # как геймпад: up/down/left/right/confirm/back
+shards act ui_read                              # each widget: id, value, focus
+shards act ui_navigate dir=down                 # like a gamepad: up/down/left/right/confirm/back
 shards act ui_click id=pause/settings
-shards act ui_set id=settings/music value=0.5   # слайдер: settings: audio.music 0.8 → 0.5
+shards act ui_set id=settings/music value=0.5   # slider: settings: audio.music 0.8 → 0.5
 ```
 
-`scenarios/menus.scenario` делает это агентом со scope `player`; `tests/game/screens.rs` проверяет трофеи на HUD,
-«сохранить и выйти» и смену языка, `tests/game/main_menu.rs` — главное меню.
+`scenarios/menus.scenario` does this with an agent in the `player` scope. `tests/game/screens.rs` checks the trophies on the HUD, "Save and quit" and the language change. `tests/game/main_menu.rs` checks the main menu.
 
-## Языки
+## Languages
 
-Текст HUD и меню — сообщения [Fluent](https://projectfluent.org) в `assets/locale/<язык>/game.ftl`, экраны называют их через
-`@` (`label: "@pause-resume"`). Языки — контент `assets/content/languages.locale.ron`: английский и русский, недостающее в
-русском берётся из английского. Игрок выбирает язык на вкладке Language настроек (или агент: `shards act settings_set
-group=locale key=language value=ru`), и HUD с меню тут же говорят по-русски. При первом запуске
-игра берёт язык системы, если он у неё есть (`ru-RU` — русский), и запоминает его в настройках. Кириллица есть в шрифте движка по умолчанию
-(Fira Sans, OFL), поэтому темы со своим шрифтом у шаблона нет.
+The HUD and menu text is [Fluent](https://projectfluent.org) messages in `assets/locale/<language>/game.ftl`. Screens name them with `@` (`label: "@pause-resume"`). The languages are content in `assets/content/languages.locale.ron`: English and Russian. Anything missing in Russian is taken from English. The player picks a language on the Language tab of the settings (or the agent does it: `shards act settings_set
+group=locale key=language value=ru`), and the HUD and menus switch to Russian at once. On first launch, the game takes the system language if it has one (`ru-RU` is Russian), and remembers it in the settings. The engine's default font, Fira Sans (OFL), has Cyrillic letters, so the template has no theme with its own font.
 
-Текст из кода — целые фразы с параметрами, не склейка кусков: источник `trophies` пишет
-`shards::locale::text(world, "hud-trophies", &Args::new().number("count", defeated))`, а форму множественного числа выбирает
-язык (`1 trophy`, `5 trophies`; `1 трофей`, `3 трофея`, `5 трофеев`):
+Text from code is whole phrases with parameters, not pieces glued together. The `trophies` source writes `shards::locale::text(world, "hud-trophies", &Args::new().number("count", defeated))`, and the language picks the plural form (`1 trophy`, `5 trophies`; `1 трофей`, `3 трофея`, `5 трофеев`):
 
 ```ftl
 hud-trophies = { $count ->
@@ -384,131 +321,95 @@ hud-trophies = { $count ->
 }
 ```
 
-Новый язык — строка в `languages.locale.ron` и папка `assets/locale/<язык>/`; `cargo run -- --check-content` назовёт
-ошибки в файлах (с файлом, строкой и столбцом) и `@id`, которого нет ни в одном языке. Правка `.ftl` в работающей игре
-применяется за секунду; правку с ошибкой игра отклоняет и называет в журнале, а до исправления говорит прежним текстом. Агент видит языки и
-их пробелы через `shards act locale`, читает любое сообщение — `shards act text id=hud-trophies 'args={"count": 3}'
+A new language is a line in `languages.locale.ron` and a folder `assets/locale/<language>/`. `cargo run -- --check-content` names the errors in the files (with the file, line and column) and any `@id` that is in no language. An edit to a `.ftl` file in a running game takes effect within a second. The game rejects an edit with an error, names it in the journal, and keeps the old text until the error is fixed. The agent sees the languages and their gaps through `shards act locale`, and reads any message with `shards act text id=hud-trophies 'args={"count": 3}'
 language=ru`.
 
-## Звук
+## Audio
 
-Что звучит, решает контент в `assets/content/audio/`, файлы лежат в `assets/sounds/` и `assets/music/`:
+The content in `assets/content/audio/` decides what sounds. The files are in `assets/sounds/` and `assets/music/`:
 
-- `yard.sound.ron` — звуки: атаки грунта (`grunt_swipe`, `grunt_slam`: их называют телеграфы в `grunt.action.ron`, и звук
-  раздаётся там, куда придётся удар), удары, блок, парирование, смерть, лечение, меню. У каждого — шина (`Sfx` по умолчанию,
-  `Ui` для меню), громкость, приоритет и, для звуков мира, расстояния `near`/`far`, на которых он тихнет;
-- `yard.music.ron` — музыка двора: три стема одной петли и три слоя, `explore` → `tension` → `combat`;
-- `mixer.audio.ron` — микшер: 24 голоса, музыка `yard` с начала игры и звуки событий движка (`damaged` → `hit`,
+- `yard.sound.ron` holds the sounds: grunt attacks (`grunt_swipe`, `grunt_slam`: the telegraphs in `grunt.action.ron` name them, and the sound plays wherever the blow lands), hits, blocks, parries, deaths, healing and menus. Each has a bus (`Sfx` by default, `Ui` for menus), a volume, a priority and, for world sounds, the distances `near`/`far` over which it fades;
+- `yard.music.ron` is the yard's music: three stems of one loop and three layers, `explore` → `tension` → `combat`;
+- `mixer.audio.ron` is the mixer: 24 voices, the `yard` music from the start of the game, and the engine's event sounds (`damaged` → `hit`,
   `ui_pressed` → `ui_press`, …).
 
-Слой музыки выбирают условия игры из `src/ai.rs`: `foe_near` (герой ближе полутора дальностей, на которых грунт его замечает,
-или рядом с рейдером — условие движка `npc_near`) и `in_fight` (грунт дерётся: герой в пределах его `aggro` или у грунта
-приказ атаковать; или дерётся рейдер — `npc_engaged`). Грунт ходит на мозге игры, а не на NPC движка, поэтому условия свои:
-так игра учит музыку своему бою. Напряжённый слой приходит сразу, спокойный — через пять секунд.
+The music layer is chosen by the game's conditions in `src/ai.rs`: `foe_near` (the hero is closer than one and a half times the distance at which a grunt notices them, or next to a raider: the engine's `npc_near` condition), and `in_fight` (a grunt is fighting: the hero is within its `aggro`, or the grunt has an order to attack; or a raider is fighting: `npc_engaged`). Grunts act on the game's brain, not on the engine's NPC brain, so the conditions are the game's own. That is how the game teaches the music its own fights. The tense layer comes in at once; the calm one comes in after five seconds.
 
-Громкость — вкладка Sound настроек: общая, музыка, эффекты и интерфейс (`audio.master`, `audio.music`, `audio.sfx`,
-`audio.ui`). Агент слышит игру инструментом `audio` (трек, слой, стемы, голоса, громкость шин), `observe` пишет строку `MUSIC
-yard: combat for 6.2s`, журнал — `[local] music: yard explore → tension`. Звук играет feature `audio` (по умолчанию); без окна
-и без устройства вывода ничего не звучит, а микшер решает так же, поэтому тесты слышат то же, что игрок.
+Volume is on the Sound tab of the settings: master, music, effects and UI (`audio.master`, `audio.music`, `audio.sfx`,
+`audio.ui`). The agent hears the game through the `audio` tool (track, layer, stems, voices, bus volumes). `observe` writes the line `MUSIC
+yard: combat for 6.2s`, and the journal writes `[local] music: yard explore → tension`. Sound plays through feature `audio` (on by default). Without a window and without an output device nothing is heard, but the mixer decides the same way, so the tests hear what the player hears.
 
-## Сценарии
+## Scenarios
 
-`scenarios/*.scenario`: текстовые файлы с командами `shards`, ожиданиями (`expect`) и инвариантами
-(`invariant`). Тот же файл идёт против запущенной игры и в `cargo test` без окна:
+`scenarios/*.scenario` are text files with `shards` commands, expectations (`expect`) and invariants (`invariant`). The same file runs against a running game and in `cargo test` without a window:
 
 ```bash
-shards scenario scenarios/smoke.scenario     # против запущенной игры; код выхода 0, 1 (не прошёл) или 2
-cargo test --test game scenarios             # в процессе, без окна, на свежей игре
+shards scenario scenarios/smoke.scenario     # against a running game; exit code 0, 1 (failed) or 2
+cargo test --test game scenarios             # in process, without a window, on a fresh game
 ```
 
-Формат (команды, `step --until`, `expect`, `invariant`, `mark`) описан в разделе «Сценарии» руководства движка.
-Сценарий не перезапускает игру: он идёт на свежей игре и приводит мир в порядок первыми командами, если должен
-идти и после других. Идентификаторы в сценарии (`e1` герой, `e2` враг) следуют из порядка спавна: `arena.arena.ron`
-создаёт бойцов первыми.
+The format (commands, `step --until`, `expect`, `invariant`, `mark`) is described in the section "Scenarios (E11)" of the engine manual. A scenario does not restart the game: it runs on a fresh game, and if it has to run after others too, its first commands put the world back in order. The ids in a scenario (`e1` the hero, `e2` an enemy) follow from the spawn order: `arena.arena.ron` creates the fighters first.
 
-## Реплеи
+## Replays
 
-Движок записывает сессию с тика 0: входы и вызовы инструментов. Любой сеанс можно сохранить и проиграть заново
-на той же сборке:
+The engine records the session from tick 0: inputs and tool calls. Any session can be saved and played again on the same build:
 
 ```bash
-shards save-replay replays/my-fight.json     # из запущенной игры
-cargo game --replay replays/my-fight.json --headless --paused   # проиграть и шагать дальше
-cargo game --replay tests/replays/smoke.json --verify           # без окна, код 0: игра совпала с записью
+shards save-replay replays/my-fight.json     # from a running game
+cargo game --replay replays/my-fight.json --headless --paused   # play it back and step on from there
+cargo game --replay tests/replays/smoke.json --verify           # without a window, exit code 0: the game matched the recording
 ```
 
-Расхождение называет первый тик (`DIVERGED at tick 60`). После правки геймплея
-это регрессия, после правки чисел в контенте это ожидаемо: запишите эталон заново. Чтобы сделать удачный
-сеанс эталоном, положите его файл в `tests/replays/`. Эти файлы проверяются тестом
-`reference_replays_still_match` и в CI через `--verify`; перезапись эталона шаблона:
+A divergence names the first tick (`DIVERGED at tick 60`). After an edit to gameplay, a divergence is a regression. After an edit to numbers in the content, it is expected: record the reference again. To use a good session as a reference, put its file in `tests/replays/`. These files are checked by the test
+`reference_replays_still_match` and in CI through `--verify`. To re-record the template's reference:
 
 ```bash
 cargo test --test game record_reference_replays -- --ignored
 ```
 
-Папка `replays/` (то, что пишет игра) в `.gitignore`, а `tests/replays/` нет. Реплей, записанный в окне,
-совпадает без окна: рендер не влияет на геймплей.
+The `replays/` folder (where the game writes) is in `.gitignore`, but `tests/replays/` is not. A replay recorded in a window matches the same run without one: rendering does not affect gameplay.
 
-### Детерминизм: правила игры
+### Determinism: rules for the game
 
-Одинаковый seed и одинаковые входы дают одинаковую игру. Это нужно реплеям, тестам на тысячах зёрен и кооперативу.
-Игра сохраняет это, если:
+The same seed and the same inputs give the same game. Replays, tests across thousands of seeds, and co-op all depend on this.
+The game keeps it that way if:
 
-- весь геймплей идёт в `FixedUpdate`, в одном из `SimSet::{Input, Think, Act, Move, Resolve, Cleanup}`, с явным
-  порядком систем (`.chain()`, `.before()`, `.after()`): две системы, что трогают одни данные без порядка, дают
-  warning в журнале;
-- случайность только через `SimRng` (`brain.rs`: `rng.stream(id, salt)`), время только `Res<Time>` внутри тика;
-- сущности, порядок которых важен, перебираются по `AiId`, не по `Entity` и не в порядке запроса;
-- персонажами управляют только через `Intent` (клавиатура, инструменты, мозг и реплей пишут в него);
-- `sin`, `cos`, `atan2`, `exp`, `powf` и подобное считает `ops` (`ops::sin(x)`, `ops::atan2(y, x)`; она есть в
-  `shards::prelude`), а не методы `f32` (`x.sin()`): у них математика платформы, и реплей с Linux разошёлся бы на Windows.
-  Движок собран с `libm` (Bevy, glam, simba и сам движок берут из неё трансцендентные функции; SIMD у glam остаётся), а
-  `clippy.toml` в этой папке (`disallowed-methods`) заставляет clippy падать на прямом вызове, поэтому скопируйте его в свою
-  игру. Обещание — одни и те же биты на всех ОС одной архитектуры процессора (x86_64: Windows, Linux, Steam Deck), если ни одну
-  сборку игры не собирают с `-C target-cpu=native` или `-C target-feature=+fma` (с ними glam сливает умножение и сложение
-  в одну инструкцию, и биты другие); между x86_64 и ARM (Mac на Apple Silicon) — нет. Прогоном проверено Windows 11 ↔ Ubuntu
-  24.04 (под WSL1) на одной машине: оба реплея шаблона (`smoke`, `valley`) записаны на обеих ОС побайтово одинаково, и каждая ОС
-  прошла `--verify` на записях другой; другие процессоры x86_64, macOS, ARM и железо Steam Deck не проверены (руководство движка,
-  «Время и детерминизм»). Зависимость, которая включает glam без SIMD (`scalar-math`, например
-  parry3d с `enhanced-determinism`), сборку игры остановит: с ней Bevy 0.20 перестаёт рисовать, и `shards` проверяет это при
-  компиляции;
-- мир создаётся в `OnEnter(EngineState::InGame)`, когда контент загружен (не в `Startup`), в одном и том же порядке;
-- наблюдатель события, который меняет геймплей, возвращается сразу, если машина не симулирует
-  (`shards::core::simulates`): у клиента в кооперативе события боя только для эффектов;
-- свой компонент-вход регистрируется через `replay_input::<C>()`, косметика исключается через
-  `replay_ignore::<C>()`, данные вне сущностей с `AiVisible` (ресурсы) добавляются в проверку через
-  `add_replay_check(name, |world| …)`.
+- all gameplay runs in `FixedUpdate`, in one of `SimSet::{Input, Think, Act, Move, Resolve, Cleanup}`, with an explicit order for the systems (`.chain()`, `.before()`, `.after()`). Two systems that touch the same data with no order between them give a warning in the journal;
+- randomness comes only from `SimRng` (`brain.rs`: `rng.stream(id, salt)`), and time only from `Res<Time>` inside a tick;
+- entities whose order matters are iterated by `AiId`, not by `Entity` and not in query order;
+- characters are controlled only through `Intent` (the keyboard, tools, the brain and the replay write to it);
+- `sin`, `cos`, `atan2`, `exp`, `powf` and the like are computed by `ops` (`ops::sin(x)`, `ops::atan2(y, x)`; it is in `shards::prelude`), not by `f32` methods (`x.sin()`). Those use the platform's maths, and a replay recorded on Linux would diverge on Windows. The engine is built with `libm` (Bevy, glam, simba and the engine itself take their transcendental functions from it; glam keeps its SIMD), and `clippy.toml` in this folder (`disallowed-methods`) makes clippy fail on a direct call, so copy it into your game. The promise: the same bits on every OS of one CPU architecture (x86_64: Windows, Linux, Steam Deck), as long as no build of the game uses `-C target-cpu=native` or `-C target-feature=+fma` (with them, glam fuses a multiply and an add into one instruction, and the bits differ). Between x86_64 and ARM (a Mac on Apple Silicon), it does not hold. Verified on one machine: Windows 11 ↔ Ubuntu 24.04 (under WSL1). Both template replays (`smoke`, `valley`) were recorded byte for byte the same on both OSes, and each OS passed `--verify` on the other's recordings. Other x86_64 CPUs, macOS, ARM and Steam Deck hardware are not tested (engine manual, "Time and determinism"). A dependency that turns on glam without SIMD (`scalar-math`, for example parry3d with `enhanced-determinism`) will stop the game from building: with it, Bevy 0.20 stops drawing, and `shards` checks this at compile time;
+- the world is created in `OnEnter(EngineState::InGame)`, once the content is loaded (not in `Startup`), in the same order each time;
+- an observer of an event that changes gameplay returns at once if the machine does not simulate (`shards::core::simulates`): on a co-op client, combat events are only for effects;
+- your own input component is registered with `replay_input::<C>()`, cosmetics are excluded with `replay_ignore::<C>()`, and data outside entities with `AiVisible` (resources) is added to the check with `add_replay_check(name, |world| …)`.
 
-Тесты `tests/game/determinism.rs` проверяют это на вашей игре: тот же seed даёт тот же журнал, другой seed даёт
-другой бой, `step 300` равен 5 × `step 60`.
+The tests in `tests/game/determinism.rs` check this in your game: the same seed gives the same journal, another seed gives another fight, and `step 300` equals 5 × `step 60`.
 
-## Тесты
+## Tests
 
 ```bash
-cargo test                   # всё: 43 теста (и один `#[ignore]`: запись эталонов), секунды
+cargo test                   # everything: 43 tests (and one `#[ignore]`: recording the references), takes seconds
 cargo test --test game determinism
 ```
 
-Один бинарник `tests/game` (Bevy линкуется один раз). Игра собирается для тестов через `my_game::test_app(seed)`:
-без окна, без логгера и сервера, загруженная и на паузе на тике 0. Её ведут теми же инструментами, что и агент:
-`shards::testing::{call, ok}`.
+One binary, `tests/game` (Bevy is linked once). The game is built for tests through `my_game::test_app(seed)`: without a window, without a logger or a server, loaded and paused at tick 0. The tests drive it with the same tools as the agent: `shards::testing::{call, ok}`.
 
-| модуль | проверяет |
+| module | checks |
 |---|---|
-| `scenarios.rs` | каждый файл из `scenarios/` проходит на свежей игре, каждый из `scenarios/stand/` — на стенде из своей строки `stand` |
-| `determinism.rs` | тот же seed: тот же журнал и мир; другой seed: другой бой; шаги кусками |
-| `replays.rs` | запись → проигрывание совпадает; изменённая игра называет тик расхождения; эталонные реплеи |
-| `content.rs` | контент без ошибок (в игре и как в `--check-content`), опечатки называют исправление, правка числа меняет следующий удар без пересборки, `taunt`, `arena_cleared` |
-| `coop.rs` | хост и гость на канале 150 мс с потерей 2 %: тело гостя `e7`, трофей гостя только у него и в его файле, рассинхронов нет; с файлом прошлой игры гость приходит с трофеем; реплей хоста совпадает в одиночной игре |
-| `region.rs` | тысяча зёрен долины проходят проверки; тот же seed и версия — тот же манифест байт в байт; переход в регион без окна через экран загрузки (герой тот же, тики не сдвинулись); колонна руины из файла Blender стоит, где её поставил тайл; рейдер идёт по навсетке и не уходит за поводок |
-| `audio.rs` | музыка переходит из `explore` в `tension` и `combat`, когда герой подходит к грунту, и входят барабаны; предупреждение грунта звучит его звуком, открытое меню — своим |
-| `screens.rs` | HUD показывает трофеи героя (0, после боя 1); «сохранить и выйти» сначала сохраняет, потом кончает игру; под вопросом кнопки меню не нажать |
-| `main_menu.rs` | игрок встречает главное меню, тесты идут мимо; «New game» даёт тот же мир и тот же бой, что запуск без меню, а сессия, начатая в меню, проигрывается без него; «Continue» без сохранения отказывает и остаётся в меню, с сохранением возвращает трофей героя; картинка загрузки — маленький PNG 16:9 |
-| `manifest.rs` | единственная зависимость — `shards`, `target-dir` не переопределён, папка настроек названа как пакет (переименование её найдёт) |
+| `scenarios.rs` | every file in `scenarios/` runs on a fresh game, and every file in `scenarios/stand/` runs on a stand, started from its own `stand` line |
+| `determinism.rs` | the same seed gives the same journal and world; another seed gives another fight; steps in pieces |
+| `replays.rs` | record, then play back, and it matches; a changed game names the tick where it diverges; the reference replays |
+| `content.rs` | the content has no errors (in the game and as in `--check-content`); typos name the fix; editing a number changes the next blow without a rebuild; `taunt`, `arena_cleared` |
+| `coop.rs` | host and guest on a 150 ms channel with 2 % loss: the guest's body is `e7`, the guest's trophy is only with the guest and in the guest's file, no desyncs; with the file from the previous game, the guest arrives with the trophy; the host's replay matches in single-player |
+| `region.rs` | a thousand seeds of the valley pass the checks; the same seed and version give the same manifest, byte for byte; going into a region without a window, through the loading screen (the same hero, the tick count did not change); a column from a ruin in a Blender file stands where the tile put it; a raider walks the navmesh and does not go past its leash |
+| `audio.rs` | music moves from `explore` to `tension` and `combat` when the hero comes near a grunt, and the drums come in; a grunt's warning plays its own sound, and an open menu plays its own |
+| `screens.rs` | the HUD shows the hero's trophies (0, then 1 after a fight); "Save and quit" saves first and then ends the game; while the confirmation is open, the menu buttons cannot be pressed |
+| `main_menu.rs` | the player meets the main menu, and the tests go straight past it; "New game" gives the same world and the same fight as a run without the menu, and a session started in the menu plays back without it; "Continue" with no save is refused and the player stays in the menu, and with a save it brings back the hero's trophy; the loading picture is a small 16:9 PNG |
+| `manifest.rs` | the only dependency is `shards`, `target-dir` is not overridden, and the settings folder is named after the package (a rename would be caught) |
 
-## CI игры
+## The game's CI
 
-Минимальный `.github/workflows/ci.yml` для репозитория игры (в репозитории движка то же делает задача `template`):
+A minimal `.github/workflows/ci.yml` for the game's repository (in the engine's repository, the `template` job does the same):
 
 ```yaml
 name: CI
@@ -529,37 +430,37 @@ jobs:
           done
 ```
 
-## Сборка для игроков
+## Builds for players
 
 ```bash
-shards package        # dist/my_game-0.1.0-<ОС>-<арх>/: программа и assets/, потом проверки
+shards package        # dist/my_game-0.1.0-<OS>-<arch>/: the program and assets/, then the checks
 ```
 
-`shards package` собирает профиль `dist` (`release` с `lto = "thin"`) с фичей `dist`: окно, звук и геймпады без
-BRP-сервера, горячей перезагрузки и клавиш разработчика (консоль, меню, оверлеи). На Windows C runtime вкомпилирован, так что
-Visual C++ Redistributable не нужен; `assets/icon.png` становится иконкой программы и окна, а окна консоли нет
-(`windows_subsystem` в `src/main.rs`). Потом копию папки запускают с голым окружением (`--check-content`, `--smoke 300`) и
-проверяют, что программа ничего не меняет в своей папке и (на Windows) берёт только системные DLL. Подробно — руководство движка,
-«Сборка для игроков и Windows».
+`shards package` builds the `dist` profile (`release` with `lto = "thin"`) with the `dist` feature: window, sound and gamepads without a BRP
+server, hot reload and developer keys (console, menu, overlays). On Windows the C runtime is built in, so the Visual C++
+Redistributable is not needed. `assets/icon.png` becomes the icon of the program and window, and there is no console window
+(`windows_subsystem` in `src/main.rs`). Then `shards package` runs the copy of the folder in a bare environment (`--check-content`, `--smoke 300`) and
+checks that the program changes nothing in its own folder and (on Windows) loads only system DLLs. Details: the engine
+manual, "Builds for players and Windows (E10.6)".
 
-Без `render` игра собирается только для `--headless` (сервер, генерация мира на тысячах зёрен). Проверить такую сборку
-без `shards` можно так: `cargo run --release --no-default-features -- --smoke 600` — загрузка и 600 тиков, код 0 или 1.
+Without `render`, the game builds only for `--headless` (a server, world generation over thousands of seeds). To check such a build
+without `shards`, you can run `cargo run --release --no-default-features -- --smoke 600`: loading and 600 ticks, exit code 0 or 1.
 
-Если игра у игрока упала, она пишет отчёт `crash-<время>-tick<N>.json` в `crashes/` своей рабочей папки (при запуске из
-Проводника это папка программы). Если туда писать нельзя (игра в `Program Files`), отчёт идёт в папку игрока:
-`%LOCALAPPDATA%\my_game\crashes` на Windows, `~/Library/Logs/my_game` на macOS, `~/.local/state/my_game/crashes` (или
-`$XDG_STATE_HOME/my_game/crashes`) на Linux; путь называет stderr. В отчёте — что упало и где, версия игры (`version` в
-`build_app` — версия из `Cargo.toml`), система, видеокарта, журнал, лог и реплей сессии; в отчёте о панике, которая унесла
-игру, реплея нет. Его присылают с баг-репортом, а отчёт с реплеем проигрывают как реплей:
-`cargo run -- --replay crashes/crash-….json`. Подробно — руководство движка, «Отчёт о падении».
+If the game crashes on a player's computer, it writes a report `crash-<time>-tick<N>.json` to `crashes/` in its working folder (when started from
+Explorer, this is the program's folder). If it cannot write there (the game is in `Program Files`), the report goes to the player's
+folder: `%LOCALAPPDATA%\my_game\crashes` on Windows, `~/Library/Logs/my_game` on macOS, `~/.local/state/my_game/crashes` (or
+`$XDG_STATE_HOME/my_game/crashes`) on Linux; stderr names the path. The report has what crashed and where, the game version (`version` in
+`build_app` — the version from `Cargo.toml`), the system, the graphics card, the journal, the log and the session's replay. A report about a
+panic that took the game down has no replay. Players send it with a bug report, and a report with a replay is played back as a
+replay: `cargo run -- --replay crashes/crash-….json`. Details: the engine manual, "Crash reports (E10.7)".
 
-## Чего в шаблоне ещё нет
+## What the template does not have yet
 
-Шаблон растёт вместе с модулями движка (фазы A, B и C закрыты: движение, бой, контент, уровни из Blender,
-сгенерированные регионы, NPC и навигация, снапшоты, сохранения, настройки игрока, кооператив на двоих; из фазы D — HUD и меню,
-главное меню и картинка загрузки, языки, звук). Заглушки, которые заполнятся:
+The template grows along with the engine modules (phases A, B and C are done: movement, combat, content, levels from Blender,
+generated regions, NPCs and navigation, snapshots, saves, player settings, two-player co-op; from phase D: HUD and menus, the main menu and
+the loading screen image, languages, sound). Placeholders that will be filled in:
 
-- **TODO · свои модели и слои анимации.** Персонажи носят одного гуманоида из скрипта движка (`models/humanoid.glb`), у
-  грунта и рейдера свой вид (`looks.look.ron`), но не своя модель; у движка один `AnimationPlayer` на персонажа (слоёв «верх
-  и низ тела» нет), поэтому удар на бегу показывает клип удара целиком. Стены и пол рисуются из своих коллайдеров
-  (`src/visuals.rs`) одним белым материалом; руина — из своего файла glTF.
+- **TODO · own models and animation layers.** Characters use one humanoid model from the engine's script (`models/humanoid.glb`). The grunt and the raider have
+  their own look (`looks.look.ron`), but not their own model. The engine has one `AnimationPlayer` per character (there are no "upper body and lower body" layers), so a
+  strike while running plays the whole strike clip. Walls and floors are drawn from their own colliders
+  (`src/visuals.rs`) with one white material; the ruin comes from its own glTF file.
