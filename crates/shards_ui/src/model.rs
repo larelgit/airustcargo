@@ -524,7 +524,7 @@ impl UiWidget {
                     context: context.clone(),
                     action: action.clone(),
                     slot: *slot,
-                    prompt: prompt.as_deref().map_or_else(|| DEFAULT_PROMPT.to_owned(), |p| tr(p)),
+                    prompt: prompt.as_deref().map_or_else(|| DEFAULT_PROMPT.to_owned(), tr),
                     taken: taken.clone(),
                 };
                 let bind = format!("{BINDINGS_SOURCE}:{context}.{action}");
