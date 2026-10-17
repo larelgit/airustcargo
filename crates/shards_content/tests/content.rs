@@ -703,6 +703,29 @@ fn a_file_loaded_with_a_broken_definition_applies_no_edit_until_every_definition
 }
 
 #[test]
+fn a_file_loaded_with_a_taken_id_applies_no_edit_until_it_is_renamed() {
+    let other = r#"{ "sword": (damage: 99.0), "spear": (damage: 12.0) }"#;
+    let dir = assets("loaded_taken", &[("content/a.attack.ron", ATTACKS), ("content/b.attack.ron", other)]);
+    let mut app = app(&dir);
+    assert_eq!(errors(&app), ["content/b.attack.ron: attack `sword`: already defined in content/a.attack.ron"]);
+    // The error has no position, but b's sword is left out all the same: b's edit waits.
+    write(&dir, "content/b.attack.ron", &other.replace("12.0", "14.0"));
+    let refused = act(&mut app, "content_reload", json!({}));
+    assert!(!refused.ok);
+    assert_eq!(
+        text(&refused),
+        "content/b.attack.ron: attack `sword`: already defined in content/a.attack.ron; kept the previous version of b.attack.ron"
+    );
+    assert_eq!(app.world().resource::<ContentDb>().get::<AttackDef>("spear").unwrap().damage, 12.0);
+    // Renamed, the whole file goes in.
+    write(&dir, "content/b.attack.ron", &other.replace("12.0", "14.0").replace("\"sword\"", "\"saber\""));
+    assert_eq!(text(&ok(&mut app, "content_reload", json!({}))), "content reloaded: b.attack.ron (2 definitions changed)");
+    let db = app.world().resource::<ContentDb>();
+    assert_eq!((db.get::<AttackDef>("spear").unwrap().damage, db.get::<AttackDef>("saber").unwrap().damage), (14.0, 99.0));
+    assert!(errors(&app).is_empty(), "{:?}", errors(&app));
+}
+
+#[test]
 fn removing_a_file_removes_its_definitions() {
     let dir = assets("removed", &[("content/combat/attacks.attack.ron", ATTACKS), ("content/extra.attack.ron", r#"{ "kick": (damage: 3.0) }"#)]);
     let mut app = app(&dir);

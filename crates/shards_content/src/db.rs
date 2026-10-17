@@ -703,10 +703,13 @@ impl ContentDb {
     /// What stops an edit of `edited` files from applying: errors `before` did not have, and
     /// any definition of an edited file that does not read, new error or not. A file applies
     /// whole or not at all, so one with a broken definition keeps its previous version until
-    /// every definition reads (the parse errors are the ones with a position).
+    /// every definition reads. The file errors are the ones that leave a definition out: it
+    /// does not parse (with a position), its id is taken, it has no JSON (without one).
     pub(crate) fn refusals<'a>(&'a self, before: &ContentDb, edited: &[String]) -> Vec<&'a ContentError> {
         let old: Vec<&ContentError> = before.errors().collect();
-        let unread = |e: &ContentError| e.position.is_some() && e.file.as_ref().is_some_and(|f| edited.contains(f));
+        let unread = |e: &ContentError| {
+            self.file_errors.iter().any(|f| std::ptr::eq(f, e)) && e.file.as_ref().is_some_and(|f| edited.contains(f))
+        };
         self.errors().filter(|e| !old.contains(e) || unread(e)).collect()
     }
 
