@@ -35,7 +35,8 @@
 //!         // Locomotion state -> clip. Missing ones fall back (sprint -> run -> walk -> idle).
 //!         locomotion: {"idle": "idle", "walk": "walk", "run": "run", "air": "fall",
 //!                      "stagger": "hit", "dead": "die"},
-//!         // Action id -> clip; or give the action `anim: "swing_1"`, or map its tags.
+//!         // Action id -> clip; or give the action `anim: "swing_1"`, or map its tags. (A clip
+//!         // can play on a layer of the body: see "Layers".)
 //!         actions: {"light_1": "swing_1", "roll": "roll"},
 //!         tags: {},
 //!         blend: 0.2,         // seconds between locomotion clips
@@ -50,6 +51,34 @@
 //!
 //! A character is [`Animated`] with the set's id and has the glTF scene as a child
 //! (`WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("models/hero.glb")))`).
+//!
+//! ## Layers
+//!
+//! An action can play on one part of the body while locomotion goes on in the rest: a flask
+//! drunk while walking, a guard raised while strafing. A layer is a bone and everything below
+//! it; an action's mapping says which layer its clip plays on:
+//!
+//! ```ron
+//! {
+//!     "humanoid": (
+//!         source: "models/humanoid.glb",
+//!         clips: {"idle": (), "walk": (), "drink": (source: "models/humanoid_gestures.glb")},
+//!         locomotion: {"idle": "idle", "walk": "walk"},
+//!         // The layer `upper` is the spine with the head and the arms; the legs are the rest.
+//!         layers: {"upper": (root: "spine")},
+//!         // The plain form (`"drink": "drink"`) plays on the whole body; this one on the layer.
+//!         // Tags map the same way.
+//!         actions: {"drink": (clip: "drink", layer: "upper")},
+//!     ),
+//! }
+//! ```
+//!
+//! While the action runs, the layer's bones follow its clip, seeked to the action's progress
+//! like any other, and every other bone keeps its locomotion clip. The blends are the usual
+//! ones: into the action's clip over that clip's `blend` (or `action_blend`), back to
+//! locomotion over the locomotion clip's. [`select_layer`] says what plays on a layer;
+//! [`select_clip_for`] chooses as if the action did not run. Picture only, like the rest of
+//! the set.
 //!
 //! ## Root motion
 //!
@@ -165,6 +194,94 @@ impl Default for GroundSpeeds {
     }
 }
 
+/// How many layers a set can have: each is a mask group of Bevy's animation graph, a bit of a `u64`.
+pub const MAX_LAYERS: usize = 64;
+
+/// A part of the body (an animset's `layers`): a bone and everything below it. An action's clip
+/// can play on a layer while the rest of the body keeps its locomotion clip.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LayerDef {
+    /// The bone (a node name of the glTF) the layer starts at: that bone and all below it.
+    pub root: String,
+}
+
+/// What an action shows (a value of an animset's `actions` or `tags`): a clip of the library,
+/// on the whole body or on one of the set's layers. Written `"swing_1"` for the whole body, or
+/// `(clip: "drink", layer: "upper")`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActionClip {
+    /// Our name of the clip.
+    pub clip: String,
+    /// The layer it plays on (a key of the set's `layers`); `None`: the whole body.
+    pub layer: Option<String>,
+}
+
+impl ActionClip {
+    /// `clip` on the whole body.
+    pub fn body(clip: impl Into<String>) -> Self {
+        Self { clip: clip.into(), layer: None }
+    }
+
+    /// `clip` on `layer`.
+    pub fn on(clip: impl Into<String>, layer: impl Into<String>) -> Self {
+        Self { clip: clip.into(), layer: Some(layer.into()) }
+    }
+}
+
+impl From<&str> for ActionClip {
+    fn from(clip: &str) -> Self {
+        Self::body(clip)
+    }
+}
+
+impl Serialize for ActionClip {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        match &self.layer {
+            None => serializer.serialize_str(&self.clip),
+            Some(layer) => {
+                let mut s = serializer.serialize_struct("ActionClip", 2)?;
+                s.serialize_field("clip", &self.clip)?;
+                s.serialize_field("layer", layer)?;
+                s.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ActionClip {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::{Error, MapAccess, Visitor};
+
+        struct Reader;
+        impl<'de> Visitor<'de> for Reader {
+            type Value = ActionClip;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a clip name (`\"drink\"`) or a clip on a layer (`(clip: \"drink\", layer: \"upper\")`)")
+            }
+
+            fn visit_str<E: Error>(self, clip: &str) -> Result<ActionClip, E> {
+                Ok(ActionClip::body(clip))
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ActionClip, A::Error> {
+                let (mut clip, mut layer): (Option<String>, Option<String>) = (None, None);
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "clip" => clip = Some(map.next_value()?),
+                        "layer" => layer = map.next_value()?,
+                        other => return Err(A::Error::unknown_field(other, &["clip", "layer"])),
+                    }
+                }
+                Ok(ActionClip { clip: clip.ok_or_else(|| A::Error::missing_field("clip"))?, layer })
+            }
+        }
+        deserializer.deserialize_any(Reader)
+    }
+}
+
 /// An animation set (content kind `animset`): which clips of a glTF file show which
 /// locomotion state and which action, how they blend, and their cues.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -177,12 +294,16 @@ pub struct AnimSet {
     /// Locomotion state ([`Locomotion::ALL`]) -> clip.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub locomotion: BTreeMap<String, String>,
-    /// [`ActionDef`] id -> clip.
+    /// Parts of the body an action's clip can play on while locomotion goes on in the rest:
+    /// layer name -> where it starts. At most [`MAX_LAYERS`].
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub actions: BTreeMap<String, String>,
+    pub layers: BTreeMap<String, LayerDef>,
+    /// [`ActionDef`] id -> clip (and the layer it plays on, if not the whole body).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub actions: BTreeMap<String, ActionClip>,
     /// Action tag -> clip, for actions the set does not map by id (or `anim`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub tags: BTreeMap<String, String>,
+    pub tags: BTreeMap<String, ActionClip>,
     /// Seconds to blend between locomotion clips.
     #[serde(default = "default_blend")]
     pub blend: f32,
@@ -325,17 +446,40 @@ impl AnimSet {
     /// Our clip for an action looked up by `key`: an id the set maps, a clip's own name (an
     /// action's `anim`), or a mapped tag.
     pub fn action_clip(&self, key: &str) -> Option<&str> {
-        self.actions
-            .get(key)
-            .and_then(|clip| self.known(clip))
-            .or_else(|| self.clips.get_key_value(key).map(|(k, _)| k.as_str()))
-            .or_else(|| self.tags.get(key).and_then(|clip| self.known(clip)))
+        self.action_shown(key).map(|(clip, _)| clip)
+    }
+
+    /// What an action looked up by `key` shows, as [`action_clip`](Self::action_clip) finds it:
+    /// our clip, and the layer it plays on (`None`: the whole body). A mapping that names a
+    /// layer the set lacks plays on the whole body (the content check reports it).
+    pub fn action_shown(&self, key: &str) -> Option<(&str, Option<&str>)> {
+        self.mapped(&self.actions, key)
+            .or_else(|| self.clips.get_key_value(key).map(|(k, _)| (k.as_str(), None)))
+            .or_else(|| self.mapped(&self.tags, key))
+    }
+
+    /// What `map` (`actions` or `tags`) says `key` shows, if its clip is in the library.
+    fn mapped<'a>(&'a self, map: &'a BTreeMap<String, ActionClip>, key: &str) -> Option<(&'a str, Option<&'a str>)> {
+        let shown = map.get(key).filter(|a| self.clips.contains_key(&a.clip))?;
+        let layer = shown.layer.as_deref().filter(|l| self.layers.contains_key(*l));
+        Some((shown.clip.as_str(), layer))
+    }
+
+    /// Whether the action looked up by `key` plays on a layer, not on the whole body.
+    pub fn is_layered(&self, key: &str) -> bool {
+        self.action_shown(key).is_some_and(|(_, layer)| layer.is_some())
+    }
+
+    /// The position of layer `name` among the set's layers (sorted by name): its mask group in
+    /// the animation graph.
+    pub fn layer_index(&self, name: &str) -> Option<usize> {
+        self.layers.keys().position(|k| k == name)
     }
 
     /// The key to look an action up under: its id if the set maps it, else its `anim` name
     /// if that is a clip of the set, else its first mapped tag; the id when nothing matches.
     pub fn action_key<'a>(&self, id: &'a str, anim: Option<&'a str>, tags: &'a [String]) -> &'a str {
-        if self.actions.get(id).is_some_and(|c| self.clips.contains_key(c)) {
+        if self.actions.get(id).is_some_and(|c| self.clips.contains_key(&c.clip)) {
             return id;
         }
         if let Some(anim) = anim.filter(|a| self.clips.contains_key(*a)) {
@@ -452,12 +596,16 @@ pub fn select_clip<'a>(action: Option<(&str, f32, f32)>, motion: &MotionState, s
 /// [`select_clip`] with the body's status: a dead body shows the `dead` clip (seeked while
 /// its death action runs, then held on its last pose; no clip: the pose it has stays), a
 /// staggered one the `stagger` clip seeked to the stagger action's progress.
+///
+/// An action whose clip plays on a layer is not the body's: this chooses as if it did not run
+/// ([`select_layer`] says what plays on the layer).
 pub fn select_clip_for<'a>(
     action: Option<(&str, f32, f32)>,
     motion: &MotionState,
     status: BodyStatus,
     set: &'a AnimSet,
 ) -> ClipChoice<'a> {
+    let action = action.filter(|(id, ..)| !set.is_layered(id));
     let progress = action.map(|(_, t, len)| if len > EPS { (t / len).clamp(0.0, 1.0) } else { 1.0 });
     if let Some((id, ..)) = action
         && let Some(clip) = set.action_clip(id)
@@ -496,6 +644,28 @@ pub fn select_clip_for<'a>(
         blend: set.blend_into(clip, false),
         looping: true,
     }
+}
+
+/// What plays on a layer: the clip, and the layer's name.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LayerChoice<'a> {
+    /// The layer (a key of the set's `layers`).
+    pub layer: &'a str,
+    /// The clip on it, always seeked to the action's progress: gameplay leads here too.
+    pub choice: ClipChoice<'a>,
+}
+
+/// The clip that plays on a layer now, if the running action is mapped to one. `action` is the
+/// running action as for [`select_clip_for`]. A dead body or a staggering one shows nothing on
+/// a layer: its whole body is the clip's.
+pub fn select_layer<'a>(action: Option<(&str, f32, f32)>, status: BodyStatus, set: &'a AnimSet) -> Option<LayerChoice<'a>> {
+    if status.dead || status.staggered {
+        return None;
+    }
+    let (id, t, len) = action?;
+    let (clip, Some(layer)) = set.action_shown(id)? else { return None };
+    let progress = if len > EPS { (t / len).clamp(0.0, 1.0) } else { 1.0 };
+    Some(LayerChoice { layer, choice: ClipChoice::seeked(set, clip, progress, true) })
 }
 
 /// The cues the animation passed going from `prev` to `now` (seconds on the clip's
@@ -569,7 +739,35 @@ impl AnimSet {
                     ));
                 }
             }
+            for (name, layer) in &self.layers {
+                if !layer.root.is_empty() && !file.has_node(&layer.root) {
+                    refs.error(format!(
+                        "layers.{name}.root -> `{source}` has no node `{}`; name the bone the layer starts at",
+                        layer.root
+                    ));
+                }
+            }
         }
+    }
+
+    /// `field.layer` of an action's mapping names one of the set's layers.
+    fn check_layer(&self, refs: &mut Refs, field: &str, mapping: &ActionClip) {
+        let Some(layer) = mapping.layer.as_deref() else { return };
+        if self.layers.contains_key(layer) {
+            return;
+        }
+        let names: Vec<&str> = self.layers.keys().map(String::as_str).collect();
+        if names.is_empty() {
+            refs.error(format!(
+                "{field}.layer -> unknown layer `{layer}`; the set has no layers: name one in `layers`, \
+                 e.g. `layers: {{\"upper\": (root: \"spine\")}}`"
+            ));
+            return;
+        }
+        let hint = shards_content::db::closest(layer, names.iter().copied())
+            .map(|c| format!(" (did you mean `{c}`?)"))
+            .unwrap_or_default();
+        refs.error(format!("{field}.layer -> unknown layer `{layer}`{hint}; layers: {}", names.join(", ")));
     }
 }
 
@@ -658,19 +856,34 @@ impl ContentDef for AnimSet {
                 unknown_clip(refs, &names, &format!("locomotion.{state}"), clip);
             }
         }
-        for (action, clip) in &self.actions {
-            refs.require::<ActionDef>(action, "actions");
-            if !known(clip) {
-                unknown_clip(refs, &names, &format!("actions.{action}"), clip);
+        if self.layers.len() > MAX_LAYERS {
+            refs.error(format!("layers has {} layers; at most {MAX_LAYERS}", self.layers.len()));
+        }
+        for (name, layer) in &self.layers {
+            if name.is_empty() {
+                refs.error("a layer has no name");
+            }
+            if layer.root.is_empty() {
+                refs.error(format!(
+                    "layers.{name}.root is empty; name the bone the layer starts at, e.g. `layers: {{\"{name}\": (root: \"spine\")}}`"
+                ));
             }
         }
-        for (tag, clip) in &self.tags {
+        for (action, mapping) in &self.actions {
+            refs.require::<ActionDef>(action, "actions");
+            if !known(&mapping.clip) {
+                unknown_clip(refs, &names, &format!("actions.{action}"), &mapping.clip);
+            }
+            self.check_layer(refs, &format!("actions.{action}"), mapping);
+        }
+        for (tag, mapping) in &self.tags {
             if tag.is_empty() {
                 refs.error("tags has an empty tag");
             }
-            if !known(clip) {
-                unknown_clip(refs, &names, &format!("tags.{tag}"), clip);
+            if !known(&mapping.clip) {
+                unknown_clip(refs, &names, &format!("tags.{tag}"), &mapping.clip);
             }
+            self.check_layer(refs, &format!("tags.{tag}"), mapping);
         }
         for (field, v) in [("blend", self.blend), ("action_blend", self.action_blend)] {
             if !(v >= 0.0 && v.is_finite()) {
@@ -1053,5 +1266,181 @@ mod tests {
         let set = set();
         let c = select_clip(Some((&run.action, run.t, run.length)), &moving(0.0), &set);
         assert!(close(c.seek_to.unwrap(), 0.5), "{c:?}");
+    }
+
+    /// The set of `set()` with a drinking clip that plays on the layer `upper` (the spine and
+    /// what is below it), and a tag that does too.
+    fn layered() -> AnimSet {
+        let mut set = set();
+        set.clips.insert("drink".into(), ClipDef { blend: Some(0.3), ..default() });
+        set.layers.insert("upper".into(), LayerDef { root: "spine".into() });
+        set.actions.insert("drink".into(), ActionClip::on("drink", "upper"));
+        set.tags.insert("heal".into(), ActionClip::on("generic_attack", "upper"));
+        set
+    }
+
+    fn read_set(text: &str) -> AnimSet {
+        ron::Options::default()
+            .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+            .from_str(text)
+            .unwrap_or_else(|e| panic!("{e}: {text}"))
+    }
+
+    #[test]
+    fn an_action_is_mapped_by_the_plain_form_or_with_a_layer() {
+        let set = read_set(
+            r#"(
+            source: "models/humanoid.glb",
+            clips: {"idle": (), "swing_1": (), "drink": (), "guard": ()},
+            layers: {"upper": (root: "spine")},
+            actions: {"light_1": "swing_1", "drink": (clip: "drink", layer: "upper"), "block": (clip: "guard")},
+            tags: {"heal": (layer: "upper", clip: "drink")},
+        )"#,
+        );
+        assert_eq!(set.actions["light_1"], ActionClip::body("swing_1"), "the old form: the whole body");
+        assert_eq!(set.actions["drink"], ActionClip::on("drink", "upper"));
+        assert_eq!(set.actions["block"], ActionClip::body("guard"), "a clip with no layer: the whole body");
+        assert_eq!(set.tags["heal"], ActionClip::on("drink", "upper"), "in any order");
+        assert_eq!(set.layers["upper"].root, "spine");
+        assert_eq!(set.action_shown("light_1"), Some(("swing_1", None)));
+        assert_eq!(set.action_shown("drink"), Some(("drink", Some("upper"))));
+        assert_eq!(set.action_shown("heal"), Some(("drink", Some("upper"))), "by tag");
+        assert_eq!(set.action_clip("drink"), Some("drink"), "the clip alone, for callers that do not care");
+        assert!(set.is_layered("drink") && !set.is_layered("light_1") && !set.is_layered("nothing"));
+        assert_eq!((set.layer_index("upper"), set.layer_index("lower")), (Some(0), None));
+        // Written out and read again it is the same: plain where plain, a struct where layered.
+        let text = ron::to_string(&set).unwrap();
+        assert!(text.contains(r#""light_1":"swing_1""#) && text.contains(r#"(clip:"drink",layer:"upper")"#), "{text}");
+        assert_eq!(read_set(&text), set);
+    }
+
+    #[test]
+    fn a_layered_action_leaves_the_body_to_locomotion_and_plays_on_its_layer() {
+        let set = layered();
+        let walking = moving(2.0);
+        let drinking = Some(("drink", 0.5, 1.0));
+        let body = select_clip_for(drinking, &walking, BodyStatus::default(), &set);
+        assert_eq!(body.clip, Some("walk"), "the legs go on walking");
+        assert!(body.looping && body.seek_to.is_none() && close(body.speed, 1.0), "{body:?}");
+        let layer = select_layer(drinking, BodyStatus::default(), &set).expect("the layer has the drink");
+        assert_eq!(layer.layer, "upper");
+        assert_eq!(layer.choice.clip, Some("drink"));
+        let choice = layer.choice;
+        assert!(close(choice.seek_to.unwrap(), 0.5) && close(choice.speed, 0.0) && !choice.looping, "{choice:?}");
+        assert!(close(choice.blend, 0.3), "the clip's own blend: {}", choice.blend);
+        // Standing still: the idle clip is the body's.
+        assert_eq!(select_clip_for(drinking, &moving(0.0), BodyStatus::default(), &set).clip, Some("idle"));
+        // A tag maps the same way.
+        let tags = ["heal".to_owned()];
+        let key = set.action_key("potion", None, &tags);
+        let healing = select_layer(Some((key, 0.1, 0.5)), BodyStatus::default(), &set);
+        assert_eq!(healing.map(|l| l.choice.clip), Some(Some("generic_attack")));
+        // Past the end it holds the last pose, like any seeked clip; a zero length is the end.
+        let at = |t, len| select_layer(Some(("drink", t, len)), BodyStatus::default(), &set).unwrap().choice.seek_to;
+        assert_eq!((at(2.0, 1.0), at(0.0, 0.0)), (Some(1.0), Some(1.0)));
+    }
+
+    #[test]
+    fn nothing_plays_on_a_layer_unless_a_layered_action_runs_on_a_living_body() {
+        let set = layered();
+        assert!(select_layer(None, BodyStatus::default(), &set).is_none(), "no action");
+        // A whole-body action is the body's clip, not a layer's.
+        let swing = Some(("light_1", 0.15, 0.6));
+        assert!(select_layer(swing, BodyStatus::default(), &set).is_none());
+        assert_eq!(select_clip_for(swing, &moving(2.0), BodyStatus::default(), &set).clip, Some("swing_1"));
+        assert!(select_layer(Some(("mystery", 0.1, 0.5)), BodyStatus::default(), &set).is_none(), "no clip for it");
+        // The dead and the staggering show their own clips on the whole body.
+        let drinking = Some(("drink", 0.5, 1.0));
+        assert!(select_layer(drinking, BodyStatus { dead: true, ..default() }, &set).is_none());
+        assert!(select_layer(drinking, BodyStatus { staggered: true, ..default() }, &set).is_none());
+        // A mapping to a layer the set lacks plays on the whole body (the content check
+        // reports it), so the picture shows something.
+        let mut typo = set;
+        typo.actions.insert("drink".into(), ActionClip::on("drink", "uper"));
+        assert!(typo.action_shown("drink") == Some(("drink", None)) && !typo.is_layered("drink"));
+        assert!(select_layer(drinking, BodyStatus::default(), &typo).is_none());
+        assert_eq!(select_clip_for(drinking, &moving(2.0), BodyStatus::default(), &typo).clip, Some("drink"));
+    }
+
+    const TWO_ACTIONS: &str =
+        r#"{ "light_1": (net_id: 1, phases: [("active", 0.3)]), "roll": (net_id: 2, phases: [("roll", 0.4)]) }"#;
+
+    #[test]
+    fn layers_are_checked_by_content() {
+        let errors = build_with(
+            TWO_ACTIONS,
+            r#"{ "h": (source: "models/h.glb", clips: {"idle": (), "drink": ()},
+                layers: {"upper": (root: "spine"), "arm": (root: ""), "head": (root: "head")},
+                actions: {"light_1": (clip: "drink", layer: "uper"), "roll": (clip: "dring", layer: "upper")},
+                tags: {"fire": (clip: "drink", layer: "head"), "ice": "drink"}) }"#,
+        );
+        assert_eq!(
+            errors,
+            [
+                "content/h.animset.ron: animset `h`: layers.arm.root is empty; name the bone the layer starts at, \
+                 e.g. `layers: {\"arm\": (root: \"spine\")}`",
+                "content/h.animset.ron: animset `h`: actions.light_1.layer -> unknown layer `uper` (did you mean `upper`?); \
+                 layers: arm, head, upper",
+                "content/h.animset.ron: animset `h`: actions.roll -> unknown clip `dring` (did you mean `drink`?); \
+                 clips: drink, idle",
+            ]
+        );
+        // A set with no layers says how to make one.
+        let errors = build_with(
+            TWO_ACTIONS,
+            r#"{ "h": (source: "models/h.glb", clips: {"idle": (), "drink": ()},
+                actions: {"light_1": (clip: "drink", layer: "upper")}, tags: {"fire": (clip: "drink", layer: "")}) }"#,
+        );
+        assert_eq!(
+            errors,
+            [
+                "content/h.animset.ron: animset `h`: actions.light_1.layer -> unknown layer `upper`; the set has no layers: \
+                 name one in `layers`, e.g. `layers: {\"upper\": (root: \"spine\")}`",
+                "content/h.animset.ron: animset `h`: tags.fire.layer -> unknown layer ``; the set has no layers: \
+                 name one in `layers`, e.g. `layers: {\"upper\": (root: \"spine\")}`",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_misspelt_mapping_is_a_parse_error_that_says_what_it_wants() {
+        let set = |mapping: &str| {
+            format!(r#"{{ "h": (source: "models/h.glb", clips: {{"idle": ()}}, actions: {{"light_1": {mapping}}}) }}"#)
+        };
+        let errors = build_with(TWO_ACTIONS, &set(r#"(clip: "idle", lyer: "upper")"#));
+        assert_eq!(errors.len(), 1, "{errors:#?}");
+        assert!(errors[0].contains("Unexpected field named `lyer`") && errors[0].contains("expected either `clip` or `layer`"), "{errors:#?}");
+        let errors = build_with(TWO_ACTIONS, &set(r#"(layer: "upper")"#));
+        assert!(errors.len() == 1 && errors[0].contains("missing field named `clip`"), "{errors:#?}");
+        let errors = build_with(TWO_ACTIONS, &set("7"));
+        assert!(errors.len() == 1 && errors[0].contains("a clip name"), "{errors:#?}");
+        let errors = build_with(
+            TWO_ACTIONS,
+            r#"{ "h": (source: "models/h.glb", clips: {"idle": ()}, layers: {"upper": (root: "spine", blend: 1)}) }"#,
+        );
+        assert!(errors.len() == 1 && errors[0].contains("blend"), "a layer is only its root bone: {errors:#?}");
+    }
+
+    #[test]
+    fn at_most_sixty_four_layers() {
+        let layers: String = (0..=MAX_LAYERS).map(|i| format!(r#""l{i:02}": (root: "b{i}"), "#)).collect();
+        let errors = build(&format!(r#"{{ "h": (source: "models/h.glb", clips: {{"idle": ()}}, layers: {{{layers}}}) }}"#));
+        assert_eq!(errors, ["content/h.animset.ron: animset `h`: layers has 65 layers; at most 64"]);
+    }
+
+    #[test]
+    fn the_layers_example_in_the_docs_is_valid_content() {
+        let docs = include_str!("anim.rs");
+        let start = docs.find("//! ## Layers").expect("the section");
+        let start = docs[start..].find("//! {\n").expect("its example") + start;
+        let end = docs[start..].find("//! }\n").expect("its end") + start;
+        let body: String = docs[start..end + "//! }\n".len()].lines().map(|l| l.trim_start_matches("//!").to_owned() + "\n").collect();
+        let errors = build_with(r#"{ "drink": (net_id: 1, phases: [("drink", 1.0)]) }"#, &body);
+        assert!(errors.is_empty(), "{errors:#?}");
+        let sets: BTreeMap<String, AnimSet> = ron::Options::default()
+            .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+            .from_str(&body)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(sets["humanoid"].is_layered("drink"), "the example puts the drink on a layer");
     }
 }

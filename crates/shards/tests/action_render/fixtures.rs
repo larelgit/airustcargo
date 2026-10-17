@@ -107,10 +107,12 @@ pub const ACTIONS: &str = r#"{
     "slam": (net_id: 4, phases: [("windup", 0.8), ("active", 0.1), ("recovery", 0.3)],
         hits: [(span: Phase("active"), shape: Circle(radius: 3.0), damage: 20)],
         telegraph: (symbol: "⚠", sound: "growl")),
+    // Walking on while it lasts: the humanoid test drinks with its arm and keeps the legs' walk.
+    "drink": (net_id: 5, phases: [("drink", 1.0), ("recover", 0.3)], move_speed: 0.3),
 }"#;
 
 pub const MOVESETS: &str = r#"{
-    "hero": (inputs: {"light": "light_1", "dodge": "roll", "block": "block"}),
+    "hero": (inputs: {"light": "light_1", "dodge": "roll", "block": "block", "drink": "drink"}),
     "brute": (inputs: {"light": "slam"}),
 }"#;
 
@@ -133,9 +135,25 @@ pub const HUMANOID: &str = r#"{ "humanoid": (
     root_motion: "root",
 ) }"#;
 
+/// The humanoid's set with layers: the walk the legs go on with, and the drink (from the second
+/// file) that the arms, the head and the spine take over while the action runs.
+pub const HUMANOID_LAYERED: &str = r#"{ "humanoid": (
+    source: "models/humanoid.glb",
+    clips: {"idle": (), "walk": (), "drink": (source: "models/humanoid_gestures.glb")},
+    locomotion: {"idle": "idle", "walk": "walk"},
+    layers: {"upper": (root: "spine")},
+    actions: {"drink": (clip: "drink", layer: "upper")},
+    root_motion: "root",
+) }"#;
+
 /// A fresh assets folder with the combat content, the humanoid (`models/humanoid.glb`) and its
 /// clips for the same skeleton in a second file (`models/humanoid_gestures.glb`).
 pub fn humanoid_assets(name: &str) -> PathBuf {
+    humanoid_assets_with(name, HUMANOID)
+}
+
+/// [`humanoid_assets`] with another animset.
+pub fn humanoid_assets_with(name: &str, animsets: &str) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
     let _ = std::fs::remove_dir_all(&dir);
     let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("../sandbox/assets/models");
@@ -146,7 +164,7 @@ pub fn humanoid_assets(name: &str) -> PathBuf {
     for (path, text) in [
         ("content/combat/actions.action.ron", ACTIONS),
         ("content/combat/movesets.moveset.ron", MOVESETS),
-        ("content/anim/humanoid.animset.ron", HUMANOID),
+        ("content/anim/humanoid.animset.ron", animsets),
     ] {
         let path: &Path = path.as_ref();
         std::fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
