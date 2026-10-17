@@ -157,6 +157,7 @@ mod marker;
 mod props;
 mod render;
 mod spawn;
+mod placed;
 mod tools;
 
 use ai_core::AiAppExt;
@@ -168,6 +169,7 @@ pub use asset::{Bounds, LevelAsset, LevelLoadError, LevelLoader, LevelNode, Mark
 pub use def::LevelDef;
 pub use library::{held_change, level_asset, request_level, LevelLibrary};
 pub use marker::{LevelMarker, MarkerKind, RequiredMarker};
+pub use placed::{PlacedLevel, PlacedLevels};
 pub use props::{check_level, LevelProblem, PROPERTIES};
 pub use render::LevelVisual;
 pub use spawn::{
@@ -205,12 +207,19 @@ impl Plugin for LevelPlugin {
             .add_content::<LevelDef>()
             .init_resource::<LevelLibrary>()
             .init_resource::<LevelInstances>()
-            // Which levels are placed where is not in a snapshot (their colliders are checked
-            // as static colliders, their files with this): a snapshot loads where it is the same.
+            // The levels placed by id are (`PlacedLevels`): the snapshot's go back where it
+            // loads, around the region its prepare builds again (it may have taken their numbers
+            // here, they may have taken its). Then their colliders are checked as static
+            // colliders, and every level that stands, and its file, with this.
+            .add_snapshot_resource::<PlacedLevels>()
+            .net_ignore_resource::<PlacedLevels>()
+            // Right after content: before the region, whichever module was added first.
+            .add_snapshot_prepare_after("levels", "content", &["levels"], placed::take_away)
+            .add_snapshot_prepare_after("placed levels", "region", &["levels"], placed::put_in)
             .add_snapshot_check(
                 "levels",
-                "other levels are placed than when the snapshot was taken: spawn the same levels (spawn_level) \
-                 first",
+                "other levels stand, or their files differ, than when the snapshot was taken (a level the game \
+                 spawned itself, not by id, is not in the snapshot): put those files back, or take the snapshot again",
                 spawn::level_hash,
             )
             // The numbers are: a level placed after a load gets the original session's.
@@ -219,7 +228,8 @@ impl Plugin for LevelPlugin {
             .add_snapshot_resource::<LevelCounter>()
             .net_ignore_resource::<LevelCounter>()
             .add_optional_replay_check("level", spawn::level_check)
-            .require_loaded("levels", library::level_status)
+            .require_loaded(library::LEVELS_GATE, library::level_status)
+            .add_playback_hook(library::ask_for_levels_ahead)
             .add_engine_module("level", VERSION)
             .register_ai_describer("marker", tools::describe_marker)
             .add_systems(

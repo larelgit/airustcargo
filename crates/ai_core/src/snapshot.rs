@@ -203,6 +203,8 @@ struct SnapshotPrepare {
     /// Registered checks that only mean something once this ran (`static_colliders`).
     covers: &'static [&'static str],
     run: PrepareFn,
+    /// The prepare this one runs right after, wherever the two were registered.
+    after: Option<&'static str>,
 }
 
 #[derive(Clone, Copy)]
@@ -242,9 +244,37 @@ impl SnapshotRegistry {
         self.checks.push(SnapshotCheck { name, hint, check });
     }
 
-    pub(crate) fn add_prepare(&mut self, name: &'static str, covers: &'static [&'static str], run: PrepareFn) {
+    pub(crate) fn add_prepare(&mut self, name: &'static str, after: Option<&'static str>, covers: &'static [&'static str], run: PrepareFn) {
         self.prepares.retain(|p| p.name != name);
-        self.prepares.push(SnapshotPrepare { name, covers, run });
+        self.prepares.push(SnapshotPrepare { name, covers, run, after });
+    }
+
+    /// The prepares in the order they run: registration order, except that one registered to
+    /// run after another comes right after it (after the ones that came there before it). One
+    /// whose `after` is not registered runs where it was registered.
+    fn prepare_order(&self) -> Vec<SnapshotPrepare> {
+        let known = |name: &str| self.prepares.iter().any(|p| p.name == name);
+        let mut order: Vec<SnapshotPrepare> = self.prepares.iter().filter(|p| !p.after.is_some_and(known)).copied().collect();
+        let mut left: Vec<SnapshotPrepare> = self.prepares.iter().filter(|p| p.after.is_some_and(known)).copied().collect();
+        // A chain (`c` after `b` after `a`) places one link a round; a cycle never places, and runs last.
+        while !left.is_empty() {
+            let before = left.len();
+            left.retain(|p| {
+                let Some(at) = order.iter().position(|q| Some(q.name) == p.after) else { return true };
+                // Past the ones placed after it already, and theirs.
+                let (mut end, mut placed) = (at + 1, vec![order[at].name]);
+                while order.get(end).is_some_and(|q| q.after.is_some_and(|a| placed.contains(&a))) {
+                    placed.push(order[end].name);
+                    end += 1;
+                }
+                order.insert(end, *p);
+                false
+            });
+            if left.len() == before {
+                order.append(&mut left);
+            }
+        }
+        order
     }
 
     pub(crate) fn add_rebuild(&mut self, name: &'static str, rebuild: fn(&mut World)) {
@@ -486,7 +516,7 @@ fn prepare_and_check(
     covered: &BTreeSet<&str>,
     warnings: &mut Vec<String>,
 ) -> Result<bool, String> {
-    for prepare in &modules.prepares {
+    for prepare in &modules.prepare_order() {
         match (prepare.run)(world, snapshot) {
             Ok(Some(note)) => warnings.push(format!("{}: {note}", prepare.name)),
             Ok(None) => {}
@@ -551,7 +581,7 @@ impl Before {
     /// could not be put back if anything.
     fn put_back(self, world: &mut World, modules: &SnapshotRegistry, tick: u64, reason: &str, why: String) -> String {
         let mut failed = Vec::new();
-        for prepare in &modules.prepares {
+        for prepare in &modules.prepare_order() {
             if let Err(e) = (prepare.run)(world, &self.world) {
                 failed.push(format!("{}: {e}", prepare.name));
             }
@@ -1453,6 +1483,27 @@ mod tests {
         }
         build_hills(app.world_mut(), hills);
         app
+    }
+
+    #[test]
+    fn a_prepare_registered_to_run_after_another_runs_right_after_it() {
+        fn none(_: &mut World, _: &Snapshot) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+        let mut registry = SnapshotRegistry::default();
+        registry.add_prepare("content", None, &[], none);
+        registry.add_prepare("placed", Some("region"), &[], none);
+        registry.add_prepare("levels", None, &[], none);
+        registry.add_prepare("decor", Some("placed"), &[], none);
+        registry.add_prepare("lights", Some("region"), &[], none);
+        registry.add_prepare("region", None, &[], none);
+        registry.add_prepare("lost", Some("nowhere"), &[], none);
+        registry.add_prepare("tick", Some("tock"), &[], none);
+        registry.add_prepare("tock", Some("tick"), &[], none);
+        let names: Vec<&str> = registry.prepare_order().iter().map(|p| p.name).collect();
+        // `decor` follows `placed` before `lights` comes after them; one after a prepare that is not
+        // there runs where it was registered; a cycle runs last.
+        assert_eq!(names, ["content", "levels", "region", "placed", "decor", "lights", "lost", "tick", "tock"]);
     }
 
     #[test]

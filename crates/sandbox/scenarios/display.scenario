@@ -1,0 +1,69 @@
+# Display (E10.8, E10.9): where the picture goes. A game with a window or `--offscreen` draws the 3D world
+# at `graphics.render_scale` x the picture's pixels (0.5 to 2) and `shot` captures the picture;
+# headless there is no picture, so the scale only lives as a setting (the world drawn at it, and
+# `display.scene` in `status`, are checked on a GPU: offscreen.rs, `cargo test -p sandbox --test
+# sandbox -- --ignored render_scale`). Here: the scale is read, changed and journaled like any
+# setting, a value outside 0.5 to 2 or no number is refused with what is allowed and moves nothing,
+# the settings screen's slider is this setting, and `shot` says why there is nothing to capture.
+# It puts the scale back to 1 and the settings screen closed.
+
+# --- the scale at its default, whatever an earlier run left
+act settings_set group=graphics key=render_scale reset=true
+act settings group=graphics
+expect result contains "graphics.render_scale = 1"
+expect result !contains "render_scale = 0.5"
+expect result !contains "render_scale = 2"
+
+# --- a change is journaled, as it was and is
+mark
+act settings_set group=graphics key=render_scale value=0.5
+expect result contains "graphics.render_scale 1 → 0.5"
+expect journal "settings: graphics.render_scale 1 → 0.5"
+act settings group=graphics
+expect result contains "graphics.render_scale = 0.5"
+act settings_set group=graphics key=render_scale value=2
+expect result contains "graphics.render_scale 0.5 → 2"
+act settings_set group=graphics key=render_scale value=2
+expect result contains "nothing changed"
+
+# --- a scale that cannot be drawn is refused with the range, and the scale stays
+act? settings_set group=graphics key=render_scale value=0.25
+expect result contains "graphics.render_scale 0.25 is out of range: use a number from 0.5 to 2"
+act? settings_set group=graphics key=render_scale value=3
+expect result contains "graphics.render_scale 3 is out of range: use a number from 0.5 to 2"
+act? settings_set group=graphics key=render_scale value=0
+expect result contains "graphics.render_scale 0 is out of range"
+act? settings_set group=graphics key=render_scale value=sharp
+expect result contains "a number (like 0.5)"
+act? settings_set group=graphics key=render_scale_x value=1
+expect result contains "did you mean `render_scale`"
+act settings group=graphics
+expect result contains "graphics.render_scale = 2"
+
+# --- the settings screen's slider is this setting: 0.5 to 2 in steps of a quarter
+act settings_set group=graphics key=render_scale reset=true
+act? ui_close screen=settings
+act ui_open screen=settings
+act ui_read
+expect result contains "settings/render_scale  slider \"Render scale\" 1 (0.5..2 step 0.25) [graphics.render_scale]"
+act ui_set id=settings/render_scale value=1.5
+expect result contains "settings/render_scale 1 → 1.5"
+act settings group=graphics
+expect result contains "graphics.render_scale = 1.5"
+act? ui_set id=settings/render_scale value=wide
+expect result contains "settings/render_scale is a slider: a number from 0.5 to 2, not `wide`"
+act ui_close screen=settings
+
+# --- without a window or `--offscreen` there is nothing to capture, at any scale, and the error says what to do
+act? shot
+expect result contains "nothing to capture: this game runs headless"
+expect result contains "`cargo sandbox --offscreen`"
+act? shot path=shots/scaled.png marks=false
+expect result contains "nothing to capture: this game runs headless"
+
+# --- and the scale back to 1
+act settings_set group=graphics key=render_scale reset=true
+act settings group=graphics
+expect result contains "graphics.render_scale = 1"
+expect result !contains "render_scale = 1.5"
+expect result !contains "render_scale = 2"

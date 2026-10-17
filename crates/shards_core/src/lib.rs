@@ -75,7 +75,8 @@ pub struct EngineConfig {
     pub tick_hz: f64,
     /// A gameplay failure saves `replays/crash-tick<N>.json` to reproduce it with and a crash
     /// report (`crashes/…`; a panic nobody handled too), a violated invariant
-    /// `replays/invariant-<name>-tick<N>.json`.
+    /// `replays/invariant-<name>-tick<N>.json`. `false` switches off what the game writes by itself,
+    /// not the `crash_report` tool: a bug report an agent asks for is written whatever this says.
     pub crash_replays: bool,
     /// Ticks between replay checks (`--check-every`), stored in every replay saved.
     pub check_every: u64,

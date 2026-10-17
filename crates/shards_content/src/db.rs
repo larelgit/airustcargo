@@ -444,6 +444,14 @@ impl ContentDb {
     /// Builds and validates a database from file texts (any order: files are read in
     /// path order, so the first of two duplicate ids is the one kept).
     pub fn build(kinds: &ContentKinds, sources: &[Source]) -> ContentDb {
+        let mut db = Self::build_unchecked(kinds, sources);
+        db.revalidate(kinds);
+        db
+    }
+
+    /// [`build`](Self::build) without validating the definitions against each other: what the
+    /// files say, for comparing definitions.
+    pub(crate) fn build_unchecked(kinds: &ContentKinds, sources: &[Source]) -> ContentDb {
         let mut db = ContentDb { loaded: true, ..default() };
         for kind in &kinds.kinds {
             db.tables.insert(kind.kind, BTreeMap::new());
@@ -453,7 +461,6 @@ impl ContentDb {
         for source in sources {
             db.add_file(kinds, source);
         }
-        db.revalidate(kinds);
         db
     }
 

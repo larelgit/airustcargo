@@ -35,6 +35,7 @@
 
 pub mod color;
 pub mod db;
+pub mod edits;
 pub mod load;
 pub mod prefab;
 mod tools;
@@ -48,8 +49,9 @@ use bevy::prelude::*;
 use shards_core::EngineAppExt;
 
 pub use color::parse_color;
+pub use edits::{ContentEdit, ContentEdits};
 pub use db::{check_dir, ContentDb, ContentDef, ContentError, ContentKinds, DefChange, Refs, Summary};
-pub use load::{asset_root, ContentText};
+pub use load::{asset_root, defs_ahead, ContentText};
 pub use prefab::{spawn_prefab, PrefabDef};
 
 /// The types a game module uses most.
@@ -167,11 +169,16 @@ impl Plugin for ContentPlugin {
             .require_loaded("content", load::content_status)
             .add_engine_module("content", env!("CARGO_PKG_VERSION"))
             .add_replay_check("content", |w| w.get_resource::<ContentDb>().map_or(0, ContentDb::hash))
-            // Content is not in a snapshot (it is files); a snapshot loads where it is the same.
+            // Content is files, not snapshot state; what `content_apply` set apart from them is
+            // (`ContentEdits`), and goes over this game's files before the check compares the two
+            // databases. Each machine of a co-op session keeps its own.
+            .add_snapshot_resource::<ContentEdits>()
+            .net_ignore_resource::<ContentEdits>()
+            .add_snapshot_prepare("content", &["content"], edits::snapshot_prepare)
             .add_snapshot_check(
                 "content",
-                "the content files differ from the ones the snapshot was taken with, or a content edit came before \
-                 it: put those files back, or take the snapshot again",
+                "the content files differ from the ones the snapshot was taken with: put those files back, or take \
+                 the snapshot again",
                 |w| w.get_resource::<ContentDb>().map_or(0, ContentDb::hash),
             )
             .add_systems(Startup, load::start_loading)

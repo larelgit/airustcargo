@@ -53,7 +53,8 @@ pub struct LevelInstance {
     pub visual: Option<Entity>,
 }
 
-/// The levels spawned and still standing, in spawn order (numbered by [`LevelCounter`]).
+/// The levels spawned and still standing, in number order ([`LevelCounter`]: the order they were
+/// spawned, also after a snapshot placed some again under their numbers).
 #[derive(Resource, Default, Debug)]
 pub struct LevelInstances {
     list: Vec<LevelInstance>,
@@ -125,6 +126,13 @@ pub fn spawn_level_as(world: &mut World, level: &LevelAsset, at: Transform, labe
 /// Despawns every entity of `instance` (and its visual root). Returns how many gameplay
 /// entities went.
 pub fn despawn_level(world: &mut World, instance: u32) -> usize {
+    let gone = despawn_instance(world, instance);
+    crate::placed::forget(world, instance);
+    gone
+}
+
+/// [`despawn_level`] for one that is placed again right after (a reload): it stays placed.
+fn despawn_instance(world: &mut World, instance: u32) -> usize {
     let mut found = world.query::<(Entity, &FromLevel)>();
     let doomed: Vec<Entity> = found.iter(world).filter(|(_, from)| from.instance == instance).map(|(e, _)| e).collect();
     for entity in &doomed {
@@ -152,8 +160,11 @@ pub fn reload_level(world: &mut World, instance: u32) -> Result<usize, String> {
     let plans = prepare(world, &level)?;
     // Before anything goes: a pose no node can be placed at is a problem of the file too.
     check_poses(&level, &plans, old.at)?;
-    despawn_level(world, instance);
-    place(world, &level, &plans, old.at, &old.label, instance).map(|spawned| spawned.entities.len())
+    despawn_instance(world, instance);
+    let first_collider = crate::placed::next_collider(world);
+    let spawned = place(world, &level, &plans, old.at, &old.label, instance)?;
+    crate::placed::reloaded(world, instance, first_collider);
+    Ok(spawned.entities.len())
 }
 
 /// `level `arena.gltf` has 2 problems:` and a line each.
@@ -212,7 +223,8 @@ fn place(world: &mut World, level: &LevelAsset, plans: &[NodePlan], at: Transfor
     }
     let visual = crate::render::spawn_visual(world, &level.path, level.scene.unwrap_or(0), at, instance);
     let mut instances = world.get_resource_or_init::<LevelInstances>();
-    instances.list.push(LevelInstance { id: instance, label: label.to_owned(), path: level.path.clone(), at, visual });
+    let position = instances.list.partition_point(|i| i.id < instance);
+    instances.list.insert(position, LevelInstance { id: instance, label: label.to_owned(), path: level.path.clone(), at, visual });
     Ok(SpawnedLevel { instance, entities, visual })
 }
 

@@ -55,6 +55,12 @@ pub const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/npc/assets"
 
 /// An arena with the content of asset folder `dir`.
 pub fn app_in(dir: &str, seed: u64, setup: impl FnOnce(&mut App)) -> App {
+    app_in_with(dir, seed, |_| {}, setup)
+}
+
+/// [`app_in`] with plugins added before the engine's (a window's gizmos, say: the modules look
+/// for them as they are built).
+pub fn app_in_with(dir: &str, seed: u64, before: impl FnOnce(&mut App), setup: impl FnOnce(&mut App)) -> App {
     let dir = dir.to_owned();
     let config = EngineConfig {
         headless: true,
@@ -70,6 +76,7 @@ pub fn app_in(dir: &str, seed: u64, setup: impl FnOnce(&mut App)) -> App {
     let mut app = App::new();
     let assets = AssetPlugin { file_path: dir, watch_for_changes_override: Some(false), ..default() };
     app.add_plugins((MinimalPlugins, assets, StatesPlugin));
+    before(&mut app);
     app.add_plugins(config.ai_core_plugin())
         .add_plugins(CorePlugin { config })
         .add_plugins(ContentPlugin)

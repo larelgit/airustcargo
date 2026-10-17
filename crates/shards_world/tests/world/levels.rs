@@ -535,6 +535,240 @@ fn a_session_that_reloads_a_level_replays_identically() {
     assert!(report.identical(), "{report}");
 }
 
+/// `content_apply` arguments for a tile `annex` built from `tiles/annex.gltf` (the yard's twin,
+/// a file no content names when the game loads) and a region `annexes` of annexes.
+fn annex_changes(app: &App) -> serde_json::Value {
+    let db = app.world().resource::<ContentDb>();
+    let mut tile = db.get_json("tile", "yard").unwrap().clone();
+    tile["geometry"]["Level"]["path"] = json!("tiles/annex.gltf");
+    let mut region = db.get_json("region", "lawns").unwrap().clone();
+    region["tiles"] = json!(["annex"]);
+    json!({"changes": [{"kind": "tile", "id": "annex", "def": tile}, {"kind": "region", "id": "annexes", "def": region}]})
+}
+
+/// Loads `path` the way a live session does between two calls: frame after frame, until the
+/// loading gate lets go.
+fn load_between_calls(app: &mut App, path: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while shards::level::level_asset(app.world(), path).is_err() || shards::ai_core::sim::gate_message(app.world()).is_some() {
+        assert!(Instant::now() < deadline, "{path} did not load");
+        app.update();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn a_tile_file_a_content_edit_adds_is_loaded_before_a_replay_builds_with_it_in_the_same_tick() {
+    let annex = yard().gltf();
+    let dir = site("ahead", &[("tiles/annex.gltf", annex.as_bytes())]);
+    let mut app = app_in(&dir, 7, Some("lawns"));
+    ok(&mut app, "step", json!({"ticks": 10}));
+    let changes = annex_changes(&app);
+    ok(&mut app, "content_apply", changes);
+    load_between_calls(&mut app, "tiles/annex.gltf");
+    ok(&mut app, "regen", json!({"region": "annexes", "seed": 1}));
+    ok(&mut app, "step", json!({"ticks": 20}));
+    let recording = shards::ai_core::replay::save(app.world());
+
+    // Playback runs both calls in tick 10, with no frame between them: the file the edit names
+    // was asked for while the game loaded.
+    let mut again = fresh_in(&dir, 7, Some("lawns"));
+    let report = testing::verify(&mut again, recording).expect("plays");
+    assert!(report.identical(), "{report}");
+    assert_eq!(region(&again).manifest.region, "annexes");
+}
+
+/// A session that adds the annex tile with an edit and builds the annexes with it: a snapshot
+/// there names a file no content named when the game loaded.
+fn in_the_annexes(dir: &Path) -> App {
+    let mut app = app_in(dir, 7, Some("lawns"));
+    ok(&mut app, "step", json!({"ticks": 5}));
+    let changes = annex_changes(&app);
+    ok(&mut app, "content_apply", changes);
+    load_between_calls(&mut app, "tiles/annex.gltf");
+    ok(&mut app, "regen", json!({"region": "annexes", "seed": 1}));
+    ok(&mut app, "step", json!({"ticks": 5}));
+    app
+}
+
+#[test]
+fn a_snapshot_whose_edits_add_a_tile_file_loads_by_hand_once_the_file_is_in() {
+    use shards::ai_core::snapshot::{capture, restore};
+    let annex = yard().gltf();
+    let dir = site("annex_by_hand", &[("tiles/annex.gltf", annex.as_bytes())]);
+    let original = in_the_annexes(&dir);
+    let snapshot = capture(original.world()).unwrap();
+
+    // A fresh game had not asked for the file: the load asks for it now, is refused with what to
+    // do, and leaves the game as it was.
+    let mut copy = app_in(&dir, 7, Some("lawns"));
+    let before = state_hash(copy.world());
+    let err = restore(copy.world_mut(), &snapshot, false).unwrap_err();
+    assert!(err.contains("`tiles/annex.gltf`") && err.contains("load the snapshot again"), "{err}");
+    assert_eq!(state_hash(copy.world()), before);
+    assert_eq!(region(&copy).manifest.region, "lawns");
+    assert!(copy.world().resource::<ContentDb>().get_json("tile", "annex").is_none());
+
+    load_between_calls(&mut copy, "tiles/annex.gltf");
+    let report = restore(copy.world_mut(), &snapshot, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert_eq!(region(&copy).manifest.region, "annexes");
+    assert_eq!(state_hash(copy.world()), snapshot.state_hash);
+}
+
+#[test]
+fn a_replay_from_a_snapshot_whose_edits_add_a_tile_file_plays_in_a_fresh_game() {
+    let annex = yard().gltf();
+    let dir = site("annex_replay", &[("tiles/annex.gltf", annex.as_bytes())]);
+    let mut original = in_the_annexes(&dir);
+    // The recording restarts from the snapshot, loaded into the game it was taken in.
+    let file = format!("snapshots/shards_world_annex_{}.json", std::process::id());
+    ok(&mut original, "snapshot_save", json!({"path": file}));
+    ok(&mut original, "snapshot_load", json!({"path": file}));
+    let _ = std::fs::remove_file(&file);
+    ok(&mut original, "move", json!({"dir": "E", "meters": 4}));
+    ok(&mut original, "step", json!({"ticks": 30}));
+    let recording = shards::ai_core::replay::save(original.world());
+    assert!(recording.start.is_some());
+
+    // Armed before the game loads, as `--replay` does: the file is asked for while it loads.
+    let mut early = fresh_in(&dir, 7, Some("lawns"));
+    let report = testing::verify(&mut early, recording.clone()).expect("plays");
+    assert!(report.identical(), "{report}");
+    // Armed in a game that has loaded already: the playback waits for the file before its start.
+    let mut late = app_in(&dir, 7, Some("lawns"));
+    let report = testing::verify(&mut late, recording).expect("plays");
+    assert!(report.identical(), "{report}");
+    assert_eq!(region(&late).manifest.region, "annexes");
+}
+
+#[test]
+fn a_level_a_content_edit_adds_is_loaded_before_a_replay_spawns_it_in_the_same_tick() {
+    let annex = yard().gltf();
+    let dir = site("ahead_level", &[("levels/annex.gltf", annex.as_bytes())]);
+    let mut app = app_in(&dir, 7, Some("lawns"));
+    ok(&mut app, "step", json!({"ticks": 10}));
+    let level = json!({"changes": [{"kind": "level", "id": "annex", "def": {"file": "levels/annex.gltf", "at": [40.0, 0.0, 40.0]}}]});
+    ok(&mut app, "content_apply", level);
+    load_between_calls(&mut app, "levels/annex.gltf");
+    ok(&mut app, "spawn_level", json!({"id": "annex"}));
+    ok(&mut app, "step", json!({"ticks": 20}));
+    let recording = shards::ai_core::replay::save(app.world());
+
+    let mut again = fresh_in(&dir, 7, Some("lawns"));
+    let report = testing::verify(&mut again, recording).expect("plays");
+    assert!(report.identical(), "{report}");
+    assert!(again.world().resource::<LevelInstances>().iter().any(|i| i.label == "annex"));
+}
+
+/// A site with level `annex` in its content (the yard's file, placed by hand).
+fn with_a_level(name: &str) -> PathBuf {
+    let annex = yard().gltf();
+    let def = r#"{ "annex": (file: "levels/annex.gltf", at: (40.0, 0.0, 40.0)) }"#;
+    site(name, &[("levels/annex.gltf", annex.as_bytes()), ("content/ruins/annex.level.ron", def.as_bytes())])
+}
+
+/// Every level standing: number, label and where.
+fn standing(app: &App) -> Vec<(u32, String, [f32; 3])> {
+    app.world().resource::<LevelInstances>().iter().map(|i| (i.id, i.label.clone(), i.at.translation.to_array())).collect()
+}
+
+/// A session that places the annex between two regions of level tiles: its number lies between
+/// theirs.
+fn with_the_annex_placed(dir: &Path) -> App {
+    let mut app = app_in(dir, 7, Some("lawns"));
+    ok(&mut app, "step", json!({"ticks": 5}));
+    ok(&mut app, "regen", json!({"region": "ruins", "seed": 3}));
+    ok(&mut app, "spawn_level", json!({"id": "annex", "x": 60.0}));
+    ok(&mut app, "regen", json!({"region": "mixed", "seed": 4}));
+    ok(&mut app, "move", json!({"dir": "E", "meters": 4}));
+    ok(&mut app, "step", json!({"ticks": 10}));
+    app
+}
+
+#[test]
+fn a_level_placed_by_id_before_a_snapshot_stands_again_with_its_numbers_in_a_fresh_game() {
+    use shards::ai_core::snapshot::{capture, restore};
+    let dir = with_a_level("placed_by_id");
+    let mut original = with_the_annex_placed(&dir);
+    let snapshot = capture(original.world()).unwrap();
+    let annex = standing(&original).into_iter().find(|(_, label, _)| label == "annex").expect("the annex stands");
+    assert_eq!(annex.2, [60.0, 0.0, 40.0]);
+    ok(&mut original, "step", json!({"ticks": 30}));
+
+    // A fresh game in other mixed fields after the ruins: its tiles have the numbers the annex
+    // and the mixed tiles had there, and none of it is placed by hand.
+    let mut copy = app_in(&dir, 7, Some("ruins"));
+    ok(&mut copy, "regen", json!({"region": "mixed", "seed": 9}));
+    assert!(standing(&copy).iter().any(|(n, ..)| *n == annex.0), "a tile has the annex's number here");
+    let report = restore(copy.world_mut(), &snapshot, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert!(report.warnings.iter().any(|w| w.contains("placed levels: 1 level placed by id stands again")), "{:?}", report.warnings);
+    assert_eq!(standing(&copy), standing(&original));
+    ok(&mut copy, "step", json!({"ticks": 30}));
+    assert_eq!(state_hash(copy.world()), state_hash(original.world()));
+
+    // A fresh game that placed the annex twice: its second has the number of the snapshot's first
+    // mixed tile. Both go before the region comes back (else that tile's number would stand twice,
+    // and taking the annex away would take the tile with it).
+    let mut placer = app_in(&dir, 7, Some("ruins"));
+    ok(&mut placer, "spawn_level", json!({"id": "annex", "z": -30.0}));
+    ok(&mut placer, "spawn_level", json!({"id": "annex", "z": -60.0}));
+    let mixed = standing(&original).into_iter().find(|(n, ..)| *n > annex.0).expect("mixed tiles after the annex");
+    assert!(standing(&placer).iter().any(|(n, label, _)| *n == mixed.0 && label == "annex"), "{:?}", standing(&placer));
+    let report = restore(placer.world_mut(), &snapshot, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert!(report.warnings.iter().any(|w| w.contains("levels: 2 levels placed by id taken away")), "{:?}", report.warnings);
+    assert_eq!(standing(&placer), standing(&original));
+
+    // Loaded where it was taken, the snapshot finds the annex standing as it was: nothing to place.
+    let report = restore(original.world_mut(), &snapshot, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert!(!report.warnings.iter().any(|w| w.contains("placed")), "{:?}", report.warnings);
+}
+
+#[test]
+fn a_replay_from_a_snapshot_taken_after_a_level_was_placed_plays_in_a_fresh_game() {
+    let dir = with_a_level("placed_by_id_replay");
+    let mut original = with_the_annex_placed(&dir);
+    let file = format!("snapshots/shards_world_placed_{}.json", std::process::id());
+    ok(&mut original, "snapshot_save", json!({"path": file}));
+    ok(&mut original, "snapshot_load", json!({"path": file}));
+    let _ = std::fs::remove_file(&file);
+    ok(&mut original, "move", json!({"dir": "S", "meters": 3}));
+    ok(&mut original, "step", json!({"ticks": 40}));
+    let recording = shards::ai_core::replay::save(original.world());
+
+    let mut again = fresh_in(&dir, 7, Some("lawns"));
+    let report = testing::verify(&mut again, recording).expect("plays");
+    assert!(report.identical(), "{report}");
+    assert_eq!(standing(&again), standing(&original));
+}
+
+#[test]
+fn a_load_refused_after_the_levels_were_placed_puts_back_the_ones_that_stood() {
+    use shards::ai_core::snapshot::{capture, restore};
+    let dir = with_a_level("placed_by_id_back");
+    let original = with_the_annex_placed(&dir);
+    let mut broken = capture(original.world()).unwrap();
+    broken.checks.insert("static_colliders".into(), "0000000000000000".into());
+
+    // This game placed the annex twice elsewhere: the load takes both away, builds the mixed fields,
+    // places the snapshot's annex, then the colliders do not compare, and it is refused: the ruins
+    // and both annexes are back.
+    let mut copy = app_in(&dir, 7, Some("ruins"));
+    ok(&mut copy, "spawn_level", json!({"id": "annex", "z": -30.0}));
+    ok(&mut copy, "spawn_level", json!({"id": "annex", "z": -60.0}));
+    ok(&mut copy, "step", json!({"ticks": 3}));
+    let (before, hash) = (standing(&copy), state_hash(copy.world()));
+    let err = restore(copy.world_mut(), &broken, false).unwrap_err();
+    assert!(err.contains("static_colliders differs"), "{err}");
+    assert_eq!(standing(&copy), before);
+    assert_eq!(state_hash(copy.world()), hash);
+    assert_eq!(region(&copy).manifest.region, "ruins");
+    ok(&mut copy, "step", json!({"ticks": 10}));
+}
+
 #[test]
 fn a_tile_whose_file_spawns_nothing_is_dropped_with_its_region_too() {
     // Only a mesh: no gameplay node, so the instance has no entity to find it by.

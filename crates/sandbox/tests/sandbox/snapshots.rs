@@ -818,16 +818,19 @@ fn level_entities(app: &mut App, n: u32) -> usize {
 #[test]
 fn a_load_refused_after_its_region_was_built_leaves_the_world_as_it_was() {
     // Taken in wilds 42 with a ruin an agent placed; loaded where the game went on to wilds 43
-    // and placed another ruin. The region is built again first, and only then do the static
-    // colliders and the levels compare: they differ, the load is refused, and the world must
-    // be what it was before the call (region, ids, counters, hash, journal), so the session's
-    // recording still plays back.
+    // and placed another ruin. The region and the snapshot's ruin are built again first, and only
+    // then do the static colliders compare: the file says other ones (as from another build of
+    // the game), the load is refused, and the world must be what it was before the call (region,
+    // its ruin, ids, counters, hash, journal), so the session's recording still plays back.
     let file = Scratch::new("refused_late");
     let mut app = sandbox::test_app(42);
     ok(&mut app, "regen", json!({"region": "wilds", "seed": 42}));
     place_ruin(&mut app, 0.0);
     step(&mut app, 10);
     ok(&mut app, "snapshot_save", json!({"path": file.1}));
+    let mut saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file.0).unwrap()).unwrap();
+    saved["checks"]["static_colliders"] = json!("0000000000000000");
+    std::fs::write(&file.0, saved.to_string()).unwrap();
     ok(&mut app, "regen", json!({"region": "wilds", "seed": 43}));
     place_ruin(&mut app, 40.0);
     ok(&mut app, "move", json!({"dir": "N", "meters": 3}));
@@ -836,7 +839,7 @@ fn a_load_refused_after_its_region_was_built_leaves_the_world_as_it_was() {
     let before = snapshot::capture(app.world()).unwrap();
     let seen = app.world().resource::<AiJournal>().last_seq();
     let err = fails(&mut app, "snapshot_load", json!({"path": file.1}));
-    assert!(err.contains("static_colliders differs") && err.contains("levels differs"), "{err}");
+    assert!(err.contains("static_colliders differs"), "{err}");
     let after = snapshot::capture(app.world()).unwrap();
     let diff = differences(&before, &after);
     assert!(diff.is_empty(), "the refused load changed the world:\n{}", diff.join("\n"));
@@ -915,4 +918,122 @@ fn a_snapshot_from_before_any_level_loads_exactly_after_one_and_back() {
     let report = snapshot::restore(fresh.world_mut(), &back, false).unwrap();
     assert!(report.exact(), "{:?}", report.differences);
     assert_eq!(replay::state_hash(fresh.world()), back.state_hash);
+}
+
+// --- content edits made before the snapshot -------------------------------------------------
+
+/// The first light attack as the game has it now (JSON).
+fn light_1(app: &App) -> Value {
+    app.world().resource::<shards::content::ContentDb>().get_json("action", "light_1").unwrap().clone()
+}
+
+/// `content_apply` arguments that make the first light attack hit for 90 instead of its file's
+/// 20: a definition no file says.
+fn harder_light(app: &App) -> Value {
+    let before = light_1(app);
+    let mut def = before.clone();
+    def["hits"][0]["damage"] = json!(90);
+    json!({"changes": [{"kind": "action", "id": "light_1", "def": def, "before": before}]})
+}
+
+fn edits_in(snapshot: &Snapshot) -> Option<&Value> {
+    snapshot.resources.iter().find(|(path, _)| path.ends_with("::ContentEdits")).map(|(_, edits)| edits)
+}
+
+#[test]
+fn a_content_edit_made_before_the_snapshot_comes_back_with_it_and_goes_again() {
+    let plain = snapshot::capture(face_to_face().world()).unwrap();
+    assert_eq!(edits_in(&plain), None, "a game without edits saves none: its snapshots are what they were");
+
+    let mut a = face_to_face();
+    let edit = harder_light(&a);
+    ok(&mut a, "content_apply", edit);
+    step(&mut a, 3);
+    let edited = snapshot::capture(a.world()).unwrap();
+    let saved = edits_in(&edited).expect("the edit is in the snapshot");
+    assert_eq!(saved["edits"][0]["kind"], "action");
+    assert_eq!(saved["edits"][0]["id"], "light_1");
+
+    // A fresh game reads the files; the load puts the edit over them, and says so.
+    let mut b = sandbox::test_app(42);
+    assert_eq!(light_1(&b)["hits"][0]["damage"].as_f64(), Some(20.0));
+    let report = snapshot::restore(b.world_mut(), &edited, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert_eq!(light_1(&b)["hits"][0]["damage"].as_f64(), Some(90.0));
+    assert!(
+        report.warnings.iter().any(|w| w == "content: 1 definition as the snapshot's session had it, over the content files"),
+        "{:?}",
+        report.warnings
+    );
+    assert!(!report.warnings.iter().any(|w| w.contains("ContentEdits")), "the saved edits load: {:?}", report.warnings);
+
+    // A load refused after the prepares put the world back, its content too.
+    let mut broken = plain.clone();
+    broken.checks.insert("static_colliders".into(), "0000000000000000".into());
+    let err = snapshot::restore(b.world_mut(), &broken, false).unwrap_err();
+    assert!(err.contains("static_colliders differs"), "{err}");
+    assert_eq!(light_1(&b)["hits"][0]["damage"].as_f64(), Some(90.0), "the edit is still there");
+    assert_eq!(edits_in(&snapshot::capture(b.world()).unwrap()), Some(saved));
+
+    // A snapshot without edits takes them away: the files' version again.
+    let report = snapshot::restore(b.world_mut(), &plain, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert_eq!(light_1(&b)["hits"][0]["damage"].as_f64(), Some(20.0));
+    assert!(report.warnings.iter().any(|w| w == "content: the definitions are the content files' again"), "{:?}", report.warnings);
+    assert_eq!(edits_in(&snapshot::capture(b.world()).unwrap()), None);
+}
+
+#[test]
+fn a_fight_after_a_content_edit_goes_on_the_same_from_a_snapshot() {
+    let mut a = face_to_face();
+    let edit = harder_light(&a);
+    ok(&mut a, "content_apply", edit);
+    step(&mut a, 3);
+    assert_continues_alike("after a content edit", a, |app| {
+        ok(app, "attack", json!({"target": BOSS, "repeat": true}));
+        step(app, 120);
+    });
+}
+
+#[test]
+fn a_replay_from_a_snapshot_taken_after_a_content_edit_plays_in_a_fresh_game() {
+    let file = Scratch::new("edited");
+    let mut origin = face_to_face();
+    let edit = harder_light(&origin);
+    ok(&mut origin, "content_apply", edit);
+    ok(&mut origin, "attack", json!({"target": BOSS, "repeat": true}));
+    step(&mut origin, 30);
+    ok(&mut origin, "snapshot_save", json!({"path": file.1}));
+
+    // Another game goes on from the snapshot and records from it.
+    let mut app = sandbox::test_app(42);
+    ok(&mut app, "snapshot_load", json!({"path": file.1}));
+    assert_eq!(light_1(&app)["hits"][0]["damage"].as_f64(), Some(90.0));
+    step(&mut app, 90);
+    let recording = replay::save(app.world());
+    assert!(recording.start.as_ref().and_then(edits_in).is_some(), "the replay's start carries the edit");
+
+    // A fresh game plays it: the start puts the edit over its files first.
+    let report = shards::testing::verify(&mut sandbox::test_app(42), recording).expect("plays");
+    assert!(report.identical(), "{report}");
+}
+
+#[test]
+fn an_edit_that_rebuilt_the_arenas_walls_before_the_snapshot_is_refused_by_the_geometry_check() {
+    // The sandbox builds its walls from `layout` content (no `AiId`, static colliders): the edit
+    // comes back with the snapshot, the walls it rebuilt do not, and the check says so.
+    let mut a = sandbox::test_app(42);
+    let before = a.world().resource::<shards::content::ContentDb>().get_json("layout", "arena").unwrap().clone();
+    let mut def = before.clone();
+    def["solids"][1]["max"][1] = json!(5.0);
+    ok(&mut a, "content_apply", json!({"changes": [{"kind": "layout", "id": "arena", "def": def, "before": before}]}));
+    step(&mut a, 2);
+    let edited = snapshot::capture(a.world()).unwrap();
+    assert!(edits_in(&edited).is_some());
+
+    let mut b = sandbox::test_app(42);
+    let err = snapshot::restore(b.world_mut(), &edited, false).unwrap_err();
+    assert!(err.contains("static_colliders differs"), "{err}");
+    let arena = b.world().resource::<shards::content::ContentDb>().get_json("layout", "arena").unwrap().clone();
+    assert_eq!(arena["solids"][1]["max"][1].as_f64(), Some(3.0), "the content is the files' again");
 }

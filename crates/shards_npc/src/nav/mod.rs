@@ -74,7 +74,7 @@
 pub mod avoid;
 pub mod bake;
 #[cfg(feature = "render")]
-pub(crate) mod overlay;
+pub mod overlay;
 pub mod query;
 pub mod region;
 pub mod settings;

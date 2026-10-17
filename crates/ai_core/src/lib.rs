@@ -131,7 +131,9 @@ pub struct AiCorePlugin {
     /// After a gameplay failure, save the session as `replays/crash-tick<N>.json` to
     /// reproduce it with, and a crash report next to it in `crashes/` ([`crash`]); after a
     /// violated invariant, as `replays/invariant-<name>-tick<N>.json`. A panic nobody handled
-    /// (another thread) gets a crash report too.
+    /// (another thread) gets a crash report too. `false` switches off what the game writes by
+    /// itself; the `crash_report` tool, a bug report an agent asks for, writes its file whatever
+    /// this says (with its `path` in `crashes/`, over the same file each time).
     pub crash_replays: bool,
     /// Ticks between replay checks ([`replay::CHECK_EVERY`] by default), stored in every
     /// replay saved. Record with 1 to have a divergence named at its exact tick.
@@ -338,6 +340,13 @@ pub trait AiAppExt {
     /// without placed levels hashes as one without the module).
     fn add_optional_replay_check(&mut self, name: &str, check: fn(&World) -> Option<u64>) -> &mut Self;
 
+    /// Runs `hook` when a playback is armed ([`replay::play`]), before its first frame or tick:
+    /// a module asks for what the recording will need and the game has not loaded (the files its
+    /// content edits name, [`AiReplay::playing`]) and holds [`SimGate`] under the name of its
+    /// loading requirement while they load. The start snapshot goes in, and the first tick runs,
+    /// once the gate lets go, also in a game that had loaded before the playback was armed.
+    fn add_playback_hook(&mut self, hook: fn(&mut World)) -> &mut Self;
+
     /// Adds field `key` to `ai/status` (`shards status`), computed on every call, e.g.
     /// the engine's version and modules. A second field with the same key replaces
     /// the first.
@@ -376,6 +385,18 @@ pub trait AiAppExt {
     /// build what that world had, or take away what it did not have). A second one with the
     /// same name replaces the first.
     fn add_snapshot_prepare(&mut self, name: &'static str, covers: &'static [&'static str], prepare: snapshot::PrepareFn) -> &mut Self;
+
+    /// [`add_snapshot_prepare`](Self::add_snapshot_prepare) that runs right after prepare `after`,
+    /// wherever the two were registered: what a module builds into the world another module's
+    /// prepare builds first (the levels placed by hand stand in the region the snapshot puts
+    /// back). Without a prepare `after`, it runs where it was registered.
+    fn add_snapshot_prepare_after(
+        &mut self,
+        name: &'static str,
+        after: &'static str,
+        covers: &'static [&'static str],
+        prepare: snapshot::PrepareFn,
+    ) -> &mut Self;
 
     /// How references to entities without an `AiId` are written in snapshots (see
     /// [`EntityKey`]).
@@ -486,6 +507,11 @@ impl AiAppExt for App {
         self
     }
 
+    fn add_playback_hook(&mut self, hook: fn(&mut World)) -> &mut Self {
+        self.world_mut().get_resource_or_init::<replay::PlaybackHooks>().0.push(hook);
+        self
+    }
+
     fn add_ai_status(&mut self, key: &str, field: status::StatusField) -> &mut Self {
         self.world_mut().get_resource_or_init::<AiStatusFields>().add(key, field);
         self
@@ -516,7 +542,18 @@ impl AiAppExt for App {
     }
 
     fn add_snapshot_prepare(&mut self, name: &'static str, covers: &'static [&'static str], prepare: snapshot::PrepareFn) -> &mut Self {
-        self.world_mut().get_resource_or_init::<SnapshotRegistry>().add_prepare(name, covers, prepare);
+        self.world_mut().get_resource_or_init::<SnapshotRegistry>().add_prepare(name, None, covers, prepare);
+        self
+    }
+
+    fn add_snapshot_prepare_after(
+        &mut self,
+        name: &'static str,
+        after: &'static str,
+        covers: &'static [&'static str],
+        prepare: snapshot::PrepareFn,
+    ) -> &mut Self {
+        self.world_mut().get_resource_or_init::<SnapshotRegistry>().add_prepare(name, Some(after), covers, prepare);
         self
     }
 

@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use ai_core::journal::{self, JournalKind};
-use ai_core::{call_tool, sim};
+use ai_core::{call_tool, sim, AiReplay};
 use bevy::asset::{AssetEvent, LoadState};
 use bevy::prelude::*;
 use serde_json::json;
@@ -38,6 +38,12 @@ pub struct LevelLibrary {
     changed: BTreeSet<String>,
     /// Why they wait ([`shards_content::content_held`]), as the journal said it.
     held: Option<String>,
+    /// The files of the levels a replay being played adds with its `content_apply` calls
+    /// ([`shards_content::defs_ahead`]): asked for and waited on while the game loads, so a
+    /// `spawn_level` right after the change (one tick apart or less, no frame between) finds
+    /// its file loaded. Whether this playback was read for them.
+    ahead: BTreeSet<String>,
+    ahead_read: bool,
 }
 
 impl LevelLibrary {
@@ -129,7 +135,15 @@ pub fn held_change(world: &World, path: &str) -> Option<String> {
 pub(crate) fn level_status(world: &World) -> LoadStatus {
     let library = world.resource::<LevelLibrary>();
     if library.ready {
-        return LoadStatus::Ready;
+        // A file a replay adds holds the game while it loads; one that cannot load does not:
+        // the replayed call that spawns it says why.
+        let server = world.resource::<AssetServer>();
+        let left = library.ahead.iter().filter(|path| library.handles.get(*path).is_some_and(|h| !is_done(server, h))).count();
+        return match left {
+            0 => LoadStatus::Ready,
+            1 => LoadStatus::Pending("1 file a replay adds".into()),
+            n => LoadStatus::Pending(format!("{n} files a replay adds")),
+        };
     }
     if !library.started {
         return LoadStatus::Pending("waiting for content".into());
@@ -146,6 +160,31 @@ fn is_done(server: &AssetServer, handle: &Handle<LevelAsset>) -> bool {
     matches!(server.load_state(handle), LoadState::Loaded | LoadState::Failed(_))
 }
 
+/// The loading requirement of the levels the content lists ([`level_status`]).
+pub(crate) const LEVELS_GATE: &str = "levels";
+
+/// Playback hook ([`AiAppExt::add_playback_hook`](ai_core::AiAppExt::add_playback_hook)): the
+/// files of the levels the recording adds are asked for as it is armed, and the gate holds while
+/// they load ([`request_levels`] would see the playback only in the next frame, and a playback
+/// armed in a game that has loaded already may run its first tick before one).
+pub(crate) fn ask_for_levels_ahead(world: &mut World) {
+    let Some(playing) = world.resource::<AiReplay>().playing() else { return };
+    let ahead: BTreeSet<String> = shards_content::defs_ahead::<LevelDef>(playing)
+        .into_iter()
+        .map(|def| def.file)
+        .filter(|file| check_relative(file).is_ok())
+        .collect();
+    let server = world.resource::<AssetServer>().clone();
+    let mut library = world.resource_mut::<LevelLibrary>();
+    let left = ahead.iter().filter(|file| !is_done(&server, &library.request(&server, file))).count();
+    library.ahead = ahead;
+    library.ahead_read = true;
+    if left > 0 {
+        let why = if left == 1 { "1 file a replay adds".to_owned() } else { format!("{left} files a replay adds") };
+        world.resource_mut::<ai_core::SimGate>().hold(LEVELS_GATE, why);
+    }
+}
+
 /// `Update`: once the content database is built, starts loading every level it lists
 /// (also ones a hot edit adds later), journals the files that fail, and opens the gate
 /// when all are in.
@@ -154,9 +193,19 @@ pub(crate) fn request_levels(world: &mut World) {
         return;
     }
     let files: Vec<String> = world.resource::<ContentDb>().iter::<LevelDef>().map(|(_, def)| def.file.clone()).collect();
+    let playing = world.get_resource::<AiReplay>().and_then(AiReplay::playing);
+    let ahead = (playing.is_some() != world.resource::<LevelLibrary>().ahead_read).then(|| {
+        let defs = playing.map(shards_content::defs_ahead::<LevelDef>).unwrap_or_default();
+        (defs.into_iter().map(|def| def.file).collect::<BTreeSet<String>>(), playing.is_some())
+    });
     let server = world.resource::<AssetServer>().clone();
     let mut library = world.resource_mut::<LevelLibrary>();
-    for file in files.iter().filter(|f| check_relative(f).is_ok()) {
+    if let Some((ahead, read)) = ahead {
+        library.ahead = ahead.into_iter().filter(|f| check_relative(f).is_ok()).collect();
+        library.ahead_read = read;
+    }
+    let ahead: Vec<String> = library.ahead.iter().cloned().collect();
+    for file in files.iter().chain(&ahead).filter(|f| check_relative(f).is_ok()) {
         library.request(&server, file);
     }
     library.started = true;

@@ -447,8 +447,8 @@ impl Plugin for PhysicsPlugin {
             .net_ignore_resource::<ColliderIds>()
             .add_snapshot_check(
                 "static_colliders",
-                "the colliders of entities without an AiId (level geometry) differ: spawn the same levels first, \
-                 or give what moves an AiId so the snapshot holds it",
+                "the colliders of entities without an AiId (level geometry) differ: a level the game spawned itself \
+                 (not by id) must stand here too, or give what moves an AiId so the snapshot holds it",
                 static_colliders_hash,
             )
             .add_snapshot_rebuild("physics", rebuild_physics)

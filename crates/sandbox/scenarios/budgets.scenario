@@ -1,0 +1,50 @@
+# Budgets (E10.4): how fast the game must run is content (`content/perf/*.perf.ron`, kind `perf`):
+# the autotest `--perf ID` goes to a scene (a region and its seed), plays the setup lines, warms up,
+# measures, and holds the run to the budgets the definition names (tick, frame, GPU, region load,
+# entities, meshes, triangles, draw commands). Times differ from run to run, so nothing here reads
+# one: the budgets are checked as they are named, and a definition that could not run is refused
+# with why. Not here: `step`'s `ticks: avg ... max ... budget ...` line and the `perf` field of
+# `status`. A live game prints the line, the in-process test game has `report_perf: false` and
+# does not (so no expectation holds in both), and `status` is no tool; crates/sandbox/tests/perf.rs
+# covers them. Nothing is applied: the content is the same at the end.
+
+# --- the sandbox's autotests, from their files
+act content_list kind=perf
+expect result contains "perf: 2 definitions"
+expect result contains "reference  "
+expect result contains "reference.perf.ron"
+expect result contains "reference96  "
+
+# --- a scene (a region and its seed, the lines that set it up) and the budgets it is held to, by name
+act content_get kind=perf id=reference
+expect result contains "reference.perf.ron"
+expect result contains "wilds"
+expect result contains "spawn_prefab id=camp_skeleton"
+expect result contains "tick_avg_ms"
+expect result contains "frame_ms"
+expect result contains "region_load_s"
+expect result contains "visible_meshes"
+expect result contains "draws"
+
+# --- the typo of an id is met with the closest
+act? content_get kind=perf id=refrence
+expect result contains "no perf `refrence` (did you mean `reference`?)"
+
+# --- a definition that could not run is refused, and each error says what to change
+act? content_apply changes='[{"kind": "perf", "id": "quick", "def": {"region": {"region": "wild", "seed": 1}, "setup": ["teleport x"], "ticks": 0, "budgets": {"tick_ms": -1, "over_share": 2}}}]'
+expect result contains "refused, it would break content: perf `quick`: "
+expect result contains "region: no `region` or `dungeon` is named `wild` (did you mean `wilds`?)"
+expect result contains "setup[0]: expected key=value, got `x`"
+expect result contains "ticks: measure at least one tick (600 is ten seconds at 60 Hz)"
+expect result contains "budgets.tick_ms: a budget is a number above 0"
+expect result contains "budgets.over_share: a share from 0 (none may go over) to 1 (all may)"
+act? content_apply changes='[{"kind": "perf", "id": "quick", "def": {"warmup": 999999, "budgets": {"region_load_s": 5}}}]'
+expect result contains "warmup: at most 216000 ticks (an hour at 60 Hz), not 999999"
+expect result contains "budgets.region_load_s: no region is loaded; name one in `region`, or drop the budget"
+act? content_apply changes='[{"kind": "perf", "id": "quick", "def": {"budgets": {"tick_avg": 4}}}]'
+expect result contains "tick_avg"
+
+# --- none of them was applied
+act content_list kind=perf
+expect result contains "perf: 2 definitions"
+expect result !contains "quick"
