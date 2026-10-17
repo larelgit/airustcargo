@@ -20,7 +20,7 @@ Remote Protocol на 127.0.0.1), без MCP-прослоек. Тем же CLI п
 агентов — в [AGENTS.md](../AGENTS.md), своя игра по шагам — ниже и в [template/README.md](../template/README.md),
 версии и подключение по тегу — в [CHANGELOG.md](../CHANGELOG.md).
 
-![sandbox: страж замахивается, на земле красная зона удара с символом](sandbox.png)
+![sandbox: страж замахивается, на земле красная зона удара](media/telegraph.png)
 
 ## Содержание
 

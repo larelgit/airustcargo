@@ -1,10 +1,31 @@
-# Shards
+<p align="center">
+  <img src="docs/media/banner.svg" width="100%" alt="Shards: a deterministic game engine in Rust that coding agents can play, test and debug from the terminal">
+</p>
 
-**A deterministic game engine in Rust that coding agents can play, test and debug from the terminal.**
+<p align="center">
+  <img src="https://img.shields.io/badge/Rust-1.99-b7410e?logo=rust&logoColor=white" alt="Rust 1.99">
+  <img src="https://img.shields.io/badge/Bevy-0.20-232326" alt="Bevy 0.20">
+  <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-2f6fb0" alt="Windows and Linux">
+  <img src="https://img.shields.io/badge/LLM%20inside-none-2e8b57" alt="No LLM inside">
+  <img src="https://img.shields.io/badge/phases%20A%E2%80%93E-built-6f42c1" alt="Phases A to E built">
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#what-an-agent-sees">What an agent sees</a> ·
+  <a href="#make-a-game-on-shards-step-by-step">Make a game</a> ·
+  <a href="docs/manual.md">Manual</a> ·
+  <a href="template/README.md">Template</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
 
 Shards is built on Bevy 0.20. A game depends on one crate, `shards`, and gets a fixed-tick simulation, physics, a character controller, data-driven combat, generated regions, NPC enemies, co-op, saves, UI, audio and the tools to package it for players. All of it is open to agents (Claude Code, Codex and the like) through the `shards` CLI: the world as text, typed actions, time on demand, replays and snapshots.
 
-![The sandbox: a guard winds up an attack and the red strike zone shows on the ground](docs/sandbox.png)
+<p align="center">
+  <img src="docs/media/fight.gif" width="640" alt="The sandbox's boss, the Frost Warden, swings at the player; a red zone on the ground shows where the strike lands, and the player hits back">
+  <br>
+  <sub>The sandbox's boss fight, driven from the terminal with <code>step</code>, <code>dodge</code> and <code>light_attack</code>. Frames from <code>shards shot</code> on a game run with <code>--offscreen</code>.</sub>
+</p>
 
 ## Why Shards
 
@@ -14,6 +35,55 @@ Shards is built on Bevy 0.20. A game depends on one crate, `shards`, and gets a 
 - **Content, not code.** Numbers, attacks, enemies, screens, texts, sounds, looks and effects are files that reload while the game runs.
 - **Bugs stop where they happen.** A broken invariant, a panicking system or a co-op desync stops the game on that tick, with a replay saved.
 - **One dependency.** A game never changes engine code. The template game shows the whole path, from a copy to a build for players.
+
+## What an agent sees
+
+A fight like the one in the GIF, from the terminal. The game runs paused, so nothing happens between commands. The agent runs time until the boss winds up, reads where the strike will land, and rolls away. This is real output from the sandbox (`cargo shards` in this repository), shortened where it says `…`:
+
+```console
+$ shards step 300 --until "journal:winds up"
+ran 208 ticks (0 → 208), stopped: journal: 208 e6 winds up shockwave (0.50s) ≈ line 9m×1.6m
+ticks: avg 0.32 ms, max 1.83 ms (tick 1), budget 16.7 ms
+CHANGES
+  ~ e6 Boss "Frost Warden": +windup shockwave 0.50s (zone line 9m×1.6m); +fight e5 · token · leash 11/26m; moved 10.6m S
+  …
+JOURNAL
+  2 e6 guard → fight e5
+  2 e6 takes an attack token on e5 (1/1)
+  208 e6 winds up shockwave (0.50s) ≈ line 9m×1.6m
+
+$ shards observe
+tick 208 (3.47s) | paused | speed 1x | seed 42 | you e5
+YOU  e5 Player  hp 100/100  stam 100/100  poise 60/60  flask 3/3  player  at (0.0, 12.0) facing N
+ALERT in hit zone of e6 shockwave (lands in 0.50s): move 1.3m E to leave it
+SEEN (by threat)
+  e6 Boss "Frost Warden"  hp 600/600  poise 140/140  windup shockwave 0.50s (zone line 9m×1.6m)  fight e5 · token · leash 11/26m  warden  phase 1  7.4m N  scr(640,252)
+  e7 Skeleton  hp 40/40  poise 20/20  idle · leash 0/30m  skeleton  15.6m NW  occluded  scr(277,228)
+  …
+
+$ shards act dodge away_from=e6
+ok: roll (S)
+
+$ shards step 60
+ran 60 ticks (208 → 268)
+ticks: avg 0.36 ms, max 1.41 ms (tick 240), budget 16.7 ms
+CHANGES
+  ~ e5 Player: moved 4.0m S
+  ~ e6 Boss "Frost Warden": windup shockwave 0.50s (zone line 9m×1.6m) → recovery shockwave 0.75s
+```
+
+The roll is an ordinary player input: the agent's tools go through the same `Intent` as the keyboard, and the session's replay records them.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/media/region.png" alt="A generated region: grass, bushes and rocks over the tiles, and two skeletons coming from their camp"></td>
+    <td width="50%"><img src="docs/media/telegraph.png" alt="The Frost Warden raises its sword; a red decal on the ground marks the line its shockwave will hit, and the player rolls out of it"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>A generated region (<code>regen region=wilds seed=42</code>): foliage scattered over the tiles, and skeletons from a camp.</sub></td>
+    <td align="center"><sub>A telegraph: the decal shows where the shockwave lands, half a second before it does.</sub></td>
+  </tr>
+</table>
 
 ## Features
 
