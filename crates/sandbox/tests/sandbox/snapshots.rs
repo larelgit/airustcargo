@@ -818,16 +818,19 @@ fn level_entities(app: &mut App, n: u32) -> usize {
 #[test]
 fn a_load_refused_after_its_region_was_built_leaves_the_world_as_it_was() {
     // Taken in wilds 42 with a ruin an agent placed; loaded where the game went on to wilds 43
-    // and placed another ruin. The region is built again first, and only then do the static
-    // colliders and the levels compare: they differ, the load is refused, and the world must
-    // be what it was before the call (region, ids, counters, hash, journal), so the session's
-    // recording still plays back.
+    // and placed another ruin. The region and the snapshot's ruin are built again first, and only
+    // then do the static colliders compare: the file says other ones (as from another build of
+    // the game), the load is refused, and the world must be what it was before the call (region,
+    // its ruin, ids, counters, hash, journal), so the session's recording still plays back.
     let file = Scratch::new("refused_late");
     let mut app = sandbox::test_app(42);
     ok(&mut app, "regen", json!({"region": "wilds", "seed": 42}));
     place_ruin(&mut app, 0.0);
     step(&mut app, 10);
     ok(&mut app, "snapshot_save", json!({"path": file.1}));
+    let mut saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file.0).unwrap()).unwrap();
+    saved["checks"]["static_colliders"] = json!("0000000000000000");
+    std::fs::write(&file.0, saved.to_string()).unwrap();
     ok(&mut app, "regen", json!({"region": "wilds", "seed": 43}));
     place_ruin(&mut app, 40.0);
     ok(&mut app, "move", json!({"dir": "N", "meters": 3}));
@@ -836,7 +839,7 @@ fn a_load_refused_after_its_region_was_built_leaves_the_world_as_it_was() {
     let before = snapshot::capture(app.world()).unwrap();
     let seen = app.world().resource::<AiJournal>().last_seq();
     let err = fails(&mut app, "snapshot_load", json!({"path": file.1}));
-    assert!(err.contains("static_colliders differs") && err.contains("levels differs"), "{err}");
+    assert!(err.contains("static_colliders differs"), "{err}");
     let after = snapshot::capture(app.world()).unwrap();
     let diff = differences(&before, &after);
     assert!(diff.is_empty(), "the refused load changed the world:\n{}", diff.join("\n"));

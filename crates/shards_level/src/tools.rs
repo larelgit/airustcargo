@@ -64,11 +64,15 @@ pub(crate) fn def_of(world: &World, id: &str) -> Result<LevelDef, String> {
 
 /// Spawns the level `id` of the content database: its file loaded, its gameplay nodes
 /// made entities. `at` of the definition unless a position is given. The same file can be
-/// spawned again (each spawn is an instance).
+/// spawned again (each spawn is an instance). It is placed by id ([`PlacedLevels`](crate::PlacedLevels)):
+/// a snapshot taken while it stands places it again where the snapshot is loaded.
 pub fn spawn_level_by_id(world: &mut World, id: &str, at: Option<Transform>) -> Result<SpawnedLevel, String> {
     let def = def_of(world, id)?;
     let at = at.unwrap_or_else(|| Transform::from_translation(def.at));
-    spawn_level_file(world, &def.file, at, id)
+    let first_collider = crate::placed::next_collider(world);
+    let spawned = spawn_level_file(world, &def.file, at, id)?;
+    crate::placed::record(world, spawned.instance, id, at, first_collider);
+    Ok(spawned)
 }
 
 /// Spawns the already loaded level file `path` (see [`request_level`]) under `label`.

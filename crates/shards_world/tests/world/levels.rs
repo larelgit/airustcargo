@@ -661,6 +661,99 @@ fn a_level_a_content_edit_adds_is_loaded_before_a_replay_spawns_it_in_the_same_t
     assert!(again.world().resource::<LevelInstances>().iter().any(|i| i.label == "annex"));
 }
 
+/// A site with level `annex` in its content (the yard's file, placed by hand).
+fn with_a_level(name: &str) -> PathBuf {
+    let annex = yard().gltf();
+    let def = r#"{ "annex": (file: "levels/annex.gltf", at: (40.0, 0.0, 40.0)) }"#;
+    site(name, &[("levels/annex.gltf", annex.as_bytes()), ("content/ruins/annex.level.ron", def.as_bytes())])
+}
+
+/// Every level standing: number, label and where.
+fn standing(app: &App) -> Vec<(u32, String, [f32; 3])> {
+    app.world().resource::<LevelInstances>().iter().map(|i| (i.id, i.label.clone(), i.at.translation.to_array())).collect()
+}
+
+/// A session that places the annex between two regions of level tiles: its number lies between
+/// theirs.
+fn with_the_annex_placed(dir: &Path) -> App {
+    let mut app = app_in(dir, 7, Some("lawns"));
+    ok(&mut app, "step", json!({"ticks": 5}));
+    ok(&mut app, "regen", json!({"region": "ruins", "seed": 3}));
+    ok(&mut app, "spawn_level", json!({"id": "annex", "x": 60.0}));
+    ok(&mut app, "regen", json!({"region": "mixed", "seed": 4}));
+    ok(&mut app, "move", json!({"dir": "E", "meters": 4}));
+    ok(&mut app, "step", json!({"ticks": 10}));
+    app
+}
+
+#[test]
+fn a_level_placed_by_id_before_a_snapshot_stands_again_with_its_numbers_in_a_fresh_game() {
+    use shards::ai_core::snapshot::{capture, restore};
+    let dir = with_a_level("placed");
+    let mut original = with_the_annex_placed(&dir);
+    let snapshot = capture(original.world()).unwrap();
+    let annex = standing(&original).into_iter().find(|(_, label, _)| label == "annex").expect("the annex stands");
+    assert_eq!(annex.2, [60.0, 0.0, 40.0]);
+    ok(&mut original, "step", json!({"ticks": 30}));
+
+    // A fresh game in other mixed fields after the ruins: its tiles have the numbers the annex
+    // and the mixed tiles had there, and none of it is placed by hand.
+    let mut copy = app_in(&dir, 7, Some("ruins"));
+    ok(&mut copy, "regen", json!({"region": "mixed", "seed": 9}));
+    assert!(standing(&copy).iter().any(|(n, ..)| *n == annex.0), "a tile has the annex's number here");
+    let report = restore(copy.world_mut(), &snapshot, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert!(report.warnings.iter().any(|w| w.contains("placed levels: 1 level placed by id stands again")), "{:?}", report.warnings);
+    assert_eq!(standing(&copy), standing(&original));
+    ok(&mut copy, "step", json!({"ticks": 30}));
+    assert_eq!(state_hash(copy.world()), state_hash(original.world()));
+
+    // Loaded where it was taken, the snapshot finds the annex standing as it was: nothing to place.
+    let report = restore(original.world_mut(), &snapshot, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert!(!report.warnings.iter().any(|w| w.contains("placed")), "{:?}", report.warnings);
+}
+
+#[test]
+fn a_replay_from_a_snapshot_taken_after_a_level_was_placed_plays_in_a_fresh_game() {
+    let dir = with_a_level("placed_replay");
+    let mut original = with_the_annex_placed(&dir);
+    let file = format!("snapshots/shards_world_placed_{}.json", std::process::id());
+    ok(&mut original, "snapshot_save", json!({"path": file}));
+    ok(&mut original, "snapshot_load", json!({"path": file}));
+    let _ = std::fs::remove_file(&file);
+    ok(&mut original, "move", json!({"dir": "S", "meters": 3}));
+    ok(&mut original, "step", json!({"ticks": 40}));
+    let recording = shards::ai_core::replay::save(original.world());
+
+    let mut again = fresh_in(&dir, 7, Some("lawns"));
+    let report = testing::verify(&mut again, recording).expect("plays");
+    assert!(report.identical(), "{report}");
+    assert_eq!(standing(&again), standing(&original));
+}
+
+#[test]
+fn a_load_refused_after_the_levels_were_placed_puts_back_the_ones_that_stood() {
+    use shards::ai_core::snapshot::{capture, restore};
+    let dir = with_a_level("placed_back");
+    let original = with_the_annex_placed(&dir);
+    let mut broken = capture(original.world()).unwrap();
+    broken.checks.insert("static_colliders".into(), "0000000000000000".into());
+
+    // This game placed the annex elsewhere, early: the load takes it away and places the
+    // snapshot's, then the colliders do not compare, and it is refused.
+    let mut copy = app_in(&dir, 7, Some("ruins"));
+    ok(&mut copy, "spawn_level", json!({"id": "annex", "z": -30.0}));
+    ok(&mut copy, "step", json!({"ticks": 3}));
+    let (before, hash) = (standing(&copy), state_hash(copy.world()));
+    let err = restore(copy.world_mut(), &broken, false).unwrap_err();
+    assert!(err.contains("static_colliders differs"), "{err}");
+    assert_eq!(standing(&copy), before);
+    assert_eq!(state_hash(copy.world()), hash);
+    assert_eq!(region(&copy).manifest.region, "ruins");
+    ok(&mut copy, "step", json!({"ticks": 10}));
+}
+
 #[test]
 fn a_tile_whose_file_spawns_nothing_is_dropped_with_its_region_too() {
     // Only a mesh: no gameplay node, so the instance has no entity to find it by.
