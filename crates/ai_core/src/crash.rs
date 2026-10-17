@@ -832,10 +832,18 @@ pub fn path_in(base: &Path, requested: &str) -> Result<PathBuf, String> {
 /// Writes `report` to `path` (see [`path_in`]), replacing a file that is there: written beside it
 /// and renamed, so a report that cannot be written leaves the old file as it was.
 pub fn write_at(path: &Path, report: &CrashReport) -> Result<(), String> {
+    use std::io::Write;
     let text = serde_json::to_string_pretty(report).map_err(|e| e.to_string())?;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let part = path.with_file_name(format!("{name}.part"));
-    std::fs::write(&part, text)
+    // This process's own temporary file, made new: a file or a symlink left under that name is
+    // removed (the link, not what it points to), never written through.
+    let part = path.with_file_name(format!("{name}.{}.part", std::process::id()));
+    let _ = std::fs::remove_file(&part);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&part)
+        .and_then(|mut file| file.write_all(text.as_bytes()).and_then(|()| file.flush()))
         .and_then(|()| std::fs::rename(&part, path))
         .map_err(|e| {
             let _ = std::fs::remove_file(&part);
@@ -953,6 +961,20 @@ mod tests {
         write_at(&path, &second).unwrap();
         assert_eq!(read(&path), second);
         assert_eq!(folder(), ["bug.json"]);
+
+        // A symlink waiting under the temporary file's name is removed, not written through.
+        #[cfg(unix)]
+        {
+            let outside = base.join("outside.txt");
+            std::fs::write(&outside, "keep").unwrap();
+            let part = path.with_file_name(format!("bug.json.{}.part", std::process::id()));
+            std::os::unix::fs::symlink(&outside, &part).unwrap();
+            write_at(&path, &first).unwrap();
+            assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep");
+            assert_eq!(read(&path), first);
+            assert!(std::fs::symlink_metadata(&part).is_err(), "the temporary file is gone");
+            assert_eq!(folder(), ["bug.json"]);
+        }
 
         // A folder below crashes/ is made.
         let deeper = path_in(&base, "crashes/mine/bug.json").unwrap();
