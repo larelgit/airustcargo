@@ -275,3 +275,16 @@ fn heavy_mode_off_is_invisible() {
     assert!(!app.world().contains_resource::<AiHeavy>());
     assert!(!app.world().contains_resource::<shards::ai_core::HeavyTwin>());
 }
+
+#[test]
+fn an_engine_rule_that_fired_is_fired_in_the_twin_too() {
+    // The twin takes over which rules have fired. If it did not, it would meet the same broken
+    // state, fire the engine rule on its own and halt, and the check would fail on a rule, not on state.
+    let mut app = heavy_sandbox(Bug::Counter, true);
+    ok(&mut app, "set", json!({"id": "e5", "component": "Stamina", "path": "current", "value": -5}));
+    let out = act(&mut app, "step", json!({"ticks": 20}));
+    assert!(text(&out).contains("stopped: invariant action.resources_in_range violated at tick 1"), "{}", out.result);
+    let out = act(&mut app, "step", json!({"ticks": 200}));
+    assert!(out.ok && out.halted.is_none(), "{}", out.result);
+    assert!(text(&ok(&mut app, "assert_list", json!({}))).contains("action.resources_in_range  engine rule  fired at tick 1"));
+}

@@ -60,6 +60,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("ai_core::describe::AiObserveSections", "the registry of observe sections, filled at build time"),
     ("ai_core::dev::DevKeyboard", "whether the window's developer keys are on"),
     ("ai_core::dev::DevMenu", "the developer menu's entries, registered at build time"),
+    ("ai_core::invariants::RuleQueries", "a cache of the invariant rules' query states, rebuilt on demand"),
     ("ai_core::failures::AiFailures", "failed systems and whether a tick failed: the AI layer's bookkeeping"),
     ("ai_core::failures::HandlerSlot", "the slot of this app's error handler in the process"),
     ("ai_core::highlight::AiOverlay", "highlight drawing settings for screenshots: the picture"),
@@ -149,6 +150,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     // shards_npc
     ("shards_npc::brain::NpcActivity", "a hook the game sets at build time"),
     ("shards_npc::brain::NpcHooks", "the NPC conditions and states, registered at build time"),
+    ("shards_npc::invariants::TokenAudit", "what the token rule found right after the director this tick: recomputed every tick, read only by the invariant"),
     ("shards_npc::nav::NavPaths", "the path finder, set at build time"),
     ("shards_npc::nav::overlay::", "the navigation overlay: the picture"),
     ("shards_npc::nav::region::NavBakes", "baked navigation tiles by hash: a function of files and content"),

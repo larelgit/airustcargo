@@ -2581,6 +2581,7 @@ must not pause on an engine rule; a game's own rules stay). `--no-engine-invaria
 rules cost. Test apps (`shards::testing::config()`), `--verify`, `shards fuzz` and `shards soak` run with the rules on. With
 the switch off, no engine rule is registered and the token audit does not run. A test that writes garbage on purpose to show
 that the controller survives it sets `engine_invariants: false`.
+In heavy mode the twin has its own engine rules and takes over which of them have fired, so a rule that fired in the original does not halt the twin again. The rules' cached query states (`RuleQueries`) are not simulation state and are not compared.
 
 An agent adds its own rules for the length of the session (scope Dev), as a condition in the `--until` syntax. Real output:
 

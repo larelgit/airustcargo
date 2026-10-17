@@ -422,7 +422,7 @@ pub(crate) fn rules_state(world: &World) -> RulesState {
         .iter()
         .filter_map(|entry| match &entry.rule {
             Rule::Session { when, .. } => Some((entry.name.clone(), when.clone())),
-            Rule::Game(_) => None,
+            Rule::Engine(_) | Rule::Game(_) => None,
         })
         .collect();
     let fired = invariants.rules.iter().filter_map(|entry| Some((entry.name.clone(), entry.fired?))).collect();
@@ -430,7 +430,7 @@ pub(crate) fn rules_state(world: &World) -> RulesState {
 }
 
 /// Puts `state` in: the session's rules are `state`'s (looking at the journal from now on),
-/// and a rule has fired when it had there. The game's own rules are this game's.
+/// and a rule has fired when it had there. The engine's and the game's own rules are this game's.
 pub(crate) fn set_rules_state(world: &mut World, state: &RulesState) {
     let Some(seen) = world.get_resource::<AiJournal>().map(AiJournal::last_seq) else {
         return;
@@ -438,7 +438,7 @@ pub(crate) fn set_rules_state(world: &mut World, state: &RulesState) {
     let Some(mut invariants) = world.get_resource_mut::<AiInvariants>() else {
         return;
     };
-    invariants.rules.retain(|entry| matches!(entry.rule, Rule::Game(_)));
+    invariants.rules.retain(|entry| matches!(entry.rule, Rule::Engine(_) | Rule::Game(_)));
     for (name, when) in &state.session {
         invariants.rules.push(Entry { name: name.clone(), rule: Rule::Session { when: when.clone(), seen }, fired: None });
     }
