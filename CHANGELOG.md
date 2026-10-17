@@ -71,11 +71,24 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   (`cargo test --workspace --doc --locked`). `cargo test` is still the local command.
 - CI tiers: `nightly.yml` (01:30 UTC, or by hand with `seed` and `minutes`): 100000 worldgen seeds for the sandbox and the template, the `#[ignore]`d GPU tests on a software Vulkan driver under Xvfb, and the performance tests `reference` and `reference96` as an artifact; a failed night opens an issue labelled `nightly` (or comments on the open one). `cross.yml` (weekly, by hand, on `v*` tags) verifies every reference replay on `windows-latest` and `ubuntu-22.04` and writes replay, verdict and CPU model to the job summary. A job of `ci.yml` that fails uploads what the run wrote (replays, crashes, snapshots, shots, game logs) as an artifact for 14 days.
 - `.gitattributes`: level files, content, replays and other text the game hashes or compares are checked out with LF on Windows too. `cross.yml` found that `ruin.gltf` came out with CRLF under the runner's `core.autocrlf`, and three reference replays that place a level then diverged (`replay check level differs`).
+- Heavy mode (`ai_core::heavy`, `shards::heavy`): `--heavy N [--heavy-span K] [--heavy-offset O]` with `--paused`, `--replay FILE --verify` or an
+  in-process `--stand` (the host). Every N ticks the game saves S(t); K ticks later a fresh twin from the game's own builder loads S(t), plays the
+  recorded calls, inputs and session rules, and must reach the same S(t+K), byte for byte, and the same gameplay journal. A failure halts like a
+  broken invariant (`stopped: heavy check failed at tick T: …`, `step`/`fuzz`/`soak` exit code 3, `--verify` exit code 1), lists the differences
+  in the journal and saves `snapshots/heavy-tick<t>.json`, `heavy-tick<T>-original.json`, `-restored.json` and `replays/heavy-tick<T>.json`;
+  it stays off until `assert_reset`, and `assert_list` shows its line. `EngineConfig::heavy`, `testing::heavy_app`, `testing::verify_heavy`.
+- `ai_core::snapshot::differences(a, b)`: where two snapshots differ, one line per place, in a fixed order (the snapshot tests use it too).
+- `ai_core::process::quiet()`: the engine's journal lines of an app that plays beside the terminal's one stay off the console.
+- Tests: `heavy.rs` (the combat prototype with `--heavy 300` on every push; a counter resource, a `Local` and a cache not rebuilt, each caught
+  and fixed), `state_audit.rs` (every resource after the combat prototype and the region replays is registered for snapshots or named, with its
+  reason, as outside the simulation), `heavy_saves.rs` (save, load in a fresh game, save again: the same sections at five ticks of every
+  reference replay), and a stand whose host is checked.
 
 ### Changed
 
 - `soak.yml` runs every night (it ran on Mondays).
 - `shards_cli`: the test `a_stale_port_file_is_neither_a_member_nor_a_reason_to_give_up` no longer uses a port that was bound and released (another test's stand could be given it): the stale file names the discard port.
+- `sandbox --replay FILE --verify` prints the journal's `replay checks leave out …` warning, and the reference replay test fails on it.
 
 ## [0.4.0] — phases C–E: co-op, saves, UI and platform (unreleased)
 

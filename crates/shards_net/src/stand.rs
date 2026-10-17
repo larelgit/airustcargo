@@ -41,6 +41,8 @@ pub fn attach(app: &mut App, hub: &MemoryHub, name: &str, host: Option<PeerId>) 
 pub enum MemberHalt {
     Failed(SystemFailure),
     Violated(Violation),
+    /// A heavy check of the member failed (heavy mode: the host).
+    Heavy(ai_core::HeavyFailure),
 }
 
 impl MemberHalt {
@@ -48,22 +50,27 @@ impl MemberHalt {
         match self {
             MemberHalt::Failed(f) => f.headline(),
             MemberHalt::Violated(v) => v.headline(),
+            MemberHalt::Heavy(h) => h.headline(),
         }
     }
 
-    /// How a step that hit `halts` ends: failures first, as [`sim::step`] reports them.
+    /// How a step that hit `halts` ends: failures first, then violations, as [`sim::step`]
+    /// reports them.
     fn step_end(halts: Vec<MemberHalt>) -> StepEnd {
-        let (mut failed, mut violated) = (Vec::new(), Vec::new());
+        let (mut failed, mut violated, mut heavy) = (Vec::new(), Vec::new(), Vec::new());
         for halt in halts {
             match halt {
                 MemberHalt::Failed(f) => failed.push(f),
                 MemberHalt::Violated(v) => violated.push(v),
+                MemberHalt::Heavy(h) => heavy.push(h),
             }
         }
-        if failed.is_empty() {
+        if !failed.is_empty() {
+            StepEnd::SystemFailed(failed)
+        } else if !violated.is_empty() {
             StepEnd::InvariantViolated(violated)
         } else {
-            StepEnd::SystemFailed(failed)
+            StepEnd::HeavyFailed(heavy)
         }
     }
 }
@@ -272,12 +279,16 @@ impl Stand {
                 continue;
             }
             let world = member.app.world_mut();
+            // Heavy mode (the host): a point may start before the first tick, and ends after one.
+            ai_core::heavy::at_tick(world, false);
             for _ in 0..ticks {
                 sim::run_tick(world)?;
             }
             ai_core::failures::collect(world);
             failed.extend(ai_core::failures::take_unreported(world).into_iter().map(|f| (i, MemberHalt::Failed(f))));
             failed.extend(ai_core::invariants::take_unreported(world).into_iter().map(|v| (i, MemberHalt::Violated(v))));
+            ai_core::heavy::at_tick(world, true);
+            failed.extend(ai_core::heavy::take_unreported(world).into_iter().map(|h| (i, MemberHalt::Heavy(h))));
         }
         self.advance_hub();
         Ok(failed)
@@ -362,6 +373,9 @@ impl Stand {
         self.running = false;
         self.sync_clock();
         let started = Instant::now();
+        // Twins of heavy checks are not the stand's time.
+        let twins = |stand: &Self| stand.members.iter().map(|member| ai_core::heavy::twin_time(member.app.world())).sum::<Duration>();
+        let twins_before = twins(self);
         let from_tick = sim::tick(self.world(m));
         let watch = StepWatch::begin(self.world_mut(m), request);
         ai_core::perf::begin_span(self.world_mut(m));
@@ -384,7 +398,8 @@ impl Stand {
                 end = StepEnd::Condition(reason);
                 break;
             }
-            if started.elapsed() > Duration::from_secs(ai_core::builtin::STEP_WALL_SECS) {
+            let wall = started.elapsed().saturating_sub(twins(self).saturating_sub(twins_before));
+            if wall > Duration::from_secs(ai_core::builtin::STEP_WALL_SECS) {
                 end = StepEnd::WallClock;
                 break;
             }

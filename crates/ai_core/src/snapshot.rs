@@ -945,6 +945,123 @@ fn differences_between(wanted: &Snapshot, again: &Snapshot, skipped: &Skipped) -
     out
 }
 
+/// Where two snapshots of the simulation differ, one line each, in a fixed order: the
+/// header (tick, seed, ids), then entities by id, then resources by type path, then what the
+/// world is built around; the state hash only when nothing else differs. Empty when they are
+/// the same state. A component or resource names its first differing field and both values:
+/// `e6 Boss: Health.current differs: 390.0 vs 400.0`, `resource shards_npc::Director
+/// differs: …` (`a`'s value first).
+pub fn differences(a: &Snapshot, b: &Snapshot) -> Vec<String> {
+    let mut out = Vec::new();
+    for (name, x, y) in [
+        ("format", Value::from(a.format.as_str()), Value::from(b.format.as_str())),
+        ("engine", Value::from(a.engine.as_str()), Value::from(b.engine.as_str())),
+        ("tick", Value::from(a.tick), Value::from(b.tick)),
+        ("seed", Value::from(a.seed), Value::from(b.seed)),
+        ("tick_hz", Value::from(a.tick_hz), Value::from(b.tick_hz)),
+    ] {
+        if x != y {
+            out.push(format!("{name} differs: {x} vs {y}"));
+        }
+    }
+    let json = |x: Result<Value, serde_json::Error>| x.unwrap_or_default();
+    if let Some((at, x, y)) = first_difference(&json(serde_json::to_value(&a.ids)), &json(serde_json::to_value(&b.ids))) {
+        out.push(format!("ids{at} differ: {x} vs {y}"));
+    }
+    let theirs: BTreeMap<u32, &EntitySnapshot> = b.entities.iter().map(|e| (e.id, e)).collect();
+    let mine: BTreeMap<u32, &EntitySnapshot> = a.entities.iter().map(|e| (e.id, e)).collect();
+    let ids: BTreeSet<u32> = mine.keys().chain(theirs.keys()).copied().collect();
+    for id in ids {
+        match (mine.get(&id), theirs.get(&id)) {
+            (Some(x), Some(y)) => {
+                let label = entity_label(x);
+                let paths: BTreeSet<&String> = x.components.keys().chain(y.components.keys()).collect();
+                for path in paths {
+                    match (x.components.get(path), y.components.get(path)) {
+                        (Some(p), Some(q)) => {
+                            if let Some((at, p, q)) = first_difference(p, q) {
+                                out.push(format!("e{id}{label}: {}{at} differs: {p} vs {q}", short(path)));
+                            }
+                        }
+                        (Some(_), None) => out.push(format!("e{id}{label}: {} only in the first", short(path))),
+                        (None, Some(_)) => out.push(format!("e{id}{label}: {} only in the second", short(path))),
+                        (None, None) => {}
+                    }
+                }
+            }
+            (Some(x), None) => out.push(format!("e{id}{} only in the first", entity_label(x))),
+            (None, Some(y)) => out.push(format!("e{id}{} only in the second", entity_label(y))),
+            (None, None) => {}
+        }
+    }
+    let names: BTreeSet<&String> = a.resources.keys().chain(b.resources.keys()).collect();
+    for name in names {
+        match (a.resources.get(name), b.resources.get(name)) {
+            (Some(x), Some(y)) => {
+                if let Some((at, x, y)) = first_difference(x, y) {
+                    out.push(format!("resource {name}{at} differs: {x} vs {y}"));
+                }
+            }
+            (Some(_), None) => out.push(format!("resource {name} only in the first")),
+            (None, Some(_)) => out.push(format!("resource {name} only in the second")),
+            (None, None) => {}
+        }
+    }
+    for (name, x, y) in [
+        ("checks", serde_json::to_value(&a.checks), serde_json::to_value(&b.checks)),
+        ("left_out", serde_json::to_value(&a.left_out), serde_json::to_value(&b.left_out)),
+    ] {
+        if let Some((at, x, y)) = first_difference(&json(x), &json(y)) {
+            out.push(format!("{name}{at} differs: {x} vs {y}"));
+        }
+    }
+    if out.is_empty() && a.state_hash != b.state_hash {
+        out.push(format!("state_hash differs: {:016x} vs {:016x}", a.state_hash, b.state_hash));
+    }
+    out
+}
+
+/// ` Boss`: the entity's `Name`, when the snapshot has one.
+fn entity_label(entity: &EntitySnapshot) -> String {
+    let name = entity
+        .components
+        .iter()
+        .find(|(path, _)| path.as_str() == "bevy_ecs::name::Name")
+        .and_then(|(_, value)| value.as_str().map(str::to_owned).or_else(|| value.get("name")?.as_str().map(str::to_owned)));
+    name.map(|n| format!(" {n}")).unwrap_or_default()
+}
+
+/// The first place `a` and `b` differ, depth first in key order: the path to it (`.current`,
+/// `[2].hp`; empty at the top) and both values there, clipped.
+fn first_difference(a: &Value, b: &Value) -> Option<(String, String, String)> {
+    if a == b {
+        return None;
+    }
+    match (a, b) {
+        (Value::Object(x), Value::Object(y)) => {
+            let keys: BTreeSet<&String> = x.keys().chain(y.keys()).collect();
+            for key in keys {
+                match (x.get(key), y.get(key)) {
+                    (Some(p), Some(q)) => {
+                        if let Some((at, p, q)) = first_difference(p, q) {
+                            return Some((format!(".{key}{at}"), p, q));
+                        }
+                    }
+                    (p, q) => {
+                        let shown = |v: Option<&Value>| v.map_or_else(|| "nothing".to_owned(), clip);
+                        return Some((format!(".{key}"), shown(p), shown(q)));
+                    }
+                }
+            }
+            None
+        }
+        (Value::Array(x), Value::Array(y)) if x.len() == y.len() => {
+            x.iter().zip(y).enumerate().find_map(|(i, (p, q))| first_difference(p, q).map(|(at, p, q)| (format!("[{i}]{at}"), p, q)))
+        }
+        _ => Some((String::new(), clip(a), clip(b))),
+    }
+}
+
 /// `game::combat::Health` → `Health`.
 fn short(path: &str) -> &str {
     path.rsplit("::").next().unwrap_or(path)
@@ -1143,6 +1260,43 @@ mod tests {
         let back: Snapshot = serde_json::from_str(&text).unwrap();
         assert_eq!(back, snapshot);
         assert_eq!(serde_json::to_string_pretty(&capture(app.world()).unwrap()).unwrap(), text, "same state, same bytes");
+    }
+
+    #[test]
+    fn differences_name_the_first_field_that_differs_in_a_fixed_order() {
+        let mut app = game();
+        step(&mut app, 3);
+        let a = capture(app.world()).unwrap();
+        assert!(differences(&a, &a).is_empty());
+
+        let mut b = a.clone();
+        b.tick = 4;
+        b.entities[1].components.get_mut("ai_core::snapshot::tests::Hp").unwrap()["current"] = serde_json::json!(1.5);
+        b.entities[0].components.remove("bevy_transform::components::transform::Transform");
+        b.entities.push(EntitySnapshot { id: 9, components: BTreeMap::new() });
+        b.resources.get_mut("ai_core::snapshot::tests::Score").unwrap()["points"] = serde_json::json!(70);
+        b.state_hash ^= 1;
+        let found = differences(&a, &b);
+        let hp = &a.entities[1].components["ai_core::snapshot::tests::Hp"]["current"];
+        assert_eq!(
+            found,
+            [
+                "tick differs: 3 vs 4".to_owned(),
+                "e1: Transform only in the first".to_owned(),
+                format!("e2: Hp.current differs: {hp} vs 1.5"),
+                "e9 only in the second".to_owned(),
+                "resource ai_core::snapshot::tests::Score.points differs: 3 vs 70".to_owned(),
+            ],
+            "the state hash is named only when nothing else is"
+        );
+
+        let mut c = a.clone();
+        c.state_hash ^= 1;
+        assert_eq!(differences(&a, &c), [format!("state_hash differs: {:016x} vs {:016x}", a.state_hash, c.state_hash)]);
+        // A long value is clipped, and an array of another length differs as a whole.
+        let long = Value::from("x".repeat(300));
+        let (at, x, _) = first_difference(&serde_json::json!({"a": [long]}), &serde_json::json!({"a": [1, 2]})).unwrap();
+        assert_eq!((at.as_str(), x.chars().count()), (".a", 101));
     }
 
     #[test]

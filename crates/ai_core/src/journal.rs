@@ -193,6 +193,7 @@ pub const EMIT_TARGET: &str = "ai_core::journal";
 pub fn emit(world: &mut World, kind: JournalKind, text: impl Into<String>) -> u64 {
     let text = text.into();
     match kind {
+        _ if crate::process::is_quiet() => {}
         JournalKind::Error => error!(target: EMIT_TARGET, "{text}"),
         JournalKind::Warn => warn!(target: EMIT_TARGET, "{text}"),
         _ => info!(target: EMIT_TARGET, "{text}"),
@@ -256,6 +257,9 @@ static CAPTURE_TARGETS: Mutex<Vec<(u64, LogCapture, TickClock)>> = Mutex::new(Ve
 
 /// The buffer the layer writes into right now.
 fn capture_target() -> Option<(LogCapture, TickClock)> {
+    if crate::process::muted() {
+        return None;
+    }
     let targets = CAPTURE_TARGETS.lock().ok()?;
     let active = crate::process::active();
     let (_, capture, clock) = targets.iter().rev().find(|(token, ..)| *token == active).or_else(|| targets.last())?;

@@ -404,6 +404,9 @@ pub struct AiReplay {
     current_call: Option<usize>,
     /// This game does not record its session ([`set_recording`]).
     not_recording: bool,
+    /// Counts the restarts of the recording (a load, recording turned off): what was
+    /// recorded before one belongs to another run. Heavy mode slices its events by it.
+    generation: u64,
 }
 
 impl Default for AiReplay {
@@ -423,6 +426,7 @@ impl Default for AiReplay {
             action_depth: 0,
             current_call: None,
             not_recording: false,
+            generation: 0,
         }
     }
 }
@@ -464,6 +468,30 @@ impl AiReplay {
     pub fn is_recording(&self) -> bool {
         !self.not_recording
     }
+
+    /// How many times the recording restarted: events of one generation index into one run.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// The events recorded from index `from` on, oldest first.
+    pub(crate) fn events_from(&self, from: usize) -> &[ReplayEvent] {
+        self.events.get(from..).unwrap_or_default()
+    }
+
+    /// Ticks between checks and what each keeps, as this session records them.
+    pub(crate) fn check_settings(&self) -> (u64, CheckDetail) {
+        (self.check_every, self.check_detail)
+    }
+
+    /// Why the playback in progress has diverged already, if it has: a start that did not
+    /// restore exactly says what it found.
+    pub(crate) fn playback_divergence(&self) -> Option<String> {
+        let playback = self.playback.as_ref()?;
+        let tick = playback.diverged_at?;
+        let why = playback.divergence.as_ref().and_then(|d| d.no_details.clone());
+        Some(why.unwrap_or_else(|| format!("diverged at tick {tick}")))
+    }
 }
 
 /// Why `replay_save` refuses in a game that does not record.
@@ -480,6 +508,7 @@ pub fn set_recording(world: &mut World, on: bool) {
         replay.events.clear();
         replay.checks.clear();
         replay.current_call = None;
+        replay.generation += 1;
     }
 }
 
@@ -515,6 +544,7 @@ pub(crate) fn restart_from(world: &mut World, start: Snapshot, interrupt_playbac
     replay.checks.clear();
     replay.start = Some(start);
     replay.current_call = None;
+    replay.generation += 1;
     if !replay.not_recording {
         replay.events.extend(rules.into_iter().map(|op| ReplayEvent::Assert { at, op }));
     }
@@ -779,6 +809,19 @@ impl ReplayHashing {
 
     pub fn add_check(&mut self, name: &str, check: ReplayCheck) {
         self.push_check(name, HashedCheck::Always(check));
+    }
+
+    /// The components already reported as left out of the checks, in name order.
+    pub(crate) fn reported_left_out(&self) -> Vec<&'static str> {
+        let mut paths: Vec<&'static str> = self.reported.iter().copied().collect();
+        paths.sort_unstable();
+        paths
+    }
+
+    /// Counts `paths` as reported already: a game that continues another's (heavy mode's
+    /// twin) does not report again what that one did.
+    pub(crate) fn mark_reported(&mut self, paths: &[&'static str]) {
+        self.reported.extend(paths.iter().copied());
     }
 
     /// [`add_check`](Self::add_check) for state that may be absent (no level placed): while

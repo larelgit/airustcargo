@@ -43,21 +43,22 @@ Instructions for agents are in [AGENTS.md](../AGENTS.md). How to make your own g
 15. [Developer menu and console (E11)](#developer-menu-and-console-e11)
 16. [Replays](#replays)
 17. [Snapshots (E11.4)](#snapshots-e114)
-18. [Saves (E8.1–5)](#saves-e815)
-19. [Settings (E8.6)](#settings-e86)
-20. [UI (E9)](#ui-e9)
-21. [Localization (E9.4)](#localization-e94)
-22. [Audio (E9.5)](#audio-e95)
-23. [Stylised materials (E10.1)](#stylised-materials-e101)
-24. [Foliage and small objects (E10.2)](#foliage-and-small-objects-e102)
-25. [Effects and decals (E10.3)](#effects-and-decals-e103)
-26. [Steam (E10.5)](#steam-e105)
-27. [Builds for players and Windows (E10.6)](#builds-for-players-and-windows-e106)
-28. [Crash reports (E10.7)](#crash-reports-e107)
-29. [The sandbox](#the-sandbox)
-30. [Tests and CI](#tests-and-ci)
-31. [What's next](#whats-next)
-32. [Conventions and building](#conventions-and-building)
+18. [Heavy mode](#heavy-mode)
+19. [Saves (E8.1–5)](#saves-e815)
+20. [Settings (E8.6)](#settings-e86)
+21. [UI (E9)](#ui-e9)
+22. [Localization (E9.4)](#localization-e94)
+23. [Audio (E9.5)](#audio-e95)
+24. [Stylised materials (E10.1)](#stylised-materials-e101)
+25. [Foliage and small objects (E10.2)](#foliage-and-small-objects-e102)
+26. [Effects and decals (E10.3)](#effects-and-decals-e103)
+27. [Steam (E10.5)](#steam-e105)
+28. [Builds for players and Windows (E10.6)](#builds-for-players-and-windows-e106)
+29. [Crash reports (E10.7)](#crash-reports-e107)
+30. [The sandbox](#the-sandbox)
+31. [Tests and CI](#tests-and-ci)
+32. [What's next](#whats-next)
+33. [Conventions and building](#conventions-and-building)
 
 ## Quick start
 
@@ -3069,6 +3070,30 @@ game (as in the tests) waits for its files until its start. Not included: a leve
 swimming, at 9 points of the fight with the Warden, when rewinding in the same game, and on a replay from a snapshot (`--verify`); for the world: a snapshot in the middle of a walk around the columns on the navmesh of the thickets, loaded into a fresh arena (`a_snapshot_in_the_generated_region_goes_on_the_same_in_a_fresh_arena`),
 tile levels coming back under their own numbers, a dungeon in a game with another region, tokens, plans, routes and NPC perception over ten ticks of a fight, and a generated region with three NPCs on the navmesh and crates that are removed and put back (`shards_npc/tests/npc/snapshot.rs`).
 Why not Bevy's `DynamicWorld`: it has the same reflection layer under it, but its entities are named by `Entity` bits, not by `AiId`; the order of component insertion depends on the archetype, while `AiId` must come before the hooks; and the file is not stable byte for byte.
+
+## Heavy mode
+
+The proof above checks the snapshot at the points a test picked. Heavy mode checks it all along a session: every `N` ticks the game saves its state S(t), plays on to t+K, and a fresh twin built by the same builder loads S(t), plays the same calls, inputs and session rules for (t, t+K], and must come out with the same S(t+K), byte for byte, and the same gameplay journal (its `Event`, `Warn` and `Error` lines). State outside the snapshot (a resource nobody registered, a `Local` in a gameplay system, a cache that a load does not rebuild) makes the twin go another way, and the check names the first place:
+
+```bash
+cargo sandbox --headless --paused --heavy 30 --port 0 --port-file /tmp/g.port &   # a point every 30 ticks
+cargo shards step 600
+# with a counter on the player that no snapshot holds (the planted bug of the tests):
+# ran 60 ticks (0 → 60), stopped: heavy check failed at tick 60: e5 Player: Planted differs: 1830 vs 930 (replay: replays/heavy-tick60.json)
+cargo sandbox --replay tests/replays/combat_prototype.json --verify --heavy 30
+# replay finished at tick 1010: identical to the recording (17 checks); heavy: 33 checked, 0 skipped [1010 ticks in 3.10s]
+```
+
+- **Flags.** `--heavy N` (a point every N ticks), `--heavy-span K` (the ticks a point plays before the twin is compared: by default N, at most 600; with K > N the points overlap) and `--heavy-offset O` (the first point, by default tick 0; a nightly run passes `seed % N`). The checks run between stepped ticks: heavy mode needs `--paused` (and `shards step`), `--replay FILE --verify` or an in-process `--stand N` (there the host is checked: the clients do not simulate). Without one of them the game does not start (`error: --heavy checks between stepped ticks: …`, exit code 2), and `resume` answers that this game is stepped. It does not go with a window, `--host`/`--join`, `--stand-udp` or the batch modes (`--check-content`, `--worldgen-report`, the bakes, `--perf`). `EngineConfig::heavy: Option<HeavyConfig { every, span, offset }>` is the same in code.
+- **The twin** is built by the game's own builder (the function passed to `shards::run`) with the session's seed and tick rate, without a window, port, settings, menu or network, with its own save folder, and with its engine lines kept off the terminal. It starts from S(t) as a replay starts from a snapshot (`start`), so whatever a replay from a snapshot cannot do, a heavy check cannot either. Twin time is not tick time: neither the `ticks:` line nor the wall budget of `step` counts it. A point is skipped while the loading gate holds the clock or when S(t) cannot be saved (`heavy point at tick 120 not checked: …`, the `skipped` count); a snapshot load or a new recording drops the open points. Without a recording, or in a game that has no twin, heavy mode says so once (`heavy mode is on, but …: no heavy checks`).
+- **A failed check** stops the game the way a broken invariant does: `step` answers `stopped: heavy check failed at tick T: <first difference> (replay: replays/heavy-tick<T>.json)` and exits with code 3 (`fuzz` and `soak` too), `--verify` lists every difference and exits with code 1. The journal has the error line `heavy check failed at tick T (a fresh game from tick t, N differences): …` and one `heavy: …` line per difference (ten at most). The files: `snapshots/heavy-tick<t>.json` (S(t)), `snapshots/heavy-tick<T>-original.json` and `-restored.json` (both states at T; compare them with any JSON diff), and `replays/heavy-tick<T>.json` (the session), with the line `heavy check saved: … (play it with --replay … --verify --heavy N --heavy-span K --heavy-offset O)`. The differences come from `ai_core::snapshot::differences(a, b)`: the header, entities by id (`e6 Boss: Health.current differs: 390.0 vs 400.0`), resources by type path, what the world is built around, and the state hash only when nothing else differs (then it is an `add_replay_check` value, and the line says so). After it has fired, heavy mode is off until `assert_reset`; `assert_list` ends with its line: `heavy: every 30 ticks (span 30, from tick 0): 2 checked, 0 skipped, fired at tick 60, off until assert_reset`.
+- **In tests.** `shards::testing::heavy_app(configure, setup, HeavyConfig::every(30))` is `test_app` with heavy mode (the builder is the two closures, called again for each twin); `testing::verify_heavy(recording, configure, setup, heavy)` plays a replay with it and returns `HeavyVerdict { report, checked, skipped }`, or the failure.
+- **Cost.** A check builds and loads a twin and plays K ticks again. Measured on the reference replays with `--heavy 30 --heavy-span 1` (so a twin plays one tick): HEAVY_COST.
+- **What it is not.** A save holds less than a snapshot (the body's place in a swing, an enemy's plan), so a game loaded from a save is not a heavy twin. Saves have their own check: at five ticks of each reference replay, `save_game what=all`, `load_game` in a fresh game and `save_game` again must write the same sections, byte for byte (`crates/sandbox/tests/sandbox/heavy_saves.rs`).
+
+**The state audit** is the static half: after the combat prototype and the region replays have played to their end, every resource in the world (`World::iter_resources`) is either registered with `add_snapshot_resource`, or named in the audit's list as outside the simulation, with why (`crates/sandbox/tests/sandbox/state_audit.rs`: Bevy's clocks and render state, registries filled at build time, presentation, settings, transport, caches named with their rebuild). A resource that is neither fails the test with its type name: register it, or add it to the list with its reason. The reference replay test fails on `replay checks leave out …` (a gameplay component the checks cannot hash), which `--verify` prints as a warning.
+
+**Proof.** `crates/sandbox/tests/sandbox/heavy.rs`: the combat prototype verifies with `--heavy 300` (on every push), and three planted bugs on the player are each caught at tick 60 and pass once fixed: a counter resource (fixed with `add_snapshot_resource`), a `Local<u32>` every 50th call (fixed by reading the tick), a derived cache (fixed with `add_snapshot_rebuild`); a failed check halts, stays off and comes back with `assert_reset`. `crates/shards/src/run.rs`: a stand's host with a guest is checked, and a host-only counter halts the stand. Every reference replay of the engine and the template passes `--verify --heavy 30` (nightly).
 ## Saves (E8.1–5)
 
 A save is the player's progress, laid over the world that the game built as usual. It is not a snapshot: a snapshot (`snapshot_save`) holds the exact state of the simulation at one tick and is for the developer, while a save is a set of explicit structures that the game names itself. Nothing that is not named goes into the file. The crate is `crates/shards_save`, module `save` (`ai/status`). The umbrella crate exposes it as `shards::save`.

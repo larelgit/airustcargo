@@ -49,6 +49,7 @@ cargo shards worldgen --region wilds --seeds 1..1000 --report   # batch check of
 cargo sandbox --bake-nav                # bake tile navigation into assets/nav/ for all body classes (after a change to a tile, its level file or the body of any class)
 cargo sandbox --bake-motion             # bake action offsets (the action's `bake`) from the clip's root bone (after a change to the clip)
 cargo sandbox --replay FILE --verify    # replay without a window; add --windowed (under xvfb-run -a) for a window
+cargo sandbox --replay FILE --verify --heavy 30   # also: from every 30th tick's snapshot, a fresh game goes on the same (heavy mode)
 cargo shards assert add hp 'field:6:Health.current<300'   # rule: the game stops when it is broken (`step` → exit code 3)
 cargo shards fuzz --seed 7 --steps 300  # random inputs until a rule is broken
 cargo shards soak --minutes 30 --regen wilds   # stand: agents with a seed play for all participants, until the first desync
@@ -116,7 +117,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   under the `YOU` line says where to leave the zone: `step --until "journal:winds up"`, then `dodge`.
 - Exit codes of `shards`: 0 — done, 1 — a tool refused (the error says why), 2 — `shards` itself failed
   (no game, no token, wrong command), 3 — the game stopped: `step` (or `fuzz`, `soak`) halted on a crashed
-  system or a broken invariant.
+  system, a broken invariant or a failed heavy check (`--heavy`, see "Checking changes").
 - Looking for a bug? Describe it as a rule: `shards assert add NAME COND`, where `COND` uses the `--until` syntax
   (plus `warning` and `error`). After each tick the game checks the game's rules and yours; on a violation
   `step` answers `stopped: invariant NAME violated at tick N (replay: …)`, and the replay is already saved.
@@ -344,6 +345,14 @@ It is written when a panic happens on another thread (the render thread, a task)
 - By default, checks run every 60 ticks, and the tick in the report is the first check after the divergence. To find a
   bug, record a replay with `--check-every 1` (`cargo sandbox --headless --paused --check-every 1`). Then the
   report names the exact tick. The value is stored in the file, so the flag is not needed when the replay plays back.
+- Heavy mode checks snapshots along a whole session: `--heavy N` (with `--paused` and `shards step`, with
+  `--replay FILE --verify`, or with `--stand N`, where the host is checked) saves the state every N ticks, and a fresh twin
+  that loads it must play the next `--heavy-span K` ticks (by default N, at most 600) to the same bytes and the same gameplay journal.
+  A failure stops the game like a broken invariant (`stopped: heavy check failed at tick T: e5 Player: Planted differs: 1830 vs 930`,
+  `step` exit code 3, `--verify` exit code 1) and saves `snapshots/heavy-tick<t>.json`, `heavy-tick<T>-original.json` and `-restored.json`, and
+  `replays/heavy-tick<T>.json`. What it names is state outside the snapshot: register it (`add_snapshot_resource`, `add_snapshot_rebuild`).
+  The static half is the state audit (`crates/sandbox/tests/sandbox/state_audit.rs`): a new resource is either registered for snapshots
+  or added to its list with the reason it is not simulation state. In tests: `shards::testing::heavy_app`, `verify_heavy`.
 - Check tick speed on a release build: the debug build compiles its own code with `opt-level = 1`.
   `cargo run -p sandbox --release -- --headless --paused --tick-budget-ms 5`, then `shards step 600`.
   The `ticks:` line shows the average, the worst tick and the number of ticks over budget. The Tracy profiler is enabled with

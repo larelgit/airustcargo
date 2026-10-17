@@ -60,7 +60,10 @@ fn every_reference_replay_verifies_headless() {
             .unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout);
         let report = stdout.lines().find(|l| l.starts_with("replay ")).unwrap_or_default().to_owned();
-        if out.status.code() != Some(0) || !report.contains("identical to the recording") {
+        // A gameplay component the checks leave out (it does not serialize) is a failure here,
+        // not a warning: the reference replays would not see it change.
+        let left_out = stdout.contains("replay checks leave out ");
+        if out.status.code() != Some(0) || !report.contains("identical to the recording") || left_out {
             failed.push(format!(
                 "{}: exit {:?}\n{stdout}{}",
                 file.display(),

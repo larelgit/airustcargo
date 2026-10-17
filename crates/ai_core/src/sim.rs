@@ -296,6 +296,10 @@ pub enum StepEnd {
     /// Invariants were violated in the last tick; never empty. The game is paused, the
     /// violations are in the journal.
     InvariantViolated(Vec<crate::invariants::Violation>),
+    /// A heavy check after the last tick found that a fresh game loaded from a snapshot did
+    /// not continue like this one ([`heavy`](crate::heavy)); never empty. The game is paused,
+    /// the differences are in the journal.
+    HeavyFailed(Vec<crate::heavy::HeavyFailure>),
 }
 
 #[derive(Debug, Clone)]
@@ -335,21 +339,31 @@ pub fn step(
     crate::failures::collect(world);
     crate::failures::take_unreported(world);
     crate::invariants::take_unreported(world);
+    crate::heavy::take_unreported(world);
     let from_tick = tick(world);
     let started = Instant::now();
+    // Twins of heavy checks are not this game's time.
+    let twins_before = crate::heavy::twin_time(world);
     crate::perf::begin_span(world);
+    crate::heavy::at_tick(world, false);
     let mut end = StepEnd::Completed;
     for _ in 0..max_ticks {
         run_tick(world)?;
         crate::failures::collect(world);
         let failed = crate::failures::take_unreported(world);
         let violated = crate::invariants::take_unreported(world);
+        crate::heavy::at_tick(world, true);
         if !failed.is_empty() {
             end = StepEnd::SystemFailed(failed);
             break;
         }
         if !violated.is_empty() {
             end = StepEnd::InvariantViolated(violated);
+            break;
+        }
+        let heavy = crate::heavy::take_unreported(world);
+        if !heavy.is_empty() {
+            end = StepEnd::HeavyFailed(heavy);
             break;
         }
         if let Some(reason) = stop(world) {
@@ -360,7 +374,8 @@ pub fn step(
             end = StepEnd::Condition(format!("the game started loading ({})", gate.reasons().join(", ")));
             break;
         }
-        if started.elapsed() > wall_budget {
+        let twins = crate::heavy::twin_time(world).saturating_sub(twins_before);
+        if started.elapsed().saturating_sub(twins) > wall_budget {
             end = StepEnd::WallClock;
             break;
         }

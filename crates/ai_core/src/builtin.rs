@@ -197,8 +197,16 @@ pub fn apply_clock(world: &mut World, action: ClockAction) -> ToolResult {
     }
 }
 
+/// Why `resume` refuses in a game with heavy checks.
+pub const HEAVY_STEPS_ONLY: &str = "heavy checks run between stepped ticks: this game was started with --heavy, so `step` it \
+     (e.g. `step 600`), or start it without --heavy to play in real time";
+
 /// A clock tool on a world whose steps are deferred: queued, `{"pending": id}`.
 fn clock(world: &mut World, action: ClockAction, agent: &str) -> ToolResult<Value> {
+    // A stand's driver ticks its members itself, and checks between its ticks in real time too.
+    if matches!(action, ClockAction::Resume) && crate::heavy::is_on(world) && sim::deferred_queue(world).is_none() {
+        return Err(HEAVY_STEPS_ONLY.to_owned());
+    }
     match sim::deferred_queue(world) {
         Some(queue) => {
             let id = queue.lock().map_err(|_| "the step queue is poisoned".to_owned())?.push_clock(action, agent);
@@ -341,6 +349,13 @@ pub fn step_report_text(world: &World, report: &StepReport, conditions: bool) ->
             if violations.len() > 1 {
                 msg.push_str(&format!(" (+{} more)", violations.len() - 1));
             }
+            if let Some(path) = &first.replay {
+                msg.push_str(&format!(" (replay: {path})"));
+            }
+        }
+        StepEnd::HeavyFailed(failures) => {
+            let first = &failures[0];
+            msg.push_str(&format!(", stopped: {}: {}", first.headline(), first.first()));
             if let Some(path) = &first.replay {
                 msg.push_str(&format!(" (replay: {path})"));
             }

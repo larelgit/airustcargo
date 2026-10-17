@@ -147,6 +147,11 @@ pub struct EngineConfig {
     /// (`audio`, `scatter`; `--without audio,scatter`): their plugins are not added. Which ones can
     /// go, and what each needs, is `shards::modules`.
     pub without: Vec<String>,
+    /// Heavy mode (`--heavy N`, `--heavy-span K`, `--heavy-offset O`): every N ticks a fresh game is
+    /// loaded from a snapshot of this one and must continue like it ([`ai_core::heavy`]). `None` (the
+    /// default): off. It needs the game's builder, which `shards::run` and
+    /// `shards::testing::heavy_app` give it.
+    pub heavy: Option<ai_core::HeavyConfig>,
 }
 
 /// What a game asks of Steam at launch (the `steam` feature of `shards`: the `shards_steam` module).
@@ -319,6 +324,7 @@ impl Default for EngineConfig {
             exit_with_host: false,
             steam: SteamLaunch::default(),
             without: Vec::new(),
+            heavy: None,
         }
     }
 }
@@ -362,6 +368,9 @@ impl EngineConfig {
             tick_budget: self.tick_budget,
             report_perf: self.report_perf,
             game: ai_core::crash::GameInfo { title: self.title.clone(), version: self.version.clone() },
+            heavy: self.heavy,
+            // Test apps write no files.
+            heavy_files: !self.testing,
             ..default()
         }
     }

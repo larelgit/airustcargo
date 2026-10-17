@@ -10,11 +10,12 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ai_core::replay::{self, Replay};
 use ai_core::sim::{StepEnd, StepReport};
-use ai_core::{call_tool, AiReplay, CallOutcome, ReplayReport, SimGate, SystemFailure, Violation};
+use ai_core::{call_tool, AiReplay, CallOutcome, HeavyConfig, HeavyFailure, ReplayReport, SimGate, SystemFailure, Violation};
 use bevy::prelude::*;
 use serde_json::Value;
 use shards_core::{EngineConfig, EngineState, NetLaunch, SettingsStore};
@@ -63,11 +64,11 @@ impl Drop for TestSaves {
     }
 }
 
-/// Gives `app` a [`TestSaves`] folder unless its `config` names a `save_dir` of its own. A
-/// test that sets `SaveConfig::dir` itself, after this, simply replaces it.
-fn own_saves(app: &mut App, config: &EngineConfig) {
+/// Gives `app` a [`TestSaves`] folder unless its `config` names a `save_dir` of its own (or it
+/// has one already). A test that sets `SaveConfig::dir` itself, after this, simply replaces it.
+pub(crate) fn own_saves(app: &mut App, config: &EngineConfig) {
     static N: AtomicUsize = AtomicUsize::new(0);
-    if config.save_dir != EngineConfig::default().save_dir {
+    if config.save_dir != EngineConfig::default().save_dir || app.world().contains_resource::<TestSaves>() {
         return;
     }
     let dir = std::env::temp_dir().join(format!("shards_test_saves_{}_{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
@@ -133,6 +134,9 @@ pub struct RunStops {
     /// Every invariant violated on the way, in order. A violation halts the game, but a
     /// rule that fired stays off, so the run goes on past it.
     pub violations: Vec<Violation>,
+    /// Every heavy check that failed on the way (heavy mode: [`heavy_app`]). The checks stay
+    /// off after one, so the run goes on past it.
+    pub heavy: Vec<HeavyFailure>,
 }
 
 /// Runs ticks until tick `end`, waiting out loading on the way: a region change loads
@@ -151,6 +155,15 @@ pub fn run_to(app: &mut App, end: u64, load_timeout: Duration) -> Result<RunStop
                 stops.violations.extend(violated);
                 // The tick that broke a rule may also have started a load (a region change
                 // behind the gate): the gate holds until it is waited out, here as below.
+                if loading(app.world()).is_some() {
+                    wait_until_loaded(app, load_timeout)?;
+                }
+                if to_tick >= end {
+                    return Ok(stops);
+                }
+            }
+            StepReport { end: StepEnd::HeavyFailed(failed), to_tick, .. } => {
+                stops.heavy.extend(failed);
                 if loading(app.world()).is_some() {
                     wait_until_loaded(app, load_timeout)?;
                 }
@@ -178,8 +191,90 @@ pub fn verify(app: &mut App, recording: Replay) -> Result<ReplayReport, String> 
     if let Some(violation) = stops.violations.first() {
         return Err(format!("{}: {}", violation.headline(), violation.text));
     }
+    if let Some(failure) = stops.heavy.first() {
+        return Err(format!("{}: {}", failure.headline(), failure.differences.join("; ")));
+    }
     app.update();
     app.world().resource::<AiReplay>().report().cloned().ok_or_else(|| "the replay did not finish".to_owned())
+}
+
+/// The game a heavy test app is: [`config`] changed by `configure` with heavy mode `heavy`, and
+/// the builder that makes it, and its twins, from the engine and `setup`.
+fn heavy_game(
+    configure: impl Fn(&mut EngineConfig) + Send + Sync + 'static,
+    setup: impl Fn(&mut App) + Send + Sync + 'static,
+    heavy: HeavyConfig,
+) -> (EngineConfig, crate::heavy::Builder) {
+    let mut config = config();
+    configure(&mut config);
+    config.heavy = Some(heavy);
+    let build: crate::heavy::Builder = Arc::new(move |config: &EngineConfig| {
+        let mut app = App::new();
+        app.add_plugins(EnginePlugins::new(config.clone()));
+        own_saves(&mut app, config);
+        setup(&mut app);
+        app
+    });
+    (config, build)
+}
+
+/// [`heavy_game`] built and finished, not loaded: a recording is played on it before it loads.
+fn heavy_unloaded(config: &EngineConfig, build: crate::heavy::Builder) -> App {
+    let mut app = build(config);
+    crate::heavy::install(&mut app, config, build);
+    app.finish();
+    app.cleanup();
+    app
+}
+
+/// [`test_app`] in heavy mode (`--heavy`): every `heavy.every` ticks a twin, built again from
+/// `configure` and `setup`, loads a snapshot of the app and must continue like it
+/// ([`ai_core::heavy`]); `step` stops at a check that fails (`StepEnd::HeavyFailed`). The twin
+/// is built like the app, so `configure` and `setup` are `Fn`.
+pub fn heavy_app(
+    configure: impl Fn(&mut EngineConfig) + Send + Sync + 'static,
+    setup: impl Fn(&mut App) + Send + Sync + 'static,
+    heavy: HeavyConfig,
+) -> App {
+    let (config, build) = heavy_game(configure, setup, heavy);
+    let mut app = heavy_unloaded(&config, build);
+    if let Err(e) = wait_until_loaded(&mut app, LOAD_TIMEOUT) {
+        panic!("{e}");
+    }
+    app
+}
+
+/// What [`verify_heavy`] found.
+#[derive(Clone, Debug)]
+pub struct HeavyVerdict {
+    /// How the playback compares with the recording.
+    pub report: ReplayReport,
+    /// Heavy checks that passed on the way.
+    pub checked: u64,
+    /// Heavy points that could not be checked (a load restarted the session).
+    pub skipped: u64,
+}
+
+/// [`verify`] in heavy mode: plays `recording` on the game `configure` and `setup` build (with
+/// the recording's seed and tick rate), a twin checking every `heavy.every` ticks. A failed
+/// heavy check is an error, like a violated invariant.
+pub fn verify_heavy(
+    recording: Replay,
+    configure: impl Fn(&mut EngineConfig) + Send + Sync + 'static,
+    setup: impl Fn(&mut App) + Send + Sync + 'static,
+    heavy: HeavyConfig,
+) -> Result<HeavyVerdict, String> {
+    let (seed, hz) = (recording.seed, recording.tick_hz);
+    let configure = move |config: &mut EngineConfig| {
+        configure(config);
+        config.seed = seed;
+        config.tick_hz = hz;
+    };
+    let (config, build) = heavy_game(configure, setup, heavy);
+    let mut app = heavy_unloaded(&config, build);
+    let report = verify(&mut app, recording)?;
+    let state = app.world().resource::<ai_core::heavy::AiHeavy>();
+    Ok(HeavyVerdict { report, checked: state.checked(), skipped: state.skipped() })
 }
 
 /// Calls `tool` as agent `dev` (dev scope, the player's body).

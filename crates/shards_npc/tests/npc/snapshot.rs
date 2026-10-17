@@ -3,7 +3,7 @@
 //! like the one it was taken in (the proof in `crates/sandbox/tests/sandbox/snapshots.rs`,
 //! here for the NPC module's state).
 
-use ai_core::snapshot::{self, Snapshot};
+use ai_core::snapshot::{self, differences};
 use ai_core::{sim, AiId, AiIndex, AiJournal, JournalKind};
 use bevy::prelude::*;
 use serde_json::{json, Value};
@@ -65,28 +65,6 @@ fn story_after(app: &App, n: u64) -> Vec<String> {
         .filter(|e| e.tick > n && matches!(e.kind, JournalKind::Event | JournalKind::Warn | JournalKind::Error))
         .map(ToString::to_string)
         .collect()
-}
-
-fn differences(a: &Snapshot, b: &Snapshot) -> Vec<String> {
-    let mut out = Vec::new();
-    if a.resources != b.resources || a.ids != b.ids || a.state_hash != b.state_hash {
-        out.push("resources, ids or state hash".to_owned());
-    }
-    let ids = |s: &Snapshot| s.entities.iter().map(|e| e.id).collect::<Vec<_>>();
-    if ids(a) != ids(b) {
-        out.push(format!("entities {:?} vs {:?}", ids(a), ids(b)));
-        return out;
-    }
-    for (x, y) in a.entities.iter().zip(&b.entities) {
-        for path in x.components.keys().chain(y.components.keys()) {
-            if x.components.get(path) != y.components.get(path) {
-                out.push(format!("e{} {path}: {:?} vs {:?}", x.id, x.components.get(path), y.components.get(path)));
-            }
-        }
-    }
-    out.sort();
-    out.dedup();
-    out
 }
 
 #[test]

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::MutexGuard;
 
 use shards::action::InputBuffer;
-use shards::ai_core::snapshot::{self, Snapshot};
+use shards::ai_core::snapshot::{self, differences, Snapshot};
 use shards::ai_core::{replay, sim, AgentSessions, AiJournal, JournalKind, Scope};
 use shards::motion::{MotionMode, MotionState, Volume, VolumeKind};
 use shards::prelude::*;
@@ -31,37 +31,6 @@ fn story_after(app: &App, n: u64) -> Vec<String> {
         .filter(|e| e.tick > n && matches!(e.kind, JournalKind::Event | JournalKind::Warn | JournalKind::Error))
         .map(ToString::to_string)
         .collect()
-}
-
-/// Where two snapshots differ, one line each: which entity, which component.
-fn differences(a: &Snapshot, b: &Snapshot) -> Vec<String> {
-    let mut out = Vec::new();
-    for (name, x, y) in [
-        ("tick", json!(a.tick), json!(b.tick)),
-        ("ids", json!(a.ids), json!(b.ids)),
-        ("resources", json!(a.resources), json!(b.resources)),
-        ("checks", json!(a.checks), json!(b.checks)),
-        ("state_hash", json!(a.state_hash), json!(b.state_hash)),
-    ] {
-        if x != y {
-            out.push(format!("{name}: {x} vs {y}"));
-        }
-    }
-    let ids = |s: &Snapshot| s.entities.iter().map(|e| e.id).collect::<Vec<_>>();
-    if ids(a) != ids(b) {
-        out.push(format!("entities {:?} vs {:?}", ids(a), ids(b)));
-        return out;
-    }
-    for (x, y) in a.entities.iter().zip(&b.entities) {
-        for path in x.components.keys().chain(y.components.keys()) {
-            if x.components.get(path) != y.components.get(path) {
-                out.push(format!("e{} {path}: {:?} vs {:?}", x.id, x.components.get(path), y.components.get(path)));
-            }
-        }
-    }
-    out.sort();
-    out.dedup();
-    out
 }
 
 fn assert_same_state(what: &str, a: &App, b: &App) {
