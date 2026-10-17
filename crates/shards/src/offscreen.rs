@@ -89,7 +89,7 @@ fn aim_at_the_image(insert: On<Insert<RenderTarget>>, mut targets: Query<&mut Re
 
 /// A target a game system changed in place (no insert, so no observer) is aimed the same way,
 /// before Bevy works out where each camera draws.
-fn aim_changed_targets(mut targets: Query<&mut RenderTarget, Changed<RenderTarget>>, offscreen: Res<Offscreen>) {
+pub(crate) fn aim_changed_targets(mut targets: Query<&mut RenderTarget, Changed<RenderTarget>>, offscreen: Res<Offscreen>) {
     for target in &mut targets {
         aim(target, &offscreen);
     }

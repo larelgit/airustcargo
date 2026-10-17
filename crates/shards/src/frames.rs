@@ -13,6 +13,10 @@
 //! time of every pass and the triangles that reached the rasterizer, where the GPU measures them
 //! (timestamp and pipeline-statistics queries: Vulkan and DX12). They arrive a few frames late.
 //!
+//! The draw commands per frame are counted in the render world, from the batched render phases ([`crate::draws`]
+//! says exactly what is counted); they are frame-exact, so they travel with the frame's render time and
+//! need no waiting for a report.
+//!
 //! Timing is wall-clock and differs from run to run: it is in no replay check, no replay and no
 //! snapshot, and it is not journaled.
 
@@ -64,6 +68,9 @@ impl Plugin for FramesPlugin {
                         render_started.before(RenderSystems::ExtractCommands),
                         (display_wait_started.before(prepare_windows), display_wait_ended.after(prepare_windows))
                             .in_set(RenderSystems::PrepareViews),
+                        // After Bevy batched the phases (the UI sets its batches in `PrepareBindGroups`),
+                        // before the render graph draws them.
+                        count_draws.after(RenderSystems::PrepareBindGroups).before(RenderSystems::Render),
                         render_ended.after(RenderSystems::PostCleanup),
                     ),
                 );
@@ -80,6 +87,9 @@ pub struct Frame {
     pub main: Duration,
     /// `None`: the render world dropped it.
     pub render: Option<Duration>,
+    /// The draw commands the render phases issued for it ([`crate::draws`]); `None`: the render world
+    /// dropped it, or Bevy keeps this GPU's batches to itself.
+    pub draws: Option<u64>,
 }
 
 impl Frame {
@@ -112,6 +122,10 @@ pub struct FrameStats {
     pub triangle_frames: u64,
     pub triangles: f64,
     pub triangles_max: f64,
+    /// The frames that counted their draws, the draws summed and the most in one frame.
+    pub draw_frames: u64,
+    pub draws: u64,
+    pub draws_max: u64,
 }
 
 impl FrameStats {
@@ -126,6 +140,11 @@ impl FrameStats {
         self.over_budget += u64::from(cost > budget);
         self.main += frame.main;
         self.render += frame.render.unwrap_or_default();
+        if let Some(draws) = frame.draws {
+            self.draw_frames += 1;
+            self.draws += draws;
+            self.draws_max = self.draws_max.max(draws);
+        }
         self.first.get_or_insert(frame.at);
         self.last = Some(frame.at);
     }
@@ -171,6 +190,11 @@ impl FrameStats {
     /// GPU time per frame (ms), where the GPU measured it.
     pub fn gpu_avg_ms(&self) -> Option<f64> {
         (self.gpu_frames > 0).then(|| self.gpu_ms / self.gpu_frames as f64)
+    }
+
+    /// Draw commands per frame, where they were counted ([`crate::draws`]).
+    pub fn draws_avg(&self) -> Option<f64> {
+        (self.draw_frames > 0).then(|| self.draws as f64 / self.draw_frames as f64)
     }
 
     /// Triangles per frame, where the GPU counted them.
@@ -240,14 +264,14 @@ impl FrameClock {
 
     /// The render world drew frame `frame` in `took`. Frames before it that it never reported
     /// count without it; a frame that was left out has no main-world time and is not counted.
-    fn rendered(&mut self, frame: u64, took: Duration) {
+    fn rendered(&mut self, frame: u64, took: Duration, draws: Option<u64>) {
         while let Some(&(waiting, at, main)) = self.waiting.front() {
             if waiting > frame {
                 break;
             }
             self.waiting.pop_front();
             let render = (waiting == frame).then_some(took);
-            self.complete(Frame { frame: waiting, at, main, render });
+            self.complete(Frame { frame: waiting, at, main, render, draws: if waiting == frame { draws } else { None } });
         }
     }
 
@@ -258,7 +282,7 @@ impl FrameClock {
                 break;
             }
             self.waiting.pop_front();
-            self.complete(Frame { frame: waiting, at, main, render: None });
+            self.complete(Frame { frame: waiting, at, main, render: None, draws: None });
         }
     }
 
@@ -342,9 +366,16 @@ pub fn span(world: &World) -> Option<FrameStats> {
     world.get_resource::<FrameClock>().map(|c| c.span)
 }
 
-/// Render times on their way from the render world to the main world: `(frame, time)`.
+/// Render times (and draws) on their way from the render world to the main world.
 #[derive(Resource, Clone, Default)]
-struct Renders(Arc<Mutex<Vec<(u64, Duration)>>>);
+struct Renders(Arc<Mutex<Vec<Rendered>>>);
+
+/// What the render world reports of one frame it drew.
+struct Rendered {
+    frame: u64,
+    took: Duration,
+    draws: Option<u64>,
+}
 
 /// The render world's side: the frame it draws, when it began, and the time it waited for the
 /// display.
@@ -354,6 +385,8 @@ struct RenderClock {
     started: Option<Instant>,
     display_wait_started: Option<Instant>,
     display_wait: Duration,
+    /// The draws counted for this frame ([`crate::draws`]).
+    draws: Option<u64>,
 }
 
 fn frame_started(mut clock: ResMut<FrameClock>, tick: Res<ai_core::sim::SimTick>) {
@@ -370,8 +403,8 @@ fn frame_ended(world: &mut World) {
     let report = world.get_resource::<DiagnosticsStore>().and_then(|store| gpu_report(store, seen));
     let mut clock = world.resource_mut::<FrameClock>();
     clock.end(at, tick, paused);
-    for (frame, took) in renders {
-        clock.rendered(frame, took);
+    for Rendered { frame, took, draws } in renders {
+        clock.rendered(frame, took, draws);
     }
     clock.give_up_on_old();
     if let Some((time, gpu)) = report {
@@ -429,12 +462,18 @@ fn display_wait_ended(mut clock: ResMut<RenderClock>) {
     }
 }
 
+/// The draws the render phases hold now, batched and about to be drawn.
+fn count_draws(world: &mut World) {
+    let draws = crate::draws::count(world);
+    world.resource_mut::<RenderClock>().draws = draws;
+}
+
 fn render_ended(mut clock: ResMut<RenderClock>, renders: Res<Renders>) {
     let Some(started) = clock.started.take() else {
         return;
     };
     let took = started.elapsed().saturating_sub(clock.display_wait);
-    renders.0.lock().unwrap_or_else(|e| e.into_inner()).push((clock.frame, took));
+    renders.0.lock().unwrap_or_else(|e| e.into_inner()).push(Rendered { frame: clock.frame, took, draws: clock.draws.take() });
 }
 
 fn ms_json(d: Duration) -> f64 {
@@ -446,7 +485,9 @@ fn round3(x: f64) -> f64 {
 }
 
 /// `frames` in `ai/status`: the last [`RECENT`] frames against the budget, the main and the render
-/// world's share, the GPU's time and triangles per frame (`null` where it measures none). `null`
+/// world's share, the GPU's time and triangles per frame (`null` where it measures none), and the
+/// draw commands the render phases issue per frame, on average and at most (`null` where Bevy keeps
+/// its batches to itself: [`crate::draws`]). `null`
 /// when nothing is drawn (headless).
 pub fn status(world: &World) -> Value {
     let Some(clock) = world.get_resource::<FrameClock>() else {
@@ -465,6 +506,8 @@ pub fn status(world: &World) -> Value {
         "render_ms": ms_json(stats.avg_render()),
         "gpu_ms": stats.gpu_avg_ms().map(round3),
         "triangles": stats.triangles_avg().map(f64::round),
+        "draws": stats.draws_avg().map(f64::round),
+        "draws_max": (stats.draw_frames > 0).then_some(stats.draws_max),
     })
 }
 
@@ -494,8 +537,8 @@ mod tests {
         let mut clock = FrameClock::new(ms(16));
         let at = frames(&mut clock, Instant::now(), &[(4, 1, false), (20, 0, false), (3, 1, false)]);
         assert_eq!(clock.recent().count(), 0, "no render time yet");
-        clock.rendered(1, ms(10));
-        clock.rendered(2, ms(5));
+        clock.rendered(1, ms(10), None);
+        clock.rendered(2, ms(5), None);
         let stats = clock.recent_stats();
         assert_eq!((stats.frames, stats.worst_frame, stats.over_budget), (2, 2, 1));
         assert_eq!((stats.max, stats.avg()), (ms(20), ms(15)), "10 ms of render, then 20 ms of main");
@@ -513,7 +556,7 @@ mod tests {
         // A paused frame without ticks counts; one that ran a `step` of 600 does not; play does.
         frames(&mut clock, Instant::now(), &[(2, 0, true), (900, 600, true), (5, 1, false)]);
         for frame in 1..=3 {
-            clock.rendered(frame, ms(1));
+            clock.rendered(frame, ms(1), None);
         }
         let counted: Vec<u64> = clock.recent().map(|f| f.frame).collect();
         assert_eq!(counted, [1, 3]);
@@ -527,7 +570,7 @@ mod tests {
         let mut at = Instant::now();
         for frame in 1..=last {
             at = frames(&mut clock, at, &[(1, 1, false)]);
-            clock.rendered(frame, ms(frame % 20));
+            clock.rendered(frame, ms(frame % 20), None);
         }
         assert_eq!(clock.recent().next().map(|f| f.frame), Some(6), "the oldest five are gone");
         assert_eq!(clock.recent_stats().frames, RECENT as u64);
@@ -548,18 +591,18 @@ mod tests {
         let mut clock = world.resource_mut::<FrameClock>();
         // A warmup of two frames; the second is still drawn when the span begins.
         let at = frames(&mut clock, Instant::now(), &[(30, 1, false), (2, 1, false)]);
-        clock.rendered(1, ms(1));
+        clock.rendered(1, ms(1), None);
         begin_span(&mut world);
         let mut clock = world.resource_mut::<FrameClock>();
         let at = frames(&mut clock, at, &[(30, 1, false), (2, 1, false)]);
-        clock.rendered(2, ms(1));
-        clock.rendered(3, ms(1));
+        clock.rendered(2, ms(1), None);
+        clock.rendered(3, ms(1), None);
         clock.span_frames.1 = clock.frame;
         assert!(!clock.span_settled(), "frame 4 waits for its render time");
         // A frame on the paused game while the last one is drawn: it is not the span's.
         frames(&mut clock, at, &[(40, 0, true)]);
-        clock.rendered(4, ms(1));
-        clock.rendered(5, ms(1));
+        clock.rendered(4, ms(1), None);
+        clock.rendered(5, ms(1), None);
         assert!(clock.span_settled());
         let span = span(&world).unwrap();
         assert_eq!((span.frames, span.over_budget, span.worst_frame), (2, 1, 3), "frames 3 and 4 only");
@@ -591,6 +634,36 @@ mod tests {
         let span = span(&world).unwrap();
         assert_eq!((span.gpu_frames, span.gpu_avg_ms()), (4, Some(2.0)));
         assert_eq!(world.resource::<FrameClock>().recent_stats().gpu_frames, 13, "every report is recent");
+    }
+
+    #[test]
+    fn draws_travel_with_their_frame_and_average_over_the_frames_that_counted() {
+        let mut clock = FrameClock::new(ms(16));
+        frames(&mut clock, Instant::now(), &[(1, 1, false); 4]);
+        clock.rendered(1, ms(1), Some(100));
+        clock.rendered(2, ms(1), None);
+        // Frame 3's render time never comes: its draws are lost with it, not given to frame 4.
+        clock.rendered(4, ms(1), Some(300));
+        let counted: Vec<Option<u64>> = clock.recent().map(|f| f.draws).collect();
+        assert_eq!(counted, [Some(100), None, None, Some(300)]);
+        let stats = clock.recent_stats();
+        assert_eq!((stats.draw_frames, stats.draws_avg(), stats.draws_max), (2, Some(200.0), 300));
+        let mut world = World::new();
+        world.insert_resource(clock);
+        let status = status(&world);
+        assert_eq!((&status["draws"], &status["draws_max"]), (&json!(200.0), &json!(300)));
+    }
+
+    #[test]
+    fn a_gpu_whose_batches_are_private_reports_no_draws() {
+        let mut clock = FrameClock::new(ms(16));
+        frames(&mut clock, Instant::now(), &[(1, 1, false); 2]);
+        clock.rendered(2, ms(1), None);
+        assert_eq!(clock.recent_stats().draws_avg(), None);
+        let mut world = World::new();
+        world.insert_resource(clock);
+        let status = status(&world);
+        assert_eq!((&status["draws"], &status["draws_max"]), (&Value::Null, &Value::Null));
     }
 
     #[test]

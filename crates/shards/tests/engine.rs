@@ -61,7 +61,7 @@ fn offscreen_is_the_window_plugins_without_a_window() {
 fn a_headless_game_has_no_picture_and_says_how_to_get_one() {
     let mut app = shards::testing::test_app(|_| {}, |_| {});
     let display = &shards::ai_core::status::status(app.world())["display"];
-    assert_eq!(display, &json!({"mode": "headless", "size": null, "gpu": null}));
+    assert_eq!(display, &json!({"mode": "headless", "size": null, "scene": null, "gpu": null}));
     let refused = call(&mut app, "shot", json!({}));
     let text = refused.result.as_str().unwrap_or_default().to_owned();
     assert!(!refused.ok && text.contains("--offscreen") && text.contains("observe"), "{text}");

@@ -116,6 +116,15 @@ pub struct Budgets {
     /// Triangles per frame, on average, at most (where the GPU counts them).
     #[serde(default)]
     pub triangles: Option<u64>,
+    /// Draw commands per frame, on average, at most: what the render phases issue once Bevy has
+    /// batched them, every view's (cameras, shadow maps) summed, a multi-draw once ([`crate::draws`]
+    /// says what is counted). Where Bevy keeps the GPU's batches to itself the budget is not judged.
+    ///
+    /// Left out of a definition's JSON while unset: the content hash (which replays compare) is
+    /// over that JSON, so a definition that does not name the budget keeps the hash it had before
+    /// the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draws: Option<u64>,
 }
 
 /// The share of ticks and frames that may go over their budget unless the definition says.
@@ -313,6 +322,8 @@ pub struct FrameSummary {
     pub render: Duration,
     pub gpu_avg_ms: Option<f64>,
     pub triangles: Option<f64>,
+    /// Draw commands per frame, on average ([`crate::draws`]); `None`: this GPU keeps its batches private.
+    pub draws: Option<f64>,
 }
 
 /// What a run measured.
@@ -362,6 +373,9 @@ impl Measured {
             if let Some(triangles) = f.triangles {
                 line.push_str(&format!(", {triangles:.0} triangles"));
             }
+            if let Some(draws) = f.draws {
+                line.push_str(&format!(", {draws:.0} draws"));
+            }
         }
         line.push_str(&format!(
             "; {} entities, {} meshes, {} drawn ({} distinct), {} in cameras",
@@ -393,6 +407,12 @@ impl Verdict {
 
 fn ms(d: Duration) -> f64 {
     d.as_secs_f64() * 1000.0
+}
+
+/// A per-frame average as a budget line shows it: whole when it is, else to a tenth, so an average
+/// just over a whole budget (900.4 against 900) does not read as the budget itself.
+fn per_frame(n: f64) -> String {
+    if n.fract() == 0.0 { format!("{n:.0}") } else { format!("{n:.1}") }
 }
 
 /// Every budget of `budgets` against what the run `measured`. `judged` off (a debug build): the
@@ -449,9 +469,16 @@ pub fn judge(budgets: &Budgets, measured: &Measured, judged: bool) -> Vec<Verdic
     }
     if let Some(budget) = budgets.triangles {
         match frames.map(|f| f.triangles) {
-            Some(Some(n)) => check(Some(n <= budget as f64), format!("triangles {n:.0} a frame (at most {budget})")),
+            Some(Some(n)) => check(Some(n <= budget as f64), format!("triangles {} a frame (at most {budget})", per_frame(n))),
             Some(None) => check(None, "triangles: this GPU (or build) counts none".to_owned()),
             None => check(None, not_drawn("triangles")),
+        }
+    }
+    if let Some(budget) = budgets.draws {
+        match frames.map(|f| f.draws) {
+            Some(Some(n)) => check(Some(n <= budget as f64), format!("draws {} a frame (at most {budget})", per_frame(n))),
+            Some(None) => check(None, "draws: this GPU keeps its batches private, none are counted".to_owned()),
+            None => check(None, not_drawn("draws")),
         }
     }
     if let Some(budget) = budgets.entities {
@@ -604,6 +631,7 @@ fn real_time(app: &mut App, def: &PerfDef, timestep: Duration) -> Result<(TickSt
         render: f.avg_render(),
         gpu_avg_ms: f.gpu_avg_ms(),
         triangles: f.triangles_avg(),
+        draws: f.draws_avg(),
     });
     Ok((ticks, wall, frames))
 }
@@ -666,6 +694,7 @@ mod tests {
             budget,
             gpu_avg_ms: None,
             triangles: Some(120_000.0),
+            draws: Some(840.0),
             ..Default::default()
         };
         let measured = Measured {
@@ -682,6 +711,7 @@ mod tests {
             frame_avg_ms: Some(16.7),
             gpu_avg_ms: Some(10.0),
             triangles: Some(100_000),
+            draws: Some(800),
             visible_meshes: Some(500),
             mesh_assets: Some(10),
             ..Default::default()
@@ -696,10 +726,42 @@ mod tests {
                 "OVER  frames over 16.0 ms: 20 of 1000, 2.0% (at most 1.0%)",
                 "-     GPU time: this GPU (or build) measures none",
                 "OVER  triangles 120000 a frame (at most 100000)",
+                "OVER  draws 840 a frame (at most 800)",
                 "ok    visible meshes 300 (at most 500)",
                 "OVER  distinct meshes drawn 12 (at most 10)",
             ]
         );
+    }
+
+    #[test]
+    fn draws_are_judged_where_counted_and_reported_in_the_line() {
+        let budget = Duration::from_millis(16);
+        let measured = |draws: Option<f64>| Measured {
+            ticks: ticks(600, 1, 0),
+            tick_budget: budget,
+            frames: Some(FrameSummary { frames: 100, budget, draws, ..Default::default() }),
+            ..Default::default()
+        };
+        let budgets = Budgets { draws: Some(900), ..Default::default() };
+        let line = |draws| judge(&budgets, &measured(draws), true).iter().find(|v| v.text.starts_with("draws")).map(Verdict::line);
+        assert_eq!(line(Some(812.4)).as_deref(), Some("ok    draws 812.4 a frame (at most 900)"));
+        assert_eq!(line(Some(900.4)).as_deref(), Some("OVER  draws 900.4 a frame (at most 900)"), "the line shows the value judged");
+        assert_eq!(line(Some(901.0)).as_deref(), Some("OVER  draws 901 a frame (at most 900)"));
+        assert_eq!(line(None).as_deref(), Some("-     draws: this GPU keeps its batches private, none are counted"));
+        let headless = Measured { ticks: ticks(600, 1, 0), tick_budget: budget, ..Default::default() };
+        let verdicts = judge(&budgets, &headless, true);
+        assert!(verdicts.iter().any(|v| v.line() == "-     draws: nothing is drawn headless (`--offscreen` draws)"), "{verdicts:?}");
+        assert!(measured(Some(812.4)).line().contains(", 812 draws;"), "{}", measured(Some(812.4)).line());
+        assert!(!measured(None).line().contains("draws;"), "no number is made up");
+    }
+
+    #[test]
+    fn a_budget_nobody_set_leaves_a_definitions_json_as_it_was() {
+        // The content hash is over this JSON, and replays compare it: a field added to the budgets
+        // must not move the hash of a definition that does not use it.
+        let json = |budgets: Budgets| serde_json::to_value(PerfDef { budgets, ..serde_json::from_str("{}").unwrap() }).unwrap();
+        assert!(!json(Budgets::default())["budgets"].as_object().unwrap().contains_key("draws"));
+        assert_eq!(json(Budgets { draws: Some(150), ..Default::default() })["budgets"]["draws"], 150);
     }
 
     fn errors(perf: &str) -> Vec<String> {
