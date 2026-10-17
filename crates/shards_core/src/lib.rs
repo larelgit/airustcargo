@@ -159,6 +159,10 @@ pub struct EngineConfig {
     /// rule), and by `--no-engine-invariants`. Test apps, `--verify`, fuzz and soak keep it on.
     /// Read when the plugins are built, so set it before.
     pub engine_invariants: bool,
+    /// State coverage (`--coverage`): the `coverage` tool lists the states the session reached and what
+    /// content declares that it never did ([`ai_core::coverage`]). Off by default; it only reads the
+    /// world, so a game plays the same either way.
+    pub coverage: bool,
 }
 
 /// What a game asks of Steam at launch (the `steam` feature of `shards`: the `shards_steam` module).
@@ -333,6 +337,7 @@ impl Default for EngineConfig {
             without: Vec::new(),
             heavy: None,
             engine_invariants: !cfg!(feature = "dist"),
+            coverage: false,
         }
     }
 }
@@ -377,6 +382,7 @@ impl EngineConfig {
             report_perf: self.report_perf,
             game: ai_core::crash::GameInfo { title: self.title.clone(), version: self.version.clone() },
             heavy: self.heavy,
+            coverage: self.coverage,
             // Test apps write no files.
             heavy_files: !self.testing,
             engine_invariants: self.engine_invariants,

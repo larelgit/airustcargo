@@ -73,6 +73,7 @@ pub mod fuzz;
 pub mod inputs;
 mod lex;
 pub mod minimize;
+pub mod regress;
 mod run;
 pub mod schema;
 mod script;

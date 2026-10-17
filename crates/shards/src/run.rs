@@ -99,6 +99,11 @@ struct Args {
     /// so that over many nights every tick phase is checked.
     #[arg(long, value_name = "O", requires = "heavy")]
     heavy_offset: Option<u64>,
+    /// Keep state coverage: the `coverage` tool lists the states the session reached (an entity's kind,
+    /// motion mode, action and phase, behaviour state, statuses) and what content declares that it
+    /// never did. Only reads the world; for fuzzing and soak.
+    #[arg(long, conflicts_with_all = ["check_content", "worldgen_report", "bake_nav", "bake_motion", "smoke", "perf"])]
+    coverage: bool,
     /// A tick slower than this is over budget: `step` counts it and the journal names
     /// it (`perf`). Default: the tick's own duration (16.7 ms at 60 Hz). Debug builds
     /// run slower than `--release`.
@@ -404,6 +409,7 @@ impl Args {
                 _ => MenuLaunch::Auto,
             },
             without: self.without.clone(),
+            coverage: self.coverage,
             heavy: self.heavy.map(|every| {
                 let defaults = ai_core::HeavyConfig::every(every);
                 ai_core::HeavyConfig {

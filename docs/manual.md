@@ -2691,6 +2691,8 @@ invariant low violated at tick 1053: e5 Health.current = 42
 replay finished at tick 1053: identical to the recording (18 checks); 1 invariant violated [1053 ticks in 1.50s]
 ```
 
+**Minimising and regression scenarios (`shards_script::minimize`, `shards_script::regress`).** `minimize(items, still_fails, budget)` is Zeller's `ddmin` as a pure function over any list: split into n chunks, try each chunk, then each complement, double n; then a one-at-a-time pass while the budget lasts. It never asks about the empty list or the original, remembers the candidates it asked about (a repeat costs no attempt), and returns the smallest failing list, the attempts used and whether the budget ran out. A session that broke a rule is a list of rounds (the input calls, then a step length); `regress::scenario_text` writes the shrunk rounds as a scenario: a header comment (seed, inputs before and after shrinking, the stop text), `seed S`, and the `act?` and `step` lines as played, nothing else. The calls are `act?` because most random calls are refused and a refusal is not the failure; the stop is: the broken rule halts the game inside a `step`, and a step cut short fails a scenario. Such files live in `crates/sandbox/scenarios/regress/` as `<YYYYMMDD>-<stop>-seed<S>.scenario`, fail while the bug exists, and are committed with its fix; `scenario_files.rs` runs each on a fresh game of the seed it names, forward only.
+
 ## Tick time (E11)
 
 Each run of `FixedMain` (one tick) is timed by the real clock, both in `step` and in a normal game. The timing wraps
@@ -3161,6 +3163,28 @@ cargo sandbox --replay tests/replays/combat_prototype.json --verify --heavy 30
 **The state audit** is the static half: after the combat prototype and the region replays have played to their end, every resource in the world (`World::iter_resources`) is either registered with `add_snapshot_resource`, or named in the audit's list as outside the simulation, with why (`crates/sandbox/tests/sandbox/state_audit.rs`: Bevy's clocks and render state, registries filled at build time, presentation, settings, transport, caches named with their rebuild). A resource that is neither fails the test with its type name: register it, or add it to the list with its reason. The reference replay test fails on `warning: replay checks leave out …`, which `--verify` prints for each gameplay component the checks cannot hash (it does not serialize through reflection; `ReplayHashing::reported_left_out`).
 
 **Proof.** `crates/sandbox/tests/sandbox/heavy.rs`: the combat prototype verifies with `--heavy 300` (on every push), and three planted bugs on the player are each caught at tick 60 and pass once fixed: a counter resource (fixed with `add_snapshot_resource`), a `Local<u32>` every 50th call (fixed by reading the tick), a derived cache (fixed with `add_snapshot_rebuild`); a failed check halts, stays off and comes back with `assert_reset`. `crates/shards/src/run.rs`: a stand's host with a guest is checked, and a host-only counter halts the stand. Every reference replay of the engine and the template passes `--verify --heavy 30` (checked on 17 October 2026, Windows 11), and the nightly job `heavy` runs them all with `--heavy 10 --heavy-span 30` from the seed's offset (see "Tests and CI").
+## Coverage
+
+Which states has a session reached? Coverage answers it for a fuzz run or a soak, and tells a fuzzer which of its calls led somewhere new. It is test-only bookkeeping: off by default, on with `--coverage` (`EngineConfig::coverage`; `cargo sandbox --headless --paused --coverage …`). It only reads the world: the resource `AiCoverage` exists only when coverage is on, and it is not in the replay hash, the replay checks or a snapshot (heavy mode's twins keep it off). A game with coverage on records the same replay as one without; `tests/sandbox/coverage.rs` compares the two recordings, and the combat prototype's reference replay verifies with `--coverage`.
+
+**Signatures.** After every tick each entity with `AiVisible` gets one signature: the **parts** modules contribute, joined in registration order (`add_coverage_part(name, |world, entity| Option<String>)`, a part returns `None` for an entity that has no such aspect). The engine's own: `kind` (`AiKind`), `motion` (the `MotionState` mode: `ground`, `air`, `water`, `glide`, `mantle`), `action` (`light_1:recovery`, or `idle`), `statuses` (the ids of the active statuses, sorted: `bleed,slow`) and `npc` (the `NpcBrain` state). Each module registers its part in its own plugin. Example: `kind=Boss motion=ground action=slash:active npc=fight`. The resource counts every distinct signature (entity-ticks) and the tick it first appeared at; within one tick the entities' signatures are counted in sorted order, so a window that shifts `Entity` indices changes nothing.
+
+**What content declares.** `add_coverage_catalog(label, part, declared, reached)` names a kind of thing content declares (`declared(world)` lists the ids) and how a part's values show it was reached (`reached(value)` gives the ids: `slash:active` reached the action `slash`). The engine registers `actions` (every `action` definition; `idle` is the value of a free fighter), `statuses` (every `status`, reached when it was active on some entity) and `behaviour states` (every state of every `behavior`). A state name shared by two behaviours counts as reached once any entity of either is in it.
+
+**Tools.** `coverage` (query, dev scope; `shards coverage [--top N] [--since K]`):
+
+```text
+coverage: 51 distinct signatures, 32298 entity-ticks
+distinct: 51
+rarest 5:
+  2x first at tick 436  kind=Player motion=ground action=block:lower
+  3x first at tick 1156  kind=Boss motion=ground action=shockwave_enraged:active npc=fight
+never reached, actions (7 of 23): claw, player_death, player_stagger, skeleton_death, skeleton_flinch, skeleton_stagger, slam
+never reached, behaviour states (3 of 5): guard, home, idle
+```
+
+`json=true` answers as JSON (`distinct`, `entity_ticks`, `rarest`, `never_reached`, and `new_since` and `new` with `since`). **Steering:** `since=<distinct of an earlier answer>` adds `new since K: N` and lists the new signatures (the first twenty), so a driver polls it after a call and learns whether the call led anywhere new; the count is the driver's, the game keeps no cursor, so several drivers do not disturb each other (after a reset a stale count means "all"). `coverage_reset` (control; `shards coverage reset`) forgets it all. With coverage off both tools answer `coverage is off: start the game with coverage on (EngineConfig.coverage, or --coverage)`.
+
 ## Saves (E8.1–5)
 
 A save is the player's progress, laid over the world that the game built as usual. It is not a snapshot: a snapshot (`snapshot_save`) holds the exact state of the simulation at one tick and is for the developer, while a save is a set of explicit structures that the game names itself. Nothing that is not named goes into the file. The crate is `crates/shards_save`, module `save` (`ai/status`). The umbrella crate exposes it as `shards::save`.

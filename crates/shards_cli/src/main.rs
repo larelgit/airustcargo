@@ -180,6 +180,20 @@ enum Cmd {
         #[command(subcommand)]
         op: AssertCmd,
     },
+    /// The states the session has reached (a game started with `--coverage`): distinct signatures,
+    /// the rarest, what is new since an earlier answer, and what content declares that was never
+    /// reached. `shards coverage reset` forgets it all.
+    Coverage {
+        /// `reset` clears the counts.
+        #[arg(value_parser = ["reset"])]
+        op: Option<String>,
+        /// How many of the rarest signatures to list.
+        #[arg(long)]
+        top: Option<usize>,
+        /// The `distinct` an earlier answer gave: list what is new since.
+        #[arg(long)]
+        since: Option<usize>,
+    },
     /// Random player inputs between short steps, until the game halts or the steps run out.
     /// Plays every player action tool the game lists, with arguments made from the tool's own
     /// schema (targets from `observe`); `--chaos` adds developer calls that shake the world.
@@ -738,6 +752,8 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             plan.save_replay = true;
             return run_fuzz(client, plan);
         }
+        Cmd::Coverage { op: Some(_), .. } => act("coverage_reset", json!({}))?,
+        Cmd::Coverage { op: None, top, since } => act("coverage", json!({"top": top, "since": since}))?,
         Cmd::Soak { .. } => unreachable!("a soak finds its members itself (main)"),
         Cmd::Package { .. } => unreachable!("a package needs no game (main)"),
         Cmd::Shot { no_marks, out } => {

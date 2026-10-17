@@ -41,6 +41,7 @@
 
 pub mod builtin;
 pub mod crash;
+pub mod coverage;
 pub mod describe;
 pub mod dev;
 pub mod display;
@@ -90,6 +91,7 @@ pub use describe::{
 pub use dev::{DevCommand, DevEntry, DevLine, DevMenu};
 pub use failures::{ai_core_error_handler, AiFailures, SystemFailure};
 pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible};
+pub use coverage::AiCoverage;
 pub use heavy::{HeavyConfig, HeavyFailure, HeavyTwin};
 pub use invariants::{with_query, AiInvariants, InvariantSystems, Offenders, RuleQueries, Violation};
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
@@ -159,6 +161,9 @@ pub struct AiCorePlugin {
     /// Register the engine's own invariant rules (`ai.index_consistent` here; the other
     /// modules read `EngineConfig::engine_invariants`). On by default.
     pub engine_invariants: bool,
+    /// State coverage ([`coverage`]): which states the session reached, for the `coverage` tool.
+    /// Off by default; nothing of it exists then.
+    pub coverage: bool,
 }
 
 impl Default for AiCorePlugin {
@@ -177,6 +182,7 @@ impl Default for AiCorePlugin {
             heavy: None,
             heavy_files: true,
             engine_invariants: true,
+            coverage: false,
         }
     }
 }
@@ -244,6 +250,7 @@ impl Plugin for AiCorePlugin {
                 panic!("ai.index_consistent: {e}");
             }
         }
+        coverage::plugin(app, self.coverage);
 
         #[cfg(feature = "render")]
         {
@@ -337,6 +344,15 @@ pub trait AiAppExt {
     /// game halts the way it does after a gameplay failure (see [`invariants`]). Names use
     /// letters, digits, `_` and `-` (panics otherwise); the same name replaces a rule.
     fn add_ai_invariant(&mut self, name: &str, rule: invariants::Invariant) -> &mut Self;
+
+    /// A piece of every visible entity's coverage signature ([`coverage`]): `part(world, entity)`
+    /// returns its value (`ground`, `heavy:windup`) or `None` when the entity has no such aspect.
+    /// Parts are joined in registration order; the same name replaces a part. Only reads the world.
+    fn add_coverage_part(&mut self, name: &str, part: coverage::CoveragePart) -> &mut Self;
+
+    /// What content declares in a kind (`label`: `actions`) and how the values of `part` show it was
+    /// reached, so the `coverage` tool can list what a session never reached.
+    fn add_coverage_catalog(&mut self, label: &str, part: &str, declared: coverage::Declared, reached: coverage::Reached) -> &mut Self;
 
     /// Records component `C` in replays: the per-entity input everything writes
     /// (keyboard, network, agents) and gameplay only reads, like the sandbox's `Intent`.
@@ -501,6 +517,19 @@ impl AiAppExt for App {
         if let Err(e) = self.world_mut().get_resource_or_init::<AiInvariants>().add_game_rule(name, rule) {
             panic!("add_ai_invariant: {e}");
         }
+        self
+    }
+
+    fn add_coverage_part(&mut self, name: &str, part: coverage::CoveragePart) -> &mut Self {
+        if let Err(e) = self.world_mut().get_resource_or_init::<coverage::CoverageParts>().add_part(name, part) {
+            panic!("add_coverage_part: {e}");
+        }
+        self
+    }
+
+    fn add_coverage_catalog(&mut self, label: &str, part: &str, declared: coverage::Declared, reached: coverage::Reached) -> &mut Self {
+        let catalog = coverage::Catalog { label: label.to_owned(), part: part.to_owned(), declared, reached };
+        self.world_mut().get_resource_or_init::<coverage::CoverageParts>().add_catalog(catalog);
         self
     }
 

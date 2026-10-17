@@ -30,7 +30,7 @@ shards-snapshots = { max-threads = 1 }
 filter = '''
 binary_id(sandbox::system_failures)
 | (binary_id(sandbox::sandbox) & (
-    test(/^scenario_files::(every_scenario_file_passes|the_scenarios_also_pass)/)
+    test(/^scenario_files::(every_scenario_file_passes|the_scenarios_also_pass|every_regression_scenario)/)
     | test(/^snapshots::/)
     | test(=invariants::a_snapshot_restart_rearms_the_rules_and_keeps_the_session_ones)
     | test(=invariants::the_replay_saved_at_a_violation_breaks_the_rule_at_the_same_tick)

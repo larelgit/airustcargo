@@ -104,6 +104,7 @@
 
 pub mod ai;
 pub mod anim;
+mod coverage;
 pub mod bake;
 pub mod clipfile;
 pub mod combat;
@@ -294,7 +295,9 @@ impl Plugin for ActionPlugin {
             .init_resource::<machine::PendingEffects>()
             .add_engine_module("action", VERSION)
             .add_engine_invariant("action.resources_in_range", invariants::resources_in_range)
-            .add_engine_invariant("action.running_sane", invariants::running_sane)
+            .add_engine_invariant("action.running_sane", invariants::running_sane);
+        coverage::plugin(app);
+        app
             // The machine runs after motion's `Intent → LocomotionInput` step: it
             // overrides what that step wrote (external, locked, face, sprint).
             .configure_sets(

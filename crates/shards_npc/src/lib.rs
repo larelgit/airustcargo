@@ -87,6 +87,7 @@
 
 pub mod ai;
 pub mod brain;
+mod coverage;
 pub mod def;
 pub mod director;
 mod invariants;
@@ -212,6 +213,7 @@ impl Plugin for NpcPlugin {
                 hooks.states.entry(name.to_owned()).or_insert(state);
             }
         }
+        coverage::plugin(app);
         app.add_content::<BehaviorDef>()
             .add_content::<PerceptionDef>()
             .add_content::<DirectorDef>()

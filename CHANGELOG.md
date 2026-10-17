@@ -96,6 +96,14 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   a test plays the same run in-process. The schema of `Id` says `"format": "entity_id"`, which is how the generator finds the arguments that take an entity id.
 - The sandbox test `tool_contracts`: every query and action tool, and `step`, is called 30 times (20 valid by schema, 10 invalid on purpose); no gameplay system fails, no tool panics, an error is not empty and
   names the signature or the bad argument, and the session's replay plays back from tick 0, which proves every successful action call was recorded. Control tests plant each bug class and show the checker names it.
+- State coverage (`ai_core::coverage`): `--coverage` (`EngineConfig::coverage`, off by default) counts one signature per visible entity per tick,
+  made of the parts modules register with `add_coverage_part` (the engine's: `kind`, `motion`, `action`, `statuses`, `npc`), and
+  `add_coverage_catalog` names what content declares so the tools can say what was never reached. The `coverage` query (`shards coverage
+  [--top N] [--since K]`, `json=true`) lists the totals, the rarest signatures, what is new since an earlier `distinct`, and the actions,
+  statuses and behaviour states never reached; `coverage_reset` (`shards coverage reset`) clears it. Only reads the world: not in the
+  hash, replays or snapshots, and a game with it on records the same replay.
+- `shards_script::minimize` (`ddmin` over any list, with a budget) and `shards_script::regress` (the shrunk rounds of a fuzz run as a
+  scenario: header, `seed S`, `act?` and `step` lines). `crates/sandbox/scenarios/regress/` holds such scenarios; `scenario_files.rs` runs each on a fresh game of its seed, forward only.
 
 ### Changed
 
