@@ -222,6 +222,8 @@ where
                 }
                 let _ = world.unregister_system(id);
                 let msg = panic_message(&panic);
+                // The answer says it: no crash report.
+                crate::crash::handled(&msg);
                 journal::log(world, JournalKind::Error, format!("tool {tool_name} panicked: {msg}"));
                 // A panic that unwound through a running schedule (a gameplay panic in
                 // `step` with `catch_system_panics` off) took that schedule with it.

@@ -326,9 +326,41 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
     // From here on `kill` ends the game through `AppExit`, like Ctrl+C: the token
     // and the port file are removed on the way out.
     termination::catch_signals();
+    // From here on a panic leaves a crash report: the hook keeps what it can, and the game
+    // writes the report, or `guarded` does when the panic takes the game with it.
+    ai_core::crash::install_panic_hook();
+    let reports = config.crash_replays;
     if let NetLaunch::Stand { clients, udp: false } = config.net {
-        return stand::run(&build, &args, config, clients);
+        return guarded(reports, None, || stand::run(&build, &args, config, clients));
     }
+    guarded(reports, None, || play(&build, &args, config, recording))
+}
+
+/// Runs the game. A panic that unwinds out of it took the world with it: what the panic hook kept
+/// goes into a crash report (`reports` off: none), its path to stderr, and the process exits with
+/// 101, as after any panic. `base`: the report goes there instead of the working directory.
+fn guarded(reports: bool, base: Option<&std::path::Path>, game: impl FnOnce() -> ExitCode) -> ExitCode {
+    let payload = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(game)) {
+        Ok(code) => return code,
+        Err(payload) => payload,
+    };
+    if !reports {
+        std::panic::resume_unwind(payload);
+    }
+    let report = ai_core::crash::fatal(payload.as_ref());
+    let written = match base {
+        Some(base) => ai_core::crash::write_in(base, &report),
+        None => ai_core::crash::write(&report),
+    };
+    match written {
+        Ok(path) => eprintln!("error: the game crashed: {}; crash report: {}", report.what.message, ai_core::crash::shown(&path)),
+        Err(e) => eprintln!("error: the game crashed: {}; the crash report was not written: {e}", report.what.message),
+    }
+    ExitCode::from(101)
+}
+
+/// The game itself, from `build` to the end of its run.
+fn play(build: &impl Fn(&EngineConfig) -> App, args: &Args, config: EngineConfig, recording: Option<Replay>) -> ExitCode {
     let mut app = build(&config);
     termination::catch_console_close();
     // Player settings are read now, not earlier: Bevy's settings plugin scans the type registry
@@ -1321,5 +1353,28 @@ mod tests {
         assert!(baked.contains("format: \"shards-navtile/1\""), "{baked}");
         assert_eq!(check_content(&game, config.clone()), ExitCode::SUCCESS, "fresh bakes are clean content");
         assert_eq!(bake_nav(&game, config, "feild"), ExitCode::FAILURE, "an unknown tile fails");
+    }
+
+    #[test]
+    fn a_panic_that_takes_the_game_with_it_leaves_a_crash_report() {
+        ai_core::crash::install_panic_hook();
+        let base = std::env::temp_dir().join(format!("shards_guarded_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(guarded(true, Some(&base), || ExitCode::from(7)), ExitCode::from(7), "a game that ends is left alone");
+        assert!(!base.exists(), "and writes no report");
+
+        assert_eq!(guarded(true, Some(&base), || panic!("the floor is lava")), ExitCode::from(101));
+        let files: Vec<_> = std::fs::read_dir(base.join("crashes")).unwrap().map(|f| f.unwrap().path()).collect();
+        assert_eq!(files.len(), 1, "{files:?}");
+        let report: ai_core::crash::CrashReport = serde_json::from_str(&std::fs::read_to_string(&files[0]).unwrap()).unwrap();
+        assert_eq!(report.format, ai_core::crash::FORMAT);
+        assert_eq!(report.what.message, "the floor is lava");
+        assert!(report.what.location.as_deref().is_some_and(|l| l.contains("run.rs")), "{:?}", report.what);
+        assert!(!report.what.backtrace.is_empty(), "the hook kept the call stack");
+        assert!(!report.system.os.is_empty());
+        assert!(report.replay.is_none() && report.no_replay.as_deref().is_some_and(|w| w.contains("took the world")));
+        let err = replay::load(&files[0]).unwrap_err();
+        assert!(err.contains("is a crash report without a replay (the panic unwound"), "{err}");
+        let _ = std::fs::remove_dir_all(base);
     }
 }

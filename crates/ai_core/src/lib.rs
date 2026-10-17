@@ -40,6 +40,7 @@
 //! ```
 
 pub mod builtin;
+pub mod crash;
 pub mod describe;
 pub mod dev;
 pub mod failures;
@@ -125,8 +126,9 @@ pub struct AiCorePlugin {
     /// `FixedUpdate` with it. `false` keeps Bevy's own handler.
     pub catch_system_panics: bool,
     /// After a gameplay failure, save the session as `replays/crash-tick<N>.json` to
-    /// reproduce it with; after a violated invariant, as
-    /// `replays/invariant-<name>-tick<N>.json`.
+    /// reproduce it with, and a crash report next to it in `crashes/` ([`crash`]); after a
+    /// violated invariant, as `replays/invariant-<name>-tick<N>.json`. A panic nobody handled
+    /// (another thread) gets a crash report too.
     pub crash_replays: bool,
     /// Ticks between replay checks ([`replay::CHECK_EVERY`] by default), stored in every
     /// replay saved. Record with 1 to have a divergence named at its exact tick.
@@ -140,6 +142,8 @@ pub struct AiCorePlugin {
     /// entries for ticks over budget. Timing is wall-clock, so tests that compare whole
     /// journals turn it off; `ai/status` has it either way.
     pub report_perf: bool,
+    /// The game a crash report names (title, version).
+    pub game: crash::GameInfo,
 }
 
 impl Default for AiCorePlugin {
@@ -154,6 +158,7 @@ impl Default for AiCorePlugin {
             check_detail: CheckDetail::default(),
             tick_budget: None,
             report_perf: true,
+            game: crash::GameInfo::default(),
         }
     }
 }
@@ -212,6 +217,7 @@ impl Plugin for AiCorePlugin {
         snapshot::plugin(app);
         perf::plugin(app, self.tick_budget, self.report_perf);
         failures::plugin(app, self.catch_system_panics, self.crash_replays);
+        crash::plugin(app, self.game.clone());
         invariants::plugin(app, self.crash_replays);
 
         #[cfg(feature = "render")]

@@ -211,7 +211,12 @@ fn broken(world: &World, rule: &Rule) -> Option<String> {
     match rule {
         Rule::Game(rule) => match catch_unwind(AssertUnwindSafe(|| rule(world))) {
             Ok(text) => text,
-            Err(panic) => Some(format!("the rule itself panicked: {}", crate::tools::panic_message(&panic))),
+            Err(panic) => {
+                let message = crate::tools::panic_message(&panic);
+                // Reported as the rule's violation: no crash report.
+                crate::crash::handled(&message);
+                Some(format!("the rule itself panicked: {message}"))
+            }
         },
         Rule::Session { when, seen } => builtin::condition_hit(world, when, *seen),
     }

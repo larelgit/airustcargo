@@ -52,6 +52,9 @@ pub mod prelude {
 pub struct EngineConfig {
     /// Window title.
     pub title: String,
+    /// The game's version (`Some(env!("CARGO_PKG_VERSION").into())` in the game's crate), named in
+    /// crash reports.
+    pub version: Option<String>,
     /// No window, no GPU, no audio: CI, servers, parallel playtests. Gameplay is the
     /// same plugins, so a game plays the same with a window or without.
     pub headless: bool,
@@ -63,8 +66,9 @@ pub struct EngineConfig {
     pub paused: bool,
     /// Simulation ticks per second.
     pub tick_hz: f64,
-    /// A gameplay failure saves `replays/crash-tick<N>.json` to reproduce it with, a
-    /// violated invariant `replays/invariant-<name>-tick<N>.json`.
+    /// A gameplay failure saves `replays/crash-tick<N>.json` to reproduce it with and a crash
+    /// report (`crashes/…`; a panic nobody handled too), a violated invariant
+    /// `replays/invariant-<name>-tick<N>.json`.
     pub crash_replays: bool,
     /// Ticks between replay checks (`--check-every`), stored in every replay saved.
     pub check_every: u64,
@@ -150,6 +154,7 @@ impl Default for EngineConfig {
     fn default() -> Self {
         Self {
             title: "Shards".into(),
+            version: None,
             headless: false,
             seed: 42,
             port: Some(ai_core::DEFAULT_PORT),
@@ -189,6 +194,7 @@ impl EngineConfig {
             check_detail: self.check_detail,
             tick_budget: self.tick_budget,
             report_perf: self.report_perf,
+            game: ai_core::crash::GameInfo { title: self.title.clone(), version: self.version.clone() },
             ..default()
         }
     }
