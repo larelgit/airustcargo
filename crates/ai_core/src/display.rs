@@ -82,3 +82,18 @@ pub fn status(world: &World) -> serde_json::Value {
     });
     serde_json::json!({"mode": mode, "size": size.map(|s| [s.x, s.y]), "scene": scene, "gpu": crate::crash::gpu(world)})
 }
+
+#[cfg(test)]
+mod tests {
+    use super::default_font_has;
+
+    #[test]
+    fn the_default_font_has_the_letters_and_marks_the_engine_writes_and_nothing_else() {
+        for c in "Az09 ÀéßŁœ ΑΩαω ЁЖжё —–‘’“”…•· № ←↑→↓".chars() {
+            assert!(default_font_has(c), "{c:?}");
+        }
+        for c in ['\u{7F}', '\u{3A2}', '⚠', '✕', '中', '😀', '\u{460}'] {
+            assert!(!default_font_has(c), "{c:?}");
+        }
+    }
+}
