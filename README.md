@@ -749,6 +749,8 @@ fall_height }`, плюс `Jumped`, `Mantled`, `ModeChanged`. Позиция `Tra
   $ shards act rebind action=sprint mode=Toggle
   ok: gameplay/sprint: mode toggle
   ```
+  Игроку — экран: виджет `Binding` в контенте меню показывает входы действия и ждёт новую клавишу, кнопку мыши или кнопку
+  геймпада; занятый вход он не отнимает, а называет, у кого тот (см. «Интерфейс (E9)», «Клавиши»).
 - Сохранение: изменения игрока — настройки группы `controls` (`ControlSettings`), их сохраняют настройки Bevy в
   `settings.toml`, см. «Настройки (E8.6)». В файле только то, что отличается от умолчаний (`"gameplay.jump" =
   ["Key(KeyJ)", "GamepadButton(South)"]`, режим в `hold_or_toggle`), поэтому новые умолчания доходят и до старых файлов.
@@ -4150,9 +4152,10 @@ HUD и меню игры — контент. Модуль `shards_ui` держи
 ближайшие точки интереса), `Allies` (рамки союзников: имя, здоровье, лежит ли), `Compare` (до → после по строкам: `damage 12 →
 15 (+3)`). Берут ввод: `Button` (`action`), `Slider` (`min`, `max`, `step`), `Toggle`, `Choice` (`options`); у трёх последних
 `setting: "группа.ключ"` — настройка игрока: виджет показывает её и меняет через `settings_set` (её проверки, запись в
-`settings.toml`, журнал `settings: …`). Id виджета — `экран/id` (`pause/resume`); у виджета без id — вид и номер (`hud/hint1`).
+`settings.toml`, журнал `settings: …`). `Binding` (`context`, `action`, `slot`) — клавиша или кнопка действия, которую игрок
+меняет сам (см. «Клавиши» ниже). Id виджета — `экран/id` (`pause/resume`); у виджета без id — вид и номер (`hud/hint1`).
 Ошибки контента называют файл и виджет: повтор id, `open` несуществующего экрана, слайдер без диапазона, `setting` не вида
-`группа.ключ`; правка, которая их вносит, отклоняется, и остаётся прежний экран.
+`группа.ключ`, `context` с точкой, `taken` не сообщением `@id`; правка, которая их вносит, отклоняется, и остаётся прежний экран.
 
 **Действия кнопок:** `close` (закрыть свой экран), `back` (закрыть верхний), `open <экран>`, `quit` (`AppExit`), `tool <имя>
 {json}` — инструмент от имени нажавшего агента и с его scope (кнопка не даёт игроку инструмент разработчика), одно слово —
@@ -4169,7 +4172,8 @@ app.add_ui_action("give_up", |world, press| {          // press: widget, screen,
 ```
 
 Источники движка (`shards`): `you.health`, `you.stamina`, `you.poise` (полоса), `you.charges:<заряд>`, `you.cooldown:<действие>`,
-`you.heading` (компас), `allies`. «You» — тело, которым управляет эта машина (`LocalPlayer`), иначе то, за которое играет
+`you.heading` (компас), `allies`, `input.bindings:<контекст>.<действие>` (входы действия по карте ввода, какой её делают
+настройки `controls` в эту минуту; его берёт `Binding`). «You» — тело, которым управляет эта машина (`LocalPlayer`), иначе то, за которое играет
 агент (`AiPlayer`). Неизвестный источник пишет в журнал одно предупреждение, а виджет остаётся пустым.
 
 **Тема** — определение вида `theme` с id `default` (без него — тема движка): цвета `text`, `dim_text`, `panel`, `backdrop`,
@@ -4224,6 +4228,58 @@ East: B, ○); их можно
 через picking Bevy: наведение подсвечивает, щелчок — `ui_click`. Всё это — вызовы `ui_*` от агента `input`, поэтому реплей
 записывает их и нажимает те же кнопки на тех же тиках.
 
+**Клавиши.** Экран переназначения собирается из тех же виджетов: строка `Binding` на действие.
+
+```ron
+Panel(id: "keys", title: "@controls-keys", children: [
+    Binding(id: "jump", label: "@controls-jump", action: "jump", prompt: "@controls-press", taken: "@controls-taken"),
+    Binding(id: "jump_pad", label: "@controls-jump", action: "jump", slot: 1),        // только второй вход
+    Binding(id: "confirm", label: "@controls-confirm", context: "menu", action: "confirm"),
+]),
+```
+
+| поле `Binding` | что |
+|---|---|
+| `context` | контекст ввода; по умолчанию `gameplay` |
+| `action` | действие карты ввода |
+| `slot` | только этот слот (0 — первый вход; на единицу больше последнего — новый вход). Без него строка показывает все входы, а новый вход заменяет первый вход того же устройства (клавиатура и мышь — одно, геймпад — другое) или добавляется, если такого нет |
+| `prompt` | что строка пишет, пока ждёт; по умолчанию `Press a key or button... (Esc cancels)` |
+| `taken` | сообщение `@id` о занятом входе, с параметрами `$input` и `$action`; по умолчанию английское `<вход> is already used by <действие>` |
+
+Входы строка пишет так, как их читает игрок (`Binding::label`): `Space · Pad South` (в окне `Space / Pad South`), `Left Shift`,
+`Mouse Right`, `Pad L2`. Подтверждение строки (`confirm`, щелчок, `ui_click`) переводит её в ожидание: она показывает
+`prompt`, а следующая клавиша, кнопка мыши или кнопка геймпада (геймпад читается так же, как в игре) становится привязкой —
+меню отдаёт её вызовом `ui_set id=<строка> value=Key(KeyK)` от агента `input`, и реплей записывает этот вызов. Escape и Start
+отменяют ожидание, как `back`, и экран при этом не закрывается (закроет следующий Escape); переход на другой виджет тоже
+отменяет. Стрелка, которую только что назначили, фокус не двигает, а щелчок отпущенной кнопки мыши, ставшей привязкой, ничего
+не нажимает. Escape и Start в `gameplay` — это `pause`, так что назначить их и без того нельзя.
+
+Привязку меняют только настройки: `ui_set` зовёт `settings_set group=controls key=bindings.<контекст>.<действие>`, поэтому в
+`settings.toml` (`[controls.bindings]`) попадает лишь отличие от умолчаний, `value=default` возвращает умолчания
+(`reset=true`), а карту ввода собирает заново `ControlSync`. Вход, который читает другое действие контекста, отклоняется (молча
+его не отнять): строка пишет, у кого он (`E is already used by Interact`, `E уже используется для «Взаимодействие»`), а ответ
+`ui_set` — это отказ настроек и строка того действия на экране. Оси (стик, `WASD`) так не меняются, для них есть `settings_set`.
+
+```text
+$ shards act ui_click id=settings/jump
+ok: settings/jump waits for an input: the next key, mouse button or gamepad button becomes it (Escape or Start cancels, as `back` does); an agent gives one with `ui_set id=settings/jump value=Key(KeyK)`
+$ shards act ui_set id=settings/jump value='Key(KeyK)'
+ok: settings/jump Space · Pad South → K · Pad South
+$ shards act ui_set id=settings/dodge value='Key(KeyE)'
+error: settings/dodge: controls.bindings.gameplay.dodge: Key(KeyE) is already bound to `interact` in `gameplay`; free it first: … (on this screen: settings/interact)
+$ shards act ui_read screen=settings
+…
+    settings/jump  binding "Jump" K · Pad South = Key(KeyK), GamepadButton(South) [controls.bindings.gameplay.jump]
+    settings/dodge  binding "Dodge" Left Ctrl · Pad East = Key(ControlLeft), GamepadButton(East) [controls.bindings.gameplay.dodge] · E is already used by Interact ◀ focus
+$ shards act ui_set id=settings/jump value=default
+ok: settings/jump K · Pad South → Space · Pad South
+```
+
+Пока строка ждёт, `ui_read` дописывает к ней `· waiting for an input (Escape cancels; ui_set id=… value=Key(KeyK))`, журнал —
+`ui: settings/jump waits for an input`, `ui: settings/jump stopped waiting for an input`, `ui: settings/jump Space · Pad South → K ·
+Pad South`. В песочнице и шаблоне на странице управления — панель «Клавиши и кнопки»: прыжок, уклонение, лёгкая и тяжёлая
+атаки, блок, парирование, взаимодействие, предмет, захват цели, бег и планирование.
+
 **Вне симуляции.** У виджетов нет `AiId` (меню не сдвигает id), экраны не входят ни в снапшот, ни в хэш реплея, хост их не
 пересылает: у каждой машины свои. Инструменты, которые их меняют, — action, и реплей их повторяет; вызов, который делает
 кнопка (`tool heal …`), в реплей отдельно не пишется: его делает тот же щелчок.
@@ -4235,7 +4291,9 @@ East: B, ○); их можно
 него — шрифтом движка по умолчанию (`shards::ui::DEFAULT_FONT`, Fira Sans: латиница, греческий, кириллица).
 
 Проверка: `crates/shards_ui` (юнит-тесты разбора и навигации; `tests/ui/`: экраны, меню, клавиатура, рисование и подписи
-доступности без GPU, реплей с нажатыми кнопками, правка экрана в работающей игре и отказ сломанной), сценарии
+доступности без GPU, реплей с нажатыми кнопками, правка экрана в работающей игре и отказ сломанной; `bindings.rs` —
+переназначение через `ui_set`, отказ с названным действием, ожидание клавиши, кнопки мыши и кнопки геймпада, Escape, который
+не закрывает экран, реплей), сценарии
 `crates/sandbox/scenarios/ui.scenario` и `template/scenarios/menus.scenario`.
 
 ## Локализация (E9.4)
@@ -4312,8 +4370,8 @@ language=ru` — все сообщения языка с текстом. `text i
 ```text
 $ shards act locale
 playing: en
-en English: 34 messages
-ru Русский → en: 33 messages; lacks 1: settings-fov
+en English: 48 messages
+ru Русский → en: 47 messages; lacks 1: settings-fov
 # switch: settings_set group=locale key=language value=<id>; `locale language=<id>` lists one language's text
 $ shards act text id=defeated 'args={"count": 3}' language=ru
 Повержено 3 врага
@@ -5489,6 +5547,8 @@ saved crashes/crash-20261016-123456-tick30.json: tick 30, 120 log lines, 48 jour
   `controls`; в начале и в конце все группы возвращаются к умолчаниям (идёт и с файлом настроек, и без);
 - `ui.scenario` (E9) — меню проходится по дереву интерфейса: пауза, вкладки настроек, слайдер и выбор меняют настройки
   игрока, вопрос поверх меню, ошибки, которые учат; в начале и в конце меню закрыты, настройки по умолчанию;
+- `remap.scenario` (E9) — строки клавиш на странице управления: ожидание входа и отмена без закрытия экрана, новая клавиша как
+  настройка `controls`, занятый вход отклонён с названным действием (по-английски и по-русски), `default` возвращает умолчания;
 - `locale.scenario` (E9.4) — `locale` и `text`: формы множественного числа по языку, фраза во фразе, подсказка к опечатке;
   вкладка «Language» меню переключает его на русский, пока оно открыто, недостающее в русском берётся из английского, язык,
   которого нет, отклоняется; в начале и в конце язык игры, меню закрыты;
