@@ -30,7 +30,13 @@
 //! scope, so handing them over would be refused there while the client reported `ok`; and
 //! `assert_list` is a query, which runs where it is called.)
 
+use std::any::{Any, TypeId};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+
+use bevy::ecs::query::{QueryData, QueryFilter};
+use bevy::ecs::world::WorldId;
 
 use bevy::prelude::*;
 use schemars::JsonSchema;
@@ -172,6 +178,32 @@ pub(crate) fn check_name(name: &str) -> Result<(), String> {
     } else {
         Err(format!("bad rule name `{name}`: use up to 64 letters, digits, `_` and `-` (it names the replay file), e.g. boss_hp"))
     }
+}
+
+/// Runs `f` on a query state for `world` that is kept between calls, or returns `None` when
+/// a component the query names is not registered in the world (the query state of a rule is
+/// built again on the next call, and then it is kept).
+///
+/// The rules run after every tick and cannot hold state of their own (they are `fn(&World)`),
+/// and building a `QueryState` walks every archetype of the world, which costs more than a rule
+/// that finds nothing wrong. The state lives in a thread-local cache keyed by the world, so apps
+/// side by side in one process (a stand) keep their own; it picks up new archetypes by itself.
+pub fn with_query<D, F, R>(world: &World, f: impl FnOnce(&mut QueryState<D, F>) -> R) -> Option<R>
+where
+    D: QueryData + 'static,
+    F: QueryFilter + 'static,
+{
+    thread_local! {
+        static STATES: RefCell<HashMap<(TypeId, WorldId), Box<dyn Any>>> = RefCell::new(HashMap::new());
+    }
+    STATES.with(|states| {
+        let mut states = states.borrow_mut();
+        let key = (TypeId::of::<QueryState<D, F>>(), world.id());
+        if let std::collections::hash_map::Entry::Vacant(slot) = states.entry(key) {
+            slot.insert(Box::new(world.try_query_filtered::<D, F>()?));
+        }
+        states.get_mut(&key)?.downcast_mut::<QueryState<D, F>>().map(f)
+    })
 }
 
 /// Collects the entities that break a rule, to report the lowest [`AiId`] first and
@@ -603,6 +635,25 @@ mod tests {
         assert_eq!(rules.rule_names(), ["ai.one", "core.two", "health", "mine"]);
         assert!(rules.add_game_rule("ai.one", |_| None).is_err());
         assert!(rules.add_game_rule("no.dots.here", |_| None).is_err());
+    }
+
+    #[test]
+    fn a_kept_query_sees_new_entities_and_belongs_to_its_world() {
+        let count = |world: &World| with_query::<&AiId, (), _>(world, |q| q.iter(world).count());
+        let mut a = World::new();
+        a.init_resource::<crate::AiIndex>();
+        let mut b = World::new();
+        b.init_resource::<crate::AiIndex>();
+        a.spawn(crate::AiVisible);
+        assert_eq!(count(&a), Some(1));
+        a.spawn(crate::AiVisible);
+        a.spawn((crate::AiVisible, Name::new("in a new archetype")));
+        assert_eq!(count(&a), Some(3), "the kept state follows new entities and archetypes");
+        assert_eq!(count(&b), None, "an AiId nobody spawned in b is not registered there");
+        b.spawn(crate::AiVisible);
+        assert_eq!(count(&b), Some(1), "another world has its own state");
+        // A component the world does not know: nothing to judge, and no state is kept.
+        assert_eq!(with_query::<&crate::replay::AiReplay, (), _>(&b, |_| ()), None);
     }
 
     #[test]

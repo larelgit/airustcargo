@@ -222,16 +222,17 @@ pub fn clear_presses(mut intents: Query<&mut Intent>) {
 /// (`EngineConfig::engine_invariants`). The vertical part of `move_dir` is not judged, only
 /// the length.
 pub fn intent_sane(world: &World) -> Option<String> {
-    let mut query = world.try_query::<(&AiId, &Intent)>()?;
     let mut bad = ai_core::Offenders::default();
-    for (id, intent) in query.iter(world) {
-        let dir = intent.move_dir;
-        if !dir.is_finite() || dir.length() > 1.0 + 1e-4 {
-            bad.note(*id, || format!("Intent.move_dir = {dir} is not finite or longer than 1"));
-        } else if let Some(aim) = intent.aim.filter(|a| !a.is_finite()) {
-            bad.note(*id, || format!("Intent.aim = {aim} is not finite"));
+    ai_core::with_query::<(&AiId, &Intent), (), _>(world, |query| {
+        for (id, intent) in query.iter(world) {
+            let dir = intent.move_dir;
+            if !dir.is_finite() || dir.length() > 1.0 + 1e-4 {
+                bad.note(*id, || format!("Intent.move_dir = {dir} is not finite or longer than 1"));
+            } else if let Some(aim) = intent.aim.filter(|a| !a.is_finite()) {
+                bad.note(*id, || format!("Intent.aim = {aim} is not finite"));
+            }
         }
-    }
+    })?;
     bad.report()
 }
 

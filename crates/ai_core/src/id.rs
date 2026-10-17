@@ -19,7 +19,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::invariants::Offenders;
+use crate::invariants::{with_query, Offenders};
 use crate::sim::SimTick;
 
 /// Monotonic, never reused entity id. Printed as `e42`.
@@ -358,21 +358,22 @@ impl AiIndex {
     /// "no id is used twice" follows. Tombstones and the transient `discarded` map are
     /// history, not state, and are not looked at. Reports the lowest broken id first.
     pub(crate) fn check(&self, world: &World) -> Option<String> {
-        let mut query = world.try_query::<(Entity, &AiId)>()?;
         let mut broken = Offenders::default();
         let mut with_id = 0usize;
-        for (entity, id) in query.iter(world) {
-            if id.0 == 0 {
-                continue;
+        with_query::<(Entity, &AiId), (), _>(world, |query| {
+            for (entity, id) in query.iter(world) {
+                if id.0 == 0 {
+                    continue;
+                }
+                with_id += 1;
+                if self.live.get(id) != Some(&entity) {
+                    broken.note(*id, || match self.live.get(id) {
+                        Some(other) => format!("AiId is on {entity} but the index maps it to {other}"),
+                        None => format!("AiId is on {entity} but the index does not have it"),
+                    });
+                }
             }
-            with_id += 1;
-            if self.live.get(id) != Some(&entity) {
-                broken.note(*id, || match self.live.get(id) {
-                    Some(other) => format!("AiId is on {entity} but the index maps it to {other}"),
-                    None => format!("AiId is on {entity} but the index does not have it"),
-                });
-            }
-        }
+        })?;
         for (id, entity) in &self.live {
             if world.get::<AiId>(*entity) != Some(id) {
                 broken.note(*id, || match world.get_entity(*entity) {

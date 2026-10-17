@@ -1,6 +1,6 @@
 //! The engine rules `action.resources_in_range` and `action.running_sane`.
 
-use ai_core::{AiId, Offenders};
+use ai_core::{with_query, AiId, Offenders};
 use bevy::prelude::*;
 use shards_content::ContentDb;
 
@@ -20,27 +20,28 @@ use crate::machine::ActionState;
 /// really needs otherwise has to turn the engine rules off.
 pub fn resources_in_range(world: &World) -> Option<String> {
     let mut bad = Offenders::default();
-    if let Some(mut query) = world.try_query::<(&AiId, &Health)>() {
+    // A component that is not registered has no entities to judge: its query is skipped.
+    with_query::<(&AiId, &Health), (), _>(world, |query| {
         for (id, h) in query.iter(world) {
             if let Some(what) = out_of_range("Health", h.current, h.max) {
                 bad.note(*id, || what);
             }
         }
-    }
-    if let Some(mut query) = world.try_query::<(&AiId, &Stamina)>() {
+    });
+    with_query::<(&AiId, &Stamina), (), _>(world, |query| {
         for (id, s) in query.iter(world) {
             if let Some(what) = out_of_range("Stamina", s.current, s.max) {
                 bad.note(*id, || what);
             }
         }
-    }
-    if let Some(mut query) = world.try_query::<(&AiId, &Poise)>() {
+    });
+    with_query::<(&AiId, &Poise), (), _>(world, |query| {
         for (id, p) in query.iter(world) {
             if let Some(what) = out_of_range("Poise", p.current, p.max) {
                 bad.note(*id, || what);
             }
         }
-    }
+    });
     bad.report()
 }
 
@@ -63,19 +64,20 @@ fn out_of_range(name: &str, current: f32, max: f32) -> Option<String> {
 pub fn running_sane(world: &World) -> Option<String> {
     let db = world.get_resource::<ContentDb>()?;
     let tick = world.get_resource::<Time<Fixed>>().map_or(0.0, |t| t.timestep().as_secs_f32());
-    let mut query = world.try_query_filtered::<(&AiId, &ActionState), With<Fighter>>()?;
     let mut bad = Offenders::default();
-    for (id, state) in query.iter(world) {
-        let Some(run) = &state.current else { continue };
-        let Some(def) = db.get::<ActionDef>(&run.action) else {
-            bad.note(*id, || format!("runs action `{}`, which is not in content", run.action));
-            continue;
-        };
-        if !def.phases.is_empty() && !def.phases.iter().any(|p| p.0 == run.phase) {
-            bad.note(*id, || format!("action `{}` is in phase `{}`, which is not one of its phases", run.action, run.phase));
-        } else if !(run.t >= 0.0 && run.t <= def.length() + tick) {
-            bad.note(*id, || format!("action `{}` has t = {} outside 0..={} (+ one tick)", run.action, run.t, def.length()));
+    with_query::<(&AiId, &ActionState), With<Fighter>, _>(world, |query| {
+        for (id, state) in query.iter(world) {
+            let Some(run) = &state.current else { continue };
+            let Some(def) = db.get::<ActionDef>(&run.action) else {
+                bad.note(*id, || format!("runs action `{}`, which is not in content", run.action));
+                continue;
+            };
+            if !def.phases.is_empty() && !def.phases.iter().any(|p| p.0 == run.phase) {
+                bad.note(*id, || format!("action `{}` is in phase `{}`, which is not one of its phases", run.action, run.phase));
+            } else if !(run.t >= 0.0 && run.t <= def.length() + tick) {
+                bad.note(*id, || format!("action `{}` has t = {} outside 0..={} (+ one tick)", run.action, run.t, def.length()));
+            }
         }
-    }
+    })?;
     bad.report()
 }

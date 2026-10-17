@@ -1,6 +1,6 @@
 //! The engine rules `npc.state_known` and `npc.tokens_within_limit`.
 
-use ai_core::{AiId, Offenders};
+use ai_core::{with_query, AiId, Offenders};
 use bevy::prelude::*;
 use shards_action::Dead;
 use shards_content::ContentDb;
@@ -24,17 +24,18 @@ use crate::director::{FightingReadOnly, Grant};
 ///   NPC stands still), or a world without a `ContentDb`.
 pub fn state_known(world: &World) -> Option<String> {
     let db = world.get_resource::<ContentDb>()?;
-    let mut query = world.try_query::<(&AiId, &Npc, &NpcBrain)>()?;
     let mut bad = Offenders::default();
-    for (id, npc, brain) in query.iter(world) {
-        if brain.state.is_empty() || !brain.active {
-            continue;
+    with_query::<(&AiId, &Npc, &NpcBrain), (), _>(world, |query| {
+        for (id, npc, brain) in query.iter(world) {
+            if brain.state.is_empty() || !brain.active {
+                continue;
+            }
+            let Some(behavior) = db.get::<BehaviorDef>(&npc.behavior) else { continue };
+            if !behavior.states.contains_key(&brain.state) {
+                bad.note(*id, || format!("NpcBrain.state = `{}` is not a state of behavior `{}`", brain.state, npc.behavior));
+            }
         }
-        let Some(behavior) = db.get::<BehaviorDef>(&npc.behavior) else { continue };
-        if !behavior.states.contains_key(&brain.state) {
-            bad.note(*id, || format!("NpcBrain.state = `{}` is not a state of behavior `{}`", brain.state, npc.behavior));
-        }
-    }
+    })?;
     bad.report()
 }
 

@@ -91,7 +91,7 @@ pub use dev::{DevCommand, DevEntry, DevLine, DevMenu};
 pub use failures::{ai_core_error_handler, AiFailures, SystemFailure};
 pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible};
 pub use heavy::{HeavyConfig, HeavyFailure, HeavyTwin};
-pub use invariants::{AiInvariants, InvariantSystems, Offenders, Violation};
+pub use invariants::{with_query, AiInvariants, InvariantSystems, Offenders, Violation};
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
 pub use net_rules::{replicated_components, rules_hash, NetRules};
 pub use observe::{AiCamera, AiPerception, ObserveOptions};

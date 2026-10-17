@@ -213,6 +213,10 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   `add_ai_invariant(name, |w: &World| -> Option<String>)`. The rule only reads the world and returns
   the text of the violation with the entity's id (`e6 Health.current = 700 outside 0..=600`). Rules and their firings
   are not part of the replay hash or the snapshot; the replay records session rules (`assert_add`) as events.
+  The engine's own rules are named `<module>.<rule>` and registered with `add_engine_invariant(name, rule)` (shards_core): on by
+  default, off in a `dist` build and with `--no-engine-invariants` (`EngineConfig::engine_invariants`; tests, `--verify`, fuzz and soak
+  keep them on). Each states in its doc comment what it checks and why any carve-out exists, and has a control test that breaks the
+  state on purpose. If one fires, it is a bug in the engine or the game: fix the bug, do not weaken the rule without saying why.
 - A new tool is an argument struct with doc comments (they become the schema's description)
   and a Bevy system `In<Call<Args>> -> ToolResult`. Kinds: `query` reads, `action` changes the world
   (journal, diff, replay), `control` manages time and the session. A tool error says how to fix the call.
@@ -254,8 +258,8 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
 - **A new engine module** is a crate with a plugin that names itself `add_engine_module(name, version)` (so it is visible in
   `ai/status`), with system sets for ordering and one line in `EnginePlugins`. It describes its state for the AI
   (describe, `journal_event`), and gives its actions as tools (what the developer needs at hand in the window is also an item in the
-  developer menu, `add_dev_entry`, which calls the same tool); it takes its numbers from content; it has unit tests, a scenario in
-  the sandbox, a replay and a section of the manual (`docs/manual.md`).
+  developer menu, `add_dev_entry`, which calls the same tool); it takes its numbers from content; it has unit tests, its invariants (each with a control test that
+  breaks the state on purpose), a scenario in the sandbox, a replay and a section of the manual (`docs/manual.md`).
 - **World, regions and levels (phase B).** The things the gameplay takes from tiles, rooms and levels (colliders, markers, prefabs,
   points of interest) are **top-level entities with a world `Transform`**: that is how physics reads them and how `spawn_region` and
   `spawn_level` create them. A region is changed with tools (`regen`, `region_load`) or with `change_region`, through

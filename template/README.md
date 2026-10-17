@@ -228,6 +228,9 @@ a system `In<Call<Args>> -> ToolResult`. The registration call sets the kind:
 - `add_ai_tool(name, scope, system)`: an **action**. It changes the world, and it goes into the journal, into `CHANGES` and into the replay;
 - `add_ai_query(…)`: reads only, with no journal entry and no replay entry;
 - `add_ai_condition(name, |world| bool)`: a name for `step --until named:NAME`.
+- `add_ai_invariant(name, |world| Option<String>)`: a rule that must hold after every tick. The function reads the world and returns the explanation while the rule is broken (`e2 Grunt.heavy_chance = 25 outside 0..=1`); the game then stops like after a crashed system: `step` answers `stopped: invariant grunt_chance violated at tick N`, and the session is saved as a replay. `grunt_chance` in `src/ai.rs` is the example, with a control test (`tests/game/content.rs`) that breaks it on purpose. `Offenders` reports the lowest id first with `(+N more)`.
+
+The engine adds its own rules (`shards assert list` shows them as `engine rule`): they check ids, `Intent`, transforms, health, stamina, poise, running actions, NPC states and attack tokens. They are on in tests and in development builds, and off in a build with the `dist` feature, so a shipped game never pauses on a rule; `--no-engine-invariants` turns them off in a development build.
 
 `Scope::Player` is for what a person could do (the tool works through `Intent` and the game rules).
 `Scope::Dev` is for cheats and debugging. A tool error must say how to fix the call (see `taunt`).
@@ -388,7 +391,7 @@ The tests in `tests/game/determinism.rs` check this in your game: the same seed 
 ## Tests
 
 ```bash
-cargo test                   # everything: 43 tests (and one `#[ignore]`: recording the references), takes seconds
+cargo test                   # everything: 45 tests (and one `#[ignore]`: recording the references), takes seconds
 cargo test --test game determinism
 ```
 
@@ -399,7 +402,7 @@ One binary, `tests/game` (Bevy is linked once). The game is built for tests thro
 | `scenarios.rs` | every file in `scenarios/` runs on a fresh game, and every file in `scenarios/stand/` runs on a stand, started from its own `stand` line |
 | `determinism.rs` | the same seed gives the same journal and world; another seed gives another fight; steps in pieces |
 | `replays.rs` | record, then play back, and it matches; a changed game names the tick where it diverges; the reference replays |
-| `content.rs` | the content has no errors (in the game and as in `--check-content`); typos name the fix; editing a number changes the next blow without a rebuild; `taunt`, `arena_cleared` |
+| `content.rs` | the content has no errors (in the game and as in `--check-content`); typos name the fix; editing a number changes the next blow without a rebuild; `taunt`, `arena_cleared`; the game's rule `grunt_chance` stops the game when it is broken, and is listed next to the engine's rules |
 | `coop.rs` | host and guest on a 150 ms channel with 2 % loss: the guest's body is `e7`, the guest's trophy is only with the guest and in the guest's file, no desyncs; with the file from the previous game, the guest arrives with the trophy; the host's replay matches in single-player |
 | `region.rs` | a thousand seeds of the valley pass the checks; the same seed and version give the same manifest, byte for byte; going into a region without a window, through the loading screen (the same hero, the tick count did not change); a column from a ruin in a Blender file stands where the tile put it; a raider walks the navmesh and does not go past its leash |
 | `audio.rs` | music moves from `explore` to `tension` and `combat` when the hero comes near a grunt, and the drums come in; a grunt's warning plays its own sound, and an open menu plays its own |

@@ -6,10 +6,12 @@
 //!   caused, and is recorded in replays (`add_ai_tool`);
 //! - a **query** tool only reads (`add_ai_query`);
 //! - a **condition** is a name `step --until named:NAME` stops on (`add_ai_condition`).
+//! - an **invariant** is a rule that must hold after every tick; the game halts when it breaks
+//!   (`add_ai_invariant`).
 //!
 //! Tool errors teach the fix: say what is wrong and what to do instead.
 
-use shards::ai_core::{AiConditions, AiIndex};
+use shards::ai_core::{AiConditions, AiIndex, Offenders};
 use shards::core::flat;
 use shards::core::input_names::LIGHT;
 use shards::prelude::*;
@@ -24,7 +26,9 @@ impl Plugin for GameAiPlugin {
             .add_ai_condition("arena_cleared", arena_cleared)
             // What the music listens to (`content/audio/yard.music.ron`): a foe near, a fight on.
             .add_ai_condition("foe_near", foe_near)
-            .add_ai_condition("in_fight", in_fight);
+            .add_ai_condition("in_fight", in_fight)
+            // What must always hold; see `grunt_chance`.
+            .add_ai_invariant("grunt_chance", grunt_chance);
     }
 }
 
@@ -108,4 +112,21 @@ fn in_fight(world: &World) -> bool {
 /// A condition the engine registered, by name (false without one of that name).
 fn engine_condition(world: &World, name: &str) -> bool {
     world.get_resource::<AiConditions>().and_then(|conditions| conditions.0.get(name)).is_some_and(|condition| condition(world))
+}
+
+/// A rule of this game, checked after every tick: a grunt's `heavy_chance` is a chance, 0..=1
+/// (a typo in a balance edit, or a tool that wrote 25 for 0.25, would make it always slam).
+/// The engine halts the game the moment it is broken: `step` answers `stopped: invariant
+/// grunt_chance violated at tick N`, the journal names the grunt, and the session is saved as a
+/// replay. A rule only reads the world and returns the explanation, lowest id first
+/// (`Offenders` does the "and N more").
+fn grunt_chance(world: &World) -> Option<String> {
+    let mut grunts = world.try_query::<(&AiId, &Grunt)>()?;
+    let mut broken = Offenders::default();
+    for (id, grunt) in grunts.iter(world) {
+        if !(0.0..=1.0).contains(&grunt.heavy_chance) {
+            broken.note(*id, || format!("Grunt.heavy_chance = {} outside 0..=1", grunt.heavy_chance));
+        }
+    }
+    broken.report()
 }

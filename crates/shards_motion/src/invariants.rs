@@ -1,6 +1,6 @@
 //! The engine rule `motion.finite`.
 
-use ai_core::{AiId, AiVisible, Offenders};
+use ai_core::{with_query, AiId, AiVisible, Offenders};
 use bevy::prelude::*;
 
 use crate::controller::{Mantle, MotionState};
@@ -20,13 +20,14 @@ const ROTATION_TOLERANCE: f32 = 1e-3;
 /// rotation that a level file or a save writes unnormalised (`Quat::from_array`) is a bug in
 /// that writer: the rule is the reason to normalise it there.
 pub fn motion_finite(world: &World) -> Option<String> {
-    let mut query = world.try_query_filtered::<(&AiId, &Transform, Option<&MotionState>), With<AiVisible>>()?;
     let mut bad = Offenders::default();
-    for (id, transform, motion) in query.iter(world) {
-        if let Some(what) = transform_problem(transform).or_else(|| motion.and_then(motion_problem)) {
-            bad.note(*id, || what);
+    with_query::<(&AiId, &Transform, Option<&MotionState>), With<AiVisible>, _>(world, |query| {
+        for (id, transform, motion) in query.iter(world) {
+            if let Some(what) = transform_problem(transform).or_else(|| motion.and_then(motion_problem)) {
+                bad.note(*id, || what);
+            }
         }
-    }
+    })?;
     bad.report()
 }
 
