@@ -1,0 +1,27 @@
+// What grows and lies in the valley (the engine's scatter, content kind `scatter`): tufts of grass
+// on the meadows and around the gate, pebbles everywhere. Drawn only (a window, `--offscreen`),
+// the same for a seed every run; `shards act scatter` says what each strews and what found no
+// place, `settings_set group=graphics key=foliage value=0.5` thins them out.
+{
+    "grass": (
+        tiles: ["meadow", "gate", "columns"],
+        density: 0.4,
+        spacing: 0.4,
+        scale: (0.7, 1.3),
+        tilt: 10.0,
+        looks: ["grass"],
+        fade: 3.0,
+        lods: [
+            (mesh: Blades(width: 0.09, height: 0.45, count: 6), until: 20.0),
+            (mesh: Blades(width: 0.14, height: 0.4, count: 3), until: 40.0),
+        ],
+    ),
+    "pebbles": (
+        density: 0.05,
+        spacing: 1.0,
+        scale: (0.6, 1.5),
+        clearance: 0.2,
+        looks: ["pebble"],
+        lods: [(mesh: Rock(radius: 0.2, detail: 1, squash: 0.6), until: 40.0)],
+    ),
+}

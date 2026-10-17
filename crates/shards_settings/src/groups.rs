@@ -93,11 +93,14 @@ pub struct GraphicsSettings {
     pub render_scale: f64,
     /// `off`, `low`, `medium` or `high`. The game's lights read it ([`GraphicsSettings::shadow_quality`]).
     pub shadows: String,
+    /// How much of the foliage and small props the scatter module strews (0 none to 1 all of it,
+    /// [`GraphicsSettings::foliage_density`]): fewer instances of the same scatter, never others.
+    pub foliage: f64,
 }
 
 impl Default for GraphicsSettings {
     fn default() -> Self {
-        Self { fullscreen: false, vsync: true, resolution: "auto".into(), render_scale: 1.0, shadows: "high".into() }
+        Self { fullscreen: false, vsync: true, resolution: "auto".into(), render_scale: 1.0, shadows: "high".into(), foliage: 1.0 }
     }
 }
 
@@ -115,6 +118,11 @@ impl GraphicsSettings {
         if self.render_scale.is_finite() { self.render_scale.clamp(0.5, 2.0) as f32 } else { 1.0 }
     }
 
+    /// `foliage` within 0 to 1 (a NaN keeps it all, a hand-edited 3 is all of it).
+    pub fn foliage_density(&self) -> f32 {
+        if self.foliage.is_finite() { self.foliage.clamp(0.0, 1.0) as f32 } else { 1.0 }
+    }
+
     /// `shadows`, the default (`high`) when the file says something else.
     pub fn shadow_quality(&self) -> ShadowQuality {
         ShadowQuality::parse(&self.shadows).unwrap_or_default()
@@ -129,6 +137,7 @@ impl GraphicsSettings {
             ));
         }
         range("graphics.render_scale", self.render_scale, 0.5, 2.0)?;
+        range("graphics.foliage", self.foliage, 0.0, 1.0)?;
         if ShadowQuality::parse(&self.shadows).is_none() {
             return Err(format!("graphics.shadows `{}` is not one of {}", self.shadows, ShadowQuality::NAMES.join(", ")));
         }

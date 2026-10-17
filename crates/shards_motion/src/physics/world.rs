@@ -230,6 +230,15 @@ impl PhysicsWorld {
         self.colliders.binary_search_by_key(&id, |c| c.id)
     }
 
+    /// A world of the colliders `keep` keeps, in the same order. Queries scan every collider of
+    /// the world they ask, so many in one small place (strewing a tile) ask the part near it:
+    /// for rays and shapes that only kept colliders can reach, it answers as this world does.
+    pub fn subset(&self, keep: impl Fn(&ColliderInfo) -> bool) -> PhysicsWorld {
+        let colliders: Vec<ColliderInfo> = self.colliders.iter().filter(|c| keep(c)).cloned().collect();
+        let ids = colliders.iter().map(|c| (c.entity, c.id)).collect();
+        PhysicsWorld { colliders, ids }
+    }
+
     // --- maintenance (sync and hooks) ---------------------------------------------
 
     pub(crate) fn upsert(&mut self, (entity, id, collider, tf, body, volume): ColliderData) {
@@ -512,5 +521,28 @@ mod tests {
         assert!(!ray_hits_aabb(Vec3::new(-5.0, 0.0, 0.0), Vec3::X, 3.0, min, max));
         assert!(!ray_hits_aabb(Vec3::new(-5.0, 2.0, 0.0), Vec3::X, 10.0, min, max));
         assert!(ray_hits_aabb(Vec3::ZERO, Vec3::Y, 0.5, min, max), "inside counts");
+    }
+
+    #[test]
+    fn a_subset_answers_with_the_colliders_it_keeps() {
+        let mut physics = PhysicsWorld::default();
+        let collider = super::super::Collider::new(Shape::cuboid(Vec3::new(1.0, 0.5, 1.0)));
+        for (n, y) in [(1, 0.0), (2, 2.0), (3, 4.0)] {
+            let tf = Transform::from_xyz(0.0, y, 0.0);
+            let body = if n == 2 { Body::Kinematic } else { Body::Static };
+            physics.upsert((Entity::from_raw_u32(n).unwrap(), &ColliderId(n), &collider, &tf, Some(&body), None));
+        }
+        let down = |world: &PhysicsWorld| {
+            let hit = world.raycast(Vec3::new(0.0, 10.0, 0.0), Dir3::NEG_Y, 20.0, &QueryFilter::default());
+            hit.map(|h| h.point.y)
+        };
+        assert_eq!(down(&physics), Some(4.5));
+        let low = physics.subset(|c| c.aabb_max.y < 3.0);
+        assert_eq!((low.len(), down(&low)), (2, Some(2.5)), "the top box is left out");
+        let still = physics.subset(|c| c.body == Body::Static);
+        assert_eq!(still.colliders().map(|c| c.id.0).collect::<Vec<_>>(), [1, 3], "in id order");
+        assert!(still.collider(Entity::from_raw_u32(3).unwrap()).is_some() && still.collider(Entity::from_raw_u32(2).unwrap()).is_none());
+        let none = physics.subset(|_| false);
+        assert!(none.is_empty() && down(&none).is_none());
     }
 }

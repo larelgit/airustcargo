@@ -1,6 +1,7 @@
-//! Tile visuals: what a window draws for each tile, loaded and unloaded by distance.
+//! Tile visuals: what the picture (a window, or `--offscreen`) shows for each tile, loaded and
+//! unloaded by distance.
 //!
-//! Gameplay geometry of the whole region is spawned when it loads. What only a window
+//! Gameplay geometry of the whole region is spawned when it loads. What only the picture
 //! needs — meshes, scenes, their level of detail — comes and goes with the players: every
 //! frame (`Update`, not the fixed tick) each tile picks the first LOD whose distance
 //! ([`WorldSettings::visual_lods`]) covers the nearest player, or none beyond the last.
@@ -8,7 +9,7 @@
 //! ([`WorldAppExt::set_tile_visual_spawner`](crate::WorldAppExt::set_tile_visual_spawner))
 //! makes the new one, in the tile's frame; the engine parents it to the tile, which is
 //! placed and turned. Visual entities are never gameplay: no colliders, no AI ids, so
-//! streaming them changes no tick. Headless, nothing streams.
+//! streaming them changes no tick. Headless (nothing drawn), nothing streams.
 
 use ai_core::AiPlayer;
 use bevy::prelude::*;

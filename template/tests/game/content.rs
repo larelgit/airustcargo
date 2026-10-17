@@ -28,9 +28,9 @@ fn check_content_is_clean() {
     });
     assert_eq!((summary.kinds["arena"], summary.kinds["prefab"]), (1, 4), "{summary:?}");
     // The valley: its tiles, the level file one of them is (checked node by node), the region,
-    // the navmesh settings (every tile's bake file fresh), the raider's behaviour.
-    let valley = ["tile", "level", "region", "nav", "behavior"].map(|kind| summary.kinds[kind]);
-    assert_eq!(valley, [4, 1, 1, 1, 1], "{summary:?}");
+    // the navmesh settings (every tile's bake file fresh), the raider's behaviour, its grass and pebbles.
+    let valley = ["tile", "level", "region", "nav", "behavior", "scatter"].map(|kind| summary.kinds[kind]);
+    assert_eq!(valley, [4, 1, 1, 1, 1, 2], "{summary:?}");
 }
 
 #[test]

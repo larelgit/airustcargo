@@ -20,6 +20,9 @@ import bevy_pbr::render::{
     shadows,
 };
 
+@if(VISIBILITY_RANGE_DITHER)
+import bevy_pbr::render::pbr_functions::visibility_range_dither;
+
 struct Toon {
     bands: u32,
 }
@@ -122,6 +125,10 @@ fn fragment(
     in: VertexOutput,
     @builtin(front_facing) is_front: bool,
 ) -> FragmentOutput {
+    // Between two levels of detail (a `VisibilityRange` with margins), dissolved like Bevy's own.
+@if(VISIBILITY_RANGE_DITHER)
+    visibility_range_dither(in.position, in.visibility_range_dither);
+
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     pbr_input.material.base_color = alpha_discard(
         pbr_input.material.flags,

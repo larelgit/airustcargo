@@ -1,0 +1,49 @@
+# Scatter (E10.2): what grows and lies on the wilds is content (`content/region/wilds.scatter.ron`):
+# tufts of grass on every tile, bushes and rocks here and there, each drawn with a look of
+# `content/look/sandbox.look.ron`, nearer and farther meshes by distance. It is the picture's:
+# headless nothing is strewn and the tools say so, but the scatters, their checks, the setting that
+# thins them out and the switch are the same. It puts the scatter back on, at full density.
+
+seed 42
+
+# --- strewn, at full density, whatever an earlier run left
+act scatter_set on=true
+act settings_set group=graphics key=foliage value=1
+
+# --- the wilds' scatters as content has them; headless nothing is strewn
+act scatter
+expect result contains "3 scatters · nothing is strewn headless: scatter is drawn in a window or with --offscreen"
+expect result contains "  grass   0.4/m² · spacing 0.35 m · 2 LODs to 40 m · looks grass, grass_dry"
+expect result contains "  bushes  0.02/m² · spacing 3 m · 2 LODs to 80 m · looks bush · shadows · on grass, pillars, ruin, hall, road_bend, road_end"
+expect result contains "  rocks   0.03/m² · spacing 1.5 m · 1 LOD to 60 m · looks rock · shadows"
+act content_get kind=scatter id=grass
+expect result contains "wilds.scatter.ron"
+expect result contains "Blades"
+act content_get kind=look id=grass
+expect result contains "#5fae45"
+
+# --- how much is strewn is the player's: 0 to 1, journaled like every setting
+mark
+act settings_set group=graphics key=foliage value=0.5
+expect result contains "graphics.foliage 1 → 0.5"
+expect journal "settings: graphics.foliage 1 → 0.5"
+act? settings_set group=graphics key=foliage value=3
+expect result contains "graphics.foliage 3 is out of range"
+act settings_set group=graphics key=foliage value=1
+
+# --- off and on again, by the tool and by the developer menu's switch
+act scatter_set on=false
+expect result contains "scatter off: nothing is strewn headless"
+act dev_menu
+expect result contains "scatter_set on=true"
+expect result contains "Scatters and what they strew"
+act dev_menu run=scatter_set
+expect result contains "scatter on"
+act dev_menu
+expect result contains "scatter_set on=false"
+
+# --- a scatter that could not be strewn is refused, and the error says why
+act? content_apply changes='[{"kind": "scatter", "id": "weeds", "def": {"looks": ["gras"], "lods": []}}]'
+expect result contains "refused, it would break content: "
+expect result contains "looks[0] -> unknown look `gras` (did you mean `grass`?)"
+expect result contains "lods: 1 to 4 levels of detail, not 0"

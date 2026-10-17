@@ -1,0 +1,45 @@
+// What grows and lies on the wilds (the engine's scatter, E10.2): tufts of grass on every tile,
+// bushes and rocks here and there. The region's seed strews the same ones every run; a player's
+// `graphics.foliage` thins them out. The height band (the default, 0.5 m around the tiles'
+// ground) keeps them off the tops of the columns, and a ray that starts inside a solid finds no
+// ground, so nothing grows inside the ruin's walls; `clearance` keeps bushes and rocks clear of
+// them. `shards act scatter` says what each one has strewn and what found no place.
+{
+    // Six blades near, three from 20 m, nothing beyond 40 m; no shadows.
+    "grass": (
+        density: 0.4,
+        spacing: 0.35,
+        scale: (0.7, 1.3),
+        tilt: 12.0,
+        looks: ["grass", "grass_dry"],
+        fade: 3.0,
+        lods: [
+            (mesh: Blades(width: 0.09, height: 0.45, count: 6), until: 20.0),
+            (mesh: Blades(width: 0.14, height: 0.4, count: 3), until: 40.0),
+        ],
+    ),
+    "bushes": (
+        tiles: ["grass", "pillars", "ruin", "hall", "road_bend", "road_end"],
+        density: 0.02,
+        spacing: 3.0,
+        scale: (0.7, 1.4),
+        clearance: 0.7,
+        looks: ["bush"],
+        shadows: true,
+        fade: 4.0,
+        lods: [
+            (mesh: Rock(radius: 0.6, detail: 1, squash: 0.8), until: 35.0),
+            (mesh: Rock(radius: 0.6, detail: 0, squash: 0.8), until: 80.0),
+        ],
+    ),
+    "rocks": (
+        density: 0.03,
+        spacing: 1.5,
+        scale: (0.5, 1.6),
+        tilt: 20.0,
+        clearance: 0.3,
+        looks: ["rock"],
+        shadows: true,
+        lods: [(mesh: Rock(radius: 0.35, detail: 1, squash: 0.6), until: 60.0)],
+    ),
+}

@@ -44,12 +44,13 @@ Remote Protocol на 127.0.0.1), без MCP-прослоек. Тем же CLI п
 21. [Локализация (E9.4)](#локализация-e94)
 22. [Звук (E9.5)](#звук-e95)
 23. [Стилизованные материалы (E10.1)](#стилизованные-материалы-e101)
-24. [Сборка для игроков и Windows (E10.6)](#сборка-для-игроков-и-windows-e106)
-25. [Отчёт о падении (E10.7)](#отчёт-о-падении-e107)
-26. [Песочница](#песочница)
-27. [Тесты и CI](#тесты-и-ci)
-28. [Что дальше](#что-дальше)
-29. [Соглашения и сборка](#соглашения-и-сборка)
+24. [Растительность и мелкие объекты (E10.2)](#растительность-и-мелкие-объекты-e102)
+25. [Сборка для игроков и Windows (E10.6)](#сборка-для-игроков-и-windows-e106)
+26. [Отчёт о падении (E10.7)](#отчёт-о-падении-e107)
+27. [Песочница](#песочница)
+28. [Тесты и CI](#тесты-и-ci)
+29. [Что дальше](#что-дальше)
+30. [Соглашения и сборка](#соглашения-и-сборка)
 
 ## Быстрый старт
 
@@ -68,7 +69,7 @@ cargo shards observe                       # срез мира текстом + 
 cargo shards tools                         # что можно сделать (--json: со схемами аргументов)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # в ответе CHANGES и JOURNAL
-cargo shards content check                 # ok: 110 definitions in 32 files
+cargo shards content check                 # ok: 117 definitions in 33 files
 cargo shards act regen region=wilds seed=42   # сгенерированный регион к югу от арены; игрок у его ворот
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # маршрут к логову по навсетке: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # проверка генератора на тысяче зёрен
@@ -91,7 +92,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Контент без игры: читает и проверяет все файлы (в том числе файлы уровней тайлов и запечённую навигацию), код 0 или 1.
 cargo sandbox --check-content
-# ok: 110 definitions in 32 files
+# ok: 117 definitions in 33 files
 
 # 7. Мир без игры: генератор на тысяче зёрен (код 0, если прошли все) и запекание навигации тайлов.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -272,7 +273,9 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 берёт у мира граф тайлов, активные зоны и событие «регион загружен», у уровней — файлы тайлов для запекания. `shards_dev`
 (меню и консоль разработчика) не знает ни одного модуля: свои пункты меню модули регистрируют в `ai_core` (`add_dev_entry`),
 а он вызывает их инструменты по имени. `shards_look` (как рисуются меши) знает только `ai_core`, ядро и контент: к префабам он
-подходит проверкой, которую добавляет к виду `prefab` (`add_content_check`), а геймплея не касается.
+подходит проверкой, которую добавляет к виду `prefab` (`add_content_check`), а геймплея не касается. `shards_scatter`
+(растительность) стоит над миром и видами: рассыпает экземпляры по тайлам региона `shards_world`, ищет под ними землю физикой
+`shards_motion` и красит их видами `shards_look`.
 
 ### Крейты
 
@@ -293,6 +296,7 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 | `crates/shards_locale` | локализация (E9.4): языки в контенте (`locale`), тексты на Fluent (`assets/locale/<язык>/*.ftl`) с параметрами и формами множественного числа, запасной язык, настройка `locale.language` и смена языка на лету, инструменты `locale` и `text`, горячая перезагрузка файлов |
 | `crates/shards_audio` | звук (E9.5): звуки, музыка и микшер в контенте (`sound`, `music`, `audio`), шины с громкостью из настроек, голоса с приоритетом и лимитом, пространственные звуки, музыка в слоях по условиям игры, звуки телеграфов и событий, инструменты `audio`, `sound_play`, `music_set`, строка `MUSIC` в `observe`; с feature `audio` зонтика — воспроизведение через Bevy audio |
 | `crates/shards_look` | вид мешей (E10.1): виды в контенте (`look`, `*.look.ron`) — цвет, свет полосами (`Toon`), `Matte`, `Unlit`, `Lit`, плоские грани, контур одной ширины в пикселях, свечение, материалы glTF; компонент `Look`, материал и шейдеры на WESL, инструменты `looks` и `look_outlines`, поле `looks` в `ai/status`, два пункта меню разработчика; с feature `render` — стилизация мешей (окно или `--offscreen`) |
+| `crates/shards_scatter` | растительность и мелкие объекты (E10.2): вид контента `scatter` (`*.scatter.ron`) — что рассыпать по тайлам каких регионов, как густо, на какой земле, какими видами, какие меши вблизи и вдали; раскладка по зерну региона (одинаковая в каждом запуске), меши-примитивы (пучок травы, конус, камень, коробка) или glTF, уровни детализации через `VisibilityRange`, настройка `graphics.foliage`, инструменты `scatter` и `scatter_set`, поле `scatter` в `ai/status`, два пункта меню разработчика; с feature `render` — экземпляры под тайлами (окно или `--offscreen`) |
 | `crates/shards_dev` | меню и консоль разработчика (E11): пункты модулей (`add_dev_entry`) и игры (вид контента `devmenu`), консоль строк `tool key=value`, инструменты `dev_menu` и `console`; с feature `render` — панели в окне (F10 и `` ` ``), Tab дописывает имена из схем, контекст ввода `dev` |
 | `crates/ai_core` | слой ИИ, не зависит от конкретной игры: id, срез мира, журнал, инструменты, время, реплеи, транспорт |
 | `crates/shards_script` | без Bevy: формат сценариев, их запуск, разбор условий `--until`, долгая игра агентов (`soak`) и их случайные входы; общий для `shards` и тестов |
@@ -572,7 +576,7 @@ reflection, как в сценах Bevy; каждый компонент дол�
 
 ```text
 $ shards act content_list
-content: 110 definitions in 32 files
+content: 117 definitions in 33 files
   action  23
   animset  0
   attack_plan  3
@@ -1442,10 +1446,12 @@ $ shards act region_info | grep manifest_hash
   ~ e7 Skeleton: +dormant
 ```
 
-**Стриминг.** Геометрия региона для игры создаётся вся при загрузке региона. Окно (`render`) ещё показывает тайлы: картинку
+**Стриминг.** Геометрия региона для игры создаётся вся при загрузке региона. Картинка (окно или `--offscreen`) ещё показывает тайлы: картинку
 тайла игра делает сама (`set_tile_visual_spawner`, по LOD), а движок создаёт и убирает её по расстоянию до ближайшего игрока
-(`WorldSettings::visual_lods`, по умолчанию 96 и 256 м; дальше последней границы убрано). Это только картинка: без окна
-ничего не стримится, на тики это не влияет. Подгрузки геометрии тайлов для физики по расстоянию нет (весь регион в памяти).
+(`WorldSettings::visual_lods`, по умолчанию 96 и 256 м; дальше последней границы убрано). Это только картинка: без неё
+(`--headless`) ничего не стримится, на тики это не влияет. Подгрузки геометрии тайлов для физики по расстоянию нет (весь регион в памяти).
+Растительность (E10.2) рассыпается по тайлам один раз, когда регион построен, и уходит вместе с тайлом; как далеко её видно,
+решают её уровни детализации, а не стриминг.
 
 ### Регион глазами ИИ
 
@@ -1862,7 +1868,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 | scope | инструменты |
 |---|---|
 | **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; движение: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; бой: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack; мир: region_info, level_info, nav_path, npc_state; настройки: settings, settings_set (как меню настроек у человека); звук: audio |
-| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset; мир: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; звук: sound_play, music_set; вид мешей: looks, look_outlines; меню и консоль разработчика: dev_menu, console |
+| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset; мир: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; звук: sound_play, music_set; вид мешей: looks, look_outlines; растительность: scatter, scatter_set; меню и консоль разработчика: dev_menu, console |
 
 Игра добавляет свои (в шаблоне `taunt` и условия `arena_cleared`, `foe_near`, `in_fight`, в песочнице условия `boss_phase_2`,
 `boss_dead`, `player_dead`, `three_attacking`). Модули добавляют условия для `step --until named:…`: `near_poi` (мир, появляется
@@ -2781,13 +2787,14 @@ ticks: avg 0.52 ms, max 2.60 ms (tick 540), budget 16.7 ms
   который их не меряет, и сборка `dist` (в ней диагностик нет) дают `null`: WARP меряет время, но не треугольники.
 - Поле `counts` есть всегда: `entities` — все сущности мира (с `AiId` — поле `entities` рядом), `meshes` — сущности с
   `Mesh3d`, `visible_meshes` — меши, которые рисует хоть какой-то вид (камера или карта теней света; направленный свет видит
-  весь регион), `camera_meshes` — меши активных камер, у каждой свои: отрисовки картинки до того, как Bevy соберёт их в пакеты.
+  весь регион), `camera_meshes` — меши активных камер, у каждой свои: отрисовки картинки до того, как Bevy соберёт их в пакеты;
+  `mesh_assets` — сколько среди рисуемых разных мешей (экземпляры одного меша с одним материалом Bevy рисует одним пакетом).
   Без окна ничего не рисуется, там 0.
 - Кадры, как и тики, не входят ни в хэш, ни в реплей, ни в снапшот; в журнал они не пишутся.
 
 **Автотест** — `--perf ID` у любой игры на `shards::run`. Сцену, прогрев, замер и бюджеты называет определение контента вида
-`perf` (`content/**/*.perf.ron`, `shards::bench::PerfDef`). Эталонная сцена песочницы — регион 8×8 с 15 врагами из ТЗ
-(растительности ещё нет, она — E10.2):
+`perf` (`content/**/*.perf.ron`, `shards::bench::PerfDef`). Эталонная сцена песочницы — регион 8×8 с 15 врагами из ТЗ и
+растительностью (E10.2, `region/wilds.scatter.ron`):
 
 ```ron
 // crates/sandbox/assets/content/perf/reference.perf.ron (сокращено)
@@ -2805,6 +2812,7 @@ ticks: avg 0.52 ms, max 2.60 ms (tick 540), budget 16.7 ms
             region_load_s: Some(15.0),   // генерация и загрузка региона, не дольше
             entities: Some(20000),
             visible_meshes: Some(2000),
+            mesh_assets: Some(80),       // разных мешей среди рисуемых (сколько пакетов), не больше
         ),
     ),
 }
@@ -2821,17 +2829,23 @@ ticks: avg 0.52 ms, max 2.60 ms (tick 540), budget 16.7 ms
 ```text
 $ cargo run -p sandbox --release -- --perf reference --offscreen
 perf reference: release build, offscreen 1920x1080 on NVIDIA GeForce RTX 5080 (Vulkan, DiscreteGpu, driver NVIDIA 610.88)
-loaded in 0.18s, region wilds seed 42 in 0.04s of it
-600 ticks in 10.00s: avg 0.72 ms, max 7.13 ms (tick 180); 3890 frames, 389.0 fps: avg 2.33 ms, max 8.95 ms (main 1.26, render 2.33, GPU 0.45 ms), 21421 triangles; 1132 entities, 217 meshes, 217 drawn, 156 in cameras
-ok    region load 0.04 s (at most 15.0 s)
-ok    tick avg 0.72 ms (at most 4.00 ms)
+loaded in 0.10s, region wilds seed 42 in 0.03s of it
+600 ticks in 10.00s: avg 0.50 ms, max 2.90 ms (tick 540); 3789 frames, 378.9 fps: avg 2.44 ms, max 4.17 ms (main 1.23, render 2.44, GPU 0.42 ms), 52481 triangles; 15407 entities, 14239 meshes, 1364 drawn (48 distinct), 1053 in cameras
+ok    region load 0.03 s (at most 15.0 s)
+ok    tick avg 0.50 ms (at most 4.00 ms)
 ok    ticks over 16.7 ms: 0 of 600, 0.0% (at most 1.0%)
-ok    frame avg 2.33 ms (at most 10.00 ms)
-ok    frames over 16.7 ms: 0 of 3890, 0.0% (at most 1.0%)
-ok    entities 1132 (at most 20000)
-ok    visible meshes 217 (at most 2000)
-perf reference: all 7 budgets met
+ok    frame avg 2.44 ms (at most 10.00 ms)
+ok    frames over 16.7 ms: 0 of 3789, 0.0% (at most 1.0%)
+ok    entities 15407 (at most 20000)
+ok    visible meshes 1364 (at most 2000)
+ok    distinct meshes drawn 48 (at most 80)
+perf reference: all 8 budgets met
 ```
+
+Это релизная сборка с растительностью (около 7200 экземпляров, 14 000 мешей): 379 кадров в секунду в 1080p, ни одного кадра
+дольше 16.7 мс, GPU — 0.42 мс на кадр. RTX 5080 — не «средний ПК» из ТЗ: на нём сцену не мерили, запас по кадру — шестикратный.
+До растительности та же сцена давала 389 кадров в секунду (1132 сущности, 217 рисуемых мешей). Отладочная сборка меряет, но не
+судит: строки идут с `-`, с растительностью — 342 кадра в секунду.
 
 - Без `--offscreen` автотест меряет только тики и гонит их как можно быстрее (прогрев и замер — по одному `step`); бюджеты
   кадров идут строками `-` («nothing is drawn headless»). С `--offscreen` игра идёт в реальном времени, 60 тиков в секунду, а
@@ -3294,6 +3308,7 @@ vsync = true
 resolution = "1920x1080"     # "auto" — как у игры
 render_scale = 1.0           # 0.5…2: множитель масштаба окна
 shadows = "high"             # off | low | medium | high
+foliage = 1.0                # 0…1: сколько растительности и мелочи рассыпать (scatter)
 
 [audio]                      # 0…1; master умножается на остальные
 master = 1.0
@@ -3324,7 +3339,7 @@ invert_y = false
 
 | группа | кто и как |
 |---|---|
-| `graphics` | `shards_settings::apply_graphics`: основное окно (полный экран, vsync, размер, масштаб `scale_factor_override`); окно меняется, когда меняются настройки, а не каждый кадр, поэтому размер, который игрок потянул мышью, не отнимают. Без окна значения только хранятся. `shadows` читает игра: `GraphicsSettings::shadow_quality()` |
+| `graphics` | `shards_settings::apply_graphics`: основное окно (полный экран, vsync, размер, масштаб `scale_factor_override`); окно меняется, когда меняются настройки, а не каждый кадр, поэтому размер, который игрок потянул мышью, не отнимают. Без окна значения только хранятся. `shadows` читает игра: `GraphicsSettings::shadow_quality()`; `foliage` читает `shards_scatter` (`GraphicsSettings::foliage_density()`): при 0.5 остаётся половина тех же экземпляров, без новых (см. «Растительность и мелкие объекты (E10.2)») |
 | `audio` | `shards_audio`: громкость шин `music`, `sfx`, `voice`, `ui` с учётом `master` (`AudioSettings::volume("music")`), применяется к тому, что уже звучит (см. «Звук») |
 | `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (см. «Ввод» в «Движении (E2)»); чувствительность и инверсия оси Y идут в `CameraSettings` |
 | `accessibility` | `shards_motion`: поле зрения и сила тряски камеры, `MotionBlur` на камерах, у которых он есть (игра добавляет компонент, настройка задаёт силу, 0 выключает), `hold_to_toggle` в карте ввода; `shards_action`: `flashes` для мерцания телеграфов и маркеров за кадром (`reduced` — вдвое мельче и не чаще 2 раз в секунду, `off` — ровный свет, `draw::pulse_at`) |
@@ -3928,28 +3943,33 @@ which no `*.sound.ron` defines (did you mean `boom`?)``). Условие сло�
 
 ```text
 $ shards act looks
-11 looks · 49 meshes styled (36 outlined) · 2 without a look · outlines on
-  cel       toon 2 bands
-  dark      #1a1a1f · matte · 5 meshes
-  floor     #2b303b · toon 2 bands · extends cel · 2 meshes
-  low_poly  toon 3 bands · flat · outline 2px #0b0f1a
-  marker    #ffd933 · unlit · 4 meshes
-  player    #408cff · toon 3 bands · flat · outline 2px #0b1a33 · extends low_poly · 1 mesh
-  sand      #8c8061 · toon 2 bands · extends cel · 2 meshes
-  skeleton  #d9d1b3 · toon 3 bands · flat · outline 2px #2a2418 · extends low_poly · 3 meshes
-  stone     #61636e · toon 3 bands · outline 1.5px #16171c · 17 meshes
-  wall      #454754 · toon 3 bands · outline 1.5px #16171c · 14 meshes
-  warden    #8cd9ff · toon 3 bands · flat · outline 3px #0a2433 · extends low_poly · 1 mesh
+15 looks · 49 meshes styled (36 outlined) · 2 without a look · outlines on
+  bush       #2f7a3a · toon 3 bands · flat
+  cel        toon 2 bands
+  dark       #1a1a1f · matte · 5 meshes
+  floor      #2b303b · toon 2 bands · extends cel · 2 meshes
+  grass      #5fae45 · toon 2 bands
+  grass_dry  #a7b04e · toon 2 bands
+  low_poly   toon 3 bands · flat · outline 2px #0b0f1a
+  marker     #ffd933 · unlit · 4 meshes
+  player     #408cff · toon 3 bands · flat · outline 2px #0b1a33 · extends low_poly · 1 mesh
+  rock       #8a867c · toon 3 bands · flat
+  sand       #8c8061 · toon 2 bands · extends cel · 2 meshes
+  skeleton   #d9d1b3 · toon 3 bands · flat · outline 2px #2a2418 · extends low_poly · 3 meshes
+  stone      #61636e · toon 3 bands · outline 1.5px #16171c · 17 meshes
+  wall       #454754 · toon 3 bands · outline 1.5px #16171c · 14 meshes
+  warden     #8cd9ff · toon 3 bands · flat · outline 3px #0a2433 · extends low_poly · 1 mesh
 $ shards act look_outlines on=false
 outlines off: 36 drawn with an outline
 ```
 
-Строка вида — то, чем он рисует на деле: значения пресета, которые вид не поменял, уже в ней, а `extends` называет пресет.
-Без картинки инструмент говорит, почему нечего считать: `11 looks · nothing is drawn headless: looks style meshes in a window or
+Это арена песочницы. Виды растительности (`bush`, `grass`, `grass_dry`, `rock`) рисуют экземпляры `scatter` в регионе: после
+`regen region=wilds seed=42` — `15 looks · 14035 meshes styled (146 outlined) · 22 without a look`. Строка вида — то, чем он рисует на деле: значения пресета, которые вид не поменял, уже в ней, а `extends` называет пресет.
+Без картинки инструмент говорит, почему нечего считать: `15 looks · nothing is drawn headless: looks style meshes in a window or
 with --offscreen`, и дальше те же строки видов без числа мешей. Меши, которые ещё ждут материал или меш, названы последней строкой
 (`3 meshes wait for their material or mesh to load`).
 
-`ai/status` — поле `looks`: `{"looks": 11, "outlined": 36, "outlines": true, "styled": 49}` (видов, мешей с контуром, контуры включены,
+`ai/status` — поле `looks`: `{"looks": 15, "outlined": 36, "outlines": true, "styled": 49}` (видов, мешей с контуром, контуры включены,
 мешей в стиле видов). `inspect eN` показывает `Look` сущности. В меню разработчика (раздел `world`) два пункта: `looks` («Looks
 and what they draw») и `look_outlines` («Outlines of the looks»; пока контуры видны, он выполняет `look_outlines on=false`).
 
@@ -3987,6 +4007,156 @@ shots/looks.png`; сравнить без контуров — `shards act look_
 нормалям: рёбер внутри силуэта у него нет. Ширина контура одна на вид: от расстояния и размера меша она не зависит (вдали не
 сузить). Проверено на GPU с `--offscreen` (песочница: полосы, плоские грани и контуры на картинке); в окне на дисплее глазами не
 проверяли.
+## Растительность и мелкие объекты (E10.2)
+
+Траву, кусты и камни рассыпает по тайлам региона модуль `shards_scatter` по контенту вида `scatter` (`*.scatter.ron`). Что, где
+и как густо, решает контент; где лежит каждый экземпляр — зерно региона, клетка тайла и id определения, поэтому раскладка
+одна и та же в каждом запуске и на каждой машине. Это только картинка: экземпляры появляются, когда игра рисует (окно или
+`--offscreen`), у них нет ни `AiId`, ни коллайдеров, и геймплей, реплей и снапшот о них не знают.
+
+```ron
+// crates/sandbox/assets/content/region/wilds.scatter.ron (сокращено)
+{
+    "grass": (
+        density: 0.4, spacing: 0.35, scale: (0.7, 1.3), tilt: 12.0,
+        looks: ["grass", "grass_dry"],
+        fade: 3.0,
+        lods: [
+            (mesh: Blades(width: 0.09, height: 0.45, count: 6), until: 20.0),
+            (mesh: Blades(width: 0.14, height: 0.4, count: 3), until: 40.0),
+        ],
+    ),
+    "rocks": (
+        density: 0.03, spacing: 1.5, scale: (0.5, 1.6), tilt: 20.0, clearance: 0.3,
+        looks: ["rock"], shadows: true,
+        lods: [(mesh: Rock(radius: 0.35, detail: 1, squash: 0.6), until: 60.0)],
+    ),
+}
+```
+
+**Поля.** Обязательны только `looks` и `lods`; поле, которого нет, — ошибка со строкой (`deny_unknown_fields`). В скобках —
+значение по умолчанию.
+
+- `tiles: ["grass", "#meadow"]` — тайлы и комнаты, по id или `#тегу`, на которых растёт (пусто — на всех).
+- `regions: ["wilds"]` — регионы и подземелья (пусто — во всех).
+- `density` — экземпляров на квадратный метр тайла, от 0 до 20 (0.5); это до настройки игрока `graphics.foliage`. Вместе с
+  уровнями детализации — не больше 10 000 сущностей-мешей (экземпляры × уровни) на самом большом тайле или комнате, где
+  определение растёт (`MAX_TILE_ENTITIES`); больше — ошибка контента.
+- `spacing` — наименьшее расстояние между двумя экземплярами этого определения в тайле, м: 0 — любое, иначе не меньше 0.01 (0).
+- `scale: (0.7, 1.3)` — размер экземпляра, множитель меша, равномерно между двумя ((1, 1)).
+- `tilt` — наибольший наклон от вертикали в случайную сторону, от 0 до 60 градусов (0).
+- `max_slope` — на земле круче стольких градусов не растёт (30).
+- `height: (-0.5, 0.5)` — высоты земли относительно начала тайла, на которых экземпляр может стоять: по умолчанию пол тайла, а
+  не верх колонны или стены. Луч вниз начинается чуть выше этой полосы; начался внутри твёрдого (стена выше полосы) — земли нет,
+  поэтому внутри стен ничего не растёт.
+- `clearance` — сколько места экземпляру нужно над землёй, м (0): шар такого радиуса, лежащий на земле (по её нормали, в 5 см
+  над ней), не должен задевать твёрдое. К стене и колонне ближе экземпляр не встанет, а склон, на котором он стоит, места не
+  отнимает: шар, поднятый прямо вверх, тонул бы в любом склоне круче ~20°.
+- `looks` — виды (`*.look.ron`, E10.1): каждый экземпляр берёт один из них. Меши белые, цвет и свет дают виды. Вид с контуром
+  (своим или от вида, который он расширяет, `extends`) — ошибка контента: контур — оболочка на каждый экземпляр и уровень
+  детализации, а у растворяющегося уровня она не растворяется.
+- `shadows` — экземпляры бросают тени (false: траве и камешкам тени не нужны).
+- `fade` — сколько метров один уровень детализации растворяется в следующем, а последний в ничто (0 — сменяются сразу); меньше
+  самого короткого уровня.
+- `lods` — от 1 до 4 уровней детализации, ближний первым: `mesh` и `until` — до скольких метров от камеры он рисуется. Дальше
+  последнего не рисуется ничего.
+
+**Меши.** Примитив движка делается один раз и общий у всех определений, которые называют такой же:
+
+- `Blades(width: 0.09, height: 0.45, count: 6)` — пучок травы: `count` (от 1 до 16) узких лезвий веером, у корня темнее
+  (вершинные цвета), виден с обеих сторон;
+- `Cone(radius: 0.6, height: 1.4, sides: 6)` — конус с гранями (от 3 до 32 сторон): ель, шип;
+- `Rock(radius: 0.35, detail: 1, squash: 0.6)` — комковатый шар, низом чуть в земле: камень, а с лиственным видом — куст;
+  `detail` от 0 до 3 (от 20 до 320 граней), `squash` — высота к ширине, от 0.1 до 2 (1);
+- `Box(size: (1.0, 0.4, 1.0))` — ящик, плита;
+- `Gltf("foliage/bush.glb#Mesh0/Primitive0")` — меш из файла glTF в папке ассетов; рисуется белым, цвет даёт вид.
+
+Каждый стоит на своём начале координат, +Y вверх.
+
+**Раскладка.** Для каждого тайла и определения `DetRng` с ключами «зерно региона, id региона, клетка тайла, id определения»
+бросает точки в квадрат тайла: `density × площадь` точек, не больше вчетверо бросков, не ближе `spacing` друг к другу; у каждой
+точки свои поворот, наклон, размер и вид. Потом каждая падает на землю лучом, а отсеиваются те, у которых нет земли в полосе
+`height` (или луч начался внутри твёрдого), у которых земля круче `max_slope` и которые ближе `clearance` к твёрдому. На
+тайл — не больше 10 000 сущностей-мешей определения: раскладка оставляет первые `10 000 / уровни` экземпляров того же списка и
+пишет в журнал `` scatter `x`: N tiles would get … each keeps its first M `` (контент, который столько просит, — уже ошибка).
+Настройка `graphics.foliage` (от 0 до 1) оставляет начало того же списка: при 0.5 — половина тех же экземпляров, ни одного
+нового. Тайлы рассыпаются по порядку клеток, как только регион построен; тайл, который уходит (смена региона, `regen`), уносит
+с собой свои экземпляры и счёт тех, что не нашли места. Правка `*.scatter.ron`, тегов тайла или комнаты (`tags` в `*.tile.ron`,
+`*.room.ron`) или настройки рассыпает всё заново в том же кадре, правка вида только перекрашивает.
+
+**Что земля и что твёрдое.** Только статичные коллайдеры мира: `Body::Static`, слой `WORLD`, не объёмы. То, что движется
+(`Body::Kinematic`: платформы, лифты), не земля и не помеха: экземпляр остался бы там, где её уже нет. Луч и шар `clearance`
+спрашивают не весь мир, а его часть вокруг тайла (`place::solids`, `PhysicsWorld::subset`: коллайдеры, чьи границы заходят в
+столб тайла), так что лучи и шары не перебирают все коллайдеры региона: в диких землях 8×8 с зерном 42 (отладочная сборка)
+броски, лучи и шары всех 64 тайлов занимают 4.2–4.8 мс против 6.6–7.0 мс по всему миру, остальное время раскладки (20–35 мс) —
+создание и удаление сущностей. Геометрия региона (тайлы, их уровни и префабы)
+строится до раскладки и всегда в ней; статичный коллайдер, который игра поставила сама, учтётся, когда тайл рассыпают: тайл
+рассыпается один раз, поэтому ящик, поставленный позже, траву под собой не уберёт до следующей раскладки (настройка,
+`scatter_set`, правка контента). Раскладка — функция зерна, контента и статичного мира в момент раскладки.
+
+**Как рисуется.** Под корнем тайла (он получает `Visibility`) стоит сущность на пару «определение, вид» с `Look`, под ней по
+сущности на экземпляр и уровень детализации: общий меш уровня, общий белый материал (вид делает из него один свой) и
+`VisibilityRange` уровня. Одинаковые меши с одинаковым материалом Bevy рисует одним пакетом: в эталонной сцене рисуются 1364
+меша, а разных из них 48 (поле `mesh_assets` в `counts`). Дальше `until` последнего уровня экземпляр не рисуется, а то, чего не
+видит камера, отсекает Bevy. Свет полосами (`Toon`) растворяет уровни тем же сглаживанием, что и материал Bevy.
+
+**Для агента.** `scatter` (Dev, query) показывает определения, сколько каждое рассыпало, сколько бросков не нашли места на тайлах,
+которые есть сейчас, и почему, а последней строкой — сколько тайлов и экземпляров рассыпала последняя раскладка и за сколько
+миллисекунд (в скобках — бросок точек, лучи и шары `clearance`, без создания сущностей; время настенное, от запуска к запуску
+разное). `scatter_set on=false` (Dev, query; без аргумента — включить) убирает всё, `on=true` рассыпает заново. Переключатель —
+ресурс `ScatterState`, не в реплее и не в снапшоте.
+
+```text
+$ shards act regen region=wilds seed=42
+$ shards step 5
+$ shards act scatter
+3 scatters · 7182 instances (13864 mesh entities) on 64 tiles · foliage 1 · scatter on
+  bushes  0.02/m² · spacing 3 m · 2 LODs to 80 m · looks bush · shadows · on grass, pillars, ruin, hall, road_bend, road_end · 203 on 45 tiles · 22 found no place (4 no ground in the band, 18 too close to a solid)
+  grass   0.4/m² · spacing 0.35 m · 2 LODs to 40 m · looks grass, grass_dry · 6479 on 64 tiles · 49 found no place (49 no ground in the band)
+  rocks   0.03/m² · spacing 1.5 m · 1 LOD to 60 m · looks rock · shadows · 500 on 64 tiles · 12 found no place (5 no ground in the band, 7 too close to a solid)
+last pass: 64 tiles, 7182 instances in 20.5 ms (4.2 ms finding their ground)
+$ shards act settings_set group=graphics key=foliage value=0.5
+$ shards act scatter
+3 scatters · 3609 instances (6971 mesh entities) on 64 tiles · foliage 0.5 · scatter on
+…
+$ shards act scatter_set on=false
+scatter off: 0 instances on 0 tiles
+```
+
+Без картинки инструмент говорит, почему ничего нет: `3 scatters · nothing is strewn headless: scatter is drawn in a window or
+with --offscreen`, и дальше те же строки определений; до первого региона — `no region is loaded: …`. `ai/status` — поле
+`scatter`: `{"entities": 13864, "instances": 7182, "on": true, "scatters": 3, "tiles": 64}`. В меню разработчика (раздел
+`world`) два пункта: `scatter_set` («Foliage and props (scatter)», переключатель) и `scatter` («Scatters and what they strew»).
+
+**Проверка контента.** `--check-content` и `content_check` называют файл, определение и поле:
+
+```text
+content/region/wilds.scatter.ron: scatter `grass`: looks[1] -> unknown look `grass_dyr` (did you mean `grass_dry`?)
+content/region/wilds.scatter.ron: scatter `grass`: tiles[0]: no tile or room `gras` (did you mean `grass`?)
+content/region/wilds.scatter.ron: scatter `grass`: lods[1].until: 15 must be farther than 20 m, where the level before ends
+content/region/wilds.scatter.ron: scatter `grass`: fade: 25 m is not shorter than the shortest level of detail (20 m)
+content/region/wilds.scatter.ron: scatter `bushes`: lods[0].mesh: Gltf `foliage/bush.glb` names no mesh in the file; add `#Mesh0/Primitive0` (the first mesh's first primitive)
+content/region/wilds.scatter.ron: scatter `bushes`: looks[0]: look `bush` has an outline: foliage looks are drawn without outlines (one hull per instance); give the scatter a look without `outline` (nor one it extends)
+content/region/wilds.scatter.ron: scatter `grass`: spacing: meters, 0 (any) or 0.01 or more, not 0.001
+content/region/wilds.scatter.ron: scatter `grass`: density: 20/m² on a tile of `wilds` (256 m²) with 2 levels of detail is 10240 mesh entities a tile, more than 10000; lower the density or the levels (each tile keeps its first 5000 instances)
+```
+
+Ещё: тег, которого нет ни у одного тайла, регион, которого нет, пустой `looks`, больше 4 уровней, числа вне своих пределов,
+файл glTF, которого нет в папке ассетов. Определения входят в хэш базы контента, как любой контент: новое определение расходит
+старый реплей на проверке `content`, и эталоны записывают заново.
+
+**Как игра этим пользуется.** (1) Виды растительности без контура в `*.look.ron` (в песочнице `grass`, `grass_dry`, `bush`,
+`rock`). (2) Файл `*.scatter.ron` с тайлами, плотностью и мешами: в песочнице `region/wilds.scatter.ron`, в шаблоне
+`region/valley.scatter.ron` (трава на лугах, у ворот и колонн, камешки везде). Кода не нужно. Посмотреть: `cargo sandbox
+--offscreen --paused --port 0 --port-file F &`, `shards act regen region=wilds seed=42`, `shards step 5`, `shards act scatter`,
+`shards shot -o shots/scatter.png`.
+
+**Чего нет.** Трава не колышется (ветра нет). Плотность задаётся тайлами и тегами, маски внутри тайла нет. Экземпляры не
+мешают ходить: что должно мешать, ставится в тайл коллайдером или префабом. На экземпляр и уровень детализации — своя сущность,
+пакеты собирает Bevy: в регионе 8×8 это около 14 000 сущностей. Эталонная сцена с растительностью в релизной сборке
+(`--offscreen`, 1080p, RTX 5080) — 379 кадров в секунду, худший кадр 4.2 мс; на «среднем ПК» её не мерили. Меш `Gltf`
+проверен только проверкой контента, на настоящем файле не рисовался. В окне на дисплее глазами не смотрели, только картинки
+`--offscreen`.
 
 ## Сборка для игроков и Windows (E10.6)
 
@@ -4001,7 +4171,7 @@ built: …\target\x86_64-pc-windows-msvc\dist\my_game.exe
 package: …\my_game\dist\my_game-0.1.0-windows-x86_64 (program 123.6 MB, assets/ 52 files, 1.3 MB)
 subsystem: windows (no console window)
 imports: system DLLs only (kernel32.dll, oleaut32.dll, uiautomationcore.dll, user32.dll, …, dxgi.dll, ws2_32.dll)
-check-content: ok: 63 definitions in 26 files
+check-content: ok: 67 definitions in 27 files
 smoke: ok: loaded in 0.05s, 300 ticks in 0.07s
 writes: nothing in its own folder
 ```
@@ -4169,6 +4339,7 @@ saved crashes/crash-20261016-123456-tick30.json: tick 30, 120 log lines, 48 jour
 | `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | коготь скелета, мувсеты, буфер ввода |
 | `npc/monsters.behavior.ron`, `monsters.perception.ron`, `monsters.director.ron`, `monsters.attack_plan.ron` | как монстры думают: автоматы `skeleton` и `warden` (с состоянием `calm`, из которого сценарии не выпускают монстра), зрение, директоры `default` (два жетона на одного игрока) и `boss` (страж бьёт один), планы атак стража |
 | `region/wilds.*.ron` | дебри: тайлы, правила сокетов, точки интереса, регион, запасная карта, настройки навсетки |
+| `region/wilds.scatter.ron` | растительность дебрей (E10.2): пучки травы двух видов на всех тайлах, кусты и камни; виды `grass`, `grass_dry`, `bush`, `rock` — в `look/sandbox.look.ron` |
 | `region/camps.prefab.ron`, `region/ruin.level.ron` | лагерные скелеты (`Home` 12 м) и страж логова (10 м); файл руины и маркеры, обязательные в нём |
 | `world/watch.layout.ron` | третий скелет арены (`e14`) |
 | `world/world.bounds.ron` | границы мира для правила `bodies_in_world`: запас вокруг построенных layout и региона, высота, ниже которой тело выпало |
@@ -4236,6 +4407,9 @@ saved crashes/crash-20261016-123456-tick30.json: tick 30, 120 log lines, 48 jour
 - `looks.scenario` (E10.1) — без картинки `looks` говорит, что рисовать нечего, и перечисляет виды с пресетами (`extends`);
   `content_get` вида, `Look` тел в `inspect`, `look_outlines` и переключатель меню разработчика (в конце контуры включены),
   вид с ошибкой `content_apply` отклоняет.
+- `scatter.scenario` (E10.2) — без картинки `scatter` говорит, что ничего не рассыпано, и перечисляет определения дебрей;
+  `content_get` определения и вида, `graphics.foliage` в журнале и отказ вне 0…1, `scatter_set` и переключатель меню
+  разработчика (в конце растительность включена и полная), определение с ошибками `content_apply` отклоняет.
 
 Сценарии начинают с `heal`/`teleport`/`set`/`npc_set_state … calm`, поэтому идут на свежей игре и после других, в любом порядке:
 CI гоняет их вперёд и потом назад в одной игре. Сессии шести из них записаны как эталонные реплеи в `tests/replays/`
@@ -4269,6 +4443,7 @@ cargo test --manifest-path template/Cargo.toml # шаблон отдельно: 
 | `shards_save` | секции и реестр, конверт `shards-save/1` и контрольная сумма, атомарная запись, три копии и восстановление, матрица порчи, миграции, сохранения из более новой версии, слоты (в том числе слот клиента по имени), автосохранение, инструменты `save_*` и `load_game`, `SaveRouting` |
 | `shards_dev` | у каждого пункта списка GDD 32.8 есть пункт меню с живым инструментом и порядок разделов, пункты и строки идут через те же инструменты (переключатели, пункты с пропуском, пункты без дела, пункты игры из контента), консоль отвечает и помнит строки, `open` показывает панели, клавиши оверлеев ждут, пока панель открыта, Tab дописывает имена инструментов и аргументов, битый пункт — ошибка контента |
 | `shards_look` | вид меша: свой `Look`, предка, имя материала glTF; материал из исходного (цвет и прозрачность, свечение, `unlit`), пресеты `extends` и их ошибки, плоская копия и контур (слои, прозрачные материалы и морф-таргеты без контура), горячая перезагрузка и ассеты, изменённые на месте, без картинки ничего не стилизуется; картинка на GPU (`#[ignore]`): полосы и контур в пикселях |
+| `shards_scatter` | раскладка: одно зерно — одни точки, `spacing`, `graphics.foliage` оставляет начало того же списка, земля, крутизна, полоса высот и `clearance`; проверка контента называет каждую ошибку; в игре без картинки ничего, на каждом тайле тестового региона, не на колонне, не в стене, одинаково в двух запусках; пакеты (два меша на тысячи сущностей), `VisibilityRange` уровней, тени; `graphics.foliage`, `scatter_set` и меню разработчика, правка контента и смена региона (без предупреждения B0004); картинка на GPU (`#[ignore]`): трава зелёная в пикселях, выключенная и дальше последнего уровня не рисуется |
 | `shards_net` | `src/`: без Bevy — транспорты (хаб в памяти, UDP), имитация связи, канал (надёжные и последние сообщения, блобы, подтверждения, RTT, потери, тайм-ауты), формат датаграмм; сессия (пределы кадров ввода и самого большого честного пакета, удерживаемое после мира заново, правила репликации, ожидание места в канале по числу и байтам, `NetDef`, ушедшие токены). Сессия целиком — в тестах песочницы `net*.rs` |
 | `shards` | сведение сети и сохранений (`coop`: что хост знает о персонаже игрока, как он едет текстом), секции движка (число, какого не бывает у тела), слот стенда, реплей со снапшота (`--verify`: тот же результат, код 2 для чужого снапшота), режим без окна — те же плагины и картинки нет (`display` и подсказка `shot`), `--offscreen` — плагины окна без окна (картинка для `shot`, в неё рисуют камеры, нацеленные на окно, и после смены цели), тестовое приложение, `testing::ok` на сбое геймплея, `testing::run_to` и `verify`, когда нарушенное правило совпало с началом загрузки, бюджет тика в командной строке, время кадра (`frames`: кадр — более медленный из двух миров, кадр с `step` не в счёт, отчёт GPU), автотест (`bench`: вердикты, проверка определения, `--perf` и его коды), `counts` без окна, анимационный мост на настоящей модели со скином |
 | `sandbox` | в одном бинарнике `tests/sandbox`: снапшоты (`snapshots.rs`: состояние после загрузки то же, что в исходной сессии, на перекате, комбо, телеграфе, планировании, плавании, флаконе, боях NPC и в сгенерированном регионе), тайл руины (`tiles.rs`: файл из тестового генератора glTF совпадает с закоммиченным), сценарии (`scenario_files`: каждый файл на свежей игре, все подряд в одной игре, бой-прототип после шести разных пауз), эталонные реплеи, действия, контент, полоса препятствий, детерминизм, видимость, права scope, реплеи, `kill` и SIGHUP; инварианты (`invariants.rs`: правила песочницы и их границы, сессии, остановка в реальном времени, реплей нарушения, снапшот; `net_seams.rs`: клиент правил не проверяет); кооператив на стенде (`net.rs`, `net_guards.rs`, `net_lifecycle.rs`, `net_sync.rs`, `net_predict.rs`, `net_seams.rs`, `net_coop.rs`, из них 2 замера под `#[ignore]`: вход и уход, пределы и текст пира, мир заново, ввод, рассинхрон, конец сессии и коды выхода, часы стенда, UDP на loopback, предсказание клиента, персонажи и сохранения); долгая игра (`soak.rs`: две минуты хоста и двух клиентов на 150 мс и 2 % со сменой региона и сохранениями, полчаса — под `#[ignore]`); снимок без окна (`offscreen.rs`, `#[ignore]`: нужен GPU или программный рендер); отдельно `system_failures` (сбой геймплея, краш-реплей, отчёт о падении, паника в другом потоке, `crash_report`, возврат снапшотом после сбоя), `log_capture` (строки лога в `step`) и `perf` (время тика: бюджет, журнал, `ai/status`; автотест на эталонной сцене без окна, с `offscreen` — под `#[ignore]`): у них свои процессы |
@@ -4318,10 +4493,10 @@ E9.1–3 в `shards_ui`, локализация E9.4 в `shards_locale`, зву�
 NPC в `shards_dev` и `shards_npc`, `path_to` и `clearance` по навсетке, проверка сокетов файла уровня) собраны, CI проверяет
 их на каждом пуше. Впереди:
 
-1. **Фаза E — платформа (E10):** стилизованные материалы (раздел «Стилизованные материалы (E10.1)»), бюджеты и автотест
-   производительности, обработчик падений и скриншоты без окна уже есть. Сборка под Windows тоже есть (`shards package`, раздел
-   «Сборка для игроков и Windows»); не хватает запуска на настоящей чистой машине. Впереди растительность с инстансингом, эффекты
-   и декали, Steam.
+1. **Фаза E — платформа (E10):** стилизованные материалы (раздел «Стилизованные материалы (E10.1)»), растительность с уровнями
+   детализации (раздел «Растительность и мелкие объекты (E10.2)»), бюджеты и автотест производительности, обработчик падений и
+   скриншоты без окна уже есть. Сборка под Windows тоже есть (`shards package`, раздел «Сборка для игроков и Windows»); не хватает
+   запуска на настоящей чистой машине. Впереди эффекты и декали, Steam.
 2. **Остатки фазы B:** стриминг геометрии тайлов для физики (сейчас по расстоянию грузится только картинка), навсетка под
    несколько тел.
 3. Горячая перезагрузка кода (`--features dynamic`, subsecond).

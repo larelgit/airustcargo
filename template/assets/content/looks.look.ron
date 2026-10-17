@@ -10,4 +10,8 @@
     "grunt": (extends: "low_poly", color: Some("#d9594d"), outline: Some((width: 2.0, color: "#2a0f0b"))),
     "raider": (extends: "low_poly", color: Some("#d98c4d"), outline: Some((width: 2.0, color: "#2a1a0b"))),
     "stone": (color: Some("#4d5261"), outline: Some((width: 1.5, color: "#16171c"))),
+    // The valley's scatter (region/valley.scatter.ron): no outline, so each look's instances
+    // are drawn together.
+    "grass": (color: Some("#6fb24a"), shading: Toon(bands: 2)),
+    "pebble": (color: Some("#8f8a80"), flat: true),
 }

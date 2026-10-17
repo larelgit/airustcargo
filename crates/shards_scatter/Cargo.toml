@@ -1,0 +1,31 @@
+[package]
+name = "shards_scatter"
+description = "Shards scatter (E10.2): foliage and small props strewn over region tiles from content, drawn as shared meshes the GPU batches, with levels of detail by distance and culling."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# Drawing the scatter: the meshes, their materials, levels of detail (visibility ranges) and
+# shadows. Without it the kind, its checks, the placement and the tools are still there: a
+# headless game draws nothing, so nothing is scattered.
+render = ["ai_core/render", "shards_look/render", "shards_world/render", "bevy/3d_bevy_render", "bevy/bevy_pbr"]
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+shards_motion.workspace = true
+shards_world.workspace = true
+shards_look.workspace = true
+shards_settings.workspace = true
+bevy = { workspace = true, features = ["std", "serialize", "bevy_asset"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+# Integration tests build apps the way a game does: the whole engine (`shards::testing`).
+shards = { workspace = true, features = ["render", "remote", "hot_reload"] }
+ron.workspace = true

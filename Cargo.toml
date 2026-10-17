@@ -15,6 +15,7 @@ members = [
     "crates/shards_audio",
     "crates/shards_dev",
     "crates/shards_look",
+    "crates/shards_scatter",
     "crates/shards_npc",
     "crates/shards_world",
     "crates/shards_net",
@@ -89,6 +90,7 @@ shards_ui = { path = "crates/shards_ui" }
 shards_audio = { path = "crates/shards_audio" }
 shards_dev = { path = "crates/shards_dev" }
 shards_look = { path = "crates/shards_look" }
+shards_scatter = { path = "crates/shards_scatter" }
 shards_world = { path = "crates/shards_world" }
 shards_net = { path = "crates/shards_net" }
 shards = { path = "crates/shards", default-features = false }

@@ -10,11 +10,11 @@ act look_outlines on=true
 
 # --- the sandbox's looks as drawn, with what each takes from its preset; headless nothing is styled
 act looks
-expect result contains "11 looks · nothing is drawn headless: looks style meshes in a window or with --offscreen"
-expect result contains "  low_poly  toon 3 bands · flat · outline 2px #0b0f1a"
-expect result contains "  player    #408cff · toon 3 bands · flat · outline 2px #0b1a33 · extends low_poly"
-expect result contains "  floor     #2b303b · toon 2 bands · extends cel"
-expect result contains "  marker    #ffd933 · unlit"
+expect result contains "15 looks · nothing is drawn headless: looks style meshes in a window or with --offscreen"
+expect result contains "toon 3 bands · flat · outline 2px #0b0f1a"
+expect result contains "#408cff · toon 3 bands · flat · outline 2px #0b1a33 · extends low_poly"
+expect result contains "#2b303b · toon 2 bands · extends cel"
+expect result contains "#ffd933 · unlit"
 act content_get kind=look id=warden
 expect result contains "sandbox.look.ron"
 expect result contains "#8cd9ff"
@@ -43,4 +43,4 @@ expect result contains "shading: Toon has 2 to 8 bands, not 12"
 act? content_apply changes='[{"kind": "look", "id": "neon", "def": {"extends": "low_pol"}}]'
 expect result contains "extends -> unknown look `low_pol` (did you mean `low_poly`?)"
 act looks
-expect result contains "11 looks · "
+expect result contains "15 looks · "
