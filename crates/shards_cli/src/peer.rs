@@ -1344,7 +1344,10 @@ mod tests {
         pretend_stand(&dir, Arc::new(AtomicBool::new(false)), Arc::default());
         // c1's file was left by a client that is gone; c3's by a bigger stand.
         let real = std::fs::read_to_string(dir.join("g.port.c1")).unwrap();
-        let free = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        // A port nobody listens on and nobody can be given: the discard port lies below the range the
+        // system hands out to `bind(0)`. (A port that was bound and released can go to another test's
+        // stand a moment later, and then the file would point at a live game.)
+        let free = 9;
         std::fs::write(dir.join("g.port.c1"), format!("{free}\n")).unwrap();
         std::fs::write(dir.join("g.port.c3"), format!("{free}\n")).unwrap();
         let path = dir.join("g.port").display().to_string();
