@@ -1013,3 +1013,23 @@ fn a_replay_from_a_snapshot_taken_after_a_content_edit_plays_in_a_fresh_game() {
     let report = shards::testing::verify(&mut sandbox::test_app(42), recording).expect("plays");
     assert!(report.identical(), "{report}");
 }
+
+#[test]
+fn an_edit_that_rebuilt_the_arenas_walls_before_the_snapshot_is_refused_by_the_geometry_check() {
+    // The sandbox builds its walls from `layout` content (no `AiId`, static colliders): the edit
+    // comes back with the snapshot, the walls it rebuilt do not, and the check says so.
+    let mut a = sandbox::test_app(42);
+    let before = a.world().resource::<shards::content::ContentDb>().get_json("layout", "arena").unwrap().clone();
+    let mut def = before.clone();
+    def["solids"][1]["max"][1] = json!(5.0);
+    ok(&mut a, "content_apply", json!({"changes": [{"kind": "layout", "id": "arena", "def": def, "before": before}]}));
+    step(&mut a, 2);
+    let edited = snapshot::capture(a.world()).unwrap();
+    assert!(edits_in(&edited).is_some());
+
+    let mut b = sandbox::test_app(42);
+    let err = snapshot::restore(b.world_mut(), &edited, false).unwrap_err();
+    assert!(err.contains("static_colliders differs"), "{err}");
+    let arena = b.world().resource::<shards::content::ContentDb>().get_json("layout", "arena").unwrap().clone();
+    assert_eq!(arena["solids"][1]["max"][1].as_f64(), Some(3.0), "the content is the files' again");
+}
