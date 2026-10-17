@@ -3724,9 +3724,9 @@ ran 120 ticks (332 → 452)
 (тайл региона может получить номер такого уровня), и ставит уровни снапшота после него (`add_snapshot_prepare_after(name,
 "region", covers, fn)`: подготовка идёт сразу после названной, в каком бы порядке ни добавили модули), под их номерами и id
 коллайдеров; загрузка, которой отказали, возвращает прежние. Тайл или уровень, чей файл игра ещё не загружала (его добавила
-правка), загрузка запрашивает и отказывает до любых изменений: `cannot put back the region the snapshot was taken in: its
+правка), загрузка запрашивает и отказывает до любых изменений: ``cannot put back the region the snapshot was taken in: its
 tiles are built from the level file `tiles/annex.gltf`, which this game is loading only now: load the snapshot again in a
-moment` — повторите загрузку через мгновение. Уровень, который игра ставит сама не по id (`spawn_level_file`), в снапшот
+moment`` — повторите загрузку через мгновение. Уровень, который игра ставит сама не по id (`spawn_level_file`), в снапшот
 не входит: проверки `levels` и `static_colliders` требуют, чтобы он стоял и там, куда грузят. У каждой машины кооператива
 правки и уровни по id свои (`net_ignore_resource`, как `LevelCounter`): мир, с которым клиент входит в сессию, их не несёт.
 
