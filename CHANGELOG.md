@@ -15,14 +15,14 @@
 ```toml
 # Cargo.toml игры
 [dependencies]
-shards = { git = "https://github.com/larelgit/airustcargo", tag = "v0.3.0" }
+shards = { git = "https://github.com/larelgit/airustcargo", tag = "v0.4.0" }
 ```
 
 CLI `shards` берите той же версии, что и движок в игре (протокол `ai/*` может меняться между минорными
 версиями):
 
 ```bash
-cargo install shards_cli --git https://github.com/larelgit/airustcargo --tag v0.3.0
+cargo install shards_cli --git https://github.com/larelgit/airustcargo --tag v0.4.0
 ```
 
 Перейти на новую версию: поменять `tag`, выполнить `cargo update -p shards`, прочитать раздел «Изменено» этого
@@ -35,11 +35,12 @@ cargo install shards_cli --git https://github.com/larelgit/airustcargo --tag v0.
 
 1. Поднять `version` в `[workspace.package]` корневого `Cargo.toml` и выполнить `cargo update --workspace`
    (обновит `Cargo.lock`). Перенести записи из `Unreleased` в новый раздел `[X.Y.Z] — дата` и поправить
-   ссылки внизу файла. Раздел уже может лежать готовым (фаза B записана в `[0.3.0]`, «не выпущена»): тогда поставить в нём
+   ссылки внизу файла. Раздел уже может лежать готовым (фаза B записана в `[0.3.0]`, фазы C–E — в `[0.4.0]`, обе «не выпущены»): тогда поставить в нём
    дату. Поднятие минорной версии отклоняет снапшоты прежней: записать заново `tests/replays/snapshot.json`
    (`cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`).
-2. Обновить тег `vX.Y.Z` в `template/Cargo.toml` (комментарий о зависимости), в `template/README.md` (шаги 3 и 5) и в
-   `README.md` (шаг 2 раздела «Как сделать игру на Shards: по шагам»), заменив `rev` на `tag`, и синхронизировать
+2. Обновить тег `vX.Y.Z` в `template/Cargo.toml` (комментарий о зависимости), в `template/README.md` (шаги 3 и 5), в
+   `README.md` (шаг 2 раздела «Make a game on Shards, step by step») и в `docs/manual.md` (шаг 2 раздела «Как сделать игру
+   на Shards: по шагам»), заменив `rev` на `tag`, и синхронизировать
    `template/Cargo.lock` с корневым (CI проверяет, что версии зависимостей в них не расходятся):
    `cp Cargo.lock template/Cargo.lock && cargo metadata --manifest-path template/Cargo.toml --format-version 1 >/dev/null`.
 3. Убедиться, что CI зелёный на коммите, который станет релизом, и влить его в основную ветку.
@@ -60,7 +61,14 @@ git push origin v0.1.0
 
 ## [Unreleased]
 
-Сюда идёт всё, что попало в основную ветку после фазы B (`0.3.0`).
+Сюда пойдёт то, что попадёт в основную ветку после фаз C–E (`0.4.0`).
+
+## [0.4.0] — фазы C–E: кооператив, сохранения, интерфейс и платформа (не выпущена)
+
+Всё, что попало в основную ветку после фазы B (`0.3.0`): кооператив и сохранения (фаза C), интерфейс, локализация и звук
+(фаза D), платформа — рендер, производительность, Steam, сборка для игроков (фаза E), и доделки по ТЗ после них (хвосты E4,
+E5, E6, E9, E11). Раздел подготовлен заранее, как `[0.3.0]`: версия в `Cargo.toml` не поднята, тег не поставлен; при
+выпуске поставить дату (см. «Как выпустить версию»).
 
 ### Добавлено
 
@@ -1470,6 +1478,11 @@ E2.4, E1.3; `shards_ui`, `shards_motion`, `shards_core`, `shards_save`, `shards_
 
 ### Изменено
 
+- **README на английском, руководство — `docs/manual.md`.** `README.md` — теперь короткая страница о проекте на английском:
+  что это, зачем, быстрый старт, игра по шагам, как устроено, состояние и ссылки. Прежний README, полное руководство на
+  русском, переехал в `docs/manual.md`; ссылки из `AGENTS.md`, README шаблона, документов, тестов и комментариев кода ведут
+  туда. Правило о языке в `AGENTS.md` говорит об этом. Шаблону нужен движок фаз C–E (сохранения, кооператив, экраны, тексты):
+  README, руководство, README шаблона и комментарий в его `Cargo.toml` называют `0.4.0`, а не `0.3.0`.
 - **Протокол сессии 2 (`shards_net`).** Версия протокола канала (`wire::PROTO`) и сессии (`msg::PROTO`) — 2: вход со стуком и
   cookie, флаги заголовка `COOKIE` и `KNOCK`, у `Hello` поля `character_parts` и `character_bytes`, новые сообщения
   `CharacterPart`, `CharacterAsk`, `CharacterNotSent`, `PeerStage::Character`, `ClientStage::Knocking`. Игры прошлой сборки
@@ -1561,10 +1574,6 @@ E2.4, E1.3; `shards_ui`, `shards_motion`, `shards_core`, `shards_save`, `shards_
 - E6.1: классы тел меняют контент песочницы (`wilds.nav.ron` с классом `large`), и хэш контента снова другой; новых
   расходящихся компонентов они не добавляют: NPC в реплеях — скелеты, они идут по классу `agent`, а его навсетка и файлы
   прежние. Журнал региона прибавил строку `navmesh (body large): …`.
-
-### Планируется
-
-- Фаза E: платформа (E10) — рендер и производительность, Steam, Windows, скриншоты без окна.
 
 ## [0.3.0] — фаза B: мир, враги и снапшоты (не выпущена)
 
@@ -1862,7 +1871,8 @@ E2.4, E1.3; `shards_ui`, `shards_motion`, `shards_core`, `shards_save`, `shards_
   не от камеры окна.
 - `dodge` и `attack` объясняют отказ вместо пустого `ok`.
 
-[Unreleased]: https://github.com/larelgit/airustcargo/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/larelgit/airustcargo/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/larelgit/airustcargo/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/larelgit/airustcargo/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/larelgit/airustcargo/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/larelgit/airustcargo/commits/v0.1.0

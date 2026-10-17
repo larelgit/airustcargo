@@ -141,17 +141,18 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
    grep -rIl my_game . | grep -v Cargo.lock | xargs sed -i 's/my_game/pit/g'   # пакет `pit` и папка настроек `SettingsAppId::new("pit")`; Cargo.lock правится сам
    ```
 2. **Подключите движок по тегу или коммиту.** В `Cargo.toml` вместо пути (`../crates/shards`) — git-зависимость;
-   версии и теги описаны в [CHANGELOG.md](CHANGELOG.md). Шаблон использует мир, NPC и навсетку, поэтому нужен движок
-   фазы B (будущий `0.3.0`), тег `v0.2.0` (фаза A) не подойдёт. Пока мейнтейнер не поставил тег, закрепите коммит:
+   версии и теги описаны в [CHANGELOG.md](../CHANGELOG.md). Шаблон использует сохранения, кооператив, экраны и тексты,
+   поэтому нужен движок фаз C–E (будущий `0.4.0`), теги `v0.2.0` и `v0.3.0` не подойдут. Пока мейнтейнер не поставил
+   тег, закрепите коммит:
    ```toml
    [dependencies]
    shards = { git = "https://github.com/larelgit/airustcargo", rev = "<хэш>", default-features = false }
    ```
-   После выпуска `v0.3.0` замените `rev = "<хэш>"` на `tag = "v0.3.0"`. Сборка не меняется, пока вы сами не поменяете
+   После выпуска `v0.4.0` замените `rev = "<хэш>"` на `tag = "v0.4.0"`. Сборка не меняется, пока вы сами не поменяете
    `rev` или `tag`. `default-features = false` нужен, чтобы
    features (`render`, `remote`, `hot_reload`, `audio`, `gamepad`, …) включала игра в своём `[features]`. Других
    зависимостей нет: Bevy, serde и schemars приходят через `shards` (`shards::prelude::*`, `shards::serde`,
-   `shards::schemars`). CLI ставится той же версии: `cargo install shards_cli --git … --rev <хэш>` (после выпуска — `--tag v0.3.0`).
+   `shards::schemars`). CLI ставится той же версии: `cargo install shards_cli --git … --rev <хэш>` (после выпуска — `--tag v0.4.0`).
 3. **`main` — одна строка.** `shards::run` читает командную строку (`--headless --seed --port --port-file --no-remote
    --paused --hz --replay --verify --windowed --check-every --check-detail --tick-budget-ms --frame-budget-ms --check-content
    --worldgen-report --seeds --bake-nav --smoke --perf`), ловит `kill` и закрытый терминал:
