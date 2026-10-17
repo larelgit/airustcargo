@@ -50,6 +50,22 @@
                     Slider(id: "look", label: "@settings-look", min: 0.25, max: 3.0, step: 0.25, setting: "controls.mouse_sensitivity"),
                     Toggle(id: "invert_y", label: "@settings-invert", setting: "controls.invert_y"),
                     Toggle(id: "hold", label: "@settings-hold", setting: "accessibility.hold_to_toggle"),
+                    // The hero's buttons: confirm a row and press the new key, mouse button or
+                    // gamepad button (Escape cancels). The change is saved in `controls.bindings`;
+                    // an input another action reads is refused, and the row says which.
+                    Panel(id: "keys", title: "@controls-keys", children: [
+                        Binding(id: "jump", label: "@controls-jump", action: "jump", prompt: "@controls-press", taken: "@controls-taken"),
+                        Binding(id: "dodge", label: "@controls-dodge", action: "dodge", prompt: "@controls-press", taken: "@controls-taken"),
+                        Binding(id: "light", label: "@controls-light", action: "light", prompt: "@controls-press", taken: "@controls-taken"),
+                        Binding(id: "heavy", label: "@controls-heavy", action: "heavy", prompt: "@controls-press", taken: "@controls-taken"),
+                        Binding(id: "block", label: "@controls-block", action: "block", prompt: "@controls-press", taken: "@controls-taken"),
+                        Binding(id: "parry", label: "@controls-parry", action: "parry", prompt: "@controls-press", taken: "@controls-taken"),
+                        Binding(id: "interact", label: "@controls-interact", action: "interact", prompt: "@controls-press", taken: "@controls-taken"),
+                        Binding(id: "use_item", label: "@controls-use-item", action: "use_item", prompt: "@controls-press", taken: "@controls-taken"),
+                        Binding(id: "lock_on", label: "@controls-lock-on", action: "lock_on", prompt: "@controls-press", taken: "@controls-taken"),
+                        Binding(id: "sprint", label: "@controls-sprint", action: "sprint", prompt: "@controls-press", taken: "@controls-taken"),
+                        Binding(id: "glide", label: "@controls-glide", action: "glide", prompt: "@controls-press", taken: "@controls-taken"),
+                    ]),
                 ]),
                 // A language's name is written in that language, whichever is played; `value` is
                 // what shows while the player has not picked one (the game's own, English).

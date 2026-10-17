@@ -37,6 +37,21 @@ settings-look = Скорость обзора
 settings-invert = Инверсия обзора
 settings-hold = Удержание как переключение
 
+controls-keys = Клавиши и кнопки
+controls-jump = Прыжок
+controls-dodge = Уклонение
+controls-light = Лёгкая атака
+controls-heavy = Тяжёлая атака
+controls-block = Блок
+controls-parry = Парирование
+controls-interact = Взаимодействие
+controls-use-item = Использовать предмет
+controls-lock-on = Захват цели
+controls-sprint = Бег
+controls-glide = Планирование
+controls-press = Нажмите клавишу или кнопку… (Esc — отмена)
+controls-taken = { $input } уже используется для «{ $action }»
+
 settings-language = Язык
 
 quit-title = Сохранить и выйти?

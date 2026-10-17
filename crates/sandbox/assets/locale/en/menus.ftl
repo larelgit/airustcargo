@@ -26,6 +26,24 @@ settings-look-speed = Look speed
 settings-invert-y = Invert look
 settings-hold = Hold to toggle
 
+# The rows that change a control: an action's name, what a row says while it waits for the new
+# input, and the phrase for an input another action has (`$input`: F, Mouse Right, Pad South;
+# `$action`: that action's row label).
+controls-keys = Keys and buttons
+controls-jump = Jump
+controls-dodge = Dodge
+controls-light = Light attack
+controls-heavy = Heavy attack
+controls-block = Block
+controls-parry = Parry
+controls-interact = Interact
+controls-use-item = Use item
+controls-lock-on = Lock on
+controls-sprint = Sprint
+controls-glide = Glide
+controls-press = Press a key or button… (Esc cancels)
+controls-taken = { $input } is already used by { $action }
+
 settings-accessibility = Accessibility
 settings-text-size = Text size
 settings-flashes = Flashes
