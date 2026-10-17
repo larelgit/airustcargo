@@ -17,6 +17,8 @@
 name: nightly
 
 on:
+  push:
+    branches: [claude/t2-nightly-fail-demo]
   schedule:
     - cron: "30 1 * * *"
   workflow_dispatch:
@@ -68,6 +70,7 @@ jobs:
   # E5: the generated region passes its checks for 100000 seeds (exit 1 if any fails).
   worldgen:
     name: worldgen
+    if: false # DEMO
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -107,6 +110,7 @@ jobs:
   # the test wants more than 10 frames in 120 ticks). They stay `#[ignore]`d for a machine with a GPU.
   gpu:
     name: gpu
+    if: false # DEMO
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -153,6 +157,7 @@ jobs:
   # failed; 2 (no such definition) fails the job.
   perf:
     name: perf
+    if: false # DEMO
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -194,12 +199,20 @@ jobs:
         with:
           name: nightly-perf
 
+  planted:
+    name: planted
+    needs: plan
+    runs-on: ubuntu-latest
+    steps:
+      - name: A planted failure (demo branch only)
+        run: echo "planted failure"; exit 1
+
   # ---------------------------------------------------------------------------------------
   # The counterpart of an email to the authors of the last commits: the failure reaches the
   # tracker. One open issue labelled `nightly` collects the nights (a comment per failed night).
   issue:
     name: issue
-    needs: [plan, worldgen, gpu, perf]
+    needs: [plan, planted, worldgen, gpu, perf]
     if: ${{ failure() }}
     # The only job that writes to the tracker.
     permissions:
