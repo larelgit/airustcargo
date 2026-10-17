@@ -2642,7 +2642,7 @@ replay finished at tick 230: identical to the recording (4 checks); 1 invariant 
   `crash_replays: false` on `EngineConfig` turns it off too (or `AiInvariants.replays = false`).
 - The rules are checked by whoever simulates the world: on a network client, `InvariantSystems` does not run (see "Groundwork for networking (phase C)").
 
-**Fuzzing.** `shards fuzz --seed S --steps N` sends N random player inputs and after each one runs `step` for 1–30 ticks (`--max-ticks`).
+**Fuzzing.** `shards fuzz --seed S --steps N` plays N rounds: each sends one random player input (or, with `--chaos`, a share of them make developer calls instead) and then runs `step` for 1–30 ticks (`--max-ticks`).
 The same seed against the same fresh game gives the same calls. The loop lives in `shards_script::fuzz` and moves JSON through a
 `Driver`, like scenarios and soaks: `shards fuzz` plays a live game over BRP, and a test plays the same run in-process
 (`ai_core::scenario::WorldDriver`, `ai_core::scenario::tool_list`). It has no model in it.

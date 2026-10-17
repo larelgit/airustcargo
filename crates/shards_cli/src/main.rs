@@ -13,7 +13,7 @@
 //! shards save-snapshot             # the state at this tick as a file (snapshots/tick<T>.json)
 //! shards load-snapshot snapshots/tick120.json   # back to it: the next step continues from there
 //! shards assert add hp 'field:6:Health.current<0'   # halt the game when it breaks
-//! shards fuzz --seed 7 --steps 300 # random inputs until a rule breaks
+//! shards fuzz --seed 7 --steps 300 # 300 rounds of random inputs until a rule breaks
 //! shards --port-file F soak --minutes 30   # seeded agents on every member of a stand until a desync
 //! shards --port-file F wait        # a game started with `--port 0 --port-file F`; waits for loading
 //! shards --port-file F wait --peer all   # a stand (`--stand 2`): its host and every client
