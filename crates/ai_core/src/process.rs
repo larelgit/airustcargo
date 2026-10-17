@@ -20,7 +20,8 @@
 //! time.** A stand driver activates a member, runs its frame or ticks, collects its failures,
 //! then goes on to the next one. Within that, systems may run on any thread: the active token
 //! is one atomic. Lines logged by other threads on their own (asset loading on the IO pool)
-//! land in whichever app is active at the time; that is harmless.
+//! land in whichever app is active at the time; their journal entries say so (`JournalEntry::background`),
+//! and heavy mode leaves them out of its comparison.
 //!
 //! The thread that drives an app (calls `update`, `step`, `call_tool`) also remembers the
 //! app it activated last, and lines it logs go there even if another thread activated another

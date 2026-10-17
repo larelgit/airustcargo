@@ -32,7 +32,7 @@ use bevy::prelude::*;
 use serde::Serialize;
 
 use crate::invariants::{self, RulesState};
-use crate::journal::{self, AiJournal, JournalKind};
+use crate::journal::{self, AiJournal, JournalEntry, JournalKind};
 use crate::replay::{self, AiReplay, Check, Replay, ReplayHashing};
 use crate::sim::{self, Halt, StepEnd};
 use crate::snapshot::{self, Snapshot, SNAPSHOTS_DIR};
@@ -323,7 +323,7 @@ fn read_journal(world: &mut World) {
     let mut read = Vec::new();
     for point in &world_ref.resource::<AiHeavy>().open {
         let (entries, missed) = journal.after(point.seq);
-        let lines: Vec<String> = entries.filter(|e| gameplay(e.kind)).map(ToString::to_string).collect();
+        let lines: Vec<String> = entries.filter(|e| compared(e)).map(ToString::to_string).collect();
         read.push((lines, missed));
     }
     let last = journal.last_seq();
@@ -335,9 +335,11 @@ fn read_journal(world: &mut World) {
     }
 }
 
-/// The kinds of line a twin must write as the original did.
-fn gameplay(kind: JournalKind) -> bool {
-    matches!(kind, JournalKind::Event | JournalKind::Warn | JournalKind::Error)
+/// The lines a twin must write as the original did: its gameplay lines (`Event`, `Warn`,
+/// `Error`), not those of the asset threads, which land in whichever app is active (a twin's
+/// late loading line in the original, for one).
+fn compared(entry: &JournalEntry) -> bool {
+    matches!(entry.kind, JournalKind::Event | JournalKind::Warn | JournalKind::Error) && !entry.background
 }
 
 /// Point t: S(t) and where the recorder, the rules and the journal stand.
@@ -497,7 +499,7 @@ fn play_twin(twin: &HeavyTwin, recording: Replay, point: &Point, end: u64) -> Re
         let report = sim::step(app.world_mut(), 1, Duration::from_secs(3600), |_| None)?;
         let journal = app.world().resource::<AiJournal>();
         let (entries, missed) = journal.after(seq);
-        lines.extend(entries.filter(|e| gameplay(e.kind)).map(ToString::to_string));
+        lines.extend(entries.filter(|e| compared(e)).map(ToString::to_string));
         lost += missed;
         seq = journal.last_seq();
         if let StepEnd::SystemFailed(failures) = &report.end {
@@ -609,6 +611,17 @@ mod tests {
         let points: Vec<u64> = (0..100).filter(|t| shifted.starts_at(*t)).collect();
         assert_eq!(points, [7, 37, 67, 97]);
         assert_eq!(shifted.flags(), "--heavy 30 --heavy-span 10 --heavy-offset 7");
+    }
+
+    #[test]
+    fn gameplay_lines_are_compared_and_asset_thread_lines_are_not() {
+        let mut journal = AiJournal::default();
+        journal.push(1, JournalKind::Event, "e6 hits e5 for 30");
+        journal.push(1, JournalKind::Warn, "game: frost cracks");
+        journal.push(1, JournalKind::Sim, "snapshot saved");
+        journal.push_entry(1, JournalKind::Warn, "bevy_asset::server: a twin's texture is missing".into(), true);
+        let compared: Vec<&str> = journal.after(0).0.filter(|e| compared(e)).map(|e| e.text.as_str()).collect();
+        assert_eq!(compared, ["e6 hits e5 for 30", "game: frost cracks"]);
     }
 
     #[test]

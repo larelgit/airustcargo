@@ -79,6 +79,7 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   it stays off until `assert_reset`, and `assert_list` shows its line. `EngineConfig::heavy`, `testing::heavy_app`, `testing::verify_heavy`.
 - `ai_core::snapshot::differences(a, b)`: where two snapshots differ, one line per place, in a fixed order (the snapshot tests use it too).
 - `ai_core::process::quiet()`: the engine's journal lines of an app that plays beside the terminal's one stay off the console.
+- `JournalEntry::background`: a line logged on Bevy's IO or async compute threads (asset loading) says so; it lands in whichever app of the process is active, and heavy mode does not compare it.
 - Tests: `heavy.rs` (the combat prototype with `--heavy 300` on every push; a counter resource, a `Local` and a cache not rebuilt, each caught
   and fixed), `state_audit.rs` (every resource after the combat prototype and the region replays is registered for snapshots or named, with its
   reason, as outside the simulation), `heavy_saves.rs` (save, load in a fresh game, save again: the same sections at five ticks of every

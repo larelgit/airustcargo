@@ -51,6 +51,11 @@ pub struct JournalEntry {
     pub tick: u64,
     pub kind: JournalKind,
     pub text: String,
+    /// Logged on a thread of Bevy's IO or async compute pool (asset loading), where no
+    /// gameplay system runs. Such a line lands in whichever app of the process is active (see
+    /// [`process`](crate::process)), so heavy mode leaves it out of its comparison.
+    #[serde(skip)]
+    pub background: bool,
 }
 
 impl std::fmt::Display for JournalEntry {
@@ -99,12 +104,16 @@ impl AiJournal {
     }
 
     pub fn push(&mut self, tick: u64, kind: JournalKind, text: impl Into<String>) -> u64 {
+        self.push_entry(tick, kind, text.into(), false)
+    }
+
+    pub(crate) fn push_entry(&mut self, tick: u64, kind: JournalKind, text: String, background: bool) -> u64 {
         if self.entries.len() == self.capacity {
             self.entries.pop_front();
         }
         let seq = self.next_seq;
         self.next_seq += 1;
-        self.entries.push_back(JournalEntry { seq, tick, kind, text: text.into() });
+        self.entries.push_back(JournalEntry { seq, tick, kind, text, background });
         seq
     }
 
@@ -230,6 +239,8 @@ struct CapturedLog {
     level: Level,
     target: String,
     message: String,
+    /// See [`JournalEntry::background`].
+    background: bool,
 }
 
 /// Lines captured since the last [`drain_logs`].
@@ -312,7 +323,8 @@ impl<S: Subscriber> Layer<S> for CaptureLayer {
         }
         if buf.kept < MAX_CAPTURED_PER_TICK {
             buf.kept += 1;
-            buf.lines.push(CapturedLog { tick, level, target: event.metadata().target().to_owned(), message: visitor.0 });
+            let background = std::thread::current().name().is_some_and(on_a_background_pool);
+            buf.lines.push(CapturedLog { tick, level, target: event.metadata().target().to_owned(), message: visitor.0, background });
         } else {
             match buf.dropped.last_mut() {
                 Some((t, n)) if *t == tick => *n += 1,
@@ -320,6 +332,12 @@ impl<S: Subscriber> Layer<S> for CaptureLayer {
             }
         }
     }
+}
+
+/// A thread of Bevy's IO or async compute pool (`IO Task Pool (2)`): asset loading and other
+/// tasks run there, never a system.
+fn on_a_background_pool(thread: &str) -> bool {
+    thread.starts_with("IO Task Pool") || thread.starts_with("Async Compute Task Pool")
 }
 
 struct MessageVisitor(String);
@@ -394,7 +412,7 @@ pub fn drain_logs(world: &mut World) {
     };
     for log in lines {
         let kind = if log.level == Level::ERROR { JournalKind::Error } else { JournalKind::Warn };
-        journal.push(log.tick, kind, format!("{}: {}", log.target, log.message));
+        journal.push_entry(log.tick, kind, format!("{}: {}", log.target, log.message), log.background);
     }
     for (tick, n) in dropped {
         let text = format!("{n} log lines dropped (limit {MAX_CAPTURED_PER_TICK} per tick)");

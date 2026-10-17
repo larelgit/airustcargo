@@ -75,6 +75,30 @@ fn a_warning_keeps_the_tick_it_was_logged_at() {
     assert_eq!(frost[0].0, 30, "logged at tick 30, not at the end of the step: {frost:?}");
 }
 
+/// A line from an asset thread lands in whichever app is active: its entry says so, and heavy
+/// mode does not compare it.
+#[test]
+fn a_warning_from_an_asset_thread_is_marked_as_background() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let mut app = app();
+    for thread in ["IO Task Pool (0)", "Async Compute Task Pool (1)", "Compute Task Pool (2)"] {
+        std::thread::Builder::new().name(thread.into()).spawn(move || warn!("from {thread}")).unwrap().join().unwrap();
+    }
+    ok(&mut app, "step", json!({"ticks": 1}));
+    let journal = app.world().resource::<AiJournal>();
+    let marked: Vec<(String, bool)> =
+        journal.after(0).0.filter(|e| e.text.contains(" from ")).map(|e| (e.text.clone(), e.background)).collect();
+    assert_eq!(
+        marked,
+        [
+            ("log_capture: from IO Task Pool (0)".to_owned(), true),
+            ("log_capture: from Async Compute Task Pool (1)".to_owned(), true),
+            ("log_capture: from Compute Task Pool (2)".to_owned(), false),
+        ],
+        "systems run on the compute pool: its lines are gameplay"
+    );
+}
+
 #[test]
 fn step_until_journal_sees_a_warning_in_its_own_tick() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
