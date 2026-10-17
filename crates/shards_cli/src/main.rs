@@ -226,6 +226,20 @@ enum Cmd {
         /// loaded, pause, speed, heal. Needs an agent with dev scope (the default).
         #[arg(long, default_value_t = 0.0, value_name = "P")]
         chaos: f64,
+        /// Steer by coverage: a tool's weight grows with the new coverage signatures that appeared in
+        /// the rounds it was called in (decaying, deterministic). Needs a game started with `--coverage`.
+        #[arg(long)]
+        steer: bool,
+        /// When the game halts (or a chaos round trip fails to come back), shrink the session to the
+        /// few rounds that stop on the same thing and write `scenarios/regress/<date>-<stop>-seed<S>.scenario`.
+        /// Saves a snapshot before the first round and loads it before each attempt, so the attempts
+        /// run in this game, which is not a fresh one: a result can differ from a fresh game's (the
+        /// in-process minimiser, `shards::testing::fuzz_and_shrink`, plays each attempt on one).
+        #[arg(long)]
+        minimize: bool,
+        /// With --minimize: the most attempts to make.
+        #[arg(long, default_value_t = 300, value_name = "N", requires = "minimize")]
+        budget: u32,
     },
     /// A long co-op session played by seeded agents on every member of a stand at once (or on
     /// one game): every round each member makes a random player input with what it sees (move,
@@ -740,7 +754,7 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             AssertCmd::Remove { name } => act("assert_remove", json!({"name": name}))?,
             AssertCmd::Reset => act("assert_reset", json!({}))?,
         },
-        Cmd::Fuzz { seed, steps, max_ticks, alphabet, weights, invalid, chaos } => {
+        Cmd::Fuzz { seed, steps, max_ticks, alphabet, weights, invalid, chaos, steer, minimize, budget } => {
             let mut plan = FuzzPlan::new(*seed);
             plan.rounds = *steps;
             plan.max_ticks = *max_ticks;
@@ -748,9 +762,10 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             plan.weights = parse_weights(weights.as_deref().unwrap_or_default())?;
             plan.invalid = unit_share("--invalid", *invalid)?;
             plan.chaos = unit_share("--chaos", *chaos)?;
+            plan.steer = *steer;
             plan.agent = agent.to_owned();
             plan.save_replay = true;
-            return run_fuzz(client, plan);
+            return run_fuzz(client, plan, minimize.then_some(*budget));
         }
         Cmd::Coverage { op: Some(_), .. } => act("coverage_reset", json!({}))?,
         Cmd::Coverage { op: None, top, since } => act("coverage", json!({"top": top, "since": since}))?,
@@ -1058,11 +1073,19 @@ impl Driver for FuzzDriver<'_> {
 
 /// Player inputs (and, with `--chaos`, developer calls) between short steps until the game
 /// halts or the rounds ran out. A refused input is part of the game: the next round goes on.
-fn run_fuzz(client: &Client, plan: FuzzPlan) -> Result<ExitCode, String> {
+fn run_fuzz(client: &Client, plan: FuzzPlan, minimize: Option<u32>) -> Result<ExitCode, String> {
     let tools = ToolDesc::list_from_json(&client.call("ai/tools", json!({"agent": plan.agent}))?);
     let mut driver = FuzzDriver { client, last_step: None };
+    // The state every attempt of the shrinking starts from.
+    let start = format!("snapshots/{}-start.json", plan.stem);
+    if minimize.is_some() {
+        let saved = driver.call(&plan.agent, "snapshot_save", json!({"path": start}))?;
+        if !saved.ok {
+            return Err(format!("--minimize saves a snapshot before the first round, and snapshot_save refused: {}", saved.text()));
+        }
+    }
     let report = fuzz::run(&mut driver, &plan, &tools)?;
-    let step = driver.last_step.unwrap_or_default();
+    let step = driver.last_step.take().unwrap_or_default();
     match &report.ended {
         Ended::StepRefused(_) => Ok(print_outcome(&step, false)),
         Ended::Halted { .. } => {
@@ -1071,12 +1094,18 @@ fn run_fuzz(client: &Client, plan: FuzzPlan) -> Result<ExitCode, String> {
             if let Some(replay) = &report.replay {
                 say(format!("replay: {replay}"));
             }
+            if let Some(budget) = minimize {
+                minimize_run(client, &mut driver, &plan, &report, &start, budget)?;
+            }
             Ok(ExitCode::from(exit::HALTED))
         }
         Ended::ChaosBroke { .. } => {
             say(report.to_string());
             if let Some(replay) = &report.replay {
                 say(format!("replay: {replay}"));
+            }
+            if let Some(budget) = minimize {
+                minimize_run(client, &mut driver, &plan, &report, &start, budget)?;
             }
             Ok(ExitCode::from(exit::HALTED))
         }
@@ -1089,6 +1118,69 @@ fn run_fuzz(client: &Client, plan: FuzzPlan) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
     }
+}
+
+/// `fuzz --minimize`: shrinks the session that stopped with `shards_script::shrink`, each attempt
+/// loading the snapshot taken before the first round into this same game, and writes the scenario
+/// under `scenarios/regress/` of the current folder.
+fn minimize_run(client: &Client, driver: &mut FuzzDriver, plan: &FuzzPlan, report: &fuzz::FuzzReport, start: &str, budget: u32) -> Result<(), String> {
+    use shards_script::{regress, shrink, stop::Stop};
+    let Some(stop) = Stop::of(&report.ended) else {
+        say("not minimising: the stop is not one this knows how to compare (a halt reason that is not an invariant, a failed system or a heavy check)");
+        return Ok(());
+    };
+    say("warning: --minimize plays each attempt in THIS game after loading the snapshot taken before the first round; a game that has run for a while is not a fresh one, so a result can differ from a fresh game's (the scenario is checked on a fresh game by `cargo test`)");
+    if report.from_tick != 0 {
+        say(format!("warning: the run began at tick {}, not 0; the scenario starts a fresh game and may not reach the same state", report.from_tick));
+    }
+    let game_seed = client.call("ai/status", Value::Null)?["seed"].as_u64().unwrap_or(plan.seed);
+    let agent = plan.agent.clone();
+    let mut attempt = |rounds: &[fuzz::Round]| -> Result<bool, String> {
+        let loaded = driver.call(&agent, "snapshot_load", json!({"path": start}))?;
+        if !loaded.ok {
+            return Err(format!("snapshot_load of {start} refused: {}", loaded.text()));
+        }
+        // A rule that fired stays off until it is re-armed.
+        driver.call(&agent, "assert_reset", json!({}))?;
+        shrink::replays_stop(driver, &agent, rounds, &stop)
+    };
+    if !attempt(&report.played)? {
+        say("not minimising: playing the whole session again from the snapshot did not stop on the same thing, so there is nothing to shrink against");
+        return Ok(());
+    }
+    let shrunk = shrink::shrink(&report.played, budget.saturating_sub(1), &mut attempt)?;
+    let text = match &report.ended {
+        Ended::Halted { reason, .. } => reason.clone(),
+        Ended::ChaosBroke { call, why } => format!("{call} was refused: {why}"),
+        _ => String::new(),
+    };
+    let title = stop.title();
+    let strict = match &stop {
+        Stop::Chaos { tool } => Some(tool.as_str()),
+        _ => None,
+    };
+    let header = regress::Header { seed: game_seed, stop: &text, stop_kind: &title, before: &report.played, heavy: None, strict };
+    let scenario = regress::scenario_text(&header, &shrunk.rounds);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let dir = std::path::Path::new("scenarios/regress");
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    let path = dir.join(regress::file_name(&regress::date_of(now), &stop.slug(), game_seed));
+    std::fs::write(&path, &scenario).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    say(format!(
+        "minimised: {} inputs in {} rounds -> {} inputs in {} rounds, {} attempts{}; {} commands written to {}",
+        regress::input_count(&report.played),
+        report.played.len(),
+        regress::input_count(&shrunk.rounds),
+        shrunk.rounds.len(),
+        shrunk.attempts + 1,
+        if shrunk.exhausted { " (budget spent: not proven minimal)" } else { "" },
+        regress::command_count(&scenario),
+        path.display()
+    ));
+    if matches!(stop, Stop::Heavy { .. }) {
+        say("note: a heavy stop happens only with heavy mode on; the file does not ask for it. Add the line `# heavy: every=N span=K offset=O` before `seed` with the values the game ran with");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
