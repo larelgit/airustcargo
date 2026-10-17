@@ -18,7 +18,7 @@
 //! |---|---|
 //! | join | the client reads its slot (a damaged file is restored from its backup, the journal says so) and puts the sections in `Hello`; the host applies them to the new body inside the recorded `player_join`, so a replay builds the same body. A version older than this build's is migrated; an unreadable payload is journaled and the player starts fresh |
 //! | the game saves (`save_now`, an autosave event, `save_game` for a remote player's body) | the host writes its own character and sends every remote player theirs |
-//! | the player saves (`save_game what=character` on their game) | the client asks the host (`CharacterAsk`), which captures the body it plays and sends it (at most once a second); the slot named, now the current one, is written when it comes |
+//! | the player saves (`save_game what=character` on their game) | the client asks the host (`CharacterAsk`, numbered), which captures the body it plays and sends it with that number (at most once a second); the slot that ask named is written when it comes, whichever slot is current by then |
 //! | leave, kick, timeout | the host captures the body and sends it to the leaver's own link; the body waits for a rejoin |
 //! | the session ends | the host saves the world and its character, then each client gets a final `CharacterSave`, then `SessionEnd` (which names the world slot) |
 //!
@@ -415,10 +415,10 @@ fn route(world: &mut World, kind: SaveKind, body: Option<Entity>, slot: &str, re
     }
 }
 
-/// A client's `save_game` of its character: the host is asked for it, and `slot` (now the current
-/// one) is written when its capture comes back (`on_character_save`).
+/// A client's `save_game` of its character: the host is asked for it, and `slot` is written when
+/// its capture comes back (`on_character_save`), even if another slot is current by then.
 fn ask_host(world: &mut World, slot: &str) -> Result<SaveReport, String> {
-    let host = shards_net::client::ask_character(world)?;
+    let host = shards_net::client::ask_character(world, slot)?;
     let report = SaveReport {
         kind: SaveKind::Character,
         slot: slot.to_owned(),
@@ -449,11 +449,11 @@ fn saved(world: &mut World, kind: SaveKind, reason: &str) {
 
 // --- the client ------------------------------------------------------------------------
 
-/// `NetHooks::on_character_save`: the host's capture of this player's character, into the
-/// slot this machine plays. Nothing is written that this build could not read: a bad
-/// capture must not replace a good file.
-fn on_character_save(world: &mut World, tick: u64, reason: &str, sections: &Value) {
-    let Some(slot) = world.get_resource::<SaveSlots>().map(|s| s.character.clone()) else { return };
+/// `NetHooks::on_character_save`: the host's capture of this player's character, into the slot
+/// the player asked for it in (`asked`), else the slot this machine plays. Nothing is written
+/// that this build could not read: a bad capture must not replace a good file.
+fn on_character_save(world: &mut World, tick: u64, reason: &str, sections: &Value, asked: Option<&str>) {
+    let Some(slot) = asked.map(str::to_owned).or_else(|| world.get_resource::<SaveSlots>().map(|s| s.character.clone())) else { return };
     let refuse = |world: &mut World, why: String| {
         journal::emit(world, JournalKind::Error, format!("save: the host's character for you {}; character/{slot} is as it was", clip(&why, MAX_PEER_TEXT)));
     };

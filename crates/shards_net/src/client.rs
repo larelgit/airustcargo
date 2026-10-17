@@ -134,6 +134,9 @@ pub struct NetClient {
     pub rebases: u32,
     next_call: u64,
     calls: BTreeMap<u64, String>,
+    /// The character asks the host has not answered yet, by number: the slot each one saves into.
+    asks: BTreeMap<u32, String>,
+    next_ask: u32,
     pub host_paused: bool,
     /// Deltas applied and skipped, and their bytes.
     pub deltas: u64,
@@ -172,6 +175,8 @@ impl NetClient {
             rebases: 0,
             next_call: 0,
             calls: BTreeMap::new(),
+            asks: BTreeMap::new(),
+            next_ask: 0,
             host_paused: false,
             deltas: 0,
             skipped: 0,
@@ -348,10 +353,9 @@ pub(crate) fn on_exit(world: &mut World) {
                 }
                 for message in delivered {
                     if let Delivered::Reliable(bytes) = message
-                        && let Ok(Msg::CharacterSave { tick, reason, sections }) = msg::decode::<Msg>(&bytes)
+                        && let Ok(Msg::CharacterSave { tick, reason, sections, asked }) = msg::decode::<Msg>(&bytes)
                     {
-                        let save = hooks(world).on_character_save;
-                        save(world, tick, &reason, &sections);
+                        character_save(world, client, tick, &reason, &sections, asked);
                         // The answer to our `Bye` (the host leaves with the reason we gave), not
                         // a save that was on its way when we quit.
                         final_save |= reason == QUIT;
@@ -699,12 +703,11 @@ fn on_message(world: &mut World, client: &mut NetClient, clock: &NetClock, messa
             let verdict = if ok { "ok" } else { "failed" };
             journal::log(world, JournalKind::Agent, format!("host: {tool} {verdict} at host tick {tick}: {text}"));
         }
-        Msg::CharacterSave { tick, reason, sections } => {
-            let save = hooks(world).on_character_save;
-            save(world, tick, &reason, &sections);
-        }
-        Msg::CharacterNotSent { reason } => {
-            journal::emit(world, JournalKind::Error, format!("save: the host did not send your character: {}", crate::host::clip(&reason, crate::host::MAX_PEER_TEXT)));
+        Msg::CharacterSave { tick, reason, sections, asked } => character_save(world, client, tick, &reason, &sections, asked),
+        Msg::CharacterNotSent { reason, asked } => {
+            let slot = asked.and_then(|id| client.asks.remove(&id)).map(|slot| format!(" (character/{slot} is as it was)")).unwrap_or_default();
+            let reason = crate::host::clip(&reason, crate::host::MAX_PEER_TEXT);
+            journal::emit(world, JournalKind::Error, format!("save: the host did not send your character: {reason}{slot}"));
         }
         Msg::SessionEnd { reason, saved_slot } => {
             let saved = saved_slot.map(|slot| format!(", world saved: {}", crate::host::clip(&slot, 40))).unwrap_or_default();
@@ -929,10 +932,33 @@ fn apply_pending(world: &mut World, client: &mut NetClient) {
     }
 }
 
-/// Asks the host for this player's character now: it captures the body it plays and sends it
-/// back (`Msg::CharacterSave`, reason `save_game`), which the game writes like any it is sent
-/// (co-op saves: into the current character slot). Answers the host's address.
-pub fn ask_character(world: &mut World) -> Result<String, String> {
+/// The character asks this game remembers until the host answers them: an ask the host never
+/// answers (one more in the same second) is forgotten after this many newer ones.
+const MAX_ASKS: usize = 16;
+
+/// The host's capture of this player's character to the game's hook: into the slot of the ask it
+/// answers, else (sent of the host's own accord) the slot this machine plays. An answer to an ask
+/// this game does not remember is written nowhere: which slot it was for is not known.
+fn character_save(world: &mut World, client: &mut NetClient, tick: u64, reason: &str, sections: &Value, asked: Option<u32>) {
+    let slot = match asked {
+        None => None,
+        Some(id) => match client.asks.remove(&id) {
+            Some(slot) => Some(slot),
+            None => {
+                journal::emit(world, JournalKind::Warn, format!("save: the host answered character ask #{id}, which this game does not remember; not written"));
+                return;
+            }
+        },
+    };
+    let save = hooks(world).on_character_save;
+    save(world, tick, reason, sections, slot.as_deref());
+}
+
+/// Asks the host for this player's character now, to save into `slot`: it captures the body it
+/// plays and sends it back (`Msg::CharacterSave`, reason `save_game`) with the ask's number, and
+/// the game writes it into `slot` (co-op saves), whichever slot is current by then. Answers the
+/// host's address.
+pub fn ask_character(world: &mut World, slot: &str) -> Result<String, String> {
     let Some(mut client) = world.get_resource_mut::<NetClient>() else {
         return Err("this game is not a client of a host".into());
     };
@@ -941,7 +967,13 @@ pub fn ask_character(world: &mut World) -> Result<String, String> {
         ClientStage::Ended(why) => return Err(format!("not in a session any more ({why}); the host sends a player their character when they leave")),
         other => return Err(format!("not connected to the host yet ({other:?}); wait for `net_joined`")),
     }
-    client.send(&Msg::CharacterAsk);
+    client.next_ask = client.next_ask.wrapping_add(1);
+    let id = client.next_ask;
+    client.asks.insert(id, slot.to_owned());
+    while client.asks.len() > MAX_ASKS {
+        client.asks.pop_first();
+    }
+    client.send(&Msg::CharacterAsk { id });
     Ok(client.address.clone())
 }
 

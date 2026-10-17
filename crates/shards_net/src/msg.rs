@@ -51,17 +51,19 @@ pub enum Msg {
         #[serde(default)]
         epoch: u32,
     },
-    /// A player's character, captured by the host (co-op saves).
-    CharacterSave { tick: u64, reason: String, sections: Value },
+    /// A player's character, captured by the host (co-op saves). `asked`: the number of the
+    /// player's [`Msg::CharacterAsk`] it answers; none when the host sends it of its own accord.
+    CharacterSave { tick: u64, reason: String, sections: Value, asked: Option<u32> },
     Paused(bool),
     /// Part `index` of a character too big for the hello ([`Hello::character_parts`]): a piece of
     /// its JSON text, in order.
     CharacterPart { index: u32, text: String },
     /// A player asks for its character now (`save_game what=character` on a client): the host
-    /// answers with a [`Msg::CharacterSave`] (reason `save_game`), or why not.
-    CharacterAsk,
-    /// Why the host did not send the character a player asked for.
-    CharacterNotSent { reason: String },
+    /// answers with a [`Msg::CharacterSave`] (reason `save_game`), or why not, either carrying
+    /// `id` back: the player's number for the ask, which says the slot the answer goes into.
+    CharacterAsk { id: u32 },
+    /// Why the host did not send the character a player asked for (ask `asked`).
+    CharacterNotSent { reason: String, asked: Option<u32> },
 }
 
 /// The first thing a client says.

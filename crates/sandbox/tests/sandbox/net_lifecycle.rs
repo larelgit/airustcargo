@@ -23,7 +23,7 @@ fn character(_: &mut World, _: Entity) -> Option<Value> {
     Some(json!({"level": 3}))
 }
 
-fn keep_character(world: &mut World, _tick: u64, _reason: &str, sections: &Value) {
+fn keep_character(world: &mut World, _tick: u64, _reason: &str, sections: &Value, _slot: Option<&str>) {
     if sections["level"] == 3 {
         world.get_resource_or_init::<CharacterSaves>().0 += 1;
     }

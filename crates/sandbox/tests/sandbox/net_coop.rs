@@ -729,7 +729,7 @@ fn a_rebuilt_world_gives_a_player_the_newest_character_the_host_has() {
 fn tell_client(stand: &mut Stand, member: usize, reason: &str, sections: Value) {
     let world = stand.world_mut(member);
     let hook = shards::net::hooks::hooks(world).on_character_save;
-    hook(world, 99, reason, &sections);
+    hook(world, 99, reason, &sections, None);
 }
 
 #[test]
@@ -979,6 +979,26 @@ fn a_client_saves_its_character_by_asking_the_host_for_the_body_it_plays() {
     // Asking saves nothing on the host and changes nothing of the game.
     assert!(!folders.of("host").join("character/mine.save").exists());
     verify(&stand, &NetDef::default());
+}
+
+#[test]
+fn each_ask_for_a_character_is_written_into_the_slot_it_named() {
+    let folders = Folders::new("asked_two");
+    let (mut stand, c1, me) = joined_with_file(&folders, &NetDef::default());
+    give(&mut stand, &me, 9);
+    stand.run(20);
+    // Two asks before the first answer comes: the second slot is the current one by then (and the
+    // host tells that ask to wait).
+    assert!(stand.call(c1, "save_game", json!({"what": "character", "slot": "first"})).ok);
+    assert!(stand.call(c1, "save_game", json!({"what": "character", "slot": "second"})).ok);
+    assert_eq!(stand.world(c1).resource::<SaveSlots>().character, "second");
+    run_until(&mut stand, 90, "the first is written", |_| folders.of("c1").join("character/first.save").exists());
+    stand.run(30);
+    assert_eq!(coins_in(&folders.of("c1"), "first"), 9);
+    assert!(!folders.of("c1").join("character/second.save").exists(), "the first's answer is not the second's: {:#?}", journal(&stand, c1));
+    let told = "save: the host did not send your character: it was sent less than a second ago; ask again in ";
+    let waits: Vec<String> = journal(&stand, c1).into_iter().filter(|l| l.contains(told)).collect();
+    assert!(waits.len() == 1 && waits[0].ends_with("(character/second is as it was)"), "{waits:#?}");
 }
 
 #[test]

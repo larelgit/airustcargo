@@ -327,8 +327,8 @@ enum Task {
     /// Player `player` left through `peer` (its character goes there, not to a newer link).
     Leave { player: u8, peer: PeerId, reason: String },
     Call { peer: PeerId, call: CallMsg },
-    /// The player of `peer` asked for its character.
-    SendCharacter(PeerId),
+    /// The player of `peer` asked for its character (their ask's number).
+    SendCharacter(PeerId, u32),
 }
 
 /// How often a player is sent the character it asks for, milliseconds: a capture is the size of
@@ -514,7 +514,7 @@ impl NetHost {
         let Some(peer) = self.peers.values_mut().find(|p| p.player == player && p.stage == PeerStage::Connected) else {
             return false;
         };
-        peer.send(&Msg::CharacterSave { tick, reason: reason.to_owned(), sections }).is_ok()
+        peer.send(&Msg::CharacterSave { tick, reason: reason.to_owned(), sections, asked: None }).is_ok()
     }
 
     /// Sends `peer` the whole world again at the next send.
@@ -695,7 +695,7 @@ pub fn end_session(world: &mut World, reason: &str) {
                     if let Some(body) = peer.body.and_then(|id| world.resource::<AiIndex>().get(AiId(id)))
                         && let Some(sections) = capture(world, body)
                     {
-                        peer.send_noted(&Msg::CharacterSave { tick, reason: "session ended".into(), sections }, "the character");
+                        peer.send_noted(&Msg::CharacterSave { tick, reason: "session ended".into(), sections, asked: None }, "the character");
                     }
                     peer.send_noted(&Msg::SessionEnd { reason: reason.to_owned(), saved_slot: saved_slot.clone() }, "the end of the session");
                     leaving.push((peer.player, peer.id));
@@ -1046,7 +1046,7 @@ fn on_message(world: &mut World, host: &mut NetHost, id: PeerId, message: Msg) {
     match message {
         Msg::Hello(hello) => on_hello(world, host, id, hello),
         Msg::CharacterPart { index, text } => on_character_part(world, host, id, index, text),
-        Msg::CharacterAsk => {
+        Msg::CharacterAsk { id: ask } => {
             let now = host.now;
             let Some(peer) = host.peers.get_mut(&id).filter(|p| p.stage == PeerStage::Connected) else { return };
             match peer.character_asked {
@@ -1055,13 +1055,13 @@ fn on_message(world: &mut World, host: &mut NetHost, id: PeerId, message: Msg) {
                     if !told {
                         let wait = (CHARACTER_ASK_EVERY_MS - now.saturating_sub(at)) as f64 / 1000.0;
                         let reason = format!("it was sent less than a second ago; ask again in {wait:.1} s");
-                        let _ = peer.send(&Msg::CharacterNotSent { reason });
+                        let _ = peer.send(&Msg::CharacterNotSent { reason, asked: Some(ask) });
                         peer.character_asked = Some((at, true));
                     }
                 }
                 _ => {
                     peer.character_asked = Some((now, false));
-                    host.tasks.push(Task::SendCharacter(id));
+                    host.tasks.push(Task::SendCharacter(id, ask));
                 }
             }
         }
@@ -1396,7 +1396,7 @@ fn run_tasks(world: &mut World, host: &mut NetHost) {
             Task::Admit(id) => admit(world, host, id),
             Task::Leave { player, peer, reason } => leave(world, host, player, peer, &reason, true),
             Task::Call { peer, call } => forwarded(world, host, peer, call),
-            Task::SendCharacter(peer) => character_asked(world, host, peer),
+            Task::SendCharacter(peer, ask) => character_asked(world, host, peer, ask),
         }
     }
     for peer in host.peers.values_mut() {
@@ -1526,10 +1526,10 @@ fn join_call(world: &mut World, host: &NetHost, player: u8, hello: &Hello) -> (V
 }
 
 /// A player asked for its character (`save_game what=character` on its game): the host captures
-/// the body it plays, the authoritative one, and sends it with the reason `save_game`; their
-/// machine writes it into the slot it asked for. A body that is gone or a capture that fails is
-/// said to them instead.
-fn character_asked(world: &mut World, host: &mut NetHost, id: PeerId) {
+/// the body it plays, the authoritative one, and sends it with the reason `save_game` and the
+/// ask's number; their machine writes it into the slot that ask named. A body that is gone or a
+/// capture that fails is said to them instead.
+fn character_asked(world: &mut World, host: &mut NetHost, id: PeerId, ask: u32) {
     let Some(peer) = host.peers.get(&id).filter(|p| p.stage == PeerStage::Connected) else { return };
     let (player, body) = (peer.player, peer.body);
     let entity = body.and_then(|b| world.resource::<AiIndex>().get(AiId(b)));
@@ -1537,13 +1537,13 @@ fn character_asked(world: &mut World, host: &mut NetHost, id: PeerId) {
     let Some(peer) = host.peers.get_mut(&id) else { return };
     let Some(sections) = captured else {
         let reason = if entity.is_none() { "you have no body in the host's world" } else { "the host could not capture it (its journal says why)" };
-        let _ = peer.send(&Msg::CharacterNotSent { reason: reason.to_owned() });
+        let _ = peer.send(&Msg::CharacterNotSent { reason: reason.to_owned(), asked: Some(ask) });
         return;
     };
     let kb = msg::encode(&sections).len().div_ceil(1024);
     let tick = sim::tick(world);
-    if let Err(e) = peer.send(&Msg::CharacterSave { tick, reason: "save_game".into(), sections }) {
-        let _ = peer.send(&Msg::CharacterNotSent { reason: format!("the host could not send it ({e})") });
+    if let Err(e) = peer.send(&Msg::CharacterSave { tick, reason: "save_game".into(), sections, asked: Some(ask) }) {
+        let _ = peer.send(&Msg::CharacterNotSent { reason: format!("the host could not send it ({e})"), asked: Some(ask) });
         return;
     }
     journal::log(world, JournalKind::Sim, format!("net: p{player} asked for its character: sent ({kb} KB, tick {tick})"));
@@ -1593,7 +1593,7 @@ fn leave(world: &mut World, host: &mut NetHost, player: u8, peer: PeerId, reason
             && let Some(sections) = (hooks(world).capture_character)(world, body)
             && let Some(peer) = host.peers.get_mut(&peer)
         {
-            peer.send_noted(&Msg::CharacterSave { tick, reason: reason.to_owned(), sections }, "the character");
+            peer.send_noted(&Msg::CharacterSave { tick, reason: reason.to_owned(), sections, asked: None }, "the character");
         }
         if world.get::<NetLeft>(body).is_none() {
             let out = call_tool(world, NET_AGENT, "player_leave", json!({ "player": player, "reason": reason }));
