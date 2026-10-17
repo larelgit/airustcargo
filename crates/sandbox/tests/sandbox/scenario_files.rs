@@ -313,12 +313,23 @@ fn regress_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Runs a regression scenario on a fresh game of the seed it names (42 without a `seed` line).
+/// Runs a regression scenario on a fresh game of the seed it names (42 without a `seed` line), in heavy
+/// mode when its header asks for it.
 fn run_regress_file(file: &Path) -> shards::script::Report {
     let text = std::fs::read_to_string(file).unwrap_or_else(|e| panic!("cannot read {}: {e}", file.display()));
     let name = file.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
     let seed = Script::parse(&name, &text).ok().and_then(|script| script.seed()).unwrap_or(42);
-    let mut app = sandbox::test_app(seed);
+    // A heavy stop needs heavy mode on to happen; the file's header says which.
+    let mut app = match shards::script::regress::heavy_of(&text) {
+        Some((every, span, offset)) => shards::testing::heavy_app(
+            move |config| config.seed = seed,
+            |app| {
+                app.add_plugins(sandbox::SandboxPlugin);
+            },
+            shards::HeavyConfig { every, span, offset },
+        ),
+        None => sandbox::test_app(seed),
+    };
     run_file(app.world_mut(), file)
 }
 

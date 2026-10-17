@@ -22,14 +22,7 @@ use std::fmt::Write as _;
 
 use serde_json::Value;
 
-/// One round as played: the calls made, then a step of `ticks`.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Round {
-    /// `(tool, arguments)` in the order they were called.
-    pub calls: Vec<(String, Value)>,
-    /// The length of the `step` that followed the calls.
-    pub ticks: u64,
-}
+use crate::fuzz::Round;
 
 /// The input calls of `rounds`.
 pub fn input_count(rounds: &[Round]) -> usize {
@@ -37,7 +30,7 @@ pub fn input_count(rounds: &[Round]) -> usize {
 }
 
 /// What the header says about the run.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Header<'a> {
     pub seed: u64,
     /// The stop's text (the halt reason), first line only.
@@ -46,6 +39,13 @@ pub struct Header<'a> {
     pub stop_kind: &'a str,
     /// The rounds before shrinking.
     pub before: &'a [Round],
+    /// Heavy mode the run had on (`every`, `span`, `offset`): a heavy stop does not happen without it,
+    /// so the header says how to play the file (`# heavy: every=60 span=60 offset=3`, read by
+    /// [`heavy_of`]).
+    pub heavy: Option<(u64, u64, u64)>,
+    /// A stop that is a refused call, not a halt (a chaos round trip): the last call of this tool is
+    /// written `act`, not `act?`, so that its refusal fails the file.
+    pub strict: Option<&'a str>,
 }
 
 /// The scenario file for `rounds` (already shrunk), with the header describing the run.
@@ -63,16 +63,46 @@ pub fn scenario_text(header: &Header, rounds: &[Round]) -> String {
         rounds.len()
     );
     let _ = writeln!(out, "# fails while the bug exists: the stop halts the game inside a step, and a step cut short fails a scenario");
+    if let Some((every, span, offset)) = header.heavy {
+        let _ = writeln!(out, "# heavy: every={every} span={span} offset={offset}");
+    }
     let _ = writeln!(out, "seed {}", header.seed);
-    for round in rounds {
-        for (tool, args) in &round.calls {
-            let _ = writeln!(out, "{}", act_line(tool, args));
+    // The one call that must work, when the stop is a refusal.
+    let strict_at = header.strict.and_then(|wanted| {
+        rounds.iter().enumerate().rev().find_map(|(r, round)| round.calls.iter().rposition(|(t, _)| t == wanted).map(|c| (r, c)))
+    });
+    for (r, round) in rounds.iter().enumerate() {
+        for (c, (tool, args)) in round.calls.iter().enumerate() {
+            let line = act_line(tool, args);
+            let _ = writeln!(out, "{}", if strict_at == Some((r, c)) { line.replacen("act?", "act", 1) } else { line });
         }
         if round.ticks > 0 {
             let _ = writeln!(out, "step {}", round.ticks);
         }
     }
     out
+}
+
+/// The heavy mode a scenario file asks for in its header (`# heavy: every=60 span=60 offset=3`).
+pub fn heavy_of(text: &str) -> Option<(u64, u64, u64)> {
+    let line = text.lines().find_map(|l| l.strip_prefix("# heavy: "))?;
+    let field = |key: &str| line.split_whitespace().find_map(|w| w.strip_prefix(key)?.strip_prefix('=')?.parse().ok());
+    Some((field("every")?, field("span")?, field("offset")?))
+}
+
+/// `YYYYMMDD` of the day `unix_seconds` falls on (UTC).
+pub fn date_of(unix_seconds: u64) -> String {
+    // Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
+    let z = (unix_seconds / 86_400) as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}{month:02}{day:02}")
 }
 
 /// How many commands the scenario holds (`seed`, `act?` and `step` lines).
@@ -135,6 +165,7 @@ mod tests {
             stop: "invariant action.resources_in_range violated at tick 212: e5 Stamina.current = -3\nmore",
             stop_kind: "invariant action.resources_in_range",
             before: &before,
+            ..Header::default()
         };
         let text = scenario_text(&header, &after);
         let expected = "\
@@ -157,7 +188,7 @@ step 12
             round(&[], 0),
             round(&[("move_to", json!({"target": "e6", "path": true}))], 30),
         ];
-        let header = Header { seed: 42, stop: "panic", stop_kind: "panic", before: &rounds };
+        let header = Header { seed: 42, stop: "panic", stop_kind: "panic", before: &rounds, ..Header::default() };
         let text = scenario_text(&header, &rounds);
         let script = Script::parse("r.scenario", &text).unwrap();
         assert_eq!(script.seed(), Some(42));
@@ -172,7 +203,7 @@ step 12
     #[test]
     fn an_empty_round_writes_no_step_and_no_commands() {
         let rounds = vec![round(&[], 0)];
-        let header = Header { seed: 1, stop: "x", stop_kind: "x", before: &rounds };
+        let header = Header { seed: 1, stop: "x", stop_kind: "x", before: &rounds, ..Header::default() };
         assert_eq!(command_count(&scenario_text(&header, &rounds)), 1); // just `seed 1`
     }
 
@@ -181,6 +212,29 @@ step 12
         assert_eq!(act_line("jump", &json!({})), "act? jump");
         assert_eq!(act_line("jump", &Value::Null), "act? jump");
         assert_eq!(act_line("move", &json!({"dir": "N"})), "act? move '{\"dir\":\"N\"}'");
+    }
+
+    #[test]
+    fn a_heavy_stop_says_how_to_play_it_and_a_refusal_stop_is_a_strict_act() {
+        let rounds = vec![round(&[("snapshot_save", json!({"path": "s"})), ("snapshot_load", json!({"path": "s"}))], 3)];
+        let header = Header { seed: 5, stop: "x", stop_kind: "x", before: &rounds, heavy: Some((60, 60, 5)), strict: Some("snapshot_load") };
+        let text = scenario_text(&header, &rounds);
+        assert!(text.contains("# heavy: every=60 span=60 offset=5
+"), "{text}");
+        assert!(text.contains("act? snapshot_save") && text.contains("
+act snapshot_load"), "{text}");
+        assert_eq!(heavy_of(&text), Some((60, 60, 5)));
+        assert_eq!(heavy_of("seed 1
+step 3
+"), None);
+        Script::parse("r.scenario", &text).unwrap();
+    }
+
+    #[test]
+    fn dates_are_civil_days_in_utc() {
+        assert_eq!(date_of(0), "19700101");
+        assert_eq!(date_of(951_782_400), "20000229");
+        assert_eq!(date_of(1_792_281_600), "20261018");
     }
 
     #[test]

@@ -74,6 +74,8 @@ pub mod inputs;
 mod lex;
 pub mod minimize;
 pub mod regress;
+pub mod shrink;
+pub mod stop;
 mod run;
 pub mod schema;
 mod script;
