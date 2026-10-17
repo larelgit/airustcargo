@@ -39,6 +39,42 @@ fn npc_state_tells_the_mind_and_the_line_reads_short() {
 }
 
 #[test]
+fn npc_overlay_answers_a_line_per_npc_near_the_players() {
+    let mut app = app();
+    let hero = player(app.world_mut(), 0, Vec3::ZERO);
+    let g = grunt(app.world_mut(), "grunt", "grunt", "default", Vec3::new(0.0, 0.0, -6.0));
+    home(app.world_mut(), g, Vec3::new(0.0, 0.0, -6.0), 15.0);
+    // Far from the player: no line for it.
+    let far = grunt(app.world_mut(), "grunt", "grunt", "default", Vec3::new(0.0, 0.0, 80.0));
+    let (gid, hid, fid) = (id(&app, g), id(&app, hero), id(&app, far));
+    for _ in 0..300 {
+        step(&mut app, 1);
+        if has_token(&app, g) {
+            break;
+        }
+    }
+    // A fallen player's body is nobody to be near: the far grunt stays out.
+    let body = player(app.world_mut(), 1, Vec3::new(0.0, 0.0, 78.0));
+    app.world_mut().entity_mut(body).insert(shards_action::Dead);
+    let out = ok(&mut app, "npc_overlay", json!({}));
+    let lines: Vec<String> = text(&out).lines().map(str::to_owned).collect();
+    assert_eq!(lines[0], "npc overlay on");
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    let line = &lines[1];
+    assert!(line.starts_with(&format!("{gid} grunt: fight {hid} · token · leash ")), "{line}");
+    assert!(line.contains(&format!(" · sees {hid} ")), "{line}");
+    assert!(!text(&out).contains(&fid.to_string()), "{}", text(&out));
+    assert!(app.world().resource::<shards_npc::NpcOverlay>().enabled);
+    // The hero out of its sight: it still knows where it was a moment ago.
+    teleport(&mut app, hero, Vec3::new(0.0, 0.0, -30.0));
+    step(&mut app, 10);
+    let lost = text(&ok(&mut app, "npc_overlay", json!({})));
+    assert!(lost.contains(&format!("lost {hid} 0.")) && lost.contains("s ago at "), "{lost}");
+    assert_eq!(text(&ok(&mut app, "npc_overlay", json!({"on": false}))), "npc overlay off");
+    assert!(!app.world().resource::<shards_npc::NpcOverlay>().enabled);
+}
+
+#[test]
 fn npc_set_state_puts_it_there_or_lists_the_states() {
     let mut app = app();
     let g = grunt(app.world_mut(), "grunt", "grunt", "default", Vec3::new(0.0, 0.0, -6.0));

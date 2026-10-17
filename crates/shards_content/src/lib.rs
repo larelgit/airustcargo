@@ -61,6 +61,11 @@ pub trait ContentAppExt {
     /// error saying `by` (`AttackKind`) needs it. Reported at load and by
     /// `--check-content`, and a hot edit that deletes one is refused.
     fn require_content<T: ContentDef>(&mut self, ids: &[&str], by: &str) -> &mut Self;
+
+    /// A check of kind `T`'s definitions that a module other than the kind's own adds: it
+    /// runs after the kind's `validate`, wherever content is validated (see
+    /// [`ContentKinds::add_check`]).
+    fn add_content_check<T: ContentDef>(&mut self, name: &'static str, check: fn(&T, &str, &mut Refs)) -> &mut Self;
 }
 
 impl ContentAppExt for App {
@@ -74,6 +79,11 @@ impl ContentAppExt for App {
         for id in ids {
             kinds.require::<T>(id, by);
         }
+        self
+    }
+
+    fn add_content_check<T: ContentDef>(&mut self, name: &'static str, check: fn(&T, &str, &mut Refs)) -> &mut Self {
+        self.world_mut().get_resource_or_init::<ContentKinds>().add_check::<T>(name, check);
         self
     }
 }

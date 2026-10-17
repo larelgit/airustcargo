@@ -124,9 +124,33 @@ fn stitching_turns_tiles_with_them_and_follows_open_sockets() {
     assert!(err.contains("cannot reach at all") && err.contains("sockets"), "{err}");
     assert_eq!(app.world().resource::<NavRegion>().report.closed_edges, 1);
     // The local grid sees only the geometry: it walks straight across.
+    let across = shards_npc::nav::local_grid_path(app.world(), Vec3::new(4.0, 0.0, 4.0), Vec3::new(12.0, 0.0, 4.0), 0.4);
+    assert!(across.is_some(), "the ground meets");
+    // An agent's `path_to` and `clearance` ask the navmesh: no way, and east ends at the edge.
     player(app.world_mut(), 0, Vec3::new(4.0, 0.0, 4.0));
-    let out = ok(&mut app, "path_to", json!({"target": {"x": 12.0, "z": 4.0}}));
-    assert!(out.result["path"].as_str().unwrap().starts_with("path 8.0m"), "{}", out.result);
+    let err = fails(&mut app, "path_to", json!({"target": {"x": 12.0, "z": 4.0}}));
+    assert!(err.starts_with("navmesh: ") && err.contains("cannot reach at all"), "{err}");
+    let line = text(&ok(&mut app, "clearance", json!({})));
+    assert!(line.contains("E closed 4.0m (the navmesh goes no further)"), "{line}");
+    // Past the region's own edges the navmesh knows nothing: the physics world answers there.
+    for dir in ["N", "S", "W", "NW", "SW"] {
+        assert!(!line.contains(&format!("{dir} closed")), "{dir}: {line}");
+    }
+    let from = Vec3::new(4.0, 0.0, 4.0);
+    let nav = app.world().resource::<NavRegion>();
+    let east = nav.reach(from, (1, 0), 15.0).unwrap();
+    assert!((east - 4.0).abs() < 0.05, "to the far side of the last column: {east}");
+    assert_eq!(nav.reach(from, (0, 1), 15.0), None, "south leaves the region");
+    // Only compass steps: a wider one would overflow the column it walks to.
+    for step in [(i32::MAX, 0), (2, 0), (0, i32::MIN), (0, 0)] {
+        assert_eq!(nav.reach(from, step, 15.0), None, "{step:?}");
+    }
+    // Where the sockets meet, the way goes on to the range, or out of the region.
+    let mut open = crate::common::app();
+    load_region(&mut open, &["floor floor floor"]);
+    let nav = open.world().resource::<NavRegion>();
+    assert_eq!(nav.reach(from, (1, 0), 15.0), Some(15.0));
+    assert_eq!(nav.reach(from, (1, 0), 30.0), None);
 }
 
 #[test]
@@ -327,8 +351,13 @@ fn move_to_path_follows_the_navmesh_beyond_the_local_planners_reach() {
     load_region(&mut app, &rows);
     let hero = player(app.world_mut(), 0, Vec3::new(2.0, 0.0, 2.0));
     let goal = json!({"x": 62.0, "z": 62.0});
-    let far = fails(&mut app, "path_to", json!({"target": goal}));
-    assert!(far.contains("farther than max 80m"), "the local planner stops at 80 m: {far}");
+    // The local grid stops at 80 m; `path_to` asks the navmesh first, which goes as far as
+    // the region does, unless `max` says otherwise.
+    let far = ok(&mut app, "path_to", json!({"target": goal}));
+    assert_eq!(far.result["provider"], "navmesh", "{}", far.result);
+    assert!(far.result["path"].as_str().unwrap().starts_with("path 8"), "{}", far.result);
+    let capped = fails(&mut app, "path_to", json!({"target": goal, "max": 80}));
+    assert!(capped.contains("the shortest route (navmesh) is 8") && capped.contains("longer than max 80m"), "{capped}");
     let out = ok(&mut app, "move_to", json!({"target": goal, "path": true}));
     assert!(text(&out).starts_with("ok: following path 8"), "{}", text(&out));
     for _ in 0..40 {
@@ -429,6 +458,38 @@ fn solids_the_bakes_never_saw_are_carved_out_and_back_in() {
     step(&mut app, 1);
     assert_eq!(carved(&app), 0);
     assert!(route(&app, from, to).unwrap().length < 4.01, "straight across again");
+}
+
+/// A diagonal step passes between two side columns: where carving switched one of them off,
+/// `reach` stops, though the bake's diagonal link and the column it leads to are still there.
+#[test]
+fn a_diagonal_reach_stops_where_a_side_column_is_switched_off() {
+    let mut app = app();
+    load_region(&mut app, &["floor floor floor"]);
+    // A thin post: carving switches off the columns round it, not the ones a step further.
+    wall(app.world_mut(), Vec3::new(11.9, 0.0, 3.9), Vec3::new(12.1, 2.5, 4.1));
+    step(&mut app, 1);
+    let off: Vec<[i32; 2]> = {
+        let nav = app.world().resource::<NavRegion>();
+        disabled(&app).into_iter().map(|n| nav.node_column(n)).collect()
+    };
+    let nav = app.world().resource::<NavRegion>();
+    let open = |c: [i32; 2]| !off.contains(&c) && !nav.nodes_at(c).is_empty();
+    // A column whose east side is off, while it, its south-east diagonal and its south side are open.
+    let column = off
+        .iter()
+        .map(|c| [c[0] - 1, c[1]])
+        .find(|c| open(*c) && open([c[0] + 1, c[1] + 1]) && open([c[0], c[1] + 1]))
+        .expect("a column beside the carved ones");
+    let from = nav.node_pos(nav.nodes_at(column).start);
+    let half_diagonal = 0.5 * nav.cell * std::f32::consts::SQRT_2;
+    let south_east = nav.reach(from, (1, 1), 2.0).unwrap();
+    assert!(
+        south_east <= half_diagonal + 1e-3,
+        "south-east stops at the corner of its own column: {south_east} (column {column:?}, off {off:?})"
+    );
+    // South, its one way open, goes on.
+    assert!(nav.reach(from, (0, 1), 2.0).unwrap() > 1.0);
 }
 
 /// The nodes switched off now, in node order.

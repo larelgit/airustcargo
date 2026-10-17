@@ -3,8 +3,9 @@
 //! mispredicted actions). Toggle it with the `net_overlay` tool or F6; it draws in a window
 //! only (`render` feature), the tool answers the same lines anywhere.
 
+use ai_core::dev::toggle_line;
 use ai_core::tools::{register_tool, ToolKind};
-use ai_core::{sim, Call, Scope, ToolResult};
+use ai_core::{sim, AiAppExt, Call, DevCommand, Scope, ToolResult};
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -31,6 +32,15 @@ impl Default for NetOverlay {
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<NetOverlay>();
     register_tool(app.world_mut(), "net_overlay", Scope::Dev, ToolKind::Query, overlay_tool);
+    app.add_dev_entry(
+        "net",
+        "net_overlay",
+        "Links: ping, loss, desyncs (F6)",
+        DevCommand::Live(|w, _| Ok(toggle_line("net_overlay", w.resource::<NetOverlay>().enabled))),
+    )
+    .add_dev_entry("net", "net_status", "Session status", DevCommand::Run("net_status".into()))
+    .add_dev_entry("net", "net_lag", "Simulate 150 ms, 2% loss", DevCommand::Run("net_sim conditions=latency=150,loss=0.02".into()))
+    .add_dev_entry("net", "net_no_lag", "No simulated lag", DevCommand::Run("net_sim conditions=none".into()));
     #[cfg(feature = "render")]
     window::plugin(app);
 }
@@ -114,7 +124,7 @@ mod window {
     struct NetOverlayText;
 
     pub(super) fn plugin(app: &mut App) {
-        app.add_systems(Update, (toggle_with_key, show).chain().run_if(any_with_component::<Window>));
+        app.add_systems(Update, (toggle_with_key.run_if(ai_core::dev::keys_free), show).chain().run_if(any_with_component::<Window>));
     }
 
     fn toggle_with_key(keys: Option<Res<ButtonInput<KeyCode>>>, mut overlay: ResMut<NetOverlay>) {

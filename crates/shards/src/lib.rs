@@ -6,7 +6,7 @@
 //! camera ([`motion`]), data-driven combat ([`action`]), levels from Blender ([`level`]),
 //! generated regions ([`world`]), enemy AI ([`npc`]), saves ([`save`]), the player's settings
 //! ([`settings`]), screens and menus ([`ui`]) and their languages ([`locale`]), sound and music
-//! ([`audio`]); Bevy and serde come re-exported.
+//! ([`audio`]), the developer menu and console ([`dev`]); Bevy and serde come re-exported.
 //!
 //! ```ignore
 //! use shards::prelude::*;
@@ -60,6 +60,7 @@ pub use shards_action as action;
 pub use shards_audio as audio;
 pub use shards_content as content;
 pub use shards_core as core;
+pub use shards_dev as dev;
 pub use shards_level as level;
 pub use shards_locale as locale;
 pub use shards_motion as motion;

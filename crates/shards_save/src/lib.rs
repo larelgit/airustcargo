@@ -117,6 +117,8 @@ impl Plugin for SavePlugin {
             .add_content::<SaveDef>()
             .add_engine_module("save", VERSION)
             .add_ai_status("save", status)
+            .add_dev_entry("saves", "save_check", "Check the saves", ai_core::DevCommand::Run("save_check what=all".into()))
+            .add_dev_entry("saves", "save_list", "Saves on disk", ai_core::DevCommand::Run("save_list".into()))
             .add_exit_hook("save: write the autosaves still waiting", autosave::flush_on_exit)
             .add_systems(FixedLast, autosave::write_requests.after(ReplaySystems::Remember));
         // A single game loads what `--world` / `--character` name before its first tick; the

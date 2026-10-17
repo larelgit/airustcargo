@@ -180,6 +180,9 @@ fn worldgen_report_runs_in_a_live_game() {
     let mut app = app(1, None);
     let out = ok(&mut app, "worldgen_report", json!({"region": "meadow", "seeds": "1..20"}));
     assert!(out.starts_with("ok: worldgen meadow v1, seeds 1..20: 20/20 passed"), "{out}");
+    // One seed as a number, as `seeds=7` on a line reads.
+    let one = ok(&mut app, "worldgen_report", json!({"region": "meadow", "seeds": 7}));
+    assert!(one.starts_with("ok: worldgen meadow v1, seeds 7: 1/1 passed"), "{one}");
     let typo = err(&mut app, "worldgen_report", json!({"region": "medow", "seeds": "1..2"}));
     assert!(typo.contains("did you mean `meadow`?"), "{typo}");
     let seeds = err(&mut app, "worldgen_report", json!({"region": "meadow", "seeds": "ten"}));

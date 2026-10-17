@@ -50,8 +50,9 @@
 //! - **Leash**: an NPC whose state keeps it leashed never steers out of its [`Home`] circle.
 //!
 //! The result is `Intent.move_dir` (and `aim`, presses, held inputs): NPCs drive their body
-//! exactly as players do. `move_to path=true` follows navmesh routes too (the motion
-//! module's [`RoutePlanner`] seam), and `nav_path` shows them.
+//! exactly as players do. `move_to path=true` follows navmesh routes too and `path_to`
+//! reports them (the motion module's [`RoutePlanner`] seam), `clearance` ends a direction
+//! where the navmesh does, and `nav_path` shows routes with their tiles.
 
 pub mod bake;
 #[cfg(feature = "render")]
@@ -72,7 +73,9 @@ use ai_core::AiId;
 use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::{flat, Intent};
-use shards_motion::perception::{plan_path, Block, PathPlan, PathRequest, Probe, RoutePlanner, RouteRequest, Terrain};
+use shards_motion::perception::{
+    plan_path, Block, PathPlan, PathRequest, Probe, ReachRequest, RoutePlanner, RouteRequest, Terrain,
+};
 use shards_world::ActiveRegion;
 use shards_motion::{
     CharacterController, CharacterParams, LayerMask, MotionAi, MotionState, PhysicsWorld, QueryFilter, Shape,
@@ -105,10 +108,7 @@ pub const NAVMESH: &str = "navmesh";
 /// steps, climbs or swims less well, a walker off the ground), else the route or why there
 /// is none.
 pub fn navmesh_route(world: &World, from: Vec3, to: Vec3, params: &CharacterParams, goal_level: bool) -> Option<Result<NavPath, String>> {
-    let nav = world.get_resource::<NavRegion>()?;
-    if world.get_resource::<ActiveRegion>().map(|r| r.hash) != Some(nav.hash) || !nav.serves(params) {
-        return None;
-    }
+    let nav = serving(world, params)?;
     let physics = world.get_resource::<PhysicsWorld>()?;
     let query = NavQuery { from, to, goal_level, radius: params.radius, height: params.height, step_height: params.step_height };
     match nav.path(physics, &query) {
@@ -130,14 +130,26 @@ pub fn navmesh_path(world: &World, from: Vec3, to: Vec3, radius: f32) -> Option<
     }
 }
 
-/// The motion module's [`RoutePlanner`]: `move_to path=true` on the navmesh.
+/// The navmesh of the region in the world, when it is built for that region and serves a
+/// body of `params`.
+fn serving<'w>(world: &'w World, params: &CharacterParams) -> Option<&'w NavRegion> {
+    let nav = world.get_resource::<NavRegion>()?;
+    (world.get_resource::<ActiveRegion>().map(|r| r.hash) == Some(nav.hash) && nav.serves(params)).then_some(nav)
+}
+
+/// The motion module's [`RoutePlanner`]: `move_to path=true` and `path_to` on the navmesh.
 pub(crate) fn route_plan(world: &World, request: &RouteRequest) -> Option<Result<PathPlan, String>> {
     let r = request.request;
     navmesh_route(world, r.start, r.goal, request.params, r.goal_level).map(|route| route.map(|path| path.to_plan()))
 }
 
+/// The motion module's [`RoutePlanner`] reach: how far `clearance` goes on the navmesh.
+pub(crate) fn route_reach(world: &World, request: &ReachRequest) -> Option<f32> {
+    serving(world, request.params)?.reach(request.from, request.step, request.range)
+}
+
 /// The navmesh as the motion module's route planner.
-pub(crate) const ROUTE_PLANNER: RoutePlanner = RoutePlanner { name: NAVMESH, plan: route_plan };
+pub(crate) const ROUTE_PLANNER: RoutePlanner = RoutePlanner { name: NAVMESH, plan: route_plan, reach: route_reach };
 
 /// The route [`NavPaths`] gives right now (tools, tests).
 pub fn find_path(world: &World, from: Vec3, to: Vec3, radius: f32) -> Option<Vec<Vec3>> {

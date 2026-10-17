@@ -5,7 +5,7 @@
 
 use ai_core::prelude::*;
 use ai_core::spatial::{compass, compass_vector, relative};
-use ai_core::AiIndex;
+use ai_core::{AiIndex, DevCommand};
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -32,7 +32,15 @@ pub(crate) fn register(app: &mut App) {
         .add_ai_tool("attack", Scope::Player, attack)
         .add_ai_tool("god", Scope::Dev, god)
         .add_ai_tool("heal", Scope::Dev, heal)
-        .add_ai_tool("stagger", Scope::Dev, stagger_tool);
+        .add_ai_tool("stagger", Scope::Dev, stagger_tool)
+        .add_dev_entry("combat", "god", "Immortality on / off", DevCommand::Live(god_line))
+        .add_dev_entry("combat", "heal", "Heal / revive", DevCommand::Run("heal".into()));
+}
+
+/// The menu's immortality switch: off when the caller's body has it.
+fn god_line(world: &World, caller: &Caller) -> Result<String, String> {
+    let me = caller.require_subject()?;
+    Ok(ai_core::dev::toggle_line("god", world.get::<Invulnerable>(me).is_some()))
 }
 
 /// Your body, if it is a fighter you can control.

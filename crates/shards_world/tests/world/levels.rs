@@ -94,7 +94,7 @@ const REGIONS: &str = r#"
 "#;
 
 /// A 16 m yard as an artist would model it: a floor, a wall on the east side, a prop group
-/// turned a quarter, markers (a spawn, a camp, two road sockets, a ladder) and a lamp that is
+/// turned a quarter, markers (a spawn, a camp, two sockets, a ladder) and a lamp that is
 /// only a mesh.
 fn yard() -> Gltf {
     let mut g = Gltf::new();
@@ -105,8 +105,8 @@ fn yard() -> Gltf {
     g.child(props, NodeSpec::new("Pillar").at([2.0, 1.0, 0.0]).scale([1.0, 2.0, 1.0]).mesh(cube).props(json!({"collider": "auto"})));
     g.root(NodeSpec::new("Start").at([-2.0, 0.0, 3.0]).props(json!({"marker": "spawn", "name": "start"})));
     g.root(NodeSpec::new("Camp").at([-5.0, 0.0, 5.0]).props(json!({"marker": "camp", "name": "bandits"})));
-    g.root(NodeSpec::new("Edge.N").at([0.0, 0.0, -8.0]).props(json!({"socket": "road"})));
-    g.root(NodeSpec::new("Edge.E").at([8.0, 0.0, 0.0]).props(json!({"socket": "road"})));
+    g.root(NodeSpec::new("Edge.N").at([0.0, 0.0, -8.0]).props(json!({"socket": "grass"})));
+    g.root(NodeSpec::new("Edge.E").at([8.0, 0.0, 0.0]).props(json!({"socket": "grass"})));
     g.root(NodeSpec::new("LadderBottom").at([6.0, 0.0, 6.0]).props(json!({"marker": "navlink", "name": "ladder", "to": "LadderTop"})));
     g.root(NodeSpec::new("LadderTop").at([6.0, 3.0, 5.0]));
     g.root(NodeSpec::new("Lamp").at([1.0, 3.0, 1.0]).scale([0.2, 0.2, 0.2]).mesh(cube));
@@ -341,10 +341,10 @@ fn markers_of_the_file_are_the_markers_of_the_tile() {
         let center = manifest.tile_center(tile);
         let mine: Vec<_> = found.iter().filter(|f| f.0 == id).collect();
         let names: Vec<&str> = mine.iter().map(|f| f.1.as_str()).collect();
-        assert_eq!(names, ["bandits", "ladder", "road", "road", "start"], "{id:?}");
+        assert_eq!(names, ["bandits", "grass", "grass", "ladder", "start"], "{id:?}");
         assert!(mine.iter().all(|f| f.4), "tagged as part of the region");
         let kinds: Vec<String> = mine.iter().map(|f| f.2.to_string()).collect();
-        assert_eq!(kinds, ["camp", "navlink", "socket", "socket", "spawn"]);
+        assert_eq!(kinds, ["camp", "socket", "socket", "navlink", "spawn"]);
         // A navlink ends at the world position of its other node, turned like everything.
         let top = yard_file.node_at("LadderTop").unwrap().world.w_axis.truncate();
         let ladder = mine.iter().find(|f| f.1 == "ladder").unwrap();
@@ -355,7 +355,7 @@ fn markers_of_the_file_are_the_markers_of_the_tile() {
         assert!(start.5.distance(want) < 1e-3);
         // The sockets are where the file put them, turned: the north one faces another way
         // in a turned tile.
-        let sockets: Vec<Vec3> = mine.iter().filter(|f| f.1 == "road").map(|f| f.5 - center).collect();
+        let sockets: Vec<Vec3> = mine.iter().filter(|f| f.1 == "grass").map(|f| f.5 - center).collect();
         let want_sockets = [turn(Vec3::new(0.0, 0.0, -8.0), turns), turn(Vec3::new(8.0, 0.0, 0.0), turns)];
         for want in want_sockets {
             assert!(sockets.iter().any(|s| s.distance(want) < 1e-3), "{sockets:?} lacks {want}");
@@ -577,6 +577,57 @@ fn a_missing_level_file_is_a_content_error_naming_the_tile_and_the_path() {
     assert!(outside.len() == 1 && outside[0].contains("`../tiles/yard.gltf` must be a path inside the asset folder"), "{outside:?}");
     let empty = errors(&build(&tile(r#"Level(path: "")"#)));
     assert!(empty.len() == 1 && empty[0].contains("Level path is empty"), "{empty:?}");
+}
+
+/// A tile whose file marks its sockets, right and wrong: the road in the middle of the north
+/// edge, grass at the east end of the south edge; a road on the east edge (grass there), one in
+/// the middle of the tile, water a level up (the edge's is at 0), and a marker of two kinds.
+fn gate() -> Gltf {
+    let mut g = Gltf::new();
+    let cube = g.cube();
+    g.root(NodeSpec::new("Floor").at([0.0, -0.5, 0.0]).scale([16.0, 1.0, 16.0]).mesh(cube).props(json!({"collider": "auto"})));
+    g.root(NodeSpec::new("Road.N").at([0.0, 0.0, -8.0]).props(json!({"socket": "road"})));
+    g.root(NodeSpec::new("Bank").at([7.0, 0.0, 8.0]).props(json!({"socket": "grass"})));
+    g.root(NodeSpec::new("Road.E").at([8.0, 0.0, 1.0]).props(json!({"socket": "road"})));
+    g.root(NodeSpec::new("Middle").at([0.0, 0.0, 0.0]).props(json!({"socket": "road"})));
+    g.root(NodeSpec::new("Shore").at([-2.0, 0.0, 7.5]).props(json!({"socket": "water@1"})));
+    g.root(NodeSpec::new("Odd").at([-8.0, 0.0, 0.0]).props(json!({"socket": "road grass"})));
+    g
+}
+
+#[test]
+fn socket_markers_of_a_tiles_file_stand_where_the_tile_has_their_sockets() {
+    let dir = site("sockets", &[("tiles/gate.gltf", gate().gltf().as_bytes())]);
+    let app = app_in(&dir, 1, None);
+    let kinds = app.world().resource::<ContentKinds>().clone();
+    // South is clockwise east to west: grass at its east half, water at its west half.
+    let tile = r#"{ "gate": (
+        sockets: (n: "grass road grass", e: "grass", s: "grass water", w: "grass"),
+        slots: [(at: (0.0, 0.0, 0.0), accepts: ["spawn"])],
+        geometry: Level(path: "tiles/gate.gltf"),
+    ) }"#;
+    let region = r#"{ "gates": (size: (1, 1), tile_size: 16.0, version: 1, tiles: ["gate"], pois: [(poi: "spawn")]) }"#;
+    let build = |with_region: bool| {
+        let mut sources: Vec<Source> = read_dir(&dir).expect("test content");
+        sources.push(Source { path: "content/ruins/gate.tile.ron".into(), text: tile.to_owned() });
+        if with_region {
+            sources.push(Source { path: "content/ruins/gate.region.ron".into(), text: region.to_owned() });
+        }
+        ContentDb::build(&kinds, &sources).errors().map(ToString::to_string).collect::<Vec<_>>()
+    };
+
+    let errors = build(true);
+    let at = "content/ruins/gate.tile.ron: tile `gate`: geometry: tiles/gate.gltf: ";
+    let want = [
+        "socket marker `road grass` (node `Odd`) names no socket: give one kind, like `socket = road` or `road@1`",
+        "socket marker `road` (node `Road.E`) is on the east edge, where sockets.e has `grass`",
+        "socket marker `road` (node `Middle`) at x 0.0, z 0.0 is on no edge: the 16 m tiles of region `gates` have them at x and z = ±8",
+        "socket marker `water@1` (node `Shore`) is on the south edge, where sockets.s has `water` (part 2 of 2)",
+    ];
+    assert_eq!(errors, want.map(|w| format!("{at}{w}")), "the road in the north and the grass in the south are where they should be");
+    // A tile no region uses has no size yet, so no edges to stand on; a marker that names no
+    // socket is wrong at any size.
+    assert_eq!(build(false), [format!("{at}{}", want[0])]);
 }
 
 #[test]

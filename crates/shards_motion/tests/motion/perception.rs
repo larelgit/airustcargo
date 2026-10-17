@@ -340,6 +340,8 @@ fn path_to_answers_with_a_summary_and_the_waypoints() {
     let last = waypoints.last().unwrap();
     assert!(last["x"].as_f64().unwrap().abs() < 0.1 && (last["z"].as_f64().unwrap() + 12.0).abs() < 0.1, "{last}");
     assert_eq!(out.result["turns"].as_u64().unwrap() as usize, waypoints.len());
+    // No navmesh here: the local grid planned it.
+    assert_eq!(out.result["provider"], "local grid");
 }
 
 #[test]

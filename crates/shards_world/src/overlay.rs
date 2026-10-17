@@ -2,9 +2,11 @@
 //! roads orange), the points of interest and the roads or doors between them, drawn with
 //! gizmos. Toggle it with the `world_overlay` tool; it draws in the window only.
 
+use ai_core::dev::toggle_line;
 use ai_core::highlight::AiGizmos;
 use ai_core::prelude::*;
 use ai_core::tools::{register_tool, ToolKind};
+use ai_core::DevCommand;
 use bevy::gizmos::config::GizmoConfigStore;
 use bevy::prelude::*;
 use schemars::JsonSchema;
@@ -25,6 +27,12 @@ pub struct TileOverlay {
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<TileOverlay>();
     register_tool(app.world_mut(), "world_overlay", Scope::Dev, ToolKind::Query, overlay_tool);
+    app.add_dev_entry(
+        "world",
+        "world_overlay",
+        "Tile bounds, sockets, roads",
+        DevCommand::Live(|w, _| Ok(toggle_line("world_overlay", w.resource::<TileOverlay>().enabled))),
+    );
     // Headless apps have no gizmo plugin: the tool still answers, nothing is drawn.
     if app.is_plugin_added::<bevy::gizmos::GizmoPlugin>() {
         app.add_systems(PostUpdate, draw_tiles.run_if(resource_exists::<GizmoConfigStore>));

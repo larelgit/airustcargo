@@ -224,6 +224,7 @@ impl Plugin for WorldPlugin {
             .add_systems(Update, (region::build_start_region, stream::stream_tile_visuals.run_if(stream::streaming)).chain());
         ai::plugin(app);
         tools::register(app.world_mut());
+        tools::dev_entries(app);
         #[cfg(feature = "render")]
         overlay::plugin(app);
     }

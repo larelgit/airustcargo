@@ -182,10 +182,14 @@ fn dress(
 }
 
 /// P: pause · N / `.`: one tick while paused · F1: id overlay · F3: collider overlay ·
-/// F4: revive the player · F12: marked screenshot into shots/. (F2, the combat overlay, and
-/// F6, the net overlay, are the engine's, and so is the rest of the keyboard, its input map:
-/// WASD, Space, Shift, F, Ctrl, mouse, Q, C, Tab.)
+/// F4: revive the player · F12: marked screenshot into shots/. (F2, the combat overlay, F6,
+/// the net overlay, F7, the NPC overlay, the console key and F10, the developer menu, are the
+/// engine's, and so is the rest of the keyboard, its input map: WASD, Space, Shift, F, Ctrl,
+/// mouse, Q, C, Tab.) They wait while the console or the menu has the keyboard.
 fn dev_keys(world: &mut World) {
+    if shards::dev::has_keyboard(world) {
+        return;
+    }
     let (pause, step, overlay, revive, colliders, shot) = {
         let keys = world.resource::<ButtonInput<KeyCode>>();
         (
@@ -282,7 +286,8 @@ fn setup_hud(mut commands: Commands) {
 /// The keys, for the HUD: the engine's input map (`InputMap::standard`) and the dev keys.
 const CONTROLS: &str = "WASD move | Space jump | Shift sprint | F glide | Ctrl dodge\n\
                         LMB light | RMB heavy | Q block | C flask | Tab lock-on | Esc menu\n\
-                        P pause | N step | F1 ids | F2 combat | F3 colliders | F4 revive | F6 net | F12 shot";
+                        P pause | N step | F1 ids | F2 combat | F3 colliders | F4 revive | F12 shot\n\
+                        F6 net | F7 npcs | F10 dev menu | ` console";
 
 type PlayerHud<'a> = (
     &'a AiId,

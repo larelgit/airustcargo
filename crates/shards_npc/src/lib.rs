@@ -75,8 +75,9 @@
 //! default every NPC the world module has not marked [`Dormant`](shards_world::Dormant)).
 //!
 //! Tools: `npc_state {id}`, `nav_path {from?, to, radius?}` and `nav_info` (queries),
-//! `npc_set_state {id, state}`, `nav_bake {tile?}` and `nav_overlay {on?}` (dev). Stop
-//! conditions: `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`. Journal: `e7 idle → chase e5`, `e7 takes an attack token on e5 (2/2)`, `e7
+//! `npc_set_state {id, state}`, `nav_bake {tile?}`, `nav_overlay {on?}` and `npc_overlay
+//! {on?}` ([`overlay`], F7 in a window) (dev). Stop conditions: `npc_attacking`, `npcs_calm`,
+//! `npc_beyond_leash`, `npc_detour`. Journal: `e7 idle → chase e5`, `e7 takes an attack token on e5 (2/2)`, `e7
 //! returns its attack token after swipe (1/2)`. The NPC's line: `attack e5 · token · leash
 //! 6/15m`.
 
@@ -85,6 +86,7 @@ pub mod brain;
 pub mod def;
 pub mod director;
 pub mod nav;
+pub mod overlay;
 pub mod perception;
 pub mod planner;
 
@@ -109,6 +111,7 @@ pub use nav::{
     bake_files, find_path, local_grid_path, local_grid_route, navmesh_path, navmesh_route, plain_sight, straight_clear, NavAgent,
     NavError, NavPath, NavPaths, NavQuery, NavRegion, NavSettingsDef, NavTile,
 };
+pub use overlay::NpcOverlay;
 pub use perception::{sees, sight_clear, HeardAt, Noise, Perceived, Sensed, Sound};
 pub use planner::{banned, choose, pick_weighted, resolve, NpcPlan, PastAttack, Resolved};
 
@@ -249,6 +252,7 @@ impl Plugin for NpcPlugin {
         }
         ai::register(app);
         nav::tools::register(app.world_mut());
+        overlay::plugin(app);
         #[cfg(feature = "render")]
         nav::overlay::plugin(app);
     }

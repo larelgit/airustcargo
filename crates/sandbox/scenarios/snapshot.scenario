@@ -43,9 +43,10 @@ act set id=e6 component=Boss path=phase value=1
 step 120
 expect shows e6 "phase 1"
 
-# --- "go to boss phase 2": one call, and the fight is where it was saved
+# --- "go to boss phase 2": one entry of the developer menu (F10), a `snapshot_load` of that
+# file, and the fight is where it was saved
 mark
-act snapshot_load path=snapshots/boss_phase2.json
+act dev_menu run=boss_phase_2
 expect result contains "boss_phase2.json: tick"
 expect shows e6 "phase 2"
 expect field e6 Boss.phase == 2
