@@ -219,7 +219,8 @@ impl Plugin for LevelPlugin {
             .add_snapshot_resource::<LevelCounter>()
             .net_ignore_resource::<LevelCounter>()
             .add_optional_replay_check("level", spawn::level_check)
-            .require_loaded("levels", library::level_status)
+            .require_loaded(library::LEVELS_GATE, library::level_status)
+            .add_playback_hook(library::ask_for_levels_ahead)
             .add_engine_module("level", VERSION)
             .register_ai_describer("marker", tools::describe_marker)
             .add_systems(

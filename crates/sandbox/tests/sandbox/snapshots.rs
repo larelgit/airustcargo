@@ -962,6 +962,7 @@ fn a_content_edit_made_before_the_snapshot_comes_back_with_it_and_goes_again() {
         "{:?}",
         report.warnings
     );
+    assert!(!report.warnings.iter().any(|w| w.contains("ContentEdits")), "the saved edits load: {:?}", report.warnings);
 
     // A load refused after the prepares put the world back, its content too.
     let mut broken = plain.clone();

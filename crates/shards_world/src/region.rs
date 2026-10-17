@@ -270,6 +270,35 @@ pub(crate) fn request_level_files(
     }
 }
 
+/// The loading requirement of the files tiles are built from ([`levels_status`]).
+pub(crate) const LEVELS_GATE: &str = "tile levels";
+
+/// Playback hook ([`AiAppExt::add_playback_hook`](ai_core::AiAppExt::add_playback_hook)): the
+/// files of the tiles and rooms the recording adds (with its start snapshot's content edits, or
+/// its `content_apply` calls) are asked for as it is armed, and the gate holds while they load.
+/// [`request_level_files`] would see the playback only in the next frame, and a playback armed
+/// in a game that has loaded already may put its start in, and run its first tick, before one.
+pub(crate) fn ask_for_files_ahead(world: &mut World) {
+    let Some(spawner) = world.get_resource::<LevelSpawner>().copied() else { return };
+    let Some(ahead) = world.resource::<AiReplay>().playing().map(paths_ahead) else { return };
+    let asked: Vec<String> = ahead.iter().filter(|p| level_path_problem(p).is_none()).cloned().collect();
+    let mut left = 0;
+    for path in &asked {
+        (spawner.request)(world, path);
+        if let LoadStatus::Pending(_) = (spawner.status)(world, path) {
+            left += 1;
+        }
+    }
+    let mut files = world.resource_mut::<LevelFiles>();
+    files.requested.extend(asked);
+    files.ahead = ahead;
+    files.ahead_read = true;
+    if left > 0 {
+        let why = if left == 1 { "1 level file left".to_owned() } else { format!("{left} level files left") };
+        world.resource_mut::<SimGate>().hold(LEVELS_GATE, why);
+    }
+}
+
 /// The level files of the tiles and rooms `replay` adds as it plays.
 fn paths_ahead(replay: &ai_core::replay::Replay) -> Vec<String> {
     let tiles = shards_content::defs_ahead::<TileDef>(replay).into_iter().map(|t| t.geometry);
@@ -865,6 +894,7 @@ pub fn snapshot_prepare(world: &mut World, snapshot: &Snapshot) -> Result<Option
         return Ok(Some(format!("{title} unloaded: the snapshot was taken without one")));
     };
     let manifest = RegionManifest::from_json(&build.manifest)?;
+    request_files(world, &manifest)?;
     plan(world, &manifest)?;
     if let Some(old) = world.get_resource::<ActiveRegion>().map(|r| r.manifest.title()) {
         let removed = despawn_region(world);
@@ -880,6 +910,46 @@ pub fn snapshot_prepare(world: &mut World, snapshot: &Snapshot) -> Result<Option
     let title = manifest.title();
     let spawned = install(world, manifest)?;
     Ok(Some(format!("{title} built again from its manifest ({} entities)", spawned.entities)))
+}
+
+/// Asks the loader for the level files `manifest`'s tiles are built from, and refuses while one
+/// is still loading. A snapshot taken after a content edit added a tile names a file this game
+/// may never have asked for (a replay that starts from it asks as it is armed, see
+/// [`ask_for_files_ahead`]); asked for now, it is in a moment later, and the same load succeeds.
+fn request_files(world: &mut World, manifest: &RegionManifest) -> Result<(), String> {
+    let Some(loader) = world.get_resource::<LevelSpawner>().copied() else { return Ok(()) };
+    let paths: BTreeSet<String> = {
+        let db = world.resource::<ContentDb>();
+        manifest
+            .tiles
+            .iter()
+            .filter_map(|t| match manifest.layout {
+                Layout::Grid => db.get::<TileDef>(&t.tile).map(|d| d.geometry.clone()),
+                Layout::Rooms => db.get::<RoomDef>(&t.tile).map(|d| d.geometry.clone()),
+            })
+            .filter_map(|geometry| match geometry {
+                TileGeometry::Level { path } if level_path_problem(&path).is_none() => Some(path),
+                _ => None,
+            })
+            .collect()
+    };
+    let mut loading = Vec::new();
+    for path in paths {
+        (loader.request)(world, &path);
+        if let LoadStatus::Pending(_) = (loader.status)(world, &path) {
+            loading.push(format!("`{path}`"));
+        }
+    }
+    match loading.as_slice() {
+        [] => Ok(()),
+        [one] => Err(format!(
+            "its tiles are built from the level file {one}, which this game is loading only now: load the snapshot again in a moment"
+        )),
+        many => Err(format!(
+            "its tiles are built from the level files {}, which this game is loading only now: load the snapshot again in a moment",
+            many.join(", ")
+        )),
+    }
 }
 
 /// Back to `InGame` now if nothing else loads; else the gate holds the ticks under each

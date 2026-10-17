@@ -578,6 +578,70 @@ fn a_tile_file_a_content_edit_adds_is_loaded_before_a_replay_builds_with_it_in_t
     assert_eq!(region(&again).manifest.region, "annexes");
 }
 
+/// A session that adds the annex tile with an edit and builds the annexes with it: a snapshot
+/// there names a file no content named when the game loaded.
+fn in_the_annexes(dir: &Path) -> App {
+    let mut app = app_in(dir, 7, Some("lawns"));
+    ok(&mut app, "step", json!({"ticks": 5}));
+    let changes = annex_changes(&app);
+    ok(&mut app, "content_apply", changes);
+    load_between_calls(&mut app, "tiles/annex.gltf");
+    ok(&mut app, "regen", json!({"region": "annexes", "seed": 1}));
+    ok(&mut app, "step", json!({"ticks": 5}));
+    app
+}
+
+#[test]
+fn a_snapshot_whose_edits_add_a_tile_file_loads_by_hand_once_the_file_is_in() {
+    use shards::ai_core::snapshot::{capture, restore};
+    let annex = yard().gltf();
+    let dir = site("annex_by_hand", &[("tiles/annex.gltf", annex.as_bytes())]);
+    let original = in_the_annexes(&dir);
+    let snapshot = capture(original.world()).unwrap();
+
+    // A fresh game had not asked for the file: the load asks for it now, is refused with what to
+    // do, and leaves the game as it was.
+    let mut copy = app_in(&dir, 7, Some("lawns"));
+    let before = state_hash(copy.world());
+    let err = restore(copy.world_mut(), &snapshot, false).unwrap_err();
+    assert!(err.contains("`tiles/annex.gltf`") && err.contains("load the snapshot again"), "{err}");
+    assert_eq!(state_hash(copy.world()), before);
+    assert_eq!(region(&copy).manifest.region, "lawns");
+    assert!(copy.world().resource::<ContentDb>().get_json("tile", "annex").is_none());
+
+    load_between_calls(&mut copy, "tiles/annex.gltf");
+    let report = restore(copy.world_mut(), &snapshot, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert_eq!(region(&copy).manifest.region, "annexes");
+    assert_eq!(state_hash(copy.world()), snapshot.state_hash);
+}
+
+#[test]
+fn a_replay_from_a_snapshot_whose_edits_add_a_tile_file_plays_in_a_fresh_game() {
+    let annex = yard().gltf();
+    let dir = site("annex_replay", &[("tiles/annex.gltf", annex.as_bytes())]);
+    let mut original = in_the_annexes(&dir);
+    // The recording restarts from the snapshot, loaded into the game it was taken in.
+    let file = format!("snapshots/shards_world_annex_{}.json", std::process::id());
+    ok(&mut original, "snapshot_save", json!({"path": file}));
+    ok(&mut original, "snapshot_load", json!({"path": file}));
+    let _ = std::fs::remove_file(&file);
+    ok(&mut original, "move", json!({"dir": "E", "meters": 4}));
+    ok(&mut original, "step", json!({"ticks": 30}));
+    let recording = shards::ai_core::replay::save(original.world());
+    assert!(recording.start.is_some());
+
+    // Armed before the game loads, as `--replay` does: the file is asked for while it loads.
+    let mut early = fresh_in(&dir, 7, Some("lawns"));
+    let report = testing::verify(&mut early, recording.clone()).expect("plays");
+    assert!(report.identical(), "{report}");
+    // Armed in a game that has loaded already: the playback waits for the file before its start.
+    let mut late = app_in(&dir, 7, Some("lawns"));
+    let report = testing::verify(&mut late, recording).expect("plays");
+    assert!(report.identical(), "{report}");
+    assert_eq!(region(&late).manifest.region, "annexes");
+}
+
 #[test]
 fn a_level_a_content_edit_adds_is_loaded_before_a_replay_spawns_it_in_the_same_tick() {
     let annex = yard().gltf();
