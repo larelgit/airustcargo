@@ -9,3 +9,6 @@ saves/
 *.png
 !assets/**/*.png
 !docs/*.png
+# `shards package`: builds for players, beside the Cargo.toml of the game packaged.
+/dist/
+/crates/*/dist/

@@ -9,5 +9,6 @@ publish.workspace = true
 [dependencies]
 ai_core.workspace = true
 bevy = { workspace = true, features = ["std", "bevy_state", "serialize"] }
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

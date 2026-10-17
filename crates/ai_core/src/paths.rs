@@ -38,7 +38,7 @@ pub fn inside_of(base: &Path, dir: &str, requested: &str, example: &str) -> Resu
     std::fs::create_dir_all(&root).map_err(|e| format!("cannot create {}: {e}", root.display()))?;
     // The folder itself may be a symlink (replays kept on another disk); what is inside
     // it must stay inside it.
-    let root = root.canonicalize().map_err(|e| format!("cannot open {}: {e}", root.display()))?;
+    let root = canonical(&root).map_err(|e| format!("cannot open {}: {e}", root.display()))?;
     let parent = folders.iter().fold(root.clone(), |p, f| p.join(f));
     // Check the part that exists before creating the rest: `create_dir_all` would follow a
     // symlink out of the folder.
@@ -46,12 +46,12 @@ pub fn inside_of(base: &Path, dir: &str, requested: &str, example: &str) -> Resu
     while std::fs::symlink_metadata(existing).is_err() {
         existing = existing.parent().unwrap_or(root.as_path());
     }
-    let real = existing.canonicalize().map_err(|_| refuse("goes through a broken symlink"))?;
+    let real = canonical(existing).map_err(|_| refuse("goes through a broken symlink"))?;
     if !real.starts_with(&root) {
         return Err(refuse("leads outside through a symlink"));
     }
     std::fs::create_dir_all(&parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-    let path = parent.canonicalize().map_err(|e| format!("cannot open {}: {e}", parent.display()))?.join(name);
+    let path = canonical(&parent).map_err(|e| format!("cannot open {}: {e}", parent.display()))?.join(name);
     // Writing (or removing) through a symlink would touch its target.
     if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(refuse("is a symlink"));
@@ -59,15 +59,119 @@ pub fn inside_of(base: &Path, dir: &str, requested: &str, example: &str) -> Resu
     Ok(path)
 }
 
+/// `path` made absolute with every link followed, written the way people write it: on Windows
+/// without the `\\?\` that [`Path::canonicalize`] puts in front (`\\?\C:\game` → `C:\game`,
+/// `\\?\UNC\server\share` → `\\server\share`), so the answers of tools show a path one can paste.
+/// It opens the same file: the standard library puts the prefix back on an absolute path too
+/// long for the plain form when it calls Windows.
+pub fn canonical(path: &Path) -> std::io::Result<PathBuf> {
+    path.canonicalize().map(|p| without_verbatim(&p))
+}
+
+/// `path` without Windows' verbatim prefix, where the plain form means the same: a drive or a
+/// share, and names that read the same without the prefix (see [`reads_the_same`]). Names are
+/// kept as they are, unpaired surrogates and all. Other paths, and every path off Windows, are
+/// left as they are.
+pub fn without_verbatim(path: &Path) -> PathBuf {
+    use std::path::Prefix;
+    let mut parts = path.components();
+    let Some(Component::Prefix(prefix)) = parts.next() else { return path.to_path_buf() };
+    let mut plain = match prefix.kind() {
+        Prefix::VerbatimDisk(drive) => PathBuf::from(format!(r"{}:\", drive as char)),
+        Prefix::VerbatimUNC(server, share) => {
+            let mut root = std::ffi::OsString::from(r"\\");
+            for (part, then) in [(server, r"\"), (share, r"\")] {
+                root.push(part);
+                root.push(then);
+            }
+            PathBuf::from(root)
+        }
+        _ => return path.to_path_buf(),
+    };
+    for part in parts {
+        match part {
+            Component::RootDir => {}
+            Component::Normal(name) if reads_the_same(name) => plain.push(name),
+            // Without the prefix it would read as something else.
+            _ => return path.to_path_buf(),
+        }
+    }
+    plain
+}
+
+/// A name that a plain Windows path reads as it is. Not so: one that holds `/` (a separator
+/// there), one that ends in a period or a space (`.` and `..` among them: Windows trims those off),
+/// and a device name, with any extension (`NUL`, `con.txt`, `COM1.log`, `LPT¹`: the device opens).
+fn reads_the_same(name: &std::ffi::OsStr) -> bool {
+    let bytes = name.as_encoded_bytes();
+    if bytes.contains(&b'/') || bytes.ends_with(b".") || bytes.ends_with(b" ") {
+        return false;
+    }
+    let stem = bytes.split(|b| *b == b'.').next().unwrap_or_default();
+    let stem = String::from_utf8_lossy(stem).trim_end().to_ascii_uppercase();
+    let numbered = |prefix: &str| {
+        stem.strip_prefix(prefix).is_some_and(|n| matches!(n, "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"))
+    };
+    let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$") || numbered("COM") || numbered("LPT");
+    !device
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_verbatim_prefix_goes_where_the_plain_path_means_the_same() {
+        let plain = |p: &str| without_verbatim(Path::new(p)).display().to_string();
+        assert_eq!(plain("/home/me/game/replays/a.json"), "/home/me/game/replays/a.json");
+        if cfg!(windows) {
+            assert_eq!(plain(r"\\?\E:\game\replays\a.json"), r"E:\game\replays\a.json");
+            assert_eq!(plain(r"\\?\UNC\server\share\a.json"), r"\\server\share\a.json");
+            // A device or a volume by its GUID has no plain form.
+            assert_eq!(plain(r"\\?\Volume{1234}\a.json"), r"\\?\Volume{1234}\a.json");
+            // Names that the plain form would read otherwise: a separator, `.` and `..`, a period or
+            // a space at the end (trimmed), a device whatever its extension.
+            for kept in [
+                r"\\?\E:\game\a/b.json",
+                r"\\?\E:\game\..\a.json",
+                r"\\?\E:\game\.\a.json",
+                r"\\?\E:\game\replays.\a.json",
+                r"\\?\E:\game\a.json ",
+                r"\\?\E:\game\NUL",
+                r"\\?\E:\game\con.txt",
+                r"\\?\E:\game\Com1.log",
+                r"\\?\E:\game\lpt¹",
+                r"\\?\E:\game\aux .json",
+            ] {
+                assert_eq!(plain(kept), kept);
+            }
+            // Names that only look like those.
+            assert_eq!(plain(r"\\?\E:\game\console\COM10.txt"), r"E:\game\console\COM10.txt");
+            assert_eq!(plain(r"\\?\E:\game\.shards\nul_ish.json"), r"E:\game\.shards\nul_ish.json");
+        } else {
+            // Off Windows a backslash is part of a name.
+            assert_eq!(plain(r"\\?\E:\game"), r"\\?\E:\game");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_name_that_is_no_unicode_keeps_its_units() {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        let wide = |s: &str| s.encode_utf16().collect::<Vec<u16>>();
+        // `\\?\E:\` and a name with an unpaired surrogate, which no `String` can hold.
+        let name = [0xd800, u16::from(b'a')];
+        let verbatim = OsString::from_wide(&[wide(r"\\?\E:\"), name.to_vec()].concat());
+        let plain: Vec<u16> = without_verbatim(Path::new(&verbatim)).as_os_str().encode_wide().collect();
+        assert_eq!(plain, [wide(r"E:\"), name.to_vec()].concat());
+    }
 
     fn base(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("ai_core_paths_{name}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        dir.canonicalize().unwrap()
+        canonical(&dir).unwrap()
     }
 
     #[test]

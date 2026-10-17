@@ -232,6 +232,42 @@ fn a_write_that_fails_does_not_cost_the_settings() {
     assert!(failed.len() == 1 && failed[0].contains("not a regular file") && failed[0].contains("the last good copy"), "{failed:?}");
 }
 
+/// What keeps Bevy from writing its temporary file `settings.toml.new` until it is lifted, and from
+/// renaming it over the settings. On unix a folder of that name; on Windows a folder would be
+/// renamed over the settings file, so the file is held open there, shared with nobody.
+struct Blocked {
+    path: std::path::PathBuf,
+    #[cfg(windows)]
+    held: std::fs::File,
+}
+
+impl Blocked {
+    fn new(dir: &TempDir) -> Self {
+        let path = dir.path().join("settings.toml.new");
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            let held = std::fs::OpenOptions::new().read(true).write(true).create_new(true).share_mode(0).open(&path).unwrap();
+            Self { path, held }
+        }
+        #[cfg(not(windows))]
+        {
+            std::fs::create_dir(&path).unwrap();
+            Self { path }
+        }
+    }
+
+    fn lift(self) {
+        #[cfg(windows)]
+        {
+            drop(self.held);
+            std::fs::remove_file(&self.path).unwrap();
+        }
+        #[cfg(not(windows))]
+        std::fs::remove_dir(&self.path).unwrap();
+    }
+}
+
 /// The temporary file cannot be made at all: the good file stays, the journal reports, and it gives up.
 #[test]
 fn a_write_that_cannot_happen_is_reported_and_given_up() {
@@ -240,7 +276,7 @@ fn a_write_that_cannot_happen_is_reported_and_given_up() {
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(4)));
     set(&mut app, "audio", "master", "0.4");
     shards::settings::flush(app.world_mut());
-    std::fs::create_dir(dir.path().join("settings.toml.new")).unwrap();
+    let blocked = Blocked::new(&dir);
 
     set(&mut app, "audio", "master", "0.3");
     for _ in 0..8 {
@@ -254,7 +290,7 @@ fn a_write_that_cannot_happen_is_reported_and_given_up() {
     assert_eq!(lines(&app, JournalKind::Error, "giving up").len(), 1, "and it stops");
 
     // The obstacle goes, and the next change is written again.
-    std::fs::remove_dir(dir.path().join("settings.toml.new")).unwrap();
+    blocked.lift();
     set(&mut app, "audio", "master", "0.2");
     updates(&mut app);
     assert!(std::fs::read_to_string(dir.file()).unwrap().contains("master = 0.2"));
@@ -269,7 +305,7 @@ fn a_change_given_up_on_is_written_when_the_game_exits() {
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(4)));
     set(&mut app, "audio", "master", "0.4");
     shards::settings::flush(app.world_mut());
-    std::fs::create_dir(dir.path().join("settings.toml.new")).unwrap();
+    let blocked = Blocked::new(&dir);
     set(&mut app, "audio", "master", "0.3");
     for _ in 0..8 {
         app.update();
@@ -278,7 +314,7 @@ fn a_change_given_up_on_is_written_when_the_game_exits() {
     assert!(std::fs::read_to_string(dir.file()).unwrap().contains("master = 0.4"), "the good file stayed");
 
     // The player frees the disk and quits without touching a setting again.
-    std::fs::remove_dir(dir.path().join("settings.toml.new")).unwrap();
+    blocked.lift();
     run_exit_hooks(app.world_mut());
     assert!(std::fs::read_to_string(dir.file()).unwrap().contains("master = 0.3"), "written at exit after all");
     // And it is written once: a second exit has nothing left to do.

@@ -93,6 +93,16 @@ struct Args {
     /// Loads the game headless (content, level files) and runs no tick.
     #[arg(long, value_name = "TILES", num_args = 0..=1, default_missing_value = "all")]
     bake_nav: Option<String>,
+    /// Load headless and run TICKS ticks as fast as they go, print how long it took, exit 0, or 1
+    /// when the game did not load, a gameplay system panicked or an invariant broke. Writes
+    /// nothing. Checks a build that has no `shards` server (a build for players).
+    #[arg(
+        long,
+        value_name = "TICKS",
+        value_parser = clap::value_parser!(u64).range(1..),
+        conflicts_with_all = ["replay", "check_content", "worldgen_report", "bake_nav"]
+    )]
+    smoke: Option<u64>,
     /// Host a networked game on this UDP port (default 7777); other games `--join` it.
     #[arg(long, value_name = "PORT", num_args = 0..=1, default_missing_value = "7777", conflicts_with_all = ["join", "stand"])]
     host: Option<u16>,
@@ -227,12 +237,36 @@ impl Args {
     }
 }
 
+/// A game built as a Windows program without a console (`windows_subsystem = "windows"`: what
+/// players start from Explorer) writes to the terminal it was started from, if there is one:
+/// `--check-content`, `--help` and errors stay readable there. Output that was redirected (to a
+/// file, a pipe) goes there as before.
+#[cfg(windows)]
+fn attach_console() {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetConsoleWindow() -> *mut core::ffi::c_void;
+        fn AttachConsole(process: u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    // SAFETY: two calls without arguments that point anywhere.
+    unsafe {
+        if GetConsoleWindow().is_null() {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn attach_console() {}
+
 /// The standard game `main`: parses the command line into an [`EngineConfig`], calls
 /// `build` with it (the game adds `EnginePlugins::new(config.clone())` and its own
 /// plugins), and runs, verifies a replay or checks content. Refuses a busy BRP port
 /// (exit code 3) before anything is built; `kill` and a closed terminal exit through
 /// `AppExit` like Ctrl+C, so the token and the port file go away with the game.
 pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
+    attach_console();
     let args = Args::parse();
     let mut recording = match args.replay.as_deref().map(replay::load).transpose() {
         Ok(r) => r,
@@ -253,8 +287,10 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
         // Its own name in the session, and in its ready line.
         config.player_name = args.name.clone().unwrap_or_else(|| "host".into());
     }
-    if config.net != NetLaunch::Off && (args.replay.is_some() || args.check_content || args.worldgen_report.is_some() || args.bake_nav.is_some()) {
-        eprintln!("error: --host, --join and --stand start a session; drop them to verify, check or bake");
+    if config.net != NetLaunch::Off
+        && (args.replay.is_some() || args.check_content || args.worldgen_report.is_some() || args.bake_nav.is_some() || args.smoke.is_some())
+    {
+        eprintln!("error: --host, --join and --stand start a session; drop them to verify, check, bake or --smoke");
         return ExitCode::from(2);
     }
     if let Some(r) = &recording {
@@ -269,6 +305,9 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
     }
     if let Some(tiles) = &args.bake_nav {
         return bake_nav(&build, config, tiles);
+    }
+    if let Some(ticks) = args.smoke {
+        return smoke(&build, config, ticks);
     }
     if args.verify
         && let Some(r) = recording.take()
@@ -291,6 +330,7 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
         return stand::run(&build, &args, config, clients);
     }
     let mut app = build(&config);
+    termination::catch_console_close();
     // Player settings are read now, not earlier: Bevy's settings plugin scans the type registry
     // once, so every group the game registered while building must be there.
     if let Err(e) = shards_settings::install(&mut app, &config) {
@@ -387,6 +427,7 @@ mod stand {
                 return ExitCode::from(2);
             }
         };
+        termination::catch_console_close();
         if let Err(e) = stand.settle() {
             eprintln!("error: {e}");
             return ExitCode::from(1);
@@ -807,8 +848,49 @@ fn bake_nav(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, tiles: 
     }
 }
 
-/// `kill` (SIGTERM) and a closed terminal (SIGHUP) end the game the way Ctrl+C does:
-/// through `AppExit`, so what it wrote at start (the BRP token, `--port-file`) is
+/// `--smoke TICKS`: the game loaded headless and run for TICKS ticks as fast as they go, then
+/// `ok: loaded in 1.20s, 600 ticks in 0.84s` and exit 0; or what stopped it (`error: the game did
+/// not finish loading …`, `gameplay system … panicked …`, every invariant it broke) and exit 1.
+/// Writes nothing: no settings, no crash replay. `shards package` runs it on the build it made.
+fn smoke(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, ticks: u64) -> ExitCode {
+    let config = EngineConfig { headless: true, port: None, paused: true, crash_replays: false, hot_reload: false, ..config };
+    let started = Instant::now();
+    let mut app = build(&config);
+    app.finish();
+    app.cleanup();
+    if let Err(e) = crate::testing::wait_until_loaded(&mut app, crate::testing::LOAD_TIMEOUT) {
+        println!("error: {e}");
+        return ExitCode::FAILURE;
+    }
+    let loaded = started.elapsed();
+    let started = Instant::now();
+    let Some(end) = ai_core::sim::tick(app.world()).checked_add(ticks) else {
+        println!("error: --smoke {ticks}: the game cannot count that many ticks");
+        return ExitCode::FAILURE;
+    };
+    let stops = match crate::testing::run_to(&mut app, end, crate::testing::LOAD_TIMEOUT) {
+        Ok(stops) => stops,
+        Err(e) => {
+            println!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    for v in &stops.violations {
+        println!("{}: {}", v.headline(), v.text);
+    }
+    if let Some(failure) = stops.failures.first() {
+        println!("gameplay {}: {}", failure.headline(), failure.message);
+        return ExitCode::FAILURE;
+    }
+    if !stops.violations.is_empty() {
+        return ExitCode::FAILURE;
+    }
+    println!("ok: loaded in {:.2}s, {ticks} ticks in {:.2}s", loaded.as_secs_f64(), started.elapsed().as_secs_f64());
+    ExitCode::SUCCESS
+}
+
+/// `kill` (SIGTERM) and a closed terminal (SIGHUP; on Windows a closed console) end the game the
+/// way Ctrl+C does: through `AppExit`, so what it wrote at start (the BRP token, `--port-file`) is
 /// removed. A signal the game was started with ignored (`nohup`) stays ignored; a
 /// second signal exits at once.
 pub(crate) mod termination {
@@ -846,8 +928,58 @@ pub(crate) mod termination {
         }
     }
 
-    #[cfg(not(unix))]
+    /// Windows: the console's closing (its window closed, a log-off, a shutdown) is SIGHUP's
+    /// counterpart. Ctrl+C and Ctrl+Break are left to Bevy's handler.
+    #[cfg(windows)]
+    pub fn catch_signals() {
+        catch_console_close();
+    }
+
+    #[cfg(not(any(unix, windows)))]
     pub fn catch_signals() {}
+
+    /// Windows asks the console handler registered last first, and the one of Bevy's Ctrl+C
+    /// plugin answers every event, the console's closing too, after which Windows ends the
+    /// process at once. Called again once the game is built, this puts the engine's in front.
+    #[cfg(windows)]
+    pub fn catch_console_close() {
+        // SAFETY: registers (and first takes out) a handler function; no other pointers.
+        unsafe {
+            windows::SetConsoleCtrlHandler(Some(on_console_event), 0);
+            windows::SetConsoleCtrlHandler(Some(on_console_event), 1);
+        }
+    }
+
+    #[cfg(not(windows))]
+    pub fn catch_console_close() {}
+
+    #[cfg(windows)]
+    mod windows {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            pub fn SetConsoleCtrlHandler(handler: Option<unsafe extern "system" fn(u32) -> i32>, add: i32) -> i32;
+        }
+    }
+
+    /// SIGHUP's number: a closed console ends the game with code 129, as a closed terminal does.
+    #[cfg(windows)]
+    const CONSOLE_CLOSED: i32 = 1;
+
+    /// Runs on a thread of its own. Windows ends the process when this returns, and five seconds
+    /// after the event at the latest, so it waits: the game sees the flag on its next frame, runs
+    /// its exit hooks and returns from `main`, which ends the process (this thread with it).
+    #[cfg(windows)]
+    unsafe extern "system" fn on_console_event(event: u32) -> i32 {
+        const CTRL_CLOSE_EVENT: u32 = 2;
+        const CTRL_LOGOFF_EVENT: u32 = 5;
+        const CTRL_SHUTDOWN_EVENT: u32 = 6;
+        if !matches!(event, CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT | CTRL_SHUTDOWN_EVENT) {
+            return 0;
+        }
+        let _ = RECEIVED.compare_exchange(0, CONSOLE_CLOSED, Ordering::SeqCst, Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(4500));
+        1
+    }
 
     #[cfg(unix)]
     extern "C" fn on_signal(signal: libc::c_int) {

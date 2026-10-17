@@ -23,6 +23,7 @@
 //! shards content check             # every content file parsed and validated
 //! shards worldgen --region meadow --seeds 1..1000 --report   # batch check of the generator
 //! shards scenario a.scenario b.scenario   # commands, expectations, invariants: exit 0 / 1 failed / 2 error
+//! shards package                 # the game built for players in dist/, checked as a clean machine runs it
 //! shards tools
 //! shards raw world.query '{"data":{"components":["sandbox::gameplay::combat::Health"]}}'
 //! ```
@@ -43,6 +44,7 @@ use shards_script::{parse_args, parse_condition};
 
 #[cfg(test)]
 mod fake;
+mod package;
 mod peer;
 mod scenario;
 
@@ -53,6 +55,10 @@ const DEFAULT_PORT: u16 = 15702;
 
 /// How often a deferred `step` is asked whether it is done.
 const POLL_EVERY: Duration = Duration::from_millis(20);
+
+/// How long a connection to the game may take. The game is on this machine: it accepts at once, or
+/// nothing listens. (Windows tries a refused loopback connection again for about two seconds.)
+const CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// How long `shards` waits for a deferred `step` (and for `wait`, `shot` and `stand stop` to
 /// finish) unless `--timeout` says otherwise.
@@ -290,6 +296,40 @@ enum Cmd {
     /// the host and every client of a stand, one line each, and a check that they are one
     /// session. Gives up after --timeout seconds (60).
     Wait,
+    /// End the game the way Ctrl+C does (its tool `quit`): its exit hooks run, its token and port
+    /// file go. Waits until it answers no more and its process is gone (--timeout, 15 s). How a
+    /// game is stopped on Windows; on unix `kill PID` does the same.
+    Quit,
+    /// Build the game for players and check the build. Profile `dist` (else `release`), the
+    /// game's feature `dist` when it has one (no `shards` server, no developer keys), on Windows
+    /// the C runtime linked in and `assets/icon.png` as the program's icon. The program and
+    /// `assets/` go to `dist/<name>-<version>-<os>-<arch>/` beside the game's Cargo.toml. Then a
+    /// copy of that folder, started with a bare environment, must pass `--check-content` and
+    /// `--smoke`, import only system DLLs (Windows) and write nothing into its own folder. Needs no
+    /// running game. Exit 0, 1 (a check failed), 2 (the build failed).
+    Package {
+        /// The game's Cargo.toml. Default: the package of this folder.
+        #[arg(long, value_name = "PATH")]
+        manifest_path: Option<std::path::PathBuf>,
+        /// The game's package, in a workspace of several (`--package sandbox`).
+        #[arg(long, value_name = "NAME")]
+        package: Option<String>,
+        /// Its program, when it has several.
+        #[arg(long, value_name = "NAME")]
+        bin: Option<String>,
+        /// Cargo profile. Default: `dist` when the workspace defines it, else `release`.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Where the package's folder goes. Default: `dist/` beside the game's Cargo.toml.
+        #[arg(long, value_name = "DIR")]
+        out: Option<std::path::PathBuf>,
+        /// Ticks the package's smoke test runs (`--smoke`).
+        #[arg(long, value_name = "TICKS", default_value_t = 300, value_parser = clap::value_parser!(u64).range(1..))]
+        smoke_ticks: u64,
+        /// Build and copy; check nothing.
+        #[arg(long)]
+        no_check: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -336,6 +376,8 @@ enum CallError {
     Unreachable(String),
     /// The game answered `unauthorized`: the token sent is not its own.
     Unauthorized(String),
+    /// Something took the call and did not answer in time.
+    Silent(String),
     /// Anything else: the game refused the call, or its answer makes no sense.
     Other(String),
 }
@@ -343,7 +385,7 @@ enum CallError {
 impl CallError {
     fn into_message(self) -> String {
         match self {
-            CallError::Unreachable(m) | CallError::Unauthorized(m) | CallError::Other(m) => m,
+            CallError::Unreachable(m) | CallError::Unauthorized(m) | CallError::Silent(m) | CallError::Other(m) => m,
         }
     }
 }
@@ -352,6 +394,7 @@ impl Client {
     fn new(port: u16, token: Option<String>) -> Self {
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(300)))
+            .timeout_connect(Some(CONNECT_TIMEOUT))
             .http_status_as_error(false)
             .build()
             .new_agent();
@@ -405,12 +448,27 @@ impl Client {
 
     /// [`Client::call`] that says what kind of failure it was.
     fn try_call(&self, method: &str, params: Value) -> Result<Value, CallError> {
+        self.try_call_within(method, params, None)
+    }
+
+    /// [`Client::try_call`] that gives up after `within` (else after the agent's 300 s): a game
+    /// that takes the connection and never answers holds a call no longer than that.
+    fn try_call_within(&self, method: &str, params: Value, within: Option<Duration>) -> Result<Value, CallError> {
         let params = with_token(params, self.token.as_deref()).map_err(CallError::Other)?;
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
-        let mut resp = self.agent.post(&self.url).send_json(&body).map_err(|e| match e {
-            ureq::Error::Io(_) | ureq::Error::ConnectionFailed | ureq::Error::HostNotFound => {
+        let request = self.agent.post(&self.url);
+        let request = match within {
+            Some(within) => request.config().timeout_global(Some(within)).build(),
+            None => request,
+        };
+        let mut resp = request.send_json(&body).map_err(|e| match e {
+            ureq::Error::Io(_)
+            | ureq::Error::ConnectionFailed
+            | ureq::Error::HostNotFound
+            | ureq::Error::Timeout(ureq::Timeout::Connect) => {
                 CallError::Unreachable(format!("cannot reach the game at {} ({e}). Is it running? Try `cargo sandbox`.", self.url))
             }
+            ureq::Error::Timeout(_) => CallError::Silent(format!("the game at {} took the call and did not answer in time ({e})", self.url)),
             e => CallError::Other(format!("request failed: {e}")),
         })?;
         let reply: Value = resp.body_mut().read_json().map_err(|e| CallError::Other(format!("bad response: {e}")))?;
@@ -482,6 +540,16 @@ fn main() -> ExitCode {
             };
             scenario::soak(&cli, &plan, cli.json)
         }
+        // A build, not a game: nothing to connect to.
+        (Cmd::Package { manifest_path, package, bin, profile, out, smoke_ticks, no_check }, _) => package::run(&package::Options {
+            manifest_path: manifest_path.clone(),
+            package: package.clone(),
+            bin: bin.clone(),
+            profile: profile.clone(),
+            out: out.clone(),
+            smoke: *smoke_ticks,
+            check: !no_check,
+        }),
         (_, Some(Peer::All)) => Err(peer::ALL_NEEDS_A_MEMBER.to_owned()),
         _ => cli.client().and_then(|client| run(&cli, &client)),
     };
@@ -499,7 +567,7 @@ fn main() -> ExitCode {
 fn stand(cli: &Cli, op: Option<&StandCmd>) -> Result<ExitCode, String> {
     let complete = match op {
         None => peer::show(cli)?,
-        Some(StandCmd::Stop) => peer::stop(cli, &peer::terminate)?,
+        Some(StandCmd::Stop) => peer::stop(cli, &|client, pid| peer::end_game(client, &cli.agent, pid))?,
     };
     Ok(if complete { ExitCode::SUCCESS } else { ExitCode::from(exit::TOOL_ERROR) })
 }
@@ -642,6 +710,7 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
         },
         Cmd::Fuzz { seed, steps, max_ticks } => return fuzz(&act, *seed, *steps, *max_ticks),
         Cmd::Soak { .. } => unreachable!("a soak finds its members itself (main)"),
+        Cmd::Package { .. } => unreachable!("a package needs no game (main)"),
         Cmd::Shot { no_marks, out } => {
             let reply = act("shot", json!({"marks": !no_marks, "path": out}))?;
             if reply.get("ok") != Some(&Value::Bool(true)) {
@@ -733,9 +802,61 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             return Ok(ExitCode::SUCCESS);
         }
         Cmd::Wait => return wait(cli, cli.timeout_or(DEFAULT_TIMEOUT_SECS)),
+        Cmd::Quit => return quit(cli, client),
         Cmd::Stand { op } => return stand(cli, op.as_ref()),
     };
     Ok(print_outcome(&outcome, cli.json))
+}
+
+/// `shards quit`: the game's `quit`, then a wait until it answers no more.
+fn quit(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
+    let pid = client.call("ai/status", Value::Null)?["instance"]["pid"].as_u64();
+    let out = client.act(&cli.agent, "quit", json!({}))?;
+    if out["ok"] != Value::Bool(true) {
+        return Ok(print_outcome(&out, cli.json));
+    }
+    let game = pid.map_or_else(|| "the game".to_owned(), |pid| format!("the game (pid {pid})"));
+    let limit = cli.timeout_or(15);
+    match until_ended(client, pid.and_then(|pid| u32::try_from(pid).ok()), limit, Duration::from_millis(100)) {
+        Ok(true) => say(format!("{game} ended")),
+        Ok(false) => say(format!("{game} answers no more (whether its process is gone cannot be checked here)")),
+        Err(state) => {
+            return Err(format!("{game} {state} {}s after `quit`: see `shards journal`, or end it yourself", limit.as_secs()));
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Waits until a game asked to quit has ended: nothing answers at its port as it (`unauthorized`:
+/// another game took the port), then no process has its `pid`. An error or a broken answer
+/// while it shuts down proves nothing: it is asked again. `Ok(false)`: it answers no more, and
+/// whether its process is gone is unknown (no pid, or no way to look here). `Err`: what it still
+/// does when `limit` is up. No call outlasts the time left, an unanswered one included.
+fn until_ended(client: &Client, pid: Option<u32>, limit: Duration, every: Duration) -> Result<bool, &'static str> {
+    let started = Instant::now();
+    let left = || limit.saturating_sub(started.elapsed());
+    let mut silent = false;
+    loop {
+        if left().is_zero() {
+            return Err(if silent { "still holds its port, but answers nothing" } else { "still answers" });
+        }
+        match client.try_call_within("ai/status", Value::Null, Some(left())) {
+            Err(CallError::Unreachable(_) | CallError::Unauthorized(_)) => break,
+            outcome => {
+                silent = matches!(outcome, Err(CallError::Silent(_)));
+                std::thread::sleep(every.min(left()));
+            }
+        }
+    }
+    let Some(pid) = pid else { return Ok(false) };
+    loop {
+        match peer::running(pid) {
+            Some(false) => return Ok(true),
+            None => return Ok(false),
+            Some(true) if started.elapsed() >= limit => return Err("answers no more, but its process still runs"),
+            Some(true) => std::thread::sleep(every),
+        }
+    }
 }
 
 /// The game writes the PNG under a temporary name and renames it when complete, so
@@ -1108,6 +1229,62 @@ mod tests {
             let out = client.act("dev", tool, args).unwrap();
             assert_eq!(out["result"], format!("{tool} done as request {id}"));
         }
+    }
+
+    /// `quit` waits through answers that prove nothing (an error while the game shuts down) until
+    /// nothing answers, then until its process is gone; a process that stays is an error.
+    #[test]
+    fn quit_waits_until_the_game_answers_no_more_and_its_process_is_gone() {
+        use crate::fake::{error, reply, serve};
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+
+        let calls = Arc::new(AtomicU32::new(0));
+        let ending = || {
+            let calls = calls.clone();
+            calls.store(0, Ordering::SeqCst);
+            serve(move |_, _| match calls.fetch_add(1, Ordering::SeqCst) {
+                0 => Some(reply(json!({"instance": {"pid": 4242}}))),
+                1 => Some(error("ai/status: the world is being torn down")),
+                // The connection drops unanswered: the game is gone.
+                _ => None,
+            })
+        };
+        let sleeper = || {
+            let mut command = if cfg!(windows) { std::process::Command::new("ping") } else { std::process::Command::new("sleep") };
+            if cfg!(windows) {
+                command.args(["-n", "30", "127.0.0.1"]);
+            } else {
+                command.arg("30");
+            }
+            command.stdout(std::process::Stdio::null()).spawn().unwrap()
+        };
+        let (limit, every) = (Duration::from_secs(10), Duration::from_millis(10));
+
+        // No pid: that it answers no more is all there is to know.
+        assert_eq!(until_ended(&Client::new(ending(), None), None, limit, every), Ok(false));
+        assert!(calls.load(Ordering::SeqCst) >= 3, "the error was no proof: it was asked again");
+        let mut child = sleeper();
+        let gone = child.id();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        drop(child);
+        assert_eq!(until_ended(&Client::new(ending(), None), Some(gone), limit, every), Ok(true));
+        let mut child = sleeper();
+        let stays = until_ended(&Client::new(ending(), None), Some(child.id()), Duration::from_millis(300), every);
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert_eq!(stays, Err("answers no more, but its process still runs"));
+        let answering = serve(|_, _| Some(reply(json!({"instance": {"pid": 4242}}))));
+        assert_eq!(until_ended(&Client::new(answering, None), None, Duration::from_millis(100), every), Err("still answers"));
+        // Something that takes the connection and never answers holds a call no longer than the time left.
+        let silent = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = silent.local_addr().unwrap().port();
+        std::thread::spawn(move || silent.incoming().flatten().collect::<Vec<_>>());
+        let started = Instant::now();
+        let held = until_ended(&Client::new(port, None), None, Duration::from_millis(300), every);
+        assert_eq!(held, Err("still holds its port, but answers nothing"));
+        assert!(started.elapsed() < Duration::from_secs(5), "the call gave up with the time: {:?}", started.elapsed());
     }
 
     #[test]

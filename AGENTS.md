@@ -46,12 +46,14 @@ cargo sandbox --replay FILE --verify    # реплей без окна; доба
 cargo shards assert add hp 'field:6:Health.current<300'   # правило: игра встанет, когда оно нарушено (`step` → код выхода 3)
 cargo shards fuzz --seed 7 --steps 300  # случайные входы, пока не нарушится правило
 cargo shards soak --minutes 30 --regen wilds   # стенд: агенты с зерном играют за всех участников, до первого рассинхрона
-kill <pid>                              # pid из `wait`
+kill <pid>                              # pid из `wait`; на Windows (и где угодно) — cargo shards quit
+cargo shards package --manifest-path template/Cargo.toml   # сборка для игроков в template/dist/ и её проверка (`--smoke`, DLL)
 ```
 
 - `shards` запускайте из папки игры или ниже: там лежит токен `.shards/<port>.token`, без него игра
   отвечает `unauthorized`. Из другого места передайте его в `SHARDS_TOKEN`.
-- Останавливайте игру `kill` (или Ctrl+C), не `kill -9`: так она удаляет токен и `--port-file`.
+- Останавливайте игру `kill` (или Ctrl+C), не `kill -9`: так она удаляет токен и `--port-file`. На Windows сигналов нет:
+  `shards quit` (инструмент `quit`) завершает игру так же и ждёт, пока она перестанет отвечать и кончится её процесс.
 - Собранный бинарник запускайте через `cargo sandbox` (или с `BEVY_ASSET_ROOT=$PWD/crates/sandbox`, путь абсолютный:
   относительный не принимает наблюдатель за файлами): иначе он не найдёт `assets/`, и мир окажется пустым.
 - Файлы игра пишет только к себе: реплеи в `replays/`, снимки экрана в `shots/`, снапшоты состояния в `snapshots/`
@@ -76,7 +78,8 @@ kill <pid>                              # pid из `wait`
   (`track=…`/`none`, `layer=combat`/`auto`); громкость — `settings_set group=audio key=sfx value=0.5`; **меню и консоль
   разработчика** — `dev_menu` (пункты по разделам со строкой каждого; `run=<id>` выполняет пункт: `boss_phase_2`, `god`,
   `region_check`), `console line="speed x=0.25"` (строка как у `shards act`); в окне это F10 и `` ` ``, `open=true` показывает
-  панель для `shot`. Свои пункты игра кладёт в контент (`*.devmenu.ron`), модуль — `add_dev_entry`. Условия для
+  панель для `shot`. Свои пункты игра кладёт в контент (`*.devmenu.ron`), модуль — `add_dev_entry`. **Выход** — `quit`
+  (`shards quit`: хуки выхода, токен и файл порта убраны). Условия для
   `step --until named:…`: `near_poi`, `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_engaged`,
   `npc_near`; свои у игры (в песочнице `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`, в шаблоне
   `arena_cleared`, `foe_near`, `in_fight`).

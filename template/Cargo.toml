@@ -34,6 +34,9 @@ wayland = ["shards/wayland"]
 dynamic = ["shards/dynamic"]
 # Tracy profiler zones for every system (`cargo run --release --features trace_tracy`).
 trace_tracy = ["shards/trace_tracy"]
+# The build for players (`shards package`): window, sound and gamepads, no `shards` server, no
+# hot reload, no developer keys; on Windows no console window either.
+dist = ["render", "audio", "gamepad", "shards/dist"]
 
 [dependencies]
 # The engine is the game's only dependency: Bevy, serde and schemars come through it
@@ -61,3 +64,9 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 opt-level = 3
 debug = false
+
+# The build for players (`shards package` uses it): release, optimised across crates. Panics stay
+# `unwind`: the engine catches a panicking gameplay system and saves its replay.
+[profile.dist]
+inherits = "release"
+lto = "thin"

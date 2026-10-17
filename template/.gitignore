@@ -9,3 +9,5 @@
 !assets/**/*.png
 # Reference replays checked in and verified by CI (`--replay tests/replays/x.json --verify`).
 !/tests/replays/
+# `shards package`: the build for players.
+/dist/

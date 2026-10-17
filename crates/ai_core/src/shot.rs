@@ -327,7 +327,7 @@ mod tests {
         let base = std::env::temp_dir().join(format!("ai_core_shot_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(base.join("shots/nested")).unwrap();
-        let base = base.canonicalize().unwrap();
+        let base = crate::paths::canonical(&base).unwrap();
         assert!(prepare_path(&base, "shots/shot.jpg").unwrap_err().contains("must end in .png"));
         for outside in ["a.png", "/tmp/a.png", "shots/../a.png", "replays/a.png"] {
             let err = prepare_path(&base, outside).unwrap_err();
