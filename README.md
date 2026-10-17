@@ -409,7 +409,7 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 | `port` | порт BRP для `shards` (`None` — без сервера) |
 | `paused` | старт на паузе; тики идут по `shards step` |
 | `tick_hz` | тиков в секунду (60) |
-| `crash_replays` | сбой геймплея сохраняет `replays/crash-tick<N>.json` и отчёт о падении в `crashes/`, нарушенный инвариант — `replays/invariant-<name>-tick<N>.json` (см. «Отчёт о падении») |
+| `crash_replays` | сбой геймплея сохраняет `replays/crash-tick<N>.json` и отчёт о падении в `crashes/`, нарушенный инвариант — `replays/invariant-<name>-tick<N>.json` (см. «Отчёт о падении»); отчёт, который просит инструмент `crash_report`, пишется и без него |
 | `check_every`, `check_detail` | тиков между проверками реплея (60, `--check-every`) и что проверка хранит, чтобы назвать разошедшееся: `components`, `entities` или `none` (`--check-detail`); оба пишутся в файл реплея |
 | `tick_budget` | тик дольше этого — «сверх бюджета» (`--tick-budget-ms`); `None` — длительность самого тика |
 | `frame_budget` | кадр дольше этого — «сверх бюджета» (`--frame-budget-ms`; поле `frames` в `ai/status`); `None` — 1/60 с. Кадры есть только у игры, которая рисует |
@@ -5544,22 +5544,31 @@ cargo sandbox --replay crashes/crash-20261016-123456-tick50.json --verify       
   игру, тик и seed обработчик паник запомнил в последнем кадре. Хуки выхода в этом случае не работают (хост не завершает
   сессию, настройки не пишутся), а токен BRP и `--port-file` удаляются.
 - **По запросу**: инструмент `crash_report` (scope Dev; в меню разработчика — «Save a bug report…») пишет такой же отчёт,
-  не останавливая игру. Его заголовок — `note`:
+  не останавливая игру. Его заголовок — `note`. Отчёт по запросу пишется всегда, что бы ни говорил `crash_replays`: его просят,
+  а не пишет сама игра. С `path` (файл внутри `crashes/`, как у `snapshot_save` и `replay_save`) он пишется именно туда и
+  заменяет файл с таким именем; без `path` — новый `crash-<время>-tick<N>.json`:
 
 ```bash
 cargo shards act crash_report note="the boss fell through the floor"
 saved crashes/crash-20261016-123456-tick30.json: tick 30, 120 log lines, 48 journal entries, a replay of 30 ticks and 4 events
+cargo shards act crash_report note="the boss fell through the floor" path=crashes/boss.json
+saved crashes/boss.json: tick 30, 120 log lines, 48 journal entries, a replay of 30 ticks and 4 events
+cargo shards act crash_report path=../x.json                  # код выхода 1
+error: path must be inside crashes/, e.g. crashes/bug.json (`../x.json` goes up with `..`)
 ```
 
 **Куда.** В `crashes/` рабочей папки игры (рядом с `replays/`). Если туда писать нельзя, например игра стоит в
 `C:\Program Files`, отчёт идёт в папку игрока: `%LOCALAPPDATA%\<программа>\crashes` на Windows, `~/Library/Logs/<программа>`
 на macOS, `$XDG_STATE_HOME/<программа>/crashes` (или `~/.local/state/<программа>/crashes`) на Linux. Отчёт той же секунды не
-перезаписывается: следующий получает имя с `-2`, `-3`.
+перезаписывается: следующий получает имя с `-2`, `-3`. Отчёт с `path` идёт только в `crashes/` рабочей папки (абсолютный путь,
+`..`, путь вне `crashes/` и симлинк наружу отклоняются, ничего не записано) и в папку игрока не уходит: файл с этим именем
+заменяется, а при ошибке записи остаётся прежний (отчёт пишется рядом и переименовывается).
 
 **Кто что делает.** Обработчик паник (`ai_core::crash::install_panic_hook`) ставит `shards::run`. Он запоминает последние
 восемь паник со стеком и сессией, в которой они случились, а потом печатает панику, как раньше; файлов он не пишет. Без него
-(свой `main`, тесты) отчёт есть, но без места и стека паники. Файлы пишет игра с `crash_replays` (по умолчанию); тесты,
-`--verify`, `--smoke`, `--check-content`, `--worldgen-report` и `--bake-nav` его выключают. Код, который ловит панику сам и
+(свой `main`, тесты) отчёт есть, но без места и стека паники. Файлы, которые игра пишет сама, пишет игра с `crash_replays` (по умолчанию); тесты,
+`--verify`, `--smoke`, `--check-content`, `--worldgen-report` и `--bake-nav` его выключают. На отчёт, который просит агент
+(`crash_report`), выключатель не действует. Код, который ловит панику сам и
 продолжает (ответ инструмента, нарушенное правило, зерно генератора, персонаж пира), зовёт `ai_core::crash::handled(&message)`:
 о такой панике отдельного отчёта нет, её покажет в `panics` следующий отчёт. Если с тем же текстом паникуют сразу два
 потока или две игры одного процесса, `handled` берёт панику своего потока, потом своей игры и только потом самую новую.
@@ -5702,9 +5711,13 @@ saved crashes/crash-20261016-123456-tick30.json: tick 30, 120 log lines, 48 jour
   меняется и пишется в журнал, значение вне 0.5…2 и не число отклоняются с диапазоном и ничего не двигают, слайдер экрана
   настроек (`ui_read`) привязан к ней, `shot` отвечает `nothing to capture: this game runs headless` и называет `--offscreen`;
   в конце масштаб 1 и экран настроек закрыт. Образ 3D и `display.scene` проверяет тест под `#[ignore]` (нужен GPU);
-- без сценария остаются отчёт о падении (`crash_report` пишет в `crashes/` файл, который сценарий убрать не умеет: он копился бы в
-  `crates/sandbox/crashes/` при каждом `cargo test`), `shards package` (сборка командой CLI) и `quit` (кончает игру); Steam —
-  `crates/shards_steam/scenarios/lobby_search.scenario` (стенд над поддельным Steam, см. «Поиск лобби»);
+- `crash_report.scenario` (E10.7) — `crash_report note=… path=crashes/scenario.json` пишет отчёт в этот файл и отвечает путём, тиком,
+  числом строк лога и журнала и реплеем сессии; второй вызов с тем же `path` заменяет файл, поэтому прогон оставляет ровно один
+  файл (`crashes/` в `.gitignore`: в тесте это `crates/sandbox/crashes/`, в живой игре — `crashes/` рабочей папки); путь вне
+  `crashes/`, с `..` и абсолютный отклоняются с примером. Отчёт без `path` каждый раз новый, сценарий его убрать не умеет:
+  его проверяют Rust-тесты `system_failures.rs`;
+- без сценария остаются `shards package` (сборка командой CLI, а не инструмент игры) и `quit` (кончает игру, которой управляет
+  сценарий); Steam — `crates/shards_steam/scenarios/lobby_search.scenario` (стенд над поддельным Steam, см. «Поиск лобби»);
 - `world_save.scenario` (E8) — мир сохраняется в дебрях с зерном 42, другое зерно заменяет регион (`save_check`: `differs in
   region`), загрузка строит сохранённый регион из манифеста сохранения (`built from the save's manifest`, ни одного `region
   generated`), хэш снова `7bbfdc3b62623fbc`, `save_check` согласен.
