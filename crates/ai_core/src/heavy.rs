@@ -429,7 +429,7 @@ fn check(world: &mut World, point: Point) {
     });
     crate::process::activate(world);
     world.resource_mut::<AiHeavy>().twin_time += started.elapsed();
-    let (found, restored) = match run {
+    let (found, restored, lost) = match run {
         Ok(run) => {
             let mut found = snapshot::differences(&original, &run.state);
             if let [only] = found.as_mut_slice()
@@ -443,12 +443,24 @@ fn check(world: &mut World, point: Point) {
             {
                 found.push(line);
             }
-            (found, Some(run.state))
+            (found, Some(run.state), (point.lost, run.lost))
         }
-        Err(why) => (vec![why], None),
+        Err(why) => (vec![why], None, (0, 0)),
     };
     if found.is_empty() {
-        world.resource_mut::<AiHeavy>().checked += 1;
+        let mut heavy = world.resource_mut::<AiHeavy>();
+        if lost == (0, 0) {
+            heavy.checked += 1;
+            return;
+        }
+        // The state was compared, the gameplay journal could not be: not a passed check.
+        heavy.skipped += 1;
+        let (game, twin) = lost;
+        let why = format!(
+            "heavy point from tick {} not checked: the state is the same, but the journal lost {game} lines of the game and {twin} of the twin before they were compared (more lines in a tick than it holds)",
+            point.tick
+        );
+        journal::log(world, JournalKind::Sim, why);
         return;
     }
     fail(world, &point, &original, restored.as_ref(), found);

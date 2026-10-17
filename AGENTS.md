@@ -125,7 +125,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   `shards fuzz --seed S --steps N` feeds random player inputs, driven by the seed, until a rule is broken.
 - The game's `warn!`/`error!` messages reach the journal with the tick they were logged on, even inside a long `step`:
   `step 600 --until journal:TEXT` catches them too. A tick holds no more than 64 lines; the rest are reported by the line
-  `N log lines dropped`.
+  `N log lines dropped` (the asset threads have their own 64).
 - Below the first line of a `step` answer is the time of its ticks: `ticks: avg 0.42 ms, max 2.10 ms (tick 142),
   budget 16.7 ms`. Ticks longer than the budget (by default the tick length; the game has the flag
   `--tick-budget-ms`) are logged as a `perf` entry, at most once per game second:

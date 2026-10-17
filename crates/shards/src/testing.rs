@@ -251,7 +251,8 @@ pub struct HeavyVerdict {
     pub report: ReplayReport,
     /// Heavy checks that passed on the way.
     pub checked: u64,
-    /// Heavy points that could not be checked (a load restarted the session).
+    /// Heavy points that could not be checked (a load restarted the session, or the journal
+    /// lost lines before they were compared).
     pub skipped: u64,
 }
 

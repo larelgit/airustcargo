@@ -238,6 +238,37 @@ fn heavy_mode_refuses_real_time() {
     assert!(error.contains("heavy checks run between stepped ticks"), "{error}");
 }
 
+/// More gameplay lines in a tick than the journal holds.
+fn chatter(tick: Res<SimTick>, mut journal: ResMut<AiJournal>) {
+    for i in 0..20 {
+        journal.push(tick.0, JournalKind::Event, format!("chatter {i}"));
+    }
+}
+
+/// The state of such a point is compared, its journal cannot be: it is not counted as checked.
+#[test]
+fn a_point_whose_journal_lines_were_lost_is_skipped_not_passed() {
+    let setup = |app: &mut App| {
+        app.add_plugins(SandboxPlugin)
+            .insert_resource(AiJournal::with_capacity(16))
+            .add_systems(FixedUpdate, chatter.in_set(SimSet::Cleanup));
+    };
+    let mut app = shards::testing::heavy_app(|config| config.seed = 42, setup, HeavyConfig { every: 30, span: 30, offset: 0 });
+    let out = act(&mut app, "step", json!({"ticks": 30}));
+    assert!(out.ok && out.halted.is_none(), "{}", out.result);
+    let last = app.world().resource::<AiJournal>().after(0).0.last().map(|e| e.text.clone());
+    let last = last.unwrap_or_default();
+    assert!(
+        last.starts_with("heavy point from tick 0 not checked: the state is the same, but the journal lost ")
+            && last.ends_with(" of the twin before they were compared (more lines in a tick than it holds)"),
+        "{last}"
+    );
+    let out = act(&mut app, "step", json!({"ticks": 60}));
+    assert!(out.ok && out.halted.is_none(), "{}", out.result);
+    let heavy = app.world().resource::<AiHeavy>();
+    assert_eq!((heavy.checked(), heavy.skipped()), (0, 3), "points 0, 30 and 60");
+}
+
 #[test]
 fn heavy_mode_off_is_invisible() {
     let app = sandbox::test_app(42);

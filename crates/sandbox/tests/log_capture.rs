@@ -138,6 +138,36 @@ fn a_flood_is_cut_at_64_lines_per_tick_and_says_so() {
     assert_eq!(shown, "70 [warn] 36 log lines dropped (limit 64 per tick)");
 }
 
+/// A burst of loading warnings, which lands in whichever app is active, has its own limit: it
+/// cuts no line of the game, and its own drop line is not compared by heavy mode either.
+#[test]
+fn the_asset_threads_have_their_own_limit() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let mut app = app();
+    std::thread::Builder::new()
+        .name("IO Task Pool (0)".into())
+        .spawn(|| (0..100).for_each(|i| warn!("texture {i} is missing")))
+        .unwrap()
+        .join()
+        .unwrap();
+    (0..70).for_each(|i| warn!("hail {i}"));
+    ok(&mut app, "step", json!({"ticks": 1}));
+    let journal = app.world().resource::<AiJournal>();
+    let count = |what: &str, background: bool| {
+        journal.after(0).0.filter(|e| e.text.contains(what) && e.background == background).count()
+    };
+    assert_eq!((count("hail", false), count("texture", true)), (64, 64));
+    let dropped: Vec<(String, bool)> =
+        journal.after(0).0.filter(|e| e.text.contains("dropped")).map(|e| (e.text.clone(), e.background)).collect();
+    assert_eq!(
+        dropped,
+        [
+            ("36 log lines of the asset threads dropped (limit 64 per tick)".to_owned(), true),
+            ("6 log lines dropped (limit 64 per tick)".to_owned(), false),
+        ]
+    );
+}
+
 #[test]
 fn an_action_returns_the_warnings_it_caused() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
