@@ -4451,7 +4451,7 @@ the toolchain from `rust-toolchain.toml`, the cargo cache). All of the jobs' com
 
 Two more files. `soak.yml` — the E7 acceptance check, run again: half an hour of `shards soak` on a live stand of a host and two clients (150 ms,
 2 %), with a region change every 5 minutes and a save every 3; on Mondays, by hand (`minutes`, `seed`), and on a push with
-`[soak]` in the commit message. `record-replays.yml` records the sandbox's and the template's reference replays again on Linux (CI checks them there; recording on Windows gives the same bytes: a run has verified this, see "Time and determinism") and delivers them as the artifact
+`[soak]` in the commit message. `record-replays.yml` records the sandbox's and the template's reference replays again on Linux (CI checks them there; Windows records the same bytes: the nine files in the tree were recorded on Windows and again on Linux, byte for byte, see "Time and determinism") and delivers them as the artifact
 `reference-replays`: a push with `[record replays]` in the commit message (or a run by hand, once the file is on the default branch), then `gh run download <id> --name reference-replays --dir .` in
 the root of the repository. The reference replays were re-recorded after
 E10.1–E10.3 (looks, foliage and effects change the content hash) and E10.6 (`libm`); Windows and Linux recorded them
