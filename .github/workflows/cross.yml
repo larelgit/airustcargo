@@ -1,0 +1,106 @@
+# The README promises that a replay recorded on one OS verifies on another. This checks it: every
+# reference replay (the sandbox's and the template's) is verified on Windows and on Ubuntu 22.04
+# (another glibc than the ubuntu-latest of ci.yml; `libm` must make that invisible). Every Sunday, by
+# hand, and on a version tag.
+#
+# Hosted runners land on different x86_64 processors, so over the weeks this checks other CPUs too:
+# each job prints a table of replay, verdict and CPU model into its summary. The job fails if any
+# replay does not say `identical to the recording`.
+
+name: cross
+
+on:
+  schedule:
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # Windows needs no system packages.
+      - name: System packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev libudev-dev
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cross-${{ matrix.os }}
+          # A failed run still keeps the build: the verdicts are what is being looked at.
+          cache-on-failure: true
+      - name: Build the sandbox and the template
+        run: |
+          cargo build --locked -p sandbox
+          cargo build --locked --manifest-path template/Cargo.toml
+      - name: The processor
+        id: cpu
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            cpu=$(pwsh -NoProfile -Command "(Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name)")
+          else
+            cpu=$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -n 1)
+          fi
+          cpu=$(echo "$cpu" | tr -d '\r|' | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')
+          echo "cpu=$cpu" >> "$GITHUB_OUTPUT"
+          echo "$cpu"
+      - name: Verify every reference replay
+        env:
+          CPU: ${{ steps.cpu.outputs.cpu }}
+        run: |
+          {
+            echo "### Reference replays on ${{ matrix.os }}"
+            echo
+            echo "| replay | verdict | CPU |"
+            echo "| --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          failed=0
+          verify() {
+            local dir=$1 replay=$2; shift 2
+            local out code verdict
+            set +e
+            out=$(cd "$dir" && "$@" --replay "$replay" --verify 2>&1)
+            code=$?
+            set -e
+            echo "== $dir/$replay (exit $code)"
+            echo "$out" | tail -n 5
+            if [ "$code" -eq 0 ] && echo "$out" | grep -q 'identical to the recording'; then
+              verdict=$(echo "$out" | grep -o 'identical to the recording[^\r]*' | tail -n 1 | tr -d '\r')
+            else
+              verdict="DIVERGED or failed (exit $code)"
+              failed=1
+            fi
+            echo "| $dir/$replay | $verdict | $CPU |" >> "$GITHUB_STEP_SUMMARY"
+          }
+          for replay in tests/replays/*.json; do
+            verify . "$replay" cargo run -q --locked -p sandbox --
+          done
+          for replay in template/tests/replays/*.json; do
+            verify template "tests/replays/$(basename "$replay")" cargo run -q --locked --
+          done
+          exit "$failed"

@@ -69,9 +69,12 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   fails the run (`flaky-result = "fail"`), no fail-fast, and a JUnit file uploaded as an artifact (`junit-test`, `junit-template`); profile `ci-perf` for the sandbox's
   tick-time tests, which run alone with `-j 1`; the test groups `snapshot-file` and `shards-snapshots` for the tests that share a file name or a folder. The doctests run as a step of their own
   (`cargo test --workspace --doc --locked`). `cargo test` is still the local command.
+- CI tiers: `nightly.yml` (01:30 UTC, or by hand with `seed` and `minutes`): 100000 worldgen seeds for the sandbox and the template, the `#[ignore]`d GPU tests on a software Vulkan driver under Xvfb, and the performance tests `reference` and `reference96` as an artifact; a failed night opens an issue labelled `nightly` (or comments on the open one). `cross.yml` (weekly, by hand, on `v*` tags) verifies every reference replay on `windows-latest` and `ubuntu-22.04` and writes replay, verdict and CPU model to the job summary. A job of `ci.yml` that fails uploads what the run wrote (replays, crashes, snapshots, shots, game logs) as an artifact for 14 days.
+- `.gitattributes`: level files, content, replays and other text the game hashes or compares are checked out with LF on Windows too. `cross.yml` found that `ruin.gltf` came out with CRLF under the runner's `core.autocrlf`, and three reference replays that place a level then diverged (`replay check level differs`).
 
 ### Changed
 
+- `soak.yml` runs every night (it ran on Mondays).
 - `shards_cli`: the test `a_stale_port_file_is_neither_a_member_nor_a_reason_to_give_up` no longer uses a port that was bound and released (another test's stand could be given it): the stale file names the discard port.
 
 ## [0.4.0] — phases C–E: co-op, saves, UI and platform (unreleased)
@@ -300,12 +303,12 @@ Bevy (`bevy::settings`, feature `bevy_settings`; only `bevy-settings 0.20.0` is 
 - `shards soak` and `shards_script::soak` (`SoakPlan`, `SoakReport`, `run`, `SOAK_AGENT`): seeded agents play for each participant of the stand (or for one game): each round, `observe` and a random player input. A dead body is healed by the host. On a schedule the host changes the region (`--regen`, `--regen-minutes`) and saves everything (`--save-minutes`), exactly on time: a step does not jump past it. The stand steps with
   `--until named:net_desync`. The first desync, a crashed system or a broken invariant gives exit code 3. At the end, each participant's `net_status` is checked: a participant that does not answer it fails the run (`desyncs ?`). A plan that ends after the last tick the game can count is rejected before the first call. It runs through `Driver`: against a live stand and in `cargo test` (`shards::testing::StandDriver`).
   The `fuzz` and `soak` inputs are in `shards_script::inputs` (they used to be in the CLI).
-- Acceptance for E7: half an hour of game time, a host and two clients, 150 ms one way and 2% loss, five region changes and nine saves, and not one desync (`shards soak --minutes 30` on a live `--stand 2`, the same run over UDP with client processes, the test `half_an_hour_of_three_players_on_lossy_links_stays_in_sync` under `#[ignore]`). Two minutes of the same run is the test `two_minutes_of_three_players_on_lossy_links_stay_in_sync`; three minutes is the `headless-cli` CI step; half an hour is `soak.yml`, once a week.
+- Acceptance for E7: half an hour of game time, a host and two clients, 150 ms one way and 2% loss, five region changes and nine saves, and not one desync (`shards soak --minutes 30` on a live `--stand 2`, the same run over UDP with client processes, the test `half_an_hour_of_three_players_on_lossy_links_stays_in_sync` under `#[ignore]`). Two minutes of the same run is the test `two_minutes_of_three_players_on_lossy_links_stay_in_sync`; three minutes is the `headless-cli` CI step; half an hour is `soak.yml`, every night.
 - Region edge: `edge_wall: H` on `region` puts an invisible wall H m high around the region (`region::edge_wall`, `edge_wall_boxes`, `EDGE_WALL_THICKNESS`, `EDGE_WALL_DEPTH`, the `RegionEdge` marker, which the template does not draw). `region_info` shows an `edge` line. The wall does not change tiles or seed points. Its colliders come after the tiles.
 - The client's `net_status` reports the number of its own desyncs (`desyncs`).
 - Template: saves (`src/progress.rs`: the character section `trophies`, the world section `fallen`, an autosave of the cleared yard; `SaveKey` for the arena's characters by the `key` from content (`yard.gate_grunt`), and a repeated key is a content error; `scenarios/saves.scenario`) and co-op for two (`content/session.net.ron`,
   `scenarios/stand/coop.scenario`, `tests/game/coop.rs`; the stand-scenario test `every_stand_scenario_passes`). The template's `saves/` folder is in `.gitignore`.
-- CI: `soak.yml` (half an hour on a live stand: on Mondays, by hand, and on a push with `[soak]`) and `record-replays.yml`
+- CI: `soak.yml` (half an hour on a live stand: every night, by hand, and on a push with `[soak]`) and `record-replays.yml`
   (the sandbox's and the template's reference replays, re-recorded on Linux, as an artifact: on a push with `[record replays]`).
 
 **UI (D1, E9.1–3, `shards_ui`)** — HUD and menus from content, and an interface tree for the agent:

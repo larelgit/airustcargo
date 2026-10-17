@@ -1,0 +1,242 @@
+# The long checks, every night at 01:30 UTC and on demand (workflow_dispatch: `seed`, `minutes`).
+# Nothing here is cheap enough for every push; everything is the same commands you can run by hand.
+#
+#   worldgen   the generator's check on 100000 seeds: the sandbox's `wilds` and the template's `valley`
+#   gpu        the #[ignore]d tests that need a GPU, on Mesa's software Vulkan driver under Xvfb
+#   perf       a release build and the performance tests `reference` and `reference96`, ticks only;
+#              the output is an artifact, there is no gate yet
+#   issue      if any job above fails: an issue labelled `nightly` (or a comment on the open one) with
+#              the failed job and step, the seed, and the links to the run and its artifacts
+#
+# Heavy replays (every reference replay with `--verify --heavy N`) and the fuzz campaign are added to
+# this file by the PRs that build them (heavy mode, the fuzzer): they are jobs in this list and in
+# `needs` of the `issue` job.
+#
+# Elsewhere: soak.yml (half an hour of a live stand, every night), cross.yml (weekly).
+
+name: nightly
+
+on:
+  schedule:
+    - cron: "30 1 * * *"
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: Seed of the night (empty - today's date, YYYYMMDD); used by the fuzz campaign and the heavy replays once they join, named in the issue
+        default: ""
+      minutes:
+        description: Minutes of game time for the jobs that play (empty - each job's own default); no job in this file plays yet
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # The night's seed and minutes, decided once so that every job and the issue name the same ones.
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      seed: ${{ steps.plan.outputs.seed }}
+      minutes: ${{ steps.plan.outputs.minutes }}
+    steps:
+      - id: plan
+        env:
+          SEED: ${{ inputs.seed }}
+          MINUTES: ${{ inputs.minutes }}
+        run: |
+          seed="${SEED:-$(date -u +%Y%m%d)}"
+          echo "seed=$seed" >> "$GITHUB_OUTPUT"
+          echo "minutes=$MINUTES" >> "$GITHUB_OUTPUT"
+          echo "seed $seed, minutes '${MINUTES:-default}'"
+
+  # ---------------------------------------------------------------------------------------
+  # E5: the generated region passes its checks for 100000 seeds (exit 1 if any fails).
+  worldgen:
+    name: worldgen
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: dev
+          save: "false"
+      - name: Worldgen report, 100000 seeds of the wilds (sandbox)
+        run: |
+          set -o pipefail
+          cargo run --locked -p sandbox -- --worldgen-report wilds --seeds 1..100000 2>&1 | tee "$RUNNER_TEMP/worldgen-wilds.log"
+      - name: Worldgen report, 100000 seeds of the valley (template)
+        working-directory: template
+        run: |
+          set -o pipefail
+          cargo run --locked -- --worldgen-report valley --seeds 1..100000 2>&1 | tee "$RUNNER_TEMP/worldgen-valley.log"
+      - name: Keep what the run wrote
+        if: failure()
+        uses: ./.github/actions/upload-failure
+        with:
+          name: nightly-worldgen
+
+  # ---------------------------------------------------------------------------------------
+  # The tests marked #[ignore] because they need a GPU (here Mesa's lavapipe, software Vulkan) or a
+  # display. Selected by name, never "all ignored": the recorders (record_reference_replays,
+  # write_v1_samples), the measurements (spike_*, broad_phase_timing) and the half-hour soak test are
+  # also #[ignore]d, and none of them belongs here.
+  #
+  # Two tests of the list in the spec are left out because they assume a real GPU and fail on lavapipe
+  # (first run, 17 October 2026): `offscreen::draws_follow_how_bevy_batches_not_how_many_meshes_are_drawn`
+  # (lavapipe does not multi-draw: 4 draws more for one pipeline) and perf.rs
+  # `an_offscreen_run_measures_its_frames_and_what_they_draw` (software rendering gives 1 frame a second,
+  # the test wants more than 10 frames in 120 ticks). They stay `#[ignore]`d for a machine with a GPU.
+  gpu:
+    name: gpu
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      WGPU_FORCE_FALLBACK_ADAPTER: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: dev
+          save: "false"
+          packages: xvfb mesa-vulkan-drivers libxkbcommon-x11-0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.148
+      - name: The GPU tests
+        run: |
+          xvfb-run -a cargo nextest run --workspace --locked --profile ci --run-ignored only --no-tests=fail -E '
+            (binary_id(sandbox::sandbox) & test(/^offscreen::/) & not test(/^offscreen::draws_follow/))
+            | (binary_id(shards_fx::fx) & test(/^offscreen::/))
+            | (binary_id(shards_scatter::scatter) & test(/^offscreen::/))
+            | (binary_id(shards_look::look) & test(/^offscreen::/))
+            | (binary_id(shards::action_render) & test(/^window::/))
+          '
+      - name: JUnit
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-gpu
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: warn
+      - name: Keep what the run wrote
+        if: failure()
+        uses: ./.github/actions/upload-failure
+        with:
+          name: nightly-gpu
+
+  # ---------------------------------------------------------------------------------------
+  # The performance tests of the sandbox in a release build, ticks only (no --offscreen: the runner has
+  # no GPU worth measuring). A GitHub runner is a shared machine, so there is no gate: the numbers
+  # are an artifact to compare from night to night. Exit code 1 (a budget exceeded) is reported, not
+  # failed; 2 (no such definition) fails the job.
+  perf:
+    name: perf
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          # A release build is another set of artifacts than the dev cache holds: its own cache,
+          # kept by this job.
+          cache-key: release
+      - name: Build the sandbox, release
+        run: cargo build --release --locked -p sandbox
+      - name: Performance tests
+        run: |
+          mkdir -p perf-out
+          worst=0
+          for id in reference reference96; do
+            set +e
+            cargo run --release --locked -p sandbox -- --perf "$id" 2>&1 | tee "perf-out/$id.txt"
+            code=${PIPESTATUS[0]}
+            set -e
+            echo "$id: exit code $code"
+            echo "- \`$id\`: exit code $code (0 within budgets, 1 over a budget, no gate)" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$code" -gt 1 ]; then worst=$code; fi
+          done
+          exit "$worst"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: perf
+          path: perf-out/
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Keep what the run wrote
+        if: failure()
+        uses: ./.github/actions/upload-failure
+        with:
+          name: nightly-perf
+
+  # ---------------------------------------------------------------------------------------
+  # The counterpart of an email to the authors of the last commits: the failure reaches the
+  # tracker. One open issue labelled `nightly` collects the nights (a comment per failed night).
+  issue:
+    name: issue
+    needs: [plan, worldgen, gpu, perf]
+    if: ${{ failure() }}
+    # The only job that writes to the tracker.
+    permissions:
+      actions: read
+      issues: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SEED: ${{ needs.plan.outputs.seed }}
+      MINUTES: ${{ needs.plan.outputs.minutes }}
+      RUN_ID: ${{ github.run_id }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      REF_NAME: ${{ github.ref_name }}
+      SHA: ${{ github.sha }}
+    steps:
+      - name: Open or update the nightly issue
+        run: |
+          failed=$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/jobs?per_page=100" --jq '
+            .jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out")
+            | "- job `\(.name)`, step `\([.steps[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled")][0].name // "unknown")`: \(.html_url)"')
+          body=$(printf '%s\n' \
+            "The nightly run on \`$REF_NAME\` ($SHA) failed." \
+            "" \
+            "$failed" \
+            "" \
+            "- seed: \`$SEED\`${MINUTES:+, minutes: \`$MINUTES\`}" \
+            "- run: $RUN_URL" \
+            "- artifacts (logs, replays, crashes of the failed jobs; the performance output): $RUN_URL#artifacts" \
+            "" \
+            "To repeat it: the commands are in the steps of \`.github/workflows/nightly.yml\`.")
+          gh label create nightly --color B60205 --description "A failed nightly run" 2>/dev/null || true
+          open=$(gh issue list --label nightly --state open --json number --jq '.[0].number // empty')
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body "$body"
+            echo "commented on #$open"
+          else
+            gh issue create --label nightly --title "Nightly checks failed ($(date -u +%Y-%m-%d))" --body "$body"
+          fi
