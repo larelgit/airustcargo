@@ -22,6 +22,8 @@
 //! - [`zones`]: [`ActiveZone`] / [`Dormant`] around players, every tick.
 //! - [`stream`]: tile visuals loaded and unloaded by distance (when the game draws: a window
 //!   or `--offscreen`).
+//! - `overlay` (feature `render`): the `world_overlay` shapes (`TileDraw`: bounds, sockets,
+//!   points, roads), worked out first and kept in a resource, then handed to the gizmos.
 //!
 //! Tile geometry is inline (boxes, solids, volumes, markers, prefabs in the RON) or a level
 //! file from Blender (`geometry: Level(path: "tiles/ruin.gltf")`), which this crate does not
@@ -48,6 +50,8 @@ pub mod dungeon;
 pub mod generate;
 pub mod grid;
 pub mod manifest;
+#[cfg(feature = "render")]
+pub mod overlay;
 pub mod region;
 pub mod report;
 pub mod sockets;
@@ -56,8 +60,6 @@ pub mod stream;
 pub mod zones;
 
 mod ai;
-#[cfg(feature = "render")]
-mod overlay;
 mod tools;
 
 use ai_core::{AiAppExt, SimSet};
@@ -74,7 +76,7 @@ pub use generate::{generate, CheckFn, GenContext, GenError, Generated, Stage, St
 pub use grid::Dir;
 pub use manifest::RegionManifest;
 #[cfg(feature = "render")]
-pub use overlay::TileOverlay;
+pub use overlay::{TileDraw, TileOverlay};
 pub use region::{
     change_region, check_manifest, despawn_region, level_paths, level_users, spawn_region, ActiveRegion, LevelCheckFn, LevelForgetFn, LevelNextFn,
     LevelRequestFn, LevelRestartFn, LevelSpawn, LevelSpawnFn, LevelSpawner, LevelStatusFn, Marker, Poi, RegionBuild, RegionEdge, RegionLoadedHooks,
