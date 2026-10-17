@@ -26,6 +26,20 @@ use crate::model::{format_number, widget_children};
 use crate::text::compass_point;
 use crate::UiSystems;
 
+/// The font of every text that names none (a theme without `font`, the dev console, overlays):
+/// Fira Sans Regular, with Latin, Greek and Cyrillic letters. SIL Open Font License 1.1: the
+/// licence is beside the file (`fonts/FiraSans-OFL.txt`). Bevy's own has ASCII letters only.
+pub const DEFAULT_FONT: &[u8] = include_bytes!("../fonts/FiraSans-Regular.ttf");
+
+/// Puts [`DEFAULT_FONT`] behind Bevy's default font handle, the one a `TextFont` that names no
+/// font draws with. Once every plugin is built: Bevy's text plugin puts its own font there.
+pub(crate) fn install_default_font(app: &mut App) {
+    if let Some(mut fonts) = app.world_mut().get_resource_mut::<Assets<bevy::text::Font>>() {
+        // The default id is never one of an asset that was removed.
+        let _ = fonts.insert(AssetId::default(), bevy::text::Font::from_bytes(DEFAULT_FONT.to_vec()));
+    }
+}
+
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Look>()
         .configure_sets(PostUpdate, UiSystems::Draw.before(bevy::ui::UiSystems::Prepare))
@@ -198,8 +212,7 @@ fn text_part(world: &mut World, parent: Entity, text: String, size: fn(&ThemeDef
     world.spawn((Part, Text::new(text), font, TextColor(color(rgba)), Pickable::IGNORE, ChildOf(parent))).id()
 }
 
-/// The text a widget's value is drawn as. The engine's default font has ASCII only; a theme
-/// names one for other scripts (`font`).
+/// The text a widget's value is drawn as.
 fn value_text(w: &UiWidget) -> String {
     match (&w.kind, &w.value) {
         (WidgetKind::Text | WidgetKind::Hint, UiValue::Text(t)) => t.clone(),

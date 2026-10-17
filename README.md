@@ -71,7 +71,7 @@ cargo shards observe                       # срез мира текстом + 
 cargo shards tools                         # что можно сделать (--json: со схемами аргументов)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # в ответе CHANGES и JOURNAL
-cargo shards content check                 # ok: 134 definitions in 40 files
+cargo shards content check                 # ok: 133 definitions in 39 files
 cargo shards act regen region=wilds seed=42   # сгенерированный регион к югу от арены; игрок у его ворот
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # маршрут к логову по навсетке: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # проверка генератора на тысяче зёрен
@@ -94,7 +94,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Контент без игры: читает и проверяет все файлы (в том числе файлы уровней тайлов и запечённую навигацию), код 0 или 1.
 cargo sandbox --check-content
-# ok: 134 definitions in 40 files
+# ok: 133 definitions in 39 files
 
 # 7. Мир без игры: генератор на тысяче зёрен (код 0, если прошли все) и запекание навигации тайлов.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -592,7 +592,7 @@ reflection, как в сценах Bevy; каждый компонент дол�
 
 ```text
 $ shards act content_list
-content: 134 definitions in 40 files
+content: 133 definitions in 39 files
   action  23
   animset  1
   attack_plan  3
@@ -4229,8 +4229,8 @@ ok: closed settings; pause is on top · focus pause/settings
 **Рисование** (feature `render`, только когда есть окно): узел Bevy UI на каждый виджет, рамка на экран (меню затемняет
 игру, HUD не ловит мышь, модальное окно выше меню), значения меняются на месте, фокус — обводка и `InputFocus`. Каждому виджету —
 узел AccessKit: роль (`Dialog`, `Button`, `Slider`, `ProgressIndicator`, …), подпись и значение, поэтому экранный чтец читает
-меню. Текст рисуется шрифтом темы (`font: "fonts/FiraSans-Regular.ttf"`, файл в папке ассетов; проверка контента ищет его), без
-него — шрифтом Bevy по умолчанию, в котором только латиница.
+меню. Текст рисуется шрифтом темы (`font: "fonts/MyFont.ttf"`, файл в папке ассетов; проверка контента ищет его), без
+него — шрифтом движка по умолчанию (`shards::ui::DEFAULT_FONT`, Fira Sans: латиница, греческий, кириллица).
 
 Проверка: `crates/shards_ui` (юнит-тесты разбора и навигации; `tests/ui/`: экраны, меню, клавиатура, рисование и подписи
 доступности без GPU, реплей с нажатыми кнопками, правка экрана в работающей игре и отказ сломанной), сценарии
@@ -4326,8 +4326,11 @@ Player.
 игрока кооператива читают игру на разных языках. Шлюз загрузки ждёт, пока языки построены, поэтому первый экран уже на языке
 игрока.
 
-**Шрифт.** Шрифт Bevy по умолчанию — только латиница, поэтому игра с кириллицей называет свой в теме (`font`). Песочница и
-шаблон кладут Fira Sans (SIL Open Font License, `assets/fonts/FiraSans-OFL.txt`).
+**Шрифт.** Текст, который не называет шрифт (меню и HUD без `font` в теме, консоль и меню разработчика, оверлеи), движок
+рисует своим шрифтом по умолчанию — Fira Sans (SIL Open Font License, `crates/shards_ui/fonts/FiraSans-OFL.txt`; лицензия
+есть и в самом файле шрифта): латиница, греческий и кириллица, тире, кавычки, `№` и стрелки. Песочнице и шаблону своего
+шрифта не нужно. Игра на другом письме (CJK, арабское) называет свой в теме (`font`). Значков вроде ⚠ и ✓ в шрифте нет: HUD
+и оверлеи пишут вместо них ASCII, консоль разработчика — `?` (`ai_core::display::default_font_has`).
 
 Проверка: `crates/shards_locale` (юнит-тесты: формы множественного числа, фраза во фразе, запасной язык, забытый параметр,
 разбор файлов и ошибки с позицией; `tests/locale/`: смена языка в работающей игре и меню на новом языке, проверка контента,

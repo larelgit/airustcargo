@@ -5741,6 +5741,7 @@ dependencies = [
  "shards_core",
  "shards_locale",
  "shards_settings",
+ "ttf-parser",
 ]
 
 [[package]]

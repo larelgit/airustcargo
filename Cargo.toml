@@ -98,6 +98,9 @@ accesskit = { version = "=0.24.1", default-features = false }
 fluent-bundle = "=0.16.0"
 fluent-syntax = "=0.12.0"
 unic-langid = "=0.9.6"
+# Reads the engine's default font in shards_ui's tests (which letters it has); a dev-dependency only. The
+# version Bevy 0.20's font stack already has (`parley`): one copy.
+ttf-parser = "=0.25.1"
 # Sets the window's icon inside `shards` only (`window_icon.rs`); never part of a public API. The version
 # Bevy 0.20 opens its windows with (`bevy_winit`): one copy, its features.
 winit = { version = "=0.30.13", default-features = false }

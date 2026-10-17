@@ -113,3 +113,21 @@ fn without_a_window_nothing_is_drawn() {
     let resume = widget(&mut app, "pause/resume");
     assert!(app.world().get::<Node>(resume).is_none(), "a headless game builds no UI nodes");
 }
+
+#[test]
+fn text_that_names_no_font_draws_with_the_engines_which_has_russian() {
+    let app = windowed();
+    let fonts = app.world().resource::<Assets<shards::bevy::text::Font>>();
+    let font = fonts.get(AssetId::default()).expect("a font behind the default handle");
+    assert!(font.data.data() == shards::ui::DEFAULT_FONT, "the engine's font, not Bevy's ASCII one");
+    let face = ttf_parser::Face::parse(shards::ui::DEFAULT_FONT, 0).expect("a font file");
+    let russian = "Съешь же ещё этих мягких французских булок, да выпей чаю. ЁЖ ЙЪЫЭЮЯ №5 — «ok» … ← ↑ → ↓";
+    for c in russian.chars().chain('!'..='~') {
+        assert!(face.glyph_index(c).is_some(), "no letter for {c:?}");
+    }
+    // What the engine's crates count on it to have, they find in the font itself.
+    for c in (0..0x3000u32).filter_map(char::from_u32).filter(|&c| shards::ai_core::display::default_font_has(c)) {
+        assert!(face.glyph_index(c).is_some(), "default_font_has({c:?}) but the font has no letter for it");
+    }
+    assert!(!shards::ai_core::display::default_font_has('⚠') && face.glyph_index('⚠').is_none());
+}

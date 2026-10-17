@@ -29,14 +29,13 @@ cargo test                          # тесты, сценарий и репле
 | `src/screens.rs` | своё в HUD и меню: трофеи на HUD (`add_ui_source`) и «сохранить и выйти» (`add_ui_action`) |
 | `src/visuals.rs` | меши, свет и камера, только с картинкой (feature `render`: окно или `--offscreen`); меши получают один белый материал, а цвет и свет им дают виды; персонажи — модель гуманоида с `Animated` |
 | `assets/content/*.ron` | **все числа игры**: движение, действия, мувсеты, бойцы (префабы), уровень |
-| `assets/content/looks.look.ron` | как рисуются тела и стены (виды движка, E10.1): пресет `low_poly` — плоские грани и контур, `hero`, `grunt`, `raider` начинаются с него (`extends`), `stone` — всё остальное; тело берёт вид из `"Look"` своего префаба. Не путать с `look.theme.ron` ниже: это тема экранов |
+| `assets/content/looks.look.ron` | как рисуются тела и стены (виды движка, E10.1): пресет `low_poly` — плоские грани и контур, `hero`, `grunt`, `raider` начинаются с него (`extends`), `stone` — всё остальное; тело берёт вид из `"Look"` своего префаба |
 | `assets/content/effects.effect.ron`, `assets/content/effects.fx.ron` | эффекты (движок, E10.3): искры удара и блока (осколки), пыль смерти и шагов (кубики); таблица — какое событие боя (`damaged`, `blocked`, `died`) и какая метка клипа (`footstep`) что играет. Только картинка: в окне или с `--offscreen` |
 | `assets/models/humanoid.glb`, `assets/content/anim.animset.ron` | персонаж: low-poly гуманоид со скелетом и клипами (`idle`, `walk`, `run`, `light_1`, `light_2`, `light_3`, `heavy`, `roll`, `block`, `hit`, `death`), его строит скрипт движка `tools/blender/humanoid.py` (`-- template`); набор говорит, какой клип показывает какое состояние и действие, и где в клипах шаги |
 | `assets/content/session.net.ron` | кооператив на двоих: второй игрок играет героем того же префаба `hero`, остальное — числа движка |
 | `assets/content/screens.screen.ron` | HUD, пауза, настройки и вопрос перед выходом: экраны на виджетах движка |
 | `assets/content/languages.locale.ron`, `assets/locale/` | языки (английский, русский) и их тексты на Fluent: всё, что пишут HUD и меню; см. «Языки» |
 | `assets/content/audio/`, `assets/sounds/`, `assets/music/` | звуки, музыка двора в трёх слоях и микшер; см. «Звук» |
-| `assets/content/look.theme.ron`, `assets/fonts/` | тема экранов: шрифт Fira Sans с кириллицей (OFL) |
 | `assets/content/region/` | сгенерированная долина `valley`: тайлы 16 м, сокеты, точки интереса, регион 8×8, запасная карта, настройки навсетки |
 | `assets/content/npc/` | рейдер: поведение (машина состояний), восприятие, план атак: NPC движка без строчки кода игры |
 | `assets/tiles/ruin.gltf` | тайл-руина из Blender: пол, стены, колонна, маркеры (лагерь, ориентир, сокеты) |
@@ -348,8 +347,8 @@ shards act ui_set id=settings/music value=0.5   # слайдер: settings: audi
 Текст HUD и меню — сообщения [Fluent](https://projectfluent.org) в `assets/locale/<язык>/game.ftl`, экраны называют их через
 `@` (`label: "@pause-resume"`). Языки — контент `assets/content/languages.locale.ron`: английский и русский, недостающее в
 русском берётся из английского. Игрок выбирает язык на вкладке Language настроек (или агент: `shards act settings_set
-group=locale key=language value=ru`), и HUD с меню тут же говорят по-русски. Шрифт с кириллицей — Fira Sans (OFL,
-`assets/fonts/`), его называет тема `assets/content/look.theme.ron`.
+group=locale key=language value=ru`), и HUD с меню тут же говорят по-русски. Кириллица есть в шрифте движка по умолчанию
+(Fira Sans, OFL), поэтому темы со своим шрифтом у шаблона нет.
 
 Текст из кода — целые фразы с параметрами, не склейка кусков: источник `trophies` пишет
 `shards::locale::text(world, "hud-trophies", &Args::new().number("count", defeated))`, а форму множественного числа выбирает

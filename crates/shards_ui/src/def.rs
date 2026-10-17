@@ -561,7 +561,8 @@ pub struct ThemeDef {
     /// Named colours for bars (`color: "health"`).
     pub colors: BTreeMap<String, String>,
     /// A font file under the asset folder (`fonts/FiraSans-Regular.ttf`) for every text. Default:
-    /// the engine's own, which has ASCII letters only: a game in other scripts names one.
+    /// the engine's own (`DEFAULT_FONT`: Fira Sans, with Latin, Greek and Cyrillic letters); a game
+    /// in other scripts names one.
     pub font: Option<String>,
     pub font_size: f32,
     pub title_size: f32,

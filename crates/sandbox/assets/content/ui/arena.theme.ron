@@ -1,5 +1,0 @@
-// How the arena's menus look: the engine's colours and sizes, with a font that has Cyrillic
-// letters (the engine's own has ASCII only). Fira Sans, SIL Open Font License: fonts/FiraSans-OFL.txt.
-{
-    "default": (font: "fonts/FiraSans-Regular.ttf"),
-}

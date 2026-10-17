@@ -298,20 +298,10 @@ fn take_keyboard(
     }
 }
 
-/// The built-in font has ASCII only.
-fn ascii(text: &str) -> String {
-    text.chars()
-        .map(|c| match c {
-            '·' => "|".to_owned(),
-            '→' => "->".to_owned(),
-            '←' => "<-".to_owned(),
-            '…' => "...".to_owned(),
-            '×' => "x".to_owned(),
-            '°' => " deg".to_owned(),
-            c if c.is_ascii() => c.to_string(),
-            _ => "?".to_owned(),
-        })
-        .collect()
+/// Text as the engine's font draws it (`ai_core::display::default_font_has`): Russian and the
+/// arrows as they are, a letter it does not have as `?`.
+fn drawable(text: &str) -> String {
+    text.chars().map(|c| if c.is_ascii_control() || ai_core::display::default_font_has(c) { c } else { '?' }).collect()
 }
 
 const PANEL_COLOR: Color = Color::srgba(0.02, 0.02, 0.04, 0.88);
@@ -360,11 +350,11 @@ fn show_console(
         return;
     }
     let start = console.log.len().saturating_sub(SHOWN);
-    let mut lines: Vec<String> = console.log.iter().skip(start).map(|l| ascii(l)).collect();
+    let mut lines: Vec<String> = console.log.iter().skip(start).map(|l| drawable(l)).collect();
     if !console.offered.is_empty() {
-        lines.push(ascii(&console.offered.join("  ")));
+        lines.push(drawable(&console.offered.join("  ")));
     }
-    lines.push(format!("> {}_", ascii(&console.input)));
+    lines.push(format!("> {}_", drawable(&console.input)));
     let body = lines.join("\n");
     match (shown, text.iter_mut().next()) {
         (Some(_), Some(mut text)) => {
@@ -420,7 +410,7 @@ fn show_menu(world: &mut World) {
                     (false, true) => Color::srgb(0.85, 0.9, 0.95),
                     (false, false) => Color::srgb(0.5, 0.5, 0.55),
                 };
-                let body = ascii(label);
+                let body = drawable(label);
                 if let Some(mut text) = world.get_mut::<Text>(child)
                     && text.0 != body
                 {
@@ -451,7 +441,7 @@ fn show_menu(world: &mut World) {
         if entry.group != group {
             group = entry.group.clone();
             world.spawn((
-                Text::new(ascii(&group.to_uppercase())),
+                Text::new(drawable(&group.to_uppercase())),
                 TextFont::from_font_size(13.0),
                 TextColor(Color::srgb(0.55, 0.65, 0.75)),
                 Node { margin: UiRect::top(Val::Px(6.0)), flex_shrink: 0.0, ..default() },
@@ -461,7 +451,7 @@ fn show_menu(world: &mut World) {
         let row = Node { padding: UiRect::horizontal(Val::Px(6.0)), flex_shrink: 0.0, ..default() };
         let row = world.spawn((row, MenuRow(index), ChildOf(body))).id();
         // The row takes the click, not its text.
-        world.spawn((Text::new(ascii(&rows[index].0)), TextFont::from_font_size(14.0), TextColor(Color::WHITE), Pickable::IGNORE, ChildOf(row)));
+        world.spawn((Text::new(drawable(&rows[index].0)), TextFont::from_font_size(14.0), TextColor(Color::WHITE), Pickable::IGNORE, ChildOf(row)));
     }
     world.resource_mut::<FollowChosen>().0 = true;
 }

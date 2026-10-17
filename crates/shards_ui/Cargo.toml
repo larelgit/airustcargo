@@ -31,5 +31,7 @@ accesskit = { workspace = true, optional = true }
 accesskit.workspace = true
 # The content tests read RON as the content database does.
 ron.workspace = true
+# The default font's test reads which letters the font has.
+ttf-parser.workspace = true
 # Integration tests build apps the way a game does: the whole engine (`shards::testing`).
 shards = { workspace = true, features = ["render", "remote", "hot_reload"] }
