@@ -9,6 +9,14 @@ hud-trophies = { $count ->
 }
 hud-hint = [Esc] Меню
 
+menu-title = Моя игра
+menu-art = Одинокая башня на холме под закатным небом
+menu-new-game = Новая игра
+menu-continue = Продолжить
+menu-no-save = Сохранений пока нет: начните новую игру
+menu-settings = Настройки
+menu-quit = Выйти
+
 pause-title = Пауза
 pause-resume = Продолжить
 pause-settings = Настройки

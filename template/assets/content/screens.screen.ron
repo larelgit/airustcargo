@@ -1,9 +1,27 @@
-// The HUD and menus, on the engine's widgets (the engine draws them and moves through them):
-// Escape (gamepad Start) opens `pause`. `bind` shows a value: `you.health` and `you.stamina` are
-// the engine's, `trophies` the game's (src/screens.rs). `setting` is the player's setting a
-// widget shows and changes. A text that starts with `@` is a message of the game's languages
-// (assets/locale/<language>/game.ftl), shown in the one played. Edit them while the game runs.
+// The HUD and menus, on the engine's widgets (the engine draws them and moves through them): the
+// main menu comes up after loading, Escape (gamepad Start) opens `pause` in the game. `bind` shows a
+// value: `you.health` and `you.stamina` are the engine's, `trophies` and `continue_note` the game's
+// (src/screens.rs). `setting` is the player's setting a widget shows and changes. A text that starts
+// with `@` is a message of the game's languages (assets/locale/<language>/game.ftl), shown in the one
+// played. Edit them while the game runs.
 {
+    // The main menu (`main_menu: true`), after loading, with a window or --offscreen (`--menu` without
+    // either; tests and replays go straight into the game). Time stands still until `new_game` starts
+    // the game as a run without the menu does, or `continue_game` starts it and loads the newest save.
+    // `continue_note` (src/screens.rs) says why there is nothing to continue.
+    "main_menu": (
+        main_menu: true,
+        closable: false,
+        title: "@menu-title",
+        widgets: [
+            Image(id: "art", path: "ui/loading.png", label: "@menu-art", width: 400.0),
+            Button(id: "new_game", label: "@menu-new-game", action: "tool new_game"),
+            Button(id: "continue", label: "@menu-continue", action: "tool continue_game"),
+            Hint(id: "no_save", bind: "continue_note"),
+            Button(id: "settings", label: "@menu-settings", action: "open settings"),
+            Button(id: "quit", label: "@menu-quit", action: "quit"),
+        ],
+    ),
     "hud": (
         layer: Hud,
         open_at_start: true,

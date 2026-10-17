@@ -34,3 +34,8 @@ serde_json.workspace = true
 [target.'cfg(unix)'.dev-dependencies]
 # The shutdown test sends signals to a running game.
 libc.workspace = true
+
+# Draws the template's loading picture; the PNG encoder comes with rendering.
+[[example]]
+name = "make_art"
+required-features = ["render"]

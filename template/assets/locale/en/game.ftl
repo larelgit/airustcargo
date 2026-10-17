@@ -1,5 +1,6 @@
 # The HUD and menus: assets/content/screens.screen.ron names these as `@id`. src/screens.rs
-# formats `hud-trophies` with the number of grunts the hero defeated.
+# formats `hud-trophies` with the number of grunts the hero defeated, and shows `menu-no-save`
+# under the main menu's Continue while there is no save.
 
 hud-health = HP
 hud-stamina = Stamina
@@ -8,6 +9,14 @@ hud-trophies = { $count ->
    *[other] { $count } trophies
 }
 hud-hint = [Esc] Menu
+
+menu-title = My game
+menu-art = A lone tower on a hill under a dusk sky
+menu-new-game = New game
+menu-continue = Continue
+menu-no-save = No saved game yet: start a new one
+menu-settings = Settings
+menu-quit = Quit
 
 pause-title = Paused
 pause-resume = Resume
