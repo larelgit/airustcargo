@@ -2428,7 +2428,10 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
   `AiTools::set_forwarder` вызовы `Host` уходят хосту, `HostOnly` получают отказ с причиной; без форвардера всё как
   раньше. `app.net_route(name, route)` меняет маршрут, `AiTools::set_route` — уже после сборки приложения.
 - **Агент, привязанный к игроку:** `ai/session {player: N}` и `possess player=N`; тело ищется заново на каждом вызове,
-  так что переживает респаун.
+  так что переживает респаун. Со scope `player` это агент-игрок (E11.6): на клиенте стенда (`@c1 session --agent bot --scope
+  player --player 1`) его `YOU` — тело игрока 1, его инструменты действуют через `Intent` этого тела, как клавиши человека,
+  хост выполняет их как вызовы этого игрока, а инструмент разработчика он получает отказом (`` `teleport` needs dev scope;
+  agent `bot` has player scope ``). Сценарий — `crates/sandbox/scenarios/stand/agent_player.scenario`.
 - **Отложенный шаг:** с `StepRoute::Deferred` инструменты `step`, `pause`, `resume`, `speed` ставят запрос в очередь и
   отвечают `{"pending": id}`; драйвер стенда выполняет его между кадрами, а `step_poll {id}` (BRP `ai/step_poll`)
   возвращает отчёт ровно как у обычного `step`. Тики драйвер гоняет через `sim::step`, поэтому отложенный шаг встаёт на

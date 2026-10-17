@@ -1,0 +1,52 @@
+# An agent plays a player (E11.6): on a stand, c1's agent `bot` with the player's scope is bound
+# to player 1 (`session --player 1`, BRP `ai/session player=N`). Its YOU is player 1's body,
+# whichever entity that is, its tools move that body through its Intent as a person's keys do,
+# and the host runs the moves. Dev tools are not there for it. The host's own agent can be bound
+# to a remote player as well, and then looks from that body. A player that does not exist is
+# refused with the players there are.
+#
+# Puts back: the arena calm and the bodies healed at their posts at the start; sessions are the
+# scenario's own (each file starts its members with them), so `bot` and `coach` end with it.
+stand clients=2
+seed 42
+
+# --- setup (dev, on the host): bodies e5 (the host's player), e15 (c1's), e16 (c2's)
+@host act npc_set_state id=e6 state=calm
+@host act npc_set_state id=e7 state=calm
+@host act npc_set_state id=e8 state=calm
+@host act npc_set_state id=e14 state=calm
+@host act heal id=e5
+@host act heal id=e15
+@host act heal id=e16
+@host act teleport id=e5 x=0 z=12 y=0
+@host act teleport id=e15 x=2 z=12 y=0
+@host act teleport id=e16 x=4 z=12 y=0
+@host act stop
+@c1 act stop
+@c2 act stop
+step 60
+invariant !journal "desync"
+
+# --- a player that is not there: the refusal names the ones that are
+@c1 act? possess player=3
+@c1 expect result contains "there is no player 3 with a body now; players: 0 (e5), 1 (e15), 2 (e16)"
+
+# --- c1's agent plays player 1 with the player's scope
+@c1 session --agent bot --scope player --player 1
+@c1 observe
+@c1 expect result contains "YOU  e15"
+@c1 act? teleport id=e15 x=0 z=0 y=0
+@c1 expect result contains "`teleport` needs dev scope; agent `bot` has player scope"
+@c1 act move_to target='{"x":2,"z":4}'
+step 300
+@host expect field e15 Transform.translation.z < 6
+@c1 expect field e15 Transform.translation.z < 6
+@c2 expect field e15 Transform.translation.z < 6
+# the others stayed at their posts
+@host expect field e5 Transform.translation.z > 11
+@host expect field e16 Transform.translation.z > 11
+
+# --- the host's agent bound to player 1 looks from c1's body
+@host session --agent coach --player 1
+@host observe
+@host expect result contains "YOU  e15"
