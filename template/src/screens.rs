@@ -33,10 +33,10 @@ fn trophies(world: &World, _: &str) -> Option<UiValue> {
 }
 
 /// Under the main menu's Continue: that there is no save to continue yet, and nothing (the hint
-/// hides) once there is one. The press itself is the engine's `continue_game`, which loads the
-/// newest save.
+/// hides) once there is one that reads. The press itself is the engine's `continue_game`, which
+/// loads the newest save.
 fn continue_note(world: &World, _: &str) -> Option<UiValue> {
-    let note = if shards::save::any_save(world) { String::new() } else { shards::locale::text(world, "menu-no-save", &Args::new()) };
+    let note = if shards::save::can_continue(world) { String::new() } else { shards::locale::text(world, "menu-no-save", &Args::new()) };
     Some(UiValue::Text(note))
 }
 

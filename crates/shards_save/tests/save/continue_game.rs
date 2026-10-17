@@ -5,7 +5,7 @@ use std::fs;
 use std::time::{Duration, SystemTime};
 
 use serde_json::json;
-use shards::save::{any_save, newest_slot, SaveConfig, SaveKind, SaveSlots};
+use shards::save::{any_save, can_continue, newest_slot, SaveConfig, SaveKind, SaveSlots};
 use shards::testing;
 
 use shards::prelude::*;
@@ -81,6 +81,25 @@ fn a_slot_that_does_not_read_is_passed_over() {
     let done = ok(&mut app, "continue_game", json!({}));
     assert!(done.contains("loaded world/camp, character/ford"), "each kind its newest that reads: {done}");
     assert_eq!((hero(&mut app).name, calendar(&app).day), ("Bo".to_owned(), 40));
+}
+
+#[test]
+fn the_hint_under_continue_asks_for_a_save_that_reads() {
+    let dir = TempDir::new("continue_hint");
+    let mut app = at_the_menu(&dir);
+    assert!(!can_continue(app.world()));
+    save(&dir, "camp", "Ada", 40);
+    assert!(can_continue(app.world()), "a save written meanwhile is seen at the next ask");
+    // Every copy of every kind damaged: the slot is listed, but there is nothing to load.
+    for kind in ["world", "character"] {
+        for entry in fs::read_dir(dir.file(kind)).unwrap() {
+            fs::write(entry.unwrap().path(), "not a save").unwrap();
+        }
+    }
+    assert!(any_save(app.world()));
+    assert!(!can_continue(app.world()), "the files changed, so they are read again");
+    let err = fails(&mut app, "continue_game", json!({}));
+    assert!(err.starts_with("there is no save to continue yet"), "{err}");
 }
 
 #[test]

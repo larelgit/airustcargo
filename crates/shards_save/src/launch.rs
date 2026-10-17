@@ -22,6 +22,10 @@
 //! way (the host: the world and its character, a client: its character, sent to the host);
 //! the network code calls [`load_launch_slot`] or [`load_launch_slots`] itself.
 
+use std::path::PathBuf;
+use std::sync::Mutex;
+use std::time::SystemTime;
+
 use ai_core::journal::{self, JournalKind};
 use ai_core::{call_tool, AgentSessions, Scope};
 use bevy::prelude::*;
@@ -141,12 +145,48 @@ pub fn newest_slot(world: &World, kind: SaveKind) -> Option<String> {
         .map(|(_, slot)| slot)
 }
 
-/// Whether the save folder has a slot of any kind (its files listed, not read): cheap enough for a
-/// menu to ask every frame whether there is something to continue. [`newest_slot`] reads them.
+/// Whether the save folder has a slot of any kind (its files listed, not read). A slot whose
+/// copies are all damaged counts: [`can_continue`] says whether `continue_game` has one to load.
 pub fn any_save(world: &World) -> bool {
     let Some(config) = world.get_resource::<SaveConfig>() else { return false };
     let store = config.store();
     SaveKind::ALL.into_iter().any(|kind| !store.slots(kind).is_empty())
+}
+
+/// The save folders' files as last read by [`can_continue`] (path, size, time), and its answer.
+#[derive(Resource, Default)]
+pub(crate) struct ContinueCache(Mutex<Option<(Vec<FileStamp>, bool)>>);
+
+type FileStamp = (PathBuf, u64, Option<SystemTime>);
+
+/// Whether `continue_game` has a save to play on from: a slot of some kind with a copy that
+/// reads ([`newest_saves`] is not empty). Cheap enough for a menu to ask every frame: the
+/// copies are read again only when a save folder's files change (a name, a size or a time).
+pub fn can_continue(world: &World) -> bool {
+    let Some(config) = world.get_resource::<SaveConfig>() else { return false };
+    let store = config.store();
+    let mut stamps: Vec<FileStamp> = SaveKind::ALL
+        .into_iter()
+        .filter_map(|kind| std::fs::read_dir(store.dir(kind)).ok())
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .map(|entry| {
+            let meta = entry.metadata().ok();
+            (entry.path(), meta.as_ref().map_or(0, |m| m.len()), meta.and_then(|m| m.modified().ok()))
+        })
+        .collect();
+    stamps.sort();
+    let cache = world.get_resource::<ContinueCache>().map(|c| &c.0);
+    if let Some(Ok(seen)) = cache.map(Mutex::lock)
+        && let Some((files, answer)) = seen.as_ref()
+        && *files == stamps
+    {
+        return *answer;
+    }
+    let answer = !newest_saves(world).is_empty();
+    if let Some(Ok(mut seen)) = cache.map(Mutex::lock) {
+        *seen = Some((stamps, answer));
+    }
+    answer
 }
 
 /// The newest save of each kind ([`newest_slot`]): the world's first, then the character's.

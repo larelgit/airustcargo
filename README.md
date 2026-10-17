@@ -3795,7 +3795,9 @@ NPCs plan on the local grid`).
 текущими, запись реплея начинается с загруженного состояния. Ответ: `the game starts at tick 0; loaded world/camp,
 character/camp`. Сохранений нет — отказ без изменений, игра остаётся в меню: `there is no save to continue yet (none in
 saves): \`new_game\` starts a game, and saving it makes one`. `shards::save::newest_slot(world, kind)` читает копии,
-`any_save(world)` только смотрит в папку (меню может спрашивать каждый кадр, есть ли что продолжать).
+`any_save(world)` только смотрит в папку (слот, все копии которого испорчены, тоже считается), а `can_continue(world)`
+говорит, есть ли что загрузить `continue_game`: копии он читает заново, только когда файлы папки сменились (имя, размер,
+время), поэтому меню может спрашивать его каждый кадр.
 
 **Кооператив (`shards::coop`, `CoopPlugin` в `EnginePlugins`).** Сеть (`shards_net`) и сохранения (`shards_save`) друг о друге
 не знают; их сводит зонтик: заполняет `NetHooks` (`join_character`, `on_join_character`, `capture_character`,

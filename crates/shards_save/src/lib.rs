@@ -70,7 +70,7 @@ use shards_core::{EngineAppExt, EngineConfig};
 
 pub use autosave::{flush_saves, SaveDef, SaveRequests, DEFAULT_DEBOUNCE_SECS};
 pub use file::{Fault, GameInfo, SaveFile, SectionData, SectionSet, FORMAT};
-pub use launch::{any_save, load_launch_slot, load_launch_slots, newest_saves, newest_slot, LaunchLoad, LaunchLoaded, LaunchOutcome};
+pub use launch::{any_save, can_continue, load_launch_slot, load_launch_slots, newest_saves, newest_slot, LaunchLoad, LaunchLoaded, LaunchOutcome};
 pub use ops::{
     apply_sections, capture_sections, check_parts, check_save_dir, check_state, default_body, load_parts, load_slot, newer_check, newer_sections, prepare, read_file,
     replay_playing, resolve_body, save_now, save_part, save_parts, save_slot, slot_from_name, write_sections, Applied, ApplyError, CheckReport, FileCheck, LoadReport,
@@ -115,6 +115,7 @@ impl Plugin for SavePlugin {
             .init_resource::<SaveRequests>()
             .init_resource::<SaveRouting>()
             .init_resource::<LaunchLoaded>()
+            .init_resource::<launch::ContinueCache>()
             .add_content::<SaveDef>()
             .add_engine_module("save", VERSION)
             .add_ai_status("save", status)
