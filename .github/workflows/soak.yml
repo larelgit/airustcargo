@@ -1,14 +1,14 @@
 # E7's acceptance, played again: a live stand of a host and two clients (`--stand 2`) on links of
 # 150 ms one way with 2% loss, played by the seeded agents of `shards soak` for half an hour of
 # game time, the host changing the region and saving on the way. Exit code 3 (and the stand's log)
-# on the first desync. Every Monday, by hand, and on a push whose message contains `[soak]`.
+# on the first desync. Every night, by hand, and on a push whose message contains `[soak]`.
 # CI's headless-cli job plays three minutes of the same on every push.
 
 name: soak
 
 on:
   schedule:
-    - cron: "17 3 * * 1"
+    - cron: "17 2 * * *"
   push:
   workflow_dispatch:
     inputs:
@@ -68,3 +68,8 @@ jobs:
             --regen wilds --regen-minutes 5 --save-minutes 3
           cargo shards --port-file "$port_file" stand stop
           stand_pid=
+      - name: Keep what the run wrote
+        if: failure()
+        uses: ./.github/actions/upload-failure
+        with:
+          name: soak

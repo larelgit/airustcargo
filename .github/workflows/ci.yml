@@ -10,7 +10,8 @@
 #                  `stand` line names, and a three-minute soak on E7's stand
 #   replays-window the same replays verified with a window (Xvfb + software Vulkan); optional
 #
-# Elsewhere: soak.yml (half an hour of a live stand, weekly), record-replays.yml (the reference
+# Elsewhere: nightly.yml (the long checks, every night), soak.yml (half an hour of a live stand, every
+# night), cross.yml (Windows and Ubuntu 22.04 verify the reference replays, weekly), record-replays.yml (the reference
 # replays recorded again on Linux, on demand).
 #
 # What the jobs run you can run by hand: the commands are the same.
@@ -79,6 +80,11 @@ jobs:
             target/nextest/ci/junit.xml
             target/nextest/ci-perf/junit.xml
           if-no-files-found: warn
+      - name: Keep what the run wrote
+        if: failure()
+        uses: ./.github/actions/upload-failure
+        with:
+          name: test
 
   # ---------------------------------------------------------------------------------------
   clippy:
@@ -97,6 +103,11 @@ jobs:
       # What people copy must be clean too.
       - name: cargo clippy (template)
         run: cargo clippy --manifest-path template/Cargo.toml --all-targets --locked -- -D warnings
+      - name: Keep what the run wrote
+        if: failure()
+        uses: ./.github/actions/upload-failure
+        with:
+          name: clippy
 
   # ---------------------------------------------------------------------------------------
   # The template is a workspace of its own (template/Cargo.toml has [workspace]) whose only
@@ -161,6 +172,11 @@ jobs:
       - name: Worldgen report, 1000 seeds of the valley
         working-directory: template
         run: cargo run --locked -- --worldgen-report valley --seeds 1..1000
+      - name: Keep what the run wrote
+        if: failure()
+        uses: ./.github/actions/upload-failure
+        with:
+          name: template
 
   # ---------------------------------------------------------------------------------------
   # A real game process, no window, played by the CLI the way an agent plays it.
@@ -260,6 +276,11 @@ jobs:
           start_stand "clients=2 latency=150 loss=0.02"
           cargo shards --port-file "$port_file" soak --seed 7 --minutes 3 --regen wilds --regen-minutes 1 --save-minutes 1
           stop_stand
+      - name: Keep what the run wrote
+        if: failure()
+        uses: ./.github/actions/upload-failure
+        with:
+          name: headless-cli
 
   # ---------------------------------------------------------------------------------------
   # E1: the same replay matches with a window (under Xvfb, drawn by a software Vulkan driver)
@@ -305,3 +326,8 @@ jobs:
             echo "== $replay"
             xvfb-run -a cargo run --locked -- --replay "$replay" --verify --windowed
           done
+      - name: Keep what the run wrote
+        if: failure()
+        uses: ./.github/actions/upload-failure
+        with:
+          name: replays-window

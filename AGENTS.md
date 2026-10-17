@@ -356,5 +356,6 @@ It is written when a panic happens on another thread (the render thread, a task)
   a replay from a snapshot and a replay of the sandbox's saves) are checked by `cargo test` (and by nextest). After a deliberate change to gameplay or content, record them again:
   `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays` (for the template —
   `cargo test --test game record_reference_replays -- --ignored` in `template/`).
+- The long checks are not run by hand but by `.github/workflows/nightly.yml` (worldgen on 100000 seeds, the GPU tests, performance), `soak.yml` (half an hour of a live stand) and `cross.yml` (the reference replays on Windows and Ubuntu 22.04, weekly); a failed night opens an issue labelled `nightly`. Their commands are the same as above.
 - If you change a module's behaviour, update its section in `docs/manual.md`, `docs/engine-progress.md` (statuses) and `CHANGELOG.md`
   (`Unreleased`); update `README.md` only when what it says about the project changes (features, quick start, steps).

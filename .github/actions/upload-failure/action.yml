@@ -1,0 +1,36 @@
+name: Keep what a failed run left behind
+description: >
+  For a job that failed: uploads what the game and the tests wrote to their working folders
+  (replays/, crashes/, snapshots/, shots/) and the game logs in the runner's temp folder
+  ($RUNNER_TEMP/*.log). Put it last in a job with `if: failure()`.
+
+inputs:
+  name:
+    description: The job's name; the artifact is called `failure-<name>`.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/upload-artifact@v4
+      with:
+        name: failure-${{ inputs.name }}
+        # The game writes to the working folder it runs in: the repository root for `cargo sandbox`
+        # and the CLI, the package folder for tests (crates/<crate>/), template/ for the template.
+        # tests/replays/ (checked in) is not listed: only the folders the game creates.
+        path: |
+          replays/
+          crashes/
+          snapshots/
+          shots/
+          crates/*/replays/
+          crates/*/crashes/
+          crates/*/snapshots/
+          crates/*/shots/
+          template/replays/
+          template/crashes/
+          template/snapshots/
+          template/shots/
+          ${{ runner.temp }}/*.log
+        if-no-files-found: ignore
+        retention-days: 14
