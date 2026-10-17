@@ -20,6 +20,8 @@ use std::path::Path;
 use bevy::prelude::*;
 use serde_json::Value;
 use shards_script::{AgentScope, Driver, JournalLine, JournalRead, Outcome, Script, SessionConfig, Status};
+use shards_script::fuzz::ToolDesc;
+use shards_script::Halted;
 
 pub use shards_script::{Failure, FailureKind, LogLine, Report};
 
@@ -28,7 +30,7 @@ use crate::journal::{self, AiJournal, JournalKind};
 use crate::rng::SimSeed;
 use crate::session::{configure_session, session_json, Scope, SessionChange};
 use crate::sim;
-use crate::tools::call_tool;
+use crate::tools::{call_tool, AiTools, CallOutcome};
 
 /// Runs the scenario in `path` against `world`. The report is named after the file.
 pub fn run_file(world: &mut World, path: impl AsRef<Path>) -> Report {
@@ -49,14 +51,26 @@ pub fn run_str(world: &mut World, name: &str, text: &str) -> Report {
 }
 
 /// Drives the world the way BRP does: every call goes through [`call_tool`].
-struct WorldDriver<'w> {
-    world: &'w mut World,
+pub struct WorldDriver<'w> {
+    pub world: &'w mut World,
+}
+
+/// The tools of `world` as `ai/tools` lists them for a dev agent, for [`shards_script::fuzz::run`].
+pub fn tool_list(world: &World) -> Vec<ToolDesc> {
+    let specs = world.get_resource::<AiTools>().map(|t| t.specs(Scope::Dev)).unwrap_or_default();
+    ToolDesc::list_from_json(&serde_json::to_value(specs).unwrap_or_default())
+}
+
+/// A tool call's answer as a [`Driver`] reports it.
+pub fn outcome_of(out: CallOutcome) -> Outcome {
+    let halted = out.halted.map(|h| Halted { reason: h.reason, replay: h.replay });
+    Outcome { ok: out.ok, result: out.result, tick: Some(out.tick), halted }
 }
 
 impl Driver for WorldDriver<'_> {
     fn call(&mut self, agent: &str, tool: &str, args: Value) -> Result<Outcome, String> {
         let out = call_tool(self.world, agent, tool, args);
-        Ok(Outcome { ok: out.ok, result: out.result, tick: Some(out.tick) })
+        Ok(outcome_of(out))
     }
 
     fn session(&mut self, agent: &str, config: &SessionConfig) -> Result<Outcome, String> {

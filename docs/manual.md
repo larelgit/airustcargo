@@ -2642,18 +2642,47 @@ replay finished at tick 230: identical to the recording (4 checks); 1 invariant 
   `crash_replays: false` on `EngineConfig` turns it off too (or `AiInvariants.replays = false`).
 - The rules are checked by whoever simulates the world: on a network client, `InvariantSystems` does not run (see "Groundwork for networking (phase C)").
 
-**Fuzzing.** `shards fuzz --seed S --steps N` sends N random player inputs (walking, attacking, dodging; targets are taken from
-`observe`; an attack without a target is `light_attack`, with a target `attack`), and after each one runs `step` for 1–30 ticks (`--max-ticks`). The same seed against the same fresh game gives the same calls.
+**Fuzzing.** `shards fuzz --seed S --steps N` plays N rounds: each sends one random player input (or, with `--chaos`, a share of them make developer calls instead) and then runs `step` for 1–30 ticks (`--max-ticks`).
+The same seed against the same fresh game gives the same calls. The loop lives in `shards_script::fuzz` and moves JSON through a
+`Driver`, like scenarios and soaks: `shards fuzz` plays a live game over BRP, and a test plays the same run in-process
+(`ai_core::scenario::WorldDriver`, `ai_core::scenario::tool_list`). It has no model in it.
+
+- **Inputs from the tool schemas (`--alphabet schema`, the default).** The alphabet is every tool the game lists with scope `player` and
+  kind `action` (`ai/tools`, what `shards tools --json` prints), sorted by name. The arguments are made from the tool's own
+  `input_schema` by `shards_script::schema`: objects (every `required` property, each optional one half of the time), `enum` and `const`,
+  `$ref` into `$defs`, strings, numbers and integers (inside `minimum`/`maximum` when the schema has them, else 0, 1, -1, 0.5 and 1e6),
+  booleans, short arrays, `anyOf`/`oneOf`/`allOf` and nullable types. A property that takes an entity id is marked `"format":
+  "entity_id"` in the schema (the engine's `Id`); it gets one of the ids `observe` lists, and one call in fifty an id nobody has
+  (`e999999`). Free text is, half of the time, a word the game knows: the ids of its content (`content_list`, asked once at the start),
+  and the names that refusals list (`unknown prefab …; known: skeleton, pillar`), learned as the run goes. The same seed, tool list and
+  observations make the same calls; a unit test pins it.
+- `--weights move=3,dodge=2` tilts the choice (the other tools weigh 1, weight 0 drops a tool; a name that is not in the alphabet is an
+  error that lists the names).
+- `--invalid P` (default 0.05) is the share of the inputs that break exactly one argument on purpose: a missing required property, a value of
+  the wrong type, a value under its `minimum`, an unknown enum value, or arguments that are not an object. The game must refuse them and the
+  error must say how to fix the call (`Expected: move(dir: string, meters: number)`); the final line counts how many it took anyway.
+- `--alphabet classic` plays `move`, `attack`, `light_attack` and `dodge` with the exact random draws of the first fuzzer, so the seeds of
+  old bug reports reproduce (a test pins the first calls). `--invalid` and the vocabulary belong to the schema alphabet.
+- **Chaos (`--chaos P`, default 0).** That share of the rounds makes one developer call, or a pair of them, instead of an input, drawn
+  from the seed: `snapshot_save` then `snapshot_load` of that file (`snapshots/fuzz-seed<S>.json`), `regen` of a region from
+  `content_list kind=region`, `content_reload`, `save_game` then `load_game` in the slot `fuzz` (the player's slot is left alone), `pause`
+  (a running game is paused and resumed; a paused one is only paused again, because a resume would let real time run ticks and the seed would
+  no longer make the same game), `speed` and back, `heal`. The agent needs dev scope (the default `dev` has it). Nightly runs use `--chaos
+  0.02`. A chaos call the game refuses is counted (`chaos_refused`), and the first one is named in the summary line (`; 2 chaos calls refused, the first heal {}: …`), so the count is never just a number. A round trip is different: if the first half worked and the second is refused (`snapshot_load` of the snapshot just saved, `load_game` of the save just made), the world does not come back as it was, and that ends the run as a finding: `fuzz seed S: a chaos call broke the game after N rounds (ticks A → B): snapshot_load {…} was refused: <the game's answer>`, the replay is saved as for a halt, and `shards fuzz` exits with code 3. A game that halts during a chaos call stops the run like any other halt. In the sandbox every chaos call works (a test asserts `chaos_refused == 0`); a control test plants a world fact that no snapshot holds (`add_snapshot_check`) and shows the run ends with the finding.
+- The final line counts the inputs, the refusals (part of play: no stamina, busy, no such target), the calls broken on purpose and the chaos
+  rounds. `--chaos` and `--invalid` must be shares from 0 to 1; a bad flag exits with code 2.
+
 If a rule is broken, `fuzz` prints the `step` reply and the path to the violation's replay, and exits with code 3. If not, it saves the
 session to `replays/fuzz-seed<S>.json`. Real output:
 
 ```text
-$ shards fuzz --seed 1 --steps 50
-fuzz seed 1: 50 inputs, nothing broke (ticks 0 → 857)
+$ shards fuzz --seed 1 --steps 50 --chaos 0.02
+fuzz seed 1: 50 rounds, nothing broke (ticks 0 → 857)
+player inputs 49 (36 refused, 3 broken on purpose, 0 of those taken), chaos rounds 1 (0 calls refused)
 replay: /…/replays/fuzz-seed1.json
 $ shards assert add low 'field:5:Health.current<50'       # in a fresh game
 $ shards fuzz --seed 3 --steps 300                        # exit code 3
-fuzz seed 3: the game halted after 72 inputs (ticks 0 → 1053)
+fuzz seed 3: the game halted after 72 rounds (ticks 0 → 1053)
 ran 16 ticks (1037 → 1053), stopped: invariant low violated at tick 1053 (replay: replays/invariant-low-tick1053.json)
 …
 replay: replays/invariant-low-tick1053.json
@@ -4469,7 +4498,7 @@ a separate workspace; one `#[ignore]`: recording its references).
 | crate | what it checks |
 |---|---|
 | `ai_core` | snapshots (saving and loading, refusal of a snapshot from another game, references to entities, a replay from a snapshot without loading), ids (renumbering, a taken id), the journal, RNG, the compass and line of sight (LOS), schemas, simulation steps, the paths for screenshots, replays and snapshots (only `shots/`, `replays/`, `snapshots/`; absolute paths, `..`, symlinks), `shot` labels in image pixels at any `render_scale`, the replay format and report, the ban on editing `AiId` through BRP, a busy port, `instance` in `ai/status`, the port file, the token on every BRP method, running scenarios in-process, invariants (game and session rules, firing once, the route to the host), tick time, the parts of the replay checks and the divergence report, bit-for-bit results of `ops` and of glam on `libm` (`determinism`) |
-| `shards_script` | without Bevy: conditions and arguments, words as in a shell, parsing of each scenario command and the text of each error, runs against a fake game (expectations, `mark`, invariants, `session`, `seed`, a lost game, a step, a run cut short by a violated invariant), the `warning` and `error` conditions; the inputs of `fuzz` and `soak` from a seed, `soak` on a fake stand (region changes and saves on a schedule, a dead body healed by the host, a stop on a desync, a summary per participant) |
+| `shards_script` | without Bevy: conditions and arguments, words as in a shell, parsing of each scenario command and the text of each error, runs against a fake game (expectations, `mark`, invariants, `session`, `seed`, a lost game, a step, a run cut short by a violated invariant), the `warning` and `error` conditions; the inputs of `fuzz` and `soak` from a seed, the argument generator (each schema construct, ids, invalid arguments, a seed gives the same arguments), `fuzz` on a fake game (the alphabet and weights, `classic` draws as the first fuzzer, chaos, a halt), `soak` on a fake stand (region changes and saves on a schedule, a dead body healed by the host, a stop on a desync, a summary per participant) |
 | `shards_cli` | the port from `--port-file`, the `ready` line, the token by port number; `shards scenario` against a fake game on localhost (exit codes 0/1/2); the exit code from the outcome of `step` (3 — the game stopped) |
 | `shards_core` | loading does not shift ticks, pause, `after_loading`, presses last one tick, `move_to`, `ai/status` names the modules |
 | `shards_content` | definitions and their files, duplicates and references name the file and the field, `check_dir`, prefabs (`extends`, overrides), a reload is written to a replay and played back, a broken edit is rejected (and so is an edit to a file where even one definition is broken, as a whole), a broken definition gets its own error, the other definitions of the file are loaded, an edit to a file in a running game |
@@ -4493,6 +4522,23 @@ replays, content, co-op (host and guest at 150 ms and 2 %: the guest's trophy on
 the host's replay in a single-player game), the region
 (a thousand seeds of the valley, the manifest byte for byte, the loading screen without a window, the column of the ruin, the raider on the navmesh), the manifest (its only
 dependency is `shards`).
+
+**Tool contracts** (`crates/sandbox/tests/sandbox/tool_contracts.rs`, in the sandbox test binary, about 15 s in debug). Every
+tool of the sandbox that is a query or an action, at any scope, plus `step` (the other control tools move time or the session
+itself), is called 30 times with arguments made from its own schema by the fuzzer's generator (see "Fuzzing"): 20 that satisfy the schema and
+10 that break exactly one argument on purpose, each of the ways in turn. Each tool plays on a fresh game, so tools cannot affect each other. For
+every call: no gameplay system fails and the tool does not panic (neither the error nor the journal says so); an error is not empty; and the
+error of a call the schema rejects names the tool's signature or the bad argument (the house rule: an error says how to fix the call; a call
+whose error is the same without the break, because the other arguments are what the game refuses, is not held to it). At the end of a tool the
+session's replay is played from tick 0 in a fresh game and must match, which proves that every successful action call was recorded. `SKIP` in
+the file is the one list of tools that cannot run in a test app, each with its reason (it is empty: `quit` and the Steam tools are not
+registered in a test app, and `shot` answers without a GPU). The checker proves itself: control tests plant each kind of bug in a tool of a
+test game (a tool that panics, one that fails with an empty error, one whose error does not say how to fix the call, an action that is not
+recorded, a gameplay system that panics) and show that the checker names it. The generator does not know what a tool wants, so tools with a
+narrow domain (`spawn_prefab`, `use_item`) take few of their 20 valid calls; the fuzzer, which makes thousands, goes deeper. `fuzz.rs`
+beside it runs the fuzzer in-process: a run with chaos leaves a session that plays back, the same seed plays the same game, `classic` plays
+the sandbox, and a planted panic is found and reported. These tests write `snapshots/` and `replays/` in `crates/sandbox/`, so they share the
+`snapshot-file` group of `.config/nextest.toml` with the other tests that do.
 
 **The window against the mode without a window.** The window needs a display and a GPU; the screenshot without a window (`--offscreen`) needs a GPU or software rendering,
 so they are not run by `cargo test` (the screenshot test without a window is under `#[ignore]`). The replays under Xvfb and software Vulkan check that the window and the mode without a window are identical (`apt install xvfb mesa-vulkan-drivers

@@ -14,7 +14,7 @@ use std::process::ExitCode;
 
 use serde_json::{json, Value};
 use shards_script::{
-    parse_journal_text, run_with, AgentScope, Driver, FailureKind, JournalRead, Outcome, Script, SessionConfig, StandHeader, Status,
+    parse_journal_text, run_with, AgentScope, Driver, FailureKind, Halted, JournalRead, Outcome, Script, SessionConfig, StandHeader, Status,
     CHECK_AGENT, HOST,
 };
 
@@ -90,6 +90,10 @@ impl Driver for ClientDriver<'_> {
             ok: reply.get("ok").and_then(Value::as_bool).unwrap_or(true),
             result: reply.get("result").cloned().unwrap_or(Value::Null),
             tick: reply.get("tick").and_then(Value::as_u64),
+            halted: reply.get("halted").filter(|h| !h.is_null()).map(|h| Halted {
+                reason: h["reason"].as_str().unwrap_or_default().to_owned(),
+                replay: h["replay"].as_str().map(str::to_owned),
+            }),
         })
     }
 
