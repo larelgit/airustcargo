@@ -42,6 +42,8 @@
             visible_meshes: Some(2000),
             // ...from a few dozen meshes (48: grass near and far, bushes, rocks, characters, boxes).
             mesh_assets: Some(80),
+            // Draw commands once Bevy has batched them, cameras and shadow maps: 75 measured.
+            draws: Some(150),
         ),
     ),
 }

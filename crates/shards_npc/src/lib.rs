@@ -112,7 +112,7 @@ pub use def::{
 };
 pub use director::{AttackToken, Grant, TokenGranted, TokenReturned};
 pub use nav::{
-    bake_files, find_path, local_grid_path, local_grid_route, navmesh_path, navmesh_route, plain_sight, region_nav, route_on,
+    bake_files, bake_region, find_path, local_grid_path, local_grid_route, navmesh_path, navmesh_route, plain_sight, region_nav, route_on,
     routes_at, routes_for, straight_clear, NavAgent, NavBodyDef, NavError, NavPath, NavPaths, NavQuery, NavRegion, NavSettingsDef,
     NavTile,
 };

@@ -15,9 +15,11 @@
 //! colliders on top-level entities. `Transform::scale` is ignored: size goes in the
 //! [`Shape`].
 //!
-//! The broadphase is a linear scan with an AABB prefilter (O(n) per query). A BVH can
-//! replace it behind the same API once worlds grow.
+//! The broad phase is a grid over the ground plane in levels of growing cells (`broad.rs`):
+//! a query tests the colliders in the cells it covers, in id order, and gets the answer a
+//! test of every collider would give.
 
+mod broad;
 pub(crate) mod world;
 
 use std::fmt;

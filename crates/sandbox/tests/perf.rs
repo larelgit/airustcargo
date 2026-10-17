@@ -208,6 +208,29 @@ fn the_reference_scene_loads_sets_up_and_measures_its_ticks_headless() {
     assert!(lines[0].starts_with("-     region load ") && lines.iter().any(|l| l.contains("nothing is drawn headless")), "{lines:#?}");
 }
 
+/// The scene at a region's full size (`--perf reference96`): the expanse, 8 x 8 tiles of 96 m, loads
+/// (timed), the navigation of its four tiles is baked for both body classes (timed, nothing
+/// written), the fight is set up at its gate and the ticks are measured; nothing is judged here.
+#[test]
+fn the_full_size_scene_loads_bakes_its_tiles_and_measures_its_ticks_headless() {
+    let _clock = one_clock();
+    let mut app = sandbox::test_app(42);
+    let def = app.world().resource::<shards::content::ContentDb>().get::<PerfDef>("reference96").cloned().expect("reference96");
+    let measured = shards::bench::play(&mut app, &def).unwrap();
+    assert_eq!(measured.ticks.ticks, def.ticks);
+    assert!(measured.region_load.is_some() && measured.frames.is_none(), "{measured:?}");
+    assert_eq!(measured.nav_bake.map(|(bakes, _)| bakes), Some(8), "4 tiles x 2 body classes: {measured:?}");
+    // The expanse spans x -384..384, z 200..968: its three camps 150 m away at least, and the
+    // twelve of the setup at the gate.
+    let in_the_region = monsters(&mut app, |m, _| (-384.0..384.0).contains(&m.x) && (200.0..968.0).contains(&m.z));
+    let in_the_fight = monsters(&mut app, |m, player| m.distance(player) < 12.0);
+    assert_eq!((in_the_region, in_the_fight), (15, 12));
+    let physics = app.world().resource::<shards::motion::PhysicsWorld>();
+    assert!(physics.len() > 1800, "a region of this size has some 1900 colliders: {}", physics.len());
+    let lines: Vec<String> = shards::bench::judge(&def.budgets, &measured, false).iter().map(|v| v.line()).collect();
+    assert!(lines[0].starts_with("-     region load ") && lines[1].starts_with("-     nav bake "), "{lines:#?}");
+}
+
 /// Offscreen the game plays the scene in real time and its frames are measured: the main and the
 /// render world, the GPU (where it measures), the meshes drawn.
 #[test]

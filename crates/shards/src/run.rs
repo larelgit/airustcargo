@@ -1195,7 +1195,11 @@ fn perf(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, id: &str) -
     match &def.region {
         Some(r) => {
             let took = measured.region_load.unwrap_or_default().as_secs_f64();
-            println!("loaded in {:.2}s, region {} seed {} in {took:.2}s of it", measured.load.as_secs_f64(), r.region, r.seed);
+            let baked = measured
+                .nav_bake
+                .map(|(bakes, took)| format!("; its navigation baked in {:.2}s ({bakes} tiles x body classes)", took.as_secs_f64()))
+                .unwrap_or_default();
+            println!("loaded in {:.2}s, region {} seed {} in {took:.2}s of it{baked}", measured.load.as_secs_f64(), r.region, r.seed);
         }
         None => println!("loaded in {:.2}s", measured.load.as_secs_f64()),
     }

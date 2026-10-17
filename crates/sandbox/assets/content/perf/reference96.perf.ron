@@ -1,0 +1,51 @@
+// The reference scene at the size the game design gives a region: `cargo run -p sandbox --release
+// -- --perf reference96 --offscreen` (headless, without --offscreen, the ticks alone). The expanse
+// at seed 42 (`region/expanse.region.ron`: 8 x 8 tiles of 96 m, about 1900 colliders, its scatter),
+// the player (e5) immortal at its gate in the middle (cell (4, 4), centered at (48, 632)) and twelve
+// skeletons there with it: fifteen monsters in the region with the three of its camps (150 m away
+// at least); 1080p. Besides the tick and the frame it times the region's load (the generator, the
+// tiles, the stitched navmesh of both body classes) and the bake of the navigation of its four
+// tiles for both classes, which `--bake-nav` does whenever a tile changes.
+{
+    "reference96": (
+        region: Some((region: "expanse", seed: 42)),
+        setup: [
+            "god",
+            "teleport id=e5 x=48 z=632",
+            "spawn_prefab id=camp_skeleton x=41 z=635",
+            "spawn_prefab id=camp_skeleton x=44 z=635",
+            "spawn_prefab id=camp_skeleton x=47 z=635",
+            "spawn_prefab id=camp_skeleton x=50 z=635",
+            "spawn_prefab id=camp_skeleton x=53 z=635",
+            "spawn_prefab id=camp_skeleton x=55 z=635",
+            "spawn_prefab id=camp_skeleton x=41 z=637",
+            "spawn_prefab id=camp_skeleton x=44 z=637",
+            "spawn_prefab id=camp_skeleton x=47 z=637",
+            "spawn_prefab id=camp_skeleton x=50 z=637",
+            "spawn_prefab id=camp_skeleton x=53 z=637",
+            "spawn_prefab id=camp_skeleton x=55 z=637",
+        ],
+        size: Some((1920, 1080)),
+        warmup: 120,
+        ticks: 600,
+        // Measured in a release build on an RTX 5080 (October 2026): 352 frames a second, 2.6 ms a
+        // frame on average and 9 ms the worst; ticks 0.63 ms on average; the region loaded in 0.6 s
+        // (3.9 s when physics tested every collider for every query) and its tiles baked in 0.8 s.
+        budgets: (
+            // Players see 60 frames a second: a frame within 16.7 ms, 99 in 100 of them at least.
+            frame_ms: Some(16.7),
+            frame_avg_ms: Some(8.0),
+            tick_avg_ms: Some(2.0),
+            // The design allows a region 10-15 s behind its loading screen; this one takes well
+            // under a second, and 3 s is a regression.
+            region_load_s: Some(3.0),
+            nav_bake_s: Some(4.0),
+            // The scatter is most of them: about 31 600 mesh entities with its levels of detail.
+            entities: Some(45000),
+            visible_meshes: Some(3000),
+            mesh_assets: Some(40),
+            triangles: Some(300000),
+            draws: Some(150),
+        ),
+    ),
+}
