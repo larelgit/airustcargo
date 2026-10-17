@@ -916,3 +916,100 @@ fn a_snapshot_from_before_any_level_loads_exactly_after_one_and_back() {
     assert!(report.exact(), "{:?}", report.differences);
     assert_eq!(replay::state_hash(fresh.world()), back.state_hash);
 }
+
+// --- content edits made before the snapshot -------------------------------------------------
+
+/// The first light attack as the game has it now (JSON).
+fn light_1(app: &App) -> Value {
+    app.world().resource::<shards::content::ContentDb>().get_json("action", "light_1").unwrap().clone()
+}
+
+/// `content_apply` arguments that make the first light attack hit for 90 instead of its file's
+/// 20: a definition no file says.
+fn harder_light(app: &App) -> Value {
+    let before = light_1(app);
+    let mut def = before.clone();
+    def["hits"][0]["damage"] = json!(90);
+    json!({"changes": [{"kind": "action", "id": "light_1", "def": def, "before": before}]})
+}
+
+fn edits_in(snapshot: &Snapshot) -> Option<&Value> {
+    snapshot.resources.iter().find(|(path, _)| path.ends_with("::ContentEdits")).map(|(_, edits)| edits)
+}
+
+#[test]
+fn a_content_edit_made_before_the_snapshot_comes_back_with_it_and_goes_again() {
+    let plain = snapshot::capture(face_to_face().world()).unwrap();
+    assert_eq!(edits_in(&plain), None, "a game without edits saves none: its snapshots are what they were");
+
+    let mut a = face_to_face();
+    let edit = harder_light(&a);
+    ok(&mut a, "content_apply", edit);
+    step(&mut a, 3);
+    let edited = snapshot::capture(a.world()).unwrap();
+    let saved = edits_in(&edited).expect("the edit is in the snapshot");
+    assert_eq!(saved["edits"][0]["kind"], "action");
+    assert_eq!(saved["edits"][0]["id"], "light_1");
+
+    // A fresh game reads the files; the load puts the edit over them, and says so.
+    let mut b = sandbox::test_app(42);
+    assert_eq!(light_1(&b)["hits"][0]["damage"].as_f64(), Some(20.0));
+    let report = snapshot::restore(b.world_mut(), &edited, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert_eq!(light_1(&b)["hits"][0]["damage"].as_f64(), Some(90.0));
+    assert!(
+        report.warnings.iter().any(|w| w == "content: 1 definition as the snapshot's session had it, over the content files"),
+        "{:?}",
+        report.warnings
+    );
+
+    // A load refused after the prepares put the world back, its content too.
+    let mut broken = plain.clone();
+    broken.checks.insert("static_colliders".into(), "0000000000000000".into());
+    let err = snapshot::restore(b.world_mut(), &broken, false).unwrap_err();
+    assert!(err.contains("static_colliders differs"), "{err}");
+    assert_eq!(light_1(&b)["hits"][0]["damage"].as_f64(), Some(90.0), "the edit is still there");
+    assert_eq!(edits_in(&snapshot::capture(b.world()).unwrap()), Some(saved));
+
+    // A snapshot without edits takes them away: the files' version again.
+    let report = snapshot::restore(b.world_mut(), &plain, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert_eq!(light_1(&b)["hits"][0]["damage"].as_f64(), Some(20.0));
+    assert!(report.warnings.iter().any(|w| w == "content: the definitions are the content files' again"), "{:?}", report.warnings);
+    assert_eq!(edits_in(&snapshot::capture(b.world()).unwrap()), None);
+}
+
+#[test]
+fn a_fight_after_a_content_edit_goes_on_the_same_from_a_snapshot() {
+    let mut a = face_to_face();
+    let edit = harder_light(&a);
+    ok(&mut a, "content_apply", edit);
+    step(&mut a, 3);
+    assert_continues_alike("after a content edit", a, |app| {
+        ok(app, "attack", json!({"target": BOSS, "repeat": true}));
+        step(app, 120);
+    });
+}
+
+#[test]
+fn a_replay_from_a_snapshot_taken_after_a_content_edit_plays_in_a_fresh_game() {
+    let file = Scratch::new("edited");
+    let mut origin = face_to_face();
+    let edit = harder_light(&origin);
+    ok(&mut origin, "content_apply", edit);
+    ok(&mut origin, "attack", json!({"target": BOSS, "repeat": true}));
+    step(&mut origin, 30);
+    ok(&mut origin, "snapshot_save", json!({"path": file.1}));
+
+    // Another game goes on from the snapshot and records from it.
+    let mut app = sandbox::test_app(42);
+    ok(&mut app, "snapshot_load", json!({"path": file.1}));
+    assert_eq!(light_1(&app)["hits"][0]["damage"].as_f64(), Some(90.0));
+    step(&mut app, 90);
+    let recording = replay::save(app.world());
+    assert!(recording.start.as_ref().and_then(edits_in).is_some(), "the replay's start carries the edit");
+
+    // A fresh game plays it: the start puts the edit over its files first.
+    let report = shards::testing::verify(&mut sandbox::test_app(42), recording).expect("plays");
+    assert!(report.identical(), "{report}");
+}

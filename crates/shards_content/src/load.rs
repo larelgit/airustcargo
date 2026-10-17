@@ -169,6 +169,7 @@ pub(crate) fn finish_loading(world: &mut World) {
     let summary = db.summary();
     let errors: Vec<String> = failed.into_iter().chain(db.errors().map(ToString::to_string)).collect();
     world.insert_resource(db);
+    crate::edits::refresh(world);
     world.resource_mut::<ContentLoading>().seen = sources.into_iter().map(|s| (s.path, Some(s.text))).collect();
     for error in &errors {
         journal::emit(world, JournalKind::Error, format!("content: {error}"));
@@ -331,6 +332,7 @@ pub(crate) fn reload(world: &mut World, changed: Vec<Source>, removed: Vec<Strin
     }
     if changes.is_empty() {
         world.resource_mut::<ContentDb>().adopt_files(&candidate);
+        crate::edits::refresh(world);
         if names.is_empty() {
             return Ok("content: nothing changed on disk".into());
         }
@@ -343,6 +345,7 @@ pub(crate) fn reload(world: &mut World, changed: Vec<Source>, removed: Vec<Strin
         return Err(text);
     }
     world.resource_mut::<ContentDb>().adopt_files(&candidate);
+    crate::edits::refresh(world);
     Ok(text)
 }
 
@@ -368,14 +371,16 @@ fn recorded_changes(replay: &Replay) -> Vec<DefChange> {
     changes
 }
 
-/// Every definition of kind `T` that `replay` will apply on its way: the ones its
-/// `content_apply` calls set. A module whose definitions name files (a tile's level file)
+/// Every definition of kind `T` that `replay` will apply on its way: the edits of the snapshot
+/// it starts from ([`ContentEdits`](crate::ContentEdits)) and what its `content_apply` calls set. A module whose definitions name files (a tile's level file)
 /// asks for those files while the game loads, so a replayed call right after the change (in
 /// the same tick, where a live session had frames between) finds them loaded. Definitions
 /// that do not read as `T` are left out: the replayed call says what is wrong with them.
 pub fn defs_ahead<T: ContentDef>(replay: &Replay) -> Vec<T> {
-    recorded_changes(replay)
+    let start = replay.start.as_ref().map(crate::edits::changes_in).unwrap_or_default();
+    start
         .into_iter()
+        .chain(recorded_changes(replay))
         .filter(|change| change.kind == T::KIND)
         .filter_map(|change| T::deserialize(change.def?).ok())
         .collect()
@@ -405,6 +410,7 @@ fn restore_for_playback(world: &mut World) {
     match current.with_changes(&kinds, &[], &restore) {
         Ok(db) => {
             world.insert_resource(db);
+            crate::edits::refresh(world);
             let n = restore.len();
             let defs = if n == 1 { "definition" } else { "definitions" };
             journal::emit(world, JournalKind::Event, format!("content: the replay starts from its recorded version of {n} {defs}"));
