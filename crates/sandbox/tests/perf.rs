@@ -11,6 +11,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use shards::ai_core::{self, replay, AiJournal, AiPerf, AiReplay, JournalKind};
+use shards::bench::PerfDef;
 use shards::prelude::*;
 use shards::serde_json::{self, json};
 use shards::testing::ok;
@@ -171,4 +172,64 @@ fn timing_stays_out_of_replays() {
     copy.update();
     let report = copy.world().resource::<AiReplay>().report().cloned().unwrap();
     assert!(report.identical(), "{report}");
+}
+
+/// The sandbox's reference scene (`--perf reference`).
+fn reference(app: &App) -> PerfDef {
+    app.world().resource::<shards::content::ContentDb>().get::<PerfDef>("reference").cloned().expect("the reference scene")
+}
+
+/// Monsters where `near` says, given where the player (e5) is.
+fn monsters(app: &mut App, near: impl Fn(Vec3, Vec3) -> bool) -> usize {
+    let world = app.world_mut();
+    let player = ai_core::Id(ai_core::AiId(5)).entity(world).unwrap();
+    let at = world.get::<Transform>(player).unwrap().translation;
+    let mut monsters = world.query_filtered::<&Transform, With<shards::npc::Npc>>();
+    monsters.iter(world).filter(|t| near(t.translation, at)).count()
+}
+
+/// Headless the reference scene loads the wilds (timed), sets the fight up and measures the ticks;
+/// nothing is judged here (a test build, on a machine busy with other tests).
+#[test]
+fn the_reference_scene_loads_sets_up_and_measures_its_ticks_headless() {
+    let _clock = one_clock();
+    let mut app = sandbox::test_app(42);
+    let def = reference(&app);
+    let measured = shards::bench::play(&mut app, &def).unwrap();
+    assert_eq!(measured.ticks.ticks, def.ticks);
+    assert!(measured.region_load.is_some() && measured.frames.is_none(), "{measured:?}");
+    // The wilds span x -64..64, z 48..176: its camps, its den and the twelve of the setup.
+    let in_the_region = monsters(&mut app, |m, _| (-64.0..64.0).contains(&m.x) && (48.0..176.0).contains(&m.z));
+    let in_the_fight = monsters(&mut app, |m, player| m.distance(player) < 12.0);
+    assert_eq!((in_the_region, in_the_fight), (15, 13), "the camps are 40 m away at least");
+    let verdicts = shards::bench::judge(&def.budgets, &measured, false);
+    assert!(verdicts.iter().all(|v| v.met.is_none()), "{verdicts:?}");
+    let lines: Vec<String> = verdicts.iter().map(|v| v.line()).collect();
+    assert!(lines[0].starts_with("-     region load ") && lines.iter().any(|l| l.contains("nothing is drawn headless")), "{lines:#?}");
+}
+
+/// Offscreen the game plays the scene in real time and its frames are measured: the main and the
+/// render world, the GPU (where it measures), the meshes drawn.
+#[test]
+#[ignore = "needs a GPU, or a software one (WGPU_FORCE_FALLBACK_ADAPTER=1): cargo test -p sandbox --test perf -- --ignored offscreen"]
+fn an_offscreen_run_measures_its_frames_and_what_they_draw() {
+    let _clock = one_clock();
+    let mut app = shards::testing::test_app(
+        |config| (config.headless, config.offscreen) = (false, true),
+        |app| {
+            app.add_plugins((sandbox::SandboxPlugin, sandbox::visuals::VisualsPlugin));
+        },
+    );
+    let def = PerfDef { warmup: 60, ticks: 120, ..reference(&app) };
+    let measured = shards::bench::play(&mut app, &def).unwrap();
+    assert_eq!(measured.ticks.ticks, 120, "real time, then paused again");
+    assert!(ai_core::sim::is_paused(app.world()));
+    let frames = measured.frames.expect("frames are drawn offscreen");
+    assert!(frames.frames > 10 && frames.max >= frames.avg && frames.avg > Duration::ZERO, "{frames:?}");
+    assert!(frames.fps.is_some_and(|fps| fps > 0.0) && frames.render > Duration::ZERO, "{frames:?}");
+    assert!(measured.camera_meshes > 0 && measured.visible_meshes > 0 && measured.visible_meshes <= measured.meshes, "{measured:?}");
+    let status = ai_core::status::status(app.world());
+    let shown = &status["frames"];
+    assert!(shown["frames"].as_u64().is_some_and(|n| n > 0) && shown["budget_ms"] == 16.667, "{shown}");
+    assert_eq!(status["counts"]["camera_meshes"], measured.camera_meshes, "{status}");
 }

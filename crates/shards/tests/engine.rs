@@ -67,6 +67,19 @@ fn a_headless_game_has_no_picture_and_says_how_to_get_one() {
     assert!(!refused.ok && text.contains("--offscreen") && text.contains("observe"), "{text}");
 }
 
+/// `ai/status` counts the entities and the meshes; headless no frame is drawn and nothing is seen.
+#[test]
+fn the_status_counts_what_there_is_and_headless_has_no_frames() {
+    let app = shards::testing::test_app(|_| {}, |app| {
+        app.add_plugins(TinyGame);
+    });
+    let status = shards::ai_core::status::status(app.world());
+    assert_eq!(status["frames"], json!(null), "{status}");
+    let counts = &status["counts"];
+    assert!(counts["entities"].as_u64().is_some_and(|n| n > 1), "the totem and the engine's own: {counts}");
+    assert_eq!((&counts["meshes"], &counts["visible_meshes"], &counts["camera_meshes"]), (&json!(0), &json!(0), &json!(0)), "{counts}");
+}
+
 #[test]
 fn a_test_app_comes_back_loaded_and_paused_at_tick_zero() {
     let mut app = shards::testing::test_app(|config| config.seed = 7, |app| {

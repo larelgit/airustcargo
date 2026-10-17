@@ -81,6 +81,9 @@ pub struct EngineConfig {
     /// A tick that takes longer is over budget (`--tick-budget-ms`); `None`: the tick's
     /// own duration.
     pub tick_budget: Option<std::time::Duration>,
+    /// A frame that takes longer is over budget (`--frame-budget-ms`); `None`: 1/60 s. Only a game
+    /// that draws (a window, `--offscreen`) has frames.
+    pub frame_budget: Option<std::time::Duration>,
     /// Tick timing in `step` replies and `perf` journal lines; off in tests, whose
     /// journals must not depend on the machine.
     pub report_perf: bool,
@@ -169,6 +172,7 @@ impl Default for EngineConfig {
             check_every: ai_core::replay::CHECK_EVERY,
             check_detail: ai_core::CheckDetail::default(),
             tick_budget: None,
+            frame_budget: None,
             report_perf: true,
             window: (1280, 720),
             after_loading: EngineState::InGame,

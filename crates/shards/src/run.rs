@@ -80,6 +80,10 @@ struct Args {
     /// run slower than `--release`.
     #[arg(long, value_name = "MS", value_parser = positive_ms)]
     tick_budget_ms: Option<Duration>,
+    /// A frame slower than this is over budget (`frames` in `ai/status`: a window or --offscreen).
+    /// Default 16.7 ms: 60 frames a second.
+    #[arg(long, value_name = "MS", value_parser = positive_ms)]
+    frame_budget_ms: Option<Duration>,
     /// Read, parse and validate every content file, print the problems, exit 0 (clean)
     /// or 1. Runs nothing.
     #[arg(long)]
@@ -107,6 +111,13 @@ struct Args {
         conflicts_with_all = ["replay", "check_content", "worldgen_report", "bake_nav"]
     )]
     smoke: Option<u64>,
+    /// Run the performance autotest ID (a `perf` content definition: the scene, how long, the
+    /// budgets): load, go to the scene, warm up, measure the ticks as fast as they go (with
+    /// --offscreen: play in real time, and measure the frames and the GPU too), print a line per
+    /// budget, exit 0 (all met), 1 (one exceeded, or the game failed on the way) or 2 (it could not
+    /// run). A debug build measures without judging: budgets are for --release. Writes nothing.
+    #[arg(long, value_name = "ID", conflicts_with_all = ["replay", "check_content", "worldgen_report", "bake_nav", "smoke"])]
+    perf: Option<String>,
     /// Host a networked game on this UDP port (default 7777); other games `--join` it.
     #[arg(long, value_name = "PORT", num_args = 0..=1, default_missing_value = "7777", conflicts_with_all = ["join", "stand"])]
     host: Option<u16>,
@@ -152,7 +163,7 @@ struct Args {
     exit_with_host: bool,
 }
 
-/// `--tick-budget-ms`: milliseconds, as a `Duration` that cannot be zero or too big to hold.
+/// `--tick-budget-ms`, `--frame-budget-ms`: milliseconds, as a `Duration` that cannot be zero or too big to hold.
 fn positive_ms(text: &str) -> Result<Duration, String> {
     let ms: f64 = text.parse().map_err(|_| format!("`{text}` is not a number of milliseconds"))?;
     if !ms.is_finite() {
@@ -237,6 +248,7 @@ impl Args {
             check_every: self.check_every,
             check_detail: self.check_detail,
             tick_budget: self.tick_budget_ms,
+            frame_budget: self.frame_budget_ms,
             ..EngineConfig::default()
         }
     }
@@ -296,10 +308,14 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
         // Its own name in the session, and in its ready line.
         config.player_name = args.name.clone().unwrap_or_else(|| "host".into());
     }
-    if config.net != NetLaunch::Off
-        && (args.replay.is_some() || args.check_content || args.worldgen_report.is_some() || args.bake_nav.is_some() || args.smoke.is_some())
-    {
-        eprintln!("error: --host, --join and --stand start a session; drop them to verify, check, bake or --smoke");
+    let checks = args.replay.is_some()
+        || args.check_content
+        || args.worldgen_report.is_some()
+        || args.bake_nav.is_some()
+        || args.smoke.is_some()
+        || args.perf.is_some();
+    if config.net != NetLaunch::Off && checks {
+        eprintln!("error: --host, --join and --stand start a session; drop them to verify, check, bake, --smoke or --perf");
         return ExitCode::from(2);
     }
     if let Some(r) = &recording {
@@ -317,6 +333,9 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
     }
     if let Some(ticks) = args.smoke {
         return smoke(&build, config, ticks);
+    }
+    if let Some(id) = &args.perf {
+        return perf(&build, config, id);
     }
     if args.verify
         && let Some(r) = recording.take()
@@ -955,6 +974,69 @@ fn smoke(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, ticks: u64
     ExitCode::SUCCESS
 }
 
+/// `--perf ID`: the performance autotest ([`crate::bench`]). Prints where it ran, what it measured,
+/// a line per budget and the verdict: exit 0 (every budget met; a debug build, which judges
+/// nothing, too), 1 (a budget exceeded, or the game failed on the way) or 2 (no such definition,
+/// no GPU offscreen). Writes nothing.
+fn perf(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, id: &str) -> ExitCode {
+    let def = match crate::bench::read(build, &config, id) {
+        Ok(def) => def,
+        Err(e) => {
+            println!("error: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let config = crate::bench::config(&def, config);
+    let mut app = match built(build, &config) {
+        Ok(app) => app,
+        Err(code) => return code,
+    };
+    app.finish();
+    app.cleanup();
+    let measured = match crate::bench::play(&mut app, &def) {
+        Ok(measured) => measured,
+        Err(e) => {
+            println!("error: perf {id}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let judged = !cfg!(debug_assertions);
+    let (width, height) = config.window;
+    let display = ai_core::display::status(app.world());
+    let place = match display["gpu"].as_str().filter(|_| config.offscreen) {
+        Some(gpu) => format!("offscreen {width}x{height} on {gpu}"),
+        None => "headless".to_owned(),
+    };
+    println!("perf {id}: {} build, {place}", if judged { "release" } else { "debug" });
+    match &def.region {
+        Some(r) => {
+            let took = measured.region_load.unwrap_or_default().as_secs_f64();
+            println!("loaded in {:.2}s, region {} seed {} in {took:.2}s of it", measured.load.as_secs_f64(), r.region, r.seed);
+        }
+        None => println!("loaded in {:.2}s", measured.load.as_secs_f64()),
+    }
+    println!("{}", measured.line());
+    let verdicts = crate::bench::judge(&def.budgets, &measured, judged);
+    for verdict in &verdicts {
+        println!("{}", verdict.line());
+    }
+    if !judged {
+        println!("perf {id}: not judged: a debug build runs slower than the players' (the budgets are for --release)");
+        return ExitCode::SUCCESS;
+    }
+    let checked = verdicts.iter().filter(|v| v.met.is_some()).count();
+    match verdicts.iter().filter(|v| v.met == Some(false)).count() {
+        0 => {
+            println!("perf {id}: all {checked} budgets met");
+            ExitCode::SUCCESS
+        }
+        exceeded => {
+            println!("perf {id}: {exceeded} of {checked} budgets exceeded");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// `kill` (SIGTERM) and a closed terminal (SIGHUP; on Windows a closed console) end the game the
 /// way Ctrl+C does: through `AppExit`, so what it wrote at start (the BRP token, `--port-file`) is
 /// removed. A signal the game was started with ignored (`nohup`) stays ignored; a
@@ -1400,6 +1482,34 @@ mod tests {
         assert!(baked.contains("format: \"shards-navtile/1\""), "{baked}");
         assert_eq!(check_content(&game, config.clone()), ExitCode::SUCCESS, "fresh bakes are clean content");
         assert_eq!(bake_nav(&game, config, "feild"), ExitCode::FAILURE, "an unknown tile fails");
+    }
+
+    #[test]
+    fn perf_plays_a_definition_and_names_what_stops_it() {
+        let parse = |args: &[&str]| Args::try_parse_from(args.iter().copied());
+        assert_eq!(parse(&["game", "--perf", "quick", "--offscreen"]).unwrap().perf.as_deref(), Some("quick"));
+        assert!(parse(&["game", "--perf", "quick", "--smoke", "5"]).is_err(), "one check at a time");
+
+        let config = content("perf", "Totem");
+        let defs = r#"{
+            "quick": (setup: ["teleport id=e1 x=3 z=0"], warmup: 10, ticks: 60, budgets: (entities: Some(100000))),
+            "broken": (setup: ["teleport id=e9 x=3 z=0"], ticks: 10),
+        }"#;
+        std::fs::write(std::path::PathBuf::from(&config.asset_dir).join("content/t.perf.ron"), defs).unwrap();
+        let def = crate::bench::read(&game, &config, "quick").unwrap();
+        let mut app = game(&crate::bench::config(&def, config.clone()));
+        app.finish();
+        app.cleanup();
+        let measured = crate::bench::play(&mut app, &def).unwrap();
+        assert_eq!((measured.ticks.ticks, measured.frames, measured.region_load), (60, None, None));
+        assert_eq!(ai_core::sim::tick(app.world()), 70, "the warmup, then the ticks measured");
+        let totem = ai_core::Id(ai_core::AiId(1)).entity(app.world()).unwrap();
+        assert_eq!(app.world().get::<Transform>(totem).unwrap().translation.x, 3.0, "the setup ran");
+        assert!(measured.entities > 0 && measured.line().starts_with("60 ticks in "), "{}", measured.line());
+
+        assert_eq!(perf(&game, config.clone(), "quick"), ExitCode::SUCCESS);
+        assert_eq!(perf(&game, config.clone(), "broken"), ExitCode::FAILURE, "a setup line that fails stops the run");
+        assert_eq!(perf(&game, config, "quik"), ExitCode::from(2), "no such definition");
     }
 
     #[test]

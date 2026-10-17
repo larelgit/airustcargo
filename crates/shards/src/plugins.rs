@@ -124,6 +124,8 @@ impl PluginGroup for EnginePlugins {
             // Sound and music: what the fight and the menus sound like, heard from the body.
             .add(ShardsAudioPlugin)
             .add(EngineAudioPlugin)
+            // Performance: the `perf` content kind (`--perf`), `counts` and `frames` in `ai/status`.
+            .add(crate::bench::PerfPlugin)
             // The developer menu and console, last: every module above has added its entries.
             .add(DevPlugin)
             // A build for players: none of the developer's keys.
@@ -185,9 +187,9 @@ fn with_window(group: PluginGroupBuilder, config: &EngineConfig) -> PluginGroupB
     let (width, height) = config.window;
     let window = Window { title: config.title.clone(), resolution: (width, height).into(), ..default() };
     let group = group.set(WindowPlugin { primary_window: Some(window), ..default() });
-    // `<assets>/icon.png`, if the game has one, in the title bar and the taskbar.
+    // `<assets>/icon.png`, if the game has one, in the title bar and the taskbar; how long frames take.
     #[cfg(feature = "render")]
-    let group = group.add(crate::window_icon::WindowIconPlugin);
+    let group = group.add(crate::window_icon::WindowIconPlugin).add(crate::frames::FramesPlugin { budget: config.frame_budget });
     group
 }
 
@@ -226,7 +228,9 @@ fn without_display(group: PluginGroupBuilder, driven: bool) -> PluginGroupBuilde
 fn offscreen(group: PluginGroupBuilder, config: &EngineConfig, driven: bool) -> PluginGroupBuilder {
     let group = without_window(group, driven);
     #[cfg(feature = "render")]
-    let group = group.add(crate::offscreen::OffscreenPlugin { size: config.window });
+    let group = group
+        .add(crate::offscreen::OffscreenPlugin { size: config.window })
+        .add(crate::frames::FramesPlugin { budget: config.frame_budget });
     group
 }
 

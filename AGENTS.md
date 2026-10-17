@@ -49,6 +49,7 @@ cargo shards fuzz --seed 7 --steps 300  # случайные входы, пок�
 cargo shards soak --minutes 30 --regen wilds   # стенд: агенты с зерном играют за всех участников, до первого рассинхрона
 kill <pid>                              # pid из `wait`; на Windows (и где угодно) — cargo shards quit
 cargo shards package --manifest-path template/Cargo.toml   # сборка для игроков в template/dist/ и её проверка (`--smoke`, DLL)
+cargo run -p sandbox --release -- --perf reference --offscreen   # автотест производительности: строка на бюджет, код 0, 1 или 2 (нет GPU)
 ```
 
 - `shards` запускайте из папки игры или ниже: там лежит токен `.shards/<port>.token`, без него игра
@@ -110,6 +111,9 @@ cargo shards package --manifest-path template/Cargo.toml   # сборка для
   `--tick-budget-ms`) журнал называет записью `perf`, не чаще раза в игровую секунду:
   `150 [perf] 12 ticks over budget, worst 31.4 ms at tick 150`. Время последних 600 тиков —
   в `shards status`, поле `perf`.
+- У игры, которая рисует (окно или `--offscreen`), `shards status` показывает и кадры, поле `frames`: среднее и худшее время
+  кадра за последние 600, сколько из них дольше бюджета (1/60 с, флаг `--frame-budget-ms`), `fps`, доля основного мира и
+  рендера, время GPU и треугольники на кадр. Поле `counts` — сущности, меши, меши, которые что-то рисует, и меши камер.
 - Несколько игр параллельно: `--port` у каждого инстанса, `SHARDS_PORT` у CLI. Проще так:
   `cargo sandbox --headless --paused --port 0 --port-file F` и `SHARDS_PORT_FILE=F cargo shards wait`.
   На занятом порту игра не стартует (код выхода 3). `shards wait` печатает pid, seed и порт ответившей
@@ -267,6 +271,10 @@ cargo sandbox --replay replays/crash-tick<N>.json --verify   # код 1, пок�
   `cargo run -p sandbox --release -- --headless --paused --tick-budget-ms 5`, затем `shards step 600`:
   строка `ticks:` назовёт среднее, худший тик и число тиков за бюджетом. Профайлер Tracy включается фичей
   `--features trace_tracy` (см. README, «Время тика»).
+- Производительность целиком проверяет автотест: `cargo run -p sandbox --release -- --perf reference --offscreen` (сцена,
+  прогрев, замер и бюджеты — контент вида `perf`, `*.perf.ron`; без `--offscreen` — только тики). Он печатает строку на бюджет
+  (`ok`, `OVER`, `-`) и выходит с кодом 0, 1 (бюджет превышен, игра не дошла до замера) или 2 (нет такого определения или у
+  `--offscreen` нет GPU). Отладочная сборка не судит.
 - Эталонные реплеи `tests/replays/*.json` (полоса препятствий, бой-прототип, директор жетонов, страж на навсетке, смена
   регионов и реплей со снапшота песочницы) проверяет `cargo test`. После намеренной правки геймплея или контента перезапишите их:
   `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays` (у шаблона —
