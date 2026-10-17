@@ -219,12 +219,23 @@ pub struct TileDef {
     /// What a window draws for it: the id the tile visual spawner gets.
     #[serde(default)]
     pub visual: Option<String>,
+    /// The edge (m) of the region cells its geometry is made for. A region whose `tile_size`
+    /// differs leaves it out of "every tile" (an empty `tiles`), and one that lists it (by id,
+    /// by tag or in `fixed`) is a content error. None: any region. Left out of the definition's
+    /// JSON while unset, so the content hash of the regions that use it stays as it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tile_size: Option<f32>,
 }
 
 impl TileDef {
     /// Number of walkable areas: link groups, or one.
     pub fn areas(&self) -> usize {
         self.links.as_ref().map_or(1, |l| l.len().max(1))
+    }
+
+    /// Whether it is made for region cells of `tile_size` m (or for any).
+    pub fn fits(&self, tile_size: f32) -> bool {
+        self.tile_size.is_none_or(|made_for| made_for == tile_size)
     }
 
     /// Whether a point of interest of type `poi` can be in this tile (a slot or its own).
@@ -267,6 +278,11 @@ impl ContentDef for TileDef {
             refs.require::<PrefabDef>(prefab, &format!("decor[{i}]"));
         }
         check_geometry(refs, &self.geometry);
+        if let Some(size) = self.tile_size
+            && !(size.is_finite() && size > 0.0)
+        {
+            refs.error(format!("tile_size {size} must be a positive number of meters (the regions' tile_size), or left out"));
+        }
     }
 }
 
@@ -636,9 +652,14 @@ pub fn resolve_set<'a, T: 'a>(
 }
 
 impl RegionDef {
-    /// The tiles of this region (its set plus the fixed ones), sorted by id.
+    /// The tiles of this region (its set plus the fixed ones), sorted by id. "Every tile" (an
+    /// empty `tiles`) is every tile made for cells of its size ([`TileDef::fits`]).
     pub fn tile_ids<'a>(&self, tiles: impl Iterator<Item = (&'a str, &'a TileDef)> + Clone) -> Result<Vec<&'a str>, String> {
-        let mut ids = resolve_set(&self.tiles, tiles.clone(), |t: &TileDef| &t.tags, "tile")?;
+        let mut ids = if self.tiles.is_empty() {
+            resolve_set(&self.tiles, tiles.clone().filter(|(_, t)| t.fits(self.tile_size)), |t: &TileDef| &t.tags, "tile")?
+        } else {
+            resolve_set(&self.tiles, tiles.clone(), |t: &TileDef| &t.tags, "tile")?
+        };
         for fixed in &self.fixed {
             if let Some((id, _)) = tiles.clone().find(|(id, _)| *id == fixed.tile)
                 && !ids.contains(&id)
@@ -689,6 +710,14 @@ impl ContentDef for RegionDef {
         };
         let known_set = !ids.is_empty();
         let set: Vec<(&str, &TileDef)> = all.iter().copied().filter(|(id, _)| ids.contains(id)).collect();
+        for (id, tile) in &set {
+            if let Some(made_for) = tile.tile_size.filter(|_| !tile.fits(self.tile_size)) {
+                refs.error(format!(
+                    "tiles: tile `{id}` is made for cells of {made_for} m (its tile_size), this region's are {} m; leave it out",
+                    self.tile_size
+                ));
+            }
+        }
         if let Some(rules) = rules {
             for (id, tile) in &set {
                 let Ok(edges) = tile.sockets.parse() else { continue };

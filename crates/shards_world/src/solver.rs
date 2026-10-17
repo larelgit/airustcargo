@@ -592,6 +592,7 @@ mod tests {
             decor: vec![],
             geometry: Default::default(),
             visual: None,
+            tile_size: None,
         };
         TileInfo::from_def(id, &def).unwrap()
     }

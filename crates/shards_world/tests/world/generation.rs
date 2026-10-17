@@ -209,6 +209,33 @@ fn game_steps_join_the_pipeline_and_their_panics_are_reported_with_the_seed() {
 }
 
 #[test]
+fn a_tile_made_for_bigger_cells_stays_out_of_every_tile_and_is_an_error_where_named() {
+    let app = app(1, None);
+    let worldgen = worldgen(&app);
+    let before = generate(db(&app), &worldgen, "meadow", 42).unwrap().manifest;
+    let big = r#"{ "field": (sockets: (n: "grass", e: "grass", s: "grass", w: "grass"), weight: 50.0, tile_size: Some(64.0),
+        tags: ["big"], slots: [(at: (0.0, 0.0, 0.0), accepts: ["spawn", "camp"])],
+        geometry: Inline([Box(min: (-32.0, -1.0, -32.0), max: (32.0, 0.0, 32.0))])) }"#;
+    let wide = r##"{ "wide": (size: (3, 3), tile_size: 64.0, version: 1, tiles: ["#big"], pois: [(poi: "spawn"), (poi: "camp")]) }"##;
+    let with_big = db_with(&app, &[("big.tile.ron", big), ("wide.region.ron", wide)]);
+    assert_eq!(with_big.errors().count(), 0, "{:#?}", with_big.errors().map(ToString::to_string).collect::<Vec<_>>());
+    // "Every tile" of a 16 m region is every tile made for 16 m cells: the meadow, its hash and
+    // its tiles are what they were, though the new tile weighs more than all of them.
+    let after = generate(&with_big, &worldgen, "meadow", 42).unwrap().manifest;
+    assert_eq!(after.to_canonical(), before.to_canonical());
+    let wide = generate(&with_big, &worldgen, "wide", 1).unwrap().manifest;
+    assert!(wide.tile_size == 64.0 && wide.tiles.iter().all(|t| t.tile == "field"), "{:?}", wide.tiles);
+
+    let named = r##"{ "mixed": (size: (2, 2), tile_size: 16.0, version: 1, tiles: ["grass", "#big"], fixed: [(at: (0, 0), tile: "field")]) }"##;
+    let bad_size = r#"{ "odd": (sockets: (n: "grass", e: "grass", s: "grass", w: "grass"), tile_size: Some(0.0)) }"#;
+    let db = db_with(&app, &[("big.tile.ron", big), ("mixed.region.ron", named), ("odd.tile.ron", bad_size)]);
+    let errors: Vec<String> = db.errors().map(ToString::to_string).collect();
+    let has = |needle: &str| errors.iter().any(|e| e.contains(needle));
+    assert!(has("region `mixed`: tiles: tile `field` is made for cells of 64 m (its tile_size), this region's are 16 m"), "{errors:#?}");
+    assert!(has("tile `odd`: tile_size 0 must be a positive number of meters"), "{errors:#?}");
+}
+
+#[test]
 fn content_mistakes_name_the_file_and_the_fix() {
     let app = app(1, None);
     let db = db_with(
