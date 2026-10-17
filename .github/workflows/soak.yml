@@ -19,10 +19,6 @@ on:
         description: Seed of the agents' inputs
         default: "30"
 
-concurrency:
-  group: soak-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
 
@@ -39,6 +35,11 @@ jobs:
   soak:
     name: soak
     if: github.event_name != 'push' || contains(github.event.head_commit.message, '[soak]')
+    # On the job, not the workflow: every push starts this workflow, and a push without `[soak]`
+    # (its job skipped) must not cancel a soak that is running.
+    concurrency:
+      group: soak-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
