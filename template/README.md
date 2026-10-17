@@ -347,7 +347,8 @@ shards act ui_set id=settings/music value=0.5   # слайдер: settings: audi
 Текст HUD и меню — сообщения [Fluent](https://projectfluent.org) в `assets/locale/<язык>/game.ftl`, экраны называют их через
 `@` (`label: "@pause-resume"`). Языки — контент `assets/content/languages.locale.ron`: английский и русский, недостающее в
 русском берётся из английского. Игрок выбирает язык на вкладке Language настроек (или агент: `shards act settings_set
-group=locale key=language value=ru`), и HUD с меню тут же говорят по-русски. Кириллица есть в шрифте движка по умолчанию
+group=locale key=language value=ru`), и HUD с меню тут же говорят по-русски. При первом запуске
+игра берёт язык системы, если он у неё есть (`ru-RU` — русский), и запоминает его в настройках. Кириллица есть в шрифте движка по умолчанию
 (Fira Sans, OFL), поэтому темы со своим шрифтом у шаблона нет.
 
 Текст из кода — целые фразы с параметрами, не склейка кусков: источник `trophies` пишет

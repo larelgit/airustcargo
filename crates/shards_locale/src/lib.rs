@@ -23,11 +23,16 @@
 //! - **Agents**: `locale` lists the languages, the one played, and what each lacks; `text`
 //!   formats a message with parameters in any language. `ai/status` has `locale: {language,
 //!   chain, languages}`.
+//! - **The system's language at the first run**: with settings kept on disk and no language chosen
+//!   yet, the game takes the first of the system's interface languages it has (Windows: the user's;
+//!   Linux and macOS: `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG`), `ru-RU` playing `ru`, and keeps
+//!   it in the settings. [`SystemLanguages`] stands in for the system in a test.
 //! - **Not the simulation's**: the language is this machine's setting, outside snapshots, replay
 //!   checks and the network; two players of one co-op game read it in two languages.
 
 pub mod def;
 pub mod settings;
+mod system;
 pub mod text;
 mod tools;
 
@@ -44,6 +49,7 @@ use shards_settings::{SettingsAppExt, SettingsChanged};
 
 pub use def::{check_messages, LocaleDef, Messages, LOCALE_DIR};
 pub use settings::LocaleSettings;
+pub use system::SystemLanguages;
 pub use text::{message_ref, resolve, text, Arg, Args, Language, Locale};
 pub use tools::{LocaleArgs, TextArgs};
 
@@ -252,6 +258,10 @@ fn edited(before: &[def::FtlFile], now: &[def::FtlFile]) -> Vec<String> {
 
 /// Builds the languages from `defs` and `files` and plays the one the setting names.
 fn install(world: &mut World, defs: Vec<(String, LocaleDef)>, files: BTreeMap<String, Vec<def::FtlFile>>) {
+    if world.resource::<LocaleSource>().wanted.is_none() {
+        let ids: Vec<&str> = defs.iter().map(|(id, _)| id.as_str()).collect();
+        system::adopt(world, &ids);
+    }
     let mut languages = BTreeMap::new();
     for (id, def) in &defs {
         let parsed = def::parse_language(files.get(id).map_or(&[][..], Vec::as_slice));

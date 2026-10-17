@@ -5584,6 +5584,7 @@ dependencies = [
  "shards_content",
  "shards_core",
  "shards_settings",
+ "sys-locale",
  "unic-langid",
 ]
 

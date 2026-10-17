@@ -98,6 +98,9 @@ accesskit = { version = "=0.24.1", default-features = false }
 fluent-bundle = "=0.16.0"
 fluent-syntax = "=0.12.0"
 unic-langid = "=0.9.6"
+# The language of the user's interface, which a game takes at its first run, inside shards_locale only;
+# never part of a public API. The version Bevy 0.20's text already reads it with (`bevy_text`): one copy.
+sys-locale = "=0.3.2"
 # Reads the engine's default font in shards_ui's tests (which letters it has); a dev-dependency only. The
 # version Bevy 0.20's font stack already has (`parley`): one copy.
 ttf-parser = "=0.25.1"

@@ -1,12 +1,14 @@
 //! Languages end to end on the whole engine: a menu whose text is messages, switched to another
 //! language while it is open, the tools an agent reads text with, an edited file applied while
-//! the game runs, and the content check that names mistakes.
+//! the game runs, the content check that names mistakes, and the system's language at a first run.
 
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 use shards::ai_core::{call_tool, AiJournal, CallOutcome};
 use shards::content::{check_dir, ContentKinds};
+use shards::core::{EngineConfig, SettingsStore};
+use shards::locale::{Locale, SystemLanguages};
 use shards::prelude::*;
 use shards::testing;
 
@@ -255,4 +257,98 @@ fn the_content_check_names_mistakes_in_text_and_in_what_names_it() {
     has("choice `speed`: 1 `labels` for 2 `options`: one for each option, in their order (or none)");
     has("widget `resume` label names message `pause-resum`, which de, en and ru have not, nor their fallbacks (did you mean `@pause-resume`?)");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A settings folder of a test's own, gone after it.
+struct SettingsDir(PathBuf);
+
+impl SettingsDir {
+    fn new(name: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("shards_locale_settings_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        Self(dir)
+    }
+
+    fn file(&self) -> String {
+        std::fs::read_to_string(self.0.join("settings.toml")).unwrap_or_default()
+    }
+}
+
+impl Drop for SettingsDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// The engine on the test assets with its settings kept in `dir` (`None`: no store, as a test's
+/// or an agent's headless run), on a system whose interface languages are `system`.
+fn game_on_system(dir: Option<&SettingsDir>, system: &[&str]) -> App {
+    let store = dir.map_or(SettingsStore::Off, |d| SettingsStore::Dir(d.0.display().to_string()));
+    let system = SystemLanguages(system.iter().map(|s| (*s).to_owned()).collect());
+    testing::test_app(
+        move |config| {
+            config.asset_dir = ASSETS.into();
+            config.settings = store;
+        },
+        move |app| {
+            app.insert_resource(system);
+            let config = app.world().resource::<EngineConfig>().clone();
+            shards::settings::install(app, &config).unwrap();
+        },
+    )
+}
+
+fn played(app: &App) -> String {
+    app.world().resource::<Locale>().language().unwrap_or("none").to_owned()
+}
+
+#[test]
+fn the_first_run_plays_the_systems_language_and_keeps_it() {
+    let dir = SettingsDir::new("first_run");
+    let mut app = game_on_system(Some(&dir), &["ru-RU", "en-US"]);
+    assert_eq!(played(&app), "ru");
+    assert_eq!(journal(&app, "system's language"), ["locale: the system's language is ru-RU; playing ru (kept in the settings)"]);
+    let tree = {
+        ok(&mut app, "ui_open", json!({"screen": "pause"}));
+        ok(&mut app, "ui_read", json!({}))
+    };
+    assert!(tree.contains("pause \"Пауза\""), "the first screen is in Russian:\n{tree}");
+    shards::settings::flush(app.world_mut());
+    assert!(dir.file().contains("language = \"ru\""), "{}", dir.file());
+    drop(app);
+
+    // The next start reads it as the player's choice, whatever the system says now.
+    let app = game_on_system(Some(&dir), &["en-GB"]);
+    assert_eq!(played(&app), "ru");
+    assert!(journal(&app, "system's").is_empty(), "{:?}", journal(&app, "system's"));
+}
+
+#[test]
+fn a_system_language_the_game_has_not_plays_the_games_own() {
+    let dir = SettingsDir::new("unknown");
+    let mut app = game_on_system(Some(&dir), &["de-DE", "fr-FR"]);
+    assert_eq!(played(&app), "en");
+    assert_eq!(journal(&app, "system's"), ["locale: the system's languages (de-DE, fr-FR) are none of this game's; playing its own"]);
+    shards::settings::flush(app.world_mut());
+    assert!(!dir.file().contains("language"), "nothing chosen, nothing kept: {}", dir.file());
+}
+
+#[test]
+fn a_language_the_player_chose_stays_whatever_the_systems() {
+    let dir = SettingsDir::new("chosen");
+    let mut app = game_on_system(Some(&dir), &["de-DE"]);
+    speak(&mut app, "en");
+    shards::settings::flush(app.world_mut());
+    drop(app);
+    let app = game_on_system(Some(&dir), &["ru-RU"]);
+    assert_eq!(played(&app), "en");
+    assert!(journal(&app, "system's").is_empty());
+}
+
+#[test]
+fn without_a_settings_store_the_systems_language_is_not_asked() {
+    // A test, an agent's headless run, `--no-settings`: the same language on every machine.
+    let app = game_on_system(None, &["ru-RU"]);
+    assert_eq!(played(&app), "en");
+    assert!(journal(&app, "system's").is_empty());
 }
