@@ -1,0 +1,15 @@
+# Files whose bytes are hashed or compared (a level file's digest is part of a replay's checks, and a
+# replay, a baked navmesh and a save must read the same on every OS) are checked out with LF on Windows
+# too, whatever core.autocrlf says. Found by cross.yml: ruin.gltf came out with CRLF and three reference
+# replays that place a level diverged on windows-latest ("replay check level differs").
+*.gltf text eol=lf
+*.ron text eol=lf
+*.json text eol=lf
+*.scenario text eol=lf
+*.ftl text eol=lf
+*.wesl text eol=lf
+*.glb binary
+*.save binary
+*.wav binary
+*.png binary
+*.ttf binary

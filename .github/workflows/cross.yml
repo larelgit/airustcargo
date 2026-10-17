@@ -53,6 +53,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: cross-${{ matrix.os }}
+          # A failed run still keeps the build: the verdicts are what is being looked at.
+          cache-on-failure: true
       - name: Build the sandbox and the template
         run: |
           cargo build --locked -p sandbox
