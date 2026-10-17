@@ -8,6 +8,8 @@ mod director;
 mod fsm;
 mod nav;
 mod navmesh;
+#[cfg(feature = "render")]
+mod overlay;
 mod perception;
 mod replay;
 mod snapshot;
