@@ -15,7 +15,8 @@ is driven from outside: by you, through the `shards` CLI. Anything an agent need
   libxkbcommon-x11-0`).
 - `cargo build --workspace`, `cargo test --workspace`. The first build of Bevy is slow;
   `.cargo/config.toml` limits it to four threads. `template/` is a separate workspace:
-  `cargo test --manifest-path template/Cargo.toml`.
+  `cargo test --manifest-path template/Cargo.toml`. CI runs the tests with `cargo-nextest` (`cargo install cargo-nextest --locked`; a
+  process per test, see "Checking changes"); `cargo test` stays a supported local command.
 - Crates: `shards` (the umbrella, the game's only dependency), `shards_core`, `shards_content`, `shards_motion`,
   `shards_action`, `shards_level` (levels from Blender), `shards_world` (regions, generation), `shards_npc` (enemies, navmesh),
   `shards_save` (saves: sections, slots, migrations, copies), `shards_ui` (screens and menus from content), `shards_locale`
@@ -319,6 +320,13 @@ It is written when a panic happens on another thread (the render thread, a task)
 
 - `cargo test --workspace`: unit tests and scenarios in `crates/sandbox/tests/`; `cargo clippy --workspace --all-targets
   -- -D warnings` must stay silent. If you changed something the template uses, run `cargo test --manifest-path template/Cargo.toml`.
+- What CI runs, with `cargo-nextest` (`.config/nextest.toml`, `template/.config/nextest.toml`; profile `ci`: two retries, and a test that
+  passes only on a retry **fails** the run, so a flaky test is a bug to fix, not to rerun):
+  `cargo nextest run --workspace --locked --profile ci -E 'not binary_id(sandbox::perf)'`, then the tick-time tests alone,
+  `cargo nextest run -p sandbox --locked --profile ci-perf -E 'binary_id(sandbox::perf)' -j 1`, then `cargo test --workspace --doc --locked`
+  (nextest does not run doctests); the template: `cargo nextest run --manifest-path template/Cargo.toml --locked --profile ci`. nextest runs each test in
+  its own process, so an in-test `static Mutex` serialises nothing there: a test that writes a fixed file name belongs in a test group of
+  `.config/nextest.toml` (`snapshot-file`, `shards-snapshots`), with the lock kept for `cargo test`. Without the profile (`cargo nextest run`) there are no retries.
 - Put behaviour that you can describe with `shards` commands into a scenario file in `<crate>/scenarios/`
   (`*.scenario`, format in `docs/manual.md`, "Scenarios (E11)"). The sandbox's `tests/scenario_files.rs` runs each file
   in-process (forward, then back, in one game), and `shards scenario` runs against a live game. The file must run on a fresh game and after
@@ -345,7 +353,7 @@ It is written when a panic happens on another thread (the render thread, a task)
   (`ok`, `OVER`, `-`) and exits with code 0, 1 (a budget is exceeded or the game did not reach the measurement) or 2 (no such definition, or `--offscreen`
   has no GPU). A debug build gives no verdict.
 - The reference replays `tests/replays/*.json` (obstacle course, combat prototype, token director, guard on the navmesh, region changes,
-  a replay from a snapshot and a replay of the sandbox's saves) are checked by `cargo test`. After a deliberate change to gameplay or content, record them again:
+  a replay from a snapshot and a replay of the sandbox's saves) are checked by `cargo test` (and by nextest). After a deliberate change to gameplay or content, record them again:
   `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays` (for the template —
   `cargo test --test game record_reference_replays -- --ignored` in `template/`).
 - If you change a module's behaviour, update its section in `docs/manual.md`, `docs/engine-progress.md` (statuses) and `CHANGELOG.md`

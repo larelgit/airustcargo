@@ -63,6 +63,17 @@ git push origin v0.1.0
 
 Changes that land in the main branch after phases C–E (`0.4.0`) go here.
 
+### Added
+
+- CI runs the tests with cargo-nextest (`.config/nextest.toml`, `template/.config/nextest.toml`): profile `ci` with two retries where a test that passes only on a retry
+  fails the run (`flaky-result = "fail"`), no fail-fast, and a JUnit file uploaded as an artifact (`junit-test`, `junit-template`); profile `ci-perf` for the sandbox's
+  tick-time tests, which run alone with `-j 1`; the test groups `snapshot-file` and `shards-snapshots` for the tests that share a file name or a folder. The doctests run as a step of their own
+  (`cargo test --workspace --doc --locked`). `cargo test` is still the local command.
+
+### Changed
+
+- `shards_cli`: the test `a_stale_port_file_is_neither_a_member_nor_a_reason_to_give_up` no longer uses a port that was bound and released (another test's stand could be given it): the stale file names the discard port.
+
 ## [0.4.0] — phases C–E: co-op, saves, UI and platform (unreleased)
 
 Everything that landed in the main branch after phase B (`0.3.0`): co-op and saves (phase C), UI, localization and audio

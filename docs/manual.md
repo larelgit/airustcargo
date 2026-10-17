@@ -4389,8 +4389,12 @@ CI runs them forward and then backward in one game. Sessions of seven of them ar
 
 ```bash
 cargo test --workspace          # unit tests, scenarios and reference replays; the first Bevy build is slow
+cargo nextest run --workspace --profile ci -E 'not binary_id(sandbox::perf)'   # the same tests, as CI runs them: a process per test, retries that fail the run
+cargo nextest run -p sandbox --profile ci-perf -E 'binary_id(sandbox::perf)' -j 1   # the tick-time tests alone
+cargo test --workspace --doc    # doctests: nextest does not run them
 cargo test -p sandbox --test sandbox          # the sandbox: scenarios, replays, content, the obstacle course, combat
 cargo test --manifest-path template/Cargo.toml # the template on its own: its own workspace and its own Cargo.lock
+cargo nextest run --manifest-path template/Cargo.toml --profile ci   # the same with nextest (reads template/.config/nextest.toml)
 ```
 
 The test count for each crate is kept in `docs/engine-progress.md`, "Tests"; there is no overall total here: it drifted from the table
@@ -4443,11 +4447,34 @@ the toolchain from `rust-toolchain.toml`, the cargo cache). All of the jobs' com
 
 | job | what it does |
 |---|---|
-| `test` | `cargo test --workspace --locked`: unit tests, sandbox scenarios (including the world and NPCs), reference replays (`--verify`) |
+| `test` | `cargo nextest run --workspace --locked --profile ci` without the sandbox's `perf` binary: unit tests, sandbox scenarios (including the world and NPCs), reference replays (`--verify`); then the `perf` binary alone with `-j 1` (profile `ci-perf`); then `cargo test --workspace --doc --locked`. The JUnit files are uploaded as the artifact `junit-test` | 
 | `clippy` | `cargo clippy --all-targets --locked -- -D warnings` for the engine and for the template |
-| `template` | `template/Cargo.lock` does not diverge from the root one; the template's `cargo test`; `cargo run -- --check-content`, `--verify` of its replays and `--worldgen-report valley --seeds 1..1000` through the game binary |
+| `template` | `template/Cargo.lock` does not diverge from the root one; the template's tests with `cargo nextest run --manifest-path template/Cargo.toml --locked --profile ci` (artifact `junit-template`); `cargo run -- --check-content`, `--verify` of its replays and `--worldgen-report valley --seeds 1..1000` through the game binary |
 | `headless-cli` | `cargo sandbox --check-content` (the tile level files and the baked navigation too), `--worldgen-report wilds --seeds 1..1000`; a live sandbox without a window (`--port 0 --port-file`), `shards wait`, `shards scenario crates/sandbox/scenarios/*.scenario`, then the same scenarios in reverse order in the same game; `kill` at the end; live stands: the files in `crates/sandbox/scenarios/stand/` grouped by their `stand` line, each group on a stand started with the same clients and `--net-sim` links (`shards wait --peer all`, `shards scenario`, `shards stand`, `shards stand stop`); then three minutes of `shards soak` on a fresh E7 stand (`--stand 2 --net-sim latency=150,loss=0.02`, a region change and a save every minute) |
 | `replays-window` | the same replays (the sandbox's and the template's) in a window under Xvfb: `--verify --windowed`; optional (`continue-on-error`) until it proves stable |
+
+**nextest.** CI runs the tests with [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked`, pinned in the workflow to `0.9.148`);
+`cargo test` runs the same tests and stays the local command. nextest starts a process for every test and runs many at once, so what a test shares with
+others on disk or in the machine's time has to be handled by the configuration, `.config/nextest.toml` (the template has its own,
+`template/.config/nextest.toml`, because it is a separate workspace):
+
+- Profile `ci`: `retries = 2`, `flaky-result = "fail"` (a test that fails and then passes on a retry is reported as flaky and **fails the run**: a flaky
+  test is fixed, not retried), `fail-fast = false` (a run shows every failure), and a JUnit file, `target/nextest/ci/junit.xml` (`template/target/nextest/ci/junit.xml` for the template), which the `test` and
+  `template` jobs upload (`junit-test`, `junit-template`). Without `--profile ci` there are no retries.
+- Test group `snapshot-file` (`max-threads = 1`): the sandbox tests that write a file with a fixed name or remove a folder in `crates/sandbox/` —
+  `snapshots/boss_phase2.json`, `crashes/scenario.json`, `crashes/` and `replays/crash-tick50.json` (the `system_failures` binary),
+  `replays/invariant-fuse-tick31.json`, `remove_dir("snapshots")` after a test. These are the scenario files that run the whole set, the `snapshots` module, two
+  tests of `invariants`, the recorder of the reference replays and the `system_failures` binary. A group works across binaries, so one limit covers
+  all of them. Test group `shards-snapshots`: the two `verify_…snapshot…` tests of `shards` (`run.rs`), which use `snapshots/` of `crates/shards/`.
+- The locks that stand in the test code (`static Mutex`) stay for `cargo test`, which runs a binary's tests in one process: `SNAPSHOT_FILE` and `Scratch` (the
+  files above), `ONE_AT_A_TIME` in `system_failures` and `log_capture` (the process-global panic memory and tracing subscriber), `TURN` in the
+  crash tests of `ai_core`, `FOLDER` in `shards`, `CLOCK` in `perf`. Under nextest a lock inside a process serialises nothing; where the
+  tests share a file, the group above does it; where they shared a process, the process per test does.
+- `perf` (`crates/sandbox/tests/perf.rs`) measures wall time (a tick that sleeps 200 ms against a 120 ms budget), and a busy machine would break it. CI leaves
+  the binary out of the main run (`-E 'not binary_id(sandbox::perf)'`) and runs it afterwards, alone, with `-j 1`, under the profile `ci-perf` (it inherits `ci` and keeps its own JUnit file).
+- nextest does not run doctests, so `cargo test --workspace --doc --locked` is a step of its own. Today the workspace has no doctest that runs (the code in the documentation is `ignore`, `ron`
+  or `text`); the step is there for the first one.
+- To check that nothing is lost: `cargo test --workspace -- --list` and `cargo nextest list --workspace` name the same tests (nextest has no doctests).
 
 Two more files. `soak.yml` — the E7 acceptance check, run again: half an hour of `shards soak` on a live stand of a host and two clients (150 ms,
 2 %), with a region change every 5 minutes and a save every 3; on Mondays, by hand (`minutes`, `seed`), and on a push with
