@@ -257,6 +257,17 @@ impl SettingsRegistry {
         self.groups().filter(move |g| g.name().eq_ignore_ascii_case(name))
     }
 
+    /// A setting as the `settings` tool lists it (`accessibility.text_scale` → `1`, text in
+    /// quotes: `"reduced"`), `None` for a key no group has.
+    pub fn value(&self, world: &World, key: &str) -> Option<String> {
+        let (group, _) = key.split_once('.')?;
+        self.named(group)
+            .filter_map(|g| g.read(world).map(|values| flatten(g.name(), g.info(), &values)))
+            .flatten()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+            .map(|(_, v)| v)
+    }
+
     /// The names of the groups, once each, in order.
     pub fn names(&self) -> Vec<&'static str> {
         let mut names: Vec<&'static str> = Vec::new();

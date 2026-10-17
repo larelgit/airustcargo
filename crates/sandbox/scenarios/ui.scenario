@@ -1,0 +1,97 @@
+# Menus (E9): screens are content (`content/ui/menus.screen.ron`), and an agent goes through them
+# by the UI tree alone: `ui_read` lists every widget by id with its value, `ui_navigate` moves the
+# way a gamepad does, `ui_click` presses, `ui_set` sets. A widget bound to a player setting changes
+# it through `settings_set`. The journal says what opened, closed and changed; while a menu is open
+# `observe` has a `UI` section.
+
+seed 42
+
+# --- no menu open, the settings the menus change at their defaults, whatever an earlier run left
+act? ui_close screen=confirm_quit
+act? ui_close screen=settings
+act? ui_close screen=pause
+act settings_set group=audio reset=true
+act settings_set group=accessibility reset=true
+act ui_read
+expect result contains "no screens are open"
+observe
+expect result !contains "UI  "
+
+# --- the pause menu, as the pause key opens it
+mark
+act ui_open screen=pause
+expect result contains "opened pause (menu, pauses the game) · focus pause/resume"
+expect journal "ui: opened pause"
+observe
+expect result contains "UI  pause \"Paused\" (menu, pauses the game) · focus pause/resume · ui_navigate, ui_click, ui_set"
+expect result contains "pause/settings  button \"Settings\" → open settings"
+act ui_open screen=pause
+expect result contains "pause is open already"
+
+# --- down to Settings and in; the tree names every page and setting
+act ui_navigate dir=down
+expect result contains "focus pause/settings (button \"Settings\")"
+act ui_navigate dir=confirm
+expect result contains "pressed pause/settings: opened settings (menu) · focus settings/tabs"
+act ui_read
+expect result contains "SCREENS  settings ◀ takes input · pause"
+expect result contains "settings/tabs  tabs [graphics] audio controls accessibility ◀ focus"
+expect result contains "settings/shadows  choice \"Shadows\" high (off|low|medium|high) [graphics.shadows]"
+expect result contains "settings/audio  panel \"Audio\" (page not shown)"
+expect result !contains "settings/music"
+
+# --- a page at a time: right turns the tabs, a slider moves by its step and sets the setting
+act ui_navigate dir=right
+expect result contains "settings/tabs graphics → audio"
+act ui_navigate dir=down
+expect result contains "focus settings/master (slider \"Master\")"
+act ui_navigate dir=left
+expect result contains "settings/master 1 → 0.9"
+expect journal "settings: audio.master 1 → 0.9"
+act ui_set id=settings/music value=0.25
+expect result contains "settings/music 0.8 → 0.3"
+act settings group=audio
+expect result contains "audio.master = 0.9"
+expect result contains "audio.music = 0.3"
+
+# --- what is on another page is out of reach until the tabs turn to it
+act? ui_set id=settings/flashes value=reduced
+expect result contains "settings/flashes is on a page that is not shown"
+act ui_set id=settings/tabs value=4
+expect result contains "settings/tabs audio → accessibility"
+act ui_set id=settings/flashes value=Reduced
+expect result contains "settings/flashes full → reduced"
+act? ui_set id=settings/fov value=wide
+expect result contains "settings/fov is a slider: a number from 50 to 110, not `wide`"
+act? ui_set id=settings/tabs value=sound
+expect result contains "settings/tabs has pages graphics, audio, controls, accessibility (or 1 to 4), not `sound`"
+
+# --- a question over the menu; back closes it, and the menu below keeps its focus
+act ui_navigate dir=back
+expect result contains "closed settings; pause is on top · focus pause/settings"
+act ui_click id=pause/quit
+expect result contains "opened confirm_quit (modal) · focus confirm_quit/no"
+act? ui_click id=pause/resume
+expect result contains "pause/resume is under confirm_quit: answer or close that first"
+act ui_navigate dir=confirm
+expect result contains "pressed confirm_quit/no: closed confirm_quit; pause is on top · focus pause/quit"
+
+# --- mistakes say how to fix the call
+act? ui_open screen=setting
+expect result contains "no screen `setting` (did you mean `settings`?)"
+act? ui_navigate dir=sideways
+expect result contains "up, down, left, right, next, prev, confirm or back"
+
+# --- Resume closes the menu; with no menu open there is nothing to navigate
+act ui_click id=pause/resume
+expect result contains "closed pause; no menu is open"
+expect journal "ui: pause/resume pressed (close)"
+expect journal "ui: closed pause"
+act? ui_navigate dir=down
+expect result contains "no menu is open"
+
+# --- and the settings back to their defaults
+act settings_set group=audio reset=true
+act settings_set group=accessibility reset=true
+act ui_read
+expect result contains "no screens are open"

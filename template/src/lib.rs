@@ -11,6 +11,7 @@
 //! | [`brain`] | the grunt: notices the hero and attacks it, through `Intent` like a player |
 //! | [`ai`] | what an agent can do that is this game's (`taunt`) and wait for (`arena_cleared`) |
 //! | [`progress`] | what a save keeps that is this game's: a hero's trophies, the yard's fallen grunts |
+//! | [`screens`] | the HUD and menus are content (`assets/content/screens.screen.ron`); this adds the trophies a HUD shows and the menu's save-and-quit |
 //! | `visuals` | meshes, light and the camera when there is a window (`render` feature) |
 //!
 //! All numbers are content in `assets/content/`: how the hero moves, every action's timing
@@ -43,6 +44,7 @@ pub mod ai;
 pub mod arena;
 pub mod brain;
 pub mod progress;
+pub mod screens;
 #[cfg(feature = "render")]
 pub mod visuals;
 
@@ -61,7 +63,7 @@ impl Plugin for GamePlugin {
         // Earlier versions of the template kept rebound keys in `~/.config/my_game/input.ron`; asking
         // for them here imports them once. A game that never shipped that file deletes this line.
         app.insert_resource(shards::motion::InputSettings::for_game("my_game"));
-        app.add_plugins((arena::ArenaPlugin, brain::BrainPlugin, ai::GameAiPlugin, progress::ProgressPlugin));
+        app.add_plugins((arena::ArenaPlugin, brain::BrainPlugin, ai::GameAiPlugin, progress::ProgressPlugin, screens::ScreensPlugin));
     }
 }
 

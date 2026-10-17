@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use my_game::progress::Trophies;
 use shards::ai_core::{AiIndex, AiJournal};
+use shards::bevy::ecs::message::Messages;
 use shards::net::{LinkConditions, NetDesync, NetState, Stand};
 use shards::prelude::*;
 use shards::save::{read_file, SaveConfig, SaveKind, SaveSlots};
@@ -165,6 +166,20 @@ fn a_guest_brings_their_trophies_to_the_next_session() {
     assert!(!down(&second, HOST, "e2"));
     assert_eq!((trophies(&second, HOST, "e1"), trophies(&second, HOST, &guest)), (0, 1));
     assert_eq!(trophies(&second, GUEST, &guest), 1, "the guest's own copy of its body");
+}
+
+#[test]
+fn a_guest_saves_and_quits_by_leaving() {
+    let folder = GuestFolder::new("quit");
+    let mut stand = two_heroes(&folder.0);
+    act(&mut stand, GUEST, "ui_open", json!({"screen": "pause"}));
+    act(&mut stand, GUEST, "ui_click", json!({"id": "pause/quit"}));
+    let out = stand.call(GUEST, "ui_click", json!({"id": "confirm_quit/yes"}));
+    let done = out.result.as_str().unwrap_or_default().to_owned();
+    assert!(out.ok && done.ends_with("the host saves your hero as you leave; the game ends"), "{done}");
+    let exits = stand.world(GUEST).resource::<Messages<AppExit>>();
+    assert_eq!(exits.iter_current_update_messages().count(), 1, "the guest's game is asked to end");
+    assert!(!folder.0.join("world").exists(), "a guest writes no world");
 }
 
 #[test]

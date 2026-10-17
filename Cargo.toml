@@ -10,6 +10,7 @@ members = [
     "crates/shards_level",
     "crates/shards_save",
     "crates/shards_settings",
+    "crates/shards_ui",
     "crates/shards_npc",
     "crates/shards_world",
     "crates/shards_net",
@@ -57,6 +58,9 @@ toml = { version = "=1.1.8", default-features = false, features = ["std", "serde
 # Deflate of link bodies and blobs inside shards_net only; never part of a public API. Pure Rust
 # (miniz_oxide), raw deflate streams: no zlib header, no C or SIMD backends.
 flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
+# Labels, roles and values of UI widgets for screen readers, inside shards_ui only; never part of a
+# public API. The version Bevy 0.20's own accessibility uses (`bevy_a11y`, `bevy_winit`): one copy.
+accesskit = { version = "=0.24.1", default-features = false }
 
 ai_core = { path = "crates/ai_core", default-features = false }
 shards_script = { path = "crates/shards_script" }
@@ -68,6 +72,7 @@ shards_level = { path = "crates/shards_level" }
 shards_npc = { path = "crates/shards_npc" }
 shards_save = { path = "crates/shards_save" }
 shards_settings = { path = "crates/shards_settings" }
+shards_ui = { path = "crates/shards_ui" }
 shards_world = { path = "crates/shards_world" }
 shards_net = { path = "crates/shards_net" }
 shards = { path = "crates/shards", default-features = false }

@@ -66,6 +66,20 @@ pub fn observe_lines(world: &World, subject: Entity) -> Vec<String> {
     world.get_resource::<AiObserveLines>().map(|l| l.0.iter().flat_map(|f| f(world, subject)).collect()).unwrap_or_default()
 }
 
+/// Lines about the game around everyone, not about a subject, printed after `LANDMARKS` as they
+/// are (`UI  pause (on top, pauses the game) · focus pause/resume`): for state of this machine
+/// that is no entity, like the screens a player has open. Return nothing to add nothing.
+pub type ObserveSectionFn = fn(&World) -> Vec<String>;
+
+/// Registered sections, in registration order.
+#[derive(Resource, Default, Clone)]
+pub struct AiObserveSections(pub Vec<ObserveSectionFn>);
+
+/// Every section line, in registration order.
+pub fn observe_sections(world: &World) -> Vec<String> {
+    world.get_resource::<AiObserveSections>().map(|s| s.0.iter().flat_map(|f| f(world)).collect()).unwrap_or_default()
+}
+
 /// Everything the AI layer knows about one entity, independent of the viewer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EntityFacts {

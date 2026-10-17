@@ -17,6 +17,7 @@ render = [
     "shards_world/render",
     "shards_npc/render",
     "shards_net/render",
+    "shards_ui/render",
     "bevy/3d_bevy_render",
     "bevy/ui_bevy_render",
     "bevy/bevy_winit",
@@ -51,6 +52,7 @@ shards_save.workspace = true
 shards_net.workspace = true
 shards_script.workspace = true
 shards_settings.workspace = true
+shards_ui.workspace = true
 bevy = { workspace = true, features = ["default_app", "std", "multi_threaded", "serialize"] }
 serde.workspace = true
 serde_json.workspace = true

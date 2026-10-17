@@ -315,6 +315,9 @@ pub fn observe(world: &World, opts: &ObserveOptions) -> String {
             landmarks.iter().map(|(f, _)| format!("{} {} {}", f.id, f.label, relative(origin, f.pos))).collect();
         let _ = writeln!(out, "LANDMARKS  {}", items.join(" · "));
     }
+    for line in crate::describe::observe_sections(world) {
+        let _ = writeln!(out, "{line}");
+    }
 
     if let (Some(after), Some(journal)) = (opts.journal_after, world.get_resource::<AiJournal>()) {
         let (entries, missed) = journal.after(after);

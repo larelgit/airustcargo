@@ -16,11 +16,13 @@ use shards_net::NetPlugin;
 use shards_npc::NpcPlugin;
 use shards_save::SavePlugin;
 use shards_settings::ShardsSettingsPlugin;
+use shards_ui::UiPlugin as ShardsUiPlugin;
 use shards_world::WorldPlugin;
 
 use crate::coop::CoopPlugin;
 use crate::net_wiring::EngineNetPlugin;
 use crate::save_sections::EngineSavePlugin;
+use crate::ui_wiring::EngineUiPlugin;
 use crate::TileLevelsPlugin;
 
 /// Bevy's `DefaultPlugins` (whatever the cargo features compile in), the log capture
@@ -102,6 +104,9 @@ impl PluginGroup for EnginePlugins {
             .add(EngineSavePlugin)
             // Where the two meet: characters travel with their players, the host keeps the world.
             .add(CoopPlugin)
+            // Screens and menus, then the HUD's values and the controls in menus.
+            .add(ShardsUiPlugin)
+            .add(EngineUiPlugin)
     }
 }
 

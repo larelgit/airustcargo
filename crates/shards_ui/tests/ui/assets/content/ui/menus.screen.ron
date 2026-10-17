@@ -1,0 +1,52 @@
+// The menus of the tests: pause, settings with tabs, a question that must be answered, a shop.
+{
+    "pause": (
+        pauses: true,
+        title: "Paused",
+        widgets: [
+            Button(id: "resume", label: "Resume", action: "close"),
+            Button(id: "settings", label: "Settings", action: "open settings"),
+            Button(id: "patch_up", label: "Patch up", action: "tool heal {\"id\": \"e1\"}"),
+            Button(id: "quit", label: "Quit", action: "open confirm_quit"),
+        ],
+    ),
+    "settings": (
+        title: "Settings",
+        widgets: [
+            Tabs(id: "tabs", children: [
+                Panel(id: "display", title: "Display", children: [
+                    Slider(id: "text_size", label: "Text size", min: 0.5, max: 3.0, step: 0.25, setting: "accessibility.text_scale"),
+                    Choice(id: "flashes", label: "Flashes", options: ["full", "reduced", "off"], setting: "accessibility.flashes"),
+                ]),
+                Panel(id: "controls", title: "Controls", children: [
+                    Toggle(id: "hold", label: "Hold to toggle", setting: "accessibility.hold_to_toggle"),
+                ]),
+            ]),
+            Button(id: "back", label: "Back", action: "back"),
+        ],
+    ),
+    "confirm_quit": (
+        layer: Modal,
+        closable: false,
+        title: "Give up?",
+        widgets: [
+            Panel(layout: Row, children: [
+                Button(id: "yes", label: "Yes", action: "give_up"),
+                Button(id: "no", label: "No", action: "close"),
+            ]),
+        ],
+    ),
+    "shop": (
+        title: "Shop",
+        widgets: [
+            Grid(id: "goods", columns: 3, children: [
+                Button(id: "a", label: "A", action: "close"),
+                Button(id: "b", label: "B", action: "close"),
+                Button(id: "c", label: "C", action: "close"),
+                Button(id: "d", label: "D", action: "close"),
+                Button(id: "e", label: "E", action: "close"),
+            ]),
+            Compare(id: "sword", title: "Sword", rows: [(stat: "damage", before: 12, after: 15), (stat: "speed", before: 5, after: 4)]),
+        ],
+    ),
+}
