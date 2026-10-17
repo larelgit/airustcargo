@@ -3,6 +3,7 @@
 
 mod autosave;
 mod common;
+mod continue_game;
 mod damage;
 mod launch;
 mod migrate;

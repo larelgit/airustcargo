@@ -1,4 +1,4 @@
-//! Tools: `save_game`, `load_game`, `save_check`, `save_list`, `save_registry`, `save_damage`.
+//! Tools: `save_game`, `load_game`, `save_check`, `save_list`, `save_registry`, `save_damage`, `continue_game`.
 //!
 //! An agent drives saves the way a player's menu does (`save_game`, `load_game`), and checks
 //! them the way a tester does: `save_check` compares the state with a file,
@@ -23,6 +23,7 @@ pub(crate) fn register(world: &mut World) {
     register_tool(world, "save_list", Scope::Player, ToolKind::Query, save_list);
     register_tool(world, "save_registry", Scope::Player, ToolKind::Query, save_registry);
     register_tool(world, "save_damage", Scope::Dev, ToolKind::Control, save_damage);
+    register_tool(world, "continue_game", Scope::Player, ToolKind::Action, continue_game);
 }
 
 /// What the tools can be pointed at.
@@ -134,6 +135,45 @@ fn load_game(In(call): In<Call<LoadGameArgs>>, world: &mut World) -> ToolResult 
     let parts = parts(world, &call.caller, what);
     let reports = ops::load_parts(world, &parts, &slots)?;
     Ok(format!("ok: {}", reports.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")))
+}
+
+/// Leave the main menu and play on from the newest save: the game starts as `new_game` starts it,
+/// then the world and the character saved last (of each kind, the slot whose good copy was written
+/// last; `save_list` lists them) are loaded into it and become the current slots. A player may: the
+/// loads are made as the launch's own agent, as `--world` and `--character` are. Refuses, staying in
+/// the menu, when there is no save yet: `new_game` starts a game, and saving it makes one.
+#[derive(Deserialize, JsonSchema, Default)]
+pub struct ContinueGameArgs {}
+
+fn continue_game(In(_): In<Call<ContinueGameArgs>>, world: &mut World) -> ToolResult {
+    let refuse = |world: &mut World, message: String| {
+        ai_core::replay::forget_call(world);
+        message
+    };
+    if let Err(e) = shards_core::can_start_game(world) {
+        return Err(refuse(world, e));
+    }
+    let newest = crate::launch::newest_saves(world);
+    if newest.is_empty() {
+        let dir = world.get_resource::<crate::SaveConfig>().map(|c| c.dir.display().to_string()).unwrap_or_default();
+        return Err(refuse(world, format!("there is no save to continue yet (none in {dir}): `new_game` starts a game, and saving it makes one")));
+    }
+    if !shards_core::menu::starts_at_once(world) {
+        return Err(refuse(world, "the game cannot start inside a state transition, so nothing could be loaded into it: call it from outside one".to_owned()));
+    }
+    let started = shards_core::start_game(world)?;
+    let mut loaded = Vec::new();
+    for (kind, slot) in newest {
+        match crate::launch::load_launch_slot(world, kind, &slot).outcome {
+            crate::LaunchOutcome::Loaded => loaded.push(format!("{kind}/{slot}")),
+            crate::LaunchOutcome::Fresh => {}
+            crate::LaunchOutcome::Failed(why) => {
+                let before = if loaded.is_empty() { String::new() } else { format!(" ({} loaded)", loaded.join(", ")) };
+                return Err(format!("{started}, but {kind}/{slot} did not load{before}: {why}; the game goes on without it"));
+            }
+        }
+    }
+    Ok(format!("{started}; loaded {}", loaded.join(", ")))
 }
 
 /// Hash the saveable state (what a save would hold) and, with a slot, compare it with that

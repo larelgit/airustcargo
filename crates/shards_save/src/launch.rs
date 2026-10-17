@@ -30,6 +30,7 @@ use shards_core::{EngineConfig, EngineState, NetLaunch};
 
 use crate::ops::{replay_playing, SaveConfig};
 use crate::section::SaveKind;
+use crate::store::FileState;
 
 /// The agent the launch's loads are made as: dev scope, the player's body.
 pub const LAUNCH_AGENT: &str = "launch";
@@ -115,6 +116,42 @@ pub(crate) fn load_at_launch(world: &mut World) {
     if !replay_playing(world) {
         load_launch_slots(world);
     }
+}
+
+/// The slot of `kind` saved last: of the slots with a copy that reads (`ok` in `save_list`), the one
+/// whose good copy was written last, by the files' time (equal times: the first name). `None`: no
+/// usable save of that kind. What a main menu's "continue" plays on from.
+pub fn newest_slot(world: &World, kind: SaveKind) -> Option<String> {
+    let store = world.get_resource::<SaveConfig>()?.store();
+    let newer = crate::ops::newer_check(world, kind);
+    store
+        .slots(kind)
+        .into_iter()
+        .filter_map(|slot| {
+            let info = store.inspect_with(kind, &slot, &newer);
+            let written = info
+                .files
+                .iter()
+                .filter(|f| matches!(f.state, FileState::Ok { .. }))
+                .filter_map(|f| std::fs::metadata(store.path(kind, &slot, f.which)).and_then(|m| m.modified()).ok())
+                .max()?;
+            Some((written, slot))
+        })
+        .max_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)))
+        .map(|(_, slot)| slot)
+}
+
+/// Whether the save folder has a slot of any kind (its files listed, not read): cheap enough for a
+/// menu to ask every frame whether there is something to continue. [`newest_slot`] reads them.
+pub fn any_save(world: &World) -> bool {
+    let Some(config) = world.get_resource::<SaveConfig>() else { return false };
+    let store = config.store();
+    SaveKind::ALL.into_iter().any(|kind| !store.slots(kind).is_empty())
+}
+
+/// The newest save of each kind ([`newest_slot`]): the world's first, then the character's.
+pub fn newest_saves(world: &World) -> Vec<(SaveKind, String)> {
+    SaveKind::ALL.into_iter().filter_map(|kind| Some((kind, newest_slot(world, kind)?))).collect()
 }
 
 /// Whether a game launched as `config` loads its slots by itself: a single game does, the

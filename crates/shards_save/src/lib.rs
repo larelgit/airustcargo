@@ -46,6 +46,7 @@
 //!   which a single game also loads before its first tick ([`launch`]).
 //!
 //! Tools: `save_game`, `load_game` (an action: the recording restarts from the loaded state),
+//! `continue_game` (a main menu's "continue": the game starts, the newest saves load into it),
 //! `save_check`, `save_list`, `save_registry`, `save_damage` (QA of the recovery).
 //! `ai/status` gets a `save` field (the folder, the current slots, how many sections).
 
@@ -69,7 +70,7 @@ use shards_core::{EngineAppExt, EngineConfig};
 
 pub use autosave::{flush_saves, SaveDef, SaveRequests, DEFAULT_DEBOUNCE_SECS};
 pub use file::{Fault, GameInfo, SaveFile, SectionData, SectionSet, FORMAT};
-pub use launch::{load_launch_slot, load_launch_slots, LaunchLoad, LaunchLoaded, LaunchOutcome};
+pub use launch::{any_save, load_launch_slot, load_launch_slots, newest_saves, newest_slot, LaunchLoad, LaunchLoaded, LaunchOutcome};
 pub use ops::{
     apply_sections, capture_sections, check_parts, check_save_dir, check_state, default_body, load_parts, load_slot, newer_check, newer_sections, prepare, read_file,
     replay_playing, resolve_body, save_now, save_part, save_parts, save_slot, slot_from_name, write_sections, Applied, ApplyError, CheckReport, FileCheck, LoadReport,
