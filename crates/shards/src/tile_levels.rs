@@ -146,11 +146,14 @@ const EDGES: [(&str, &str); 4] = [("north", "n"), ("east", "e"), ("south", "s"),
 /// that names the file and the node. Then the file's `socket` markers against the tile's
 /// `sockets`, at every size a region uses the tile at: each marker stands on an edge, at a part
 /// of it whose socket is of the marker's kind (and height, when the marker names one). Markers
-/// are optional: a socket the file does not mark is not checked.
+/// are optional: a socket the file does not mark is not checked. And the file's `navlink`
+/// markers against the tile's `navlinks`: the generator's reachability check takes a navlink
+/// only as the tile lists it, so each one the file has is listed, under a name of its own, and
+/// each one listed is in the file.
 ///
 /// A file that a `level` definition names too is that definition's to report: it checks the same
 /// things (and its `required_markers`), under its own name, and one problem of one file must
-/// not be two errors. The tile then adds only what is its own, the sockets.
+/// not be two errors. The tile then adds only what is its own, the sockets and the navlinks.
 fn check_tile_file(tile: &TileDef, id: &str, refs: &mut Refs) {
     let TileGeometry::Level { path } = &tile.geometry else { return };
     let Some(root) = refs.asset_root() else { return };
@@ -179,9 +182,36 @@ fn check_tile_file(tile: &TileDef, id: &str, refs: &mut Refs) {
             refs.error(format!("geometry: {path}: {problem}"));
         }
     }
-    for problem in socket_problems(tile, id, &level, refs) {
+    for problem in socket_problems(tile, id, &level, refs).into_iter().chain(navlink_problems(tile, &level)) {
         refs.error(format!("geometry: {path}: {problem}"));
     }
+}
+
+/// What does not match between the file's navlink markers and the tile's `navlinks`, once each.
+fn navlink_problems(tile: &TileDef, level: &LevelAsset) -> Vec<String> {
+    let markers: Vec<_> = level.markers().into_iter().filter(|m| m.kind == MarkerKind::NavLink).collect();
+    let mut problems = Vec::new();
+    for (i, marker) in markers.iter().enumerate() {
+        // A name the file uses again is said once, at its second marker.
+        let earlier: Vec<_> = markers[..i].iter().filter(|m| m.name == marker.name).collect();
+        if let [first] = earlier[..] {
+            problems.push(format!(
+                "two navlinks are called `{}` (nodes `{}` and `{}`): give one a `name` property, so the tile's navlinks tell them apart",
+                marker.name, first.node, marker.node
+            ));
+        } else if earlier.is_empty() && !tile.navlinks.iter().any(|l| l.name == marker.name) {
+            problems.push(format!(
+                "navlink `{}` (node `{}`) is not in the tile's navlinks, so the generator's reachability check does not know it: list it with the links groups it starts and ends in, e.g. (name: \"{}\", from: 0, to: 1)",
+                marker.name, marker.node, marker.name
+            ));
+        }
+    }
+    for link in &tile.navlinks {
+        if !markers.iter().any(|m| m.name == link.name) {
+            problems.push(format!("navlinks: `{}` is no navlink marker of the file", link.name));
+        }
+    }
+    problems
 }
 
 /// What does not match between the file's socket markers and the tile's `sockets`, once each.

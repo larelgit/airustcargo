@@ -225,6 +225,25 @@ pub struct TileDef {
     /// JSON while unset, so the content hash of the regions that use it stays as it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tile_size: Option<f32>,
+    /// The navlinks of its level file, as the generator's reachability check takes them: the
+    /// `links` group each starts in and the one it ends in. One-way, marker to `to`, as the
+    /// navmesh takes them; `content check` holds the list to the file's navlink markers. Left
+    /// out of the definition's JSON while empty, so the content hash stays as it was.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub navlinks: Vec<TileNavLink>,
+}
+
+/// A navlink of a tile's level file, between two of the tile's walkable areas:
+/// `(name: "Ledge.Drop", from: 1, to: 0)`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TileNavLink {
+    /// The navlink marker's name in the file: the node's name, or its `name` property.
+    pub name: String,
+    /// The `links` group it starts in (0 when the tile has none).
+    pub from: usize,
+    /// The `links` group it ends in.
+    pub to: usize,
 }
 
 impl TileDef {
@@ -263,8 +282,9 @@ impl ContentDef for TileDef {
         if let Some(groups) = &self.links {
             let mut seen = BTreeSet::new();
             for (i, group) in groups.iter().enumerate() {
-                if group.is_empty() {
-                    refs.error(format!("links[{i}] is empty; list the sides that connect, e.g. [N, S]"));
+                // An area on no side is one walkers reach only by a navlink: a plateau, a pit.
+                if group.is_empty() && !self.navlinks.iter().any(|l| l.to == i && l.from != i) {
+                    refs.error(format!("links[{i}] is empty; list the sides that connect, e.g. [N, S], or reach it with a navlink"));
                 }
                 for side in group {
                     if !seen.insert(*side) {
@@ -274,6 +294,7 @@ impl ContentDef for TileDef {
             }
         }
         check_pois(refs, &self.pois, &self.slots, self.areas());
+        check_navlinks(refs, &self.navlinks, self.areas(), &self.geometry);
         for (i, prefab) in self.decor.iter().enumerate() {
             refs.require::<PrefabDef>(prefab, &format!("decor[{i}]"));
         }
@@ -316,6 +337,25 @@ fn check_pois(refs: &mut Refs, pois: &[FixedPoi], slots: &[PoiSlot], areas: usiz
         }
         if slot.area >= areas {
             refs.error(format!("slots[{i}].area {} is past the last links group ({})", slot.area, areas - 1));
+        }
+    }
+}
+
+fn check_navlinks(refs: &mut Refs, navlinks: &[TileNavLink], areas: usize, geometry: &TileGeometry) {
+    if !navlinks.is_empty() && !matches!(geometry, TileGeometry::Level { .. }) {
+        refs.error("navlinks are the navlink markers of a level file, and the tile's geometry is no Level(path: …)");
+    }
+    let mut seen = BTreeSet::new();
+    for (i, link) in navlinks.iter().enumerate() {
+        if link.name.trim().is_empty() {
+            refs.error(format!("navlinks[{i}].name is empty; give the navlink marker's name in the level file"));
+        } else if !seen.insert(link.name.as_str()) {
+            refs.error(format!("navlinks: `{}` is listed twice", link.name));
+        }
+        for (field, area) in [("from", link.from), ("to", link.to)] {
+            if area >= areas {
+                refs.error(format!("navlinks[{i}].{field} {area} is past the last links group ({})", areas - 1));
+            }
         }
     }
 }

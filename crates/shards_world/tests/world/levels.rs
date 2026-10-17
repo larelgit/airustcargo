@@ -31,6 +31,8 @@ const TILES: &str = r#"
         rotations: [0, 90, 180, 270],
         slots: [(at: (3.0, 0.0, -3.0), accepts: ["spawn", "camp"])],
         geometry: Level(path: "tiles/yard.gltf"),
+        // Up the wall and back on the yard's one walkable area.
+        navlinks: [(name: "ladder", from: 0, to: 0)],
     ),
     "lawn": (
         sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
@@ -575,8 +577,9 @@ fn a_missing_level_file_is_a_content_error_naming_the_tile_and_the_path() {
     let missing = errors(&build(&tile(r#"Level(path: "tiles/ghost.gltf")"#)));
     assert_eq!(missing.len(), 1, "{missing:?}");
     assert!(missing[0].starts_with("content/ruins/ghost.tile.ron: tile `ghost`: geometry: level file `tiles/ghost.gltf` not found"), "{}", missing[0]);
-    // Files that are there pass, and paths outside the asset folder never do.
-    assert!(errors(&build(&tile(r#"Level(path: "tiles/yard.gltf")"#))).is_empty());
+    // Files that are there pass (one without navlinks: the yard's ladder would want listing), and paths outside the asset
+    // folder never do.
+    assert!(errors(&build(&tile(r#"Level(path: "tiles/cracked.gltf")"#))).is_empty());
     let outside = errors(&build(&tile(r#"Level(path: "../tiles/yard.gltf")"#)));
     assert!(outside.len() == 1 && outside[0].contains("`../tiles/yard.gltf` must be a path inside the asset folder"), "{outside:?}");
     let empty = errors(&build(&tile(r#"Level(path: "")"#)));
@@ -661,17 +664,80 @@ fn a_tile_file_with_an_unknown_component_is_a_content_error_naming_the_tile_the_
 
 #[test]
 fn a_tile_file_is_checked_with_the_content_around_it_one_error_for_every_problem() {
-    // A bad component, a navlink that ends nowhere and a prefab nobody defined, in file order.
+    // A bad component, a navlink that ends nowhere and a prefab nobody defined, in file order;
+    // then what the tile says of the file: the navlink is not among its `navlinks`.
     let mut file = cracked(true);
     file.root(NodeSpec::new("Ladder").at([2.0, 0.0, 2.0]).props(json!({"marker": "navlink", "name": "ladder", "to": "Nowhere"})));
     file.root(NodeSpec::new("Crate").at([-2.0, 0.0, 2.0]).props(json!({"prefab": "rockz"})));
     let dir = site("every_problem", &[]);
     let errors = content_errors_with(&dir, ("tiles/cracked.gltf", &file.gltf()), &[]);
     let at = format!("{TILE_RON}: tile `cracked`: geometry: tiles/cracked.gltf: node `");
-    assert_eq!(errors.len(), 3, "{errors:#?}");
+    assert_eq!(errors.len(), 4, "{errors:#?}");
     assert_eq!(errors[0], format!("{at}Floor`: unknown component `Helth` (did you mean `Health`?)"));
     assert_eq!(errors[1], format!("{at}Ladder`: navlink `to` names no node: `Nowhere`"));
     assert!(errors[2].starts_with(&format!("{at}Crate`: ")) && errors[2].contains("rockz") && errors[2].contains("`rocks`"), "{}", errors[2]);
+    assert!(errors[3].starts_with(&format!("{TILE_RON}: tile `cracked`: geometry: tiles/cracked.gltf: navlink `ladder` (node `Ladder`) is not in")), "{}", errors[3]);
+}
+
+/// `cracked` with a rope down from a ledge: navlink markers `names`, one node each.
+fn roped(names: &[&str]) -> Gltf {
+    let mut file = cracked(false);
+    for (i, name) in names.iter().enumerate() {
+        let x = i as f32 * 2.0;
+        file.root(NodeSpec::new(&format!("Rope{i}")).at([x, 2.0, 0.0]).props(json!({"marker": "navlink", "name": name, "to": format!("Foot{i}")})));
+        file.root(NodeSpec::new(&format!("Foot{i}")).at([x, 0.0, 1.0]));
+    }
+    file
+}
+
+#[test]
+fn a_navlink_of_a_tiles_file_that_the_tile_does_not_list_is_a_content_error() {
+    let dir = site("navlink_unlisted", &[]);
+    let errors = content_errors_with(&dir, ("tiles/cracked.gltf", &roped(&["rope"]).gltf()), &[]);
+    assert_eq!(
+        errors,
+        [format!(
+            "{TILE_RON}: tile `cracked`: geometry: tiles/cracked.gltf: navlink `rope` (node `Rope0`) is not in the tile's navlinks, so the generator's reachability check does not know it: list it with the links groups it starts and ends in, e.g. (name: \"rope\", from: 0, to: 1)"
+        )]
+    );
+    // Listed, it is the generator's: no error.
+    let listed = ("content/ruins/roped.tile.ron", r#"{ "roped": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        geometry: Level(path: "tiles/cracked.gltf"),
+        navlinks: [(name: "rope", from: 0, to: 0)],
+    ) }"#);
+    let dir = site("navlink_listed", &[]);
+    let errors = content_errors_with(&dir, ("tiles/cracked.gltf", &roped(&["rope"]).gltf()), &[listed]);
+    assert_eq!(errors.len(), 1, "only `cracked` still lacks it: {errors:#?}");
+    assert!(errors[0].starts_with(&format!("{TILE_RON}: tile `cracked`: ")), "{}", errors[0]);
+}
+
+#[test]
+fn a_listed_navlink_the_file_does_not_have_is_a_content_error() {
+    let zipline = ("content/ruins/zipline.tile.ron", r#"{ "zipline": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        geometry: Level(path: "tiles/cracked.gltf"),
+        navlinks: [(name: "zip", from: 0, to: 0)],
+    ) }"#);
+    let dir = site("navlink_missing", &[]);
+    let errors = content_errors_with(&dir, ("tiles/cracked.gltf", &cracked(false).gltf()), &[zipline]);
+    assert_eq!(
+        errors,
+        ["content/ruins/zipline.tile.ron: tile `zipline`: geometry: tiles/cracked.gltf: navlinks: `zip` is no navlink marker of the file"]
+    );
+}
+
+#[test]
+fn two_navlinks_of_one_name_in_a_tiles_file_are_a_content_error_said_once() {
+    let dir = site("navlink_twice", &[]);
+    let errors = content_errors_with(&dir, ("tiles/cracked.gltf", &roped(&["rope", "rope", "rope"]).gltf()), &[]);
+    let at = format!("{TILE_RON}: tile `cracked`: geometry: tiles/cracked.gltf: ");
+    assert_eq!(errors.len(), 2, "{errors:#?}");
+    assert!(errors[0].starts_with(&format!("{at}navlink `rope` (node `Rope0`) is not in")), "{}", errors[0]);
+    assert_eq!(
+        errors[1],
+        format!("{at}two navlinks are called `rope` (nodes `Rope0` and `Rope1`): give one a `name` property, so the tile's navlinks tell them apart")
+    );
 }
 
 #[test]
