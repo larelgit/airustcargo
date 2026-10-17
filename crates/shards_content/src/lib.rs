@@ -23,6 +23,8 @@
 //!   database; a clean edit is applied through the `content_apply` tool, recorded in
 //!   the replay at its tick, and journaled: `content reloaded: combat/attacks.attack.ron
 //!   (1 definition changed)`. A broken edit is journaled and the previous version kept.
+//!   While a module holds content ([`ContentGuards`]: a co-op session) an edit waits and
+//!   the tools refuse.
 //! - **Checking without a game**: [`check_dir`] for a `--check-content` CI step.
 //! - **Prefabs**: entities defined in content ([`PrefabDef`], [`spawn_prefab`]).
 //!
@@ -68,6 +70,24 @@ pub trait ContentAppExt {
     /// runs after the kind's `validate`, wherever content is validated (see
     /// [`ContentKinds::add_check`]).
     fn add_content_check<T: ContentDef>(&mut self, name: &'static str, check: fn(&T, &str, &mut Refs)) -> &mut Self;
+
+    /// A module that cannot have this game's content change under it at times says when, and
+    /// why ([`ContentGuards`]).
+    fn add_content_guard(&mut self, guard: fn(&World) -> Option<String>) -> &mut Self;
+}
+
+/// Why the content of this game must not change right now, from the modules that may say so:
+/// while a guard gives a reason, `content_apply`, `content_reload` and a level's reload refuse
+/// with it, and a file changed on disk waits (said once in the journal) until no guard holds.
+/// A co-op session holds content while other machines play it (`shards_net`): changed on one of
+/// them only, it would desync them. The reason finishes the sentence "a content reload …":
+/// `during a co-op session would desync its 2 clients; …`.
+#[derive(Resource, Default, Clone)]
+pub struct ContentGuards(Vec<fn(&World) -> Option<String>>);
+
+/// The first reason a guard gives for content to stay as it is now ([`ContentGuards`]).
+pub fn content_held(world: &World) -> Option<String> {
+    world.get_resource::<ContentGuards>()?.0.iter().find_map(|guard| guard(world))
 }
 
 impl ContentAppExt for App {
@@ -86,6 +106,11 @@ impl ContentAppExt for App {
 
     fn add_content_check<T: ContentDef>(&mut self, name: &'static str, check: fn(&T, &str, &mut Refs)) -> &mut Self {
         self.world_mut().get_resource_or_init::<ContentKinds>().add_check::<T>(name, check);
+        self
+    }
+
+    fn add_content_guard(&mut self, guard: fn(&World) -> Option<String>) -> &mut Self {
+        self.world_mut().get_resource_or_init::<ContentGuards>().0.push(guard);
         self
     }
 }

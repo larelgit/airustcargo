@@ -192,7 +192,8 @@ fn level_info(In(call): In<Call<LevelInfoArgs>>, world: &World) -> ToolResult {
 /// Replace the spawned instances of a level with the file as it is now (the asset server
 /// reloads a changed file by itself, and the instances follow through this tool, so a replay
 /// has it). Entities the game changed come back as the file says. A file with problems
-/// leaves the instances as they were. Without arguments: every spawned level.
+/// leaves the instances as they were. Without arguments: every spawned level. Refused during a
+/// co-op session with other machines in it: they would desync.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct LevelReloadArgs {
     /// Level id, e.g. "arena".
@@ -202,6 +203,11 @@ pub struct LevelReloadArgs {
 }
 
 fn level_reload(In(call): In<Call<LevelReloadArgs>>, world: &mut World) -> ToolResult {
+    if let Some(why) = shards_content::content_held(world) {
+        // Nothing changed: not part of the recording.
+        ai_core::replay::forget_call(world);
+        return Err(format!("refused: a level reload {why}"));
+    }
     let LevelReloadArgs { id, file } = call.args;
     let file_of_id = match &id {
         Some(id) => Some(def_of(world, id)?.file),

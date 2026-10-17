@@ -36,6 +36,8 @@ pub struct LevelLibrary {
     reported: BTreeSet<String>,
     /// Files the asset server reloaded, waiting for their instances to be replaced.
     changed: BTreeSet<String>,
+    /// Why they wait ([`shards_content::content_held`]), as the journal said it.
+    held: Option<String>,
 }
 
 impl LevelLibrary {
@@ -180,6 +182,16 @@ pub(crate) fn apply_changed(world: &mut World) {
     if world.resource::<LevelLibrary>().changed.is_empty() || sim::gate_message(world).is_some() {
         return;
     }
+    // A module holds content (a co-op session): the change waits, said once.
+    if let Some(why) = shards_content::content_held(world) {
+        let mut library = world.resource_mut::<LevelLibrary>();
+        if library.held.as_deref() != Some(why.as_str()) {
+            library.held = Some(why.clone());
+            journal::emit(world, JournalKind::Warn, format!("level: a level file changed on disk and waits: a level reload {why}; it applies when that is over"));
+        }
+        return;
+    }
+    world.resource_mut::<LevelLibrary>().held = None;
     let changed = std::mem::take(&mut world.resource_mut::<LevelLibrary>().changed);
     for file in changed {
         let used = world.get_resource::<LevelInstances>().is_some_and(|i| i.iter().any(|i| i.path == file));

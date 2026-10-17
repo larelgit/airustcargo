@@ -163,6 +163,7 @@ impl Plugin for NetPlugin {
             .init_resource::<crate::events::EventOutbox>()
             .init_resource::<crate::events::EventInbox>()
             .init_resource::<crate::predict::NetCorrection>()
+            .add_content_guard(content_guard)
             // A client sends its own intent; the host's copy of it is never sent back.
             .net_predicted::<Intent>()
             .add_systems(FixedUpdate, despawn_left.in_set(SimSet::Cleanup).before(CoreSystems::ClearPresses));
@@ -339,6 +340,27 @@ fn pump(world: &mut World) {
     if world.contains_resource::<NetClient>() {
         client::pump(world);
     }
+}
+
+/// Content stays as it is while other machines play it ([`shards_content::ContentGuards`]): on a
+/// host with a client past its hello (its world is built, or will be, from this content), on a
+/// client in a session. A reload on one machine only would desync them: content is not sent over
+/// the session, it is checked at the hello (`content differs`). The answer ends the sentence "a
+/// content reload …".
+fn content_guard(world: &World) -> Option<String> {
+    if let Some(host) = world.get_resource::<NetHost>() {
+        let n = host.peers.values().filter(|p| !matches!(p.stage, host::PeerStage::New | host::PeerStage::Gone)).count();
+        if n > 0 {
+            let clients = if n == 1 { "client".to_owned() } else { format!("{n} clients") };
+            return Some(format!("during a co-op session would desync its {clients}; do it once they have left, or after net_end"));
+        }
+    }
+    if let Some(client) = world.get_resource::<NetClient>()
+        && !matches!(client.stage, client::ClientStage::Connecting | client::ClientStage::Ended(_))
+    {
+        return Some(format!("during a co-op session would desync this game from its host {}; leave the session first", client.address));
+    }
+    None
 }
 
 /// Milliseconds on the session's clock (0 without an endpoint).
