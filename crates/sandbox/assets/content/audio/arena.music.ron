@@ -1,0 +1,22 @@
+// The arena's music (content kind `music`): three stems of one six-second loop that play together,
+// each heard in some layers. Calm to intense: `explore` (the pad), `tension` when the hero is near
+// an awake monster (its sight range and half again: the NPC module's `npc_near`), `combat` while a
+// monster has a target (`npc_engaged`). A more intense layer comes at once; a calmer one after five
+// seconds of being wanted. `music_set layer=combat` holds a layer, `layer=auto` lets go.
+{
+    "arena": (
+        stems: [
+            (file: "music/arena_pad.wav", layers: ["explore", "tension", "combat"]),
+            (file: "music/arena_pulse.wav", layers: ["tension", "combat"]),
+            (file: "music/arena_drums.wav", layers: ["combat"]),
+        ],
+        layers: [
+            (name: "explore"),
+            (name: "tension", when: "npc_near"),
+            (name: "combat", when: "npc_engaged"),
+        ],
+        fade_in: 1.0,
+        fade_out: 2.5,
+        hold: 5.0,
+    ),
+}

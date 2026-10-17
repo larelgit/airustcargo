@@ -12,6 +12,7 @@ members = [
     "crates/shards_settings",
     "crates/shards_locale",
     "crates/shards_ui",
+    "crates/shards_audio",
     "crates/shards_npc",
     "crates/shards_world",
     "crates/shards_net",
@@ -80,6 +81,7 @@ shards_save = { path = "crates/shards_save" }
 shards_settings = { path = "crates/shards_settings" }
 shards_locale = { path = "crates/shards_locale" }
 shards_ui = { path = "crates/shards_ui" }
+shards_audio = { path = "crates/shards_audio" }
 shards_world = { path = "crates/shards_world" }
 shards_net = { path = "crates/shards_net" }
 shards = { path = "crates/shards", default-features = false }

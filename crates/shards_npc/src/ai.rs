@@ -47,6 +47,13 @@ pub(crate) fn register(app: &mut App) {
         .add_ai_condition("npcs_calm", |w| {
             w.try_query::<&NpcBrain>().is_none_or(|mut q| q.iter(w).all(|b| !b.active || b.target.is_none()))
         })
+        // `step --until named:npc_engaged`: an active NPC with a target is in a fighting state
+        // (`chase`, `attack`, `wait_token`): what adaptive music calls combat. A calm NPC that
+        // sees someone is not. Reads only what a co-op client is sent too.
+        .add_ai_condition("npc_engaged", npc_engaged)
+        // `step --until named:npc_near`: a player's body is within an active NPC's sight range
+        // and half again: it may be noticed any moment (what adaptive music calls tension).
+        .add_ai_condition("npc_near", npc_near)
         // `step --until named:npc_beyond_leash`: an active NPC stands farther from its home than
         // its leash, give or take a meter (its goals stay half a meter inside; the rest is a
         // body pushed by others). A step that should keep NPCs in their zones must not stop on it.
@@ -66,6 +73,39 @@ pub(crate) fn register(app: &mut App) {
 
 /// How far past its leash an NPC may stand before `npc_beyond_leash` holds (m).
 pub const LEASH_SLACK: f32 = 1.0;
+
+/// The engine's states an NPC fights in, by kind: `npc_engaged` holds while one is in them.
+pub const FIGHTING_STATES: [&str; 3] = ["chase", "attack", "wait_token"];
+
+/// `npc_engaged`: an active NPC with a target is in a state of a [`FIGHTING_STATES`] kind.
+fn npc_engaged(w: &World) -> bool {
+    let Some(mut npcs) = w.try_query::<(&Npc, &NpcBrain)>() else { return false };
+    let db = w.get_resource::<shards_content::ContentDb>();
+    npcs.iter(w).filter(|(_, b)| b.active && b.target.is_some()).any(|(npc, brain)| {
+        let behavior = db.and_then(|db| db.get::<crate::def::BehaviorDef>(&npc.behavior));
+        let kind = behavior.map_or(brain.state.as_str(), |b| b.kind_of(&brain.state));
+        FIGHTING_STATES.contains(&kind)
+    })
+}
+
+/// How far past its sight range an NPC counts as near for `npc_near` (× the range).
+pub const NEAR_SIGHT: f32 = 1.5;
+
+/// `npc_near`: some living player's body is within [`NEAR_SIGHT`] × the sight range of an
+/// active NPC (its perception's, the engine's default without one).
+fn npc_near(w: &World) -> bool {
+    let Some(mut players) = w.try_query_filtered::<&Transform, (With<shards_core::PlayerId>, Without<shards_action::Dead>)>() else {
+        return false;
+    };
+    let players: Vec<Vec3> = players.iter(w).map(|t| t.translation).collect();
+    let Some(mut npcs) = w.try_query::<(&Npc, &NpcBrain, &Transform)>() else { return false };
+    let db = w.get_resource::<shards_content::ContentDb>();
+    npcs.iter(w).filter(|(_, b, _)| b.active).any(|(npc, _, at)| {
+        let sight = db.and_then(|db| db.get::<crate::def::PerceptionDef>(&npc.perception)).map_or_else(|| crate::def::PerceptionDef::default().sight_range, |d| d.sight_range);
+        let reach = sight * NEAR_SIGHT;
+        players.iter().any(|p| flat(*p - at.translation).length() <= reach)
+    })
+}
 
 /// `chase e5 · token · leash 12/20m`, `attack e5 · circle`, `idle (dormant)`.
 pub fn describe_npc(e: EntityRef) -> Option<String> {

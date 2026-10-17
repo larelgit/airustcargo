@@ -5,8 +5,8 @@
 //! content database ([`content`]), physics, the character controller, input and
 //! camera ([`motion`]), data-driven combat ([`action`]), levels from Blender ([`level`]),
 //! generated regions ([`world`]), enemy AI ([`npc`]), saves ([`save`]), the player's settings
-//! ([`settings`]), screens and menus ([`ui`]) and their languages ([`locale`]); Bevy and serde come
-//! re-exported.
+//! ([`settings`]), screens and menus ([`ui`]) and their languages ([`locale`]), sound and music
+//! ([`audio`]); Bevy and serde come re-exported.
 //!
 //! ```ignore
 //! use shards::prelude::*;
@@ -40,6 +40,7 @@
 //! struct Args { target: Id }
 //! ```
 
+mod audio_wiring;
 pub mod coop;
 mod net_wiring;
 mod plugins;
@@ -56,6 +57,7 @@ pub use schemars;
 pub use serde;
 pub use serde_json;
 pub use shards_action as action;
+pub use shards_audio as audio;
 pub use shards_content as content;
 pub use shards_core as core;
 pub use shards_level as level;
@@ -73,6 +75,7 @@ pub use plugins::EnginePlugins;
 pub use run::run;
 pub use shards_core::EngineConfig;
 pub use tile_levels::TileLevelsPlugin;
+pub use audio_wiring::EngineAudioPlugin;
 pub use ui_wiring::{EngineUiPlugin, PAUSE_SCREEN};
 
 /// Everything a game module needs in scope.
@@ -82,6 +85,7 @@ pub mod prelude {
     pub use schemars::JsonSchema;
     pub use serde::{Deserialize, Serialize};
     pub use shards_action::prelude::*;
+    pub use shards_audio::prelude::*;
     pub use shards_content::prelude::*;
     pub use shards_core::prelude::*;
     pub use shards_level::prelude::*;

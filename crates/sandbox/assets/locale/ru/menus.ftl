@@ -19,6 +19,7 @@ settings-master = Общая громкость
 settings-music = Музыка
 settings-sfx = Эффекты
 settings-voice = Голос
+settings-ui = Интерфейс
 
 settings-controls = Управление
 settings-look-speed = Скорость обзора

@@ -1,0 +1,25 @@
+// The arena's sounds (content kind `sound`): files under assets/sounds/, written by
+// `cargo run -p sandbox --example make_sounds`. A sound the warden's attacks name in their
+// telegraph plays where the attack will land; the mixer (mixer.audio.ron) gives the engine's
+// events theirs. `spatial` sounds fade from `near` to `far` around the hero; past `far` they are
+// not played at all. The higher `priority` keeps its voice when all 24 are taken.
+{
+    "warden_slash": (files: ["sounds/warden_slash.wav"], priority: 180, spatial: (near: 3.0, far: 40.0)),
+    "warden_slam": (files: ["sounds/warden_slam.wav"], priority: 220, spatial: (near: 4.0, far: 55.0)),
+    "warden_sweep": (files: ["sounds/warden_sweep.wav"], priority: 200, spatial: (near: 3.0, far: 45.0)),
+    "warden_shockwave": (files: ["sounds/warden_shockwave.wav"], priority: 230, spatial: (near: 5.0, far: 60.0)),
+    // Two takes of a hit, played in turn.
+    "hit": (files: ["sounds/hit_1.wav", "sounds/hit_2.wav"], priority: 120, spatial: (near: 2.0, far: 30.0), max_instances: 4),
+    "block": (files: ["sounds/block.wav"], volume: 0.8, priority: 140, spatial: (near: 2.0, far: 30.0), max_instances: 3),
+    "parry": (files: ["sounds/parry.wav"], priority: 160, spatial: (near: 2.0, far: 35.0)),
+    "whoosh": (files: ["sounds/whoosh.wav"], volume: 0.6, priority: 60, spatial: (near: 2.0, far: 20.0), max_instances: 3),
+    "guard_break": (files: ["sounds/guard_break.wav"], priority: 170, spatial: (near: 2.0, far: 35.0)),
+    "death": (files: ["sounds/death.wav"], volume: 0.8, priority: 150, spatial: (near: 3.0, far: 40.0)),
+    "heal": (files: ["sounds/heal.wav"], volume: 0.6, priority: 90, spatial: (near: 2.0, far: 20.0)),
+    // Menus: heard the same everywhere, and while the game is paused.
+    "ui_move": (files: ["sounds/ui_move.wav"], bus: Ui, volume: 0.4, max_instances: 2),
+    "ui_press": (files: ["sounds/ui_press.wav"], bus: Ui, volume: 0.5),
+    "ui_tick": (files: ["sounds/ui_tick.wav"], bus: Ui, volume: 0.4, max_instances: 2),
+    "ui_open": (files: ["sounds/ui_open.wav"], bus: Ui, volume: 0.3),
+    "ui_close": (files: ["sounds/ui_close.wav"], bus: Ui, volume: 0.3),
+}

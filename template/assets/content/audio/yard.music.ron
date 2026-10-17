@@ -1,0 +1,23 @@
+// The yard's music (content kind `music`): three stems of one loop that play together, each heard
+// in some layers. Calm to intense: `explore` (the pad), `tension` while a foe could notice the hero
+// (`foe_near`), `combat` while one fights (`in_fight`). Both conditions are the game's own
+// (src/ai.rs): the grunt has the game's brain, and they ask the engine's `npc_near` and
+// `npc_engaged` about the valley's raiders. A more intense layer comes at once; a calmer one after
+// five seconds of being wanted.
+{
+    "yard": (
+        stems: [
+            (file: "music/yard_pad.wav", layers: ["explore", "tension", "combat"]),
+            (file: "music/yard_pulse.wav", layers: ["tension", "combat"]),
+            (file: "music/yard_drums.wav", layers: ["combat"]),
+        ],
+        layers: [
+            (name: "explore"),
+            (name: "tension", when: "foe_near"),
+            (name: "combat", when: "in_fight"),
+        ],
+        fade_in: 1.0,
+        fade_out: 2.5,
+        hold: 5.0,
+    ),
+}

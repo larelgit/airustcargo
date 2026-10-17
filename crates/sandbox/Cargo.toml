@@ -7,7 +7,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [features]
-default = ["render", "remote", "hot_reload"]
+default = ["render", "remote", "hot_reload", "audio"]
 remote = ["shards/remote"]
 # Window, 3D rendering, UI. Without it the game only runs `--headless`.
 render = ["shards/render"]

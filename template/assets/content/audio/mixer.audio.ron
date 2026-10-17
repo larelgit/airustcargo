@@ -1,0 +1,22 @@
+// The game's mixer (content kind `audio`, one per game): 24 voices at once, the yard's music from
+// the start, and the sounds of the engine's events (hits, guards, deaths, menus).
+{
+    "mixer": (
+        voices: 24,
+        music: "yard",
+        sounds: {
+            "damaged": "hit",
+            "blocked": "block",
+            "parried": "parry",
+            "evaded": "whoosh",
+            "guard_broken": "guard_break",
+            "died": "death",
+            "healed": "heal",
+            "ui_moved": "ui_move",
+            "ui_pressed": "ui_press",
+            "ui_changed": "ui_tick",
+            "ui_opened": "ui_open",
+            "ui_closed": "ui_close",
+        },
+    ),
+}

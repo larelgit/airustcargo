@@ -19,6 +19,7 @@ settings-master = Master
 settings-music = Music
 settings-sfx = Effects
 settings-voice = Voice
+settings-ui = Interface
 
 settings-controls = Controls
 settings-look-speed = Look speed

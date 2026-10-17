@@ -19,7 +19,7 @@ path = "src/main.rs"
 test = false
 
 [features]
-default =["render", "remote", "hot_reload"]
+default = ["render", "remote", "hot_reload", "audio"]
 # `shards` BRP server (`shards observe`, `shards step`, ...). Dev builds.
 remote = ["shards/remote"]
 # Window, 3D rendering, UI. Without it the game only runs `--headless`.
