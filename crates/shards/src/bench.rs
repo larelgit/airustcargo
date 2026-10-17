@@ -601,6 +601,7 @@ fn as_fast_as_they_go(app: &mut App, def: &PerfDef) -> Result<(TickStats, Durati
                 Err(format!("gameplay {}: {}", f.headline(), f.message))
             }
             StepEnd::InvariantViolated(violated) => Err(violated.iter().map(|v| format!("{}: {}", v.headline(), v.text)).collect::<Vec<_>>().join("; ")),
+            StepEnd::HeavyFailed(failed) => Err(failed.iter().map(|h| format!("{}: {}", h.headline(), h.first())).collect::<Vec<_>>().join("; ")),
             StepEnd::WallClock => Err(format!("the {what} ran {} of {ticks} ticks in {:.0}s", report.ticks(), report.wall.as_secs_f64())),
             StepEnd::Condition(why) => Err(format!("the {what} stopped at tick {}: {why}", report.to_tick)),
         }

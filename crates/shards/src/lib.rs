@@ -25,7 +25,7 @@
 //! ```
 //!
 //! [`run`] is the standard `main`: `--headless --seed --port --port-file --no-remote
-//! --paused --hz --replay --verify [--windowed] --check-every N
+//! --paused --hz --replay --verify [--windowed] --check-every N --heavy N [--heavy-span K --heavy-offset O]
 //! --check-detail components|entities|none --tick-budget-ms MS --check-content
 //! --worldgen-report REGION --seeds 1..1000 --bake-nav [TILES] --settings-dir DIR --no-settings`.
 //! [`testing::test_app`] builds the same game headless for tests, loaded and paused at tick 0. The
@@ -50,6 +50,7 @@ pub mod coop;
 mod draws;
 #[cfg(feature = "render")]
 pub mod frames;
+pub mod heavy;
 pub mod modules;
 mod net_wiring;
 #[cfg(feature = "render")]
@@ -92,6 +93,7 @@ pub use shards_steam as steam;
 pub use shards_ui as ui;
 pub use shards_world as world;
 
+pub use ai_core::HeavyConfig;
 pub use plugins::EnginePlugins;
 pub use run::run;
 pub use shards_core::EngineConfig;

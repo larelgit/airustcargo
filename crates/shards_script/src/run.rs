@@ -350,12 +350,12 @@ impl StepEnd {
     }
 
     /// A step the game cut short is a failure, though the call succeeded: a gameplay
-    /// system crashed, an invariant broke (the game halted), or the ticks did not fit the
+    /// system crashed, an invariant broke or a heavy check failed (the game halted), or the ticks did not fit the
     /// wall-clock budget. What the scenario expects next would be checked on a world that
     /// did not get there.
     fn cut_short(&self) -> Result<(), Fail> {
         match &self.stopped {
-            Some(why) if why.starts_with("gameplay ") || why.starts_with("invariant ") => Err(Fail::check(format!(
+            Some(why) if why.starts_with("gameplay ") || why.starts_with("invariant ") || why.starts_with("heavy ") => Err(Fail::check(format!(
                 "the step {}, stopped: {why} (`act? step …` lets a step crash on purpose)",
                 self.ran
             ))),

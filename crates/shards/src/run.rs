@@ -75,6 +75,30 @@ struct Args {
     /// components and their values), entities, or none (the tick only).
     #[arg(long, value_name = "DETAIL", default_value_t = CheckDetail::Components, conflicts_with = "replay")]
     check_detail: CheckDetail,
+    /// Heavy mode: every N ticks a fresh copy of the game (a twin, built by this game's own
+    /// builder) loads a snapshot of it, plays what it did for --heavy-span ticks, and must come
+    /// to the same state and the same journal. A difference stops the game like a broken
+    /// invariant (`step` exits 3, `--verify` exits 1) and saves snapshots/heavy-tick<T>-*.json
+    /// and replays/heavy-tick<T>.json. The checks run between stepped ticks: with --paused
+    /// (`shards step`, scenarios, fuzz), --replay FILE --verify, or --stand.
+    #[arg(
+        long,
+        value_name = "N",
+        value_parser = clap::value_parser!(u64).range(1..),
+        conflicts_with_all = [
+            "windowed", "check_content", "worldgen_report", "bake_nav", "bake_motion", "smoke", "perf",
+            "host", "join", "stand_udp", "steam_host", "steam_server",
+        ]
+    )]
+    heavy: Option<u64>,
+    /// With --heavy: the ticks each heavy point plays before its twin is compared (default N, at
+    /// most 600).
+    #[arg(long, value_name = "K", requires = "heavy", value_parser = clap::value_parser!(u64).range(1..=ai_core::heavy::MAX_SPAN))]
+    heavy_span: Option<u64>,
+    /// With --heavy: the tick of the first heavy point (default 0). A nightly run passes seed % N,
+    /// so that over many nights every tick phase is checked.
+    #[arg(long, value_name = "O", requires = "heavy")]
+    heavy_offset: Option<u64>,
     /// A tick slower than this is over budget: `step` counts it and the journal names
     /// it (`perf`). Default: the tick's own duration (16.7 ms at 60 Hz). Debug builds
     /// run slower than `--release`.
@@ -376,6 +400,14 @@ impl Args {
                 _ => MenuLaunch::Auto,
             },
             without: self.without.clone(),
+            heavy: self.heavy.map(|every| {
+                let defaults = ai_core::HeavyConfig::every(every);
+                ai_core::HeavyConfig {
+                    span: self.heavy_span.unwrap_or(defaults.span),
+                    offset: self.heavy_offset.unwrap_or(defaults.offset),
+                    ..defaults
+                }
+            }),
             check_every: self.check_every,
             check_detail: self.check_detail,
             tick_budget: self.tick_budget_ms,
@@ -422,8 +454,11 @@ fn attach_console() {}
 /// `build` with it (the game adds `EnginePlugins::new(config.clone())` and its own
 /// plugins), and runs, verifies a replay or checks content. Refuses a busy BRP port
 /// (exit code 3) before anything is built; `kill` and a closed terminal exit through
-/// `AppExit` like Ctrl+C, so the token and the port file go away with the game.
-pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
+/// `AppExit` like Ctrl+C, so the token and the port file go away with the game. `build` is
+/// called again for each twin of heavy mode (`--heavy`), so it is shared: `Send + Sync`.
+pub fn run(build: impl Fn(&EngineConfig) -> App + Send + Sync + 'static) -> ExitCode {
+    let shared: crate::heavy::Builder = std::sync::Arc::new(build);
+    let build = |config: &EngineConfig| shared(config);
     attach_console();
     let args = match command_line() {
         Ok(args) => args,
@@ -476,6 +511,20 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
         config.seed = r.seed;
         config.tick_hz = r.tick_hz;
     }
+    if let Some(heavy) = &config.heavy {
+        if let Err(e) = heavy.check() {
+            eprintln!("error: {e}");
+            return ExitCode::from(2);
+        }
+        // A stand's driver checks its host in real time too; a game alone only between steps.
+        if !(args.paused || args.verify || args.stand.is_some()) {
+            eprintln!(
+                "error: --heavy checks between stepped ticks: add --paused (and `shards step` it), \
+                 or use it with --replay FILE --verify or --stand"
+            );
+            return ExitCode::from(2);
+        }
+    }
     if args.check_content {
         return check_content(&build, config);
     }
@@ -497,7 +546,7 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
     if args.verify
         && let Some(r) = recording.take()
     {
-        return if args.windowed { windowed::verify(&build, config, r) } else { verify(&build, config, r) };
+        return if args.windowed { windowed::verify(&build, config, r) } else { verify(&shared, config, r) };
     }
     // Before anything is built: a second game on a busy port would run without a
     // server while `shards` quietly drives the first one.
@@ -516,12 +565,12 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
     ai_core::crash::install_panic_hook();
     let reports = config.crash_replays;
     if let NetLaunch::Stand { clients, udp: false } = config.net {
-        return guarded(reports, None, || stand::run(&build, &args, config, clients));
+        return guarded(reports, None, || stand::run(&shared, &args, config, clients));
     }
     // A game that is played talks to Steam (with the `steam_sdk` feature): checks, tests and the
     // in-process stand never do.
     config.steam.connect = true;
-    guarded(reports, None, || play(&build, &args, config, recording))
+    guarded(reports, None, || play(&shared, &args, config, recording))
 }
 
 /// Runs the game. A panic that unwinds out of it took the world with it: what the panic hook kept
@@ -548,11 +597,14 @@ fn guarded(reports: bool, base: Option<&std::path::Path>, game: impl FnOnce() ->
 }
 
 /// The game itself, from `build` to the end of its run.
-fn play(build: &impl Fn(&EngineConfig) -> App, args: &Args, config: EngineConfig, recording: Option<Replay>) -> ExitCode {
-    let mut app = match built(build, &config) {
+fn play(build: &crate::heavy::Builder, args: &Args, config: EngineConfig, recording: Option<Replay>) -> ExitCode {
+    let mut app = match built(&|config: &EngineConfig| build(config), &config) {
         Ok(app) => app,
         Err(code) => return code,
     };
+    // The twin of a heavy check plays as the game, not as the player at this machine (settings,
+    // Steam): it is built from what the command line said.
+    crate::heavy::install(&mut app, &config, build.clone());
     termination::catch_console_close();
     // Player settings are read now, not earlier: Bevy's settings plugin scans the type registry
     // once, so every group the game registered while building must be there.
@@ -695,7 +747,7 @@ mod stand {
         }
     }
 
-    pub fn run(build: &impl Fn(&EngineConfig) -> App, args: &Args, config: EngineConfig, clients: u8) -> ExitCode {
+    pub fn run(build: &crate::heavy::Builder, args: &Args, config: EngineConfig, clients: u8) -> ExitCode {
         if let Some(clash) = slot_clash(config.character_slot.as_deref(), clients) {
             eprintln!("error: {clash}");
             return ExitCode::from(2);
@@ -716,7 +768,7 @@ mod stand {
             });
         }
         let host_name = args.name.clone().unwrap_or_else(|| "host".into());
-        let mut stand = match members(build, &config, &host_name, links, &ports) {
+        let mut stand = match members(&|config: &EngineConfig| build(config), &config, &host_name, links, &ports, Some(build)) {
             Ok(stand) => stand,
             Err(e) => {
                 eprintln!("error: {e}");
@@ -777,6 +829,7 @@ mod stand {
         host_name: &str,
         links: LinkConditions,
         ports: &[Option<u16>],
+        twin: Option<&crate::heavy::Builder>,
     ) -> Result<Stand, String> {
         // The stand owns time: every member is paused and ticks when it says.
         let host_config = EngineConfig { paused: true, player_name: host_name.to_owned(), port: ports[0], ..config.clone() };
@@ -787,6 +840,10 @@ mod stand {
         // are (`--settings-dir`, `--no-settings`). The clients keep none (`SettingsStore::Off`).
         shards_settings::install(&mut host, &host_config)?;
         host.add_systems(First, termination::exit_when_signalled);
+        // Heavy mode checks the host: the clients do not simulate.
+        if let Some(twin) = twin {
+            crate::heavy::install(&mut host, &host_config, twin.clone());
+        }
         wire.attach(&mut host, &hub, 0, "host", links);
         host.finish();
         host.cleanup();
@@ -808,6 +865,7 @@ mod stand {
                 world_slot: None,
                 // The lobby is the host's: a client has none to make.
                 steam: SteamLaunch { lobby: SteamLobby::default(), host: false, ..config.steam.clone() },
+                heavy: None,
                 ..config.clone()
             };
             let mut app = build(&client_config);
@@ -879,11 +937,13 @@ fn exit_code(exit: AppExit) -> ExitCode {
 /// that fails on the way counts as a difference (exit 1), even when the state matches:
 /// a crash replay reproduces its crash, a regular one must not crash. So does every
 /// invariant broken on the way: each is listed, and playback goes on to the end.
-fn verify(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, recording: Replay) -> ExitCode {
-    // Verifying writes nothing, not even a crash replay over the one being verified.
+fn verify(build: &crate::heavy::Builder, config: EngineConfig, recording: Replay) -> ExitCode {
+    // Verifying writes nothing, not even a crash replay over the one being verified (a failed
+    // heavy check saves what it found: heavy mode is asked for, to find out).
     let config = EngineConfig { headless: true, port: None, paused: true, crash_replays: false, hot_reload: false, ..config };
     let end = recording.end.tick;
     let mut app = build(&config);
+    crate::heavy::install(&mut app, &config, build.clone());
     app.finish();
     app.cleanup();
     // Before loading, as a live `--replay` does: the world is spawned from the content
@@ -911,10 +971,18 @@ fn verify(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, recording
         }
     };
     app.update(); // calls made after the last tick, then the final comparison
+    for warning in left_out_warnings(app.world()) {
+        println!("{warning}");
+    }
     let report = app.world().resource::<AiReplay>().report().cloned();
     let took = format!("[{} ticks in {:.2}s]", ai_core::sim::tick(app.world()), started.elapsed().as_secs_f64());
     let failure = stops.failures.first().map(|f| format!("gameplay {}: {}", f.headline(), f.message));
-    match print_verdict(report.as_ref(), failure.as_deref(), &stops.violations, &took) {
+    let heavy = app.world().get_resource::<ai_core::heavy::AiHeavy>().map(|h| HeavyRun {
+        failures: stops.heavy.clone(),
+        checked: h.checked(),
+        skipped: h.skipped(),
+    });
+    match print_verdict(report.as_ref(), failure.as_deref(), &stops.violations, heavy.as_ref(), &took) {
         Some(true) => ExitCode::SUCCESS,
         Some(false) => ExitCode::FAILURE,
         None => {
@@ -924,20 +992,59 @@ fn verify(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, recording
     }
 }
 
-/// Prints what `--verify` found: every violation (`invariant hp violated at tick 31: …`), the
-/// verdict line (`replay finished at tick 600: identical to the recording (10 checks); 1
-/// invariant violated [600 ticks in 1.20s]`), then what diverged holds in this run, a line
-/// per value. Returns whether it passed; `None` when there is nothing to say (no report, no
-/// failure).
-fn print_verdict(report: Option<&ReplayReport>, failure: Option<&str>, violations: &[Violation], took: &str) -> Option<bool> {
+/// A gameplay component the checks cannot hash is a hole in every check: `--verify` says so,
+/// one line each (the reference replay test fails on them).
+fn left_out_warnings(world: &World) -> Vec<String> {
+    let paths = world.get_resource::<ai_core::replay::ReplayHashing>().map(|h| h.reported_left_out()).unwrap_or_default();
+    paths.into_iter().map(|path| format!("warning: replay checks leave out {path}: it does not serialize through reflection")).collect()
+}
+
+/// What heavy mode found in a `--verify --heavy N`.
+struct HeavyRun {
+    failures: Vec<ai_core::HeavyFailure>,
+    checked: u64,
+    skipped: u64,
+}
+
+/// Prints what `--verify` found: every violation (`invariant hp violated at tick 31: …`) and
+/// failed heavy check, the verdict line (`replay finished at tick 600: identical to the
+/// recording (10 checks); 1 invariant violated [600 ticks in 1.20s]`), then what diverged
+/// holds in this run, a line per value. Returns whether it passed; `None` when there is
+/// nothing to say (no report, no failure).
+fn print_verdict(
+    report: Option<&ReplayReport>,
+    failure: Option<&str>,
+    violations: &[Violation],
+    heavy: Option<&HeavyRun>,
+    took: &str,
+) -> Option<bool> {
     for v in violations {
         println!("{}: {}", v.headline(), v.text);
     }
-    let broken = match violations.len() {
+    let heavy_failures = heavy.map_or(&[][..], |h| &h.failures[..]);
+    for f in heavy_failures {
+        println!("{} (a fresh game from tick {}): {}", f.headline(), f.from, f.first());
+        for line in f.differences.iter().skip(1).take(9) {
+            println!("  {line}");
+        }
+        if let Some(path) = &f.replay {
+            println!("  replay: {path}");
+        }
+    }
+    let mut broken = match violations.len() {
         0 => String::new(),
         1 => "; 1 invariant violated".to_owned(),
         n => format!("; {n} invariants violated"),
     };
+    if let Some(h) = heavy {
+        let failed = match h.failures.len() {
+            0 => String::new(),
+            1 => ", 1 failed".to_owned(),
+            n => format!(", {n} failed"),
+        };
+        broken.push_str(&format!("; heavy: {} checked{failed}, {} skipped", h.checked, h.skipped));
+    }
+    let violations_or_heavy = !violations.is_empty() || !heavy_failures.is_empty();
     let passed = match (report, failure) {
         (_, Some(failure)) => {
             let shown = report.map(|r| format!("{}; ", r.headline())).unwrap_or_default();
@@ -946,7 +1053,7 @@ fn print_verdict(report: Option<&ReplayReport>, failure: Option<&str>, violation
         }
         (Some(r), None) => {
             println!("{}{broken} {took}", r.headline());
-            r.identical() && violations.is_empty()
+            r.identical() && !violations_or_heavy
         }
         (None, None) => return None,
     };
@@ -1038,7 +1145,7 @@ mod windowed {
         // The playback finishes in `Last` of the frame that ran its last tick.
         if let Some(report) = world.resource::<AiReplay>().report().cloned() {
             let violations = std::mem::take(&mut world.resource_mut::<Verifying>().violations);
-            let passed = print_verdict(Some(&report), None, &violations, &took(world)) == Some(true);
+            let passed = print_verdict(Some(&report), None, &violations, None, &took(world)) == Some(true);
             // 2: it could not be played (its snapshot did not load).
             let code = if report.interrupted.is_some() { 2 } else { 1 };
             world.write_message(if passed { AppExit::Success } else { AppExit::from_code(code) });
@@ -1055,7 +1162,7 @@ mod windowed {
                 let failure = &failures[0];
                 let failure = format!("gameplay {}: {}", failure.headline(), failure.message);
                 let violations = std::mem::take(&mut world.resource_mut::<Verifying>().violations);
-                print_verdict(None, Some(&failure), &violations, &took(world));
+                print_verdict(None, Some(&failure), &violations, None, &took(world));
                 world.write_message(AppExit::from_code(1));
             }
             // A rule that fired stays off unless the recording re-armed it: go on.
@@ -1414,6 +1521,11 @@ mod tests {
         app
     }
 
+    /// [`game`], as `run` shares it.
+    fn built() -> crate::heavy::Builder {
+        std::sync::Arc::new(game)
+    }
+
     fn content(name: &str, totem: &str) -> EngineConfig {
         let dir = std::env::temp_dir().join(format!("shards_verify_{name}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1447,7 +1559,7 @@ mod tests {
             ok(app, "step", json!({"ticks": 60}));
         });
         // The file says Idol now; the recording spawned a Totem.
-        assert_eq!(verify(&game, config, recording), ExitCode::SUCCESS);
+        assert_eq!(verify(&built(), config, recording), ExitCode::SUCCESS);
     }
 
     #[test]
@@ -1595,10 +1707,95 @@ mod tests {
             settings: SettingsStore::Dir(dir.to_string_lossy().into_owned()),
             ..testing::config()
         };
-        let stand = stand::members(&game, &config, "host", shards_net::LinkConditions::NONE, &[None, None]).unwrap();
+        let stand = stand::members(&game, &config, "host", shards_net::LinkConditions::NONE, &[None, None], None).unwrap();
         let file = |member: usize| stand.world(member).get_resource::<shards_settings::SettingsStorage>().map(|s| s.file.clone());
         assert_eq!(file(0), Some(Some(dir.join("settings.toml"))), "the host's settings live in --settings-dir");
         assert_eq!(file(1), None, "a client of the stand keeps none");
+    }
+
+    /// Gameplay state a check cannot hash: an `Instant` does not serialize through reflection.
+    #[derive(Component, Reflect)]
+    #[reflect(Component)]
+    struct Stamped {
+        at: std::time::Instant,
+    }
+
+    #[test]
+    fn verify_names_the_components_the_checks_leave_out() {
+        let config = content("left_out", "totem");
+        let recording = record(&config, |app| {
+            ok(app, "step", json!({ "ticks": 61 }));
+        });
+        let mut clean = game(&config);
+        clean.finish();
+        clean.cleanup();
+        testing::verify(&mut clean, recording.clone()).unwrap();
+        assert!(left_out_warnings(clean.world()).is_empty());
+        // The same game with a component the checks cannot hash.
+        let mut app = game(&config);
+        app.register_type::<Stamped>().add_systems(OnEnter(EngineState::InGame), |mut commands: Commands, totems: Query<Entity, With<ai_core::AiId>>| {
+            for totem in &totems {
+                commands.entity(totem).insert(Stamped { at: std::time::Instant::now() });
+            }
+        });
+        app.finish();
+        app.cleanup();
+        testing::verify(&mut app, recording).unwrap();
+        assert_eq!(
+            left_out_warnings(app.world()),
+            ["warning: replay checks leave out shards::run::tests::Stamped: it does not serialize through reflection"]
+        );
+    }
+
+    /// A stand of a host and one client, with heavy mode every 30 ticks: the client gets a body.
+    fn heavy_stand(name: &str, build: fn(&EngineConfig) -> App) -> shards_net::Stand {
+        let config = EngineConfig {
+            net: NetLaunch::Stand { clients: 1, udp: false },
+            heavy: Some(ai_core::HeavyConfig::every(30)),
+            ..content(name, "totem")
+        };
+        std::fs::write(std::path::Path::new(&config.asset_dir).join("content/players.prefab.ron"), r#"{ "player": (components: { "AiKind": ("Player") }) }"#).unwrap();
+        let twin: crate::heavy::Builder = std::sync::Arc::new(build);
+        let mut stand = stand::members(&build, &config, "host", shards_net::LinkConditions::NONE, &[None, None], Some(&twin)).unwrap();
+        stand.settle().unwrap();
+        stand
+    }
+
+    /// The host's own count, which no snapshot holds, in the totem's name.
+    #[derive(Resource, Default)]
+    struct Drift(u32);
+
+    fn drifting(config: &EngineConfig) -> App {
+        let mut app = game(config);
+        app.init_resource::<Drift>().add_systems(
+            FixedUpdate,
+            (|mut drift: ResMut<Drift>, mut names: Query<&mut Name>| {
+                drift.0 += 1;
+                for mut name in names.iter_mut().filter(|n| n.as_str().starts_with("totem")) {
+                    name.set(format!("totem {}", drift.0));
+                }
+            })
+            .in_set(ai_core::SimSet::Resolve),
+        );
+        app
+    }
+
+    /// `--stand N --heavy`: the host is checked (the clients do not simulate), its guest's body
+    /// and input with it, and a difference halts the stand as a broken invariant does.
+    #[test]
+    fn heavy_mode_on_a_stand_checks_the_host_and_halts_it_on_a_difference() {
+        let mut stand = heavy_stand("stand_heavy", game);
+        stand.run(120);
+        assert!(matches!(stand.world(1).resource::<shards_net::NetState>(), shards_net::NetState::Connected { player: 1, .. }));
+        let heavy = stand.world(0).resource::<ai_core::heavy::AiHeavy>();
+        assert!(heavy.checked() >= 3 && heavy.failures().is_empty(), "{}", heavy.summary());
+        assert!(stand.world(1).get_resource::<ai_core::heavy::AiHeavy>().is_none(), "a client is not checked");
+
+        let mut stand = heavy_stand("stand_heavy_drift", drifting);
+        let halted = (0..120).find_map(|_| Some(stand.tick().unwrap()).filter(|h| !h.is_empty())).expect("the host's drift is found");
+        let [(0, shards_net::stand::MemberHalt::Heavy(failure))] = &halted[..] else { panic!("{halted:?}") };
+        assert_eq!((failure.from, failure.tick), (30, 60), "{failure:?}");
+        assert!(failure.first().contains("Name") && failure.first().contains("totem 60"), "{failure:?}");
     }
 
     #[test]
@@ -1634,7 +1831,7 @@ mod tests {
         };
         // The body a joining player gets.
         std::fs::write(std::path::Path::new(&config.asset_dir).join("content/players.prefab.ron"), r#"{ "player": (components: { "AiKind": ("Player") }) }"#).unwrap();
-        let mut stand = stand::members(&game, &config, "host", shards_net::LinkConditions::NONE, &[None, None]).unwrap();
+        let mut stand = stand::members(&game, &config, "host", shards_net::LinkConditions::NONE, &[None, None], None).unwrap();
         stand.settle().unwrap();
         fn session(stand: &Stand, member: usize) -> &shards_steam::SteamSession {
             stand.world(member).resource::<shards_steam::SteamSession>()
@@ -1778,7 +1975,7 @@ mod tests {
         assert_eq!((recording.end.tick, recording.events.len()), (110, 1), "{:?}", recording.events);
         // Only the file is needed to play it: the snapshot is inside.
         let _ = std::fs::remove_file(&file.0);
-        assert_eq!(verify(&game, config, recording), ExitCode::SUCCESS);
+        assert_eq!(verify(&built(), config, recording), ExitCode::SUCCESS);
     }
 
     #[test]
@@ -1788,7 +1985,7 @@ mod tests {
         let mut recording = recorded_from_a_snapshot(&config, &file);
         recording.start.as_mut().unwrap().checks.insert("content".into(), "00000000000000ff".into());
         // Exit code 2: it could not be played (1 is a replay that diverged).
-        assert_eq!(verify(&game, config, recording), ExitCode::from(2));
+        assert_eq!(verify(&built(), config, recording), ExitCode::from(2));
     }
 
     #[test]
@@ -1798,7 +1995,7 @@ mod tests {
             ok(app, "teleport", json!({"id": "e1", "x": 3, "z": 0}));
         });
         assert_eq!(recording.end.tick, 0);
-        assert_eq!(verify(&game, config, recording), ExitCode::SUCCESS);
+        assert_eq!(verify(&built(), config, recording), ExitCode::SUCCESS);
     }
 
     #[test]

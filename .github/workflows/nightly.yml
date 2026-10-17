@@ -1,6 +1,7 @@
 # The long checks, every night at 01:30 UTC and on demand (workflow_dispatch: `seed`, `minutes`).
 # Nothing here is cheap enough for every push; everything is the same commands you can run by hand.
 #
+#   heavy      every reference replay with `--verify --heavy 10 --heavy-span 30` from the seed's offset (heavy mode)
 #   worldgen   the generator's check on 100000 seeds: the sandbox's `wilds` and the template's `valley`
 #   gpu        the #[ignore]d tests that need a GPU, on Mesa's software Vulkan driver under Xvfb
 #   perf       a release build and the performance tests `reference` and `reference96`, ticks only;
@@ -8,9 +9,8 @@
 #   issue      if any job above fails: an issue labelled `nightly` (or a comment on the open one) with
 #              the failed job and step, the seed, and the links to the run and its artifacts
 #
-# Heavy replays (every reference replay with `--verify --heavy N`) and the fuzz campaign are added to
-# this file by the PRs that build them (heavy mode, the fuzzer): they are jobs in this list and in
-# `needs` of the `issue` job.
+# The fuzz campaign is added to this file by the PR that builds it (the fuzzer): a job in this list
+# and in `needs` of the `issue` job.
 #
 # Elsewhere: soak.yml (half an hour of a live stand, every night), cross.yml (weekly).
 
@@ -63,6 +63,71 @@ jobs:
           echo "seed=$seed" >> "$GITHUB_OUTPUT"
           echo "minutes=$MINUTES" >> "$GITHUB_OUTPUT"
           echo "seed $seed, minutes '${MINUTES:-default}'"
+
+  # ---------------------------------------------------------------------------------------
+  # Heavy mode (docs/manual.md, "Heavy mode"): every reference replay, the engine's and the template's,
+  # verified with a heavy point every 10 ticks, each played 30 ticks by a fresh twin from its snapshot.
+  # The first point is the night's seed % 10, so the nights check different ticks.
+  heavy:
+    name: heavy
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      SEED: ${{ needs.plan.outputs.seed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: dev
+          save: "false"
+      - name: Build the sandbox and the template
+        run: |
+          cargo build --locked -p sandbox
+          cargo build --locked --manifest-path template/Cargo.toml
+      - name: Every reference replay with --heavy 10 --heavy-span 30
+        run: |
+          heavy="--heavy 10 --heavy-span 30 --heavy-offset $((SEED % 10))"
+          echo "seed $SEED: $heavy"
+          {
+            echo "### Reference replays, $heavy (seed $SEED)"
+            echo
+            echo "| replay | verdict |"
+            echo "| --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          failed=0
+          verify() {
+            local dir=$1 replay=$2; shift 2
+            local out code verdict
+            set +e
+            # shellcheck disable=SC2086
+            out=$(cd "$dir" && "$@" --replay "$replay" --verify $heavy 2>&1)
+            code=$?
+            set -e
+            echo "== $dir/$replay (exit $code)"
+            echo "$out" | grep -v ' INFO ' | tail -n 40
+            if [ "$code" -eq 0 ] && echo "$out" | grep -q 'identical to the recording'; then
+              verdict=$(echo "$out" | grep -o 'identical to the recording[^\r]*' | tail -n 1 | tr -d '\r')
+            else
+              verdict="FAILED (exit $code): $(echo "$out" | grep -m 1 -o 'heavy check failed at tick [0-9]*\|DIVERGED at tick [0-9]*' || true)"
+              failed=1
+            fi
+            echo "| $dir/$replay | $verdict |" >> "$GITHUB_STEP_SUMMARY"
+          }
+          for replay in tests/replays/*.json; do
+            verify . "$replay" cargo run -q --locked -p sandbox --
+          done
+          for replay in template/tests/replays/*.json; do
+            verify template "tests/replays/$(basename "$replay")" cargo run -q --locked --
+          done
+          exit "$failed"
+      - name: Keep what the run wrote
+        if: failure()
+        uses: ./.github/actions/upload-failure
+        with:
+          name: nightly-heavy
 
   # ---------------------------------------------------------------------------------------
   # E5: the generated region passes its checks for 100000 seeds (exit 1 if any fails).
@@ -199,7 +264,7 @@ jobs:
   # tracker. One open issue labelled `nightly` collects the nights (a comment per failed night).
   issue:
     name: issue
-    needs: [plan, worldgen, gpu, perf]
+    needs: [plan, heavy, worldgen, gpu, perf]
     if: ${{ failure() }}
     # The only job that writes to the tracker.
     permissions:

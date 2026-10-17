@@ -277,6 +277,49 @@ pub(crate) fn restarted(world: &mut World) -> Vec<AssertOp> {
     ops
 }
 
+/// The rules as they stand at one tick: the session's (in order) and which rules have fired.
+/// A game that continues from a snapshot of that tick (heavy mode's twin) takes them over, so
+/// it checks what the original checks from there on, and fires what the original fires.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RulesState {
+    session: Vec<(String, StopWhen)>,
+    fired: Vec<(String, u64)>,
+}
+
+pub(crate) fn rules_state(world: &World) -> RulesState {
+    let Some(invariants) = world.get_resource::<AiInvariants>() else {
+        return RulesState::default();
+    };
+    let session = invariants
+        .rules
+        .iter()
+        .filter_map(|entry| match &entry.rule {
+            Rule::Session { when, .. } => Some((entry.name.clone(), when.clone())),
+            Rule::Game(_) => None,
+        })
+        .collect();
+    let fired = invariants.rules.iter().filter_map(|entry| Some((entry.name.clone(), entry.fired?))).collect();
+    RulesState { session, fired }
+}
+
+/// Puts `state` in: the session's rules are `state`'s (looking at the journal from now on),
+/// and a rule has fired when it had there. The game's own rules are this game's.
+pub(crate) fn set_rules_state(world: &mut World, state: &RulesState) {
+    let Some(seen) = world.get_resource::<AiJournal>().map(AiJournal::last_seq) else {
+        return;
+    };
+    let Some(mut invariants) = world.get_resource_mut::<AiInvariants>() else {
+        return;
+    };
+    invariants.rules.retain(|entry| matches!(entry.rule, Rule::Game(_)));
+    for (name, when) in &state.session {
+        invariants.rules.push(Entry { name: name.clone(), rule: Rule::Session { when: when.clone(), seen }, fired: None });
+    }
+    for entry in &mut invariants.rules {
+        entry.fired = state.fired.iter().find(|(name, _)| *name == entry.name).map(|(_, tick)| *tick);
+    }
+}
+
 /// Violations since the last call, for the `step` that is running (or a stand's driver).
 pub fn take_unreported(world: &mut World) -> Vec<Violation> {
     let Some(mut invariants) = world.get_resource_mut::<AiInvariants>() else {
@@ -356,6 +399,10 @@ fn reset(world: &mut World) -> String {
             }
         }
     }
+    // Heavy mode stops checking after a failed check, like a rule that fired.
+    if crate::heavy::rearm(world) {
+        rearmed.push("heavy".to_owned());
+    }
     if rearmed.is_empty() { "no rule has fired; nothing to re-arm".to_owned() } else { format!("re-armed {}", rearmed.join(", ")) }
 }
 
@@ -402,9 +449,14 @@ fn assert_reset_tool(In(_): In<Call<AssertResetArgs>>, world: &mut World) -> Too
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct AssertListArgs {}
 
-fn assert_list_tool(In(_): In<Call<AssertListArgs>>, invariants: Res<AiInvariants>) -> ToolResult {
+fn assert_list_tool(
+    In(_): In<Call<AssertListArgs>>,
+    invariants: Res<AiInvariants>,
+    heavy: Option<Res<crate::heavy::AiHeavy>>,
+) -> ToolResult {
+    let heavy = heavy.map(|h| format!("\n{}", h.summary())).unwrap_or_default();
     if invariants.rules.is_empty() {
-        return Ok("no rules; add one with assert_add {name, when}".into());
+        return Ok(format!("no rules; add one with assert_add {{name, when}}{heavy}"));
     }
     let mut out = format!("{} rules, checked after every tick", invariants.rules.len());
     for entry in &invariants.rules {
@@ -421,6 +473,7 @@ fn assert_list_tool(In(_): In<Call<AssertListArgs>>, invariants: Res<AiInvariant
     if let Some(last) = invariants.violations.last() {
         out.push_str(&format!("\nviolations so far: {} (last: {})", invariants.violations.len(), last.headline()));
     }
+    out.push_str(&heavy);
     Ok(out)
 }
 

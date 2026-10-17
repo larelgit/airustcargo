@@ -47,6 +47,7 @@ pub mod display;
 #[cfg(test)]
 mod determinism;
 pub mod failures;
+pub mod heavy;
 #[cfg(feature = "render")]
 pub mod highlight;
 pub mod id;
@@ -89,6 +90,7 @@ pub use describe::{
 pub use dev::{DevCommand, DevEntry, DevLine, DevMenu};
 pub use failures::{ai_core_error_handler, AiFailures, SystemFailure};
 pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible};
+pub use heavy::{HeavyConfig, HeavyFailure, HeavyTwin};
 pub use invariants::{AiInvariants, InvariantSystems, Violation};
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
 pub use net_rules::{replicated_components, rules_hash, NetRules};
@@ -149,6 +151,11 @@ pub struct AiCorePlugin {
     pub report_perf: bool,
     /// The game a crash report names (title, version).
     pub game: crash::GameInfo,
+    /// Heavy mode ([`heavy`]): every few ticks, a fresh game loaded from a snapshot of this one
+    /// must continue like it. `None` (the default): off, and nothing of it exists.
+    pub heavy: Option<heavy::HeavyConfig>,
+    /// A failed heavy check saves its snapshots and the session's replay (off in tests).
+    pub heavy_files: bool,
 }
 
 impl Default for AiCorePlugin {
@@ -164,6 +171,8 @@ impl Default for AiCorePlugin {
             tick_budget: None,
             report_perf: true,
             game: crash::GameInfo::default(),
+            heavy: None,
+            heavy_files: true,
         }
     }
 }
@@ -224,6 +233,7 @@ impl Plugin for AiCorePlugin {
         failures::plugin(app, self.catch_system_panics, self.crash_replays);
         crash::plugin(app, self.game.clone());
         invariants::plugin(app, self.crash_replays);
+        heavy::plugin(app, self.heavy, self.heavy_files);
 
         #[cfg(feature = "render")]
         {

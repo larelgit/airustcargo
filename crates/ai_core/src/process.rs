@@ -20,7 +20,8 @@
 //! time.** A stand driver activates a member, runs its frame or ticks, collects its failures,
 //! then goes on to the next one. Within that, systems may run on any thread: the active token
 //! is one atomic. Lines logged by other threads on their own (asset loading on the IO pool)
-//! land in whichever app is active at the time; that is harmless.
+//! land in whichever app is active at the time; their journal entries say so (`JournalEntry::background`),
+//! and heavy mode leaves them out of its comparison.
 //!
 //! The thread that drives an app (calls `update`, `step`, `call_tool`) also remembers the
 //! app it activated last, and lines it logs go there even if another thread activated another
@@ -82,6 +83,60 @@ pub fn active() -> u64 {
 /// it runs on the thread that drives the app.
 pub fn activate_app(world: &mut World) {
     activate(world);
+}
+
+thread_local! {
+    /// Set while this thread builds an app beside the active one (heavy mode's twin): it has
+    /// no token yet, and its lines must not land in the active app's journal.
+    static MUTED: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Lines this thread logs go into no app's journal while the returned guard lives: for
+/// building an app beside the active one, before it has a token of its own ([`activate`] it
+/// after). Other threads (other tests of the process) are not affected.
+pub fn mute() -> Muted {
+    MUTED.with(|m| m.set(m.get() + 1));
+    Muted(())
+}
+
+/// See [`mute`].
+pub struct Muted(());
+
+impl Drop for Muted {
+    fn drop(&mut self) {
+        MUTED.with(|m| m.set(m.get().saturating_sub(1)));
+    }
+}
+
+/// Whether lines this thread logs go nowhere right now (see [`mute`]).
+pub(crate) fn muted() -> bool {
+    MUTED.with(Cell::get) > 0
+}
+
+thread_local! {
+    static QUIET: Cell<u32> = const { Cell::new(0) };
+}
+
+/// The engine's own journal lines ([`emit`](crate::journal::emit)) this thread writes stay off
+/// the console while the returned guard lives; they still reach the journal. For an app that
+/// plays beside the one at the terminal, like heavy mode's twin.
+pub fn quiet() -> Quiet {
+    QUIET.with(|q| q.set(q.get() + 1));
+    Quiet(())
+}
+
+/// See [`quiet`].
+pub struct Quiet(());
+
+impl Drop for Quiet {
+    fn drop(&mut self) {
+        QUIET.with(|q| q.set(q.get().saturating_sub(1)));
+    }
+}
+
+/// Whether [`quiet`] holds on this thread.
+pub(crate) fn is_quiet() -> bool {
+    QUIET.with(Cell::get) > 0
 }
 
 #[cfg(test)]

@@ -12,6 +12,8 @@ use shards::bevy::math::ops;
 // The glTF writer of shards_level's tests: the region's level files are made with it.
 #[path = "../../../shards_level/tests/level/gltf.rs"]
 mod gltf;
+mod heavy;
+mod heavy_saves;
 mod invariants;
 mod net;
 mod net_coop;
@@ -30,6 +32,7 @@ mod scenarios;
 mod settings;
 mod shutdown;
 mod snapshots;
+mod state_audit;
 mod soak;
 mod stand_udp;
 mod tiles;

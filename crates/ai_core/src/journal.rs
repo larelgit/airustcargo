@@ -8,8 +8,8 @@
 //! tracing layer) and are moved into the journal after every tick, once per frame, and
 //! around every tool call. So a warning inside a long `step` keeps its own tick, ends
 //! the step if `--until journal:` looks for it, and an action's own warnings come back
-//! with that action. At most [`MAX_CAPTURED_PER_TICK`] lines per tick; the rest are
-//! counted in one `N log lines dropped` line.
+//! with that action. At most [`MAX_CAPTURED_PER_TICK`] lines per tick (and as many from
+//! the asset threads); the rest are counted in one `N log lines dropped` line.
 
 use std::collections::VecDeque;
 use std::fmt::Write as _;
@@ -51,6 +51,11 @@ pub struct JournalEntry {
     pub tick: u64,
     pub kind: JournalKind,
     pub text: String,
+    /// Logged on a thread of Bevy's IO or async compute pool (asset loading), where no
+    /// gameplay system runs. Such a line lands in whichever app of the process is active (see
+    /// [`process`](crate::process)), so heavy mode leaves it out of its comparison.
+    #[serde(skip)]
+    pub background: bool,
 }
 
 impl std::fmt::Display for JournalEntry {
@@ -99,12 +104,16 @@ impl AiJournal {
     }
 
     pub fn push(&mut self, tick: u64, kind: JournalKind, text: impl Into<String>) -> u64 {
+        self.push_entry(tick, kind, text.into(), false)
+    }
+
+    pub(crate) fn push_entry(&mut self, tick: u64, kind: JournalKind, text: String, background: bool) -> u64 {
         if self.entries.len() == self.capacity {
             self.entries.pop_front();
         }
         let seq = self.next_seq;
         self.next_seq += 1;
-        self.entries.push_back(JournalEntry { seq, tick, kind, text: text.into() });
+        self.entries.push_back(JournalEntry { seq, tick, kind, text, background });
         seq
     }
 
@@ -192,10 +201,12 @@ pub const EMIT_TARGET: &str = "ai_core::journal";
 /// apps without the log capture (tests), and the terminal too.
 pub fn emit(world: &mut World, kind: JournalKind, text: impl Into<String>) -> u64 {
     let text = text.into();
-    match kind {
-        JournalKind::Error => error!(target: EMIT_TARGET, "{text}"),
-        JournalKind::Warn => warn!(target: EMIT_TARGET, "{text}"),
-        _ => info!(target: EMIT_TARGET, "{text}"),
+    if !crate::process::is_quiet() {
+        match kind {
+            JournalKind::Error => error!(target: EMIT_TARGET, "{text}"),
+            JournalKind::Warn => warn!(target: EMIT_TARGET, "{text}"),
+            _ => info!(target: EMIT_TARGET, "{text}"),
+        }
     }
     match world.get_resource::<AiJournal>() {
         Some(_) => log(world, kind, text),
@@ -228,24 +239,29 @@ struct CapturedLog {
     level: Level,
     target: String,
     message: String,
+    /// See [`JournalEntry::background`].
+    background: bool,
 }
 
 /// Lines captured since the last [`drain_logs`].
 #[derive(Default)]
 struct Captured {
     lines: Vec<CapturedLog>,
-    /// Tick of the newest line, and how many lines of that tick were kept.
+    /// Tick of the newest line, and how many lines of that tick were kept: the game's, then
+    /// those of the asset threads (each has its own limit: a burst of loading warnings, which
+    /// lands in whichever app is active, cuts no line of the game).
     tick: u64,
-    kept: usize,
-    /// `(tick, lines dropped)`, oldest first.
-    dropped: Vec<(u64, u64)>,
+    kept: [usize; 2],
+    /// `(tick, from the asset threads, lines dropped)`, oldest first.
+    dropped: Vec<(u64, bool, u64)>,
 }
 
 /// Shared buffer between the tracing layer (any thread) and the ECS.
 #[derive(Resource, Clone, Default)]
 pub struct LogCapture(Arc<Mutex<Captured>>);
 
-/// Log lines kept per tick (and per frame between ticks).
+/// Log lines kept per tick (and per frame between ticks), for the game and for the asset
+/// threads each.
 pub const MAX_CAPTURED_PER_TICK: usize = 64;
 
 /// The tracing subscriber is global and set once per process, while every app keeps its
@@ -256,6 +272,9 @@ static CAPTURE_TARGETS: Mutex<Vec<(u64, LogCapture, TickClock)>> = Mutex::new(Ve
 
 /// The buffer the layer writes into right now.
 fn capture_target() -> Option<(LogCapture, TickClock)> {
+    if crate::process::muted() {
+        return None;
+    }
     let targets = CAPTURE_TARGETS.lock().ok()?;
     let active = crate::process::active();
     let (_, capture, clock) = targets.iter().rev().find(|(token, ..)| *token == active).or_else(|| targets.last())?;
@@ -303,18 +322,27 @@ impl<S: Subscriber> Layer<S> for CaptureLayer {
         };
         if buf.tick != tick {
             buf.tick = tick;
-            buf.kept = 0;
+            buf.kept = [0; 2];
         }
-        if buf.kept < MAX_CAPTURED_PER_TICK {
-            buf.kept += 1;
-            buf.lines.push(CapturedLog { tick, level, target: event.metadata().target().to_owned(), message: visitor.0 });
+        let background = std::thread::current().name().is_some_and(on_a_background_pool);
+        let class = usize::from(background);
+        if buf.kept[class] < MAX_CAPTURED_PER_TICK {
+            buf.kept[class] += 1;
+            buf.lines.push(CapturedLog { tick, level, target: event.metadata().target().to_owned(), message: visitor.0, background });
         } else {
-            match buf.dropped.last_mut() {
-                Some((t, n)) if *t == tick => *n += 1,
-                _ => buf.dropped.push((tick, 1)),
+            let this_tick = buf.dropped.iter_mut().rev().take_while(|(t, ..)| *t == tick).find(|(_, b, _)| *b == background);
+            match this_tick {
+                Some((.., n)) => *n += 1,
+                None => buf.dropped.push((tick, background, 1)),
             }
         }
     }
+}
+
+/// A thread of Bevy's IO or async compute pool (`IO Task Pool (2)`): asset loading and other
+/// tasks run there, never a system.
+fn on_a_background_pool(thread: &str) -> bool {
+    thread.starts_with("IO Task Pool") || thread.starts_with("Async Compute Task Pool")
 }
 
 struct MessageVisitor(String);
@@ -379,7 +407,7 @@ pub fn drain_logs(world: &mut World) {
     };
     let (lines, dropped) = match capture.0.lock() {
         Ok(mut buf) => {
-            buf.kept = 0;
+            buf.kept = [0; 2];
             (std::mem::take(&mut buf.lines), std::mem::take(&mut buf.dropped))
         }
         Err(_) => return,
@@ -389,11 +417,12 @@ pub fn drain_logs(world: &mut World) {
     };
     for log in lines {
         let kind = if log.level == Level::ERROR { JournalKind::Error } else { JournalKind::Warn };
-        journal.push(log.tick, kind, format!("{}: {}", log.target, log.message));
+        journal.push_entry(log.tick, kind, format!("{}: {}", log.target, log.message), log.background);
     }
-    for (tick, n) in dropped {
-        let text = format!("{n} log lines dropped (limit {MAX_CAPTURED_PER_TICK} per tick)");
-        journal.push(tick, JournalKind::Warn, text);
+    for (tick, background, n) in dropped {
+        let of = if background { " of the asset threads" } else { "" };
+        let text = format!("{n} log lines{of} dropped (limit {MAX_CAPTURED_PER_TICK} per tick)");
+        journal.push_entry(tick, JournalKind::Warn, text, background);
     }
 }
 
