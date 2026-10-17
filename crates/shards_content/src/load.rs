@@ -289,8 +289,9 @@ pub(crate) fn shown(path: &str) -> &str {
 /// Checks the database built from the applied files with `changed` files replaced and
 /// `removed` ones gone; applies every definition that differs (also one `content_apply`
 /// or a replay changed apart from its file) through `content_apply` when no new
-/// problem appears. The one path for hot reload and `content_reload`. Returns what
-/// happened, for the journal or the caller.
+/// problem appears and every definition of a changed file reads: a file applies whole, so
+/// with one definition broken the previous version of all of them stays. The one path for
+/// hot reload and `content_reload`. Returns what happened, for the journal or the caller.
 pub(crate) fn reload(world: &mut World, changed: Vec<Source>, removed: Vec<String>) -> Result<String, String> {
     if let Some(why) = crate::content_held(world) {
         return Err(format!("refused: a content reload {why}"));
@@ -314,10 +315,12 @@ pub(crate) fn reload(world: &mut World, changed: Vec<Source>, removed: Vec<Strin
     let sources: Vec<Source> = texts.into_iter().map(|(path, text)| Source { path, text }).collect();
     let candidate = ContentDb::build(&kinds, &sources);
     let changes = current.changes_to(&candidate);
+    // The files whose text changed: any definition of them that does not read refuses the edit.
+    let edited = files.clone();
     files.extend(changes.iter().filter_map(|c| c.file.clone()));
     files.sort();
     files.dedup();
-    let problems: Vec<String> = candidate.new_errors(current).into_iter().map(ToString::to_string).collect();
+    let problems: Vec<String> = candidate.refusals(current, &edited).into_iter().map(ToString::to_string).collect();
     let names: Vec<&str> = files.iter().map(|f| shown(f)).collect();
     if !problems.is_empty() {
         for problem in &problems {
