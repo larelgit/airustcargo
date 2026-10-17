@@ -88,7 +88,7 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
 
 - `soak.yml` runs every night (it ran on Mondays).
 - `shards_cli`: the test `a_stale_port_file_is_neither_a_member_nor_a_reason_to_give_up` no longer uses a port that was bound and released (another test's stand could be given it): the stale file names the discard port.
-- `sandbox --replay FILE --verify` prints the journal's `replay checks leave out …` warning, and the reference replay test fails on it.
+- `--replay FILE --verify` prints a `warning: replay checks leave out …` line for each gameplay component the checks cannot hash (`ReplayHashing::reported_left_out`, now public), and the reference replay test fails on one.
 
 ## [0.4.0] — phases C–E: co-op, saves, UI and platform (unreleased)
 

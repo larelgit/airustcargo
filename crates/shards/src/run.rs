@@ -971,10 +971,8 @@ fn verify(build: &crate::heavy::Builder, config: EngineConfig, recording: Replay
         }
     };
     app.update(); // calls made after the last tick, then the final comparison
-    // A gameplay component the checks cannot hash is a hole in every check: say so.
-    let journal = app.world().resource::<ai_core::AiJournal>();
-    for entry in journal.after(0).0.filter(|e| e.kind == ai_core::JournalKind::Warn && e.text.starts_with("replay checks leave out ")) {
-        println!("warning: {}", entry.text);
+    for warning in left_out_warnings(app.world()) {
+        println!("{warning}");
     }
     let report = app.world().resource::<AiReplay>().report().cloned();
     let took = format!("[{} ticks in {:.2}s]", ai_core::sim::tick(app.world()), started.elapsed().as_secs_f64());
@@ -992,6 +990,13 @@ fn verify(build: &crate::heavy::Builder, config: EngineConfig, recording: Replay
             ExitCode::from(2)
         }
     }
+}
+
+/// A gameplay component the checks cannot hash is a hole in every check: `--verify` says so,
+/// one line each (the reference replay test fails on them).
+fn left_out_warnings(world: &World) -> Vec<String> {
+    let paths = world.get_resource::<ai_core::replay::ReplayHashing>().map(|h| h.reported_left_out()).unwrap_or_default();
+    paths.into_iter().map(|path| format!("warning: replay checks leave out {path}: it does not serialize through reflection")).collect()
 }
 
 /// What heavy mode found in a `--verify --heavy N`.
@@ -1706,6 +1711,40 @@ mod tests {
         let file = |member: usize| stand.world(member).get_resource::<shards_settings::SettingsStorage>().map(|s| s.file.clone());
         assert_eq!(file(0), Some(Some(dir.join("settings.toml"))), "the host's settings live in --settings-dir");
         assert_eq!(file(1), None, "a client of the stand keeps none");
+    }
+
+    /// Gameplay state a check cannot hash: an `Instant` does not serialize through reflection.
+    #[derive(Component, Reflect)]
+    #[reflect(Component)]
+    struct Stamped {
+        at: std::time::Instant,
+    }
+
+    #[test]
+    fn verify_names_the_components_the_checks_leave_out() {
+        let config = content("left_out", "totem");
+        let recording = record(&config, |app| {
+            ok(app, "step", json!({ "ticks": 61 }));
+        });
+        let mut clean = game(&config);
+        clean.finish();
+        clean.cleanup();
+        testing::verify(&mut clean, recording.clone()).unwrap();
+        assert!(left_out_warnings(clean.world()).is_empty());
+        // The same game with a component the checks cannot hash.
+        let mut app = game(&config);
+        app.register_type::<Stamped>().add_systems(OnEnter(EngineState::InGame), |mut commands: Commands, totems: Query<Entity, With<ai_core::AiId>>| {
+            for totem in &totems {
+                commands.entity(totem).insert(Stamped { at: std::time::Instant::now() });
+            }
+        });
+        app.finish();
+        app.cleanup();
+        testing::verify(&mut app, recording).unwrap();
+        assert_eq!(
+            left_out_warnings(app.world()),
+            ["warning: replay checks leave out shards::run::tests::Stamped: it does not serialize through reflection"]
+        );
     }
 
     /// A stand of a host and one client, with heavy mode every 30 ticks: the client gets a body.

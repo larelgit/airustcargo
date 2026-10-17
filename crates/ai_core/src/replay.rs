@@ -811,8 +811,9 @@ impl ReplayHashing {
         self.push_check(name, HashedCheck::Always(check));
     }
 
-    /// The components already reported as left out of the checks, in name order.
-    pub(crate) fn reported_left_out(&self) -> Vec<&'static str> {
+    /// The components the checks left out so far (they do not serialize through reflection),
+    /// in name order: each is a hole in every check, which `--verify` names.
+    pub fn reported_left_out(&self) -> Vec<&'static str> {
         let mut paths: Vec<&'static str> = self.reported.iter().copied().collect();
         paths.sort_unstable();
         paths
