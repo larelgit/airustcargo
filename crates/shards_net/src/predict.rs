@@ -467,7 +467,7 @@ mod tests {
         for every in [1, 2, 6] {
             let feet = blend_towards_one(every);
             for (n, tick) in (12..36).enumerate() {
-                let want = 1.0 - 0.85f32.powi(n as i32 + 1);
+                let want = 1.0 - ops::powf(0.85, (n + 1) as f32);
                 assert!((feet[tick] - want).abs() < 1e-4, "every {every}, tick {tick}: {} vs {want}", feet[tick]);
             }
             assert!(feet.iter().all(|x| *x <= 1.0 + 1e-6), "no overshoot");

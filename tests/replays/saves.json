@@ -10,9 +10,9 @@
     "seed": 42,
     "tick_hz": 59.99999880000003,
     "engine": "0.2.0",
-    "state_hash": "33735a86c06fc6b0",
+    "state_hash": "4cc6e6e4a27d6ff0",
     "checks": {
-      "content": "ad91af3fc5344219",
+      "content": "1900c86b0f5759af",
       "levels": "cbf29ce484222325",
       "static_colliders": "b16a4682932b69b4"
     },
@@ -21,6 +21,38 @@
       "graveyard": []
     },
     "resources": {
+      "shards_audio::music::Music": {
+        "calmer": "explore",
+        "calmer_for": 0.033333335,
+        "forced": null,
+        "layer": "tension",
+        "since": 0.1,
+        "started": true,
+        "stems": [
+          {
+            "file": "music/arena_pad.wav",
+            "gain": 0.11666667,
+            "index": 0,
+            "target": 1.0,
+            "track": "arena"
+          },
+          {
+            "file": "music/arena_pulse.wav",
+            "gain": 0.11666667,
+            "index": 1,
+            "target": 1.0,
+            "track": "arena"
+          },
+          {
+            "file": "music/arena_drums.wav",
+            "gain": 0.0,
+            "index": 2,
+            "target": 0.0,
+            "track": "arena"
+          }
+        ],
+        "track": "arena"
+      },
       "shards_level::spawn::LevelCounter": {
         "last": 0
       },
@@ -55,6 +87,7 @@
             ]
           },
           "sandbox::gameplay::Pillar": {},
+          "shards_look::Look": "stone",
           "shards_motion::physics::Body": "Static",
           "shards_motion::physics::Collider": {
             "layers": {
@@ -105,6 +138,7 @@
             ]
           },
           "sandbox::gameplay::Pillar": {},
+          "shards_look::Look": "stone",
           "shards_motion::physics::Body": "Static",
           "shards_motion::physics::Collider": {
             "layers": {
@@ -155,6 +189,7 @@
             ]
           },
           "sandbox::gameplay::Pillar": {},
+          "shards_look::Look": "stone",
           "shards_motion::physics::Body": "Static",
           "shards_motion::physics::Collider": {
             "layers": {
@@ -205,6 +240,7 @@
             ]
           },
           "sandbox::gameplay::Pillar": {},
+          "shards_look::Look": "stone",
           "shards_motion::physics::Body": "Static",
           "shards_motion::physics::Collider": {
             "layers": {
@@ -309,6 +345,7 @@
           },
           "shards_core::state::LocalPlayer": {},
           "shards_core::state::PlayerId": 0,
+          "shards_look::Look": "player",
           "shards_motion::controller::CharacterController": {
             "params": "player"
           },
@@ -454,6 +491,7 @@
             "pressed": [],
             "target": null
           },
+          "shards_look::Look": "warden",
           "shards_motion::camera::LockOnTarget": {},
           "shards_motion::controller::CharacterController": {
             "params": "warden"
@@ -663,6 +701,7 @@
             "pressed": [],
             "target": null
           },
+          "shards_look::Look": "skeleton",
           "shards_motion::camera::LockOnTarget": {},
           "shards_motion::controller::CharacterController": {
             "params": "skeleton"
@@ -872,6 +911,7 @@
             "pressed": [],
             "target": null
           },
+          "shards_look::Look": "skeleton",
           "shards_motion::camera::LockOnTarget": {},
           "shards_motion::controller::CharacterController": {
             "params": "skeleton"
@@ -1275,6 +1315,7 @@
             "pressed": [],
             "target": null
           },
+          "shards_look::Look": "skeleton",
           "shards_motion::camera::LockOnTarget": {},
           "shards_motion::controller::CharacterController": {
             "params": "skeleton"
@@ -1422,13 +1463,14 @@
   },
   "end": {
     "tick": 157,
-    "hash": "560dbb0f7ae6ed6a",
+    "hash": "7865076622dc0f12",
     "parts": {
       "entities": {
         "e1": {
           "Body": "e406ed6e99cc6b9a",
           "Collider": "fe3aec64863beaa5",
           "ColliderId": "bed2f67298c5d4b8",
+          "Look": "d739ebcc02ffd834",
           "Name": "061aaa57a4d625c3",
           "Pillar": "aaf80ef159585437",
           "Transform": "041e2e43567b55d9"
@@ -1437,6 +1479,7 @@
           "Body": "e406ed6e99cc6b9a",
           "Collider": "fe3aec64863beaa5",
           "ColliderId": "ce2867f4591df34f",
+          "Look": "d739ebcc02ffd834",
           "Name": "061aaa57a4d625c3",
           "Pillar": "aaf80ef159585437",
           "Transform": "280926ac8df55015"
@@ -1445,6 +1488,7 @@
           "Body": "e406ed6e99cc6b9a",
           "Collider": "fe3aec64863beaa5",
           "ColliderId": "13e967db9b4d1116",
+          "Look": "d739ebcc02ffd834",
           "Name": "061aaa57a4d625c3",
           "Pillar": "aaf80ef159585437",
           "Transform": "d80cde9f049c660f"
@@ -1453,6 +1497,7 @@
           "Body": "e406ed6e99cc6b9a",
           "Collider": "fe3aec64863beaa5",
           "ColliderId": "2b68a115042adea5",
+          "Look": "d739ebcc02ffd834",
           "Name": "061aaa57a4d625c3",
           "Pillar": "aaf80ef159585437",
           "Transform": "ea2d4533c2f7918b"
@@ -1472,6 +1517,7 @@
           "Intent": "38dab3b75de55ab8",
           "LocalPlayer": "9649be778570e9b6",
           "LocomotionInput": "39e4de9fd83ac7a7",
+          "Look": "e44906346a412547",
           "MotionState": "8ea83ea7282c6a13",
           "Name": "34a01a235b960c38",
           "Player": "d4e87c7e9cc60712",
@@ -1499,6 +1545,7 @@
           "Intent": "38dab3b75de55ab8",
           "LockOnTarget": "8e7e24c8d091cff2",
           "LocomotionInput": "39e4de9fd83ac7a7",
+          "Look": "69d0ee91f082244b",
           "MotionState": "1b0f39eab5831839",
           "Name": "c60481842b5403a4",
           "NavAgent": "59682c99cad9d12c",
@@ -1528,6 +1575,7 @@
           "Intent": "38dab3b75de55ab8",
           "LockOnTarget": "8e7e24c8d091cff2",
           "LocomotionInput": "39e4de9fd83ac7a7",
+          "Look": "f94c630656387237",
           "MotionState": "a479ec98c2ca52a5",
           "Name": "69a7067b825ad410",
           "NavAgent": "59682c99cad9d12c",
@@ -1559,6 +1607,7 @@
           "Intent": "38dab3b75de55ab8",
           "LockOnTarget": "8e7e24c8d091cff2",
           "LocomotionInput": "39e4de9fd83ac7a7",
+          "Look": "f94c630656387237",
           "MotionState": "45b7aeb32aeb0ff5",
           "Name": "69a7067b825ad410",
           "NavAgent": "59682c99cad9d12c",
@@ -1619,6 +1668,7 @@
           "Intent": "38dab3b75de55ab8",
           "LockOnTarget": "8e7e24c8d091cff2",
           "LocomotionInput": "39e4de9fd83ac7a7",
+          "Look": "f94c630656387237",
           "MotionState": "9a431375471c8d4d",
           "Name": "69a7067b825ad410",
           "NavAgent": "59682c99cad9d12c",
@@ -1636,7 +1686,7 @@
         }
       },
       "game": {
-        "content": "ad91af3fc5344219"
+        "content": "1900c86b0f5759af"
       }
     }
   },
@@ -1751,13 +1801,14 @@
   "checks": [
     {
       "tick": 60,
-      "hash": "ad60c0c0935ef16f",
+      "hash": "f96bc69df90bb8a5",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -1766,6 +1817,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -1774,6 +1826,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -1782,6 +1835,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -1801,6 +1855,7 @@
             "Intent": "38dab3b75de55ab8",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
             "MotionState": "8abcbe27c39605a1",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -1828,6 +1883,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -1857,6 +1913,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "f94c630656387237",
             "MotionState": "a479ec98c2ca52a5",
             "Name": "69a7067b825ad410",
             "NavAgent": "59682c99cad9d12c",
@@ -1888,6 +1945,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "f94c630656387237",
             "MotionState": "45b7aeb32aeb0ff5",
             "Name": "69a7067b825ad410",
             "NavAgent": "59682c99cad9d12c",
@@ -1948,6 +2006,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "f94c630656387237",
             "MotionState": "9a431375471c8d4d",
             "Name": "69a7067b825ad410",
             "NavAgent": "59682c99cad9d12c",
@@ -1965,19 +2024,20 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     },
     {
       "tick": 120,
-      "hash": "a1caa641902255a3",
+      "hash": "b1373c1f34f7d66f",
       "parts": {
         "entities": {
           "e1": {
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "041e2e43567b55d9"
@@ -1986,6 +2046,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "280926ac8df55015"
@@ -1994,6 +2055,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "d80cde9f049c660f"
@@ -2002,6 +2064,7 @@
             "Body": "e406ed6e99cc6b9a",
             "Collider": "fe3aec64863beaa5",
             "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
             "Name": "061aaa57a4d625c3",
             "Pillar": "aaf80ef159585437",
             "Transform": "ea2d4533c2f7918b"
@@ -2021,6 +2084,7 @@
             "Intent": "95bfefa1be43c4e8",
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "6ef687da7da9d332",
+            "Look": "e44906346a412547",
             "MotionState": "81c84518d53c9add",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
@@ -2048,6 +2112,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "69d0ee91f082244b",
             "MotionState": "1b0f39eab5831839",
             "Name": "c60481842b5403a4",
             "NavAgent": "59682c99cad9d12c",
@@ -2077,6 +2142,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "f94c630656387237",
             "MotionState": "a479ec98c2ca52a5",
             "Name": "69a7067b825ad410",
             "NavAgent": "59682c99cad9d12c",
@@ -2108,6 +2174,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "f94c630656387237",
             "MotionState": "45b7aeb32aeb0ff5",
             "Name": "69a7067b825ad410",
             "NavAgent": "59682c99cad9d12c",
@@ -2168,6 +2235,7 @@
             "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
             "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "f94c630656387237",
             "MotionState": "9a431375471c8d4d",
             "Name": "69a7067b825ad410",
             "NavAgent": "59682c99cad9d12c",
@@ -2185,7 +2253,7 @@
           }
         },
         "game": {
-          "content": "ad91af3fc5344219"
+          "content": "1900c86b0f5759af"
         }
       }
     }

@@ -26,3 +26,5 @@ serde_json.workspace = true
 schemars.workspace = true
 ron.workspace = true
 parry3d.workspace = true
+# Only for its `libm` feature (parry's math through libm without glam's scalar-math; root Cargo.toml).
+glamx.workspace = true

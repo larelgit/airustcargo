@@ -6,6 +6,8 @@
 
 #![allow(dead_code)]
 
+// `ops` comes from whoever includes this file (sandbox, shards_level and shards_world reach Bevy by different paths).
+use super::ops;
 use serde_json::{json, Map, Value};
 
 /// A node as the exporter writes it.
@@ -38,7 +40,7 @@ impl NodeSpec {
     /// A quarter turn (or any angle, in degrees) about Y.
     pub fn yaw(mut self, degrees: f32) -> Self {
         let half = degrees.to_radians() * 0.5;
-        self.rotation = Some([0.0, half.sin(), 0.0, half.cos()]);
+        self.rotation = Some([0.0, ops::sin(half), 0.0, ops::cos(half)]);
         self
     }
 

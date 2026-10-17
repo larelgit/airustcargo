@@ -37,7 +37,13 @@ publish = false
 [workspace.dependencies]
 # Bevy is pinned to the 0.20 line on purpose: minor releases break APIs.
 # Upgrade deliberately (read the migration guide), never via `cargo update` alone.
-bevy = { version = "0.20.0", default-features = false }
+# `libm`: sin, cos, atan2, exp, powf and the rest come from the pure-Rust `libm` crate (glam and `bevy::math::ops`)
+# instead of the platform's C math library, whose last bits differ between MSVC, glibc and macOS. Replays and
+# co-op depend on it: the same seed must give the same bits on every OS of one CPU architecture (x86_64: Windows,
+# Linux, Steam Deck; see `parry3d` below for why not across architectures). It is here, not in `shards`, so that
+# `cargo test -p <any crate>` has it too; the template gets it through `shards`. Game code calls `bevy::math::ops`
+# (clippy.toml forbids std's `f32::sin` and friends).
+bevy = { version = "0.20.0", default-features = false, features = ["libm"] }
 bevy_remote = { version = "0.20.0", default-features = false, features = ["http"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -50,10 +56,29 @@ ron = "=0.12.2"
 # Checksums of save files, inside shards_save only.
 crc32fast = "=1.5.2"
 # Collision queries inside shards_motion only; never part of a public API. `alloc` holds
-# the support-map shape casts and EPA contacts. No `enhanced-determinism`: it switches
-# glam (shared with all of Bevy) to scalar libm math; one machine + one build is already
-# deterministic, which is what replays need.
-parry3d = { version = "=0.31.1", default-features = false, features = ["std", "alloc", "dim3", "f32"] }
+# the support-map shape casts and EPA contacts. `indexmap`: the hash maps parry iterates become `IndexMap`s.
+#
+# This is parry's `enhanced-determinism` minus one of its four items. `indexmap` is above; `simba/libm_force`
+# and `glamx/libm` come with the `glamx` line below. The fourth, `glamx/scalar-math`, is left out and must stay
+# out: it turns glam (shared with all of Bevy) to scalar code, and scalar glam drops the 16-byte alignment of
+# `Vec4` and `Mat4`. Bevy 0.20 sizes its GPU mesh buffers by the Rust layout, so `MeshUniform` becomes 168 bytes
+# against the shader's 176, wgpu rejects the bind group ("Binding size 168 of Buffer with '' label is less than
+# minimum 176") and rendering stops. `shards` refuses that build at compile time (`crates/shards/src/lib.rs`).
+# What glam's SIMD gives: the same bits on every OS of one CPU architecture (x86_64: Windows, Linux, Steam Deck),
+# because glam's SSE2 code is the same instructions there and only transcendental functions (sin, exp, powf)
+# differ between C runtimes, and those come from `libm` (checked by a run: Windows 11 and Ubuntu 24.04 under
+# WSL1 record the same reference replays byte for byte, on one machine, so one CPU; other x86_64 CPUs, macOS,
+# ARM and Steam Deck hardware are not checked). Across
+# architectures (x86_64 against ARM, Apple Silicon) it is not promised: NEON fuses multiply-adds where SSE2
+# rounds twice. Nor with `-C target-cpu=native` or `+fma`: under `target_feature = "fma"` glam's SSE2 code
+# fuses them too (`Quat` products and `slerp`, `Vec3A::cross` and `slerp`, `lerp_monotonic` and `mul_add` of
+# `Vec3A` and `Vec4`).
+parry3d = { version = "=0.31.1", default-features = false, features = ["std", "alloc", "dim3", "f32", "indexmap"] }
+# Inside shards_motion only, for one feature; never imported, never part of a public API. glamx is parry's
+# math layer: `libm` makes it and simba (`simba/libm_force`) take sqrt, sin, atan2, powf and the rest from the
+# pure-Rust `libm` crate, as `enhanced-determinism` would, but without `scalar-math` (see `parry3d` above).
+# Pinned to the version parry 0.31.1 resolves to; move it together with parry.
+glamx = { version = "=0.3.1", default-features = false, features = ["libm"] }
 # Reads level files (Blender's glTF export) inside shards_level only; never part of a public API.
 # The JSON alone is enough (node tree, transforms, names, extras, POSITION bounds): no `import`
 # feature, so no image decoders. Bevy's own glTF loader uses the same crate for the visuals.

@@ -191,14 +191,14 @@ fn orbit_camera(
             .map(chest);
 
         let head = subject_tf.translation + Vec3::Y * camera.height;
-        let rate = 1.0 - (-camera.follow_rate * dt).exp();
+        let rate = 1.0 - ops::exp(-camera.follow_rate * dt);
         camera.focus = if camera.focus == Vec3::ZERO || camera.focus.distance(head) > 12.0 { head } else { camera.focus.lerp(head, rate) };
 
         match locked {
             // Framing a target: behind the player, looking at it. The look axis flicks targets.
             Some(target) => {
                 let (yaw, pitch) = orbit_angles(camera.focus - target);
-                camera.yaw = wrap_angle(camera.yaw + wrap_angle(yaw - camera.yaw) * (1.0 - (-LOCK_FRAMING_RATE * dt).exp()));
+                camera.yaw = wrap_angle(camera.yaw + wrap_angle(yaw - camera.yaw) * (1.0 - ops::exp(-LOCK_FRAMING_RATE * dt)));
                 camera.pitch = damp(camera.pitch, pitch.clamp(0.15, 0.7), LOCK_FRAMING_RATE, dt);
             }
             // Free look: the player's turn, bent toward a target near the crosshair.

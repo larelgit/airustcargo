@@ -89,7 +89,7 @@ fn write(dir: &Path, file: &str, bytes: &[u8]) {
 pub fn tone(seconds: f32, hz: f32) -> Vec<u8> {
     let rate = 8_000;
     let samples: Vec<i16> = (0..(seconds * rate as f32) as usize)
-        .map(|i| ((i as f32 / rate as f32 * hz * std::f32::consts::TAU).sin() * 8_000.0) as i16)
+        .map(|i| (ops::sin(i as f32 / rate as f32 * hz * std::f32::consts::TAU) * 8_000.0) as i16)
         .collect();
     wav_bytes(rate, &samples)
 }

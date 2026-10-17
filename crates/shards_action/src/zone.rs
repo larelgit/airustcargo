@@ -157,7 +157,7 @@ impl WorldShape {
 
 /// The rotation that turns -Z (Bevy's forward) to `facing` about Y.
 pub(crate) fn yaw(facing: Vec3) -> Quat {
-    Quat::from_rotation_y((-facing.x).atan2(-facing.z))
+    Quat::from_rotation_y(ops::atan2(-facing.x, -facing.z))
 }
 
 /// Out of the segment `a..b` inflated by `reach`. At its core, leave along `side`.
@@ -192,8 +192,8 @@ fn rect_exit(p: Vec3, f: Vec3, r: Vec3, hx: f32, hz: f32) -> Option<Vec3> {
 fn sector_exit(p: Vec3, f: Vec3, range: f32, half: f32, radius: f32) -> Option<Vec3> {
     let d = p.length();
     let side = Vec3::new(-f.z, 0.0, f.x);
-    let phi = p.dot(side).atan2(p.dot(f));
-    let edge_dir = |edge: f32| f * edge.cos() + side * edge.sin();
+    let phi = ops::atan2(p.dot(side), p.dot(f));
+    let edge_dir = |edge: f32| f * ops::cos(edge) + side * ops::sin(edge);
     // How far the point is from the (uninflated) sector.
     let outside = if phi.abs() <= half || d < 1e-4 {
         (d - range).max(0.0)
@@ -215,7 +215,7 @@ fn sector_exit(p: Vec3, f: Vec3, range: f32, half: f32, radius: f32) -> Option<V
     } else if half < PI - EPS {
         // The notch clears the sector by `radius` from this apex back along the axis; its
         // edges run the sector's way. The nearest point of the notch is on one of them.
-        let apex = -f * (radius / (PI - half).sin());
+        let apex = -f * (radius / ops::sin(PI - half));
         for edge in [half, -half] {
             let dir = edge_dir(edge);
             let to = apex + dir * (p - apex).dot(dir).max(0.0) - p;
@@ -373,7 +373,7 @@ pub fn threat_indicators(world: &World, viewer: Entity, view_forward: Vec3) -> V
             continue;
         }
         let to = flat(z.shape.center() - here);
-        let angle_deg = to.dot(right).atan2(to.dot(fwd)).to_degrees();
+        let angle_deg = ops::atan2(to.dot(right), to.dot(fwd)).to_degrees();
         out.push(Indicator {
             source: z.attacker,
             source_id: z.attacker_id,
@@ -454,7 +454,7 @@ mod tests {
         // 1 m ahead of the apex: crossing an edge line stays inside a sector this wide;
         // the way out is straight back, into the notch deep enough to clear the edges.
         let out = z.exit(Vec3::new(0.0, 0.0, -1.0), 0.4).unwrap();
-        let behind = 0.4 / 60f32.to_radians().sin();
+        let behind = 0.4 / ops::sin(60f32.to_radians());
         assert!(close(out, Vec3::new(0.0, 0.0, 1.0 + behind)), "{out}");
         // Whatever the angle, doing what `exit` says leaves the zone (or its edge, to
         // within a centimeter).

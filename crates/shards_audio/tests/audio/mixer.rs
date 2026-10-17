@@ -56,7 +56,7 @@ fn a_spatial_sound_fades_with_distance_follows_its_source_and_is_not_started_out
 
     let foe = entity(&app, FOE);
     play(app.world_mut(), "beep", SoundAt::Entity(foe)).unwrap();
-    near(voices(&app)[2].gain, (1.0f32 - 3.0 / 8.0).powi(2));
+    near(voices(&app)[2].gain, ops::powf(1.0 - 3.0 / 8.0, 2.0));
     app.world_mut().get_mut::<Transform>(foe).unwrap().translation = Vec3::new(0.0, 0.0, -1.0);
     refresh(app.world_mut());
     let follows = &voices(&app)[2];

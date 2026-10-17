@@ -55,7 +55,7 @@ impl<'a> Terrain<'a> {
     /// is asked to look around).
     pub fn new(physics: &'a PhysicsWorld, params: &'a CharacterParams, exclude: &[Entity]) -> Self {
         let filter = exclude.iter().fold(QueryFilter::new(LayerMask::WORLD), |filter, &entity| filter.excluding(entity));
-        Self { physics, params, filter, min_ground_y: params.max_slope_deg.clamp(0.0, 89.9).to_radians().cos() }
+        Self { physics, params, filter, min_ground_y: ops::cos(params.max_slope_deg.clamp(0.0, 89.9).to_radians()) }
     }
 
     /// Height of the feet of a swimmer in water with its surface at `surface`.
@@ -97,7 +97,7 @@ impl<'a> Terrain<'a> {
             return if blockers.is_empty() { (Probe::Water { surface }, blockers) } else { (Probe::Blocked(Block::Tight), blockers) };
         }
         if normal.y < self.min_ground_y {
-            return (Probe::Blocked(Block::Steep(normal.y.clamp(-1.0, 1.0).acos().to_degrees())), Vec::new());
+            return (Probe::Blocked(Block::Steep(ops::acos(normal.y.clamp(-1.0, 1.0)).to_degrees())), Vec::new());
         }
         let blockers = self.in_the_way(x, z, floor, normal.y, p.step_height);
         if blockers.is_empty() { (Probe::Floor { y: floor, normal }, blockers) } else { (Probe::Blocked(Block::Tight), blockers) }
@@ -175,11 +175,11 @@ mod tests {
     fn a_slope_lifts_a_floor_by_its_tilt() {
         let (physics, params) = (PhysicsWorld::default(), CharacterParams::default());
         let terrain = Terrain::new(&physics, &params, &[]);
-        let up =|degrees: f32| degrees.to_radians().cos();
+        let up =|degrees: f32| ops::cos(degrees.to_radians());
         assert_eq!(terrain.slope_rise(0.5, 1.0, up(1.0)), 0.0, "flat enough to be a step");
         let gentle = terrain.slope_rise(0.5, up(3.6), 1.0);
-        assert!((gentle - 0.5 * 3.6f32.to_radians().tan()).abs() < 1e-4, "{gentle}");
-        assert!((terrain.slope_rise(0.5, 1.0, up(30.0)) - 0.5 * 30f32.to_radians().tan()).abs() < 1e-4, "the steeper of the two counts");
+        assert!((gentle - 0.5 * ops::tan(3.6f32.to_radians())).abs() < 1e-4, "{gentle}");
+        assert!((terrain.slope_rise(0.5, 1.0, up(30.0)) - 0.5 * ops::tan(30f32.to_radians())).abs() < 1e-4, "the steeper of the two counts");
         assert!((terrain.slope_rise(0.5, up(60.0), 1.0) - 0.5).abs() < 1e-4, "capped at the walkable limit (45°)");
     }
 

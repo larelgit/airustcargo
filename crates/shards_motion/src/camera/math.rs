@@ -8,6 +8,7 @@
 
 use std::f32::consts::{PI, TAU};
 
+use bevy::math::FloatPow;
 use bevy::prelude::*;
 
 use crate::physics::{LayerMask, PhysicsWorld, QueryFilter, Shape};
@@ -26,7 +27,7 @@ pub fn orbit_position(focus: Vec3, yaw: f32, pitch: f32, distance: f32) -> Vec3 
 /// inverse of [`orbit_offset`].
 pub fn orbit_angles(offset: Vec3) -> (f32, f32) {
     let offset = offset.normalize_or(Vec3::Z);
-    (offset.x.atan2(offset.z), offset.y.clamp(-1.0, 1.0).asin())
+    (ops::atan2(offset.x, offset.z), ops::asin(offset.y.clamp(-1.0, 1.0)))
 }
 
 /// Pulls the camera in when a wall stands between the focus and `desired`: a sphere of
@@ -110,7 +111,7 @@ pub enum Side {
 fn bearing(view: &LockView, position: Vec3) -> f32 {
     let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z).normalize_or_zero();
     let (forward, to) = (flat(view.forward), flat(position - view.eye));
-    forward.cross(to).y.atan2(forward.dot(to))
+    ops::atan2(forward.cross(to).y, forward.dot(to))
 }
 
 /// The next target to the `side` of the current one (`current` is an index into
@@ -149,13 +150,13 @@ pub struct ShakeOffset {
 /// A smooth, repeatable wobble: `trauma` (0..1) is squared so small hits stay subtle,
 /// `t` is time in seconds. The same inputs give the same offset.
 pub fn shake_offset(trauma: f32, t: f32) -> ShakeOffset {
-    let amount = trauma.clamp(0.0, 1.0).powi(2);
+    let amount = trauma.clamp(0.0, 1.0).squared();
     if amount == 0.0 {
         return ShakeOffset::default();
     }
     let noise = |channel: f32| {
         let phase = channel * 12.9898;
-        0.5 * ((TAU * 7.3 * t + phase).sin() + (TAU * 11.7 * t + phase * 1.7).sin())
+        0.5 * (ops::sin(TAU * 7.3 * t + phase) + ops::sin(TAU * 11.7 * t + phase * 1.7))
     };
     ShakeOffset {
         translation: Vec3::new(noise(1.0), noise(2.0), noise(3.0)) * 0.12 * amount,
@@ -184,7 +185,7 @@ pub fn aim_assist(look: Vec2, error: Vec2, strength: f32) -> Vec2 {
 /// Moves `current` toward `target` by an exponential catch-up of `rate` per second:
 /// frame-rate independent.
 pub fn damp(current: f32, target: f32, rate: f32, dt: f32) -> f32 {
-    current + (target - current) * (1.0 - (-rate * dt).exp())
+    current + (target - current) * (1.0 - ops::exp(-rate * dt))
 }
 
 /// `angle` turned into -π..π.

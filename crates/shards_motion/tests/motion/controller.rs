@@ -173,7 +173,7 @@ fn stairs_are_climbed_from_any_start_at_any_pace_and_angle() {
             let mut app = app();
             floor(app.world_mut());
             wide_stairs(app.world_mut(), rise, STEPS);
-            let dir = Vec3::new(angle.to_radians().cos(), 0.0, angle.to_radians().sin());
+            let dir = Vec3::new(ops::cos(angle.to_radians()), 0.0, ops::sin(angle.to_radians()));
             // Parallel lanes, 3 m apart: bodies never meet.
             let mut runners = Vec::new();
             for (lane, (amount, start)) in
@@ -314,7 +314,7 @@ fn a_ledge_is_grabbed_from_a_jump() {
 /// A ramp rising toward +x at `deg`, its surface starting at ground level at x = 2.
 fn ramp(world: &mut World, deg: f32) {
     let a = deg.to_radians();
-    let (along, normal) = (Vec3::new(a.cos(), a.sin(), 0.0), Vec3::new(-a.sin(), a.cos(), 0.0));
+    let (along, normal) = (Vec3::new(ops::cos(a), ops::sin(a), 0.0), Vec3::new(-ops::sin(a), ops::cos(a), 0.0));
     let half = Vec3::new(10.0, 0.5, 3.0);
     let center = Vec3::new(2.0, 0.0, 0.0) + along * half.x - normal * half.y;
     turned_block(world, center, half, Quat::from_rotation_z(a));
@@ -331,7 +331,7 @@ fn slopes_under_the_limit_are_walked_up() {
     // The round bottom touches the slope uphill of the feet, which hover a little; the
     // gap to the slope (along its normal) is a skin.
     let a = 30f32.to_radians();
-    let surface = (end.x - 2.0) * a.tan() + (RADIUS + SKIN) / a.cos() - RADIUS;
+    let surface = (end.x - 2.0) * ops::tan(a) + (RADIUS + SKIN) / ops::cos(a) - RADIUS;
     assert!(end.x > 6.0, "kept going: {end}");
     assert!((end.y - surface).abs() < 1e-3, "on the slope ({surface}): {end}");
     assert_eq!(state(&app, e).mode, MotionMode::Ground);
@@ -364,7 +364,7 @@ fn standing_on_a_steep_slope_slides_down() {
     floor(app.world_mut());
     ramp(app.world_mut(), 60.0);
     // Dropped onto the slope 2 m up it.
-    let x = 2.0 + 2.0 / 60f32.to_radians().tan();
+    let x = 2.0 + 2.0 / ops::tan(60f32.to_radians());
     let e = hero(app.world_mut(), Vec3::new(x, 3.0, 0.0));
     for _ in 0..120 {
         step(&mut app, 1);
@@ -535,7 +535,7 @@ fn walks_out_of_water_where_it_gets_shallow() {
     let a = 20f32.to_radians();
     let half = Vec3::new(6.0, 0.5, 10.0);
     // Surface from (10, -3) up toward +x.
-    let (along, normal) = (Vec3::new(a.cos(), a.sin(), 0.0), Vec3::new(-a.sin(), a.cos(), 0.0));
+    let (along, normal) = (Vec3::new(ops::cos(a), ops::sin(a), 0.0), Vec3::new(-ops::sin(a), ops::cos(a), 0.0));
     turned_block(app.world_mut(), Vec3::new(10.0, -3.0, 0.0) + along * half.x - normal * half.y, half, Quat::from_rotation_z(a));
     volume(app.world_mut(), Vec3::new(0.0, -3.0, -10.0), Vec3::new(30.0, -0.5, 10.0), VolumeKind::Water);
     let e = hero(app.world_mut(), Vec3::new(-1.0, 0.0, 0.0));

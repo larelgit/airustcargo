@@ -446,8 +446,8 @@ fn a_gentle_slope_does_not_make_a_ledge_walkable() {
 /// Ground, a 16.7° ramp up 3 m over 10 m, and a platform on top.
 fn ramp_course(world: &mut World) {
     block(world, Vec3::new(-30.0, -1.0, -6.0), Vec3::new(0.0, 0.0, 6.0));
-    let angle = 0.3f32.atan();
-    let normal = Vec3::new(-angle.sin(), angle.cos(), 0.0);
+    let angle = ops::atan(0.3f32);
+    let normal = Vec3::new(-ops::sin(angle), ops::cos(angle), 0.0);
     let middle = Vec3::new(5.0, 1.5, 0.0) - normal * 0.25;
     turned_block(world, middle, Vec3::new(5.22, 0.25, 6.0), Quat::from_rotation_z(angle));
     block(world, Vec3::new(10.0, -1.0, -6.0), Vec3::new(30.0, 3.0, 6.0));

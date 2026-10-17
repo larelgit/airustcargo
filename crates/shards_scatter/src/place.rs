@@ -38,7 +38,7 @@ impl Candidate {
     /// Its rotation: turned, then leaned.
     pub fn rotation(&self) -> Quat {
         let (side, angle) = self.lean;
-        let axis = Vec3::new(side.cos(), 0.0, side.sin());
+        let axis = Vec3::new(ops::cos(side), 0.0, ops::sin(side));
         Quat::from_axis_angle(axis, angle) * Quat::from_rotation_y(self.yaw)
     }
 }
@@ -204,7 +204,7 @@ pub fn settle(def: &ScatterDef, center: Vec3, candidates: &[Candidate], ground: 
     // above it (a wall) holds the ray's start.
     let top = high + 0.05;
     let reach = top - low + 0.05;
-    let flattest = def.max_slope.to_radians().cos() - 1e-4;
+    let flattest = ops::cos(def.max_slope.to_radians()) - 1e-4;
     let mut skipped = Skipped::default();
     let mut placed = Vec::with_capacity(candidates.len());
     for c in candidates {

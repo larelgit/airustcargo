@@ -210,7 +210,7 @@ fn crowd() -> Vec<[u32; 3]> {
     let mut heroes = Vec::new();
     for i in 0..10 {
         let a = i as f32 * std::f32::consts::TAU / 10.0;
-        let at = Vec3::new(a.cos(), 0.0, a.sin()) * 4.0;
+        let at = Vec3::new(ops::cos(a), 0.0, ops::sin(a)) * 4.0;
         let e = hero(app.world_mut(), at);
         walk(app.world_mut(), e, -at.normalize());
         heroes.push(e);
