@@ -423,6 +423,8 @@ pub struct Link {
     session: u32,
     role: Role,
     cfg: LinkConfig,
+    /// The host's cookie (a client's link): sent in every datagram until the host is heard from.
+    cookie: Option<u64>,
     // clock
     now: u64,
     started: Option<u64>,
@@ -494,6 +496,7 @@ impl Link {
             session,
             role,
             cfg,
+            cookie: None,
             now: 0,
             started: None,
             last_recv: None,
@@ -536,6 +539,17 @@ impl Link {
 
     pub fn role(&self) -> Role {
         self.role
+    }
+
+    /// The cookie the host answered this client's knock with ([`crate::cookie`]): every datagram
+    /// carries it until the host is heard from. A newer one replaces it.
+    pub fn set_cookie(&mut self, cookie: u64) {
+        self.cookie = Some(cookie);
+    }
+
+    /// Whether anything of the peer's has arrived (a datagram of this session).
+    pub fn heard_from(&self) -> bool {
+        self.last_recv.is_some()
     }
 
     pub fn config(&self) -> &LinkConfig {
@@ -751,7 +765,9 @@ impl Link {
         body.time_ms = now as u32;
         body.time_echo = self.peer_time.map(|(t, at)| t.wrapping_add(now.saturating_sub(at) as u32));
         body.reliable_ack = self.rin_next;
-        let header = Header { flags: 0, session: self.session, seq, ack, ack_bits };
+        // Nothing heard, nothing to acknowledge: the fields carry the cookie instead.
+        let cookie = self.cookie.filter(|_| self.last_recv.is_none());
+        let header = Header { flags: 0, session: self.session, seq, ack, ack_bits, cookie };
         let bytes = wire::encode(&header, &body);
         debug_assert!(bytes.len() <= crate::transport::MTU, "built a datagram of {} bytes", bytes.len());
         self.sent.push_back(SentRecord { seq, sent_at: now, rels: b.rels, frag: b.frag, acked: false, resolved: false });
@@ -786,6 +802,11 @@ impl Link {
                 return Verdict::Rejected(r);
             }
         };
+        if header.flags & wire::flag::KNOCK != 0 {
+            // A knock or a challenge: the session's business, never a link's (its numbers are none).
+            self.c.malformed += 1;
+            return Verdict::Rejected(Reject::Malformed);
+        }
         if header.session != self.session {
             self.c.rejected_session += 1;
             return Verdict::Rejected(Reject::Session(header.session));

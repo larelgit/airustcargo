@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 use shards_content::ContentDb;
 use shards_core::{player_body, Intent, PlayerId};
 
+use crate::cookie::Cookies;
 use crate::def::{net_def, NetDef};
 use crate::hooks::{hooks, JoinDecision, JoinRequest, NetLeft, NetSeat};
 use crate::inputs::InputQueue;
@@ -23,7 +24,7 @@ use crate::msg::{self, Accept, CallMsg, Hello, Inputs, Msg, Welcome, PROTO};
 use crate::replicate::{base_view, build_delta, close_view, DeltaInput, EncodeCache, Encoded, Fnv, SentView, ACK_PATIENCE, CLOSURE_CAP, SENT_KEPT};
 use crate::session::{NetEndpoint, NetGame, NetMarks, NetState, Ticked, NET_AGENT};
 use crate::transport::PeerId;
-use crate::wire;
+use crate::wire::{self, Handshake};
 
 /// How long a peer that is gone may stay silent with messages unacknowledged before it is
 /// forgotten, milliseconds.
@@ -53,6 +54,10 @@ pub const MAX_PEER_TEXT: usize = 200;
 /// Largest message a peer that does not play yet is read, in bytes: a `Hello` with the
 /// largest character. A larger one is refused unread.
 pub const MAX_JOINING_MESSAGE: usize = MAX_CHARACTER_BYTES + 16 * 1024;
+
+/// Answers to games of an older build (wire protocol 1) a second, all told: a refusal is bigger
+/// than some hellos, and anyone can claim to be one.
+pub const OLDER_BUILD_ANSWERS_PER_SECOND: u32 = 8;
 
 /// Largest reliable message a player is read, in bytes (a call and its arguments, a desync
 /// report). A larger one is dropped unread.
@@ -334,11 +339,27 @@ pub struct NetHost {
     /// The peer the next poll starts with: the first one the last poll left unread because the
     /// budget of the peers that do not play yet was spent. `None`: in the order of the ids.
     poll_first: Option<PeerId>,
+    /// The key of the join's cookies ([`crate::cookie`]).
+    cookies: Cookies,
+    /// Knocks answered with a cookie.
+    pub knocks: u64,
+    /// Datagrams of strangers dropped because they carried no cookie this host made for them (a
+    /// spoofed address, a cookie that expired, junk), or carried one and no message.
+    pub cookieless: u64,
+    /// Games of an older build refused; then the one-second window of those answers: when it began
+    /// (ms) and how many it has had.
+    pub older_builds: u64,
+    older_window: (u64, u32),
 }
 
 impl NetHost {
     pub fn new() -> Self {
         Self {
+            cookies: Cookies::random(),
+            knocks: 0,
+            cookieless: 0,
+            older_builds: 0,
+            older_window: (0, 0),
             peers: BTreeMap::new(),
             slots: BTreeMap::new(),
             retired: Vec::new(),
@@ -361,6 +382,13 @@ impl NetHost {
     /// Values kept between sends (`net_status`).
     pub fn cache_len(&self) -> usize {
         self.cache.len()
+    }
+
+    /// The cookie this host answers a knock from `peer` for `session` with at `now` (milliseconds
+    /// on the session's clock). A client that hand-builds its link in a test takes it from here
+    /// instead of knocking.
+    pub fn cookie_for(&self, peer: PeerId, session: u32, now: u64) -> u64 {
+        self.cookies.issue(peer, session, now)
     }
 
     /// A token for a new player: who they are when they come back (a restarted client brings
@@ -693,17 +721,37 @@ fn io_in(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint) {
     endpoint.transport.recv(now, &mut datagrams);
     let mut evicted = Vec::new();
     for (from, bytes) in datagrams {
+        // The join's round trip is answered from the datagram alone: nothing of the knocker is
+        // kept, and the answer is no bigger than the knock.
+        if let Some(Handshake::Knock { session }) = wire::handshake(&bytes) {
+            if host.ended.is_none() {
+                host.knocks += 1;
+                let cookie = host.cookies.issue(from, session, now);
+                endpoint.transport.reply(from, &wire::challenge(session, cookie));
+            }
+            continue;
+        }
         if !host.peers.contains_key(&from) {
-            // A game that ended (kicked, timed out, this host's previous process) keeps acking
-            // for a while: only a message makes a new peer.
-            if host.ended.is_some() || !wire::carries_messages(&bytes) {
+            if host.ended.is_some() {
                 continue;
             }
-            let Some(session) = wire::peek_session(&bytes) else { continue };
+            if let Some(session) = wire::older_build(&bytes) {
+                refuse_older_build(world, host, endpoint, from, session, now);
+                continue;
+            }
+            // Only a message makes a new peer (a game that ended keeps acking for a while), and
+            // only with the cookie this host gave that address for that session: a spoofed address
+            // never had one.
+            let Ok(header) = wire::peek(&bytes) else { continue };
+            let vouched = header.cookie.is_some_and(|c| host.cookies.check(from, header.session, now, c));
+            if !vouched || !wire::carries_messages(&bytes) {
+                host.cookieless += 1;
+                continue;
+            }
             if !make_room(host, endpoint, def.max_players, now, &mut evicted) {
                 continue;
             }
-            host.peers.insert(from, Peer::new(from, session, now));
+            host.peers.insert(from, Peer::new(from, header.session, now));
         }
         let peer = host.peers.get_mut(&from).expect("inserted above");
         if let Verdict::Rejected(reason) = peer.link.on_datagram(now, &bytes) {
@@ -869,6 +917,31 @@ fn make_room(host: &mut NetHost, endpoint: &mut NetEndpoint, max_players: u8, no
     }
     endpoint.transport.forget(victim);
     true
+}
+
+/// A game of an older build (wire protocol 1) said hello: it is told why it cannot join, in its own
+/// protocol, from a link made for the answer and dropped after it. Nothing of it is kept; at most
+/// [`OLDER_BUILD_ANSWERS_PER_SECOND`] of these go out a second.
+fn refuse_older_build(world: &mut World, host: &mut NetHost, endpoint: &mut NetEndpoint, from: PeerId, session: u32, now: u64) {
+    if now.saturating_sub(host.older_window.0) >= 1000 {
+        host.older_window = (now, 0);
+    }
+    if host.older_window.1 >= OLDER_BUILD_ANSWERS_PER_SECOND {
+        return;
+    }
+    host.older_window.1 += 1;
+    host.older_builds += 1;
+    let reason = format!(
+        "the host runs a newer build: wire protocol {} (a join starts with a cookie round trip), yours speaks {}; run the same build",
+        wire::PROTO,
+        wire::PROTO_1
+    );
+    let mut link = Link::new(session, Role::Host);
+    if link.send_reliable(&msg::encode(&Msg::Refused { reason })).is_err() {
+        return;
+    }
+    link.flush(now, &mut |datagram| endpoint.transport.reply(from, &wire::as_version(datagram, wire::PROTO_1)));
+    crate::hooks::net_line(world, "refused", JournalKind::Warn, format!("refused peer {from}: a game of an older build (wire protocol {})", wire::PROTO_1));
 }
 
 /// Silence: a connected player leaves, anyone else is forgotten. The host closed the link.
@@ -2060,5 +2133,186 @@ mod tests {
         let mut other = NetHost { wall_clock: true, ..NetHost::new() };
         let (a, b) = (lan.issue_token(7, 1, "player"), other.issue_token(7, 1, "player"));
         assert!(hex(&a) && a != b, "{a} {b}");
+    }
+
+    // --- the join's cookie ------------------------------------------------------------------
+
+    use super::PeerStage;
+    use crate::hub::{MemoryHub, MemoryTransport};
+    use crate::link::{Delivered, Link, Role, Verdict};
+    use crate::msg::{self, Msg};
+    use crate::session::{NetClock, NetEndpoint};
+    use crate::transport::Transport;
+    use crate::wire::{self, Handshake};
+    use crate::LinkConditions;
+
+    /// A host's receiving on a hub of its own, in a bare world: what strangers' datagrams make of it.
+    struct OnHub {
+        world: World,
+        host: NetHost,
+        endpoint: NetEndpoint,
+        hub: MemoryHub,
+    }
+
+    impl OnHub {
+        fn new() -> Self {
+            let hub = MemoryHub::new(5);
+            let transport = hub.endpoint("host");
+            let endpoint = NetEndpoint { transport: Box::new(transport), clock: NetClock::Hub(hub.clone()), host: None };
+            Self { world: bare_world(), host: NetHost::new(), endpoint, hub }
+        }
+
+        /// Another endpoint of the hub, linked to the host's (endpoint 0).
+        fn stranger(&self, name: &str) -> MemoryTransport {
+            let t = self.hub.endpoint(name);
+            self.hub.connect_both(t.id(), 0, LinkConditions::NONE);
+            t
+        }
+
+        fn receive(&mut self) {
+            super::io_in(&mut self.world, &mut self.host, &mut self.endpoint);
+        }
+
+        fn cookie(&self, who: &MemoryTransport, session: u32) -> u64 {
+            self.host.cookie_for(who.id(), session, self.hub.now())
+        }
+    }
+
+    /// What `who` got from the host.
+    fn heard(hub: &MemoryHub, who: &mut MemoryTransport) -> Vec<Vec<u8>> {
+        let mut got = Vec::new();
+        who.recv(hub.now(), &mut got);
+        got.into_iter().map(|(_, d)| d).collect()
+    }
+
+    /// The datagrams of a client of `session` that says hello, carrying `cookie`.
+    fn saying_hello(world: &World, session: u32, cookie: Option<u64>) -> Vec<Vec<u8>> {
+        let mut link = Link::new(session, Role::Client);
+        if let Some(cookie) = cookie {
+            link.set_cookie(cookie);
+        }
+        link.send_reliable(&msg::encode(&Msg::Hello(hello_of(world, "c1", "")))).unwrap();
+        let mut out = Vec::new();
+        link.flush(0, &mut |d| out.push(d.to_vec()));
+        out
+    }
+
+    #[test]
+    fn a_knock_is_answered_from_the_datagram_alone_and_the_host_keeps_nothing() {
+        let mut h = OnHub::new();
+        let mut strangers: Vec<MemoryTransport> = (0..40).map(|i| h.stranger(&format!("s{i}"))).collect();
+        for (i, s) in strangers.iter_mut().enumerate() {
+            s.send(0, &wire::knock(100 + i as u32));
+        }
+        h.receive();
+        assert!(h.host.peers.is_empty(), "a knock makes no peer");
+        assert_eq!(h.host.knocks, 40);
+        for (i, s) in strangers.iter_mut().enumerate() {
+            let got = heard(&h.hub, s);
+            assert_eq!(got.len(), 1, "one answer to one knock");
+            assert!(got[0].len() <= wire::KNOCK_LEN, "no bigger than the knock");
+            let session = 100 + i as u32;
+            assert_eq!(wire::handshake(&got[0]), Some(Handshake::Challenge { session, cookie: h.cookie(s, session) }));
+        }
+    }
+
+    #[test]
+    fn only_a_message_with_the_cookie_its_address_was_given_makes_a_peer() {
+        let mut h = OnHub::new();
+        let mut s = h.stranger("s");
+        let good = h.cookie(&s, 7);
+        // None, a made-up one, another address's (a spoofed sender), another session's: nothing is kept.
+        let other_address = h.host.cookie_for(s.id() + 1, 7, h.hub.now());
+        let other_session = h.cookie(&s, 8);
+        for cookie in [None, Some(good ^ 1), Some(other_address), Some(other_session)] {
+            for d in saying_hello(&h.world, 7, cookie) {
+                s.send(0, &d);
+            }
+            h.receive();
+            assert!(h.host.peers.is_empty(), "{cookie:?}");
+        }
+        assert_eq!(h.host.cookieless, 4);
+        assert!(heard(&h.hub, &mut s).is_empty(), "and nothing is said to them");
+        // Acknowledgements alone, with the right cookie, are nobody joining either.
+        let mut quiet = Link::new(7, Role::Client);
+        quiet.set_cookie(good);
+        quiet.flush(0, &mut |d| s.send(0, d));
+        h.receive();
+        assert!(h.host.peers.is_empty());
+        // The cookie of its address and session: a peer, and its hello is read.
+        for d in saying_hello(&h.world, 7, Some(good)) {
+            s.send(0, &d);
+        }
+        h.receive();
+        assert_eq!(h.host.peers.get(&s.id()).map(|p| p.stage.clone()), Some(PeerStage::Accepted));
+    }
+
+    #[test]
+    fn a_cookie_replayed_after_it_expired_makes_no_peer_and_a_new_knock_brings_a_good_one() {
+        let mut h = OnHub::new();
+        let mut s = h.stranger("s");
+        let old = h.cookie(&s, 7);
+        let captured = saying_hello(&h.world, 7, Some(old));
+        h.hub.set_time(2 * crate::cookie::BUCKET_MS);
+        for d in &captured {
+            s.send(0, d);
+        }
+        h.receive();
+        assert!(h.host.peers.is_empty(), "expired");
+        s.send(0, &wire::knock(7));
+        h.receive();
+        let Some(Handshake::Challenge { cookie, .. }) = heard(&h.hub, &mut s).first().and_then(|d| wire::handshake(d)) else { panic!("no challenge") };
+        assert_ne!(cookie, old);
+        for d in saying_hello(&h.world, 7, Some(cookie)) {
+            s.send(0, &d);
+        }
+        h.receive();
+        assert!(h.host.peers.contains_key(&s.id()));
+    }
+
+    #[test]
+    fn strangers_with_good_cookies_still_fill_no_more_than_the_table() {
+        let mut h = OnHub::new();
+        let cap = super::max_strangers(crate::NetDef::default().max_players);
+        let mut strangers: Vec<MemoryTransport> = (0..cap + 3).map(|i| h.stranger(&format!("s{i}"))).collect();
+        for (i, s) in strangers.iter_mut().enumerate() {
+            let mut link = Link::new(i as u32 + 1, Role::Client);
+            link.set_cookie(h.host.cookie_for(s.id(), i as u32 + 1, h.hub.now()));
+            link.send_unreliable(b"hello?").unwrap();
+            link.flush(0, &mut |d| s.send(0, d));
+        }
+        h.receive();
+        assert_eq!(h.host.peers.len(), cap, "the bound on peers that do not play holds as before");
+    }
+
+    #[test]
+    fn a_hello_of_an_older_build_is_refused_in_its_own_protocol_and_kept_nowhere() {
+        let mut h = OnHub::new();
+        let mut s = h.stranger("old");
+        // A client of wire protocol 1: no knock, its hello straight away.
+        let mut old = Link::new(5, Role::Client);
+        old.send_reliable(&msg::encode(&Msg::Hello(hello_of(&h.world, "old", "")))).unwrap();
+        let mut sent = Vec::new();
+        old.flush(0, &mut |d| sent.push(wire::as_version(d, wire::PROTO_1)));
+        for _ in 0..20 {
+            for d in &sent {
+                s.send(0, d);
+            }
+        }
+        h.receive();
+        assert!(h.host.peers.is_empty());
+        let got = heard(&h.hub, &mut s);
+        assert_eq!((got.len(), h.host.older_builds), (8, 8), "at most {} answers a second", super::OLDER_BUILD_ANSWERS_PER_SECOND);
+        assert!(got.iter().all(|d| d[2] == wire::PROTO_1), "in its protocol");
+        // Read the way that build reads it: a refusal that says what to do.
+        assert_eq!(old.on_datagram(1, &wire::as_version(&got[0], wire::PROTO)), Verdict::Accepted);
+        let Some(Delivered::Reliable(bytes)) = old.poll(1).into_iter().next() else { panic!("nothing delivered") };
+        let Ok(Msg::Refused { reason }) = msg::decode::<Msg>(&bytes) else { panic!("not a refusal") };
+        assert!(reason.contains("wire protocol 2") && reason.contains("yours speaks 1") && reason.contains("run the same build"), "{reason}");
+        // A second later it is answered again.
+        h.hub.set_time(1000);
+        s.send(0, &sent[0]);
+        h.receive();
+        assert_eq!(heard(&h.hub, &mut s).len(), 1);
     }
 }

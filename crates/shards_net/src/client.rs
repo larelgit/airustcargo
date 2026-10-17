@@ -23,12 +23,15 @@ use crate::msg::{self, CallMsg, Hello, Inputs, Msg, StateDelta, Welcome, PROTO};
 use crate::predict::NetCorrection;
 use crate::replicate::{apply, changes_between, first_difference, world_hash, ClientRing, Fnv, LOCAL_BASE};
 use crate::session::{ExternalTransport, NetClock, NetEndpoint, NetGame, NetMarks, NetState, Ticked};
+use crate::wire::{self, Handshake};
 
 /// Where a client is in the session.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClientStage {
     /// Loading content before saying hello.
     Connecting,
+    /// Knocked: waits for the host's cookie, without which it would not read the hello.
+    Knocking,
     /// Said hello; waits for the host's answer.
     HelloSent,
     /// The host's game said "not now".
@@ -44,7 +47,7 @@ pub enum ClientStage {
 impl ClientStage {
     /// Whether the client waits for the network (and not for its own loading).
     pub fn waits_on_network(&self) -> bool {
-        matches!(self, ClientStage::HelloSent | ClientStage::Waiting(_) | ClientStage::ReadySent | ClientStage::Connected | ClientStage::Ended(_))
+        matches!(self, ClientStage::Knocking | ClientStage::HelloSent | ClientStage::Waiting(_) | ClientStage::ReadySent | ClientStage::Connected | ClientStage::Ended(_))
     }
 }
 
@@ -138,7 +141,13 @@ pub struct NetClient {
     pub delta_bytes: u64,
     /// The RTT the link watch saw a second ago.
     watched_rtt: f32,
+    /// When it first knocked, and last (milliseconds on the session's clock).
+    knocks: Option<(u64, u64)>,
 }
+
+/// How often a client knocks again while its host has said nothing (a knock or its answer may be
+/// lost, and a cookie runs out), milliseconds.
+pub const KNOCK_EVERY_MS: u64 = 500;
 
 impl NetClient {
     pub fn new(address: &str, config: &EngineConfig) -> Self {
@@ -168,6 +177,7 @@ impl NetClient {
             skipped: 0,
             watched_rtt: 0.0,
             delta_bytes: 0,
+            knocks: None,
         }
     }
 
@@ -435,6 +445,10 @@ fn pace(world: &mut World, client: &mut NetClient) {
 pub const ENDED_PATIENCE_MS: u64 = 3000;
 
 fn flush(client: &mut NetClient, endpoint: &mut NetEndpoint) {
+    // Nothing to say before the cookie: the host would drop it.
+    if client.stage == ClientStage::Knocking {
+        return;
+    }
     let (Some(link), Some(host)) = (client.link.as_mut(), endpoint.host) else { return };
     let now = endpoint.clock.now();
     let transport = &mut endpoint.transport;
@@ -454,18 +468,35 @@ fn io_in(world: &mut World, client: &mut NetClient, endpoint: &mut NetEndpoint) 
     let now = endpoint.clock.now();
     let Some(host) = endpoint.host else { return };
     if client.stage == ClientStage::Connecting && world.get_resource::<ContentDb>().is_some_and(ContentDb::is_loaded) {
-        hello(world, client, &endpoint.clock);
+        open(world, client, &endpoint.clock);
         set_state(world, NetState::Joining(format!("waiting for the host {}", client.address)));
         shards_core::seed::hold_seed(world, &format!("net: waiting for the host {}", client.address));
     }
     let mut datagrams = Vec::new();
     endpoint.transport.recv(now, &mut datagrams);
+    let session = client.session;
     let Some(link) = client.link.as_mut() else { return };
+    let mut cookie = None;
     for (from, bytes) in datagrams {
-        if from == host {
-            link.on_datagram(now, &bytes);
+        if from != host {
+            continue;
+        }
+        match wire::handshake(&bytes) {
+            Some(Handshake::Challenge { session: s, cookie: c }) if s == session => cookie = Some(c),
+            Some(_) => {}
+            None => {
+                link.on_datagram(now, &bytes);
+            }
         }
     }
+    if let Some(cookie) = cookie {
+        link.set_cookie(cookie);
+        if client.stage == ClientStage::Knocking {
+            say_hello(world, client);
+        }
+    }
+    knock(world, client, endpoint, now);
+    let Some(link) = client.link.as_mut() else { return };
     let delivered = link.poll(now);
     for message in delivered {
         match message {
@@ -541,10 +572,11 @@ fn keep_token(world: &mut World, client: &NetClient, clock: &NetClock) {
     }
 }
 
-fn hello(world: &mut World, client: &mut NetClient, clock: &NetClock) {
+/// Content is loaded: the session's link, and a knock for the host's cookie.
+fn open(world: &mut World, client: &mut NetClient, clock: &NetClock) {
     client.token = load_token(world, client, clock);
     // The link's session tells this run's datagrams from an earlier run's: random over a real
-    // network, the same in every run of a stand.
+    // network, the same in every run of a stand. It is also what the host's cookie is for.
     client.session = match clock {
         NetClock::Hub(_) => {
             let mut h = Fnv::default();
@@ -554,6 +586,38 @@ fn hello(world: &mut World, client: &mut NetClient, clock: &NetClock) {
         NetClock::Wall(_) => crate::host::random_word(3, u64::from(std::process::id())) as u32,
     } | 1;
     client.link = Some(Link::new(client.session, Role::Client));
+    client.stage = ClientStage::Knocking;
+    client.knocks = None;
+}
+
+/// While the host has said nothing: a knock now and every [`KNOCK_EVERY_MS`] (a lost knock or
+/// answer, a cookie that runs out while a full host makes the hello wait). No answer to the
+/// knocks in the silence timeout ends the join, with what it may mean.
+fn knock(world: &mut World, client: &mut NetClient, endpoint: &mut NetEndpoint, now: u64) {
+    let (Some(host), Some(link)) = (endpoint.host, client.link.as_ref()) else { return };
+    if !matches!(client.stage, ClientStage::Knocking | ClientStage::HelloSent) || link.heard_from() {
+        return;
+    }
+    let (first, last) = client.knocks.map_or((now, None), |(first, last)| (first, Some(last)));
+    let timeout_ms = (net_def(world).timeout_secs * 1000.0) as u64;
+    if client.stage == ClientStage::Knocking && now.saturating_sub(first) > timeout_ms {
+        let why = format!(
+            "no answer from the host {} to the hello in {:.0} s: is it running there, and of this build? (a host of an older build does not answer it)",
+            client.address,
+            timeout_ms as f64 / 1000.0
+        );
+        journal::emit(world, JournalKind::Error, format!("net: {why}"));
+        end(world, client, &why, AppExit::error());
+        return;
+    }
+    if last.is_none_or(|last| now.saturating_sub(last) >= KNOCK_EVERY_MS) {
+        endpoint.transport.send(host, &wire::knock(client.session));
+        client.knocks = Some((first, now));
+    }
+}
+
+/// The cookie came: the hello.
+fn say_hello(world: &mut World, client: &mut NetClient) {
     let hello = Hello {
         proto: PROTO,
         engine: ENGINE_VERSION.to_owned(),

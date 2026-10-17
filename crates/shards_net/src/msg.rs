@@ -12,8 +12,8 @@ use serde_json::Value;
 
 use crate::inputs::InputFrame;
 
-/// Session protocol version: a client with another one is refused.
-pub const PROTO: u32 = 1;
+/// Session protocol version: a client with another one is refused. 2: the join's cookie.
+pub const PROTO: u32 = 2;
 
 /// A reliable message.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

@@ -4,11 +4,13 @@
 //! The only code in the crate that touches the wall clock is [`WallClock`], which hands out
 //! milliseconds since it was created; callers pass them as `now` like any other clock.
 //!
-//! Strangers: a datagram from an unknown address is dropped unless it carries the link header
-//! ([`wire::peek`]). An address that does is kept in a small table of 64 pending senders (least recently
-//! heard of replaced first, silent ones forgotten after 10 s) and handed up to the session layer; it
-//! becomes a peer in the table of 512 linked ones when the session layer answers it with
-//! [`Transport::send`]. So junk and floods never fill the table of peers that have links.
+//! Strangers: a datagram from an unknown address is dropped unless it starts like ours, of any
+//! version ([`wire::is_ours`]: an older build is answered with a refusal). An address that does is
+//! kept in a small table of 64 pending senders (least recently heard of replaced first, silent ones
+//! forgotten after 10 s) and handed up to the session layer; it becomes a peer in the table of 512
+//! linked ones when the session layer answers it with [`Transport::send`]. What the session says to
+//! a stranger before the join's cookie came back goes by [`Transport::reply`], which links nothing.
+//! So junk and floods never fill the table of peers that have links.
 
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
@@ -187,6 +189,17 @@ impl Transport for UdpTransport {
         }
     }
 
+    fn reply(&mut self, to: PeerId, datagram: &[u8]) {
+        if datagram.len() > MTU {
+            return;
+        }
+        // A pending address stays pending: answering a stranger links nothing.
+        let Some(addr) = self.peer_addr(to) else { return };
+        if self.socket.send_to(datagram, addr).is_err() {
+            self.send_errors += 1;
+        }
+    }
+
     fn recv(&mut self, now: u64, out: &mut Vec<(PeerId, Vec<u8>)>) {
         self.pending.retain(|_, p| now.saturating_sub(p.last_seen) <= PENDING_TTL_MS);
         for _ in 0..MAX_PER_RECV {
@@ -194,8 +207,8 @@ impl Transport for UdpTransport {
                 Ok((n, addr)) => {
                     let id = peer_id(addr);
                     if !self.peers.contains_key(&id) {
-                        // A stranger: only a datagram that carries our header is worth a table entry.
-                        if wire::peek(&self.buf[..n]).is_err() {
+                        // A stranger: only a datagram that starts like ours is worth a table entry.
+                        if !wire::is_ours(&self.buf[..n]) {
                             self.refused_unknown += 1;
                             continue;
                         }
@@ -390,6 +403,28 @@ mod tests {
         // Sending to an address nobody heard from goes nowhere.
         host.send(12345, &ours(9));
         assert_eq!(host.peers.len(), 0);
+    }
+
+    #[test]
+    fn a_reply_to_a_stranger_reaches_it_and_links_nothing() {
+        let mut host = UdpTransport::bind("127.0.0.1:0").unwrap();
+        let client = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let to = SocketAddr::from(([127, 0, 0, 1], host.socket_addr().unwrap().port()));
+        client.send_to(&wire::knock(9), to).unwrap();
+        let got = recv_n(&mut host, 1);
+        assert_eq!(wire::handshake(&got[0].1), Some(wire::Handshake::Knock { session: 9 }));
+        let id = got[0].0;
+        host.reply(id, &wire::challenge(9, 77));
+        assert_eq!((host.peers.len(), host.pending.len()), (0, 1), "still a stranger");
+        let mut buf = [0u8; 2048];
+        client.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap();
+        let (n, _) = client.recv_from(&mut buf).expect("the challenge reached the client");
+        assert_eq!(wire::handshake(&buf[..n]), Some(wire::Handshake::Challenge { session: 9, cookie: 77 }));
+        // Nobody heard from, nobody answered; a datagram of an older build is a stranger worth reading.
+        host.reply(12345, b"x");
+        assert_eq!(host.counters().1, 0);
+        client.send_to(&wire::as_version(&ours(4), wire::PROTO_1), to).unwrap();
+        assert_eq!(recv_n(&mut host, 1).len(), 1);
     }
 
     #[test]

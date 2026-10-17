@@ -19,6 +19,14 @@ pub trait Transport: Send + Sync + 'static {
     /// or duplicated. Never blocks and never fails visibly.
     fn send(&mut self, to: PeerId, datagram: &[u8]);
 
+    /// Answer `to` without keeping anything of it: what a host says to a stranger before the join's
+    /// cookie came back (a challenge, a refusal of another build). Over UDP the address stays an
+    /// unknown sender instead of becoming a linked peer; a conditioned transport keeps no
+    /// conditions for it. By default the same as [`send`](Self::send).
+    fn reply(&mut self, to: PeerId, datagram: &[u8]) {
+        self.send(to, datagram)
+    }
+
     /// Append every datagram that is due by `now` (milliseconds on the caller's clock) to `out`, in
     /// arrival order. The in-memory hub ignores `now`: its own clock ([`crate::hub::MemoryHub::advance`])
     /// decides what is due, because the members of a stand run on different tick counts.
@@ -59,6 +67,9 @@ pub trait Transport: Send + Sync + 'static {
 impl<T: Transport + ?Sized> Transport for Box<T> {
     fn send(&mut self, to: PeerId, datagram: &[u8]) {
         (**self).send(to, datagram)
+    }
+    fn reply(&mut self, to: PeerId, datagram: &[u8]) {
+        (**self).reply(to, datagram)
     }
     fn recv(&mut self, now: u64, out: &mut Vec<(PeerId, Vec<u8>)>) {
         (**self).recv(now, out)

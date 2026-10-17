@@ -203,6 +203,7 @@ fn net_status(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
         out["encode_cache"] = json!({ "encoded": encoded, "reused": reused });
         let slots: Vec<Value> = host.slots.iter().map(|(n, s)| json!({ "player": n, "name": s.name, "left_at": s.left_at })).collect();
         out["slots"] = json!(slots);
+        out["strangers"] = json!({ "knocks": host.knocks, "cookieless": host.cookieless, "older_builds": host.older_builds });
     }
     if let Some(client) = world.get_resource::<NetClient>() {
         let s = client.link().map(|l| l.stats()).unwrap_or_default();
