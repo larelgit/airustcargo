@@ -4,7 +4,8 @@
 //! scenes load here as they do in a window.
 //!
 //! The levels are fixtures of `shards_level`'s own tests: `arena.gltf`, written by the helper
-//! that stands in for Blender's exporter, and `outpost.glb`, a real export of Blender 5.2.2.
+//! that stands in for Blender's exporter, and `outpost.glb` and `outpost_embedded.gltf`, real
+//! exports of Blender 5.2.2 (glTF Binary and glTF Embedded).
 
 #![cfg(feature = "render")]
 
@@ -108,7 +109,14 @@ struct Locked;
 #[test]
 fn a_blender_export_shows_the_scene_its_level_comes_from() {
     // `outpost.glb`, exported by Blender 5.2.2: scene 0 is `Kit` (the instanced collection's
-    // own scene), the level is the default scene, 1.
+    // own scene), the level is the default scene, 1. The glTF Embedded export of the same scene
+    // keeps its buffer inside the file, as a `data:` URI, and shows alike.
+    for level in ["outpost", "outpost_embedded"] {
+        shows_its_scene(level);
+    }
+}
+
+fn shows_its_scene(level: &str) {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../shards_level/tests/level/blender").to_owned();
     let mut app = shards::testing::test_app(
         |config| config.asset_dir = dir,
@@ -118,13 +126,13 @@ fn a_blender_export_shows_the_scene_its_level_comes_from() {
     );
     let errors: Vec<String> = app.world().resource::<ContentDb>().errors().map(ToString::to_string).collect();
     assert!(errors.is_empty(), "{errors:#?}");
-    ok(&mut app, "spawn_level", json!({"id": "outpost"}));
+    ok(&mut app, "spawn_level", json!({"id": level}));
     let root = {
         let world = app.world_mut();
         world.query_filtered::<Entity, With<LevelVisual>>().single(world).unwrap()
     };
     // The level's fourteen meshes, the barrel of each collection instance among them.
-    update_until(&mut app, "the scene is instantiated", |app| {
+    update_until(&mut app, &format!("the scene of {level} is instantiated"), |app| {
         let world = app.world_mut();
         let meshes: Vec<Entity> = world.query_filtered::<Entity, With<Mesh3d>>().iter(world).collect();
         meshes.iter().filter(|m| is_below(world, **m, root)).count() == 14
@@ -138,7 +146,7 @@ fn a_blender_export_shows_the_scene_its_level_comes_from() {
         .collect();
     // Bevy names the scene's root after it.
     for wanted in ["Outpost", "Ground", "Wall North", "Säule", "Костёр", "Barrels.A", "Barrels.B"] {
-        assert!(names.iter().any(|n| n == wanted), "no `{wanted}` in the scene: {names:?}");
+        assert!(names.iter().any(|n| n == wanted), "{level}: no `{wanted}` in the scene: {names:?}");
     }
     assert!(!names.iter().any(|n| n == "Kit"), "{names:?}");
 }

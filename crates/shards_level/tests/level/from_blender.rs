@@ -1,7 +1,7 @@
 //! The level pipeline on files Blender itself exported: `blender/` holds what
 //! `tools/blender/outpost_level.py` writes with Blender 5.2.2 LTS (`outpost.glb`, the same
-//! scene as glTF Separate with punctual lights, with Draco compression, with meshopt
-//! compression under each of its two extensions, and with an artist's mistakes), and the
+//! scene as glTF Separate with punctual lights, as glTF Embedded, with Draco compression, with
+//! meshopt compression under each of its two extensions, and with an artist's mistakes), and the
 //! content that names it. No Blender is needed to run these
 //! tests; re-export after changing the script:
 //!
@@ -64,6 +64,11 @@ fn the_fixtures_are_what_blender_exported() {
     let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(doc["asset"]["generator"], "Khronos glTF Blender I/O v5.2.40");
     assert_eq!(doc["buffers"][0]["uri"], "outpost_lights.bin");
+    let embedded: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(blender().join("outpost_embedded.gltf")).unwrap()).unwrap();
+    assert_eq!(embedded["asset"]["generator"], "Khronos glTF Blender I/O v5.2.40");
+    let buffers = embedded["buffers"].as_array().unwrap();
+    assert_eq!(buffers.len(), 1);
+    assert!(buffers[0]["uri"].as_str().unwrap().starts_with("data:application/octet-stream;base64,"), "the buffer is inside the file");
     for glb in ["outpost.glb", "outpost_draco.glb", "outpost_meshopt.glb", "outpost_meshopt_khr.glb", "outpost_broken.glb"] {
         let bytes = std::fs::read(blender().join(glb)).unwrap();
         assert_eq!(&bytes[..4], b"glTF", "{glb} is glTF Binary");
@@ -127,6 +132,29 @@ fn the_glb_and_the_separate_gltf_read_alike() {
         assert_eq!((&a.path, &a.extras, &a.mesh, a.bounds), (&b.path, &b.extras, &b.mesh, b.bounds));
         assert!(a.world.abs_diff_eq(b.world, 1e-6), "{}", a.path);
     }
+}
+
+#[test]
+fn the_glb_and_the_embedded_gltf_read_and_spawn_alike() {
+    // glTF Embedded: the buffer is a base64 `data:` URI inside the `.gltf`, nothing beside it.
+    let (glb, embedded) = (read("outpost.glb"), read("outpost_embedded.gltf"));
+    assert_eq!(embedded.nodes.len(), glb.nodes.len());
+    for (a, b) in glb.nodes.iter().zip(&embedded.nodes) {
+        assert_eq!((&a.path, &a.extras, &a.mesh, a.bounds), (&b.path, &b.extras, &b.mesh, b.bounds));
+        assert!(a.world.abs_diff_eq(b.world, 1e-6), "{}", a.path);
+    }
+    let (a, b) = (glb.markers(), embedded.markers());
+    assert_eq!(a.len(), b.len());
+    for (a, b) in a.iter().zip(&b) {
+        assert_eq!((&a.kind, &a.name, &a.node), (&b.kind, &b.name, &b.node));
+        assert!(a.position.abs_diff_eq(b.position, 1e-5), "{}", a.node);
+    }
+    let mut app = app_in(&blender());
+    let info = ok(&mut app, "level_info", json!({"id": "outpost_embedded"}));
+    assert!(info.starts_with("level outpost_embedded: outpost_embedded.gltf, at (0.0, 0.0)\n29 nodes, 10 markers\n"), "{info}");
+    assert!(info.ends_with("checks: ok"), "{info}");
+    let placed = ok(&mut app, "spawn_level", json!({"id": "outpost_embedded", "x": 50.0}));
+    assert!(placed.starts_with("spawned level `outpost_embedded` as instance 1 at (50.0, 0.0): 22 entities"), "{placed}");
 }
 
 #[test]
@@ -293,7 +321,7 @@ fn prefabs_and_components_come_from_every_kind_of_property() {
 #[test]
 fn content_check_and_level_info_read_the_real_export() {
     let mut app = app_in(&blender());
-    assert_eq!(ok(&mut app, "content_check", json!({})), "ok: 2 definitions in 2 files");
+    assert_eq!(ok(&mut app, "content_check", json!({})), "ok: 3 definitions in 2 files");
     let info = ok(&mut app, "level_info", json!({"id": "outpost"}));
     assert!(info.starts_with("level outpost: outpost.glb, at (0.0, 0.0)\n29 nodes, 10 markers\n"), "{info}");
     assert!(info.contains("camp \"bandits\" at (-8.0, 6.0)  Markers/Костёр"), "{info}");

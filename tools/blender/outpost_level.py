@@ -16,6 +16,9 @@ It writes into the folder given after `--`:
 - `outpost.glb`: the default export format (glTF Binary);
 - `outpost_lights.gltf` + `outpost_lights.bin`: glTF Separate, the same scene with
   *Include -> Punctual Lights* ticked (the exporter marks `KHR_lights_punctual` required);
+- `outpost_embedded.gltf`: glTF Embedded, one `.gltf` with its buffer inside as base64 (the
+  exporter offers it once *Allow glTF Embedded format* is ticked in its preferences, which the
+  script does);
 - `outpost_draco.glb`: the same scene with Draco mesh compression;
 - `outpost_meshopt.glb` and `outpost_meshopt_khr.glb`: the same scene with *Data -> Meshopt
   Compression*, once with each of its two extensions (`EXT_meshopt_compression`, the
@@ -255,6 +258,16 @@ def break_it():
     objects["Rock"].data["collider"] = "auto"
 
 
+def allow_embedded():
+    """*Edit -> Preferences -> Add-ons -> glTF 2.0 -> Allow glTF Embedded format*."""
+    for module in ("io_scene_gltf2", "bl_ext.blender_org.io_scene_gltf2"):
+        addon = bpy.context.preferences.addons.get(module)
+        if addon is not None and hasattr(addon.preferences, "allow_embedded_format"):
+            addon.preferences.allow_embedded_format = True
+            return
+    raise RuntimeError("the glTF exporter has no `allow_embedded_format` preference in this Blender")
+
+
 def export(path, fmt, lights=False, draco=False, meshopt=None):
     result = bpy.ops.export_scene.gltf(
         filepath=path,
@@ -276,6 +289,8 @@ def main():
     build()
     export(os.path.join(folder, "outpost.glb"), "GLB")
     export(os.path.join(folder, "outpost_lights.gltf"), "GLTF_SEPARATE", lights=True)
+    allow_embedded()
+    export(os.path.join(folder, "outpost_embedded.gltf"), "GLTF_EMBEDDED")
     export(os.path.join(folder, "outpost_draco.glb"), "GLB", draco=True)
     export(os.path.join(folder, "outpost_meshopt.glb"), "GLB", meshopt="EXT_meshopt_compression")
     export(os.path.join(folder, "outpost_meshopt_khr.glb"), "GLB", meshopt="KHR_meshopt_compression")

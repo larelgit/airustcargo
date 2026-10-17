@@ -16,4 +16,6 @@
         ],
         at: (0.0, 0.0, 0.0),
     ),
+    // The same scene exported as glTF Embedded: one `.gltf` with its buffer inside as base64.
+    "outpost_embedded": (file: "outpost_embedded.gltf"),
 }
