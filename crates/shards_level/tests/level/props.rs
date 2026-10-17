@@ -130,6 +130,32 @@ fn blenders_own_keys_and_empty_nodes_are_left_alone() {
 }
 
 #[test]
+fn properties_on_the_mesh_data_are_named_not_lost() {
+    // Blender's *Object Data Properties* land on the glTF mesh, which the engine does not read.
+    let mut app = app();
+    let with_mesh_props = |object: serde_json::Value, mesh: serde_json::Value| {
+        let mut doc: serde_json::Value = serde_json::from_str(&one(object).gltf()).unwrap();
+        doc["meshes"][0]["extras"] = mesh;
+        shards_level::LevelAsset::from_slice("test.gltf", doc.to_string().as_bytes()).unwrap()
+    };
+    let level = with_mesh_props(json!({}), json!({"Health": {"current": 3.0, "max": 3.0}, "lod_bias": 2}));
+    assert_eq!(level.nodes[0].mesh_extras["lod_bias"], 2);
+    let err = shards_level::spawn_level(app.world_mut(), &level, Transform::default()).unwrap_err();
+    assert!(
+        err.contains(
+            "node `Thing`: custom properties on mesh `Cube` are not read: `Health`; the engine reads the object's (Object \
+             Properties → Custom Properties), move them there"
+        ),
+        "{err}"
+    );
+    assert!(nothing_spawned(&mut app));
+
+    // Other tools' data on a mesh, and a property the object has as well, are left alone.
+    let level = with_mesh_props(json!({"collider": "auto"}), json!({"collider": "auto", "lod_bias": 2}));
+    assert_eq!(shards_level::spawn_level(app.world_mut(), &level, Transform::default()).unwrap().len(), 1);
+}
+
+#[test]
 fn a_prefab_node_spawns_the_prefab_and_patches_it_field_by_field() {
     let mut app = app();
     let level = read(&arena());

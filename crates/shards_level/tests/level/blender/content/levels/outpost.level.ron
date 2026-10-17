@@ -1,0 +1,19 @@
+// The level Blender 5.2.2 exported (tools/blender/outpost_level.py), with every marker kind
+// it has required.
+{
+    "outpost": (
+        file: "outpost.glb",
+        required_markers: [
+            (kind: "spawn", name: "start"),
+            (kind: "socket", name: "road", min: 2),
+            (kind: "socket", name: "river"),
+            (kind: "navlink", name: "ladder"),
+            (kind: "trigger", name: "goal"),
+            (kind: "interactable", name: "lever"),
+            (kind: "camp", name: "bandits"),
+            (kind: "landmark", name: "Old Shrine"),
+            (kind: "custom:vendor"),
+        ],
+        at: (0.0, 0.0, 0.0),
+    ),
+}

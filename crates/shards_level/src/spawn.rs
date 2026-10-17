@@ -210,7 +210,7 @@ fn place(world: &mut World, level: &LevelAsset, plans: &[NodePlan], at: Transfor
             }
         }
     }
-    let visual = crate::render::spawn_visual(world, &level.path, at, instance);
+    let visual = crate::render::spawn_visual(world, &level.path, level.scene.unwrap_or(0), at, instance);
     let mut instances = world.get_resource_or_init::<LevelInstances>();
     instances.list.push(LevelInstance { id: instance, label: label.to_owned(), path: level.path.clone(), at, visual });
     Ok(SpawnedLevel { instance, entities, visual })

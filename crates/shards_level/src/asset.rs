@@ -4,7 +4,8 @@
 //! The `gltf` crate parses the JSON (a `.gltf` file, or the JSON chunk of a `.glb`); the
 //! rest is arithmetic on the node tree. Mesh bounds come from the `min` and `max` the
 //! glTF format requires on every `POSITION` accessor, so external `.bin` files and images
-//! are never touched.
+//! are never touched. For the same reason the extensions a file marks required (lights,
+//! materials, textures) do not stop it, except compressed meshes, which the error explains.
 //!
 //! Loading goes through the asset server like any asset: [`LevelLoader`] claims **no file
 //! extension**. Bevy picks a loader by the asset type when a path has no `#label`, so
@@ -66,6 +67,9 @@ pub struct LevelNode {
     pub extras_problem: Option<String>,
     /// The mesh on this node: its name. Meshes are visuals; only their bounds matter here.
     pub mesh: Option<String>,
+    /// The custom properties of the node's mesh (Blender's *Object Data Properties*). The
+    /// engine reads the object's, not these: checks only name the ones meant for it.
+    pub mesh_extras: Map<String, Value>,
     /// The bounds of the mesh's `POSITION` data in the node's own space (all primitives).
     /// `None` without a mesh, or for a mesh with no vertex positions.
     pub bounds: Option<Bounds>,
@@ -93,18 +97,24 @@ pub struct LevelAsset {
     /// FNV-1a of the file's bytes: replay checks compare it, so a recording made against
     /// another version of the file diverges at its first check.
     pub digest: u64,
-    /// The default scene's custom properties.
+    /// The index of the scene the nodes come from: the file's default scene, else its first;
+    /// `None` for a file without scenes. Blender writes every scene of the `.blend` (a kit
+    /// of instanced collections may live in one) and makes the active one the default; the
+    /// level's visuals show this scene.
+    pub scene: Option<usize>,
+    /// The scene's custom properties.
     pub extras: Map<String, Value>,
-    /// The nodes of the default scene (all root nodes when the file has no scene), in the
-    /// order of the file's `nodes` array.
+    /// The nodes of the scene (all root nodes when the file has no scene), in the order of
+    /// the file's `nodes` array.
     pub nodes: Vec<LevelNode>,
 }
 
 impl LevelAsset {
     /// Reads a `.gltf` (JSON) or `.glb` file's bytes. `path` is only recorded.
     pub fn from_slice(path: &str, bytes: &[u8]) -> Result<LevelAsset, String> {
-        let gltf = gltf::Gltf::from_slice(bytes).map_err(|e| format!("not a valid glTF file: {e}"))?;
+        let gltf = parse(bytes)?;
         let scene = gltf.default_scene().or_else(|| gltf.scenes().next());
+        let scene_index = scene.as_ref().map(gltf::Scene::index);
         let (scene_extras, scene_problem) = match &scene {
             Some(scene) => parse_extras(scene.extras()),
             None => (Map::new(), None),
@@ -132,18 +142,28 @@ impl LevelAsset {
             let path = if parent_path.is_empty() { name.clone() } else { format!("{parent_path}/{name}") };
             let world = parent_world * local_matrix(node.transform());
             let (extras, extras_problem) = parse_extras(node.extras());
-            let (mesh, bounds) = match node.mesh() {
-                Some(mesh) => (Some(mesh.name().map_or_else(|| format!("mesh{}", mesh.index()), str::to_owned)), mesh_bounds(&mesh)),
-                None => (None, None),
+            let (mesh, bounds, mesh_extras) = match node.mesh() {
+                Some(mesh) => (
+                    Some(mesh.name().map_or_else(|| format!("mesh{}", mesh.index()), str::to_owned)),
+                    mesh_bounds(&mesh),
+                    parse_extras(mesh.extras()).0,
+                ),
+                None => (None, None, Map::new()),
             };
             let index = node.index();
             for child in node.children().collect::<Vec<_>>().into_iter().rev() {
                 stack.push((child, Some(index), world, path.clone()));
             }
-            found.insert(index, LevelNode { index, name, path, parent, world, extras, extras_problem, mesh, bounds });
+            found.insert(index, LevelNode { index, name, path, parent, world, extras, extras_problem, mesh, mesh_extras, bounds });
         }
 
-        Ok(LevelAsset { path: path.to_owned(), digest: fnv(bytes), extras: scene_extras, nodes: found.into_values().collect() })
+        Ok(LevelAsset {
+            path: path.to_owned(),
+            digest: fnv(bytes),
+            scene: scene_index,
+            extras: scene_extras,
+            nodes: found.into_values().collect(),
+        })
     }
 
     /// Reads the file `file` of the asset folder `root` straight from disk, for checks and
@@ -154,7 +174,8 @@ impl LevelAsset {
         Self::from_slice(file, &bytes).map_err(|e| format!("`{file}`: {e}"))
     }
 
-    /// The first node called `name` (Blender object names are unique within a file).
+    /// The first node called `name`. Names repeat below instanced collections (each instancer
+    /// holds its own `Barrel`); [`node_at`](Self::node_at) tells those apart by path.
     pub fn node(&self, name: &str) -> Option<&LevelNode> {
         self.nodes.iter().find(|n| n.name == name)
     }
@@ -175,6 +196,40 @@ impl LevelAsset {
             })
             .collect()
     }
+}
+
+/// Required extensions that store meshes compressed or quantized: Bevy's glTF loader has no
+/// decoder for them, so the level could not be drawn. Each entry says how to export without
+/// it. Blender 5.2's exporter
+/// writes Draco and both meshopt variants (*Data → Meshopt Compression* chooses which), but
+/// never `KHR_mesh_quantization`: a file with it went through another tool.
+const COMPRESSED_MESHES: [(&str, &str); 4] = [
+    ("KHR_draco_mesh_compression", "in Blender's glTF export, untick *Data → Draco Compression* and export again"),
+    ("EXT_meshopt_compression", "in Blender's glTF export, untick *Data → Meshopt Compression* and export again"),
+    ("KHR_meshopt_compression", "in Blender's glTF export, untick *Data → Meshopt Compression* and export again"),
+    (
+        "KHR_mesh_quantization",
+        "Blender's glTF export never quantizes, so another tool did (gltfpack does unless given `-noq`): export from Blender again, or run that tool without quantization",
+    ),
+];
+
+/// The file's JSON, validated. Extensions the file marks required are no reason to refuse
+/// it, except compressed meshes: the reader takes nothing but the node tree, names, extras
+/// and `POSITION` bounds, which lights (`KHR_lights_punctual`, required in Blender's export
+/// with *Punctual Lights*), materials and textures do not change. Whether the file can be
+/// drawn is for Bevy's glTF loader to say. (The `gltf` crate refuses any required extension
+/// whose cargo feature is off, so without this a file would read in a build with `render`
+/// and not in one without.)
+fn parse(bytes: &[u8]) -> Result<gltf::Document, String> {
+    let invalid = |e: gltf::Error| format!("not a valid glTF file: {e}");
+    let mut json = gltf::Gltf::from_slice_without_validation(bytes).map_err(invalid)?.document.into_json();
+    if let Some((name, fix)) = COMPRESSED_MESHES.iter().find(|(name, _)| json.extensions_required.iter().any(|e| e == name)) {
+        return Err(format!(
+            "the meshes are compressed with `{name}`, which the engine cannot read or draw; {fix}"
+        ));
+    }
+    json.extensions_required.clear();
+    gltf::Document::from_json(json).map_err(invalid)
 }
 
 /// `levels/arena.gltf` is a path inside the asset folder: relative, no `..`.

@@ -154,6 +154,23 @@ fn text<'a>(props: &'a Map<String, Value>, key: &str) -> Result<Option<&'a str>,
     }
 }
 
+/// The name of a node: text, or the object itself. Blender's *Data-Block* property type
+/// points at an object, and the exporter writes it as `{"name": "Ladder Top", "type":
+/// "Object"}`.
+fn node_name<'a>(props: &'a Map<String, Value>, key: &str) -> Result<Option<&'a str>, String> {
+    let Some(Value::Object(reference)) = props.get(key) else {
+        return text(props, key).map_err(|_| {
+            let found = props.get(key).map_or("nothing", json_kind);
+            format!("`{key}` must be a node's name or the object itself (a Data-Block property), found {found}")
+        });
+    };
+    match (reference.get("name").and_then(Value::as_str), reference.get("type").and_then(Value::as_str)) {
+        (Some(name), None | Some("Object")) => Ok(Some(name.trim())),
+        (Some(name), Some(other)) => Err(format!("`{key}` points at the {other} `{name}`; pick the object (Data-Block type Object)")),
+        (None, _) => Err(format!("`{key}` must be a node's name or the object itself (a Data-Block property), found an object without `name`")),
+    }
+}
+
 /// A finite number; text that holds one counts (Blender's string fields).
 fn number(props: &Map<String, Value>, key: &str) -> Result<Option<f32>, String> {
     let value = match props.get(key) {
@@ -274,6 +291,22 @@ pub(crate) fn plan_node(node: &LevelNode, position: usize, registry: &TypeRegist
         return (plan, problems);
     }
     let props = &node.extras;
+    // Properties on the mesh data instead of the object are not read: say so, for the ones
+    // meant for the engine (other tools may keep their own data on meshes).
+    let stray: Vec<&str> = node
+        .mesh_extras
+        .keys()
+        .filter(|k| !props.contains_key(*k) && (PROPERTIES.contains(&k.as_str()) || resolve_component(registry, k).is_ok()))
+        .map(String::as_str)
+        .collect();
+    if !stray.is_empty() {
+        problems.push(format!(
+            "custom properties on mesh `{}` are not read: `{}`; the engine reads the object's (Object Properties → Custom \
+             Properties), move them there",
+            node.mesh.as_deref().unwrap_or_default(),
+            stray.join("`, `")
+        ));
+    }
     // Properties that are always read; the others must be used by something on the node.
     let mut used: Vec<&'static str> = vec!["marker", "socket", "volume", "collider", "prefab"];
 
@@ -303,13 +336,18 @@ pub(crate) fn plan_node(node: &LevelNode, position: usize, registry: &TypeRegist
     match marker_of(node) {
         Ok(Some((kind, name))) => {
             used.push("name");
-            let link = match (&kind, text(props, "to")) {
+            let link = match (&kind, node_name(props, "to")) {
                 (MarkerKind::NavLink, Ok(Some(to))) if !to.is_empty() => {
                     used.push("to");
                     Some(to.to_owned())
                 }
                 (MarkerKind::NavLink, Ok(_)) => {
                     problems.push("a navlink needs `to`: the name of the node where it ends".into());
+                    None
+                }
+                (MarkerKind::NavLink, Err(e)) => {
+                    used.push("to");
+                    problems.push(e);
                     None
                 }
                 (_, Err(e)) => {

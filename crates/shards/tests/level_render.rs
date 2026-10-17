@@ -3,8 +3,8 @@
 //! among the gameplay ones. The headless engine keeps its render plugins without a GPU, so
 //! scenes load here as they do in a window.
 //!
-//! The level is the fixture of `shards_level`'s own tests (`arena.gltf`, written by the
-//! helper that stands in for Blender's exporter).
+//! The levels are fixtures of `shards_level`'s own tests: `arena.gltf`, written by the helper
+//! that stands in for Blender's exporter, and `outpost.glb`, a real export of Blender 5.2.2.
 
 #![cfg(feature = "render")]
 
@@ -89,4 +89,56 @@ fn a_level_shows_as_a_scene_beside_its_gameplay() {
     assert!(gameplay.iter().all(|e| world.get::<Mesh3d>(*e).is_none()));
     assert_eq!(world.resource::<AiIndex>().ids(), ids_before);
     let _ = AiId(0);
+}
+
+/// The components the Blender level names that are not the engine's (`shards_level`'s tests
+/// register the same).
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+struct Loot {
+    table: String,
+    rolls: u32,
+    tags: Vec<String>,
+}
+
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+struct Locked;
+
+#[test]
+fn a_blender_export_shows_the_scene_its_level_comes_from() {
+    // `outpost.glb`, exported by Blender 5.2.2: scene 0 is `Kit` (the instanced collection's
+    // own scene), the level is the default scene, 1.
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../shards_level/tests/level/blender").to_owned();
+    let mut app = shards::testing::test_app(
+        |config| config.asset_dir = dir,
+        |app| {
+            app.register_type::<Loot>().register_type::<Locked>();
+        },
+    );
+    let errors: Vec<String> = app.world().resource::<ContentDb>().errors().map(ToString::to_string).collect();
+    assert!(errors.is_empty(), "{errors:#?}");
+    ok(&mut app, "spawn_level", json!({"id": "outpost"}));
+    let root = {
+        let world = app.world_mut();
+        world.query_filtered::<Entity, With<LevelVisual>>().single(world).unwrap()
+    };
+    // The level's fourteen meshes, the barrel of each collection instance among them.
+    update_until(&mut app, "the scene is instantiated", |app| {
+        let world = app.world_mut();
+        let meshes: Vec<Entity> = world.query_filtered::<Entity, With<Mesh3d>>().iter(world).collect();
+        meshes.iter().filter(|m| is_below(world, **m, root)).count() == 14
+    });
+    let world = app.world_mut();
+    let names: Vec<String> = world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .filter(|(e, _)| is_below(world, *e, root))
+        .map(|(_, name)| name.as_str().to_owned())
+        .collect();
+    // Bevy names the scene's root after it.
+    for wanted in ["Outpost", "Ground", "Wall North", "Säule", "Костёр", "Barrels.A", "Barrels.B"] {
+        assert!(names.iter().any(|n| n == wanted), "no `{wanted}` in the scene: {names:?}");
+    }
+    assert!(!names.iter().any(|n| n == "Kit"), "{names:?}");
 }
