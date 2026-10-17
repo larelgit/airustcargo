@@ -257,7 +257,7 @@ pub enum WidgetDef {
         /// device (keyboard and mouse, or gamepad), or is added when the action has none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         slot: Option<usize>,
-        /// What it says while it waits (`@controls-press`). Default: `Press a key or button...
+        /// What it says while it waits (`@controls-press`). Default: `Press a key or button…
         /// (Esc cancels)`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompt: Option<String>,

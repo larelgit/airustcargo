@@ -25,9 +25,8 @@ use crate::def::{assign_id, ButtonAction, CompareRow, Layer, Layout, ScreenDef, 
 /// other action of the context that reads it (`None`: the text is not an input).
 pub const BINDINGS_SOURCE: &str = "input.bindings";
 
-/// What a binding widget says while it waits, unless content says otherwise (ASCII: the
-/// engine's own font has nothing else).
-pub const DEFAULT_PROMPT: &str = "Press a key or button... (Esc cancels)";
+/// What a binding widget says while it waits, unless content says otherwise.
+pub const DEFAULT_PROMPT: &str = "Press a key or button… (Esc cancels)";
 
 /// One widget of an open screen. The root of a screen is one too: a panel named like the screen.
 #[derive(Component, Clone, Debug, PartialEq)]

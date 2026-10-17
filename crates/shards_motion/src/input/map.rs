@@ -120,7 +120,7 @@ impl Binding {
 
     /// Whether a gamepad gives it (a button, an axis, a stick), not the keyboard or the mouse.
     pub fn is_gamepad(&self) -> bool {
-        matches!(self, Binding::GamepadButton(_) | Binding::GamepadAxis { .. } | Binding::Stick { .. })
+        matches!(self, Binding::GamepadButton(_) | Binding::GamepadAxis { .. } | Binding::Buttons2D { .. } | Binding::Stick { .. })
     }
 
     /// The binding as a player reads it in a menu: `F`, `Space`, `Left Shift`, `Mouse Right`,
@@ -137,6 +137,14 @@ impl Binding {
                 let keys = [up, left, down, right].map(|k| key_label(*k));
                 if keys.iter().all(|k| k.chars().count() == 1) { keys.concat() } else { keys.join("/") }
             }
+            Binding::Buttons2D { up, down, left, right } => {
+                let d_pad = [GamepadButton::DPadUp, GamepadButton::DPadLeft, GamepadButton::DPadDown, GamepadButton::DPadRight];
+                if [*up, *left, *down, *right] == d_pad {
+                    "Pad D-Pad".to_owned()
+                } else {
+                    format!("Pad {}", [up, left, down, right].map(|b| pad_label(*b)).join("/"))
+                }
+            }
             Binding::Stick { stick, .. } => format!("{stick:?} Stick"),
             Binding::MouseMotion { .. } => "Mouse".to_owned(),
         }
@@ -148,7 +156,8 @@ impl Binding {
             format!(
                 "`{text}` is not a binding ({e}); write Key(KeyE), Mouse(Left), GamepadButton(South), \
                  GamepadAxis(axis: LeftStickX), KeyAxis(neg: KeyA, pos: KeyD), \
-                 Keys2D(up: KeyW, down: KeyS, left: KeyA, right: KeyD), \n                 Buttons2D(up: DPadUp, down: DPadDown, left: DPadLeft, right: DPadRight), Stick(stick: Left) or MouseMotion()"
+                 Keys2D(up: KeyW, down: KeyS, left: KeyA, right: KeyD), \
+                 Buttons2D(up: DPadUp, down: DPadDown, left: DPadLeft, right: DPadRight), Stick(stick: Left) or MouseMotion()"
             )
         })
     }
@@ -644,6 +653,18 @@ mod tests {
             Binding::GamepadButton(GamepadButton::DPadUp),
             Binding::Keys2D { up: KeyCode::KeyW, down: KeyCode::KeyS, left: KeyCode::KeyA, right: KeyCode::KeyD },
             Binding::Keys2D { up: KeyCode::ArrowUp, down: KeyCode::ArrowDown, left: KeyCode::ArrowLeft, right: KeyCode::ArrowRight },
+            Binding::Buttons2D {
+                up: GamepadButton::DPadUp,
+                down: GamepadButton::DPadDown,
+                left: GamepadButton::DPadLeft,
+                right: GamepadButton::DPadRight,
+            },
+            Binding::Buttons2D {
+                up: GamepadButton::North,
+                down: GamepadButton::South,
+                left: GamepadButton::West,
+                right: GamepadButton::East,
+            },
             Binding::Stick { stick: Stick::Left, deadzone: 0.15, scale: 1.0 },
         ]
         .iter()
@@ -653,7 +674,7 @@ mod tests {
             labels,
             [
                 "F", "7", "Space", "Left Shift", "Right Ctrl", "Up", "Num 4", "Esc", "Tab", "Mouse Right", "Mouse 5", "Pad South", "Pad L2", "Pad R3",
-                "Pad D-Up", "WASD", "Up/Left/Down/Right", "Left Stick",
+                "Pad D-Up", "WASD", "Up/Left/Down/Right", "Pad D-Pad", "Pad North/West/South/East", "Left Stick",
             ]
         );
         assert!(Binding::GamepadButton(GamepadButton::North).is_gamepad() && Binding::Stick { stick: Stick::Right, deadzone: 0.1, scale: 1.0 }.is_gamepad());
