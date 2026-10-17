@@ -24,15 +24,14 @@ on:
   workflow_dispatch:
     inputs:
       seed:
-        description: Seed of the night's randomised jobs (empty - today's date, YYYYMMDD)
+        description: Seed of the night (empty - today's date, YYYYMMDD); used by the fuzz campaign and the heavy replays once they join, named in the issue
         default: ""
       minutes:
-        description: Minutes of game time for the jobs that play (empty - each job's own default)
+        description: Minutes of game time for the jobs that play (empty - each job's own default); no job in this file plays yet
         default: ""
 
 permissions:
   contents: read
-  issues: write
 
 concurrency:
   group: nightly-${{ github.ref }}
@@ -204,6 +203,10 @@ jobs:
     name: issue
     needs: [plan, worldgen, gpu, perf]
     if: ${{ failure() }}
+    # The only job that writes to the tracker.
+    permissions:
+      actions: read
+      issues: write
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
