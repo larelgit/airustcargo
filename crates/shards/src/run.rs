@@ -23,7 +23,7 @@ struct Args {
     headless: bool,
     /// No window, but the GPU draws: the cameras render into an image of the window's size that
     /// `shards shot` captures. For CI and agents on a machine with a GPU (or a software one).
-    #[arg(long, conflicts_with_all = ["headless", "stand", "verify", "check_content", "worldgen_report", "bake_nav", "smoke"])]
+    #[arg(long, conflicts_with_all = ["headless", "stand", "verify", "check_content", "worldgen_report", "bake_nav", "bake_motion", "smoke"])]
     offscreen: bool,
     /// World seed: same seed + same inputs = same game.
     #[arg(long, default_value_t = EngineConfig::default().seed)]
@@ -101,6 +101,12 @@ struct Args {
     /// Loads the game headless (content, level files) and runs no tick.
     #[arg(long, value_name = "TILES", num_args = 0..=1, default_missing_value = "all")]
     bake_nav: Option<String>,
+    /// Bake the displacement curves of actions from the root bone of their clips (an action's
+    /// `bake`) into their content files (ACTIONS: `all`, the default, or action ids separated by
+    /// commas), print what was baked, exit 0 (all baked) or 1. Loads the game headless (content)
+    /// and runs no tick.
+    #[arg(long, value_name = "ACTIONS", num_args = 0..=1, default_missing_value = "all", conflicts_with = "bake_nav")]
+    bake_motion: Option<String>,
     /// Load headless and run TICKS ticks as fast as they go, print how long it took, exit 0, or 1
     /// when the game did not load, a gameplay system panicked or an invariant broke. Writes
     /// nothing. Checks a build that has no `shards` server (a build for players).
@@ -108,7 +114,7 @@ struct Args {
         long,
         value_name = "TICKS",
         value_parser = clap::value_parser!(u64).range(1..),
-        conflicts_with_all = ["replay", "check_content", "worldgen_report", "bake_nav"]
+        conflicts_with_all = ["replay", "check_content", "worldgen_report", "bake_nav", "bake_motion"]
     )]
     smoke: Option<u64>,
     /// Run the performance autotest ID (a `perf` content definition: the scene, how long, the
@@ -116,7 +122,7 @@ struct Args {
     /// --offscreen: play in real time, and measure the frames and the GPU too), print a line per
     /// budget, exit 0 (all met), 1 (one exceeded, or the game failed on the way) or 2 (it could not
     /// run). A debug build measures without judging: budgets are for --release. Writes nothing.
-    #[arg(long, value_name = "ID", conflicts_with_all = ["replay", "check_content", "worldgen_report", "bake_nav", "smoke"])]
+    #[arg(long, value_name = "ID", conflicts_with_all = ["replay", "check_content", "worldgen_report", "bake_nav", "bake_motion", "smoke"])]
     perf: Option<String>,
     /// Host a networked game on this UDP port (default 7777); other games `--join` it.
     #[arg(long, value_name = "PORT", num_args = 0..=1, default_missing_value = "7777", conflicts_with_all = ["join", "stand"])]
@@ -394,6 +400,7 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
         || args.check_content
         || args.worldgen_report.is_some()
         || args.bake_nav.is_some()
+        || args.bake_motion.is_some()
         || args.smoke.is_some()
         || args.perf.is_some();
     if config.net != NetLaunch::Off && checks {
@@ -414,6 +421,9 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
     }
     if let Some(tiles) = &args.bake_nav {
         return bake_nav(&build, config, tiles);
+    }
+    if let Some(actions) = &args.bake_motion {
+        return bake_motion(&build, config, actions);
     }
     if let Some(ticks) = args.smoke {
         return smoke(&build, config, ticks);
@@ -1020,6 +1030,30 @@ fn bake_nav(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, tiles: 
     }
 }
 
+/// `--bake-motion [ACTIONS]`: the game's content loaded headless, the displacement of its actions
+/// baked from their clips into their content files, the report printed; exit 0 (every action
+/// baked) or 1.
+fn bake_motion(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, actions: &str) -> ExitCode {
+    let config = EngineConfig { headless: true, testing: true, port: None, paused: true, crash_replays: false, hot_reload: false, ..config };
+    let mut app = build(&config);
+    app.finish();
+    app.cleanup();
+    if let Err(e) = crate::testing::wait_until_loaded(&mut app, crate::testing::LOAD_TIMEOUT) {
+        println!("error: {e}");
+        return ExitCode::FAILURE;
+    }
+    match shards_action::bake::bake_files(app.world(), Some(actions)) {
+        Ok(report) => {
+            println!("{report}");
+            if report.ok() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+        }
+        Err(e) => {
+            println!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// `--smoke TICKS`: the game loaded headless and run for TICKS ticks as fast as they go, then
 /// `ok: loaded in 1.20s, 600 ticks in 0.84s` and exit 0; or what stopped it (`error: the game did
 /// not finish loading …`, `gameplay system … panicked …`, every invariant it broke) and exit 1.
@@ -1609,6 +1643,38 @@ mod tests {
         assert!(baked.contains("format: \"shards-navtile/1\""), "{baked}");
         assert_eq!(check_content(&game, config.clone()), ExitCode::SUCCESS, "fresh bakes are clean content");
         assert_eq!(bake_nav(&game, config, "feild"), ExitCode::FAILURE, "an unknown tile fails");
+    }
+
+    #[test]
+    fn bake_motion_writes_the_curves_content_checks() {
+        let parse = |args: &[&str]| Args::try_parse_from(args.iter().copied());
+        assert_eq!(parse(&["game", "--bake-motion"]).unwrap().bake_motion.as_deref(), Some("all"));
+        assert_eq!(parse(&["game", "--bake-motion", "roll,light_1"]).unwrap().bake_motion.as_deref(), Some("roll,light_1"));
+        assert!(parse(&["game", "--bake-motion", "--bake-nav"]).is_err(), "one bake at a time");
+        assert!(parse(&["game", "--bake-motion", "--offscreen"]).is_err());
+
+        let config = content("bake_motion", "Totem");
+        let dir = std::path::PathBuf::from(&config.asset_dir);
+        let model = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../sandbox/assets/models/humanoid.glb")).unwrap();
+        std::fs::create_dir_all(dir.join("models")).unwrap();
+        std::fs::write(dir.join("models/humanoid.glb"), model).unwrap();
+        let set = r#"{ "humanoid": (source: "models/humanoid.glb", clips: {"roll": (), "idle": ()}, root_motion: "root") }"#;
+        let actions = r#"{
+    "roll": (
+        net_id: 1,
+        phases: [("roll", 0.4), ("recover", 0.1)],
+        displacement: [(0.35, 4.0)],
+        bake: (animset: "humanoid", clip: "roll"),
+    ),
+}"#;
+        std::fs::write(dir.join("content/h.animset.ron"), set).unwrap();
+        std::fs::write(dir.join("content/a.action.ron"), actions).unwrap();
+        assert_eq!(check_content(&game, config.clone()), ExitCode::FAILURE, "the hand-made curve is not the clip's");
+        assert_eq!(bake_motion(&game, config.clone(), "all"), ExitCode::SUCCESS);
+        let baked = std::fs::read_to_string(dir.join("content/a.action.ron")).unwrap();
+        assert!(!baked.contains("displacement: [(0.35, 4.0)]") && baked.contains("bake: (animset"), "{baked}");
+        assert_eq!(check_content(&game, config.clone()), ExitCode::SUCCESS, "a fresh bake is clean content");
+        assert_eq!(bake_motion(&game, config, "rol"), ExitCode::FAILURE, "an unknown action fails");
     }
 
     #[test]

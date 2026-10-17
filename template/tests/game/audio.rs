@@ -52,3 +52,17 @@ fn the_grunts_attacks_warn_with_their_sounds_and_the_menus_click() {
     let heard = say(&mut app, "audio", json!({}));
     assert!(heard.contains(" ui_open ui "), "{heard}");
 }
+
+#[test]
+fn the_heros_swing_whooshes_on_the_simulation_clock_with_no_model_drawn() {
+    // The whoosh is the action's own `Sound` effect (hero.action.ron), not the clip's cue: a cue
+    // sounds only where a model plays the clip, and this game runs headless.
+    let mut app = my_game::test_app(SEED);
+    assert!(!say(&mut app, "audio", json!({})).contains(" whoosh "), "nothing before the swing");
+    assert!(say(&mut app, "light_attack", json!({})).starts_with("ok: light_1"));
+    step(&mut app, 8);
+    assert!(!say(&mut app, "audio", json!({})).contains(" whoosh "), "the swing is still winding up (0.18 s)");
+    step(&mut app, 6);
+    let heard = say(&mut app, "audio", json!({}));
+    assert!(heard.contains(" whoosh sfx e1 "), "the swing's whoosh plays from the hero's body:\n{heard}");
+}

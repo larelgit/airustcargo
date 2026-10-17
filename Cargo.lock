@@ -5455,6 +5455,7 @@ version = "0.2.0"
 dependencies = [
  "ai_core",
  "bevy",
+ "gltf",
  "ron",
  "schemars",
  "serde",

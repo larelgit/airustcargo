@@ -3,13 +3,25 @@
 //! session verifies without a window).
 //!
 //! Bodies are drawn from their colliders (a box, a capsule), so changing a number in
-//! content changes what you see. Real art goes in the same place: an observer or a system
+//! content changes what you see. Characters wear the humanoid (`models/humanoid.glb`, made in
+//! Blender by the engine's `tools/blender/humanoid.py`), as tall as their capsule, and are
+//! `Animated` by `content/anim.animset.ron`: the engine plays the clip their actions and their
+//! pace call for. `Animated` is a picture-only component (replays ignore it), so it is put on
+//! the body only here, with a window. More art goes in the same place: an observer or a system
 //! that dresses an entity once it exists.
 
+use std::f32::consts::PI;
+
+use shards::action::Animated;
+use shards::bevy::gltf::GltfAssetLabel;
+use shards::bevy::world_serialization::WorldAssetRoot;
 use shards::look::Look;
-use shards::motion::Shape;
+use shards::motion::{CharacterController, Shape};
 use shards::prelude::*;
 use shards::world::RegionEdge;
+
+/// How tall the humanoid stands in its file (m): it is scaled to each body's capsule.
+const MODEL_HEIGHT: f32 = 1.8;
 
 pub struct VisualsPlugin;
 
@@ -18,7 +30,7 @@ impl Plugin for VisualsPlugin {
         app.insert_resource(ClearColor(Color::srgb(0.05, 0.06, 0.09)))
             .insert_resource(GlobalAmbientLight { brightness: 300.0, ..default() })
             .add_systems(Startup, setup_scene)
-            .add_systems(Update, (dress, hide_the_dead));
+            .add_systems(Update, dress);
     }
 }
 
@@ -34,18 +46,33 @@ fn setup_scene(mut commands: Commands) {
 }
 
 /// Gives every collider a mesh of its own shape, once: an entity without `Visibility` has
-/// not been dressed yet. The wall around a region's edge stays invisible. The engine's looks
-/// (content/looks.look.ron) give the colour and the light: a body's prefab names its look,
-/// everything else is stone.
+/// not been dressed yet; a character the humanoid instead. The wall around a region's edge
+/// stays invisible. The engine's looks (content/looks.look.ron) give the colour and the light: a
+/// body's prefab names its look, everything else is stone.
 fn dress(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut white: Local<Option<Handle<StandardMaterial>>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    undressed: Query<(Entity, &Collider, Has<Look>), (Without<Visibility>, Without<RegionEdge>)>,
+    assets: Res<AssetServer>,
+    undressed: Query<(Entity, &Collider, Has<CharacterController>, Has<Look>), (Without<Visibility>, Without<RegionEdge>)>,
 ) {
     let white = white.get_or_insert_with(|| materials.add(StandardMaterial::default())).clone();
-    for (entity, collider, looked) in &undressed {
+    for (entity, collider, character, looked) in &undressed {
+        if character && let Shape::Capsule { half_height, radius } = collider.shape {
+            let height = 2.0 * (half_height + radius);
+            // On the capsule's foot, turned to face where the body faces (a glTF faces +Z, a body -Z).
+            let at = Transform {
+                translation: collider.offset - Vec3::Y * height * 0.5,
+                rotation: Quat::from_rotation_y(PI),
+                scale: Vec3::splat(height / MODEL_HEIGHT),
+            };
+            let model = (WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset("models/humanoid.glb"))), at);
+            let mut e = commands.entity(entity);
+            e.insert((Visibility::default(), Animated::new("humanoid")));
+            if looked { e.with_child(model) } else { e.with_child((model, Look::new("stone"))) };
+            continue;
+        }
         let mesh = match collider.shape {
             Shape::Cuboid { half } => meshes.add(Cuboid::new(half.x * 2.0, half.y * 2.0, half.z * 2.0)),
             Shape::Sphere { radius } => meshes.add(Sphere::new(radius)),
@@ -58,12 +85,5 @@ fn dress(
         e.insert(Visibility::default());
         // On the mesh, not the body: the picture adds nothing the simulation keeps.
         if looked { e.with_child(body) } else { e.with_child((body, Look::new("stone"))) };
-    }
-}
-
-/// A body that died is not drawn (there is no death animation in the template).
-fn hide_the_dead(mut dead: Query<&mut Visibility, Added<Dead>>) {
-    for mut visibility in &mut dead {
-        *visibility = Visibility::Hidden;
     }
 }

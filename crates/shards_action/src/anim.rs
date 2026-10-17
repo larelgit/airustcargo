@@ -29,6 +29,8 @@
 //!             "roll": (blend: 0.04),
 //!             "hit": (),
 //!             "die": (),
+//!             // A clip from another file made for the same skeleton.
+//!             "bow": (source: "models/humanoid_gestures.glb"),
 //!         },
 //!         // Locomotion state -> clip. Missing ones fall back (sprint -> run -> walk -> idle).
 //!         locomotion: {"idle": "idle", "walk": "walk", "run": "run", "air": "fall",
@@ -40,12 +42,24 @@
 //!         action_blend: 0.06, // seconds into an action's clip
 //!         // What speed (m/s) the walk, run and sprint clips were made for.
 //!         speeds: (walk: 2.0, run: 5.0, sprint: 8.0),
+//!         // The root bone: its move along the ground is root motion (see "Root motion").
+//!         root_motion: "root",
 //!     ),
 //! }
 //! ```
 //!
 //! A character is [`Animated`] with the set's id and has the glTF scene as a child
 //! (`WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("models/hero.glb")))`).
+//!
+//! ## Root motion
+//!
+//! An attack's lunge and a roll's distance are in its clip: the root bone moves forward. The
+//! body moves by the action's `displacement` (gameplay leads), so the curve is baked from the
+//! clip: the action names it (`bake: (animset: "humanoid", clip: "roll")`) and `--bake-motion`
+//! (or the `motion_bake` tool) writes the root bone's move along the ground into the action
+//! ([`crate::bake`]). The picture then keeps that bone in place: the model does not walk off
+//! its body. A content check with the asset folder reads the files: a clip the file lacks, a
+//! root bone it lacks, a baked curve that no longer matches its clip are errors.
 //!
 //! ## Cues
 //!
@@ -61,6 +75,7 @@ use serde::{Deserialize, Serialize};
 use shards_content::{ContentDef, Refs};
 use shards_motion::{MotionMode, MotionState};
 
+use crate::clipfile::ClipFile;
 use crate::def::{ActionDef, EPS};
 
 /// Marks a character the animation bridge drives: `animset` is the id of its
@@ -106,6 +121,10 @@ pub struct ClipDef {
     /// The animation's name in the glTF file; default: this clip's own name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The glTF file it comes from; default: the set's `source`. Another file's clips play on
+    /// the set's characters when its skeleton has the same node names (clips shared by models).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     /// Playback speed multiplier while it loops as locomotion (1: as authored).
     pub speed: f32,
     /// Seconds to blend into it; default: the set's `blend` (`action_blend` for actions).
@@ -118,7 +137,7 @@ pub struct ClipDef {
 
 impl Default for ClipDef {
     fn default() -> Self {
-        Self { name: None, speed: 1.0, blend: None, cues: Vec::new() }
+        Self { name: None, source: None, speed: 1.0, blend: None, cues: Vec::new() }
     }
 }
 
@@ -172,6 +191,11 @@ pub struct AnimSet {
     pub action_blend: f32,
     #[serde(default)]
     pub speeds: GroundSpeeds,
+    /// The root bone (a node name of the glTF): its move along the ground is root motion. The
+    /// picture keeps it in place, since the body moves by the action's `displacement`, which
+    /// `--bake-motion` reads off this bone ([`crate::bake`]). `None`: the clips move nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_motion: Option<String>,
 }
 
 fn default_blend() -> f32 {
@@ -259,6 +283,24 @@ impl AnimSet {
     /// The animation's name in the glTF file for our clip name.
     pub fn file_name<'a>(&'a self, clip: &'a str) -> &'a str {
         self.clips.get(clip).and_then(|c| c.name.as_deref()).unwrap_or(clip)
+    }
+
+    /// The glTF file clip `clip` comes from: its own `source`, or the set's.
+    pub fn source_of<'a>(&'a self, clip: &str) -> &'a str {
+        self.clips.get(clip).and_then(|c| c.source.as_deref()).unwrap_or(&self.source)
+    }
+
+    /// Every glTF file the set reads, its own `source` first.
+    pub fn sources(&self) -> Vec<&str> {
+        let mut files = vec![self.source.as_str()];
+        for clip in self.clips.values() {
+            if let Some(source) = clip.source.as_deref()
+                && !files.contains(&source)
+            {
+                files.push(source);
+            }
+        }
+        files
     }
 
     /// Our clip for locomotion `state`, or the nearest fallback the set has, with the state
@@ -484,6 +526,53 @@ pub fn crossed_cues(cues: &[CueDef], prev: Option<f32>, now: f32, wrap_at: Optio
     found
 }
 
+fn is_gltf(path: &str) -> bool {
+    let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
+    matches!(ext.as_deref(), Some("gltf" | "glb"))
+}
+
+impl AnimSet {
+    /// With an asset folder: every file the set names can be read, has the animations its
+    /// clips name and, with `root_motion`, that bone, unturned by its parents.
+    fn check_files(&self, refs: &mut Refs) {
+        let Some(root) = refs.asset_root() else { return };
+        for source in self.sources() {
+            if source.is_empty() || !is_gltf(source) {
+                continue;
+            }
+            let field = if source == self.source { "source" } else { "a clip's source" };
+            let file = match ClipFile::read(&root.join(source)) {
+                Ok(file) => file,
+                Err(e) => {
+                    refs.error(format!("{field} `{source}` {e}; check the path under the assets folder"));
+                    continue;
+                }
+            };
+            let have = file.animation_names();
+            let have = if have.is_empty() { "none".to_owned() } else { have.join(", ") };
+            for name in self.clips.keys().filter(|c| self.source_of(c) == source) {
+                let wanted = self.file_name(name);
+                if !file.has_animation(wanted) {
+                    refs.error(format!("clips.{name} -> `{source}` has no animation `{wanted}`; it has: {have}"));
+                }
+            }
+            if source != self.source {
+                continue;
+            }
+            if let Some(bone) = self.root_motion.as_deref().filter(|b| !b.is_empty()) {
+                if !file.has_node(bone) {
+                    refs.error(format!("root_motion -> `{source}` has no node `{bone}`; name its root bone"));
+                } else if let Some(parent) = file.turned_parent(bone) {
+                    refs.error(format!(
+                        "root_motion `{bone}` sits under node `{parent}` of `{source}`, which turns it or scales it unevenly: \
+                         its moves are not in the model's axes; export the armature unturned"
+                    ));
+                }
+            }
+        }
+    }
+}
+
 /// `field -> unknown clip `x` (did you mean `y`?); clips: a, b`.
 fn unknown_clip(refs: &mut Refs, names: &[&str], field: &str, clip: &str) {
     let hint = shards_content::db::closest(clip, names.iter().copied())
@@ -492,14 +581,35 @@ fn unknown_clip(refs: &mut Refs, names: &[&str], field: &str, clip: &str) {
     refs.error(format!("{field} -> unknown clip `{clip}`{hint}; clips: {}", names.join(", ")));
 }
 
+/// The content check of an action's `anim`: in a game with animsets, one of them plays it (a
+/// clip of that name, or one its `actions` or `tags` give the action). A game with none shows
+/// its actions another way, and `anim` is then only a name for it.
+pub(crate) fn check_action_clip(id: &str, anim: &str, tags: &[String], refs: &mut Refs) {
+    let sets: Vec<&AnimSet> = refs.iter::<AnimSet>().map(|(_, set)| set).collect();
+    if sets.is_empty() || sets.iter().any(|set| set.action_clip(set.action_key(id, Some(anim), tags)).is_some()) {
+        return;
+    }
+    let mut clips: Vec<&str> = sets.iter().flat_map(|set| set.clips.keys().map(String::as_str)).collect();
+    clips.sort_unstable();
+    clips.dedup();
+    let hint = shards_content::db::closest(anim, clips.iter().copied())
+        .map(|c| format!(" (did you mean `{c}`?)"))
+        .unwrap_or_default();
+    let message = format!(
+        "anim `{anim}` is no clip of any animset{hint}; clips: {}; name one of them, or leave `anim` out and the \
+         character keeps its locomotion clip meanwhile",
+        clips.join(", ")
+    );
+    refs.error(message);
+}
+
 impl ContentDef for AnimSet {
     const KIND: &'static str = "animset";
 
     fn validate(&self, _id: &str, refs: &mut Refs) {
-        let ext = self.source.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
         if self.source.is_empty() {
             refs.error("source is empty; name the glTF with the clips, e.g. `source: \"models/hero.glb\"`");
-        } else if !matches!(ext.as_deref(), Some("gltf" | "glb")) {
+        } else if !is_gltf(&self.source) {
             refs.error(format!("source `{}` is not a glTF file (.gltf or .glb)", self.source));
         }
         if self.clips.is_empty() {
@@ -513,6 +623,11 @@ impl ContentDef for AnimSet {
             }
             if clip.name.as_deref().is_some_and(str::is_empty) {
                 refs.error(format!("clips.{name}.name is empty; leave it out to use `{name}`"));
+            }
+            if let Some(source) = &clip.source
+                && !is_gltf(source)
+            {
+                refs.error(format!("clips.{name}.source `{source}` is not a glTF file (.gltf or .glb)"));
             }
             if !(clip.speed > 0.0 && clip.speed.is_finite()) {
                 refs.error(format!("clips.{name}.speed must be > 0 (is {})", clip.speed));
@@ -562,6 +677,10 @@ impl ContentDef for AnimSet {
                 refs.error(format!("{field} must be >= 0 (is {v})"));
             }
         }
+        if self.root_motion.as_deref().is_some_and(str::is_empty) {
+            refs.error("root_motion is empty; name the root bone (`root_motion: \"root\"`) or leave it out");
+        }
+        self.check_files(refs);
         let s = &self.speeds;
         for (field, v) in [("walk", s.walk), ("run", s.run), ("sprint", s.sprint)] {
             if !(v > 0.0 && v.is_finite()) {
@@ -827,17 +946,48 @@ mod tests {
     }
 
     fn build(animsets: &str) -> Vec<String> {
+        let actions = r#"{ "light_1": (net_id: 1, phases: [("active", 0.3)]), "roll": (net_id: 2, phases: [("roll", 0.4)]) }"#;
+        build_with(actions, animsets)
+    }
+
+    fn build_with(actions: &str, animsets: &str) -> Vec<String> {
         let mut kinds = ContentKinds::default();
         kinds.register::<ActionDef>();
         kinds.register::<AnimSet>();
         kinds.register::<crate::def::MovesetDef>();
         kinds.register::<crate::status::StatusDef>();
-        let actions = r#"{ "light_1": (net_id: 1, phases: [("active", 0.3)]), "roll": (net_id: 2, phases: [("roll", 0.4)]) }"#;
         let sources = [
             shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
             shards_content::db::Source { path: "content/h.animset.ron".into(), text: animsets.into() },
         ];
         ContentDb::build(&kinds, &sources).errors().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn an_action_clip_no_animset_has_is_an_error_but_a_mapped_one_is_not() {
+        let set = r#"{ "h": (source: "models/h.glb", clips: {"idle": (), "slash": (name: "Slash")},
+            actions: {"light_1": "slash"}, tags: {"fire": "slash"}) }"#;
+        let actions = r#"{
+            "light_1": (net_id: 1, phases: [("active", 0.3)], anim: "nothing"),
+            "a": (net_id: 2, phases: [("a", 0.3)], anim: "idle"),
+            "b": (net_id: 3, phases: [("a", 0.3)], anim: "swing", tags: ["fire"]),
+            "c": (net_id: 4, phases: [("a", 0.3)], anim: "slsh"),
+            "d": (net_id: 5, phases: [("a", 0.3)]),
+        }"#;
+        assert_eq!(
+            build_with(actions, set),
+            [
+                "content/a.action.ron: action `c`: anim `slsh` is no clip of any animset (did you mean `slash`?); clips: \
+                 idle, slash; name one of them, or leave `anim` out and the character keeps its locomotion clip meanwhile"
+            ],
+            "a clip, a mapped id and a tag are played; a typo is not; no `anim` asks for nothing"
+        );
+        // A game with no animset shows its actions another way: `anim` is only a name there.
+        let alone = shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() };
+        let mut kinds = ContentKinds::default();
+        kinds.register::<ActionDef>();
+        let errors: Vec<String> = ContentDb::build(&kinds, &[alone]).errors().map(ToString::to_string).collect();
+        assert!(errors.is_empty(), "{errors:#?}");
     }
 
     #[test]

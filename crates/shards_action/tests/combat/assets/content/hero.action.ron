@@ -64,7 +64,8 @@
         net_id: 8,
         phases: [("drink", 0.8), ("recover", 0.2)],
         cost: (charge: "flask"),
-        effects: [(at: 0.5, effect: Heal(40))],
+        // The sounds are for the tests of `Effect::Sound`: one as it starts, one mid-way.
+        effects: [(at: 0.0, effect: Sound("pop")), (at: 0.3, effect: Sound("gulp")), (at: 0.5, effect: Heal(40))],
         move_speed: 0.3,
     ),
     "lunge": (

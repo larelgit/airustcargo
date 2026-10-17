@@ -155,3 +155,26 @@ fn audio_and_observe_say_what_plays_and_sound_play_explains_a_wrong_call() {
     assert_eq!(refused(&mut app, "sound_play", json!({"sound": "beep", "at": FOE, "point": [0.0, 0.0, 0.0]})), "give `at` (an entity) or `point` (x, y, z), not both");
     assert_eq!(refused(&mut app, "sound_play", json!({"sound": "beep", "times": 65})), "times: 1 to 64, not 65");
 }
+
+#[test]
+fn an_actions_sound_effect_plays_from_its_actor_without_a_model_and_an_unknown_one_is_said_once() {
+    use shards::action::{apply_effect, Effect};
+    let assets = Folder::new("effect");
+    let mut app = game(&assets);
+    let hero = entity(&app, HERO);
+    // What an action's `Sound` effect does on the frame it reaches (the machine calls this): the
+    // sound is the actor's own, from where it stands, with no clip, model or window involved.
+    apply_effect(app.world_mut(), hero, "swing", &Effect::Sound("beep".into()));
+    app.world_mut().flush();
+    let heard = voices(&app);
+    assert_eq!(heard.iter().map(|v| (v.sound.as_str(), v.bus, v.source_id.map(|i| i.to_string()))).collect::<Vec<_>>(), [("beep", Bus::Sfx, Some(HERO.to_owned()))]);
+    assert_eq!(heard[0].position, Some(Vec3::ZERO), "spatial: from where the actor is");
+
+    for _ in 0..2 {
+        apply_effect(app.world_mut(), hero, "swing", &Effect::Sound("bep".into()));
+        app.world_mut().flush();
+    }
+    let warned = journal(&app, JournalKind::Warn, "no sound `bep` (did you mean `beep`?)");
+    assert_eq!(warned.len(), 1, "{warned:?}");
+    assert!(warned[0].starts_with("audio: action `swing` plays it"), "{warned:?}");
+}

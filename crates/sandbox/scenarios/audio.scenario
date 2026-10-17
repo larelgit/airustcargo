@@ -117,3 +117,15 @@ act audio
 expect result contains "ui_open ui"
 act ui_close screen=pause
 act god on=false
+
+# --- 9. the swing's whoosh is the action's own: the player's attacks carry a `Sound("whoosh")`
+# effect (combat/player.action.ron), decided on the simulation's clock like the rest of the mixer,
+# so this headless game hears it. (A clip's cue would sound only where a model is drawn.) It lands
+# as the active phase starts, 0.2 s into the swing, and plays from the player's body.
+act teleport id=e5 x=120 y=-9 z=0
+act heal id=e5
+act stop
+act light_attack
+step 16
+act audio
+expect result contains "whoosh sfx e5"

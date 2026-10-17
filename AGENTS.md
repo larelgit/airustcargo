@@ -46,6 +46,7 @@ cargo shards act regen region=wilds seed=42    # сгенерировать ре
 cargo shards act nav_path to=e6         # маршрут по навсетке региона; npc_state id=eN — что у NPC на уме
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # пакетная проверка генератора; без игры: cargo sandbox --worldgen-report wilds --seeds 1..1000
 cargo sandbox --bake-nav                # запечь навигацию тайлов в assets/nav/ под все классы тел (после правки тайла, его файла уровня или тела любого класса)
+cargo sandbox --bake-motion             # запечь смещение действий (`bake` у действия) из корневой кости клипа (после правки клипа)
 cargo sandbox --replay FILE --verify    # реплей без окна; добавьте --windowed (под xvfb-run -a) для окна
 cargo shards assert add hp 'field:6:Health.current<300'   # правило: игра встанет, когда оно нарушено (`step` → код выхода 3)
 cargo shards fuzz --seed 7 --steps 300  # случайные входы, пока не нарушится правило
@@ -71,7 +72,8 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
 - Инструменты движка (`shards tools`): **движение** — `move_to` (`path=true` ведёт по `path_to`), `move`, `stop`, `jump`,
   `sprint`, `glide`, запросы `clearance` и `path_to` (в регионе по навсетке: `path_to` называет `provider`, `clearance` —
   `closed`, где навсетка кончается раньше физики), `input_bindings`, `rebind`; **бой** — `light_attack`, `heavy_attack`,
-  `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on`, `attack`, `god`, `heal`, `stagger`; **контент** —
+  `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on`, `attack`, `god`, `heal`, `stagger`, `motion_bake`
+  (то же, что `--bake-motion`); **контент** —
   `content_list`, `content_get`, `content_check`, `content_reload`, `spawn_prefab`; **мир** — `regen`, `region_load`,
   `goto_tile`, `region_info`, `worldgen_report`, `spawn_level`, `level_info`, `level_reload`; **NPC и навигация** —
   `npc_state` (`nav.routes`: по навсетке какого класса тел NPC планирует или почему по локальной сетке), `npc_set_state`,
@@ -102,8 +104,8 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
   `npc_engaged`, `npc_near`; свои у игры (в песочнице `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`, в шаблоне
   `arena_cleared`, `foe_near`, `in_fight`).
 - Звук решается на часах симуляции и одинаков без окна: слушайте игру через `audio` и строку `MUSIC` в `observe`, а не через
-  динамики. Смены музыки идут в журнал строками `[local] music: arena explore → combat` (не игровые события). Файлы звуков
-  песочницы и шаблона синтезирует `cargo run -p sandbox --example make_sounds`.
+  динамики (кроме звука метки клипа `AnimationCue`: он есть, только если нарисована модель). Смены музыки идут
+  в журнал строками `[local] music: arena explore → combat` (не игровые события). Файлы звуков песочницы и шаблона синтезирует `cargo run -p sandbox --example make_sounds`.
 - Инструменты боя (`dodge`, `light_attack`, `block`, `use_item`, `attack`) отвечают по правилам игры сразу: `ok: roll (W)`,
   `ok: queued, heavy starts in 0.10s` (вход ждёт в буфере) или ошибка с причиной и временем (`not enough stamina: 10/20
   (ready in 0.2s)`, `busy: windup heavy 0.50s (ready in 0.90s, when a cancel window opens)`). На ошибку сделайте `step`
@@ -216,9 +218,12 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
 - **HUD и меню — контент** (`*.screen.ron`, тема — `*.theme.ron`), а не код окна: значения виджетам игра даёт
   `add_ui_source`, действия кнопок — `add_ui_action`. Экраны вне симуляции (без `AiId`, не в снапшоте); всё, что меняет мир,
   кнопка делает инструментом (`tool …`) или действием игры, а реплей повторяет само нажатие (`ui_click`, `ui_navigate`).
-- **Звук — контент** (`*.sound.ron`, `*.music.ron`, микшер `*.audio.ron`): атака называет звук в `telegraph.sound`, игра
-  играет свой `PlaySound`, слой музыки ждёт условие по имени (`add_ai_condition`). Звук только читает мир и не меняет его;
-  то, что показывает лишь эта машина, журнал пишет видом `JournalKind::Local`, а не `Event` (хост шлёт клиентам события).
+- **Звук — контент** (`*.sound.ron`, `*.music.ron`, микшер `*.audio.ron`): атака называет звук в `telegraph.sound`, действие —
+  эффектом `Sound("whoosh")` в свой момент (взмах), игра играет свой `PlaySound`, слой музыки ждёт условие по имени
+  (`add_ai_condition`). Звук только читает мир и не меняет его; то, что показывает лишь эта машина, журнал пишет видом
+  `JournalKind::Local`, а не `Event` (хост шлёт клиентам события). Звук решается на часах симуляции и одинаков без окна и у
+  клиента кооператива, поэтому звук, который игра должна слышать всегда, — `telegraph.sound` или эффект `Sound`, а не метка
+  клипа: её звук (`AnimationCue` с именем звука) есть только там, где нарисована модель, и `audio` без окна его не покажет.
 - **Вид мешей — контент** (`*.look.ron`): цвет, свет полосами, плоские грани, контур и свечение называет вид, префаб — свой вид
   компонентом `"Look": ("hero")`, а код даёт мешу один белый материал и `Look::new("stone")` на самом меше. Меняется только
   картинка (feature `render`, окно или `--offscreen`), никогда не геймплей. `Look` в префабе тела — обычный компонент (реплей,
@@ -233,6 +238,13 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
   эффект, событие боя (`damaged`, `died`, …) или метка клипа выбирает его в таблице, а свой момент игра играет
   `PlayEffect`. Эффекты и декали — только картинка (feature `render`, окно или `--offscreen`): они не меняют мир, их сущности без
   `AiId`, часы частиц — часы симуляции (пауза их замораживает). Числа эффектов в код игры не кладут.
+- **Анимация — контент** (`*.animset.ron`): какой клип какого файла glTF показывает состояние и действие, смешивание и метки
+  (`cues` → звук и эффект) называет набор; модели и клипы строит скрипт Blender (`tools/blender/humanoid.py`, только `-b
+  --factory-startup`, без окна), его вывод коммитится. `Animated` и модель — только картинка: игра ставит их телу, когда
+  `config.draws()`, реплей `Animated` не сверяет, геймплей от клипа не зависит. Смещение действия (`displacement`) с `bake:
+  (animset, clip)` запекается из корневой кости клипа: **поменяли клип — запеките заново** (`cargo sandbox --bake-motion`, tool
+  `motion_bake`), иначе `--check-content` назовёт устаревшую кривую; руками такую кривую не правят. Новая запеканка меняет
+  геймплей: эталонные реплеи тогда расходятся и перезаписываются.
 - **Новый модуль движка** — крейт с плагином, который называет себя `add_engine_module(name, version)` (так он виден в
   `ai/status`), с наборами систем для упорядочивания и одной строкой в `EnginePlugins`. Состояние он описывает для ИИ
   (describe, `journal_event`), действия отдаёт инструментами (то, что разработчику нужно под рукой в окне, — ещё и пунктом

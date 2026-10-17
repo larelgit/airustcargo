@@ -27,10 +27,15 @@
 //!   locomotion state or action, blends, cues) and [`select_clip`], the pure choice of the
 //!   clip a character shows: gameplay leads, the animation is seeked to the action's
 //!   progress. [`Animated`] characters are driven by the bridge of the `render` feature.
+//! - **Displacement bake** ([`bake`]): an action's `displacement` read off the root bone of its
+//!   clip (`bake: (animset, clip)`), written into its file by `--bake-motion` or `motion_bake`;
+//!   content checks call a curve stale when its clip changed. [`clipfile`] reads glTF clips
+//!   without a window.
 //! - **Drawing** ([`draw`]): the geometry of what the `render` feature puts on screen, as
 //!   plain data: ground telegraphs with symbols, the combat overlay, edge markers for
 //!   attacks off screen.
-//! - **Cues** ([`cue`]): [`SoundCue`] for the audio module, [`AnimationCue`] for effects.
+//! - **Cues** ([`cue`]): [`SoundCue`] (a telegraph's) and [`ActionSound`] (an action's `Sound`
+//!   effect) for the audio module, [`AnimationCue`] for effects.
 //!
 //! The controller stays the only thing that moves a body: an action's displacement
 //! curve goes into `LocomotionInput::external`, so a wall stops a lunge.
@@ -68,7 +73,7 @@
 //! ```text
 //! SimSet::Input    ActionSystems::Orders    Order::Attack → Intent (after core's follow_orders)
 //! SimSet::Act      ActionSystems::Machine   presses → buffer → start/advance → LocomotionInput
-//!                  ActionSystems::Effects   heal, stamina, statuses, game effects
+//!                  ActionSystems::Effects   heal, stamina, statuses, sounds, game effects
 //! SimSet::Move     (controller)             integrates LocomotionInput, external included
 //! SimSet::Resolve  ActionSystems::Hits      overlaps → damage pipeline → events
 //!                  ActionSystems::Fighters  sprint drain, regeneration, cooldowns, finished actions end
@@ -77,7 +82,7 @@
 //! ```
 //!
 //! Tools: `light_attack`, `heavy_attack`, `block`, `parry`, `dodge`, `use_technique`,
-//! `use_item`, `lock_on`, `attack` (player); `god`, `heal`, `stagger` (dev);
+//! `use_item`, `lock_on`, `attack` (player); `god`, `heal`, `stagger`, `motion_bake` (dev);
 //! `combat_overlay` (dev, with the `render` feature).
 //!
 //! ## The render feature
@@ -99,6 +104,8 @@
 
 pub mod ai;
 pub mod anim;
+pub mod bake;
+pub mod clipfile;
 pub mod combat;
 pub mod cue;
 pub mod def;
@@ -127,10 +134,10 @@ pub use combat::{
     kill, revive, stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died, Evaded, GuardBroken, Outcome, Parried,
     StaggerCause, Staggered,
 };
-pub use cue::SoundCue;
+pub use cue::{ActionSound, SoundCue};
 pub use def::{
-    ActionDef, CancelDef, CombatTuning, Cost, Effect, GuardDef, HitDef, HitFlag, HitShape, HoldDef, Local, MovesetDef,
-    Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
+    ActionDef, CancelDef, CombatTuning, Cost, Effect, GuardDef, HitDef, HitFlag, HitShape, HoldDef, Local, MotionBake,
+    MovesetDef, Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
 };
 pub use fighter::{
     Armor, Charge, Charges, Cooldown, Cooldowns, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team,
@@ -258,6 +265,7 @@ impl Plugin for ActionPlugin {
             .register_type::<ActionStarted>()
             .register_type::<ActionRejected>()
             .register_type::<Telegraph>()
+            .register_type::<ActionSound>()
             .register_type::<Healed>()
             .register_type::<Damaged>()
             .register_type::<Blocked>()
@@ -325,6 +333,7 @@ impl Plugin for ActionPlugin {
         predict::plugin(app);
         ai::register(app);
         tools::register(app);
+        bake::register(app);
         cue::plugin(app);
         #[cfg(feature = "render")]
         render::plugin(app);

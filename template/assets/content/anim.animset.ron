@@ -1,0 +1,34 @@
+// What the characters show (content kind `animset`): the clips of models/humanoid.glb, made in
+// Blender by the engine's `tools/blender/humanoid.py` (`-- template`), which locomotion state and
+// which action each one shows, how they blend, and their cues. The hero and the grunts share the
+// skeleton and so the set. In a window the game dresses every character with the model
+// (src/visuals.rs); headless nothing is loaded and nothing plays.
+//
+// Gameplay leads: an action's clip is seeked to the action's progress. The hero's swings and roll
+// were made to the actions' phases, and their `displacement` is baked from the clip's root bone
+// (`bake` in hero.action.ron): after changing a clip, `cargo game --bake-motion`.
+{
+    "humanoid": (
+        source: "models/humanoid.glb",
+        clips: {
+            "idle": (),
+            "walk": (cues: [(at: 0.0, cue: "footstep"), (at: 0.4, cue: "footstep")]),
+            "run": (cues: [(at: 0.0, cue: "footstep"), (at: 0.3, cue: "footstep")]),
+            // The hero's swings whoosh by the `Sound("whoosh")` effect of the actions (hero.action.ron),
+            // not by a cue: a cue sounds only where a model is drawn. Cues here are for the picture.
+            "light_1": (),
+            "light_2": (),
+            "roll": (blend: 0.04),
+            "hit": (blend: 0.04),
+            "death": (),
+            // The grunt's attacks: the hero's swing and the heavy chop, on their own timelines.
+            "swipe": (name: "light_1"),
+            "slam": (name: "heavy"),
+        },
+        locomotion: {"idle": "idle", "walk": "walk", "run": "run", "stagger": "hit", "dead": "death"},
+        // The hero's actions name their clips (`anim`); the grunt's are mapped here.
+        actions: {"swipe": "swipe", "slam": "slam"},
+        speeds: (walk: 2.0, run: 4.5, sprint: 8.0),
+        root_motion: "root",
+    ),
+}

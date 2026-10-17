@@ -8,7 +8,8 @@
 //! - `coop`: two heroes on a lossy link; the guest's trophy goes home with them and comes back
 //! - `region`: the generated valley: 1000 seeds pass, the same seed the same bytes, the
 //!   loading screen headless, a raider on the navmesh and its leash
-//! - `audio`: the music turns to combat when the hero comes to the grunt; warnings and menus sound
+//! - `audio`: the music turns to combat when the hero comes to the grunt; warnings and menus sound;
+//!   the hero's swing whooshes with no model drawn
 //! - `screens`: the HUD counts the trophies, the menu saves before it quits
 //! - `manifest`: the game depends on `shards` and nothing else, and its settings folder is named
 //!   after the package (a rename finds it)

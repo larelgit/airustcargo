@@ -4,11 +4,11 @@
 //! every [`Animated`] character, [`select_clip`](crate::select_clip) says which clip of its
 //! [`AnimSet`] to show; this module applies it to Bevy's `AnimationPlayer`:
 //!
-//! - **One graph per set.** [`build_graphs`] loads the set's glTF once, makes an
-//!   `AnimationGraph` with a node for every clip of the library, and every character of the
-//!   set shares it (clip reuse). Characters whose models have the same skeleton node names
-//!   share the clips too ([`retarget_on_ready`] gives a model without animations of its own
-//!   a player and the animation targets its bones need).
+//! - **One graph per set.** [`build_graphs`] loads the set's glTF files once (its `source`
+//!   and any clip's own `source`), makes an `AnimationGraph` with a node for every clip of the
+//!   library, and every character of the set shares it (clip reuse). Characters whose models
+//!   have the same skeleton node names share the clips too ([`retarget_on_ready`] gives a model
+//!   without animations of its own a player and the animation targets its bones need).
 //! - **Binding.** [`bind_players`] finds the `AnimationPlayer` under the character and gives
 //!   it the graph and an `AnimationTransitions`.
 //! - **Following.** [`drive`] switches clips with a blend (`AnimationTransitions`), seeks an
@@ -16,6 +16,9 @@
 //!   speed 0), lets locomotion clips loop at the speed the velocity asks for, and fires
 //!   [`AnimationCue`]s as clips pass their cue times. Between two ticks it looks one step
 //!   ahead (`Time<Fixed>` overstep) so the pose moves smoothly at any frame rate.
+//! - **Root motion in place.** [`hold_root_motion`] puts the set's `root_motion` bone back
+//!   where it rests along the ground after the clips are applied: the body already moves by
+//!   the action's `displacement`, baked from that bone.
 //!
 //! The character is `Animated` plus a child with the model:
 //!
@@ -33,7 +36,7 @@ use bevy::animation::transition::AnimationTransitions;
 use bevy::animation::{AnimatedBy, AnimationClip, AnimationPlayer, AnimationTargetId, RepeatAnimation};
 use bevy::asset::LoadState;
 use bevy::ecs::query::QueryData;
-use bevy::gltf::Gltf;
+use bevy::gltf::{Gltf, GltfNode};
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 use shards_content::ContentDb;
@@ -118,6 +121,8 @@ pub struct AnimationBound {
     clip: Option<String>,
     /// Seconds on that clip's timeline at the last frame, for cues.
     last_time: Option<f32>,
+    /// The set's `root_motion` bone under the player and its rest translation, once found.
+    root: Option<(Entity, Vec3)>,
 }
 
 impl AnimationBound {
@@ -131,24 +136,24 @@ impl AnimationBound {
 pub struct GraphBuild {
     pub graph: AnimationGraph,
     nodes: Nodes,
-    /// Names (in the file) of the animations the set wants and the file lacks.
-    pub missing: Vec<String>,
+    /// `(file, animation)` of the animations the set wants and its files lack.
+    pub missing: Vec<(String, String)>,
 }
 
 /// The graph of `set`: a node for each clip of the library whose animation `find` supplies
-/// (it gets the animation's name in the file), in the order of the clip names.
-pub fn build_graph(set: &AnimSet, mut find: impl FnMut(&str) -> Option<Handle<AnimationClip>>) -> GraphBuild {
+/// (it gets the clip's file and the animation's name in it), in the order of the clip names.
+pub fn build_graph(set: &AnimSet, mut find: impl FnMut(&str, &str) -> Option<Handle<AnimationClip>>) -> GraphBuild {
     let mut graph = AnimationGraph::new();
     let mut nodes = HashMap::new();
     let mut missing = Vec::new();
     for clip in set.clips.keys() {
-        let file = set.file_name(clip);
-        match find(file) {
+        let (source, name) = (set.source_of(clip), set.file_name(clip));
+        match find(source, name) {
             Some(handle) => {
                 let node = graph.add_clip(handle.clone(), 1.0, graph.root);
                 nodes.insert(clip.clone(), (node, handle));
             }
-            None => missing.push(file.to_owned()),
+            None => missing.push((source.to_owned(), name.to_owned())),
         }
     }
     GraphBuild { graph, nodes, missing }
@@ -157,11 +162,15 @@ pub fn build_graph(set: &AnimSet, mut find: impl FnMut(&str) -> Option<Handle<An
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<AnimGraphs>()
         .add_observer(retarget_on_ready)
-        .add_systems(Update, (build_graphs, bind_players, drive).chain());
+        .add_systems(Update, (build_graphs, bind_players, drive).chain())
+        .add_systems(
+            PostUpdate,
+            hold_root_motion.after(bevy::app::AnimationSystems).before(bevy::transform::TransformSystems::Propagate),
+        );
 }
 
-/// `Update`: loads the glTF of every animset a character uses and builds its graph once it is
-/// there. An edited animset (hot reload) is built again.
+/// `Update`: loads the glTF files of every animset a character uses and builds its graph once
+/// they are there. An edited animset (hot reload) is built again.
 pub fn build_graphs(
     db: Option<Res<ContentDb>>,
     animated: Query<&Animated>,
@@ -187,30 +196,38 @@ pub fn build_graphs(
         if state.sets.get(id).is_some_and(|s| s.built.is_some()) {
             continue;
         }
-        let library = state
-            .libraries
-            .entry(set.source.clone())
-            .or_insert_with(|| asset_server.load::<Gltf>(set.source.clone()))
-            .clone();
-        let Some(gltf) = gltfs.get(&library) else {
-            if matches!(asset_server.load_state(&library), LoadState::Failed(_)) {
-                state.warn_once(
-                    format!("load {}", set.source),
-                    format!("animset `{id}`: cannot load `{}`; check the path under the assets folder", set.source),
-                );
+        let mut files: HashMap<&str, &Gltf> = HashMap::new();
+        for source in set.sources() {
+            let library =
+                state.libraries.entry(source.to_owned()).or_insert_with(|| asset_server.load::<Gltf>(source.to_owned())).clone();
+            match gltfs.get(&library) {
+                Some(gltf) => {
+                    files.insert(source, gltf);
+                }
+                None if matches!(asset_server.load_state(&library), LoadState::Failed(_)) => state.warn_once(
+                    format!("load {source}"),
+                    format!("animset `{id}`: cannot load `{source}`; check the path under the assets folder"),
+                ),
+                None => {}
             }
-            continue;
-        };
-        let GraphBuild { graph, nodes, missing } = build_graph(set, |name| gltf.named_animations.get(name).cloned());
-        if !missing.is_empty() {
-            let mut have: Vec<&str> = gltf.named_animations.keys().map(|k| &**k).collect();
+        }
+        if files.len() < set.sources().len() {
+            continue; // still loading (or failed: warned); the clips come together
+        }
+        let GraphBuild { graph, nodes, missing } =
+            build_graph(set, |source, name| files.get(source).and_then(|g| g.named_animations.get(name).cloned()));
+        for source in set.sources() {
+            let lacks: Vec<String> = missing.iter().filter(|(s, _)| s == source).map(|(_, m)| format!("`{m}`")).collect();
+            if lacks.is_empty() {
+                continue;
+            }
+            let mut have: Vec<&str> = files[source].named_animations.keys().map(|k| &**k).collect();
             have.sort_unstable();
             state.warn_once(
-                format!("clips {id} {missing:?}"),
+                format!("clips {id} {source} {lacks:?}"),
                 format!(
-                    "animset `{id}`: `{}` has no animation {}; it has: {}",
-                    set.source,
-                    missing.iter().map(|m| format!("`{m}`")).collect::<Vec<_>>().join(", "),
+                    "animset `{id}`: `{source}` has no animation {}; it has: {}",
+                    lacks.join(", "),
                     if have.is_empty() { "none".to_owned() } else { have.join(", ") }
                 ),
             );
@@ -246,7 +263,7 @@ pub fn bind_players(
         commands
             .entity(player)
             .insert((AnimationGraphHandle(built.graph.clone()), AnimationTransitions::new()));
-        commands.entity(entity).insert(AnimationBound { player, graph: built.graph.id(), clip: None, last_time: None });
+        commands.entity(entity).insert(AnimationBound { player, graph: built.graph.id(), clip: None, last_time: None, root: None });
     }
 }
 
@@ -354,6 +371,48 @@ pub fn drive(
     }
 }
 
+/// `PostUpdate`, after the clips are applied and before transforms propagate: the set's
+/// `root_motion` bone back at its rest translation along the ground (its height stays, a roll
+/// still bobs). The body moves by the action's `displacement`, baked from this very bone, so
+/// the model would otherwise run ahead of its body. The rest comes from the set's glTF.
+#[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
+pub fn hold_root_motion(
+    db: Option<Res<ContentDb>>,
+    graphs: Res<AnimGraphs>,
+    gltfs: Res<Assets<Gltf>>,
+    gltf_nodes: Option<Res<Assets<GltfNode>>>,
+    mut animated: Query<(&Animated, &mut AnimationBound)>,
+    children: Query<&Children>,
+    names: Query<&Name>,
+    mut transforms: Query<&mut Transform>,
+) {
+    let Some(db) = db else { return };
+    for (set_ref, mut bound) in &mut animated {
+        let Some(bone) = db.get::<AnimSet>(&set_ref.animset).and_then(|s| s.root_motion.as_deref().map(|b| (s, b))) else {
+            continue;
+        };
+        let (set, bone) = bone;
+        if bound.root.is_none_or(|(e, _)| !transforms.contains(e)) {
+            let found = std::iter::once(bound.player)
+                .chain(children.iter_descendants(bound.player))
+                .find(|e| names.get(*e).is_ok_and(|n| n.as_str() == bone));
+            let rest = graphs
+                .libraries
+                .get(&set.source)
+                .and_then(|lib| gltfs.get(lib))
+                .and_then(|gltf| gltf.named_nodes.get(bone))
+                .and_then(|node| gltf_nodes.as_ref()?.get(node))
+                .map_or(Vec3::ZERO, |node| node.transform.translation);
+            bound.root = found.map(|e| (e, rest));
+        }
+        let Some((entity, rest)) = bound.root else { continue };
+        if let Ok(mut transform) = transforms.get_mut(entity) {
+            transform.translation.x = rest.x;
+            transform.translation.z = rest.z;
+        }
+    }
+}
+
 /// A model of an [`Animated`] character that brings no animations of its own (the clips are in
 /// the set's library file) cannot be animated by Bevy as it is: there is no `AnimationPlayer`
 /// and its bones have no animation targets. This gives them both, the way the glTF loader
@@ -410,6 +469,7 @@ mod tests {
     use shards_content::ContentKinds;
     use shards_motion::MotionMode;
 
+    use crate::anim::ClipDef;
     use crate::machine::Running;
 
     const ACTIONS: &str = r#"{
@@ -812,20 +872,53 @@ mod tests {
     fn a_missing_animation_in_the_file_is_left_out() {
         let mut set = db().get::<AnimSet>("humanoid").cloned().unwrap();
         set.clips.insert("dance".into(), default());
-        let built = build_graph(&set, |name| (name != "dance").then(Handle::<AnimationClip>::default));
-        assert_eq!(built.missing, ["dance"]);
+        let built = build_graph(&set, |_, name| (name != "dance").then(Handle::<AnimationClip>::default));
+        assert_eq!(built.missing, [("models/humanoid.glb".to_owned(), "dance".to_owned())]);
         assert_eq!(built.nodes.len(), 5);
         assert_eq!(built.graph.nodes().count(), 5 + 1, "the clips and the root");
     }
 
     #[test]
     fn clip_names_in_the_file_come_from_the_library() {
-        let set = db().get::<AnimSet>("humanoid").cloned().unwrap();
+        let mut set = db().get::<AnimSet>("humanoid").cloned().unwrap();
+        set.clips.insert("bow".into(), ClipDef { source: Some("models/gestures.glb".into()), ..default() });
         let mut asked = Vec::new();
-        build_graph(&set, |name| {
-            asked.push(name.to_owned());
+        build_graph(&set, |source, name| {
+            asked.push(format!("{source}: {name}"));
             None
         });
-        assert_eq!(asked, ["hit", "idle", "run", "Armature|Slash", "walk"]);
+        let asked: Vec<&str> = asked.iter().map(String::as_str).collect();
+        assert_eq!(
+            asked,
+            [
+                "models/gestures.glb: bow",
+                "models/humanoid.glb: hit",
+                "models/humanoid.glb: idle",
+                "models/humanoid.glb: run",
+                "models/humanoid.glb: Armature|Slash",
+                "models/humanoid.glb: walk",
+            ]
+        );
+        assert_eq!(set.sources(), ["models/humanoid.glb", "models/gestures.glb"]);
+    }
+
+    #[test]
+    fn the_root_bone_stays_in_place_along_the_ground() {
+        let mut rig = rig();
+        let edited = ANIMSETS.replace("actions: {\"roll\": \"idle\"},", "actions: {\"roll\": \"idle\"}, root_motion: \"root\",");
+        assert_ne!(edited, ANIMSETS);
+        rig.app.insert_resource(db_from(&edited));
+        rig.app.add_systems(PostUpdate, hold_root_motion.after(bevy::app::AnimationSystems));
+        let bone = rig.app.world_mut().spawn((Name::new("root"), Transform::from_xyz(0.5, 0.2, 3.0))).id();
+        rig.app.world_mut().entity_mut(rig.player).add_child(bone);
+        rig.app.update();
+        rig.app.update();
+        let t = rig.app.world().get::<Transform>(bone).unwrap().translation;
+        assert_eq!(t, Vec3::new(0.0, 0.2, 0.0), "back to its rest (none in the library: the origin), its height kept");
+        // A set without `root_motion` leaves the bone alone.
+        rig.app.insert_resource(db());
+        rig.app.world_mut().get_mut::<Transform>(bone).unwrap().translation = Vec3::new(0.5, 0.2, 3.0);
+        rig.app.update();
+        assert_eq!(rig.app.world().get::<Transform>(bone).unwrap().translation, Vec3::new(0.5, 0.2, 3.0));
     }
 }

@@ -20,6 +20,10 @@
     "death_dust": (count: 16, rate: 24.0, duration: 0.8, lifetime: (0.8, 1.4), speed: (0.4, 1.4), spread: 120.0,
         gravity: -0.6, drag: 1.5, size: (0.12, 0.22), size_end: 1.6, color: "#8c8061cc", color_end: "#5c554400",
         shape: Cube, spin: 90.0, radius: 0.5, offset: (0.0, 0.3, 0.0), max_live: 96),
+    // A footstep (a clip's cue): a little dust that puffs off the ground and settles.
+    "step_dust": (count: 4, lifetime: (0.3, 0.5), speed: (0.3, 0.8), spread: 160.0, lift: 20.0, gravity: -1.0,
+        drag: 3.0, size: (0.06, 0.1), size_end: 1.8, color: "#8c806199", color_end: "#5c554400", shape: Cube,
+        radius: 0.15, offset: (0.0, 0.05, 0.0), max_live: 48),
     // A heal: green motes that rise round the body for half a second.
     "heal_glow": (count: 8, rate: 30.0, duration: 0.6, lifetime: (0.6, 1.0), speed: (0.6, 1.4), spread: 25.0,
         size: (0.16, 0.26), size_end: 0.3, color: "#7dff9e", color_end: "#2bd96b00", glow: true, radius: 0.8,

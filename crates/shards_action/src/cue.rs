@@ -3,7 +3,8 @@
 //! An attack's telegraph names a sound (`TelegraphDef::sound`); when it starts, a
 //! [`SoundCue`] is triggered where the attack will land. Nothing here makes a sound: the
 //! audio module (E9) observes the event and plays it, a headless run just ignores it.
-//! Cues are cosmetic, so they never reach the journal or the replay checks.
+//! An action can also name a sound at a time, as an [`Effect::Sound`](crate::Effect::Sound):
+//! [`ActionSound`]. Cues are cosmetic, so they never reach the journal or the replay checks.
 
 use bevy::prelude::*;
 
@@ -17,6 +18,21 @@ pub struct SoundCue {
     /// The cue id from content: `boss_roar`, `slam_warning`.
     pub cue: String,
     pub position: Vec3,
+}
+
+/// A sound an action plays from its actor at a moment: its `Sound` effect ([`Effect::Sound`](crate::Effect::Sound)).
+/// Triggered where the action runs on the simulation's clock, so the audio module hears it the
+/// same headless and in a window; the host forwards it to its co-op clients like a hit (a client
+/// runs no effects of its own: it plays the host's). Like [`SoundCue`], nothing here makes a
+/// sound, and it never reaches the journal or the replay checks.
+#[derive(Event, Reflect, Clone, Debug, PartialEq)]
+pub struct ActionSound {
+    /// The actor the sound comes from.
+    pub entity: Entity,
+    /// The action whose effect it is (for the journal line of an unknown sound).
+    pub action: String,
+    /// The sound id from content: `whoosh`.
+    pub sound: String,
 }
 
 pub(crate) fn plugin(app: &mut App) {

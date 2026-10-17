@@ -1,0 +1,52 @@
+// What the sandbox's characters show (content kind `animset`): the clips of the humanoid made in
+// Blender by `tools/blender/humanoid.py` (models/humanoid.glb), which locomotion state and which
+// action each one shows, how they blend, and their cues. The player, the skeletons and the warden
+// share the one skeleton and so the one set; the warden's model is only bigger. In a window (or
+// --offscreen) the sandbox dresses every character with the model; headless nothing is loaded.
+//
+// Gameplay leads: an action's clip is seeked to the action's progress, so the warden's slow slash
+// plays the player's quick one stretched over its own timeline. The player's attacks and roll
+// were made to the actions' phases (each clip carries them), and their `displacement` is baked
+// from the clip's root bone (`bake` in combat/player.action.ron; `cargo sandbox --bake-motion`).
+{
+    "humanoid": (
+        source: "models/humanoid.glb",
+        clips: {
+            "idle": (),
+            // The left heel strikes at 0, the right half a stride later.
+            "walk": (cues: [(at: 0.0, cue: "footstep"), (at: 0.4, cue: "footstep")]),
+            "run": (cues: [(at: 0.0, cue: "footstep"), (at: 0.3, cue: "footstep")]),
+            // The swings' whoosh is not a cue: a cue sounds only where a model is drawn, and the
+            // `Sound("whoosh")` effect of the actions (combat/player.action.ron) is decided on the
+            // simulation's clock. Cues here are for the picture (the footsteps' dust).
+            "light_1": (),
+            "light_2": (),
+            "light_3": (),
+            "heavy": (),
+            "roll": (blend: 0.04),
+            "block": (),
+            "stagger": (name: "hit", blend: 0.04),
+            "death": (),
+            // The monsters' moves: the same swings on their own timelines (their telegraphs have
+            // sounds of their own).
+            "claw": (name: "light_2"),
+            "flinch": (name: "hit", blend: 0.04),
+            "slash": (name: "light_1"),
+            "slam": (name: "heavy"),
+            "sweep": (name: "light_3"),
+            "shockwave": (name: "heavy"),
+            // Clips of a second file made for the same skeleton: any character of this set can
+            // play them, though no action of the sandbox asks for them yet.
+            "bow": (source: "models/humanoid_gestures.glb"),
+            "taunt": (source: "models/humanoid_gestures.glb"),
+        },
+        locomotion: {"idle": "idle", "walk": "walk", "run": "run", "stagger": "stagger", "dead": "death"},
+        // Actions find their clips by their `anim` (light_1, roll, claw, slash, ...); the drink names
+        // none (the model has no drinking clip) and walks on.
+        blend: 0.2,
+        action_blend: 0.06,
+        // The walk's feet keep pace at 2 m/s, the run's at 4.5 m/s.
+        speeds: (walk: 2.0, run: 4.5, sprint: 7.5),
+        root_motion: "root",
+    ),
+}

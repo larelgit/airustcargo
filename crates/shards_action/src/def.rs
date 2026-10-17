@@ -22,6 +22,11 @@
 //!     ),
 //! }
 //! ```
+//!
+//! The `displacement` curve can come from the clip: `bake: (animset: "humanoid", clip: "light_1")`
+//! names the clip whose root bone moves the body, `--bake-motion` (or the `motion_bake` tool)
+//! writes the curve, and content checks say when the clip changed and the curve is stale
+//! ([`crate::bake`]).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -291,6 +296,12 @@ pub enum Effect {
     RestoreStamina(f32),
     /// Status buildup on the actor itself: `Status("regen", 100)`.
     Status(String, f32),
+    /// A sound from the actor (the audio module plays the `*.sound.ron` of that name from the
+    /// body): `Sound("whoosh")`. Decided with the rest of the action on the simulation's clock, so
+    /// it is the same headless and in a window, and a co-op client hears the host's
+    /// ([`ActionSound`](crate::ActionSound)); a clip's cue sounds only where a model is drawn.
+    /// The audio module's content check names a sound that is not defined.
+    Sound(String),
     /// A game hook registered with `add_action_effect`: `Custom("spawn_fireball")`.
     Custom(String),
 }
@@ -340,6 +351,15 @@ pub enum Steer {
     Move,
 }
 
+/// Where an action's `displacement` is baked from: clip `clip` of animset `animset`, whose
+/// `root_motion` bone moves along the ground ([`crate::bake`]).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MotionBake {
+    pub animset: String,
+    pub clip: String,
+}
+
 /// What starting an action costs.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(default, deny_unknown_fields)]
@@ -386,6 +406,10 @@ pub struct ActionDef {
     /// controller moves the body, so a wall stops a lunge.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub displacement: Vec<(f32, f32)>,
+    /// The clip `displacement` is baked from (`--bake-motion`); content checks that the curve
+    /// is not stale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bake: Option<MotionBake>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hold: Option<HoldDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -401,7 +425,9 @@ pub struct ActionDef {
     /// speed meanwhile (0.5 for a raised block).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub move_speed: Option<f32>,
-    /// Animation clip; the animation follows the action, never the other way round.
+    /// Animation clip; the animation follows the action, never the other way round. In a game
+    /// with animsets the content check wants one of them to play it ([`AnimSet`](crate::AnimSet)):
+    /// leave it out for an action that shows no clip of its own (the locomotion clip plays on).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anim: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -607,6 +633,12 @@ impl ContentDef for ActionDef {
             }
         }
         check.displacement();
+        if let Some(bake) = &self.bake {
+            crate::bake::check(self, id, bake, check.refs);
+        }
+        if let Some(anim) = &self.anim {
+            crate::anim::check_action_clip(id, anim, &self.tags, check.refs);
+        }
         if let Some(hold) = &self.hold {
             check.span("hold.span", &hold.span);
             if let Some((a, b)) = self.span(&hold.span)
@@ -628,7 +660,8 @@ impl ContentDef for ActionDef {
                     check.refs.require::<StatusDef>(status, &format!("effects[{i}]"));
                     check.number(&format!("effects[{i}]"), *v);
                 }
-                Effect::Custom(_) => {}
+                // The sound is checked where the mixer is (`AudioDef`), as a telegraph's is.
+                Effect::Sound(_) | Effect::Custom(_) => {}
             }
         }
         if let Some(telegraph) = &self.telegraph {
