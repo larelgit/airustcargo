@@ -1,6 +1,8 @@
 # Records the reference replays again on Linux, where CI verifies them, and hands them back as an
-# artifact. A replay recorded on another OS may differ in the last bits of a float (its libm), so
-# the checked-in ones come from here.
+# artifact. Since E10.6 the simulation's maths goes through libm, the same on Windows and Linux
+# (x86_64), and both record byte-identical replays (docs/manual.md, "Time and determinism"): the
+# checked-in ones may come from either OS, and this workflow is one way to get them. Other CPUs,
+# macOS and ARM are not checked.
 #
 # After a deliberate change of gameplay or content: push a commit whose message contains
 # `[record replays]` (or run this workflow by hand once it is on the default branch), then
