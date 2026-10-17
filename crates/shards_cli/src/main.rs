@@ -165,7 +165,7 @@ enum Cmd {
         force: bool,
     },
     /// Run scenario files against the game: shards commands with expectations and
-    /// invariants, one command per line (format: see shards_script, docs/manual.md "Сценарии").
+    /// invariants, one command per line (format: see shards_script, docs/manual.md "Scenarios (E11)").
     /// Exit code 0 all passed, 1 a scenario failed, 2 usage or connection error.
     Scenario {
         #[arg(required = true, value_name = "FILE")]

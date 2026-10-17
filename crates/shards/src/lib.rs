@@ -105,7 +105,7 @@ pub use ui_wiring::{EngineUiPlugin, PAUSE_SCREEN};
 // `UninitBufferVec`), so the buffers stop matching the shader's struct, 168 bytes against 176, and
 // wgpu stops the renderer: "Binding size 168 of Buffer with '' label is less than minimum 176". A
 // headless build would run, but replays and co-op need every build of a game to compute alike, so
-// the build is refused here. docs/manual.md, "Время и детерминизм": what determinism the engine promises
+// the build is refused here. docs/manual.md, "Time and determinism": what determinism the engine promises
 // without `scalar-math`.
 const _: () = assert!(
     std::mem::align_of::<bevy::math::Vec4>() == 16 && std::mem::align_of::<bevy::math::Mat4>() == 16,

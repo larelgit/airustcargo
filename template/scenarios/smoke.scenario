@@ -3,7 +3,7 @@
 # The same file runs in `cargo test` without a window (tests/scenarios.rs) and against a
 # running game (`shards scenario scenarios/smoke.scenario`), with the same meaning. It plays
 # the way an agent plays: look, act, step until something happens, check the journal.
-# The format is documented in the engine's README ("Сценарии").
+# The format is documented in the engine's manual (docs/manual.md, "Scenarios (E11)").
 
 seed 42
 
