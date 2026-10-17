@@ -860,14 +860,14 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   (``tile `pillars` has no bake file for the body `large` (nav/large/pillars.navtile.ron)``).
 - Регион строит навсетку каждого класса (`NavRegion::bodies`, `classes()`, `class(name)`) с вырезанием по телу класса;
   журнал — строкой на класс (`navmesh (body large): 64 tiles, …`, предупреждения с той же меткой).
-- Маршрут идёт по самому тесному классу: у NPC — по радиусу (`NavRegion::for_radius`: `navmesh_path`, `plain_sight`), у
-  `move_to path=true`, `path_to` и `clearance` — по телу ходока (`NavRegion::serving`). Тело шире всех классов планирует по
-  локальной сетке.
+- Маршрут идёт по самому тесному классу, который обслуживает всё тело ходока (`NavRegion::serving`): у NPC (`navmesh_path`,
+  `plain_sight`), у `move_to path=true`, `path_to`, `clearance` и `nav_path` (см. «Исправлено»: сначала NPC выбирал класс
+  только по радиусу). Тело, которое не обслуживает ни один класс, планирует по локальной сетке.
 - Инструменты: `nav_path body=large` (`"body"` в ответе, на опечатку — ошибка с подсказкой и списком классов), `nav_info` →
   `bodies` (тело и навсетка каждого класса), `npc_state` → `nav.routes` (`navmesh, body large` или `local grid: …` с причиной,
   в том числе `the NPC stands outside the region`: регион не покрывает места, где NPC стоит, и его маршруты — локальной сетки;
   со своими маршрутами игры — имя её поставщика), `npc_overlay` дописывает `body large` или `local grid` по тому же правилу, а
-  со своими маршрутами игры — ничего. Функции `region_nav`, `route_on`, `routes_for` (по радиусу), `routes_at` (по радиусу и
+  со своими маршрутами игры — ничего. Функции `region_nav`, `route_on`, `routes_for` (по телу), `routes_at` (по телу и
   месту).
 - Песочница: класс `large` под тело стража (`content/region/wilds.nav.ron`), файлы `assets/nav/large/` (9 тайлов); сценарий
   `npc_bodies` (страж в пилонном зале wilds идёт к игроку по навсетке своего класса). У шаблона классов нет, его файлы прежние.
@@ -1011,6 +1011,21 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
 
 ### Исправлено
 
+- NPC (`shards_npc`): маршрут знает всё тело NPC, а не только радиус. Раньше `NavPaths::find`, `find_path` и `navmesh_path`
+  получали радиус, класс навсетки выбирался по нему (`NavRegion::for_radius`), и NPC шёл телом этого класса: NPC выше класса,
+  в который он влезает по радиусу, получал маршрут под навес или перемычку, под которыми его капсула не проходит, и упирался в
+  них; так же судили его прямую к цели на виду (`plain_sight`) и `nav_path` от NPC. Теперь они берут самый тесный класс,
+  который обслуживает тело NPC (`NavRegion::serving`: не уже, не ниже, ступенька, перелезание и склон не хуже, та же глубина
+  плавания; из таких — самый узкий, потом самый низкий), и идут его собственным телом; тело, которое не обслуживает ни один
+  класс, планирует по локальной сетке своим телом (раньше — радиусом и остальными числами по умолчанию). `npc_state`
+  (`nav.routes`) говорит, почему: ``local grid: no body class serves the body: agent has height 1.80 m, the body 2.40 m``
+  (`NavRegion::unserved`, `NavRegion::lack`; тело шире всех классов — прежнее ``no body class fits a 1.60 m radius …``),
+  `npc_overlay` — `local grid`. Прямая к цели вне навсетки (`straight_clear`) бросает капсулу тела от высоты ступеньки до
+  макушки, а не шар над ступенькой: под перемычкой ниже тела прямой нет. Тела NPC песочницы и шаблона совпадают со своими
+  классами: их маршруты и эталонные реплеи прежние. Тесты
+  `a_tall_npc_routes_on_a_class_as_tall_and_never_under_a_lintel_it_does_not_clear`,
+  `a_tall_npc_no_class_serves_plans_on_the_local_grid_with_its_whole_body`,
+  `a_goal_through_an_arch_is_in_plain_sight_only_for_a_body_that_clears_it`, юнит-тесты выбора класса `nav::region` (3).
 - Уровни (найдено настоящим экспортом Blender): `to` у `navlink` принимает и свойство *Data-Block* (объект, который экспортёр
   пишет как `{"name", "type"}`), без второй, ложной ошибки «узел не navlink»; файл с обязательным расширением, которое не
   меняет узлов (`KHR_lights_punctual` с *Punctual Lights*, `KHR_texture_transform`), читается и без фичи `render`, а сжатые
@@ -1241,6 +1256,11 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
 
 ### Изменено
 
+- **Маршруты NPC получают тело, а не радиус (`shards_npc`).** `NavPaths::find` — `fn(&World, Vec3, Vec3, &CharacterParams) ->
+  Option<Vec<Vec3>>`; `find_path`, `navmesh_path`, `local_grid_path`, `routes_for` и `routes_at` тоже берут `&CharacterParams`,
+  а `straight_clear` — его вместо радиуса и высоты ступеньки. Свой поставщик маршрутов игры меняет сигнатуру и может читать
+  рост и остальные числа тела. `NavRegion::serving` из классов одного радиуса берёт самый низкий; новые `NavRegion::lack` и
+  `NavRegion::unserved`.
 - **`graphics.render_scale` — внутреннее разрешение 3D, не масштаб окна.** Раньше настройка ставила `scale_factor_override` окна
   (оно и UI в нём становились крупнее или мельче); теперь окно и UI в родных пикселях, а 3D-мир рисуется в `render_scale` x
   пикселей окна (см. «Добавлено»). `shards_settings::apply_graphics` больше не трогает масштаб окна. Значение 1.0 по-прежнему
