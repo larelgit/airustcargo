@@ -276,15 +276,8 @@ fn command_line() -> Result<Args, String> {
     let args = Args::parse_from(shards_steam::connect_lobby_args(std::env::args_os())?);
     #[cfg(not(feature = "steam"))]
     let args = Args::parse();
-    let wants_steam = args.steam_host
-        || args.steam_server
-        || args.steam_lobby.is_some()
-        || args.stand_steam
-        || args.steam_relay_only
-        || args.steam_app.is_some()
-        || args.join.as_deref().is_some_and(|a| a.starts_with("steam:"));
     check_without(&args)?;
-    if wants_steam && !cfg!(feature = "steam") {
+    if args.wants_steam() && !cfg!(feature = "steam") {
         return Err("this game is built without Steam: --steam-host, --steam-lobby, --stand-steam, --steam-server, --steam-relay-only, --steam-app and --join steam:… need \
                     the `steam` feature of `shards` (and `steam_sdk` to reach the Steam client; --stand-steam never does)"
             .into());
@@ -304,6 +297,10 @@ fn check_without(args: &Args) -> Result<(), String> {
     if session && without.contains(&"net") {
         return Err("--without net leaves out co-op sessions: drop --host, --join, --stand, --steam-host and --steam-server, or keep `net`".into());
     }
+    if args.wants_steam() && without.contains(&"steam") {
+        return Err("--without steam leaves out Steam: drop --steam-host, --steam-lobby, --stand-steam, --steam-server,                     --steam-relay-only, --steam-app and --join steam:…, or keep `steam`"
+            .into());
+    }
     if (args.character.is_some() || args.world.is_some()) && without.contains(&"save") {
         return Err("--without save leaves out saves: drop --character and --world, or keep `save`".into());
     }
@@ -322,6 +319,17 @@ fn slot_name(slot: &str) -> Result<String, String> {
 }
 
 impl Args {
+    /// Whether the command line asks for Steam: a lobby, a server, a stand over the fake client, an app id.
+    fn wants_steam(&self) -> bool {
+        self.steam_host
+            || self.steam_server
+            || self.steam_lobby.is_some()
+            || self.stand_steam
+            || self.steam_relay_only
+            || self.steam_app.is_some()
+            || self.join.as_deref().is_some_and(|a| a.starts_with("steam:"))
+    }
+
     /// What the command line says about networking.
     fn net(&self) -> NetLaunch {
         if self.steam_host || self.steam_server {
@@ -563,6 +571,7 @@ fn play(build: &impl Fn(&EngineConfig) -> App, args: &Args, config: EngineConfig
                 port_file: args.port_file.clone(),
                 no_remote: args.no_remote,
                 save_dir: config.save_dir.clone(),
+                without: config.without.clone(),
             },
         );
     }
@@ -1525,6 +1534,10 @@ mod tests {
             assert!(modules(&["game", "--without", "net"]).contains("`steam` (") && modules(&["game", "--without", "net"]).contains("needs `net`"));
         }
         assert!(modules(&["game", "--without", "save", "--character", "ann"]).starts_with("--without save leaves out saves"));
+        for steam in [&["--steam-host"][..], &["--steam-server"], &["--headless", "--stand", "1", "--stand-steam"], &["--join", "steam:90071992547409921"], &["--steam-app", "480"]] {
+            let args: Vec<&str> = ["game", "--without", "steam"].into_iter().chain(steam.iter().copied()).collect();
+            assert!(modules(&args).starts_with("--without steam leaves out Steam"), "{steam:?}: {}", modules(&args));
+        }
 
         let plain = parse(&["game"]).unwrap().config();
         assert_eq!(plain.net, NetLaunch::Off);

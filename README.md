@@ -436,8 +436,10 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 отвечает ``--without: `ui` (screens, menus and the HUD) needs `locale`: leave out both (`--without locale,ui`) or
 neither``, `steam` (в сборке с ним) нужен `net`. То, что только соединяет два модуля, уходит с любым из них: `coop` — с
 `net` или `save`, уровни как тайлы — с `level` или `world`. Командная строка проверяет и остальное: `--without net` с
-`--host`, `--join` или `--stand`, `--without save` с `--character` или `--world` — ошибка с кодом 2; `EnginePlugins` с
-неверным `without` паникует с тем же текстом. Игра, которая сама зовёт API выключенного модуля (`add_ui_action` без `ui`),
+`--host`, `--join` или `--stand`, `--without save` с `--character` или `--world`, `--without steam` с флагами Steam
+(`--steam-host`, `--steam-lobby`, `--stand-steam`, `--steam-server`, `--steam-relay-only`, `--steam-app`, `--join steam:…`)
+— ошибка с кодом 2; `EnginePlugins` с неверным `without` паникует с тем же текстом. Участники стенда оставляют за бортом те
+же модули, что и хост: клиенты `--stand N` берут его настройку, а дочерние процессы `--stand-udp` получают его `--without`. Игра, которая сама зовёт API выключенного модуля (`add_ui_action` без `ui`),
 сама за это отвечает. Без `ui` главное меню по умолчанию пропускается: его нечем нарисовать (`--menu` всё равно ставит
 `MainMenu`, из которого выводит `new_game`). Тест `a_game_runs_without_each_module_it_may_leave_out` (`crates/shards/tests/engine.rs`) выключает
 каждый модуль (с теми, кому он нужен) и гоняет движок 60 тиков.

@@ -158,7 +158,9 @@ fn check_tile_file(tile: &TileDef, id: &str, refs: &mut Refs) {
     if !Path::new(path).components().all(|c| matches!(c, Component::Normal(_))) || !root.join(path).is_file() {
         return;
     }
-    let by_level = refs.iter::<LevelDef>().any(|(_, def)| Path::new(&def.file) == Path::new(path));
+    // A `level` definition reads its file only with a type registry: without one (a bare
+    // `ContentDb::build`), the tile says what the file is like, and nobody says it twice.
+    let by_level = refs.type_registry().is_some() && refs.iter::<LevelDef>().any(|(_, def)| Path::new(&def.file) == Path::new(path));
     let level = match LevelAsset::read(root, path) {
         Ok(level) => level,
         // The reason names the file already: `tiles/ruin.gltf`: ...
@@ -169,7 +171,7 @@ fn check_tile_file(tile: &TileDef, id: &str, refs: &mut Refs) {
             return;
         }
     };
-    // Without a type registry (a bare `ContentDb::build`) components cannot be told from typos.
+    // Without a type registry components cannot be told from typos.
     if let Some(registry) = refs.type_registry()
         && !by_level
     {
@@ -301,4 +303,50 @@ fn retag_level_entity(add: On<Add<FromLevel>>, levels: Query<(&FromLevel, Option
 /// The marker comes after [`FromLevel`] in the node, so a marker needs its own look.
 fn retag_level_marker(add: On<Add<LevelMarker>>, levels: Query<(&FromLevel, Option<&LevelMarker>)>, tiles: Res<TileLevels>, mut commands: Commands) {
     retag(add.entity, &levels, &tiles, &mut commands);
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::reflect::AppTypeRegistry;
+    use shards_content::db::Source;
+    use shards_content::ContentKinds;
+
+    use super::*;
+
+    /// The errors of a tile and a `level` that name one file that does not read, with or without
+    /// a type registry.
+    fn errors(registry: bool) -> Vec<String> {
+        let dir = std::env::temp_dir().join(format!("shards_tile_levels_{}_{registry}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("tiles")).unwrap();
+        std::fs::write(dir.join("tiles/bad.gltf"), "not a glTF").unwrap();
+        let mut kinds = ContentKinds::default();
+        kinds.register::<TileDef>();
+        kinds.register::<LevelDef>();
+        kinds.add_check::<TileDef>("level file", check_tile_file);
+        kinds.set_asset_root(dir.clone());
+        if registry {
+            kinds.set_type_registry(AppTypeRegistry::default());
+        }
+        let sources = vec![
+            Source {
+                path: "content/t.tile.ron".into(),
+                text: r#"{ "bad": (sockets: (n: "a", e: "a", s: "a", w: "a"), geometry: Level(path: "tiles/bad.gltf")) }"#.into(),
+            },
+            Source { path: "content/l.level.ron".into(), text: r#"{ "bad": (file: "tiles/bad.gltf") }"#.into() },
+        ];
+        let errors = ContentDb::build(&kinds, &sources).errors().map(ToString::to_string).collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        errors
+    }
+
+    #[test]
+    fn a_file_that_does_not_read_is_said_once_by_whoever_reads_it() {
+        // With a registry the `level` reads its file and says so; the tile keeps quiet.
+        let with = errors(true);
+        assert!(with.len() == 1 && with[0].starts_with("content/l.level.ron: level `bad`: `tiles/bad.gltf`: "), "{with:#?}");
+        // Without one the `level` does not read it, so the tile does.
+        let without = errors(false);
+        assert!(without.len() == 1 && without[0].starts_with("content/t.tile.ron: tile `bad`: geometry: `tiles/bad.gltf`: "), "{without:#?}");
+    }
 }

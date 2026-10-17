@@ -1132,9 +1132,11 @@ E2.4, E1.3; `shards_ui`, `shards_motion`, `shards_core`, `shards_save`, `shards_
   (`engine.modules`), и `EnginePlugins` не добавляет их плагинов. Убрать можно 14 модулей (`shards::modules::OPTIONAL_MODULES`:
   `level`, `world`, `npc`, `net`, `save`, `coop`, `locale`, `ui`, `audio`, `look`, `scatter`, `fx`, `steam`, `dev`), модуль,
   нужный другому, — только вместе с ним (`ui` нужен `locale`, `steam` — `net`), а соединяющие (`coop`, уровни как тайлы)
-  уходят с любым из своих модулей. `--without net` с `--host`/`--join`/`--stand` и `--without save` с `--character`/`--world`
-  — ошибка с кодом 2. Тесты: `shards` (+4: `modules` 2, `tests/engine.rs` 2 — движок без каждого модуля и отказ без
-  нужного; разбор `--without` в тесте флагов).
+  уходят с любым из своих модулей. `--without net` с `--host`/`--join`/`--stand`, `--without save` с `--character`/`--world`
+  и `--without steam` с флагами Steam — ошибка с кодом 2. Клиенты стенда по UDP (`--stand-udp`, дочерние процессы) получают
+  `--without` хоста, как его настройку берут клиенты `--stand N`. Тесты: `shards` (+4: `modules` 2, `tests/engine.rs` 2 —
+  движок без каждого модуля и отказ без нужного; разбор `--without` в тесте флагов, `--without` у клиентов стенда в
+  `stand_udp`).
 - Контент (`shards_content`): определение, которое не подошло под свой тип (лишнее или недостающее поле, не то значение), —
   ошибка само по себе, со строкой и столбцом внутри файла, видом и id; остальные определения файла загружены. Раньше такой
   файл не давал в базу ничего, и следом шли ложные «unknown action …» из файлов, которые ссылались на его исправные
@@ -1146,7 +1148,8 @@ E2.4, E1.3; `shards_ui`, `shards_motion`, `shards_core`, `shards_save`, `shards_
   `navlink` в никуда, свойство, которое не разбирается, и файл, который не читается, — ошибка тайла с именем файла и узла
   (``tile `ruin`: geometry: tiles/ruin.gltf: node `Ruin/Column`: unknown component `Helth` (did you mean `Health`?)``).
   Раньше проверялось только, что файл есть, а узлы — если файл назван ещё и определением `level`; такой файл и теперь
-  сообщает о себе один раз, через `level`. Тесты: `shards_world` (+4, `tests/world/levels.rs`).
+  сообщает о себе один раз, через `level` (а без реестра типов, когда `level` файла не читает, — через тайл). Тесты:
+  `shards_world` (+4, `tests/world/levels.rs`), `shards` (+1, `tile_levels`).
 - Уровни из Blender (E4.2): вариант glTF *Embedded* проверен на экспорте Blender 5.2.2 (в аддоне это настройка *Allow glTF
   Embedded format*): `outpost_embedded.gltf` читается, ставится и рисуется так же, как `outpost.glb`
   (`the_glb_and_the_embedded_gltf_read_and_spawn_alike`, `crates/shards/tests/level_render.rs`). `ruin.gltf` песочницы и
