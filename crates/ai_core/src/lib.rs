@@ -386,6 +386,18 @@ pub trait AiAppExt {
     /// same name replaces the first.
     fn add_snapshot_prepare(&mut self, name: &'static str, covers: &'static [&'static str], prepare: snapshot::PrepareFn) -> &mut Self;
 
+    /// [`add_snapshot_prepare`](Self::add_snapshot_prepare) that runs right after prepare `after`,
+    /// wherever the two were registered: what a module builds into the world another module's
+    /// prepare builds first (the levels placed by hand stand in the region the snapshot puts
+    /// back). Without a prepare `after`, it runs where it was registered.
+    fn add_snapshot_prepare_after(
+        &mut self,
+        name: &'static str,
+        after: &'static str,
+        covers: &'static [&'static str],
+        prepare: snapshot::PrepareFn,
+    ) -> &mut Self;
+
     /// How references to entities without an `AiId` are written in snapshots (see
     /// [`EntityKey`]).
     fn add_snapshot_entity_key(&mut self, key: EntityKey) -> &mut Self;
@@ -530,7 +542,18 @@ impl AiAppExt for App {
     }
 
     fn add_snapshot_prepare(&mut self, name: &'static str, covers: &'static [&'static str], prepare: snapshot::PrepareFn) -> &mut Self {
-        self.world_mut().get_resource_or_init::<SnapshotRegistry>().add_prepare(name, covers, prepare);
+        self.world_mut().get_resource_or_init::<SnapshotRegistry>().add_prepare(name, None, covers, prepare);
+        self
+    }
+
+    fn add_snapshot_prepare_after(
+        &mut self,
+        name: &'static str,
+        after: &'static str,
+        covers: &'static [&'static str],
+        prepare: snapshot::PrepareFn,
+    ) -> &mut Self {
+        self.world_mut().get_resource_or_init::<SnapshotRegistry>().add_prepare(name, Some(after), covers, prepare);
         self
     }
 
