@@ -29,6 +29,26 @@ pub struct SceneImage {
     pub scale: f32,
 }
 
+/// Whether the engine's default font (`shards_ui::DEFAULT_FONT`, Fira Sans), which draws every
+/// text that names no font, has a letter for `c`: printable ASCII, Latin-1 and Latin Extended-A,
+/// Greek, Cyrillic, the common dashes, quotes and bullets, `№` and the four arrows. Text drawn
+/// with it shows anything else as a stand-in.
+pub fn default_font_has(c: char) -> bool {
+    matches!(c,
+        ' '..='~'
+            | '\u{A0}'..='\u{17E}'
+            | '\u{391}'..='\u{3A1}'
+            | '\u{3A3}'..='\u{3C9}'
+            | '\u{400}'..='\u{45F}'
+            | '\u{2012}'..='\u{2016}'
+            | '\u{2018}'..='\u{201A}'
+            | '\u{201C}'..='\u{201E}'
+            | '\u{2020}'..='\u{2022}'
+            | '\u{2026}'
+            | '\u{2116}'
+            | '\u{2190}'..='\u{2193}')
+}
+
 /// Something is drawn: there is a window, or the game draws offscreen. The run condition of
 /// systems that only show things (the HUD, overlays, smoothing what is seen).
 pub fn drawn(windows: Query<(), With<Window>>, offscreen: Option<Res<Offscreen>>) -> bool {
@@ -61,4 +81,19 @@ pub fn status(world: &World) -> serde_json::Value {
         None => serde_json::json!({"size": [picture.x, picture.y], "scale": 1.0}),
     });
     serde_json::json!({"mode": mode, "size": size.map(|s| [s.x, s.y]), "scene": scene, "gpu": crate::crash::gpu(world)})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_font_has;
+
+    #[test]
+    fn the_default_font_has_the_letters_and_marks_the_engine_writes_and_nothing_else() {
+        for c in "Az09 ÀéßŁœ ΑΩαω ЁЖжё —–‘’“”…•· № ←↑→↓".chars() {
+            assert!(default_font_has(c), "{c:?}");
+        }
+        for c in ['\u{7F}', '\u{3A2}', '⚠', '✕', '中', '😀', '\u{460}'] {
+            assert!(!default_font_has(c), "{c:?}");
+        }
+    }
 }

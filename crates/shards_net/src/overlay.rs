@@ -145,8 +145,7 @@ mod window {
             }
             (false, None) => {}
             (true, shown) => {
-                // The built-in font is ASCII only.
-                let text = overlay_lines(world).join("\n").replace('·', "|");
+                let text = overlay_lines(world).join("\n");
                 match shown {
                     Some(entity) => {
                         if let Some(mut t) = world.get_mut::<Text>(entity)

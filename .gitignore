@@ -10,6 +10,8 @@ saves/
 *.png
 !assets/**/*.png
 !docs/*.png
+# Pictures a test loads from its own asset folder.
+!crates/*/tests/**/assets*/**/*.png
 # `shards package`: builds for players, beside the Cargo.toml of the game packaged.
 /dist/
 /crates/*/dist/

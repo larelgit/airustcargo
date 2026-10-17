@@ -128,9 +128,9 @@ impl SimGate {
             .then(|| format!("the game is still loading ({}); wait with `shards wait`", self.reasons().join(", ")))
     }
 
-    /// Someone paused on purpose while the gate held: releasing it must not resume.
-    /// Returns whether the gate had paused it.
-    pub(crate) fn forget_pause(&mut self) -> bool {
+    /// Someone paused on purpose while the gate held (a pause tool, a game's main menu): releasing
+    /// it must not resume. Returns whether the gate had paused it.
+    pub fn forget_pause(&mut self) -> bool {
         std::mem::take(&mut self.paused_time)
     }
 }

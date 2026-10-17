@@ -71,8 +71,18 @@ impl Plugin for GamePlugin {
 /// `--headless`, `--seed`, ...), this game, and its looks when something is drawn (a window, `--offscreen`).
 pub fn build_app(config: &EngineConfig) -> App {
     let mut app = App::new();
-    // The title and the version name the game in its window and its crash reports.
-    let game = EngineConfig { title: "My game".into(), version: Some(env!("CARGO_PKG_VERSION").into()), ..config.clone() };
+    // The title and the version name the game in its window and its crash reports. After loading, a
+    // player meets the main menu (content: `main_menu` in screens.screen.ron); headless runs, tests
+    // and replays go straight into the game (`--menu` and `--no-menu` decide it either way). While the
+    // game loads, a window shows the loading picture (`cargo run -p sandbox --example make_art` in the
+    // engine draws it).
+    let game = EngineConfig {
+        title: "My game".into(),
+        version: Some(env!("CARGO_PKG_VERSION").into()),
+        after_loading: EngineState::MainMenu,
+        loading_image: Some("ui/loading.png".into()),
+        ..config.clone()
+    };
     app.add_plugins(EnginePlugins::new(game)).add_plugins(GamePlugin);
     if config.draws() {
         #[cfg(feature = "render")]

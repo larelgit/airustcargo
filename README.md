@@ -71,7 +71,7 @@ cargo shards observe                       # срез мира текстом + 
 cargo shards tools                         # что можно сделать (--json: со схемами аргументов)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # в ответе CHANGES и JOURNAL
-cargo shards content check                 # ok: 134 definitions in 40 files
+cargo shards content check                 # ok: 133 definitions in 39 files
 cargo shards act regen region=wilds seed=42   # сгенерированный регион к югу от арены; игрок у его ворот
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # маршрут к логову по навсетке: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # проверка генератора на тысяче зёрен
@@ -94,7 +94,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Контент без игры: читает и проверяет все файлы (в том числе файлы уровней тайлов и запечённую навигацию), код 0 или 1.
 cargo sandbox --check-content
-# ok: 134 definitions in 40 files
+# ok: 133 definitions in 39 files
 
 # 7. Мир без игры: генератор на тысяче зёрен (код 0, если прошли все) и запекание навигации тайлов.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -290,17 +290,17 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 | крейт | что это |
 |---|---|
 | `crates/shards` | **единственная зависимость игры.** `EnginePlugins`, `EngineConfig`, `run` (стандартный `main`: ещё `--worldgen-report`, `--bake-nav` и `--bake-motion`), `testing` (тестовые приложения), `TileLevelsPlugin` (уровни как тайлы), `coop` (сеть и сохранения вместе: персонаж едет с игроком, мир хранит хост), `prelude`, реэкспорт `bevy`, `serde`, `schemars`, `serde_json` и модулей (`shards::world`, `shards::npc`, …) |
-| `crates/shards_core` | ядро (E1): `EngineConfig`, состояния, шлюз загрузки, `Intent`, `PlayerId`/`LocalPlayer`/`NetRole`, реестр модулей |
+| `crates/shards_core` | ядро (E1): `EngineConfig`, состояния, главное меню (`new_game`), шлюз загрузки, `Intent`, `PlayerId`/`LocalPlayer`/`NetRole`, реестр модулей |
 | `crates/shards_content` | контент (E4): `ContentDef`, база, загрузка и горячая перезагрузка, префабы, инструменты контента, `check_dir` |
 | `crates/shards_motion` | движение (E2): физика на parry3d, контроллер, карта ввода, камера, инструменты и запросы движения |
 | `crates/shards_action` | бой (E3): действия, мувсеты, машина, попадания, ресурсы, статусы, телеграфы, анимационный мост, запекание смещения из клипов, оверлеи |
 | `crates/shards_level` | уровни из Blender (E4.2): glTF с custom properties → коллайдеры, датчики, маркеры, префабы, компоненты; вид `level`, инструменты |
 | `crates/shards_world` | мир (E5): тайлы, регионы и подземелья в контенте, генератор с решателем сокетов и проверками, манифест, пакетные отчёты, загрузка и смена региона, активные зоны, стриминг картинки |
 | `crates/shards_net` | сеть и кооператив (E7). Канальный слой (E7.2) без Bevy: транспорты `Transport` (в памяти — `MemoryHub`, детерминированный; UDP для LAN), имитация задержки и потерь (`LinkConditions`, `--net-sim`), `Link` — надёжные и ненадёжные сообщения, блобы, сжатие, подтверждения, RTT и статистика. Поверх него на Bevy — сессия кооператива (`NetPlugin`: хост, клиент, репликация, инструменты `net_*`) и стенд «хост + клиенты» в одном процессе (`Stand`) |
-| `crates/shards_save` | сохранения (E8.1–5): секции и реестр, слоты, конверт `shards-save/1`, миграции, атомарная запись с тремя копиями и восстановлением, `save_now` и автосохранение, инструменты `save_*` и `load_game`; секции движка (`region`, `position`, `vitals`) регистрирует зонтик |
+| `crates/shards_save` | сохранения (E8.1–5): секции и реестр, слоты, конверт `shards-save/1`, миграции, атомарная запись с тремя копиями и восстановлением, `save_now` и автосохранение, инструменты `save_*`, `load_game` и `continue_game` («Продолжить» главного меню); секции движка (`region`, `position`, `vitals`) регистрирует зонтик |
 | `crates/shards_npc` | враги (E6): автомат поведения, восприятие, режиссёр боя (жетоны), планировщик атак, навсетка по тайлам (`nav`: запекание, сшивка, маршруты), агенты и поводок |
 | `crates/shards_settings` | настройки игрока (E8.6): группы графики, звука, управления и доступности на настройках Bevy (`bevy_settings`), `settings.toml`, инструменты `settings`/`settings_set`, окно по настройкам графики |
-| `crates/shards_ui` | интерфейс (E9): экраны и темы в контенте (`screen`, `theme`), стек экранов, фокус и навигация, источники значений и действия кнопок, инструменты `ui_*`, раздел `UI` в `observe`; с feature `render` — рисование на Bevy UI с подписями AccessKit |
+| `crates/shards_ui` | интерфейс (E9): экраны и темы в контенте (`screen`, `theme`), стек экранов, фокус и навигация, источники значений и действия кнопок, инструменты `ui_*`, раздел `UI` в `observe`, главное меню (`main_menu`); с feature `render` — рисование на Bevy UI с подписями AccessKit и картинка загрузки |
 | `crates/shards_locale` | локализация (E9.4): языки в контенте (`locale`), тексты на Fluent (`assets/locale/<язык>/*.ftl`) с параметрами и формами множественного числа, запасной язык, настройка `locale.language` и смена языка на лету, инструменты `locale` и `text`, горячая перезагрузка файлов |
 | `crates/shards_audio` | звук (E9.5): звуки, музыка и микшер в контенте (`sound`, `music`, `audio`), шины с громкостью из настроек, голоса с приоритетом и лимитом, пространственные звуки, музыка в слоях по условиям игры, звуки телеграфов и событий, инструменты `audio`, `sound_play`, `music_set`, строка `MUSIC` в `observe`; с feature `audio` зонтика — воспроизведение через Bevy audio |
 | `crates/shards_look` | вид мешей (E10.1): виды в контенте (`look`, `*.look.ron`) — цвет, свет полосами (`Toon`), `Matte`, `Unlit`, `Lit`, плоские грани, контур одной ширины в пикселях, свечение, материалы glTF; компонент `Look`, материал и шейдеры на WESL, инструменты `looks` и `look_outlines`, поле `looks` в `ai/status`, два пункта меню разработчика; с feature `render` — стилизация мешей (окно или `--offscreen`) |
@@ -414,7 +414,9 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 | `tick_budget` | тик дольше этого — «сверх бюджета» (`--tick-budget-ms`); `None` — длительность самого тика |
 | `frame_budget` | кадр дольше этого — «сверх бюджета» (`--frame-budget-ms`; поле `frames` в `ai/status`); `None` — 1/60 с. Кадры есть только у игры, которая рисует |
 | `report_perf` | строка `ticks:` под ответом `step` и записи `perf` в журнале; в `shards::testing::config()` выключено |
-| `after_loading` | куда идёт `Loading` после загрузки (`InGame`; `MainMenu` для игры с меню) |
+| `after_loading` | куда идёт `Loading` после загрузки (`InGame`; `MainMenu` для игры с главным меню). Покажет ли меню этот запуск, решает `menu`, а итог — `start_state()` |
+| `menu` | `MenuLaunch`: `Auto` (по умолчанию) показывает главное меню, только когда игра рисует (окно, `--offscreen`), без сессии и без названных слотов (`--world`, `--character`); `Show` (`--menu`) — всегда, и без окна; `Skip` (`--no-menu`) — никогда. Реплеи, проверки, `--smoke` и `--perf` всегда идут мимо меню |
+| `loading_image` | картинка под папкой ассетов (`ui/loading.png`) во весь экран, пока игра грузится (`Loading`) и пока регион грузится дольше одного вызова (`RegionLoading`), если что-то рисуется. Контента в этот момент ещё нет, поэтому она в конфиге, а не в контенте; `--check-content` проверяет, что файл есть. `None` — ничего |
 | `hot_reload` | применять файлы контента по мере правки (нужна cargo feature `hot_reload`; в тестах и `--verify` выключено) |
 | `asset_dir` | папка ассетов; контент в `<asset_dir>/content/`. Относительно папки игры (`CARGO_MANIFEST_DIR` под cargo, иначе рядом с исполняемым файлом); `BEVY_ASSET_ROOT` перекрывает |
 | `testing` | тестовое приложение: без окна, логгера, Ctrl+C и цикла; его ведут через `app.update()` и инструменты |
@@ -442,7 +444,8 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 --check-content --worldgen-report REGION [--seeds S] --bake-nav [TILES] --bake-motion [ACTIONS] --smoke TICKS --perf ID`; для фазы C:
 `--host [PORT] | --join ADDR | --stand N [--stand-udp | --stand-steam]` (взаимоисключающие, `--stand` только с `--headless`), `--name`,
 `--net-sim SPEC`, `--save-dir DIR`, `--settings-dir DIR | --no-settings`, `--character SLOT`, `--world SLOT` (слот —
-1–32 символа `a-z0-9_-`), `--exit-with-host`; для Steam (feature `steam`, см. «Steam (E10.5)»): `--steam-host | --steam-server`, `--steam-lobby TYPE`,
+1–32 символа `a-z0-9_-`), `--exit-with-host`; `--menu | --no-menu` (главное меню и без окна или мимо него и с окном, см.
+«Главное меню» ниже; `--menu` не сочетается с реплеем, проверками, сессиями и слотами); для Steam (feature `steam`, см. «Steam (E10.5)»): `--steam-host | --steam-server`, `--steam-lobby TYPE`,
 `--join steam:<id>`, `--steam-relay-only`, `--steam-app N`, а `+connect_lobby <id>` становится `--join steam:<id>`; игра без
 feature `steam` на них выходит с кодом 2. `--host`, `--join` и `--stand` начинают сессию (раздел «Сессия
 кооператива»); `--stand-udp` вместо стенда в одном процессе запускает хост по UDP и N клиентов дочерними процессами (только
@@ -460,11 +463,26 @@ feature `steam` на них выходит с кодом 2. `--host`, `--join` �
 `--bake-nav`, `--bake-motion`, `--smoke`); без GPU он выходит с кодом 2 и советом, без фичи `render` — тоже. С `--perf` (автотест
 производительности, см. «Время кадра и автотест производительности») он сочетается: тогда автотест меряет и кадры.
 
-**Состояния** (`EngineState`, Bevy States): `Loading` → `InGame` (или `MainMenu`, если так задал `after_loading`),
+**Состояния** (`EngineState`, Bevy States): `Loading` → `InGame` (или `MainMenu`, если `after_loading` его называет и
+этот запуск меню показывает: `start_state()`), `MainMenu` → `InGame` (`new_game`, `continue_game` или сама игра),
 `RegionLoading` — экран загрузки региона: через него идёт `regen` (см. «Мир и генерация»). Внутри `InGame` — `PauseState::{Running, Paused}`: игровая пауза,
 в одиночной игре она останавливает и симуляцию; `shards pause` и `--paused` — инструмент разработчика и `PauseState` не
 трогают. Игра вешает свои системы на `OnEnter`/`OnExit` этих состояний; переходы пишутся в журнал (`state Loading ->
 InGame`).
+
+**Главное меню** (`shards_core::menu`). Игра с меню ставит `after_loading: EngineState::MainMenu`, а сам экран — контент
+(`main_menu: true` в `*.screen.ron`, см. «Интерфейс»). Показывает его только запуск, за которым может сидеть человек: окно
+или `--offscreen` без сессии и без `--world`/`--character` (`--menu` — и без окна, `--no-menu` — мимо и с окном). Без окна,
+в тестах, реплеях, проверках и на стенде игра идёт прямо в `InGame` и строит тот же мир с теми же `AiId`, что и игра без
+меню. В меню время стоит: вход в него ставит симуляцию на паузу (паузу шлюза загрузки меню забирает себе), выход снимает её,
+если игра не была на паузе раньше (`--paused`); `step` разработчика тики всё равно гонит. Инструмент `new_game` (игрок,
+действие; кнопка `tool new_game`) уходит из меню внутри вызова, так что мир игры, который она создаёт в `OnEnter(InGame)`,
+уже стоит, когда он ответил; вне меню он отказывает (`the game is on already`). `continue_game` из `shards_save` делает то
+же и загружает самые новые сохранения (см. «Сохранения»). Код игры уходит из меню через `shards::core::start_game(world)`.
+Реплей идёт мимо меню: нажатия в меню на тике 0 там ничего не находят и ничего не меняют. Если меню сдвинуло мир (`step`,
+`spawn_prefab`, регион из меню), запись при старте игры начинается заново со снапшота этого мира (журнал: `the recording
+starts at tick N: the main menu moved the world`), и реплей сессии всё равно сходится. Клавиша паузы открывает `pause`
+только в игре.
 
 **Шлюз загрузки.** Модули регистрируют, чего ждать (`app.require_loaded("content", check)`; контент регистрирует свои
 файлы). Пока что-то не готово, `ai_core::SimGate` не пускает ни одного тика, ни в реальном времени, ни через `step`
@@ -592,7 +610,7 @@ reflection, как в сценах Bevy; каждый компонент дол�
 
 ```text
 $ shards act content_list
-content: 134 definitions in 40 files
+content: 133 definitions in 39 files
   action  23
   animset  1
   attack_plan  3
@@ -718,7 +736,8 @@ fall_height }`, плюс `Jumped`, `Mantled`, `ModeChanged`. Позиция `Tra
 тиками (`PreUpdate`); `Intent` трогается, только когда что-то изменилось (реплей записывает каждое изменение).
 
 - `InputMap { contexts }`: контекст (`gameplay`, `menu`, свои) → действия → привязки. Привязка: `Key`, `Mouse`,
-  `GamepadButton`, `GamepadAxis` (мёртвая зона, масштаб), `KeyAxis`, `Keys2D` (WASD как 2D-ось), `Stick`, `MouseMotion`.
+  `GamepadButton`, `GamepadAxis` (мёртвая зона, масштаб), `KeyAxis`, `Keys2D` (WASD как 2D-ось), `Buttons2D` (крестовина геймпада как 2D-ось), `Stick`,
+  `MouseMotion`.
   Режим действия: `Press` (одно нажатие), `Hold` (пока зажато), `Toggle` (нажатие включает до следующего: «удержание или
   нажатие» для доступности). `directional: true` — нажатие несёт направление, куда идёт игрок (перекат туда, куда
   направлен стик). Слот 0 — основная привязка, слот 1 и дальше — запасные.
@@ -748,6 +767,8 @@ fall_height }`, плюс `Jumped`, `Mantled`, `ModeChanged`. Позиция `Tra
   $ shards act rebind action=sprint mode=Toggle
   ok: gameplay/sprint: mode toggle
   ```
+  Игроку — экран: виджет `Binding` в контенте меню показывает входы действия и ждёт новую клавишу, кнопку мыши или кнопку
+  геймпада; занятый вход он не отнимает, а называет, у кого тот (см. «Интерфейс (E9)», «Клавиши»).
 - Сохранение: изменения игрока — настройки группы `controls` (`ControlSettings`), их сохраняют настройки Bevy в
   `settings.toml`, см. «Настройки (E8.6)». В файле только то, что отличается от умолчаний (`"gameplay.jump" =
   ["Key(KeyJ)", "GamepadButton(South)"]`, режим в `hold_or_toggle`), поэтому новые умолчания доходят и до старых файлов.
@@ -3768,6 +3789,16 @@ NPCs plan on the local grid`).
 этом, а своего персонажа читает и приносит в `Hello` (см. ниже). Крючки для своего порядка:
 `shards::save::load_launch_slot(world, kind, slot)` и `load_launch_slots(world)`.
 
+**«Продолжить» главного меню.** Инструмент `continue_game` (игрок, action) уходит из главного меню, как `new_game`, и
+загружает в начатую игру самое новое сохранение каждого вида так же, как `--world` и `--character`: слот, чья исправная
+копия записана последней (по времени файла); слот, ни одна копия которого не читается, пропускается. Эти слоты становятся
+текущими, запись реплея начинается с загруженного состояния. Ответ: `the game starts at tick 0; loaded world/camp,
+character/camp`. Сохранений нет — отказ без изменений, игра остаётся в меню: `there is no save to continue yet (none in
+saves): \`new_game\` starts a game, and saving it makes one`. `shards::save::newest_slot(world, kind)` читает копии,
+`any_save(world)` только смотрит в папку (слот, все копии которого испорчены, тоже считается), а `can_continue(world)`
+говорит, есть ли что загрузить `continue_game`: копии он читает заново, только когда файлы папки сменились (имя, размер,
+время), поэтому меню может спрашивать его каждый кадр.
+
 **Кооператив (`shards::coop`, `CoopPlugin` в `EnginePlugins`).** Сеть (`shards_net`) и сохранения (`shards_save`) друг о друге
 не знают; их сводит зонтик: заполняет `NetHooks` (`join_character`, `on_join_character`, `capture_character`,
 `on_character_save`, `on_session_end`) и `SaveRouting` (`route`: куда идёт сохранение, `saved`: игра решила сохранить).
@@ -3832,14 +3863,16 @@ NPCs plan on the local grid`).
 `replay::restart_from_current`, поэтому реплей после загрузки проходит `--verify`), `save_check what= slot=` (хэш
 сохраняемого состояния и, со слотом, сравнение с файлом по секциям), `save_list` (слоты, подписи, тики, копии и их
 здоровье), `save_registry`, `save_damage what= slot= how=flip|truncate|garbage copy=` (Dev: портит файл только внутри
-`save_dir`, для проверки восстановления). Сценарий `crates/sandbox/scenarios/saves.scenario` проходит весь путь: сохранить,
+`save_dir`, для проверки восстановления), `continue_game` (Player, action: из главного меню — в игру с самыми новыми
+сохранениями, см. выше). Сценарий `crates/sandbox/scenarios/saves.scenario` проходит весь путь: сохранить,
 потерять состояние, загрузить, испортить файл, получить восстановление из копии, испортить всё, умереть, загрузить снова;
 эталонный реплей `tests/replays/saves.json` записан с него. Сценарий `world_save.scenario` сохраняет мир в дебрях,
 меняет регион и загружает мир: регион строится из манифеста сохранения, генератор не запускается.
 
 **Доказательство.** `crates/shards_save/tests/save/` — 1000 случайных состояний туда и обратно, матрица порчи, образцы
 файлов версии 1 (`tests/samples/`, не переписываются), автосохранение и хэш состояния, `load_game` и `--verify`, запуск с
-`--world`/`--character`, реплей, который сохраняет и ничего не пишет (байты и времена изменения слота не тронуты), выход,
+`--world`/`--character`, `continue_game` (самый новый слот каждого вида, нечитаемый пропущен, без сохранений — отказ),
+реплей, который сохраняет и ничего не пишет (байты и времена изменения слота не тронуты), выход,
 новые сохранения, маршрутизация сохранений и слот клиента по имени; `crates/sandbox/tests/sandbox/saves.rs` — секции движка и оживление
 мёртвого тела, регион из манифеста сохранения (тот же мир после обновления, которое меняет генератор; тайла нет — отказ без
 изменений; манифест не совпал с хэшем — порча и копия; сохранение версии 1 генерируется заново, а после обновления
@@ -4140,18 +4173,23 @@ HUD и меню игры — контент. Модуль `shards_ui` держи
 | `layer` | `Hud` (ввода не берёт, лежит под меню), `Menu` (по умолчанию: берёт управление), `Modal` (поверх меню; пока открыт, ниже ничего не нажать) |
 | `pauses` | в одиночной игре (`NetRole::Single`) открытый экран ставит `PauseState::Paused`, и симуляция стоит; закрытие возвращает игру, только если паузу поставило меню. В кооперативе мир идёт дальше. HUD паузы не ставит (ошибка контента) |
 | `open_at_start` | открыть при входе в игру (`OnEnter(InGame)`): так открывается HUD |
+| `main_menu` | главное меню игры: открыть при входе в `EngineState::MainMenu` (после загрузки, в запуске, который меню показывает; см. «Главное меню» в «Ядре»), а при уходе в игру закрыть его и всё, что открыто поверх (настройки). HUD им быть не может: он не берёт ввод (ошибка контента). Поле со значением `false` не пишется, поэтому прежние экраны и их хэш не меняются |
 | `closable` | `false` — `back` и `ui_close` экран не закрывают, только его кнопки (вопрос, на который надо ответить) |
 | `title`, `anchor`, `layout` | заголовок; где на экране (`TopLeft` … `BottomRight`, по умолчанию `Center`); `Column` или `Row` |
 
 **Виджеты.** Держат другие: `Panel` (заголовок, `layout`), `List`, `Grid` (`columns`), `Tabs` (страницы — `Panel`/`List`/`Grid`
-с id; видна одна). Показывают: `Text` (свой текст или `bind`), `Hint` (подсказка; пустая не видна), `Bar` (`value`/`max` или
+с id; видна одна). Показывают: `Text` (свой текст или `bind`), `Hint` (подсказка; пустая не видна), `Image` (картинка:
+`path` под папкой ассетов, `label` — что на ней, для чтеца и агента, `width` и `height` в логических пикселях; один размер —
+второй по пропорциям картинки, ни одного — её собственный размер; проверка контента называет файл, которого нет, и размер не
+больше 0), `Bar` (`value`/`max` или
 `bind`, `color` — имя цвета темы или `#rrggbb`), `Cooldown` (время до готовности), `Compass` (куда смотрит игрок и четыре
 ближайшие точки интереса), `Allies` (рамки союзников: имя, здоровье, лежит ли), `Compare` (до → после по строкам: `damage 12 →
 15 (+3)`). Берут ввод: `Button` (`action`), `Slider` (`min`, `max`, `step`), `Toggle`, `Choice` (`options`); у трёх последних
 `setting: "группа.ключ"` — настройка игрока: виджет показывает её и меняет через `settings_set` (её проверки, запись в
-`settings.toml`, журнал `settings: …`). Id виджета — `экран/id` (`pause/resume`); у виджета без id — вид и номер (`hud/hint1`).
+`settings.toml`, журнал `settings: …`). `Binding` (`context`, `action`, `slot`) — клавиша или кнопка действия, которую игрок
+меняет сам (см. «Клавиши» ниже). Id виджета — `экран/id` (`pause/resume`); у виджета без id — вид и номер (`hud/hint1`).
 Ошибки контента называют файл и виджет: повтор id, `open` несуществующего экрана, слайдер без диапазона, `setting` не вида
-`группа.ключ`; правка, которая их вносит, отклоняется, и остаётся прежний экран.
+`группа.ключ`, `context` с точкой, `taken` не сообщением `@id`; правка, которая их вносит, отклоняется, и остаётся прежний экран.
 
 **Действия кнопок:** `close` (закрыть свой экран), `back` (закрыть верхний), `open <экран>`, `quit` (`AppExit`), `tool <имя>
 {json}` — инструмент от имени нажавшего агента и с его scope (кнопка не даёт игроку инструмент разработчика), одно слово —
@@ -4168,7 +4206,8 @@ app.add_ui_action("give_up", |world, press| {          // press: widget, screen,
 ```
 
 Источники движка (`shards`): `you.health`, `you.stamina`, `you.poise` (полоса), `you.charges:<заряд>`, `you.cooldown:<действие>`,
-`you.heading` (компас), `allies`. «You» — тело, которым управляет эта машина (`LocalPlayer`), иначе то, за которое играет
+`you.heading` (компас), `allies`, `input.bindings:<контекст>.<действие>` (входы действия по карте ввода, какой её делают
+настройки `controls` в эту минуту; его берёт `Binding`). «You» — тело, которым управляет эта машина (`LocalPlayer`), иначе то, за которое играет
 агент (`AiPlayer`). Неизвестный источник пишет в журнал одно предупреждение, а виджет остаётся пустым.
 
 **Тема** — определение вида `theme` с id `default` (без него — тема движка): цвета `text`, `dim_text`, `panel`, `backdrop`,
@@ -4215,12 +4254,79 @@ ok: closed settings; pause is on top · focus pause/settings
 1 → 1.25`, `ui: closed pause`; код слышит события `UiFocusMoved`, `UiPressed`, `UiChanged`, `UiScreenChanged` (их озвучивает
 модуль звука). `ai/status` получает поле `ui` (`screens`; `input` — экран, который берёт ввод; `focus`).
 
-**Человек.** Клавиша `pause` карты ввода (Escape, Start на геймпаде) открывает экран `pause`, если он есть в контенте. Пока
-открыто меню, сверху стоит контекст ввода `menu` (персонаж ничего не слышит): `navigate` (стрелки, WASD, левый стик; зажатое
-направление повторяется через 0,35 с и потом каждые 0,12 с), `confirm` (Enter, South) и `back` (Escape, East); их можно
-переназначить (`rebind context=menu`, настройки `controls`). Мышь —
-через picking Bevy: наведение подсвечивает, щелчок — `ui_click`. Всё это — вызовы `ui_*` от агента `input`, поэтому реплей
+**Главное меню** — экран с `main_menu: true`: в нём `tool new_game` начинает игру, `tool continue_game` продолжает с самого
+нового сохранения (без сохранений отказывает и говорит почему), `open settings` и `quit` — как везде. Агент проходит его теми
+же `ui_*` (без окна — с `--menu`): `observe` после загрузки печатает раздел `UI` меню, `ui_click id=main_menu/new_game`
+отвечает `pressed main_menu/new_game: new_game: the game starts at tick 0`. Пример — главное меню шаблона.
+
+**Картинка загрузки** (`EngineConfig::loading_image`, feature `render`, с окном или `--offscreen`): во весь экран поверх всех
+экранов на каждом кадре, который рисуется, пока движок в `Loading` или `RegionLoading`; картинка покрывает окно, по центру,
+края, что не влезли, обрезаны. Первая загрузка идёт много кадров, и картинка видна с кадра, на котором прочитан её файл, до
+последнего кадра `Loading`. Смена региона (`regen`, `region_load`) проходит `RegionLoading` внутри одного вызова, если больше
+нечего ждать: между ними не рисуется ни одного кадра, картинки не видно, а следующий кадр уже показывает новый регион. Видна
+она только при смене, которая ждёт загрузки дольше вызова (шлюз держит `RegionLoading` несколько кадров). Без окна ничего не
+рисуется. Картинку шаблона (`template/assets/ui/loading.png`, 1280×720, 51 КБ) рисует `cargo run -p sandbox --example
+make_art` из плоских фигур в стиле движка (полосы света, плоские грани), без чужих ассетов; звёзды по зерну, так что файл
+каждый раз тот же.
+
+**Человек.** Клавиша `pause` карты ввода (Escape, Start на геймпаде) открывает экран `pause` в игре (не в главном меню и не
+во время загрузки), если он есть в контенте. Пока открыто меню, сверху стоит контекст ввода `menu` (персонаж ничего не слышит):
+`navigate` (стрелки, WASD, левый стик, крестовина; зажатое направление повторяется через 0,35 с и потом каждые 0,12 с), `confirm`
+(Enter, South: A у Xbox, ✕ у PlayStation) и `back` (Escape, East: B, ○); их можно переназначить (`rebind context=menu`, настройки
+`controls`). Мышь — через picking Bevy: наведение подсвечивает, щелчок — `ui_click`. Всё это — вызовы `ui_*` от агента `input`, поэтому реплей
 записывает их и нажимает те же кнопки на тех же тиках.
+
+**Клавиши.** Экран переназначения собирается из тех же виджетов: строка `Binding` на действие.
+
+```ron
+Panel(id: "keys", title: "@controls-keys", children: [
+    Binding(id: "jump", label: "@controls-jump", action: "jump", prompt: "@controls-press", taken: "@controls-taken"),
+    Binding(id: "jump_pad", label: "@controls-jump", action: "jump", slot: 1),        // только второй вход
+    Binding(id: "confirm", label: "@controls-confirm", context: "menu", action: "confirm"),
+]),
+```
+
+| поле `Binding` | что |
+|---|---|
+| `context` | контекст ввода; по умолчанию `gameplay` |
+| `action` | действие карты ввода |
+| `slot` | только этот слот (0 — первый вход; на единицу больше последнего — новый вход). Без него строка показывает все входы, а новый вход заменяет первый вход того же устройства (клавиатура и мышь — одно, геймпад — другое) или добавляется, если такого нет |
+| `prompt` | что строка пишет, пока ждёт; по умолчанию `Press a key or button… (Esc cancels)` |
+| `taken` | сообщение `@id` о занятом входе, с параметрами `$input` и `$action`; по умолчанию английское `<вход> is already used by <действие>` |
+
+Входы строка пишет так, как их читает игрок (`Binding::label`): `Space · Pad South`, `Left Shift`,
+`Mouse Right`, `Pad L2`. Подтверждение строки (`confirm`, щелчок, `ui_click`) переводит её в ожидание: она показывает
+`prompt`, а следующая клавиша, кнопка мыши или кнопка геймпада (геймпад читается так же, как в игре) становится привязкой —
+меню отдаёт её вызовом `ui_set id=<строка> value=Key(KeyK)` от агента `input`, и реплей записывает этот вызов. Escape и Start
+отменяют ожидание, как `back`, и экран при этом не закрывается (закроет следующий Escape); переход на другой виджет тоже
+отменяет. Стрелка, которую только что назначили, фокус не двигает, а щелчок отпущенной кнопки мыши, ставшей привязкой, ничего
+не нажимает. Escape и Start в `gameplay` — это `pause`, так что назначить их и без того нельзя.
+
+Привязку меняют только настройки: `ui_set` зовёт `settings_set group=controls key=bindings.<контекст>.<действие>`, поэтому в
+`settings.toml` (`[controls.bindings]`) попадает лишь отличие от умолчаний, `value=default` возвращает умолчания
+(`reset=true`), а карту ввода собирает заново `ControlSync`. Вход, который читает другое действие контекста, отклоняется (молча
+его не отнять): строка пишет, у кого он (`E is already used by Interact`, `E уже используется для «Взаимодействие»`), а ответ
+`ui_set` — это отказ настроек и строка того действия на экране. Оси (стик, `WASD`) так не меняются, для них есть `settings_set`.
+
+```text
+$ shards act ui_click id=settings/jump
+ok: settings/jump waits for an input: the next key, mouse button or gamepad button becomes it (Escape or Start cancels, as `back` does); an agent gives one with `ui_set id=settings/jump value=Key(KeyK)`
+$ shards act ui_set id=settings/jump value='Key(KeyK)'
+ok: settings/jump Space · Pad South → K · Pad South
+$ shards act ui_set id=settings/dodge value='Key(KeyE)'
+error: settings/dodge: controls.bindings.gameplay.dodge: Key(KeyE) is already bound to `interact` in `gameplay`; free it first: … (on this screen: settings/interact)
+$ shards act ui_read screen=settings
+…
+    settings/jump  binding "Jump" K · Pad South = Key(KeyK), GamepadButton(South) [controls.bindings.gameplay.jump]
+    settings/dodge  binding "Dodge" Left Ctrl · Pad East = Key(ControlLeft), GamepadButton(East) [controls.bindings.gameplay.dodge] · E is already used by Interact ◀ focus
+$ shards act ui_set id=settings/jump value=default
+ok: settings/jump K · Pad South → Space · Pad South
+```
+
+Пока строка ждёт, `ui_read` дописывает к ней `· waiting for an input (Escape cancels; ui_set id=… value=Key(KeyK))`, журнал —
+`ui: settings/jump waits for an input`, `ui: settings/jump stopped waiting for an input`, `ui: settings/jump Space · Pad South → K ·
+Pad South`. В песочнице и шаблоне на странице управления — панель «Клавиши и кнопки»: прыжок, уклонение, лёгкая и тяжёлая
+атаки, блок, парирование, взаимодействие, предмет, захват цели, бег и планирование.
 
 **Вне симуляции.** У виджетов нет `AiId` (меню не сдвигает id), экраны не входят ни в снапшот, ни в хэш реплея, хост их не
 пересылает: у каждой машины свои. Инструменты, которые их меняют, — action, и реплей их повторяет; вызов, который делает
@@ -4229,11 +4335,14 @@ ok: closed settings; pause is on top · focus pause/settings
 **Рисование** (feature `render`, только когда есть окно): узел Bevy UI на каждый виджет, рамка на экран (меню затемняет
 игру, HUD не ловит мышь, модальное окно выше меню), значения меняются на месте, фокус — обводка и `InputFocus`. Каждому виджету —
 узел AccessKit: роль (`Dialog`, `Button`, `Slider`, `ProgressIndicator`, …), подпись и значение, поэтому экранный чтец читает
-меню. Текст рисуется шрифтом темы (`font: "fonts/FiraSans-Regular.ttf"`, файл в папке ассетов; проверка контента ищет его), без
-него — шрифтом Bevy по умолчанию, в котором только латиница.
+меню. Текст рисуется шрифтом темы (`font: "fonts/MyFont.ttf"`, файл в папке ассетов; проверка контента ищет его), без
+него — шрифтом движка по умолчанию (`shards::ui::DEFAULT_FONT`, Fira Sans: латиница, греческий, кириллица).
 
 Проверка: `crates/shards_ui` (юнит-тесты разбора и навигации; `tests/ui/`: экраны, меню, клавиатура, рисование и подписи
-доступности без GPU, реплей с нажатыми кнопками, правка экрана в работающей игре и отказ сломанной), сценарии
+доступности без GPU, реплей с нажатыми кнопками, правка экрана в работающей игре и отказ сломанной, главное меню, картинка и
+картинка загрузки — `main_menu.rs`; `bindings.rs` — переназначение через `ui_set`, отказ с названным действием, ожидание
+клавиши, кнопки мыши и кнопки геймпада, Escape, который не закрывает экран, реплей), `template/tests/game/main_menu.rs` (путь
+через меню даёт ту же игру и тот же реплей, что без него; «Продолжить» с сохранением и без), сценарии
 `crates/sandbox/scenarios/ui.scenario` и `template/scenarios/menus.scenario`.
 
 ## Локализация (E9.4)
@@ -4310,8 +4419,8 @@ language=ru` — все сообщения языка с текстом. `text i
 ```text
 $ shards act locale
 playing: en
-en English: 34 messages
-ru Русский → en: 33 messages; lacks 1: settings-fov
+en English: 48 messages
+ru Русский → en: 47 messages; lacks 1: settings-fov
 # switch: settings_set group=locale key=language value=<id>; `locale language=<id>` lists one language's text
 $ shards act text id=defeated 'args={"count": 3}' language=ru
 Повержено 3 врага
@@ -4326,8 +4435,18 @@ Player.
 игрока кооператива читают игру на разных языках. Шлюз загрузки ждёт, пока языки построены, поэтому первый экран уже на языке
 игрока.
 
-**Шрифт.** Шрифт Bevy по умолчанию — только латиница, поэтому игра с кириллицей называет свой в теме (`font`). Песочница и
-шаблон кладут Fira Sans (SIL Open Font License, `assets/fonts/FiraSans-OFL.txt`).
+**Шрифт.** Текст, который не называет шрифт (меню и HUD без `font` в теме, консоль и меню разработчика, оверлеи), движок
+рисует своим шрифтом по умолчанию — Fira Sans (SIL Open Font License, `crates/shards_ui/fonts/FiraSans-OFL.txt`; лицензия
+есть и в самом файле шрифта): латиница, греческий и кириллица, тире, кавычки, `№` и стрелки. Песочнице и шаблону своего
+шрифта не нужно. Игра на другом письме (CJK, арабское) называет свой в теме (`font`). Значков вроде ⚠ и ✓ в шрифте нет: HUD
+и оверлеи пишут вместо них ASCII, консоль разработчика — `?` (`ai_core::display::default_font_has`).
+
+**Язык системы при первом запуске.** Пока игрок не выбрал язык (`locale.language` пуст) и настройки хранятся на диске, игра
+при запуске берёт первый из языков интерфейса системы, который у неё есть (Windows — языки пользователя; Linux и macOS —
+`LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG`): тот же тег (`pt-BR`) или тот же язык (`ru-RU` — `ru`, без региона раньше), и
+записывает его в настройки — дальше это выбор игрока. В журнале: `[local] locale: the system's language is ru-RU; playing ru
+(kept in the settings)`. Без хранилища настроек (тесты, `--headless` агента, `--no-settings`) язык системы не спрашивается:
+игра на любой машине начинается на своём языке. Тест подставляет языки системы ресурсом `shards::locale::SystemLanguages`.
 
 Проверка: `crates/shards_locale` (юнит-тесты: формы множественного числа, фраза во фразе, запасной язык, забытый параметр,
 разбор файлов и ошибки с позицией; `tests/locale/`: смена языка в работающей игре и меню на новом языке, проверка контента,
@@ -5477,6 +5596,8 @@ saved crashes/crash-20261016-123456-tick30.json: tick 30, 120 log lines, 48 jour
   `controls`; в начале и в конце все группы возвращаются к умолчаниям (идёт и с файлом настроек, и без);
 - `ui.scenario` (E9) — меню проходится по дереву интерфейса: пауза, вкладки настроек, слайдер и выбор меняют настройки
   игрока, вопрос поверх меню, ошибки, которые учат; в начале и в конце меню закрыты, настройки по умолчанию;
+- `remap.scenario` (E9) — строки клавиш на странице управления: ожидание входа и отмена без закрытия экрана, новая клавиша как
+  настройка `controls`, занятый вход отклонён с названным действием (по-английски и по-русски), `default` возвращает умолчания;
 - `locale.scenario` (E9.4) — `locale` и `text`: формы множественного числа по языку, фраза во фразе, подсказка к опечатке;
   вкладка «Language» меню переключает его на русский, пока оно открыто, недостающее в русском берётся из английского, язык,
   которого нет, отклоняется; в начале и в конце язык игры, меню закрыты;

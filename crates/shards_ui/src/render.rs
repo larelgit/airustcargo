@@ -13,6 +13,7 @@ use accesskit::{Node as A11yNode, Role, Toggled};
 use bevy::a11y::AccessibilityNode;
 use bevy::input_focus::{FocusCause, InputFocus};
 use bevy::picking::events::{PointerClick, PointerOut, PointerOver};
+use bevy::picking::pointer::PointerButton;
 use bevy::picking::Pickable;
 use bevy::prelude::*;
 use serde_json::json;
@@ -21,10 +22,24 @@ use shards_settings::AccessibilitySettings;
 
 use crate::bind::live_value;
 use crate::def::{Anchor, Layer, Layout, ThemeDef};
-use crate::model::{focused, on_shown_page, UiScreen, UiValue, UiWidget, WidgetKind};
+use crate::model::{binding_state, focused, on_shown_page, UiScreen, UiValue, UiWidget, WidgetKind};
 use crate::model::{format_number, widget_children};
 use crate::text::compass_point;
-use crate::UiSystems;
+use crate::{CapturedClicks, UiSystems};
+
+/// The font of every text that names none (a theme without `font`, the dev console, overlays):
+/// Fira Sans Regular, with Latin, Greek and Cyrillic letters. SIL Open Font License 1.1: the
+/// licence is beside the file (`fonts/FiraSans-OFL.txt`). Bevy's own has ASCII letters only.
+pub const DEFAULT_FONT: &[u8] = include_bytes!("../fonts/FiraSans-Regular.ttf");
+
+/// Puts [`DEFAULT_FONT`] behind Bevy's default font handle, the one a `TextFont` that names no
+/// font draws with. Once every plugin is built: Bevy's text plugin puts its own font there.
+pub(crate) fn install_default_font(app: &mut App) {
+    if let Some(mut fonts) = app.world_mut().get_resource_mut::<Assets<bevy::text::Font>>() {
+        // The default id is never one of an asset that was removed.
+        let _ = fonts.insert(AssetId::default(), bevy::text::Font::from_bytes(DEFAULT_FONT.to_vec()));
+    }
+}
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Look>()
@@ -68,6 +83,10 @@ struct Drawn {
     widget: UiWidget,
     focused: bool,
     shown: bool,
+    /// A binding that waits for an input.
+    waits: bool,
+    /// What a binding says of an input it refused.
+    note: Option<String>,
 }
 
 fn color(rgba: [u8; 4]) -> Color {
@@ -90,7 +109,8 @@ fn draw(world: &mut World) {
         let Some(stored) = world.get::<UiWidget>(e).cloned() else { continue };
         let widget = UiWidget { value: live_value(world, &stored), ..stored };
         let shown = on_shown_page(world, e) && !matches!((&widget.kind, &widget.value), (WidgetKind::Hint, UiValue::Text(t)) if t.is_empty());
-        let now = Drawn { widget, focused: focus == Some(e), shown };
+        let (waits, note) = if matches!(widget.kind, WidgetKind::Binding { .. }) { binding_state(world, e) } else { (false, None) };
+        let now = Drawn { widget, focused: focus == Some(e), shown, waits, note };
         let before = world.get::<Drawn>(e).cloned();
         if before.as_ref() == Some(&now) {
             continue;
@@ -198,8 +218,7 @@ fn text_part(world: &mut World, parent: Entity, text: String, size: fn(&ThemeDef
     world.spawn((Part, Text::new(text), font, TextColor(color(rgba)), Pickable::IGNORE, ChildOf(parent))).id()
 }
 
-/// The text a widget's value is drawn as. The engine's default font has ASCII only; a theme
-/// names one for other scripts (`font`).
+/// The text a widget's value is drawn as.
 fn value_text(w: &UiWidget) -> String {
     match (&w.kind, &w.value) {
         (WidgetKind::Text | WidgetKind::Hint, UiValue::Text(t)) => t.clone(),
@@ -221,6 +240,11 @@ fn value_text(w: &UiWidget) -> String {
         (WidgetKind::Slider { .. }, UiValue::Number(v)) => format_number(*v),
         (WidgetKind::Toggle, UiValue::Flag(on)) => if *on { "[x]" } else { "[ ]" }.to_owned(),
         (WidgetKind::Choice { .. }, UiValue::Choice(v)) => format!("< {} >", w.kind.option_label(v)),
+        (WidgetKind::Binding { .. }, UiValue::Bindings(bound)) => {
+            let shown: Vec<&str> = w.kind.shown_inputs(&bound.inputs).iter().map(|i| i.label.as_str()).collect();
+            if shown.is_empty() { "-".to_owned() } else { shown.join(" · ") }
+        }
+        (WidgetKind::Binding { .. }, UiValue::Text(why)) => why.clone(),
         _ => String::new(),
     }
 }
@@ -299,12 +323,14 @@ fn role(w: &UiWidget, screen: Option<Layer>) -> Role {
         (WidgetKind::Tabs, _) => Role::TabList,
         (WidgetKind::Text | WidgetKind::Compass | WidgetKind::Cooldown | WidgetKind::Compare, _) => Role::Label,
         (WidgetKind::Hint, _) => Role::Status,
+        (WidgetKind::Image { .. }, _) => Role::Image,
         (WidgetKind::Button { .. }, _) => Role::Button,
         (WidgetKind::Bar { .. }, _) => Role::ProgressIndicator,
         (WidgetKind::Allies, _) => Role::List,
         (WidgetKind::Slider { .. }, _) => Role::Slider,
         (WidgetKind::Toggle, _) => Role::CheckBox,
         (WidgetKind::Choice { .. }, _) => Role::ComboBox,
+        (WidgetKind::Binding { .. }, _) => Role::Button,
     }
 }
 
@@ -376,6 +402,20 @@ fn redraw(world: &mut World, e: Entity, state: &Drawn) {
             let font = font(world, size);
             world.entity_mut(e).insert((Node { display, ..default() }, Text::new(value_text(w)), font, TextColor(color(rgba))));
         }
+        WidgetKind::Image { path, width, height } => {
+            // One of the sizes alone: the picture's proportions give the other.
+            let size = |v: &Option<f32>| v.map_or(Val::Auto, Val::Px);
+            world.entity_mut(e).insert(Node { display, width: size(width), height: size(height), ..default() });
+            // The picture is a part: Bevy names an image node from its text, and it has none, so on
+            // the widget it would take the widget's label away. Screen readers skip the part.
+            let fill = |v: &Option<f32>| if v.is_some() { Val::Percent(100.0) } else { Val::Auto };
+            let image = world.resource::<AssetServer>().load(path.clone());
+            let mut unseen = A11yNode::new(Role::Image);
+            unseen.set_hidden();
+            let picture = (Part, Node { width: fill(width), height: fill(height), ..default() }, ImageNode::new(image), AccessibilityNode(unseen));
+            let picture = world.spawn((picture, ChildOf(e))).id();
+            parts.all.push(picture);
+        }
         WidgetKind::Button { .. } => {
             let node = Node {
                 display,
@@ -420,6 +460,19 @@ fn redraw(world: &mut World, e: Entity, state: &Drawn) {
             let value = text_part(world, e, value_text(w), |t| t.font_size, t.color(&t.accent));
             parts.value = Some(value);
             parts.all.extend([label, value]);
+        }
+        WidgetKind::Binding { prompt, .. } => {
+            world.entity_mut(e).insert(Node { display, flex_direction: FlexDirection::Row, column_gap: gap, align_items: AlignItems::Center, ..default() });
+            let label = text_part(world, e, w.label.clone(), |t| t.font_size, text_rgba);
+            // Waiting, it asks for the input; the inputs come back when it gets one.
+            let shown = if state.waits { prompt.clone() } else { value_text(w) };
+            let value = text_part(world, e, shown, |t| t.font_size, t.color(&t.accent));
+            parts.value = Some(value);
+            parts.all.extend([label, value]);
+            if let Some(note) = &state.note {
+                let warn = t.bar_color(Some("health"));
+                parts.all.push(text_part(world, e, note.clone(), |t| t.hint_size, warn));
+            }
         }
         WidgetKind::Allies => {
             world.entity_mut(e).insert(column(FlexDirection::Column));
@@ -479,6 +532,14 @@ fn redraw(world: &mut World, e: Entity, state: &Drawn) {
         a11y.set_disabled();
     }
     describe(&mut a11y, w);
+    if let WidgetKind::Binding { prompt, .. } = &w.kind {
+        if state.waits {
+            a11y.set_value(prompt.clone());
+        }
+        if let Some(note) = &state.note {
+            a11y.set_description(note.clone());
+        }
+    }
     world.entity_mut(e).insert((AccessibilityNode(a11y), parts));
 }
 
@@ -496,8 +557,19 @@ fn sync_focus(world: &mut World, focus: Option<Entity>) {
     }
 }
 
-/// A click on a widget that takes input presses it, as `ui_click` (recorded like any call).
-fn on_click(mut click: On<PointerClick>, widgets: Query<&UiWidget>, mut commands: Commands) {
+/// A click on a widget that takes input presses it, as `ui_click` (recorded like any call). The
+/// click of a mouse button a binding took on its press is not one: it ends there.
+fn on_click(mut click: On<PointerClick>, widgets: Query<&UiWidget>, mut captured: ResMut<CapturedClicks>, mut commands: Commands) {
+    let button = match click.button {
+        PointerButton::Primary => MouseButton::Left,
+        PointerButton::Secondary => MouseButton::Right,
+        PointerButton::Middle => MouseButton::Middle,
+    };
+    if let Some(at) = captured.0.iter().position(|b| *b == button) {
+        captured.0.remove(at);
+        click.propagate(false);
+        return;
+    }
     let Ok(widget) = widgets.get(click.entity) else { return };
     if !widget.kind.focusable() {
         return;

@@ -72,7 +72,8 @@ fn ui_close(In(call): In<Call<UiCloseArgs>>, world: &mut World) -> ToolResult {
 
 /// Move on the screen that takes input, as a gamepad does: `up`/`down`/`next`/`prev` move the
 /// focus, `left`/`right` change a slider, choice, toggle or tabs (in a row or grid they move),
-/// `confirm` presses the focused widget, `back` closes the screen.
+/// `confirm` presses the focused widget, `back` closes the screen (or stops a binding that waits
+/// for an input, and the screen stays).
 #[derive(Deserialize, JsonSchema)]
 pub struct UiNavigateArgs {
     /// `up`, `down`, `left`, `right`, `next`, `prev`, `confirm` or `back`.
@@ -86,7 +87,8 @@ fn ui_navigate(In(call): In<Call<UiNavigateArgs>>, world: &mut World) -> ToolRes
 }
 
 /// Press a widget on the screen that takes input, as a click does: a button does its action, a
-/// toggle flips, a choice or tabs go to the next. Focus moves to it.
+/// toggle flips, a choice or tabs go to the next, a binding waits for the player's next key or
+/// button. Focus moves to it.
 #[derive(Deserialize, JsonSchema)]
 pub struct UiClickArgs {
     /// The widget, `screen/widget` as `ui_read` lists it (`pause/resume`).
@@ -98,9 +100,11 @@ fn ui_click(In(call): In<Call<UiClickArgs>>, world: &mut World) -> ToolResult {
     model::activate(world, e, &call.caller.agent)
 }
 
-/// Set a slider (a number), toggle (`on`/`off`), choice (one of its options) or tabs (a page's
-/// id, title or number from 1) on the screen that takes input. One bound to a player setting changes
-/// that setting, which is saved.
+/// Set a slider (a number), toggle (`on`/`off`), choice (one of its options), tabs (a page's
+/// id, title or number from 1) or binding (an input: `Key(KeyK)`, `Mouse(Right)`,
+/// `GamepadButton(North)`; `default` gives the action its default inputs back) on the screen that
+/// takes input. One bound to a player setting changes that setting, which is saved; a binding
+/// changes the `controls` settings, which refuse an input another action of the context reads.
 #[derive(Deserialize, JsonSchema)]
 pub struct UiSetArgs {
     /// The widget, `screen/widget` (`settings/text_size`).

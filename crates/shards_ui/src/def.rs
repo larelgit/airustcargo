@@ -85,6 +85,10 @@ pub struct ScreenDef {
     /// Opened when the game starts (`OnEnter(EngineState::InGame)`): a HUD.
     #[serde(default)]
     pub open_at_start: bool,
+    /// The game's main menu: opened on entering `EngineState::MainMenu` (after loading, in a run
+    /// that shows the menu); leaving it for the game closes it and every screen opened over it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub main_menu: bool,
     /// `back` closes it. A screen that must be answered says `false`, and closes from a button.
     #[serde(default = "yes")]
     pub closable: bool,
@@ -100,6 +104,10 @@ pub struct ScreenDef {
 
 fn yes() -> bool {
     true
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 fn one() -> f32 {
@@ -148,6 +156,20 @@ pub enum WidgetDef {
         text: String,
         #[serde(default)]
         bind: Option<String>,
+    },
+    /// A picture: a file under the asset folder (`ui/key_art.png`), `width` or `height` in
+    /// logical pixels (one of them: the other keeps the picture's proportions; neither: its own
+    /// size). `label` is what it shows, for screen readers and agents.
+    Image {
+        #[serde(default)]
+        id: Option<String>,
+        path: String,
+        #[serde(default)]
+        label: String,
+        #[serde(default)]
+        width: Option<f32>,
+        #[serde(default)]
+        height: Option<f32>,
     },
     /// A hint (`[E] Open the gate`): hidden while its text, or its source's, is empty.
     Hint {
@@ -239,6 +261,33 @@ pub enum WidgetDef {
         #[serde(default)]
         setting: Option<String>,
     },
+    /// The input of an action of the controls (`jump`: `Space · Pad South`), which the player
+    /// changes: confirming it waits for the next key, mouse button or gamepad button (Escape
+    /// cancels), and that input becomes the binding, saved in the `controls` settings. An input
+    /// another action of the context reads is refused, and the widget says which action holds it.
+    /// The engine's source `input.bindings` gives the inputs.
+    Binding {
+        id: String,
+        label: String,
+        /// The input context (`gameplay`, `menu`, a game's own).
+        #[serde(default = "gameplay", skip_serializing_if = "is_gameplay")]
+        context: String,
+        /// The action (`jump`, `light`, `use_item`).
+        action: String,
+        /// Only this slot (0: the primary input; one past the last adds one). Without it the widget
+        /// shows every input of the action, and a new one replaces the first input of its kind of
+        /// device (keyboard and mouse, or gamepad), or is added when the action has none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slot: Option<usize>,
+        /// What it says while it waits (`@controls-press`). Default: `Press a key or button…
+        /// (Esc cancels)`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt: Option<String>,
+        /// The message that says an input is taken, with `$input` and `$action`
+        /// (`@controls-taken`). Default: `<input> is already used by <action>`, in English.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        taken: Option<String>,
+    },
     /// One of `options`; with `setting`, that player setting.
     Choice {
         id: String,
@@ -261,6 +310,14 @@ fn heading() -> String {
     "you.heading".to_owned()
 }
 
+fn gameplay() -> String {
+    "gameplay".to_owned()
+}
+
+fn is_gameplay(context: &str) -> bool {
+    context == "gameplay"
+}
+
 fn allies() -> String {
     "allies".to_owned()
 }
@@ -281,11 +338,13 @@ impl WidgetDef {
             | WidgetDef::Button { id, .. }
             | WidgetDef::Slider { id, .. }
             | WidgetDef::Toggle { id, .. }
+            | WidgetDef::Binding { id, .. }
             | WidgetDef::Choice { id, .. } => Some(id),
             WidgetDef::Panel { id, .. }
             | WidgetDef::List { id, .. }
             | WidgetDef::Grid { id, .. }
             | WidgetDef::Text { id, .. }
+            | WidgetDef::Image { id, .. }
             | WidgetDef::Hint { id, .. }
             | WidgetDef::Bar { id, .. }
             | WidgetDef::Cooldown { id, .. }
@@ -303,6 +362,7 @@ impl WidgetDef {
             WidgetDef::Grid { .. } => "grid",
             WidgetDef::Tabs { .. } => "tabs",
             WidgetDef::Text { .. } => "text",
+            WidgetDef::Image { .. } => "image",
             WidgetDef::Hint { .. } => "hint",
             WidgetDef::Button { .. } => "button",
             WidgetDef::Bar { .. } => "bar",
@@ -312,6 +372,7 @@ impl WidgetDef {
             WidgetDef::Compare { .. } => "compare",
             WidgetDef::Slider { .. } => "slider",
             WidgetDef::Toggle { .. } => "toggle",
+            WidgetDef::Binding { .. } => "binding",
             WidgetDef::Choice { .. } => "choice",
         }
     }
@@ -344,6 +405,7 @@ impl WidgetDef {
         match self {
             WidgetDef::Text { text, .. } | WidgetDef::Hint { text, .. } => texts.push((text, "text")),
             WidgetDef::Button { label, .. }
+            | WidgetDef::Image { label, .. }
             | WidgetDef::Bar { label, .. }
             | WidgetDef::Cooldown { label, .. }
             | WidgetDef::Slider { label, .. }
@@ -351,6 +413,11 @@ impl WidgetDef {
             WidgetDef::Choice { label, labels, .. } => {
                 texts.push((label, "label"));
                 texts.extend(labels.iter().map(|l| (l.as_str(), "labels")));
+            }
+            WidgetDef::Binding { label, prompt, taken, .. } => {
+                texts.push((label, "label"));
+                texts.extend(prompt.as_deref().map(|p| (p, "prompt")));
+                texts.extend(taken.as_deref().map(|t| (t, "taken")));
             }
             WidgetDef::Compare { rows, .. } => texts.extend(rows.iter().map(|r| (r.stat.as_str(), "rows.stat"))),
             _ => {}
@@ -421,6 +488,9 @@ impl ContentDef for ScreenDef {
         if self.layer == Layer::Hud && self.pauses {
             refs.error("a HUD never pauses the game: `pauses: true` needs `layer: Menu` or `Modal`");
         }
+        if self.layer == Layer::Hud && self.main_menu {
+            refs.error("a HUD takes no input, so it cannot be the main menu: `main_menu: true` needs `layer: Menu` or `Modal`");
+        }
         let mut seen = BTreeSet::new();
         let mut counters = BTreeMap::new();
         for widget in &self.widgets {
@@ -461,6 +531,20 @@ fn check_widget(widget: &WidgetDef, refs: &mut Refs, seen: &mut BTreeSet<String>
             Err(e) => refs.error(format!("button `{id}`: {e}")),
         },
         WidgetDef::Grid { columns: 0, .. } => refs.error(format!("grid `{id}`: `columns` is at least 1")),
+        WidgetDef::Image { path, width, height, .. } => {
+            for (field, size) in [("width", width), ("height", height)] {
+                if let Some(size) = size
+                    && (!size.is_finite() || *size <= 0.0)
+                {
+                    refs.error(format!("image `{id}`: `{field}` is a size above 0, not {size}"));
+                }
+            }
+            if let Some(root) = refs.asset_root()
+                && !root.join(path).is_file()
+            {
+                refs.error(format!("image `{id}`: no file `{path}` under the asset folder (a .png, `ui/key_art.png`)"));
+            }
+        }
         WidgetDef::Tabs { children, .. } => {
             if children.is_empty() {
                 refs.error(format!("tabs `{id}`: no pages; each child is a page"));
@@ -514,6 +598,22 @@ fn check_widget(widget: &WidgetDef, refs: &mut Refs, seen: &mut BTreeSet<String>
             }
             check_setting(&id, setting.as_deref(), refs);
         }
+        WidgetDef::Binding { context, action, taken, .. } => {
+            // The player's controls are saved as `context.action`, split at the first dot.
+            if context.is_empty() || context.contains('.') || context.contains(char::is_whitespace) {
+                refs.error(format!("binding `{id}`: `context` is an input context's name (`gameplay`), without dots or spaces, not `{context}`"));
+            }
+            if action.is_empty() || action.contains(char::is_whitespace) {
+                refs.error(format!("binding `{id}`: `action` is an action of the input map (`jump`, `light`), not `{action}`"));
+            }
+            if let Some(text) = taken
+                && shards_locale::message_ref(text).is_none()
+            {
+                refs.error(format!(
+                    "binding `{id}`: `taken` names a message with `$input` and `$action` (`@controls-taken`), not `{text}`"
+                ));
+            }
+        }
         _ => {}
     }
     for child in widget.children() {
@@ -561,7 +661,8 @@ pub struct ThemeDef {
     /// Named colours for bars (`color: "health"`).
     pub colors: BTreeMap<String, String>,
     /// A font file under the asset folder (`fonts/FiraSans-Regular.ttf`) for every text. Default:
-    /// the engine's own, which has ASCII letters only: a game in other scripts names one.
+    /// the engine's own (`DEFAULT_FONT`: Fira Sans, with Latin, Greek and Cyrillic letters); a game
+    /// in other scripts names one.
     pub font: Option<String>,
     pub font_size: f32,
     pub title_size: f32,
@@ -729,5 +830,43 @@ mod tests {
         assert_eq!(screen.widgets.len(), 4);
         assert!(matches!(&screen.widgets[1], WidgetDef::Slider { step, setting: Some(s), .. } if *step == 0.25 && s == "accessibility.text_scale"));
         assert!(matches!(&screen.widgets[3], WidgetDef::Bar { max, .. } if *max == 1.0));
+    }
+
+    #[test]
+    fn a_binding_reads_from_ron_with_its_defaults_and_writes_only_what_it_has() {
+        let text = r#"[
+            Binding(id: "jump", label: "@controls-jump", action: "jump"),
+            Binding(id: "pad_back", label: "Back", context: "menu", action: "back", slot: 1, prompt: "@controls-press", taken: "@controls-taken"),
+        ]"#;
+        let opts = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        let widgets: Vec<WidgetDef> = opts.from_str(text).unwrap();
+        let WidgetDef::Binding { context, action, slot, prompt, taken, .. } = &widgets[0] else { panic!("{:?}", widgets[0]) };
+        assert_eq!((context.as_str(), action.as_str(), slot, prompt, taken), ("gameplay", "jump", &None, &None, &None), "gameplay, every slot, the engine's texts");
+        assert!(matches!(&widgets[1], WidgetDef::Binding { context, slot: Some(1), .. } if context == "menu"));
+        assert_eq!((widgets[0].kind(), widgets[0].id()), ("binding", Some("jump")));
+        assert_eq!(widgets[1].texts(), [("Back", "label"), ("@controls-press", "prompt"), ("@controls-taken", "taken")]);
+        // What is left out stays out of the JSON the content database hashes.
+        let json = serde_json::to_value(&widgets[0]).unwrap();
+        assert_eq!(json, serde_json::json!({"Binding": {"id": "jump", "label": "@controls-jump", "action": "jump"}}));
+        let menu = serde_json::to_value(&widgets[1]).unwrap();
+        assert_eq!(menu["Binding"]["context"], "menu");
+    }
+
+    #[test]
+    fn a_main_menu_and_its_picture_read_from_ron_and_a_plain_screen_writes_no_main_menu() {
+        let opts = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        let menu: ScreenDef = opts
+            .from_str(r#"(main_menu: true, closable: false, widgets: [Image(path: "ui/key_art.png", label: "@menu-art", width: 400.0)])"#)
+            .unwrap();
+        assert!(menu.main_menu && !menu.closable);
+        assert!(matches!(
+            &menu.widgets[0],
+            WidgetDef::Image { id: None, path, label, width: Some(w), height: None } if path == "ui/key_art.png" && label == "@menu-art" && *w == 400.0
+        ));
+        assert_eq!(menu.widgets[0].kind(), "image");
+        assert_eq!(assign_id(&menu.widgets[0], &mut BTreeMap::new()), "image1");
+        let plain: ScreenDef = opts.from_str(r#"(widgets: [Image(path: "a.png")])"#).unwrap();
+        assert!(!plain.main_menu);
+        assert!(!ron::to_string(&plain).unwrap().contains("main_menu"), "a screen that is no main menu says nothing of it");
     }
 }

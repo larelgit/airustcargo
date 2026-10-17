@@ -20,6 +20,8 @@ schemars.workspace = true
 fluent-bundle.workspace = true
 fluent-syntax.workspace = true
 unic-langid.workspace = true
+# The language of the system, which a game takes at its first run; inside this crate only.
+sys-locale.workspace = true
 
 [dev-dependencies]
 # Integration tests build apps the way a game does: the whole engine (`shards::testing`).

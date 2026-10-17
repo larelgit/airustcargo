@@ -26,6 +26,21 @@ settings-look-speed = Скорость обзора
 settings-invert-y = Инверсия обзора
 settings-hold = Удержание как переключение
 
+controls-keys = Клавиши и кнопки
+controls-jump = Прыжок
+controls-dodge = Уклонение
+controls-light = Лёгкая атака
+controls-heavy = Тяжёлая атака
+controls-block = Блок
+controls-parry = Парирование
+controls-interact = Взаимодействие
+controls-use-item = Использовать предмет
+controls-lock-on = Захват цели
+controls-sprint = Бег
+controls-glide = Планирование
+controls-press = Нажмите клавишу или кнопку… (Esc — отмена)
+controls-taken = { $input } уже используется для «{ $action }»
+
 settings-accessibility = Доступность
 settings-text-size = Размер текста
 settings-flashes = Вспышки

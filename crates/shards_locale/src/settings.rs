@@ -14,7 +14,8 @@ use crate::def::LocaleDef;
 #[settings_group(group = "locale")]
 pub struct LocaleSettings {
     /// A language of the game's content (`en`, `ru`). Empty: the game's own, which is the
-    /// first language (by id) that falls back to no other.
+    /// first language (by id) that falls back to no other; a game that keeps its settings on disk
+    /// fills it at its first run with the system's language, when it has that one.
     pub language: String,
 }
 

@@ -18,7 +18,8 @@ shards_content.workspace = true
 shards_settings.workspace = true
 # Text that names a message (`@menu-resume`) is shown in the language played.
 shards_locale.workspace = true
-bevy = { workspace = true, features = ["std", "serialize", "bevy_state"] }
+# `mouse` only switches on bevy_input's mouse types: a capture names the mouse button it took.
+bevy = { workspace = true, features = ["std", "serialize", "bevy_state", "mouse"] }
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
@@ -31,5 +32,7 @@ accesskit = { workspace = true, optional = true }
 accesskit.workspace = true
 # The content tests read RON as the content database does.
 ron.workspace = true
+# The default font's test reads which letters the font has.
+ttf-parser.workspace = true
 # Integration tests build apps the way a game does: the whole engine (`shards::testing`).
 shards = { workspace = true, features = ["render", "remote", "hot_reload"] }

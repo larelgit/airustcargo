@@ -81,7 +81,8 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
   `world_overlay` и `nav_overlay` (окно),
   `npc_overlay` (строка на NPC рядом с игроками: состояние, цель, жетон, поводок, что видит и слышит; в окне — F7); **правила** —
   `assert_add`, `assert_list`, `assert_remove`, `assert_reset` (`shards assert`); **интерфейс** — `ui_read` (дерево экранов: id
-  виджетов, значения, фокус), `ui_open`, `ui_close`, `ui_navigate`, `ui_click`, `ui_set`; **язык** — `locale` (языки, на каком
+  виджетов, значения, фокус), `ui_open`, `ui_close`, `ui_navigate`, `ui_click`, `ui_set` (у строки клавиш — `value=Key(KeyK)`);
+  главное меню (у игры, где оно есть, без окна — с `--menu`) — `new_game`, `continue_game`; **язык** — `locale` (языки, на каком
   играют, чего каждому не хватает), `text` (сообщение с параметрами на любом языке); язык меняет `settings_set group=locale
   key=language value=ru`; **звук** — `audio` (что слышит эта машина: трек и слой музыки, стемы, шины, голоса, неуслышанные
   звуки с причиной), `sound_play` (сыграть звук по правилам микшера: `at=eN`, `point=[x,y,z]`, `times=25`), `music_set`

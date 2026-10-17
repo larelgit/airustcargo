@@ -12,7 +12,7 @@ use bevy::app::AppExit;
 use bevy::prelude::*;
 use clap::Parser;
 use shards_content::{asset_root, check_dir, ContentKinds};
-use shards_core::{EngineConfig, NetLaunch, SettingsStore, SteamLaunch, SteamLobby};
+use shards_core::{EngineConfig, MenuLaunch, NetLaunch, SettingsStore, SteamLaunch, SteamLobby};
 
 /// A game on the Shards engine.
 #[derive(Parser, Debug)]
@@ -173,6 +173,21 @@ struct Args {
     /// when it ends the session.
     #[arg(long)]
     exit_with_host: bool,
+    /// Show the game's main menu after loading even without a window (an agent goes through it with
+    /// `ui_*` tools, `new_game`, `continue_game`). A game with a main menu shows it by default only
+    /// with a window or --offscreen, and never in replays, checks or sessions. A game without one
+    /// goes straight in either way.
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "no_menu", "replay", "check_content", "worldgen_report", "bake_nav", "bake_motion", "smoke", "perf",
+            "host", "join", "stand", "steam_host", "steam_server", "world", "character",
+        ]
+    )]
+    menu: bool,
+    /// Go straight into the game past its main menu, with a window or --offscreen too.
+    #[arg(long)]
+    no_menu: bool,
     /// Host the session in a Steam lobby (a game built with the `steam` feature): friends join
     /// through an invite, or with `--join steam:<lobby>`, over the Steam relay; no UDP port is opened.
     #[arg(long, conflicts_with_all = ["host", "join", "stand", "steam_server"])]
@@ -326,6 +341,11 @@ impl Args {
             character_slot: self.character.clone(),
             world_slot: self.world.clone(),
             exit_with_host: self.exit_with_host,
+            menu: match (self.menu, self.no_menu) {
+                (true, _) => MenuLaunch::Show,
+                (_, true) => MenuLaunch::Skip,
+                _ => MenuLaunch::Auto,
+            },
             check_every: self.check_every,
             check_detail: self.check_detail,
             tick_budget: self.tick_budget_ms,
@@ -412,6 +432,10 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
         || args.bake_motion.is_some()
         || args.smoke.is_some()
         || args.perf.is_some();
+    if checks {
+        // A replay is played, and a check made, on the game as it starts without a person: no menu.
+        config.menu = MenuLaunch::Skip;
+    }
     if config.net != NetLaunch::Off && checks {
         eprintln!(
             "error: --host, --join, --stand, --steam-host and --steam-server start a session; drop them to verify, check, bake, --smoke or --perf"
@@ -1023,12 +1047,18 @@ fn check_content(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig) ->
     let app = build(&config);
     let kinds = app.world().resource::<ContentKinds>().clone();
     let root = asset_root(app.world());
-    match check_dir(&root, &kinds) {
-        Ok(summary) => {
+    // The loading picture is shown before content loads, so the game names it in its config.
+    let picture = app.world().resource::<EngineConfig>().loading_image.clone();
+    let missing = picture.filter(|path| !root.join(path).is_file()).map(|path| {
+        format!("loading_image: no file `{path}` under the asset folder (the picture the game's EngineConfig names for loading screens)")
+    });
+    match (check_dir(&root, &kinds), missing) {
+        (Ok(summary), None) => {
             println!("{summary}");
             ExitCode::SUCCESS
         }
-        Err(errors) => {
+        (outcome, missing) => {
+            let errors: Vec<String> = outcome.err().unwrap_or_default().iter().map(ToString::to_string).chain(missing).collect();
             for error in &errors {
                 println!("{error}");
             }

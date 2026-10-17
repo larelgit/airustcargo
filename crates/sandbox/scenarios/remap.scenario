@@ -1,0 +1,64 @@
+# Keys and buttons (E9): the controls page of the settings has a binding row for each gameplay
+# button. Confirming a row makes it wait for the next key, mouse button or gamepad button (in a
+# window the menu gives it with `ui_set` as the `input` agent; here the agent gives it), and the
+# change is a `controls` setting: only what differs from the defaults is kept, and an input
+# another action reads is refused, the row naming that action.
+
+seed 42
+
+# --- no menu open, the controls and the language at their defaults, whatever an earlier run left
+act? ui_close screen=confirm_quit
+act? ui_close screen=settings
+act? ui_close screen=pause
+act settings_set group=controls reset=true
+act settings_set group=locale reset=true
+
+# --- the rows are on the controls page
+act ui_open screen=pause
+act ui_click id=pause/settings
+act ui_set id=settings/tabs value=controls
+act ui_read screen=settings
+expect result contains "settings/keys  panel \"Keys and buttons\""
+expect result contains "settings/jump  binding \"Jump\" Space · Pad South = Key(Space), GamepadButton(South) [controls.bindings.gameplay.jump]"
+expect result contains "settings/glide  binding \"Glide\" "
+expect result !contains "no action"
+
+# --- confirming a row waits; back stops the wait, and the settings stay open
+mark
+act ui_click id=settings/jump
+expect result contains "settings/jump waits for an input: the next key, mouse button or gamepad button becomes it"
+expect journal "ui: settings/jump waits for an input"
+act ui_read screen=settings
+expect result contains "[controls.bindings.gameplay.jump] · waiting for an input (Escape cancels; ui_set id=settings/jump value=Key(KeyK))"
+act ui_navigate dir=back
+expect result contains "settings/jump stopped waiting for an input; it stays Space · Pad South"
+act ui_read
+expect result contains "SCREENS  settings ◀ takes input · pause"
+
+# --- the input given becomes the binding: a key takes the keyboard's place, the gamepad's stays
+act ui_click id=settings/jump
+act ui_set id=settings/jump value="Key(KeyK)"
+expect result contains "settings/jump Space · Pad South → K · Pad South"
+expect journal "ui: settings/jump Space · Pad South → K · Pad South"
+act settings group=controls
+expect result contains "controls.bindings.gameplay.jump = [\"Key(KeyK)\",\"GamepadButton(South)\"]"
+
+# --- an input another action reads is refused; the row says which action has it
+act? ui_set id=settings/dodge value="Key(KeyE)"
+expect result contains "Key(KeyE) is already bound to `interact` in `gameplay`; free it first"
+expect result contains "(on this screen: settings/interact)"
+act ui_read screen=settings
+expect result contains "[controls.bindings.gameplay.dodge] · E is already used by Interact"
+act settings_set group=locale key=language value=ru
+act? ui_set id=settings/dodge value="Key(KeyE)"
+act ui_read screen=settings
+expect result contains "· E уже используется для «Взаимодействие»"
+act settings_set group=locale reset=true
+
+# --- `default` gives the defaults back, and the controls keep nothing for the jump
+act ui_set id=settings/jump value=default
+expect result contains "settings/jump K · Pad South → Space · Pad South"
+act settings group=controls
+expect result !contains "controls.bindings.gameplay.jump"
+act ui_navigate dir=back
+act ui_close screen=pause

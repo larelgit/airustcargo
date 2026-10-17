@@ -141,8 +141,8 @@ fn arrows_walk_a_grid_both_ways_and_a_comparison_reads_before_and_after() {
 fn mistakes_say_how_to_fix_the_call() {
     let mut app = game();
     let err = refused(&mut app, "ui_open", json!({"screen": "paws"}));
-    assert_eq!(err, "no screen `paws`; screens: confirm_quit, hud, pause, settings, shop");
-    assert_eq!(refused(&mut app, "ui_open", json!({"screen": "setting"})), "no screen `setting` (did you mean `settings`?); screens: confirm_quit, hud, pause, settings, shop");
+    assert_eq!(err, "no screen `paws`; screens: confirm_quit, hud, keys, pause, settings, shop");
+    assert_eq!(refused(&mut app, "ui_open", json!({"screen": "setting"})), "no screen `setting` (did you mean `settings`?); screens: confirm_quit, hud, keys, pause, settings, shop");
     let err = refused(&mut app, "ui_click", json!({"id": "pause/resume"}));
     assert!(err.starts_with("no widget `pause/resume`: screen `pause` is not open (open: hud)"), "{err}");
     assert!(refused(&mut app, "ui_navigate", json!({"dir": "down"})).starts_with("no menu is open (only the HUD"));
@@ -154,7 +154,7 @@ fn mistakes_say_how_to_fix_the_call() {
     let err = refused(&mut app, "ui_navigate", json!({"dir": "sideways"}));
     assert_eq!(err, "no direction `sideways`: up, down, left, right, next, prev, confirm or back");
     let err = refused(&mut app, "ui_set", json!({"id": "pause/resume", "value": 1}));
-    assert_eq!(err, "pause/resume is a button: `ui_set` takes sliders, toggles, choices and tabs");
+    assert_eq!(err, "pause/resume is a button: `ui_set` takes sliders, toggles, choices, tabs and bindings");
     ok(&mut app, "ui_click", json!({"id": "pause/settings"}));
     let err = refused(&mut app, "ui_set", json!({"id": "settings/text_size", "value": "big"}));
     assert_eq!(err, "settings/text_size is a slider: a number from 0.5 to 3, not `big`");

@@ -138,7 +138,7 @@ fn a_paused_game_stays_paused_after_loading() {
 
 #[test]
 fn after_loading_can_be_the_main_menu() {
-    let mut app = app(EngineConfig { after_loading: EngineState::MainMenu, ..test_config() });
+    let mut app = app(menu_config());
     app.world_mut().resource_mut::<Loaded>().0 = true;
     for _ in 0..3 {
         app.update();
@@ -146,6 +146,113 @@ fn after_loading_can_be_the_main_menu() {
     assert_eq!(state(&app), EngineState::MainMenu);
     assert!(app.world().get_resource::<State<PauseState>>().is_none(), "PauseState only exists in game");
     assert!(!app.world().resource::<SimGate>().is_held());
+}
+
+/// A game with a main menu, in a run that shows it.
+fn menu_config() -> EngineConfig {
+    EngineConfig { after_loading: EngineState::MainMenu, menu: MenuLaunch::Show, ..test_config() }
+}
+
+/// Updates until the loading gate lets go: the game is in its main menu, or in play.
+fn load_to_menu(app: &mut App) {
+    app.world_mut().resource_mut::<Loaded>().0 = true;
+    for _ in 0..10 {
+        app.update();
+        if state(app) != EngineState::Loading && !app.world().resource::<SimGate>().is_held() {
+            return;
+        }
+    }
+    panic!("still loading: {:?}", app.world().resource::<SimGate>().reasons());
+}
+
+fn heroes(app: &mut App) -> usize {
+    app.world_mut().query_filtered::<Entity, With<Hero>>().iter(app.world()).count()
+}
+
+#[test]
+fn a_main_menu_shows_only_in_runs_a_person_may_be_at() {
+    let windowed = EngineConfig { after_loading: EngineState::MainMenu, ..default() };
+    assert_eq!(windowed.start_state(), EngineState::MainMenu, "a window shows it");
+    let start = |config: EngineConfig| config.start_state();
+    assert_eq!(start(EngineConfig { headless: true, ..windowed.clone() }), EngineState::InGame, "headless goes straight in");
+    assert_eq!(start(EngineConfig { headless: true, offscreen: true, ..windowed.clone() }), EngineState::MainMenu, "offscreen draws");
+    assert_eq!(start(EngineConfig { testing: true, ..windowed.clone() }), EngineState::InGame, "tests go straight in");
+    assert_eq!(start(EngineConfig { world_slot: Some("slot1".into()), ..windowed.clone() }), EngineState::InGame, "a named save is played");
+    assert_eq!(start(EngineConfig { character_slot: Some("slot1".into()), ..windowed.clone() }), EngineState::InGame);
+    assert_eq!(start(EngineConfig { menu: MenuLaunch::Skip, ..windowed.clone() }), EngineState::InGame, "--no-menu");
+    assert_eq!(start(EngineConfig { menu: MenuLaunch::Show, ..test_config() }), EngineState::InGame, "a game without a menu has none to show");
+    assert_eq!(start(menu_config()), EngineState::MainMenu, "--menu shows it headless");
+}
+
+#[test]
+fn a_main_menu_headless_by_default_is_passed_over() {
+    let mut app = app(EngineConfig { after_loading: EngineState::MainMenu, ..test_config() });
+    load(&mut app);
+    assert_eq!(heroes(&mut app), 1, "the game's world, as without a menu");
+    let journal: Vec<String> = app.world().resource::<AiJournal>().after(0).0.map(|e| e.text.clone()).collect();
+    assert!(journal.iter().any(|t| t == "state Loading -> InGame"), "{journal:?}");
+}
+
+#[test]
+fn time_stands_in_the_main_menu_until_new_game_starts_the_game() {
+    let mut app = app(EngineConfig { paused: false, ..menu_config() });
+    load_to_menu(&mut app);
+    assert_eq!(state(&app), EngineState::MainMenu);
+    for _ in 0..3 {
+        app.update();
+    }
+    assert!(ai_core::sim::is_paused(app.world()), "no tick runs in the menu");
+    assert_eq!(ai_core::sim::tick(app.world()), 0);
+    assert_eq!(heroes(&mut app), 0, "the game's world waits for the game");
+
+    let out = ok(&mut app, "new_game", json!({}));
+    assert_eq!(state(&app), EngineState::InGame, "{}", out.result);
+    assert_eq!(heroes(&mut app), 1, "spawned inside the call");
+    assert!(!ai_core::sim::is_paused(app.world()), "time runs in the game");
+    assert!(app.world().get_resource::<State<PauseState>>().is_some());
+
+    let again = act(&mut app, "new_game", json!({}));
+    assert!(!again.ok, "{}", again.result);
+    assert!(again.result.as_str().unwrap().contains("on already"), "{}", again.result);
+}
+
+#[test]
+fn a_paused_game_stays_paused_past_its_main_menu() {
+    let mut app = app(menu_config());
+    load_to_menu(&mut app);
+    ok(&mut app, "new_game", json!({}));
+    assert_eq!(state(&app), EngineState::InGame);
+    assert!(ai_core::sim::is_paused(app.world()), "--paused: time runs only by step");
+    ok(&mut app, "step", json!({"ticks": 2}));
+    assert_eq!(ai_core::sim::tick(app.world()), 2);
+}
+
+#[test]
+fn new_game_refuses_outside_the_main_menu_and_records_nothing() {
+    let mut app = app(test_config());
+    load(&mut app);
+    let out = act(&mut app, "new_game", json!({}));
+    assert!(!out.ok);
+    assert!(out.result.as_str().unwrap().contains("on already"), "{}", out.result);
+    assert_eq!(heroes(&mut app), 1);
+}
+
+#[test]
+fn ticks_run_in_the_main_menu_restart_the_recording_when_the_game_starts() {
+    let mut moved = app(menu_config());
+    load_to_menu(&mut moved);
+    ok(&mut moved, "step", json!({"ticks": 3}));
+    assert_eq!(state(&moved), EngineState::MainMenu);
+    ok(&mut moved, "new_game", json!({}));
+    let journal: Vec<String> = moved.world().resource::<AiJournal>().after(0).0.map(|e| e.text.clone()).collect();
+    assert!(journal.iter().any(|t| t.starts_with("the recording starts at tick 3")), "{journal:?}");
+
+    // A menu left as it was entered keeps the recording from tick 0.
+    let mut still = app(menu_config());
+    load_to_menu(&mut still);
+    ok(&mut still, "new_game", json!({}));
+    let journal: Vec<String> = still.world().resource::<AiJournal>().after(0).0.map(|e| e.text.clone()).collect();
+    assert!(!journal.iter().any(|t| t.starts_with("the recording starts")), "{journal:?}");
 }
 
 #[test]

@@ -11,6 +11,8 @@
 //! - `audio`: the music turns to combat when the hero comes to the grunt; warnings and menus sound;
 //!   the hero's swing whooshes with no model drawn
 //! - `screens`: the HUD counts the trophies, the menu saves before it quits
+//! - `main_menu`: a player meets the main menu, tests and replays go straight in; New game and
+//!   Continue; the loading picture
 //! - `manifest`: the game depends on `shards` and nothing else, and its settings folder is named
 //!   after the package (a rename finds it)
 
@@ -18,6 +20,7 @@ mod audio;
 mod content;
 mod coop;
 mod determinism;
+mod main_menu;
 mod manifest;
 mod region;
 mod replays;
