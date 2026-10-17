@@ -50,6 +50,7 @@ pub mod camera;
 pub mod controller;
 pub mod input;
 mod intent;
+mod invariants;
 #[cfg(feature = "render")]
 mod overlay;
 pub mod perception;
@@ -59,6 +60,8 @@ mod tools;
 
 use bevy::prelude::*;
 use shards_core::EngineAppExt;
+
+pub use invariants::motion_finite;
 
 pub use ai::{describe_motion, physics_line_of_sight, MotionAi};
 pub use camera::{CameraSettings, LockOnTarget, ThirdPersonCamera};
@@ -107,6 +110,7 @@ impl Plugin for MotionPlugin {
             app.add_plugins(shards_settings::ShardsSettingsPlugin);
         }
         app.add_engine_module("motion", VERSION);
+        app.add_engine_invariant("motion.finite", motion_finite);
         ai::plugin(app);
         intent::plugin(app);
         tools::plugin(app);

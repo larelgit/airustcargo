@@ -14,6 +14,7 @@ use shards::bevy::math::ops;
 mod gltf;
 mod heavy;
 mod heavy_saves;
+mod engine_rules;
 mod invariants;
 mod net;
 mod net_coop;

@@ -46,7 +46,7 @@ dynamic = ["bevy/dynamic_linking"]
 trace_tracy = ["bevy/trace_tracy"]
 # A build for players (`shards package`): the developer's keys (console, menu, overlays) do nothing.
 # Build it without `remote` and `hot_reload`.
-dist = []
+dist = ["shards_core/dist"]
 # Steam (E10.5): lobbies and invites, co-op over the Steam relay (`--steam-host`, `--steam-server`,
 # `--join steam:<id>`), achievements (`*.achievement.ron`), saves mirrored to Steam Cloud. On its own the
 # module runs on a fake Steam in the process (tests; a game a player runs says it has no Steam);

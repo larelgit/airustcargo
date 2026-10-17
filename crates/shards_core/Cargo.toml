@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+# A shipped build: the engine's own invariant rules are off by default (`EngineConfig::engine_invariants`).
+dist = []
+
 [dependencies]
 ai_core.workspace = true
 bevy = { workspace = true, features = ["std", "bevy_state", "serialize"] }

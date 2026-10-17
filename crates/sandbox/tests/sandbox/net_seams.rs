@@ -75,7 +75,7 @@ fn a_client_sandbox_simulates_nothing() {
 #[test]
 fn a_client_checks_no_invariants_and_a_host_does() {
     let mut app = sandbox::test_app(42);
-    // Breaks the game's `health_in_range` (above the max); a client does not simulate, so its
+    // Breaks the engine's `action.resources_in_range` and the game's `health_in_range` (above the max); a client does not simulate, so its
     // body would only ever be a replicated or predicted one that a rule must not judge.
     ok(&mut app, "set", json!({"id": BOSS, "component": "Health", "path": "current", "value": 700.0}));
     app.insert_resource(NetRole::Client);
@@ -87,9 +87,9 @@ fn a_client_checks_no_invariants_and_a_host_does() {
     // The rule had not fired: the same state halts the game where it is simulated.
     app.insert_resource(NetRole::Single);
     let hosted = act(&mut app, "step", json!({"ticks": 5}));
-    assert_eq!(text(&hosted), "ran 1 ticks (5 → 6), stopped: invariant health_in_range violated at tick 6");
+    assert_eq!(text(&hosted), "ran 1 ticks (5 → 6), stopped: invariant action.resources_in_range violated at tick 6 (+1 more)");
     assert!(hosted.halted.is_some());
-    assert_eq!(app.world().resource::<AiInvariants>().violations().len(), 1);
+    assert_eq!(app.world().resource::<AiInvariants>().violations().len(), 2);
 }
 
 /// Everything a host would send a client that has nothing: every AI-visible entity's

@@ -91,7 +91,7 @@ pub use dev::{DevCommand, DevEntry, DevLine, DevMenu};
 pub use failures::{ai_core_error_handler, AiFailures, SystemFailure};
 pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible};
 pub use heavy::{HeavyConfig, HeavyFailure, HeavyTwin};
-pub use invariants::{AiInvariants, InvariantSystems, Violation};
+pub use invariants::{AiInvariants, InvariantSystems, Offenders, Violation};
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
 pub use net_rules::{replicated_components, rules_hash, NetRules};
 pub use observe::{AiCamera, AiPerception, ObserveOptions};
@@ -156,6 +156,9 @@ pub struct AiCorePlugin {
     pub heavy: Option<heavy::HeavyConfig>,
     /// A failed heavy check saves its snapshots and the session's replay (off in tests).
     pub heavy_files: bool,
+    /// Register the engine's own invariant rules (`ai.index_consistent` here; the other
+    /// modules read `EngineConfig::engine_invariants`). On by default.
+    pub engine_invariants: bool,
 }
 
 impl Default for AiCorePlugin {
@@ -173,6 +176,7 @@ impl Default for AiCorePlugin {
             game: crash::GameInfo::default(),
             heavy: None,
             heavy_files: true,
+            engine_invariants: true,
         }
     }
 }
@@ -234,6 +238,12 @@ impl Plugin for AiCorePlugin {
         crash::plugin(app, self.game.clone());
         invariants::plugin(app, self.crash_replays);
         heavy::plugin(app, self.heavy, self.heavy_files);
+        if self.engine_invariants {
+            let rule: invariants::Invariant = |world| world.get_resource::<AiIndex>()?.check(world);
+            if let Err(e) = app.world_mut().resource_mut::<AiInvariants>().add_engine_rule("ai.index_consistent", rule) {
+                panic!("ai.index_consistent: {e}");
+            }
+        }
 
         #[cfg(feature = "render")]
         {

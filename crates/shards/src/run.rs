@@ -182,6 +182,10 @@ struct Args {
     /// modules that run (`engine.modules`); a module others need goes only with them.
     #[arg(long, value_name = "MODULES", value_delimiter = ',')]
     without: Vec<String>,
+    /// Do not check the engine's own invariant rules (`shards assert list` shows them as `engine
+    /// rule`). They are on by default and off in a `dist` build; `--verify` always checks them.
+    #[arg(long)]
+    no_engine_invariants: bool,
     /// Keep player settings in DIR instead of the platform's settings folder.
     #[arg(long, value_name = "DIR", conflicts_with = "no_settings")]
     settings_dir: Option<String>,
@@ -408,6 +412,7 @@ impl Args {
                     ..defaults
                 }
             }),
+            engine_invariants: defaults.engine_invariants && !self.no_engine_invariants,
             check_every: self.check_every,
             check_detail: self.check_detail,
             tick_budget: self.tick_budget_ms,
@@ -940,7 +945,8 @@ fn exit_code(exit: AppExit) -> ExitCode {
 fn verify(build: &crate::heavy::Builder, config: EngineConfig, recording: Replay) -> ExitCode {
     // Verifying writes nothing, not even a crash replay over the one being verified (a failed
     // heavy check saves what it found: heavy mode is asked for, to find out).
-    let config = EngineConfig { headless: true, port: None, paused: true, crash_replays: false, hot_reload: false, ..config };
+    let config =
+        EngineConfig { headless: true, port: None, paused: true, crash_replays: false, hot_reload: false, engine_invariants: true, ..config };
     let end = recording.end.tick;
     let mut app = build(&config);
     crate::heavy::install(&mut app, &config, build.clone());
@@ -1096,7 +1102,7 @@ mod windowed {
     pub fn verify(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, recording: Replay) -> ExitCode {
         // Writes nothing, serves nothing, starts paused: time moves only by the driver's steps.
         let config =
-            EngineConfig { headless: false, port: None, paused: true, crash_replays: false, hot_reload: false, ..config };
+            EngineConfig { headless: false, port: None, paused: true, crash_replays: false, hot_reload: false, engine_invariants: true, ..config };
         let (end, from) = (recording.end.tick, recording.start.as_ref().map_or(0, |s| s.tick));
         let mut app = build(&config);
         // Before loading, as a live `--replay` does.
@@ -1290,7 +1296,8 @@ fn bake_motion(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, acti
 /// not finish loading …`, `gameplay system … panicked …`, every invariant it broke) and exit 1.
 /// Writes nothing: no settings, no crash replay. `shards package` runs it on the build it made.
 fn smoke(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig, ticks: u64) -> ExitCode {
-    let config = EngineConfig { headless: true, port: None, paused: true, crash_replays: false, hot_reload: false, ..config };
+    let config =
+        EngineConfig { headless: true, port: None, paused: true, crash_replays: false, hot_reload: false, engine_invariants: true, ..config };
     let started = Instant::now();
     let mut app = build(&config);
     app.finish();

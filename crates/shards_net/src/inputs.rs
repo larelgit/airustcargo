@@ -29,6 +29,8 @@ pub const MAX_ORDERS: usize = 16;
 pub const MAX_INPUT_NAME: usize = 64;
 /// Presses a host tick takes from one player, however many of their frames are due at once.
 pub const MAX_PRESSES_PER_TICK: usize = 32;
+/// How much longer than 1 a client's `move_dir` may be before the host cuts it (rounding).
+pub const MOVE_DIR_SLACK: f32 = 1e-4;
 /// Largest frame within the limits above, as JSON bytes (with room to spare).
 pub const MAX_FRAME_BYTES: usize = 8 * 1024;
 /// Largest `Inputs` packet a host reads, in bytes: one larger is over the limits whatever it
@@ -76,11 +78,27 @@ impl IntentState {
     }
 
     /// Writes the state into `intent`; whether anything changed.
+    ///
+    /// The host does not trust a client's numbers: a `move_dir` that is not finite becomes
+    /// zero, one longer than 1 (beyond rounding) is cut to length 1, and an `aim` that is not
+    /// finite is dropped. An honest client already sends `move_dir` clamped, so its frames
+    /// pass unchanged; a bad frame cannot put garbage in `Intent` (the engine rule
+    /// `core.intent_sane` would stop the host on it).
     pub fn write(&self, intent: &mut Intent) -> bool {
-        let changed = intent.move_dir != self.move_dir || intent.aim != self.aim || intent.target != self.target || intent.held != self.held;
+        let move_dir = if !self.move_dir.is_finite() {
+            Vec3::ZERO
+        } else if self.move_dir.length() > 1.0 + MOVE_DIR_SLACK {
+            // Scaled down first: the length of a huge finite vector overflows to infinity.
+            let big = self.move_dir.abs().max_element();
+            (self.move_dir / big).clamp_length_max(1.0)
+        } else {
+            self.move_dir
+        };
+        let aim = self.aim.filter(|a| a.is_finite());
+        let changed = intent.move_dir != move_dir || intent.aim != aim || intent.target != self.target || intent.held != self.held;
         if changed {
-            intent.move_dir = self.move_dir;
-            intent.aim = self.aim;
+            intent.move_dir = move_dir;
+            intent.aim = aim;
             intent.target = self.target;
             intent.held = self.held.clone();
         }
@@ -323,6 +341,24 @@ mod tests {
     fn frame(tick: u64) -> InputFrame {
         InputFrame { tick, presses: vec![press("dodge")], ..default() }
     }
+
+    #[test]
+    fn a_bad_frame_cannot_put_garbage_in_the_hosts_intent() {
+        let mut intent = Intent::default();
+        let state = |move_dir: Vec3, aim: Option<Vec3>| IntentState { move_dir, aim, ..default() };
+        // An honest, clamped frame passes bit for bit.
+        let honest = Vec3::new(0.6, 0.0, 0.8);
+        assert!(state(honest, Some(Vec3::X)).write(&mut intent));
+        assert_eq!((intent.move_dir, intent.aim), (honest, Some(Vec3::X)));
+        // Too long: cut to 1. Not finite: zero, and the aim is dropped.
+        state(Vec3::new(1e30, 0.0, 0.0), None).write(&mut intent);
+        assert!((intent.move_dir.length() - 1.0).abs() < 1e-4, "{:?}", intent.move_dir);
+        state(Vec3::new(f32::NAN, 0.0, 1.0), Some(Vec3::splat(f32::INFINITY))).write(&mut intent);
+        assert_eq!((intent.move_dir, intent.aim), (Vec3::ZERO, None));
+        // The same bad frame again changes nothing.
+        assert!(!state(Vec3::new(f32::NAN, 0.0, 1.0), Some(Vec3::splat(f32::INFINITY))).write(&mut intent));
+    }
+
 
     #[test]
     fn presses_apply_exactly_once_and_state_is_last_wins() {
