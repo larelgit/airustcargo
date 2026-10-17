@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use ai_core::journal::{self, JournalKind};
+use ai_core::replay::Replay;
 use ai_core::{call_tool, sim, AiReplay};
 use bevy::asset::io::Reader;
 use bevy::asset::{AssetLoader, LoadContext, LoadState};
@@ -20,7 +21,7 @@ use bevy::prelude::*;
 use serde_json::json;
 use shards_core::{EngineConfig, LoadStatus};
 
-use crate::db::{is_claimed, list_files, read_file, ContentDb, ContentKinds, DefChange, Source, CONTENT_DIR, NO_FOLDER_HINT};
+use crate::db::{is_claimed, list_files, read_file, ContentDb, ContentDef, ContentKinds, DefChange, Source, CONTENT_DIR, NO_FOLDER_HINT};
 
 /// One content file's text. Parsing happens when the database is built, so a broken
 /// file still loads (and is reported with every other problem).
@@ -354,6 +355,32 @@ pub(crate) fn prepare_playback(world: &mut World) {
     }
 }
 
+/// The changes of every `content_apply` a recording made, in order.
+fn recorded_changes(replay: &Replay) -> Vec<DefChange> {
+    let mut changes = Vec::new();
+    for event in &replay.events {
+        let ai_core::replay::ReplayEvent::Call { tool, args, .. } = event else { continue };
+        if tool == "content_apply" {
+            let applied: Vec<DefChange> = args.get("changes").and_then(|c| serde_json::from_value(c.clone()).ok()).unwrap_or_default();
+            changes.extend(applied);
+        }
+    }
+    changes
+}
+
+/// Every definition of kind `T` that `replay` will apply on its way: the ones its
+/// `content_apply` calls set. A module whose definitions name files (a tile's level file)
+/// asks for those files while the game loads, so a replayed call right after the change (in
+/// the same tick, where a live session had frames between) finds them loaded. Definitions
+/// that do not read as `T` are left out: the replayed call says what is wrong with them.
+pub fn defs_ahead<T: ContentDef>(replay: &Replay) -> Vec<T> {
+    recorded_changes(replay)
+        .into_iter()
+        .filter(|change| change.kind == T::KIND)
+        .filter_map(|change| T::deserialize(change.def?).ok())
+        .collect()
+}
+
 /// Definitions the playing recording changed with `content_apply` go back to the
 /// versions it started from (the `before` of the first change to each, which
 /// `content_apply` checked), so the replay plays the session it recorded even after the
@@ -361,16 +388,9 @@ pub(crate) fn prepare_playback(world: &mut World) {
 fn restore_for_playback(world: &mut World) {
     let Some(replay) = world.get_resource::<AiReplay>().and_then(AiReplay::playing) else { return };
     let mut first: Vec<DefChange> = Vec::new();
-    for event in &replay.events {
-        let ai_core::replay::ReplayEvent::Call { tool, args, .. } = event else { continue };
-        if tool != "content_apply" {
-            continue;
-        }
-        let changes: Vec<DefChange> = args.get("changes").and_then(|c| serde_json::from_value(c.clone()).ok()).unwrap_or_default();
-        for change in changes {
-            if !first.iter().any(|c| c.kind == change.kind && c.id == change.id) {
-                first.push(DefChange { def: change.before.clone(), file: change.file.clone(), ..change });
-            }
+    for change in recorded_changes(replay) {
+        if !first.iter().any(|c| c.kind == change.kind && c.id == change.id) {
+            first.push(DefChange { def: change.before.clone(), file: change.file.clone(), ..change });
         }
     }
     let kinds = world.resource::<ContentKinds>().clone();

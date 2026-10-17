@@ -49,7 +49,7 @@ use shards_core::EngineAppExt;
 
 pub use color::parse_color;
 pub use db::{check_dir, ContentDb, ContentDef, ContentError, ContentKinds, DefChange, Refs, Summary};
-pub use load::{asset_root, ContentText};
+pub use load::{asset_root, defs_ahead, ContentText};
 pub use prefab::{spawn_prefab, PrefabDef};
 
 /// The types a game module uses most.

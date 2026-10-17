@@ -27,7 +27,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use ai_core::journal::{self, JournalKind};
-use ai_core::{AiId, AiKind, AiLandmark, AiPlayer, SimGate, SimSeed, Snapshot};
+use ai_core::{AiId, AiKind, AiLandmark, AiPlayer, AiReplay, SimGate, SimSeed, Snapshot};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::prefab::check_prefab;
@@ -221,6 +221,10 @@ pub(crate) struct LevelFiles {
     checked: BTreeSet<String>,
     /// The content was read once since a loader was registered.
     synced: bool,
+    /// The files a replay being played will build tiles from once its `content_apply` calls
+    /// add them ([`shards_content::defs_ahead`]), and whether this playback was read for them.
+    ahead: Vec<String>,
+    ahead_read: bool,
 }
 
 /// `PostUpdate`, once content is built or changed (a hot reload that adds a tile too): asks
@@ -229,23 +233,55 @@ pub(crate) struct LevelFiles {
 pub(crate) fn request_level_files(
     db: Res<ContentDb>,
     spawner: Option<Res<LevelSpawner>>,
+    replay: Option<Res<AiReplay>>,
     mut files: ResMut<LevelFiles>,
     mut commands: Commands,
 ) {
     let Some(spawner) = spawner else { return };
-    if !db.is_loaded() || (files.synced && !db.is_changed() && !spawner.is_changed()) {
+    // A playback began or ended: in a replay, a `content_apply` that adds a tile and the
+    // `regen` that builds with it can be one tick apart or less, with no frame between to load
+    // the tile's file, so the files are asked for (and the loading gate waits for them) first.
+    let playing = replay.as_deref().and_then(AiReplay::playing);
+    let new_playback = playing.is_some() != files.ahead_read;
+    if !db.is_loaded() || (files.synced && !db.is_changed() && !spawner.is_changed() && !new_playback) {
         return;
+    }
+    if new_playback {
+        files.ahead = playing.map(paths_ahead).unwrap_or_default();
+        files.ahead_read = playing.is_some();
     }
     let request = spawner.request;
     files.paths = level_paths(&db);
     files.synced = true;
     // A path outside the asset folder gets no request: the asset server answers with a handle
     // that never loads (the loading gate reports it, see `levels_status`).
-    let fresh: Vec<String> = files.paths.iter().filter(|p| level_path_problem(p).is_none() && !files.requested.contains(*p)).cloned().collect();
+    let fresh: Vec<String> = files
+        .paths
+        .iter()
+        .chain(&files.ahead)
+        .filter(|p| level_path_problem(p).is_none() && !files.requested.contains(*p))
+        .cloned()
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .collect();
     for path in fresh {
         files.requested.insert(path.clone());
         commands.queue(move |world: &mut World| request(world, &path));
     }
+}
+
+/// The level files of the tiles and rooms `replay` adds as it plays.
+fn paths_ahead(replay: &ai_core::replay::Replay) -> Vec<String> {
+    let tiles = shards_content::defs_ahead::<TileDef>(replay).into_iter().map(|t| t.geometry);
+    let rooms = shards_content::defs_ahead::<RoomDef>(replay).into_iter().map(|r| r.geometry);
+    let paths: BTreeSet<String> = tiles
+        .chain(rooms)
+        .filter_map(|geometry| match geometry {
+            TileGeometry::Level { path } => Some(path),
+            _ => None,
+        })
+        .collect();
+    paths.into_iter().collect()
 }
 
 /// `PostUpdate`: once a level file is loaded, journals what the loader finds wrong inside it
@@ -298,6 +334,13 @@ pub(crate) fn levels_status(world: &World) -> LoadStatus {
             LoadStatus::Ready => {}
             LoadStatus::Pending(_) => waiting += 1,
             LoadStatus::Failed(why) => failed.push((path, why)),
+        }
+    }
+    // A file a replay will add waits too; one that cannot load does not hold the game: the
+    // replayed call that builds with it says why.
+    for path in files.ahead.iter().filter(|p| !files.paths.contains(*p) && level_path_problem(p).is_none()) {
+        if let LoadStatus::Pending(_) = (spawner.status)(world, path) {
+            waiting += 1;
         }
     }
     if !failed.is_empty() {

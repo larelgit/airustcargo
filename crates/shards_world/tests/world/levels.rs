@@ -535,6 +535,68 @@ fn a_session_that_reloads_a_level_replays_identically() {
     assert!(report.identical(), "{report}");
 }
 
+/// `content_apply` arguments for a tile `annex` built from `tiles/annex.gltf` (the yard's twin,
+/// a file no content names when the game loads) and a region `annexes` of annexes.
+fn annex_changes(app: &App) -> serde_json::Value {
+    let db = app.world().resource::<ContentDb>();
+    let mut tile = db.get_json("tile", "yard").unwrap().clone();
+    tile["geometry"]["Level"]["path"] = json!("tiles/annex.gltf");
+    let mut region = db.get_json("region", "lawns").unwrap().clone();
+    region["tiles"] = json!(["annex"]);
+    json!({"changes": [{"kind": "tile", "id": "annex", "def": tile}, {"kind": "region", "id": "annexes", "def": region}]})
+}
+
+/// Loads `path` the way a live session does between two calls: frame after frame, until the
+/// loading gate lets go.
+fn load_between_calls(app: &mut App, path: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while shards::level::level_asset(app.world(), path).is_err() || shards::ai_core::sim::gate_message(app.world()).is_some() {
+        assert!(Instant::now() < deadline, "{path} did not load");
+        app.update();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn a_tile_file_a_content_edit_adds_is_loaded_before_a_replay_builds_with_it_in_the_same_tick() {
+    let annex = yard().gltf();
+    let dir = site("ahead", &[("tiles/annex.gltf", annex.as_bytes())]);
+    let mut app = app_in(&dir, 7, Some("lawns"));
+    ok(&mut app, "step", json!({"ticks": 10}));
+    let changes = annex_changes(&app);
+    ok(&mut app, "content_apply", changes);
+    load_between_calls(&mut app, "tiles/annex.gltf");
+    ok(&mut app, "regen", json!({"region": "annexes", "seed": 1}));
+    ok(&mut app, "step", json!({"ticks": 20}));
+    let recording = shards::ai_core::replay::save(app.world());
+
+    // Playback runs both calls in tick 10, with no frame between them: the file the edit names
+    // was asked for while the game loaded.
+    let mut again = fresh_in(&dir, 7, Some("lawns"));
+    let report = testing::verify(&mut again, recording).expect("plays");
+    assert!(report.identical(), "{report}");
+    assert_eq!(region(&again).manifest.region, "annexes");
+}
+
+#[test]
+fn a_level_a_content_edit_adds_is_loaded_before_a_replay_spawns_it_in_the_same_tick() {
+    let annex = yard().gltf();
+    let dir = site("ahead_level", &[("levels/annex.gltf", annex.as_bytes())]);
+    let mut app = app_in(&dir, 7, Some("lawns"));
+    ok(&mut app, "step", json!({"ticks": 10}));
+    let level = json!({"changes": [{"kind": "level", "id": "annex", "def": {"file": "levels/annex.gltf", "at": [40.0, 0.0, 40.0]}}]});
+    ok(&mut app, "content_apply", level);
+    load_between_calls(&mut app, "levels/annex.gltf");
+    ok(&mut app, "spawn_level", json!({"id": "annex"}));
+    ok(&mut app, "step", json!({"ticks": 20}));
+    let recording = shards::ai_core::replay::save(app.world());
+
+    let mut again = fresh_in(&dir, 7, Some("lawns"));
+    let report = testing::verify(&mut again, recording).expect("plays");
+    assert!(report.identical(), "{report}");
+    assert!(again.world().resource::<LevelInstances>().iter().any(|i| i.label == "annex"));
+}
+
 #[test]
 fn a_tile_whose_file_spawns_nothing_is_dropped_with_its_region_too() {
     // Only a mesh: no gameplay node, so the instance has no entity to find it by.
