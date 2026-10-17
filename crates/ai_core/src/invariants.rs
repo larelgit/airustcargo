@@ -197,12 +197,17 @@ where
         static STATES: RefCell<HashMap<(TypeId, WorldId), Box<dyn Any>>> = RefCell::new(HashMap::new());
     }
     STATES.with(|states| {
-        let mut states = states.borrow_mut();
         let key = (TypeId::of::<QueryState<D, F>>(), world.id());
-        if let std::collections::hash_map::Entry::Vacant(slot) = states.entry(key) {
-            slot.insert(Box::new(world.try_query_filtered::<D, F>()?));
-        }
-        states.get_mut(&key)?.downcast_mut::<QueryState<D, F>>().map(f)
+        // Taken out while `f` runs: a rule may call `with_query` again inside, and a panic in
+        // `f` drops the state, which the next call builds again.
+        let kept = states.borrow_mut().remove(&key);
+        let mut state = match kept.and_then(|b| b.downcast::<QueryState<D, F>>().ok()) {
+            Some(state) => state,
+            None => Box::new(world.try_query_filtered::<D, F>()?),
+        };
+        let out = f(&mut state);
+        states.borrow_mut().insert(key, state);
+        Some(out)
     })
 }
 
@@ -654,6 +659,20 @@ mod tests {
         assert_eq!(count(&b), Some(1), "another world has its own state");
         // A component the world does not know: nothing to judge, and no state is kept.
         assert_eq!(with_query::<&crate::replay::AiReplay, (), _>(&b, |_| ()), None);
+    }
+
+    #[test]
+    fn a_rule_may_nest_queries_and_a_panic_inside_loses_only_the_kept_state() {
+        let mut w = World::new();
+        w.init_resource::<crate::AiIndex>();
+        w.spawn(crate::AiVisible);
+        let nested = with_query::<&AiId, (), _>(&w, |outer| {
+            outer.iter(&w).count() + with_query::<&AiId, (), _>(&w, |inner| inner.iter(&w).count()).unwrap()
+        });
+        assert_eq!(nested, Some(2));
+        let panicked = catch_unwind(AssertUnwindSafe(|| with_query::<&AiId, (), _>(&w, |_| panic!("the rule has a bug"))));
+        assert!(panicked.is_err());
+        assert_eq!(with_query::<&AiId, (), _>(&w, |q| q.iter(&w).count()), Some(1), "built again");
     }
 
     #[test]

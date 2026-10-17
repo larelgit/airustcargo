@@ -230,7 +230,7 @@ a system `In<Call<Args>> -> ToolResult`. The registration call sets the kind:
 - `add_ai_condition(name, |world| bool)`: a name for `step --until named:NAME`.
 - `add_ai_invariant(name, |world| Option<String>)`: a rule that must hold after every tick. The function reads the world and returns the explanation while the rule is broken (`e2 Grunt.heavy_chance = 25 outside 0..=1`); the game then stops like after a crashed system: `step` answers `stopped: invariant grunt_chance violated at tick N`, and the session is saved as a replay. `grunt_chance` in `src/ai.rs` is the example, with a control test (`tests/game/content.rs`) that breaks it on purpose. `Offenders` reports the lowest id first with `(+N more)`.
 
-The engine adds its own rules (`shards assert list` shows them as `engine rule`): they check ids, `Intent`, transforms, health, stamina, poise, running actions, NPC states and attack tokens. They are on in tests and in development builds, and off in a build with the `dist` feature, so a shipped game never pauses on a rule; `--no-engine-invariants` turns them off in a development build.
+The engine adds its own rules (`shards assert list` shows them as `engine rule`): they check ids, `Intent`, transforms, health, stamina, poise, running actions, NPC states and attack tokens. They are on in tests and in development builds, and off in a build with the `dist` feature, so a shipped game never pauses on an engine rule (your own rules, such as `grunt_chance`, stay on); `--no-engine-invariants` turns them off in a development build.
 
 `Scope::Player` is for what a person could do (the tool works through `Intent` and the game rules).
 `Scope::Dev` is for cheats and debugging. A tool error must say how to fix the call (see `taunt`).

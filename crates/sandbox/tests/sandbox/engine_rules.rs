@@ -87,7 +87,6 @@ fn a_transform_or_motion_state_with_nan_stops_the_game() {
     // in a running game, Bevy's own `Dir3` assertions panic on it first.
     let mut world = World::new();
     world.init_resource::<ai_core::AiIndex>();
-    world.register_component::<shards::motion::MotionState>();
     world.spawn((AiVisible, Transform { rotation: Quat::from_xyzw(0.0, 0.0, 0.0, 1.05), ..default() }));
     let text = shards::motion::motion_finite(&world).expect("1.05 is not a rotation");
     assert!(text.starts_with("e1 Transform.rotation = ") && text.contains("not normalised"), "{text}");

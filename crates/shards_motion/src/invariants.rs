@@ -21,8 +21,11 @@ const ROTATION_TOLERANCE: f32 = 1e-3;
 /// that writer: the rule is the reason to normalise it there.
 pub fn motion_finite(world: &World) -> Option<String> {
     let mut bad = Offenders::default();
-    with_query::<(&AiId, &Transform, Option<&MotionState>), With<AiVisible>, _>(world, |query| {
-        for (id, transform, motion) in query.iter(world) {
+    // `MotionState` is read per entity, not named in the query: a world that never registered
+    // it still has its transforms judged.
+    with_query::<(Entity, &AiId, &Transform), With<AiVisible>, _>(world, |query| {
+        for (entity, id, transform) in query.iter(world) {
+            let motion = world.get::<MotionState>(entity);
             if let Some(what) = transform_problem(transform).or_else(|| motion.and_then(motion_problem)) {
                 bad.note(*id, || what);
             }
