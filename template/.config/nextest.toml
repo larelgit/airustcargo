@@ -1,0 +1,13 @@
+# cargo-nextest for the template (a separate workspace: nextest reads this file, not the root one).
+# CI runs `cargo nextest run --manifest-path template/Cargo.toml --locked --profile ci`.
+#
+# The template's tests use no fixed file names (temp folders carry the process id), so no test
+# groups are needed; see ../../.config/nextest.toml for the engine's.
+
+[profile.ci]
+retries = 2
+flaky-result = "fail"
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"

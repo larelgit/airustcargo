@@ -1,8 +1,9 @@
 # Engine CI: every push and every pull request.
 #
-#   test           cargo test --workspace: unit tests, sandbox scenarios, checked-in replays
+#   test           cargo nextest run --workspace (profile ci): unit tests, sandbox scenarios, checked-in
+#                  replays; the sandbox's tick-time tests alone; doctests
 #   clippy         warnings are errors, engine and template
-#   template       the template game builds and passes its tests apart from the workspace
+#   template       the template game builds and passes its tests (nextest) apart from the workspace
 #   headless-cli   a live sandbox without a window, driven by the `shards` CLI; content and
 #                  1000-seed worldgen checks through the game's binary; live stands (a host and
 #                  clients, `--stand N`) running the stand scenarios, each on the links its
@@ -52,11 +53,31 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cache-key: dev
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.148
       # Includes the sandbox's scenario files (crates/sandbox/scenarios/*.scenario, and the stand
       # scenarios in scenarios/stand/ on in-process stands) and the checked-in replays (--verify),
-      # which are cargo tests there.
-      - name: cargo test --workspace
-        run: cargo test --workspace --locked
+      # which are tests there. Profile `ci` (.config/nextest.toml): two retries, and a test that
+      # passes only on a retry fails the run. The sandbox's `perf` binary measures wall time, so it
+      # is left out here and runs alone below.
+      - name: cargo nextest run --workspace
+        run: cargo nextest run --workspace --locked --profile ci -E 'not binary_id(sandbox::perf)'
+      # Tick-time tests: one at a time, nothing else running (profile `ci-perf` keeps its own JUnit file).
+      - name: cargo nextest run (perf)
+        run: cargo nextest run -p sandbox --locked --profile ci-perf -E 'binary_id(sandbox::perf)' -j 1
+      # nextest does not run doctests.
+      - name: cargo test --doc
+        run: cargo test --workspace --doc --locked
+      - name: JUnit
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-test
+          path: |
+            target/nextest/ci/junit.xml
+            target/nextest/ci-perf/junit.xml
+          if-no-files-found: warn
 
   # ---------------------------------------------------------------------------------------
   clippy:
@@ -113,8 +134,20 @@ jobs:
                        + "\nResync it: cp Cargo.lock template/Cargo.lock && cargo metadata --manifest-path template/Cargo.toml --format-version 1 >/dev/null")
           print(f"ok: {len(template)} registry packages, all pinned like the engine's")
           EOF
-      - name: cargo test (template)
-        run: cargo test --manifest-path template/Cargo.toml --locked
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.148
+      # A separate workspace: nextest reads template/.config/nextest.toml (profile `ci`).
+      - name: cargo nextest run (template)
+        run: cargo nextest run --manifest-path template/Cargo.toml --locked --profile ci
+      - name: JUnit
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-template
+          # nextest keeps its store in `target/` of the workspace it runs for, not in CARGO_TARGET_DIR.
+          path: template/target/nextest/ci/junit.xml
+          if-no-files-found: warn
       # The game's own binary: its content is valid and its reference replays still match.
       - name: Content check and replay verification, through the game's binary
         working-directory: template
