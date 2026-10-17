@@ -4390,7 +4390,7 @@ CI runs them forward and then backward in one game. Sessions of seven of them ar
 ```bash
 cargo test --workspace          # unit tests, scenarios and reference replays; the first Bevy build is slow
 cargo nextest run --workspace --profile ci -E 'not binary_id(sandbox::perf)'   # the same tests, as CI runs them: a process per test, retries that fail the run
-cargo nextest run -p sandbox --profile ci-perf -E 'binary_id(sandbox::perf)' -j 1   # the tick-time tests alone
+cargo nextest run --workspace --profile ci-perf -E 'binary_id(sandbox::perf)' -j 1   # the tick-time tests alone
 cargo test --workspace --doc    # doctests: nextest does not run them
 cargo test -p sandbox --test sandbox          # the sandbox: scenarios, replays, content, the obstacle course, combat
 cargo test --manifest-path template/Cargo.toml # the template on its own: its own workspace and its own Cargo.lock

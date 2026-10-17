@@ -323,7 +323,7 @@ It is written when a panic happens on another thread (the render thread, a task)
 - What CI runs, with `cargo-nextest` (`.config/nextest.toml`, `template/.config/nextest.toml`; profile `ci`: two retries, and a test that
   passes only on a retry **fails** the run, so a flaky test is a bug to fix, not to rerun):
   `cargo nextest run --workspace --locked --profile ci -E 'not binary_id(sandbox::perf)'`, then the tick-time tests alone,
-  `cargo nextest run -p sandbox --locked --profile ci-perf -E 'binary_id(sandbox::perf)' -j 1`, then `cargo test --workspace --doc --locked`
+  `cargo nextest run --workspace --locked --profile ci-perf -E 'binary_id(sandbox::perf)' -j 1`, then `cargo test --workspace --doc --locked`
   (nextest does not run doctests); the template: `cargo nextest run --manifest-path template/Cargo.toml --locked --profile ci`. nextest runs each test in
   its own process, so an in-test `static Mutex` serialises nothing there: a test that writes a fixed file name belongs in a test group of
   `.config/nextest.toml` (`snapshot-file`, `shards-snapshots`), with the lock kept for `cargo test`. Without the profile (`cargo nextest run`) there are no retries.

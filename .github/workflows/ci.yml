@@ -64,8 +64,9 @@ jobs:
       - name: cargo nextest run --workspace
         run: cargo nextest run --workspace --locked --profile ci -E 'not binary_id(sandbox::perf)'
       # Tick-time tests: one at a time, nothing else running (profile `ci-perf` keeps its own JUnit file).
+      # `--workspace` like the run above: another package selection changes the feature set and builds again.
       - name: cargo nextest run (perf)
-        run: cargo nextest run -p sandbox --locked --profile ci-perf -E 'binary_id(sandbox::perf)' -j 1
+        run: cargo nextest run --workspace --locked --profile ci-perf -E 'binary_id(sandbox::perf)' -j 1
       # nextest does not run doctests.
       - name: cargo test --doc
         run: cargo test --workspace --doc --locked
