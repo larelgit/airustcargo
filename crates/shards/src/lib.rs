@@ -43,6 +43,8 @@
 mod audio_wiring;
 pub mod coop;
 mod net_wiring;
+#[cfg(feature = "render")]
+mod offscreen;
 mod plugins;
 mod run;
 pub mod save_sections;

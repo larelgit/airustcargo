@@ -33,6 +33,7 @@ cargo shards tools                      # инструменты и сигнат
 cargo shards act move_to target=e6      # действие → CHANGES и JOURNAL
 cargo shards step 120 --until journal:died
 cargo shards inspect e6                 # все компоненты сущности
+cargo sandbox --offscreen --paused --port 0 --port-file /tmp/g.port &   # вместо первой строки: как --headless, но GPU рисует (для shards shot)
 cargo shards save-replay                # сессия с тика 0 → replays/tick<T>.json
 cargo shards save-snapshot              # состояние на этом тике → snapshots/tick<T>.json
 cargo shards load-snapshot snapshots/tick120.json   # вернуться к нему (регион и навсетка вернутся с ним); реплей дальше идёт с этого снапшота
@@ -59,8 +60,9 @@ cargo shards package --manifest-path template/Cargo.toml   # сборка для
 - Файлы игра пишет только к себе: реплеи в `replays/`, снимки экрана в `shots/`, снапшоты состояния в `snapshots/`,
   отчёты о падениях в `crashes/` (`save-replay replays/x.json`, `shot -o shots/x.png`, `save-snapshot snapshots/x.json`).
   Абсолютные пути и `..` не принимаются.
-- Числа и позиции берите из `observe` и `inspect`, не из картинок. `shards shot` (нужно окно, можно под Xvfb) —
-  для визуальных багов: PNG с метками `eN` и легенда, где на картинке какой id.
+- Числа и позиции берите из `observe` и `inspect`, не из картинок. `shards shot` (нужно окно, можно под Xvfb, или
+  `--offscreen` вместо `--headless`: без окна, но с GPU, `display` в `shards status` говорит, есть ли картинка) — для визуальных
+  багов: PNG с метками `eN` и легенда, где на картинке какой id.
 - Ошибки инструментов объясняют, как исправить вызов. Читайте их, а не повторяйте вызов вслепую.
 - Инструменты движка (`shards tools`): **движение** — `move_to` (`path=true` ведёт по `path_to`), `move`, `stop`, `jump`,
   `sprint`, `glide`, запросы `clearance` и `path_to` (в регионе по навсетке: `path_to` называет `provider`, `clearance` —

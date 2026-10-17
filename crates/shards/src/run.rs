@@ -21,6 +21,10 @@ struct Args {
     /// No window and no rendering (CI, parallel playtests, servers).
     #[arg(long)]
     headless: bool,
+    /// No window, but the GPU draws: the cameras render into an image of the window's size that
+    /// `shards shot` captures. For CI and agents on a machine with a GPU (or a software one).
+    #[arg(long, conflicts_with_all = ["headless", "stand", "verify", "check_content", "worldgen_report", "bake_nav", "smoke"])]
+    offscreen: bool,
     /// World seed: same seed + same inputs = same game.
     #[arg(long, default_value_t = EngineConfig::default().seed)]
     seed: u64,
@@ -217,6 +221,7 @@ impl Args {
         };
         EngineConfig {
             headless: self.headless,
+            offscreen: self.offscreen,
             seed: self.seed,
             port: None,
             paused: self.paused,
@@ -276,6 +281,10 @@ pub fn run(build: impl Fn(&EngineConfig) -> App) -> ExitCode {
         }
     };
     let mut config = args.config();
+    if config.offscreen && !cfg!(feature = "render") {
+        eprintln!("error: --offscreen draws on the GPU, and this game is built without the `render` feature: run it with --headless");
+        return ExitCode::from(2);
+    }
     if matches!(config.net, NetLaunch::Stand { udp: true, .. }) {
         if args.paused {
             eprintln!(
@@ -361,7 +370,10 @@ fn guarded(reports: bool, base: Option<&std::path::Path>, game: impl FnOnce() ->
 
 /// The game itself, from `build` to the end of its run.
 fn play(build: &impl Fn(&EngineConfig) -> App, args: &Args, config: EngineConfig, recording: Option<Replay>) -> ExitCode {
-    let mut app = build(&config);
+    let mut app = match built(build, &config) {
+        Ok(app) => app,
+        Err(code) => return code,
+    };
     termination::catch_console_close();
     // Player settings are read now, not earlier: Bevy's settings plugin scans the type registry
     // once, so every group the game registered while building must be there.
@@ -402,6 +414,28 @@ fn play(build: &impl Fn(&EngineConfig) -> App, args: &Args, config: EngineConfig
     let net = net_ready(&config.net, args.name.as_deref().or(matches!(config.net, NetLaunch::Stand { .. }).then_some("host")));
     println!("{}{net}", ai_core::ready_line(0, std::process::id(), config.seed, config.port));
     exit_code(app.run())
+}
+
+/// `build(config)`. Offscreen without a GPU, Bevy panics while it builds the renderer: that is no
+/// crash but a machine that cannot draw, so it ends with what to do instead (exit 2).
+fn built(build: &impl Fn(&EngineConfig) -> App, config: &EngineConfig) -> Result<App, ExitCode> {
+    if !config.offscreen {
+        return Ok(build(config));
+    }
+    let payload = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| build(config))) {
+        Ok(app) => return Ok(app),
+        Err(payload) => payload,
+    };
+    let message = ai_core::crash::panic_text(payload.as_ref());
+    if !message.starts_with("Unable to find a GPU") {
+        std::panic::resume_unwind(payload);
+    }
+    ai_core::crash::handled(&message);
+    eprintln!(
+        "error: --offscreen draws on the GPU, and there is none: {message} \
+         Run with --headless (no pictures), or let a software renderer draw: WGPU_FORCE_FALLBACK_ADAPTER=1"
+    );
+    Err(ExitCode::from(2))
 }
 
 /// `--stand N`: the host and N clients as apps of this process on an in-memory network
@@ -1113,6 +1147,19 @@ mod tests {
         assert!(parse(&["game", "--replay", "r.json", "--windowed"]).is_err());
         let args = parse(&["game", "--replay", "r.json", "--verify", "--windowed"]).unwrap();
         assert!(args.verify && args.windowed);
+    }
+
+    #[test]
+    fn offscreen_is_a_way_to_play_not_to_check() {
+        let parse = |args: &[&str]| Args::try_parse_from(args.iter().copied());
+        let config = parse(&["game", "--offscreen", "--paused"]).unwrap().config();
+        assert!(config.offscreen && !config.headless && config.draws());
+        assert!(parse(&["game", "--offscreen", "--replay", "r.json"]).unwrap().config().offscreen, "a replay plays offscreen");
+        for clash in [&["--headless"][..], &["--smoke", "60"], &["--check-content"], &["--replay", "r.json", "--verify"], &["--stand", "2"]] {
+            let args: Vec<&str> = ["game", "--offscreen"].into_iter().chain(clash.iter().copied()).collect();
+            assert!(parse(&args).unwrap_err().to_string().contains("cannot be used with"), "{clash:?}");
+        }
+        assert!(!parse(&["game", "--headless"]).unwrap().config().draws());
     }
 
     #[test]

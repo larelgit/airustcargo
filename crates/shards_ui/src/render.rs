@@ -1,4 +1,4 @@
-//! Drawing (feature `render`, with a window): every widget as Bevy UI nodes.
+//! Drawing (feature `render`, with a window or offscreen): every widget as Bevy UI nodes.
 //!
 //! The model's entities are drawn in place: a widget gets a `Node` (and its colours), and what
 //! only draws it (a label, a bar's track and fill) are parts, children without [`UiWidget`]. A
@@ -15,7 +15,6 @@ use bevy::input_focus::{FocusCause, InputFocus};
 use bevy::picking::events::{PointerClick, PointerOut, PointerOver};
 use bevy::picking::Pickable;
 use bevy::prelude::*;
-use bevy::window::Window;
 use serde_json::json;
 use shards_content::ContentDb;
 use shards_settings::AccessibilitySettings;
@@ -30,7 +29,7 @@ use crate::UiSystems;
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Look>()
         .configure_sets(PostUpdate, UiSystems::Draw.before(bevy::ui::UiSystems::Prepare))
-        .add_systems(PostUpdate, draw.in_set(UiSystems::Draw).run_if(any_with_component::<Window>))
+        .add_systems(PostUpdate, draw.in_set(UiSystems::Draw).run_if(ai_core::display::drawn))
         .add_observer(on_click)
         .add_observer(on_over)
         .add_observer(on_out);

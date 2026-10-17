@@ -68,13 +68,13 @@ impl Plugin for GamePlugin {
 }
 
 /// The app `shards::run` runs: the engine from `config` (which the command line filled:
-/// `--headless`, `--seed`, ...), this game, and its looks when there is a window.
+/// `--headless`, `--seed`, ...), this game, and its looks when something is drawn (a window, `--offscreen`).
 pub fn build_app(config: &EngineConfig) -> App {
     let mut app = App::new();
     // The title and the version name the game in its window and its crash reports.
     let game = EngineConfig { title: "My game".into(), version: Some(env!("CARGO_PKG_VERSION").into()), ..config.clone() };
     app.add_plugins(EnginePlugins::new(game)).add_plugins(GamePlugin);
-    if !config.headless && !config.testing {
+    if config.draws() {
         #[cfg(feature = "render")]
         app.add_plugins(visuals::VisualsPlugin);
         #[cfg(not(feature = "render"))]

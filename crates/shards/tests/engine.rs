@@ -42,6 +42,31 @@ fn headless_is_the_same_plugins_minus_display() {
     assert!(!testing.enabled::<bevy::log::LogPlugin>(), "a process has one logger");
 }
 
+/// Offscreen is headless's window (none) and run loop with the window's GPU: the renderer looks
+/// for an adapter, and gizmos (the `eN` marks) are drawn.
+#[cfg(feature = "render")]
+#[test]
+fn offscreen_is_the_window_plugins_without_a_window() {
+    let offscreen = EnginePlugins::new(EngineConfig { offscreen: true, ..default() }).build();
+    assert!(offscreen.enabled::<ScheduleRunnerPlugin>() && !offscreen.enabled::<bevy::winit::WinitPlugin>());
+    assert!(offscreen.enabled::<bevy::render::RenderPlugin>() && offscreen.enabled::<bevy::gizmos_render::GizmoRenderPlugin>());
+    let headless = EnginePlugins::new(EngineConfig { headless: true, ..default() }).build();
+    assert!(!headless.enabled::<bevy::gizmos_render::GizmoRenderPlugin>(), "no GPU to draw gizmos with");
+    assert!(EngineConfig { offscreen: true, ..default() }.draws() && !EngineConfig { headless: true, ..default() }.draws());
+}
+
+/// A headless game says so, and `shot` names the ways to get a picture.
+#[cfg(feature = "render")]
+#[test]
+fn a_headless_game_has_no_picture_and_says_how_to_get_one() {
+    let mut app = shards::testing::test_app(|_| {}, |_| {});
+    let display = &shards::ai_core::status::status(app.world())["display"];
+    assert_eq!(display, &json!({"mode": "headless", "size": null, "gpu": null}));
+    let refused = call(&mut app, "shot", json!({}));
+    let text = refused.result.as_str().unwrap_or_default().to_owned();
+    assert!(!refused.ok && text.contains("--offscreen") && text.contains("observe"), "{text}");
+}
+
 #[test]
 fn a_test_app_comes_back_loaded_and_paused_at_tick_zero() {
     let mut app = shards::testing::test_app(|config| config.seed = 7, |app| {

@@ -2,7 +2,7 @@
 //!
 //! A client's gameplay `Transform` of a remote entity is the host's value at the newest state
 //! applied: physics, `observe` and the desync hash read it, and it moves in steps of
-//! `send_every` ticks. In a window (`render` feature, never headless) the client shows those
+//! `send_every` ticks. In a window or offscreen (`render` feature, never headless) the client shows those
 //! entities a little in the past instead, blended between the two states around
 //! `render tick = host tick now − (send_every + jitter ticks)` plus the fraction of the tick
 //! the frame is into: `PostUpdate`, after transform propagation, writes their
@@ -110,7 +110,7 @@ mod window {
                 show.after(TransformSystems::Propagate),
             )
                 .run_if(resource_exists::<NetClient>)
-                .run_if(any_with_component::<Window>),
+                .run_if(ai_core::display::drawn),
         );
     }
 

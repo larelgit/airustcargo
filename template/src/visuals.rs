@@ -1,4 +1,4 @@
-//! Window-only layer: meshes, light and the camera. Gameplay never depends on anything
+//! Picture-only layer (a window or `--offscreen`): meshes, light and the camera. Gameplay never depends on anything
 //! here, so the same game runs headless (and plays the same: the replay of a windowed
 //! session verifies without a window).
 //!

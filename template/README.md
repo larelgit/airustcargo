@@ -10,6 +10,7 @@
 ```text
 cargo game                          # окно: WASD, мышь, Space, Shift, Ctrl, левая кнопка, Escape — меню
 cargo game --headless --paused &    # без окна, время стоит, пока вы не сделаете `shards step`
+cargo game --offscreen --paused &   # тоже без окна, но GPU рисует: `shards shot` снимает картинку
 shards wait && shards observe       # что в мире, текстом
 shards scenario scenarios/smoke.scenario
 cargo test                          # тесты, сценарий и реплей: без окна, секунды
@@ -148,7 +149,8 @@ shards save-replay                            # сессия с тика 0 → r
 
 `shards` запускайте из папки игры или ниже: токен лежит в `.shards/<порт>.token`. Останавливайте игру `kill` или
 Ctrl+C, не `kill -9`; на Windows — `shards quit`. Подробности (транспорт, параллельные инстансы, скриншоты `shards shot`,
-права `Player` и `Dev`) в README движка. Чтобы проверить игру честно, как человек, переключите агента на игрока:
+в том числе без окна с `--offscreen`, права `Player` и `Dev`) в README движка. Чтобы проверить игру честно, как человек,
+переключите агента на игрока:
 `shards session --scope player`.
 
 Управление в окне: WASD или стрелки: ходьба; мышь: камера; Space: прыжок; Shift: спринт; Ctrl: перекат;

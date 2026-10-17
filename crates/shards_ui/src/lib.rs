@@ -31,7 +31,7 @@
 //! - **This machine's, not the simulation's**: no widget has an `AiId` (opening a menu shifts no
 //!   id), screens are outside snapshots and the replay hash, and a host does not send them. The
 //!   tools that change them are actions, so a replay presses the same buttons at the same ticks.
-//! - **Drawing** (feature `render`, with a window): Bevy UI nodes for every widget, the theme's
+//! - **Drawing** (feature `render`, with a window or offscreen): Bevy UI nodes for every widget, the theme's
 //!   colours and sizes, the player's text size, the mouse through picking, and every widget
 //!   named for screen readers (AccessKit roles, labels, values; focus follows the UI's). A theme
 //!   names a font for scripts beyond ASCII (`font`). The keyboard and gamepad reach the UI through
@@ -76,7 +76,7 @@ pub mod prelude {
 pub enum UiSystems {
     /// `Update`: edited screens built again, bound values stored for drawing.
     Model,
-    /// `PostUpdate`, before Bevy's UI layout: widgets drawn as Bevy UI nodes (with a window).
+    /// `PostUpdate`, before Bevy's UI layout: widgets drawn as Bevy UI nodes (with a window or offscreen).
     Draw,
 }
 

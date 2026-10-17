@@ -33,10 +33,12 @@ use crate::TileLevelsPlugin;
 /// that feeds `warn!`/`error!` into the journal, the AI layer, the engine core, content
 /// and motion (physics, characters, input, camera), all configured from one [`EngineConfig`].
 ///
-/// One plugin set for both modes: headless is the same plugins minus window, GPU and
+/// One plugin set for every mode: headless is the same plugins minus window, GPU and
 /// audio (`WindowPlugin` without a window, no winit, `RenderPlugin` without a backend so
 /// render plugins stay registered, a 60 Hz run loop instead of the event loop).
 /// Transforms, assets and states work the same, so gameplay is the same.
+/// [`EngineConfig::offscreen`] keeps the GPU and drops only the window: the cameras draw into
+/// an image that `shot` captures.
 /// [`EngineConfig::testing`] also drops the logger (one per process) and the Ctrl+C
 /// handler, and runs no loop: tests drive the app with `update()`.
 /// [`EngineConfig::embedded`] does the same for a game beside another in one process, but
@@ -75,14 +77,20 @@ impl PluginGroup for EnginePlugins {
             group.disable::<LogPlugin>().disable::<TerminalCtrlCHandlerPlugin>()
         } else {
             let mut filter = bevy::log::DEFAULT_FILTER.to_owned();
-            if headless && cfg!(feature = "render") {
+            if headless && !config.offscreen && cfg!(feature = "render") {
                 // Render plugins without a render app: Bevy logs one error about the missing
                 // sub-app it extracts into. Expected headless, and noise in every journal.
                 filter.push_str(",bevy_extract::extract_resource=off");
             }
             group.set(LogPlugin { filter, custom_layer: ai_core::capture_log_layer, ..default() })
         };
-        group = if headless { without_display(group, driven) } else { with_window(group, &config) };
+        group = if config.offscreen && cfg!(feature = "render") {
+            offscreen(group, &config, driven)
+        } else if headless {
+            without_display(group, driven)
+        } else {
+            with_window(group, &config)
+        };
         if config.embedded {
             group = group.add(EmbeddedLogCapture);
         }
@@ -196,7 +204,34 @@ impl Plugin for NoGpu {
     }
 }
 
-fn without_display(mut group: PluginGroupBuilder, driven: bool) -> PluginGroupBuilder {
+/// Headless: no window and no GPU.
+fn without_display(group: PluginGroupBuilder, driven: bool) -> PluginGroupBuilder {
+    #[cfg_attr(not(feature = "render"), allow(unused_mut))]
+    let mut group = without_window(group, driven);
+    #[cfg(feature = "render")]
+    {
+        use bevy::render::settings::WgpuSettings;
+        use bevy::render::RenderPlugin;
+        group = group
+            // Drawing gizmos needs a GPU; gizmos themselves (`GizmoPlugin`) stay.
+            .disable::<bevy::gizmos_render::GizmoRenderPlugin>()
+            .set(RenderPlugin { render_creation: WgpuSettings { backends: None, ..default() }.into(), ..default() })
+            .add_before::<RenderPlugin>(NoGpu);
+    }
+    group
+}
+
+/// Offscreen: no window, but the GPU draws, gizmos too, and the cameras draw into an image.
+#[cfg_attr(not(feature = "render"), allow(unused_variables))]
+fn offscreen(group: PluginGroupBuilder, config: &EngineConfig, driven: bool) -> PluginGroupBuilder {
+    let group = without_window(group, driven);
+    #[cfg(feature = "render")]
+    let group = group.add(crate::offscreen::OffscreenPlugin { size: config.window });
+    group
+}
+
+/// No window, no audio device, no gamepads, and a run loop of its own (none when `driven`).
+fn without_window(mut group: PluginGroupBuilder, driven: bool) -> PluginGroupBuilder {
     group = group.set(WindowPlugin {
         primary_window: None,
         exit_condition: ExitCondition::DontExit,
@@ -205,14 +240,7 @@ fn without_display(mut group: PluginGroupBuilder, driven: bool) -> PluginGroupBu
     });
     #[cfg(feature = "render")]
     {
-        use bevy::render::settings::WgpuSettings;
-        use bevy::render::RenderPlugin;
-        group = group
-            .disable::<bevy::winit::WinitPlugin>()
-            // Drawing gizmos needs a GPU; gizmos themselves (`GizmoPlugin`) stay.
-            .disable::<bevy::gizmos_render::GizmoRenderPlugin>()
-            .set(RenderPlugin { render_creation: WgpuSettings { backends: None, ..default() }.into(), ..default() })
-            .add_before::<RenderPlugin>(NoGpu);
+        group = group.disable::<bevy::winit::WinitPlugin>();
     }
     #[cfg(feature = "audio")]
     {

@@ -49,6 +49,7 @@ pub fn status(world: &World) -> Value {
         "tools": world.get_resource::<AiTools>().map(|t| t.names(Scope::Dev)).unwrap_or_default(),
         "replay": world.get_resource::<crate::AiReplay>().map(|_| crate::replay::status(world)),
         "perf": crate::perf::status(world),
+        "display": crate::display::status(world),
     });
     if let (Some(fields), Some(map)) = (world.get_resource::<AiStatusFields>(), body.as_object_mut()) {
         for (key, field) in &fields.0 {
