@@ -29,15 +29,27 @@ pub struct Outcome {
     pub result: Value,
     /// The tick after the call, when the transport says.
     pub tick: Option<u64>,
+    /// The game stopped itself during the call (a `step` met a failed gameplay system or a
+    /// violated invariant).
+    pub halted: Option<Halted>,
+}
+
+/// Why the game halted, as `halted` of a tool reply says.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Halted {
+    /// `invariant hp violated at tick 1`.
+    pub reason: String,
+    /// The replay the game saved for it, relative to its working folder.
+    pub replay: Option<String>,
 }
 
 impl Outcome {
     pub fn ok(result: impl Into<Value>) -> Self {
-        Self { ok: true, result: result.into(), tick: None }
+        Self { ok: true, result: result.into(), tick: None, halted: None }
     }
 
     pub fn err(message: impl Into<String>) -> Self {
-        Self { ok: false, result: Value::String(message.into()), tick: None }
+        Self { ok: false, result: Value::String(message.into()), tick: None, halted: None }
     }
 
     /// The result as text: strings as they are, anything else as pretty JSON.

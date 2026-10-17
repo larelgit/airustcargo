@@ -399,7 +399,7 @@ impl Driver for StandDriver<'_> {
     fn call_on(&mut self, peer: &str, agent: &str, tool: &str, args: Value) -> Result<Outcome, String> {
         let member = self.index(peer)?;
         let out = self.stand.call_as(member, agent, tool, args);
-        Ok(Outcome { ok: out.ok, result: out.result, tick: Some(out.tick) })
+        Ok(ai_core::scenario::outcome_of(out))
     }
 
     fn session_on(&mut self, peer: &str, agent: &str, config: &SessionConfig) -> Result<Outcome, String> {

@@ -393,7 +393,7 @@ mod tests {
                             format!("ran {ticks} ticks")
                         }
                     };
-                    Outcome { ok: true, result: Value::String(text), tick: Some(self.tick) }
+                    Outcome { ok: true, result: Value::String(text), tick: Some(self.tick), halted: None }
                 }
                 "net_status" if self.mute == Some(peer) => Outcome::err("unknown tool `net_status`"),
                 "net_status" if peer == HOST => {

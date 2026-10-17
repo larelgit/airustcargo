@@ -89,8 +89,17 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
 - `ai_core::Offenders`: collects the entities that break a rule and reports the lowest id first with `(+N more)`, without allocating while nothing is broken. `ai_core::with_query` keeps a rule's query state between ticks in the world (the resource `RuleQueries`, dropped with it), which is what keeps the rules under 1 % of a tick.
 - `template`: an example game rule, `grunt_chance` (`src/ai.rs`), with a control test.
 
+- `shards fuzz` plays from the tool schemas: the alphabet is every tool of scope `player` and kind `action` that the game lists, with arguments made from the tool's own
+  `input_schema` by `shards_script::schema` (`--alphabet schema`, the default; `--weights move=3,dodge=2`; `--invalid P` breaks one argument on purpose in that share of the calls,
+  default 0.05; `--alphabet classic` keeps the four tools and the draws of the first fuzzer). `--chaos P` makes that share of the rounds a developer call instead of an input
+  (snapshot saved and loaded, `regen`, `content_reload`, game saved and loaded, pause, `speed`, `heal`); a load that is refused after its save worked (the world does not come back as it was) ends the run as a finding, exit code 3. The loop moved to `shards_script::fuzz` (`run`, a `Driver`, a `FuzzReport`), so
+  a test plays the same run in-process. The schema of `Id` says `"format": "entity_id"`, which is how the generator finds the arguments that take an entity id.
+- The sandbox test `tool_contracts`: every query and action tool, and `step`, is called 30 times (20 valid by schema, 10 invalid on purpose); no gameplay system fails, no tool panics, an error is not empty and
+  names the signature or the bad argument, and the session's replay plays back from tick 0, which proves every successful action call was recorded. Control tests plant each bug class and show the checker names it.
+
 ### Changed
 
+- `shards_script`: a tool call's `Outcome` carries `halted` (why the game stopped itself during the call), so a driver other than the CLI sees a halted `step`.
 - `soak.yml` runs every night (it ran on Mondays).
 - `shards_cli`: the test `a_stale_port_file_is_neither_a_member_nor_a_reason_to_give_up` no longer uses a port that was bound and released (another test's stand could be given it): the stale file names the discard port.
 - `--replay FILE --verify` prints a `warning: replay checks leave out …` line for each gameplay component the checks cannot hash (`ReplayHashing::reported_left_out`, now public), and the reference replay test fails on one.

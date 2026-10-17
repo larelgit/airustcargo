@@ -51,7 +51,7 @@ cargo sandbox --bake-motion             # bake action offsets (the action's `bak
 cargo sandbox --replay FILE --verify    # replay without a window; add --windowed (under xvfb-run -a) for a window
 cargo sandbox --replay FILE --verify --heavy 30   # also: from every 30th tick's snapshot, a fresh game goes on the same (heavy mode)
 cargo shards assert add hp 'field:6:Health.current<300'   # rule: the game stops when it is broken (`step` → exit code 3)
-cargo shards fuzz --seed 7 --steps 300  # random inputs until a rule is broken
+cargo shards fuzz --seed 7 --steps 300 --chaos 0.02 --invalid 0.05  # random player inputs from the tool schemas, 2% developer calls, 5% broken on purpose, until a rule is broken
 cargo shards soak --minutes 30 --regen wilds   # stand: agents with a seed play for all participants, until the first desync
 kill <pid>                              # pid from `wait`; on Windows (and everywhere) — cargo shards quit
 cargo shards package --manifest-path template/Cargo.toml   # build for players in template/dist/ and its check (`--smoke`, DLL)
@@ -122,7 +122,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   (plus `warning` and `error`). After each tick the game checks the game's rules and yours; on a violation
   `step` answers `stopped: invariant NAME violated at tick N (replay: …)`, and the replay is already saved.
   A rule that has fired stays silent until `shards assert reset`; `shards assert list` shows all rules.
-  `shards fuzz --seed S --steps N` feeds random player inputs, driven by the seed, until a rule is broken.
+  `shards fuzz --seed S --steps N` feeds random player inputs (every player action tool, arguments from its schema), driven by the seed, until a rule is broken.
 - The game's `warn!`/`error!` messages reach the journal with the tick they were logged on, even inside a long `step`:
   `step 600 --until journal:TEXT` catches them too. A tick holds no more than 64 lines; the rest are reported by the line
   `N log lines dropped` (the asset threads have their own 64).

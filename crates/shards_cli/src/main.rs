@@ -39,8 +39,8 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use serde_json::{json, Map, Value};
-use shards_script::inputs::{ids_in, random_input, SplitMix};
-use shards_script::{parse_args, parse_condition};
+use shards_script::fuzz::{self, parse_weights, Ended, FuzzPlan, ToolDesc};
+use shards_script::{parse_args, parse_condition, Driver, Halted, JournalRead, Outcome, SessionConfig, Status};
 
 #[cfg(test)]
 mod fake;
@@ -180,12 +180,13 @@ enum Cmd {
         #[command(subcommand)]
         op: AssertCmd,
     },
-    /// Random player inputs (move, attack, dodge; targets from `observe`) between short
-    /// steps, until the game halts or the steps run out. Prints the replay to reproduce
-    /// it with; exit code 3 if the game halted.
+    /// Random player inputs between short steps, until the game halts or the steps run out.
+    /// Plays every player action tool the game lists, with arguments made from the tool's own
+    /// schema (targets from `observe`); `--chaos` adds developer calls that shake the world.
+    /// Prints the replay to reproduce it with; exit code 3 if the game halted.
     Fuzz {
-        /// Seed of the inputs (the game has its own): the same seed against the same
-        /// fresh game makes the same calls.
+        /// Seed of the inputs (the game has its own): the same seed against the same fresh
+        /// game makes the same calls.
         #[arg(long, default_value_t = 1)]
         seed: u64,
         /// Inputs to make, each followed by a step.
@@ -194,6 +195,23 @@ enum Cmd {
         /// Longest step after an input, in ticks.
         #[arg(long, default_value_t = 30)]
         max_ticks: u64,
+        /// Where the inputs come from: `schema` (every player action tool of the game, with
+        /// arguments from its schema) or `classic` (move, attack, light_attack, dodge, drawn as
+        /// the first fuzzer did, so old seeds reproduce).
+        #[arg(long, default_value = "schema")]
+        alphabet: String,
+        /// Tilt the choice of tool, e.g. `move=3,dodge=2` (the others weigh 1; 0 drops a tool).
+        #[arg(long, value_name = "TOOL=N,...")]
+        weights: Option<String>,
+        /// Share of the inputs (0 to 1) that break one argument on purpose: the game must refuse
+        /// them and say how to fix the call.
+        #[arg(long, default_value_t = shards_script::fuzz::DEFAULT_INVALID, value_name = "P")]
+        invalid: f64,
+        /// Share of the rounds (0 to 1) that make one developer call instead of an input: a
+        /// snapshot saved and loaded, a region generated, content reloaded, a game saved and
+        /// loaded, pause, speed, heal. Needs an agent with dev scope (the default).
+        #[arg(long, default_value_t = 0.0, value_name = "P")]
+        chaos: f64,
     },
     /// A long co-op session played by seeded agents on every member of a stand at once (or on
     /// one game): every round each member makes a random player input with what it sees (move,
@@ -708,7 +726,18 @@ fn run(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
             AssertCmd::Remove { name } => act("assert_remove", json!({"name": name}))?,
             AssertCmd::Reset => act("assert_reset", json!({}))?,
         },
-        Cmd::Fuzz { seed, steps, max_ticks } => return fuzz(&act, *seed, *steps, *max_ticks),
+        Cmd::Fuzz { seed, steps, max_ticks, alphabet, weights, invalid, chaos } => {
+            let mut plan = FuzzPlan::new(*seed);
+            plan.rounds = *steps;
+            plan.max_ticks = *max_ticks;
+            plan.alphabet = alphabet.parse()?;
+            plan.weights = parse_weights(weights.as_deref().unwrap_or_default())?;
+            plan.invalid = unit_share("--invalid", *invalid)?;
+            plan.chaos = unit_share("--chaos", *chaos)?;
+            plan.agent = agent.to_owned();
+            plan.save_replay = true;
+            return run_fuzz(client, plan);
+        }
         Cmd::Soak { .. } => unreachable!("a soak finds its members itself (main)"),
         Cmd::Package { .. } => unreachable!("a package needs no game (main)"),
         Cmd::Shot { no_marks, out } => {
@@ -966,49 +995,83 @@ fn print_outcome(out: &Value, as_json: bool) -> ExitCode {
     code
 }
 
-/// Random player inputs between short steps until the game halts or `rounds` ran out.
-/// A refused input is part of the game: the next round goes on.
-fn fuzz(act: &dyn Fn(&str, Value) -> Result<Value, String>, seed: u64, rounds: u32, max_ticks: u64) -> Result<ExitCode, String> {
-    let mut rng = SplitMix(seed);
-    let mut from = None;
-    for round in 1..=rounds {
-        let seen = act("observe", json!({}))?;
-        from.get_or_insert(seen["tick"].as_u64().unwrap_or(0));
-        let ids = ids_in(seen["result"].as_str().unwrap_or_default());
-        let (tool, args) = random_input(&mut rng, &ids);
-        act(tool, args)?;
-        let out = act("step", json!({"ticks": 1 + rng.below(max_ticks)}))?;
-        if out.get("ok") == Some(&Value::Bool(false)) {
-            return Ok(print_outcome(&out, false));
-        }
-        if out.get("halted").is_some_and(|h| !h.is_null()) {
-            let tick = out["tick"].as_u64().unwrap_or(0);
-            say(format!("fuzz seed {seed}: the game halted after {round} inputs (ticks {} → {tick})", from.unwrap_or(0)));
-            print_outcome(&out, false);
-            let replay = match out["halted"]["replay"].as_str() {
-                Some(path) => path.to_owned(),
-                None => saved_replay(act, &format!("replays/fuzz-seed{seed}-tick{tick}.json"))?,
-            };
-            say(format!("replay: {replay}"));
-            return Ok(ExitCode::from(exit::HALTED));
-        }
+/// `value` as a share: a number from 0 to 1.
+fn unit_share(flag: &str, value: f64) -> Result<f64, String> {
+    if (0.0..=1.0).contains(&value) {
+        Ok(value)
+    } else {
+        Err(format!("{flag} is a share from 0 to 1 (0.05 is one call in twenty), not {value}"))
     }
-    let tick = act("observe", json!({}))?["tick"].as_u64().unwrap_or(0);
-    let replay = saved_replay(act, &format!("replays/fuzz-seed{seed}.json"))?;
-    say(format!("fuzz seed {seed}: {rounds} inputs, nothing broke (ticks {} → {tick})", from.unwrap_or(0)));
-    say(format!("replay: {replay}"));
-    Ok(ExitCode::SUCCESS)
 }
 
-/// Saves the session as a replay; returns the path the game wrote.
-fn saved_replay(act: &dyn Fn(&str, Value) -> Result<Value, String>, path: &str) -> Result<String, String> {
-    let out = act("replay_save", json!({"path": path}))?;
-    match out["result"].as_str() {
-        // "saved PATH: 120 ticks, …"
-        Some(text) if out["ok"] == Value::Bool(true) => {
-            Ok(text.trim_start_matches("saved ").split_once(": ").map_or(path, |(saved, _)| saved).to_owned())
+/// The game a fuzz run plays, over BRP; it keeps the newest answer of `step`, whole.
+struct FuzzDriver<'a> {
+    client: &'a Client,
+    last_step: Option<Value>,
+}
+
+impl Driver for FuzzDriver<'_> {
+    fn call(&mut self, agent: &str, tool: &str, args: Value) -> Result<Outcome, String> {
+        let reply = self.client.act(agent, tool, args)?;
+        if tool == "step" {
+            self.last_step = Some(reply.clone());
         }
-        _ => Err(format!("replay_save: {}", out["result"])),
+        Ok(Outcome {
+            ok: reply.get("ok").and_then(Value::as_bool).unwrap_or(true),
+            result: reply.get("result").cloned().unwrap_or(Value::Null),
+            tick: reply.get("tick").and_then(Value::as_u64),
+            halted: reply.get("halted").filter(|h| !h.is_null()).map(|h| Halted {
+                reason: h["reason"].as_str().unwrap_or_default().to_owned(),
+                replay: h["replay"].as_str().map(str::to_owned),
+            }),
+        })
+    }
+
+    fn session(&mut self, _: &str, _: &SessionConfig) -> Result<Outcome, String> {
+        Err("a fuzz run configures no session".to_owned())
+    }
+
+    fn status(&mut self) -> Result<Status, String> {
+        Err("a fuzz run asks for no status".to_owned())
+    }
+
+    fn journal_since(&mut self, _: u64) -> Result<JournalRead, String> {
+        Err("a fuzz run reads no journal".to_owned())
+    }
+}
+
+/// Player inputs (and, with `--chaos`, developer calls) between short steps until the game
+/// halts or the rounds ran out. A refused input is part of the game: the next round goes on.
+fn run_fuzz(client: &Client, plan: FuzzPlan) -> Result<ExitCode, String> {
+    let tools = ToolDesc::list_from_json(&client.call("ai/tools", json!({"agent": plan.agent}))?);
+    let mut driver = FuzzDriver { client, last_step: None };
+    let report = fuzz::run(&mut driver, &plan, &tools)?;
+    let step = driver.last_step.unwrap_or_default();
+    match &report.ended {
+        Ended::StepRefused(_) => Ok(print_outcome(&step, false)),
+        Ended::Halted { .. } => {
+            say(report.to_string());
+            print_outcome(&step, false);
+            if let Some(replay) = &report.replay {
+                say(format!("replay: {replay}"));
+            }
+            Ok(ExitCode::from(exit::HALTED))
+        }
+        Ended::ChaosBroke { .. } => {
+            say(report.to_string());
+            if let Some(replay) = &report.replay {
+                say(format!("replay: {replay}"));
+            }
+            Ok(ExitCode::from(exit::HALTED))
+        }
+        Ended::Done => {
+            say(report.to_string());
+            say(format!("player inputs {} ({} refused, {} broken on purpose, {} of those taken), chaos rounds {} ({} calls refused)", report.inputs, report.refused, report.invalid, report.invalid_taken, report.chaos_rounds, report.chaos_refused));
+            if let Some(replay) = &report.replay {
+                say(format!("replay: {replay}"));
+            }
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 

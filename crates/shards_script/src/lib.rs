@@ -69,9 +69,11 @@
 
 mod args;
 mod condition;
+pub mod fuzz;
 pub mod inputs;
 mod lex;
 mod run;
+pub mod schema;
 mod script;
 pub mod soak;
 
@@ -79,7 +81,7 @@ pub use args::{loose_value, parse_args};
 pub use lex::{split_words, Words};
 pub use condition::parse_condition;
 pub use run::{
-    parse_journal_text, run, run_with, Driver, Failure, FailureKind, JournalLine, JournalRead, LogLine, Outcome, Report, Status,
+    parse_journal_text, run, run_with, Driver, Failure, FailureKind, Halted, JournalLine, JournalRead, LogLine, Outcome, Report, Status,
     CHECK_AGENT, DEFAULT_AGENT,
 };
 pub use script::{

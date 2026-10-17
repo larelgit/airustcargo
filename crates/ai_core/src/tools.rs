@@ -601,6 +601,7 @@ impl JsonSchema for Id {
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
         schemars::json_schema!({
             "type": ["integer", "string"],
+            "format": shards_script::schema::ENTITY_ID_FORMAT,
             "description": "Entity id as shown in observations: 42 or \"e42\"."
         })
     }
