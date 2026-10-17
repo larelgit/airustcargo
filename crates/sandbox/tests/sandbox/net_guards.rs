@@ -449,6 +449,36 @@ fn a_client_whose_knocks_go_unanswered_ends_its_join_saying_what_it_may_be() {
     assert!(stand.world(HOST).resource::<NetHost>().peers.is_empty());
 }
 
+// --- content during a session --------------------------------------------------------------
+
+#[test]
+fn content_does_not_change_under_a_session_and_can_again_once_it_is_over() {
+    let mut stand = stand(1);
+    let refused = |out: &shards::ai_core::CallOutcome| -> String {
+        assert!(!out.ok, "not refused: {}", out.result);
+        out.result.as_str().unwrap_or_default().to_owned()
+    };
+    let host = stand.call(HOST, "content_reload", json!({}));
+    assert_eq!(refused(&host), "refused: a content reload during a co-op session would desync its client; do it once they have left, or after net_end");
+    let change = json!({"changes": [{"kind": "effect", "id": "puff", "def": {"count": 4}}]});
+    let host = stand.call(HOST, "content_apply", change.clone());
+    assert!(refused(&host).starts_with("refused: a content change during a co-op session would desync its client"));
+    let host = stand.call(HOST, "level_reload", json!({}));
+    assert!(refused(&host).starts_with("refused: a level reload during a co-op session would desync its client"));
+    let client = stand.call(C1, "content_reload", json!({}));
+    assert_eq!(refused(&client), "refused: a content reload during a co-op session would desync this game from its host host; leave the session first");
+    assert!(host_calls(&stand, "content_apply").is_empty(), "nothing was recorded");
+    stand.run(30);
+    assert_eq!(desyncs(&stand, C1), 0);
+    // The session over, each can reload again.
+    assert!(stand.call(HOST, "net_end", json!({})).ok);
+    stand.run(30);
+    for member in [HOST, C1] {
+        let out = stand.call(member, "content_reload", json!({}));
+        assert!(out.ok, "member {member}: {}", out.result);
+    }
+}
+
 // --- sizes and words -----------------------------------------------------------------------
 
 #[test]
