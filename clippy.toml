@@ -36,6 +36,7 @@ disallowed-methods = [
   { path = "f32::acosh", reason = "use bevy::math::ops::acosh instead for libm determinism" },
   { path = "f32::atanh", reason = "use bevy::math::ops::atanh instead for libm determinism" },
   # `bevy::math::ops` has f32 only. Do the math in f32 (cast the f64 in, cast the result out) so that it comes from libm too.
+  # Bring a large f64 into range before the cast (a phase modulo TAU, a clock minus its start): f32 keeps 24 bits and ends at 3.4e38.
   { path = "f64::powi", reason = "bevy::math::ops is f32 only: use f32 and bevy::math::ops::FloatPow::squared or bevy::math::ops::powf for libm determinism" },
   { path = "f64::log", reason = "bevy::math::ops is f32 only: use f32 and bevy::math::ops::ln, log2 or log10 for libm determinism" },
   { path = "f64::abs_sub", reason = "deprecated and deeply confusing method" },

@@ -1992,7 +1992,8 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
   - код движка и игры зовёт `bevy::math::ops` (в прелюдии Bevy и `shards::prelude` она называется `ops`): `ops::sin(x)`,
     `ops::atan2(y, x)`, `ops::exp(x)`, `ops::powf(x, y)`, `ops::sin_cos(x)`; вместо `x.powi(2)` — `FloatPow::squared`
     (`bevy::math::FloatPow`). Точные операции (`sqrt`, `abs`, `floor`, `round`, `mul_add`, `rem_euclid`, `to_radians`) остаются
-    методами. `ops` есть только для `f32`: `f64` приводят к `f32` (так сделана подсветка `highlight` в `ai_core`). Правило
+    методами. `ops` есть только для `f32`: `f64` приводят к `f32`, а большое значение сначала сводят к малому, пока оно ещё
+    `f64` (у `f32` всего 24 бита и предел 3.4e38): так подсветка `highlight` в `ai_core` берёт фазу по модулю `TAU`. Правило
     одно для всего кода на Rust, и для того, что только рисует (частицы и декали `shards_fx`, растительность `shards_scatter`,
     HUD): так его не надо делить на «симуляцию» и «картинку». Шейдеры WESL — не Rust, их правило не касается;
   - правило держит `clippy.toml` (в корне репозитория и в `template/`, отдельный файл: clippy берёт ближайший и не
