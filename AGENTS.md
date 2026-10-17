@@ -258,9 +258,10 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
 - **NPC действуют только через `Intent`** (как игрок и агент): мозг NPC движка пишет в него в `NpcSystems::Drive`, а не двигает
   тело. Поведение, восприятие, директор и планы атак — контент (`*.behavior.ron`, `*.perception.ron`, `*.director.ron`,
   `*.attack_plan.ron`); свою логику добавляют как `add_npc_condition` / `add_npc_state` по имени, а не копией мозга. Состояние NPC
-  живёт в его компонентах (они входят в реплей и снапшот), не в ресурсах. Уклонение от других тел тоже пишет только в `Intent`
-  (в `NpcSystems::Drive`, перед `drive_intents`): соседи по `AiId`, без случайности; его числа — `avoidance` в `npc_tuning` или
-  в поведении, не константы в коде.
+  живёт в его компонентах (они входят в реплей и снапшот), не в ресурсах. Уклонение от других тел тоже не двигает тело: в
+  `NpcSystems::Drive`, перед `drive_intents`, оно правит вход маршрута `NavAgent::desired` (его `drive_intents` и пишет в
+  `Intent`) и своё состояние `NavAgent::avoiding` и `side`; соседи по `AiId`, без случайности; его числа — `avoidance` в
+  `npc_tuning` или в поведении, не константы в коде.
 - **Состояние мира в снапшоте.** Новое состояние региона, уровня или навигации вне сущностей с `AiId` — `add_snapshot_resource`;
   то, что строится из сохранённого (регион из манифеста, навсетка), — `add_snapshot_prepare` / `add_snapshot_rebuild`; то,
   вокруг чего построен мир, — `add_snapshot_check`. Покройте его тестом по образцу `crates/sandbox/tests/sandbox/snapshots.rs`
