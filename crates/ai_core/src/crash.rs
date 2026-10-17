@@ -835,16 +835,30 @@ pub fn write_at(path: &Path, report: &CrashReport) -> Result<(), String> {
     use std::io::Write;
     let text = serde_json::to_string_pretty(report).map_err(|e| e.to_string())?;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    // This process's own temporary file, made new: a file or a symlink left under that name is
-    // removed (the link, not what it points to), never written through.
-    let part = path.with_file_name(format!("{name}.{}.part", std::process::id()));
-    let _ = std::fs::remove_file(&part);
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&part)
-        .and_then(|mut file| file.write_all(text.as_bytes()).and_then(|()| file.flush()))
-        .and_then(|()| std::fs::rename(&part, path))
+    // Each call makes a temporary file of its own: the first free `<name>.<pid>.<n>.part`, taken with
+    // `create_new`. A name already there (another call writing the same report, a file left over, a
+    // planted symlink) is skipped, never written through or removed; only the call's own file is.
+    let mut taken = None;
+    for n in 0..64 {
+        let part = path.with_file_name(format!("{name}.{}.{n}.part", std::process::id()));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&part) {
+            Ok(file) => {
+                taken = Some((part, file));
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("cannot write {}: {e}", path.display())),
+        }
+    }
+    let Some((part, mut file)) = taken else {
+        return Err(format!("cannot write {}: 64 temporary files beside it are taken", path.display()));
+    };
+    file.write_all(text.as_bytes())
+        .and_then(|()| file.flush())
+        .and_then(|()| {
+            drop(file);
+            std::fs::rename(&part, path)
+        })
         .map_err(|e| {
             let _ = std::fs::remove_file(&part);
             format!("cannot write {}: {e}", path.display())
@@ -962,19 +976,35 @@ mod tests {
         assert_eq!(read(&path), second);
         assert_eq!(folder(), ["bug.json"]);
 
-        // A symlink waiting under the temporary file's name is removed, not written through.
+        // A symlink waiting under the first temporary name is skipped: not written through, not removed.
         #[cfg(unix)]
         {
             let outside = base.join("outside.txt");
             std::fs::write(&outside, "keep").unwrap();
-            let part = path.with_file_name(format!("bug.json.{}.part", std::process::id()));
-            std::os::unix::fs::symlink(&outside, &part).unwrap();
+            let planted = path.with_file_name(format!("bug.json.{}.0.part", std::process::id()));
+            std::os::unix::fs::symlink(&outside, &planted).unwrap();
             write_at(&path, &first).unwrap();
             assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep");
             assert_eq!(read(&path), first);
-            assert!(std::fs::symlink_metadata(&part).is_err(), "the temporary file is gone");
-            assert_eq!(folder(), ["bug.json"]);
+            let mut names = folder();
+            names.sort();
+            assert_eq!(names, ["bug.json".to_string(), format!("bug.json.{}.0.part", std::process::id())]);
+            std::fs::remove_file(&planted).unwrap();
         }
+
+        // Calls writing the same report at once each use a temporary file of their own: all of them
+        // succeed, the report is whole, and no temporary file is left.
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    for _ in 0..10 {
+                        write_at(&path, &second).unwrap();
+                    }
+                });
+            }
+        });
+        assert_eq!(read(&path), second);
+        assert_eq!(folder(), ["bug.json"]);
 
         // A folder below crashes/ is made.
         let deeper = path_in(&base, "crashes/mine/bug.json").unwrap();
