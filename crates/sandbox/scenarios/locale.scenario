@@ -1,0 +1,83 @@
+# Languages (E9.4): the arena's text is Fluent files, one folder per language
+# (`assets/locale/<language>/menus.ftl`), and content names the languages
+# (`content/ui/languages.locale.ron`: Russian falls back to English). The player's
+# `locale.language` setting picks one, and the menus say everything again in it while the game
+# runs, before the call that switched returns. `locale` tells an agent what each language has;
+# `text` reads any message in any language, with its parameters.
+
+seed 42
+
+# --- English, no menu open, whatever an earlier run left
+act? ui_close screen=confirm_quit
+act? ui_close screen=settings
+act? ui_close screen=pause
+act settings_set group=locale reset=true
+act locale
+expect result contains "playing: en"
+expect result contains "ru Русский → en: 32 messages; lacks 1: settings-fov"
+
+# --- whole phrases with parameters: a number picks each language's plural form, and a phrase
+# goes into a phrase whole, never glued from pieces
+act text id=defeated args='{"count": 1}'
+expect result contains "1 enemy defeated"
+act text id=defeated args='{"count": 3}' language=ru
+expect result contains "Повержено 3 врага"
+act text id=defeated args='{"count": 21}' language=ru
+expect result contains "Повержен 21 враг"
+act text id=leave args='{"place": "@place-arena"}' language=ru
+expect result contains "Покинуть арену?"
+act text id=settings-fov language=ru
+expect result contains "Field of view"
+expect result contains "# ru has no message `settings-fov`; it is shown in en"
+act? text id=pause-resum
+expect result contains "en has no message `pause-resum` (did you mean `pause-resume`?)"
+act? text id=defeated language=de
+expect result contains "no language `de`; languages: en, ru"
+
+# --- the menus in English; their Language page switches them while they are open
+act ui_open screen=pause
+expect result contains "opened pause"
+act ui_read screen=pause
+expect result contains "pause \"Paused\""
+expect result contains "pause/resume  button \"Resume\""
+act ui_click id=pause/settings
+act ui_set id=settings/tabs value=language
+expect result contains "settings/tabs graphics → language"
+act ui_read screen=settings
+expect result contains "settings/game_language  choice \"Language\" en \"English\" (en|ru) [locale.language]"
+mark
+act ui_set id=settings/game_language value=Русский
+expect result contains "settings/game_language en → ru"
+expect journal "locale: language en → ru"
+expect journal "locale: ru has no message `settings-fov`; it is shown in en"
+act ui_read
+expect result contains "settings \"Настройки\""
+expect result contains "settings/game_language  choice \"Язык\" ru \"Русский\" (en|ru) [locale.language]"
+expect result contains "settings/accessibility  panel \"Доступность\" (page not shown)"
+expect result contains "pause/resume  button \"Продолжить\""
+act locale
+expect result contains "playing: ru (missing messages from en)"
+
+# --- a message Russian lacks is shown in English
+act ui_set id=settings/tabs value=accessibility
+act ui_read screen=settings
+expect result contains "settings/fov  slider \"Field of view\""
+expect result contains "settings/flashes  choice \"Вспышки\""
+
+# --- a language the game has not is refused with the ones it has
+act? settings_set group=locale key=language value=de
+expect result contains "`de` is not a language of this game"
+expect result contains "en (English), ru (Русский)"
+
+# --- back to the game's own language: the setting reset, the menus in English again
+mark
+act settings_set group=locale reset=true
+expect journal "locale: language ru → en"
+act ui_read screen=pause
+expect result contains "pause/resume  button \"Resume\""
+
+# --- and the menus closed
+act ui_close screen=settings
+act ui_close screen=pause
+act ui_read
+expect result contains "no screens are open"

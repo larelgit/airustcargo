@@ -51,9 +51,10 @@ fn a_host_does_not_replicate_settings() {
 #[test]
 fn the_engine_groups_are_registered_in_order() {
     let app = game();
-    assert_eq!(app.world().resource::<SettingsRegistry>().names(), ["graphics", "audio", "controls", "accessibility"]);
+    // The four of this crate, then the language of `shards_locale`, which the engine adds after it.
+    assert_eq!(app.world().resource::<SettingsRegistry>().names(), ["graphics", "audio", "controls", "accessibility", "locale"]);
     let status = shards::ai_core::status::status(app.world());
-    assert_eq!(status["settings"]["groups"], json!(["graphics", "audio", "controls", "accessibility"]));
+    assert_eq!(status["settings"]["groups"], json!(["graphics", "audio", "controls", "accessibility", "locale"]));
     assert_eq!(status["settings"]["store"], json!(null), "no store in a test app");
     assert!(status["engine"]["modules"].to_string().contains("settings"), "{status}");
 }

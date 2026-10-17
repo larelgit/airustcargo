@@ -2,7 +2,9 @@
 //! draws them, moves through them with the keyboard, gamepad and mouse, and lets agents read and
 //! press them (`ui_read`, `ui_navigate`, `ui_click`). A game adds only what is its own:
 //!
-//! - a **source** a widget binds to (`bind: "trophies"`), read from the world when it is shown;
+//! - a **source** a widget binds to (`bind: "trophies"`), read from the world when it is shown, and
+//!   said in the language played: a message of `assets/locale/<language>/game.ftl` with the
+//!   number as a parameter, so each language picks its own plural form;
 //! - a **game action** a button does (`action: "save_and_quit"`), when `close`, `open <screen>`,
 //!   `quit` and `tool <name> {json}` are not enough.
 
@@ -21,10 +23,10 @@ impl Plugin for ScreensPlugin {
     }
 }
 
-/// `Trophies 2`: the grunts the hero this machine plays has defeated.
+/// `2 trophies` (`2 трофея`): the grunts the hero this machine plays has defeated.
 fn trophies(world: &World, _: &str) -> Option<UiValue> {
     let defeated = world.get::<Trophies>(viewer(world)?)?.defeated;
-    Some(UiValue::Text(format!("Trophies {defeated}")))
+    Some(UiValue::Text(shards::locale::text(world, "hud-trophies", &Args::new().number("count", defeated))))
 }
 
 /// Saves the world and the hero, then ends the game; a save that fails keeps the game going,

@@ -1,0 +1,5 @@
+// Two languages; what Russian lacks is shown in English.
+{
+    "en": (name: "English"),
+    "ru": (name: "Русский", fallback: "en"),
+}

@@ -4,8 +4,9 @@
 //! the AI layer ([`ai_core`]), engine states and the loading gate ([`core`]), the
 //! content database ([`content`]), physics, the character controller, input and
 //! camera ([`motion`]), data-driven combat ([`action`]), levels from Blender ([`level`]),
-//! generated regions ([`world`]), enemy AI ([`npc`]), saves ([`save`]) and the player's settings
-//! ([`settings`]); Bevy and serde come re-exported.
+//! generated regions ([`world`]), enemy AI ([`npc`]), saves ([`save`]), the player's settings
+//! ([`settings`]), screens and menus ([`ui`]) and their languages ([`locale`]); Bevy and serde come
+//! re-exported.
 //!
 //! ```ignore
 //! use shards::prelude::*;
@@ -58,6 +59,7 @@ pub use shards_action as action;
 pub use shards_content as content;
 pub use shards_core as core;
 pub use shards_level as level;
+pub use shards_locale as locale;
 pub use shards_motion as motion;
 pub use shards_net as net;
 pub use shards_npc as npc;
@@ -83,6 +85,7 @@ pub mod prelude {
     pub use shards_content::prelude::*;
     pub use shards_core::prelude::*;
     pub use shards_level::prelude::*;
+    pub use shards_locale::prelude::*;
     pub use shards_motion::prelude::*;
     pub use shards_npc::prelude::*;
     pub use shards_save::prelude::*;

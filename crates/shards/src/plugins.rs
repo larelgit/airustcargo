@@ -15,6 +15,7 @@ use shards_motion::MotionPlugin;
 use shards_net::NetPlugin;
 use shards_npc::NpcPlugin;
 use shards_save::SavePlugin;
+use shards_locale::LocalePlugin;
 use shards_settings::ShardsSettingsPlugin;
 use shards_ui::UiPlugin as ShardsUiPlugin;
 use shards_world::WorldPlugin;
@@ -104,6 +105,8 @@ impl PluginGroup for EnginePlugins {
             .add(EngineSavePlugin)
             // Where the two meet: characters travel with their players, the host keeps the world.
             .add(CoopPlugin)
+            // Languages and their text, which screens are drawn in.
+            .add(LocalePlugin)
             // Screens and menus, then the HUD's values and the controls in menus.
             .add(ShardsUiPlugin)
             .add(EngineUiPlugin)

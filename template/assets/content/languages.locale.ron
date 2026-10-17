@@ -1,0 +1,9 @@
+// The languages the game is played in. Each one's text is assets/locale/<id>/*.ftl (Fluent:
+// https://projectfluent.org), and a message missing in Russian is shown in English. The player
+// picks one in Settings → Language; an agent with `settings_set group=locale key=language value=ru`.
+// Add a language: a line here and its folder of .ftl files; `cargo run -- --check-content` says
+// what it lacks.
+{
+    "en": (name: "English"),
+    "ru": (name: "Русский", fallback: "en"),
+}

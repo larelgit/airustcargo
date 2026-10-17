@@ -30,6 +30,8 @@ cargo test                          # тесты, сценарий и репле
 | `assets/content/*.ron` | **все числа игры**: движение, действия, мувсеты, бойцы (префабы), уровень |
 | `assets/content/session.net.ron` | кооператив на двоих: второй игрок играет героем того же префаба `hero`, остальное — числа движка |
 | `assets/content/screens.screen.ron` | HUD, пауза, настройки и вопрос перед выходом: экраны на виджетах движка |
+| `assets/content/languages.locale.ron`, `assets/locale/` | языки (английский, русский) и их тексты на Fluent: всё, что пишут HUD и меню; см. «Языки» |
+| `assets/content/look.theme.ron`, `assets/fonts/` | тема экранов: шрифт Fira Sans с кириллицей (OFL) |
 | `assets/content/region/` | сгенерированная долина `valley`: тайлы 16 м, сокеты, точки интереса, регион 8×8, запасная карта, настройки навсетки |
 | `assets/content/npc/` | рейдер: поведение (машина состояний), восприятие, план атак: NPC движка без строчки кода игры |
 | `assets/tiles/ruin.gltf` | тайл-руина из Blender: пол, стены, колонна, маркеры (лагерь, ориентир, сокеты) |
@@ -67,6 +69,8 @@ cargo test                          # тесты, сценарий и репле
   с ним. Из игры нужен один файл контента. См. «Кооператив на двоих».
 - **HUD и меню**: экраны в контенте, рисует, водит фокус и показывает агенту движок; игра даёт трофеи на HUD и кнопку
   «сохранить и выйти» (`src/screens.rs`). См. «HUD и меню».
+- **Языки**: английский и русский на Fluent, переключаются на лету из настроек; трофеи на HUD — фраза с формой
+  множественного числа. См. «Языки».
 
 ## Запуск из репозитория движка
 
@@ -283,8 +287,34 @@ shards act ui_click id=pause/settings
 shards act ui_set id=settings/music value=0.5   # слайдер: settings: audio.music 0.8 → 0.5
 ```
 
-`scenarios/menus.scenario` делает это агентом со scope `player`; `tests/game/screens.rs` проверяет трофеи на HUD и
-«сохранить и выйти».
+`scenarios/menus.scenario` делает это агентом со scope `player`; `tests/game/screens.rs` проверяет трофеи на HUD,
+«сохранить и выйти» и смену языка.
+
+## Языки
+
+Текст HUD и меню — сообщения [Fluent](https://projectfluent.org) в `assets/locale/<язык>/game.ftl`, экраны называют их через
+`@` (`label: "@pause-resume"`). Языки — контент `assets/content/languages.locale.ron`: английский и русский, недостающее в
+русском берётся из английского. Игрок выбирает язык на вкладке Language настроек (или агент: `shards act settings_set
+group=locale key=language value=ru`), и HUD с меню тут же говорят по-русски. Шрифт с кириллицей — Fira Sans (OFL,
+`assets/fonts/`), его называет тема `assets/content/look.theme.ron`.
+
+Текст из кода — целые фразы с параметрами, не склейка кусков: источник `trophies` пишет
+`shards::locale::text(world, "hud-trophies", &Args::new().number("count", defeated))`, а форму множественного числа выбирает
+язык (`1 trophy`, `5 trophies`; `1 трофей`, `3 трофея`, `5 трофеев`):
+
+```ftl
+hud-trophies = { $count ->
+    [one] { $count } трофей
+    [few] { $count } трофея
+   *[many] { $count } трофеев
+}
+```
+
+Новый язык — строка в `languages.locale.ron` и папка `assets/locale/<язык>/`; `cargo run -- --check-content` назовёт
+ошибки в файлах (с файлом, строкой и столбцом) и `@id`, которого нет ни в одном языке. Правка `.ftl` в работающей игре
+применяется за секунду; правку с ошибкой игра отклоняет и называет в журнале, а до исправления говорит прежним текстом. Агент видит языки и
+их пробелы через `shards act locale`, читает любое сообщение — `shards act text id=hud-trophies 'args={"count": 3}'
+language=ru`.
 
 ## Сценарии
 
@@ -348,7 +378,7 @@ cargo test --test game record_reference_replays -- --ignored
 ## Тесты
 
 ```bash
-cargo test                   # всё: 33 теста (и один `#[ignore]`: запись эталонов), секунды
+cargo test                   # всё: 34 теста (и один `#[ignore]`: запись эталонов), секунды
 cargo test --test game determinism
 ```
 
@@ -406,8 +436,8 @@ cargo build --release --no-default-features --features render
 сгенерированные регионы, NPC и навигация, снапшоты, сохранения, настройки игрока, кооператив на двоих; из фазы D — HUD и меню). Заглушки,
 которые заполнятся:
 
-- **TODO · звук, локализация и главное меню (E9, фаза D).** HUD и меню паузы есть (см. «HUD и меню»); звука, перевода и
-  экрана `EngineState::MainMenu` пока нет, экран загрузки региона (`RegionLoading`) без картинки.
+- **TODO · звук и главное меню (E9, фаза D).** HUD, меню паузы и языки есть (см. «HUD и меню», «Языки»); звука и экрана
+  `EngineState::MainMenu` пока нет, экран загрузки региона (`RegionLoading`) без картинки.
 - **TODO · анимации и реальные модели.** `anim: "light_1"` в действиях это имя клипа; мост к анимации движка
   появится вместе с модулем рендера (E10). Сейчас тела рисуются из своих коллайдеров (`src/visuals.rs`), руина —
   из своего файла glTF.

@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use shards_core::LocalPlayer;
 use shards_settings::SettingsRegistry;
 
-use crate::model::{UiValue, UiWidget};
+use crate::model::{UiValue, UiWidget, WidgetKind};
 
 /// The body a HUD is about: the one this machine's controls drive (`LocalPlayer`), else the one
 /// agents play (`AiPlayer`). A game's own sources read it too (`trophies` of the hero).
@@ -108,7 +108,11 @@ pub fn live_value(world: &World, widget: &UiWidget) -> UiValue {
         return match &widget.value {
             UiValue::Number(_) => text.parse().map(UiValue::Number).unwrap_or_else(|_| widget.value.clone()),
             UiValue::Flag(_) => UiValue::Flag(text == "true"),
-            UiValue::Choice(_) => UiValue::Choice(text.trim_matches('"').to_owned()),
+            // A setting that is none of the options (a language left to the game) shows `value`.
+            UiValue::Choice(_) => match (&widget.kind, text.trim_matches('"')) {
+                (WidgetKind::Choice { options, .. }, now) if options.iter().any(|o| o == now) => UiValue::Choice(now.to_owned()),
+                _ => widget.value.clone(),
+            },
             other => other.clone(),
         };
     }

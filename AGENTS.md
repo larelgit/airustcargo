@@ -18,7 +18,9 @@
   `cargo test --manifest-path template/Cargo.toml`.
 - Крейты: `shards` (зонтик, единственная зависимость игры), `shards_core`, `shards_content`, `shards_motion`,
   `shards_action`, `shards_level` (уровни из Blender), `shards_world` (регионы, генерация), `shards_npc` (враги, навсетка),
-  `shards_save` (сохранения: секции, слоты, миграции, копии), `shards_ui` (экраны и меню из контента), `ai_core`, `shards_script`, `shards_cli`, `sandbox` (арена движка). Карта — в README, «Архитектура».
+  `shards_save` (сохранения: секции, слоты, миграции, копии), `shards_ui` (экраны и меню из контента), `shards_locale`
+  (языки: тексты на Fluent, смена на лету), `ai_core`, `shards_script`, `shards_cli`, `sandbox` (арена движка). Карта — в
+  README, «Архитектура».
 
 ## Как смотреть на игру и действовать в ней
 
@@ -65,7 +67,9 @@ kill <pid>                              # pid из `wait`
   `goto_tile`, `region_info`, `worldgen_report`, `spawn_level`, `level_info`, `level_reload`; **NPC и навигация** —
   `npc_state`, `npc_set_state`, `nav_path`, `nav_info`, `nav_bake`, оверлеи `world_overlay` и `nav_overlay` (окно); **правила** —
   `assert_add`, `assert_list`, `assert_remove`, `assert_reset` (`shards assert`); **интерфейс** — `ui_read` (дерево экранов: id
-  виджетов, значения, фокус), `ui_open`, `ui_close`, `ui_navigate`, `ui_click`, `ui_set`. Условия для
+  виджетов, значения, фокус), `ui_open`, `ui_close`, `ui_navigate`, `ui_click`, `ui_set`; **язык** — `locale` (языки, на каком
+  играют, чего каждому не хватает), `text` (сообщение с параметрами на любом языке); язык меняет `settings_set group=locale
+  key=language value=ru`. Условия для
   `step --until named:…`: `near_poi`, `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`; свои у игры (в песочнице
   `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`).
 - Инструменты боя (`dodge`, `light_attack`, `block`, `use_item`, `attack`) отвечают по правилам игры сразу: `ok: roll (W)`,
@@ -115,6 +119,8 @@ kill <pid>                              # pid из `wait`
   из конкретной игры: если механизм пригодится второй игре с другим сюжетом, он в движке, если это конкретное
   «что» (оружие, враг, число), оно в игре, то есть в контенте.
 - **Контент.** Числа и определения — файлы `assets/content/**/*.<вид>.ron` (горячая перезагрузка), а не константы в коде.
+  Текст, который читает игрок, — сообщения Fluent в `assets/locale/<язык>/*.ftl`: контент называет их `@id`, код
+  форматирует `shards::locale::text(world, id, &Args)` целыми фразами с параметрами, не склеивая куски.
   Песочница тоже: её мир, префабы, атаки, мувсеты и движение лежат в `crates/sandbox/assets/content/`. Новый вид контента —
   структура с `ContentDef` и `add_content`; ссылки на другие определения проверяются в `validate` (`refs.require`).
 - **Мир создавайте в `OnEnter(EngineState::InGame)`**, не в `Startup`: контент есть только после загрузки. Порядок

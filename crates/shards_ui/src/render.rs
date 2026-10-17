@@ -41,6 +41,8 @@ pub(crate) fn plugin(app: &mut App) {
 struct Look {
     theme: ThemeDef,
     scale: f32,
+    /// The theme's font; `None`: the engine's own.
+    font: Option<Handle<bevy::text::Font>>,
 }
 
 /// A full-screen node holding a screen's root, placed by its anchor.
@@ -111,11 +113,12 @@ fn draw(world: &mut World) {
 fn update_look(world: &mut World) {
     let theme = world.get_resource::<ContentDb>().and_then(|db| db.get::<ThemeDef>("default").cloned()).unwrap_or_default();
     let scale = world.get_resource::<AccessibilitySettings>().map_or(1.0, AccessibilitySettings::text);
-    let look = Look { theme, scale };
-    if *world.resource::<Look>() == look {
+    let now = world.resource::<Look>();
+    if now.theme == theme && now.scale == scale {
         return;
     }
-    world.insert_resource(look);
+    let font = theme.font.clone().map(|path| world.resource::<AssetServer>().load(path));
+    world.insert_resource(Look { theme, scale, font });
     let mut drawn = world.query_filtered::<Entity, With<Drawn>>();
     for e in drawn.iter(world).collect::<Vec<_>>() {
         world.entity_mut(e).remove::<Drawn>();
@@ -180,7 +183,11 @@ fn frame_screens(world: &mut World) {
 /// Font size of a role, times the player's text size.
 fn font(world: &World, size: fn(&ThemeDef) -> f32) -> TextFont {
     let look = world.resource::<Look>();
-    TextFont::from_font_size(size(&look.theme) * look.scale)
+    let mut font = TextFont::from_font_size(size(&look.theme) * look.scale);
+    if let Some(handle) = &look.font {
+        font.font = handle.clone().into();
+    }
+    font
 }
 
 fn theme(world: &World) -> ThemeDef {
@@ -192,7 +199,8 @@ fn text_part(world: &mut World, parent: Entity, text: String, size: fn(&ThemeDef
     world.spawn((Part, Text::new(text), font, TextColor(color(rgba)), Pickable::IGNORE, ChildOf(parent))).id()
 }
 
-/// The text a widget's value is drawn as. The engine's default font has ASCII only.
+/// The text a widget's value is drawn as. The engine's default font has ASCII only; a theme
+/// names one for other scripts (`font`).
 fn value_text(w: &UiWidget) -> String {
     match (&w.kind, &w.value) {
         (WidgetKind::Text | WidgetKind::Hint, UiValue::Text(t)) => t.clone(),
@@ -213,7 +221,7 @@ fn value_text(w: &UiWidget) -> String {
         }
         (WidgetKind::Slider { .. }, UiValue::Number(v)) => format_number(*v),
         (WidgetKind::Toggle, UiValue::Flag(on)) => if *on { "[x]" } else { "[ ]" }.to_owned(),
-        (WidgetKind::Choice { .. }, UiValue::Choice(v)) => format!("< {v} >"),
+        (WidgetKind::Choice { .. }, UiValue::Choice(v)) => format!("< {} >", w.kind.option_label(v)),
         _ => String::new(),
     }
 }
@@ -272,6 +280,7 @@ fn describe(node: &mut A11yNode, w: &UiWidget) {
         }
         (WidgetKind::Toggle, UiValue::Flag(on)) => node.set_toggled(if *on { Toggled::True } else { Toggled::False }),
         (WidgetKind::Text | WidgetKind::Hint, UiValue::Text(t)) => node.set_label(t.clone()),
+        (WidgetKind::Choice { .. }, UiValue::Choice(v)) => node.set_value(w.kind.option_label(v).to_owned()),
         _ => {
             let text = value_text(w);
             if !text.is_empty() {

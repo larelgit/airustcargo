@@ -54,7 +54,8 @@ pub enum WidgetKind {
     Compare,
     Slider { min: f32, max: f32, step: f32 },
     Toggle,
-    Choice { options: Vec<String> },
+    /// `labels`: what each option says, in the language played (empty: the options themselves).
+    Choice { options: Vec<String>, labels: Vec<String> },
 }
 
 impl WidgetKind {
@@ -87,6 +88,14 @@ impl WidgetKind {
     /// Whether it holds other widgets.
     pub fn container(&self) -> bool {
         matches!(self, WidgetKind::Panel { .. } | WidgetKind::List | WidgetKind::Grid { .. } | WidgetKind::Tabs)
+    }
+
+    /// What option `value` of a choice says: its label, or itself.
+    pub fn option_label<'a>(&'a self, value: &'a str) -> &'a str {
+        match self {
+            WidgetKind::Choice { options, labels } => options.iter().position(|o| o == value).and_then(|i| labels.get(i)).map_or(value, String::as_str),
+            _ => value,
+        }
     }
 }
 
@@ -325,6 +334,8 @@ pub fn open(world: &mut World, name: &str) -> Result<String, String> {
     }
     let def = screen_def(world, name)?;
     let root = spawn_screen(world, name, &def);
+    // A message the language lacks is in the journal before the call returns.
+    shards_locale::journal_notes(world);
     world.resource_mut::<UiStack>().open.push((name.to_owned(), root));
     ensure_focus(world, root);
     if def.layer != Layer::Hud {
@@ -363,7 +374,7 @@ fn spawn_screen(world: &mut World, name: &str, def: &ScreenDef) -> Entity {
     let root = UiWidget {
         path: name.to_owned(),
         kind: WidgetKind::Panel { layout: def.layout },
-        label: def.title.clone().unwrap_or_default(),
+        label: def.title.as_deref().map(|t| shards_locale::resolve(world, t)).unwrap_or_default(),
         value: UiValue::None,
         bind: None,
         setting: None,
@@ -380,18 +391,20 @@ fn spawn_screen(world: &mut World, name: &str, def: &ScreenDef) -> Entity {
 
 fn spawn_widget(world: &mut World, parent: Entity, screen: &str, def: &WidgetDef, counters: &mut BTreeMap<&'static str, u32>) {
     let path = format!("{screen}/{}", assign_id(def, counters));
-    let e = world.spawn((Name::new(format!("ui {path}")), UiWidget::from_def(path, def), ChildOf(parent))).id();
+    let widget = UiWidget::from_def(path.clone(), def, &|t| shards_locale::resolve(world, t));
+    let e = world.spawn((Name::new(format!("ui {path}")), widget, ChildOf(parent))).id();
     for child in def.children() {
         spawn_widget(world, e, screen, child, counters);
     }
 }
 
 impl UiWidget {
-    fn from_def(path: String, def: &WidgetDef) -> UiWidget {
+    /// The widget `def` describes, its texts through `tr` (`@menu-resume` → `Resume`).
+    fn from_def(path: String, def: &WidgetDef, tr: &dyn Fn(&str) -> String) -> UiWidget {
         let plain = |kind, label: &str, value| UiWidget {
             path: path.clone(),
             kind,
-            label: label.to_owned(),
+            label: tr(label),
             value,
             bind: None,
             setting: None,
@@ -403,8 +416,8 @@ impl UiWidget {
             WidgetDef::List { .. } => plain(WidgetKind::List, title, UiValue::None),
             WidgetDef::Grid { columns, .. } => plain(WidgetKind::Grid { columns: (*columns).max(1) }, title, UiValue::None),
             WidgetDef::Tabs { .. } => plain(WidgetKind::Tabs, "", UiValue::Page(0)),
-            WidgetDef::Text { text, bind, .. } => UiWidget { bind: bind.clone(), ..plain(WidgetKind::Text, "", UiValue::Text(text.clone())) },
-            WidgetDef::Hint { text, bind, .. } => UiWidget { bind: bind.clone(), ..plain(WidgetKind::Hint, "", UiValue::Text(text.clone())) },
+            WidgetDef::Text { text, bind, .. } => UiWidget { bind: bind.clone(), ..plain(WidgetKind::Text, "", UiValue::Text(tr(text))) },
+            WidgetDef::Hint { text, bind, .. } => UiWidget { bind: bind.clone(), ..plain(WidgetKind::Hint, "", UiValue::Text(tr(text))) },
             WidgetDef::Button { label, action, enabled, .. } => {
                 UiWidget { enabled: *enabled, ..plain(WidgetKind::Button { action: action.clone() }, label, UiValue::None) }
             }
@@ -419,15 +432,19 @@ impl UiWidget {
                 UiWidget { bind: Some(bind.clone()), ..plain(WidgetKind::Compass, "", UiValue::Heading { deg: 0.0, marks: Vec::new() }) }
             }
             WidgetDef::Allies { bind, .. } => UiWidget { bind: Some(bind.clone()), ..plain(WidgetKind::Allies, "", UiValue::Allies(Vec::new())) },
-            WidgetDef::Compare { rows, bind, .. } => UiWidget { bind: bind.clone(), ..plain(WidgetKind::Compare, title, UiValue::Compare(rows.clone())) },
+            WidgetDef::Compare { rows, bind, .. } => {
+                let rows = rows.iter().map(|r| CompareRow { stat: tr(&r.stat), ..r.clone() }).collect();
+                UiWidget { bind: bind.clone(), ..plain(WidgetKind::Compare, title, UiValue::Compare(rows)) }
+            }
             WidgetDef::Slider { label, min, max, step, value, setting, .. } => UiWidget {
                 setting: setting.clone(),
                 ..plain(WidgetKind::Slider { min: *min, max: *max, step: *step }, label, UiValue::Number(value.unwrap_or(*min)))
             },
             WidgetDef::Toggle { label, on, setting, .. } => UiWidget { setting: setting.clone(), ..plain(WidgetKind::Toggle, label, UiValue::Flag(*on)) },
-            WidgetDef::Choice { label, options, value, setting, .. } => {
+            WidgetDef::Choice { label, options, labels, value, setting, .. } => {
                 let value = value.clone().or_else(|| options.first().cloned()).unwrap_or_default();
-                UiWidget { setting: setting.clone(), ..plain(WidgetKind::Choice { options: options.clone() }, label, UiValue::Choice(value)) }
+                let kind = WidgetKind::Choice { options: options.clone(), labels: labels.iter().map(|l| tr(l)).collect() };
+                UiWidget { setting: setting.clone(), ..plain(kind, label, UiValue::Choice(value)) }
             }
         }
     }
@@ -689,7 +706,7 @@ pub fn adjust(world: &mut World, e: Entity, delta: i32, agent: &str) -> Result<S
             let step = if *step > 0.0 { *step } else { (max - min) / 20.0 };
             format_number(v + delta as f32 * step)
         }
-        (WidgetKind::Choice { options }, UiValue::Choice(v)) => {
+        (WidgetKind::Choice { options, .. }, UiValue::Choice(v)) => {
             let at = options.iter().position(|o| *o == v).unwrap_or(0) as i32;
             options[(at + delta).rem_euclid(options.len().max(1) as i32) as usize].clone()
         }
@@ -725,9 +742,19 @@ pub fn set_value(world: &mut World, e: Entity, text: &str, agent: &str) -> Resul
             "false" | "off" | "no" | "0" => false,
             _ => return Err(format!("{} is a toggle: `on` or `off`, not `{text}`", w.path)),
         }),
-        WidgetKind::Choice { options } => {
-            let found = options.iter().find(|o| o.eq_ignore_ascii_case(text)).cloned();
-            UiValue::Choice(found.ok_or_else(|| format!("{} is one of {}, not `{text}`", w.path, options.join(", ")))?)
+        WidgetKind::Choice { options, labels } => {
+            // An option, or what it says.
+            let found = options.iter().find(|o| o.eq_ignore_ascii_case(text)).or_else(|| {
+                labels.iter().position(|l| l.to_lowercase() == text.to_lowercase()).and_then(|i| options.get(i))
+            });
+            let each: Vec<String> = options
+                .iter()
+                .map(|o| match w.kind.option_label(o) {
+                    label if label == o => o.clone(),
+                    label => format!("{o} ({label})"),
+                })
+                .collect();
+            UiValue::Choice(found.cloned().ok_or_else(|| format!("{} is one of {}, not `{text}`", w.path, each.join(", ")))?)
         }
         WidgetKind::Tabs => {
             let pages = widget_children(world, e);
@@ -803,6 +830,57 @@ pub(crate) fn open_start_screens(world: &mut World) {
         if let Err(e) = open(world, &name) {
             warn!("ui: {e}");
         }
+    }
+}
+
+/// The text the open screens say things in: the [`Locale`](shards_locale::Locale) version they
+/// were last given.
+#[derive(Resource, Default)]
+pub(crate) struct UiTextVersion(u64);
+
+/// `Update`, after the locale: another language, or its files edited. Every open screen says
+/// what it says again in the new text; values, focus and pages stay as they are.
+pub(crate) fn retell_screens(world: &mut World) {
+    let Some(version) = world.get_resource::<shards_locale::Locale>().map(shards_locale::Locale::version) else { return };
+    if world.resource::<UiTextVersion>().0 == version {
+        return;
+    }
+    world.resource_mut::<UiTextVersion>().0 = version;
+    let open: Vec<(String, Entity)> = world.resource::<UiStack>().screens().map(|(n, e)| (n.to_owned(), e)).collect();
+    for (name, root) in open {
+        let Some(def) = world.get::<UiScreen>(root).map(|s| s.def.clone()) else { continue };
+        let mut fresh = BTreeMap::new();
+        fresh.insert(name.clone(), def.title.as_deref().map(|t| shards_locale::resolve(world, t)).unwrap_or_default());
+        let mut told = BTreeMap::new();
+        let mut counters = BTreeMap::new();
+        for w in &def.widgets {
+            retold(world, &name, w, &mut counters, &mut told);
+        }
+        for (e, _) in walk(world, root) {
+            let Some(mut w) = world.get_mut::<UiWidget>(e) else { continue };
+            if let Some(title) = fresh.get(&w.path) {
+                w.label = title.clone();
+                continue;
+            }
+            let Some(new) = told.remove(&w.path) else { continue };
+            w.label = new.label;
+            if matches!(w.kind, WidgetKind::Choice { .. }) {
+                w.kind = new.kind;
+            }
+            // Text fixed by content; a source's says what the source says.
+            if w.bind.is_none() && matches!(w.kind, WidgetKind::Text | WidgetKind::Hint | WidgetKind::Compare) {
+                w.value = new.value;
+            }
+        }
+    }
+}
+
+/// The widgets of `def` as they are told now, by path.
+fn retold(world: &World, screen: &str, def: &WidgetDef, counters: &mut BTreeMap<&'static str, u32>, out: &mut BTreeMap<String, UiWidget>) {
+    let path = format!("{screen}/{}", assign_id(def, counters));
+    out.insert(path.clone(), UiWidget::from_def(path, def, &|t| shards_locale::resolve(world, t)));
+    for child in def.children() {
+        retold(world, screen, child, counters, out);
     }
 }
 
