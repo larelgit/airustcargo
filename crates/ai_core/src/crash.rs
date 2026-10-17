@@ -17,7 +17,10 @@
 //! The panic hook ([`install_panic_hook`]; `shards::run` installs it) keeps the last panics with
 //! their call stacks; it writes nothing. Code that catches a panic itself and carries on (a
 //! tool's answer, an invariant's violation) calls [`handled`], so no report is written for it.
-//! The files a game writes are switched off with [`AiCorePlugin::crash_replays`](crate::AiCorePlugin).
+//! [`AiCorePlugin::crash_replays`](crate::AiCorePlugin) switches off the reports the game writes by itself (a
+//! failed system, a panic nobody handled), not the one an agent asks for with `crash_report`: that is a bug
+//! report on request, and it is written whatever the switch says. It goes to a new file in `crashes/`, or,
+//! with `path`, to the file of that name in `crashes/`, replaced each time.
 
 use std::backtrace::{Backtrace, BacktraceStatus};
 use std::collections::VecDeque;
@@ -810,13 +813,59 @@ fn watch(world: &mut World) {
 pub struct CrashReportArgs {
     /// What is wrong, in a sentence; it heads the report: "the boss fell through the floor".
     pub note: Option<String>,
+    /// Where to write it, inside crashes/ in the game's working directory, e.g. "crashes/bug.json";
+    /// a file of that name is replaced. Default: a new crashes/crash-<time>-tick<T>.json (or, when
+    /// that folder cannot be written, one in the player's own folder).
+    pub path: Option<String>,
+}
+
+/// A good path for the errors that refuse a bad one.
+const CRASH_PATH_EXAMPLE: &str = "crashes/bug.json";
+
+/// `requested` (a path inside `crashes/`, e.g. `crashes/bug.json`) as an absolute path inside
+/// `<base>/crashes/`, with the folder created. Refuses an absolute path, `..` and a symlink
+/// that leads out, with an example of a good one ([`crate::paths::inside_of`]).
+pub fn path_in(base: &Path, requested: &str) -> Result<PathBuf, String> {
+    crate::paths::inside_of(base, CRASHES_DIR, requested, CRASH_PATH_EXAMPLE)
+}
+
+/// Writes `report` to `path` (see [`path_in`]), replacing a file that is there: written beside it
+/// and renamed, so a report that cannot be written leaves the old file as it was.
+pub fn write_at(path: &Path, report: &CrashReport) -> Result<(), String> {
+    let text = serde_json::to_string_pretty(report).map_err(|e| e.to_string())?;
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let part = path.with_file_name(format!("{name}.part"));
+    std::fs::write(&part, text)
+        .and_then(|()| std::fs::rename(&part, path))
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&part);
+            format!("cannot write {}: {e}", path.display())
+        })
 }
 
 fn crash_report_tool(In(call): In<Call<CrashReportArgs>>, world: &mut World) -> ToolResult {
-    let note = call.args.note.unwrap_or_default();
+    let CrashReportArgs { note, path: requested } = call.args;
+    // The path is checked before the report is made: a report holds the panics nobody has reported
+    // yet, and a call that is refused must leave them to the next.
+    let target = requested
+        .map(|requested| {
+            let base = std::env::current_dir().map_err(|e| format!("no working directory: {e}"))?;
+            path_in(&base, &requested)
+        })
+        .transpose()?;
+    let note = note.unwrap_or_default();
     let headline = if note.is_empty() { "bug report".to_owned() } else { format!("bug report: {note}") };
     let report = report(world, What { headline, message: note, ..default() }, None);
-    let path = write(&report)?;
+    let path = match target {
+        Some(path) => match write_at(&path, &report) {
+            Ok(()) => path,
+            Err(e) => {
+                release(&report);
+                return Err(e);
+            }
+        },
+        None => write(&report)?,
+    };
     let replay = match (&report.replay, &report.no_replay) {
         (Some(r), _) => format!("a replay of {} ticks and {} events", r.end.tick, r.events.len()),
         (None, why) => format!("no replay: {}", why.as_deref().unwrap_or("none")),
@@ -882,6 +931,48 @@ mod tests {
         assert_eq!(first.parent(), Some(crate::paths::canonical(&base.join(CRASHES_DIR)).unwrap().as_path()));
         let read: CrashReport = serde_json::from_str(&std::fs::read_to_string(&first).unwrap()).unwrap();
         assert_eq!(read, report);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn a_report_asked_to_a_path_goes_there_and_replaces_the_one_before() {
+        let base = std::env::temp_dir().join(format!("ai_core_crash_path_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let folder = || std::fs::read_dir(base.join(CRASHES_DIR)).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect::<Vec<_>>();
+        let read = |path: &Path| -> CrashReport { serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap() };
+
+        let first = CrashReport { session: Some(Session { tick: 50, seed: 7, tick_hz: 60.0 }), ..sample() };
+        let path = path_in(&base, "crashes/bug.json").unwrap();
+        assert_eq!(path, crate::paths::canonical(&base.join(CRASHES_DIR)).unwrap().join("bug.json"));
+        write_at(&path, &first).unwrap();
+        assert_eq!(read(&path), first);
+
+        // The same path again is the same file, replaced: nothing else is left in the folder.
+        let second = CrashReport { session: Some(Session { tick: 90, seed: 7, tick_hz: 60.0 }), ..sample() };
+        assert_eq!(path_in(&base, "crashes/./bug.json").unwrap(), path);
+        write_at(&path, &second).unwrap();
+        assert_eq!(read(&path), second);
+        assert_eq!(folder(), ["bug.json"]);
+
+        // A folder below crashes/ is made.
+        let deeper = path_in(&base, "crashes/mine/bug.json").unwrap();
+        write_at(&deeper, &first).unwrap();
+        assert_eq!(read(&deeper), first);
+
+        // Anything outside crashes/ is refused with a path that works, and nothing is written.
+        let example = "path must be inside crashes/, e.g. crashes/bug.json";
+        for (bad, why) in [
+            ("bug.json", "is outside crashes/"),
+            ("replays/bug.json", "is outside crashes/"),
+            ("crashes/../bug.json", "goes up with `..`"),
+            ("../crashes/bug.json", "goes up with `..`"),
+            ("crashes", "names no file"),
+            (if cfg!(windows) { "C:\\bug.json" } else { "/tmp/bug.json" }, "is absolute"),
+        ] {
+            let refused = path_in(&base, bad).unwrap_err();
+            assert!(refused.starts_with(example) && refused.contains(why), "`{bad}`: {refused}");
+        }
+        assert!(!base.join("bug.json").exists() && !base.join("replays").exists(), "nothing outside crashes/");
         let _ = std::fs::remove_dir_all(base);
     }
 

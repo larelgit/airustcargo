@@ -131,7 +131,9 @@ pub struct AiCorePlugin {
     /// After a gameplay failure, save the session as `replays/crash-tick<N>.json` to
     /// reproduce it with, and a crash report next to it in `crashes/` ([`crash`]); after a
     /// violated invariant, as `replays/invariant-<name>-tick<N>.json`. A panic nobody handled
-    /// (another thread) gets a crash report too.
+    /// (another thread) gets a crash report too. `false` switches off what the game writes by
+    /// itself; the `crash_report` tool, a bug report an agent asks for, writes its file whatever
+    /// this says (with its `path` in `crashes/`, over the same file each time).
     pub crash_replays: bool,
     /// Ticks between replay checks ([`replay::CHECK_EVERY`] by default), stored in every
     /// replay saved. Record with 1 to have a divergence named at its exact tick.
