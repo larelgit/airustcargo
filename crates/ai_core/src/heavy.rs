@@ -83,12 +83,15 @@ impl HeavyConfig {
     }
 }
 
+/// Updates a twin until it has loaded, or says why it has not.
+type Wait = Arc<dyn Fn(&mut App) -> Result<(), String> + Send + Sync>;
+
 /// How heavy mode builds a twin: the game's own builder. `shards::run` and the test apps of
 /// `shards::testing` put it in; a game without it runs no heavy checks, and says so.
 #[derive(Resource, Clone)]
 pub struct HeavyTwin {
     build: Arc<dyn Fn() -> App + Send + Sync>,
-    wait: Arc<dyn Fn(&mut App) -> Result<(), String> + Send + Sync>,
+    wait: Wait,
 }
 
 impl HeavyTwin {

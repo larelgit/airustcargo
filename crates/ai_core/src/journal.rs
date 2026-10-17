@@ -192,11 +192,12 @@ pub const EMIT_TARGET: &str = "ai_core::journal";
 /// apps without the log capture (tests), and the terminal too.
 pub fn emit(world: &mut World, kind: JournalKind, text: impl Into<String>) -> u64 {
     let text = text.into();
-    match kind {
-        _ if crate::process::is_quiet() => {}
-        JournalKind::Error => error!(target: EMIT_TARGET, "{text}"),
-        JournalKind::Warn => warn!(target: EMIT_TARGET, "{text}"),
-        _ => info!(target: EMIT_TARGET, "{text}"),
+    if !crate::process::is_quiet() {
+        match kind {
+            JournalKind::Error => error!(target: EMIT_TARGET, "{text}"),
+            JournalKind::Warn => warn!(target: EMIT_TARGET, "{text}"),
+            _ => info!(target: EMIT_TARGET, "{text}"),
+        }
     }
     match world.get_resource::<AiJournal>() {
         Some(_) => log(world, kind, text),
