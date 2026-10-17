@@ -70,6 +70,7 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   tick-time tests, which run alone with `-j 1`; the test groups `snapshot-file` and `shards-snapshots` for the tests that share a file name or a folder. The doctests run as a step of their own
   (`cargo test --workspace --doc --locked`). `cargo test` is still the local command.
 - CI tiers: `nightly.yml` (01:30 UTC, or by hand with `seed` and `minutes`): 100000 worldgen seeds for the sandbox and the template, the `#[ignore]`d GPU tests on a software Vulkan driver under Xvfb, and the performance tests `reference` and `reference96` as an artifact; a failed night opens an issue labelled `nightly` (or comments on the open one). `cross.yml` (weekly, by hand, on `v*` tags) verifies every reference replay on `windows-latest` and `ubuntu-22.04` and writes replay, verdict and CPU model to the job summary. A job of `ci.yml` that fails uploads what the run wrote (replays, crashes, snapshots, shots, game logs) as an artifact for 14 days.
+- `.gitattributes`: level files, content, replays and other text the game hashes or compares are checked out with LF on Windows too. `cross.yml` found that `ruin.gltf` came out with CRLF under the runner's `core.autocrlf`, and three reference replays that place a level then diverged (`replay check level differs`).
 
 ### Changed
 
