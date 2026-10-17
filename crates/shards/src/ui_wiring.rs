@@ -5,7 +5,13 @@
 //! one agents play (`AiPlayer`). The controls: the `pause` key (Escape, gamepad Start) opens the
 //! screen `pause` if the game has one; while a menu is open the input map's `menu` context is on
 //! top (the character hears nothing), its `navigate`, `confirm` and `back` move through the menu.
-//! Both go through the `ui_*` tools as agent [`INPUT_AGENT`], so replays record them.
+//! While a binding widget waits for an input, the menu hears nothing either: the next key, mouse
+//! button or gamepad button becomes the binding (`ui_set`), and Escape or Start stops the wait
+//! (`ui_navigate back`, which then leaves the screen open). All of it goes through the `ui_*`
+//! tools as agent [`INPUT_AGENT`], so replays record them.
+//!
+//! The source `input.bindings` ([`shards_ui::BINDINGS_SOURCE`]) gives binding widgets the inputs of
+//! an action, as the `controls` settings make them now.
 
 use ai_core::AiLandmark;
 use bevy::prelude::*;
@@ -13,8 +19,9 @@ use serde_json::json;
 use shards_action::fighter::{Charges, Cooldowns, Dead, Health, Poise, Stamina};
 use shards_content::ContentDb;
 use shards_core::PlayerId;
-use shards_motion::{ControlState, ControlSystems, InputContexts};
-use shards_ui::{viewer, Ally, Mark, Nav, ScreenDef, UiAppExt, UiValue, INPUT_AGENT};
+use shards_motion::input::InputDefaults;
+use shards_motion::{Binding, ControlState, ControlSystems, InputContexts, InputMap};
+use shards_ui::{viewer, Ally, BoundInput, BoundInputs, CapturedClicks, Mark, Nav, ScreenDef, UiAppExt, UiValue, BINDINGS_SOURCE, INPUT_AGENT};
 
 /// The screen the pause key opens.
 pub const PAUSE_SCREEN: &str = "pause";
@@ -40,6 +47,7 @@ impl Plugin for EngineUiPlugin {
             })
             .add_ui_source("you.heading", heading)
             .add_ui_source("allies", allies)
+            .add_ui_source(BINDINGS_SOURCE, bindings)
             .init_resource::<MenuControls>()
             .add_systems(PreUpdate, menu_controls.after(ControlSystems::Read));
     }
@@ -47,6 +55,45 @@ impl Plugin for EngineUiPlugin {
 
 fn ratio(value: f32, max: f32) -> UiValue {
     UiValue::Ratio { value, max }
+}
+
+/// One input as a binding widget shows it.
+fn bound(binding: &Binding, taken_by: Option<String>) -> BoundInput {
+    BoundInput { text: binding.text(), label: binding.label(), gamepad: binding.is_gamepad(), axis: binding.is_axis(), taken_by }
+}
+
+/// `input.bindings:<context>.<action>`: the action's inputs as the `controls` settings make them
+/// now (right after `settings_set`, before the map follows), and its defaults; why there are none
+/// when the map has no such action. `input.bindings:<context>.<action> <input>`: that input, and
+/// the other action of the context that reads it (`None`: the text is no input).
+fn bindings(world: &World, arg: &str) -> Option<UiValue> {
+    let (key, asked) = match arg.trim().split_once(char::is_whitespace) {
+        Some((key, input)) => (key, Some(input.trim())),
+        None => (arg.trim(), None),
+    };
+    let map = shards_motion::input::controls::map_now(world)?;
+    let Some((context, action)) = key.split_once('.') else {
+        return Some(UiValue::Text(format!("`{key}` is not `context.action` (`gameplay.jump`)")));
+    };
+    let Some(ctx) = map.context(context) else {
+        let all: Vec<&str> = map.contexts.iter().map(|c| c.name.as_str()).collect();
+        return Some(UiValue::Text(format!("no input context `{context}`{}; contexts: {}", InputMap::suggest(context, all.iter().copied()), all.join(", "))));
+    };
+    let Some(found) = ctx.action(action) else {
+        let names = map.action_names(context);
+        return Some(UiValue::Text(format!(
+            "no action `{action}` in context `{context}`{}; actions: {}",
+            InputMap::suggest(action, names.iter().copied()),
+            names.join(", ")
+        )));
+    };
+    if let Some(text) = asked {
+        let input = Binding::parse(text).ok()?;
+        let holder = map.used_by(context, &input, action).map(str::to_owned);
+        return Some(UiValue::Bindings(BoundInputs { inputs: vec![bound(&input, holder)], defaults: Vec::new() }));
+    }
+    let defaults = world.get_resource::<InputDefaults>().and_then(|d| d.0.action(context, action)).map(|a| a.bindings.iter().map(Binding::text).collect());
+    Some(UiValue::Bindings(BoundInputs { inputs: found.bindings.iter().map(|b| bound(b, None)).collect(), defaults: defaults.unwrap_or_default() }))
 }
 
 /// Degrees clockwise from north (-Z) of a direction on the ground.
@@ -95,6 +142,9 @@ struct MenuControls {
     pushed: bool,
     held: Option<Nav>,
     next_repeat: f64,
+    /// A binding widget took an input a moment ago: the menu moves again once nothing steers it,
+    /// so an arrow key or W that became a binding does not also move the focus.
+    settle: bool,
 }
 
 /// `PreUpdate`, after the controls are read: the `menu` context while a menu is open, its
@@ -122,7 +172,18 @@ fn menu_controls(world: &mut World) {
             return;
         }
     }
+    forget_released_clicks(world);
+    if let Some(path) = shards_ui::capturing(world) {
+        capture(world, &path);
+        return;
+    }
     let Some(controls) = world.get_resource::<ControlState>().cloned() else { return };
+    if world.resource::<MenuControls>().settle {
+        if controls.axis("navigate") != Vec2::ZERO {
+            return;
+        }
+        world.resource_mut::<MenuControls>().settle = false;
+    }
     if !menu_open {
         let has_pause = world.get_resource::<ContentDb>().is_some_and(|db| db.get::<ScreenDef>(PAUSE_SCREEN).is_some());
         if controls.just_pressed("pause") && has_pause {
@@ -176,6 +237,58 @@ fn menu_controls(world: &mut World) {
             Nav::Back => "back",
         };
         call(world, "ui_navigate", json!({"dir": word}));
+    }
+}
+
+/// The order mouse buttons are taken in when two go down in one frame.
+fn mouse_rank(button: MouseButton) -> u16 {
+    match button {
+        MouseButton::Left => 0,
+        MouseButton::Right => 1,
+        MouseButton::Middle => 2,
+        MouseButton::Back => 3,
+        MouseButton::Forward => 4,
+        MouseButton::Other(n) => n.saturating_add(5),
+    }
+}
+
+/// A binding widget waits: Escape or Start stops the wait (`ui_navigate back`), else the first key,
+/// mouse button or gamepad button that went down this frame becomes the binding (`ui_set`). The
+/// menu hears none of it.
+fn capture(world: &mut World, path: &str) {
+    let mut gamepads = world.query::<(Entity, &Gamepad)>();
+    let mut pads: Vec<(Entity, &Gamepad)> = gamepads.iter(world).collect();
+    let keys = world.get_resource::<ButtonInput<KeyCode>>();
+    let mouse = world.get_resource::<ButtonInput<MouseButton>>();
+    pads.sort_by_key(|(e, _)| *e);
+    let cancel = keys.is_some_and(|k| k.just_pressed(KeyCode::Escape)) || pads.iter().any(|(_, p)| p.just_pressed(GamepadButton::Start));
+    let key = keys.and_then(|k| k.get_just_pressed().min().copied());
+    let click = mouse.and_then(|m| m.get_just_pressed().copied().min_by_key(|b| mouse_rank(*b)));
+    let pad = pads.iter().find_map(|(_, p)| p.get_just_pressed().min().copied());
+    let input = key.map(Binding::Key).or(click.map(Binding::Mouse)).or(pad.map(Binding::GamepadButton));
+    if cancel {
+        call(world, "ui_navigate", json!({"dir": "back"}));
+    } else if let Some(input) = input {
+        if let Binding::Mouse(button) = input {
+            world.resource_mut::<CapturedClicks>().0.push(button);
+        }
+        call(world, "ui_set", json!({"id": path, "value": input.text()}));
+    } else {
+        return;
+    }
+    world.resource_mut::<MenuControls>().settle = true;
+}
+
+/// A mouse button a binding took stops guarding its click a frame after it is let go: the click
+/// comes on the frame it is let go, and a release away from any widget brings none.
+fn forget_released_clicks(world: &mut World) {
+    let Some(mouse) = world.get_resource::<ButtonInput<MouseButton>>() else { return };
+    let gone: Vec<MouseButton> = world
+        .get_resource::<CapturedClicks>()
+        .map(|c| c.0.iter().copied().filter(|b| !mouse.pressed(*b) && !mouse.just_released(*b)).collect())
+        .unwrap_or_default();
+    if !gone.is_empty() {
+        world.resource_mut::<CapturedClicks>().0.retain(|b| !gone.contains(b));
     }
 }
 

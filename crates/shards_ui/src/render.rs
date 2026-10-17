@@ -13,6 +13,7 @@ use accesskit::{Node as A11yNode, Role, Toggled};
 use bevy::a11y::AccessibilityNode;
 use bevy::input_focus::{FocusCause, InputFocus};
 use bevy::picking::events::{PointerClick, PointerOut, PointerOver};
+use bevy::picking::pointer::PointerButton;
 use bevy::picking::Pickable;
 use bevy::prelude::*;
 use serde_json::json;
@@ -21,10 +22,10 @@ use shards_settings::AccessibilitySettings;
 
 use crate::bind::live_value;
 use crate::def::{Anchor, Layer, Layout, ThemeDef};
-use crate::model::{focused, on_shown_page, UiScreen, UiValue, UiWidget, WidgetKind};
+use crate::model::{binding_state, focused, on_shown_page, UiScreen, UiValue, UiWidget, WidgetKind};
 use crate::model::{format_number, widget_children};
 use crate::text::compass_point;
-use crate::UiSystems;
+use crate::{CapturedClicks, UiSystems};
 
 /// The font of every text that names none (a theme without `font`, the dev console, overlays):
 /// Fira Sans Regular, with Latin, Greek and Cyrillic letters. SIL Open Font License 1.1: the
@@ -82,6 +83,10 @@ struct Drawn {
     widget: UiWidget,
     focused: bool,
     shown: bool,
+    /// A binding that waits for an input.
+    waits: bool,
+    /// What a binding says of an input it refused.
+    note: Option<String>,
 }
 
 fn color(rgba: [u8; 4]) -> Color {
@@ -104,7 +109,8 @@ fn draw(world: &mut World) {
         let Some(stored) = world.get::<UiWidget>(e).cloned() else { continue };
         let widget = UiWidget { value: live_value(world, &stored), ..stored };
         let shown = on_shown_page(world, e) && !matches!((&widget.kind, &widget.value), (WidgetKind::Hint, UiValue::Text(t)) if t.is_empty());
-        let now = Drawn { widget, focused: focus == Some(e), shown };
+        let (waits, note) = if matches!(widget.kind, WidgetKind::Binding { .. }) { binding_state(world, e) } else { (false, None) };
+        let now = Drawn { widget, focused: focus == Some(e), shown, waits, note };
         let before = world.get::<Drawn>(e).cloned();
         if before.as_ref() == Some(&now) {
             continue;
@@ -234,6 +240,11 @@ fn value_text(w: &UiWidget) -> String {
         (WidgetKind::Slider { .. }, UiValue::Number(v)) => format_number(*v),
         (WidgetKind::Toggle, UiValue::Flag(on)) => if *on { "[x]" } else { "[ ]" }.to_owned(),
         (WidgetKind::Choice { .. }, UiValue::Choice(v)) => format!("< {} >", w.kind.option_label(v)),
+        (WidgetKind::Binding { .. }, UiValue::Bindings(bound)) => {
+            let shown: Vec<&str> = w.kind.shown_inputs(&bound.inputs).iter().map(|i| i.label.as_str()).collect();
+            if shown.is_empty() { "-".to_owned() } else { shown.join(" / ") }
+        }
+        (WidgetKind::Binding { .. }, UiValue::Text(why)) => why.clone(),
         _ => String::new(),
     }
 }
@@ -318,6 +329,7 @@ fn role(w: &UiWidget, screen: Option<Layer>) -> Role {
         (WidgetKind::Slider { .. }, _) => Role::Slider,
         (WidgetKind::Toggle, _) => Role::CheckBox,
         (WidgetKind::Choice { .. }, _) => Role::ComboBox,
+        (WidgetKind::Binding { .. }, _) => Role::Button,
     }
 }
 
@@ -434,6 +446,19 @@ fn redraw(world: &mut World, e: Entity, state: &Drawn) {
             parts.value = Some(value);
             parts.all.extend([label, value]);
         }
+        WidgetKind::Binding { prompt, .. } => {
+            world.entity_mut(e).insert(Node { display, flex_direction: FlexDirection::Row, column_gap: gap, align_items: AlignItems::Center, ..default() });
+            let label = text_part(world, e, w.label.clone(), |t| t.font_size, text_rgba);
+            // Waiting, it asks for the input; the inputs come back when it gets one.
+            let shown = if state.waits { prompt.clone() } else { value_text(w) };
+            let value = text_part(world, e, shown, |t| t.font_size, t.color(&t.accent));
+            parts.value = Some(value);
+            parts.all.extend([label, value]);
+            if let Some(note) = &state.note {
+                let warn = t.bar_color(Some("health"));
+                parts.all.push(text_part(world, e, note.clone(), |t| t.hint_size, warn));
+            }
+        }
         WidgetKind::Allies => {
             world.entity_mut(e).insert(column(FlexDirection::Column));
             if let UiValue::Allies(allies) = &w.value {
@@ -492,6 +517,14 @@ fn redraw(world: &mut World, e: Entity, state: &Drawn) {
         a11y.set_disabled();
     }
     describe(&mut a11y, w);
+    if let WidgetKind::Binding { prompt, .. } = &w.kind {
+        if state.waits {
+            a11y.set_value(prompt.clone());
+        }
+        if let Some(note) = &state.note {
+            a11y.set_description(note.clone());
+        }
+    }
     world.entity_mut(e).insert((AccessibilityNode(a11y), parts));
 }
 
@@ -509,8 +542,19 @@ fn sync_focus(world: &mut World, focus: Option<Entity>) {
     }
 }
 
-/// A click on a widget that takes input presses it, as `ui_click` (recorded like any call).
-fn on_click(mut click: On<PointerClick>, widgets: Query<&UiWidget>, mut commands: Commands) {
+/// A click on a widget that takes input presses it, as `ui_click` (recorded like any call). The
+/// click of a mouse button a binding took on its press is not one: it ends there.
+fn on_click(mut click: On<PointerClick>, widgets: Query<&UiWidget>, mut captured: ResMut<CapturedClicks>, mut commands: Commands) {
+    let button = match click.button {
+        PointerButton::Primary => MouseButton::Left,
+        PointerButton::Secondary => MouseButton::Right,
+        PointerButton::Middle => MouseButton::Middle,
+    };
+    if let Some(at) = captured.0.iter().position(|b| *b == button) {
+        captured.0.remove(at);
+        click.propagate(false);
+        return;
+    }
     let Ok(widget) = widgets.get(click.entity) else { return };
     if !widget.kind.focusable() {
         return;

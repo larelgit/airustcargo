@@ -239,6 +239,33 @@ pub enum WidgetDef {
         #[serde(default)]
         setting: Option<String>,
     },
+    /// The input of an action of the controls (`jump`: `Space · Pad South`), which the player
+    /// changes: confirming it waits for the next key, mouse button or gamepad button (Escape
+    /// cancels), and that input becomes the binding, saved in the `controls` settings. An input
+    /// another action of the context reads is refused, and the widget says which action holds it.
+    /// The engine's source `input.bindings` gives the inputs.
+    Binding {
+        id: String,
+        label: String,
+        /// The input context (`gameplay`, `menu`, a game's own).
+        #[serde(default = "gameplay", skip_serializing_if = "is_gameplay")]
+        context: String,
+        /// The action (`jump`, `light`, `use_item`).
+        action: String,
+        /// Only this slot (0: the primary input; one past the last adds one). Without it the widget
+        /// shows every input of the action, and a new one replaces the first input of its kind of
+        /// device (keyboard and mouse, or gamepad), or is added when the action has none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slot: Option<usize>,
+        /// What it says while it waits (`@controls-press`). Default: `Press a key or button...
+        /// (Esc cancels)`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt: Option<String>,
+        /// The message that says an input is taken, with `$input` and `$action`
+        /// (`@controls-taken`). Default: `<input> is already used by <action>`, in English.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        taken: Option<String>,
+    },
     /// One of `options`; with `setting`, that player setting.
     Choice {
         id: String,
@@ -261,6 +288,14 @@ fn heading() -> String {
     "you.heading".to_owned()
 }
 
+fn gameplay() -> String {
+    "gameplay".to_owned()
+}
+
+fn is_gameplay(context: &str) -> bool {
+    context == "gameplay"
+}
+
 fn allies() -> String {
     "allies".to_owned()
 }
@@ -281,6 +316,7 @@ impl WidgetDef {
             | WidgetDef::Button { id, .. }
             | WidgetDef::Slider { id, .. }
             | WidgetDef::Toggle { id, .. }
+            | WidgetDef::Binding { id, .. }
             | WidgetDef::Choice { id, .. } => Some(id),
             WidgetDef::Panel { id, .. }
             | WidgetDef::List { id, .. }
@@ -312,6 +348,7 @@ impl WidgetDef {
             WidgetDef::Compare { .. } => "compare",
             WidgetDef::Slider { .. } => "slider",
             WidgetDef::Toggle { .. } => "toggle",
+            WidgetDef::Binding { .. } => "binding",
             WidgetDef::Choice { .. } => "choice",
         }
     }
@@ -351,6 +388,11 @@ impl WidgetDef {
             WidgetDef::Choice { label, labels, .. } => {
                 texts.push((label, "label"));
                 texts.extend(labels.iter().map(|l| (l.as_str(), "labels")));
+            }
+            WidgetDef::Binding { label, prompt, taken, .. } => {
+                texts.push((label, "label"));
+                texts.extend(prompt.as_deref().map(|p| (p, "prompt")));
+                texts.extend(taken.as_deref().map(|t| (t, "taken")));
             }
             WidgetDef::Compare { rows, .. } => texts.extend(rows.iter().map(|r| (r.stat.as_str(), "rows.stat"))),
             _ => {}
@@ -513,6 +555,22 @@ fn check_widget(widget: &WidgetDef, refs: &mut Refs, seen: &mut BTreeSet<String>
                 refs.error(format!("choice `{id}`: `value` `{v}` is not one of the options ({})", options.join(", ")));
             }
             check_setting(&id, setting.as_deref(), refs);
+        }
+        WidgetDef::Binding { context, action, taken, .. } => {
+            // The player's controls are saved as `context.action`, split at the first dot.
+            if context.is_empty() || context.contains('.') || context.contains(char::is_whitespace) {
+                refs.error(format!("binding `{id}`: `context` is an input context's name (`gameplay`), without dots or spaces, not `{context}`"));
+            }
+            if action.is_empty() || action.contains(char::is_whitespace) {
+                refs.error(format!("binding `{id}`: `action` is an action of the input map (`jump`, `light`), not `{action}`"));
+            }
+            if let Some(text) = taken
+                && shards_locale::message_ref(text).is_none()
+            {
+                refs.error(format!(
+                    "binding `{id}`: `taken` names a message with `$input` and `$action` (`@controls-taken`), not `{text}`"
+                ));
+            }
         }
         _ => {}
     }
@@ -730,5 +788,25 @@ mod tests {
         assert_eq!(screen.widgets.len(), 4);
         assert!(matches!(&screen.widgets[1], WidgetDef::Slider { step, setting: Some(s), .. } if *step == 0.25 && s == "accessibility.text_scale"));
         assert!(matches!(&screen.widgets[3], WidgetDef::Bar { max, .. } if *max == 1.0));
+    }
+
+    #[test]
+    fn a_binding_reads_from_ron_with_its_defaults_and_writes_only_what_it_has() {
+        let text = r#"[
+            Binding(id: "jump", label: "@controls-jump", action: "jump"),
+            Binding(id: "pad_back", label: "Back", context: "menu", action: "back", slot: 1, prompt: "@controls-press", taken: "@controls-taken"),
+        ]"#;
+        let opts = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
+        let widgets: Vec<WidgetDef> = opts.from_str(text).unwrap();
+        let WidgetDef::Binding { context, action, slot, prompt, taken, .. } = &widgets[0] else { panic!("{:?}", widgets[0]) };
+        assert_eq!((context.as_str(), action.as_str(), slot, prompt, taken), ("gameplay", "jump", &None, &None, &None), "gameplay, every slot, the engine's texts");
+        assert!(matches!(&widgets[1], WidgetDef::Binding { context, slot: Some(1), .. } if context == "menu"));
+        assert_eq!((widgets[0].kind(), widgets[0].id()), ("binding", Some("jump")));
+        assert_eq!(widgets[1].texts(), [("Back", "label"), ("@controls-press", "prompt"), ("@controls-taken", "taken")]);
+        // What is left out stays out of the JSON the content database hashes.
+        let json = serde_json::to_value(&widgets[0]).unwrap();
+        assert_eq!(json, serde_json::json!({"Binding": {"id": "jump", "label": "@controls-jump", "action": "jump"}}));
+        let menu = serde_json::to_value(&widgets[1]).unwrap();
+        assert_eq!(menu["Binding"]["context"], "menu");
     }
 }

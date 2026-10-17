@@ -131,3 +131,28 @@ fn text_that_names_no_font_draws_with_the_engines_which_has_russian() {
     }
     assert!(!shards::ai_core::display::default_font_has('⚠') && face.glyph_index('⚠').is_none());
 }
+
+#[test]
+fn a_binding_is_drawn_with_its_inputs_and_asks_for_one_while_it_waits() {
+    let mut app = windowed();
+    ok(&mut app, "ui_open", json!({"screen": "keys"}));
+    app.update();
+    let jump = widget(&mut app, "keys/jump");
+    assert_eq!(texts(&app, jump), ["Jump", "Space / Pad South"], "the inputs as a player reads them, in ASCII for the engine's font");
+    let node = a11y(&mut app, "keys/jump");
+    assert_eq!((node.role(), node.label(), node.value()), (Role::Button, Some("Jump"), Some("Space / Pad South")));
+
+    ok(&mut app, "ui_click", json!({"id": "keys/jump"}));
+    app.update();
+    assert_eq!(texts(&app, jump), ["Jump", "Press a key or button... (Esc cancels)"]);
+    assert_eq!(a11y(&mut app, "keys/jump").value(), Some("Press a key or button... (Esc cancels)"));
+
+    // A refused input: the row says which action holds it, and a screen reader hears it too.
+    refused(&mut app, "ui_set", json!({"id": "keys/jump", "value": "Key(KeyE)"}));
+    app.update();
+    assert_eq!(texts(&app, jump), ["Jump", "Space / Pad South", "E is already used by Interact"]);
+    assert_eq!(a11y(&mut app, "keys/jump").description(), Some("E is already used by Interact"));
+    ok(&mut app, "ui_set", json!({"id": "keys/jump", "value": "Key(KeyJ)"}));
+    app.update();
+    assert_eq!(texts(&app, jump), ["Jump", "J / Pad South"]);
+}

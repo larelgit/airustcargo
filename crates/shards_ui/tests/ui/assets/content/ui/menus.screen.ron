@@ -49,4 +49,16 @@
             Compare(id: "sword", title: "Sword", rows: [(stat: "damage", before: 12, after: 15), (stat: "speed", before: 5, after: 4)]),
         ],
     ),
+    // The controls: every input of an action, one slot of it, another context, an action the map lacks.
+    "keys": (
+        title: "Keys",
+        widgets: [
+            Binding(id: "jump", label: "Jump", action: "jump"),
+            Binding(id: "interact", label: "Interact", action: "interact"),
+            Binding(id: "jump_pad", label: "Jump (pad)", action: "jump", slot: 1),
+            Binding(id: "confirm", label: "Confirm", context: "menu", action: "confirm"),
+            Binding(id: "fly", label: "Fly", action: "fly"),
+            Button(id: "back", label: "Back", action: "back"),
+        ],
+    ),
 }

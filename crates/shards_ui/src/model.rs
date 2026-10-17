@@ -15,8 +15,19 @@ use serde_json::json;
 use shards_content::ContentDb;
 use shards_core::{NetRole, PauseState};
 
-use crate::bind::{live_value, UiActions, UiPress};
+use crate::bind::{live_value, read_source, UiActions, UiPress};
 use crate::def::{assign_id, ButtonAction, CompareRow, Layer, Layout, ScreenDef, WidgetDef};
+
+/// The source binding widgets read, which the engine gives from its input map (the `shards`
+/// crate): `input.bindings:<context>.<action>` is the action's inputs as [`UiValue::Bindings`]
+/// (or [`UiValue::Text`] saying why there are none: no such action);
+/// `input.bindings:<context>.<action> <input>` is that one input as a player reads it, with the
+/// other action of the context that reads it (`None`: the text is not an input).
+pub const BINDINGS_SOURCE: &str = "input.bindings";
+
+/// What a binding widget says while it waits, unless content says otherwise (ASCII: the
+/// engine's own font has nothing else).
+pub const DEFAULT_PROMPT: &str = "Press a key or button... (Esc cancels)";
 
 /// One widget of an open screen. The root of a screen is one too: a panel named like the screen.
 #[derive(Component, Clone, Debug, PartialEq)]
@@ -56,6 +67,10 @@ pub enum WidgetKind {
     Toggle,
     /// `labels`: what each option says, in the language played (empty: the options themselves).
     Choice { options: Vec<String>, labels: Vec<String> },
+    /// The inputs of `action` in input context `context` (only slot `slot`, with one); `prompt` is
+    /// what it says while it waits for an input (in the language played), `taken` the message
+    /// (`@id`) that says an input is taken.
+    Binding { context: String, action: String, slot: Option<usize>, prompt: String, taken: Option<String> },
 }
 
 impl WidgetKind {
@@ -77,12 +92,24 @@ impl WidgetKind {
             WidgetKind::Slider { .. } => "slider",
             WidgetKind::Toggle => "toggle",
             WidgetKind::Choice { .. } => "choice",
+            WidgetKind::Binding { .. } => "binding",
         }
     }
 
     /// Whether focus can rest on it: the widgets a player presses or changes.
     pub fn focusable(&self) -> bool {
-        matches!(self, WidgetKind::Button { .. } | WidgetKind::Slider { .. } | WidgetKind::Toggle | WidgetKind::Choice { .. } | WidgetKind::Tabs)
+        matches!(
+            self,
+            WidgetKind::Button { .. } | WidgetKind::Slider { .. } | WidgetKind::Toggle | WidgetKind::Choice { .. } | WidgetKind::Tabs | WidgetKind::Binding { .. }
+        )
+    }
+
+    /// The inputs a binding widget shows of `inputs`: its slot's, or all of them.
+    pub fn shown_inputs<'a>(&self, inputs: &'a [BoundInput]) -> &'a [BoundInput] {
+        match self {
+            WidgetKind::Binding { slot: Some(slot), .. } => inputs.get(*slot..=*slot).unwrap_or(&[]),
+            _ => inputs,
+        }
     }
 
     /// Whether it holds other widgets.
@@ -118,6 +145,41 @@ pub enum UiValue {
     Choice(String),
     /// The page tabs show, by index.
     Page(usize),
+    /// An action's inputs (source [`BINDINGS_SOURCE`]).
+    Bindings(BoundInputs),
+}
+
+/// An action's inputs, as a binding widget shows and changes them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BoundInputs {
+    /// Slot 0 (the primary input) first.
+    pub inputs: Vec<BoundInput>,
+    /// The game's default inputs of the action, as text: going back to them removes the player's
+    /// setting instead of saving a copy of the defaults.
+    pub defaults: Vec<String>,
+}
+
+/// One input of an action.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BoundInput {
+    /// As settings and `ui_set` write it: `Key(KeyK)`, `GamepadButton(South)`.
+    pub text: String,
+    /// As a player reads it: `F`, `Mouse Right`, `Pad South`.
+    pub label: String,
+    /// A gamepad's: a binding widget without a slot replaces the input of the same kind of device.
+    pub gamepad: bool,
+    /// An axis (a stick, WASD), not a button: binding widgets take buttons only.
+    pub axis: bool,
+    /// For an input asked about: the other action of the context that reads it.
+    pub taken_by: Option<String>,
+}
+
+/// `Space · Pad South`, `none` for no input: what a binding widget shows, for agents and the journal.
+pub fn inputs_text(inputs: &[BoundInput]) -> String {
+    if inputs.is_empty() {
+        return "none".to_owned();
+    }
+    inputs.iter().map(|i| i.label.as_str()).collect::<Vec<_>>().join(" · ")
 }
 
 /// A place on a compass.
@@ -146,6 +208,10 @@ pub struct UiScreen {
     pub def: ScreenDef,
     /// The focused widget's path, when the screen takes input.
     pub focus: Option<String>,
+    /// The binding widget that waits for an input (its path), while one does.
+    pub capture: Option<String>,
+    /// What the last refused binding said, and the binding widget that says it: `(path, text)`.
+    pub note: Option<(String, String)>,
 }
 
 /// The open screens, in the order they opened.
@@ -181,7 +247,8 @@ pub struct UiPressed {
     pub action: String,
 }
 
-/// A slider, toggle, choice or tabs changed value (`value` as `ui_set` takes it).
+/// A slider, toggle, choice, tabs or binding changed value (`value` as `ui_set` takes it; a
+/// binding's: the inputs a player reads).
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct UiChanged {
     pub widget: String,
@@ -386,7 +453,7 @@ fn spawn_screen(world: &mut World, name: &str, def: &ScreenDef) -> Entity {
         setting: None,
         enabled: true,
     };
-    let screen = UiScreen { name: name.to_owned(), def: def.clone(), focus: None };
+    let screen = UiScreen { name: name.to_owned(), def: def.clone(), focus: None, capture: None, note: None };
     let root = world.spawn((Name::new(format!("ui {name}")), screen, root)).id();
     let mut counters = BTreeMap::new();
     for w in &def.widgets {
@@ -451,6 +518,17 @@ impl UiWidget {
                 let value = value.clone().or_else(|| options.first().cloned()).unwrap_or_default();
                 let kind = WidgetKind::Choice { options: options.clone(), labels: labels.iter().map(|l| tr(l)).collect() };
                 UiWidget { setting: setting.clone(), ..plain(kind, label, UiValue::Choice(value)) }
+            }
+            WidgetDef::Binding { label, context, action, slot, prompt, taken, .. } => {
+                let kind = WidgetKind::Binding {
+                    context: context.clone(),
+                    action: action.clone(),
+                    slot: *slot,
+                    prompt: prompt.as_deref().map_or_else(|| DEFAULT_PROMPT.to_owned(), |p| tr(p)),
+                    taken: taken.clone(),
+                };
+                let bind = format!("{BINDINGS_SOURCE}:{context}.{action}");
+                UiWidget { bind: Some(bind), ..plain(kind, label, UiValue::Bindings(BoundInputs::default())) }
             }
         }
     }
@@ -543,9 +621,20 @@ impl Nav {
 /// that takes input.
 pub fn navigate(world: &mut World, nav: Nav, agent: &str) -> Result<String, String> {
     if nav == Nav::Back {
+        // A binding that waits for an input stops waiting, and the screen stays: Escape cancels.
+        if let Some(top) = top_screen(world)
+            && let Some(path) = cancel_capture(world, top)
+        {
+            let kept = find(world, &path).map(|e| shown_value(world, e)).unwrap_or_default();
+            return Ok(format!("{path} stopped waiting for an input; it stays {kept}"));
+        }
         return back(world);
     }
     let top = top_screen(world).ok_or_else(no_screen)?;
+    if nav != Nav::Confirm {
+        // Moving on: a binding that waited stops.
+        cancel_capture(world, top);
+    }
     ensure_focus(world, top);
     let all = focusables(world, top);
     let Some(current) = focused(world) else {
@@ -651,11 +740,18 @@ pub fn reachable(world: &World, e: Entity) -> Result<(), String> {
     Ok(())
 }
 
-/// Presses `e`: a button does its action, a toggle flips, a choice or tabs go to the next.
+/// Presses `e`: a button does its action, a toggle flips, a choice or tabs go to the next, a
+/// binding waits for an input.
 pub fn activate(world: &mut World, e: Entity, agent: &str) -> Result<String, String> {
     reachable(world, e)?;
     set_focus(world, e);
     let w = widget(world, e).cloned().ok_or("not a widget")?;
+    if matches!(w.kind, WidgetKind::Binding { .. }) {
+        return start_capture(world, e, &w);
+    }
+    if let Some(root) = screen_of(world, e) {
+        cancel_capture(world, root);
+    }
     match &w.kind {
         WidgetKind::Button { action } => press(world, e, &w.path, action, agent),
         WidgetKind::Toggle | WidgetKind::Choice { .. } | WidgetKind::Tabs => adjust(world, e, 1, agent),
@@ -724,17 +820,25 @@ pub fn adjust(world: &mut World, e: Entity, delta: i32, agent: &str) -> Result<S
             ((i as i32 + delta).rem_euclid(pages) + 1).to_string()
         }
         (WidgetKind::Toggle, UiValue::Flag(on)) => (!on).to_string(),
+        (WidgetKind::Binding { .. }, _) => return Err(format!("{} is a binding: `confirm` waits for an input, `ui_set` sets one", w.path)),
         (kind, _) => return Err(format!("{} is a {}: nothing to change", w.path, kind.name())),
     };
     set_value(world, e, &value, agent)
 }
 
-/// Sets a slider, toggle, choice or tabs to `text` (a number; `on`/`off`; an option; a page's
-/// id, title or number from 1), and its player setting with it.
+/// Sets a slider, toggle, choice, tabs or binding to `text` (a number; `on`/`off`; an option; a
+/// page's id, title or number from 1; an input such as `Key(KeyK)`, or `default`), and its player
+/// setting with it.
 pub fn set_value(world: &mut World, e: Entity, text: &str, agent: &str) -> Result<String, String> {
     reachable(world, e)?;
     set_focus(world, e);
     let w = widget(world, e).cloned().ok_or("not a widget")?;
+    if matches!(w.kind, WidgetKind::Binding { .. }) {
+        return set_binding(world, e, &w, text.trim(), agent);
+    }
+    if let Some(root) = screen_of(world, e) {
+        cancel_capture(world, root);
+    }
     let before = live_value(world, &w);
     let text = text.trim();
     let value = match &w.kind {
@@ -775,7 +879,7 @@ pub fn set_value(world: &mut World, e: Entity, text: &str, agent: &str) -> Resul
             let names: Vec<String> = pages.iter().filter_map(|p| widget(world, *p)).map(|pw| pw.path.rsplit('/').next().unwrap_or("").to_owned()).collect();
             UiValue::Page(index.ok_or_else(|| format!("{} has pages {} (or 1 to {}), not `{text}`", w.path, names.join(", "), names.len()))?)
         }
-        other => return Err(format!("{} is a {}: `ui_set` takes sliders, toggles, choices and tabs", w.path, other.name())),
+        other => return Err(format!("{} is a {}: `ui_set` takes sliders, toggles, choices, tabs and bindings", w.path, other.name())),
     };
     let shown = value_text(world, e, &value);
     if let Some(key) = &w.setting {
@@ -809,9 +913,205 @@ pub fn set_value(world: &mut World, e: Entity, text: &str, agent: &str) -> Resul
     Ok(format!("{} {was} → {shown}", w.path))
 }
 
-/// A value as `ui_set` takes it: `1.25`, `on`, `reduced`, a page's id.
+/// The binding widget of the screen that takes input that waits for an input (its path).
+pub fn capturing(world: &World) -> Option<String> {
+    let top = top_screen(world)?;
+    let path = world.get::<UiScreen>(top)?.capture.clone()?;
+    find(world, &path).map(|_| path)
+}
+
+/// Whether binding widget `e` waits for an input, and what it says of a refused one.
+pub fn binding_state(world: &World, e: Entity) -> (bool, Option<String>) {
+    let Some(w) = widget(world, e) else { return (false, None) };
+    let Some(screen) = screen_of(world, e).and_then(|root| world.get::<UiScreen>(root)) else { return (false, None) };
+    let waits = screen.capture.as_deref() == Some(w.path.as_str());
+    let note = screen.note.as_ref().filter(|(path, _)| *path == w.path).map(|(_, text)| text.clone());
+    (waits, note)
+}
+
+/// Stops the binding widget of the screen at `root` that waits for an input, if one does.
+fn cancel_capture(world: &mut World, root: Entity) -> Option<String> {
+    let path = world.get_mut::<UiScreen>(root)?.capture.take()?;
+    journal::log(world, JournalKind::Event, format!("ui: {path} stopped waiting for an input"));
+    Some(path)
+}
+
+/// What widget `e` shows now, as `ui_set` and the journal say it.
+fn shown_value(world: &World, e: Entity) -> String {
+    widget(world, e).map(|w| value_text(world, e, &live_value(world, w))).unwrap_or_default()
+}
+
+/// A binding widget waits for an input: the player's next key, mouse button or gamepad button,
+/// which the engine's controls set with `ui_set` (as agent `input`), or an agent's `ui_set`.
+fn start_capture(world: &mut World, e: Entity, w: &UiWidget) -> Result<String, String> {
+    let root = screen_of(world, e).ok_or("not on a screen")?;
+    let how = format!(
+        "the next key, mouse button or gamepad button becomes it (Escape or Start cancels, as `back` does); \
+         an agent gives one with `ui_set id={} value=Key(KeyK)`",
+        w.path
+    );
+    if world.get::<UiScreen>(root).is_some_and(|s| s.capture.as_deref() == Some(w.path.as_str())) {
+        return Ok(format!("{} is waiting for an input already: {how}", w.path));
+    }
+    cancel_capture(world, root);
+    if let Some(mut screen) = world.get_mut::<UiScreen>(root) {
+        screen.capture = Some(w.path.clone());
+        screen.note = None;
+    }
+    journal::log(world, JournalKind::Event, format!("ui: {} waits for an input", w.path));
+    world.trigger(UiPressed { widget: w.path.clone(), action: "capture".to_owned() });
+    Ok(format!("{} waits for an input: {how}", w.path))
+}
+
+/// What the source says of binding widget `w` now: its action's inputs, or why it has none.
+fn bound_now(world: &World, w: &UiWidget) -> Result<BoundInputs, String> {
+    let bind = w.bind.as_deref().unwrap_or(BINDINGS_SOURCE);
+    match read_source(world, bind).map_err(|why| format!("{}: {why}", w.path))? {
+        Some(UiValue::Bindings(inputs)) => Ok(inputs),
+        Some(UiValue::Text(why)) => Err(format!("{}: {why}", w.path)),
+        _ => Err(format!("{}: `{bind}` says nothing of the controls", w.path)),
+    }
+}
+
+/// Input `text` as the source reads it for the action of binding widget `w`: what a player
+/// reads, its device and the other action that holds it. `None`: no input reads so.
+fn ask_input(world: &World, w: &UiWidget, text: &str) -> Option<BoundInput> {
+    let bind = w.bind.as_deref()?;
+    match read_source(world, &format!("{bind} {text}")) {
+        Ok(Some(UiValue::Bindings(asked))) => asked.inputs.into_iter().next(),
+        _ => None,
+    }
+}
+
+/// The label of the binding widget of `action` on the screen at `root`, and its path; the action
+/// itself without one.
+fn holder_name(world: &World, root: Entity, context: &str, action: &str) -> (String, Option<String>) {
+    for (e, _) in walk(world, root) {
+        if let Some(UiWidget { kind: WidgetKind::Binding { context: c, action: a, .. }, label, path, .. }) = widget(world, e)
+            && c == context
+            && a == action
+        {
+            let name = if label.is_empty() { action.to_owned() } else { label.clone() };
+            return (name, Some(path.clone()));
+        }
+    }
+    (action.to_owned(), None)
+}
+
+/// Gives binding widget `e` input `text` (`Key(KeyK)`), or its action back its default inputs
+/// (`default`), through the `controls` settings: what `settings_set` refuses (an input another
+/// action reads) is refused, and the widget says which action holds it.
+fn set_binding(world: &mut World, e: Entity, w: &UiWidget, text: &str, agent: &str) -> Result<String, String> {
+    let WidgetKind::Binding { context, action, slot, taken, .. } = &w.kind else { return Err(format!("{} is not a binding", w.path)) };
+    let root = screen_of(world, e).ok_or("not on a screen")?;
+    // This widget's wait is answered; another one's stops.
+    if let Some(mut screen) = world.get_mut::<UiScreen>(root)
+        && screen.capture.as_deref() == Some(w.path.as_str())
+    {
+        screen.capture = None;
+    }
+    cancel_capture(world, root);
+    let now = bound_now(world, w)?;
+    let was = inputs_text(w.kind.shown_inputs(&now.inputs));
+    let list: Vec<String> = now.inputs.iter().map(|i| i.text.clone()).collect();
+    let mut asked = None;
+    let next = if matches!(text.to_ascii_lowercase().as_str(), "default" | "reset") {
+        now.defaults.clone()
+    } else {
+        let input = ask_input(world, w, text);
+        if let Some(input) = input.as_ref().filter(|i| i.axis) {
+            return Err(format!("{} takes a key, a mouse button or a gamepad button, not an axis like {}", w.path, input.text));
+        }
+        // Text that is no input goes as it is: the settings say what is wrong with it.
+        let new = input.as_ref().map_or_else(|| text.to_owned(), |i| i.text.clone());
+        let gamepad = input.as_ref().map(|i| i.gamepad);
+        asked = input;
+        let mut next = list.clone();
+        match slot {
+            Some(slot) if *slot > next.len() => {
+                return Err(format!(
+                    "{}: `{action}` has {} input(s), so it has no slot {slot} (slot {} adds one)",
+                    w.path,
+                    next.len(),
+                    next.len()
+                ));
+            }
+            Some(slot) => {
+                if *slot == next.len() {
+                    next.push(new.clone());
+                } else {
+                    next[*slot] = new.clone();
+                }
+                // The input moves to this slot from another one of the action.
+                let mut at = 0;
+                next.retain(|t| {
+                    at += 1;
+                    at - 1 == *slot || *t != new
+                });
+            }
+            // The action reads it already.
+            None if next.contains(&new) => {}
+            None => {
+                // The first input of the same kind of device; a gamepad's is added when there is none.
+                let same = match gamepad {
+                    Some(pad) => now.inputs.iter().position(|i| i.gamepad == pad),
+                    None => Some(0),
+                };
+                match same.filter(|at| *at < next.len()) {
+                    Some(at) => next[at] = new,
+                    None => next.push(new),
+                }
+            }
+        }
+        next
+    };
+    if next == list {
+        return Ok(format!("{} is {was} already", w.path));
+    }
+    let key = format!("bindings.{context}.{action}");
+    // Back to the defaults is no setting at all: the file keeps only what differs.
+    let args = if next == now.defaults {
+        json!({"group": "controls", "key": key, "reset": true})
+    } else {
+        json!({"group": "controls", "key": key, "value": next})
+    };
+    let out = ai_core::call_tool(world, agent, "settings_set", args);
+    if !out.ok {
+        let why = out.result.as_str().map_or_else(|| out.result.to_string(), str::to_owned);
+        let mut refusal = format!("{}: {why}", w.path);
+        if let Some(BoundInput { label: input, taken_by: Some(holder), .. }) = asked {
+            let (name, holder_path) = holder_name(world, root, context, &holder);
+            let note = match taken.as_deref().and_then(shards_locale::message_ref) {
+                Some(id) => shards_locale::text(world, id, &shards_locale::Args::new().text("input", input).text("action", name)),
+                None => format!("{input} is already used by {name}"),
+            };
+            if let Some(mut screen) = world.get_mut::<UiScreen>(root) {
+                screen.note = Some((w.path.clone(), note));
+            }
+            if let Some(path) = holder_path {
+                refusal.push_str(&format!(" (on this screen: {path})"));
+            }
+        }
+        return Err(refusal);
+    }
+    if let Some(mut screen) = world.get_mut::<UiScreen>(root) {
+        screen.note = None;
+    }
+    let after = bound_now(world, w)?;
+    let shown = inputs_text(w.kind.shown_inputs(&after.inputs));
+    if let Some(mut stored) = world.get_mut::<UiWidget>(e) {
+        stored.value = UiValue::Bindings(after);
+    }
+    journal::log(world, JournalKind::Event, format!("ui: {} {was} → {shown}", w.path));
+    world.trigger(UiChanged { widget: w.path.clone(), value: shown.clone() });
+    Ok(format!("{} {was} → {shown}", w.path))
+}
+
+/// A value as `ui_set` takes it: `1.25`, `on`, `reduced`, a page's id; a binding's inputs as a
+/// player reads them.
 pub fn value_text(world: &World, e: Entity, value: &UiValue) -> String {
     match value {
+        UiValue::Bindings(bound) => widget(world, e).map_or_else(|| inputs_text(&bound.inputs), |w| inputs_text(w.kind.shown_inputs(&bound.inputs))),
         UiValue::Number(v) => format_number(*v),
         UiValue::Flag(on) => if *on { "on" } else { "off" }.to_owned(),
         UiValue::Choice(c) | UiValue::Text(c) => c.clone(),
@@ -873,7 +1173,7 @@ pub(crate) fn retell_screens(world: &mut World) {
             }
             let Some(new) = told.remove(&w.path) else { continue };
             w.label = new.label;
-            if matches!(w.kind, WidgetKind::Choice { .. }) {
+            if matches!(w.kind, WidgetKind::Choice { .. } | WidgetKind::Binding { .. }) {
                 w.kind = new.kind;
             }
             // Text fixed by content; a source's says what the source says.
@@ -937,6 +1237,19 @@ mod tests {
         assert_eq!(format_number(0.1 + 0.2), "0.3");
         assert_eq!(format_number(-0.0001), "0");
         assert_eq!(format_number(0.5), "0.5");
+    }
+
+    #[test]
+    fn a_binding_shows_its_slot_or_every_input() {
+        let input = |text: &str, label: &str, gamepad| BoundInput { text: text.into(), label: label.into(), gamepad, ..default() };
+        let inputs = [input("Key(Space)", "Space", false), input("GamepadButton(South)", "Pad South", true)];
+        let kind = |slot| WidgetKind::Binding { context: "gameplay".into(), action: "jump".into(), slot, prompt: DEFAULT_PROMPT.into(), taken: None };
+        assert_eq!(inputs_text(kind(None).shown_inputs(&inputs)), "Space · Pad South");
+        assert_eq!(inputs_text(kind(Some(1)).shown_inputs(&inputs)), "Pad South");
+        assert_eq!(inputs_text(kind(Some(2)).shown_inputs(&inputs)), "none", "a slot past the last shows nothing yet");
+        assert_eq!(inputs_text(&[]), "none");
+        assert!(kind(None).focusable() && !kind(None).container());
+        assert_eq!(kind(None).name(), "binding");
     }
 
     #[test]

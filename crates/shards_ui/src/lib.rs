@@ -11,7 +11,11 @@
 //!   `closable` (whether `back` closes it), a title, where it sits and its widgets.
 //! - **Widgets** ([`WidgetDef`]): panels, lists, grids and tabs hold others; text, hints, bars,
 //!   cooldowns, a compass, ally frames and a before → after comparison show values; buttons,
-//!   sliders, toggles and choices take input. A widget shows a source's value (`bind:
+//!   sliders, toggles, choices and bindings take input. A binding shows an action's inputs (source
+//!   [`BINDINGS_SOURCE`], which the `shards` crate gives from the input map); confirming it waits
+//!   for the next key, mouse or gamepad button ([`capturing`]), and the input it gets (or an
+//!   agent's `ui_set`) goes into the `controls` settings, which refuse an input another action
+//!   reads, and the widget says which. A widget shows a source's value (`bind:
 //!   "you.health"`, sources from [`UiAppExt::add_ui_source`]; the engine gives `you.*` and
 //!   `allies`) or a player setting (`setting: "accessibility.text_scale"`), which changing the
 //!   widget changes and saves.
@@ -22,7 +26,8 @@
 //!   that pressed, with its scope), or a game action ([`UiAppExt::add_ui_action`]).
 //! - **Focus and navigation** ([`model::navigate`]): `up`/`down`/`next`/`prev` move the focus on
 //!   the screen that takes input (rows and grids also left and right), `left`/`right` change a
-//!   slider, choice, toggle or tabs, `confirm` presses, `back` closes.
+//!   slider, choice, toggle or tabs, `confirm` presses, `back` closes (a binding that waits for an
+//!   input stops waiting instead).
 //! - **Agents** read the tree with `ui_read` and in `observe` (a `UI` section while a menu is
 //!   open: its widgets, values and focus), and act with `ui_navigate`, `ui_click`, `ui_set`,
 //!   `ui_open` and `ui_close`. The journal says `ui: opened pause`, `ui: pause/resume pressed
@@ -55,8 +60,8 @@ use shards_core::{EngineAppExt, EngineState, PauseState};
 pub use bind::{live_value, read_source, viewer, UiActionFn, UiActions, UiPress, UiSourceFn, UiSources};
 pub use def::{Anchor, ButtonAction, CompareRow, Layer, Layout, ScreenDef, ThemeDef, WidgetDef};
 pub use model::{
-    focused, top_screen, Ally, Mark, Nav, UiChanged, UiFocusMoved, UiPressed, UiScreen, UiScreenChanged, UiStack, UiValue, UiWidget,
-    WidgetKind,
+    capturing, focused, top_screen, Ally, BoundInput, BoundInputs, Mark, Nav, UiChanged, UiFocusMoved, UiPressed, UiScreen, UiScreenChanged,
+    UiStack, UiValue, UiWidget, WidgetKind, BINDINGS_SOURCE, DEFAULT_PROMPT,
 };
 pub use tools::{UiClickArgs, UiCloseArgs, UiNavigateArgs, UiOpenArgs, UiReadArgs, UiSetArgs};
 
@@ -69,6 +74,12 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The agent the local player's controls call the `ui_*` tools as (keys, gamepad, mouse), so a
 /// replay records what a human pressed in menus like any agent's call.
 pub const INPUT_AGENT: &str = "input";
+
+/// Mouse buttons a binding widget took on their press. The release that follows would click the
+/// widget under the pointer; that click ends here instead. The engine's controls fill it (and empty
+/// it of buttons let go a frame ago); drawing takes a button out when its click comes.
+#[derive(Resource, Default, Debug, Clone, PartialEq)]
+pub struct CapturedClicks(pub Vec<MouseButton>);
 
 /// The types a game module uses most.
 pub mod prelude {
@@ -121,6 +132,7 @@ impl Plugin for UiPlugin {
             .init_resource::<UiStack>()
             .init_resource::<UiSources>()
             .init_resource::<UiActions>()
+            .init_resource::<CapturedClicks>()
             .init_resource::<model::UiPaused>()
             .init_resource::<model::UiTextVersion>()
             .add_engine_module("ui", VERSION)

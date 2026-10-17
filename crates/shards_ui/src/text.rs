@@ -12,7 +12,7 @@ use bevy::prelude::*;
 
 use crate::bind::live_value;
 use crate::def::Layer;
-use crate::model::{focused, on_shown_page, top_screen, walk, widget_children, UiScreen, UiStack, UiValue, UiWidget, WidgetKind};
+use crate::model::{binding_state, focused, inputs_text, on_shown_page, top_screen, walk, widget_children, UiScreen, UiStack, UiValue, UiWidget, WidgetKind};
 use crate::model::format_number;
 
 /// At most this many widget lines of the screen on top in `observe`; `ui_read` has them all.
@@ -96,12 +96,34 @@ pub fn widget_line(world: &World, e: Entity, focus: Option<Entity>) -> String {
         (WidgetKind::Grid { columns }, _) => {
             let _ = write!(line, " {columns} columns");
         }
+        (WidgetKind::Binding { .. }, UiValue::Bindings(bound)) => {
+            let shown = w.kind.shown_inputs(&bound.inputs);
+            let texts: Vec<&str> = shown.iter().map(|i| i.text.as_str()).collect();
+            let _ = write!(line, " {}", inputs_text(shown));
+            if !texts.is_empty() {
+                let _ = write!(line, " = {}", texts.join(", "));
+            }
+        }
+        (WidgetKind::Binding { .. }, UiValue::Text(why)) => {
+            let _ = write!(line, " ({why})");
+        }
         _ => {}
     }
     if let Some(key) = &w.setting {
         let _ = write!(line, " [{key}]");
     }
-    if let Some(bind) = &w.bind {
+    if let WidgetKind::Binding { context, action, slot, .. } = &w.kind {
+        // The setting it changes; the source is the engine's.
+        let slot = slot.map(|s| format!(" slot {s}")).unwrap_or_default();
+        let _ = write!(line, " [controls.bindings.{context}.{action}{slot}]");
+        let (waits, note) = binding_state(world, e);
+        if waits {
+            let _ = write!(line, " · waiting for an input (Escape cancels; ui_set id={} value=Key(KeyK))", w.path);
+        }
+        if let Some(note) = note {
+            let _ = write!(line, " · {note}");
+        }
+    } else if let Some(bind) = &w.bind {
         let _ = write!(line, " ← {bind}");
     }
     if !w.enabled {
