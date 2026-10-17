@@ -774,6 +774,28 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   ошибки с путями узлов; `crates/shards/tests/level_render.rs` рисует `outpost.glb` загрузчиком Bevy.
 - `LevelAsset::scene` (сцена, из которой узлы уровня) и `LevelNode::mesh_extras` (свойства данных меша).
 
+**Регион в сохранении — из его манифеста (E5.4, E8; `shards`, `shards_world`, `shards_save`):**
+
+- Секция `region` сохранения мира хранит сам манифест региона (`manifest`, версия секции 2) рядом с id, зерном, версией
+  генератора и хэшем. Загрузка строит регион из него (`change_region`), генератор не запускается: обновление игры, которое
+  меняет генератор (новая `version` региона, веса, шаги), сохранённый мир не перестраивает. Журнал говорит, откуда регион:
+  `region wilds seed 42 v1: built from the save's manifest (the generator is v2 now)` (скобки — когда версия генератора в
+  контенте другая; региона с таким id в контенте больше нет — `` (`old_wilds` is no longer in the content) ``). Строка
+  пишется, когда регион уже построен (после `region loaded`), а не перед сборкой, которая ещё может не удаться.
+- Тайл, комната или префаб из манифеста, которых контент уже не знает, — отказ до любых изменений мира с именами и выходом:
+  `` the save's world cannot be built: the manifest of wilds seed 42 v1 names tiles content does not have: old_ruin (…); keep that
+  content in the game, or write a migration for `region` that replaces it in the saved manifest ``.
+- Манифест, который не совпадает со своим хэшем, с id, зерном и версией рядом или чужого формата, — порча копии (`section region
+  does not read: the manifest of wilds seed 42 v1 is damaged: it hashes to …, the save says …`): загрузка берёт резервную копию,
+  как при неверной контрольной сумме. Так же и секция версии 2 без манифеста: без него читается только регион, пришедший
+  миграцией из версии 1 (она ставит метку `from_v1: true`), а не любая копия, где манифест пропал (`the save of wilds seed 42 v1
+  keeps no manifest; only a save of version 1 of the section may lack it`).
+- `shards_world::check_manifest` (`region::check_manifest`): может ли контент построить манифест, ничего не меняя в мире (то, что
+  `change_region` проверяет до изменений).
+- Сценарий песочницы `world_save.scenario`; тесты в `saves.rs` (тот же мир после обновления, которое меняет генератор; тайла
+  нет; региона нет в контенте; порча и резервная копия; сохранение версии 1) и `net_coop.rs` (мир другой версии генератора:
+  хост строит его из манифеста, гость получает тот же).
+
 ### Исправлено
 
 - Уровни (найдено настоящим экспортом Blender): `to` у `navlink` принимает и свойство *Data-Block* (объект, который экспортёр
@@ -783,6 +805,24 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   с галочкой, которую снять (у квантования — с тем, что его писал не Blender); свойства движка на данных меша
   вместо объекта — ошибка узла, а не молчание; картинка уровня — сцена по умолчанию файла, а не нулевая (Blender пишет все
   сцены `.blend`, и сцена с коллекцией-инстансом шла первой).
+- Сохранения: `load_game`, у которого секция отказала до того, как что-то применилось, больше не пишет `The world is partly
+  loaded`: ответ `loading world/gone failed at section region: …; nothing was applied: fix the cause and load again`, и вызова
+  в записи нет. Когда что-то применилось, ошибка называет и секции, чей `missing` успел отработать (`weather (missing from the
+  file)`), и виды, загруженные раньше (`already loaded: world/camp`); такая загрузка перезапускает запись, даже если до отказа
+  отработали только `missing`. Ошибка из `apply` или `missing` теперь всегда значит «мир мог измениться»: секция запускалась
+  и могла изменить его до отказа, поэтому загрузка не пишет `nothing was applied`, не выбрасывает вызов из записи,
+  перезапускает её и сообщает хосту, что мир собран заново, а ошибка добавляет `the failed section may have changed the
+  world too` (или, когда до неё ничего не применилось, `no section before it was applied, but the failed section may have
+  changed the world`). Отказы, после которых мир должен остаться нетронутым, переехали в новый метод `SaveSection::check(&self,
+  &World, body)` (по умолчанию принимает; `&World` не даёт ему менять мир): все `check` всех загружаемых видов идут после
+  чтения файлов и до первого `apply`, отказ — `nothing was applied` и вызова нет в записи, даже у последней секции загрузки
+  (`apply_sections` тоже зовёт их до `apply`). Свои `check` у `region` (манифест и `plan()` содержимого, для сохранения
+  версии 1 — то же поколение региона и хэш), `position` и `vitals` (тело, числа, число и имена зарядов) и у компонента тела из
+  `save_component` (тело есть); `vitals` выдаёт телу `Charges` одним вызовом `entry`. У `SectionEntry` новый `check_in`, у
+  `ApplyError` новые поля `missing` и `failed_section` и `changed_anything()` (тесты
+  `a_load_that_fails_part_way_says_what_it_applied_and_records_the_load`,
+  `a_section_that_refuses_in_check_applies_nothing_even_late_in_the_load`,
+  `a_section_whose_apply_changes_the_world_and_fails_may_have_changed_it`).
 - Windows: `cargo clippy --workspace --all-targets -- -D warnings` молчит: помощники тестов `stand_udp`, которые нужны только
   тестам с настоящим `sh` (unix), собираются только там.
 - D4: `clearance` по навсетке больше не проходит по диагонали мимо колонки, которую вырезал поставленный после загрузки
@@ -1049,6 +1089,13 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   E10.6 вместе): Windows и Linux записали их побайтово одинаково (см. «Добавлено»). Игра, которая
   звала `x.sin()` и подобные в симуляции, получает ошибку `clippy::disallowed_methods`, если скопирует `clippy.toml` шаблона:
   заменить на `ops::sin(x)` (`ops` есть в `shards::prelude`).
+- **Формат сохранения мира: секция `region` — версия 2** (с манифестом региона; секция с манифестом `wilds` 8 × 8 — около
+  3 КБ, весь файл мира — 3392 байта). Файлы с версией 1 читаются миграцией `region` 1 → 2 (`manifest: null`): такой регион, как раньше, генерируется заново и сверяется с
+  хэшем, а следующее сохранение пишет версию 2. Сборка старее этой сохранение с `region` v2 не читает и не перезаписывает
+  (`saved by a newer version of the game (section region v2 > v1)`). Снапшоты, реплеи и эталонные реплеи не меняются.
+- `SaveRegistry::add`: секция другого крейта, которая заменяет секцию с тем же именем, начинает свою историю миграций — миграции
+  заменённой удаляются вместе с ней (игра, заменившая `region`, регистрирует миграции своих версий после неё; иначе миграция движка
+  `region` 1 → 2 уронила бы сборку её секции версии 1).
 
 ### Планируется
 

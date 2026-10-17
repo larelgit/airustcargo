@@ -940,6 +940,42 @@ fn a_hosts_launch_slots_load_before_its_first_tick_as_recorded_calls() {
     assert_eq!(desyncs(&stand, c1), 0, "{:#?}", journal(&stand, c1));
 }
 
+#[test]
+fn a_world_another_generator_made_loads_on_the_host_from_its_manifest_and_its_clients_get_it() {
+    let folders = Folders::new("manifest");
+    // A game of one whose wilds are at another generator version saves a world in them.
+    let saved = {
+        let updated = crate::saves::Updated::new("coop");
+        let mut single = updated.game_in(&folders.of("host"));
+        ok(&mut single, "regen", json!({"region": "wilds", "seed": 42}));
+        ok(&mut single, "save_game", json!({"what": "world", "slot": "camp"}));
+        single.world().resource::<ActiveRegion>().hash
+    };
+    let launch = |c: &mut shards::EngineConfig| {
+        c.seed = 42;
+        c.world_slot = Some("camp".into());
+    };
+    let mut stand = shards::testing::stand_host(1, &launch, &setup_for(folders.of("host"), NetDef::default()));
+    let hash = |stand: &Stand, member: usize| stand.world(member).get_resource::<ActiveRegion>().map(|r| r.hash);
+    assert_eq!(hash(&stand, HOST), Some(saved), "the host built the saved world, not what its generator makes");
+    assert!(has_line(&stand, HOST, "region wilds seed 42 v2: built from the save's manifest (the generator is v1 now)"), "{:#?}", journal(&stand, HOST));
+    // The recording starts from the loaded state: its replay builds that world from the manifest too.
+    verify_host(&stand);
+
+    // A guest joins the loaded world: it takes the region from the host, it does not generate it.
+    let c1 = add_client(&mut stand, &folders, "c1", &NetDef::default(), lossy());
+    join(&mut stand, c1);
+    stand.run(60);
+    assert_eq!(hash(&stand, c1), Some(saved));
+    assert!(!has_line(&stand, c1, "region generated"), "{:#?}", journal(&stand, c1));
+    assert_eq!(desyncs(&stand, c1), 0, "{:#?}", journal(&stand, c1));
+
+    // The host's next save keeps that world.
+    assert!(stand.call(HOST, "save_game", json!({"what": "world", "slot": "camp"})).ok);
+    let world = read_file(&folders.of("host"), SaveKind::World, "camp");
+    assert_eq!(world.sections.0["region"].data["active"]["manifest_hash"], json!(format!("{saved:016x}")));
+}
+
 // --- over a real socket ---------------------------------------------------------------------
 
 /// Save folders inside the game's folder (as `--save-dir` must be), removed when the test ends.

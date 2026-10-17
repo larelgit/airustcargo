@@ -5,20 +5,24 @@
 //!
 //! | section | kind | holds |
 //! |---|---|---|
-//! | `region` | world | the region in the world: its id, seed, generator version and manifest hash. Applying it generates the region again and changes to it through the world module's region change (when it differs from the one there), and refuses, changing nothing, if it no longer comes out the same |
+//! | `region` | world | the region in the world: its id, seed, generator version, manifest hash and (v2) the manifest itself. Applying it builds the region from that manifest, without the generator, and changes to it through the world module's region change (when it differs from the one there): a game update that changes the generator leaves a saved world as it was. Refused, changing nothing, when content no longer has what the manifest names; a manifest that does not match its hash is damage (the save's backups are tried). A save of v1 kept no manifest: it is migrated to v2 without one, generated again, and refused if it no longer comes out the same; its next save is a v2 one |
 //! | `position` | character | the body's feet, its rotation (characters turn about Y: that is their facing) and the region it stood in. Applied onto a body in the same region only; in another one the body stays where it is and the journal says why |
 //! | `vitals` | character | health, stamina and charges. Applied to the components the body already has (a fresh body has what its prefab gives it); a charge the body lacks is added. A body that died since the save is revived (`shards_action::revive`, as the dev `heal` does, and `Healed` follows); a save made at zero health leaves it dead |
 //!
 //! A game replaces one with a section of the same name (`position` as "restore at the last
-//! camp"): the new one takes its place in the order sections are applied.
+//! camp"): the new one takes its place in the order sections are applied and starts a migration
+//! history of its own; the engine's migrations of the one it replaces (`region` from v1) are
+//! removed.
 
 use ai_core::journal::{self, JournalKind};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use shards_action::{revive, Charge, Charges, Health, Healed, Stamina};
 use shards_content::ContentDb;
 use shards_save::{SaveAppExt, SaveKind, SaveSection};
-use shards_world::{generate, region, ActiveRegion, WorldGen};
+use shards_world::manifest::{Layout, FORMAT};
+use shards_world::{generate, region, ActiveRegion, DungeonDef, RegionDef, RegionManifest, WorldGen};
 
 /// Adds the engine's sections to the registry. Part of [`EnginePlugins`](crate::EnginePlugins).
 pub struct EngineSavePlugin;
@@ -26,7 +30,10 @@ pub struct EngineSavePlugin;
 impl Plugin for EngineSavePlugin {
     fn build(&self, app: &mut App) {
         // World first, then the character: the position is applied onto the region just built.
-        app.add_save_section::<RegionSave>().add_save_section::<PositionSave>().add_save_section::<VitalsSave>();
+        app.add_save_section::<RegionSave>()
+            .add_save_migration(RegionSave::NAME, 1, region_from_v1)
+            .add_save_section::<PositionSave>()
+            .add_save_section::<VitalsSave>();
     }
 }
 
@@ -57,19 +64,103 @@ pub struct RegionSave {
     pub active: Option<SavedRegion>,
 }
 
+/// The region a world was saved in. Read through [`SavedRegionData`], so a manifest that is not
+/// the one its hash and names describe does not read: the save module counts that copy as
+/// damaged and tries its backups.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(try_from = "SavedRegionData", into = "SavedRegionData")]
 pub struct SavedRegion {
     pub id: String,
     pub seed: u64,
-    /// The generator version of the region's definition.
+    /// The generator version of the region's definition when it was made.
     pub version: u32,
-    /// [`RegionManifest::hash`](shards_world::RegionManifest::hash), hex: what the world was.
+    /// [`RegionManifest::hash`], hex: what the world was.
     pub manifest_hash: String,
+    /// The region as it was built, kept for good: loading builds it from this, never from the
+    /// generator. `None` only in a save migrated from version 1 of the section, which kept
+    /// none: that one is generated again and must come out with `manifest_hash`.
+    pub manifest: Option<RegionManifest>,
+}
+
+/// [`SavedRegion`] as a file holds it, before it is checked. `from_v1` marks a region migrated
+/// from version 1 of the section, the only one that may lack its manifest: a version 2 file
+/// without one is damaged, not old.
+#[derive(Serialize, Deserialize)]
+struct SavedRegionData {
+    id: String,
+    seed: u64,
+    version: u32,
+    manifest_hash: String,
+    manifest: Option<RegionManifest>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    from_v1: bool,
+}
+
+impl From<SavedRegion> for SavedRegionData {
+    fn from(saved: SavedRegion) -> Self {
+        let SavedRegion { id, seed, version, manifest_hash, manifest } = saved;
+        let from_v1 = manifest.is_none();
+        SavedRegionData { id, seed, version, manifest_hash, manifest, from_v1 }
+    }
+}
+
+impl TryFrom<SavedRegionData> for SavedRegion {
+    type Error = String;
+
+    fn try_from(data: SavedRegionData) -> Result<Self, String> {
+        let SavedRegionData { id, seed, version, manifest_hash, manifest, from_v1 } = data;
+        let saved = SavedRegion { id, seed, version, manifest_hash, manifest };
+        if saved.manifest.is_none() && !from_v1 {
+            return Err(format!("the save of {} keeps no manifest; only a save of version 1 of the section may lack it", saved.title()));
+        }
+        saved.check()?;
+        Ok(saved)
+    }
+}
+
+impl SavedRegion {
+    /// `wilds seed 42 v1`.
+    fn title(&self) -> String {
+        format!("{} seed {} v{}", self.id, self.seed, self.version)
+    }
+
+    /// The saved hash, after checking that the manifest (when there is one) is the region the
+    /// save names and hashes to it: what the region was is in the file whole, or the file is
+    /// damaged.
+    fn check(&self) -> Result<u64, String> {
+        let want = u64::from_str_radix(&self.manifest_hash, 16).map_err(|_| format!("manifest_hash `{}` is not hex", self.manifest_hash))?;
+        let Some(manifest) = &self.manifest else {
+            return Ok(want);
+        };
+        let title = self.title();
+        if manifest.format != FORMAT {
+            return Err(format!("the manifest of {title} is of format `{}`; this build reads `{FORMAT}`", manifest.format));
+        }
+        if (manifest.region.as_str(), manifest.seed, manifest.version) != (self.id.as_str(), self.seed, self.version) {
+            return Err(format!("the manifest of {title} is damaged: it is the manifest of {}", manifest.title()));
+        }
+        let now = manifest.hash();
+        if now != want {
+            return Err(format!("the manifest of {title} is damaged: it hashes to {now:016x}, the save says {want:016x}"));
+        }
+        Ok(want)
+    }
+}
+
+/// Version 1 of the section kept no manifest: such a region is generated again when it is
+/// loaded ([`SavedRegion::manifest`] `None`). `from_v1` says so to the reader, which refuses a
+/// missing manifest in any other save.
+fn region_from_v1(mut old: Value) -> Result<Value, String> {
+    if let Some(active) = old.get_mut("active").and_then(Value::as_object_mut) {
+        active.insert("manifest".to_owned(), Value::Null);
+        active.insert("from_v1".to_owned(), Value::Bool(true));
+    }
+    Ok(old)
 }
 
 impl SaveSection for RegionSave {
     const NAME: &'static str = "region";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
     const KIND: SaveKind = SaveKind::World;
 
     fn capture(world: &World, _: Option<Entity>) -> Result<Self, String> {
@@ -78,8 +169,27 @@ impl SaveSection for RegionSave {
             seed: r.manifest.seed,
             version: r.manifest.version,
             manifest_hash: format!("{:016x}", r.hash),
+            manifest: Some(r.manifest.clone()),
         });
         Ok(RegionSave { active })
+    }
+
+    /// Everything that can refuse the region, before the load touches anything: the save is
+    /// whole (`SavedRegion::check`), and content still has everything the manifest names
+    /// (`check_manifest`), or, for a version 1 save, generates the same region again.
+    fn check(&self, world: &World, _: Option<Entity>) -> Result<(), String> {
+        // Saved outside any region, or in the one that stands: nothing to build.
+        let Some(saved) = &self.active else {
+            return Ok(());
+        };
+        let want = saved.check()?;
+        if world.get_resource::<ActiveRegion>().is_some_and(|r| r.hash == want) {
+            return Ok(());
+        }
+        match &saved.manifest {
+            Some(manifest) => check_saved(world, manifest),
+            None => regenerate(world, &saved.id, saved.seed, &saved.title(), want).map(drop),
+        }
     }
 
     fn apply(self, world: &mut World, _: Option<Entity>) -> Result<(), String> {
@@ -90,29 +200,76 @@ impl SaveSection for RegionSave {
         let Some(saved) = self.active else {
             return Ok(());
         };
-        let want = u64::from_str_radix(&saved.manifest_hash, 16).map_err(|_| format!("manifest_hash `{}` is not hex", saved.manifest_hash))?;
-        let title = format!("{} seed {} v{}", saved.id, saved.seed, saved.version);
+        let want = saved.check()?;
         if world.get_resource::<ActiveRegion>().is_some_and(|r| r.hash == want) {
             return Ok(());
         }
-        let worldgen = world.get_resource::<WorldGen>().ok_or("the world module is not installed")?.clone();
-        // Pure: the same seed and content make the same manifest. Checked before anything changes.
-        let generated = generate::generate(world.resource::<ContentDb>(), &worldgen, &saved.id, saved.seed).map_err(|e| {
-            let attempts: Vec<String> = e.failures.iter().map(|f| format!("  {f}")).collect();
-            if attempts.is_empty() { format!("cannot generate {title}: {}", e.message) } else { format!("cannot generate {title}: {}\n{}", e.message, attempts.join("\n")) }
-        })?;
-        let now = generated.manifest.hash();
-        if now != want {
-            return Err(format!(
-                "{title} comes out differently now (manifest {want:016x} when saved, {now:016x} now, generator v{}): its definition or its tiles changed since the save, \
-                 so the world it describes cannot be built again; write a migration for `region` or keep the old content",
-                generated.manifest.version
-            ));
+        match saved.manifest {
+            Some(manifest) => build_saved(world, manifest),
+            None => generate_again(world, &saved.id, saved.seed, &saved.title(), want),
         }
-        region::journal_generated(world, &generated);
-        region::change_region(world, generated.manifest).map_err(|e| format!("cannot change to {title}: {e}"))?;
-        Ok(())
     }
+}
+
+/// The generator version content has now for the region of `manifest`, `None` when content no
+/// longer defines it.
+fn generator_version(db: &ContentDb, manifest: &RegionManifest) -> Option<u32> {
+    match manifest.layout {
+        Layout::Grid => db.get::<RegionDef>(&manifest.region).map(|d| d.version),
+        Layout::Rooms => db.get::<DungeonDef>(&manifest.region).map(|d| d.version),
+    }
+}
+
+/// Whether content still has everything the manifest names. Changes nothing.
+fn check_saved(world: &World, manifest: &RegionManifest) -> Result<(), String> {
+    region::check_manifest(world, manifest).map_err(|e| {
+        format!("the save's world cannot be built: {e}; keep that content in the game, or write a migration for `region` that replaces it in the saved manifest")
+    })
+}
+
+/// A region from the save's own manifest: the world it was, whatever the generator makes of
+/// that seed now. Content must still have everything the manifest names (`check` asked before
+/// the load applied anything; `change_region` looks again before it unloads the old region).
+fn build_saved(world: &mut World, manifest: RegionManifest) -> Result<(), String> {
+    let title = manifest.title();
+    let now = match generator_version(world.resource::<ContentDb>(), &manifest) {
+        Some(version) if version == manifest.version => String::new(),
+        Some(version) => format!(" (the generator is v{version} now)"),
+        None => format!(" (`{}` is no longer in the content)", manifest.region),
+    };
+    region::change_region(world, manifest).map_err(|e| format!("cannot change to {title}: {e}"))?;
+    // Said once the region stands: a build that fails says so instead.
+    journal::emit(world, JournalKind::Event, format!("region {title}: built from the save's manifest{now}"));
+    Ok(())
+}
+
+/// A region of a version 1 save, which kept no manifest, generated again from its seed: pure
+/// (the same seed and content make the same manifest), and refused unless it comes out as it
+/// was (`want`, its manifest hash). Changes nothing.
+fn regenerate(world: &World, id: &str, seed: u64, title: &str, want: u64) -> Result<generate::Generated, String> {
+    let worldgen = world.get_resource::<WorldGen>().ok_or("the world module is not installed")?;
+    let generated = generate::generate(world.resource::<ContentDb>(), worldgen, id, seed).map_err(|e| {
+        let attempts: Vec<String> = e.failures.iter().map(|f| format!("  {f}")).collect();
+        if attempts.is_empty() { format!("cannot generate {title}: {}", e.message) } else { format!("cannot generate {title}: {}\n{}", e.message, attempts.join("\n")) }
+    })?;
+    let now = generated.manifest.hash();
+    if now != want {
+        return Err(format!(
+            "{title} comes out differently now (manifest {want:016x} when saved, {now:016x} now, generator v{}): its definition or its tiles changed since the save, \
+             so the world it describes cannot be built again; write a migration for `region` or keep the old content",
+            generated.manifest.version
+        ));
+    }
+    Ok(generated)
+}
+
+/// A region of a version 1 save: generated again (`regenerate`, which `check` asked before the
+/// load applied anything) and changed to.
+fn generate_again(world: &mut World, id: &str, seed: u64, title: &str, want: u64) -> Result<(), String> {
+    let generated = regenerate(world, id, seed, title, want)?;
+    region::journal_generated(world, &generated);
+    region::change_region(world, generated.manifest).map_err(|e| format!("cannot change to {title}: {e}"))?;
+    Ok(())
 }
 
 // --- position ---------------------------------------------------------------------------
@@ -140,6 +297,22 @@ impl SaveSection for PositionSave {
         Ok(PositionSave { feet: tf.translation.to_array(), rotation: tf.rotation.to_array(), region: RegionRef::current(world) })
     }
 
+    fn check(&self, world: &World, body: Option<Entity>) -> Result<(), String> {
+        let body = body.ok_or("there is no body")?;
+        if world.get::<Transform>(body).is_none() {
+            return Err("the body has no Transform".to_owned());
+        }
+        let rotation = Quat::from_array(self.rotation);
+        if !rotation.is_finite() || rotation.length_squared() < 1e-6 {
+            return Err(format!("rotation {:?} is not a rotation", self.rotation));
+        }
+        // A character may come from another machine (co-op): a body at infinity is not a position.
+        if self.feet.iter().any(|v| !v.is_finite()) {
+            return Err(format!("feet {:?} are not a position", self.feet));
+        }
+        Ok(())
+    }
+
     fn apply(self, world: &mut World, body: Option<Entity>) -> Result<(), String> {
         let body = body.ok_or("there is no body")?;
         if let Some(saved) = &self.region {
@@ -155,13 +328,6 @@ impl SaveSection for PositionSave {
             }
         }
         let rotation = Quat::from_array(self.rotation);
-        if !rotation.is_finite() || rotation.length_squared() < 1e-6 {
-            return Err(format!("rotation {:?} is not a rotation", self.rotation));
-        }
-        // A character may come from another machine (co-op): a body at infinity is not a position.
-        if self.feet.iter().any(|v| !v.is_finite()) {
-            return Err(format!("feet {:?} are not a position", self.feet));
-        }
         let mut tf = world.get_mut::<Transform>(body).ok_or("the body has no Transform")?;
         tf.translation = Vec3::from_array(self.feet);
         tf.rotation = rotation;
@@ -227,9 +393,9 @@ impl SaveSection for VitalsSave {
         })
     }
 
-    fn apply(self, world: &mut World, body: Option<Entity>) -> Result<(), String> {
+    fn check(&self, world: &World, body: Option<Entity>) -> Result<(), String> {
         let body = body.ok_or("there is no body")?;
-        // Everything is checked first, so a section that is refused changes nothing.
+        world.get_entity(body).map_err(|e| e.to_string())?;
         for (what, pool) in [("health", &self.health), ("stamina", &self.stamina)] {
             if let Some(pool) = pool {
                 pool.check(what)?;
@@ -238,6 +404,11 @@ impl SaveSection for VitalsSave {
         if self.charges.len() > MAX_CHARGES || self.charges.iter().any(|c| c.name.len() > MAX_CHARGE_NAME || c.name.chars().any(char::is_control)) {
             return Err(format!("at most {MAX_CHARGES} charges, named in {MAX_CHARGE_NAME} characters without control characters"));
         }
+        Ok(())
+    }
+
+    fn apply(self, world: &mut World, body: Option<Entity>) -> Result<(), String> {
+        let body = body.ok_or("there is no body")?;
         let mut entity = world.get_entity_mut(body).map_err(|e| e.to_string())?;
         let mut hp = None;
         if let (Some(saved), Some(mut health)) = (self.health, entity.get_mut::<Health>()) {
@@ -251,13 +422,8 @@ impl SaveSection for VitalsSave {
             stamina.exhausted = false;
         }
         if !self.charges.is_empty() {
-            let mut charges = match entity.get_mut::<Charges>() {
-                Some(charges) => charges,
-                None => {
-                    entity.insert(Charges::default());
-                    entity.get_mut::<Charges>().ok_or("cannot give the body charges")?
-                }
-            };
+            // The body gets the component if it lacks it.
+            let mut charges = entity.entry::<Charges>().or_default().into_mut();
             for saved in self.charges {
                 match charges.get_mut(&saved.name) {
                     Some(charge) => {
@@ -283,6 +449,162 @@ impl SaveSection for VitalsSave {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use shards_world::manifest::{ManifestPoi, PlacedTile};
+
+    fn manifest() -> RegionManifest {
+        RegionManifest {
+            format: FORMAT.into(),
+            region: "meadow".into(),
+            layout: Layout::Grid,
+            seed: 42,
+            version: 3,
+            attempt: 1,
+            fallback: None,
+            size: [2, 1],
+            tile_size: 16.0,
+            origin: [-64.0, 48.0],
+            tiles: vec![
+                PlacedTile { at: [0, 0], size: [1, 1], tile: "gate".into(), rot: 90, decor: None },
+                PlacedTile { at: [1, 0], size: [1, 1], tile: "grass".into(), rot: 0, decor: Some("rocks".into()) },
+            ],
+            pois: vec![ManifestPoi { id: "spawn.0".into(), poi: "spawn".into(), cell: [0, 0], pos: [-56.1, 0.25, 56.0], area: 0 }],
+            links: vec![],
+            spawn: Some("spawn.0".into()),
+            content_hash: "00ff".into(),
+        }
+    }
+
+    fn saved(manifest: RegionManifest) -> Value {
+        let hash = format!("{:016x}", manifest.hash());
+        let active = SavedRegion { id: manifest.region.clone(), seed: manifest.seed, version: manifest.version, manifest_hash: hash, manifest: Some(manifest) };
+        serde_json::to_value(RegionSave { active: Some(active) }).unwrap()
+    }
+
+    fn read(value: Value) -> Result<RegionSave, String> {
+        serde_json::from_value(value).map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn a_saved_region_reads_only_with_the_manifest_its_hash_and_names_describe() {
+        let good = saved(manifest());
+        let back = read(good.clone()).unwrap();
+        assert_eq!(back.active.as_ref().and_then(|a| a.manifest.clone()), Some(manifest()));
+        assert_eq!(serde_json::to_value(&back).unwrap(), good, "reads back to the same data");
+
+        let mut turned = good.clone();
+        turned["active"]["manifest"]["tiles"][0]["rot"] = json!(180);
+        let err = read(turned).unwrap_err();
+        assert!(err.contains("the manifest of meadow seed 42 v3 is damaged: it hashes to ") && err.contains(&format!("the save says {:016x}", manifest().hash())), "{err}");
+
+        let mut other = manifest();
+        other.seed = 43;
+        let mut swapped = saved(other);
+        swapped["active"]["seed"] = json!(42);
+        let err = read(swapped).unwrap_err();
+        assert!(err.contains("is damaged: it is the manifest of meadow seed 43 v3"), "{err}");
+
+        let mut foreign = manifest();
+        foreign.format = "shards-region/0".into();
+        let err = read(saved(foreign)).unwrap_err();
+        assert!(err.contains("is of format `shards-region/0`; this build reads `shards-region/1`"), "{err}");
+
+        let mut garbled = good.clone();
+        garbled["active"]["manifest_hash"] = json!("not hex");
+        assert!(read(garbled).unwrap_err().contains("manifest_hash `not hex` is not hex"));
+
+        // A version 2 save without its manifest is damaged, not a version 1 one: it is not
+        // generated again, and the load tries the backups.
+        let mut null = good.clone();
+        null["active"]["manifest"] = Value::Null;
+        let mut omitted = good.clone();
+        omitted["active"].as_object_mut().unwrap().remove("manifest");
+        for without in [null, omitted] {
+            let err = read(without).unwrap_err();
+            assert!(err.contains("the save of meadow seed 42 v3 keeps no manifest; only a save of version 1 of the section may lack it"), "{err}");
+        }
+    }
+
+    #[test]
+    fn a_version_1_region_reads_as_one_without_a_manifest() {
+        let v1 = json!({"active": {"id": "wilds", "seed": 42, "version": 1, "manifest_hash": "7bbfdc3b62623fbc"}});
+        let migrated = region_from_v1(v1).unwrap();
+        assert_eq!((&migrated["active"]["manifest"], &migrated["active"]["from_v1"]), (&Value::Null, &json!(true)));
+        let back = read(migrated.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&back).unwrap(), migrated, "writes back as it read, still marked");
+        let active = back.active.unwrap();
+        assert_eq!(active.check(), Ok(0x7bbf_dc3b_6262_3fbc));
+        assert_eq!((active.title(), active.manifest), ("wilds seed 42 v1".to_owned(), None));
+        // Saved outside any region: nothing to add.
+        assert_eq!(region_from_v1(json!({"active": null})).unwrap(), json!({"active": null}));
+    }
+
+    #[test]
+    fn a_position_that_is_not_one_is_refused_in_check_and_a_good_one_is_applied() {
+        let mut world = World::new();
+        let body = world.spawn((Transform::from_xyz(1.0, 2.0, 3.0), Health::new(100.0))).id();
+        let at = |feet: [f32; 3], rotation: [f32; 4]| PositionSave { feet, rotation, region: None };
+
+        // A position and a rotation that are not ones, and a body that cannot take one.
+        for (saved, on, why) in [
+            (at([f32::NAN, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]), Some(body), "are not a position"),
+            (at([9.0, 9.0, 9.0], [0.0; 4]), Some(body), "is not a rotation"),
+            (at([9.0, 9.0, 9.0], [0.0, 0.0, 0.0, 1.0]), None, "there is no body"),
+        ] {
+            let err = saved.check(&world, on).unwrap_err();
+            assert!(err.contains(why), "{err}");
+        }
+        let bare = world.spawn_empty().id();
+        assert_eq!(at([9.0; 3], [0.0, 0.0, 0.0, 1.0]).check(&world, Some(bare)), Err("the body has no Transform".to_owned()));
+
+        let good = at([9.0, 8.0, 7.0], [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(good.check(&world, Some(body)), Ok(()));
+        good.apply(&mut world, Some(body)).unwrap();
+        assert_eq!(world.get::<Transform>(body).unwrap().translation, Vec3::new(9.0, 8.0, 7.0));
+    }
+
+    #[test]
+    fn vitals_that_are_not_pools_are_refused_in_check_and_a_body_without_charges_is_given_them() {
+        let mut world = World::new();
+        let body = world.spawn((Health::new(100.0), Stamina::new(50.0, 5.0, 1.0))).id();
+        let flask = || ChargeSave { name: "flask".into(), current: 1, max: 3 };
+
+        let refused = VitalsSave { health: Some(Pool { current: 10.0, max: 20.0 }), stamina: Some(Pool { current: f32::NAN, max: 5.0 }), charges: vec![flask()] };
+        assert!(refused.check(&world, Some(body)).unwrap_err().starts_with("stamina "));
+        let many = VitalsSave { charges: (0..=MAX_CHARGES).map(|n| ChargeSave { name: format!("c{n}"), current: 0, max: 1 }).collect(), ..VitalsSave::default() };
+        assert!(many.check(&world, Some(body)).unwrap_err().starts_with("at most 64 charges"));
+        assert_eq!(VitalsSave::default().check(&world, None), Err("there is no body".to_owned()));
+        world.despawn(body);
+        assert!(VitalsSave::default().check(&world, Some(body)).is_err(), "the body is gone");
+
+        let body = world.spawn((Health::new(100.0), Stamina::new(50.0, 5.0, 1.0))).id();
+        let taken = VitalsSave { health: Some(Pool { current: 10.0, max: 20.0 }), stamina: None, charges: vec![flask()] };
+        assert_eq!(taken.check(&world, Some(body)), Ok(()));
+        taken.apply(&mut world, Some(body)).unwrap();
+        assert_eq!(world.get::<Health>(body).map(|h| (h.current, h.max)), Some((10.0, 20.0)));
+        assert_eq!(world.get::<Charges>(body).unwrap().0, vec![Charge { name: "flask".into(), current: 1, max: 3 }], "a body without charges is given them");
+    }
+
+    #[test]
+    fn a_region_content_cannot_build_is_refused_in_check_before_the_one_standing_is_touched() {
+        // A world with a region standing and no content at all: the manifest's tiles are gone.
+        let mut world = World::new();
+        world.init_resource::<ContentDb>();
+        let mut standing = manifest();
+        standing.seed = 7;
+        world.insert_resource(ActiveRegion::new(standing.clone(), None, None, 0));
+        let hash = world.resource::<ActiveRegion>().hash;
+
+        let err = read(saved(manifest())).unwrap().check(&world, None).unwrap_err();
+        assert!(err.contains("the save's world cannot be built: the manifest of meadow seed 42 v3 names tiles content does not have: gate, grass"), "{err}");
+        assert!(err.contains("keep that content in the game, or write a migration for `region`"), "{err}");
+        let still = world.resource::<ActiveRegion>();
+        assert_eq!((still.hash, still.manifest.seed), (hash, 7), "the region there stays: a check only reads the world");
+
+        // The region that stands, and a world saved outside any region, need nothing from content.
+        assert_eq!(read(saved(standing)).unwrap().check(&world, None), Ok(()));
+        assert_eq!(RegionSave { active: None }.check(&world, None), Ok(()));
+    }
 
     #[test]
     fn a_pool_of_another_machine_is_checked_before_it_is_applied() {

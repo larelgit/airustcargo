@@ -1,0 +1,34 @@
+# Saves (E8) of a world in a generated region: the world save keeps the region's manifest (section
+# `region` v2), and a load builds the region from it, never from the generator. So a game update that
+# changes the generator (a new `version` of the region, other weights) leaves a saved world as it was.
+# Here the generator is the same, so only the journal line tells how the region came back;
+# `cargo test` (tests/sandbox/saves.rs) loads such a save on content whose wilds are at version 2.
+# Files go to saves/world/qa-world* of the game's working directory (not committed: made here).
+
+seed 42
+
+# --- the wilds of seed 42, saved as a world
+act regen region=wilds seed=42
+expect result contains "ok: wilds seed 42 v1"
+act save_game what=world slot=qa-world label="scenario"
+expect result contains "ok: world/qa-world saved (save_game, "
+act save_check what=world slot=qa-world
+expect result contains "same as world/qa-world"
+
+# --- another seed replaces it: the world differs from the file in its region
+act regen region=wilds seed=43
+act save_check what=world slot=qa-world
+expect result contains "differs in region"
+
+# --- the load builds the saved region from its manifest, not from the generator, and the check agrees
+mark
+act load_game what=world slot=qa-world
+expect result contains "ok: world/qa-world loaded"
+expect journal "region wilds seed 42 v1: built from the save's manifest"
+expect journal "region unloaded: wilds seed 43 v1"
+expect journal "region loaded: wilds seed 42 v1 (64 tiles"
+expect !journal "region generated"
+act region_info
+expect result contains "\"manifest_hash\": \"7bbfdc3b62623fbc\""
+act save_check what=world slot=qa-world
+expect result contains "same as world/qa-world"

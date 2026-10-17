@@ -2,9 +2,10 @@
 
 use std::fs;
 
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use shards::ai_core::{call_tool, AgentSessions, AiId, Scope};
-use shards::save::SaveFile;
+use shards::ai_core::{call_tool, AgentSessions, AiId, JournalKind, Scope, WorldRebuilt};
+use shards::save::{SaveFile, SaveKind, SaveSection};
 
 use shards::prelude::*;
 
@@ -274,4 +275,289 @@ fn every_save_written_is_announced_with_its_bytes_and_a_refused_one_is_not() {
     // A save that is refused writes nothing and says nothing.
     fails(&mut app, "save_game", json!({"what": "world", "slot": "Not A Slot"}));
     assert_eq!(app.world().resource::<Written>().0.len(), 3);
+}
+
+/// The kind whose [`Brittle`] section refuses to load while the world has this.
+#[derive(Resource)]
+struct Refuse(SaveKind);
+
+fn refused(world: &World, kind: SaveKind) -> Result<(), String> {
+    match world.get_resource::<Refuse>() {
+        Some(refuse) if refuse.0 == kind => Err("refused on purpose".to_owned()),
+        _ => Ok(()),
+    }
+}
+
+/// A world section that loads unless the world has `Refuse(World)`.
+#[derive(Serialize, Deserialize)]
+struct Brittle {
+    kept: bool,
+}
+
+impl SaveSection for Brittle {
+    const NAME: &'static str = "brittle";
+    const VERSION: u32 = 1;
+    const KIND: SaveKind = SaveKind::World;
+
+    fn capture(_: &World, _: Option<Entity>) -> Result<Self, String> {
+        Ok(Brittle { kept: true })
+    }
+
+    fn apply(self, world: &mut World, _: Option<Entity>) -> Result<(), String> {
+        refused(world, Self::KIND)
+    }
+}
+
+/// A character section that loads unless the world has `Refuse(Character)`.
+#[derive(Serialize, Deserialize)]
+struct BrittleHero {
+    kept: bool,
+}
+
+impl SaveSection for BrittleHero {
+    const NAME: &'static str = "brittle_hero";
+    const VERSION: u32 = 1;
+    const KIND: SaveKind = SaveKind::Character;
+
+    fn capture(_: &World, _: Option<Entity>) -> Result<Self, String> {
+        Ok(BrittleHero { kept: true })
+    }
+
+    fn apply(self, world: &mut World, _: Option<Entity>) -> Result<(), String> {
+        refused(world, Self::KIND)
+    }
+}
+
+/// The game with both brittle sections, and the weather when `later` (a newer game: files
+/// of the older one lack it, so its `missing` runs on load).
+fn brittle_game(dir: &TempDir, later: Option<SaveKind>) -> App {
+    game_in(dir, |app| {
+        if let Some(refuse) = later {
+            app.insert_resource(Weather("rain".into())).add_save_section::<WeatherSave>().insert_resource(Refuse(refuse));
+        }
+        app.add_save_section::<Brittle>().add_save_section::<BrittleHero>();
+    })
+}
+
+#[test]
+fn a_load_that_fails_part_way_says_what_it_applied_and_records_the_load() {
+    let dir = TempDir::new("partway");
+    let mut app = brittle_game(&dir, None);
+    some_state(&mut app);
+    ok(&mut app, "save_game", json!({"what": "all", "slot": "camp"}));
+
+    // The world's last section fails when applied: what ran before it stays, the weather's `missing` too.
+    let mut world_fails = brittle_game(&dir, Some(SaveKind::World));
+    other_state(&mut world_fails);
+    let err = fails(&mut world_fails, "load_game", json!({"what": "all", "slot": "camp"}));
+    assert_eq!(
+        err,
+        "loading world/camp failed at section brittle: refused on purpose; applied before it: region, chests, calendar, weather (missing from the file); the failed section may have changed the world too. \
+         The world is partly loaded: fix the cause and load again, or go back with snapshot_load"
+    );
+    assert_eq!(calendar(&world_fails).day, 40);
+    assert_eq!(world_fails.world().resource::<Weather>().0, "clear", "its `missing` ran");
+    assert_eq!(hero(&mut world_fails).name, "Bob", "the character was not reached");
+    assert_eq!(lines(&world_fails, JournalKind::Error, "save: loading world/camp failed: section brittle: refused on purpose").len(), 1);
+    assert!(shards::ai_core::replay::save(world_fails.world()).start.is_some(), "the recording restarts from the partly loaded world");
+
+    // The character's last section fails when applied, after the world was loaded.
+    let mut hero_fails = brittle_game(&dir, Some(SaveKind::Character));
+    other_state(&mut hero_fails);
+    let err = fails(&mut hero_fails, "load_game", json!({"what": "all", "slot": "camp"}));
+    assert_eq!(
+        err,
+        "loading character/camp failed at section brittle_hero: refused on purpose; applied before it: position, vitals, hero; the failed section may have changed the world too; already loaded: world/camp. \
+         The world is partly loaded: fix the cause and load again, or go back with snapshot_load"
+    );
+    assert_eq!((hero(&mut hero_fails).name, calendar(&hero_fails).day), ("Ada".to_owned(), 40));
+}
+
+/// What a section whose `apply` ran leaves in the world (and what one whose `check` refused does
+/// not).
+#[derive(Resource)]
+struct Scribbled;
+
+/// A world section named `region`: it takes the engine's place in the order, so nothing is
+/// applied before it. Its `apply` changes the world and then fails.
+#[derive(Serialize, Deserialize)]
+struct Scribbler {
+    kept: bool,
+}
+
+impl SaveSection for Scribbler {
+    const NAME: &'static str = "region";
+    const VERSION: u32 = 1;
+    const KIND: SaveKind = SaveKind::World;
+
+    fn capture(_: &World, _: Option<Entity>) -> Result<Self, String> {
+        Ok(Scribbler { kept: true })
+    }
+
+    fn apply(self, world: &mut World, _: Option<Entity>) -> Result<(), String> {
+        world.insert_resource(Scribbled);
+        Err("stopped half way".to_owned())
+    }
+}
+
+/// A section of its own, applied after the others, whose `apply` changes the world and then fails.
+#[derive(Serialize, Deserialize)]
+struct LateScribbler {
+    kept: bool,
+}
+
+impl SaveSection for LateScribbler {
+    const NAME: &'static str = "scribbled_late";
+    const VERSION: u32 = 1;
+    const KIND: SaveKind = SaveKind::World;
+
+    fn capture(_: &World, _: Option<Entity>) -> Result<Self, String> {
+        Ok(LateScribbler { kept: true })
+    }
+
+    fn apply(self, world: &mut World, _: Option<Entity>) -> Result<(), String> {
+        world.insert_resource(Scribbled);
+        Err("stopped half way".to_owned())
+    }
+}
+
+/// A world section that looks first and refuses in `check`; applied, it would change the world.
+#[derive(Serialize, Deserialize)]
+struct Picky {
+    kept: bool,
+}
+
+impl SaveSection for Picky {
+    const NAME: &'static str = "picky";
+    const VERSION: u32 = 1;
+    const KIND: SaveKind = SaveKind::World;
+
+    fn capture(_: &World, _: Option<Entity>) -> Result<Self, String> {
+        Ok(Picky { kept: true })
+    }
+
+    fn check(&self, _: &World, _: Option<Entity>) -> Result<(), String> {
+        Err("refused up front".to_owned())
+    }
+
+    fn apply(self, world: &mut World, _: Option<Entity>) -> Result<(), String> {
+        world.insert_resource(Scribbled);
+        Ok(())
+    }
+}
+
+/// The same for a character: the last section of the whole load, after every world section.
+#[derive(Serialize, Deserialize)]
+struct PickyHero {
+    kept: bool,
+}
+
+impl SaveSection for PickyHero {
+    const NAME: &'static str = "picky_hero";
+    const VERSION: u32 = 1;
+    const KIND: SaveKind = SaveKind::Character;
+
+    fn capture(_: &World, _: Option<Entity>) -> Result<Self, String> {
+        Ok(PickyHero { kept: true })
+    }
+
+    fn check(&self, world: &World, body: Option<Entity>) -> Result<(), String> {
+        assert!(body.is_some_and(|body| world.get_entity(body).is_ok()), "a character section is checked with its body");
+        Err("no hero wanted".to_owned())
+    }
+
+    fn apply(self, world: &mut World, _: Option<Entity>) -> Result<(), String> {
+        world.insert_resource(Scribbled);
+        Ok(())
+    }
+}
+
+/// The reasons the world was said to be built again (`WorldRebuilt`): a co-op host's clients take it whole then.
+#[derive(Resource, Default)]
+struct Rebuilt(Vec<String>);
+
+fn watch_rebuilds(app: &mut App) {
+    app.init_resource::<Rebuilt>().add_observer(|e: On<WorldRebuilt>, mut seen: ResMut<Rebuilt>| seen.0.push(e.reason.clone()));
+}
+
+#[test]
+fn a_section_that_refuses_in_check_applies_nothing_even_late_in_the_load() {
+    // A world section after `region`, `chests` and `calendar`.
+    let dir = TempDir::new("picky");
+    let mut app = game_in(&dir, |app| {
+        app.add_save_section::<Picky>();
+        watch_rebuilds(app);
+    });
+    some_state(&mut app);
+    ok(&mut app, "save_game", json!({"what": "all", "slot": "camp"}));
+    other_state(&mut app);
+    let events = shards::ai_core::replay::save(app.world()).events.len();
+
+    let err = fails(&mut app, "load_game", json!({"what": "all", "slot": "camp"}));
+    assert_eq!(err, "loading world/camp failed at section picky: refused up front; nothing was applied: fix the cause and load again");
+    assert_eq!(calendar(&app).day, 1, "`calendar` comes before it and was not applied");
+    assert_eq!(hero(&mut app).name, "Bob", "nor was the character");
+    assert!(!app.world().contains_resource::<Scribbled>(), "its `apply` never ran");
+    let recording = shards::ai_core::replay::save(app.world());
+    assert!(recording.start.is_none() && recording.events.len() == events, "the load that applied nothing is not in the recording");
+    assert!(app.world().resource::<Rebuilt>().0.is_empty(), "nobody is told the world was rebuilt");
+    assert_eq!(lines(&app, JournalKind::Error, "save: loading world/camp failed: section picky: refused up front").len(), 1);
+
+    // A character section, the last of the load: the world sections before it are not applied either.
+    let dir = TempDir::new("picky_hero");
+    let mut app = game_in(&dir, |app| {
+        app.add_save_section::<PickyHero>();
+        watch_rebuilds(app);
+    });
+    some_state(&mut app);
+    ok(&mut app, "save_game", json!({"what": "all", "slot": "camp"}));
+    other_state(&mut app);
+    let events = shards::ai_core::replay::save(app.world()).events.len();
+
+    let err = fails(&mut app, "load_game", json!({"what": "all", "slot": "camp"}));
+    assert_eq!(err, "loading character/camp failed at section picky_hero: no hero wanted; nothing was applied: fix the cause and load again");
+    assert_eq!((hero(&mut app).name, calendar(&app).day), ("Bob".to_owned(), 1), "the world sections before it were not applied either");
+    assert!(!app.world().contains_resource::<Scribbled>());
+    let recording = shards::ai_core::replay::save(app.world());
+    assert!(recording.start.is_none() && recording.events.len() == events);
+    assert!(app.world().resource::<Rebuilt>().0.is_empty());
+}
+
+#[test]
+fn a_section_whose_apply_changes_the_world_and_fails_may_have_changed_it() {
+    // The first to run, so nothing was applied before it: the load still does not say that nothing
+    // was applied, because the section ran.
+    let dir = TempDir::new("scribbled");
+    let mut app = game_in(&dir, |app| {
+        app.add_save_section::<Scribbler>();
+        watch_rebuilds(app);
+    });
+    ok(&mut app, "save_game", json!({"what": "world", "slot": "camp"}));
+    assert!(shards::ai_core::replay::save(app.world()).start.is_none(), "the recording starts at tick 0");
+    let err = fails(&mut app, "load_game", json!({"what": "world", "slot": "camp"}));
+    assert_eq!(
+        err,
+        "loading world/camp failed at section region: stopped half way; no section before it was applied, but the failed section may have changed the world. \
+         The world is partly loaded: fix the cause and load again, or go back with snapshot_load"
+    );
+    assert!(app.world().contains_resource::<Scribbled>(), "the world did change");
+    assert!(shards::ai_core::replay::save(app.world()).start.is_some(), "the recording restarts from the world as it is, so a replay saved now verifies");
+    assert_eq!(app.world().resource::<Rebuilt>().0, ["save camp loaded"], "whoever mirrors the world takes it whole again");
+    assert_eq!(lines(&app, JournalKind::Error, "save: loading world/camp failed: section region: stopped half way").len(), 1);
+
+    // After sections that ran, it says both.
+    let dir = TempDir::new("scribbled_late");
+    let mut app = game_in(&dir, |app| {
+        app.add_save_section::<LateScribbler>();
+        watch_rebuilds(app);
+    });
+    ok(&mut app, "save_game", json!({"what": "world", "slot": "camp"}));
+    let err = fails(&mut app, "load_game", json!({"what": "world", "slot": "camp"}));
+    assert_eq!(
+        err,
+        "loading world/camp failed at section scribbled_late: stopped half way; applied before it: region, chests, calendar; \
+         the failed section may have changed the world too. The world is partly loaded: fix the cause and load again, or go back with snapshot_load"
+    );
+    assert!(app.world().contains_resource::<Scribbled>());
+    assert_eq!(app.world().resource::<Rebuilt>().0, ["save camp loaded"]);
 }

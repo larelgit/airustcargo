@@ -100,7 +100,9 @@ pub trait SaveSection: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// Key in the file and in the registry: lowercase letters, digits, `_`. Unique across
     /// the game. Registering a second section with a name replaces the first (a game
     /// replaces the engine's `position` with "restore at camp"), keeping its place in the
-    /// order sections are applied.
+    /// order sections are applied. A replacement from another crate starts a migration history
+    /// of its own: the first one's migrations are removed with it, and the new one registers the
+    /// migrations of its own versions after it.
     const NAME: &'static str;
     /// The schema version, from 1. Raise it when the serde form changes in a way old files
     /// do not read, and add a migration from the version before.
@@ -121,12 +123,33 @@ pub trait SaveSection: Serialize + DeserializeOwned + Send + Sync + 'static {
         let _ = (world, body);
         Ok(())
     }
+
+    /// Looks at the saved state and the world before **any** section of the load is applied,
+    /// and refuses what cannot be applied: the place for every refusal that must leave the
+    /// world untouched (content a manifest names that the game no longer has, a body that must
+    /// exist, a number out of its range). Every `check` of the load, of every kind, runs after
+    /// all files are read and before the first [`apply`](Self::apply); one that fails stops the
+    /// load there: nothing was applied, and the call leaves the recording.
+    ///
+    /// It only reads the world (`&World`), so it cannot change it, and it sees the world as it
+    /// is before the load: a refusal that depends on what an earlier section does belongs in
+    /// `apply`. Not run for a section the file lacks ([`missing`](Self::missing) has no data to
+    /// look at). Default: accept.
+    ///
+    /// An `Err` from [`apply`](Self::apply) or [`missing`](Self::missing) is another thing: the
+    /// section ran, so the world counts as possibly changed (the load says so, restarts the
+    /// recording from the world as it is and tells whoever mirrors it to take it whole again).
+    fn check(&self, world: &World, body: Option<Entity>) -> Result<(), String> {
+        let _ = (world, body);
+        Ok(())
+    }
 }
 
 type CaptureFn = Arc<dyn Fn(&World, Option<Entity>) -> Result<Value, String> + Send + Sync>;
 type ApplyFn = Arc<dyn Fn(&mut World, Option<Entity>, Value) -> Result<(), String> + Send + Sync>;
 type MissingFn = Arc<dyn Fn(&mut World, Option<Entity>) -> Result<(), String> + Send + Sync>;
 type CheckFn = Arc<dyn Fn(&Value) -> Result<(), String> + Send + Sync>;
+type CheckInFn = Arc<dyn Fn(&World, Option<Entity>, &Value) -> Result<(), String> + Send + Sync>;
 
 /// A registered section, type-erased.
 #[derive(Clone)]
@@ -141,6 +164,7 @@ pub struct SectionEntry {
     apply: ApplyFn,
     missing: MissingFn,
     check: CheckFn,
+    check_in: CheckInFn,
 }
 
 impl std::fmt::Debug for SectionEntry {
@@ -190,6 +214,7 @@ impl SectionEntry {
             apply: Arc::new(|world, body, value| read::<S>(value)?.apply(world, body)),
             missing: Arc::new(|world, body| S::missing(world, body)),
             check: Arc::new(|value| read::<S>(value.clone()).map(drop)),
+            check_in: Arc::new(|world, body, value| read::<S>(value.clone())?.check(world, body)),
         }
     }
 
@@ -198,9 +223,17 @@ impl SectionEntry {
         (self.capture)(world, body)
     }
 
-    /// Puts `data` (at this entry's version) into the world.
+    /// Puts `data` (at this entry's version) into the world. It does not look first: whoever
+    /// applies calls [`check_in`](Self::check_in) before (`load_parts` and `apply_sections` do),
+    /// and an `Err` from here means the world may have changed.
     pub fn apply(&self, world: &mut World, body: Option<Entity>, data: Value) -> Result<(), String> {
         (self.apply)(world, body, data)
+    }
+
+    /// [`SaveSection::check`] on `data` (at this entry's version): whether the world can take it,
+    /// asked before anything of the load is applied. Changes nothing.
+    pub fn check_in(&self, world: &World, body: Option<Entity>, data: &Value) -> Result<(), String> {
+        (self.check_in)(world, body, data)
     }
 
     /// What to do for a file that has no such section.
@@ -238,6 +271,8 @@ impl SectionEntry {
             }),
             missing: Arc::new(|_, _| Ok(())),
             check: Arc::new(|value| read::<Option<C>>(value.clone()).map(drop)),
+            // A body that must be there to take the component.
+            check_in: Arc::new(move |world, body, _| world.get_entity(need(body)?).map(drop).map_err(|e| e.to_string())),
         }
     }
 
@@ -290,6 +325,7 @@ impl SectionEntry {
             }),
             missing: Arc::new(|_, _| Ok(())),
             check: Arc::new(|value| read::<BTreeMap<String, C>>(value.clone()).map(drop)),
+            check_in: Arc::new(|_, _, _| Ok(())),
         }
     }
 
@@ -316,6 +352,7 @@ impl SectionEntry {
             }),
             missing: Arc::new(|_, _| Ok(())),
             check: Arc::new(|value| read::<R>(value.clone()).map(drop)),
+            check_in: Arc::new(|_, _, _| Ok(())),
         }
     }
 }
@@ -335,7 +372,10 @@ pub struct SaveRegistry {
 }
 
 impl SaveRegistry {
-    /// Adds a section; one with the same name is replaced in place. Panics on a bad name,
+    /// Adds a section; one with the same name is replaced in place. A section of another crate
+    /// (a game's in place of the engine's) has data of its own and starts its own migration
+    /// history: the migrations registered for the one it replaces, which read that one's old
+    /// data, are removed. Panics on a bad name,
     /// version 0, or a name that is already registered as the other kind.
     pub fn add(&mut self, entry: SectionEntry) {
         assert!(valid_name(&entry.name), "save section name `{}` must be lowercase letters, digits and `_`, at most 48", entry.name);
@@ -349,6 +389,9 @@ impl SaveRegistry {
                     old.kind,
                     entry.kind
                 );
+                if old.source != entry.source {
+                    self.migrations.retain(|(name, _), _| *name != entry.name);
+                }
                 *old = entry;
             }
             None => self.sections.push(entry),
@@ -443,6 +486,55 @@ mod tests {
         }
     }
 
+    #[derive(Resource)]
+    struct Closed;
+
+    // A section that looks at its data and the world before it is applied.
+    #[derive(Serialize, Deserialize)]
+    struct Picky {
+        limit: u32,
+    }
+    impl SaveSection for Picky {
+        const NAME: &'static str = "picky";
+        const VERSION: u32 = 1;
+        const KIND: SaveKind = SaveKind::World;
+        fn capture(_: &World, _: Option<Entity>) -> Result<Self, String> {
+            Ok(Picky { limit: 1 })
+        }
+        fn apply(self, _: &mut World, _: Option<Entity>) -> Result<(), String> {
+            Ok(())
+        }
+        fn check(&self, world: &World, _: Option<Entity>) -> Result<(), String> {
+            if self.limit > 10 {
+                return Err(format!("limit {} is above 10", self.limit));
+            }
+            if world.contains_resource::<Closed>() {
+                return Err("the world is closed".to_owned());
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn an_entry_asks_the_section_whether_the_world_can_take_its_data() {
+        let mut world = World::new();
+        let picky = SectionEntry::of::<Picky>();
+        assert_eq!(picky.check_in(&world, None, &json!({"limit": 3})), Ok(()));
+        assert_eq!(picky.check_in(&world, None, &json!({"limit": 30})), Err("limit 30 is above 10".to_owned()));
+        world.insert_resource(Closed);
+        assert_eq!(picky.check_in(&world, None, &json!({"limit": 3})), Err("the world is closed".to_owned()));
+        assert!(picky.check_in(&world, None, &json!("nonsense")).is_err(), "data that does not read is not accepted");
+        // The default accepts; a character component wants a body that exists.
+        assert_eq!(SectionEntry::of::<WalletData>().check_in(&world, None, &json!({"gold": 1})), Ok(()));
+        let purse = SectionEntry::character_component::<Purse>("purse", 1);
+        let body = world.spawn(Purse(1)).id();
+        assert_eq!(purse.check_in(&world, Some(body), &json!(7)), Ok(()));
+        assert!(purse.check_in(&world, None, &json!(7)).unwrap_err().contains("no player body"));
+        world.despawn(body);
+        assert!(purse.check_in(&world, Some(body), &json!(7)).is_err(), "the body is gone");
+        assert_eq!(SectionEntry::world_component::<Purse>("chests", 1).check_in(&world, None, &json!({})), Ok(()));
+    }
+
     #[test]
     fn a_gap_in_a_migration_chain_is_named() {
         let mut registry = SaveRegistry::default();
@@ -471,6 +563,24 @@ mod tests {
         let order: Vec<(&str, u32)> = registry.sections().iter().map(|s| (s.name.as_str(), s.version)).collect();
         assert_eq!(order, [("a", 2), ("b", 1)]);
         assert_eq!(registry.sections()[0].source, "shards_save");
+    }
+
+    #[test]
+    fn a_section_of_another_crate_takes_the_name_without_the_old_ones_migrations() {
+        let mut registry = SaveRegistry::default();
+        registry.add(SectionEntry::of::<WalletData>());
+        registry.add_migration("wallet", 1, Ok);
+        registry.add_migration("wallet", 2, Ok);
+        registry.add(SectionEntry::of::<WalletData>());
+        assert_eq!(registry.migrations_of("wallet"), [1, 2], "the same crate's section again keeps its history");
+        // A game's own `wallet` at its version 1: the history of the one it replaces would never run.
+        let mut game = SectionEntry::character_component::<Purse>("wallet", 1);
+        game.source = "game".into();
+        registry.add(game);
+        assert!(registry.migrations_of("wallet").is_empty());
+        assert_eq!(registry.check_chains(), Ok(()));
+        registry.add_migration("wallet", 1, Ok);
+        assert!(registry.check_chains().unwrap_err().contains("would never run"), "the game's own migrations are its to keep in step");
     }
 
     #[test]

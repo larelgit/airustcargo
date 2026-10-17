@@ -75,7 +75,7 @@ pub use manifest::RegionManifest;
 #[cfg(feature = "render")]
 pub use overlay::TileOverlay;
 pub use region::{
-    change_region, despawn_region, level_paths, level_users, spawn_region, ActiveRegion, LevelCheckFn, LevelForgetFn, LevelNextFn,
+    change_region, check_manifest, despawn_region, level_paths, level_users, spawn_region, ActiveRegion, LevelCheckFn, LevelForgetFn, LevelNextFn,
     LevelRequestFn, LevelRestartFn, LevelSpawn, LevelSpawnFn, LevelSpawner, LevelStatusFn, Marker, Poi, RegionBuild, RegionEdge, RegionLoadedHooks,
     RegionPart, RegionTile, StartRegion, TileId,
 };
