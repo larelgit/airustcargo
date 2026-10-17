@@ -13,7 +13,7 @@ use shards_content::ContentDb;
 use shards_motion::{Collider, Volume};
 
 use crate::def::LevelDef;
-use crate::library::level_asset;
+use crate::library::{held_change, level_asset};
 use crate::marker::{LevelMarker, MarkerKind};
 use crate::props::check_level;
 use crate::spawn::{reload_level, spawn_level_as, FromLevel, LevelInstances, SpawnedLevel};
@@ -74,6 +74,9 @@ pub fn spawn_level_by_id(world: &mut World, id: &str, at: Option<Transform>) -> 
 /// Spawns the already loaded level file `path` (see [`request_level`]) under `label`.
 /// For games that place level files the content does not list: the tiles of a region.
 pub fn spawn_level_file(world: &mut World, path: &str, at: Transform, label: &str) -> Result<SpawnedLevel, String> {
+    if let Some(refusal) = held_change(world, path) {
+        return Err(refusal);
+    }
     let level = level_asset(world, path)?.clone();
     spawn_level_as(world, &level, at, label)
 }
@@ -96,6 +99,11 @@ pub struct SpawnLevelArgs {
 fn spawn_level_tool(In(call): In<Call<SpawnLevelArgs>>, world: &mut World) -> ToolResult {
     let SpawnLevelArgs { id, x, y, z } = call.args;
     let def = def_of(world, &id)?;
+    if let Some(refusal) = held_change(world, &def.file) {
+        // Nothing changed: not part of the recording (a replay plays without the session).
+        ai_core::replay::forget_call(world);
+        return Err(refusal);
+    }
     let at = Vec3::new(x.unwrap_or(def.at.x), y.unwrap_or(def.at.y), z.unwrap_or(def.at.z));
     let spawned = spawn_level_by_id(world, &id, Some(Transform::from_translation(at)))?;
     Ok(summarize(world, &id, at, &spawned))
@@ -192,7 +200,8 @@ fn level_info(In(call): In<Call<LevelInfoArgs>>, world: &World) -> ToolResult {
 /// Replace the spawned instances of a level with the file as it is now (the asset server
 /// reloads a changed file by itself, and the instances follow through this tool, so a replay
 /// has it). Entities the game changed come back as the file says. A file with problems
-/// leaves the instances as they were. Without arguments: every spawned level.
+/// leaves the instances as they were. Without arguments: every spawned level. Refused during a
+/// co-op session with other machines in it: they would desync.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct LevelReloadArgs {
     /// Level id, e.g. "arena".
@@ -202,6 +211,11 @@ pub struct LevelReloadArgs {
 }
 
 fn level_reload(In(call): In<Call<LevelReloadArgs>>, world: &mut World) -> ToolResult {
+    if let Some(why) = shards_content::content_held(world) {
+        // Nothing changed: not part of the recording.
+        ai_core::replay::forget_call(world);
+        return Err(format!("refused: a level reload {why}"));
+    }
     let LevelReloadArgs { id, file } = call.args;
     let file_of_id = match &id {
         Some(id) => Some(def_of(world, id)?.file),

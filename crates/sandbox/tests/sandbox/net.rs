@@ -844,6 +844,9 @@ fn a_client_joins_a_host_over_udp_loopback() {
     let mut client = udp_member(join.clone(), "udp", Some(&saves));
     let joined_at = play_over_udp(&mut host, &mut client, 60, started, deadline);
     assert!(joined_at.is_some(), "not connected within {deadline:?}: {:#?}", lines(&client));
+    // It knocked first, and said nothing the host dropped for want of its cookie.
+    let strangers = &host.world().resource::<NetHost>();
+    assert!(strangers.knocks >= 1 && strangers.cookieless == 0, "knocks {}, cookieless {}", strangers.knocks, strangers.cookieless);
     let newest = client.world().resource::<NetClient>().newest_host_tick;
     assert!(newest > joined_at.unwrap() + 30, "states arrive: newest host tick {newest}");
     assert_eq!(client.world().get_resource::<NetDesync>().map_or(0, |d| d.count), 0, "{:#?}", lines(&client));

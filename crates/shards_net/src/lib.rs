@@ -11,7 +11,9 @@
 //!   [`Conditioned`], the same simulation over any transport (`net_sim`, `--net-sim`).
 //! * [`link`]: [`Link`], one per peer pair: unreliable latest-wins messages, reliable ordered messages,
 //!   blobs, deflate, acknowledgements, RTT, loss and byte-rate statistics, timeouts.
-//! * [`wire`]: the datagram format. [`wire::peek_session`] lets a host create a link for an unknown peer.
+//! * [`wire`]: the datagram format, and the join's round trip (a knock and the host's challenge).
+//! * [`cookie`]: what that round trip hands out: a host keeps nothing of an address until a
+//!   datagram from it carries the cookie it was given ([`cookie::Cookies`]).
 //! * [`stats`]: [`LinkStats`], [`DirStats`].
 //!
 //! Every API there that needs time takes `now: u64` in milliseconds from the caller. The hub and the
@@ -39,6 +41,7 @@
 
 pub mod client;
 pub mod conditioner;
+pub mod cookie;
 pub mod def;
 pub mod events;
 pub mod hooks;

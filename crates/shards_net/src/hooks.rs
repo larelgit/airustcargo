@@ -68,8 +68,9 @@ pub struct NetHooks {
     /// their leave, at the end of the session and when the host overrode what they brought.
     pub capture_character: fn(&mut World, Entity) -> Option<Value>,
     /// A client got its character from the host (`CharacterSave`: the host tick it was
-    /// captured at, why, the sections): write it to its slot.
-    pub on_character_save: fn(&mut World, u64, &str, &Value),
+    /// captured at, why, the sections, and the slot the player asked for it in, `None` when the
+    /// host sent it of its own accord): write it to that slot, or to the one it plays.
+    pub on_character_save: fn(&mut World, u64, &str, &Value, Option<&str>),
     /// The host ends the session: save the world (before the clients are told). Answers the
     /// slot the world was saved in, which `SessionEnd` tells the clients.
     pub on_session_end: fn(&mut World) -> Option<String>,
@@ -91,7 +92,7 @@ impl Default for NetHooks {
             join_character: |_, request| request.character.clone(),
             on_join_character: |_, _, _| {},
             capture_character: |_, _| None,
-            on_character_save: |_, _, _, _| {},
+            on_character_save: |_, _, _, _, _| {},
             on_session_end: |_| None,
             spawn_point: |_, _| None,
             after_restore: |_| {},

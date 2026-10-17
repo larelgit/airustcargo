@@ -1165,7 +1165,7 @@ fn the_senders_byte_cap_counts_the_bytes_the_receiver_will_hold() {
 
 /// A datagram of `session` carrying `body`, built by the real encoder (which deflates a big body).
 fn hostile(session: u32, seq: u32, body: &wire::Body) -> Vec<u8> {
-    wire::encode(&wire::Header { flags: 0, session, seq, ack: 0, ack_bits: 0 }, body)
+    wire::encode(&wire::Header { flags: 0, session, seq, ack: 0, ack_bits: 0, cookie: None }, body)
 }
 
 fn zeros_deflated(len: usize) -> wire::Msg {

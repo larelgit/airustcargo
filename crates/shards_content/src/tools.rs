@@ -103,7 +103,8 @@ fn content_check(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult {
 /// changes: everything, one `file` ("combat/attacks.attack.ron"), or one `kind`. Every
 /// definition that differs from the files is applied, also one `content_apply` or a
 /// replay changed. A version with new problems is refused and the previous one kept.
-/// What changed is applied (and recorded for replays) through `content_apply`.
+/// What changed is applied (and recorded for replays) through `content_apply`. Refused
+/// during a co-op session with other machines in it: they would desync.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct ContentReloadArgs {
     /// One file, relative to content/ (or the full asset path).
@@ -143,7 +144,8 @@ fn content_reload(In(call): In<Call<ContentReloadArgs>>, world: &mut World) -> T
 /// Apply content definitions given as JSON: what hot reload and `content_reload` do
 /// with a checked edit, and what replays record and play back. Prefer
 /// `content_reload`. Each change names the definition it replaces as `before`
-/// (`content_get` shows it): a replay starts from it.
+/// (`content_get` shows it): a replay starts from it. Refused during a co-op session
+/// with other machines in it: they would desync.
 #[derive(Deserialize, JsonSchema)]
 pub struct ContentApplyArgs {
     /// Files the change comes from, e.g. ["content/combat/attacks.attack.ron"].
@@ -176,6 +178,9 @@ fn check_before(kinds: &ContentKinds, db: &ContentDb, change: &DefChange) -> Res
 }
 
 fn apply(world: &mut World, args: ContentApplyArgs) -> ToolResult {
+    if let Some(why) = crate::content_held(world) {
+        return Err(format!("refused: a content change {why}"));
+    }
     let ContentApplyArgs { files, changes } = args;
     let kinds = world.resource::<ContentKinds>().clone();
     let current = world.resource::<ContentDb>();

@@ -200,7 +200,8 @@ pub struct Conditioned<T: Transport> {
     egress: Conditioner,
     peers: BTreeMap<PeerId, PeerCond>,
     ingress: Conditioner,
-    out_q: BTreeMap<(u64, u64), (PeerId, Vec<u8>)>,
+    /// Delayed sends: to whom, what, and whether it is a [`Transport::reply`].
+    out_q: BTreeMap<(u64, u64), (PeerId, Vec<u8>, bool)>,
     in_q: BTreeMap<(u64, u64), (PeerId, Vec<u8>)>,
     seq: u64,
     now: u64,
@@ -264,10 +265,14 @@ impl<T: Transport> Conditioned<T> {
             if entry.key().0 > self.now {
                 break;
             }
-            let (to, bytes) = entry.remove();
+            let (to, bytes, reply) = entry.remove();
             self.egress_stats.delivered += 1;
             self.egress_stats.bytes_delivered += bytes.len() as u64;
-            self.inner.send(to, &bytes);
+            if reply {
+                self.inner.reply(to, &bytes);
+            } else {
+                self.inner.send(to, &bytes);
+            }
         }
     }
 
@@ -276,8 +281,28 @@ impl<T: Transport> Conditioned<T> {
         q.insert((due, *seq), (peer, bytes.to_vec()));
     }
 
+    fn queue_out(&mut self, due: u64, peer: PeerId, bytes: &[u8], reply: bool) {
+        self.seq += 1;
+        self.out_q.insert((due, self.seq), (peer, bytes.to_vec(), reply));
+    }
+
     fn peer_key(&self, peer: PeerId) -> u64 {
         self.link ^ peer.rotate_left(17)
+    }
+
+    /// Queues a send that the conditions did not drop; zero-delay copies leave at once.
+    fn delay_out(&mut self, fate: Fate, to: PeerId, datagram: &[u8], reply: bool) {
+        match fate.delay_ms {
+            None => self.egress_stats.dropped += 1,
+            Some(d) => {
+                self.queue_out(self.now + d as u64, to, datagram, reply);
+                if let Some(d2) = fate.duplicate_delay_ms {
+                    self.egress_stats.duplicated += 1;
+                    self.queue_out(self.now + d2 as u64, to, datagram, reply);
+                }
+            }
+        }
+        self.pump(self.now);
     }
 }
 
@@ -299,18 +324,26 @@ impl<T: Transport> Transport for Conditioned<T> {
             return;
         }
         let fate = peer.cond.fate();
-        match fate.delay_ms {
-            None => self.egress_stats.dropped += 1,
-            Some(d) => {
-                Self::queue(&mut self.out_q, &mut self.seq, self.now + d as u64, to, datagram);
-                if let Some(d2) = fate.duplicate_delay_ms {
-                    self.egress_stats.duplicated += 1;
-                    Self::queue(&mut self.out_q, &mut self.seq, self.now + d2 as u64, to, datagram);
-                }
-            }
+        self.delay_out(fate, to, datagram, false);
+    }
+
+    fn reply(&mut self, to: PeerId, datagram: &[u8]) {
+        // The default conditions, and no state kept for a stranger: its own conditions are made
+        // when it becomes a peer (`send`).
+        let conditions = self.peers.get(&to).map_or_else(|| self.egress.conditions(), |p| p.cond.conditions());
+        self.egress_stats.sent += 1;
+        self.egress_stats.bytes_sent += datagram.len() as u64;
+        if conditions.is_none() {
+            self.egress_stats.delivered += 1;
+            self.egress_stats.bytes_delivered += datagram.len() as u64;
+            self.inner.reply(to, datagram);
+            return;
         }
-        // Zero-delay copies leave at once.
-        self.pump(self.now);
+        let fate = match self.peers.get_mut(&to) {
+            Some(peer) => peer.cond.fate(),
+            None => self.egress.fate(),
+        };
+        self.delay_out(fate, to, datagram, true);
     }
 
     fn recv(&mut self, now: u64, out: &mut Vec<(PeerId, Vec<u8>)>) {

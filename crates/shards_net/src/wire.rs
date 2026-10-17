@@ -9,7 +9,16 @@
 //!   n_reliable   varint, then n × (rseq u32, message)
 //!   [fragment: msg u32 | index u16 | count u16 | len varint | bytes]        (flags: FRAG)
 //! message = varint(len << 1 | deflated) | bytes
+//!
+//! the join's round trip (no body but the knock's padding; see `cookie`):
+//!   knock     (client → host): flags KNOCK, the client's session, zeros to KNOCK_LEN bytes
+//!   challenge (host → client): flags KNOCK | COOKIE, the session, the cookie in ack | ack_bits
 //! ```
+//!
+//! A client's datagrams carry the host's cookie (flag COOKIE) in `ack` and `ack_bits` while it has
+//! received nothing from the host, which is exactly when those fields say nothing. Wire protocol 1
+//! had neither flag; a host answers a link datagram of protocol 1 with a refusal in protocol 1
+//! ([`older_build`], [`as_version`]).
 //!
 //! The body is length-prefixed binary: this layer carries opaque payloads (the session layer
 //! serializes its own messages). A body over 256 bytes is deflated when that makes it smaller;
@@ -30,9 +39,14 @@ use flate2::write::DeflateEncoder;
 use crate::transport::MTU;
 
 pub const MAGIC: [u8; 2] = *b"SH";
-/// Wire protocol version; a datagram of another version is rejected.
-pub const PROTO: u8 = 1;
+/// Wire protocol version; a datagram of another version is rejected. 2: the join's cookie.
+pub const PROTO: u8 = 2;
+/// The older version a host still recognises, to refuse it in words its client reads.
+pub const PROTO_1: u8 = 1;
 pub const HEADER_LEN: usize = 20;
+/// Bytes of a knock: at least those of the challenge that answers it, so a host never sends more
+/// than it was sent (a spoofed knock cannot make it amplify a flood).
+pub const KNOCK_LEN: usize = 64;
 /// Bytes a body may take.
 pub const MAX_BODY: usize = MTU - HEADER_LEN;
 /// Bodies above this size are deflated (when it helps).
@@ -53,6 +67,11 @@ pub mod flag {
     pub const ECHO: u8 = 8;
     /// The fragmented message is deflated as a whole.
     pub const FRAG_DEFLATED: u8 = 16;
+    /// A client's datagram: `ack` and `ack_bits` carry the host's cookie (it has received nothing).
+    /// With `KNOCK`: the host's challenge.
+    pub const COOKIE: u8 = 32;
+    /// Not a link datagram: a knock (client → host), or with `COOKIE` the challenge answering it.
+    pub const KNOCK: u8 = 64;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,6 +81,9 @@ pub struct Header {
     pub seq: u32,
     pub ack: u32,
     pub ack_bits: u32,
+    /// The host's cookie a client's datagram carries in place of its acknowledgements (it has
+    /// received nothing yet): `ack` and `ack_bits` read as 0.
+    pub cookie: Option<u64>,
 }
 
 /// Why a datagram was dropped.
@@ -81,19 +103,21 @@ pub enum Reject {
 
 impl Header {
     fn write(&self, out: &mut Vec<u8>) {
+        let (ack, ack_bits) = self.cookie.map_or((self.ack, self.ack_bits), |c| (c as u32, (c >> 32) as u32));
         out.extend_from_slice(&MAGIC);
         out.push(PROTO);
         out.push(self.flags);
         out.extend_from_slice(&self.session.to_le_bytes());
         out.extend_from_slice(&self.seq.to_le_bytes());
-        out.extend_from_slice(&self.ack.to_le_bytes());
-        out.extend_from_slice(&self.ack_bits.to_le_bytes());
+        out.extend_from_slice(&ack.to_le_bytes());
+        out.extend_from_slice(&ack_bits.to_le_bytes());
     }
 }
 
 /// Read the header of a datagram without touching the body: magic and protocol are checked, the
 /// session is not (the caller knows which sessions it accepts). A host uses this to learn the session
-/// of the first datagram from an unknown peer before it creates a link for it.
+/// of the first datagram from an unknown peer before it creates a link for it. A client's cookie is
+/// taken out of the acknowledgements ([`Header::cookie`]).
 pub fn peek(datagram: &[u8]) -> Result<Header, Reject> {
     if datagram.len() < HEADER_LEN {
         return Err(Reject::TooShort);
@@ -105,12 +129,80 @@ pub fn peek(datagram: &[u8]) -> Result<Header, Reject> {
         return Err(Reject::Proto(datagram[2]));
     }
     let u = |at: usize| u32::from_le_bytes([datagram[at], datagram[at + 1], datagram[at + 2], datagram[at + 3]]);
-    Ok(Header { flags: datagram[3], session: u(4), seq: u(8), ack: u(12), ack_bits: u(16) })
+    let (flags, ack, ack_bits) = (datagram[3], u(12), u(16));
+    if flags & flag::COOKIE != 0 && flags & flag::KNOCK == 0 {
+        let cookie = u64::from(ack) | u64::from(ack_bits) << 32;
+        return Ok(Header { flags, session: u(4), seq: u(8), ack: 0, ack_bits: 0, cookie: Some(cookie) });
+    }
+    Ok(Header { flags, session: u(4), seq: u(8), ack, ack_bits, cookie: None })
 }
 
 /// The session a datagram claims, `None` for a datagram that is not ours.
 pub fn peek_session(datagram: &[u8]) -> Option<u32> {
     peek(datagram).ok().map(|h| h.session)
+}
+
+/// Whether a datagram starts like one of ours, of any version: a stranger worth reading.
+pub fn is_ours(datagram: &[u8]) -> bool {
+    datagram.len() >= HEADER_LEN && datagram[..2] == MAGIC
+}
+
+/// One datagram of the join's round trip.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Handshake {
+    /// A client asks for a cookie for its session.
+    Knock { session: u32 },
+    /// The host's cookie for that session.
+    Challenge { session: u32, cookie: u64 },
+}
+
+/// A knock: a client of `session` asks the host for a cookie. Padded to [`KNOCK_LEN`].
+pub fn knock(session: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(KNOCK_LEN);
+    Header { flags: flag::KNOCK, session, seq: 0, ack: 0, ack_bits: 0, cookie: None }.write(&mut out);
+    out.resize(KNOCK_LEN, 0);
+    out
+}
+
+/// The host's answer to a knock: `cookie` for `session`, [`HEADER_LEN`] bytes.
+pub fn challenge(session: u32, cookie: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(HEADER_LEN);
+    Header { flags: flag::KNOCK | flag::COOKIE, session, seq: 0, ack: 0, ack_bits: 0, cookie: Some(cookie) }.write(&mut out);
+    out
+}
+
+/// What a datagram of the join's round trip says, `None` for anything else (a link datagram, junk,
+/// a knock of the wrong length).
+pub fn handshake(datagram: &[u8]) -> Option<Handshake> {
+    let header = peek(datagram).ok()?;
+    if header.flags == flag::KNOCK && datagram.len() == KNOCK_LEN {
+        return Some(Handshake::Knock { session: header.session });
+    }
+    if header.flags == flag::KNOCK | flag::COOKIE && datagram.len() == HEADER_LEN {
+        return Some(Handshake::Challenge { session: header.session, cookie: u64::from(header.ack) | u64::from(header.ack_bits) << 32 });
+    }
+    None
+}
+
+/// The session of a link datagram of wire protocol 1 that carries a message: a client of an older
+/// build saying hello. Its format is this one's without the join's flags.
+pub fn older_build(datagram: &[u8]) -> Option<u32> {
+    if !is_ours(datagram) || datagram[2] != PROTO_1 || datagram[3] & (flag::COOKIE | flag::KNOCK) != 0 {
+        return None;
+    }
+    let current = as_version(datagram, PROTO);
+    let (header, body) = decode_with(&current, &mut Budget::new()).ok()?;
+    body.has_payload().then_some(header.session)
+}
+
+/// `datagram` with its version byte set to `proto`: a link datagram without the join's flags, in
+/// the words of protocol 1.
+pub fn as_version(datagram: &[u8], proto: u8) -> Vec<u8> {
+    let mut out = datagram.to_vec();
+    if out.len() >= HEADER_LEN {
+        out[2] = proto;
+    }
+    out
 }
 
 /// Whether a datagram carries a message (or a piece of one), not just acks and the clock. A
@@ -224,6 +316,9 @@ pub(crate) fn encode(header: &Header, body: &Body) -> Vec<u8> {
     if body.time_echo.is_some() {
         flags |= flag::ECHO;
     }
+    if header.cookie.is_some() {
+        flags |= flag::COOKIE;
+    }
     if let Some(f) = &body.frag {
         flags |= flag::FRAG;
         if f.reliable {
@@ -308,6 +403,10 @@ pub(crate) fn decode(datagram: &[u8]) -> Result<(Header, Body), Reject> {
 /// the body takes from `budget`, and a body inflates to at most [`MAX_BODY`] bytes.
 pub(crate) fn decode_with(datagram: &[u8], budget: &mut Budget) -> Result<(Header, Body), Reject> {
     let header = peek(datagram)?;
+    if header.flags & flag::KNOCK != 0 {
+        // The join's round trip is not a link's business.
+        return Err(Reject::Malformed);
+    }
     let raw = &datagram[HEADER_LEN..];
     let inflated;
     let payload = if header.flags & flag::DEFLATED != 0 {
@@ -384,7 +483,7 @@ mod tests {
     use super::*;
 
     fn header() -> Header {
-        Header { flags: 0, session: 0xDEAD_BEEF, seq: 77, ack: 70, ack_bits: 0b1011 }
+        Header { flags: 0, session: 0xDEAD_BEEF, seq: 77, ack: 70, ack_bits: 0b1011, cookie: None }
     }
 
     fn full_body() -> Body {
@@ -499,7 +598,7 @@ mod tests {
         assert_eq!(decode(&trailing).unwrap_err(), Reject::Malformed);
         // A count that promises more messages than there are bytes.
         let mut lie = Vec::new();
-        Header { flags: 0, session: 1, seq: 1, ack: 0, ack_bits: 0 }.write(&mut lie);
+        Header { flags: 0, session: 1, seq: 1, ack: 0, ack_bits: 0, cookie: None }.write(&mut lie);
         lie.extend_from_slice(&[0; 12]);
         lie.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0x0F]);
         assert_eq!(decode(&lie).unwrap_err(), Reject::Malformed);
@@ -550,6 +649,54 @@ mod tests {
         let bytes = encode(&header(), &body);
         assert!(bytes.len() < 300, "{}", bytes.len());
         assert_eq!(decode(&bytes).unwrap_err(), Reject::Malformed);
+    }
+
+    #[test]
+    fn a_cookie_rides_in_the_acknowledgements_and_reads_as_none_acknowledged() {
+        let cookie = 0x0123_4567_89AB_CDEF;
+        let hello = Body { reliable: vec![(0, Msg { data: b"hello".to_vec(), deflated: false })], ..Body::default() };
+        let bytes = encode(&Header { ack: 0, ack_bits: 0, cookie: Some(cookie), ..header() }, &hello);
+        assert_eq!(bytes.len(), encode(&Header { ack: 0, ack_bits: 0, ..header() }, &hello).len(), "it costs no byte");
+        assert_ne!(bytes[3] & flag::COOKIE, 0);
+        let (h, b) = decode(&bytes).unwrap();
+        assert_eq!((h.cookie, h.ack, h.ack_bits), (Some(cookie), 0, 0));
+        assert_eq!(b, hello);
+        assert!(carries_messages(&bytes));
+        assert_eq!(peek(&encode(&header(), &hello)).unwrap().cookie, None);
+    }
+
+    #[test]
+    fn a_knock_and_its_challenge_are_not_link_datagrams() {
+        let knock = knock(0xC0FFEE);
+        assert_eq!(knock.len(), KNOCK_LEN);
+        assert_eq!(handshake(&knock), Some(Handshake::Knock { session: 0xC0FFEE }));
+        let answer = challenge(0xC0FFEE, u64::MAX - 5);
+        assert!(answer.len() <= knock.len(), "the answer is never bigger than the knock");
+        assert_eq!(handshake(&answer), Some(Handshake::Challenge { session: 0xC0FFEE, cookie: u64::MAX - 5 }));
+        for datagram in [&knock, &answer] {
+            assert_eq!(decode(datagram).unwrap_err(), Reject::Malformed, "no link takes it");
+            assert!(!carries_messages(datagram));
+        }
+        // A knock cut short or padded out, and a link datagram, are no knock.
+        assert_eq!(handshake(&knock[..KNOCK_LEN - 1]), None);
+        assert_eq!(handshake(&[knock.clone(), vec![0]].concat()), None);
+        assert_eq!(handshake(&encode(&header(), &full_body())), None);
+        assert_eq!(handshake(b"SH"), None);
+    }
+
+    #[test]
+    fn a_hello_of_protocol_1_is_recognised_and_answered_in_its_words() {
+        let hello = Body { reliable: vec![(0, Msg { data: b"{\"Hello\":{}}".to_vec(), deflated: false })], ..Body::default() };
+        let old = as_version(&encode(&header(), &hello), PROTO_1);
+        assert_eq!(decode(&old).unwrap_err(), Reject::Proto(PROTO_1), "not this version");
+        assert!(is_ours(&old));
+        assert_eq!(older_build(&old), Some(0xDEAD_BEEF));
+        // Acknowledgements alone, another version still, junk: nothing to answer.
+        assert_eq!(older_build(&as_version(&encode(&header(), &Body::default()), PROTO_1)), None);
+        assert_eq!(older_build(&as_version(&encode(&header(), &hello), 0)), None);
+        assert_eq!(older_build(&encode(&header(), &hello)), None, "this version is no older build");
+        assert_eq!(older_build(b"SH\x01\x00 not a datagram at all"), None);
+        assert!(!is_ours(b"GET / HTTP/1.1"));
     }
 
     #[test]

@@ -81,6 +81,8 @@ pub(crate) struct ContentLoading {
     dirty: bool,
     /// When hot reload lists the folder next (real time).
     next_scan: Duration,
+    /// Why an edit seen on disk waits ([`crate::content_held`]), as the journal said it.
+    held: Option<String>,
 }
 
 /// The asset folder on disk: where Bevy reads it, so synchronous reads see the same
@@ -245,10 +247,22 @@ pub(crate) fn collect_changes(
 
 /// `Update`, after [`collect_changes`]: applies every file seen on disk that differs
 /// from what is applied, checked together. Not while the game loads: then an edit
-/// waits, since an action cannot run.
+/// waits, since an action cannot run. Nor while a module holds content
+/// ([`crate::ContentGuards`]): the journal says so once, and the edit applies when it lets go.
 pub(crate) fn apply_changes(world: &mut World) {
     if !world.resource::<ContentLoading>().dirty || sim::gate_message(world).is_some() {
         return;
+    }
+    if let Some(why) = crate::content_held(world) {
+        let mut loading = world.resource_mut::<ContentLoading>();
+        if loading.held.as_deref() != Some(why.as_str()) {
+            loading.held = Some(why.clone());
+            journal::emit(world, JournalKind::Warn, format!("content: a file changed on disk and waits: a content reload {why}; it applies when that is over"));
+        }
+        return;
+    }
+    if world.resource_mut::<ContentLoading>().held.take().is_some() {
+        journal::emit(world, JournalKind::Sim, "content: nothing holds content any more: applying what changed on disk");
     }
     world.resource_mut::<ContentLoading>().dirty = false;
     let loading = world.resource::<ContentLoading>();
@@ -278,6 +292,9 @@ pub(crate) fn shown(path: &str) -> &str {
 /// problem appears. The one path for hot reload and `content_reload`. Returns what
 /// happened, for the journal or the caller.
 pub(crate) fn reload(world: &mut World, changed: Vec<Source>, removed: Vec<String>) -> Result<String, String> {
+    if let Some(why) = crate::content_held(world) {
+        return Err(format!("refused: a content reload {why}"));
+    }
     let kinds = world.resource::<ContentKinds>().clone();
     let current = world.resource::<ContentDb>();
     let mut texts = current.sources();
@@ -372,5 +389,48 @@ fn restore_for_playback(world: &mut World) {
         Err(e) => {
             journal::emit(world, JournalKind::Error, format!("content: cannot restore the replay's starting content: {e}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ai_core::AiJournal;
+
+    /// Whether the test's "session" holds content.
+    #[derive(Resource)]
+    struct Session(bool);
+
+    fn in_session(world: &World) -> Option<String> {
+        world.resource::<Session>().0.then(|| "during a co-op session would desync its client".to_owned())
+    }
+
+    fn lines(world: &World) -> Vec<String> {
+        world.resource::<AiJournal>().after(0).0.map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn an_edit_seen_on_disk_waits_while_content_is_held_says_so_once_and_goes_ahead_after() {
+        let mut world = World::new();
+        world.init_resource::<ai_core::SimTick>();
+        world.init_resource::<AiJournal>();
+        world.init_resource::<ContentDb>();
+        world.insert_resource(Session(true));
+        world.insert_resource(crate::ContentGuards(vec![in_session]));
+        world.insert_resource(ContentLoading { dirty: true, ..Default::default() });
+        apply_changes(&mut world);
+        apply_changes(&mut world);
+        assert!(world.resource::<ContentLoading>().dirty, "the edit waits");
+        let said: Vec<String> = lines(&world).into_iter().filter(|l| l.contains("waits")).collect();
+        assert_eq!(said.len(), 1, "{said:#?}");
+        assert!(said[0].ends_with("content: a file changed on disk and waits: a content reload during a co-op session would desync its client; it applies when that is over"), "{}", said[0]);
+        let refused = reload(&mut world, Vec::new(), Vec::new()).unwrap_err();
+        assert_eq!(refused, "refused: a content reload during a co-op session would desync its client");
+        // The session is over: what changed goes ahead (here nothing differs, so nothing is applied).
+        world.resource_mut::<Session>().0 = false;
+        apply_changes(&mut world);
+        assert!(!world.resource::<ContentLoading>().dirty);
+        assert!(lines(&world).iter().any(|l| l.ends_with("content: nothing holds content any more: applying what changed on disk")), "{:#?}", lines(&world));
+        assert_eq!(crate::content_held(&world), None);
     }
 }

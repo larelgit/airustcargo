@@ -11,7 +11,7 @@ use shards::core::Press;
 use shards::net::inputs::InputFrame;
 use shards::net::host::{max_strangers, PeerStage, JOINING_POLL_BYTES, PLAYER_POLL_BYTES, SHARED_JOINING_POLL_BYTES};
 use shards::net::msg::{self, CallMsg, Hello, Inputs, Msg, StateDelta, Welcome};
-use shards::net::{Delivered, Link, LinkConditions, MemoryTransport, NetDef, NetDefaults, NetGame, NetHost, NetState, Role, Stand, Transport};
+use shards::net::{wire, Delivered, Link, LinkConditions, MemoryTransport, NetDef, NetDefaults, NetGame, NetHost, NetState, Role, Stand, Transport};
 use shards::prelude::*;
 use shards::serde_json::{json, Map, Value};
 
@@ -28,7 +28,16 @@ struct Rogue {
 }
 
 impl Rogue {
+    /// A peer with the host's cookie for its address and session, as its knock would have brought it.
     fn new(stand: &Stand, name: &str, session: u32) -> Self {
+        let mut rogue = Self::bare(stand, name, session);
+        let cookie = stand.world(HOST).resource::<NetHost>().cookie_for(rogue.transport.id(), session, stand.hub.now());
+        rogue.link.set_cookie(cookie);
+        rogue
+    }
+
+    /// A peer that never knocked: no cookie.
+    fn bare(stand: &Stand, name: &str, session: u32) -> Self {
         let transport = stand.hub.endpoint(name);
         stand.hub.connect_both(0, transport.id(), LinkConditions::NONE);
         Self { transport, link: Link::new(session, Role::Client), got: Vec::new(), deltas: Vec::new() }
@@ -134,6 +143,8 @@ fn hello(stand: &Stand, name: &str) -> Hello {
         name: name.to_owned(),
         token: String::new(),
         character: None,
+        character_parts: 0,
+        character_bytes: 0,
         tick_hz: 1.0 / sim::tick_seconds(world) as f64,
     }
 }
@@ -330,6 +341,142 @@ fn a_hello_of_another_build_is_refused_saying_what_differs() {
     slow.say(&Msg::Hello(changed));
     slow.run(&mut stand, 5);
     assert!(slow.refused().is_some_and(|r| r.contains("start with --hz 60")), "{:?}", slow.got);
+}
+
+// --- the join's cookie ---------------------------------------------------------------------
+
+#[test]
+fn a_stranger_without_the_hosts_cookie_for_its_address_is_never_a_peer() {
+    let mut stand = stand(0);
+    // One that never knocked, one with another address's cookie (a spoofed sender), one with a
+    // made-up cookie: each says hello, again and again, for two seconds.
+    let mut bare = Rogue::bare(&stand, "bare", 3001);
+    let mut spoofed = Rogue::bare(&stand, "spoofed", 3003);
+    let theirs = stand.world(HOST).resource::<NetHost>().cookie_for(spoofed.transport.id() + 1, 3003, stand.hub.now());
+    spoofed.link.set_cookie(theirs);
+    let mut forged = Rogue::bare(&stand, "forged", 3005);
+    forged.link.set_cookie(0x1234_5678_9ABC_DEF0);
+    for rogue in [&mut bare, &mut spoofed, &mut forged] {
+        rogue.say(&Msg::Hello(hello(&stand, "rogue")));
+    }
+    for _ in 0..120 {
+        for rogue in [&mut bare, &mut spoofed, &mut forged] {
+            rogue.pump(&stand);
+        }
+        stand.run(1);
+    }
+    let host = stand.world(HOST).resource::<NetHost>();
+    assert!(host.peers.is_empty(), "{:?}", host.peers.keys().collect::<Vec<_>>());
+    assert!(host.cookieless >= 3, "{}", host.cookieless);
+    assert!([&bare, &spoofed, &forged].iter().all(|r| r.got.is_empty()), "nothing is said to them");
+    assert!(host_lines(&stand, "refused").is_empty(), "{:#?}", journal(&stand, HOST));
+    // With the cookie of its own address, the same hello is read at once.
+    let mut honest = Rogue::new(&stand, "honest", 3007);
+    honest.say(&Msg::Hello(hello(&stand, "honest")));
+    honest.wait_for(&mut stand, 30, "accepted", |m| matches!(m, Msg::Accept(_)));
+}
+
+#[test]
+fn a_client_knocks_before_its_hello_and_knocks_cost_the_host_nothing_it_keeps() {
+    let mut stand = stand(1);
+    let status = stand.call(HOST, "net_status", json!({}));
+    assert!(status.result["strangers"]["knocks"].as_u64().is_some_and(|n| n >= 1), "{}", status.result["strangers"]);
+    assert_eq!(status.result["strangers"]["cookieless"], json!(0), "the client said nothing before its cookie came");
+    // A hundred addresses knock in one tick: each is answered, none is kept.
+    let mut knockers: Vec<MemoryTransport> = (0..100)
+        .map(|i| {
+            let t = stand.hub.endpoint(&format!("k{i}"));
+            stand.hub.connect_both(0, t.id(), LinkConditions::NONE);
+            t
+        })
+        .collect();
+    for (i, knocker) in knockers.iter_mut().enumerate() {
+        knocker.send(0, &wire::knock(4000 + i as u32));
+    }
+    stand.run(1);
+    let host = stand.world(HOST).resource::<NetHost>();
+    assert_eq!(host.peers.len(), 1, "only the player");
+    assert!(host.knocks >= 101);
+    for knocker in &mut knockers {
+        let mut got = Vec::new();
+        knocker.recv(stand.hub.now(), &mut got);
+        assert!(matches!(got.first().and_then(|(_, d)| wire::handshake(d)), Some(wire::Handshake::Challenge { .. })), "{got:?}");
+    }
+    assert!(connected_peers(&stand) == 1, "the player plays on");
+}
+
+#[test]
+fn a_game_of_the_build_before_the_cookie_is_told_to_update_and_kept_nowhere() {
+    let mut stand = stand(0);
+    // A client of wire protocol 1: its hello without a knock, in the datagrams of then.
+    let mut old = Rogue::bare(&stand, "old", 3101);
+    old.say(&Msg::Hello(hello(&stand, "old")));
+    for _ in 0..10 {
+        let now = stand.hub.now();
+        let Rogue { transport, link, got, .. } = &mut old;
+        let mut datagrams = Vec::new();
+        transport.recv(now, &mut datagrams);
+        for (_, datagram) in datagrams {
+            assert_eq!(datagram[2], wire::PROTO_1, "the host answers in its protocol");
+            link.on_datagram(now, &wire::as_version(&datagram, wire::PROTO));
+        }
+        for delivered in link.poll(now) {
+            if let Delivered::Reliable(bytes) = delivered {
+                got.extend(msg::decode::<Msg>(&bytes).ok());
+            }
+        }
+        link.flush(now, &mut |datagram| transport.send(0, &wire::as_version(datagram, wire::PROTO_1)));
+        stand.run(1);
+    }
+    let reason = old.refused().unwrap_or_else(|| panic!("{:?}", old.got));
+    assert!(reason.contains("wire protocol 2") && reason.contains("run the same build"), "{reason}");
+    let host = stand.world(HOST).resource::<NetHost>();
+    assert!(host.peers.is_empty() && host.older_builds >= 1);
+    assert!(has_line(&stand, HOST, "a game of an older build (wire protocol 1)"), "{:#?}", journal(&stand, HOST));
+}
+
+#[test]
+fn a_client_whose_knocks_go_unanswered_ends_its_join_saying_what_it_may_be() {
+    let mut stand = stand(0);
+    let deaf: LinkConditions = "loss=1".parse().unwrap();
+    let c = shards::testing::stand_client(&mut stand, "lost", deaf, &configure, &|app: &mut App| {
+        app.add_plugins(sandbox::SandboxPlugin);
+        app.insert_resource(NetDefaults(NetDef { timeout_secs: 1.0, ..Default::default() }));
+    });
+    run_until(&mut stand, 200, "the join ends", |s| matches!(net_state(s, c), NetState::Ended(_)));
+    let NetState::Ended(why) = net_state(&stand, c) else { unreachable!() };
+    assert!(why.starts_with("no answer from the host host to the hello in 1 s") && why.contains("a host of an older build does not answer it"), "{why}");
+    assert!(stand.world(HOST).resource::<NetHost>().peers.is_empty());
+}
+
+// --- content during a session --------------------------------------------------------------
+
+#[test]
+fn content_does_not_change_under_a_session_and_can_again_once_it_is_over() {
+    let mut stand = stand(1);
+    let refused = |out: &shards::ai_core::CallOutcome| -> String {
+        assert!(!out.ok, "not refused: {}", out.result);
+        out.result.as_str().unwrap_or_default().to_owned()
+    };
+    let host = stand.call(HOST, "content_reload", json!({}));
+    assert_eq!(refused(&host), "refused: a content reload during a co-op session would desync its client; do it once they have left, or after net_end");
+    let change = json!({"changes": [{"kind": "effect", "id": "puff", "def": {"count": 4}}]});
+    let host = stand.call(HOST, "content_apply", change.clone());
+    assert!(refused(&host).starts_with("refused: a content change during a co-op session would desync its client"));
+    let host = stand.call(HOST, "level_reload", json!({}));
+    assert!(refused(&host).starts_with("refused: a level reload during a co-op session would desync its client"));
+    let client = stand.call(C1, "content_reload", json!({}));
+    assert_eq!(refused(&client), "refused: a content reload during a co-op session would desync this game from its host host; leave the session first");
+    assert!(host_calls(&stand, "content_apply").is_empty(), "nothing was recorded");
+    stand.run(30);
+    assert_eq!(desyncs(&stand, C1), 0);
+    // The session over, each can reload again.
+    assert!(stand.call(HOST, "net_end", json!({})).ok);
+    stand.run(30);
+    for member in [HOST, C1] {
+        let out = stand.call(member, "content_reload", json!({}));
+        assert!(out.ok, "member {member}: {}", out.result);
+    }
 }
 
 // --- sizes and words -----------------------------------------------------------------------

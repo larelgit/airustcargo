@@ -1,0 +1,45 @@
+# What a session keeps safe (E7, E8.7): the join's cookie, content while other machines play it,
+# and a client's own character, which only its host can save.
+#
+# - Every client knocked before its hello and brought back the host's cookie: the host answered
+#   knocks, kept nothing of anyone before that, and heard from no game of an older build.
+# - Content stays as it is while clients play it: a reload on the host or on a client would desync
+#   them, so it is refused, and says when it can be done.
+# - c1 saves its character: its game asks the host, which captures the body it plays (the
+#   authoritative one) and sends it back; c1 writes it into its slot.
+#
+# Against a live stand: see coop_smoke.scenario.
+stand clients=2 latency=150 loss=0.02
+seed 42
+
+# --- setup (dev, on the host): the arena calm, c1's body (e15) healed
+@host act npc_set_state id=e6 state=calm
+@host act npc_set_state id=e7 state=calm
+@host act npc_set_state id=e8 state=calm
+@host act npc_set_state id=e14 state=calm
+@host act heal id=e15
+step 30
+invariant !journal "desync"
+
+# --- the join's cookie: knocks answered, nothing dropped for want of a cookie, no older build
+@host act net_status
+@host expect result contains "\"knocks\":"
+@host expect result contains "\"cookieless\": 0"
+@host expect result contains "\"older_builds\": 0"
+
+# --- content stays as it is while clients play it
+@host act? content_reload
+@host expect result contains "refused: a content reload during a co-op session would desync its 2 clients"
+@host act? level_reload
+@host expect result contains "refused: a level reload during a co-op session"
+@c1 act? content_reload
+@c1 expect result contains "refused: a content reload during a co-op session would desync this game from its host"
+
+# --- c1 asks the host for its character, and writes what the host sends
+mark
+@c1 act save_game what=character
+@c1 expect result contains "asked of the host"
+step 60
+@c1 expect journal " saved (save_game, "
+@c1 expect !journal "did not send your character"
+@host expect journal "net: p1 asked for its character: sent"

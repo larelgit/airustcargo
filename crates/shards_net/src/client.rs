@@ -23,12 +23,15 @@ use crate::msg::{self, CallMsg, Hello, Inputs, Msg, StateDelta, Welcome, PROTO};
 use crate::predict::NetCorrection;
 use crate::replicate::{apply, changes_between, first_difference, world_hash, ClientRing, Fnv, LOCAL_BASE};
 use crate::session::{ExternalTransport, NetClock, NetEndpoint, NetGame, NetMarks, NetState, Ticked};
+use crate::wire::{self, Handshake};
 
 /// Where a client is in the session.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClientStage {
     /// Loading content before saying hello.
     Connecting,
+    /// Knocked: waits for the host's cookie, without which it would not read the hello.
+    Knocking,
     /// Said hello; waits for the host's answer.
     HelloSent,
     /// The host's game said "not now".
@@ -44,7 +47,7 @@ pub enum ClientStage {
 impl ClientStage {
     /// Whether the client waits for the network (and not for its own loading).
     pub fn waits_on_network(&self) -> bool {
-        matches!(self, ClientStage::HelloSent | ClientStage::Waiting(_) | ClientStage::ReadySent | ClientStage::Connected | ClientStage::Ended(_))
+        matches!(self, ClientStage::Knocking | ClientStage::HelloSent | ClientStage::Waiting(_) | ClientStage::ReadySent | ClientStage::Connected | ClientStage::Ended(_))
     }
 }
 
@@ -131,6 +134,9 @@ pub struct NetClient {
     pub rebases: u32,
     next_call: u64,
     calls: BTreeMap<u64, String>,
+    /// The character asks the host has not answered yet, by number: the slot each one saves into.
+    asks: BTreeMap<u32, String>,
+    next_ask: u32,
     pub host_paused: bool,
     /// Deltas applied and skipped, and their bytes.
     pub deltas: u64,
@@ -138,7 +144,13 @@ pub struct NetClient {
     pub delta_bytes: u64,
     /// The RTT the link watch saw a second ago.
     watched_rtt: f32,
+    /// When it first knocked, and last (milliseconds on the session's clock).
+    knocks: Option<(u64, u64)>,
 }
+
+/// How often a client knocks again while its host has said nothing (a knock or its answer may be
+/// lost, and a cookie runs out), milliseconds.
+pub const KNOCK_EVERY_MS: u64 = 500;
 
 impl NetClient {
     pub fn new(address: &str, config: &EngineConfig) -> Self {
@@ -163,11 +175,14 @@ impl NetClient {
             rebases: 0,
             next_call: 0,
             calls: BTreeMap::new(),
+            asks: BTreeMap::new(),
+            next_ask: 0,
             host_paused: false,
             deltas: 0,
             skipped: 0,
             watched_rtt: 0.0,
             delta_bytes: 0,
+            knocks: None,
         }
     }
 
@@ -338,10 +353,9 @@ pub(crate) fn on_exit(world: &mut World) {
                 }
                 for message in delivered {
                     if let Delivered::Reliable(bytes) = message
-                        && let Ok(Msg::CharacterSave { tick, reason, sections }) = msg::decode::<Msg>(&bytes)
+                        && let Ok(Msg::CharacterSave { tick, reason, sections, asked }) = msg::decode::<Msg>(&bytes)
                     {
-                        let save = hooks(world).on_character_save;
-                        save(world, tick, &reason, &sections);
+                        character_save(world, client, tick, &reason, &sections, asked);
                         // The answer to our `Bye` (the host leaves with the reason we gave), not
                         // a save that was on its way when we quit.
                         final_save |= reason == QUIT;
@@ -435,6 +449,10 @@ fn pace(world: &mut World, client: &mut NetClient) {
 pub const ENDED_PATIENCE_MS: u64 = 3000;
 
 fn flush(client: &mut NetClient, endpoint: &mut NetEndpoint) {
+    // Nothing to say before the cookie: the host would drop it.
+    if client.stage == ClientStage::Knocking {
+        return;
+    }
     let (Some(link), Some(host)) = (client.link.as_mut(), endpoint.host) else { return };
     let now = endpoint.clock.now();
     let transport = &mut endpoint.transport;
@@ -454,18 +472,35 @@ fn io_in(world: &mut World, client: &mut NetClient, endpoint: &mut NetEndpoint) 
     let now = endpoint.clock.now();
     let Some(host) = endpoint.host else { return };
     if client.stage == ClientStage::Connecting && world.get_resource::<ContentDb>().is_some_and(ContentDb::is_loaded) {
-        hello(world, client, &endpoint.clock);
+        open(world, client, &endpoint.clock);
         set_state(world, NetState::Joining(format!("waiting for the host {}", client.address)));
         shards_core::seed::hold_seed(world, &format!("net: waiting for the host {}", client.address));
     }
     let mut datagrams = Vec::new();
     endpoint.transport.recv(now, &mut datagrams);
+    let session = client.session;
     let Some(link) = client.link.as_mut() else { return };
+    let mut cookie = None;
     for (from, bytes) in datagrams {
-        if from == host {
-            link.on_datagram(now, &bytes);
+        if from != host {
+            continue;
+        }
+        match wire::handshake(&bytes) {
+            Some(Handshake::Challenge { session: s, cookie: c }) if s == session => cookie = Some(c),
+            Some(_) => {}
+            None => {
+                link.on_datagram(now, &bytes);
+            }
         }
     }
+    if let Some(cookie) = cookie {
+        link.set_cookie(cookie);
+        if client.stage == ClientStage::Knocking {
+            say_hello(world, client);
+        }
+    }
+    knock(world, client, endpoint, now);
+    let Some(link) = client.link.as_mut() else { return };
     let delivered = link.poll(now);
     for message in delivered {
         match message {
@@ -541,10 +576,11 @@ fn keep_token(world: &mut World, client: &NetClient, clock: &NetClock) {
     }
 }
 
-fn hello(world: &mut World, client: &mut NetClient, clock: &NetClock) {
+/// Content is loaded: the session's link, and a knock for the host's cookie.
+fn open(world: &mut World, client: &mut NetClient, clock: &NetClock) {
     client.token = load_token(world, client, clock);
     // The link's session tells this run's datagrams from an earlier run's: random over a real
-    // network, the same in every run of a stand.
+    // network, the same in every run of a stand. It is also what the host's cookie is for.
     client.session = match clock {
         NetClock::Hub(_) => {
             let mut h = Fnv::default();
@@ -554,6 +590,51 @@ fn hello(world: &mut World, client: &mut NetClient, clock: &NetClock) {
         NetClock::Wall(_) => crate::host::random_word(3, u64::from(std::process::id())) as u32,
     } | 1;
     client.link = Some(Link::new(client.session, Role::Client));
+    client.stage = ClientStage::Knocking;
+    client.knocks = None;
+}
+
+/// While the host has said nothing: a knock now and every [`KNOCK_EVERY_MS`] (a lost knock or
+/// answer, a cookie that runs out while a full host makes the hello wait). No answer to the
+/// knocks in the silence timeout ends the join, with what it may mean.
+fn knock(world: &mut World, client: &mut NetClient, endpoint: &mut NetEndpoint, now: u64) {
+    let (Some(host), Some(link)) = (endpoint.host, client.link.as_ref()) else { return };
+    if !matches!(client.stage, ClientStage::Knocking | ClientStage::HelloSent) || link.heard_from() {
+        return;
+    }
+    let (first, last) = client.knocks.map_or((now, None), |(first, last)| (first, Some(last)));
+    let timeout_ms = (net_def(world).timeout_secs * 1000.0) as u64;
+    if client.stage == ClientStage::Knocking && now.saturating_sub(first) > timeout_ms {
+        let why = format!(
+            "no answer from the host {} to the hello in {:.0} s: is it running there, and of this build? (a host of an older build does not answer it)",
+            client.address,
+            timeout_ms as f64 / 1000.0
+        );
+        journal::emit(world, JournalKind::Error, format!("net: {why}"));
+        end(world, client, &why, AppExit::error());
+        return;
+    }
+    if last.is_none_or(|last| now.saturating_sub(last) >= KNOCK_EVERY_MS) {
+        endpoint.transport.send(host, &wire::knock(client.session));
+        client.knocks = Some((first, now));
+    }
+}
+
+/// The cookie came: the hello, and the character after it in parts when it is too big for it.
+fn say_hello(world: &mut World, client: &mut NetClient) {
+    let mut character = client.character.clone();
+    let mut parts = Vec::new();
+    if let Some(value) = &character
+        && msg::encode(value).len() > crate::host::MAX_INLINE_CHARACTER
+    {
+        parts = msg::split_character(value, crate::host::CHARACTER_PART_BYTES);
+        character = None;
+    }
+    let bytes: usize = parts.iter().map(String::len).sum();
+    if bytes > crate::host::MAX_CHARACTER_BYTES {
+        // The host refuses it at the hello and says so; the parts are not worth sending.
+        journal::emit(world, JournalKind::Error, format!("net: your character is {} KB, over the {} KB a host takes", bytes.div_ceil(1024), crate::host::MAX_CHARACTER_BYTES / 1024));
+    }
     let hello = Hello {
         proto: PROTO,
         engine: ENGINE_VERSION.to_owned(),
@@ -562,10 +643,17 @@ fn hello(world: &mut World, client: &mut NetClient, clock: &NetClock) {
         net_rules_hash: net_rules::rules_hash(world),
         name: client.name.clone(),
         token: client.token.clone(),
-        character: client.character.clone(),
+        character,
+        character_parts: parts.len() as u32,
+        character_bytes: bytes as u64,
         tick_hz: 1.0 / sim::tick_seconds(world) as f64,
     };
     client.send(&Msg::Hello(hello));
+    if bytes <= crate::host::MAX_CHARACTER_BYTES {
+        for (index, text) in parts.into_iter().enumerate() {
+            client.send(&Msg::CharacterPart { index: index as u32, text });
+        }
+    }
     client.stage = ClientStage::HelloSent;
 }
 
@@ -615,9 +703,11 @@ fn on_message(world: &mut World, client: &mut NetClient, clock: &NetClock, messa
             let verdict = if ok { "ok" } else { "failed" };
             journal::log(world, JournalKind::Agent, format!("host: {tool} {verdict} at host tick {tick}: {text}"));
         }
-        Msg::CharacterSave { tick, reason, sections } => {
-            let save = hooks(world).on_character_save;
-            save(world, tick, &reason, &sections);
+        Msg::CharacterSave { tick, reason, sections, asked } => character_save(world, client, tick, &reason, &sections, asked),
+        Msg::CharacterNotSent { reason, asked } => {
+            let slot = asked.and_then(|id| client.asks.remove(&id)).map(|slot| format!(" (character/{slot} is as it was)")).unwrap_or_default();
+            let reason = crate::host::clip(&reason, crate::host::MAX_PEER_TEXT);
+            journal::emit(world, JournalKind::Error, format!("save: the host did not send your character: {reason}{slot}"));
         }
         Msg::SessionEnd { reason, saved_slot } => {
             let saved = saved_slot.map(|slot| format!(", world saved: {}", crate::host::clip(&slot, 40))).unwrap_or_default();
@@ -840,6 +930,51 @@ fn apply_pending(world: &mut World, client: &mut NetClient) {
             client.send(&Msg::Desync { tick: delta.tick, here, host: host_hash, first, epoch: client.rebases });
         }
     }
+}
+
+/// The character asks this game remembers until the host answers them: an ask the host never
+/// answers (one more in the same second) is forgotten after this many newer ones.
+const MAX_ASKS: usize = 16;
+
+/// The host's capture of this player's character to the game's hook: into the slot of the ask it
+/// answers, else (sent of the host's own accord) the slot this machine plays. An answer to an ask
+/// this game does not remember is written nowhere: which slot it was for is not known.
+fn character_save(world: &mut World, client: &mut NetClient, tick: u64, reason: &str, sections: &Value, asked: Option<u32>) {
+    let slot = match asked {
+        None => None,
+        Some(id) => match client.asks.remove(&id) {
+            Some(slot) => Some(slot),
+            None => {
+                journal::emit(world, JournalKind::Warn, format!("save: the host answered character ask #{id}, which this game does not remember; not written"));
+                return;
+            }
+        },
+    };
+    let save = hooks(world).on_character_save;
+    save(world, tick, reason, sections, slot.as_deref());
+}
+
+/// Asks the host for this player's character now, to save into `slot`: it captures the body it
+/// plays and sends it back (`Msg::CharacterSave`, reason `save_game`) with the ask's number, and
+/// the game writes it into `slot` (co-op saves), whichever slot is current by then. Answers the
+/// host's address.
+pub fn ask_character(world: &mut World, slot: &str) -> Result<String, String> {
+    let Some(mut client) = world.get_resource_mut::<NetClient>() else {
+        return Err("this game is not a client of a host".into());
+    };
+    match &client.stage {
+        ClientStage::Connected => {}
+        ClientStage::Ended(why) => return Err(format!("not in a session any more ({why}); the host sends a player their character when they leave")),
+        other => return Err(format!("not connected to the host yet ({other:?}); wait for `net_joined`")),
+    }
+    client.next_ask = client.next_ask.wrapping_add(1);
+    let id = client.next_ask;
+    client.asks.insert(id, slot.to_owned());
+    while client.asks.len() > MAX_ASKS {
+        client.asks.pop_first();
+    }
+    client.send(&Msg::CharacterAsk { id });
+    Ok(client.address.clone())
 }
 
 // --- forwarded calls -----------------------------------------------------------------------
