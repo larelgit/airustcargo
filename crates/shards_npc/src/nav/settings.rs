@@ -1,6 +1,7 @@
 //! How tiles are baked: [`NavSettingsDef`] (content kind `nav`), what a bake hashes, which
 //! tiles there are to bake and at what size.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -11,13 +12,23 @@ use shards_world::manifest::{compact, fnv};
 
 use super::tile::{file_hash, hex, TileKind, BAKE_VERSION, FORMAT};
 
-/// How tiles are baked into navigation grids, and for which body. Kind `nav`; the engine
+/// The body class every navmesh has: the `agent` of the nav settings. Its bakes are in the
+/// bake folder itself (`nav/<tile>.navtile.ron`), the other classes' in a folder each
+/// (`nav/<class>/<tile>.navtile.ron`).
+pub const DEFAULT_BODY: &str = "agent";
+
+/// How tiles are baked into navigation grids, and for which bodies. Kind `nav`; the engine
 /// reads the definition `default` (the code defaults without one).
 ///
 /// ```ron
 /// // content/nav/default.nav.ron
-/// { "default": (cell: 0.5, agent: Some("grunt"), safe_drop: 2.0) }
+/// { "default": (cell: 0.5, agent: Some("grunt"), safe_drop: 2.0,
+///                bodies: {"large": (locomotion: Some("ogre"))}) }
 /// ```
+///
+/// Every tile is baked once per body class: `agent`, then each of `bodies`. An NPC routes on
+/// the tightest class its body fits (the smallest radius at least its own); a body wider
+/// than every class plans on the local grid.
 ///
 /// With a `nav` definition, content checks every bake file: a missing or stale one is a
 /// content error (`content check`, `--check-content`). Either way a region bakes what has
@@ -28,9 +39,12 @@ pub struct NavSettingsDef {
     /// Edge of a grid cell (m). A tile's edge must be a whole number of cells.
     pub cell: f32,
     /// The `locomotion` definition of the body tiles are baked for (its radius, height,
-    /// step height, slope limit and climbing); the code defaults without one. Bigger bodies
-    /// plan on the local grid instead.
+    /// step height, slope limit and climbing); the code defaults without one. The body class
+    /// `agent`.
     pub agent: Option<String>,
+    /// More body classes, by name (lowercase letters, digits, `_`): each is baked into its
+    /// own folder, `<dir>/<name>/`.
+    pub bodies: BTreeMap<String, NavBodyDef>,
     /// Drops deeper than this are cliffs (m).
     pub safe_drop: f32,
     /// The folder of bake files, in the asset folder.
@@ -41,8 +55,28 @@ pub struct NavSettingsDef {
 
 impl Default for NavSettingsDef {
     fn default() -> Self {
-        Self { cell: 0.5, agent: None, safe_drop: 2.0, dir: "nav".into(), check_bakes: true }
+        Self { cell: 0.5, agent: None, safe_drop: 2.0, bodies: BTreeMap::new(), dir: "nav".into(), check_bakes: true }
     }
+}
+
+/// A body class of the nav settings besides `agent`: a body the tiles are baked for too.
+///
+/// ```ron
+/// "large": (locomotion: Some("ogre")),
+/// "wide": (radius: Some(1.2), height: Some(2.6)),
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NavBodyDef {
+    /// The `locomotion` definition of the body (radius, height, step height, slope limit,
+    /// climbing, swimming); without one, the `agent`'s.
+    pub locomotion: Option<String>,
+    /// Its radius instead of the locomotion's (m).
+    pub radius: Option<f32>,
+    /// Its height instead of the locomotion's (m). With either, the body must still be a
+    /// capsule its locomotion allows: at least as tall as it is wide, and wider than twice
+    /// the skin width (content checks it).
+    pub height: Option<f32>,
 }
 
 impl NavSettingsDef {
@@ -72,7 +106,47 @@ impl ContentDef for NavSettingsDef {
         if let Some(agent) = &self.agent {
             refs.require::<CharacterParams>(agent, "agent");
         }
+        for (name, body) in &self.bodies {
+            if name == DEFAULT_BODY {
+                refs.error(format!("bodies: `{DEFAULT_BODY}` is the body `agent` names; call this class something else, e.g. `large`"));
+            } else if name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+                refs.error(format!("bodies: `{name}` must be lowercase letters, digits and `_`: it names the folder of its bakes"));
+            }
+            if let Some(locomotion) = &body.locomotion {
+                refs.require::<CharacterParams>(locomotion, &format!("bodies.{name}.locomotion"));
+            }
+            for (field, value) in [("radius", body.radius), ("height", body.height)] {
+                if let Some(v) = value.filter(|v| !(v.is_finite() && *v > 0.0)) {
+                    refs.error(format!("bodies.{name}.{field} {v} must be more than 0 m"));
+                }
+            }
+        }
         let db = refs.db();
+        let classes = NavSettings::classes(self, db);
+        // A class's own radius and height stand instead of its body's: they must still make a
+        // capsule its locomotion allows (the rest of the body is checked as a `locomotion`).
+        for ((name, body), class) in self.bodies.iter().zip(classes.iter().skip(1)) {
+            let sized = [body.radius, body.height].into_iter().flatten().all(|v| v.is_finite() && v > 0.0);
+            if !sized || (body.radius.is_none() && body.height.is_none()) {
+                continue;
+            }
+            let CharacterParams { radius, height, skin_width, .. } = class.agent;
+            if height < 2.0 * radius {
+                refs.error(format!(
+                    "bodies.{name}: height {height} is less than the capsule's diameter {}; give the class a height of at \
+                     least {} m or a smaller radius",
+                    2.0 * radius,
+                    2.0 * radius
+                ));
+            }
+            if body.radius.is_some() && skin_width >= radius * 0.5 {
+                refs.error(format!(
+                    "bodies.{name}: skin_width {skin_width} is too large for radius {radius}; give the class a radius \
+                     above {} m (twice its locomotion's skin_width)",
+                    2.0 * skin_width
+                ));
+            }
+        }
         for target in bake_targets(db) {
             for size in &target.sizes {
                 if !whole_cells(*size, self.cell) {
@@ -90,35 +164,38 @@ impl ContentDef for NavSettingsDef {
             return;
         }
         let Some(root) = refs.asset_root().map(Path::to_path_buf) else { return };
-        let settings = NavSettings::from_def(self, db);
-        for target in bake_targets(db) {
-            let shown = format!("{}/{}", self.dir, file_name(target.kind, &target.id));
-            let what = format!("{} `{}`", target.kind.content_kind(), target.id);
-            match std::fs::read_to_string(settings.file(&root, target.kind, &target.id)) {
-                Err(_) => refs.error(format!(
-                    "{what} has no bake file ({shown}); bake it with `--bake-nav {}` (or `--bake-nav all`)",
-                    target.id
-                )),
-                Ok(text) => match file_hash(&text) {
-                    Err(e) => refs.error(format!("{shown}: {e}")),
-                    Ok(hash) => {
-                        let fresh = target.sizes.iter().any(|s| bake_hash(db, Some(&root), target.kind, &target.id, *s, &settings).is_ok_and(|h| h == hash));
-                        if !fresh {
-                            refs.error(format!(
-                                "the bake of {what} ({shown}) is stale: the {}, its prefabs or level file, or the nav settings \
-                                 changed since it was baked; bake it again with `--bake-nav {}`",
-                                target.kind.content_kind(),
-                                target.id
-                            ));
+        for settings in classes {
+            // The agent's files are named as ever; another class's say whose they are.
+            let body = if settings.is_default() { String::new() } else { format!(" for the body `{}`", settings.body) };
+            for target in bake_targets(db) {
+                let shown = settings.shown(target.kind, &target.id);
+                let what = format!("{} `{}`", target.kind.content_kind(), target.id);
+                match std::fs::read_to_string(settings.file(&root, target.kind, &target.id)) {
+                    Err(_) => refs.error(format!(
+                        "{what} has no bake file{body} ({shown}); bake it with `--bake-nav {}` (or `--bake-nav all`)",
+                        target.id
+                    )),
+                    Ok(text) => match file_hash(&text) {
+                        Err(e) => refs.error(format!("{shown}: {e}")),
+                        Ok(hash) => {
+                            let fresh = target.sizes.iter().any(|s| bake_hash(db, Some(&root), target.kind, &target.id, *s, &settings).is_ok_and(|h| h == hash));
+                            if !fresh {
+                                refs.error(format!(
+                                    "the bake of {what}{body} ({shown}) is stale: the {}, its prefabs or level file, or the nav \
+                                     settings changed since it was baked; bake it again with `--bake-nav {}`",
+                                    target.kind.content_kind(),
+                                    target.id
+                                ));
+                            }
                         }
-                    }
-                },
+                    },
+                }
             }
         }
     }
 }
 
-/// [`NavSettingsDef`] resolved against content: the body is known.
+/// [`NavSettingsDef`] resolved against content for one body class: the body is known.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NavSettings {
     pub cell: f32,
@@ -126,6 +203,8 @@ pub struct NavSettings {
     /// The body tiles are baked for.
     pub agent: CharacterParams,
     pub dir: String,
+    /// Its body class: [`DEFAULT_BODY`], or a name of [`NavSettingsDef::bodies`].
+    pub body: String,
 }
 
 impl Default for NavSettings {
@@ -143,14 +222,59 @@ impl NavSettings {
         }
     }
 
+    /// The settings of the body class `agent`.
     pub fn from_def(def: &NavSettingsDef, db: &ContentDb) -> NavSettings {
         let agent = def.agent.as_deref().and_then(|id| db.get::<CharacterParams>(id)).cloned().unwrap_or_default();
-        NavSettings { cell: def.cell, safe_drop: def.safe_drop, agent, dir: def.dir.clone() }
+        NavSettings { cell: def.cell, safe_drop: def.safe_drop, agent, dir: def.dir.clone(), body: DEFAULT_BODY.to_owned() }
+    }
+
+    /// The settings of every body class content has: `agent` first, then the others by name.
+    pub fn all(db: &ContentDb) -> Vec<NavSettings> {
+        match db.get::<NavSettingsDef>(NavSettingsDef::ID) {
+            Some(def) => Self::classes(def, db),
+            None => Self::classes(&NavSettingsDef::default(), db),
+        }
+    }
+
+    /// The settings of every body class of `def`: `agent` first, then the others by name. A
+    /// class without a locomotion has the agent's body; its own radius and height stand
+    /// instead of the locomotion's when given.
+    pub fn classes(def: &NavSettingsDef, db: &ContentDb) -> Vec<NavSettings> {
+        let base = Self::from_def(def, db);
+        let mut out = vec![base.clone()];
+        for (name, body) in &def.bodies {
+            let mut agent =
+                body.locomotion.as_deref().and_then(|id| db.get::<CharacterParams>(id)).cloned().unwrap_or_else(|| base.agent.clone());
+            if let Some(radius) = body.radius {
+                agent.radius = radius;
+            }
+            if let Some(height) = body.height {
+                agent.height = height;
+            }
+            out.push(NavSettings { agent, body: name.clone(), ..base.clone() });
+        }
+        out
+    }
+
+    /// Whether it is the class `agent`.
+    pub fn is_default(&self) -> bool {
+        self.body == DEFAULT_BODY
+    }
+
+    /// The bake file of `id` inside the bake folder: `grass.navtile.ron`, for another class
+    /// `large/grass.navtile.ron`.
+    pub fn in_dir(&self, kind: TileKind, id: &str) -> String {
+        if self.is_default() { file_name(kind, id) } else { format!("{}/{}", self.body, file_name(kind, id)) }
+    }
+
+    /// The bake file of `id` as content errors name it: `nav/large/grass.navtile.ron`.
+    pub fn shown(&self, kind: TileKind, id: &str) -> String {
+        format!("{}/{}", self.dir, self.in_dir(kind, id))
     }
 
     /// Where the bake file of `id` is.
     pub fn file(&self, root: &Path, kind: TileKind, id: &str) -> PathBuf {
-        root.join(&self.dir).join(file_name(kind, id))
+        root.join(&self.dir).join(self.in_dir(kind, id))
     }
 }
 
@@ -224,7 +348,8 @@ pub fn geometry_of(db: &ContentDb, kind: TileKind, id: &str) -> Option<(TileGeom
 /// Hex FNV-1a over everything a bake of `id` at `tile_size` is made from: the bake format
 /// and version, the definition, the prefabs its geometry spawns (a level file's nodes
 /// included) with every prefab they extend, its level file's bytes (read under `root`), the
-/// tile size and the nav settings with the body. A bake file whose hash differs is stale.
+/// tile size and the nav settings with the body (and its class, but for `agent`). A bake
+/// file whose hash differs is stale.
 pub fn bake_hash(db: &ContentDb, root: Option<&Path>, kind: TileKind, id: &str, tile_size: f32, settings: &NavSettings) -> Result<String, String> {
     let what = kind.content_kind();
     let def = db.get_json(what, id).ok_or_else(|| format!("no {what} `{id}` in content"))?;
@@ -233,6 +358,10 @@ pub fn bake_hash(db: &ContentDb, root: Option<&Path>, kind: TileKind, id: &str, 
     text.push_str(&format!("\nsize {tile_size:?} cell {:?} drop {:?}\nagent ", settings.cell, settings.safe_drop));
     let agent = serde_json::to_value(&settings.agent).map_err(|e| e.to_string())?;
     compact(&agent, &mut text);
+    if !settings.is_default() {
+        // Two classes of the same numbers still have bakes of their own.
+        text.push_str(&format!("\nbody {}", settings.body));
+    }
     if let Some((geometry, _)) = geometry_of(db, kind, id) {
         match geometry {
             TileGeometry::None => {}

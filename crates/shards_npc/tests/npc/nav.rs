@@ -142,3 +142,33 @@ fn an_npc_off_the_navmesh_does_not_walk_off_a_ledge_either() {
     }
     assert_eq!(state(&app, sentry), "chase");
 }
+
+/// Outside any region: a walker on a direct route (its goal in plain sight along a 4 m high
+/// walkway) is put down beside the line that was checked, on a pad that joins the walkway at
+/// its start. The straight line from there to the goal leaves the pad over the drop: it plans
+/// again from where it stands and goes round by the walkway instead of walking off.
+#[test]
+fn an_npc_put_off_its_straight_line_plans_again_before_walking_off_a_ledge() {
+    let mut app = app();
+    // The walkway, along z = 0, and the pad north of its start (both 4 m high).
+    wall(app.world_mut(), Vec3::new(-2.0, 0.0, -1.5), Vec3::new(14.0, 4.0, 1.0));
+    wall(app.world_mut(), Vec3::new(-2.0, 0.0, 1.0), Vec3::new(3.0, 4.0, 6.0));
+    let goal = Vec3::new(12.0, 4.0, 0.0);
+    let e = walker(&mut app, Vec3::new(0.0, 4.0, 0.0), goal);
+    step(&mut app, 1);
+    let agent = app.world().get::<NavAgent>(e).unwrap().clone();
+    assert!(agent.direct && agent.path == [goal], "the goal is in plain sight along the walkway: {agent:?}");
+    // Pushed, knocked back or carried off its line: on the pad, 4 m from it.
+    let aside = Vec3::new(1.0, 4.0, 4.0);
+    teleport(&mut app, e, aside);
+    step(&mut app, 1);
+    let agent = app.world().get::<NavAgent>(e).unwrap().clone();
+    assert!(!agent.direct && agent.path.len() > 1, "planned again from where it stands: {agent:?}");
+    assert!(agent.planned_from.is_some_and(|p| flat_distance(p, aside) < 0.2), "{agent:?}");
+    for t in 0..360 {
+        step(&mut app, 1);
+        let at = feet(&app, e);
+        assert!(at.y > 3.9, "tick {t}: it walked off the pad: {at}");
+    }
+    assert!(flat_distance(feet(&app, e), goal) < 0.6, "arrived by the walkway: {}", feet(&app, e));
+}

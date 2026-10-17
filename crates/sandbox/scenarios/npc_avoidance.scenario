@@ -1,0 +1,58 @@
+# Avoidance between bodies (E6): the arena's three skeletons, in a file one behind another,
+# run at the player. Each NPC on its way looks at the bodies near it (the other skeletons,
+# the player) and takes the cheapest of a fan of velocities around the one its route asks
+# for: round the skeleton in front instead of through it, and the one in front takes half
+# of each sidestep. The scenario stops on the engine's condition `npc_avoiding` (an active
+# NPC steers off its route for another body); the NPC overlay names that body (`avoiding
+# e7`), and nothing about it goes to the journal. The numbers are content: `avoidance` of
+# the tuning (`npc_tuning`) or of a behaviour.
+
+seed 42
+
+# --- the arena, everyone out of the fight first, whatever was played in it before
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+step 120
+# the warden at its post, out of it; the player in the arena's south half, the three
+# skeletons in a file 8 m north of it, their bodies 0.4 m apart
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e5 x=0 z=12 y=0
+act teleport id=e7 x=0 z=4 y=0
+act teleport id=e8 x=0 z=2.8 y=0
+act teleport id=e14 x=0 z=1.6 y=0
+act heal id=e7
+act heal id=e8
+act heal id=e14
+act god
+step 2
+invariant field e5 Health.current > 0
+
+# --- 1. the file wakes: the ones behind steer round the ones in front
+mark
+act npc_set_state id=e7 state=idle
+act npc_set_state id=e8 state=idle
+act npc_set_state id=e14 state=idle
+step 300 --until named:npc_avoiding
+expect stopped "npc_avoiding"
+act npc_overlay
+expect result contains "fight e5"
+expect result contains "avoiding e"
+act npc_overlay on=false
+
+# --- 2. five seconds of the fight: the waiters circle round each other and the striker,
+# and the journal says nothing of it
+step 300
+expect journal "-> e5 claw"
+expect !journal "avoid"
+
+# --- the pack stands down again
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act god on=false

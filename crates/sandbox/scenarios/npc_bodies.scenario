@@ -1,0 +1,63 @@
+# Body classes of the navmesh (E6): the wilds are baked twice, for the skeletons' body (`agent`)
+# and once more for the warden's (the class `large`: `content/region/wilds.nav.ron`, bakes in
+# `assets/nav/large/`), and an NPC routes on the tightest class its body fits. The arena's
+# warden (e6) is brought into the pillar hall of the wilds for it, and sent back at the end.
+#
+# The hall is fixed by the region's content at cell (5, 5): its colonnade runs x 19..29 at
+# z 135..137. The warden stands south of it, the player north.
+
+seed 42
+
+# --- setup (dev): the wilds of seed 42, the player unhurtable north of the columns, the warden
+# calm south of them, its zone around where it stands
+act regen region=wilds seed=42
+expect result contains "ok: wilds seed 42 v1"
+expect journal "navmesh (body large): 64 tiles"
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god
+act teleport id=e5 x=24 z=130 y=0
+act npc_set_state id=e6 state=calm
+act heal id=e6
+act set id=e6 component=Boss path=phase value=1
+act set id=e6 component=NpcPlan value='{"history": [], "cooldowns": [], "rest": 0.5, "attacks": 0}'
+act teleport id=e6 x=24 z=150 y=0
+act set id=e6 component=Home path=pos value='[24, 0, 150]'
+mark
+
+# --- 1. the region's navmesh has both classes; the warden's body is the large one
+act nav_info
+expect result contains "\"body\": \"large\""
+expect result contains "\"radius\": 0.8"
+act npc_state id=e6
+expect result contains "\"routes\": \"navmesh, body large\""
+# the same walk for either body: each on its own class's navmesh
+act nav_path from='{"x": 24, "z": 150}' to=e5 body=large
+expect result contains "\"provider\": \"navmesh\""
+expect result contains "\"body\": \"large\""
+act nav_path from='{"x": 24, "z": 150}' to=e5
+expect result contains "\"body\": \"agent\""
+act? nav_path from='{"x": 24, "z": 150}' to=e5 body=larg
+expect result contains "no body class `larg` in the nav settings (did you mean `large`?)"
+
+# --- 2. the warden goes for the player round the columns, by the large class's navmesh, and
+# never out of its zone on the way
+act npc_set_state id=e6 state=fight
+step 300 --until shows:e6:ground
+expect stopped "e6"
+act npc_overlay
+expect result contains "e6 warden: fight e5"
+expect result contains " · body large"
+act npc_overlay on=false
+step 900 --until "journal:e6 winds up" --until named:npc_beyond_leash
+expect stopped "e6 winds up"
+
+# --- the warden back to its arena, calm, its zone there
+act npc_set_state id=e6 state=calm
+act heal id=e6
+act set id=e6 component=NpcPlan value='{"history": [], "cooldowns": [], "rest": 0.5, "attacks": 0}'
+act teleport id=e6 x=0 z=-6 y=0
+act set id=e6 component=Home path=pos value='[0, 0, -6]'
+act god on=false

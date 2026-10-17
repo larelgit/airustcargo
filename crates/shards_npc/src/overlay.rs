@@ -12,12 +12,14 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use shards_action::Dead;
+use shards_content::ContentDb;
 use shards_core::{flat, PlayerId};
+use shards_motion::{CharacterController, CharacterParams};
 
 use crate::ai::npc_line;
 use crate::brain::{Home, Npc, NpcBrain};
 use crate::director::AttackToken;
-use crate::nav::NavAgent;
+use crate::nav::{route_source, NavAgent, RouteSource, DEFAULT_BODY};
 use crate::perception::Perceived;
 
 /// NPCs farther than this from every player are left out (m).
@@ -88,7 +90,10 @@ fn near_players(players: &[Vec3], at: Vec3) -> bool {
 }
 
 /// The overlay's lines: one per NPC near a player, in id order. `e7 grunt: fight e5 · token
-/// · leash 6/15m · sees e5 4.2m NE · detour, 3 waypoints left`.
+/// · leash 6/15m · sees e5 4.2m NE · detour, 3 waypoints left`. An NPC on its way in a region
+/// says the body class it walks by when it is not `agent` (`body large`), or `local grid` when
+/// no class is wide enough for it or it stands outside the region; under a game's own route
+/// provider, neither.
 pub fn overlay_lines(world: &World) -> Vec<String> {
     let players: Vec<Vec3> = world
         .try_query_filtered::<&Transform, Players>()
@@ -103,18 +108,30 @@ pub fn overlay_lines(world: &World) -> Vec<String> {
         Option<&Home>,
         Option<&Perceived>,
         Option<&NavAgent>,
+        Option<&CharacterController>,
+        Option<&CharacterParams>,
     )>() else {
         return Vec::new();
     };
+    let db = world.get_resource::<ContentDb>();
     let mut rows: Vec<_> = npcs.iter(world).filter(|row| near_players(&players, row.3.translation)).collect();
     rows.sort_by_key(|row| *row.0);
     rows.into_iter()
-        .map(|(id, npc, brain, tf, token, home, perceived, agent)| {
+        .map(|(id, npc, brain, tf, token, home, perceived, agent, controller, own)| {
             let here = tf.translation;
             let mut parts = vec![npc_line(brain, token, home, Some(tf)).unwrap_or_else(|| "(not started)".into())];
             if brain.active {
                 parts.extend(perceived.map(|p| senses(here, p)).unwrap_or_default());
-                parts.extend(agent.and_then(route));
+                parts.extend(agent.map(route).unwrap_or_default());
+                let radius = controller.map_or_else(|| own.cloned().unwrap_or_default().radius, |c| c.resolve(own, db).radius);
+                let walking = agent.is_some_and(|a| a.goal.is_some() && !a.arrived);
+                // As `npc_state` says it (`nav.routes`); nothing under a game's own provider.
+                match walking.then(|| route_source(world, radius, Some(here))) {
+                    Some(RouteSource::Navmesh(class)) if class.body != DEFAULT_BODY => parts.push(format!("body {}", class.body)),
+                    // In a region with a navmesh, but wider than every class or outside it.
+                    Some(RouteSource::LocalGrid { region: true, .. }) => parts.push("local grid".into()),
+                    _ => {}
+                }
             }
             format!("{id} {}: {}", npc.behavior, parts.join(" · "))
         })
@@ -140,17 +157,21 @@ fn senses(here: Vec3, perceived: &Perceived) -> Vec<String> {
 }
 
 /// Its way to its goal, when it is not a straight walk: `detour, 3 waypoints left`, `no
-/// route`.
-fn route(agent: &NavAgent) -> Option<String> {
-    if agent.goal.is_none() || agent.direct || agent.arrived {
-        return None;
+/// route`; and the body it steers around: `avoiding e7`.
+fn route(agent: &NavAgent) -> Vec<String> {
+    let mut out = Vec::new();
+    if agent.goal.is_some() && !agent.direct && !agent.arrived {
+        let left = agent.path.len().saturating_sub(agent.index as usize);
+        match left {
+            0 if agent.path.is_empty() => out.push("no route".into()),
+            0 => {}
+            n => out.push(format!("detour, {n} waypoint{} left", if n == 1 { "" } else { "s" })),
+        }
     }
-    let left = agent.path.len().saturating_sub(agent.index as usize);
-    match left {
-        0 if agent.path.is_empty() => Some("no route".into()),
-        0 => None,
-        n => Some(format!("detour, {n} waypoint{} left", if n == 1 { "" } else { "s" })),
+    if let Some(other) = agent.avoiding {
+        out.push(format!("avoiding {other}"));
     }
+    out
 }
 
 #[cfg(feature = "render")]

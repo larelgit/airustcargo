@@ -1,11 +1,13 @@
 // How the region's tiles are baked into navigation grids (content kind `nav`, id `default`):
-// half-meter cells for the skeletons' body. The bake files are in `assets/nav/`; after editing
-// a tile, its level file or the skeleton's locomotion, bake again:
+// half-meter cells for the skeletons' body (`agent`), and once more for the warden's (the body
+// class `large`: 0.8 m wide, 3.2 m tall). The bake files are in `assets/nav/` (the class's in
+// `assets/nav/large/`); after editing a tile, its level file or the locomotion of either
+// body, bake again (every class at once):
 //
 //   cargo sandbox --bake-nav            (or the dev tool `nav_bake`)
 //
-// `content check` names a missing or stale bake. The warden is wider than a skeleton: it
-// plans on the local grid.
+// `content check` names a missing or stale bake, per class. An NPC routes on the tightest
+// class its body fits: skeletons on `agent`, the warden on `large`.
 {
-    "default": (cell: 0.5, agent: Some("skeleton"), safe_drop: 2.0),
+    "default": (cell: 0.5, agent: Some("skeleton"), safe_drop: 2.0, bodies: {"large": (locomotion: Some("warden"))}),
 }

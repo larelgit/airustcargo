@@ -23,6 +23,10 @@
 //! 6. **The tile graph**: portals (one per side and area of each tile), the costs between
 //!    them inside each tile, the links between tiles; and which nodes reach which at all.
 //!
+//! Every body class of the nav settings has its own navmesh, built the same way from its own
+//! bakes: the region's [`NavRegion`] is the `agent`'s, the others are in its
+//! [`bodies`](NavRegion::bodies). A route asks the tightest class its body fits.
+//!
 //! Afterwards, every tick (and in tools), solids that spawned, went or moved since are
 //! carved out or back in, and the links across tile edges near them made again: a node
 //! is off when some solid its bake never saw stands in the body's way there **now**, so the
@@ -48,7 +52,7 @@ use shards_world::manifest::Layout;
 use shards_world::{ActiveRegion, RegionGraph, TileId};
 
 use super::bake::{bake, dijkstra, solid};
-use super::settings::{whole_cells, NavSettings};
+use super::settings::{whole_cells, NavSettings, DEFAULT_BODY};
 use super::tile::{link_cost, NavTile, TileKind, MOVES};
 
 /// Global node id: an instance's first id plus the node's index in its bake.
@@ -306,11 +310,17 @@ struct NavFailed {
     content: bevy::ecs::change_detection::Tick,
 }
 
-/// The navmesh of the region in the world (see the module docs).
+/// The navmesh of the region in the world (see the module docs): the one of the body class
+/// `agent`, with the other classes' in [`bodies`](Self::bodies).
 #[derive(Resource, Clone, Debug)]
 pub struct NavRegion {
     /// [`ActiveRegion::hash`] of the region it was built for.
     pub hash: u64,
+    /// The body class it is baked for: `agent`, or a name of the nav settings' `bodies`.
+    pub body: String,
+    /// The navmeshes of the other body classes, by name (only on the `agent`'s, the
+    /// resource; a class that could not be built is missing).
+    pub bodies: Vec<NavRegion>,
     /// `meadow seed 42 v1`.
     pub title: String,
     pub cell: f32,
@@ -521,6 +531,41 @@ impl NavRegion {
             && (params.float_depth - a.float_depth).abs() < 0.01
     }
 
+    /// The navmesh of every body class: this one (`agent`), then the others by name.
+    pub fn classes(&self) -> impl Iterator<Item = &NavRegion> {
+        std::iter::once(self).chain(&self.bodies)
+    }
+
+    /// The navmesh of body class `name`.
+    pub fn class(&self, name: &str) -> Option<&NavRegion> {
+        self.classes().find(|c| c.body == name)
+    }
+
+    /// The navmesh a body of `radius` routes on, when it knows only its radius (an NPC's
+    /// routes, [`NavPaths`](super::NavPaths)): the tightest class whose body is at least as
+    /// wide (the first of equals), else none: it plans on the local grid.
+    pub fn for_radius(&self, radius: f32) -> Option<&NavRegion> {
+        self.classes().filter(|c| radius <= c.agent_radius + 0.01).min_by(|a, b| a.agent_radius.total_cmp(&b.agent_radius))
+    }
+
+    /// The navmesh that serves a walker of `params` ([`serves`](Self::serves)): the tightest
+    /// such class (the first of equals), else none.
+    pub fn serving(&self, params: &CharacterParams) -> Option<&NavRegion> {
+        self.classes().filter(|c| c.serves(params)).min_by(|a, b| a.agent_radius.total_cmp(&b.agent_radius))
+    }
+
+    /// Why a body of `radius` plans on the local grid in this region: `no body class fits a
+    /// 1.60 m radius (the widest: large, 1.20 m)`.
+    pub fn too_wide(&self, radius: f32) -> String {
+        let widest = self.classes().max_by(|a, b| a.agent_radius.total_cmp(&b.agent_radius)).unwrap_or(self);
+        format!("no body class fits a {radius:.2} m radius (the widest: {}, {:.2} m)", widest.body, widest.agent_radius)
+    }
+
+    /// The settings it was built with (carving and stitching again use its own body).
+    pub fn settings(&self) -> NavSettings {
+        NavSettings { cell: self.cell, safe_drop: self.safe_drop, agent: self.agent.clone(), dir: String::new(), body: self.body.clone() }
+    }
+
     /// `64 tiles, 16384 nodes, 896 links across edges, 2 navlinks`.
     pub fn summary(&self) -> String {
         let links = self.navlinks.iter().filter(|l| l.nodes.is_some()).count();
@@ -539,50 +584,71 @@ pub(crate) fn region_loaded(world: &mut World) {
     rebuild(world);
 }
 
-/// Builds the navmesh of the region in the world now (or removes a stale one when there
-/// is no region, or it cannot be built), and journals what it did. Also what a snapshot load
-/// runs: the navmesh is a pure function of the region, content and the solids standing, so
-/// the one made again is the one the saved game had.
+/// Builds the navmesh of the region in the world now, of every body class (or removes a
+/// stale one when there is no region, or it cannot be built), and journals what it did. Also
+/// what a snapshot load runs: the navmesh is a pure function of the region, content and the
+/// solids standing, so the one made again is the one the saved game had.
 pub fn rebuild(world: &mut World) {
     world.remove_resource::<NavRegion>();
     world.remove_resource::<NavFailed>();
     let Some(region) = world.get_resource::<ActiveRegion>().map(|r| r.hash) else {
         return;
     };
-    match build(world) {
-        Ok(nav) => {
-            let report = nav.report.clone();
-            let unused: Vec<(String, String)> = nav.navlinks.iter().filter_map(|l| Some((l.name.clone(), l.unused.clone()?))).collect();
-            let line = format!("navmesh: {} ({})", nav.title, nav.summary());
+    let classes = NavSettings::all(world.resource::<ContentDb>());
+    match build(world, &classes[0]) {
+        Ok(mut nav) => {
+            let mut lines = vec![(JournalKind::Event, format!("navmesh: {} ({})", nav.title, nav.summary()))];
+            report_lines(&nav, "navmesh", &mut lines);
+            for settings in &classes[1..] {
+                let label = format!("navmesh (body {})", settings.body);
+                match build(world, settings) {
+                    Ok(class) => {
+                        lines.push((JournalKind::Event, format!("{label}: {}", class.summary())));
+                        report_lines(&class, &label, &mut lines);
+                        nav.bodies.push(class);
+                    }
+                    Err(why) => lines.push((JournalKind::Warn, format!("{label}: none for this region: {why}; bodies of its size plan on the local grid"))),
+                }
+            }
             world.insert_resource(nav);
-            journal::emit(world, JournalKind::Event, line);
-            let mut baked: Vec<String> = Vec::new();
-            if !report.missing.is_empty() {
-                baked.push(format!("no bake file: {}", report.missing.join(", ")));
-            }
-            if !report.stale.is_empty() {
-                baked.push(format!("stale: {}", report.stale.join(", ")));
-            }
-            if !baked.is_empty() {
-                let n = report.missing.len() + report.stale.len();
-                let tiles = if n == 1 { "tile" } else { "tiles" };
-                journal::emit(
-                    world,
-                    JournalKind::Warn,
-                    format!("navmesh: {n} {tiles} baked while loading ({}); bake them with `--bake-nav all` (or the nav_bake tool)", baked.join("; ")),
-                );
-            }
-            for (tile, why) in report.failed {
-                journal::emit(world, JournalKind::Warn, format!("navmesh: tile `{tile}` cannot be baked ({why}); NPCs plan on the local grid there"));
-            }
-            for (name, why) in unused {
-                journal::emit(world, JournalKind::Warn, format!("navmesh: navlink `{name}` is not used: {why}"));
+            for (kind, line) in lines {
+                journal::emit(world, kind, line);
             }
         }
         Err(why) => {
             let content = content_changed(world);
             world.insert_resource(NavFailed { region, content });
             journal::emit(world, JournalKind::Warn, format!("navmesh: none for this region: {why}; NPCs plan on the local grid"));
+        }
+    }
+}
+
+/// The journal's warnings about a navmesh just built (bakes made while loading, tiles that
+/// cannot be baked, navlinks not used), each line starting with `label`.
+fn report_lines(nav: &NavRegion, label: &str, lines: &mut Vec<(JournalKind, String)>) {
+    let report = &nav.report;
+    let mut baked: Vec<String> = Vec::new();
+    if !report.missing.is_empty() {
+        baked.push(format!("no bake file: {}", report.missing.join(", ")));
+    }
+    if !report.stale.is_empty() {
+        baked.push(format!("stale: {}", report.stale.join(", ")));
+    }
+    if !baked.is_empty() {
+        let n = report.missing.len() + report.stale.len();
+        let tiles = if n == 1 { "tile" } else { "tiles" };
+        lines.push((
+            JournalKind::Warn,
+            format!("{label}: {n} {tiles} baked while loading ({}); bake them with `--bake-nav all` (or the nav_bake tool)", baked.join("; ")),
+        ));
+    }
+    let who = if nav.body == DEFAULT_BODY { "NPCs".to_owned() } else { format!("bodies of the class {}", nav.body) };
+    for (tile, why) in &report.failed {
+        lines.push((JournalKind::Warn, format!("{label}: tile `{tile}` cannot be baked ({why}); {who} plan on the local grid there")));
+    }
+    for link in &nav.navlinks {
+        if let Some(why) = &link.unused {
+            lines.push((JournalKind::Warn, format!("{label}: navlink `{}` is not used: {why}", link.name)));
         }
     }
 }
@@ -606,7 +672,7 @@ pub fn refresh(world: &mut World) {
         return;
     }
     let changed = match (world.get_resource::<NavRegion>(), world.get_resource::<PhysicsWorld>()) {
-        (Some(nav), Some(physics)) => nav.carve.differs(physics),
+        (Some(nav), Some(physics)) => nav.classes().any(|c| c.carve.differs(physics)),
         _ => false,
     };
     if !changed {
@@ -615,12 +681,17 @@ pub fn refresh(world: &mut World) {
     let _ = world.run_system_cached(sync_physics);
     let tiles = tile_ids(world);
     let mut nav = world.remove_resource::<NavRegion>().expect("checked above");
-    let settings = NavSettings::of(world.resource::<ContentDb>());
     let physics = world.resource::<PhysicsWorld>();
     let edges = world.get_resource::<ActiveRegion>().and_then(|r| r.graph.as_ref());
-    if nav.update(physics, &settings, &tiles, edges) {
-        nav.build_graph();
-    }
+    // Each class with its own body.
+    let carve = |class: &mut NavRegion| {
+        let settings = class.settings();
+        if class.update(physics, &settings, &tiles, edges) {
+            class.build_graph();
+        }
+    };
+    carve(&mut nav);
+    nav.bodies.iter_mut().for_each(carve);
     world.insert_resource(nav);
 }
 
@@ -630,12 +701,11 @@ fn tile_ids(world: &mut World) -> BTreeMap<ColliderId, TileId> {
     q.iter(world).map(|(c, t)| (*c, *t)).collect()
 }
 
-/// The navmesh of the region in the world.
-fn build(world: &mut World) -> Result<NavRegion, String> {
+/// The navmesh of the region in the world for the body class of `settings`.
+fn build(world: &mut World, settings: &NavSettings) -> Result<NavRegion, String> {
     let region = world.get_resource::<ActiveRegion>().ok_or("no region")?.clone();
     let graph = region.graph.clone().ok_or("content no longer describes every tile of its manifest")?;
     let manifest = &region.manifest;
-    let settings = NavSettings::of(world.resource::<ContentDb>());
     if !whole_cells(manifest.tile_size, settings.cell) {
         return Err(format!("its tile size {} m is not a whole number of {} m cells (nav settings `cell`)", manifest.tile_size, settings.cell));
     }
@@ -649,7 +719,7 @@ fn build(world: &mut World) -> Result<NavRegion, String> {
     ids.dedup();
     let mut bakes: BTreeMap<String, Arc<NavTile>> = BTreeMap::new();
     for id in ids {
-        let (nav, source) = tile_nav(world, kind, id, manifest.tile_size, &settings);
+        let (nav, source) = tile_nav(world, kind, id, manifest.tile_size, settings);
         match source {
             Source::File => report.from_files.push(id.to_owned()),
             Source::Missing => report.missing.push(id.to_owned()),
@@ -692,6 +762,8 @@ fn build(world: &mut World) -> Result<NavRegion, String> {
     let physics = world.resource::<PhysicsWorld>();
     let mut nav = NavRegion {
         hash: region.hash,
+        body: settings.body.clone(),
+        bodies: Vec::new(),
         title: manifest.title(),
         cell: settings.cell,
         tile_size: manifest.tile_size,
@@ -712,9 +784,9 @@ fn build(world: &mut World) -> Result<NavRegion, String> {
         report,
         carve: Carve::default(),
     };
-    nav.update(physics, &settings, &tiles, None);
-    nav.stitch(&terrain(physics, &settings), &settings, &graph);
-    nav.add_navlinks(&settings, markers);
+    nav.update(physics, settings, &tiles, None);
+    nav.stitch(&terrain(physics, settings), settings, &graph);
+    nav.add_navlinks(settings, markers);
     nav.build_graph();
     Ok(nav)
 }
