@@ -141,13 +141,13 @@ are in [template/README.md](../template/README.md).
 
 1. **Copy the template and rename the package.**
    ```bash
-   cp -r template ~/games/pit && cd ~/games/pit && git init
+   mkdir -p ~/games && cp -r template ~/games/pit && cd ~/games/pit && git init
    grep -rIl my_game . | grep -v Cargo.lock | xargs sed -i 's/my_game/pit/g'   # the package `pit` and the settings folder `SettingsAppId::new("pit")`; Cargo.lock updates itself
    ```
 2. **Depend on the engine by tag or commit.** In `Cargo.toml`, use a git dependency instead of the path
    (`../crates/shards`). Versions and tags are described in [CHANGELOG.md](../CHANGELOG.md). The template uses saves,
-   co-op, screens and texts, so it needs the engine of phases C–E (the future `0.4.0`). The tags `v0.2.0` and `v0.3.0`
-   will not work. Until the maintainer sets a tag, pin a commit:
+   co-op, screens and texts, so it needs the engine of phases C–E (the future `0.4.0`). The earlier versions `0.2.0` and
+   `0.3.0` will not work. Until the maintainer sets a tag, pin a commit:
    ```toml
    [dependencies]
    shards = { git = "https://github.com/larelgit/airustcargo", rev = "<hash>", default-features = false }
@@ -4459,25 +4459,30 @@ identically.
 
 ## What's next
 
-The details, item by item against the spec, are in [docs/engine-progress.md](engine-progress.md). Phases A (the combat prototype: E1–E3 and parts of E4 and
-E11), B (the world: E5, E6, levels from Blender, snapshots) and C (co-op: networking E7, saves and settings E8, the "host + clients" stand;
-acceptance: half an hour of a host and two clients at 150 ms and 2 % loss without a desync, `shards soak`) and D (UI
-E9.1–3 in `shards_ui`, localization E9.4 in `shards_locale`, audio E9.5 in `shards_audio`, the developer menu, the console and the NPC overlay
-in `shards_dev` and `shards_npc`, `path_to` and `clearance` on the navmesh, the check of level file sockets) are built, and CI checks
-them on every push. Ahead:
+The details, item by item against the spec, are in [docs/engine-progress.md](engine-progress.md). All five phases are built:
+A (the combat prototype: E1–E3 and parts of E4 and E11), B (the world: E5, E6, levels from Blender, snapshots), C (co-op:
+networking E7, saves and settings E8, the "host + clients" stand; acceptance: half an hour of a host and two clients at 150 ms
+and 2 % loss without a desync, `shards soak`), D (UI E9.1–3 in `shards_ui`, localization E9.4 in `shards_locale`, audio E9.5
+in `shards_audio`, the developer menu, the console and the NPC overlay in `shards_dev` and `shards_npc`, `path_to` and
+`clearance` on the navmesh, the check of level file sockets) and E (the platform, E10: stylised materials, foliage, effects
+and decals, budgets and the performance test, Steam, Windows builds, the crash report and screenshots without a window). The
+simulation maths goes through `libm`, the same on all x86_64 operating systems (section "Time and determinism"): Windows and
+Linux record reference replays byte for byte identically and check each other's recordings.
 
-1. **Phase E — the platform (E10):** stylised materials (section "Stylised materials (E10.1)"), foliage with levels of
-   detail (section "Foliage and small objects (E10.2)"), effects and decals (section "Effects and decals (E10.3)"), budgets
-   and the performance test, the crash handler and screenshots without a window are already there. Windows builds are there too
-   (`shards package`, section "Builds for players and Windows (E10.6)"); a run on a real clean machine is still missing. The simulation maths goes through `libm`, the same on all x86_64 operating systems (section "Time and determinism"): Windows and Linux record reference
-   replays byte for byte identically and check each other's recordings.
-   Steam (section "Steam (E10.5)") is checked on a fake Steam inside the same process, and on the real one: the game server and a player over the relay,
-   achievements and lobby search (the test app, one account, one machine); joining the lobby with a second account, the overlay and a successful write to the cloud — not yet.
+CI (`.github/workflows/ci.yml`) is set up to check every push and pull request, but GitHub has not run its jobs since
+15 October (account billing). Until it does, the same checks run locally before each push. Still open:
+
+1. **What needs hardware or accounts the maintainer has:** the packaged build (`shards package`, section "Builds for players
+   and Windows (E10.6)") on a real clean Windows machine, and 60 FPS at 1080p on the target PC. Steam (section "Steam
+   (E10.5)") is checked on a fake Steam inside the same process, and on the real one: the game server and a player over the
+   relay, achievements and lobby search (the test app, one account, one machine); joining the lobby with a second account,
+   the overlay and a successful write to the cloud — not yet.
 2. **The rest of phase B:** streaming of tile geometry for physics (now only the image is loaded by distance) is not needed yet: a full-size region
    (`reference96`) with the broad phase loads in 0.6 s and ticks in 0.5–0.6 ms (section "Active zones and streaming");
    foliage is not scattered by distance either, so it is sparser on a large region. The navmesh for several bodies is already there
    (body classes, E6.1).
-3. Hot reload of code (`--features dynamic`, subsecond).
+3. **Minidumps and a crash dialog for the player** (E10.7 beyond the one-file crash report): postponed by the owner's decision.
+4. Hot reload of code (`--features dynamic`, subsecond).
 
 ## Conventions and building
 

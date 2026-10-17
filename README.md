@@ -187,10 +187,10 @@ A game is a separate repository with one dependency, `shards`. The starting poin
 
 1. **Copy the template and rename the package.**
    ```bash
-   cp -r template ~/games/pit && cd ~/games/pit && git init
+   mkdir -p ~/games && cp -r template ~/games/pit && cd ~/games/pit && git init
    grep -rIl my_game . | grep -v Cargo.lock | xargs sed -i 's/my_game/pit/g'   # the package `pit` and the settings folder `SettingsAppId::new("pit")`; Cargo.lock fixes itself
    ```
-2. **Depend on the engine by git.** In `Cargo.toml`, replace the path (`../crates/shards`) with a git dependency. The template uses saves, co-op, screens and texts, so it needs the engine of phases C–E (the future `0.4.0`); the `v0.2.0` and `v0.3.0` tags will not do. Until the maintainer sets a tag, pin a commit:
+2. **Depend on the engine by git.** In `Cargo.toml`, replace the path (`../crates/shards`) with a git dependency. The template uses saves, co-op, screens and texts, so it needs the engine of phases C–E (the future `0.4.0`); the earlier versions `0.2.0` and `0.3.0` will not do. Until the maintainer sets a tag, pin a commit:
    ```toml
    [dependencies]
    shards = { git = "https://github.com/larelgit/airustcargo", rev = "<hash>", default-features = false }
@@ -280,7 +280,7 @@ What remains needs hardware or accounts that these checks cannot reach:
 - the packaged build on a clean Windows machine;
 - two players over the Steam relay from two accounts.
 
-No version is tagged yet, so games pin a commit (step 2 above). Progress against the spec, item by item, is in [docs/engine-progress.md](docs/engine-progress.md).
+No version is tagged yet, `v0.4.0` included, so games pin a commit (step 2 above). Progress against the spec, item by item, is in [docs/engine-progress.md](docs/engine-progress.md).
 
 Shards is being built for the game *Осколки Предела*, which lives in its own repository. Nothing from that game is in the engine code.
 

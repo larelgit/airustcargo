@@ -85,7 +85,7 @@ The template is a **separate workspace** with its own `Cargo.lock`: the engine's
 
 1. **Copy the folder.**
    ```bash
-   cp -r template ~/games/my-game && cd ~/games/my-game
+   mkdir -p ~/games && cp -r template ~/games/my-game && cd ~/games/my-game
    git init
    ```
 2. **Rename the package.** The name `my_game` appears in `Cargo.toml` (`name`, `[[bin]]`), `src/main.rs`
@@ -96,7 +96,7 @@ The template is a **separate workspace** with its own `Cargo.lock`: the engine's
    folder and overwrite each other's keys and volume (the test `the_settings_folder_is_named_after_the_package_the_way_a_rename_finds_it`
    will remind you). The line `InputSettings::for_game` migrates the keys from the old `~/.config/my_game/input.ron`,
    which earlier versions of the template wrote. A new game does not need it, and you can delete it.
-3. **Connect the engine.** In `Cargo.toml`, replace the path with a git dependency. The template uses saves, co-op, screens and the texts of phases C–E, so you need the engine of those phases (the coming `0.4.0`); the tags `v0.2.0` and `v0.3.0` will not do.
+3. **Connect the engine.** In `Cargo.toml`, replace the path with a git dependency. The template uses saves, co-op, screens and the texts of phases C–E, so you need the engine of those phases (the coming `0.4.0`); the earlier versions `0.2.0` and `0.3.0` will not do.
    Until the repository has any tags (the maintainer adds `v0.4.0`, see the engine's `CHANGELOG.md`), pin a commit:
    ```toml
    [dependencies]
