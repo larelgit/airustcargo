@@ -2512,7 +2512,9 @@ cargo sandbox --headless --paused --stand 2 --net-sim latency=150,loss=0.02 --po
   its host 10.0.0.2:7777; leave the session first`), ничего не записывается в реплей. Файл, изменившийся на диске
   (наблюдатель за файлами), не применяется и ждёт, журнал говорит это один раз (`content: a file changed on disk and waits:
   a content reload during a co-op session …; it applies when that is over`; у файла уровня — `level: …`), а когда клиентов
-  не осталось или сессия кончилась, правка применяется сама. Решение — запрет, а не рассылка: хосту пришлось бы слать
+  не осталось или сессия кончилась, правка применяется сама. Из такого файла уровня ничего не ставится, пока правка ждёт:
+  сервер ассетов уже прочёл новый файл, а другие машины играют на старом, поэтому `spawn_level` и тайл региона из него
+  отказывают (`refused: `ruin.gltf` changed on disk, and a level spawn from the changed file during a co-op session …`). Решение — запрет, а не рассылка: хосту пришлось бы слать
   определения (и файлы уровней, и запечённую навигацию) и менять контент у всех на одном тике, а мир, построенный вокруг
   старого контента (регион, навсетка), — строить заново; запрет закрывает рассинхрон, которым кончился первый получасовой
   `soak`, когда файл региона поменяли посреди игры. Механизм — `ContentGuards` (`add_content_guard`) крейта
@@ -3803,8 +3805,10 @@ NPCs plan on the local grid`).
   of the host 10.0.0.2:7777: written here when it comes (save_game, tick 1830)`, названный слот сразу становится текущим.
   Хост снимает тело, которым игрок играет у него, и отправляет `CharacterSave` с причиной `save_game` (журнал хоста `net: p1
   asked for its character: sent (2 KB, tick 1832)`), клиент пишет его в этот слот: `save: character/mine saved (save_game,
-  2 KB, tick 1832)`. Не чаще раза в секунду на игрока: второй запрос за секунду получает ответ `CharacterNotSent`
-  (`save: the host did not send your character: it was sent less than a second ago; ask again in 0.4 s`), дальнейшие в
+  2 KB, tick 1832)`. Запрос несёт номер, ответ возвращает его, поэтому ответ ложится в слот своего запроса, даже если
+  следующий запрос уже сделал текущим другой. Не чаще раза в секунду на игрока: второй запрос за секунду получает ответ `CharacterNotSent`
+  (`save: the host did not send your character: it was sent less than a second ago; ask again in 0.4 s (character/b is as
+  it was)`), дальнейшие в
   ту же секунду не читаются; тела нет или снять не удалось — тоже `CharacterNotSent` с причиной. Не в сессии — отказ сразу
   (`not connected to the host yet …`, `not in a session any more (…)`). Хост при этом ничего не пишет, мир не меняется.
   `save_game what=world` на клиенте по-прежнему отвечает, что мир хранит хост.
