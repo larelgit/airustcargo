@@ -1,0 +1,32 @@
+# Crash report (E10.7): `crash_report` writes everything a bug report needs (the log, the journal,
+# `ai/status`, the machine, the session's replay) into one file. Given a `path` inside crashes/ it
+# writes that file and replaces it on the next call, so this scenario leaves exactly one file,
+# `crashes/scenario.json` in the game's working directory, and writes it afresh each run (crashes/
+# is gitignored, like snapshots/ that snapshot.scenario writes). A path outside crashes/, with `..`
+# or absolute is refused with an example that works. Without `path` a report gets a new name every
+# time, which a scenario cannot clean up, so that is left to system_failures.rs.
+
+# --- a report with a note, in the file asked for
+act crash_report note="the scenario asks for a bug report" path=crashes/scenario.json
+expect result contains "saved crashes/scenario.json: tick "
+expect result contains " log lines, "
+expect result contains " journal entries, a replay of "
+expect result contains " ticks and "
+
+# --- the same path again replaces the file: no second report is made
+act crash_report path=crashes/scenario.json
+expect result contains "saved crashes/scenario.json: tick "
+
+# --- a path outside crashes/ is refused with a path that works, and nothing is written
+act? crash_report path=bug.json
+expect result contains "path must be inside crashes/, e.g. crashes/bug.json (`bug.json` is outside crashes/)"
+act? crash_report path=replays/bug.json
+expect result contains "`replays/bug.json` is outside crashes/"
+act? crash_report path=crashes/../bug.json
+expect result contains "`crashes/../bug.json` goes up with `..`"
+act? crash_report path=../crashes/bug.json
+expect result contains "goes up with `..`"
+act? crash_report path=crashes
+expect result contains "`crashes` names no file"
+act? crash_report path=/tmp/bug.json
+expect result contains "`/tmp/bug.json` is absolute"
