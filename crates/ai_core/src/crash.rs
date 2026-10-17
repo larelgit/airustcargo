@@ -853,8 +853,10 @@ pub fn write_at(path: &Path, report: &CrashReport) -> Result<(), String> {
     let Some((part, mut file)) = taken else {
         return Err(format!("cannot write {}: 64 temporary files beside it are taken", path.display()));
     };
+    // The bytes reach the disk before the rename, so a power cut after it cannot leave an empty
+    // report where the old one was.
     file.write_all(text.as_bytes())
-        .and_then(|()| file.flush())
+        .and_then(|()| file.sync_all())
         .and_then(|()| {
             drop(file);
             std::fs::rename(&part, path)
@@ -862,7 +864,13 @@ pub fn write_at(path: &Path, report: &CrashReport) -> Result<(), String> {
         .map_err(|e| {
             let _ = std::fs::remove_file(&part);
             format!("cannot write {}: {e}", path.display())
-        })
+        })?;
+    // On unix the new name is kept by syncing its folder too; a failure here loses nothing written.
+    #[cfg(unix)]
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::File::open(dir).and_then(|d| d.sync_all());
+    }
+    Ok(())
 }
 
 fn crash_report_tool(In(call): In<Call<CrashReportArgs>>, world: &mut World) -> ToolResult {
