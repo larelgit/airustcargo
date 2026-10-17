@@ -1,6 +1,7 @@
 //! Each check on hand-made manifests: it fails on what breaks its rule, names the rule and
 //! the cells, and passes once the problem is fixed.
 
+use shards::content::ContentDb;
 use shards::world::checks::{custom_checks, engine_rules, CheckInput, RegionGraph};
 use shards::world::content::{CheckRules, DistanceRule};
 use shards::world::manifest::{Layout, ManifestPoi, PlacedTile, RegionManifest, FORMAT};
@@ -138,4 +139,112 @@ fn a_region_without_a_spawn_and_unknown_custom_checks_fail() {
     let custom = custom_checks(&worldgen, &CheckInput { manifest: &m, rules: &rules, graph: &graph, db: db(&app) });
     assert_eq!(custom.len(), 1);
     assert!(custom[0].message.contains("no check named `rivers_cross` is registered (add_worldgen_check); registered: roads_wide"));
+}
+
+/// `falls`: the river tile with its northern bank above the southern one and a navlink down
+/// the falls; `mesa`: a plateau in the middle of a meadow, an area on no side, a navlink up and
+/// one down (`down: false`, only up).
+fn ledges(down: bool) -> String {
+    let back = if down { r#", (name: "Mesa.Down", from: 1, to: 0)"# } else { "" };
+    format!(
+        r#"{{
+    "falls": (
+        sockets: (n: "grass", e: "grass water grass", s: "grass", w: "grass water grass"),
+        links: [[N], [S]],
+        geometry: Level(path: "tiles/falls.gltf"),
+        navlinks: [(name: "Falls.Drop", from: 0, to: 1)],
+    ),
+    "mesa": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        links: [[N, E, S, W], []],
+        slots: [(at: (0.0, 6.0, 0.0), accepts: ["camp"], area: 1)],
+        geometry: Level(path: "tiles/mesa.gltf"),
+        navlinks: [(name: "Mesa.Up", from: 0, to: 1){back}],
+    ),
+}}"#
+    )
+}
+
+/// The errors of `db` but the missing level files: the test tiles' files are never written, and their absence is
+/// another check's.
+fn errors_but_files(db: &ContentDb) -> Vec<String> {
+    db.errors().map(ToString::to_string).filter(|e| !e.contains("not found in the asset folder")).collect()
+}
+
+fn run_on(db: &ContentDb, m: &RegionManifest, rules: &CheckRules) -> Vec<CheckFailure> {
+    let graph = RegionGraph::build(db, m).expect("a graph");
+    engine_rules(&CheckInput { manifest: m, rules, graph: &graph, db })
+}
+
+#[test]
+fn a_navlink_takes_walkers_one_way_from_the_area_it_starts_in() {
+    let app = app(1, None);
+    let db = db_with(&app, &[("world/ledges.tile.ron", &ledges(true))]);
+    assert_eq!(errors_but_files(&db), Vec::<String>::new());
+    let rules = only(|r| r.reachable = true);
+    // Down the falls from the northern bank: the southern camp is reached.
+    let rows = ["grass grass grass", "river falls river", "grass grass grass"];
+    let down = manifest(&rows, &[("spawn", (0, 0)), ("camp", (2, 2))]);
+    assert!(run_on(&db, &down, &rules).is_empty(), "{:?}", run_on(&db, &down, &rules));
+    // Not up them: from the south, the north is cut off.
+    let up = manifest(&rows, &[("spawn", (0, 2)), ("camp", (2, 0))]);
+    let failures = run_on(&db, &up, &rules);
+    assert_eq!(failures.iter().map(ToString::to_string).collect::<Vec<_>>(), ["check reachable: cannot reach camp.0 at (2, 0) from spawn.0"]);
+    let graph = RegionGraph::build(&db, &down).unwrap();
+    let (spawn, camp) = (down.poi("spawn.0").unwrap(), down.poi("camp.0").unwrap());
+    assert!(graph.reaches(spawn, camp) && !graph.reaches(camp, spawn));
+    assert!(!graph.connected(spawn, camp), "connected is both ways");
+    // The navlink joins areas, not edges: walkers still cross no edge the sockets close.
+    assert!(!graph.open([1, 1], Dir::E));
+}
+
+#[test]
+fn a_point_on_a_plateau_is_reached_by_its_navlink_alone() {
+    let app = app(1, None);
+    let rules = only(|r| r.reachable = true);
+    let mut m = manifest(&["grass mesa grass"], &[("spawn", (0, 0)), ("camp", (1, 0))]);
+    m.pois[1].area = 1;
+    for down in [true, false] {
+        let db = db_with(&app, &[("world/ledges.tile.ron", &ledges(down))]);
+        assert!(run_on(&db, &m, &rules).is_empty(), "down {down}: {:?}", run_on(&db, &m, &rules));
+        let graph = RegionGraph::build(&db, &m).unwrap();
+        assert_eq!(graph.connected(&m.pois[0], &m.pois[1]), down, "back down only with Mesa.Down");
+    }
+    // A spawn up there with no way down reaches nothing else; the plateau is not the meadow.
+    let db = db_with(&app, &[("world/ledges.tile.ron", &ledges(false))]);
+    let mut stuck = manifest(&["grass mesa grass"], &[("spawn", (1, 0)), ("camp", (2, 0))]);
+    stuck.pois[0].area = 1;
+    assert_eq!(run_on(&db, &stuck, &rules)[0].to_string(), "check reachable: cannot reach camp.0 at (2, 0) from spawn.0");
+}
+
+#[test]
+fn navlinks_are_checked_with_their_tile() {
+    let app = app(1, None);
+    let errors = |fields: &str| -> Vec<String> {
+        let tile = format!(r#"{{ "steps": (sockets: (n: "grass", e: "grass", s: "grass", w: "grass"), {fields}) }}"#);
+        errors_but_files(&db_with(&app, &[("world/steps.tile.ron", &tile)]))
+    };
+    let at = "content/world/steps.tile.ron: tile `steps`: ";
+    assert_eq!(
+        errors(
+            r#"links: [[N, S], [E, W]], geometry: Level(path: "tiles/steps.gltf"),
+            navlinks: [(name: "Up", from: 0, to: 2), (name: "", from: 0, to: 1), (name: "Up", from: 1, to: 0)]"#
+        ),
+        [
+            format!("{at}navlinks[0].to 2 is past the last links group (1)"),
+            format!("{at}navlinks[1].name is empty; give the navlink marker's name in the level file"),
+            format!("{at}navlinks: `Up` is listed twice"),
+        ]
+    );
+    assert_eq!(
+        errors(r#"links: [[N, S], [E, W]], navlinks: [(name: "Up", from: 0, to: 1)]"#),
+        [format!("{at}navlinks are the navlink markers of a level file, and the tile's geometry is no Level(path: …)")]
+    );
+    // An area on no side needs a navlink into it from another.
+    let island = |links: &str| errors(&format!(r#"geometry: Level(path: "tiles/steps.gltf"), {links}"#));
+    assert!(island(r#"links: [[N, E, S, W], []], navlinks: [(name: "Up", from: 0, to: 1)]"#).is_empty());
+    assert_eq!(
+        island(r#"links: [[N, E, S, W], []], navlinks: [(name: "Up", from: 1, to: 1)]"#),
+        [format!("{at}links[1] is empty; list the sides that connect, e.g. [N, S], or reach it with a navlink")]
+    );
 }

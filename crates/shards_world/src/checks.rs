@@ -4,8 +4,8 @@
 //!
 //! - `spawn`: there is a point players appear at.
 //! - `reachable`: every point of interest can be walked to from the spawn, over edges whose
-//!   facing sockets are passable and through tiles' walkable areas (`links`); in dungeons,
-//!   through doors.
+//!   facing sockets are passable, through tiles' walkable areas (`links`) and along their
+//!   navlinks (`navlinks`, one way, as the navmesh takes them); in dungeons, through doors.
 //! - `slope`: no tile is steeper than `max_slope`.
 //! - `distance`: every `a` at least `min` from every `b`, and some `b` within `max` of
 //!   every `a`.
@@ -63,7 +63,7 @@ pub struct CheckInput<'a> {
 }
 
 /// Who can walk where: walkable areas of placed tiles joined across edges (grids) or
-/// doors (rooms), and the road network.
+/// doors (rooms), both ways, and by the tiles' navlinks, one way; and the road network.
 #[derive(Clone, Debug)]
 pub struct RegionGraph {
     pub width: u32,
@@ -72,8 +72,8 @@ pub struct RegionGraph {
     pub cell_tile: Vec<Option<usize>>,
     /// First node of each placed tile (one node per walkable area).
     node_base: Vec<usize>,
-    /// Union-find parents.
-    parent: Vec<usize>,
+    /// The nodes each node leads to, in the order they were joined.
+    next: Vec<Vec<usize>>,
     /// Sides of each cell walkers cross into the neighbor.
     open: Vec<[bool; 4]>,
     /// Sides of each cell a road crosses.
@@ -92,7 +92,7 @@ impl RegionGraph {
             height: h,
             cell_tile: vec![None; cells],
             node_base: Vec::new(),
-            parent: Vec::new(),
+            next: Vec::new(),
             open: vec![[false; 4]; cells],
             road: vec![[false; 4]; cells],
             slope: Vec::new(),
@@ -135,9 +135,13 @@ impl RegionGraph {
             }
             let cell = self.index(placed.at).ok_or_else(|| format!("tile {i} at {:?} is outside the region", placed.at))?;
             self.cell_tile[cell] = Some(i);
-            let base = self.parent.len();
+            let base = self.next.len();
             self.node_base.push(base);
-            self.parent.extend(base..base + tile.areas());
+            self.next.resize(base + tile.areas(), Vec::new());
+            // A navlink leads from its area to another, not back (content checks the areas).
+            for link in tile.navlinks.iter().filter(|l| l.from != l.to && l.from < tile.areas() && l.to < tile.areas()) {
+                self.lead(base + link.from, base + link.to);
+            }
             self.slope.push(tile.slope);
             edges.push(turned);
             areas.push(area);
@@ -165,7 +169,7 @@ impl RegionGraph {
                         self.open[c][dir.index()] = true;
                         self.open[n][dir.opposite().index()] = true;
                         let (na, nb) = (self.node_base[t] + a, self.node_base[u] + b);
-                        self.union(na, nb);
+                        self.join(na, nb);
                     }
                 }
             }
@@ -182,9 +186,8 @@ impl RegionGraph {
                     self.cell_tile[cell] = Some(i);
                 }
             }
-            let base = self.parent.len();
-            self.node_base.push(base);
-            self.parent.push(base);
+            self.node_base.push(self.next.len());
+            self.next.push(Vec::new());
             self.slope.push(0);
         }
         for link in manifest.links.iter().filter(|l| l.kind == "door") {
@@ -198,26 +201,42 @@ impl RegionGraph {
             }
             if a < self.node_base.len() && b < self.node_base.len() {
                 let (na, nb) = (self.node_base[a], self.node_base[b]);
-                self.union(na, nb);
+                self.join(na, nb);
             }
         }
         Ok(())
     }
 
-    fn find(&self, mut n: usize) -> usize {
-        while self.parent[n] != n {
-            n = self.parent[n];
+    /// Walkers get from `a` to `b`.
+    fn lead(&mut self, a: usize, b: usize) {
+        if !self.next[a].contains(&b) {
+            self.next[a].push(b);
         }
-        n
     }
 
-    fn union(&mut self, a: usize, b: usize) {
-        let (ra, rb) = (self.find(a), self.find(b));
-        if ra != rb {
-            // The lower root wins: the same graph for the same manifest.
-            let (lo, hi) = (ra.min(rb), ra.max(rb));
-            self.parent[hi] = lo;
+    /// Walkers get from `a` to `b` and back.
+    fn join(&mut self, a: usize, b: usize) {
+        self.lead(a, b);
+        self.lead(b, a);
+    }
+
+    /// Whether walkers get from node `from` to node `to`.
+    fn leads(&self, from: usize, to: usize) -> bool {
+        let mut seen = vec![false; self.next.len()];
+        let mut stack = vec![from];
+        seen[from] = true;
+        while let Some(n) = stack.pop() {
+            if n == to {
+                return true;
+            }
+            for &m in &self.next[n] {
+                if !seen[m] {
+                    seen[m] = true;
+                    stack.push(m);
+                }
+            }
         }
+        false
     }
 
     /// Whether walkers cross from `cell` into its neighbor on side `dir`.
@@ -234,16 +253,22 @@ impl RegionGraph {
     fn node_of(&self, poi: &ManifestPoi) -> Option<usize> {
         let tile = self.cell_tile[self.index(poi.cell)?]?;
         let base = self.node_base[tile];
-        let next = self.node_base.get(tile + 1).copied().unwrap_or(self.parent.len());
+        let next = self.node_base.get(tile + 1).copied().unwrap_or(self.next.len());
         Some(base + poi.area.min(next - base - 1))
     }
 
-    /// Whether `a` and `b` can be walked between.
-    pub fn connected(&self, a: &ManifestPoi, b: &ManifestPoi) -> bool {
-        match (self.node_of(a), self.node_of(b)) {
-            (Some(x), Some(y)) => self.find(x) == self.find(y),
+    /// Whether walkers get from `from` to `to` (a navlink goes one way: a drop off a ledge
+    /// reaches the ground below, not the ledge from there).
+    pub fn reaches(&self, from: &ManifestPoi, to: &ManifestPoi) -> bool {
+        match (self.node_of(from), self.node_of(to)) {
+            (Some(x), Some(y)) => self.leads(x, y),
             _ => false,
         }
+    }
+
+    /// Whether `a` and `b` can be walked between, either way.
+    pub fn connected(&self, a: &ManifestPoi, b: &ManifestPoi) -> bool {
+        self.reaches(a, b) && self.reaches(b, a)
     }
 }
 
@@ -301,7 +326,7 @@ pub fn engine_rules(input: &CheckInput) -> Vec<CheckFailure> {
     if input.rules.reachable
         && let Some(spawn) = spawn
     {
-        let cut: Vec<&ManifestPoi> = m.pois.iter().filter(|p| !input.graph.connected(spawn, p)).collect();
+        let cut: Vec<&ManifestPoi> = m.pois.iter().filter(|p| !input.graph.reaches(spawn, p)).collect();
         if !cut.is_empty() {
             let names: Vec<String> = cut.iter().map(|p| format!("{} at ({}, {})", p.id, p.cell[0], p.cell[1])).collect();
             let message = format!("cannot reach {} from {}", names.join(", "), spawn.id);

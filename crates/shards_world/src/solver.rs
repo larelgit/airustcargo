@@ -593,6 +593,7 @@ mod tests {
             geometry: Default::default(),
             visual: None,
             tile_size: None,
+            navlinks: vec![],
         };
         TileInfo::from_def(id, &def).unwrap()
     }

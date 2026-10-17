@@ -67,7 +67,8 @@ use shards_core::{CoreSystems, EngineAppExt};
 
 pub use checks::{CheckFailure, CheckInput, RegionGraph};
 pub use content::{
-    CheckRules, DungeonDef, PoiDef, PoiRule, RegionDef, RoomDef, SocketRulesDef, TileDef, TileGeometry, TileMapDef, TilePiece,
+    CheckRules, DungeonDef, PoiDef, PoiRule, RegionDef, RoomDef, SocketRulesDef, TileDef, TileGeometry, TileMapDef, TileNavLink,
+    TilePiece,
 };
 pub use generate::{generate, CheckFn, GenContext, GenError, Generated, Stage, StepFn, WorldGen};
 pub use grid::Dir;
