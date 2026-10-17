@@ -1062,6 +1062,10 @@ mod tests {
         assert!(all.len() > 60);
         // Not finite: every collider is tested, as before the broad phase.
         same(&mut world, "a ray of no end", |w| w.raycast(Vec3::new(0.0, 5.0, 0.0), Dir3::NEG_Y, f32::INFINITY, &filter));
+        // Finite, but its cells reach past `i32` on both axes (2^32 x 2^32 of them, more than a u64
+        // counts): every collider is tested.
+        same(&mut world, "a ray as long as f32 goes", |w| w.raycast(Vec3::new(0.0, 5.0, 0.0), Dir3::NEG_Y, f32::MAX, &filter));
+        assert!(matches!(world.near_box(Vec3::splat(-1.0e10), Vec3::splat(1.0e10)).which, Which::All(_)));
         // (Its hit point is NaN, which equals nothing: compared as text.)
         same(&mut world, "a ray from nowhere", |w| format!("{:?}", w.raycast(Vec3::new(f32::NAN, 5.0, 0.0), Dir3::NEG_Y, 10.0, &filter)));
         same(&mut world, "a margin turned inside out", |w| {

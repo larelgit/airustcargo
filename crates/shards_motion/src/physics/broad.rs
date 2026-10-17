@@ -50,7 +50,8 @@ fn cell(v: Vec3, edge: f32) -> IVec2 {
     IVec2::new((v.x / edge).floor() as i32, (v.z / edge).floor() as i32)
 }
 
-/// Cells from `a` to `b` along one axis.
+/// Cells from `a` to `b` along one axis: up to 2^32, so the product of two can pass `u64` and
+/// counts of cells saturate (a saturated count is over any budget).
 fn span(a: i32, b: i32) -> u64 {
     (i64::from(b) - i64::from(a) + 1).max(0) as u64
 }
@@ -124,13 +125,13 @@ impl Grid {
         // A box turned inside out (a negative margin) still touches what covers it.
         let (lo, hi) = (lo.min(hi), lo.max(hi));
         let mut ranges = [None; LEVELS.len()];
-        let mut cells = 0;
+        let mut cells: u64 = 0;
         for (level, edge) in LEVELS.iter().enumerate() {
             if self.per_level[level] == 0 {
                 continue;
             }
             let (min, max) = (cell(lo, *edge), cell(hi, *edge));
-            cells += span(min.x, max.x) * span(min.y, max.y);
+            cells = cells.saturating_add(span(min.x, max.x).saturating_mul(span(min.y, max.y)));
             if cells > budget {
                 return false;
             }
@@ -157,7 +158,7 @@ impl Grid {
         let across = len * (dir.x * dir.x + dir.z * dir.z).sqrt();
         let pad = Vec3::splat(RAY_PAD + origin.abs().max_element().max(end.abs().max_element()) * 1e-5);
         let start = out.len();
-        let mut cells = 0;
+        let mut cells: u64 = 0;
         for (level, edge) in LEVELS.iter().enumerate() {
             if self.per_level[level] == 0 {
                 continue;
@@ -172,7 +173,7 @@ impl Grid {
             for i in 0..pieces {
                 let (a, b) = (at(i), at(i + 1));
                 let (min, max) = (cell(a.min(b) - pad, *edge), cell(a.max(b) + pad, *edge));
-                cells += span(min.x, max.x) * span(min.y, max.y);
+                cells = cells.saturating_add(span(min.x, max.x).saturating_mul(span(min.y, max.y)));
                 if cells > budget {
                     out.truncate(start);
                     return false;
