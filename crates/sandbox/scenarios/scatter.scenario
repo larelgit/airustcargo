@@ -12,7 +12,7 @@ act settings_set group=graphics key=foliage value=1
 
 # --- the wilds' scatters as content has them; headless nothing is strewn
 act scatter
-expect result contains "3 scatters · nothing is strewn headless: scatter is drawn in a window or with --offscreen"
+expect result contains "6 scatters · nothing is strewn headless: scatter is drawn in a window or with --offscreen"
 expect result contains "  grass   0.4/m² · spacing 0.35 m · 2 LODs to 40 m · looks grass, grass_dry"
 expect result contains "  bushes  0.02/m² · spacing 3 m · 2 LODs to 80 m · looks bush · shadows · on grass, pillars, ruin, hall, road_bend, road_end"
 expect result contains "  rocks   0.03/m² · spacing 1.5 m · 1 LOD to 60 m · looks rock · shadows"

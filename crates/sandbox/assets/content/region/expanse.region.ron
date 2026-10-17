@@ -1,0 +1,30 @@
+// The expanse: a region at the size the game design gives a region, 8 x 8 tiles of 96 m (768 m a
+// side), for the performance autotest `reference96` (`perf/reference96.perf.ron`). Its north-west
+// corner at x -384, z 200, so it spans x -384..384, z 200..968. A dev loads it from anywhere
+// (`regen region=expanse seed=42`); players go to its gate.
+//
+// Fixed: the gate (the spawn) at cell (4, 4), centered at (48, 632). Everything else comes from
+// the seed: meadows of boulders, groves of columns, walled ruins (`expanse.tile.ron`, only those:
+// the tag `expanse`) and three camps at least 150 m from the gate.
+{
+    "expanse": (
+        size: (8, 8),
+        tile_size: 96.0,
+        version: 1,
+        tiles: ["#expanse"],
+        origin: (-384.0, 200.0),
+        fixed: [(at: (4, 4), tile: "expanse_gate", rot: 0)],
+        pois: [
+            (poi: "spawn", cells: [(4, 4)]),
+            (poi: "camp", count: 3),
+        ],
+        checks: (
+            isolated_roads: false,
+            distances: [(a: "spawn", b: "camp", min: 150.0)],
+        ),
+        // Monsters farther than this from every player rest (dormant).
+        active_radius: 60.0,
+        // An invisible wall 4 m high around the edge, as the wilds have.
+        edge_wall: 4.0,
+    ),
+}

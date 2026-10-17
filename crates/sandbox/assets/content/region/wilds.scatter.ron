@@ -3,10 +3,12 @@
 // `graphics.foliage` thins them out. The height band (the default, 0.5 m around the tiles'
 // ground) keeps them off the tops of the columns, and a ray that starts inside a solid finds no
 // ground, so nothing grows inside the ruin's walls; `clearance` keeps bushes and rocks clear of
-// them. `shards act scatter` says what each one has strewn and what found no place.
+// them. `shards act scatter` says what each one has strewn and what found no place. Only in the
+// wilds: the expanse's 96 m tiles have thinner ones of their own (`expanse.scatter.ron`).
 {
     // Six blades near, three from 20 m, nothing beyond 40 m; no shadows.
     "grass": (
+        regions: ["wilds"],
         density: 0.4,
         spacing: 0.35,
         scale: (0.7, 1.3),
@@ -20,6 +22,7 @@
     ),
     "bushes": (
         tiles: ["grass", "pillars", "ruin", "hall", "road_bend", "road_end"],
+        regions: ["wilds"],
         density: 0.02,
         spacing: 3.0,
         scale: (0.7, 1.4),
@@ -33,6 +36,7 @@
         ],
     ),
     "rocks": (
+        regions: ["wilds"],
         density: 0.03,
         spacing: 1.5,
         scale: (0.5, 1.6),

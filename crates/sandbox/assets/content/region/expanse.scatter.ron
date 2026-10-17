@@ -1,0 +1,44 @@
+// What grows and lies on the expanse (`expanse.region.ron`): the wilds' grass, bushes and rocks,
+// far thinner. A scatter is strewn over every tile of a region when it loads, not by distance:
+// the wilds' 0.4 tufts a square meter on 64 tiles of 96 m would be some 470 000 mesh entities.
+// These make about 28 000 (184 tufts, 18 bushes and 28 rocks a tile, with their levels of detail).
+{
+    "tufts": (
+        regions: ["expanse"],
+        density: 0.02,
+        spacing: 1.0,
+        scale: (0.9, 1.6),
+        tilt: 12.0,
+        looks: ["grass", "grass_dry"],
+        fade: 3.0,
+        lods: [
+            (mesh: Blades(width: 0.09, height: 0.45, count: 6), until: 25.0),
+            (mesh: Blades(width: 0.14, height: 0.4, count: 3), until: 50.0),
+        ],
+    ),
+    "shrubs": (
+        regions: ["expanse"],
+        density: 0.002,
+        spacing: 4.0,
+        scale: (0.8, 1.6),
+        clearance: 0.7,
+        looks: ["bush"],
+        shadows: true,
+        fade: 4.0,
+        lods: [
+            (mesh: Rock(radius: 0.6, detail: 1, squash: 0.8), until: 40.0),
+            (mesh: Rock(radius: 0.6, detail: 0, squash: 0.8), until: 90.0),
+        ],
+    ),
+    "stones": (
+        regions: ["expanse"],
+        density: 0.003,
+        spacing: 2.0,
+        scale: (0.5, 1.6),
+        tilt: 20.0,
+        clearance: 0.3,
+        looks: ["rock"],
+        shadows: true,
+        lods: [(mesh: Rock(radius: 0.35, detail: 1, squash: 0.6), until: 70.0)],
+    ),
+}

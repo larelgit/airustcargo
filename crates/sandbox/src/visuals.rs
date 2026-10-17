@@ -47,6 +47,8 @@ const MODEL_HEIGHT: f32 = 1.8;
 #[derive(Resource)]
 struct Palette {
     cube: Handle<Mesh>,
+    /// A ball of radius 1, few faces.
+    ball: Handle<Mesh>,
     post: Handle<Mesh>,
     /// The humanoid's scene.
     humanoid: Handle<WorldAsset>,
@@ -67,6 +69,7 @@ fn setup_assets(
     let (water, goal) = (glass(Color::srgba(0.15, 0.4, 0.95, 0.45)), glass(Color::srgba(0.3, 1.0, 0.4, 0.3)));
     commands.insert_resource(Palette {
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
+        ball: meshes.add(Sphere::new(1.0).mesh().ico(1).expect("one subdivision is within the icosphere's limit")),
         post: meshes.add(Cylinder::new(0.08, 1.6)),
         humanoid: assets.load(GltfAssetLabel::Scene(0).from_asset("models/humanoid.glb")),
         base,
@@ -103,7 +106,7 @@ type Undressed<'a> = (
 
 /// Gives what collides its meshes and looks (`content/look/sandbox.look.ron`): characters the
 /// humanoid, as tall as their capsule and animated (a character's prefab names its look, the
-/// rest are stone), boxes and ramps their surface's look, volumes a see-through box; landmarks
+/// rest are stone), boxes and ramps their surface's look, balls stone, volumes a see-through box; landmarks
 /// without a body a post. A layout piece whose collider changed (a hot edit) is dressed anew.
 fn dress(
     mut commands: Commands,
@@ -146,6 +149,15 @@ fn dress(
                     model.insert(Look::new("stone"));
                 }
             });
+            continue;
+        }
+        if let (Shape::Sphere { radius }, None) = (collider.shape, volume) {
+            let ball = (Mesh3d(palette.ball.clone()), base(), Transform { scale: Vec3::splat(radius), ..at });
+            if looked {
+                e.with_child(ball);
+            } else {
+                e.with_child((ball, Look::new("stone")));
+            }
             continue;
         }
         let Shape::Cuboid { half } = collider.shape else { continue };
