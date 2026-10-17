@@ -675,19 +675,19 @@ content: 133 definitions in 39 files
   net  0
   npc_tuning  0
   perception  3
-  perf  1
+  perf  2
   poi  4
   prefab  7
-  region  1
+  region  2
   room  0
   save  0
-  scatter  3
+  scatter  6
   screen  3
   socket_rules  1
   sound  16
   status  0
-  theme  1
-  tile  9
+  theme  0
+  tile  13
   tile_map  1
 $ shards act spawn_prefab id=skeleton x=5 z=5
 spawned e15 skeleton at (5.0, 5.0)
@@ -5654,7 +5654,7 @@ error: path must be inside crashes/, e.g. crashes/bug.json (`../x.json` goes up 
 | `world/watch.layout.ron` | третий скелет арены (`e14`) |
 | `world/world.bounds.ron` | границы мира для правила `bodies_in_world`: запас вокруг построенных layout и региона, высота, ниже которой тело выпало |
 | `ui/menus.screen.ron` | меню на виджетах движка: `pause`, `settings` (все группы настроек и язык на вкладках), вопрос `confirm_quit`; HUD у песочницы свой, в коде окна (`visuals.rs`) |
-| `ui/languages.locale.ron`, `ui/arena.theme.ron` | языки меню (английский и русский с запасным английским; тексты — `assets/locale/<язык>/menus.ftl`) и тема со шрифтом Fira Sans, в котором есть кириллица (`assets/fonts/`) |
+| `ui/languages.locale.ron` | языки меню: английский и русский с запасным английским; тексты — `assets/locale/<язык>/menus.ftl`. Темы у песочницы нет: меню рисуются темой движка и его шрифтом Fira Sans, в котором есть кириллица |
 | `dev/sandbox.devmenu.ron` | раздел `sandbox` меню разработчика: игрок к началу арены или полосы, вторая фаза стража из снапшота, дебри с зерном на выбор |
 | `audio/arena.sound.ron`, `audio/arena.music.ron`, `audio/mixer.audio.ron` | звуки (атаки стража, удары, блок, парирование, смерть, лечение, меню), музыка арены в трёх слоях и микшер: 24 голоса, звуки событий движка; файлы — `assets/sounds/`, `assets/music/` (синтезированы `cargo run -p sandbox --example make_sounds`) |
 
