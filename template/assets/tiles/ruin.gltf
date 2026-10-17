@@ -1,277 +1,277 @@
 {
-  "accessors": [
-    {
-      "bufferView": 0,
-      "componentType": 5126,
-      "count": 24,
-      "max": [
-        0.5,
-        0.5,
-        0.5
-      ],
-      "min": [
-        -0.5,
-        -0.5,
-        -0.5
-      ],
-      "type": "VEC3"
-    },
-    {
-      "bufferView": 1,
-      "componentType": 5126,
-      "count": 24,
-      "type": "VEC3"
-    },
-    {
-      "bufferView": 2,
-      "componentType": 5123,
-      "count": 36,
-      "type": "SCALAR"
-    }
-  ],
-  "asset": {
-    "generator": "shards_level test fixture (stands in for Blender's exporter)",
-    "version": "2.0"
-  },
-  "bufferViews": [
-    {
-      "buffer": 0,
-      "byteLength": 288,
-      "byteOffset": 0,
-      "target": 34962
-    },
-    {
-      "buffer": 0,
-      "byteLength": 288,
-      "byteOffset": 288,
-      "target": 34962
-    },
-    {
-      "buffer": 0,
-      "byteLength": 72,
-      "byteOffset": 576,
-      "target": 34963
-    }
-  ],
-  "buffers": [
-    {
-      "byteLength": 648,
-      "uri": "data:application/octet-stream;base64,AAAAPwAAAL8AAAC/AAAAPwAAAD8AAAC/AAAAPwAAAD8AAAA/AAAAPwAAAL8AAAA/AAAAvwAAAL8AAAC/AAAAvwAAAL8AAAA/AAAAvwAAAD8AAAA/AAAAvwAAAD8AAAC/AAAAvwAAAD8AAAC/AAAAvwAAAD8AAAA/AAAAPwAAAD8AAAA/AAAAPwAAAD8AAAC/AAAAvwAAAL8AAAC/AAAAPwAAAL8AAAC/AAAAPwAAAL8AAAA/AAAAvwAAAL8AAAA/AAAAvwAAAL8AAAA/AAAAPwAAAL8AAAA/AAAAPwAAAD8AAAA/AAAAvwAAAD8AAAA/AAAAvwAAAL8AAAC/AAAAvwAAAD8AAAC/AAAAPwAAAD8AAAC/AAAAPwAAAL8AAAC/AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcA"
-    }
-  ],
-  "meshes": [
-    {
-      "name": "Cube",
-      "primitives": [
-        {
-          "attributes": {
-            "NORMAL": 1,
-            "POSITION": 0
-          },
-          "indices": 2
-        }
-      ]
-    }
-  ],
-  "nodes": [
-    {
-      "extras": {
-        "collider": "auto"
-      },
-      "mesh": 0,
-      "name": "Ground",
-      "scale": [
-        16.0,
-        1.0,
-        16.0
-      ],
-      "translation": [
-        0.0,
-        -0.5,
-        0.0
-      ]
-    },
-    {
-      "children": [
-        2,
-        5,
-        6
-      ],
-      "name": "Ruin"
-    },
-    {
-      "children": [
-        3,
-        4
-      ],
-      "name": "Walls",
-      "translation": [
-        -1.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "extras": {
-        "collider": "auto"
-      },
-      "mesh": 0,
-      "name": "Wall.North",
-      "scale": [
-        6.0,
-        3.0,
-        0.6000000238418579
-      ],
-      "translation": [
-        -2.0,
-        1.5,
-        -5.0
-      ]
-    },
-    {
-      "extras": {
-        "collider": "auto"
-      },
-      "mesh": 0,
-      "name": "Wall.West",
-      "scale": [
-        0.6000000238418579,
-        3.0,
-        6.0
-      ],
-      "translation": [
-        -4.0,
-        1.5,
-        -1.0
-      ]
-    },
-    {
-      "extras": {
-        "collider": "auto"
-      },
-      "mesh": 0,
-      "name": "Rubble",
-      "rotation": [
-        0.0,
-        0.258819043636322,
-        0.0,
-        0.9659258127212524
-      ],
-      "scale": [
-        2.0,
-        1.0,
-        1.2000000476837158
-      ],
-      "translation": [
-        3.0,
-        0.5,
-        -4.0
-      ]
-    },
-    {
-      "extras": {
-        "collider": "auto"
-      },
-      "mesh": 0,
-      "name": "Column",
-      "scale": [
-        1.0,
-        4.0,
-        1.0
-      ],
-      "translation": [
-        4.0,
-        2.0,
-        4.0
-      ]
-    },
-    {
-      "extras": {
-        "marker": "camp",
-        "name": "ruin_camp"
-      },
-      "name": "Camp",
-      "translation": [
-        -2.0,
-        0.0,
-        2.0
-      ]
-    },
-    {
-      "extras": {
-        "marker": "landmark",
-        "name": "Ruin"
-      },
-      "name": "Arch",
-      "translation": [
-        1.0,
-        0.0,
-        1.0
-      ]
-    },
-    {
-      "extras": {
-        "socket": "grass"
-      },
-      "name": "Edge.N",
-      "translation": [
-        0.0,
-        0.0,
-        -8.0
-      ]
-    },
-    {
-      "extras": {
-        "socket": "grass"
-      },
-      "name": "Edge.E",
-      "translation": [
-        8.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "extras": {
-        "socket": "grass"
-      },
-      "name": "Edge.S",
-      "translation": [
-        0.0,
-        0.0,
-        8.0
-      ]
-    },
-    {
-      "extras": {
-        "socket": "grass"
-      },
-      "name": "Edge.W",
-      "translation": [
-        -8.0,
-        0.0,
-        0.0
-      ]
-    }
-  ],
-  "scene": 0,
-  "scenes": [
-    {
-      "extras": {
-        "size": 16,
-        "tile": "ruin"
-      },
-      "name": "Scene",
-      "nodes": [
-        0,
-        1,
-        7,
-        8,
-        9,
-        10,
-        11,
-        12
-      ]
-    }
-  ]
+	"asset":{
+		"generator":"Khronos glTF Blender I/O v5.2.40",
+		"version":"2.0"
+	},
+	"scene":0,
+	"scenes":[
+		{
+			"extras":{
+				"tile":"ruin",
+				"size":16
+			},
+			"name":"Ruin",
+			"nodes":[
+				0,
+				1,
+				2,
+				3,
+				4,
+				5,
+				6,
+				12
+			]
+		}
+	],
+	"nodes":[
+		{
+			"extras":{
+				"marker":"landmark",
+				"name":"Ruin"
+			},
+			"name":"Arch",
+			"translation":[
+				1,
+				0,
+				1
+			]
+		},
+		{
+			"extras":{
+				"marker":"camp",
+				"name":"ruin_camp"
+			},
+			"name":"Camp",
+			"translation":[
+				-2,
+				0,
+				2
+			]
+		},
+		{
+			"extras":{
+				"socket":"grass"
+			},
+			"name":"Edge.E",
+			"translation":[
+				8,
+				0,
+				0
+			]
+		},
+		{
+			"extras":{
+				"socket":"grass"
+			},
+			"name":"Edge.N",
+			"translation":[
+				0,
+				0,
+				-8
+			]
+		},
+		{
+			"extras":{
+				"socket":"grass"
+			},
+			"name":"Edge.S",
+			"translation":[
+				0,
+				0,
+				8
+			]
+		},
+		{
+			"extras":{
+				"socket":"grass"
+			},
+			"name":"Edge.W",
+			"translation":[
+				-8,
+				0,
+				0
+			]
+		},
+		{
+			"extras":{
+				"collider":"auto"
+			},
+			"mesh":0,
+			"name":"Ground",
+			"scale":[
+				16,
+				1,
+				16
+			],
+			"translation":[
+				0,
+				-0.5,
+				0
+			]
+		},
+		{
+			"extras":{
+				"collider":"auto"
+			},
+			"mesh":0,
+			"name":"Column",
+			"scale":[
+				1,
+				4,
+				1
+			],
+			"translation":[
+				4,
+				2,
+				4
+			]
+		},
+		{
+			"extras":{
+				"collider":"auto"
+			},
+			"mesh":0,
+			"name":"Rubble",
+			"rotation":[
+				0,
+				0.2588190734386444,
+				0,
+				0.965925931930542
+			],
+			"scale":[
+				2,
+				1,
+				1.1999999284744263
+			],
+			"translation":[
+				3,
+				0.5,
+				-4
+			]
+		},
+		{
+			"extras":{
+				"collider":"auto"
+			},
+			"mesh":0,
+			"name":"Wall.North",
+			"scale":[
+				6,
+				3,
+				0.6000000238418579
+			],
+			"translation":[
+				-2,
+				1.5,
+				-5
+			]
+		},
+		{
+			"extras":{
+				"collider":"auto"
+			},
+			"mesh":0,
+			"name":"Wall.West",
+			"scale":[
+				0.6000000238418579,
+				3,
+				6
+			],
+			"translation":[
+				-4,
+				1.5,
+				-1
+			]
+		},
+		{
+			"children":[
+				9,
+				10
+			],
+			"name":"Walls",
+			"translation":[
+				-1,
+				0,
+				0
+			]
+		},
+		{
+			"children":[
+				7,
+				8,
+				11
+			],
+			"name":"Ruin"
+		}
+	],
+	"meshes":[
+		{
+			"name":"Cube",
+			"primitives":[
+				{
+					"attributes":{
+						"POSITION":0,
+						"NORMAL":1
+					},
+					"indices":2
+				}
+			]
+		}
+	],
+	"accessors":[
+		{
+			"bufferView":0,
+			"componentType":5126,
+			"count":24,
+			"max":[
+				0.5,
+				0.5,
+				0.5
+			],
+			"min":[
+				-0.5,
+				-0.5,
+				-0.5
+			],
+			"type":"VEC3"
+		},
+		{
+			"bufferView":1,
+			"componentType":5126,
+			"count":24,
+			"type":"VEC3"
+		},
+		{
+			"bufferView":2,
+			"componentType":5123,
+			"count":36,
+			"type":"SCALAR"
+		}
+	],
+	"bufferViews":[
+		{
+			"buffer":0,
+			"byteLength":288,
+			"byteOffset":0,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":288,
+			"byteOffset":288,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":72,
+			"byteOffset":576,
+			"target":34963
+		}
+	],
+	"buffers":[
+		{
+			"byteLength":648,
+			"uri":"data:application/octet-stream;base64,AAAAvwAAAL8AAAA/AAAAvwAAAL8AAAA/AAAAvwAAAL8AAAA/AAAAvwAAAD8AAAA/AAAAvwAAAD8AAAA/AAAAvwAAAD8AAAA/AAAAvwAAAL8AAAC/AAAAvwAAAL8AAAC/AAAAvwAAAL8AAAC/AAAAvwAAAD8AAAC/AAAAvwAAAD8AAAC/AAAAvwAAAD8AAAC/AAAAPwAAAL8AAAA/AAAAPwAAAL8AAAA/AAAAPwAAAL8AAAA/AAAAPwAAAD8AAAA/AAAAPwAAAD8AAAA/AAAAPwAAAD8AAAA/AAAAPwAAAL8AAAC/AAAAPwAAAL8AAAC/AAAAPwAAAL8AAAC/AAAAPwAAAD8AAAC/AAAAPwAAAD8AAAC/AAAAPwAAAD8AAAC/AAAAAAAAAAAAAIA/AAAAAAAAgL8AAAAAAACAvwAAAAAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAgD8AAAAAAACAvwAAAAAAAAAAAAAAAAAAAAAAAIC/AAAAAAAAgL8AAAAAAACAvwAAAAAAAAAAAAAAAAAAAAAAAIC/AAAAAAAAgD8AAAAAAACAvwAAAAAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAgL8AAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAgD8AAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAIC/AAAAAAAAgL8AAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAIC/AAAAAAAAgD8AAAAAAACAPwAAAAAAAAAAAgAFAAsAAgALAAgABgAJABUABgAVABIAFAAXABEAFAARAA4ADAAPAAMADAADAAAABwATAA0ABwANAAEAFgAKAAQAFgAEABAA"
+		}
+	]
 }

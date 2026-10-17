@@ -295,7 +295,103 @@ fn schema_errors_say_where_and_in_which_definition() {
     assert!(errors[0].starts_with("content/attacks.attack.ron:3:"), "{errors:?}");
     assert!(errors[0].contains("attack `claw`: ") && errors[0].contains("damge"), "{errors:?}");
     assert_eq!(errors[1], "content/old.atack.ron: no content kind `atack` (did you mean `attack`?); registered: attack, moveset, prefab");
-    assert!(app.world().resource::<ContentDb>().get::<AttackDef>("sword").is_none(), "a file that does not parse adds nothing");
+    assert!(app.world().resource::<ContentDb>().get::<AttackDef>("sword").is_some(), "the definition before the broken one loads");
+    assert!(app.world().resource::<ContentDb>().get::<AttackDef>("claw").is_none(), "the broken one does not");
+}
+
+/// Three attacks; the middle one has a typo in a field name.
+const ONE_BROKEN: &str = "{\n    \"sword\": (damage: 25.0),\n    \"claw\": (damge: 8.0),\n    \"spear\": (damage: 12.0),\n}";
+
+#[test]
+fn a_broken_definition_is_its_own_error_and_its_file_keeps_the_others() {
+    let dir = assets("one_broken", &[("content/attacks.attack.ron", ONE_BROKEN)]);
+    let mut app = app(&dir);
+    let db = app.world().resource::<ContentDb>();
+    assert_eq!(db.ids::<AttackDef>().collect::<Vec<_>>(), ["spear", "sword"]);
+    assert_eq!(db.get::<AttackDef>("spear").unwrap().damage, 12.0);
+    assert_eq!(db.file_of::<AttackDef>("sword"), Some("content/attacks.attack.ron"));
+    // One error, at the field the typo is in (line 3: four blanks, `"claw": (`, then `damge` from column 14).
+    let errors = errors(&app);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    let expected = "content/attacks.attack.ron:3:14: attack `claw`: Unexpected field named `damge` in `AttackDef`, expected either `damage` or `windup` instead";
+    assert_eq!(errors[0], expected);
+    let loaded = journal(&app, JournalKind::Event);
+    assert!(loaded.contains(&"content loaded: 2 definitions in 1 file, 1 with errors (content_check lists them)".to_owned()), "{loaded:?}");
+    assert!(journal(&app, JournalKind::Error).contains(&format!("content: {expected}")));
+    assert_eq!(text(&ok(&mut app, "content_check", json!({}))), format!("1 errors:\n  {expected}"));
+    assert_eq!(text(&ok(&mut app, "content_list", json!({}))), "content: 2 definitions in 1 files, 1 errors (content_check lists them)\n  attack  2\n  moveset  0\n  prefab  0");
+}
+
+#[test]
+fn a_reference_to_a_good_neighbour_of_a_broken_definition_resolves_and_to_the_broken_one_is_missing() {
+    let movesets = r#"{
+        "hero": (light: "sword", heavy: "spear"),
+        "rogue": (light: "sword", heavy: "claw"),
+    }"#;
+    let dir = assets("neighbours", &[("content/attacks.attack.ron", ONE_BROKEN), ("content/hero.moveset.ron", movesets)]);
+    let typo = "content/attacks.attack.ron:3:14: attack `claw`: Unexpected field named `damge` in `AttackDef`, expected either `damage` or `windup` instead";
+    let missing = "content/hero.moveset.ron: moveset `rogue`: heavy -> unknown attack `claw`";
+    // The error list is the cause (the typo) and what follows from it, not a cascade of every
+    // definition in the file.
+    let app = app(&dir);
+    assert_eq!(errors(&app), [typo, missing]);
+    assert!(app.world().resource::<ContentDb>().get::<MovesetDef>("hero").is_some());
+    let from_ci: Vec<String> = check_dir(&dir, &kinds()).unwrap_err().iter().map(ToString::to_string).collect();
+    assert_eq!(from_ci, [typo, missing]);
+}
+
+#[test]
+fn a_syntax_error_still_fails_the_file_as_one_error() {
+    let cases = [
+        ("a definition left open", "{\n    \"sword\": (damage: 25.0),\n    \"claw\": (damage: 8.0,\n    \"spear\": (damage: 12.0),\n}", true),
+        ("a value cut short", "{ \"sword\": (damage: 25.0), \"claw\": (damage: ) }", true),
+        ("a comma missing between definitions", "{ \"sword\": (damage: 25.0)  \"claw\": (damage: 8.0) }", false),
+        ("an unclosed map", "{ \"sword\": (damage: 25.0),\n    \"claw\": (damage: 8.0)", false),
+    ];
+    for (what, broken, names_an_id) in cases {
+        let dir = assets("syntax", &[("content/a.attack.ron", broken), ("content/b.attack.ron", r#"{ "kick": (damage: 3.0) }"#)]);
+        let app = app(&dir);
+        let db = app.world().resource::<ContentDb>();
+        assert_eq!(db.ids::<AttackDef>().collect::<Vec<_>>(), ["kick"], "{what}: the file adds nothing, the other one loads");
+        let errors = errors(&app);
+        assert_eq!(errors.len(), 1, "{what}: {errors:?}");
+        // At the place the whole-file parse of the same text stops.
+        let old = ron::Options::default()
+            .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+            .from_str::<std::collections::BTreeMap<String, AttackDef>>(broken)
+            .unwrap_err();
+        let at = format!("content/a.attack.ron:{}:{}: ", old.span.start.line, old.span.start.col);
+        assert!(errors[0].starts_with(&at), "{what}: {} should start with {at}", errors[0]);
+        assert_eq!(errors[0].contains("attack `"), names_an_id, "{what}: {}", errors[0]);
+    }
+}
+
+#[test]
+fn a_repeated_or_unusable_id_fails_its_file_as_one_error() {
+    // The map cannot be cut into definitions by id any more, so nothing in the file is used.
+    let repeated = "{ \"sword\": (damage: 25.0), \"claw\": (damage: 8.0), \"sword\": (damage: 9.0) }";
+    let blank = "{ \"sword\": (damage: 25.0), \"two words\": (damage: 8.0) }";
+    let dir = assets("bad_ids", &[("content/a.attack.ron", repeated), ("content/b.attack.ron", blank), ("content/c.attack.ron", r#"{ "kick": (damage: 3.0) }"#)]);
+    let app = app(&dir);
+    assert_eq!(app.world().resource::<ContentDb>().ids::<AttackDef>().collect::<Vec<_>>(), ["kick"]);
+    let errors = errors(&app);
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert!(errors[0].starts_with("content/a.attack.ron:1:") && errors[0].ends_with("attack `sword`: defined twice in this file"), "{errors:?}");
+    assert!(errors[1].starts_with("content/b.attack.ron:1:") && errors[1].ends_with("attack `two words`: ids cannot contain spaces or control characters"), "{errors:?}");
+}
+
+#[test]
+fn the_extensions_a_file_turns_on_apply_to_each_of_its_definitions() {
+    // With `explicit_struct_names` a definition must be written `AttackDef(...)`: the one that is
+    // not fails alone, the other loads.
+    let file = "#![enable(explicit_struct_names)]\n{\n    \"sword\": AttackDef(damage: 25.0),\n    \"claw\": (damage: 8.0),\n}";
+    let dir = assets("extensions", &[("content/attacks.attack.ron", file)]);
+    let app = app(&dir);
+    assert_eq!(app.world().resource::<ContentDb>().ids::<AttackDef>().collect::<Vec<_>>(), ["sword"]);
+    let errors = errors(&app);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].starts_with("content/attacks.attack.ron:4:"), "{errors:?}");
+    assert!(errors[0].contains("attack `claw`: ") && errors[0].contains("AttackDef"), "{errors:?}");
 }
 
 #[test]
@@ -552,6 +648,81 @@ fn a_broken_edit_is_refused_and_the_previous_version_kept() {
     let refused = act(&mut app, "content_reload", json!({"kind": "attack"}));
     assert!(text(&refused).starts_with("content/combat/attacks.attack.ron:1:"), "{}", text(&refused));
     assert_eq!(text(&ok(&mut app, "content_reload", json!({"file": "hero.moveset.ron"}))), "content: nothing changed on disk");
+}
+
+#[test]
+fn a_hot_edit_that_breaks_one_definition_keeps_the_previous_version_of_all_of_them() {
+    let dir = assets("one_broken_edit", &[("content/combat/attacks.attack.ron", ATTACKS), ("content/hero.moveset.ron", MOVESETS)]);
+    let mut app = app(&dir);
+    // The sword gets stronger, but the claw gets a typo: the file applies whole or not at all.
+    write(&dir, "content/combat/attacks.attack.ron", "{\n    \"sword\": (damage: 40.0),\n    \"claw\": (damge: 8.0),\n}");
+    let refused = act(&mut app, "content_reload", json!({}));
+    assert!(!refused.ok);
+    assert_eq!(
+        text(&refused),
+        "content/combat/attacks.attack.ron:3:14: attack `claw`: Unexpected field named `damge` in `AttackDef`, expected either `damage` or `windup` instead; \
+         kept the previous version of combat/attacks.attack.ron"
+    );
+    let journaled = journal(&app, JournalKind::Error);
+    assert!(journaled.iter().any(|l| l.contains("attack `claw`") && l.ends_with("; kept the previous version")), "{journaled:?}");
+    let db = app.world().resource::<ContentDb>();
+    assert_eq!(db.get::<AttackDef>("sword").unwrap().damage, 25.0, "the good edit waits for the bad one");
+    assert_eq!(db.get::<AttackDef>("claw").unwrap().damage, 8.0);
+    assert!(errors(&app).is_empty(), "{:?}", errors(&app));
+    assert!(replay::save(app.world()).events.is_empty(), "nothing applied, nothing recorded");
+
+    // Fixed, the whole file goes in at once.
+    write(&dir, "content/combat/attacks.attack.ron", "{\n    \"sword\": (damage: 40.0),\n    \"claw\": (damage: 9.0),\n}");
+    assert_eq!(text(&ok(&mut app, "content_reload", json!({}))), "content reloaded: combat/attacks.attack.ron (2 definitions changed)");
+    let db = app.world().resource::<ContentDb>();
+    assert_eq!((db.get::<AttackDef>("sword").unwrap().damage, db.get::<AttackDef>("claw").unwrap().damage), (40.0, 9.0));
+}
+
+#[test]
+fn a_file_loaded_with_a_broken_definition_applies_no_edit_until_every_definition_reads() {
+    let dir = assets("loaded_broken", &[("content/attacks.attack.ron", ONE_BROKEN), ("content/hero.moveset.ron", MOVESETS)]);
+    let mut app = app(&dir);
+    assert_eq!(errors(&app).len(), 1, "{:?}", errors(&app));
+    // The spear is tuned while the claw is still broken: the edit waits, and says why.
+    write(&dir, "content/attacks.attack.ron", &ONE_BROKEN.replace("12.0", "14.0"));
+    let refused = act(&mut app, "content_reload", json!({}));
+    assert!(!refused.ok);
+    assert!(text(&refused).starts_with("content/attacks.attack.ron:3:14: attack `claw`: "), "{}", text(&refused));
+    assert!(text(&refused).ends_with("; kept the previous version of attacks.attack.ron"), "{}", text(&refused));
+    assert_eq!(app.world().resource::<ContentDb>().get::<AttackDef>("spear").unwrap().damage, 12.0);
+    // Another file's edit goes in: the broken one is not part of it.
+    write(&dir, "content/hero.moveset.ron", r#"{ "hero": (light: "spear") }"#);
+    let applied = ok(&mut app, "content_reload", json!({"file": "hero.moveset.ron"}));
+    assert_eq!(text(&applied), "content reloaded: hero.moveset.ron (1 definition changed)");
+    // The claw is fixed: the spear's edit goes in with it.
+    write(&dir, "content/attacks.attack.ron", &ONE_BROKEN.replace("12.0", "14.0").replace("damge", "damage"));
+    assert_eq!(text(&ok(&mut app, "content_reload", json!({}))), "content reloaded: attacks.attack.ron (2 definitions changed)");
+    let db = app.world().resource::<ContentDb>();
+    assert_eq!((db.get::<AttackDef>("spear").unwrap().damage, db.get::<AttackDef>("claw").unwrap().damage), (14.0, 8.0));
+    assert!(errors(&app).is_empty(), "{:?}", errors(&app));
+}
+
+#[test]
+fn a_file_loaded_with_a_taken_id_applies_no_edit_until_it_is_renamed() {
+    let other = r#"{ "sword": (damage: 99.0), "spear": (damage: 12.0) }"#;
+    let dir = assets("loaded_taken", &[("content/a.attack.ron", ATTACKS), ("content/b.attack.ron", other)]);
+    let mut app = app(&dir);
+    assert_eq!(errors(&app), ["content/b.attack.ron: attack `sword`: already defined in content/a.attack.ron"]);
+    // The error has no position, but b's sword is left out all the same: b's edit waits.
+    write(&dir, "content/b.attack.ron", &other.replace("12.0", "14.0"));
+    let refused = act(&mut app, "content_reload", json!({}));
+    assert!(!refused.ok);
+    assert_eq!(
+        text(&refused),
+        "content/b.attack.ron: attack `sword`: already defined in content/a.attack.ron; kept the previous version of b.attack.ron"
+    );
+    assert_eq!(app.world().resource::<ContentDb>().get::<AttackDef>("spear").unwrap().damage, 12.0);
+    // Renamed, the whole file goes in.
+    write(&dir, "content/b.attack.ron", &other.replace("12.0", "14.0").replace("\"sword\"", "\"saber\""));
+    assert_eq!(text(&ok(&mut app, "content_reload", json!({}))), "content reloaded: b.attack.ron (2 definitions changed)");
+    let db = app.world().resource::<ContentDb>();
+    assert_eq!((db.get::<AttackDef>("spear").unwrap().damage, db.get::<AttackDef>("saber").unwrap().damage), (14.0, 99.0));
+    assert!(errors(&app).is_empty(), "{:?}", errors(&app));
 }
 
 #[test]

@@ -36,6 +36,7 @@ const TILES: &str = r#"
         sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
         geometry: Inline([Box(min: (-8.0, -1.0, -8.0), max: (8.0, 0.0, 8.0))]),
     ),
+    // Its file is whole in a fresh site; the tests that need a crack write it.
     "cracked": (
         sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
         slots: [(at: (0.0, 0.0, 0.0), accepts: ["spawn"])],
@@ -116,11 +117,14 @@ fn yard() -> Gltf {
 /// The nodes of the yard that become entities, by path.
 const YARD_NODES: [&str; 8] = ["Floor", "Wall", "Props/Pillar", "Start", "Camp", "Edge.N", "Edge.E", "LadderBottom"];
 
-/// A level whose only object names a component that does not exist.
-fn cracked() -> Gltf {
+/// A level of one floor; `broken`, the floor also names a component that does not exist. `site`
+/// writes the whole one: the test game reads content with no error, and the tests of an error
+/// write the broken one themselves.
+fn cracked(broken: bool) -> Gltf {
     let mut g = Gltf::new();
     let cube = g.cube();
-    g.root(NodeSpec::new("Floor").mesh(cube).props(json!({"collider": "auto", "Helth": {"current": 1.0}})));
+    let props = if broken { json!({"collider": "auto", "Helth": {"current": 1.0}}) } else { json!({"collider": "auto"}) };
+    g.root(NodeSpec::new("Floor").mesh(cube).props(props));
     g
 }
 
@@ -140,7 +144,7 @@ pub(crate) fn site(name: &str, extra: &[(&str, &[u8])]) -> PathBuf {
     write("content/ruins/ruins.tile.ron", TILES.as_bytes());
     write("content/ruins/ruins.region.ron", REGIONS.as_bytes());
     write("tiles/yard.gltf", yard().gltf().as_bytes());
-    write("tiles/cracked.gltf", cracked().gltf().as_bytes());
+    write("tiles/cracked.gltf", cracked(false).gltf().as_bytes());
     for (path, bytes) in extra {
         write(path, bytes);
     }
@@ -630,6 +634,85 @@ fn socket_markers_of_a_tiles_file_stand_where_the_tile_has_their_sockets() {
     assert_eq!(build(false), [format!("{at}{}", want[0])]);
 }
 
+/// The test content with `file` (a path of the asset folder) written over, checked the way
+/// `content check` does; `more` are further content files (path, text) added to it. Returns the
+/// errors as the check prints them.
+fn content_errors_with(dir: &Path, file: (&str, &str), more: &[(&str, &str)]) -> Vec<String> {
+    // The kinds come from a game on whole content; the file is spoiled after it loaded.
+    let app = app_in(dir, 1, None);
+    let kinds = app.world().resource::<ContentKinds>().clone();
+    std::fs::write(dir.join(file.0), file.1).unwrap();
+    let mut sources: Vec<Source> = read_dir(dir).expect("test content");
+    sources.extend(more.iter().map(|(path, text)| Source { path: (*path).into(), text: (*text).into() }));
+    ContentDb::build(&kinds, &sources).errors().map(ToString::to_string).collect()
+}
+
+const TILE_RON: &str = "content/ruins/ruins.tile.ron";
+
+#[test]
+fn a_tile_file_with_an_unknown_component_is_a_content_error_naming_the_tile_the_file_and_the_node() {
+    let dir = site("node_error", &[]);
+    let errors = content_errors_with(&dir, ("tiles/cracked.gltf", &cracked(true).gltf()), &[]);
+    assert_eq!(
+        errors,
+        [format!("{TILE_RON}: tile `cracked`: geometry: tiles/cracked.gltf: node `Floor`: unknown component `Helth` (did you mean `Health`?)")]
+    );
+}
+
+#[test]
+fn a_tile_file_is_checked_with_the_content_around_it_one_error_for_every_problem() {
+    // A bad component, a navlink that ends nowhere and a prefab nobody defined, in file order.
+    let mut file = cracked(true);
+    file.root(NodeSpec::new("Ladder").at([2.0, 0.0, 2.0]).props(json!({"marker": "navlink", "name": "ladder", "to": "Nowhere"})));
+    file.root(NodeSpec::new("Crate").at([-2.0, 0.0, 2.0]).props(json!({"prefab": "rockz"})));
+    let dir = site("every_problem", &[]);
+    let errors = content_errors_with(&dir, ("tiles/cracked.gltf", &file.gltf()), &[]);
+    let at = format!("{TILE_RON}: tile `cracked`: geometry: tiles/cracked.gltf: node `");
+    assert_eq!(errors.len(), 3, "{errors:#?}");
+    assert_eq!(errors[0], format!("{at}Floor`: unknown component `Helth` (did you mean `Health`?)"));
+    assert_eq!(errors[1], format!("{at}Ladder`: navlink `to` names no node: `Nowhere`"));
+    assert!(errors[2].starts_with(&format!("{at}Crate`: ")) && errors[2].contains("rockz") && errors[2].contains("`rocks`"), "{}", errors[2]);
+}
+
+#[test]
+fn a_tile_file_that_does_not_read_is_a_content_error_naming_the_file() {
+    let dir = site("unreadable", &[]);
+    let errors = content_errors_with(&dir, ("tiles/cracked.gltf", r#"{ "asset": { "version": "2.0" "#), &[]);
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert!(errors[0].starts_with(&format!("{TILE_RON}: tile `cracked`: geometry: `tiles/cracked.gltf`: ")), "{}", errors[0]);
+}
+
+#[test]
+fn a_tile_file_that_a_level_definition_names_too_is_reported_by_the_level_alone() {
+    let level = ("content/ruins/cracked.level.ron", r#"{ "cracked_floor": (file: "tiles/cracked.gltf") }"#);
+    let dir = site("both", &[]);
+    let errors = content_errors_with(&dir, ("tiles/cracked.gltf", &cracked(true).gltf()), &[level]);
+    assert_eq!(
+        errors,
+        ["content/ruins/cracked.level.ron: level `cracked_floor`: node `Floor`: unknown component `Helth` (did you mean `Health`?)"],
+        "once, under the level"
+    );
+    // A file that does not read is the same: one error, the level's.
+    let dir = site("both_unreadable", &[]);
+    let errors = content_errors_with(&dir, ("tiles/cracked.gltf", "not a glTF"), &[level]);
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert!(errors[0].starts_with("content/ruins/cracked.level.ron: level `cracked_floor`: "), "{}", errors[0]);
+    // What only the tile can say stays the tile's: a socket marker against its `sockets`.
+    let mut file = cracked(true);
+    file.root(NodeSpec::new("Road.E").at([8.0, 0.0, 0.0]).props(json!({"socket": "road"})));
+    let dir = site("both_sockets", &[]);
+    let errors = content_errors_with(&dir, ("tiles/cracked.gltf", &file.gltf()), &[level]);
+    assert_eq!(
+        errors,
+        [
+            "content/ruins/cracked.level.ron: level `cracked_floor`: node `Floor`: unknown component `Helth` (did you mean `Health`?)".to_owned(),
+            format!(
+                "{TILE_RON}: tile `cracked`: geometry: tiles/cracked.gltf: socket marker `road` (node `Road.E`) is on the east edge, where sockets.e has `grass`"
+            ),
+        ]
+    );
+}
+
 #[test]
 fn a_level_file_that_cannot_load_holds_the_game_and_names_its_tiles() {
     let dir = site("corrupt", &[("tiles/yard.gltf", b"this is not a glTF file")]);
@@ -652,8 +735,13 @@ fn a_level_file_that_cannot_load_holds_the_game_and_names_its_tiles() {
 
 #[test]
 fn a_tile_file_with_problems_is_reported_once_when_it_loads_not_when_a_seed_picks_it() {
-    let dir = site("report", &[]);
-    let mut app = app_in(&dir, 1, None);
+    // Content that has an error loads all the same (what parsed is used), and the loader checks a
+    // file by itself too: it is what stands behind content for a file edited after content was read.
+    let dir = site("report", &[("tiles/cracked.gltf", cracked(true).gltf().as_bytes())]);
+    let mut app = fresh_in(&dir, 1, None);
+    testing::wait_until_loaded(&mut app, Duration::from_secs(20)).expect("loads");
+    let content: Vec<String> = common::db(&app).errors().map(ToString::to_string).collect();
+    assert_eq!(content.len(), 1, "content names the file too: {content:?}");
     let broken = |app: &App| -> Vec<String> { journal(app).into_iter().filter(|l| l.contains("tile levels:")).collect() };
     let lines = broken(&app);
     assert_eq!(lines.len(), 1, "only cracked.gltf is wrong: {lines:#?}");
@@ -667,8 +755,9 @@ fn a_tile_file_with_problems_is_reported_once_when_it_loads_not_when_a_seed_pick
 
 #[test]
 fn a_level_with_problems_refuses_the_change_before_anything_is_touched() {
-    let dir = site("problems", &[]);
-    let mut app = app_in(&dir, 1, Some("ruins"));
+    let dir = site("problems", &[("tiles/cracked.gltf", cracked(true).gltf().as_bytes())]);
+    let mut app = fresh_in(&dir, 1, Some("ruins"));
+    testing::wait_until_loaded(&mut app, Duration::from_secs(20)).expect("loads");
     let before = (snapshot(&mut app), region(&app).hash, app.world().resource::<LevelInstances>().iter().count());
     let refused = err(&mut app, "regen", json!({"region": "cracked_region"}));
     assert!(refused.contains("tile `cracked`: level `tiles/cracked.gltf`:"), "{refused}");

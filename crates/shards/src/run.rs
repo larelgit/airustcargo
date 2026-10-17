@@ -154,6 +154,10 @@ struct Args {
     /// Where saves are written: a folder inside the game's folder (no absolute path, no `..`).
     #[arg(long, value_name = "DIR", default_value = "saves", value_parser = save_dir_name)]
     save_dir: String,
+    /// Engine modules to leave out, separated by commas: `audio,scatter`. `ai/status` lists the
+    /// modules that run (`engine.modules`); a module others need goes only with them.
+    #[arg(long, value_name = "MODULES", value_delimiter = ',')]
+    without: Vec<String>,
     /// Keep player settings in DIR instead of the platform's settings folder.
     #[arg(long, value_name = "DIR", conflicts_with = "no_settings")]
     settings_dir: Option<String>,
@@ -272,14 +276,8 @@ fn command_line() -> Result<Args, String> {
     let args = Args::parse_from(shards_steam::connect_lobby_args(std::env::args_os())?);
     #[cfg(not(feature = "steam"))]
     let args = Args::parse();
-    let wants_steam = args.steam_host
-        || args.steam_server
-        || args.steam_lobby.is_some()
-        || args.stand_steam
-        || args.steam_relay_only
-        || args.steam_app.is_some()
-        || args.join.as_deref().is_some_and(|a| a.starts_with("steam:"));
-    if wants_steam && !cfg!(feature = "steam") {
+    check_without(&args)?;
+    if args.wants_steam() && !cfg!(feature = "steam") {
         return Err("this game is built without Steam: --steam-host, --steam-lobby, --stand-steam, --steam-server, --steam-relay-only, --steam-app and --join steam:… need \
                     the `steam` feature of `shards` (and `steam_sdk` to reach the Steam client; --stand-steam never does)"
             .into());
@@ -292,6 +290,26 @@ fn command_line() -> Result<Args, String> {
 }
 
 /// The save folder: inside the game's folder, like `replays/`.
+/// `--without`: modules a game may leave out, and nothing else on the command line asks for one.
+fn check_without(args: &Args) -> Result<(), String> {
+    let without = crate::modules::check_without(&args.without).map_err(|e| format!("--without: {e}"))?;
+    let session = args.host.is_some() || args.join.is_some() || args.stand.is_some() || args.steam_host || args.steam_server || args.stand_steam;
+    if session && without.contains(&"net") {
+        return Err("--without net leaves out co-op sessions: drop --host, --join, --stand, --steam-host and --steam-server, or keep `net`".into());
+    }
+    if args.wants_steam() && without.contains(&"steam") {
+        return Err("--without steam leaves out Steam: drop --steam-host, --steam-lobby, --stand-steam, --steam-server,                     --steam-relay-only, --steam-app and --join steam:…, or keep `steam`"
+            .into());
+    }
+    if (args.character.is_some() || args.world.is_some()) && without.contains(&"save") {
+        return Err("--without save leaves out saves: drop --character and --world, or keep `save`".into());
+    }
+    if args.worldgen_report.is_some() && without.contains(&"world") {
+        return Err("--without world leaves out the region generator: drop --worldgen-report, or keep `world`".into());
+    }
+    Ok(())
+}
+
 fn save_dir_name(dir: &str) -> Result<String, String> {
     shards_save::check_save_dir(dir).map(|()| dir.to_owned())
 }
@@ -304,6 +322,17 @@ fn slot_name(slot: &str) -> Result<String, String> {
 }
 
 impl Args {
+    /// Whether the command line asks for Steam: a lobby, a server, a stand over the fake client, an app id.
+    fn wants_steam(&self) -> bool {
+        self.steam_host
+            || self.steam_server
+            || self.steam_lobby.is_some()
+            || self.stand_steam
+            || self.steam_relay_only
+            || self.steam_app.is_some()
+            || self.join.as_deref().is_some_and(|a| a.starts_with("steam:"))
+    }
+
     /// What the command line says about networking.
     fn net(&self) -> NetLaunch {
         if self.steam_host || self.steam_server {
@@ -346,6 +375,7 @@ impl Args {
                 (_, true) => MenuLaunch::Skip,
                 _ => MenuLaunch::Auto,
             },
+            without: self.without.clone(),
             check_every: self.check_every,
             check_detail: self.check_detail,
             tick_budget: self.tick_budget_ms,
@@ -544,6 +574,7 @@ fn play(build: &impl Fn(&EngineConfig) -> App, args: &Args, config: EngineConfig
                 port_file: args.port_file.clone(),
                 no_remote: args.no_remote,
                 save_dir: config.save_dir.clone(),
+                without: config.without.clone(),
             },
         );
     }
@@ -1493,6 +1524,24 @@ mod tests {
         assert!(refused(&["game", "--save-dir", "../saves"]).contains("goes up with `..`"));
         assert!(refused(&["game", "--save-dir", ""]).contains("is empty"));
         assert_eq!(parse(&["game", "--save-dir", "saves/qa-1"]).unwrap().config().save_dir, "saves/qa-1");
+        // Modules left out: a list, checked as a whole and against what else is asked for.
+        let without = parse(&["game", "--without", "audio,scatter", "--without", "fx"]).unwrap();
+        assert_eq!(without.config().without, ["audio", "scatter", "fx"]);
+        assert_eq!(check_without(&without), Ok(()));
+        let modules = |args: &[&str]| check_without(&parse(args).unwrap()).unwrap_err();
+        assert!(modules(&["game", "--without", "motion"]).starts_with("--without: `motion` runs in every game"));
+        assert!(modules(&["game", "--without", "locale"]).contains("`ui` (screens, menus and the HUD) needs `locale`"));
+        // `steam` needs `net`: built in, it goes too, or `net` alone is refused before the session is asked about.
+        assert!(modules(&["game", "--without", "net,steam", "--host"]).starts_with("--without net leaves out co-op sessions"));
+        if cfg!(feature = "steam") {
+            assert!(modules(&["game", "--without", "net"]).contains("`steam` (") && modules(&["game", "--without", "net"]).contains("needs `net`"));
+        }
+        assert!(modules(&["game", "--without", "save", "--character", "ann"]).starts_with("--without save leaves out saves"));
+        assert!(modules(&["game", "--without", "world", "--worldgen-report", "wilds"]).starts_with("--without world leaves out the region generator"));
+        for steam in [&["--steam-host"][..], &["--steam-server"], &["--headless", "--stand", "1", "--stand-steam"], &["--join", "steam:90071992547409921"], &["--steam-app", "480"]] {
+            let args: Vec<&str> = ["game", "--without", "steam"].into_iter().chain(steam.iter().copied()).collect();
+            assert!(modules(&args).starts_with("--without steam leaves out Steam"), "{steam:?}: {}", modules(&args));
+        }
 
         let plain = parse(&["game"]).unwrap().config();
         assert_eq!(plain.net, NetLaunch::Off);

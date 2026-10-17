@@ -49,10 +49,13 @@
 //! tiles are built from it. Before a region changes anything, every level file it uses is
 //! checked (nodes, components, prefabs): a problem refuses the change and names the tile and
 //! the file, and the old region stays. Content that names a file the asset folder lacks is
-//! an error at `content check`, naming the tile and the path. What is wrong *inside* a file
-//! is no content error (`content check` does not read the nodes of tile files; list a file
-//! as a content `level` too and it does): the journal gets an error line for it, naming
-//! the tiles, as soon as the file loads.
+//! an error at `content check`, naming the tile and the path. So is what is wrong *inside* a
+//! file: `content check` reads a tile's file as it reads a `level` definition's (the file must
+//! read, its nodes must make sense), and each problem is an error of the tile that names the
+//! file and the node (`tile `ruin`: geometry: tiles/ruin.gltf: node `Pillar`: unknown component
+//! `Helth` (did you mean `Health`?)`). A file that is also a content `level` is reported by
+//! the `level` alone. A file that breaks after content was checked (edited on disk while the
+//! game runs) still gets the journal's error line, naming the tiles, as soon as it loads.
 //!
 //! When a file changes on disk (hot reload) `shards_level` replaces its instances; the
 //! entities that come back are tagged again as they are made, inside the reload (a replay
@@ -65,7 +68,7 @@ use bevy::prelude::*;
 use shards_content::{ContentAppExt, ContentDb, Refs};
 use shards_core::LoadStatus;
 use shards_level::{
-    check_level, despawn_level, level_asset, request_level, spawn_level_file, FromLevel, LevelAsset, LevelCounter, LevelLibrary,
+    check_level, despawn_level, level_asset, request_level, spawn_level_file, FromLevel, LevelAsset, LevelCounter, LevelDef, LevelLibrary,
     LevelMarker, LevelPlugin, MarkerKind,
 };
 use shards_world::content::{RegionDef, TileDef, TileGeometry};
@@ -137,11 +140,17 @@ const ON_EDGE: f32 = 0.1;
 const EDGES: [(&str, &str); 4] = [("north", "n"), ("east", "e"), ("south", "s"), ("west", "w")];
 
 /// Content's check of a tile built from a level file (when content loads, on a hot edit, at
-/// `content check`): the file's `socket` markers against the tile's `sockets`, at every size a
-/// region uses the tile at. Each marker stands on an edge, at a part of it whose socket is of the
-/// marker's kind (and height, when the marker names one). Markers are optional: a socket the file
-/// does not mark is not checked. What is wrong inside the file (a node, a file that does not
-/// read) is no content error: the loader reports it when the file loads.
+/// `content check`). The file is read once and checked the way a `level` definition's file is:
+/// it must read, and every problem `shards_level` finds in its nodes (a component that does not
+/// exist, a prefab that is missing, a navlink that ends nowhere, ...) is an error of the tile
+/// that names the file and the node. Then the file's `socket` markers against the tile's
+/// `sockets`, at every size a region uses the tile at: each marker stands on an edge, at a part
+/// of it whose socket is of the marker's kind (and height, when the marker names one). Markers
+/// are optional: a socket the file does not mark is not checked.
+///
+/// A file that a `level` definition names too is that definition's to report: it checks the same
+/// things (and its `required_markers`), under its own name, and one problem of one file must
+/// not be two errors. The tile then adds only what is its own, the sockets.
 fn check_tile_file(tile: &TileDef, id: &str, refs: &mut Refs) {
     let TileGeometry::Level { path } = &tile.geometry else { return };
     let Some(root) = refs.asset_root() else { return };
@@ -149,7 +158,27 @@ fn check_tile_file(tile: &TileDef, id: &str, refs: &mut Refs) {
     if !Path::new(path).components().all(|c| matches!(c, Component::Normal(_))) || !root.join(path).is_file() {
         return;
     }
-    let Ok(level) = LevelAsset::read(root, path) else { return };
+    // A `level` definition reads its file only with a type registry: without one (a bare
+    // `ContentDb::build`), the tile says what the file is like, and nobody says it twice.
+    let by_level = refs.type_registry().is_some() && refs.iter::<LevelDef>().any(|(_, def)| Path::new(&def.file) == Path::new(path));
+    let level = match LevelAsset::read(root, path) {
+        Ok(level) => level,
+        // The reason names the file already: `tiles/ruin.gltf`: ...
+        Err(why) => {
+            if !by_level {
+                refs.error(format!("geometry: {why}"));
+            }
+            return;
+        }
+    };
+    // Without a type registry components cannot be told from typos.
+    if let Some(registry) = refs.type_registry()
+        && !by_level
+    {
+        for problem in check_level(&level, registry, Some(refs.db()), &[]) {
+            refs.error(format!("geometry: {path}: {problem}"));
+        }
+    }
     for problem in socket_problems(tile, id, &level, refs) {
         refs.error(format!("geometry: {path}: {problem}"));
     }
@@ -274,4 +303,50 @@ fn retag_level_entity(add: On<Add<FromLevel>>, levels: Query<(&FromLevel, Option
 /// The marker comes after [`FromLevel`] in the node, so a marker needs its own look.
 fn retag_level_marker(add: On<Add<LevelMarker>>, levels: Query<(&FromLevel, Option<&LevelMarker>)>, tiles: Res<TileLevels>, mut commands: Commands) {
     retag(add.entity, &levels, &tiles, &mut commands);
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::reflect::AppTypeRegistry;
+    use shards_content::db::Source;
+    use shards_content::ContentKinds;
+
+    use super::*;
+
+    /// The errors of a tile and a `level` that name one file that does not read, with or without
+    /// a type registry.
+    fn errors(registry: bool) -> Vec<String> {
+        let dir = std::env::temp_dir().join(format!("shards_tile_levels_{}_{registry}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("tiles")).unwrap();
+        std::fs::write(dir.join("tiles/bad.gltf"), "not a glTF").unwrap();
+        let mut kinds = ContentKinds::default();
+        kinds.register::<TileDef>();
+        kinds.register::<LevelDef>();
+        kinds.add_check::<TileDef>("level file", check_tile_file);
+        kinds.set_asset_root(dir.clone());
+        if registry {
+            kinds.set_type_registry(AppTypeRegistry::default());
+        }
+        let sources = vec![
+            Source {
+                path: "content/t.tile.ron".into(),
+                text: r#"{ "bad": (sockets: (n: "a", e: "a", s: "a", w: "a"), geometry: Level(path: "tiles/bad.gltf")) }"#.into(),
+            },
+            Source { path: "content/l.level.ron".into(), text: r#"{ "bad": (file: "tiles/bad.gltf") }"#.into() },
+        ];
+        let errors = ContentDb::build(&kinds, &sources).errors().map(ToString::to_string).collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        errors
+    }
+
+    #[test]
+    fn a_file_that_does_not_read_is_said_once_by_whoever_reads_it() {
+        // With a registry the `level` reads its file and says so; the tile keeps quiet.
+        let with = errors(true);
+        assert!(with.len() == 1 && with[0].starts_with("content/l.level.ron: level `bad`: `tiles/bad.gltf`: "), "{with:#?}");
+        // Without one the `level` does not read it, so the tile does.
+        let without = errors(false);
+        assert!(without.len() == 1 && without[0].starts_with("content/t.tile.ron: tile `bad`: geometry: `tiles/bad.gltf`: "), "{without:#?}");
+    }
 }

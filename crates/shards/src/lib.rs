@@ -50,6 +50,7 @@ pub mod coop;
 mod draws;
 #[cfg(feature = "render")]
 pub mod frames;
+pub mod modules;
 mod net_wiring;
 #[cfg(feature = "render")]
 mod offscreen;

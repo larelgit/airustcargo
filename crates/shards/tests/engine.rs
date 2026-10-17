@@ -105,3 +105,44 @@ fn a_test_app_comes_back_loaded_and_paused_at_tick_zero() {
     assert_eq!(shards::ai_core::sim::tick(app.world()), 3);
     assert!(!call(&mut app, "content_get", json!({"kind": "prefab", "id": "nothing"})).ok);
 }
+
+/// Every module a game may leave out goes (with what needs it), and the engine still loads and
+/// runs without it: the module and its tools are gone from what agents see.
+#[test]
+fn a_game_runs_without_each_module_it_may_leave_out() {
+    use shards::modules::{check_without, OPTIONAL_MODULES};
+    for module in OPTIONAL_MODULES.iter().filter(|m| m.name != "steam" || cfg!(feature = "steam")) {
+        // The module, and every module that needs one that goes.
+        let mut without = vec![module.name.to_owned()];
+        while let Some(more) = OPTIONAL_MODULES.iter().find(|m| !without.iter().any(|w| w == m.name) && m.needs.iter().any(|n| without.iter().any(|w| w == n))) {
+            without.push(more.name.to_owned());
+        }
+        let gone = check_without(&without).unwrap_or_else(|e| panic!("{without:?}: {e}"));
+        let leaves = without.clone();
+        let mut app = shards::testing::test_app(move |config| config.without = leaves, |app| {
+            app.add_plugins(TinyGame);
+        });
+        ok(&mut app, "step", json!({"ticks": 60}));
+        assert_eq!(shards::ai_core::sim::tick(app.world()), 60, "without {without:?}");
+        let modules: Vec<String> = app.world().resource::<EngineModules>().iter().map(|m| m.name.clone()).collect();
+        for name in &gone {
+            assert!(!modules.iter().any(|m| m == name), "without {without:?}: {name} still runs: {modules:?}");
+        }
+        for name in shards::modules::REQUIRED_MODULES {
+            assert!(modules.iter().any(|m| m == name), "without {without:?}: {name} does not run: {modules:?}");
+        }
+    }
+    // A module's tools go with it.
+    let mut app = shards::testing::test_app(|config| config.without = vec!["audio".into(), "fx".into()], |_| {});
+    for tool in ["audio", "sound_play", "effects", "effect_play"] {
+        assert!(!call(&mut app, tool, json!({})).ok, "{tool} is still there");
+    }
+    assert!(ok(&mut app, "observe", json!({})).ok);
+}
+
+/// What cannot be left out is said before anything is built.
+#[test]
+#[should_panic(expected = "EngineConfig::without: `ui` (screens, menus and the HUD) needs `locale`")]
+fn leaving_out_a_module_something_needs_is_refused() {
+    let _ = EnginePlugins::new(EngineConfig { without: vec!["locale".into()], ..shards::testing::config() }).build();
+}

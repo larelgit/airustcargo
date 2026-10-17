@@ -7,6 +7,7 @@
 //! `content_apply` calls, so its [hash](ContentDb::hash) is part of every replay check.
 
 use std::any::{Any, TypeId};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -14,6 +15,7 @@ use std::sync::Arc;
 
 use bevy::prelude::*;
 use bevy::reflect::TypeRegistry;
+use ron::value::RawValue;
 use schemars::JsonSchema;
 use serde::de::{DeserializeOwned, DeserializeSeed, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
@@ -34,8 +36,10 @@ pub const CONTENT_DIR: &str = "content";
 ///
 /// Ids are unique per kind across all files. `Option` fields may be written without
 /// `Some(...)`. Add `#[serde(deny_unknown_fields)]`, or a typo in an optional field
-/// (`damge: 8.0`) silently keeps its default. Register a kind with
-/// [`ContentAppExt::add_content`](crate::ContentAppExt::add_content).
+/// (`damge: 8.0`) silently keeps its default. A definition that does not fit the type is an
+/// error of its own, with the file, line and column; the other definitions of its file still
+/// load. (A syntax error, a bad or repeated id breaks the map itself: that file adds nothing.)
+/// Register a kind with [`ContentAppExt::add_content`](crate::ContentAppExt::add_content).
 pub trait ContentDef: Serialize + DeserializeOwned + Clone + Send + Sync + 'static {
     /// File kind: `"attack"` for `*.attack.ron`. Lowercase, no dots.
     const KIND: &'static str;
@@ -54,7 +58,7 @@ pub trait ContentDef: Serialize + DeserializeOwned + Clone + Send + Sync + 'stat
 pub struct ContentError {
     /// Asset path of the file: `content/combat/sword.moveset.ron`.
     pub file: Option<String>,
-    /// `(line, column)` of a parse error, 1-based.
+    /// `(line, column)` of a parse error in the file, 1-based.
     pub position: Option<(usize, usize)>,
     /// The content kind of the definition it concerns.
     pub kind: Option<String>,
@@ -120,8 +124,9 @@ pub(crate) struct ParseFailure {
     message: String,
 }
 
-/// Definitions of one file in file order, or where it failed.
-type Parsed = Result<Vec<(String, AnyDef)>, ParseFailure>;
+/// The definitions of one file in file order, each read or failed on its own; or the failure of
+/// the file as a whole, when its map is broken (syntax, a bad or repeated id).
+type Parsed = Result<Vec<(String, Result<AnyDef, ParseFailure>)>, ParseFailure>;
 
 /// Monomorphized operations of one kind, so the database stays untyped.
 #[derive(Clone, Copy)]
@@ -282,29 +287,30 @@ pub(crate) fn ron_options() -> ron::Options {
 }
 
 /// Reads `{ "id": (definition), ... }` in file order, remembering which id was being
-/// read when something failed.
-struct FileSeed<'a, T> {
-    current: &'a std::cell::RefCell<Option<String>>,
-    _def: std::marker::PhantomData<T>,
+/// read when something failed. A definition stays the text it is written in ([`RawValue`]:
+/// only its syntax is checked here), so one that does not fit its type fails alone when
+/// [`parse_file`] reads it, and the file's other definitions still load.
+struct FileSeed<'a> {
+    current: &'a RefCell<Option<String>>,
 }
 
-impl<'de, T: DeserializeOwned> DeserializeSeed<'de> for FileSeed<'_, T> {
-    type Value = Vec<(String, T)>;
+impl<'de> DeserializeSeed<'de> for FileSeed<'_> {
+    type Value = Vec<(String, &'de RawValue)>;
 
     fn deserialize<D: serde::Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
         deserializer.deserialize_map(self)
     }
 }
 
-impl<'de, T: DeserializeOwned> Visitor<'de> for FileSeed<'_, T> {
-    type Value = Vec<(String, T)>;
+impl<'de> Visitor<'de> for FileSeed<'_> {
+    type Value = Vec<(String, &'de RawValue)>;
 
     fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str("a map of definitions by id: { \"id\": (...), ... }")
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-        let mut defs: Vec<(String, T)> = Vec::new();
+        let mut defs: Vec<(String, &'de RawValue)> = Vec::new();
         while let Some(id) = map.next_key::<String>()? {
             *self.current.borrow_mut() = Some(id.clone());
             if let Err(why) = check_id(&id) {
@@ -313,7 +319,7 @@ impl<'de, T: DeserializeOwned> Visitor<'de> for FileSeed<'_, T> {
             if defs.iter().any(|(seen, _)| *seen == id) {
                 return Err(serde::de::Error::custom("defined twice in this file"));
             }
-            let def = map.next_value::<T>()?;
+            let def = map.next_value::<&'de RawValue>()?;
             defs.push((id, def));
             *self.current.borrow_mut() = None;
         }
@@ -332,17 +338,52 @@ fn check_id(id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Reads a file in two steps. The map first, the way [`FileSeed`] cuts it into definitions
+/// (a failure there is the file's: nothing says where the next definition starts). Then each
+/// definition as `T`, alone, with the extensions the file turned on (`#![enable(...)]`).
 fn parse_file<T: ContentDef>(text: &str) -> Parsed {
-    let current = std::cell::RefCell::new(None);
-    let seed = FileSeed::<T> { current: &current, _def: std::marker::PhantomData };
-    match ron_options().from_str_seed(text, seed) {
-        Ok(defs) => Ok(defs.into_iter().map(|(id, def)| (id, Arc::new(def) as AnyDef)).collect()),
-        Err(e) => Err(ParseFailure {
-            position: Some((e.span.start.line, e.span.start.col)),
-            id: current.into_inner(),
-            message: e.code.to_string(),
-        }),
+    let whole = |e: ron::error::SpannedError, id: Option<String>| ParseFailure {
+        position: Some((e.span.start.line, e.span.start.col)),
+        id,
+        message: e.code.to_string(),
+    };
+    let current = RefCell::new(None);
+    let options = ron_options();
+    let mut de = ron::Deserializer::from_str_with_options(text, &options).map_err(|e| whole(e, None))?;
+    let raws = match (FileSeed { current: &current }).deserialize(&mut de) {
+        Ok(raws) => raws,
+        Err(e) => return Err(whole(de.span_error(e), current.into_inner())),
+    };
+    de.end().map_err(|e| whole(de.span_error(e), None))?;
+    let options = ron_options().with_default_extension(de.extensions());
+    Ok(raws
+        .into_iter()
+        .map(|(id, raw)| {
+            let ron = raw.get_ron();
+            let def = options.from_str::<T>(ron).map(|def| Arc::new(def) as AnyDef).map_err(|e| ParseFailure {
+                position: Some(position_in_file(text, ron, (e.span.start.line, e.span.start.col))),
+                id: Some(id.clone()),
+                message: e.code.to_string(),
+            });
+            (id, def)
+        })
+        .collect())
+}
+
+/// Where `at`, a `(line, column)` inside `part` (1-based, columns counted in chars as RON
+/// does), is in `text`, when `part` is a piece of it: the line and column of `part`'s first
+/// char, then `at` on from there. On `part`'s first line the column adds up; on later lines
+/// it is the column of the file already. A `part` from elsewhere keeps `at` as it is.
+fn position_in_file(text: &str, part: &str, at: (usize, usize)) -> (usize, usize) {
+    let bounds = text.as_bytes().as_ptr_range();
+    let start = part.as_ptr();
+    if !bounds.contains(&start) {
+        return at;
     }
+    let before = &text[..start as usize - bounds.start as usize];
+    let line = 1 + before.chars().filter(|&c| c == '\n').count();
+    let col = 1 + before.chars().rev().take_while(|&c| c != '\n').count();
+    if at.0 == 1 { (line, col + at.1 - 1) } else { (line + at.0 - 1, at.1) }
 }
 
 fn def_from_json<T: ContentDef>(json: &Value) -> Result<AnyDef, String> {
@@ -423,20 +464,27 @@ impl ContentDb {
             Ok(kind) => kind,
             Err(why) => return self.file_errors.push(ContentError::in_file(path, why)),
         };
+        let parse_error = |failure: ParseFailure| ContentError {
+            file: Some(path.to_owned()),
+            position: failure.position,
+            kind: failure.id.is_some().then(|| kind.kind.to_owned()),
+            id: failure.id,
+            message: failure.message,
+        };
         let defs = match (kind.fns.parse)(&source.text) {
             Ok(defs) => defs,
-            Err(failure) => {
-                return self.file_errors.push(ContentError {
-                    file: Some(path.to_owned()),
-                    position: failure.position,
-                    kind: failure.id.is_some().then(|| kind.kind.to_owned()),
-                    id: failure.id,
-                    message: failure.message,
-                });
-            }
+            Err(failure) => return self.file_errors.push(parse_error(failure)),
         };
         let table = self.tables.entry(kind.kind).or_default();
         for (id, def) in defs {
+            // A definition that does not read is an error of its own: the rest of the file loads.
+            let def = match def {
+                Ok(def) => def,
+                Err(failure) => {
+                    self.file_errors.push(parse_error(failure));
+                    continue;
+                }
+            };
             if let Some(first) = table.get(&id) {
                 let message = format!("already defined in {}", first.file);
                 let error = ContentError { kind: Some(kind.kind.to_owned()), id: Some(id), ..ContentError::in_file(path, message) };
@@ -650,6 +698,19 @@ impl ContentDb {
     pub(crate) fn new_errors<'a>(&'a self, before: &ContentDb) -> Vec<&'a ContentError> {
         let old: Vec<&ContentError> = before.errors().collect();
         self.errors().filter(|e| !old.contains(e)).collect()
+    }
+
+    /// What stops an edit of `edited` files from applying: errors `before` did not have, and
+    /// any definition of an edited file that does not read, new error or not. A file applies
+    /// whole or not at all, so one with a broken definition keeps its previous version until
+    /// every definition reads. The file errors are the ones that leave a definition out: it
+    /// does not parse (with a position), its id is taken, it has no JSON (without one).
+    pub(crate) fn refusals<'a>(&'a self, before: &ContentDb, edited: &[String]) -> Vec<&'a ContentError> {
+        let old: Vec<&ContentError> = before.errors().collect();
+        let unread = |e: &ContentError| {
+            self.file_errors.iter().any(|f| std::ptr::eq(f, e)) && e.file.as_ref().is_some_and(|f| edited.contains(f))
+        };
+        self.errors().filter(|e| !old.contains(e) || unread(e)).collect()
     }
 
     /// Takes the file texts and file errors of `other` (after its definitions were
@@ -926,5 +987,63 @@ mod tests {
             errors,
             ["content/a.door.ron: door `gate`: width 4 is wider than a wall's 3 m", "content/a.door.ron: door `hatch`: width must be above 0"]
         );
+    }
+
+    #[derive(Serialize, Deserialize, Clone, Debug)]
+    #[serde(deny_unknown_fields)]
+    struct Strike {
+        damage: f32,
+        #[serde(default)]
+        windup: f32,
+    }
+    impl ContentDef for Strike {
+        const KIND: &'static str = "strike";
+    }
+
+    /// The only error of a database built from `text` as one `strike` file: its position,
+    /// the id it names and its message.
+    fn only_error(text: &str) -> ((usize, usize), String, String) {
+        let mut kinds = ContentKinds::default();
+        kinds.register::<Strike>();
+        let db = ContentDb::build(&kinds, &[Source { path: "content/a.strike.ron".into(), text: text.into() }]);
+        let errors: Vec<&ContentError> = db.errors().collect();
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        (errors[0].position.expect("a position"), errors[0].id.clone().expect("an id"), errors[0].message.clone())
+    }
+
+    #[test]
+    fn a_broken_definition_is_reported_where_a_whole_file_parse_reported_it() {
+        // Each text has one mistake, in a different place and in a different kind of way.
+        let cases = [
+            ("on the line of the id", "{ \"claw\": (damge: 8.0) }", "claw"),
+            ("after good definitions on the same line", "{ \"a\": (damage: 1.0), \"b\": (damge: 2.0) }", "b"),
+            ("on a later line of the definition", "{\n    \"sword\": (damage: 25.0),\n    \"claw\": (\n        damage: 8.0,\n        speed: 3.0,\n    ),\n}", "claw"),
+            ("in a value that starts on the next line", "{\n    \"claw\":\n        (damge: 8.0),\n}", "claw"),
+            ("behind a comment", "{\n    \"claw\": /* heavy */ (damge: 8.0), // slow\n}", "claw"),
+            ("behind an id of wide chars", "{ \"клык\": (damge: 8.0) }", "клык"),
+            ("with tabs and CRLF", "{\r\n\t\"a\": (damage: 1.0),\r\n\t\"b\": (\r\n\t\twindup: 0.5, damge: 8.0,\r\n\t),\r\n}\r\n", "b"),
+            ("a wrong type", "{\n    \"claw\": (damage: \"lots\"),\n}", "claw"),
+            ("a missing field", "{\n    \"sword\": (damage: 1.0),\n    \"claw\": (windup: 0.2),\n}", "claw"),
+            ("a value of the wrong shape", "{ \"claw\": 12 }", "claw"),
+        ];
+        for (what, text, id) in cases {
+            let old = ron_options().from_str::<BTreeMap<String, Strike>>(text).unwrap_err();
+            let (position, named, message) = only_error(text);
+            assert_eq!(position, (old.span.start.line, old.span.start.col), "position {what}");
+            assert_eq!(named, id, "id {what}");
+            assert_eq!(message, old.code.to_string(), "message {what}");
+        }
+    }
+
+    #[test]
+    fn a_position_inside_a_piece_of_a_file_is_a_position_in_the_file() {
+        let text = "{\n  \"клык\": (a: 1,\n    b: 2),\n}";
+        let part = &text[text.find('(').unwrap()..];
+        // The piece starts at line 2, column 11 (the id's four chars are two bytes each).
+        assert_eq!(position_in_file(text, part, (1, 1)), (2, 11));
+        assert_eq!(position_in_file(text, part, (1, 5)), (2, 15));
+        assert_eq!(position_in_file(text, part, (2, 7)), (3, 7));
+        // Text that is not a piece of the file is left alone.
+        assert_eq!(position_in_file(text, "(a: 1)", (1, 3)), (1, 3));
     }
 }

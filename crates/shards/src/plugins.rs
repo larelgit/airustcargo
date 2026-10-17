@@ -67,6 +67,8 @@ impl PluginGroup for EnginePlugins {
         if let Ok(cwd) = std::env::current_dir() {
             config.asset_dir = resolve_asset_path(&config.asset_dir, std::env::var("BEVY_ASSET_ROOT").ok().as_deref(), &cwd);
         }
+        // What the game leaves out; `shards::run` said what is wrong with it already.
+        let without = crate::modules::check_without(&config.without).unwrap_or_else(|e| panic!("EngineConfig::without: {e}"));
         // Driven from outside (a test, a stand's driver), beside other apps in the process.
         let driven = config.testing || config.embedded;
         let headless = config.headless || driven;
@@ -142,14 +144,45 @@ impl PluginGroup for EnginePlugins {
         // Steam (feature `steam`): lobbies, the relay as a transport, achievements, cloud saves.
         #[cfg(feature = "steam")]
         let group = group.add(shards_steam::SteamPlugin);
-        group
+        let group = group
             // Performance: the `perf` content kind (`--perf`), `counts` and `frames` in `ai/status`.
             .add(crate::bench::PerfPlugin)
             // The developer menu and console, last: every module above has added its entries.
             .add(DevPlugin)
             // A build for players: none of the developer's keys.
-            .add(PlayerKeys)
+            .add(PlayerKeys);
+        leave_out(group, &without)
     }
+}
+
+/// `group` without the plugins of the modules in `without` (checked by
+/// [`check_without`](crate::modules::check_without)), and without what joins one of them to
+/// another (level files as tiles, co-op saves).
+fn leave_out(mut group: PluginGroupBuilder, without: &[&str]) -> PluginGroupBuilder {
+    fn off<P: Plugin>(group: PluginGroupBuilder) -> PluginGroupBuilder {
+        if group.contains::<P>() { group.disable::<P>() } else { group }
+    }
+    for module in without {
+        group = match *module {
+            "level" => off::<TileLevelsPlugin>(off::<LevelPlugin>(group)),
+            "world" => off::<TileLevelsPlugin>(off::<WorldPlugin>(group)),
+            "npc" => off::<NpcPlugin>(group),
+            "net" => off::<EngineNetPlugin>(off::<NetPlugin>(group)),
+            "save" => off::<EngineSavePlugin>(off::<SavePlugin>(group)),
+            "coop" => off::<CoopPlugin>(group),
+            "locale" => off::<LocalePlugin>(group),
+            "ui" => off::<EngineUiPlugin>(off::<ShardsUiPlugin>(group)),
+            "audio" => off::<EngineAudioPlugin>(off::<ShardsAudioPlugin>(group)),
+            "look" => off::<LookPlugin>(group),
+            "scatter" => off::<ScatterPlugin>(group),
+            "fx" => off::<FxPlugin>(group),
+            #[cfg(feature = "steam")]
+            "steam" => off::<shards_steam::SteamClientPlugin>(off::<shards_steam::SteamPlugin>(group)),
+            "dev" => off::<DevPlugin>(group),
+            _ => group,
+        };
+    }
+    group
 }
 
 /// A build for players (feature `dist`): the developer's keys do nothing, neither the console and

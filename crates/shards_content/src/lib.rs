@@ -16,13 +16,15 @@
 //! - **Loading**: the folder loads through the asset server while the loading gate holds
 //!   the simulation; then every file is parsed and the whole database validated
 //!   (schema, duplicate ids, references between definitions). Problems are journaled
-//!   with file, line and id; definitions that parsed are used anyway.
+//!   with file, line and id; definitions that parsed are used anyway, also those next to
+//!   a definition that did not (only a broken map, a syntax error or a bad id, drops its file).
 //! - **Reading**: [`ContentDb::get`] or the [`Content`] system param. Gameplay never
 //!   writes content.
 //! - **Hot reload** (`hot_reload` feature): an edited file is checked against the whole
 //!   database; a clean edit is applied through the `content_apply` tool, recorded in
 //!   the replay at its tick, and journaled: `content reloaded: combat/attacks.attack.ron
-//!   (1 definition changed)`. A broken edit is journaled and the previous version kept.
+//!   (1 definition changed)`. A broken edit is journaled and the previous version kept: a
+//!   file applies whole, so one broken definition keeps the previous version of all of its file.
 //!   While a module holds content ([`ContentGuards`]: a co-op session) an edit waits and
 //!   the tools refuse.
 //! - **Checking without a game**: [`check_dir`] for a `--check-content` CI step.

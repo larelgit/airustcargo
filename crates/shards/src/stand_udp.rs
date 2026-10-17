@@ -50,6 +50,8 @@ pub struct StandSpec {
     /// The host's `--save-dir`: a child keeps its character below it (`<dir>/stand-cK`), so no
     /// two games of the stand write the same files.
     pub save_dir: String,
+    /// The host's `--without`: every member leaves out the same engine modules.
+    pub without: Vec<String>,
 }
 
 /// The port file of member `name` beside `path`: `F` → `F.c1`.
@@ -73,6 +75,9 @@ pub fn child_args(spec: &StandSpec, n: u8, addr: &str) -> Vec<String> {
     }
     if let Some(budget) = spec.tick_budget {
         with("--tick-budget-ms", (budget.as_secs_f64() * 1000.0).to_string());
+    }
+    if !spec.without.is_empty() {
+        with("--without", spec.without.join(","));
     }
     if spec.no_remote {
         args.push("--no-remote".into());
@@ -455,6 +460,7 @@ mod tests {
             port_file: Some(PathBuf::from("/tmp/g.port")),
             no_remote: false,
             save_dir: "saves".into(),
+            without: Vec::new(),
         }
     }
 
@@ -477,6 +483,9 @@ mod tests {
         assert!(args.windows(2).any(|w| w == ["--tick-budget-ms", "5"]), "{args:?}");
         assert!(args.contains(&"--no-remote".to_owned()) && !args.contains(&"--port".to_owned()) && !args.contains(&"--net-sim".to_owned()), "{args:?}");
         assert!(args.windows(2).any(|w| w == ["--save-dir", "saves/stand-c1"]), "one slash: {args:?}");
+        assert!(!args.contains(&"--without".to_owned()), "{args:?}");
+        let spec = StandSpec { without: vec!["audio".into(), "dev".into()], ..spec };
+        assert!(child_args(&spec, 1, "127.0.0.1:1").windows(2).any(|w| w == ["--without", "audio,dev"]), "the host's modules left out");
     }
 
     /// The exit status of a real process: `sh -c 'exit N'`, or killed by a signal.

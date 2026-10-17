@@ -60,8 +60,8 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # автоте�
   отвечает `unauthorized`. Из другого места передайте его в `SHARDS_TOKEN`.
 - Останавливайте игру `kill` (или Ctrl+C), не `kill -9`: так она удаляет токен и `--port-file`. На Windows сигналов нет:
   `shards quit` (инструмент `quit`) завершает игру так же и ждёт, пока она перестанет отвечать и кончится её процесс.
-- Собранный бинарник запускайте через `cargo sandbox` (или с `BEVY_ASSET_ROOT=$PWD/crates/sandbox`, путь абсолютный:
-  относительный не принимает наблюдатель за файлами): иначе он не найдёт `assets/`, и мир окажется пустым.
+- Собранный бинарник запускайте через `cargo sandbox` (или с `BEVY_ASSET_ROOT=crates/sandbox`: относительный путь движок
+  делает абсолютным от рабочей папки): иначе он не найдёт `assets/`, и мир окажется пустым.
 - Файлы игра пишет только к себе: реплеи в `replays/`, снимки экрана в `shots/`, снапшоты состояния в `snapshots/`,
   отчёты о падениях в `crashes/` (`save-replay replays/x.json`, `shot -o shots/x.png`, `save-snapshot snapshots/x.json`).
   Абсолютные пути и `..` не принимаются.
