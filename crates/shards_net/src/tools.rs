@@ -219,8 +219,10 @@ fn net_status(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
         out["deltas"] = json!({ "applied": client.deltas, "skipped": client.skipped, "stale": client.ring.stale, "missing_baseline": client.ring.missing_baseline, "bytes": client.delta_bytes });
         out["rebases"] = json!(client.rebases);
         out["prediction"] = prediction(world);
-        if let Some(desync) = world.get_resource::<NetDesync>().and_then(|d| d.last.clone()) {
-            out["last_desync"] = json!({ "host_tick": desync.0, "tick": desync.1, "first": desync.2 });
+        let desync = world.get_resource::<NetDesync>();
+        out["desyncs"] = json!(desync.map_or(0, |d| d.count));
+        if let Some(last) = desync.and_then(|d| d.last.clone()) {
+            out["last_desync"] = json!({ "host_tick": last.0, "tick": last.1, "first": last.2 });
         }
     }
     Ok(out)

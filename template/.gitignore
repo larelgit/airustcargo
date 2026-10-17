@@ -4,6 +4,7 @@
 /shots/
 /snapshots/
 /.shards/
+/saves/
 *.png
 !assets/**/*.png
 # Reference replays checked in and verified by CI (`--replay tests/replays/x.json --verify`).

@@ -1,0 +1,13 @@
+// The co-op session (engine content kind `net`, id `default`): two players, the host's hero and
+// one guest. A joining player's body is this prefab, at the hero's side; the engine gives it
+// `PlayerId(1)` and takes the keyboard and camera marks away (they are the host's).
+//
+// `--stand 1` plays both in one process (a test stand with a `shards` port each);
+// `--host 0` and `--join ADDR` on two machines. Everything else (send rate, interest radius,
+// timeouts) keeps the engine's defaults: see `NetDef` in shards_net.
+{
+    "default": (
+        max_players: 2,
+        player_prefab: "hero",
+    ),
+}

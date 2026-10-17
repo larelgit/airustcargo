@@ -1,0 +1,49 @@
+# Co-op for two: the host's hero (e1) and a guest's (e7, the prefab content/session.net.ron names,
+# spawned beside the hero), on a link of 150 ms one way with 2% loss. The guest defeats the grunt:
+# the host keeps score, so the trophy is the guest's on every copy of the yard, the host saves the
+# yard, and the guest's character is sent to the guest's machine. No copy may drift from the host's.
+#
+# The stand subfolder keeps it out of the single-game run (scenarios/*.scenario). In process
+# (cargo test, tests/scenarios.rs) the stand is built from the `stand` line; against a live one:
+#   cargo game --stand 1 --headless --paused --port 0 --port-file F --net-sim latency=150,loss=0.02 &
+#   SHARDS_PORT_FILE=F shards wait --peer all
+#   SHARDS_PORT_FILE=F shards scenario scenarios/stand/coop.scenario
+stand clients=1 latency=150 loss=0.02
+seed 42
+
+# --- the yard as content made it, the guest at the hero's side, whatever ran before
+@host act heal id=e1
+@host act heal id=e2
+@host act heal id=e7
+@host act set id=e1 component=Trophies path=defeated value=0
+@host act set id=e7 component=Trophies path=defeated value=0
+@host act teleport id=e1 x=0 z=12 y=0
+@host act teleport id=e7 x=2 z=12 y=0
+@host act teleport id=e2 x=0 z=-10 y=0
+@host act stop
+@c1 act stop
+step 60
+invariant !journal "desync"
+@c1 expect field e7 Trophies.defeated == 0
+
+# --- the guest walks up to the grunt and fights it; the host's hero stays where it is
+mark
+@c1 act move_to target=e2 within=3
+@c1 act attack target=e2 repeat=true
+@c1 expect result contains "attacking e2"
+step 2400 --until named:arena_cleared
+expect stopped "arena_cleared"
+@host expect journal "e2 died (killed by e7"
+
+# --- the trophy is the guest's, wherever one looks; the host's hero earned nothing
+@host expect field e7 Trophies.defeated == 1
+@host expect field e1 Trophies.defeated == 0
+step 120
+@c1 expect field e7 Trophies.defeated == 1
+@c1 expect field e1 Trophies.defeated == 0
+@c1 expect shows e2 "dead"
+
+# --- the clear yard saved: the world on the host, the guest's character on the guest's machine
+@host expect journal "save: world/slot1 saved (yard_cleared"
+@c1 expect journal "save: character/c1 saved (yard_cleared"
+@c1 expect !journal "skipped on a client"

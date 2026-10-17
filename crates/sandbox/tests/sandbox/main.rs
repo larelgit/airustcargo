@@ -26,5 +26,6 @@ mod scenarios;
 mod settings;
 mod shutdown;
 mod snapshots;
+mod soak;
 mod stand_udp;
 mod tiles;

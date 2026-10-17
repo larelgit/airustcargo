@@ -8,6 +8,7 @@
 
 use shards::motion::Shape;
 use shards::prelude::*;
+use shards::world::RegionEdge;
 
 use crate::brain::Grunt;
 
@@ -34,12 +35,12 @@ fn setup_scene(mut commands: Commands) {
 }
 
 /// Gives every collider a mesh of its own shape, once: an entity without `Visibility` has
-/// not been dressed yet.
+/// not been dressed yet. The wall around a region's edge stays invisible.
 fn dress(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    undressed: Query<(Entity, &Collider, Has<PlayerId>, Has<Grunt>), Without<Visibility>>,
+    undressed: Query<(Entity, &Collider, Has<PlayerId>, Has<Grunt>), (Without<Visibility>, Without<RegionEdge>)>,
 ) {
     for (entity, collider, is_hero, is_grunt) in &undressed {
         let mesh = match collider.shape {

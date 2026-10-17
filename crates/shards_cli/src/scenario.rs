@@ -224,6 +224,56 @@ pub fn run(cli: &Cli, client: Option<&Client>, files: &[PathBuf], quiet: bool, a
     })
 }
 
+/// `shards soak`, in minutes of game time as the command line has it.
+pub struct SoakMinutes {
+    pub seed: u64,
+    pub minutes: f64,
+    pub max_step: u64,
+    pub regions: Vec<String>,
+    pub regen_minutes: f64,
+    pub save_minutes: f64,
+    pub report_minutes: f64,
+}
+
+/// Plays a soak ([`shards_script::soak`]) on the stand the port file names (every member, found
+/// like a stand scenario finds them) or on the one game `--port` names. Exit code 0 when no
+/// member desynced, 3 when a desync or a halted game ended it early; a refused `regen` or
+/// `save_game` is an error (2) that names the call.
+pub fn soak(cli: &Cli, plan: &SoakMinutes, as_json: bool) -> Result<ExitCode, String> {
+    if !(plan.minutes > 0.0 && plan.minutes.is_finite()) {
+        return Err(format!("--minutes must be above 0 (is {})", plan.minutes));
+    }
+    let host = if cli.port_file.is_some() { cli.client_for(Peer::Host)? } else { cli.host_client()? };
+    let hz = host.call("ai/status", Value::Null)?["tick_hz"].as_f64().filter(|hz| *hz > 0.0).unwrap_or(60.0);
+    let ticks = |minutes: f64| if minutes > 0.0 && minutes.is_finite() { (minutes * 60.0 * hz).round().max(1.0) as u64 } else { 0 };
+    let plan = shards_script::soak::SoakPlan {
+        seed: plan.seed,
+        ticks: ticks(plan.minutes),
+        max_step: plan.max_step.max(1),
+        regions: plan.regions.clone(),
+        regen_every: ticks(plan.regen_minutes),
+        save_every: ticks(plan.save_minutes),
+        report_every: ticks(plan.report_minutes),
+        tick_hz: hz,
+    };
+    let mut driver = ClientDriver::new(cli, &host);
+    let report = shards_script::soak::run(&mut driver, &plan, &mut |line| {
+        if !as_json {
+            say(line);
+        }
+    })?;
+    if as_json {
+        say(serde_json::to_string_pretty(&report).unwrap_or_default());
+    } else {
+        // The progress lines were printed as they came.
+        let text = report.to_string();
+        for line in text.lines().skip(report.log.len()) {
+            say(line);
+        }
+    }
+    Ok(if report.passed() { ExitCode::SUCCESS } else { ExitCode::from(crate::exit::HALTED) })
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::TcpListener;

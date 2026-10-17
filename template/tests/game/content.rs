@@ -39,7 +39,7 @@ fn a_typo_in_the_level_is_an_error_that_names_the_fix() {
     let dir = std::env::temp_dir().join(format!("my_game_typo_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("content")).unwrap();
-    std::fs::write(dir.join("content/arena.arena.ron"), r#"{ "yard": (half: 20.0, spawns: [(prefab: "grnt", at: (0.0, 0.0))]) }"#).unwrap();
+    std::fs::write(dir.join("content/arena.arena.ron"), r#"{ "yard": (half: 20.0, spawns: [(key: "g", prefab: "grnt", at: (0.0, 0.0)), (key: "g", prefab: "grunt", at: (2.0, 0.0))]) }"#).unwrap();
     std::fs::write(dir.join("content/characters.prefab.ron"), r#"{ "grunt": (components: {}) }"#).unwrap();
     let app = my_game::build_app(&shards::testing::config());
     let kinds = app.world().resource::<ContentKinds>().clone();
@@ -47,6 +47,7 @@ fn a_typo_in_the_level_is_an_error_that_names_the_fix() {
     let _ = std::fs::remove_dir_all(dir);
     let text = errors.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n");
     assert!(text.contains("arena `yard`: spawns[0].prefab -> unknown prefab `grnt` (did you mean `grunt`?)"), "{text}");
+    assert!(text.contains("spawns[1].key `g` is the key of spawns[0] too: a save names one character by it"), "{text}");
 }
 
 #[test]

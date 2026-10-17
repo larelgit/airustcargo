@@ -142,7 +142,7 @@ pub struct RegionInfoArgs {
     pub manifest: bool,
 }
 
-fn region_info(In(call): In<Call<RegionInfoArgs>>, region: Option<Res<ActiveRegion>>) -> ToolResult<Value> {
+fn region_info(In(call): In<Call<RegionInfoArgs>>, region: Option<Res<ActiveRegion>>, db: Res<ContentDb>) -> ToolResult<Value> {
     let region = region.ok_or("no region in the world (a dev makes one with `regen region=<id>`)")?;
     let m = &region.manifest;
     let pois: Vec<String> = m.pois.iter().map(|p| format!("{} at {}", p.id, fmt_pos(p.position()))).collect();
@@ -161,6 +161,9 @@ fn region_info(In(call): In<Call<RegionInfoArgs>>, region: Option<Res<ActiveRegi
     });
     if m.origin != [0.0, 0.0] {
         out["north_west_corner"] = serde_json::json!(fmt_pos(m.corner()));
+    }
+    if let Some(height) = region::edge_wall(&db, m) {
+        out["edge"] = serde_json::json!(format!("walled, {height}m high"));
     }
     if call.args.manifest {
         out["manifest"] = serde_json::to_value(m).map_err(|e| e.to_string())?;

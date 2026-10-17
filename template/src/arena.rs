@@ -44,6 +44,10 @@ pub struct WallDef {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(crate = "shards::serde", deny_unknown_fields)]
 pub struct SpawnDef {
+    /// What a world save knows this character by (`SaveKey` `yard.<key>`, see `progress::Fallen`).
+    /// It stays with the character when spawns are added, removed or reordered; never give an
+    /// old key to a new character, or a save made before would put it down.
+    pub key: String,
     /// The prefab to spawn (`characters.prefab.ron`).
     pub prefab: String,
     /// Where its feet stand: (x east, z south), meters.
@@ -69,6 +73,11 @@ impl ContentDef for ArenaDef {
         for (i, spawn) in self.spawns.iter().enumerate() {
             // A prefab that does not exist is an error naming this field, with the closest id.
             refs.require::<PrefabDef>(&spawn.prefab, &format!("spawns[{i}].prefab"));
+            if spawn.key.trim().is_empty() {
+                refs.error(format!("spawns[{i}].key is empty: name the character for saves (`key: \"gate_grunt\"`)"));
+            } else if let Some(first) = self.spawns[..i].iter().position(|s| s.key == spawn.key) {
+                refs.error(format!("spawns[{i}].key `{}` is the key of spawns[{first}] too: a save names one character by it", spawn.key));
+            }
         }
     }
 }
@@ -107,8 +116,13 @@ fn spawn_arena(world: &mut World) {
     for spawn in &arena.spawns {
         let at = Vec3::new(spawn.at.0, 0.0, spawn.at.1);
         let transform = Transform::from_translation(at).with_rotation(Quat::from_rotation_y(spawn.yaw_deg.to_radians()));
-        if let Err(why) = spawn_prefab(world, &spawn.prefab, transform, None) {
-            error!("arena `{ARENA}`: cannot spawn {}: {why}", spawn.prefab);
+        match spawn_prefab(world, &spawn.prefab, transform, None) {
+            // What a world save knows it by (`progress::Fallen`): its key in content, which stays
+            // with it whatever else the content changes.
+            Ok(character) => {
+                world.entity_mut(character).insert(SaveKey::new(format!("{ARENA}.{}", spawn.key)));
+            }
+            Err(why) => error!("arena `{ARENA}`: cannot spawn {}: {why}", spawn.prefab),
         }
     }
 

@@ -273,3 +273,57 @@ fn a_held_seed_holds_the_start_region_until_the_hosts_seed_is_adopted() {
     ok(&mut app, "regen", json!({"seed": 5}));
     assert_eq!(app.world().resource::<Rebuilt>().0, ["region meadow", "region meadow"], "a region change rebuilds the world");
 }
+
+#[test]
+fn an_edge_wall_keeps_a_body_in_the_region_and_an_open_edge_lets_it_fall() {
+    for walled in [false, true] {
+        let mut app = app(7, None);
+        if walled {
+            let db = edited_db(&app, "world/meadow.region.ron", |t| t.replacen("size: (6, 4),", "size: (6, 4),\n        edge_wall: 3.0,", 1));
+            assert_eq!(db.errors().count(), 0, "{:?}", db.errors().map(ToString::to_string).collect::<Vec<_>>());
+            app.world_mut().insert_resource(db);
+        }
+        ok(&mut app, "regen", json!({"region": "walled", "seed": 3}));
+        let info = testing::ok(&mut app, "region_info", json!({})).result;
+        assert_eq!(info.get("edge").and_then(|e| e.as_str()), walled.then_some("walled, 3m high"), "{info}");
+        // The gate is the north-west cell: west of it is the edge.
+        let corner = region(&app).manifest.corner();
+        let hero = hero(&mut app);
+        ok(&mut app, "move", json!({"dir": "W", "meters": 40}));
+        ok(&mut app, "step", json!({"ticks": 600}));
+        let at = pos(&app, hero);
+        if walled {
+            assert!(at.x > corner.x && at.y > -0.5, "the wall held it in the region: {at} (edge at x = {})", corner.x);
+        } else {
+            assert!(at.x < corner.x && at.y < -5.0, "with an open edge it walks off the end of the world: {at}");
+        }
+    }
+}
+
+#[test]
+fn an_edge_wall_takes_no_collider_id_from_the_tiles_and_goes_with_the_region() {
+    let colliders = |app: &mut App| {
+        let mut ids: Vec<u32> =
+            app.world_mut().query_filtered::<&ColliderId, With<RegionPart>>().iter(app.world()).map(|c| c.0).collect();
+        ids.sort_unstable();
+        ids
+    };
+    let mut open = app(7, None);
+    ok(&mut open, "regen", json!({"region": "walled", "seed": 3}));
+    let without = colliders(&mut open);
+
+    let mut app = app(7, None);
+    let db = edited_db(&app, "world/meadow.region.ron", |t| t.replacen("size: (6, 4),", "size: (6, 4),\n        edge_wall: 3.0,", 1));
+    app.world_mut().insert_resource(db);
+    ok(&mut app, "regen", json!({"region": "walled", "seed": 3}));
+    let with = colliders(&mut app);
+    assert_eq!(with.len(), without.len() + 4, "four walls");
+    assert_eq!(with[..without.len()], without[..], "the tiles keep their ids: the walls come last");
+    // Marked, so a game that draws every collider can leave them out.
+    let marked = app.world_mut().query_filtered::<&Name, With<shards::world::RegionEdge>>().iter(app.world()).filter(|n| n.as_str() == "region edge").count();
+    assert_eq!(marked, 4);
+    // A region change takes the walls away with the rest of the region.
+    ok(&mut app, "regen", json!({"region": "meadow", "seed": 3}));
+    let walls = app.world_mut().query::<&Name>().iter(app.world()).filter(|n| n.as_str() == "region edge").count();
+    assert_eq!(walls, 0, "meadow has an open edge, and the walled region's walls are gone");
+}

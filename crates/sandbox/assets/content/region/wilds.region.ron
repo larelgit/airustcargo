@@ -30,5 +30,8 @@
         fallback: "wilds_safe",
         // Monsters farther than this from every player rest (dormant).
         active_radius: 40.0,
+        // An invisible wall 4 m high around the edge: nobody walks, dodges or is knocked off the
+        // end of the world (the invariant `bodies_in_world` holds every body to it).
+        edge_wall: 4.0,
     ),
 }

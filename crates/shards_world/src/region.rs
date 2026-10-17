@@ -36,7 +36,7 @@ use shards_core::{loading_statuses, seed_ready, EngineState, Intent, LoadStatus,
 use shards_motion::{Collider, ColliderId, ColliderIds, CollisionLayers, LayerMask, PhysicsWorld, QueryFilter, Shape, Volume};
 
 use crate::checks::RegionGraph;
-use crate::content::{level_path_problem, PoiDef, RoomDef, TileDef, TileGeometry, TilePiece};
+use crate::content::{level_path_problem, PoiDef, RegionDef, RoomDef, TileDef, TileGeometry, TilePiece, EDGE_WALL_DEPTH, EDGE_WALL_THICKNESS};
 use crate::generate::{self, Generated, WorldGen};
 use crate::grid::{rotation, turn, turns_of};
 use crate::manifest::{Layout, PlacedTile, RegionManifest};
@@ -53,6 +53,12 @@ pub struct TileId {
 #[derive(Component, Reflect, Clone, Copy, Debug, Default)]
 #[reflect(Component, Default)]
 pub struct RegionPart;
+
+/// One box of the invisible wall around a region's edge (`edge_wall`): a collider with nothing to draw.
+/// A game that gives every collider a mesh of its shape leaves these out.
+#[derive(Component, Reflect, Clone, Copy, Debug, Default)]
+#[reflect(Component, Default)]
+pub struct RegionEdge;
 
 /// The root of a placed tile or room: no collider, not AI-visible. Tile visuals and overlays
 /// hang on it.
@@ -567,7 +573,43 @@ fn spawn_parts(world: &mut World, manifest: &RegionManifest, plans: &[TilePlan],
             spawned.push(entity);
         }
     }
+    // Last, so the tiles and points keep the collider ids they had without it.
+    if let Some(height) = world.get_resource::<ContentDb>().and_then(|db| edge_wall(db, manifest)) {
+        for (half, center) in edge_wall_boxes(manifest, height) {
+            let wall = (Name::new("region edge"), Collider::new(Shape::Cuboid { half }), Transform::from_translation(center), RegionPart, RegionEdge);
+            spawned.push(world.spawn(wall).id());
+        }
+    }
     Ok(())
+}
+
+/// The height of the wall around `manifest`'s edge: its region's `edge_wall` (a grid; a
+/// dungeon's rooms have walls of their own).
+pub fn edge_wall(db: &ContentDb, manifest: &RegionManifest) -> Option<f32> {
+    if manifest.layout != Layout::Grid {
+        return None;
+    }
+    db.get::<RegionDef>(&manifest.region)?.edge_wall
+}
+
+/// The four boxes of an edge wall `height` meters high, as (half extents, center): just outside
+/// the region on every side, overlapping at the corners, from [`EDGE_WALL_DEPTH`] below the
+/// ground plane to `height` above it.
+pub fn edge_wall_boxes(manifest: &RegionManifest, height: f32) -> [(Vec3, Vec3); 4] {
+    let (t, y_half) = (EDGE_WALL_THICKNESS, (height + EDGE_WALL_DEPTH) * 0.5);
+    let y = (height - EDGE_WALL_DEPTH) * 0.5;
+    let min = manifest.corner();
+    let size = Vec3::new(manifest.size[0] as f32, 0.0, manifest.size[1] as f32) * manifest.tile_size;
+    let (half_x, half_z) = (size.x * 0.5 + t, size.z * 0.5 + t);
+    let mid = min + size * 0.5;
+    [
+        // north and south, across the corners
+        (Vec3::new(half_x, y_half, t * 0.5), Vec3::new(mid.x, y, min.z - t * 0.5)),
+        (Vec3::new(half_x, y_half, t * 0.5), Vec3::new(mid.x, y, min.z + size.z + t * 0.5)),
+        // west and east
+        (Vec3::new(t * 0.5, y_half, half_z), Vec3::new(min.x - t * 0.5, y, mid.z)),
+        (Vec3::new(t * 0.5, y_half, half_z), Vec3::new(min.x + size.x + t * 0.5, y, mid.z)),
+    ]
 }
 
 /// Despawns every entity of the region (in id order) and forgets it; how many went.

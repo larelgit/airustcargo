@@ -584,7 +584,20 @@ pub struct RegionDef {
     /// them.
     #[serde(default)]
     pub origin: (f32, f32),
+    /// An invisible wall around the region's outer edge, its top this many meters above the
+    /// ground plane (y = 0) and its foot far below it, so nobody walks, dodges or is knocked off
+    /// the end of the world. None (the default): the edge is open, for a region that sits beside a
+    /// hand-made place of the same world, or whose border tiles are walls or cliffs of their own.
+    /// The wall is built with the region, not generated: changing it changes no seed's tiles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge_wall: Option<f32>,
 }
+
+/// How thick the edge wall of a region is (meters), outward from the edge.
+pub const EDGE_WALL_THICKNESS: f32 = 1.0;
+
+/// How far below the ground plane the edge wall reaches (meters).
+pub const EDGE_WALL_DEPTH: f32 = 100.0;
 
 /// The tile ids `entries` (ids and `#tags`; empty: all) name, sorted, or what is wrong.
 pub fn resolve_set<'a, T: 'a>(
@@ -654,6 +667,11 @@ impl ContentDef for RegionDef {
         }
         if !(self.origin.0.is_finite() && self.origin.1.is_finite()) {
             refs.error(format!("origin {:?} must be finite meters (x, z)", self.origin));
+        }
+        if let Some(height) = self.edge_wall
+            && !(height.is_finite() && height > 0.0 && height <= 1000.0)
+        {
+            refs.error(format!("edge_wall {height} must be meters above the ground, above 0 and at most 1000; leave it out for an open edge"));
         }
         let rules = refs.require::<SocketRulesDef>(&self.rules, "rules").then(|| refs.get::<SocketRulesDef>(&self.rules)).flatten();
         let all: Vec<(&str, &TileDef)> = refs.iter::<TileDef>().collect();
