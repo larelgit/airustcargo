@@ -689,7 +689,7 @@ fn with_the_annex_placed(dir: &Path) -> App {
 #[test]
 fn a_level_placed_by_id_before_a_snapshot_stands_again_with_its_numbers_in_a_fresh_game() {
     use shards::ai_core::snapshot::{capture, restore};
-    let dir = with_a_level("placed");
+    let dir = with_a_level("placed_by_id");
     let mut original = with_the_annex_placed(&dir);
     let snapshot = capture(original.world()).unwrap();
     let annex = standing(&original).into_iter().find(|(_, label, _)| label == "annex").expect("the annex stands");
@@ -729,7 +729,7 @@ fn a_level_placed_by_id_before_a_snapshot_stands_again_with_its_numbers_in_a_fre
 
 #[test]
 fn a_replay_from_a_snapshot_taken_after_a_level_was_placed_plays_in_a_fresh_game() {
-    let dir = with_a_level("placed_replay");
+    let dir = with_a_level("placed_by_id_replay");
     let mut original = with_the_annex_placed(&dir);
     let file = format!("snapshots/shards_world_placed_{}.json", std::process::id());
     ok(&mut original, "snapshot_save", json!({"path": file}));
@@ -748,7 +748,7 @@ fn a_replay_from_a_snapshot_taken_after_a_level_was_placed_plays_in_a_fresh_game
 #[test]
 fn a_load_refused_after_the_levels_were_placed_puts_back_the_ones_that_stood() {
     use shards::ai_core::snapshot::{capture, restore};
-    let dir = with_a_level("placed_back");
+    let dir = with_a_level("placed_by_id_back");
     let original = with_the_annex_placed(&dir);
     let mut broken = capture(original.world()).unwrap();
     broken.checks.insert("static_colliders".into(), "0000000000000000".into());
