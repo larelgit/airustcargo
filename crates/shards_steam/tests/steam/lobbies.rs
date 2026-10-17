@@ -165,7 +165,7 @@ fn a_search_that_steam_has_not_answered_says_so_and_the_next_call_has_the_answer
 
     steam.hold_searches(true);
     let slow = lobbies_err(&mut stand, c1, json!({ "wait_ms": 30 }));
-    assert_eq!(slow, "Steam has not answered the lobby search within 30 ms; it goes on: call steam_lobbies again (wait_ms=… waits longer)");
+    assert_eq!(slow, "Steam has not answered the lobby search within 30 ms; it goes on: call steam_lobbies again for its answer");
     // The search that waits is the one asked for: another kind of search is told to wait for it.
     let other = lobbies_err(&mut stand, c1, json!({ "all": true, "wait_ms": 0 }));
     assert_eq!(other, "an earlier search (all=false) still waits for Steam's answer: ask again with all=false, or in a moment");
@@ -175,6 +175,17 @@ fn a_search_that_steam_has_not_answered_says_so_and_the_next_call_has_the_answer
     steam.hold_searches(false);
     let said = lobbies(&mut stand, c1, json!({}));
     assert!(said.contains(&format!("lobby {lobby} · host host ({FIRST_USER}) · 1 of {MAX} · build matches")), "{said}");
+
+    // Steam answers with the game's frames, after the call stopped waiting: the next call says that
+    // answer and does not search again (a search held now would never be answered).
+    steam.hold_searches(true);
+    lobbies_err(&mut stand, c1, json!({ "wait_ms": 0 }));
+    steam.hold_searches(false);
+    stand.app(c1).update();
+    steam.hold_searches(true);
+    let late = lobbies(&mut stand, c1, json!({ "wait_ms": 0 }));
+    assert!(late.contains(&format!("lobby {lobby} · host host ({FIRST_USER}) · 1 of {MAX} · build matches")), "{late}");
+    steam.hold_searches(false);
 
     // Steam can fail the search too.
     steam.fail_searches(Some("Steam could not list lobbies (no connection to the Steam servers)"));

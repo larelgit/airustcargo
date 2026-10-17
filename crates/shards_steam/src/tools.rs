@@ -214,12 +214,13 @@ fn steam(In(_): In<Call<SteamArgs>>, world: &World) -> ToolResult {
 pub struct SteamLobbiesArgs {
     /// Also list the lobbies of this game on another build (they would refuse you), saying what differs.
     pub all: Option<bool>,
-    /// How long to wait for Steam's answer, in milliseconds (default 5000, at most 30000).
+    /// How long to wait for Steam's answer, in milliseconds (default and at most 5000: the wait holds
+    /// the game's frame). A search that outlasts it goes on, and the next call says its answer.
     pub wait_ms: Option<u32>,
 }
 
 fn steam_lobbies(In(call): In<Call<SteamLobbiesArgs>>, world: &mut World) -> ToolResult {
-    let wait = call.args.wait_ms.unwrap_or(lobbies::DEFAULT_WAIT_MS).min(lobbies::MAX_WAIT_MS);
+    let wait = call.args.wait_ms.unwrap_or(lobbies::WAIT_MS).min(lobbies::WAIT_MS);
     lobbies::search(world, call.args.all.unwrap_or(false), Duration::from_millis(u64::from(wait)))
 }
 

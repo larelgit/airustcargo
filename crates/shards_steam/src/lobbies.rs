@@ -21,9 +21,11 @@ use crate::backend::{data, LobbyInfo};
 use crate::session::{self, SteamRole, SteamSession, SteamState};
 use crate::Steam;
 
-/// How long `steam_lobbies` waits for Steam's answer unless told otherwise, and the longest it may.
-pub(crate) const DEFAULT_WAIT_MS: u32 = 5_000;
-pub(crate) const MAX_WAIT_MS: u32 = 30_000;
+/// How long `steam_lobbies` waits for Steam's answer, and the longest it may (`wait_ms` only
+/// shortens it). The wait holds this game's frame (the picture, a session's traffic, the simulation
+/// in real time), so it stays well under a session's silence timeout (`NetDef::timeout_secs`, 10 s
+/// by default); an answer that comes later is kept for the next call.
+pub(crate) const WAIT_MS: u32 = 5_000;
 
 /// How often a waiting search runs Steam's callbacks.
 const POLL: Duration = Duration::from_millis(10);
@@ -84,15 +86,16 @@ impl Build {
 pub(crate) struct Search {
     /// Asked and not answered yet, with whether it listed lobbies of any build.
     pub running: Option<bool>,
-    /// What Steam answered last.
-    pub answer: Option<Result<Vec<LobbyInfo>, String>>,
+    /// What Steam answered and no call has said yet, with whether that search listed lobbies of
+    /// any build.
+    pub answer: Option<(bool, Result<Vec<LobbyInfo>, String>)>,
 }
 
 /// Steam answered the search (a stray answer, with none asked for, is dropped).
 pub(crate) fn answered(world: &mut World, answer: Result<Vec<LobbyInfo>, String>) {
     let mut session = world.resource_mut::<SteamSession>();
-    if session.search.running.take().is_some() {
-        session.search.answer = Some(answer);
+    if let Some(any_build) = session.search.running.take() {
+        session.search.answer = Some((any_build, answer));
     }
 }
 
@@ -108,11 +111,15 @@ pub(crate) fn search(world: &mut World, any_build: bool, wait: Duration) -> Resu
         return Err("this game is still loading its content, so its build is not known yet: ask again when it is loaded (`shards wait`)".into());
     }
     let build = Build::of(world);
-    match world.resource::<SteamSession>().search.running {
+    let search = &world.resource::<SteamSession>().search;
+    let kept = search.answer.as_ref().is_some_and(|(earlier, _)| *earlier == any_build);
+    match search.running {
         Some(earlier) if earlier != any_build => {
             return Err(format!("an earlier search (all={earlier}) still waits for Steam's answer: ask again with all={earlier}, or in a moment"));
         }
         Some(_) => {}
+        // Steam answered with the frames, after the call that asked stopped waiting: this call says it.
+        None if kept => {}
         None => {
             world.resource_mut::<Steam>().backend.find_lobbies(&build.filter(any_build)).map_err(|e| format!("Steam could not search for lobbies: {e}"))?;
             let search = &mut world.resource_mut::<SteamSession>().search;
@@ -128,15 +135,15 @@ pub(crate) fn search(world: &mut World, any_build: bool, wait: Duration) -> Resu
         }
         if started.elapsed() >= wait {
             return Err(format!(
-                "Steam has not answered the lobby search within {} ms; it goes on: call steam_lobbies again (wait_ms=… waits longer)",
+                "Steam has not answered the lobby search within {} ms; it goes on: call steam_lobbies again for its answer",
                 wait.as_millis()
             ));
         }
         std::thread::sleep(POLL);
     }
     match world.resource_mut::<SteamSession>().search.answer.take() {
-        Some(Ok(found)) => Ok(describe(world, &build, any_build, &found)),
-        Some(Err(why)) => Err(why),
+        Some((_, Ok(found))) => Ok(describe(world, &build, any_build, &found)),
+        Some((_, Err(why))) => Err(why),
         None => Err("the lobby search ended without an answer".into()),
     }
 }
