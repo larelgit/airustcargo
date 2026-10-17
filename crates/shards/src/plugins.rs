@@ -12,6 +12,7 @@ use shards_audio::AudioPlugin as ShardsAudioPlugin;
 use shards_content::ContentPlugin;
 use shards_core::{CorePlugin, EngineConfig};
 use shards_dev::DevPlugin;
+use shards_fx::FxPlugin;
 use shards_level::LevelPlugin;
 use shards_look::LookPlugin;
 use shards_motion::MotionPlugin;
@@ -130,6 +131,8 @@ impl PluginGroup for EnginePlugins {
             .add(LookPlugin)
             // Scatter: foliage and small props strewn over the tiles, drawn in batches, by distance.
             .add(ScatterPlugin)
+            // Effects: particles from content in pools, the telegraphs on the ground as decals.
+            .add(FxPlugin)
             // Performance: the `perf` content kind (`--perf`), `counts` and `frames` in `ai/status`.
             .add(crate::bench::PerfPlugin)
             // The developer menu and console, last: every module above has added its entries.

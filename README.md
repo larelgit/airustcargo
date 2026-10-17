@@ -45,12 +45,13 @@ Remote Protocol на 127.0.0.1), без MCP-прослоек. Тем же CLI п
 22. [Звук (E9.5)](#звук-e95)
 23. [Стилизованные материалы (E10.1)](#стилизованные-материалы-e101)
 24. [Растительность и мелкие объекты (E10.2)](#растительность-и-мелкие-объекты-e102)
-25. [Сборка для игроков и Windows (E10.6)](#сборка-для-игроков-и-windows-e106)
-26. [Отчёт о падении (E10.7)](#отчёт-о-падении-e107)
-27. [Песочница](#песочница)
-28. [Тесты и CI](#тесты-и-ci)
-29. [Что дальше](#что-дальше)
-30. [Соглашения и сборка](#соглашения-и-сборка)
+25. [Эффекты и декали (E10.3)](#эффекты-и-декали-e103)
+26. [Сборка для игроков и Windows (E10.6)](#сборка-для-игроков-и-windows-e106)
+27. [Отчёт о падении (E10.7)](#отчёт-о-падении-e107)
+28. [Песочница](#песочница)
+29. [Тесты и CI](#тесты-и-ci)
+30. [Что дальше](#что-дальше)
+31. [Соглашения и сборка](#соглашения-и-сборка)
 
 ## Быстрый старт
 
@@ -69,7 +70,7 @@ cargo shards observe                       # срез мира текстом + 
 cargo shards tools                         # что можно сделать (--json: со схемами аргументов)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # в ответе CHANGES и JOURNAL
-cargo shards content check                 # ok: 117 definitions in 33 files
+cargo shards content check                 # ok: 123 definitions in 35 files
 cargo shards act regen region=wilds seed=42   # сгенерированный регион к югу от арены; игрок у его ворот
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # маршрут к логову по навсетке: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # проверка генератора на тысяче зёрен
@@ -92,7 +93,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Контент без игры: читает и проверяет все файлы (в том числе файлы уровней тайлов и запечённую навигацию), код 0 или 1.
 cargo sandbox --check-content
-# ok: 117 definitions in 33 files
+# ok: 123 definitions in 35 files
 
 # 7. Мир без игры: генератор на тысяче зёрен (код 0, если прошли все) и запекание навигации тайлов.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -238,6 +239,10 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
     игра делает сама, — один белый материал и `Look::new("stone")`. Меняется только картинка (feature `render`, окно или
     `--offscreen`), правка файла видна сразу; `shards act looks` перечисляет виды и что каждый рисует. Подробнее — «Стилизованные
     материалы (E10.1)».
+19. **Эффекты.** Искры, пыль, вспышки — файл `assets/content/*.effect.ron`, а какое событие боя что играет — таблица
+    `*.fx.ron` (`damaged`, `blocked`, `died`, …); свой момент игра играет `commands.trigger(PlayEffect::new(..))`. Телеграфы атак
+    на земле — декали движка без настройки. Только картинка; `shards act effects` перечисляет эффекты и пулы. Подробнее —
+    «Эффекты и декали (E10.3)».
 
 Правила, которые держат игру детерминированной (геймплей в `FixedUpdate` внутри `SimSet`, случайность только через
 `SimRng`, порядок по `AiId`, управление только через `Intent`, `replay_input`/`replay_ignore`/`add_replay_check`), — в
@@ -275,7 +280,8 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 а он вызывает их инструменты по имени. `shards_look` (как рисуются меши) знает только `ai_core`, ядро и контент: к префабам он
 подходит проверкой, которую добавляет к виду `prefab` (`add_content_check`), а геймплея не касается. `shards_scatter`
 (растительность) стоит над миром и видами: рассыпает экземпляры по тайлам региона `shards_world`, ищет под ними землю физикой
-`shards_motion` и красит их видами `shards_look`.
+`shards_motion` и красит их видами `shards_look`. `shards_fx` (эффекты) знает `ai_core`, ядро, контент, движение и бой: события
+боя и зоны атак он читает, а мир не меняет.
 
 ### Крейты
 
@@ -297,6 +303,7 @@ build/test/run` выполните `source ~/.local/share/rustengine-sysdeps/env
 | `crates/shards_audio` | звук (E9.5): звуки, музыка и микшер в контенте (`sound`, `music`, `audio`), шины с громкостью из настроек, голоса с приоритетом и лимитом, пространственные звуки, музыка в слоях по условиям игры, звуки телеграфов и событий, инструменты `audio`, `sound_play`, `music_set`, строка `MUSIC` в `observe`; с feature `audio` зонтика — воспроизведение через Bevy audio |
 | `crates/shards_look` | вид мешей (E10.1): виды в контенте (`look`, `*.look.ron`) — цвет, свет полосами (`Toon`), `Matte`, `Unlit`, `Lit`, плоские грани, контур одной ширины в пикселях, свечение, материалы glTF; компонент `Look`, материал и шейдеры на WESL, инструменты `looks` и `look_outlines`, поле `looks` в `ai/status`, два пункта меню разработчика; с feature `render` — стилизация мешей (окно или `--offscreen`) |
 | `crates/shards_scatter` | растительность и мелкие объекты (E10.2): вид контента `scatter` (`*.scatter.ron`) — что рассыпать по тайлам каких регионов, как густо, на какой земле, какими видами, какие меши вблизи и вдали; раскладка по зерну региона (одинаковая в каждом запуске), меши-примитивы (пучок травы, конус, камень, коробка) или glTF, уровни детализации через `VisibilityRange`, настройка `graphics.foliage`, инструменты `scatter` и `scatter_set`, поле `scatter` в `ai/status`, два пункта меню разработчика; с feature `render` — экземпляры под тайлами (окно или `--offscreen`) |
+| `crates/shards_fx` | эффекты (E10.3): эффекты в контенте (`effect`, `*.effect.ron`) и таблица событий (`fx`, `*.fx.ron`) — частицы из пулов (`max_live` мешей на эффект, один меш и один материал, цвет в `MeshTag`), квадраты к камере, кубики и осколки, свечение, полёт по формуле на часах симуляции; `PlayEffect`, эффекты событий боя и меток клипов; декали телеграфов (`ForwardDecal` с материалом зоны на WESL: круг, сектор, прямоугольник, «стадион», заливка растёт к удару), `DepthPrepass` камерам `AiCamera`; инструменты `effects`, `effect_play`, `telegraph_decals`, поле `fx` в `ai/status`, два пункта меню разработчика; с feature `render` — рисование (окно или `--offscreen`) |
 | `crates/shards_dev` | меню и консоль разработчика (E11): пункты модулей (`add_dev_entry`) и игры (вид контента `devmenu`), консоль строк `tool key=value`, инструменты `dev_menu` и `console`; с feature `render` — панели в окне (F10 и `` ` ``), Tab дописывает имена из схем, контекст ввода `dev` |
 | `crates/ai_core` | слой ИИ, не зависит от конкретной игры: id, срез мира, журнал, инструменты, время, реплеи, транспорт |
 | `crates/shards_script` | без Bevy: формат сценариев, их запуск, разбор условий `--until`, долгая игра агентов (`soak`) и их случайные входы; общий для `shards` и тестов |
@@ -488,8 +495,9 @@ InGame`).
 - Смена региона заканчивается событием `WorldRebuilt { reason: "region <id>" }` (как и загрузка снапшота).
 - `player_body(world, n)` — тело с `PlayerId(n)`; через него агент, привязанный к игроку, находит своё тело.
 
-**`ai/status`** показывает версию и модули: `engine: {version: "0.2.0", modules: [core, content, motion, action, level,
-world, npc], state: "InGame", pause: "Running"}` и `loading: []`, пока ничего не грузится; с регионом в мире ещё поле `world`.
+**`ai/status`** показывает версию и модули: `engine: {version: "0.2.0", modules: [core, content, settings, motion, action, level,
+world, npc, net, save, coop, locale, ui, audio, look, scatter, fx, dev], state: "InGame", pause: "Running"}` и `loading: []`, пока
+ничего не грузится; с регионом в мире ещё поле `world`.
 
 ## Контент (E4)
 
@@ -509,8 +517,9 @@ world, npc], state: "InGame", pause: "Running"}` и `loading: []`, пока ни
 - Id — непустая строка без пробелов и управляющих символов; уникален внутри вида по всем файлам.
 - Движок регистрирует свои виды: `prefab`, `locomotion`, `action`, `moveset`, `status`, `combat_tuning`, `animset`,
   `input_map`, уровни `level`, мир `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`, враги `behavior`,
-  `perception`, `director`, `attack_plan`, `npc_tuning` и `nav`, вид мешей `look` (см. «Стилизованные материалы (E10.1)»). Игра
-  добавляет свои: у песочницы `layout`, у шаблона `arena`.
+  `perception`, `director`, `attack_plan`, `npc_tuning` и `nav`, вид мешей `look` (см. «Стилизованные материалы (E10.1)»),
+  растительность `scatter` (см. «Растительность и мелкие объекты (E10.2)»), эффекты `effect` и `fx` (см. «Эффекты и декали
+  (E10.3)»). Игра добавляет свои: у песочницы `layout`, у шаблона `arena`.
   `content_list` (инструмент) показывает виды и число определений.
 - `#[serde(deny_unknown_fields)]` на структуре превращает опечатку в ошибку со строкой; без него опечатка в необязательном
   поле молча оставит значение по умолчанию.
@@ -576,32 +585,43 @@ reflection, как в сценах Bevy; каждый компонент дол�
 
 ```text
 $ shards act content_list
-content: 117 definitions in 33 files
+content: 123 definitions in 35 files
   action  23
   animset  0
   attack_plan  3
+  audio  1
   behavior  2
   bounds  1
   combat_tuning  1
   devmenu  4
   director  2
   dungeon  0
+  effect  5
+  fx  1
   input_map  0
   layout  3
   level  1
+  locale  2
   locomotion  3
+  look  15
   moveset  4
+  music  1
   nav  1
+  net  0
   npc_tuning  0
   perception  3
+  perf  1
   poi  4
   prefab  7
   region  1
   room  0
+  save  0
+  scatter  3
   screen  3
   socket_rules  1
+  sound  16
   status  0
-  theme  0
+  theme  1
   tile  9
   tile_map  1
 $ shards act spawn_prefab id=skeleton x=5 z=5
@@ -917,7 +937,9 @@ $ shards act path_to target=e12              # e12 — ориентир «Cliff�
 - **Телеграфы на земле** (`render::overlay`) рисуются всегда (не только в оверлее): контур зоны, штриховка, кольцо,
   которое заполняется по мере удара, и **символ** из контента как табличка на камеру, чтобы опасность читалась без цвета.
   Предупреждения врагов — тёплого цвета, союзников — холодного; рисуется всё, что направлено на локального игрока. Символ шире
-  ASCII (`⚠`) требует шрифта (`ThreatHud::font`), без него подставляется ASCII.
+  ASCII (`⚠`) требует шрифта (`ThreatHud::font`), без него подставляется ASCII. Со штатными плагинами штриховку и кольцо рисует
+  декаль на земле (модуль эффектов, «Эффекты и декали (E10.3)»; `TelegraphStyle::decals`), а гизмо — контур и символ;
+  `telegraph_decals on=false` возвращает всё гизмо.
 - **Оверлей боя** (`combat_overlay`, F2 в окне): хитбоксы открытых окон (красный), хёртбоксы (зелёный), дуги защиты
   (синий, идеальная ярче), i-frames контуром, каждая зона с оставшимся временем.
 - **Маркеры за кадром** (`render::hud`): стрелка и символ на краю экрана в сторону атаки, которая вот-вот ударит там, где
@@ -1868,7 +1890,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
 | scope | инструменты |
 |---|---|
 | **Player** (играет честно, только через `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; движение: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; бой: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack; мир: region_info, level_info, nav_path, npc_state; настройки: settings, settings_set (как меню настроек у человека); звук: audio |
-| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset; мир: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; звук: sound_play, music_set; вид мешей: looks, look_outlines; растительность: scatter, scatter_set; меню и консоль разработчика: dev_menu, console |
+| **Dev** (всё, включая время) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset; мир: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; звук: sound_play, music_set; вид мешей: looks, look_outlines; растительность: scatter, scatter_set; эффекты: effects, effect_play, telegraph_decals; меню и консоль разработчика: dev_menu, console |
 
 Игра добавляет свои (в шаблоне `taunt` и условия `arena_cleared`, `foe_near`, `in_fight`, в песочнице условия `boss_phase_2`,
 `boss_dead`, `player_dead`, `three_attacking`). Модули добавляют условия для `step --until named:…`: `near_poi` (мир, появляется
@@ -2830,22 +2852,27 @@ ticks: avg 0.52 ms, max 2.60 ms (tick 540), budget 16.7 ms
 $ cargo run -p sandbox --release -- --perf reference --offscreen
 perf reference: release build, offscreen 1920x1080 on NVIDIA GeForce RTX 5080 (Vulkan, DiscreteGpu, driver NVIDIA 610.88)
 loaded in 0.10s, region wilds seed 42 in 0.03s of it
-600 ticks in 10.00s: avg 0.50 ms, max 2.90 ms (tick 540); 3789 frames, 378.9 fps: avg 2.44 ms, max 4.17 ms (main 1.23, render 2.44, GPU 0.42 ms), 52481 triangles; 15407 entities, 14239 meshes, 1364 drawn (48 distinct), 1053 in cameras
+600 ticks in 10.00s: avg 0.52 ms, max 2.79 ms (tick 720); 3271 frames, 327.2 fps: avg 2.84 ms, max 4.47 ms (main 1.40, render 2.84, GPU 0.49 ms), 84899 triangles; 15836 entities, 14641 meshes, 1382 drawn (50 distinct), 1071 in cameras
 ok    region load 0.03 s (at most 15.0 s)
-ok    tick avg 0.50 ms (at most 4.00 ms)
+ok    tick avg 0.52 ms (at most 4.00 ms)
 ok    ticks over 16.7 ms: 0 of 600, 0.0% (at most 1.0%)
-ok    frame avg 2.44 ms (at most 10.00 ms)
-ok    frames over 16.7 ms: 0 of 3789, 0.0% (at most 1.0%)
-ok    entities 15407 (at most 20000)
-ok    visible meshes 1364 (at most 2000)
-ok    distinct meshes drawn 48 (at most 80)
+ok    frame avg 2.84 ms (at most 10.00 ms)
+ok    frames over 16.7 ms: 0 of 3271, 0.0% (at most 1.0%)
+ok    entities 15836 (at most 20000)
+ok    visible meshes 1382 (at most 2000)
+ok    distinct meshes drawn 50 (at most 80)
 perf reference: all 8 budgets met
 ```
 
-Это релизная сборка с растительностью (около 7200 экземпляров, 14 000 мешей): 379 кадров в секунду в 1080p, ни одного кадра
-дольше 16.7 мс, GPU — 0.42 мс на кадр. RTX 5080 — не «средний ПК» из ТЗ: на нём сцену не мерили, запас по кадру — шестикратный.
-До растительности та же сцена давала 389 кадров в секунду (1132 сущности, 217 рисуемых мешей). Отладочная сборка меряет, но не
-судит: строки идут с `-`, с растительностью — 342 кадра в секунду.
+Это релизная сборка с растительностью (около 7200 экземпляров, 13 900 сущностей-мешей) и эффектами (E10.3): 327 кадров в
+секунду в 1080p, ни одного кадра дольше 16.7 мс, GPU — 0.49 мс на кадр. Пулы частиц песочницы — 400 спрятанных мешей (`max_live`
+её пяти эффектов) — входят в `entities` и `meshes`, но не в `drawn`: рисуются только живые частицы и декали телеграфов, пока на
+земле есть зона атаки, а декалям камера рисует ещё проход глубины (`DepthPrepass`). Без эффектов, с одной растительностью, та же
+сцена давала 379 кадров в секунду (15 407 сущностей, 1364 рисуемых меша из 48 разных, 52 481 треугольник), до растительности —
+389 (1132 сущности, 217 рисуемых мешей). Замер — при 0–1 процессе `rustc` других веток на машине; повтор при 1–2 — 313.6 кадра
+в секунду, худший кадр 7.98 мс, все 8 бюджетов. RTX 5080 — не «средний ПК» из ТЗ: на нём сцену не мерили, запас по среднему кадру —
+почти шестикратный. Отладочная сборка меряет, но не судит: строки идут с `-` (с растительностью, до эффектов, — 342 кадра в
+секунду).
 
 - Без `--offscreen` автотест меряет только тики и гонит их как можно быстрее (прогрев и замер — по одному `step`); бюджеты
   кадров идут строками `-` («nothing is drawn headless»). С `--offscreen` игра идёт в реальном времени, 60 тиков в секунду, а
@@ -2872,14 +2899,14 @@ perf reference: all 8 budgets met
 
 **Меню** (F10 в окне; инструмент `dev_menu`) — пункты по разделам. Свои пункты модули движка регистрируют для своих
 инструментов (`add_dev_entry`): время (пауза, шаг, замедление, снапшоты, отчёт об ошибке), мир (регион и его зерно, проверка этого зерна
-генератором и 200 таких регионов, коллайдеры, тайлы, виды мешей и их контуры), бой (бессмертие, лечение, хитбоксы), ИИ (умы NPC, навсетка), сеть
+генератором и 200 таких регионов, коллайдеры, тайлы, виды мешей и их контуры, растительность, эффекты), бой (бессмертие, лечение, хитбоксы, декали телеграфов), ИИ (умы NPC, навсетка), сеть
 (связи, имитация лага), сохранения (проверка). За ними — пункты игры из контента. Переключатель показывает строку своего
 другого состояния (`npc_overlay on=false`, пока оверлей включён); пункт, которому нужно значение, в окне кладёт строку в
 консоль дописать, а инструмент просит выполнить её со значениями; пункт, которому сейчас не на чем работать, говорит почему:
 
 ```text
 $ shards act dev_menu
-dev menu: 33 entries (F10 in a window); `dev_menu run=<id>` runs one, `console line=...` runs any line
+dev menu: 37 entries (F10 in a window); `dev_menu run=<id>` runs one, `console line=...` runs any line
 time
   pause            Pause / resume                          resume
   step             One tick (while paused)                 step ticks=1
@@ -4096,9 +4123,10 @@ shots/looks.png`; сравнить без контуров — `shards act look_
 
 **Как рисуется.** Под корнем тайла (он получает `Visibility`) стоит сущность на пару «определение, вид» с `Look`, под ней по
 сущности на экземпляр и уровень детализации: общий меш уровня, общий белый материал (вид делает из него один свой) и
-`VisibilityRange` уровня. Одинаковые меши с одинаковым материалом Bevy рисует одним пакетом: в эталонной сцене рисуются 1364
-меша, а разных из них 48 (поле `mesh_assets` в `counts`). Дальше `until` последнего уровня экземпляр не рисуется, а то, чего не
-видит камера, отсекает Bevy. Свет полосами (`Toon`) растворяет уровни тем же сглаживанием, что и материал Bevy.
+`VisibilityRange` уровня. Одинаковые меши с одинаковым материалом Bevy рисует одним пакетом: в эталонной сцене рисуются 1382
+меша (с частицами и декалями эффектов), а разных из них 50 (поле `mesh_assets` в `counts`). Дальше `until` последнего уровня
+экземпляр не рисуется, а то, чего не видит камера, отсекает Bevy. Свет полосами (`Toon`) растворяет уровни тем же сглаживанием, что и
+материал Bevy.
 
 **Для агента.** `scatter` (Dev, query) показывает определения, сколько каждое рассыпало, сколько бросков не нашли места на тайлах,
 которые есть сейчас, и почему, а последней строкой — сколько тайлов и экземпляров рассыпала последняя раскладка и за сколько
@@ -4158,6 +4186,133 @@ content/region/wilds.scatter.ron: scatter `grass`: density: 20/m² on a tile of 
 проверен только проверкой контента, на настоящем файле не рисовался. В окне на дисплее глазами не смотрели, только картинки
 `--offscreen`.
 
+## Эффекты и декали (E10.3)
+
+Как выглядит эффект, решает контент вида `effect` (`*.effect.ron`), а какое событие движка его играет — таблица вида `fx`
+(`*.fx.ron`, одна на игру). Модуль `shards_fx` играет частицы из пулов и рисует телеграфы атак (E3) декалями на земле. Это дело
+только картинки: мир он не меняет, без картинки ничего не играет.
+
+```ron
+// crates/sandbox/assets/content/fx/sandbox.effect.ron (сокращено)
+{
+    "hit_spark": (count: 18, lifetime: (0.2, 0.4), speed: (3.0, 8.0), spread: 120.0, aim: Hit, lift: 35.0,
+        gravity: -9.0, drag: 2.0, size: (0.2, 0.34), size_end: 0.3, color: "#fff2b3", color_end: "#ff6a1a00",
+        glow: true, offset: (0.0, 1.1, 0.0), max_live: 128),
+    "block_spark": (count: 10, shape: Shard, spin: 720.0, aim: Hit, gravity: -12.0, color: "#bfe6ff", max_live: 64),
+    "death_dust": (count: 16, rate: 24.0, duration: 0.8, shape: Cube, size_end: 1.6, color: "#8c8061cc", max_live: 96),
+}
+// crates/sandbox/assets/content/fx/sandbox.fx.ron
+{
+    "sandbox": (effects: {"damaged": "hit_spark", "blocked": "block_spark", "parried": "parry_flash",
+        "died": "death_dust", "healed": "heal_glow"}),
+}
+```
+
+**Поля эффекта.** Все необязательны; поле, которого нет, — ошибка со строкой (`deny_unknown_fields`). Пары `(min, max)` — разброс:
+у каждой частицы своё число из него.
+
+- `count: 16` — частиц сразу; `rate: 30.0` и `duration: 0.5` — ещё столько в секунду, пока идёт `duration` (до 10 с). У эффекта
+  с `rate` частицы рождаются там, где сущность сейчас: пыль идёт за телом.
+- `lifetime: (0.4, 0.8)` — сколько живёт частица (с, до 30); `speed: (1.0, 3.0)` — начальная скорость (м/с); `spread: 60.0` —
+  ширина конуса направлений (градусы, 360 — во все стороны); `aim` — ось конуса: `Up` (вверх, по умолчанию) или `Hit` (у события
+  с нападающим — наружу из места удара, назад к нападающему); `lift: 25.0` — насколько ось `Hit` поднята над горизонталью.
+- `gravity: -9.0` — ускорение по Y (м/с²); `drag: 2.0` — сопротивление (1/с: скорость тает как e^(−drag·t)).
+- `size: (0.08, 0.12)` — размер при рождении (м); `size_end: 0.0` — доля размера к концу жизни (0 — исчезает, 1.6 — растёт).
+- `color: "#ffffff"` и `color_end` — цвет при рождении и к концу (`#rrggbb` или `#rrggbbaa`, sRGB); без `color_end` — тот же цвет,
+  прозрачный. `glow: true` — частица прибавляется к картинке (искры, вспышки), иначе ложится поверх (пыль).
+- `shape` — `Quad` (мягкое пятно, повёрнутое к камере; по умолчанию), `Cube` или `Shard` (осколок): эти освещены сверху и
+  кувыркаются со скоростью `spin: 360.0` (градусов в секунду, у каждой частицы своя доля).
+- `offset: (0.0, 1.0, 0.0)` — откуда от ног сущности или от точки; `radius: 0.5` — частицы рождаются в шаре такого радиуса.
+- `max_live: 64` — размер пула (до 4096): столько мешей эффект делает один раз, и больше живых частиц у него не бывает.
+
+**Таблица `fx`.** `effects` — событие движка → эффект; `cues` — метка клипа (`AnimationCue`: `footstep`, `swoosh`) → эффект, у тела;
+метка без записи играет эффект своего имени, если он есть. События: `damaged` (у того, кого ударили), `blocked`, `parried`, `evaded`,
+`guard_broken` (у защитника), `staggered`, `died`, `healed` (у того, с кем случилось), `telegraph` (у нападающего). Событие с
+нападающим играет эффект на стороне тела, обращённой к нему (у края коллайдера), и `aim: Hit` шлёт частицы оттуда назад к
+нападающему; такой эффект играет в точке и за телом не идёт. Свой эффект игра играет событием
+`commands.trigger(PlayEffect::new("coin_sparkle", EffectAt::Entity(chest)))` (`shards::fx::{PlayEffect, EffectAt}`) (или `EffectAt::Point`, `.toward(dir)` — ось для
+`aim: Hit`) или функцией `shards::fx::play(world, …)`, которая отвечает, сколько частиц началось.
+
+**Частицы.** Свои (у `bevy_hanabi` нет версии под Bevy 0.20), на процессоре. У каждого эффекта пул из `max_live` мешей: они
+делаются, когда загрузился контент (и заново, когда эффект поменяли), и спрятаны, пока свободны; запуск берёт свободные, а когда
+свободных нет — самые старые. Все частицы эффекта — один меш и один материал, цвет каждой — в её `MeshTag`, поэтому Bevy рисует их
+пачками. Положение частицы — функция её возраста (полёт под гравитацией и сопротивлением решён формулой, а не шагами), на **часах
+симуляции** (`Time<Fixed>` и его остаток): пауза замораживает искры, `step` двигает их на столько тиков, сколько прошло, в реальном
+времени они летят вместе с тиками; снапшот, который вернул время назад, убирает частицы, родившиеся «позже». Пулы и частицы — сущности
+без `AiId`: реплей, снапшот и кооператив их не видят; клиент кооператива играет эффекты событий, которые ему пересылает хост, сам.
+
+**Декали телеграфов.** Предупреждение атаки на земле — декаль под ней (`ForwardDecal` Bevy с материалом зоны модуля, шейдер на WESL):
+форма зоны в квадрате декали — круг, сектор конуса, прямоугольник бокса или линии, «стадион» капсулы. Зона бледная, с полосами
+под 45° к осям мира, и светлеет к краю. Полосы сгущаются к удару (`hatch_far` → `hatch_near`, как штриховка гизмо) и сходятся к
+точке, откуда растёт заливка: их отсчёт идёт от неё, а не от начала координат мира, поэтому мимо точки зоны проходит не больше
+полос, чем помещается поперёк зоны, как далеко от начала мира она ни лежала бы. Копия зоны растёт от её середины (центра следа,
+как кольцо гизмо), чем
+ближе удар (`TelegraphStyle::horizon`, как у гизмо), с яркой кромкой, и в момент удара закрывает зону, мерцая (мерцание — по
+настройке доступности `flashes`). Цвет — как у гизмо: тёплый у атаки врага, холодный у союзника. Декаль ложится на то, что под ней, и
+бледнеет к 0.6 м от своей плоскости по высоте (земля, ноги тех, кто стоит в зоне, а не стены и тела). Пока декали включены, гизмо рисуют только
+контур, символ и его ножку, а штриховку и растущее кольцо отдают декали (`TelegraphStyle::decals`). Декалям нужна глубина сцены:
+каждая камера с `AiCamera` получает `DepthPrepass`, пока они включены (и теряет, когда их выключили, если его дал модуль; свой
+prepass камеры остаётся), — это лишний проход глубины на кадр. `telegraph_decals on=false` возвращает заливку гизмо. Декали тоже из
+пула: одна сущность на зону, лишние спрятаны.
+
+**Для агента.** `effects` (Dev, query) — эффекты (что и сколько, цвета, жизнь, ось, гравитация, пул: живых/размер), таблица событий
+и меток и декали на земле сейчас: чья атака, форма, размер, насколько выросла заливка. `effect_play effect=hit_spark at=e6` (или
+`point=[4, 0, -2]`, `toward=[1, 0, 0]` для `aim: Hit`; Dev, control) играет эффект и отвечает, сколько частиц началось и сколько живых
+в пуле. `telegraph_decals on=false` (Dev, query; без аргумента — включить) переключает декали; настройка — ресурс `FxSettings`, не в
+реплее и не в снапшоте.
+
+```text
+$ shards act effects
+5 effects · 36 particles alive in pools of 400 · telegraph decals on, on the ground: 2
+  block_spark  10 shard #bfe6ff → #4d9fff00 · 0.3-0.5 s · aim hit · gravity -12 · pool 0/64
+  death_dust   16 cube + 24/s for 0.8s #8c8061cc → #5c554400 · 0.8-1.4 s · gravity -0.6 · pool 0/96
+  heal_glow    8 quad + 30/s for 0.6s glow #7dff9e → #2bd96b00 · 0.6-1 s · pool 0/48
+  hit_spark    18 quad glow #fff2b3 → #ff6a1a00 · 0.2-0.4 s · aim hit · gravity -9 · pool 36/128
+  parry_flash  24 quad glow #ffffff → #ffd24d00 · 0.12-0.22 s · pool 0/64
+events: blocked → block_spark · damaged → hit_spark · died → death_dust · healed → heal_glow · parried → parry_flash
+  decal e7 claw: sector 3.1×2.2 m, fill 0.82, hostile
+  decal e8 claw: sector 3.1×2.2 m, fill 1.00, hostile
+$ shards act effect_play effect=death_dust at=e7
+played death_dust at e7 (-5.1, 0.0, 2.8): 16 particles (+20 as it goes on), 16/96 alive in its pool
+$ shards act telegraph_decals on=false
+telegraph decals off: the gizmos draw the fill
+```
+
+Без картинки `effects` говорит `5 effects · nothing is drawn headless: effects play in a window or with --offscreen · telegraph
+decals on` и перечисляет эффекты с размером пула, а `effect_play` отказывает: `nothing is drawn headless: effects play in a window
+or with --offscreen (effect `hit_spark` is known)`; события тогда ничего не играют. Эффект, которого нет в контенте, `effect_play`
+называет с ближайшим (`no effect `hit_sprak` (did you mean `hit_spark`?)`), а `PlayEffect` пишет в журнал один раз
+(`fx: PlayEffect: no effect …`). `ai/status` — поле `fx`: `{"effects": 5, "live": 36, "decals": 2, "telegraph_decals": true}`. В меню
+разработчика пункт `effects` («Effects, their pools and decals», раздел `world`) и переключатель `telegraph_decals` («Telegraphs as
+decals on the ground», раздел `combat`).
+
+**Проверка контента.** `--check-content` и `content_check` называют файл, эффект и поле:
+
+```text
+content/fx/sandbox.effect.ron: effect `smoke`: one play starts 40 particles and max_live keeps 8: raise max_live to 40 at least, or a play takes back its own first particles
+content/fx/sandbox.effect.ron: effect `smoke`: lifetime: (min, max) with min above 0 and at most max, not (0.8, 0.2)
+content/fx/sandbox.effect.ron: effect `smoke`: color: `grey` is not a colour: `#rrggbb` or `#rrggbbaa`
+content/fx/sandbox.fx.ron: fx `sandbox`: effects: no engine event `damged` (did you mean `damaged`?); events: damaged, blocked, …
+content/fx/sandbox.fx.ron: fx `sandbox`: effects.damaged -> unknown effect `hit_sprak` (did you mean `hit_spark`?)
+```
+
+Ещё: эффект, который не запускает ни одной частицы (ни `count`, ни `rate` с `duration`), `spread` вне 0…360, `lift` вне −90…90,
+отрицательные `drag`, `size_end`, `radius`, `max_live` вне 1…4096, вторая таблица `fx` в игре, пустое имя метки. Эффект с ошибкой
+при первой загрузке всё равно играет (как любое определение, которое прочиталось), но в пределах, которые называет проверка: пул —
+не больше 4096 мешей, за раз — не больше 1024 частиц, по `rate` — не больше 4096, жизнь частицы — не дольше 30 с. Опечатка вроде
+`max_live: 4000000000` или `rate: 5e9` не повесит игру; проверка назовёт её (`one play starts 4294967295 particles …`).
+
+**Как игра этим пользуется.** (1) Эффекты в `assets/content/*.effect.ron`, таблица — один `*.fx.ron`: у песочницы искры удара и
+блока (осколки), вспышка парирования, пыль смерти (кубики) и свечение лечения, у шаблона — искры удара и блока и пыль смерти. (2)
+Свои моменты — `PlayEffect` из кода игры или метки клипов в `cues`. (3) Посмотреть: `cargo sandbox --offscreen --paused --port 0
+--port-file F &`, `shards act god`, `shards step 1800 --until "journal:winds up"`, `shards shot -o shots/fx.png` — на снимке декаль
+под атакой и искры на ударе.
+
+**Чего нет.** Частицы на процессоре: десятки тысяч живых одновременно им не по силам (пул эффекта — до 4096). Нет текстур и
+анимированных спрайтов у частиц, следов (trail), столкновений с землёй, света от частиц, звука (звук — модуль звука). Декали — только
+телеграфы: общего API пятен (кровь, следы) нет. Декаль проецируется сверху вниз в пределах 0.6 м: на крутом склоне её край бледнеет.
+Проверено на GPU с `--offscreen` (тест `offscreen` в пикселях и снимки песочницы); в окне на дисплее глазами не проверяли.
+
 ## Сборка для игроков и Windows (E10.6)
 
 `shards package` собирает игру для игроков и проверяет сборку так, как её запустит чужая машина. Запущенная игра не нужна.
@@ -4171,7 +4326,7 @@ built: …\target\x86_64-pc-windows-msvc\dist\my_game.exe
 package: …\my_game\dist\my_game-0.1.0-windows-x86_64 (program 123.6 MB, assets/ 52 files, 1.3 MB)
 subsystem: windows (no console window)
 imports: system DLLs only (kernel32.dll, oleaut32.dll, uiautomationcore.dll, user32.dll, …, dxgi.dll, ws2_32.dll)
-check-content: ok: 67 definitions in 27 files
+check-content: ok: 71 definitions in 29 files
 smoke: ok: loaded in 0.05s, 300 ticks in 0.07s
 writes: nothing in its own folder
 ```
@@ -4333,6 +4488,7 @@ saved crashes/crash-20261016-123456-tick30.json: tick 30, 120 log lines, 48 jour
 | `world/course.layout.ron` | полоса препятствий от x = 40: ступени, уступ 1.3 м, бассейн 10 м, пандус на обрыв 18 м над каньоном, площадка цели через 32 м пропасти, восходящий поток посередине |
 | `characters/characters.prefab.ron` | префабы `player`, `skeleton`, `skeleton_captain`, `frost_warden`, `pillar`; у тел и колонны `Look` — вид, которым их рисует окно |
 | `look/sandbox.look.ron` | виды (E10.1): пресеты `low_poly` (плоские грани, контур) и `cel` (две полосы); `player`, `skeleton`, `warden` (`extends: "low_poly"`), `stone`, `wall` (контур), `floor`, `sand` (две полосы), `dark` (`Matte`), `marker` (`Unlit`); вид коробки арены — поле `look` в `*.layout.ron` (`Stone`, `Floor`, `Wall`, `Sand`), носы персонажей (`dark`) и столбы ориентиров (`marker`) ставит `visuals.rs` |
+| `fx/sandbox.effect.ron`, `fx/sandbox.fx.ron` | эффекты (E10.3): `hit_spark` (искры удара, светятся, назад к нападающему), `block_spark` (осколки блока), `parry_flash` (вспышка парирования), `death_dust` (пыль смерти: кубики, ещё 0.8 с идёт за телом), `heal_glow` (свечение лечения); таблица — `damaged`, `blocked`, `parried`, `died`, `healed` |
 | `characters/bodies.locomotion.ron` | как ходят игрок, скелет и страж |
 | `combat/player.action.ron` | комбо `light_1`–`light_3`, `heavy`, перекат (i-frames 0.18 с), блок с идеальным блоком, фляга |
 | `combat/warden.action.ron` | четыре атаки стража (`slash`, `slam`, `sweep`, `shockwave`), спокойные и в ярости |
@@ -4406,10 +4562,13 @@ saved crashes/crash-20261016-123456-tick30.json: tick 30, 120 log lines, 48 jour
   тому, что звучит; лечение и меню звучат звуками микшера;
 - `looks.scenario` (E10.1) — без картинки `looks` говорит, что рисовать нечего, и перечисляет виды с пресетами (`extends`);
   `content_get` вида, `Look` тел в `inspect`, `look_outlines` и переключатель меню разработчика (в конце контуры включены),
-  вид с ошибкой `content_apply` отклоняет.
+  вид с ошибкой `content_apply` отклоняет;
 - `scatter.scenario` (E10.2) — без картинки `scatter` говорит, что ничего не рассыпано, и перечисляет определения дебрей;
   `content_get` определения и вида, `graphics.foliage` в журнале и отказ вне 0…1, `scatter_set` и переключатель меню
-  разработчика (в конце растительность включена и полная), определение с ошибками `content_apply` отклоняет.
+  разработчика (в конце растительность включена и полная), определение с ошибками `content_apply` отклоняет;
+- `effects.scenario` (E10.3) — без картинки `effects` говорит, что рисовать нечего, и перечисляет эффекты с пулами и таблицу
+  событий; `content_get` эффекта и таблицы, `effect_play` без картинки и с опечаткой, `telegraph_decals` и переключатель меню
+  разработчика (в конце декали включены), эффект и вторая таблица с ошибками `content_apply` отклоняет.
 
 Сценарии начинают с `heal`/`teleport`/`set`/`npc_set_state … calm`, поэтому идут на свежей игре и после других, в любом порядке:
 CI гоняет их вперёд и потом назад в одной игре. Сессии шести из них записаны как эталонные реплеи в `tests/replays/`
@@ -4444,11 +4603,12 @@ cargo test --manifest-path template/Cargo.toml # шаблон отдельно: 
 | `shards_dev` | у каждого пункта списка GDD 32.8 есть пункт меню с живым инструментом и порядок разделов, пункты и строки идут через те же инструменты (переключатели, пункты с пропуском, пункты без дела, пункты игры из контента), консоль отвечает и помнит строки, `open` показывает панели, клавиши оверлеев ждут, пока панель открыта, Tab дописывает имена инструментов и аргументов, битый пункт — ошибка контента |
 | `shards_look` | вид меша: свой `Look`, предка, имя материала glTF; материал из исходного (цвет и прозрачность, свечение, `unlit`), пресеты `extends` и их ошибки, плоская копия и контур (слои, прозрачные материалы и морф-таргеты без контура), горячая перезагрузка и ассеты, изменённые на месте, без картинки ничего не стилизуется; картинка на GPU (`#[ignore]`): полосы и контур в пикселях |
 | `shards_scatter` | раскладка: одно зерно — одни точки, `spacing`, `graphics.foliage` оставляет начало того же списка, земля, крутизна, полоса высот и `clearance`; проверка контента называет каждую ошибку; в игре без картинки ничего, на каждом тайле тестового региона, не на колонне, не в стене, одинаково в двух запусках; пакеты (два меша на тысячи сущностей), `VisibilityRange` уровней, тени; `graphics.foliage`, `scatter_set` и меню разработчика, правка контента и смена региона (без предупреждения B0004); картинка на GPU (`#[ignore]`): трава зелёная в пикселях, выключенная и дальше последнего уровня не рисуется |
+| `shards_fx` | эффекты и таблица в контенте и их ошибки (пул меньше одного запуска, событие с опечаткой, вторая таблица), инструменты, меню и статус без картинки; пулы мешей из контента (один меш и материал на эффект), запуск, переполнение пула (старые уступают), часы симуляции (пауза замораживает, `step` двигает), `rate` и `duration`, эффекты событий (на стороне удара), меток и `PlayEffect`; декаль на зону (круг, сектор), заливка растёт к удару, цвет врага и союзника, гизмо отдают заливку, `DepthPrepass` камере и обратно; картинка на GPU (`#[ignore]`): декаль красит пол только в зоне, частицы светятся там, где играют |
 | `shards_net` | `src/`: без Bevy — транспорты (хаб в памяти, UDP), имитация связи, канал (надёжные и последние сообщения, блобы, подтверждения, RTT, потери, тайм-ауты), формат датаграмм; сессия (пределы кадров ввода и самого большого честного пакета, удерживаемое после мира заново, правила репликации, ожидание места в канале по числу и байтам, `NetDef`, ушедшие токены). Сессия целиком — в тестах песочницы `net*.rs` |
 | `shards` | сведение сети и сохранений (`coop`: что хост знает о персонаже игрока, как он едет текстом), секции движка (число, какого не бывает у тела), слот стенда, реплей со снапшота (`--verify`: тот же результат, код 2 для чужого снапшота), режим без окна — те же плагины и картинки нет (`display` и подсказка `shot`), `--offscreen` — плагины окна без окна (картинка для `shot`, в неё рисуют камеры, нацеленные на окно, и после смены цели), тестовое приложение, `testing::ok` на сбое геймплея, `testing::run_to` и `verify`, когда нарушенное правило совпало с началом загрузки, бюджет тика в командной строке, время кадра (`frames`: кадр — более медленный из двух миров, кадр с `step` не в счёт, отчёт GPU), автотест (`bench`: вердикты, проверка определения, `--perf` и его коды), `counts` без окна, анимационный мост на настоящей модели со скином |
 | `sandbox` | в одном бинарнике `tests/sandbox`: снапшоты (`snapshots.rs`: состояние после загрузки то же, что в исходной сессии, на перекате, комбо, телеграфе, планировании, плавании, флаконе, боях NPC и в сгенерированном регионе), тайл руины (`tiles.rs`: файл из тестового генератора glTF совпадает с закоммиченным), сценарии (`scenario_files`: каждый файл на свежей игре, все подряд в одной игре, бой-прототип после шести разных пауз), эталонные реплеи, действия, контент, полоса препятствий, детерминизм, видимость, права scope, реплеи, `kill` и SIGHUP; инварианты (`invariants.rs`: правила песочницы и их границы, сессии, остановка в реальном времени, реплей нарушения, снапшот; `net_seams.rs`: клиент правил не проверяет); кооператив на стенде (`net.rs`, `net_guards.rs`, `net_lifecycle.rs`, `net_sync.rs`, `net_predict.rs`, `net_seams.rs`, `net_coop.rs`, из них 2 замера под `#[ignore]`: вход и уход, пределы и текст пира, мир заново, ввод, рассинхрон, конец сессии и коды выхода, часы стенда, UDP на loopback, предсказание клиента, персонажи и сохранения); долгая игра (`soak.rs`: две минуты хоста и двух клиентов на 150 мс и 2 % со сменой региона и сохранениями, полчаса — под `#[ignore]`); снимок без окна (`offscreen.rs`, `#[ignore]`: нужен GPU или программный рендер); отдельно `system_failures` (сбой геймплея, краш-реплей, отчёт о падении, паника в другом потоке, `crash_report`, возврат снапшотом после сбоя), `log_capture` (строки лога в `step`) и `perf` (время тика: бюджет, журнал, `ai/status`; автотест на эталонной сцене без окна, с `offscreen` — под `#[ignore]`): у них свои процессы |
 
-Тесты шаблона (`template/tests/game`, 28 и один `#[ignore]`) собираются в одном бинарнике: сценарии (и сценарий стенда), детерминизм,
+Тесты шаблона (`template/tests/game`, 36 и один `#[ignore]`) собираются в одном бинарнике: сценарии (и сценарий стенда), детерминизм,
 реплеи, контент, кооператив (хост и гость на 150 мс и 2 %: трофей гостя на каждой копии и в его файле, следующая игра с ним,
 реплей хоста в одиночной игре), регион
 (тысяча зёрен долины, манифест байт в байт, экран загрузки без окна, колонна руины, рейдер на навсетке), манифест (единственная
@@ -4482,7 +4642,9 @@ xvfb-run -a cargo test -p shards --test action_render -- --ignored --nocapture  
 2 %), со сменой региона каждые 5 минут и сохранением каждые 3; по понедельникам, руками (`minutes`, `seed`) и на пуше с
 `[soak]` в сообщении коммита. `record-replays.yml` записывает эталонные реплеи песочницы и шаблона заново на Linux (там их
 проверяет CI; запись на другой ОС может разойтись в последних битах float) и отдаёт артефактом `reference-replays`: пуш с
-`[record replays]` в сообщении, потом `gh run download <id> --name reference-replays --dir .` в корне репозитория.
+`[record replays]` в сообщении, потом `gh run download <id> --name reference-replays --dir .` в корне репозитория. В этом
+дереве обоих файлов пока нет (в `.github/workflows/` только `ci.yml`), а эталонные реплеи после E10.1–E10.3 (виды, растительность,
+эффекты меняют хэш контента) не перезаписаны: их нужно записать заново на Linux и Windows на вершине этой цепочки веток.
 
 ## Что дальше
 
@@ -4494,9 +4656,9 @@ NPC в `shards_dev` и `shards_npc`, `path_to` и `clearance` по навсет�
 их на каждом пуше. Впереди:
 
 1. **Фаза E — платформа (E10):** стилизованные материалы (раздел «Стилизованные материалы (E10.1)»), растительность с уровнями
-   детализации (раздел «Растительность и мелкие объекты (E10.2)»), бюджеты и автотест производительности, обработчик падений и
-   скриншоты без окна уже есть. Сборка под Windows тоже есть (`shards package`, раздел «Сборка для игроков и Windows»); не хватает
-   запуска на настоящей чистой машине. Впереди эффекты и декали, Steam.
+   детализации (раздел «Растительность и мелкие объекты (E10.2)»), эффекты и декали (раздел «Эффекты и декали (E10.3)»), бюджеты
+   и автотест производительности, обработчик падений и скриншоты без окна уже есть. Сборка под Windows тоже есть
+   (`shards package`, раздел «Сборка для игроков и Windows»); не хватает запуска на настоящей чистой машине. Впереди Steam.
 2. **Остатки фазы B:** стриминг геометрии тайлов для физики (сейчас по расстоянию грузится только картинка), навсетка под
    несколько тел.
 3. Горячая перезагрузка кода (`--features dynamic`, subsecond).

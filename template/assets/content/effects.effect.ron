@@ -1,0 +1,18 @@
+// The arena's effects (the engine's effects; content kind `effect`): particles from a pool of
+// `max_live` meshes made once. effects.fx.ron says which engine event plays which; `shards act
+// effect_play effect=hit_spark at=e1` plays one by hand (in a window or with --offscreen), `shards
+// act effects` lists them. Edit a number and the next play takes it.
+{
+    // A hit: sparks that burst out of the struck side, back at the attacker, glowing, fading to red.
+    "hit_spark": (count: 16, lifetime: (0.18, 0.35), speed: (3.0, 6.0), spread: 70.0, aim: Hit, gravity: -9.0,
+        drag: 2.0, size: (0.14, 0.24), size_end: 0.3, color: "#fff2b3", color_end: "#ff6a1a00", glow: true,
+        offset: (0.0, 1.0, 0.0), max_live: 96),
+    // A blow on a guard: cold shards that tumble off and fall.
+    "block_spark": (count: 8, lifetime: (0.3, 0.5), speed: (2.5, 5.0), spread: 80.0, aim: Hit, lift: 35.0,
+        gravity: -12.0, size: (0.18, 0.3), size_end: 0.4, color: "#bfe6ff", color_end: "#4d9fff00", shape: Shard,
+        spin: 720.0, offset: (0.0, 1.1, 0.0), max_live: 48),
+    // A death: dust that rises from the body, slows and settles.
+    "death_dust": (count: 14, rate: 20.0, duration: 0.6, lifetime: (0.8, 1.3), speed: (0.4, 1.2), spread: 120.0,
+        gravity: -0.6, drag: 1.5, size: (0.12, 0.2), size_end: 1.6, color: "#8c8061cc", color_end: "#5c554400",
+        shape: Cube, radius: 0.45, offset: (0.0, 0.3, 0.0), max_live: 64),
+}

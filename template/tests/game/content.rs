@@ -31,6 +31,8 @@ fn check_content_is_clean() {
     // the navmesh settings (every tile's bake file fresh), the raider's behaviour, its grass and pebbles.
     let valley = ["tile", "level", "region", "nav", "behavior", "scatter"].map(|kind| summary.kinds[kind]);
     assert_eq!(valley, [4, 1, 1, 1, 1, 2], "{summary:?}");
+    // The effects and the table of the events that play them.
+    assert_eq!((summary.kinds["effect"], summary.kinds["fx"]), (3, 1), "{summary:?}");
 }
 
 #[test]
