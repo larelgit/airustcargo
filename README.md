@@ -2514,7 +2514,7 @@ cargo sandbox --headless --paused --stand 2 --net-sim latency=150,loss=0.02 --po
   a content reload during a co-op session …; it applies when that is over`; у файла уровня — `level: …`), а когда клиентов
   не осталось или сессия кончилась, правка применяется сама. Из такого файла уровня ничего не ставится, пока правка ждёт:
   сервер ассетов уже прочёл новый файл, а другие машины играют на старом, поэтому `spawn_level` и тайл региона из него
-  отказывают (`refused: `ruin.gltf` changed on disk, and a level spawn from the changed file during a co-op session …`). Решение — запрет, а не рассылка: хосту пришлось бы слать
+  отказывают (``refused: `ruin.gltf` changed on disk, and a level spawn from the changed file during a co-op session …``). Решение — запрет, а не рассылка: хосту пришлось бы слать
   определения (и файлы уровней, и запечённую навигацию) и менять контент у всех на одном тике, а мир, построенный вокруг
   старого контента (регион, навсетка), — строить заново; запрет закрывает рассинхрон, которым кончился первый получасовой
   `soak`, когда файл региона поменяли посреди игры. Механизм — `ContentGuards` (`add_content_guard`) крейта
