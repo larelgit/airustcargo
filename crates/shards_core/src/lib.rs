@@ -142,6 +142,10 @@ pub struct EngineConfig {
     /// id, a session hosted in a Steam lobby or as a Steam game server. Without the feature nothing
     /// reads it.
     pub steam: SteamLaunch,
+    /// Engine modules this game leaves out, by the names `ai/status` lists under `engine.modules`
+    /// (`audio`, `scatter`; `--without audio,scatter`): their plugins are not added. Which ones can
+    /// go, and what each needs, is `shards::modules`.
+    pub without: Vec<String>,
 }
 
 /// What a game asks of Steam at launch (the `steam` feature of `shards`: the `shards_steam` module).
@@ -256,7 +260,9 @@ pub enum NetLaunch {
 pub enum MenuLaunch {
     /// Only when a person may be there to use it: something is drawn (a window, `--offscreen`),
     /// and the launch says nothing of what to play (no session: `--host`, `--join`, `--stand`; no
-    /// save slot: `--world`, `--character`). Headless runs, tests, replays and checks go straight in.
+    /// save slot: `--world`, `--character`), and the game runs the `ui` module that draws the menu
+    /// (not left out with [`EngineConfig::without`]). Headless runs, tests, replays and checks go
+    /// straight in.
     #[default]
     Auto,
     /// Always (`--menu`): an agent goes through it headless, with `ui_*` tools.
@@ -311,6 +317,7 @@ impl Default for EngineConfig {
             world_slot: None,
             exit_with_host: false,
             steam: SteamLaunch::default(),
+            without: Vec::new(),
         }
     }
 }
@@ -333,7 +340,11 @@ impl EngineConfig {
             MenuLaunch::Show => true,
             MenuLaunch::Skip => false,
             MenuLaunch::Auto => {
-                self.draws() && self.net == NetLaunch::Off && self.world_slot.is_none() && self.character_slot.is_none()
+                self.draws()
+                    && self.net == NetLaunch::Off
+                    && self.world_slot.is_none()
+                    && self.character_slot.is_none()
+                    && !self.without.iter().any(|module| module.trim() == "ui")
             }
         };
         if show { EngineState::MainMenu } else { EngineState::InGame }

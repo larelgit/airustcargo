@@ -180,6 +180,9 @@ fn a_main_menu_shows_only_in_runs_a_person_may_be_at() {
     assert_eq!(start(EngineConfig { world_slot: Some("slot1".into()), ..windowed.clone() }), EngineState::InGame, "a named save is played");
     assert_eq!(start(EngineConfig { character_slot: Some("slot1".into()), ..windowed.clone() }), EngineState::InGame);
     assert_eq!(start(EngineConfig { menu: MenuLaunch::Skip, ..windowed.clone() }), EngineState::InGame, "--no-menu");
+    let no_ui = EngineConfig { without: vec!["locale".into(), "ui".into()], ..windowed.clone() };
+    assert_eq!(start(no_ui.clone()), EngineState::InGame, "no screens to show it with");
+    assert_eq!(start(EngineConfig { menu: MenuLaunch::Show, ..no_ui }), EngineState::MainMenu, "--menu: an agent leaves it with new_game");
     assert_eq!(start(EngineConfig { menu: MenuLaunch::Show, ..test_config() }), EngineState::InGame, "a game without a menu has none to show");
     assert_eq!(start(menu_config()), EngineState::MainMenu, "--menu shows it headless");
 }

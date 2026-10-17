@@ -1126,6 +1126,16 @@ E2.4, E1.3; `shards_ui`, `shards_motion`, `shards_core`, `shards_save`, `shards_
   (экраны, тексты, тема ради шрифта): семь эталонных реплеев песочницы и два шаблона записаны заново на Windows 11, в них
   изменились только `content`, `state_hash` и `hash`. Песочница: `ok: 133 definitions in 39 files` (было 134 в 40).
 
+**Мелочи движка (E1.1; `shards`, `shards_core`)**:
+
+- Игра выключает модули движка: `EngineConfig::without` (`--without audio,scatter`) называет их, как `ai/status`
+  (`engine.modules`), и `EnginePlugins` не добавляет их плагинов. Убрать можно 14 модулей (`shards::modules::OPTIONAL_MODULES`:
+  `level`, `world`, `npc`, `net`, `save`, `coop`, `locale`, `ui`, `audio`, `look`, `scatter`, `fx`, `steam`, `dev`), модуль,
+  нужный другому, — только вместе с ним (`ui` нужен `locale`, `steam` — `net`), а соединяющие (`coop`, уровни как тайлы)
+  уходят с любым из своих модулей. `--without net` с `--host`/`--join`/`--stand` и `--without save` с `--character`/`--world`
+  — ошибка с кодом 2. Тесты: `shards` (+4: `modules` 2, `tests/engine.rs` 2 — движок без каждого модуля и отказ без
+  нужного; разбор `--without` в тесте флагов).
+
 ### Исправлено
 
 - NPC (`shards_npc`): маршрут знает всё тело NPC, а не только радиус. Раньше `NavPaths::find`, `find_path` и `navmesh_path`

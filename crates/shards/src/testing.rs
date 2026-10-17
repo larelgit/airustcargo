@@ -71,7 +71,9 @@ fn own_saves(app: &mut App, config: &EngineConfig) {
         return;
     }
     let dir = std::env::temp_dir().join(format!("shards_test_saves_{}_{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
-    app.world_mut().resource_mut::<SaveConfig>().dir = dir.clone();
+    // A game without the save module saves nothing.
+    let Some(mut saves) = app.world_mut().get_resource_mut::<SaveConfig>() else { return };
+    saves.dir = dir.clone();
     app.insert_resource(TestSaves(dir));
 }
 

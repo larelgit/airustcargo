@@ -426,6 +426,21 @@ FixedLast        ai_core: проверки реплея (хэш мира), за�
 | `save_dir`, `character_slot`, `world_slot` | папка сохранений (`saves`); слоты персонажа и мира (`--character`, `--world`) |
 | `settings` | `SettingsStore`: `Default` (папка настроек платформы), `Dir(путь)` (`--settings-dir`), `Off` (`--no-settings`, тесты) |
 | `exit_with_host` | клиент выходит, когда сессия кончилась, а не возвращается в меню: с кодом 0, если её завершил хост, 1 — отказ, кик, потеря хоста, мир не принят; 2 — сессию не открыть (адрес, который не разобрать; у `--host` занятый порт). Хост (`--host`) по `net_end` не выходит |
+| `without` | модули движка, которых в игре нет (`--without audio,scatter`): их плагины не добавляются, см. ниже |
+
+**Модули, которых в игре нет.** `EngineConfig::without` (или `--without`) называет модули так, как их перечисляет
+`ai/status` (`engine.modules`), и `EnginePlugins` не добавляет их плагинов: игре без звука не нужен `audio`, серверу без
+картинки — `look`, `scatter` и `fx`. Выключить можно `level`, `world`, `npc`, `net`, `save`, `coop`, `locale`, `ui`,
+`audio`, `look`, `scatter`, `fx`, `steam` и `dev` (`shards::modules::OPTIONAL_MODULES`); `core`, `content`, `settings`,
+`motion` и `action` есть в каждой игре. Модуль, который нужен другому, уходит только вместе с ним: `--without locale`
+отвечает ``--without: `ui` (screens, menus and the HUD) needs `locale`: leave out both (`--without locale,ui`) or
+neither``, `steam` (в сборке с ним) нужен `net`. То, что только соединяет два модуля, уходит с любым из них: `coop` — с
+`net` или `save`, уровни как тайлы — с `level` или `world`. Командная строка проверяет и остальное: `--without net` с
+`--host`, `--join` или `--stand`, `--without save` с `--character` или `--world` — ошибка с кодом 2; `EnginePlugins` с
+неверным `without` паникует с тем же текстом. Игра, которая сама зовёт API выключенного модуля (`add_ui_action` без `ui`),
+сама за это отвечает. Без `ui` главное меню по умолчанию пропускается: его нечем нарисовать (`--menu` всё равно ставит
+`MainMenu`, из которого выводит `new_game`). Тест `a_game_runs_without_each_module_it_may_leave_out` (`crates/shards/tests/engine.rs`) выключает
+каждый модуль (с теми, кому он нужен) и гоняет движок 60 тиков.
 
 **Окно и без окна — те же плагины.** Режим без окна — `EnginePlugins` без окна, GPU и звука: `WindowPlugin` без
 окна, нет winit, `RenderPlugin` без бэкенда (плагины рендера остаются зарегистрированными), цикл на 60 Гц вместо цикла
