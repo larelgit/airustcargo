@@ -85,7 +85,7 @@ pub use query::{NavError, NavPath, NavQuery};
 pub use region::{rebuild, refresh, NavBakes, NavRegion};
 pub use settings::{NavBodyDef, NavSettings, NavSettingsDef, DEFAULT_BODY};
 pub use tile::NavTile;
-pub use tools::{bake_files, BakeReport, NavOverlay};
+pub use tools::{bake_files, bake_region, BakeReport, NavOverlay};
 
 use ai_core::AiId;
 use bevy::prelude::*;

@@ -112,6 +112,28 @@ pub fn bake_files(world: &mut World, only: Option<&str>) -> Result<BakeReport, S
     Ok(report)
 }
 
+/// Bakes every tile (or room) the region in the world uses, once per id and body class, as
+/// `--bake-nav` would, and writes nothing: how many bakes there were and how long they took
+/// (the performance autotest's `nav_bake_s`).
+pub fn bake_region(world: &World) -> Result<(usize, std::time::Duration), String> {
+    let region = world.get_resource::<shards_world::ActiveRegion>().ok_or("no region is loaded")?;
+    let db = world.get_resource::<ContentDb>().ok_or("content is not loaded")?;
+    let manifest = &region.manifest;
+    let kind = if manifest.layout == shards_world::manifest::Layout::Rooms { super::tile::TileKind::Room } else { super::tile::TileKind::Tile };
+    let mut ids: Vec<&str> = manifest.tiles.iter().map(|t| t.tile.as_str()).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let root = asset_root(world);
+    let classes = NavSettings::all(db);
+    let started = std::time::Instant::now();
+    for id in &ids {
+        for settings in &classes {
+            bake(world, Some(&root), kind, id, manifest.tile_size, settings).map_err(|why| format!("{id} (body {}): {why}", settings.body))?;
+        }
+    }
+    Ok((ids.len() * classes.len(), started.elapsed()))
+}
+
 /// Bake tiles into their navigation bake files (`<assets>/nav/<tile>.navtile.ron`, and
 /// `<assets>/nav/<class>/<tile>.navtile.ron` for every other body class), as `--bake-nav`
 /// does: one tile or room, or every tile a region uses. A region loaded after reads them;

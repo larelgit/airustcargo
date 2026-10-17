@@ -2,7 +2,8 @@
 //!
 //! A `perf` content definition ([`PerfDef`], `content/**/*.perf.ron`) names a scene, how long to
 //! warm up and to measure, and budgets. The run loads the game, goes to the scene (the game's start
-//! world, or a region generated from a seed: its load is timed), runs the setup lines, warms up,
+//! world, or a region generated from a seed: its load is timed, and the bake of its navigation when
+//! that is a budget), runs the setup lines, warms up,
 //! measures, and gives a [`Verdict`] per budget. Headless it measures ticks, as fast as they go;
 //! `--offscreen` the game plays in real time and draws as fast as the GPU allows, and the frames
 //! ([`crate::frames`]), the GPU's time and the triangles it drew are measured too. A debug build
@@ -101,6 +102,13 @@ pub struct Budgets {
     /// Seconds the region may take to generate and load.
     #[serde(default)]
     pub region_load_s: Option<f64>,
+    /// Seconds baking the navigation of every tile the region uses may take, every body class
+    /// (`--bake-nav` for that region, nothing written). Measured only when the budget is named:
+    /// big tiles take a while.
+    ///
+    /// Left out of a definition's JSON while unset (as `draws`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nav_bake_s: Option<f64>,
     /// Entities at the end, at most.
     #[serde(default)]
     pub entities: Option<u64>,
@@ -172,6 +180,7 @@ impl ContentDef for PerfDef {
             ("frame_avg_ms", b.frame_avg_ms),
             ("gpu_avg_ms", b.gpu_avg_ms),
             ("region_load_s", b.region_load_s),
+            ("nav_bake_s", b.nav_bake_s),
         ] {
             if value.is_some_and(|v| !(v.is_finite() && v > 0.0)) {
                 refs.error(format!("budgets.{name}: a budget is a number above 0"));
@@ -188,8 +197,10 @@ impl ContentDef for PerfDef {
         if b.over_share.is_some_and(|s| !(0.0..=1.0).contains(&s)) {
             refs.error("budgets.over_share: a share from 0 (none may go over) to 1 (all may)");
         }
-        if b.region_load_s.is_some() && self.region.is_none() {
-            refs.error("budgets.region_load_s: no region is loaded; name one in `region`, or drop the budget");
+        for (name, set) in [("region_load_s", b.region_load_s.is_some()), ("nav_bake_s", b.nav_bake_s.is_some())] {
+            if set && self.region.is_none() {
+                refs.error(format!("budgets.{name}: no region is loaded; name one in `region`, or drop the budget"));
+            }
         }
     }
 }
@@ -332,6 +343,9 @@ pub struct Measured {
     /// The time to load the game, then to generate and load the region (if one was named).
     pub load: Duration,
     pub region_load: Option<Duration>,
+    /// How many bakes (tiles times body classes) the region's navigation took, and how long
+    /// (when `nav_bake_s` is a budget).
+    pub nav_bake: Option<(usize, Duration)>,
     pub ticks: TickStats,
     pub tick_budget: Duration,
     /// The real time the measured ticks took.
@@ -438,6 +452,13 @@ pub fn judge(budgets: &Budgets, measured: &Measured, judged: bool) -> Vec<Verdic
         };
         check(measured.region_load.map(|load| load.as_secs_f64() <= budget), text);
     }
+    if let Some(budget) = budgets.nav_bake_s {
+        let text = match measured.nav_bake {
+            Some((bakes, took)) => format!("nav bake {:.2} s, {bakes} tiles x body classes (at most {budget:.1} s)", took.as_secs_f64()),
+            None => "nav bake: no region was baked".to_owned(),
+        };
+        check(measured.nav_bake.map(|(_, took)| took.as_secs_f64() <= budget), text);
+    }
     let ticks = &measured.ticks;
     if let Some(budget) = budgets.tick_avg_ms {
         check(Some(ms(ticks.avg()) <= budget), format!("tick avg {:.2} ms (at most {budget:.2} ms)", ms(ticks.avg())));
@@ -526,6 +547,10 @@ pub fn play(app: &mut App, def: &PerfDef) -> Result<Measured, String> {
         None => None,
     };
     let load = started.elapsed();
+    let nav_bake = match (&def.region, def.budgets.nav_bake_s) {
+        (Some(_), Some(_)) => Some(shards_npc::bake_region(app.world()).map_err(|why| format!("nav bake: {why}"))?),
+        _ => None,
+    };
     let halts = |world: &World| world.get_resource::<ai_core::sim::Halts>().map_or(0, |h| h.count);
     for line in &def.setup {
         let before = halts(app.world());
@@ -545,6 +570,7 @@ pub fn play(app: &mut App, def: &PerfDef) -> Result<Measured, String> {
     Ok(Measured {
         load,
         region_load,
+        nav_bake,
         ticks,
         tick_budget: budget,
         wall,
@@ -699,6 +725,7 @@ mod tests {
         };
         let measured = Measured {
             region_load: Some(Duration::from_millis(3200)),
+            nav_bake: Some((8, Duration::from_millis(41_500))),
             ticks: ticks(600, 1, 0),
             tick_budget: budget,
             frames: Some(frames),
@@ -708,6 +735,7 @@ mod tests {
         };
         let budgets = Budgets {
             region_load_s: Some(15.0),
+            nav_bake_s: Some(40.0),
             frame_avg_ms: Some(16.7),
             gpu_avg_ms: Some(10.0),
             triangles: Some(100_000),
@@ -721,6 +749,7 @@ mod tests {
             lines,
             [
                 "ok    region load 3.20 s (at most 15.0 s)",
+                "OVER  nav bake 41.50 s, 8 tiles x body classes (at most 40.0 s)",
                 "ok    ticks over 16.0 ms: 0 of 600, 0.0% (at most 1.0%)",
                 "ok    frame avg 7.00 ms (at most 16.70 ms)",
                 "OVER  frames over 16.0 ms: 20 of 1000, 2.0% (at most 1.0%)",
@@ -731,6 +760,9 @@ mod tests {
                 "OVER  distinct meshes drawn 12 (at most 10)",
             ]
         );
+        let unbaked = Measured { nav_bake: None, ..measured };
+        let line = judge(&budgets, &unbaked, true).into_iter().find(|v| v.text.starts_with("nav bake")).unwrap();
+        assert_eq!(line.line(), "-     nav bake: no region was baked");
     }
 
     #[test]
@@ -760,8 +792,11 @@ mod tests {
         // The content hash is over this JSON, and replays compare it: a field added to the budgets
         // must not move the hash of a definition that does not use it.
         let json = |budgets: Budgets| serde_json::to_value(PerfDef { budgets, ..serde_json::from_str("{}").unwrap() }).unwrap();
-        assert!(!json(Budgets::default())["budgets"].as_object().unwrap().contains_key("draws"));
+        for field in ["draws", "nav_bake_s"] {
+            assert!(!json(Budgets::default())["budgets"].as_object().unwrap().contains_key(field), "{field}");
+        }
         assert_eq!(json(Budgets { draws: Some(150), ..Default::default() })["budgets"]["draws"], 150);
+        assert_eq!(json(Budgets { nav_bake_s: Some(60.0), ..Default::default() })["budgets"]["nav_bake_s"], 60.0);
     }
 
     fn errors(perf: &str) -> Vec<String> {
@@ -791,8 +826,11 @@ mod tests {
         for (error, expected) in errors.iter().zip(expected) {
             assert!(error.contains(expected), "{error} should say {expected}");
         }
-        let no_region = self::errors(r#"{ "bench": (budgets: (region_load_s: Some(10.0))) }"#);
-        assert!(no_region.len() == 1 && no_region[0].contains("no region is loaded"), "{no_region:#?}");
+        let no_region = self::errors(r#"{ "bench": (budgets: (region_load_s: Some(10.0), nav_bake_s: Some(-1.0))) }"#);
+        assert_eq!(no_region.len(), 3, "{no_region:#?}");
+        assert!(no_region[0].contains("budgets.nav_bake_s: a budget is a number above 0"), "{no_region:#?}");
+        assert!(no_region[1].contains("budgets.region_load_s: no region is loaded"), "{no_region:#?}");
+        assert!(no_region[2].contains("budgets.nav_bake_s: no region is loaded"), "{no_region:#?}");
         let huge = self::errors(
             r#"{ "bench": (warmup: 300000, ticks: 1000000000, budgets: (frame_ms: Some(1e30), tick_ms: Some(1e-9))) }"#,
         );
