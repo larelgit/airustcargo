@@ -41,6 +41,7 @@ pub fn config() -> EngineConfig {
         report_perf: false,
         hot_reload: false,
         settings: SettingsStore::Off,
+        engine_invariants: true,
         ..default()
     }
 }

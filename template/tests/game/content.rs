@@ -158,3 +158,20 @@ fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
         }
     }
 }
+
+/// The game's own rule, `grunt_chance` (`src/ai.rs`): a chance outside 0..=1 stops the game at
+/// the tick it appears, with the grunt named. A checker is shown to catch what it exists for.
+#[test]
+fn a_grunt_chance_outside_zero_to_one_stops_the_game() {
+    let mut app = my_game::test_app(SEED);
+    let listed = call(&mut app, "assert_list", json!({}));
+    let listed = listed.result.as_str().unwrap_or_default();
+    assert!(listed.contains("  grunt_chance  game rule  armed"), "{listed}");
+    // The engine's own rules are there too, and nothing fires on a normal tick.
+    assert!(listed.contains("  action.resources_in_range  engine rule  armed"), "{listed}");
+    step(&mut app, 5);
+
+    say(&mut app, "set", json!({"id": "e2", "component": "Grunt", "path": "heavy_chance", "value": 25}));
+    let out = call(&mut app, "step", json!({"ticks": 10}));
+    assert_eq!(out.result.as_str().unwrap_or_default(), "ran 1 ticks (5 → 6), stopped: invariant grunt_chance violated at tick 6");
+}

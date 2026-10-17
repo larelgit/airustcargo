@@ -1,6 +1,9 @@
 //! Invariants: rules the game must keep, checked after every tick.
 //!
 //! A rule is defined by its violation: it fires when its condition becomes true.
+//! - **engine rules**: the engine's own checks of its state, named `<module>.<rule>`
+//!   (`action.resources_in_range`). Each module registers them with `add_engine_invariant`
+//!   (shards_core), and `EngineConfig::engine_invariants` switches them off;
 //! - **game rules**: [`add_ai_invariant`](crate::AiAppExt::add_ai_invariant), code that
 //!   returns `Some(explanation)` while the rule is broken (`e5 outside the arena: x = 31.2`);
 //! - **session rules**: `assert_add {name, when}` (`shards assert add hp 'field:6:Health.current<0'`)
@@ -27,13 +30,19 @@
 //! scope, so handing them over would be refused there while the client reported `ok`; and
 //! `assert_list` is a query, which runs where it is called.)
 
+use std::any::{Any, TypeId};
+use std::sync::Mutex;
+use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+
+use bevy::ecs::query::{QueryData, QueryFilter};
 
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::builtin::{self, StopWhen};
+use crate::id::AiId;
 use crate::journal::{self, AiJournal, JournalKind};
 use crate::replay;
 use crate::session::Scope;
@@ -47,6 +56,8 @@ pub const RULES_ON_THE_HOST: &str = "the rules are checked on the host: call it 
 pub type Invariant = fn(&World) -> Option<String>;
 
 enum Rule {
+    /// [`AiInvariants::add_engine_rule`]: the engine's own, named `<module>.<rule>`.
+    Engine(Invariant),
     /// [`add_ai_invariant`](crate::AiAppExt::add_ai_invariant).
     Game(Invariant),
     /// `assert_add`. Journal conditions look at entries after `seen`, so each entry once.
@@ -78,7 +89,7 @@ impl Violation {
     }
 }
 
-/// The rules (game rules first, then session rules, each in the order added) and every
+/// The rules (engine rules first, then game rules, then session rules, each in the order added) and every
 /// violation this session.
 #[derive(Resource)]
 pub struct AiInvariants {
@@ -102,11 +113,14 @@ impl AiInvariants {
     }
 
     /// Adds a game rule (prefer [`AiAppExt::add_ai_invariant`](crate::AiAppExt::add_ai_invariant));
-    /// a rule with the same name is replaced.
+    /// a game rule with the same name is replaced, an engine rule is never replaced.
     pub fn add_game_rule(&mut self, name: &str, rule: Invariant) -> Result<(), String> {
         check_name(name)?;
         let entry = Entry { name: name.to_owned(), rule: Rule::Game(rule), fired: None };
         match self.rules.iter().position(|e| e.name == name) {
+            Some(i) if matches!(self.rules[i].rule, Rule::Engine(_)) => {
+                return Err(format!("`{name}` is one of the engine's invariants; pick another name"));
+            }
             Some(i) => self.rules[i] = entry,
             None => {
                 // Game rules come before session rules.
@@ -115,6 +129,28 @@ impl AiInvariants {
             }
         }
         Ok(())
+    }
+
+    /// Adds an engine rule, named `<module>.<rule>` (prefer `add_engine_invariant` from
+    /// shards_core, which honours `EngineConfig::engine_invariants`). Engine rules come
+    /// before the game's. A rule with the same name is replaced, so a plugin that is
+    /// added twice registers once.
+    pub fn add_engine_rule(&mut self, name: &str, rule: Invariant) -> Result<(), String> {
+        check_engine_name(name)?;
+        let entry = Entry { name: name.to_owned(), rule: Rule::Engine(rule), fired: None };
+        match self.rules.iter().position(|e| e.name == name) {
+            Some(i) => self.rules[i] = entry,
+            None => {
+                let at = self.rules.iter().position(|e| !matches!(e.rule, Rule::Engine(_))).unwrap_or(self.rules.len());
+                self.rules.insert(at, entry);
+            }
+        }
+        Ok(())
+    }
+
+    /// The names of the rules, in checking order (engine, game, session).
+    pub fn rule_names(&self) -> Vec<&str> {
+        self.rules.iter().map(|e| e.name.as_str()).collect()
     }
 
     fn position(&self, name: &str) -> Option<usize> {
@@ -143,12 +179,103 @@ pub(crate) fn check_name(name: &str) -> Result<(), String> {
     }
 }
 
+/// The query states the engine rules keep between ticks ([`with_query`]); lives in the world, so
+/// it goes when the world does. Not simulation state: a cache that is rebuilt on demand, so it is
+/// not part of a snapshot, a replay or a replay check.
+#[derive(Resource, Default)]
+pub struct RuleQueries(Mutex<HashMap<TypeId, Box<dyn Any + Send + Sync>>>);
+
+impl RuleQueries {
+    /// How many query states are kept.
+    pub fn len(&self) -> usize {
+        self.0.lock().map_or(0, |m| m.len())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Runs `f` on a query state for `world` that is kept between calls (in the world's
+/// [`RuleQueries`]), or returns `None` when a component the query names is not registered in the
+/// world (the state is built again on the next call, and then it is kept). A world without
+/// `RuleQueries` (a bare `World` in a unit test) builds the state on every call.
+///
+/// The rules run after every tick and cannot hold state of their own (they are `fn(&World)`),
+/// and building a `QueryState` walks every archetype of the world, which costs more than a rule
+/// that finds nothing wrong. The state is taken out of the cache while `f` runs, so a rule may
+/// call `with_query` again inside, and a panic in `f` drops it, to be built again by the next call.
+pub fn with_query<D, F, R>(world: &World, f: impl FnOnce(&mut QueryState<D, F>) -> R) -> Option<R>
+where
+    D: QueryData + 'static,
+    F: QueryFilter + 'static,
+{
+    let cache = world.get_resource::<RuleQueries>();
+    let key = TypeId::of::<QueryState<D, F>>();
+    let kept = cache.and_then(|c| c.0.lock().ok()?.remove(&key));
+    let mut state = match kept.and_then(|b| b.downcast::<QueryState<D, F>>().ok()) {
+        Some(state) => state,
+        None => Box::new(world.try_query_filtered::<D, F>()?),
+    };
+    let out = f(&mut state);
+    if let Some(Ok(mut states)) = cache.map(|c| c.0.lock()) {
+        states.insert(key, state);
+    }
+    Some(out)
+}
+
+/// Collects the entities that break a rule, to report the lowest [`AiId`] first and
+/// how many more there are, in the style `e6 Health.current = 700 outside 0..=600 (+2 more)`.
+///
+/// The text of a violation is built only for the lowest id seen so far, so a rule that
+/// finds nothing allocates nothing, and the report does not depend on the order the
+/// query visits entities in.
+#[derive(Default)]
+pub struct Offenders {
+    count: usize,
+    lowest: Option<(AiId, String)>,
+}
+
+impl Offenders {
+    /// Notes that `id` breaks the rule; `what` is called only if it is the lowest so far.
+    pub fn note(&mut self, id: AiId, what: impl FnOnce() -> String) {
+        self.count += 1;
+        if self.lowest.as_ref().is_none_or(|(low, _)| id < *low) {
+            self.lowest = Some((id, what()));
+        }
+    }
+
+    /// How many ids were noted.
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
+    /// `None` when nothing was noted, else `e6 <what>` (plus ` (+N more)`).
+    pub fn report(self) -> Option<String> {
+        let (id, what) = self.lowest?;
+        Some(if self.count > 1 { format!("{id} {what} (+{} more)", self.count - 1) } else { format!("{id} {what}") })
+    }
+}
+
+/// Engine rule names are `<module>.<rule>`: lowercase letters, digits and `_` on both sides
+/// of one dot. The name goes into replay file names, like any rule name.
+pub(crate) fn check_engine_name(name: &str) -> Result<(), String> {
+    let part = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    let fits = name.len() <= 64 && name.split_once('.').is_some_and(|(module, rule)| part(module) && part(rule));
+    if fits {
+        Ok(())
+    } else {
+        Err(format!("bad engine rule name `{name}`: use `<module>.<rule>` in lowercase letters, digits and `_`, e.g. action.resources_in_range"))
+    }
+}
+
 /// `FixedLast`: the rules, after the tick's failures are collected.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InvariantSystems;
 
 pub(crate) fn plugin(app: &mut App, replays: bool) {
     app.world_mut().get_resource_or_init::<AiInvariants>().replays = replays;
+    app.world_mut().init_resource::<RuleQueries>();
     // Last in the tick: its log lines and its failures are in the journal by now.
     app.configure_sets(FixedLast, InvariantSystems.after(crate::failures::collect_after_tick))
         .add_systems(FixedLast, check_after_tick.in_set(InvariantSystems));
@@ -209,7 +336,7 @@ fn check_after_tick(world: &mut World) {
 
 fn broken(world: &World, rule: &Rule) -> Option<String> {
     match rule {
-        Rule::Game(rule) => match catch_unwind(AssertUnwindSafe(|| rule(world))) {
+        Rule::Engine(rule) | Rule::Game(rule) => match catch_unwind(AssertUnwindSafe(|| rule(world))) {
             Ok(text) => text,
             Err(panic) => {
                 let message = crate::tools::panic_message(&panic);
@@ -295,7 +422,7 @@ pub(crate) fn rules_state(world: &World) -> RulesState {
         .iter()
         .filter_map(|entry| match &entry.rule {
             Rule::Session { when, .. } => Some((entry.name.clone(), when.clone())),
-            Rule::Game(_) => None,
+            Rule::Engine(_) | Rule::Game(_) => None,
         })
         .collect();
     let fired = invariants.rules.iter().filter_map(|entry| Some((entry.name.clone(), entry.fired?))).collect();
@@ -303,7 +430,7 @@ pub(crate) fn rules_state(world: &World) -> RulesState {
 }
 
 /// Puts `state` in: the session's rules are `state`'s (looking at the journal from now on),
-/// and a rule has fired when it had there. The game's own rules are this game's.
+/// and a rule has fired when it had there. The engine's and the game's own rules are this game's.
 pub(crate) fn set_rules_state(world: &mut World, state: &RulesState) {
     let Some(seen) = world.get_resource::<AiJournal>().map(AiJournal::last_seq) else {
         return;
@@ -311,7 +438,7 @@ pub(crate) fn set_rules_state(world: &mut World, state: &RulesState) {
     let Some(mut invariants) = world.get_resource_mut::<AiInvariants>() else {
         return;
     };
-    invariants.rules.retain(|entry| matches!(entry.rule, Rule::Game(_)));
+    invariants.rules.retain(|entry| matches!(entry.rule, Rule::Engine(_) | Rule::Game(_)));
     for (name, when) in &state.session {
         invariants.rules.push(Entry { name: name.clone(), rule: Rule::Session { when: when.clone(), seen }, fired: None });
     }
@@ -353,6 +480,10 @@ pub(crate) fn apply(world: &mut World, op: &AssertOp) -> Result<String, String> 
 }
 
 fn add(world: &mut World, name: &str, when: &StopWhen) -> Result<String, String> {
+    let invariants = world.resource::<AiInvariants>();
+    if invariants.position(name).is_some_and(|i| matches!(invariants.rules[i].rule, Rule::Engine(_))) {
+        return Err(format!("`{name}` is one of the engine's invariants; pick another name"));
+    }
     check_name(name)?;
     builtin::validate(world, when)?;
     let seen = world.resource::<AiJournal>().last_seq();
@@ -376,6 +507,9 @@ fn add(world: &mut World, name: &str, when: &StopWhen) -> Result<String, String>
 fn remove(world: &mut World, name: &str) -> Result<String, String> {
     let mut invariants = world.resource_mut::<AiInvariants>();
     match invariants.position(name) {
+        Some(i) if matches!(invariants.rules[i].rule, Rule::Engine(_)) => Err(format!(
+            "`{name}` is one of the engine's invariants and stays; after it fires, `assert_reset` re-arms it"
+        )),
         Some(i) if matches!(invariants.rules[i].rule, Rule::Game(_)) => Err(format!(
             "`{name}` is one of the game's invariants and stays; after it fires, `assert_reset` re-arms it"
         )),
@@ -426,7 +560,7 @@ fn assert_add_tool(In(call): In<Call<AssertAddArgs>>, world: &mut World) -> Tool
     apply(world, &AssertOp::Add { name, when })
 }
 
-/// Remove a rule added with `assert_add` (the game's own rules stay).
+/// Remove a rule added with `assert_add` (the engine's and the game's own rules stay).
 #[derive(Deserialize, JsonSchema)]
 pub struct AssertRemoveArgs {
     pub name: String,
@@ -436,7 +570,7 @@ fn assert_remove_tool(In(call): In<Call<AssertRemoveArgs>>, world: &mut World) -
     apply(world, &AssertOp::Remove { name: call.args.name })
 }
 
-/// Re-arm every rule that fired, the game's and the session's: each fires again after
+/// Re-arm every rule that fired, the engine's, the game's and the session's: each fires again after
 /// the next tick that finds it broken.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct AssertResetArgs {}
@@ -445,7 +579,7 @@ fn assert_reset_tool(In(_): In<Call<AssertResetArgs>>, world: &mut World) -> Too
     apply(world, &AssertOp::Reset)
 }
 
-/// The rules checked after every tick: the game's own and this session's, armed or fired.
+/// The rules checked after every tick: the engine's, the game's own and this session's, armed or fired.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct AssertListArgs {}
 
@@ -461,6 +595,7 @@ fn assert_list_tool(
     let mut out = format!("{} rules, checked after every tick", invariants.rules.len());
     for entry in &invariants.rules {
         let what = match &entry.rule {
+            Rule::Engine(_) => "engine rule".to_owned(),
             Rule::Game(_) => "game rule".to_owned(),
             Rule::Session { when, .. } => format!("when {when}"),
         };
@@ -500,6 +635,80 @@ mod tests {
         let names: Vec<&str> = rules.rules.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, ["health", "arena", "mine"]);
         assert!(rules.add_game_rule("no spaces", |_| None).is_err());
+    }
+
+    #[test]
+    fn engine_rules_have_their_own_names_and_come_first() {
+        for ok in ["ai.index_consistent", "a1.b_2"] {
+            assert!(check_engine_name(ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "plain", "a.b.c", ".b", "a.", "Ai.x", "a.b-c", "a b.c", "../x.y"] {
+            assert!(check_engine_name(bad).unwrap_err().contains("<module>.<rule>"), "{bad}");
+        }
+        let mut rules = AiInvariants::new(false);
+        rules.rules.push(Entry { name: "mine".into(), rule: Rule::Session { when: StopWhen::Error, seen: 0 }, fired: None });
+        rules.add_game_rule("health", |_| None).unwrap();
+        rules.add_engine_rule("ai.one", |_| None).unwrap();
+        rules.add_engine_rule("core.two", |_| None).unwrap();
+        rules.add_engine_rule("ai.one", |_| None).unwrap();
+        assert_eq!(rules.rule_names(), ["ai.one", "core.two", "health", "mine"]);
+        assert!(rules.add_game_rule("ai.one", |_| None).is_err());
+        assert!(rules.add_game_rule("no.dots.here", |_| None).is_err());
+    }
+
+    #[test]
+    fn a_kept_query_sees_new_entities_and_belongs_to_its_world() {
+        let count = |world: &World| with_query::<&AiId, (), _>(world, |q| q.iter(world).count());
+        let mut a = World::new();
+        a.init_resource::<RuleQueries>();
+        a.init_resource::<crate::AiIndex>();
+        let mut b = World::new();
+        b.init_resource::<crate::AiIndex>();
+        a.spawn(crate::AiVisible);
+        assert_eq!(count(&a), Some(1));
+        a.spawn(crate::AiVisible);
+        a.spawn((crate::AiVisible, Name::new("in a new archetype")));
+        assert_eq!(count(&a), Some(3), "the kept state follows new entities and archetypes");
+        assert_eq!(count(&b), None, "an AiId nobody spawned in b is not registered there");
+        b.spawn(crate::AiVisible);
+        assert_eq!(count(&b), Some(1), "another world has its own state");
+        // A component the world does not know: nothing to judge, and no state is kept.
+        assert_eq!(with_query::<&crate::replay::AiReplay, (), _>(&b, |_| ()), None);
+    }
+
+    #[test]
+    fn a_rule_may_nest_queries_and_a_panic_inside_loses_only_the_kept_state() {
+        let mut w = World::new();
+        w.init_resource::<RuleQueries>();
+        w.init_resource::<crate::AiIndex>();
+        w.spawn(crate::AiVisible);
+        let nested = with_query::<&AiId, (), _>(&w, |outer| {
+            outer.iter(&w).count() + with_query::<&AiId, (), _>(&w, |inner| inner.iter(&w).count()).unwrap()
+        });
+        assert_eq!(nested, Some(2));
+        let panicked = catch_unwind(AssertUnwindSafe(|| with_query::<&AiId, (), _>(&w, |_| panic!("the rule has a bug"))));
+        assert!(panicked.is_err());
+        assert_eq!(with_query::<&AiId, (), _>(&w, |q| q.iter(&w).count()), Some(1), "built again");
+    }
+
+    #[test]
+    fn kept_states_live_in_the_world_and_go_with_it() {
+        let count = |world: &World| with_query::<&AiId, (), _>(world, |q| q.iter(world).count());
+        for _ in 0..50 {
+            let mut w = World::new();
+            w.init_resource::<crate::AiIndex>();
+            w.init_resource::<RuleQueries>();
+            w.spawn(crate::AiVisible);
+            assert!(w.resource::<RuleQueries>().is_empty(), "a new world starts empty");
+            assert_eq!(count(&w), Some(1));
+            assert_eq!(count(&w), Some(1));
+            assert_eq!(w.resource::<RuleQueries>().len(), 1, "kept once, not once per call");
+        }
+        // Without the resource nothing is kept, and nothing breaks.
+        let mut bare = World::new();
+        bare.init_resource::<crate::AiIndex>();
+        bare.spawn(crate::AiVisible);
+        assert_eq!(count(&bare), Some(1));
     }
 
     #[test]

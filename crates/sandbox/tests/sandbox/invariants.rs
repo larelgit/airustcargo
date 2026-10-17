@@ -8,20 +8,31 @@ use shards::serde_json::{self, json, Value};
 
 use crate::common::{act, text, BOSS};
 
+/// The engine's rules, in the order the modules register them.
+pub(crate) const ENGINE_RULES: [&str; 7] = [
+    "ai.index_consistent",
+    "core.intent_sane",
+    "motion.finite",
+    "action.resources_in_range",
+    "action.running_sane",
+    "npc.state_known",
+    "npc.tokens_within_limit",
+];
+
 /// [`act`] that must succeed. Unlike `common::ok`, the game may halt during the call:
 /// that is what these tests look at.
-fn called(app: &mut App, tool: &str, args: Value) -> CallOutcome {
+pub(crate) fn called(app: &mut App, tool: &str, args: Value) -> CallOutcome {
     let out = act(app, tool, args.clone());
     assert!(out.ok, "{tool} {args} failed: {}", out.result);
     out
 }
 
 /// Runs up to `ticks` ticks; the reply.
-fn step(app: &mut App, ticks: u64) -> String {
+pub(crate) fn step(app: &mut App, ticks: u64) -> String {
     text(&called(app, "step", json!({"ticks": ticks}))).to_owned()
 }
 
-fn journal(app: &App, kind: JournalKind) -> Vec<String> {
+pub(crate) fn journal(app: &App, kind: JournalKind) -> Vec<String> {
     let journal = app.world().resource::<AiJournal>();
     journal.after(0).0.filter(|e| e.kind == kind).map(ToString::to_string).collect()
 }
@@ -43,14 +54,17 @@ fn a_broken_game_rule_stops_the_step_at_its_tick() {
     // the lower bound is tested on a dead one, below.)
     boss_health(&mut app, 700.0);
     let out = called(&mut app, "step", json!({"ticks": 10}));
-    assert_eq!(text(&out), "ran 1 ticks (0 → 1), stopped: invariant health_in_range violated at tick 1");
+    assert_eq!(text(&out), "ran 1 ticks (0 → 1), stopped: invariant action.resources_in_range violated at tick 1 (+1 more)");
     assert_eq!(ai_core::sim::tick(app.world()), 1);
     assert!(out.paused);
-    let line = "1 [error] invariant health_in_range violated at tick 1: e6 Health.current = 700 outside 0..=600";
+    let line = "1 [error] invariant action.resources_in_range violated at tick 1: e6 Health.current = 700 outside 0..=600";
     assert!(journal(&app, JournalKind::Error).iter().any(|l| l == line), "{:?}", journal(&app, JournalKind::Error));
     assert!(out.journal.iter().any(|l| l == line), "the step returns it: {:?}", out.journal);
     let halted = out.halted.expect("the outcome says the game halted");
-    assert_eq!(halted.reason, "invariant health_in_range violated at tick 1");
+    assert_eq!(halted.reason, "invariant action.resources_in_range violated at tick 1");
+    // The game's own rule saw the same thing, and fired too.
+    let own = "1 [error] invariant health_in_range violated at tick 1: e6 Health.current = 700 outside 0..=600";
+    assert!(journal(&app, JournalKind::Error).iter().any(|l| l == own), "{:?}", journal(&app, JournalKind::Error));
 
     // The rule that fired stays off: the same state does not stop the next step.
     let next = called(&mut app, "step", json!({"ticks": 10}));
@@ -67,8 +81,8 @@ fn health_below_zero_breaks_the_game_rule_of_a_dead_boss() {
     assert_eq!(step(&mut app, 1), "ran 1 ticks (0 → 1)", "0 is in range: the boss dies, nothing halts");
     boss_health(&mut app, -5.0);
     let out = called(&mut app, "step", json!({"ticks": 10}));
-    assert_eq!(text(&out), "ran 1 ticks (1 → 2), stopped: invariant health_in_range violated at tick 2");
-    let line = "2 [error] invariant health_in_range violated at tick 2: e6 Health.current = -5 outside 0..=600";
+    assert_eq!(text(&out), "ran 1 ticks (1 → 2), stopped: invariant action.resources_in_range violated at tick 2 (+1 more)");
+    let line = "2 [error] invariant action.resources_in_range violated at tick 2: e6 Health.current = -5 outside 0..=600";
     assert!(journal(&app, JournalKind::Error).iter().any(|l| l == line), "{:?}", journal(&app, JournalKind::Error));
 }
 
@@ -83,7 +97,7 @@ fn real_time_play_pauses_on_a_violation() {
     }
     assert!(ai_core::sim::is_paused(app.world()), "the violation must pause the game");
     assert_eq!(ai_core::sim::tick(app.world()), 1, "no tick after the one that broke the rule");
-    let paused = "1 [sim] paused: invariant health_in_range violated at tick 1";
+    let paused = "1 [sim] paused: invariant action.resources_in_range violated at tick 1";
     assert!(journal(&app, JournalKind::Sim).iter().any(|l| l == paused), "{:?}", journal(&app, JournalKind::Sim));
 }
 
@@ -112,7 +126,10 @@ fn a_session_rule_fires_once_until_it_is_reset() {
 fn rules_are_listed_and_checked_before_they_are_added() {
     let mut app = sandbox::test_app(42);
     let list = text(&called(&mut app, "assert_list", json!({}))).to_owned();
-    assert!(list.starts_with("2 rules, checked after every tick"), "{list}");
+    assert!(list.starts_with("9 rules, checked after every tick"), "{list}");
+    for engine in ENGINE_RULES {
+        assert!(list.contains(&format!("  {engine}  engine rule  armed")), "{engine}: {list}");
+    }
     assert!(list.contains("  health_in_range  game rule  armed") && list.contains("  bodies_in_world  game rule  armed"), "{list}");
 
     let mut refuse = |tool: &str, args: Value| {
@@ -131,7 +148,7 @@ fn rules_are_listed_and_checked_before_they_are_added() {
     let stays = refuse("assert_remove", json!({"name": "bodies_in_world"}));
     assert!(stays.contains("one of the game's invariants and stays"), "{stays}");
     let unknown = refuse("assert_remove", json!({"name": "nope"}));
-    assert!(unknown.contains("no rule `nope`; rules: health_in_range, bodies_in_world"), "{unknown}");
+    assert!(unknown.contains(&format!("no rule `nope`; rules: {}, health_in_range, bodies_in_world", ENGINE_RULES.join(", "))), "{unknown}");
 
     called(&mut app, "assert_add", hurt("hurt"));
     let replaced = called(&mut app, "assert_add", json!({"name": "hurt", "when": {"gone": 7}}));

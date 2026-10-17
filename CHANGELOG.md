@@ -84,12 +84,18 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   and fixed), `state_audit.rs` (every resource after the combat prototype and the region replays is registered for snapshots or named, with its
   reason, as outside the simulation), `heavy_saves.rs` (save, load in a fresh game, save again: the same sections at five ticks of every
   reference replay), and a stand whose host is checked.
+- Engine invariants: seven rules every game gets for free, checked after every tick like a game rule and listed by `shards assert list` as `engine rule`: `ai.index_consistent`, `core.intent_sane`, `motion.finite`, `action.resources_in_range`, `action.running_sane`, `npc.state_known` and `npc.tokens_within_limit`. Names are `<module>.<rule>`; an engine rule cannot be removed, replaced or shadowed by a session or game rule, and `assert_reset` re-arms it. Modules register them with `add_engine_invariant` (shards_core). Each has a control test that breaks the state on purpose and expects `stopped: invariant <name> violated at tick N`.
+- `EngineConfig::engine_invariants` and the `--no-engine-invariants` flag. The default is on, and off in a build with the `dist` feature (new in `shards_core`, forwarded by `shards`): a shipped game does not pause on a rule. `shards::testing::config()` and `--verify` always check them.
+- `ai_core::Offenders`: collects the entities that break a rule and reports the lowest id first with `(+N more)`, without allocating while nothing is broken. `ai_core::with_query` keeps a rule's query state between ticks in the world (the resource `RuleQueries`, dropped with it), which is what keeps the rules under 1 % of a tick.
+- `template`: an example game rule, `grunt_chance` (`src/ai.rs`), with a control test.
 
 ### Changed
 
 - `soak.yml` runs every night (it ran on Mondays).
 - `shards_cli`: the test `a_stale_port_file_is_neither_a_member_nor_a_reason_to_give_up` no longer uses a port that was bound and released (another test's stand could be given it): the stale file names the discard port.
 - `--replay FILE --verify` prints a `warning: replay checks leave out …` line for each gameplay component the checks cannot hash (`ReplayHashing::reported_left_out`, now public), and the reference replay test fails on one.
+- The host cleans a network client's input before it reaches `Intent`: a `move_dir` that is not finite becomes zero, one longer than 1 is cut to 1, a non-finite `aim` is dropped. An honest client sends clamped input, so replays do not change. Without it a bad frame would stop the host on `core.intent_sane`.
+- A world that breaks an engine rule and the game's `health_in_range` at once now stops with the engine rule's name first (`stopped: invariant action.resources_in_range violated at tick 1 (+1 more)`); the sandbox keeps `health_in_range` as the example of a game rule.
 
 ## [0.4.0] — phases C–E: co-op, saves, UI and platform (unreleased)
 

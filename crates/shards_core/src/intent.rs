@@ -210,9 +210,54 @@ pub fn clear_presses(mut intents: Query<&mut Intent>) {
     }
 }
 
+/// The engine rule `core.intent_sane`: every [`Intent`] has a finite `move_dir` no longer than
+/// 1 (plus 1e-4 for rounding) and a finite `aim`.
+///
+/// `Intent` is the only way anything drives a character, and every writer clamps what it writes:
+/// the keyboard and gamepad (`clamp_length_max(1.0)`), [`follow_orders`], the action module's
+/// `approach`, the NPC brain, and the host's copy of a network client's frame (which sanitizes
+/// it). The movement code is still built to survive garbage, so this rule does not guard the
+/// controller; it names the writer that forgot to clamp. A test that writes garbage on
+/// purpose to show the controller tolerates it turns the engine rules off
+/// (`EngineConfig::engine_invariants`). The vertical part of `move_dir` is not judged, only
+/// the length.
+pub fn intent_sane(world: &World) -> Option<String> {
+    let mut bad = ai_core::Offenders::default();
+    ai_core::with_query::<(&AiId, &Intent), (), _>(world, |query| {
+        for (id, intent) in query.iter(world) {
+            let dir = intent.move_dir;
+            if !dir.is_finite() || dir.length() > 1.0 + 1e-4 {
+                bad.note(*id, || format!("Intent.move_dir = {dir} is not finite or longer than 1"));
+            } else if let Some(aim) = intent.aim.filter(|a| !a.is_finite()) {
+                bad.note(*id, || format!("Intent.aim = {aim} is not finite"));
+            }
+        }
+    })?;
+    bad.report()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn intent_sane_names_a_move_that_is_too_long_or_not_finite() {
+        let mut w = World::new();
+        w.init_resource::<AiIndex>();
+        let walker = w.spawn((AiId(0), Intent { move_dir: Vec3::new(0.6, 0.0, 0.8), aim: Some(Vec3::X), ..default() })).id();
+        assert_eq!(intent_sane(&w), None, "a full-length move is fine");
+        w.get_mut::<Intent>(walker).unwrap().move_dir = Vec3::new(1.00005, 0.0, 0.0);
+        assert_eq!(intent_sane(&w), None, "rounding is tolerated");
+        w.get_mut::<Intent>(walker).unwrap().move_dir = Vec3::new(5.0, 0.0, 0.0);
+        let text = intent_sane(&w).unwrap();
+        assert!(text.starts_with("e1 Intent.move_dir = ") && text.contains("longer than 1"), "{text}");
+        w.get_mut::<Intent>(walker).unwrap().move_dir = Vec3::NAN;
+        assert!(intent_sane(&w).is_some());
+        let mut intent = w.get_mut::<Intent>(walker).unwrap();
+        intent.move_dir = Vec3::ZERO;
+        intent.aim = Some(Vec3::new(f32::INFINITY, 0.0, 0.0));
+        assert!(intent_sane(&w).unwrap().contains("Intent.aim"));
+    }
 
     #[test]
     fn held_stays_sorted_and_unique() {

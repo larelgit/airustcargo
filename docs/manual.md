@@ -423,6 +423,7 @@ line, and tests take `shards::testing::config()`.
 | `tick_budget` | a tick longer than this counts as "over budget" (`--tick-budget-ms`); `None` — the tick's own duration |
 | `frame_budget` | a frame longer than this counts as "over budget" (`--frame-budget-ms`; the `frames` field in `ai/status`); `None` — 1/60 s. Frames exist only in a game that draws |
 | `report_perf` | the `ticks:` line under the `step` reply and `perf` entries in the journal; off in `shards::testing::config()` |
+| `engine_invariants` | check the engine's own invariant rules after every tick (see "Invariants (E11)"). On by default, off in a build with the `dist` feature, and off with `--no-engine-invariants`; `shards::testing::config()` and `--verify` always turn it on. Read when the plugins are built, so set it before `EnginePlugins::new(config)` |
 | `after_loading` | where `Loading` goes after loading (`InGame`; `MainMenu` for a game with a main menu). `menu` decides whether this launch shows the menu, and `start_state()` gives the result |
 | `menu` | `MenuLaunch`: `Auto` (the default) shows the main menu only when the game draws (a window, `--offscreen`), with no session and no named slots (`--world`, `--character`); `Show` (`--menu`) always does, even without a window; `Skip` (`--no-menu`) never does. Replays, checks, `--smoke` and `--perf` always bypass the menu |
 | `loading_image` | an image under the asset folder (`ui/loading.png`), full screen, while the game loads (`Loading`) and while a region loads for longer than one call (`RegionLoading`), if anything is drawn. There is no content yet at that point, so it is in the config and not in the content; `--check-content` checks that the file exists. `None` — nothing |
@@ -446,7 +447,7 @@ is an error with exit code 2; `EnginePlugins` with an invalid `without` panics w
 
 **`shards::run`** is the standard `main`. Flags: `--headless | --offscreen --seed N --port N|0 --port-file F --no-remote --paused --hz N
 --replay FILE --verify [--windowed] --check-every N --check-detail components|entities|none --tick-budget-ms MS --frame-budget-ms MS
---check-content --worldgen-report REGION [--seeds S] --bake-nav [TILES] --bake-motion [ACTIONS] --smoke TICKS --perf ID`; for phase C:
+--check-content --worldgen-report REGION [--seeds S] --bake-nav [TILES] --bake-motion [ACTIONS] --smoke TICKS --perf ID --no-engine-invariants`; for phase C:
 `--host [PORT] | --join ADDR | --stand N [--stand-udp | --stand-steam]` (mutually exclusive; `--stand` only with `--headless`), `--name`,
 `--net-sim SPEC`, `--save-dir DIR`, `--settings-dir DIR | --no-settings`, `--character SLOT`, `--world SLOT` (a slot is
 1–32 characters `a-z0-9_-`), `--exit-with-host`; `--menu | --no-menu` (the main menu, also without a window, or skipping it, also with a window; see "Main menu" below; `--menu` cannot be combined with replays, checks, sessions and slots); for Steam (feature `steam`, see "Steam (E10.5)"): `--steam-host | --steam-server`, `--steam-lobby TYPE`,
@@ -2554,6 +2555,34 @@ The sandbox has two of them: `health_in_range` (health is in `0..=max`) and `bod
 `e7 fell out of the world: y = -80.0`. No sandbox scenario, test or reference replay breaks them. A panic inside
 a rule is a violation too: `the rule itself panicked: …`.
 
+**The engine's own rules.** A game with all the engine modules gets seven rules of the engine, one or two from each module (a game that leaves out `npc` has no NPC rules). They are named
+`<module>.<rule>`, checked before the game's rules, and listed by `shards assert list` as `engine rule`. Like a game's
+rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `add_ai_invariant` refuse its name), and
+`assert_reset` re-arms it after it fires. A module registers its rules with `add_engine_invariant(name, rule)` from
+`shards_core`; a game adds its own with `add_ai_invariant`, and the template shows one (`grunt_chance` in `src/ai.rs`).
+
+| rule | holds when |
+|---|---|
+| `ai.index_consistent` | the `AiIndex` and the `AiId` components agree both ways (every entity with an id is in the index under it, every entry points at an entity that carries it) and the counts match, so no id is used twice. Tombstones are history and are not looked at. Catches an id written in place, which skips the hooks |
+| `core.intent_sane` | every `Intent` has a finite `move_dir` of length at most 1 (+ 1e-4) and a finite `aim`. The movement code survives garbage, so the rule names the writer that forgot to clamp. The host cleans a network client's input before it reaches `Intent`, so a bad frame cannot stop the host |
+| `motion.finite` | every `AiVisible` entity has a finite `Transform` translation and a finite rotation of length 1 ± 1e-3, and a finite `MotionState` (velocity, ground normal, timers, mantle, fall height, water surface, updraft, placed position). Scale is not judged |
+| `action.resources_in_range` | `Health`, `Stamina` and `Poise` are finite with `max > 0` and `0 <= current <= max`. Dead bodies are checked too (`current` is 0). A game that wants a buff above `max` raises `max` with it |
+| `action.running_sane` | a running action of a fighter exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. Without a content database the rule passes |
+| `npc.state_known` | `NpcBrain.state` is a state of the NPC's behaviour. Three carve-outs, each a state the engine itself leaves behind: an empty state (before the NPC's first decided tick), an inactive NPC (dormant or dead: the brain passes it through, so a state a hot reload removed stays until it wakes), and an NPC whose behaviour is not in content (that is reported once as a content problem) |
+| `npc.tokens_within_limit` | after the director ran, no token is held by a dead body, and each director holds no more tokens than its limit for the living players, unless every holder beyond the limit has its attack in flight (an attack under way keeps its token to its end). It is judged right after the director, not at the end of the tick: a holder that dies in `Resolve` keeps its token until the next tick's director takes it back, so the end of the tick would fire on every kill. A small system next to the director writes what it found to the resource `TokenAudit`, which the rule reads; it is recomputed every tick and is not part of a snapshot or a replay |
+
+Each rule reports the lowest id first and `(+N more)`, in the style `e6 Health.current = 700 outside 0..=600`, and
+allocates nothing while the world is fine. The sandbox keeps its own `health_in_range` on purpose: it is the example of a
+game rule, so a boss with 700 health breaks two rules, and the stop names the first, the engine's:
+`stopped: invariant action.resources_in_range violated at tick 1 (+1 more)`.
+
+**The switch.** `EngineConfig::engine_invariants` is true by default and false when the `dist` feature is on (a shipped game
+must not pause on an engine rule; a game's own rules stay). `--no-engine-invariants` turns it off in a development build, for example to measure what the
+rules cost. Test apps (`shards::testing::config()`), `--verify`, `shards fuzz` and `shards soak` run with the rules on. With
+the switch off, no engine rule is registered and the token audit does not run. A test that writes garbage on purpose to show
+that the controller survives it sets `engine_invariants: false`.
+In heavy mode the twin has its own engine rules and takes over which of them have fired, so a rule that fired in the original does not halt the twin again. The rules' cached query states (`RuleQueries`) are not simulation state and are not compared.
+
 An agent adds its own rules for the length of the session (scope Dev), as a condition in the `--until` syntax. Real output:
 
 ```text
@@ -2562,7 +2591,14 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-4 rules, checked after every tick
+11 rules, checked after every tick
+  ai.index_consistent  engine rule  armed
+  core.intent_sane  engine rule  armed
+  motion.finite  engine rule  armed
+  action.resources_in_range  engine rule  armed
+  action.running_sane  engine rule  armed
+  npc.state_known  engine rule  armed
+  npc.tokens_within_limit  engine rule  armed
   health_in_range  game rule  armed
   bodies_in_world  game rule  armed
   hp  when field:e6:Health.current<500  armed
@@ -2582,6 +2618,8 @@ $ shards assert reset                                      # re-arm the rules th
 re-armed hp
 $ shards assert remove bodies_in_world                     # exit code 1
 error: `bodies_in_world` is one of the game's invariants and stays; after it fires, `assert_reset` re-arms it
+$ shards assert remove motion.finite                         # exit code 1
+error: `motion.finite` is one of the engine's invariants and stays; after it fires, `assert_reset` re-arms it
 $ cargo sandbox --replay replays/invariant-hp-tick230.json --verify    # exit code 1
 invariant hp violated at tick 230: e6 Health.current = 486
 replay finished at tick 230: identical to the recording (4 checks); 1 invariant violated [230 ticks in 0.46s]
@@ -2590,11 +2628,11 @@ replay finished at tick 230: identical to the recording (4 checks); 1 invariant 
 - Rules skip the tick on which a gameplay system crashed: that tick is unfinished, and the crash has already stopped the game. The skip applies
   only to the tick that just ran: if you return to it from a snapshot and run the same tick without a crash, the rules are checked on it.
 - A rule that has fired stays off until `assert_reset`. Otherwise it would fire on every tick until the world is fixed.
-  `assert_reset` turns on all the rules that fired (the game's rules too), and checking goes on from the next tick.
+  `assert_reset` turns on all the rules that fired (the engine's and the game's too), and checking goes on from the next tick.
 - `warning` and `error` fire on a journal entry of that level, including the game's `warn!`/`error!`. An entry about a violation
   of another rule does not set them off.
-- A rule name is up to 64 letters, digits, `_` and `-`: the replay file name is made from it. A game rule cannot be removed or
-  replaced with your own.
+- A rule name is up to 64 letters, digits, `_` and `-`: the replay file name is made from it. An engine rule's name is
+  `<module>.<rule>` in lowercase letters, digits and `_`. An engine or game rule cannot be removed or replaced with your own.
 - `assert add/remove/reset` are written to the replay (`assert` events) and repeated on the same tick, so a replay
   saved on a violation breaks the rule on the same tick. The rules are not part of the hash or the snapshot. Loading a
   snapshot (and playing back from it) keeps the session's rules and re-arms the ones that fired. A recording from that tick starts
@@ -4448,9 +4486,9 @@ a separate workspace; one `#[ignore]`: recording its references).
 | `shards_steam` | on a fake Steam: lobbies and invitations, relay sessions (held datagrams, refusal, hub delay), the game server, achievements and the fake's cloud, `steam:` and `+connect_lobby` addresses, the cloud check and its file names; `tests/steam/`: a lobby host and two friends over the stand's relay, the game server and a client by id, an invitation, refusal of a stranger, a failed join and `--exit-with-host`, a check of the achievement content, a write to Steam after a second and a retry of a refused write, the previous run, a replay, co-op (the host decides, each one opens its own), a copy of each record, cloud turned off, the check at start-up before a slot is loaded, the answers of `steam` and `ai/status`. The real backend is only built (`--features sdk`) |
 | `shards_net` | `src/`, without Bevy: transports (an in-memory hub, UDP, a reply to a stranger that binds no one), link simulation, the channel (reliable and latest-only messages, blobs, acknowledgements, RTT, loss, timeouts), the datagram format (knock, challenge, cookie in the acknowledgement fields, protocol 1 is recognised), the cookie (SipHash-2-4 on reference vectors, address, session, expiry, forgery); the session (a knock leaves no trace on the host, a peer only with the cookie of its own address and session, an expired cookie, the table of strangers as before, refusal of an older build on its protocol and no more than 8 times a second, the character in parts: the place is held, order, size, `Hello` bytes, JSON; the limits on input frames and on the largest honest packet, what is held after the world is reloaded, replication rules, waiting for room in the channel by count and by bytes, `NetDef`, departed tokens). The whole session is covered in the sandbox tests `net*.rs` |
 | `shards` | how networking and saves fit together (`coop`: what the host knows about the player's character, how it travels as text), engine sections (a number that a body never has), the stand's slot, a replay from a snapshot (`--verify`: the same result, code 2 for a foreign snapshot), the mode without a window: the same plugins, but no image (`display` and the `shot` hint), `--offscreen`: the window's plugins without a window (an image for `shot`, into which the cameras aimed at the window draw, also after a change of target), the internal 3D resolution (`render_scale`: an image of the right size, the cameras into it and back, shown on the whole window, the window changes size, the system scale, the game camera with its own image), the test app, `testing::ok` on a gameplay failure, `testing::run_to` and `verify`, when a violated rule matched the start of loading, the tick budget on the command line, frame time (`frames`: a frame is the slower of the two worlds, a frame with `step` does not count, the GPU report, draw commands travel with their own frame), the performance test (`bench`: verdicts, including `draws` and `nav_bake_s`, a definition check, `--perf` and its codes), `counts` without a window, the animation bridge on a real model with a skin and on a humanoid from Blender (a roll in place, a clip from a second file), `--bake-motion` |
-| `sandbox` | in one binary, `tests/sandbox`: snapshots (`snapshots.rs`: the state after loading is the same as in the original session, during a roll, a combo, a telegraph, planning, swimming, a flask, NPC fights and in a generated region), the ruin tile (`tiles.rs`: the file from the test glTF generator matches the one committed), scenarios (`scenario_files`: each file on a fresh game, all of them in a row in one game, the combat prototype after six different pauses), reference replays, actions, content, the obstacle course, determinism, visibility, scope permissions, replays, `kill` and SIGHUP; invariants (`invariants.rs`: the sandbox rules and their limits, sessions, a stop in real time, the replay of a violation, a snapshot; `net_seams.rs`: the client does not check the rules); co-op on a stand (`net.rs`, `net_guards.rs`, `net_lifecycle.rs`, `net_sync.rs`, `net_predict.rs`, `net_seams.rs`, `net_coop.rs`, of which 2 are measurements under `#[ignore]`: joining and leaving, limits and the peer's text, the world reloaded, input, desync, the end of a session and exit codes, stand clocks, UDP on loopback, client prediction, characters and saves); a long game (`soak.rs`: two minutes with a host and two clients at 150 ms and 2 % with a region change and saves, half an hour under `#[ignore]`); the screenshot without a window (`offscreen.rs`, `#[ignore]`: needs a GPU or software rendering); separately `system_failures` (a gameplay failure, a crash replay, a crash report, a panic in another thread, `crash_report`, a return to a snapshot after a failure), `log_capture` (log lines in `step`) and `perf` (tick time: budget, journal, `ai/status`; the performance test on the reference scene without a window, with `offscreen` under `#[ignore]`): these run in their own processes |
+| `sandbox` | in one binary, `tests/sandbox`: snapshots (`snapshots.rs`: the state after loading is the same as in the original session, during a roll, a combo, a telegraph, planning, swimming, a flask, NPC fights and in a generated region), the ruin tile (`tiles.rs`: the file from the test glTF generator matches the one committed), scenarios (`scenario_files`: each file on a fresh game, all of them in a row in one game, the combat prototype after six different pauses), reference replays, actions, content, the obstacle course, determinism, visibility, scope permissions, replays, `kill` and SIGHUP; invariants (`invariants.rs`, the engine's rules `engine_rules.rs` (a control test per rule): the sandbox rules and their limits, sessions, a stop in real time, the replay of a violation, a snapshot; `net_seams.rs`: the client does not check the rules); co-op on a stand (`net.rs`, `net_guards.rs`, `net_lifecycle.rs`, `net_sync.rs`, `net_predict.rs`, `net_seams.rs`, `net_coop.rs`, of which 2 are measurements under `#[ignore]`: joining and leaving, limits and the peer's text, the world reloaded, input, desync, the end of a session and exit codes, stand clocks, UDP on loopback, client prediction, characters and saves); a long game (`soak.rs`: two minutes with a host and two clients at 150 ms and 2 % with a region change and saves, half an hour under `#[ignore]`); the screenshot without a window (`offscreen.rs`, `#[ignore]`: needs a GPU or software rendering); separately `system_failures` (a gameplay failure, a crash replay, a crash report, a panic in another thread, `crash_report`, a return to a snapshot after a failure), `log_capture` (log lines in `step`) and `perf` (tick time: budget, journal, `ai/status`; the performance test on the reference scene without a window, with `offscreen` under `#[ignore]`): these run in their own processes |
 
-The template's tests (`template/tests/game`, 44 and one `#[ignore]`) are built into one binary: scenarios (and the stand scenario), determinism,
+The template's tests (`template/tests/game`, 45 and one `#[ignore]`) are built into one binary: scenarios (and the stand scenario), determinism,
 replays, content, co-op (host and guest at 150 ms and 2 %: the guest's trophy on each copy and in its file, the next game with it,
 the host's replay in a single-player game), the region
 (a thousand seeds of the valley, the manifest byte for byte, the loading screen without a window, the column of the ruin, the raider on the navmesh), the manifest (its only

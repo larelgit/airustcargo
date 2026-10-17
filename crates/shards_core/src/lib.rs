@@ -152,6 +152,13 @@ pub struct EngineConfig {
     /// default): off. It needs the game's builder, which `shards::run` and
     /// `shards::testing::heavy_app` give it.
     pub heavy: Option<ai_core::HeavyConfig>,
+    /// Check the engine's own invariant rules after every tick (`ai.index_consistent`, `core.intent_sane`,
+    /// `motion.finite`, `action.resources_in_range`, `action.running_sane`, `npc.state_known`,
+    /// `npc.tokens_within_limit`): a broken one halts the game like a failed gameplay system.
+    /// On by default; off in a build with the `dist` feature (a shipped game must not pause on a
+    /// rule), and by `--no-engine-invariants`. Test apps, `--verify`, fuzz and soak keep it on.
+    /// Read when the plugins are built, so set it before.
+    pub engine_invariants: bool,
 }
 
 /// What a game asks of Steam at launch (the `steam` feature of `shards`: the `shards_steam` module).
@@ -325,6 +332,7 @@ impl Default for EngineConfig {
             steam: SteamLaunch::default(),
             without: Vec::new(),
             heavy: None,
+            engine_invariants: !cfg!(feature = "dist"),
         }
     }
 }
@@ -371,6 +379,7 @@ impl EngineConfig {
             heavy: self.heavy,
             // Test apps write no files.
             heavy_files: !self.testing,
+            engine_invariants: self.engine_invariants,
             ..default()
         }
     }
@@ -430,6 +439,16 @@ pub trait EngineAppExt {
     /// Runs `hook` when the game ends: once, after the hooks added before it, when an
     /// `AppExit` is written or a termination signal arrives (see [`exit`]).
     fn add_exit_hook(&mut self, name: &str, hook: ExitHook) -> &mut Self;
+
+    /// Registers one of the engine's own invariant rules (`<module>.<rule>`, checked after every
+    /// tick like a game rule, listed as `engine rule`) unless [`EngineConfig::engine_invariants`] is
+    /// off. An app without an `EngineConfig` (a module's test rig) gets the rule. For engine
+    /// modules; a game adds its own with `add_ai_invariant`. Panics on a bad name.
+    fn add_engine_invariant(&mut self, name: &str, rule: ai_core::invariants::Invariant) -> &mut Self;
+
+    /// Whether the engine's invariant rules are on for this app ([`EngineConfig::engine_invariants`]; on
+    /// when there is no `EngineConfig`). For a module whose rule needs a system of its own.
+    fn engine_invariants_on(&self) -> bool;
 }
 
 impl EngineAppExt for App {
@@ -445,6 +464,19 @@ impl EngineAppExt for App {
 
     fn add_exit_hook(&mut self, name: &str, hook: ExitHook) -> &mut Self {
         self.world_mut().get_resource_or_init::<ExitHooks>().add(name, hook);
+        self
+    }
+
+    fn engine_invariants_on(&self) -> bool {
+        self.world().get_resource::<EngineConfig>().is_none_or(|c| c.engine_invariants)
+    }
+
+    fn add_engine_invariant(&mut self, name: &str, rule: ai_core::invariants::Invariant) -> &mut Self {
+        if self.engine_invariants_on()
+            && let Err(e) = self.world_mut().get_resource_or_init::<ai_core::AiInvariants>().add_engine_rule(name, rule)
+        {
+            panic!("add_engine_invariant: {e}");
+        }
         self
     }
 }
@@ -495,6 +527,7 @@ impl Plugin for CorePlugin {
             // A joining client learns the seed from its host.
             .require_loaded("seed", seed::seed_status)
             .add_engine_module("core", VERSION)
+            .add_engine_invariant("core.intent_sane", intent::intent_sane)
             .add_ai_status("engine", engine_status)
             // A client is fed the world by its host: it runs no gameplay, only its prediction.
             .configure_sets(

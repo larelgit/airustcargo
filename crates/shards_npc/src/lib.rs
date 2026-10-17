@@ -89,6 +89,7 @@ pub mod ai;
 pub mod brain;
 pub mod def;
 pub mod director;
+mod invariants;
 pub mod nav;
 pub mod overlay;
 pub mod perception;
@@ -99,6 +100,8 @@ use bevy::prelude::*;
 use shards_action::{ActionPlugin, ActionSystems};
 use shards_content::ContentAppExt;
 use shards_core::EngineAppExt;
+
+pub use invariants::{state_known, tokens_within_limit, TokenAudit};
 use shards_motion::perception::RoutePlanner;
 use shards_world::{WorldAppExt, WorldSystems};
 
@@ -223,6 +226,7 @@ impl Plugin for NpcPlugin {
             .on_region_loaded(nav::region::region_loaded)
             .add_snapshot_rebuild("navmesh", nav::rebuild)
             .add_engine_module("npc", VERSION)
+            .add_engine_invariant("npc.state_known", state_known)
             .configure_sets(
                 FixedUpdate,
                 (
@@ -251,6 +255,12 @@ impl Plugin for NpcPlugin {
             )
             .add_observer(perception::hear_noise)
             .add_observer(perception::hit_noise);
+        // The token rule judges the director's books right after it closed them.
+        if app.engine_invariants_on() {
+            app.init_resource::<TokenAudit>()
+                .add_systems(FixedUpdate, invariants::audit_tokens.after(director::direct).in_set(NpcSystems::Direct))
+                .add_engine_invariant("npc.tokens_within_limit", tokens_within_limit);
+        }
         // `move_to path=true` on the navmesh (a game's own planner, added before, stays).
         if !app.world().contains_resource::<RoutePlanner>() {
             app.insert_resource(nav::ROUTE_PLANNER);

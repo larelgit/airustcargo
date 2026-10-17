@@ -19,6 +19,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::invariants::{with_query, Offenders};
 use crate::sim::SimTick;
 
 /// Monotonic, never reused entity id. Printed as `e42`.
@@ -349,6 +350,45 @@ fn on_remove_ai_id(mut world: DeferredWorld, ctx: HookContext) {
     }
 }
 
+impl AiIndex {
+    /// The rule `ai.index_consistent`: the index and the `AiId` components agree both
+    /// ways. Every entity with a non-zero `AiId` is found in the index under that id, every
+    /// live entry of the index points at an existing entity that carries that id, and the
+    /// counts match. Two entities with one id cannot both pass the first check, so
+    /// "no id is used twice" follows. Tombstones and the transient `discarded` map are
+    /// history, not state, and are not looked at. Reports the lowest broken id first.
+    pub(crate) fn check(&self, world: &World) -> Option<String> {
+        let mut broken = Offenders::default();
+        let mut with_id = 0usize;
+        with_query::<(Entity, &AiId), (), _>(world, |query| {
+            for (entity, id) in query.iter(world) {
+                if id.0 == 0 {
+                    continue;
+                }
+                with_id += 1;
+                if self.live.get(id) != Some(&entity) {
+                    broken.note(*id, || match self.live.get(id) {
+                        Some(other) => format!("AiId is on {entity} but the index maps it to {other}"),
+                        None => format!("AiId is on {entity} but the index does not have it"),
+                    });
+                }
+            }
+        })?;
+        for (id, entity) in &self.live {
+            if world.get::<AiId>(*entity) != Some(id) {
+                broken.note(*id, || match world.get_entity(*entity) {
+                    Ok(_) => format!("is in the index for {entity}, which carries {:?}", world.get::<AiId>(*entity)),
+                    Err(_) => format!("is in the index for {entity}, which no longer exists"),
+                });
+            }
+        }
+        if broken.count() == 0 && with_id != self.live.len() {
+            return Some(format!("the index holds {} ids, the world has {with_id} entities with an AiId", self.live.len()));
+        }
+        broken.report()
+    }
+}
+
 /// `e42` for tracked entities, the raw entity otherwise. For journal formatters.
 pub fn label(world: &World, entity: Entity) -> String {
     match world.get::<AiId>(entity) {
@@ -491,5 +531,64 @@ mod tests {
         assert_eq!(AiId::parse("42"), Some(AiId(42)));
         assert_eq!(AiId::parse("e0"), None);
         assert_eq!(AiId::parse("x"), None);
+    }
+}
+
+#[cfg(test)]
+mod index_rule_tests {
+    use super::*;
+
+    fn world() -> World {
+        let mut w = World::new();
+        w.init_resource::<AiIndex>();
+        w
+    }
+
+    fn check(w: &World) -> Option<String> {
+        w.resource::<AiIndex>().check(w)
+    }
+
+    #[test]
+    fn a_consistent_index_passes_through_spawn_renumber_and_despawn() {
+        let mut w = world();
+        let a = w.spawn(AiVisible).id();
+        let b = w.spawn((AiVisible, AiId(40))).id();
+        w.spawn(AiVisible);
+        assert_eq!(check(&w), None);
+        w.entity_mut(a).insert(AiId(99));
+        w.despawn(b);
+        assert_eq!(check(&w), None);
+    }
+
+    #[test]
+    fn an_id_written_in_place_is_found_both_ways() {
+        let mut w = world();
+        let a = w.spawn(AiVisible).id();
+        w.spawn(AiVisible);
+        // The hooks do not run for an in-place write: e1 stays in the index, the entity says e7.
+        w.get_mut::<AiId>(a).unwrap().0 = 7;
+        let text = check(&w).unwrap();
+        assert!(text.starts_with("e1 is in the index for"), "{text}");
+        assert!(text.ends_with("(+1 more)"), "{text}");
+    }
+
+    #[test]
+    fn two_entities_with_one_id_are_found() {
+        let mut w = world();
+        w.spawn(AiVisible);
+        let b = w.spawn(AiVisible).id();
+        w.get_mut::<AiId>(b).unwrap().0 = 1;
+        let text = check(&w).unwrap();
+        assert!(text.starts_with("e1 AiId is on"), "{text}");
+    }
+
+    #[test]
+    fn an_entity_missing_from_the_index_is_found() {
+        let mut w = world();
+        w.insert_resource(AiIndex::default());
+        let a = w.spawn(AiVisible).id();
+        w.resource_mut::<AiIndex>().live.clear();
+        let text = check(&w).unwrap();
+        assert!(text.contains(&format!("AiId is on {a} but the index does not have it")), "{text}");
     }
 }
