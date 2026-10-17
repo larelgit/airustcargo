@@ -2,7 +2,7 @@
 //! `allies`, …) and the player's controls in menus.
 //!
 //! Sources read the viewer: the body this machine's controls drive (`LocalPlayer`), else the
-//! one agents play (`AiPlayer`). The controls: the `pause` key (Escape, gamepad Start) opens the
+//! one agents play (`AiPlayer`). The controls: in play, the `pause` key (Escape, gamepad Start) opens the
 //! screen `pause` if the game has one; while a menu is open the input map's `menu` context is on
 //! top (the character hears nothing), its `navigate`, `confirm` and `back` move through the menu.
 //! While a binding widget waits for an input, the menu hears nothing either: the next key, mouse
@@ -18,7 +18,7 @@ use bevy::prelude::*;
 use serde_json::json;
 use shards_action::fighter::{Charges, Cooldowns, Dead, Health, Poise, Stamina};
 use shards_content::ContentDb;
-use shards_core::PlayerId;
+use shards_core::{EngineState, PlayerId};
 use shards_motion::input::InputDefaults;
 use shards_motion::{Binding, ControlState, ControlSystems, InputContexts, InputMap};
 use shards_ui::{viewer, Ally, BoundInput, BoundInputs, CapturedClicks, Mark, Nav, ScreenDef, UiAppExt, UiValue, BINDINGS_SOURCE, INPUT_AGENT};
@@ -186,7 +186,9 @@ fn menu_controls(world: &mut World) {
     }
     if !menu_open {
         let has_pause = world.get_resource::<ContentDb>().is_some_and(|db| db.get::<ScreenDef>(PAUSE_SCREEN).is_some());
-        if controls.just_pressed("pause") && has_pause {
+        // Only a game in play pauses: not its main menu, not while it loads.
+        let in_game = world.get_resource::<State<EngineState>>().is_some_and(|s| *s.get() == EngineState::InGame);
+        if controls.just_pressed("pause") && has_pause && in_game {
             call(world, "ui_open", json!({"screen": PAUSE_SCREEN}));
         }
         return;
