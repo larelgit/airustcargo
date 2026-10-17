@@ -409,6 +409,12 @@ fn ms(d: Duration) -> f64 {
     d.as_secs_f64() * 1000.0
 }
 
+/// A per-frame average as a budget line shows it: whole when it is, else to a tenth, so an average
+/// just over a whole budget (900.4 against 900) does not read as the budget itself.
+fn per_frame(n: f64) -> String {
+    if n.fract() == 0.0 { format!("{n:.0}") } else { format!("{n:.1}") }
+}
+
 /// Every budget of `budgets` against what the run `measured`. `judged` off (a debug build): the
 /// same lines, none met or exceeded.
 pub fn judge(budgets: &Budgets, measured: &Measured, judged: bool) -> Vec<Verdict> {
@@ -463,14 +469,14 @@ pub fn judge(budgets: &Budgets, measured: &Measured, judged: bool) -> Vec<Verdic
     }
     if let Some(budget) = budgets.triangles {
         match frames.map(|f| f.triangles) {
-            Some(Some(n)) => check(Some(n <= budget as f64), format!("triangles {n:.0} a frame (at most {budget})")),
+            Some(Some(n)) => check(Some(n <= budget as f64), format!("triangles {} a frame (at most {budget})", per_frame(n))),
             Some(None) => check(None, "triangles: this GPU (or build) counts none".to_owned()),
             None => check(None, not_drawn("triangles")),
         }
     }
     if let Some(budget) = budgets.draws {
         match frames.map(|f| f.draws) {
-            Some(Some(n)) => check(Some(n <= budget as f64), format!("draws {n:.0} a frame (at most {budget})")),
+            Some(Some(n)) => check(Some(n <= budget as f64), format!("draws {} a frame (at most {budget})", per_frame(n))),
             Some(None) => check(None, "draws: this GPU keeps its batches private, none are counted".to_owned()),
             None => check(None, not_drawn("draws")),
         }
@@ -738,7 +744,8 @@ mod tests {
         };
         let budgets = Budgets { draws: Some(900), ..Default::default() };
         let line = |draws| judge(&budgets, &measured(draws), true).iter().find(|v| v.text.starts_with("draws")).map(Verdict::line);
-        assert_eq!(line(Some(812.4)).as_deref(), Some("ok    draws 812 a frame (at most 900)"));
+        assert_eq!(line(Some(812.4)).as_deref(), Some("ok    draws 812.4 a frame (at most 900)"));
+        assert_eq!(line(Some(900.4)).as_deref(), Some("OVER  draws 900.4 a frame (at most 900)"), "the line shows the value judged");
         assert_eq!(line(Some(901.0)).as_deref(), Some("OVER  draws 901 a frame (at most 900)"));
         assert_eq!(line(None).as_deref(), Some("-     draws: this GPU keeps its batches private, none are counted"));
         let headless = Measured { ticks: ticks(600, 1, 0), tick_budget: budget, ..Default::default() };
