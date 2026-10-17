@@ -25,7 +25,8 @@
 //!
 //! Every body class of the nav settings has its own navmesh, built the same way from its own
 //! bakes: the region's [`NavRegion`] is the `agent`'s, the others are in its
-//! [`bodies`](NavRegion::bodies). A route asks the tightest class its body fits.
+//! [`bodies`](NavRegion::bodies). A route asks the tightest class that serves its whole body
+//! ([`NavRegion::serving`]).
 //!
 //! Afterwards, every tick (and in tools), solids that spawned, went or moved since are
 //! carved out or back in, and the links across tile edges near them made again: a node
@@ -522,13 +523,32 @@ impl NavRegion {
     /// steps, climbs and walks slopes at least as well as the baked body, and swims where it
     /// does. Others plan on the local grid, which knows their own limits.
     pub fn serves(&self, params: &CharacterParams) -> bool {
+        self.lack(params).is_none()
+    }
+
+    /// The first number of the baked body that keeps it from serving a walker of `params`
+    /// ([`serves`](Self::serves)): its `locomotion` field, the baked body's value and the
+    /// walker's. `None`: it serves it.
+    pub fn lack(&self, params: &CharacterParams) -> Option<(&'static str, f32, f32)> {
         let a = &self.agent;
-        self.fits(params.radius, params.height)
-            && params.step_height + 0.01 >= a.step_height
-            && params.mantle_height + 0.01 >= a.mantle_height
-            && params.max_slope_deg + 0.01 >= a.max_slope_deg
-            && (params.swim_depth - a.swim_depth).abs() < 0.01
-            && (params.float_depth - a.float_depth).abs() < 0.01
+        if params.radius > self.agent_radius + 0.01 {
+            return Some(("radius", self.agent_radius, params.radius));
+        }
+        if params.height > self.agent_height + 0.01 {
+            return Some(("height", self.agent_height, params.height));
+        }
+        [
+            ("step_height", a.step_height, params.step_height),
+            ("mantle_height", a.mantle_height, params.mantle_height),
+            ("max_slope_deg", a.max_slope_deg, params.max_slope_deg),
+        ]
+        .into_iter()
+        .find(|(_, baked, own)| own + 0.01 < *baked)
+        .or_else(|| {
+            [("swim_depth", a.swim_depth, params.swim_depth), ("float_depth", a.float_depth, params.float_depth)]
+                .into_iter()
+                .find(|(_, baked, own)| (own - baked).abs() >= 0.01)
+        })
     }
 
     /// The navmesh of every body class: this one (`agent`), then the others by name.
@@ -541,17 +561,21 @@ impl NavRegion {
         self.classes().find(|c| c.body == name)
     }
 
-    /// The navmesh a body of `radius` routes on, when it knows only its radius (an NPC's
-    /// routes, [`NavPaths`](super::NavPaths)): the tightest class whose body is at least as
-    /// wide (the first of equals), else none: it plans on the local grid.
+    /// The class whose body a route of only a radius is walked as (`nav_path` from a point,
+    /// which has no body of its own): the tightest class whose body is at least as wide (the
+    /// first of equals), else none. A walker with a body asks [`serving`](Self::serving).
     pub fn for_radius(&self, radius: f32) -> Option<&NavRegion> {
         self.classes().filter(|c| radius <= c.agent_radius + 0.01).min_by(|a, b| a.agent_radius.total_cmp(&b.agent_radius))
     }
 
     /// The navmesh that serves a walker of `params` ([`serves`](Self::serves)): the tightest
-    /// such class (the first of equals), else none.
+    /// such class, the narrowest and then the lowest (the first of equals), else none. What
+    /// every route of a body is planned on: NPCs' ([`NavPaths`](super::NavPaths)), their
+    /// straight walks, `move_to path=true`, `path_to`, `clearance` and `nav_path`.
     pub fn serving(&self, params: &CharacterParams) -> Option<&NavRegion> {
-        self.classes().filter(|c| c.serves(params)).min_by(|a, b| a.agent_radius.total_cmp(&b.agent_radius))
+        self.classes()
+            .filter(|c| c.serves(params))
+            .min_by(|a, b| a.agent_radius.total_cmp(&b.agent_radius).then(a.agent_height.total_cmp(&b.agent_height)))
     }
 
     /// Why a body of `radius` plans on the local grid in this region: `no body class fits a
@@ -559,6 +583,25 @@ impl NavRegion {
     pub fn too_wide(&self, radius: f32) -> String {
         let widest = self.classes().max_by(|a, b| a.agent_radius.total_cmp(&b.agent_radius)).unwrap_or(self);
         format!("no body class fits a {radius:.2} m radius (the widest: {}, {:.2} m)", widest.body, widest.agent_radius)
+    }
+
+    /// Why no class serves a walker of `params` ([`serving`](Self::serving) is `None`), so it
+    /// plans on the local grid: [`too_wide`](Self::too_wide) when every class is narrower,
+    /// else what each class lacks: `no body class serves the body: agent has height 1.80 m,
+    /// the body 2.40 m; large has step_height 0.40 m, the body 0.35 m`.
+    pub fn unserved(&self, params: &CharacterParams) -> String {
+        if self.for_radius(params.radius).is_none() {
+            return self.too_wide(params.radius);
+        }
+        let lacks: Vec<String> = self
+            .classes()
+            .filter_map(|c| {
+                let (field, baked, own) = c.lack(params)?;
+                let unit = if field == "max_slope_deg" { "°" } else { " m" };
+                Some(format!("{} has {field} {baked:.2}{unit}, the body {own:.2}{unit}", c.body))
+            })
+            .collect();
+        format!("no body class serves the body: {}", lacks.join("; "))
     }
 
     /// The settings it was built with (carving and stitching again use its own body).
@@ -1497,5 +1540,109 @@ mod tests {
         // One turn: the north-west corner goes to the north-east.
         let inst = instance(1, [8, 6]);
         assert_eq!(inst.to_global(0, 0), [10 + 5, 20]);
+    }
+
+    /// The navmesh of body class `body`, baked for `agent`, with nothing in it: what choosing
+    /// a class looks at.
+    fn class(body: &str, agent: CharacterParams) -> NavRegion {
+        NavRegion {
+            hash: 0,
+            body: body.into(),
+            bodies: Vec::new(),
+            title: String::new(),
+            cell: 0.5,
+            tile_size: 8.0,
+            origin: Vec2::ZERO,
+            per: 16,
+            size: [0, 0],
+            agent_radius: agent.radius,
+            agent_height: agent.height,
+            agent,
+            safe_drop: 2.0,
+            instances: Vec::new(),
+            cell_instance: Vec::new(),
+            base: vec![0],
+            extras: Vec::new(),
+            navlinks: Vec::new(),
+            graph: TileGraph::default(),
+            components: Vec::new(),
+            report: NavReport::default(),
+            carve: Carve::default(),
+        }
+    }
+
+    /// A region's navmeshes: the first class is `agent`'s, the rest its `bodies`.
+    fn classes(all: Vec<NavRegion>) -> NavRegion {
+        let mut all = all.into_iter();
+        let mut nav = all.next().unwrap();
+        nav.bodies = all.collect();
+        nav
+    }
+
+    #[test]
+    fn a_class_serves_a_body_only_when_it_covers_all_of_it() {
+        let agent = class("agent", CharacterParams::default());
+        assert!(agent.serves(&CharacterParams::default()));
+        assert!(agent.serves(&CharacterParams { radius: 0.3, height: 1.2, ..default() }), "smaller");
+        assert!(agent.serves(&CharacterParams { step_height: 0.5, mantle_height: 2.0, max_slope_deg: 60.0, ..default() }), "stronger");
+        let lack = |params: CharacterParams| agent.lack(&params);
+        assert_eq!(lack(CharacterParams { height: 2.4, ..default() }), Some(("height", 1.8, 2.4)), "as wide, taller");
+        assert_eq!(lack(CharacterParams { radius: 0.5, height: 2.4, ..default() }), Some(("radius", 0.4, 0.5)), "the radius first");
+        assert_eq!(lack(CharacterParams { step_height: 0.2, ..default() }), Some(("step_height", 0.35, 0.2)));
+        assert_eq!(lack(CharacterParams { mantle_height: 1.0, ..default() }), Some(("mantle_height", 1.6, 1.0)));
+        assert_eq!(lack(CharacterParams { max_slope_deg: 30.0, ..default() }), Some(("max_slope_deg", 45.0, 30.0)));
+        assert_eq!(lack(CharacterParams { swim_depth: 2.0, ..default() }), Some(("swim_depth", 1.3, 2.0)), "deeper or not");
+        assert_eq!(lack(CharacterParams { height: 1.805, step_height: 0.345, ..default() }), None, "a centimeter of float noise");
+    }
+
+    #[test]
+    fn the_class_that_serves_a_body_is_the_narrowest_then_the_lowest() {
+        let nav = classes(vec![
+            class("agent", CharacterParams::default()),
+            class("tall", CharacterParams { height: 2.6, ..default() }),
+            class("mid", CharacterParams { height: 2.2, ..default() }),
+            class("large", CharacterParams { radius: 1.2, height: 2.4, ..default() }),
+        ]);
+        let serving = |params: CharacterParams| nav.serving(&params).map(|c| c.body.as_str());
+        assert_eq!(serving(CharacterParams::default()), Some("agent"));
+        // As wide as `agent` and taller: what its radius picks is not what serves it.
+        let taller = CharacterParams { height: 2.0, ..default() };
+        assert_eq!(nav.for_radius(taller.radius).map(|c| c.body.as_str()), Some("agent"));
+        assert_eq!(serving(taller), Some("mid"), "the lowest of the classes as wide and as tall");
+        assert_eq!(serving(CharacterParams { height: 2.4, ..default() }), Some("tall"));
+        assert_eq!(serving(CharacterParams { radius: 0.9, height: 2.0, ..default() }), Some("large"));
+        assert_eq!(serving(CharacterParams { height: 3.0, ..default() }), None, "taller than every class");
+        assert_eq!(serving(CharacterParams { step_height: 0.2, ..default() }), None, "steps less than every class");
+    }
+
+    #[test]
+    fn why_no_class_serves_a_body_names_what_each_class_lacks() {
+        let nav = classes(vec![
+            class("agent", CharacterParams::default()),
+            class("large", CharacterParams { radius: 1.2, height: 2.4, step_height: 0.4, ..default() }),
+        ]);
+        let unserved = |params: CharacterParams| nav.unserved(&params);
+        assert_eq!(
+            unserved(CharacterParams { radius: 1.5, ..default() }),
+            "no body class fits a 1.50 m radius (the widest: large, 1.20 m)"
+        );
+        assert_eq!(
+            unserved(CharacterParams { height: 2.2, ..default() }),
+            "no body class serves the body: agent has height 1.80 m, the body 2.20 m; large has step_height 0.40 m, the body 0.35 m"
+        );
+        assert_eq!(
+            unserved(CharacterParams { radius: 0.9, max_slope_deg: 30.0, ..default() }),
+            "no body class serves the body: agent has radius 0.40 m, the body 0.90 m; large has step_height 0.40 m, the body \
+             0.35 m"
+        );
+        assert_eq!(
+            unserved(CharacterParams { height: 2.6, step_height: 0.5, max_slope_deg: 30.0, ..default() }),
+            "no body class serves the body: agent has height 1.80 m, the body 2.60 m; large has height 2.40 m, the body 2.60 m"
+        );
+        let nav = class("agent", CharacterParams::default());
+        assert_eq!(
+            nav.unserved(&CharacterParams { max_slope_deg: 30.0, ..default() }),
+            "no body class serves the body: agent has max_slope_deg 45.00°, the body 30.00°"
+        );
     }
 }

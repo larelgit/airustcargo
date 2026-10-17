@@ -191,12 +191,12 @@ fn npc_state(In(call): In<Call<NpcStateArgs>>, world: &World) -> ToolResult<Valu
     let plan = e.get::<NpcPlan>().cloned().unwrap_or_default();
     let cooldowns: serde_json::Map<String, Value> =
         plan.cooldowns.iter().map(|c| (c.name.clone(), json!(round(c.left)))).collect();
-    let radius = body_of(world, entity).unwrap_or_default().radius;
+    let body = body_of(world, entity).unwrap_or_default();
     let nav = e.get::<NavAgent>().map(|a| {
         json!({
-            // Where its routes come from: the navmesh of its body class, or the local grid
-            // and why.
-            "routes": crate::nav::routes_at(world, radius, here),
+            // Where its routes come from: the navmesh of the class that serves its body, or
+            // the local grid and why.
+            "routes": crate::nav::routes_at(world, &body, here),
             "goal": a.goal.map(fmt_pos),
             "waypoints": a.path.len(),
             "next": a.path.get(a.index as usize).map(|p| fmt_pos(*p)),
@@ -249,8 +249,9 @@ fn npc_state(In(call): In<Call<NpcStateArgs>>, world: &World) -> ToolResult<Valu
 /// 4.5m N (mantle 1.1m) → ...`, with the waypoints. Inside a loaded region it comes from the
 /// navmesh (`provider: navmesh`, the body class it was walked as and the tiles it crosses),
 /// elsewhere from the local grid (or the game's own provider). From a point or an entity
-/// (default: you) to another, for a body of `radius` (default: the walker's) on the tightest
-/// body class it fits, or as a body of class `body`. Read-only.
+/// (default: you) to another, for the walker's own body (from a point: the body of the
+/// tightest class `radius` fits) on the tightest body class that serves it, or as a body of
+/// class `body`. Read-only.
 #[derive(Deserialize, JsonSchema)]
 pub struct NavPathArgs {
     /// Where the route starts: an entity id or a ground point {x, z}. Default: your body.
@@ -260,7 +261,7 @@ pub struct NavPathArgs {
     /// Body radius in meters. Default: the walker's (the body class's for a point).
     pub radius: Option<f32>,
     /// A body class of the nav settings (`nav_info` lists them): the route on its navmesh,
-    /// for its body. Default: the tightest class the walker fits.
+    /// for its body. Default: the tightest class that serves the walker's body.
     pub body: Option<String>,
 }
 
@@ -325,12 +326,11 @@ fn nav_path(In(call): In<Call<NavPathArgs>>, world: &mut World) -> ToolResult<Va
             Some(class)
         }
     };
-    // A point, or an NPC (its routes know only its radius: `navmesh_path`), is taken to have
-    // the body of the class it fits (or the one asked for); anyone else (`move_to
-    // path=true`) its own.
-    let npc_like = walker.is_none_or(|w| world.get::<crate::Npc>(w).is_some());
+    // A walker has its own body, as its routes do (an NPC's `navmesh_path`, anyone else's
+    // `move_to path=true`); a point the body of the class its radius fits; the class asked
+    // for its own body.
     let mut params = match walker {
-        Some(w) if !npc_like && class.is_none() => body_of(world, w).unwrap_or_default(),
+        Some(w) if class.is_none() => body_of(world, w).unwrap_or_default(),
         _ => {
             let radius = call.args.radius.or_else(|| walker.and_then(|w| body_of(world, w)).map(|p| p.radius));
             let base = class.or_else(|| radius.and_then(|r| region?.for_radius(r))).or(region);
@@ -358,12 +358,12 @@ fn nav_path(In(call): In<Call<NavPathArgs>>, world: &mut World) -> ToolResult<Va
     let paths = world.get_resource::<NavPaths>().copied().unwrap_or_default();
     let mut provider = paths.name;
     let mut find = paths.find;
-    // Off the navmesh, a walker that is no NPC plans on the local grid with its own body.
+    // Off the navmesh, a walker that is no NPC leaves its own capsule out of the local grid,
+    // as `move_to path=true` does.
     let mut own_body = None;
     if provider == NAVMESH || class.is_some() {
-        // The class asked for, else the one an NPC's radius picks, else the tightest that
-        // serves the walker's body.
-        let on = class.or_else(|| region.and_then(|nav| if npc_like { nav.for_radius(radius) } else { nav.serving(&params) }));
+        // The class asked for, else the tightest that serves the body.
+        let on = class.or_else(|| region.and_then(|nav| nav.serving(&params)));
         let routed = on.and_then(|nav| crate::nav::route_on(world, nav, from, to, &params, target.is_some()));
         match routed {
             Some(Ok(path)) => {
@@ -388,7 +388,7 @@ fn nav_path(In(call): In<Call<NavPathArgs>>, world: &mut World) -> ToolResult<Va
     }
     let path = match own_body {
         Some(w) => local_grid_route(world, from, to, &params, Some(w)),
-        None => find(world, from, to, radius),
+        None => find(world, from, to, &params),
     };
     let Some(path) = path else {
         return Err(format!(

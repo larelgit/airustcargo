@@ -124,7 +124,8 @@ fn stitching_turns_tiles_with_them_and_follows_open_sockets() {
     assert!(err.contains("cannot reach at all") && err.contains("sockets"), "{err}");
     assert_eq!(app.world().resource::<NavRegion>().report.closed_edges, 1);
     // The local grid sees only the geometry: it walks straight across.
-    let across = shards_npc::nav::local_grid_path(app.world(), Vec3::new(4.0, 0.0, 4.0), Vec3::new(12.0, 0.0, 4.0), 0.4);
+    let body = shards_motion::CharacterParams::default();
+    let across = shards_npc::nav::local_grid_path(app.world(), Vec3::new(4.0, 0.0, 4.0), Vec3::new(12.0, 0.0, 4.0), &body);
     assert!(across.is_some(), "the ground meets");
     // An agent's `path_to` and `clearance` ask the navmesh: no way, and east ends at the edge.
     player(app.world_mut(), 0, Vec3::new(4.0, 0.0, 4.0));
