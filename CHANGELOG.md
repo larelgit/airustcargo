@@ -1,49 +1,50 @@
-# История изменений
+# Changelog
 
-Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/), версии — [семантические](https://semver.org/lang/ru/).
+The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the versions are [semantic](https://semver.org/).
 
-Пока версия `0.x`, минорная версия (`0.2` → `0.3`) может ломать API движка, патч (`0.2.0` → `0.2.1`) только
-чинит. С `1.0.0` ломающие изменения идут только в мажорной версии. Все крейты движка (`ai_core`, `shards_*`,
-`shards`, `sandbox`, `shards_cli`) делят одну версию: она задана один раз в `[workspace.package]` корневого
-`Cargo.toml`. Версия Bevy закреплена (`0.20.0`); её обновление — отдельная запись в разделе «Изменено».
+While the version is `0.x`, a minor version (`0.2` → `0.3`) may break the engine's API, and a patch (`0.2.0` → `0.2.1`) only fixes bugs.
+From `1.0.0` on, breaking changes come only in a major version. All engine crates (`ai_core`, `shards_*`,
+`shards`, `sandbox`, `shards_cli`) share one version: it is set once in `[workspace.package]` of the root
+`Cargo.toml`. The Bevy version is pinned (`0.20.0`); updating it is a separate entry in the "Changed" section.
 
-## Как игра подключает движок
+## How a game depends on the engine
 
-Игра зависит от одного крейта, `shards`, и закрепляет движок **тегом git**. Так сборка не меняется, пока
-вы сами не поменяете тег. Пока тегов нет, закрепите коммит: `rev = "<хэш>"` (и `--rev <хэш>` для CLI).
+A game depends on one crate, `shards`, and pins the engine to a **git tag**. This way the build does not change until
+you change the tag yourself. While there are no tags, pin a commit: `rev = "<hash>"` (and `--rev <hash>` for the CLI).
 
 ```toml
-# Cargo.toml игры
+# The game's Cargo.toml
 [dependencies]
-shards = { git = "https://github.com/larelgit/airustcargo", tag = "v0.3.0" }
+shards = { git = "https://github.com/larelgit/airustcargo", tag = "v0.4.0" }
 ```
 
-CLI `shards` берите той же версии, что и движок в игре (протокол `ai/*` может меняться между минорными
-версиями):
+Use the `shards` CLI of the same version as the engine in the game (the `ai/*` protocol may change between minor
+versions):
 
 ```bash
-cargo install shards_cli --git https://github.com/larelgit/airustcargo --tag v0.3.0
+cargo install shards_cli --git https://github.com/larelgit/airustcargo --tag v0.4.0
 ```
 
-Перейти на новую версию: поменять `tag`, выполнить `cargo update -p shards`, прочитать раздел «Изменено» этого
-файла и прогнать тесты и реплеи игры (`--verify`). Реплеи, записанные на старой версии, после изменения
-геймплея движка могут разойтись: тогда их записывают заново.
+To move to a new version, change `tag`, run `cargo update -p shards`, read the "Changed" section of this
+file, and run the game's tests and replays (`--verify`). Replays recorded on an old version may diverge after the engine's
+gameplay changes; in that case, record them again.
 
-## Как выпустить версию (для мейнтейнера)
+## Releasing a version (for the maintainer)
 
-Теги ставит мейнтейнер, не агенты и не CI. Для релиза `X.Y.Z`:
+Tags are set by the maintainer, not by agents or CI. For a release `X.Y.Z`:
 
-1. Поднять `version` в `[workspace.package]` корневого `Cargo.toml` и выполнить `cargo update --workspace`
-   (обновит `Cargo.lock`). Перенести записи из `Unreleased` в новый раздел `[X.Y.Z] — дата` и поправить
-   ссылки внизу файла. Раздел уже может лежать готовым (фаза B записана в `[0.3.0]`, «не выпущена»): тогда поставить в нём
-   дату. Поднятие минорной версии отклоняет снапшоты прежней: записать заново `tests/replays/snapshot.json`
+1. Raise `version` in `[workspace.package]` of the root `Cargo.toml` and run `cargo update --workspace`
+   (it updates `Cargo.lock`). Move the entries from `Unreleased` into a new section `[X.Y.Z] — date` and fix the
+   links at the bottom of the file. The section may already be prepared (phase B is recorded in `[0.3.0]`, phases C–E in `[0.4.0]`, both marked "unreleased"): then set the
+   date in it. Raising the minor version rejects the snapshots of the previous one: record `tests/replays/snapshot.json` again
    (`cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`).
-2. Обновить тег `vX.Y.Z` в `template/Cargo.toml` (комментарий о зависимости), в `template/README.md` (шаги 3 и 5) и в
-   `README.md` (шаг 2 раздела «Как сделать игру на Shards: по шагам»), заменив `rev` на `tag`, и синхронизировать
-   `template/Cargo.lock` с корневым (CI проверяет, что версии зависимостей в них не расходятся):
+2. Update the `vX.Y.Z` tag in `template/Cargo.toml` (the comment about the dependency), in `template/README.md` (steps 3 and 5), in
+   `README.md` (step 2 of the section "Make a game on Shards, step by step") and in `docs/manual.md` (step 2 of the section "Make a game
+   on Shards, step by step"), replacing `rev` with `tag`, and sync
+   `template/Cargo.lock` with the root one (CI checks that the dependency versions in them do not diverge):
    `cp Cargo.lock template/Cargo.lock && cargo metadata --manifest-path template/Cargo.toml --format-version 1 >/dev/null`.
-3. Убедиться, что CI зелёный на коммите, который станет релизом, и влить его в основную ветку.
-4. Поставить и отправить аннотированный тег на этот коммит:
+3. Make sure CI is green on the commit that becomes the release, and merge it into the main branch.
+4. Create and push an annotated tag on this commit:
 
 ```bash
 git checkout main && git pull
@@ -51,7 +52,7 @@ git tag -a vX.Y.Z -m "Shards X.Y.Z"
 git push origin vX.Y.Z
 ```
 
-Тег `v0.1.0` в истории ещё не поставлен; он указывает на коммит `e90193d`, последний до фазы A:
+The tag `v0.1.0` is not yet in the history; it points to commit `e90193d`, the last one before phase A:
 
 ```bash
 git tag -a v0.1.0 -m "Shards 0.1.0" e90193d
@@ -60,1809 +61,1271 @@ git push origin v0.1.0
 
 ## [Unreleased]
 
-Сюда идёт всё, что попало в основную ветку после фазы B (`0.3.0`).
+Changes that land in the main branch after phases C–E (`0.4.0`) go here.
 
-### Добавлено
+## [0.4.0] — phases C–E: co-op, saves, UI and platform (unreleased)
 
-**Задел фазы C (`ai_core`, `shards_core`, `shards`, `shards_world`, `shards_action`)** — без сети и сохранений, в
-одиночной игре ничего не меняет (эталонные реплеи прежние):
+Everything that landed in the main branch after phase B (`0.3.0`): co-op and saves (phase C), UI, localization and audio
+(phase D), the platform — rendering, performance, Steam, builds for players (phase E), and the spec follow-ups after them (the
+leftovers of E4, E5, E6, E9, E11). The section is prepared in advance, like `[0.3.0]`: the version in `Cargo.toml` is not raised, the tag is not set; at
+release, set the date (see "Releasing a version (for the maintainer)").
 
-- `ai_core`: токены приложений (`process`: логи и сбои нескольких игр одного процесса не смешиваются), правила
-  репликации (`net_ignore`, `net_ignore_resource`, `net_predicted`, `replicated_components`, `rules_hash`), кодек
-  состояния `state` (общий со снапшотами; `apply_changes`), `sim::set_tick`, `snapshot::restore_releasing`, событие
-  `WorldRebuilt`, `AiIndex::set_local_base`, `replay::set_recording` и `restart_from_current`,
-  `journal::set_local_events` и `push_remote`, маршруты инструментов (`NetRoute`, `Forwarder`), привязка агента к
-  игроку (`ai/session {player}`, `possess player=N`), отложенный шаг (`StepRoute`, `step_poll`, `ai/step_poll`).
-- `shards_core`: `SimSet` идут только где `simulates`, `NetSet::Predict`, `Predicted`, хуки выхода
-  (`add_exit_hook`), `SeedLock`, поля `EngineConfig` для сети, сохранений и настроек.
-- `shards::run`: флаги `--host`, `--join`, `--stand`, `--stand-udp`, `--name`, `--net-sim`, `--save-dir`,
-  `--settings-dir`, `--no-settings`, `--character`, `--world`, `--exit-with-host` (пока с кодом 2 выходит один `--stand-udp`);
-  `EngineConfig::embedded` и `testing::embedded_config`.
-- `shards_world`: стартовый регион ждёт `seed_ready` и берёт `SimSeed`; смена региона шлёт `WorldRebuilt`.
-- `shards_action`: события действий и боя (`ActionStarted`, `Telegraph`, `Damaged`, `Died`, …) отражаются (`Reflect`).
-- `ai_core`: `add_optional_replay_check` — проверка реплея, которая входит в хэш, только пока ей есть что сверять.
+### Added
 
-**Канальный слой сети (E7.2, `shards_net`)** — без Bevy и ECS; сессия кооператива строится поверх него:
+**Groundwork for phase C (`ai_core`, `shards_core`, `shards`, `shards_world`, `shards_action`)** — no network and no saves; in
+single-player nothing changes (the reference replays are unchanged):
 
-- Транспорты (`Transport`, датаграммы до `MTU` байт между `PeerId`): `MemoryHub` — в памяти, для CI и стенда в одном
-  процессе, детерминированный (одно зерно и одни отправки дают одни доставки, без часов); `UdpTransport` — прямой UDP в
-  LAN. Таблицу незнакомых UDP-адресов не забить мусором.
-- Имитация канала поверх любого транспорта: `LinkConditions` (`latency=150,jitter=10,loss=0.02,dup=0`) и `Conditioned`.
-- `Link` на пару пиров: ненадёжные сообщения «последнее побеждает», надёжные упорядоченные, блобы, сжатие deflate с
-  бюджетом распаковки, подтверждения (подтверждается только принятое), RTT, потери и скорость за окно (`LinkStats`),
-  тайм-ауты; хост заводит канал незнакомому пиру по `wire::peek_session`. Время передаёт вызывающий (`now` в мс).
+- `ai_core`: application tokens (`process`: logs and crashes of several games in one process do not get mixed up), replication rules (`net_ignore`, `net_ignore_resource`, `net_predicted`, `replicated_components`, `rules_hash`), the state codec `state` (shared with snapshots; `apply_changes`), `sim::set_tick`, `snapshot::restore_releasing`, the event
+  `WorldRebuilt`, `AiIndex::set_local_base`, `replay::set_recording` and `restart_from_current`,
+  `journal::set_local_events` and `push_remote`, tool routes (`NetRoute`, `Forwarder`), binding an agent to a
+  player (`ai/session {player}`, `possess player=N`), the deferred step (`StepRoute`, `step_poll`, `ai/step_poll`).
+- `shards_core`: `SimSet` runs only where `simulates`, `NetSet::Predict`, `Predicted`, exit hooks
+  (`add_exit_hook`), `SeedLock`, `EngineConfig` fields for the network, saves and settings.
+- `shards::run`: the flags `--host`, `--join`, `--stand`, `--stand-udp`, `--name`, `--net-sim`, `--save-dir`,
+  `--settings-dir`, `--no-settings`, `--character`, `--world`, `--exit-with-host` (so far only `--stand-udp` exits with code 2);
+  `EngineConfig::embedded` and `testing::embedded_config`.
+- `shards_world`: the starting region waits for `seed_ready` and takes `SimSeed`; a region change sends `WorldRebuilt`.
+- `shards_action`: action and combat events (`ActionStarted`, `Telegraph`, `Damaged`, `Died`, …) are reflected (`Reflect`).
+- `ai_core`: `add_optional_replay_check` — a replay check that goes into the hash, but only while there is something to compare it with.
 
-**Сессия кооператива (E7, `shards_net`) и стенд «хост + клиенты» (E11.6)** — `--host`, `--join`, `--stand N`:
+**The network channel layer (E7.2, `shards_net`)** — no Bevy and no ECS; the co-op session is built on top of it:
 
-- Подключение с проверкой сборки (протокол, движок, игра, контент, правила репликации, частота тика), ввод с номером
-  тика, дельты состояния в зоне интереса, мир заново после снапшота, смены региона или рассинхрона, хэши каждые
-  `desync_every` тиков, инструменты `net_status`, `net_sim`, `net_kick`, `net_resync`, `net_end`, условия `net_desync`,
-  `net_joined`, `net_left`, `net_disconnected`. Стенд: хост и клиенты в одном процессе, у каждого свой BRP-порт, общее время.
-- Токен возвращения выдаёт хост (случайный, свой у каждого слота); клиент хранит его в `<save-dir>/net/`, и
-  перезапущенный клиент получает свой слот и тело обратно (проверено на UDP). Две игры с одним `--name` в одной папке
-  сохранений делят токен: вторая занимает слот, первая получает `Bye` с причиной и советом (`--name` или
-  `--save-dir`); персонаж уходящего уходит в его соединение, а не в первое попавшееся с тем же номером игрока, а его
-  уход не освобождает слот, который вторая игра уже заняла (пока она ждёт `join_policy`, слот её).
-- Гость действует только своим телом: хост выполняет лишь пересылаемые инструменты (`NetRoute::Host`), не больше 16
-  вызовов за тик и 8 агентов на игрока; чужой `subject` — отказ.
-- Всё, что присылает пир, ограничено: имя (1–32 символа), токен, персонаж (64 КБ), кадры ввода (`inputs::check`),
-  отчёты о рассинхроне (только по отправленному хэшу, мир заново не чаще раза в 5 с); размер сообщения проверяется до
-  разбора (до входа в игру 80 КБ, у игрока 1 МБ, пакет ввода 512 КБ, из пакетов ввода за тик разбирается последний);
-  ненадёжные пакеты незнакомых пиров не разбираются, текст пира в журнале (имя, причина `Bye`, ошибка разбора с его
-  словами) обрезан и в одну строку, отказы — не чаще строки в секунду, сообщения, которые канал пира не принял, —
-  строкой в секунду на игрока, номер тика у края `u64` не роняет хост.
-- Значение, которое не читается обратно (NaN, бесконечность), остаётся на хосте с одной строкой в журнале, а не уходит
-  `null` и не вызывает цикл рассинхрона; ссылка на удалённую сущность отправляется такой, какой читается сейчас; кэш
-  кодирования забывает удалённые сущности; сущности зоны интереса отправляются и при упоре в предел ссылок, а такой
-  вид, пока упор держится, не сверяется по хэшу (иначе мир заново шёл бы каждые 5 с), и журнал хоста называет игрока
-  один раз.
-- После снапшота или пересборки мира хост сверяет игроков с новым миром (тело — тому, у кого его нет; тело ушедшего
-  ждёт его; игрок, которого хост добавил сам через `player_join`, остаётся, какой бы номер ни держал до него гость: тела
-  пиров помечены `NetSeat`, и тела гостей снапшота из другого процесса хоста уходят, освобождая номера). `Rebase`,
-  который канал сейчас не принимает (по числу сообщений или байтам), ждёт без сдвига эпохи и без снятия мира каждый тик.
-  Пока тики хоста идут подряд (`net_resync`, рассинхрон, смена региона), ввод в пути переживает мир заново, часы
-  клиента не идут назад, а удерживаемое, что хост сбросил, клиент отправляет снова; снапшот, который двигает тик,
-  начинает ввод заново (и тогда, когда его мир ждёт места в канале), и отчёты о рассинхроне считаются с его тика. Тело после респауна получает ввод своего игрока,
-  `stop` на клиенте останавливает тело на хосте, очередь приказов клиента не откатывается до применения на хосте.
-- `net_end` и выход хоста завершают сессию один раз (хук `on_session_end` — тоже): игроки уходят из мира хоста (тело
-  ждёт, персонаж уходит один раз, с концом сессии), тем, кто ещё входит, — отказ `the session has ended`. Закончившийся
-  клиент через 3 с тишины хоста перестаёт слать и подтверждения, хост не заводит пира по датаграмме без сообщений.
-  `--exit-with-host`: 0 — сессию завершил хост, 1 — отказ, кик, потеря хоста, мир не принят (клиент), 2 — сессию не открыть
-  (у клиента адрес, у `--host` занятый порт). Стенд при выходе ждёт, пока клиенты получат персонажей и конец сессии, и запускает хуки выхода
-  каждого участника от его имени (их строки — в его журнал); стенд кончается только с хостом; `pause`/`resume`/`speed`
-  стенда видны в `ai/status` участников, `speed` не меньше 0, бесконечность (`x=1e39`) — отказ, а не паника стенда,
-  ответ называет новую скорость; `--host 0` называет занятый порт (`ai/status` → `net.udp`, `shards wait`).
-- По UDP `pause`, `resume` и `speed` на клиенте — `HostOnly` (`the host owns time; call it on the host`): маршрут
-  ставится, когда клиент открывает UDP-сокет, а не по флагам `embedded`/`testing`, поэтому его проверяет тест на UDP.
-  Клиент стенда их сохраняет: время стенда общее.
-- Стенд читает и пишет настройки игрока хоста (`--settings-dir`, `--no-settings`; `shards_settings::install` после
-  `build`, как у одиночной игры); клиенты стенда настроек не хранят.
+- Transports (`Transport`, datagrams up to `MTU` bytes between `PeerId`s): `MemoryHub` — in memory, for CI and for a stand in one
+  process, deterministic (one seed and the same sends give the same deliveries, no clocks); `UdpTransport` — direct UDP on a
+  LAN. Junk from unknown UDP addresses cannot fill the table.
+- Channel simulation over any transport: `LinkConditions` (`latency=150,jitter=10,loss=0.02,dup=0`) and `Conditioned`.
+- `Link` per pair of peers: unreliable messages where "the last one wins", reliable ordered ones, blobs, deflate compression with a
+  budget for unpacking, acknowledgements (only what was received is acknowledged), RTT, losses and rate over a window (`LinkStats`),
+  timeouts; the host opens a channel to an unknown peer by `wire::peek_session`. The caller passes in the time (`now` in ms).
 
-**Стенд для агента (E11.6, E11.7): `--peer`, сценарии стенда, `--stand-udp`**:
+**The co-op session (E7, `shards_net`) and the "host + clients" stand (E11.6)** — `--host`, `--join`, `--stand N`:
 
-- `shards`: `--peer host|c1|c2` (`SHARDS_PEER`) читает порт участника из `F`, `F.c1`, `F.c2`; `wait --peer all` ждёт всех, печатает
-  строку на участника (`member=c1 role=client player=1 body=e15 port=… pid=… seed=… tick=…`) и проверяет, что это одна сессия
-  (хост перечисляет игроков и тела клиентов; решает по свежим статусам, поэтому годится и для стенда по UDP); `shards stand`
-  (участники: роль, игрок, тело, порт, пинг, рассинхроны) и `shards stand stop` (`net_end`, SIGTERM, ждёт, пока никто не
-  отвечает; ушедший клиент называется, код выхода 1); `step`, `pause`, `resume` и `speed` стенда (`{"pending": id}`)
-  опрашиваются через `ai/step_poll` каждые 20 мс (`--timeout`, глобальный, по умолчанию 60 с; заменил `--timeout` у
-  `wait` и `shot`); `session --player N`; у каждого участника свой токен на любом пути, и у одиночных команд под `--peer cN` тоже (`--token` —
-  хоста; клиента — `SHARDS_TOKEN_C1`…, иначе его `.shards/<порт>.token`, и `--token` лишь последним; ответ `unauthorized`
-  называет переменную). `wait` (любой, и `wait --peer all`) останавливается сразу, когда ждать бессмысленно: участник был
-  и пропал (хост кончил стенд), файл порта хоста прочитан и исчез, дважды подряд `unauthorized`, командная строка не
-  называет игру (`--peer c1 wait` без файла порта), дважды подряд одно и то же несовпадение (не хост, чужой seed, два
-  клиента с одним игроком; `Mismatch::Wrong` против `Mismatch::Forming`); число клиентов `wait`, `stand` и сценарий берут из
-  `ai/status.net.stand.clients` хоста, файл порта от прежнего стенда участником не считается.
-- `shards_script`: заголовок `stand clients=N [latency=MS] [jitter=MS] [loss=P] [dup=P]`, префикс `@host|@c1|@c2`, результаты,
-  шаги, агент и отметки журнала у каждого участника отдельно, инвариант без участника идёт на каждом; `Driver` получил
-  `peers`, `call_on`, `session_on`, `status_on`, `journal_since_on`, `check_stand` (по умолчанию — одна игра).
-- Сценарии стенда лежат в `crates/sandbox/scenarios/stand/` (`coop_smoke.scenario`): в тесте идут на стенде, построенном по
-  заголовку (`shards::testing::run_stand_scenario`, `run_stand_str`, `run_stand_script`, `StandDriver`), и дважды дают
-  одинаковые журналы; против живого стенда — `shards scenario`; CI гоняет их на `--stand 2`. Одна игра файл со `stand`
-  отвергает с подсказкой, как запустить стенд. `ai_core::scenario` отдаёт `configure_agent`, `world_status`,
+- Connecting with a build check (protocol, engine, game, content, replication rules, tick rate), input with the tick
+  number, state deltas for the area of interest, the world rebuilt after a snapshot, a region change or a desync, hashes every
+  `desync_every` ticks, tools `net_status`, `net_sim`, `net_kick`, `net_resync`, `net_end`, conditions `net_desync`,
+  `net_joined`, `net_left`, `net_disconnected`. The stand: host and clients in one process, each with its own BRP port, shared time.
+- The return token is issued by the host (random, its own for each slot); the client keeps it in `<save-dir>/net/`, and a
+  restarted client gets its slot and body back (checked over UDP). Two games with one `--name` in one save folder
+  share the token: the second takes the slot, and the first gets `Bye` with a reason and a hint (`--name` or
+  `--save-dir`); the character of a leaving player goes with that player's connection, not with the first one found with the same player number, and that player's
+  leaving does not free the slot that the second game has already taken (while it waits for `join_policy`, the slot belongs to it).
+- A guest acts only through their own body: the host runs only the forwarded tools (`NetRoute::Host`), no more than 16
+  calls per tick and 8 agents per player; a foreign `subject` is refused.
+- Everything a peer sends is limited: the name (1–32 characters), the token, the character (64 KB), input frames (`inputs::check`),
+  desync reports (only for the hash that was sent; the world is rebuilt no more than once per 5 s); the message size is checked before
+  parsing (before joining the game, 80 KB; for a player, 1 MB; an input packet, 512 KB; of the input packets in one tick, only the last one is parsed);
+  unreliable packets from unknown peers are not parsed; the peer's text in the journal (the name, the `Bye` reason, a parse error with their
+  words) is cut short and kept to one line; refusals are logged no more than one line per second; messages that the peer's channel did not accept are logged
+  one line per second per player; a tick number at the edge of `u64` does not bring down the host.
+- A value that cannot be read back (NaN, infinity) stays on the host, with one line in the journal, instead of going out as
+  `null` and causing a desync loop; a reference to a removed entity is sent as it reads now; the encoding cache forgets removed entities; entities of the area of interest are sent even when the reference limit is hit, and such a
+  view, while the limit holds, is not checked by hash (otherwise the world would be rebuilt every 5 s), and the host's journal names the player
+  once.
+- After a snapshot or a world rebuild, the host matches the players with the new world (a body goes to the one who has none; the body of a player who left
+  waits for them; a player the host added itself through `player_join` stays, whatever number the guest held before it: the peers' bodies are marked
+  `NetSeat`, and the guests' bodies from the snapshot of another host process go away, freeing their numbers). A `Rebase`
+  that the channel does not accept right now (by the number of messages or by bytes) waits without shifting the epoch and without tearing down the world every tick.
+  While the host's ticks run in a row (`net_resync`, a desync, a region change), input in transit survives the world being rebuilt, the client's clock
+  does not go back, and whatever the client holds that the host dropped is sent again; a snapshot that moves the tick
+  starts the input over (including when its world is waiting for room in the channel), and desync reports are counted from its tick. After a respawn, the body gets its player's input;
+  `stop` on the client stops the body on the host, and the client's queue of orders is not rolled back until the host applies it.
+- `net_end` and the host's exit end the session once (the `on_session_end` hook too): players leave the host's world (the body
+  waits, the character leaves once, with the end of the session), and anyone still joining is refused with `the session has ended`. A client whose session has ended
+  stops sending and acknowledging after 3 s of silence from the host, and the host does not create a channel for a peer from a datagram that has no messages.
+  `--exit-with-host`: 0 — the host ended the session; 1 — a refusal, a kick, the host was lost, or the world was not accepted (client); 2 — the session could not be opened
+  (on the client, the address; with `--host`, a busy port). On exit, the stand waits until the clients get their characters and the end of the session, and runs the exit hooks
+  of each member on its behalf (their lines go into that member's journal); the stand ends only with the host; the `pause`, `resume` and `speed`
+  of the stand are visible in the members' `ai/status`; `speed` must not be below 0; infinity (`x=1e39`) is refused, not a panic of the stand;
+  the reply names the new speed; `--host 0` names the busy port (`ai/status` → `net.udp`, `shards wait`).
+- Over UDP, `pause`, `resume` and `speed` on a client are `HostOnly` (`the host owns time; call it on the host`): the route
+  is set when the client opens a UDP socket, not by the `embedded`/`testing` flags, so a UDP test checks it.
+  A stand's client keeps them: the stand's time is shared.
+- The stand reads and writes the host player's settings (`--settings-dir`, `--no-settings`; `shards_settings::install` after
+  `build`, as in a single-player game); stand clients do not store settings.
+
+**A stand for the agent (E11.6, E11.7): `--peer`, stand scenarios, `--stand-udp`**:
+
+- `shards`: `--peer host|c1|c2` (`SHARDS_PEER`) reads a member's port from `F`, `F.c1`, `F.c2`; `wait --peer all` waits for all of them, prints
+  a line per member (`member=c1 role=client player=1 body=e15 port=… pid=… seed=… tick=…`) and checks that it is one session
+  (the host lists the players and the clients' bodies; it decides from fresh statuses, so it also works for a stand over UDP); `shards stand`
+  (members: role, player, body, port, ping, desyncs) and `shards stand stop` (`net_end`, SIGTERM, waits until nobody
+  answers; a client that left is named, exit code 1); `step`, `pause`, `resume` and `speed` of the stand (`{"pending": id}`)
+  are polled through `ai/step_poll` every 20 ms (`--timeout`, global, 60 s by default; it replaced the `--timeout` of
+  `wait` and `shot`); `session --player N`; each member has its own token on any path, and single commands under `--peer cN` do too (`--token` is
+  the host's; a client's is `SHARDS_TOKEN_C1`…, otherwise its `.shards/<port>.token`, and `--token` only as the last resort; the `unauthorized` reply
+  names the variable). `wait` (any, and `wait --peer all`) stops at once when waiting is pointless: a member was there and has gone (the host ended the stand),
+  the host's port file was read and then disappeared, `unauthorized` twice in a row, the command line
+  does not name the game (`--peer c1 wait` without a port file), the same mismatch twice in a row (not the host, a foreign seed, two
+  clients with one player; `Mismatch::Wrong` against `Mismatch::Forming`); the number of clients for `wait`, `stand` and a scenario is taken from
+  the host's `ai/status.net.stand.clients`; a port file left by an earlier stand does not count as a member.
+- `shards_script`: the header `stand clients=N [latency=MS] [jitter=MS] [loss=P] [dup=P]`, the prefix `@host|@c1|@c2`, results,
+  steps, the agent and the journal marks for each member separately; an invariant without a member runs on each one; `Driver` got
+  `peers`, `call_on`, `session_on`, `status_on`, `journal_since_on`, `check_stand` (by default, one game).
+- Stand scenarios are in `crates/sandbox/scenarios/stand/` (`coop_smoke.scenario`): in tests they run on a stand built from
+  the header (`shards::testing::run_stand_scenario`, `run_stand_str`, `run_stand_script`, `StandDriver`), and run twice they give
+  the same journals; against a live stand, `shards scenario`; CI runs them with `--stand 2`. A single game rejects a file with `stand`
+  and gives a hint on how to start a stand. `ai_core::scenario` provides `configure_agent`, `world_status`,
   `world_journal_since`.
-- `--stand N --stand-udp`: хост по UDP и клиенты дочерними процессами (`--join`, свой `--port-file F.cK`, `--exit-with-host`), только
-  в реальном времени (`--paused` — код 2 с причиной); клиент, который не запустился, не вошёл в сессию (хост не пустил) или
-  упал после входа, останавливает стенд своим кодом выхода, а ушедший сам (код 0, 129/130/143 и SIGHUP/SIGINT/SIGTERM) или
-  принятый клиент, связь с которым закрыл сам хост (`net_kick`, таймаут тишины; слот помнит, кто закрыл связь,
-  `NetHost::link_closed_by_host`), попадает в журнал хоста (кик или тишина во время входа этим не оправданы: такой клиент не
-  вошёл); прощание самого клиента, отказ и вытеснение второй игрой с тем же
-  токеном этого не значат, и клиент, не принявший мир хоста и вышедший с кодом 1, останавливает стенд; «вошёл» значит
-  «принят» (`Slot::admitted`), а не «у слота есть имя», поэтому клиент, которому хост отказал после `Hello`, тоже
-  останавливает стенд; хуки выхода идут в той же системе, что остановила стенд, а стенд,
-  кончившийся до старта детей (сигнал в кадре конца загрузки), детей не запускает; дети стартуют после загрузки контента и
-  проверки, что `--stand N` помещается в `max_players` (ни одного процесса при отказе); хост убирает файлы порта
-  прежнего стенда до запуска детей; `wait` на файле клиента (`--port-file F.c1`) не кончается от его исчезновения;
+- `--stand N --stand-udp`: the host over UDP and the clients as child processes (`--join`, its own `--port-file F.cK`, `--exit-with-host`), only
+  in real time (`--paused` — exit code 2 with a reason); a client that did not start, did not join the session (the host did not let it in) or
+  crashed after joining stops the stand with its exit code, and a client that left on its own (code 0, 129/130/143 and SIGHUP/SIGINT/SIGTERM) or
+  an admitted client whose connection the host itself closed (`net_kick`, a silence timeout; the slot remembers who closed the link,
+  `NetHost::link_closed_by_host`), goes into the host's journal (a kick, or silence during joining, does not count for this: such a client did not
+  get in); the client's own goodbye, a refusal, and being pushed out by a second game with the same
+  token do not mean this, and a client that did not accept the host's world and left with code 1 stops the stand; "got in" means
+  "admitted" (`Slot::admitted`), not "the slot has a name", so a client that the host refused after `Hello` also
+  stops the stand; the exit hooks run in the same system that stopped the stand, and a stand
+  that ended before the children started (a signal in the frame where loading ends) does not start them; the children start after the content is loaded and
+  after checking that `--stand N` fits in `max_players` (no process starts on a refusal); the host removes the port files
+  of an earlier stand before it starts the children; `wait` on a client's port file (`--port-file F.c1`) does not end when that file disappears;
   `ai/status.net.stand = {clients, udp}`.
-- Файлы порта `F.c1` и `F.c2` пишутся через свои временные файлы (`F.c1.part`): два клиента, стартующие вместе, не делят один.
-- Сценарий называет участника, которого потерял драйвер (`c2: cannot reach the game at …`), при запуске и при проверке
-  инварианта (с его строкой); вердикт о связях стенда (`this scenario's \`stand\` line wants links …`) остаётся словами
-  самого сценария. Сценарий стенда не зависит от `--peer`/`SHARDS_PEER` (в том числе `all`).
+- The port files `F.c1` and `F.c2` are written through their own temporary files (`F.c1.part`): two clients that start together do not share one.
+- The scenario names a member that the driver lost (`c2: cannot reach the game at …`), both at start and when checking an invariant (with its line); the verdict on the stand's links (``this scenario's `stand` line wants links …``) stays in the scenario's own words. The stand scenario does not depend on `--peer`/`SHARDS_PEER` (including `all`).
 
-**Предсказание, сглаживание и оверлей сети (C4: E7.4, E7.5, E7.8; `shards_net`, `shards_core`, `shards_motion`,
-`shards_action`)** — клиент не ждёт хоста со своим телом; в одиночной игре и на хосте ничего не меняется (эталонные
-реплеи прежние):
+**Prediction, smoothing and the network overlay (C4: E7.4, E7.5, E7.8; `shards_net`, `shards_core`, `shards_motion`,
+`shards_action`)** — the client does not wait for the host to move its own body; in single-player and on the host nothing changes (the reference
+replays are unchanged):
 
-- Своё тело клиент двигает и начинает его действия на том же тике: наборы `NetSet::PredictInput` → `NetSet::Predict` →
-  `NetSet::PredictEnd` (только тело с `Predicted`) гоняют те же системы приказов, движения и действий, что у хоста, с
-  нажатиями, отправленными на этот тик. Меняются только компоненты с `net_predicted`; хэш рассинхрона их не сверяет.
-- Приказы ведут предсказанное тело, как на хосте, а записанное ими откатывается после тика. Пройденная точка пути
-  остаётся пройденной: путь и очередь `move_to` идут без остановки на каждой точке. Законченный на хосте приказ приходит
-  клиенту очередью хоста, у атаки — с её `aim` и `target`; после мира заново приказы, которые хост закончил или сбросил,
-  закончены и для предсказания.
-- Инструменты боя на клиенте, `attack` тоже, отвечают по показанному действию (`PredictedAction`): `ok: roll (E) ·
-  predicted, host confirms` или отказ сразу. Неподтверждённое действие — строка `net: predicted … not confirmed (…)`.
-- Поправка: ошибка ног против состояния хоста на его тике за вычетом поправок с тех пор; меньше 2 см — ничего, иначе
-  каждый тик доля `correction_rate` от остатка (по тикам, а не по пришедшим состояниям); рывок с состоянием движения
-  хоста — при ошибке больше `snap_distance`, режиме движения, который расходится 6 тиков, смерти и на первом сравнении
-  после мира заново или прыжка часов, если тело сдвинулось (`snap: world taken`, `snap: clock skipped`). После рывка
-  тело не трогают, пока взятое состояние не догонит метки хоста: приземление не даёт второго рывка.
-- Чужие сущности в окне показаны между двумя состояниями хоста, чуть в прошлом (`interp`); игровой `Transform` остаётся
-  новейшим состоянием хоста. Новая сущность сразу стоит на своём месте, а не вылетает из начала координат.
-- `net_overlay` (F6): каналы, рассинхроны, ошибка предсказания, рывки, неподтверждённые действия; в `net_status` — поле
-  `prediction`. Цифры ошибки начинаются заново с миром заново.
-- Проверено на стенде при 150 мс в одну сторону и 2 % потерь (`crates/sandbox/tests/sandbox/net_predict.rs`, 14 тестов):
-  бег, столб, путь из точек и ход к цели атаки предсказаны без ошибки, мир заново на ходу даёт один рывок и ноль ошибки
-  после него.
+- The client moves its own body and starts its actions on the same tick: the sets `NetSet::PredictInput` → `NetSet::Predict` →
+  `NetSet::PredictEnd` (only the body with `Predicted`) run the same systems for orders, movement and actions as the host, with the
+  presses sent for that tick. Only components with `net_predicted` change; the desync hash does not compare them.
+- Orders drive the predicted body as on the host, and whatever they wrote is rolled back after the tick. A passed path point
+  stays passed: the path and the `move_to` queue run without a stop at each point. An order finished on the host reaches the
+  client through the host's queue; for an attack, with its `aim` and `target`. After the world is rebuilt, orders the host finished or dropped
+  count as finished for prediction too.
+- The combat tools on the client, `attack` included, reply based on the action shown (`PredictedAction`): `ok: roll (E) ·
+  predicted, host confirms` or an immediate refusal. An unconfirmed action gets the line `net: predicted … not confirmed (…)`.
+- Correction: the error in feet position against the host's state at its tick, minus the corrections made since then; under 2 cm, nothing is corrected; otherwise,
+  each tick, a share `correction_rate` of the remaining error is corrected (per tick, not per received state). A snap to the host's movement state happens when the error is larger than `snap_distance`, in a movement mode that diverges for 6 ticks, on death, and at the first comparison
+  after the world is rebuilt or a clock jump, if the body moved (`snap: world taken`, `snap: clock skipped`). After a snap,
+  the body is left alone until the state taken catches up with the host's marks: a landing does not cause a second snap.
+- Other entities in the window are shown between two host states, slightly in the past (`interp`); the game's `Transform` stays at the newest host state. A new entity is placed at once, instead of flying in from the origin.
+- `net_overlay` (F6): channels, desyncs, prediction error, snaps, unconfirmed actions; in `net_status`, the field
+  `prediction`. The error figures start over when the world is rebuilt.
+- Checked on a stand with 150 ms one way and 2 % loss (`crates/sandbox/tests/sandbox/net_predict.rs`, 14 tests):
+  running, a pillar, a path of points and a move toward an attack's target are predicted without error; a world rebuild on the move gives one snap and zero error
+  after it.
 
-**Сохранения (E8.1–5, `shards_save`)** — персонаж и мир, слоты, секции вместо дампа мира:
+**Saves (E8.1–5, `shards_save`)** — the character and the world, slots, and sections instead of a world dump:
 
-- Секции (`SaveSection`, `save_component`, `save_resource`, `add_save_migration`), реестр (`save_registry`), конверт
-  `shards-save/1` с контрольной суммой, атомарная запись с тремя копиями и восстановлением из копии с записью в журнале,
-  `save_now`, `autosave_on` с дебаунсом из `*.save.ron`, инструменты `save_game`, `load_game`, `save_check`, `save_list`,
-  `save_damage`; секции движка `region`, `position`, `vitals` регистрирует `shards`.
-- `load_game` перезапускает запись от загруженного состояния (`replay::restart_from_current`): реплей после загрузки
-  проходит `--verify`.
-- Папка сохранений и текущие слоты берутся из `EngineConfig` (`--save-dir` — только внутри папки игры, `--world`,
-  `--character`); одиночная игра загружает названные слоты до первого тика (нет слота — новая игра), хост и клиент —
-  через `load_launch_slot`.
-- Реплей на проигрывании не пишет на диск ничего: `save_now`, `save_game`, исправление основного файла, `save_damage`,
-  автосохранения (`save: not written during replay playback`).
-- Ожидающие автосохранения пишутся при выходе (хук выхода, `flush_saves`).
-- Сохранение из более новой версии (секция выше версии сборки, конверт `shards-save/2`) не считается порчей: отказ с
-  ясной ошибкой без перехода к копиям, без `.damaged` и без перезаписи; запись в слот с более новой копией отказывает,
-  так что ротация не теряет новый файл (`Fault::Newer`).
-- `shards_action::revive` (его используют dev-`heal` и загрузка `vitals`): загруженное здоровье оживляет тело, умершее после
-  сохранения; сохранение при нулевом здоровье оставляет его мёртвым.
-- Эталонный реплей `tests/replays/saves.json` и расширенный сценарий `saves.scenario`.
+- Sections (`SaveSection`, `save_component`, `save_resource`, `add_save_migration`), the registry (`save_registry`), the envelope
+  `shards-save/1` with a checksum, an atomic write with three copies and a restore from a copy, with an entry in the journal,
+  `save_now`, `autosave_on` with a debounce taken from `*.save.ron`, tools `save_game`, `load_game`, `save_check`, `save_list`,
+  `save_damage`; the engine sections `region`, `position` and `vitals` are registered by `shards`.
+- `load_game` restarts recording from the loaded state (`replay::restart_from_current`): a replay after loading
+  passes `--verify`.
+- The save folder and the current slots are taken from `EngineConfig` (`--save-dir` only inside the game's folder, `--world`,
+  `--character`); a single-player game loads the named slots before the first tick (if there is no slot, a new game starts); the host and a client
+  go through `load_launch_slot`.
+- A replay in playback writes nothing to disk: `save_now`, `save_game`, the repair of the main file, `save_damage`,
+  autosaves (`save: not written during replay playback`).
+- Pending autosaves are written on exit (exit hook, `flush_saves`).
+- A save from a newer version (a section above the build's version, envelope `shards-save/2`) is not treated as damage: it is refused with
+  a clear error, without falling back to the copies, without `.damaged` and without overwriting; a write into a slot that has a newer copy is refused,
+  so rotation does not lose the new file (`Fault::Newer`).
+- `shards_action::revive` (used by the dev-`heal` and by loading `vitals`): loaded health revives a body that died after the
+  save; a save made at zero health leaves it dead.
+- The reference replay `tests/replays/saves.json` and the extended scenario `saves.scenario`.
 
-**Инварианты, подробности расхождения реплея, время тика (E11, задачи 9–11; larelgit/airustcargo#4, влита в эту ветку)**:
+**Invariants, divergence details of the replay, tick time (E11, tasks 9–11; larelgit/airustcargo#4, merged into this branch)**:
 
-- Инварианты (`ai_core::invariants`): правила игры `add_ai_invariant(name, |w| -> Option<String>)` и правила сессии
-  (`assert_add`, `assert_list`, `assert_remove`, `assert_reset`; CLI `shards assert add|list|remove|reset`). Проверяются
-  после каждого тика там, где идёт симуляция; нарушение останавливает игру, как упавшая система:
-  `stopped: invariant NAME violated at tick N (replay: replays/invariant-NAME-tickN.json)`, в реальном времени — пауза.
-  Отложенный шаг (`step_poll`) останавливается так же. Условия правил — синтаксис `--until` плюс `warning` и `error`.
-  Сработавшее правило молчит до `assert_reset`; правила и их срабатывания не входят ни в хэш, ни в снапшот, загрузка
-  снапшота взводит их заново и оставляет правила сессии. Все четыре инструмента `assert_*` на клиенте отказывают
-  (`NetRoute::HostOnly`): правила проверяются на хосте, спросите его.
-- `shards fuzz --seed S --steps N`: случайные входы игрока по зерну, пока не нарушится правило; реплей сессии
-  проигрывается так же. У `shards` код выхода 3: игра остановилась (упавшая система или нарушенный инвариант);
-  сценарий проваливается на нарушенном инварианте, как на упавшей системе (`act? step …` его разрешает).
-- Песочница: правила `health_in_range` (здоровье в `0..=max`) и `bodies_in_world` (тела внутри мира: коридор, полоса
-  препятствий, регион; границы — `world/world.bounds.ron`). Сценарии и эталонные реплеи их не нарушают.
-- Подробности расхождения: проверки реплея хранят части хэша (`Check.parts`: хэш по сущностям или по компонентам и
-  значения `add_replay_check`), и `--verify`, отчёт и журнал называют сущности и компоненты первой разошедшейся
-  проверки, а ниже — их значения в живой игре (`e6 now: Health { current: 390.0, max: 600.0 }`). Флаги игры
-  `--check-every N` и `--check-detail components|entities|none`; оба записываются в файл. Части есть и у реплеев со
-  снапшота; проверка `add_optional_replay_check`, пока ей нечего сверять, частей не даёт.
-- Время тика (`ai_core::perf`): строка `ticks: avg …, max … (tick N), budget …` под ответом `step`, запись `[perf]` в
-  журнале о тиках дольше бюджета (не чаще раза в игровую секунду), поле `perf` в `ai/status`; бюджет — флаг
-  `--tick-budget-ms` (по умолчанию длительность тика). `EngineConfig::report_perf` (в `shards::testing::config()` —
-  `false`) выключает вывод для тестов, которые сравнивают ответы целиком.
-- Один формат реплея: `shards-replay/3` с необязательными `check_every`, `check_detail`, `parts` и событиями `assert`;
-  файлы `/2` проигрываются, хэш состояния прежний. Эталонные реплеи песочницы и шаблона записаны заново, с разбивкой
-  проверок по компонентам: у песочницы новый файл контента `world.bounds.ron` меняет хэш контента (с прежним контентом
-  старые файлы проходят `--verify`), старые файлы шаблона проходят и так.
-- `shards_script`: условия `warning` и `error`.
+- Invariants (`ai_core::invariants`): game rules `add_ai_invariant(name, |w| -> Option<String>)` and session rules
+  (`assert_add`, `assert_list`, `assert_remove`, `assert_reset`; CLI `shards assert add|list|remove|reset`). They are checked
+  after each tick, wherever the simulation runs; a violation stops the game, as a crashed system does:
+  `stopped: invariant NAME violated at tick N (replay: replays/invariant-NAME-tickN.json)`, in real time it pauses.
+  A deferred step (`step_poll`) stops in the same way. The rule conditions use the `--until` syntax plus `warning` and `error`.
+  A rule that has fired stays silent until `assert_reset`; rules and their firings are not part of the hash or the snapshot; loading a
+  snapshot re-arms them and keeps the session rules. All four `assert_*` tools refuse on a client
+  (`NetRoute::HostOnly`): the rules are checked on the host; ask the host.
+- `shards fuzz --seed S --steps N`: random player inputs, from a seed, until a rule is broken; the session's replay
+  plays back the same way. `shards` exits with code 3 when the game has stopped (a crashed system or a broken invariant);
+  a scenario fails on a broken invariant, as on a crashed system (`act? step …` allows it).
+- The sandbox: the rules `health_in_range` (health in `0..=max`) and `bodies_in_world` (bodies inside the world: corridor, obstacle course,
+  region; the bounds are in `world/world.bounds.ron`). The scenarios and the reference replays do not break them.
+- Divergence details: replay checks keep the parts of the hash (`Check.parts`: a hash over entities or over components, and
+  the values of `add_replay_check`), and `--verify`, the report and the journal name the entities and components of the first divergent
+  check, and below them, their values in the live game (`e6 now: Health { current: 390.0, max: 600.0 }`). The game flags
+  `--check-every N` and `--check-detail components|entities|none`; both are written to the file. Parts are also present in replays made from a
+  snapshot; `add_optional_replay_check`, while there is nothing to compare, gives no parts.
+- Tick time (`ai_core::perf`): the line `ticks: avg …, max … (tick N), budget …` under the answer to `step`, a `[perf]` entry in the journal about ticks longer than the budget (not more than once per game second), the `perf` field in `ai/status`; the budget is the flag `--tick-budget-ms` (by default, the tick's length). `EngineConfig::report_perf` (`shards::testing::config()` sets it to `false`) turns off the output for tests that compare answers in full.
+- One replay format: `shards-replay/3`, with the optional `check_every`, `check_detail`, `parts` and `assert` events;
+  `/2` files play back; the state hash is unchanged. The reference replays of the sandbox and the template are recorded again, with the checks split by component: the sandbox has a new content file, `world.bounds.ron`, which changes the content hash (with the previous content, old files pass `--verify`); the template's old files pass anyway.
+- `shards_script`: the conditions `warning` and `error`.
 
-**Настройки игрока (E8.6, `shards_settings`)** — графика, звук, управление и доступность на собственном фреймворке настроек
-Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавляется только `bevy-settings 0.20.0`):
+**Player settings (E8.6, `shards_settings`)** — graphics, audio, controls and accessibility on Bevy's own settings framework
+Bevy (`bevy::settings`, feature `bevy_settings`; only `bevy-settings 0.20.0` is added to `Cargo.lock`):
 
-- Группы `GraphicsSettings`, `AudioSettings`, `ControlSettings`, `AccessibilitySettings` (ресурсы, таблицы `settings.toml`);
-  свои группы игры — `app.add_settings_group::<G>()`, группа, которую TOML не держит (`u64`, нестроковый ключ карты), и
-  группа с `#[settings_group(file = "...")]` (движок следит только за `settings.toml`) отклоняются при регистрации.
-- Хранилище: `shards::run` запускает его после `build` игры (`shards_settings::install`): папка платформы под `SettingsAppId`
-  (игра задаёт имя, иначе `shards-<заголовок>`), `--settings-dir DIR`, `--no-settings`; окно без флагов читает и пишет,
-  `--headless` без `--settings-dir`, тесты, `--verify` и встроенные игры нет. Запись через секунду после последнего изменения
-  (в том числе сделанного кодом игры) и при выходе, без изменений ничего не пишется. `--settings-dir` на платформе без папки
-  настроек — ошибка с советом (раньше «kept in DIR/settings.toml», а хранилище не писало ничего).
-- Файл настроек не теряется: не TOML — копия `settings.toml.bad` (занятые имена не затираются, но один и тот же текст
-  второй раз копией не становится), старт с последней хорошей копии `settings.toml.bak` или умолчаний; пустой файл (без
-  текста) при живой копии — неудавшаяся запись, копия возвращается, а если не вернулась, журнал называет оба файла; файл из
-  одних комментариев — просьба об умолчаниях, он остаётся как есть; удалённый файл — сброс (старая копия уходит с ним); ссылка на
-  обычный файл читается, как читает её Bevy. Запись, после которой файл пуст или не читается (диск полон), возвращает
-  копию и повторяется до трёх раз с паузой в 3 секунды, журнал называет причину; после `giving up` изменения остаются в
-  памяти, а выход пишет их ещё раз, как бы ни отметил Bevy, что менялось; последний просмотр файла при выходе ничего не
-  пишет после возврата копии, поэтому на полном диске остаётся она, а не пустой файл. Правка файла руками в работающей игре не
-  принимается за неудачную запись: читаемая только обновляет копию, нечитаемая уходит в `settings.toml.bad` (на её
-  месте последняя хорошая копия), пустой или удалённый файл не трогается. `controls` читается запись за записью;
-  `nan`/`inf` в числе — умолчание.
-- Последняя хорошая копия `settings.toml.bak` заменяется, только когда новая записана целиком (рядом, в
-  `settings.toml.bak.new`, потом `rename`): на полном диске копия не получается, и остаётся прежняя, а не пустой `.bak`.
-- `reset=true` возвращает умолчания игры (ресурс группы до файла), а не `Default` типа, и проверяет ключ как `set`; группа с
-  двумя испорченными значениями из файла не блокирует `settings_set` третьего (судят только изменение). Проверки группы с
-  доступом к миру: `add_settings_world_check`.
-- Инструменты `settings {group?}` (Player, запрос) и `settings_set group= key= value= | reset=true` (Player, control: не
-  попадает в реплей); значение читается по типу поля, отказ называет допустимое, изменение — строка журнала
-  `settings: accessibility.camera_shake 1 → 0.3`. `ai/status.settings`.
-- Применение: основное окно (`apply_graphics`: полный экран, vsync, размер, масштаб), камера (поле зрения, сила тряски,
-  чувствительность, инверсия Y, `MotionBlur` у камер, где он есть: меняется только сила, число сэмплов игры остаётся), мерцание телеграфов и маркеров за кадром
-  (`accessibility.flashes`, `draw::pulse_at`), `hold_to_toggle` в карте ввода. Громкости хранятся для звука (E9).
-- Настройки не входят в снапшоты, реплеи, их хэш и репликацию (`net_ignore_resource`); эталонные реплеи прежние.
-- Песочница: `SettingsAppId` `shards-sandbox`, `InputSettings::for_game("shards")`, сценарий `settings.scenario`; шаблон:
-  `SettingsAppId::new("my_game")` (папка `my-game`; имя записано как у пакета, чтобы его нашёл поиск при переименовании, и у
-  игр, сделанных из шаблона, не оказалось одной папки настроек), `InputSettings::for_game("my_game")`.
-- Профайлер Tracy: фича `trace_tracy` у `shards`, `sandbox` и шаблона включает фичу Bevy того же имени, и каждая система —
-  отдельная зона (`cargo run -p sandbox --release --features trace_tracy`, README, «Время тика»).
+- Groups `GraphicsSettings`, `AudioSettings`, `ControlSettings`, `AccessibilitySettings` (resources, `settings.toml` tables);
+  the game's own groups are added with `app.add_settings_group::<G>()`. Registration rejects a group that TOML cannot hold (`u64`, a map key that is not a string), and
+  a group with `#[settings_group(file = "...")]` (the engine watches only `settings.toml`).
+- Storage: `shards::run` starts it after the game's `build` (`shards_settings::install`): the platform folder under `SettingsAppId`
+  (the game sets the name, otherwise `shards-<title>`), `--settings-dir DIR`, `--no-settings`. A window without flags reads and writes;
+  `--headless` without `--settings-dir`, tests, `--verify` and built-in games have no storage. A write comes one second after the last change
+  (including changes made by the game's code) and on exit. With no change, nothing is written. `--settings-dir` on a platform without a settings folder
+  is an error with advice (it used to say "kept in DIR/settings.toml", while the storage wrote nothing).
+- The settings file is never lost. If it is not TOML, a copy goes to `settings.toml.bad` (names already taken are not overwritten, but the same text is not copied twice), and the start uses the last good copy `settings.toml.bak` or the defaults. An empty file (with no
+  text) while a copy exists is a failed write: the copy comes back. If it does not come back, the journal names both files. A file of
+  only comments is a request for the defaults, and it stays as it is. A deleted file is a reset (the old copy goes with it). A link to a
+  regular file is read the way Bevy reads it. Writes after which the file is empty or unreadable (the disk is full) return the copy and retry up to three times, with a 3-second pause. The journal names the reason. After `giving up`, the changes stay in memory, and exit writes them again, whatever Bevy reports as changed. The last look at the file on exit writes nothing after the copy has come back, so on a full disk the copy stays, not an empty file. A manual edit of the file in a running game is not taken for a failed write: a readable file only updates the copy; an unreadable one goes to `settings.toml.bad` (the last good copy takes its place); an empty or deleted file is left alone. `controls` is read entry by entry; `nan`/`inf` in a number means the default.
+- The last good copy `settings.toml.bak` is replaced only when the new copy is written in full (next to it, in `settings.toml.bak.new`, then `rename`). On a full disk the copy is not made, and the old one stays, not an empty `.bak`.
+- `reset=true` returns the game's defaults (the group's resource before the file), not the type's `Default`, and checks the key the way `set` does. A group with two bad values from the file does not block a third `settings_set` (only the change is judged). Checks of a group that need world access: `add_settings_world_check`.
+- The tools `settings {group?}` (Player, query) and `settings_set group= key= value= | reset=true` (Player, control: not recorded in the replay). The value is read by the field's type. A refusal names what is allowed. A change gives a journal line, such as `settings: accessibility.camera_shake 1 → 0.3`. `ai/status.settings`.
+- Applied to: the main window (`apply_graphics`: fullscreen, vsync, size, scale); the camera (field of view, shake strength, sensitivity, Y inversion, `MotionBlur` on cameras that have it: only the strength changes, the game's sample count stays); the flicker of telegraphs and off-screen markers (`accessibility.flashes`, `draw::pulse_at`); `hold_to_toggle` in the input map. Volumes are stored for audio (E9).
+- Settings are not part of snapshots, replays, their hash or replication (`net_ignore_resource`); the reference replays stay as they were.
+- Sandbox: `SettingsAppId` `shards-sandbox`, `InputSettings::for_game("shards")`, scenario `settings.scenario`; template:
+  `SettingsAppId::new("my_game")` (folder `my-game`; the name is written as in the package, so that search finds it on a rename, and so that games made from the template do not end up sharing one settings folder), `InputSettings::for_game("my_game")`.
+- Tracy profiler: the `trace_tracy` feature of `shards`, `sandbox` and the template turns on the Bevy feature of the same name, and each system is a separate zone (`cargo run -p sandbox --release --features trace_tracy`, README, "Tick time (E11)").
 
-**Сохранения в кооперативе (E8, `shards::coop`, `CoopPlugin` в `EnginePlugins`)** — персонаж едет с игроком, мир хранит
-хост; `shards_net` и `shards_save` друг о друге по-прежнему не знают:
+**Saves in co-op (E8, `shards::coop`, `CoopPlugin` in `EnginePlugins`)** — the character travels with the player, the world is kept by the host; `shards_net` and `shards_save` still do not know about each other:
 
-- Клиент читает слот персонажа (`--character`, без флага — слот по `--name`, у `--stand` `c1`…`cN`) и приносит его в
-  `Hello`; хост применяет персонажа внутри записанного `player_join`, реплей хоста строит то же тело. Старые версии
-  секций мигрируют, повреждённый файл восстанавливается из копии, нечитаемый — вход с умолчаниями и строка в журнале.
-  Присланное проверяется: чужие секции пропускаются, число, какого не бывает у тела (потолок ниже нуля, бесконечность),
-  отвергается до изменений, паника секции игры ловится, провалившийся вход убирает своё тело.
-- `save_now`, `autosave_on` и `save_game` по телу удалённого игрока снимают персонажа на хосте и шлют `CharacterSave`
-  клиенту (в слот хоста не пишут); клиент пишет свой слот обычным хранилищем. Сохранение внутри пересланного вызова гостя
-  встаёт в очередь сессии. Собственное сохранение хоста шлёт гостям и тогда, когда его файл не записался.
-- Хост помнит персонажа игрока на сессию (`SessionCharacters`): вернувшийся с файлом, который хост знает, получает
-  новейшее у хоста (тело ждёт со своим состоянием, а после срока строится из запомненного, и файл игрока догоняет), с
-  неизвестным ему файлом — свой. Токен, чей слот занял другой, хост хранит среди ушедших и возвращает владельцу.
-- Конец сессии (`net_end`, выход хоста): мир и персонаж хоста сохраняются (не поверх слотов, которые не успели
-  загрузиться), потом клиенты получают персонажей и `SessionEnd` со слотом мира; ничего не пишется и не отправляется
-  дважды. Хост грузит `--world` и `--character` до первого тика (`load_game` агента `launch`). Клиент мир не пишет и не
-  грузит (`the host keeps the world; ask the host (ADDR)`), `load_game` на клиенте — `HostOnly`; `load_game` мира на хосте
-  отправляет клиентам мир заново (`WorldRebuilt`). Клиент по UDP при выходе ждёт до 300 мс последний `CharacterSave`.
-- `shards::coop::{CoopPlugin, SessionCharacters, character_value, parse_character}`; `shards_save`: `SaveRouting`,
-  `SaveReport::target`, `slot_from_name`; `shards_net`: `NetHost::send_character`, хук `join_character`. Приложения
-  `shards::testing` получают свою папку сохранений, убираемую с приложением.
+- The client reads the character slot (`--character`; without the flag, the slot named by `--name`; for `--stand`, `c1`…`cN`) and sends it in `Hello`. The host applies the character inside the recorded `player_join`; the host's replay builds the same body. Old section versions are migrated. A damaged file is restored from the copy; an unreadable one starts the character with defaults, and the journal gets a line. What is sent is checked: foreign sections are skipped; a number that a body cannot have (a ceiling below zero, infinity) is rejected before any change; a panic in a game section is caught; a failed join removes its own body.
+- `save_now`, `autosave_on` and `save_game` on a remote player's body capture the character on the host and send `CharacterSave` to the client (they do not write to the host's slot). The client writes its own slot with the normal storage. A save inside a guest's forwarded call goes into the session's queue. The host's own save is sent to the guests even when its file was not written.
+- The host remembers each player's character for the session (`SessionCharacters`): a player who comes back with a file the host knows gets the newest copy the host has (the body waits with its state, and after the deadline it is built from the remembered copy, and the player's file catches up). With a file the host does not know, the player gets their own. A token whose slot was taken by another player is kept by the host among the departed and returned to its owner.
+- End of session (`net_end`, the host exits): the world and the host's character are saved (not over slots that have not finished loading); then the clients get their characters and `SessionEnd` with the world's slot. Nothing is written or sent twice. The host loads `--world` and `--character` before the first tick (`load_game` of the agent `launch`). The client neither writes nor loads the world (`the host keeps the world; ask the host (ADDR)`); `load_game` on a client is `HostOnly`; `load_game` of the world on the host sends the clients the world again (`WorldRebuilt`). On exit, a UDP client waits up to 300 ms for the last `CharacterSave`.
+- `shards::coop::{CoopPlugin, SessionCharacters, character_value, parse_character}`; `shards_save`: `SaveRouting`, `SaveReport::target`, `slot_from_name`; `shards_net`: `NetHost::send_character`, the hook `join_character`. Apps from `shards::testing` get their own save folder, which is removed with the app.
 
-**Приёмка фазы C (C9): долгая игра, край региона, сохранения и кооп в шаблоне**:
+**Phase C acceptance (C9): a long game, the region edge, saves and co-op in the template**:
 
-- `shards soak` и `shards_script::soak` (`SoakPlan`, `SoakReport`, `run`, `SOAK_AGENT`): агенты с зерном играют за
-  каждого участника стенда (или за одну игру): каждый раунд `observe` и случайный вход игрока, мёртвое тело лечит хост,
-  хост по расписанию меняет регион (`--regen`, `--regen-minutes`) и сохраняет всё (`--save-minutes`) — ровно в срок: шаг
-  его не перешагивает, — стенд шагает с
-  `--until named:net_desync`. Первый рассинхрон, упавшая система или нарушенный инвариант — код выхода 3; в конце
-  `net_status` каждого (участник, который на него не ответил, прогон не проходит: `desyncs ?`). План, который кончается
-  за последним тиком, что может сосчитать игра, отвергается до первого вызова. Работает через `Driver`: против живого стенда и в `cargo test` (`shards::testing::StandDriver`).
-  Входы `fuzz` и `soak` — `shards_script::inputs` (раньше были в CLI).
-- Приёмка E7: полчаса игрового времени, хост и два клиента, 150 мс в одну сторону и 2 % потерь, пять смен региона и
-  девять сохранений — ни одного рассинхрона (`shards soak --minutes 30` на живом `--stand 2`, тот же прогон по UDP
-  клиентами-процессами, тест `half_an_hour_of_three_players_on_lossy_links_stays_in_sync` под `#[ignore]`). Две минуты
-  того же — тест `two_minutes_of_three_players_on_lossy_links_stay_in_sync`; три — шаг CI `headless-cli`; полчаса —
-  `soak.yml` раз в неделю.
-- Край региона: `edge_wall: H` у `region` ставит вокруг региона невидимую стену H м высотой (`region::edge_wall`,
-  `edge_wall_boxes`, `EDGE_WALL_THICKNESS`, `EDGE_WALL_DEPTH`, метка `RegionEdge`, которую шаблон не рисует); у `region_info`
-  строка `edge`. Тайлов и точек зёрен
-  стена не меняет, её коллайдеры идут после тайлов.
-- `net_status` клиента называет число своих рассинхронов (`desyncs`).
-- Шаблон: сохранения (`src/progress.rs`: раздел персонажа `trophies`, раздел мира `fallen`, автосохранение очищенного
-  двора; `SaveKey` у персонажей арены по ключу `key` из контента (`yard.gate_grunt`), повтор ключа — ошибка контента; `scenarios/saves.scenario`) и кооп на двоих (`content/session.net.ron`,
-  `scenarios/stand/coop.scenario`, `tests/game/coop.rs`; тест стенд-сценариев `every_stand_scenario_passes`). Папка
-  `saves/` шаблона — в `.gitignore`.
-- CI: `soak.yml` (полчаса на живом стенде: по понедельникам, руками, на пуше с `[soak]`) и `record-replays.yml`
-  (эталонные реплеи песочницы и шаблона, записанные заново на Linux, артефактом: на пуше с `[record replays]`).
+- `shards soak` and `shards_script::soak` (`SoakPlan`, `SoakReport`, `run`, `SOAK_AGENT`): seeded agents play for each participant of the stand (or for one game): each round, `observe` and a random player input. A dead body is healed by the host. On a schedule the host changes the region (`--regen`, `--regen-minutes`) and saves everything (`--save-minutes`), exactly on time: a step does not jump past it. The stand steps with
+  `--until named:net_desync`. The first desync, a crashed system or a broken invariant gives exit code 3. At the end, each participant's `net_status` is checked: a participant that does not answer it fails the run (`desyncs ?`). A plan that ends after the last tick the game can count is rejected before the first call. It runs through `Driver`: against a live stand and in `cargo test` (`shards::testing::StandDriver`).
+  The `fuzz` and `soak` inputs are in `shards_script::inputs` (they used to be in the CLI).
+- Acceptance for E7: half an hour of game time, a host and two clients, 150 ms one way and 2% loss, five region changes and nine saves, and not one desync (`shards soak --minutes 30` on a live `--stand 2`, the same run over UDP with client processes, the test `half_an_hour_of_three_players_on_lossy_links_stays_in_sync` under `#[ignore]`). Two minutes of the same run is the test `two_minutes_of_three_players_on_lossy_links_stay_in_sync`; three minutes is the `headless-cli` CI step; half an hour is `soak.yml`, once a week.
+- Region edge: `edge_wall: H` on `region` puts an invisible wall H m high around the region (`region::edge_wall`, `edge_wall_boxes`, `EDGE_WALL_THICKNESS`, `EDGE_WALL_DEPTH`, the `RegionEdge` marker, which the template does not draw). `region_info` shows an `edge` line. The wall does not change tiles or seed points. Its colliders come after the tiles.
+- The client's `net_status` reports the number of its own desyncs (`desyncs`).
+- Template: saves (`src/progress.rs`: the character section `trophies`, the world section `fallen`, an autosave of the cleared yard; `SaveKey` for the arena's characters by the `key` from content (`yard.gate_grunt`), and a repeated key is a content error; `scenarios/saves.scenario`) and co-op for two (`content/session.net.ron`,
+  `scenarios/stand/coop.scenario`, `tests/game/coop.rs`; the stand-scenario test `every_stand_scenario_passes`). The template's `saves/` folder is in `.gitignore`.
+- CI: `soak.yml` (half an hour on a live stand: on Mondays, by hand, and on a push with `[soak]`) and `record-replays.yml`
+  (the sandbox's and the template's reference replays, re-recorded on Linux, as an artifact: on a push with `[record replays]`).
 
-**Интерфейс (D1, E9.1–3, `shards_ui`)** — HUD и меню из контента, дерево интерфейса для агента:
+**UI (D1, E9.1–3, `shards_ui`)** — HUD and menus from content, and an interface tree for the agent:
 
-- Виды контента `screen` (`*.screen.ron`: слой `Hud`/`Menu`/`Modal`, `pauses`, `open_at_start`, `closable`, заголовок,
-  место, раскладка, виджеты) и `theme` (цвета, размеры шрифтов, отступы; id `default`). Виджеты: `Panel`, `List`, `Grid`,
-  `Tabs`, `Text`, `Hint`, `Bar`, `Cooldown`, `Compass`, `Allies`, `Compare`, `Button`, `Slider`, `Toggle`, `Choice`.
-  Проверки контента: повтор id, `open` несуществующего экрана, страница вкладок без id, диапазон слайдера, `setting` не
-  вида `группа.ключ`, HUD с паузой.
-- Стек экранов и фокус (`UiStack`, `model::navigate`): `up`/`down`/`next`/`prev` с переходом через край, строки и сетки
-  влево-вправо, `left`/`right` меняют слайдер, переключатель, выбор и вкладки, `confirm`, `back`; модальное окно закрывает
-  всё под собой. Меню с `pauses` ставит `PauseState::Paused` в одиночной игре и снимает паузу, только если поставило её само.
-- Кнопки: `close`, `back`, `open <экран>`, `quit`, `tool <имя> {json}` (от имени нажавшего, с его scope), действие игры
-  (`UiAppExt::add_ui_action`). Значения — из источников (`add_ui_source`; движок даёт `you.health`, `you.stamina`, `you.poise`,
-  `you.charges:<имя>`, `you.cooldown:<действие>`, `you.heading`, `allies`; `shards_ui::viewer` — чьи они) или из настроек
-  игрока (`setting`: меняется через `settings_set`). События `UiPressed`, `UiChanged`, `UiScreenChanged`.
-- Инструменты `ui_read`, `ui_open`, `ui_close`, `ui_navigate`, `ui_click`, `ui_set` (scope Player); раздел `UI` в
-  `observe`, пока открыто меню; журнал `ui: …`; поле `ui` в `ai/status`. Экраны вне симуляции (без `AiId`, не в снапшоте и
-  хэше), а инструменты — action: реплей нажимает те же кнопки.
-- Рисование (feature `render`, только с окном): узлы Bevy UI, тема, размер текста `accessibility.text_scale`, мышь через
-  picking, роли, подписи и значения AccessKit для экранных чтецов, `InputFocus` за фокусом.
-- `shards`: `EngineUiPlugin` — источники `you.*` и `allies`, клавиша `pause` открывает экран `pause`, контекст ввода `menu`
-  (`navigate` с повтором, `confirm`, `back`) зовёт `ui_*` от агента `input`.
-- Песочница: меню `pause`, `settings` (все группы настроек на вкладках), `confirm_quit`
-  (`content/ui/menus.screen.ron`), сценарий `ui.scenario`. Шаблон: HUD (здоровье, стамина, трофеи — источник игры),
-  пауза, настройки и «сохранить и выйти» (`src/screens.rs`, `screens.screen.ron`), сценарий `menus.scenario`.
+- Content kinds `screen` (`*.screen.ron`: layer `Hud`/`Menu`/`Modal`, `pauses`, `open_at_start`, `closable`, title, position, layout, widgets) and `theme` (colours, font sizes, margins; id `default`). Widgets: `Panel`, `List`, `Grid`, `Tabs`, `Text`, `Hint`, `Bar`, `Cooldown`, `Compass`, `Allies`, `Compare`, `Button`, `Slider`, `Toggle`, `Choice`.
+  Content checks: a repeated id, `open` of a screen that does not exist, a tab page without an id, a slider range, a `setting` that is not in the form `group.key`, a HUD that pauses.
+- Screen stack and focus (`UiStack`, `model::navigate`): `up`/`down`/`next`/`prev` wrap around at the edge; rows and grids move left and right; `left`/`right` change a slider, a toggle, a choice and tabs; `confirm`, `back`; a modal closes everything beneath it. A menu with `pauses` sets `PauseState::Paused` in single-player, and clears the pause only if it set it itself.
+- Buttons: `close`, `back`, `open <screen>`, `quit`, `tool <name> {json}` (on behalf of the player who pressed it, with their scope), a game action (`UiAppExt::add_ui_action`). Values come from sources (`add_ui_source`; the engine gives `you.health`, `you.stamina`, `you.poise`, `you.charges:<name>`, `you.cooldown:<action>`, `you.heading`, `allies`; `shards_ui::viewer` says whose they are), or from the player's settings (`setting`: changed through `settings_set`). Events: `UiPressed`, `UiChanged`, `UiScreenChanged`.
+- Tools `ui_read`, `ui_open`, `ui_close`, `ui_navigate`, `ui_click`, `ui_set` (scope Player); a `UI` section in `observe` while a menu is open; the journal line `ui: …`; a `ui` field in `ai/status`. Screens outside the simulation (no `AiId`, not in the snapshot or the hash). The tools are of kind `action`: the replay presses the same buttons.
+- Drawing (feature `render`, window only): Bevy UI nodes, the theme, text size from `accessibility.text_scale`, the mouse through picking, roles, labels and AccessKit values for screen readers, and `InputFocus` follows the focus.
+- `shards`: `EngineUiPlugin` — the sources `you.*` and `allies`; the `pause` key opens the `pause` screen; the `menu` input context (`navigate` with repeat, `confirm`, `back`) calls `ui_*` as the agent `input`.
+- Sandbox: the `pause` menu, `settings` (all settings groups on tabs), `confirm_quit` (`content/ui/menus.screen.ron`), scenario `ui.scenario`. Template: HUD (health, stamina and trophies: the game supplies them), pause, settings, and "save and quit" (`src/screens.rs`, `screens.screen.ron`), scenario `menus.scenario`.
 
-**Локализация (D2, E9.4, `shards_locale`)** — тексты на Fluent, язык меняется на лету:
+**Localization (D2, E9.4, `shards_locale`)** — texts in Fluent, with the language changed on the fly:
 
-- Вид контента `locale` (`*.locale.ron`: id — тег языка, `name` на самом языке, `fallback`), тексты —
-  `assets/locale/<язык>/*.ftl`. Проверка контента разбирает файлы (ошибка с файлом, строкой и столбцом), находит сообщение в
-  двух файлах одного языка, `fallback` по кругу и язык без файлов. Сторонние крейты `fluent-bundle =0.16.0`,
-  `fluent-syntax =0.12.0`, `unic-langid =0.9.6` — только внутри `shards_locale`.
-- Сообщения — целые фразы с параметрами: число выбирает форму множественного числа языка, параметр-сообщение
-  (`Arg::Message`) вставляет фразу целиком (`Locale::text`, `shards::locale::text`, `Args`). Недостающее берётся из запасного
-  языка, иначе показывается id; каждый такой случай и забытый параметр журнал называет один раз (`locale: ru has no message …`).
-- Настройка игрока `locale.language` (группа `locale`): пустая — язык игры; неизвестный язык `settings_set` отклоняет со
-  списком. Смена применяется до возврата вызова (журнал `locale: language en → ru`, событие `TextChanged`); шлюз загрузки
-  ждёт языки. Горячая перезагрузка `.ftl` (`locale: text reloaded (…)`) и `reload_text`; правку с ошибкой она отклоняет так же,
-  как контент: файл на диске остаётся с ошибкой, а до его исправления действует текст, загруженный раньше; ошибка с местом идёт
-  в журнал один раз.
-- Инструменты `locale` (языки, на каком играют, чего каждому не хватает; `language=` — все сообщения языка) и `text`
-  (сообщение с параметрами на любом языке), оба query, scope Player; поле `locale` в `ai/status`.
-- `shards_ui`: текст `@id` в заголовках, подписях, текстах, подсказках, строках `Compare` — сообщение на языке игры; при
-  смене языка открытые экраны переписывают подписи, сохраняя значения и фокус. `Choice.labels` — подписи вариантов (`ui_set`
-  принимает и подпись); выбор, чья настройка не совпала ни с одним вариантом, показывает `value`. `ThemeDef.font` — файл
-  шрифта для всего текста (проверка контента ищет его). Проверка экрана находит `@id`, которого нет ни в одном языке.
-- `shards_settings`: событие `SettingsChanged { group }` — группа изменилась (инструментом, экраном или кодом игры), до
-  возврата `settings_set`.
-- Песочница: языки `en` и `ru` (`content/ui/languages.locale.ron`, `assets/locale/*/menus.ftl`), меню на `@id` и вкладка
-  `language`, тема со шрифтом Fira Sans (OFL), сценарий `locale.scenario`. Шаблон: то же для HUD и меню (`assets/locale/*/game.ftl`),
-  трофеи HUD — сообщение с формой множественного числа (`1 trophy`, `5 трофеев`), вкладка языка в настройках.
+- Content kind `locale` (`*.locale.ron`: id is the language tag, `name` in the language itself, `fallback`), texts are in
+  `assets/locale/<language>/*.ftl`. The content check parses the files (an error names the file, line and column), finds a message that is in two files of one language, a `fallback` cycle, and a language with no files. The third-party crates `fluent-bundle =0.16.0`,
+  `fluent-syntax =0.12.0`, `unic-langid =0.9.6` are used only inside `shards_locale`.
+- Messages are whole phrases with parameters: a number picks the language's plural form; a message parameter (`Arg::Message`) inserts a whole phrase (`Locale::text`, `shards::locale::text`, `Args`). What is missing is taken from the fallback language; otherwise the id is shown. Each such case, and each forgotten parameter, is named once in the journal (`locale: ru has no message …`).
+- The player setting `locale.language` (group `locale`): empty means the game's language; an unknown language is refused by `settings_set`, with a list. The change applies before the call returns (journal `locale: language en → ru`, event `TextChanged`); the loading gate waits for the languages. Hot reload of `.ftl` (`locale: text reloaded (…)`) and `reload_text`. An edit with an error is refused the same way as content: the file on disk stays broken, and until it is fixed the text loaded earlier is in effect; the error with its place goes to the journal once.
+- Tools `locale` (languages, which one is being played, and what each one lacks; `language=` — all messages of the language) and `text` (a message with parameters in any language), both query, scope Player; a `locale` field in `ai/status`.
+- `shards_ui`: the text `@id` in titles, labels, texts, hints and `Compare` rows is a message in the game's language. When the language changes, open screens rewrite their labels, keeping values and focus. `Choice.labels` are the labels of the options (`ui_set` accepts a label too). A choice whose setting matches none of the options shows `value`. `ThemeDef.font` is the font file for all text (the content check looks for it). The screen check finds an `@id` that is not in any language.
+- `shards_settings`: the event `SettingsChanged { group }` — the group changed (by a tool, by a screen or by the game's code), before `settings_set` returns.
+- Sandbox: languages `en` and `ru` (`content/ui/languages.locale.ron`, `assets/locale/*/menus.ftl`), the menus take their text from `@id`, with a `language` tab,
+  a theme with the Fira Sans font (OFL), and scenario `locale.scenario`. Template: the same for the HUD and the menus (`assets/locale/*/game.ftl`),
+  HUD trophies: a message with a plural form (`1 trophy`, `5 трофеев`), and a language tab in the settings.
 
-**Звук (D3, E9.5, `shards_audio`)** — шины, голоса, пространственные звуки и музыка в слоях; решения на часах симуляции:
+**Audio (D3, E9.5, `shards_audio`)** — buses, voices, spatial sounds and music in layers; decisions run on the simulation clock:
 
-- Виды контента `sound` (файлы WAV или Ogg Vorbis по очереди, шина, громкость, приоритет, `spatial: (near, far)`,
-  `max_instances`), `music` (стемы одной длины и слои от спокойного к напряжённому, у каждого после первого — условие `when`
-  по имени, `!` — отрицание; `fade_in`, `fade_out`, `hold`) и `audio` (микшер, один на игру: число голосов, трек с начала
-  игры, звуки событий движка). Проверка контента находит файл, которого нет или который не играет, стемы разной длины, слой
-  без стемов, `when` у первого слоя и его отсутствие у следующего, событие, которого нет, второй микшер и телеграф, чей звук
-  не определён.
-- Шины `music`, `sfx`, `ui`, `voice` с громкостью игрока (`audio.<шина>` × `audio.master`), применяется к тому, что звучит.
-  Голоса: не больше `voices` микшера; сильный звук (приоритет, потом громкость, потом возраст) забирает голос слабого, равный
-  не слышен; `max_instances` забирает свой самый старый. Пространственный звук тихнет от `near` до `far` (`(1 − t)²`) и дальше
-  `far` не запускается; слушатель — тело HUD (`shards_ui::viewer`), повёрнутое как `AudioListener` (зонтик вешает его на
+- Content kinds `sound` (WAV or Ogg Vorbis files, played in turn; bus, volume, priority, `spatial: (near, far)`,
+  `max_instances`), `music` (stems of equal length, and layers from calm to tense; each layer after the first has a `when` condition
+  by name; `!` negates it; `fade_in`, `fade_out`, `hold`), and `audio` (the mixer, one per game: the number of voices, the track from the start of the
+  game, the engine's event sounds). The content check finds a file that is missing or cannot play, stems of different lengths, a layer
+  with no stems, a `when` on the first layer or its absence on the next one, an event that does not exist, a second mixer, and a telegraph whose sound
+  is not defined.
+- Buses `music`, `sfx`, `ui`, `voice` take the player's volume (`audio.<bus>` × `audio.master`), which applies to whatever is playing.
+  Voices: at most the mixer's `voices`. A stronger sound (priority, then volume, then age) takes a weaker one's voice; an equal sound is not heard;
+  `max_instances` takes the oldest of its own. Spatial sound fades from `near` to `far` (`(1 − t)²`) and does not start beyond `far`. The listener is the HUD body (`shards_ui::viewer`), turned like an `AudioListener` (the umbrella crate attaches it to
   `ThirdPersonCamera`).
-- Звучат: телеграфы атак (`SoundCue`, там, куда придётся удар), ключи анимации с именем звука (`AnimationCue`), события
-  движка по микшеру (`damaged`, `blocked`, `parried`, `evaded`, `guard_broken`, `staggered`, `died`, `healed`, `ui_moved`,
-  `ui_pressed`, `ui_changed`, `ui_opened`, `ui_closed`), звуки игры (`PlaySound`, `shards::audio::play`).
-- Музыка: стемы трека играют вместе по кругу, слой выбирают условия (`add_ai_condition`), напряжённый приходит сразу, спокойный
-  после `hold`, стемы входят и уходят плавно; смена трека затихает старый. `Music` входит в снапшот.
-- Инструменты `audio` (query, Player: трек, слой, стемы, шины, голоса, неуслышанные звуки, слушатель), `sound_play` и
-  `music_set` (Dev, control); строка `MUSIC` в `observe`, поле `audio` в `ai/status`.
-- Воспроизведение (feature `audio` зонтика, `shards_audio/playback`): синк на голос, стемы стартуют вместе, звуки эффектов на
-  паузе замирают, меню звучит по реальному времени. Без окна и без устройства вывода микшер решает так же.
-- `shards_npc`: условия `npc_engaged` (активный NPC с целью в состоянии вида `chase`, `attack`, `wait_token`) и `npc_near`
-  (живой игрок ближе полутора дальностей зрения активного NPC). `shards_ui`: событие `UiFocusMoved`. `shards_settings`:
-  громкость `audio.ui`.
-- Песочница: звуки, музыка арены (`explore`, `tension`, `combat`) и микшер в `content/audio/`, слайдер «Interface» во вкладке
-  звука, сценарий `audio.scenario`; файлы синтезирует `cargo run -p sandbox --example make_sounds`. Шаблон: то же для двора,
-  условия музыки игры `foe_near` и `in_fight` (грунт на мозге игры), слайдеры «Effects» и «Interface», тесты
-  `tests/game/audio.rs`: музыка переходит в `combat`, когда герой подходит к грунту.
+- Sounds that play: attack telegraphs (`SoundCue`, where the blow will land), animation keys with a sound name (`AnimationCue`), engine events through the mixer (`damaged`, `blocked`, `parried`, `evaded`, `guard_broken`, `staggered`, `died`, `healed`, `ui_moved`,
+  `ui_pressed`, `ui_changed`, `ui_opened`, `ui_closed`), and game sounds (`PlaySound`, `shards::audio::play`).
+- Music: the stems of a track play together in a loop; the layer is chosen by conditions (`add_ai_condition`); the tense layer comes in at once, the calm one only after `hold`; stems fade in and out; a track change fades out the old one. `Music` is part of the snapshot.
+- Tools `audio` (query, Player: track, layer, stems, buses, voices, sounds not heard, listener), `sound_play` and
+  `music_set` (Dev, control); a `MUSIC` line in `observe`, an `audio` field in `ai/status`.
+- Playback (feature `audio` of the umbrella crate, `shards_audio/playback`): voices are synced, stems start together, effect sounds freeze during pause, and the menu plays in real time. Without a window or an output device, the mixer decides the same way.
+- `shards_npc`: the conditions `npc_engaged` (an active NPC whose target is in a state like `chase`, `attack`, `wait_token`) and `npc_near` (a live player closer than one and a half times the active NPC's sight range). `shards_ui`: the event `UiFocusMoved`. `shards_settings`:
+  the volume `audio.ui`.
+- Sandbox: sounds, the arena's music (`explore`, `tension`, `combat`) and the mixer in `content/audio/`, the "Interface" slider in the sound tab, scenario `audio.scenario`; `cargo run -p sandbox --example make_sounds` synthesises the files. Template: the same for the yard, the game's music conditions `foe_near` and `in_fight` (the grunt uses the game's brain), the "Effects" and "Interface" sliders, tests
+  `tests/game/audio.rs`: the music switches to `combat` when the hero comes near the grunt.
 
-**Меню и консоль разработчика, оверлей NPC, маршруты по навсетке, сокеты файлов уровней (D4: E11.1, E11.2, E11.5, E4.4)**:
+**Developer menu and console, NPC overlay, navmesh routes, sockets in level files (D4: E11.1, E11.2, E11.5, E4.4)**:
 
-- Новый крейт `shards_dev` (модуль `dev`, в `EnginePlugins` последним). **Меню** (F10 в окне; инструмент `dev_menu`): пункты
-  модулей движка по разделам — время (пауза, шаг, замедление x0.25, обычная скорость, снапшоты), мир (коллайдеры, регион и
-  зерно, «Check this seed» — `worldgen_report` на зерне региона, «Generate 200 regions like this one», `goto_tile`, `regen`,
-  оверлей мира), бой (бессмертие, лечение, хитбоксы), ИИ (умы NPC, навсетка, `npc_state`, `nav_info`), сеть (оверлей, статус,
-  имитация 150 мс и 2 %, без имитации), сохранения (`save_check`, `save_list`); затем пункты игры. Переключатель показывает
-  строку своего другого состояния, пункт с пропуском (`goto_tile x= y=`) в окне дописывается в консоли, пункт, которому сейчас
-  не на чем работать, говорит почему. `dev_menu run=<id>` выполняет пункт, `open=true|false` показывает панель в окне.
-  **Консоль** (`` ` `` в окне; инструмент `console`): строка `tool key=value …`, как у `shards act`, через `call_tool` от
-  агента `console` (scope Dev); ответ — результат и журнал вызова; `help`, `clear`; в окне история (стрелки), Tab по именам
-  инструментов и аргументов из схем, прокрутка меню колесом и стрелками, мышь. Пока панель открыта, сверху контекст ввода `dev`
-  (`shards::dev::has_keyboard`), и клавиши оверлеев (F2, F6, F7) ждут его закрытия (`ai_core::dev::DevKeyboard`, условие
-  `keys_free`); клавиши — ресурс `DevKeys`.
+- New crate `shards_dev` (module `dev`, last in `EnginePlugins`). **Menu** (F10 in the window; tool `dev_menu`): the entries of the engine modules by section: time (pause, step, slow motion x0.25, normal speed, snapshots), world (colliders, region and
+  seed, "Check this seed" — `worldgen_report` on the region's seed, "Generate 200 regions like this one", `goto_tile`, `regen`,
+  world overlay), combat (invulnerability, healing, hitboxes), AI (NPC minds, navmesh, `npc_state`, `nav_info`), network (overlay, status,
+  simulated 150 ms and 2%, no simulation), saves (`save_check`, `save_list`); then the game's own entries. A toggle shows
+  the line of its other state. In the window, an entry with blanks to fill (`goto_tile x= y=`) writes its line into the console. An entry with nothing to act on right now says why. `dev_menu run=<id>` runs an entry; `open=true|false` shows the panel in the window.
+  **Console** (`` ` `` in the window; tool `console`): a line `tool key=value …`, as in `shards act`, through `call_tool` as the agent `console` (scope Dev); the reply is the result and the call's journal; `help`, `clear`; in the window: history (arrow keys), Tab completes tool and argument names from the schemas, the menu scrolls with the wheel and the arrows, and the mouse works. While the panel is open, the `dev` input context is on top (`shards::dev::has_keyboard`), and the overlay keys (F2, F6, F7) wait until it closes (`ai_core::dev::DevKeyboard`, condition `keys_free`); the keys are the `DevKeys` resource.
 - `ai_core::dev`: `DevMenu`, `DevEntry`, `DevCommand` (`Run`, `Fill`, `Live`), `AiAppExt::add_dev_entry`, `toggle_line`,
-  `parse_line`, `run_line`; `session::caller` стал публичным. `shards_script` экспортирует `split_words`.
-- Вид контента `devmenu` (`content/**/*.devmenu.ron`: `group`, `label`, `run` или `fill`; строка проверяется при загрузке);
-  пункт игры с id пункта движка заменяет его.
-- Оверлей NPC (`shards_npc::overlay`, `NpcOverlay`, F7; инструмент `npc_overlay`, Dev query): строка на NPC ближе 40 м к
-  игроку — состояние и цель, жетон или роль, поводок, кого видит и слышит, где потерял цель, шум, маршрут; в окне гизмо:
-  строка над NPC, линия к цели (красная с жетоном), конус зрения и круг близости, крестики потерянных целей, шум, круг поводка.
-- `path_to` по навсетке: спрашивает `RoutePlanner`, как `move_to path=true`, и называет его (`"provider": "navmesh"` /
-  `"local grid"`); в регионе длина не ограничена, если не задан `max`. `clearance`: направление, где навсетка кончается
-  больше чем на метр раньше физики, — `closed` (`E closed 4.0m (the navmesh goes no further)`); `NavRegion::reach`.
-- Проверка контента сверяет маркеры-сокеты файла уровня тайла с его `sockets`: край, вид и высота, размер каждого региона,
-  который берёт тайл. `ContentKinds::add_check` и `ContentAppExt::add_content_check::<T>` — проверка, которую другой модуль
-  добавляет к виду; эту ставит `TileLevelsPlugin`.
-- Песочница: раздел `sandbox` меню (`content/dev/sandbox.devmenu.ron`: к началу арены и полосы, вторая фаза стража из
-  снапшота, дебри с зерном на выбор), сценарий `dev_menu.scenario`; `snapshot.scenario` загружает вторую фазу пунктом меню;
-  F7, F10 и `` ` `` в подсказке клавиш, свои F-клавиши молчат, пока консоль или меню открыты. Шаблон: README про меню.
+  `parse_line`, `run_line`; `session::caller` is now public. `shards_script` exports `split_words`.
+- Content kind `devmenu` (`content/**/*.devmenu.ron`: `group`, `label`, `run` or `fill`; the line is checked on load);
+  a game entry with the id of an engine entry replaces it.
+- NPC overlay (`shards_npc::overlay`, `NpcOverlay`, F7; tool `npc_overlay`, Dev query): a line on each NPC closer than 40 m to the player — its state and target, token or role, leash, who it sees and hears, where it lost its target, noise, route; in the window, gizmos:
+  a line above the NPC, a line to the target (red, with a token), the sight cone and proximity circle, crosses marking lost targets, noise, and the leash circle.
+- `path_to` on the navmesh: asks `RoutePlanner` the way `move_to path=true` does, and names its provider (`"provider": "navmesh"` /
+  `"local grid"`); inside a region the length is not limited unless `max` is set. `clearance`: a direction where the navmesh ends
+  more than a metre before physics does — `closed` (`E closed 4.0m (the navmesh goes no further)`); `NavRegion::reach`.
+- The content check compares the socket markers in a tile's level file with its `sockets`: the edge, the kind, the height, and the size of each region the tile takes. `ContentKinds::add_check` and `ContentAppExt::add_content_check::<T>` add a check to a kind, from another module; `TileLevelsPlugin` adds this one.
+- Sandbox: the `sandbox` section of the menu (`content/dev/sandbox.devmenu.ron`: to the start of the arena and the obstacle course, the guard's second phase from a snapshot, the wilds with a seed of your choice), scenario `dev_menu.scenario`; `snapshot.scenario` loads the second phase through a menu entry;
+  F7, F10 and `` ` `` are shown in the key hints; the game's own F-keys stay quiet while the console or the menu is open. Template: the README covers the menu.
 
-**Сборка для игроков и Windows (E10.6; `shards_cli`, `shards`, `shards_core`, `ai_core`):**
+**Builds for players and Windows (E10.6; `shards_cli`, `shards`, `shards_core`, `ai_core`):**
 
-- `shards package` собирает игру для игроков и проверяет сборку. Профиль `dist` (или `release`), фича игры `dist` вместо
-  фич по умолчанию. На Windows (MSVC) C runtime вкомпилирован (`+crt-static`, сборка с `--target`), а `assets/icon.png`
-  становится иконкой программы: ресурс `.res` пишет сам `shards`. Программа и `assets/` кладутся в
-  `dist/<имя>-<версия>-<ОС>-<арх>/`. Проверки: импорты PE только системные (без `vcruntime*` и `msvcp*`), а копия папки во
-  временной папке с голым окружением проходит `--check-content` и `--smoke` и ничего не меняет в своей папке (не пишет и не удаляет). Код 0, 1 (проверка
-  не прошла) или 2 (не собралось).
-- `--smoke TICKS` у `shards::run`: игра загружается без окна, прогоняет тики и отвечает `ok: loaded in …s, N ticks in …s`
-  (код 0) или называет, что помешало (код 1). Ничего не пишет.
-- Фича `dist` у `shards` выключает клавиши разработчика (`` ` ``, F10, F2, F6, F7). Иконка окна берётся из
-  `<assets>/icon.png`, если файл есть (`shards::window_icon`, зависимость `winit =0.30.13` — та же, что у Bevy). Игра с
-  `windows_subsystem = "windows"` пишет в терминал, из которого её запустили.
-- Инструмент `quit` (Dev, control) и `shards quit` останавливают игру без сигналов на любой ОС. Через 0,2 с после ответа
-  игра выходит через `AppExit`: хуки выхода работают, токен и `--port-file` удаляются. `shards quit` ждёт, пока игра
-  перестанет отвечать (ошибка или оборванный ответ при выходе — не доказательство, спрашивает снова) и пока не кончится её
-  процесс (`kill(pid, 0)` на unix, `tasklist` на Windows); ни один запрос не ждёт дольше `--timeout`, даже если игра держит
-  соединение и молчит. Клиент стенда в одном процессе отказывает.
-- Windows: закрытое окно консоли, выход из системы и выключение завершают игру как SIGHUP. Клиенты `--stand-udp` живут в
-  своей группе процессов, хост останавливает их `CTRL_BREAK`. Хост без консоли, до которого `CTRL_BREAK` не доходит,
-  завершает клиента принудительно и пишет `warn`. `ai_core::paths::{canonical, without_verbatim}` дают пути без `\\?\`:
-  путь собирается из частей, поэтому имя с непарным суррогатом UTF-16 не меняется, а имя, которое без префикса читалось бы
-  иначе (`/`, `.`, `..`, точка или пробел в конце, имя устройства вроде `NUL` или `con.txt`), оставляет путь как есть.
-- `shards package` отказывает, если в `assets/` есть ссылка (symlink) или сама `assets/` — ссылка: в пакет она принесла бы
-  то, на что указывает. Проверка копии, которая не уложилась во время, завершает и процессы, запущенные программой (`taskkill
-  /T`, группа процессов на unix), а их вывод ждёт не дольше 5 с. Профиль
-  `dist` узнаётся и по заголовку с комментарием или пробелами (`[ profile."dist" ]  # …`). `--smoke` с числом тиков, которое
-  не помещается в счётчик, отвечает ошибкой (код 1).
-- Шаблон: фича `dist`, профиль `[profile.dist]`, `assets/icon.png`, `windows_subsystem` в сборке `dist`, `dist/` в
-  `.gitignore`.
+- `shards package` builds the game for players and checks the build. Profile `dist` (or `release`), game feature `dist` instead of
+  the default features. On Windows (MSVC) the C runtime is linked in statically (`+crt-static`, a build with `--target`), and `assets/icon.png`
+  becomes the program's icon: `shards` writes the `.res` resource itself. The program and `assets/` go into
+  `dist/<name>-<version>-<OS>-<arch>/`. Checks: the PE imports are system-only (no `vcruntime*` or `msvcp*`), and a copy of the folder in
+  a temporary folder with a bare environment passes `--check-content` and `--smoke` and changes nothing in its own folder (it writes and deletes nothing). Exit code 0, 1 (the check
+  failed) or 2 (the build failed).
+- `--smoke TICKS` in `shards::run`: the game loads without a window, runs the ticks and replies `ok: loaded in …s, N ticks in …s`
+  (exit code 0), or names what got in the way (exit code 1). It writes nothing.
+- The `dist` feature of `shards` turns off the developer keys (`` ` ``, F10, F2, F6, F7). The window icon comes from
+  `<assets>/icon.png`, if the file exists (`shards::window_icon`, the `winit =0.30.13` dependency, the same one Bevy uses). A game with
+  `windows_subsystem = "windows"` writes to the terminal it was started from.
+- The `quit` tool (Dev, control) and `shards quit` stop the game without signals on any OS. 0.2 s after the reply, the game
+  exits through `AppExit`: exit hooks run, and the token and `--port-file` are removed. `shards quit` waits until the game
+  stops answering (an error or a cut-off reply on exit is not proof, so it asks again), and until its process ends
+  (`kill(pid, 0)` on Unix, `tasklist` on Windows). No request waits longer than `--timeout`, even if the game holds the
+  connection and stays silent. A stand client in one process refuses.
+- On Windows, closing the console window, signing out and shutting down end the game the same way as SIGHUP. The `--stand-udp`
+  clients live in their own process group, and the host stops them with `CTRL_BREAK`. A host without a console, which `CTRL_BREAK`
+  does not reach, ends the client by force and writes a `warn`. `ai_core::paths::{canonical, without_verbatim}` give paths without `\\?\`:
+  the path is built from parts, so a name with an unpaired UTF-16 surrogate does not change, and a name that would be read
+  differently without the prefix (`/`, `.`, `..`, a dot or a space at the end, a device name such as `NUL` or `con.txt`) keeps the path as it is.
+- `shards package` refuses if `assets/` holds a link (symlink), or if `assets/` itself is a link: the package would take in whatever the
+  link points to. When a copy check runs past its time limit, it also ends the processes the program started (`taskkill
+  /T`, a process group on Unix), and their output waits no longer than 5 s. The `dist` profile is also recognised by a header that has a comment
+  or spaces in it (`[ profile."dist" ]  # …`). `--smoke` with a tick count that does not fit the counter replies with an error (exit code 1).
+- Template: the `dist` feature, the `[profile.dist]` profile, `assets/icon.png`, `windows_subsystem` in the `dist` build, `dist/` in `.gitignore`.
 
-**Отчёт о падении (E10.7; `ai_core`, `shards`, `shards_core`):**
+**Crash reports (E10.7; `ai_core`, `shards`, `shards_core`):**
 
-- `ai_core::crash`: отчёт `shards-crash/1` в `crashes/crash-<время UTC>-tick<N>.json` — что случилось (сообщение, место,
-  поток, стек вызовов), игра (`title`, новое `EngineConfig::version`, программа, версия движка, сборка), машина (ОС с
-  версией, процессор, потоки, память, видеокарта и драйвер), тик и seed, `ai/status`, последние 200 записей журнала и 200
-  строк лога, другие паники и реплей сессии (если он есть; `no_replay` — почему его нет: `--replay` такой отчёт не
-  проигрывает). Если в рабочую папку писать нельзя, отчёт идёт в папку игрока
-  (`%LOCALAPPDATA%\<программа>\crashes`, `~/.local/state/<программа>/crashes`, `~/Library/Logs/<программа>`).
-- Когда пишется: упала система геймплея (вместе с краш-реплеем, по одному на систему; `SystemFailure::crash_report`),
-  паника в другом потоке, которую никто не поймал (в следующем кадре, по одному на место), паника, которая унесла игру
-  (`shards::run` ловит её, пишет отчёт без реплея и выходит с кодом 101), и по запросу: инструмент `crash_report note=…`
-  (Dev, query) и пункт меню разработчика «Save a bug report…». Пишет игра с `crash_replays`.
-- Обработчик паник `ai_core::crash::install_panic_hook` (его ставит `shards::run`) запоминает последние восемь паник со
-  стеком и сессией и передаёт панику прежнему обработчику. Код, который ловит панику сам (ответ инструмента, правило,
-  зерно генератора, персонаж пира), зовёт `ai_core::crash::handled`, и своего отчёта о ней нет: её покажет среди других
-  паник следующий отчёт. Паника попадает в отчёты один раз; при одинаковом тексте `handled` берёт панику своего потока,
-  потом своей игры. Отчёт, который не удалось записать, ничего не тратит: его паники покажет следующий, а упавшая система
-  или место паники в другом потоке получат отчёт при следующем сбое.
-- `replay::load` и `--replay` принимают отчёт о падении как реплей (без реплея — ошибка с причиной). Слой лога, который
-  несёт `warn!` в журнал, хранит для отчётов и строки `info`. Шаблон и песочница называют свою версию; `crashes/` в
-  `.gitignore`.
+- `ai_core::crash`: a `shards-crash/1` report in `crashes/crash-<time UTC>-tick<N>.json`: what happened (the message, the place, the thread, the call stack), the game (`title`, the new `EngineConfig::version`, the program, the engine version, the build), the machine (OS with its version, processor, threads, memory, graphics card and driver), the tick and the seed, `ai/status`, the last 200 journal entries and 200 log lines, other panics, and the session's replay (if there is one; `no_replay` says why there is not: `--replay` does not play back such a report). If the working folder cannot be written to, the report goes to the player's folder (`%LOCALAPPDATA%\<program>\crashes`, `~/.local/state/<program>/crashes`, `~/Library/Logs/<program>`).
+- When it is written: a gameplay system failed (together with a crash replay, one per system; `SystemFailure::crash_report`), a panic in another thread that nobody caught (in the next frame, one per place), a panic that took the game down (`shards::run` catches it, writes a report without a replay and exits with code 101), and on request: the `crash_report note=…` tool (Dev, query) and the developer menu item "Save a bug report…". A game with `crash_replays` writes them.
+- The panic hook `ai_core::crash::install_panic_hook` (`shards::run` installs it) remembers the last eight panics, with their stack and session, and passes each panic on to the handler that was there before. Code that catches a panic itself (a tool's reply, a rule, the generator's seed, a peer's character) calls `ai_core::crash::handled`, and it gets no report of its own: the next report shows it among the other panics. A panic goes into reports only once; when the texts are the same, `handled` takes the panic from its own thread first, then from its own game. A report that could not be written does not use up its panics: the next report shows them, and a failed system or a panic in another thread gets a report at the next failure.
+- `replay::load` and `--replay` accept a crash report as a replay (without a replay, it is an error with the reason). The log layer that passes `warn!` into the journal also keeps `info` lines for reports. The template and the sandbox name their own version; `crashes/` is in `.gitignore`.
 
-**Скриншоты без окна (E10.8; `shards`, `shards_core`, `ai_core`):**
+**Screenshots without a window (E10.8; `shards`, `shards_core`, `ai_core`):**
 
-- `--offscreen` (`EngineConfig::offscreen`): игра без окна, но с GPU. Камеры, нацеленные на главное окно (при появлении
-  или позже, сменой цели), рисуют в картинку размера `window` (`ai_core::display::Offscreen`), UI — в камеру, которая
-  рисует последней, и `shot` снимает эту картинку
-  с метками `eN` и легендой. Окно не открывается, дисплей не нужен. Каждый кадр ждёт, пока GPU его нарисует: без окна
-  нечему держать кадры, и программный рендер (WARP) исчерпывал память; кадр, не дорисованный за 30 с, значит, что GPU завис, и
-  игра выходит с кодом 1. Без GPU — код 2 и совет (`--headless` или
-  `WGPU_FORCE_FALLBACK_ADAPTER=1`). Не сочетается с `--headless`, `--stand`, `--verify` и проверками.
-- `EngineConfig::draws()`: есть картинка (окно или `--offscreen`); по нему песочница и шаблон добавляют свой вид, а мир —
-  стриминг визуала тайлов. Системы, которые только показывают (HUD боя, оверлеи, интерфейс, меню разработчика, сглаживание
-  чужих тел у клиента), идут по условию `ai_core::display::drawn` вместо «есть окно». Настройки игрока `--offscreen`, как и
-  `--headless`, не читает.
-- `display` в `ai/status`: `window`, `offscreen` или `headless`, размер картинки и GPU. Ошибка `shot` без картинки называет
-  `--offscreen`.
+- `--offscreen` (`EngineConfig::offscreen`): the game runs without a window, but with a GPU. Cameras aimed at the main window (when they appear, or later through a change of target) draw into an image the size of `window` (`ai_core::display::Offscreen`), the UI draws into the camera that draws last, and `shot` takes that image with `eN` labels and a legend. No window is opened, and no display is needed. Each frame waits until the GPU has drawn it: without a window nothing holds the frames, and software rendering (WARP) ran out of memory; a frame not finished within 30 s means the GPU has hung, and the game exits with code 1. Without a GPU it exits with code 2 and a hint (`--headless` or `WGPU_FORCE_FALLBACK_ADAPTER=1`). It does not combine with `--headless`, `--stand`, `--verify` or the replay checks.
+- `EngineConfig::draws()`: there is a picture (a window or `--offscreen`). The sandbox and the template use it to add their own visuals, and the world uses it to stream tile visuals. Systems that only show things (the combat HUD, overlays, the UI, the developer menu, smoothing of other bodies on a client) run on the condition `ai_core::display::drawn` instead of "there is a window". `--offscreen`, like `--headless`, does not read the player's settings.
+- `display` in `ai/status`: `window`, `offscreen` or `headless`, the picture size and the GPU. An error from `shot` when there is no picture names `--offscreen`.
 
-**Бюджеты и автотест производительности (E10.4; `shards`, `shards_core`):**
+**Budgets and the performance test (E10.4; `shards`, `shards_core`):**
 
-- Время кадра (`shards::frames`) у игры, которая рисует (окно, `--offscreen`): кадр — обновление основного мира (`First` …
-  `Last`) и кадр мира рендера для него, стоит он столько, сколько более медленный из двух. Ожидание дисплея (vsync) не в
-  счёт; кадр, в котором `step` прогнал тики на паузе, не считается. Поле `frames` в `ai/status` за последние 600 кадров:
-  среднее, худший, сверх бюджета, `fps`, основной мир и рендер, время GPU и треугольники на кадр (диагностики рендера Bevy,
-  запросы timestamp и pipeline statistics; не в сборке `dist`). Бюджет кадра — `--frame-budget-ms`,
-  `EngineConfig::frame_budget` (1/60 с).
-- Поле `counts` в `ai/status`: сущности мира, меши, меши, которые рисует хоть один вид (камера или тени), и меши активных
-  камер (отрисовки картинки до пакетов Bevy).
-- `--perf ID` у `shards::run`: автотест производительности по определению нового вида контента `perf` (`*.perf.ron`,
-  `shards::bench::PerfDef`) — регион с зерном (загрузка по времени), строки подготовки как у консоли, прогрев, замер и бюджеты
-  тика, кадра, GPU, треугольников, загрузки региона, сущностей и мешей. Без окна — тики так быстро, как идут; с `--offscreen` —
-  реальное время и кадры (ровно кадры замера: кадры прогрева, дорисованные в замере, не в счёт, последние кадры замера игра
-  дожидается на паузе; отчёты GPU, которые кадра не называют, — только те, что наверняка о кадрах замера). Строка на бюджет (`ok`, `OVER`, `-`), код 0, 1 или 2; отладочная сборка меряет, но не судит. У
-  песочницы эталонная сцена `reference`: дикие земли с зерном 42 (8×8), 15 врагов в регионе, 13 из них в бою, 1080p; на RTX
-  5080 — 389 кадров в секунду, все 7 бюджетов. Определение проверяет `--check-content`, и опечатка в нём не роняет `--perf`:
-  `tick_ms` и `frame_ms` — длительности, которые игра может удержать, прогрев и замер — не больше 216000 тиков. Из тестов —
-  `shards::bench::play` и `judge`.
+- Frame time (`shards::frames`) for a game that draws (a window, `--offscreen`): a frame is an update of the main world (`First` … `Last`) and a frame of the render world for it, and it takes as long as the slower of the two. Waiting for the display (vsync) does not count; a frame in which `step` ran ticks while paused does not count. The `frames` field in `ai/status` covers the last 600 frames: the average, the worst, how many were over budget, `fps`, the main world and the render, GPU time and triangles per frame (Bevy render diagnostics, timestamp and pipeline statistics queries; not in the `dist` build). The frame budget is `--frame-budget-ms`, `EngineConfig::frame_budget` (1/60 s).
+- The `counts` field in `ai/status`: world entities, meshes, meshes that at least one view draws (a camera or the shadows), and the meshes of the active cameras (drawing the picture before Bevy's batches).
+- `--perf ID` in `shards::run`: the performance test for the new content kind `perf` (`*.perf.ron`, `shards::bench::PerfDef`): a region with a seed (its load is timed), setup lines like the console's, a warm-up, a measurement, and budgets for the tick, frame, GPU, triangles, region load, entities and meshes. Without a window the ticks run as fast as they can; with `--offscreen` it runs in real time and frames (exactly the measurement frames: warm-up frames that are still drawn during the measurement do not count; the game waits for the last measurement frames while paused; of the GPU reports that do not name their frame, only those that are surely about measurement frames count). One line per budget (`ok`, `OVER`, `-`), exit code 0, 1 or 2; a debug build measures, but does not judge. The sandbox's reference scene is `reference`: the wild lands with seed 42 (8×8), 15 enemies in the region, 13 of them in combat, 1080p; on an RTX 5080: 389 frames per second, all 7 budgets. `--check-content` checks the definition, and a typo in it does not break `--perf`: `tick_ms` and `frame_ms` are durations the game can hold, and the warm-up and the measurement are at most 216000 ticks. For tests: `shards::bench::play` and `judge`.
 
-**Стилизованные материалы (E10.1; `shards_look`, `shards`, `shards_content`, `shards_ui`):**
+**Stylised materials (E10.1; `shards_look`, `shards`, `shards_content`, `shards_ui`):**
 
-- Новый крейт `shards_look` (модуль `look`, в `EnginePlugins` после звука). Вид контента `look` (`*.look.ron`, `LookDef`): `color`
-  (`#rgb`, `#rrggbb` или `#rrggbbaa`; без него меш сохраняет свой цвет, материала игры или файла glTF), `shading` (`Toon(bands)` от 2
-  до 8 полос — по умолчанию три, `Matte`, `Unlit`, `Lit(roughness, metallic)`), `flat` (плоские грани low-poly на любом меше),
-  `outline` (`width` в пикселях, больше 0 и не больше 16, и `color`), `glow` (у `Unlit` прибавляется к цвету), `materials` (имена
-  материалов glTF, которые рисует вид) и `extends` — пресеты: вид начинается с другого и меняет только свои поля (`materials` не
-  наследуется), так низкополигональный стиль (`low_poly`: плоские грани и контур) задаётся один раз.
-- Компонент `Look(String)` (`Look::new`, в префабе `"Look": ("stone")`) стилизует меши сущности и её потомков. Вид меша: его
-  собственный `Look`, потом ближайший выше, потом вид, названный как материал glTF (`GltfMaterialName`: в `materials` вида или тем же
-  id), так что уровни и тайлы из Blender берут стиль без кода. Меш без вида остаётся с материалом игры; цвет, текстура, вершинные
-  цвета и прозрачность материала сохраняются (прозрачность меняет только цвет `#rrggbbaa`). `Look` в префабе — обычный компонент:
-  он входит в реплей и снапшот и уходит клиентам кооператива; `Look`, нужный только картинке, игры ставят на меши-потомки.
-- Рисование (feature `render`, её включает `render` зонтика; окно или `--offscreen`, без картинки ничего не стилизуется): `Toon` — это
-  `ExtendedMaterial<StandardMaterial, Toon>` с фрагментным шейдером WESL: солнце (каждый направленный свет, с тенями) полосами,
-  окружающий свет, лампы и прожекторы ровно, без блика; экспозиция камеры действует на свет, но не на `glow`. Контур — оболочка наизнанку
-  (`OutlineMaterial`, `OutlineHull` ребёнком меша): задние грани, вершины сдвинуты на `width` пикселей экрана, поэтому ширина
-  одна вблизи и вдали; нормали усреднены по точкам меша, щелей на рёбрах нет; у меша со скином контур получает тот же `SkinnedMesh`;
-  контур не бросает тени и не идёт в prepass, берёт у меша `RenderLayers`, `NoFrustumCulling` и `VisibilityRange`; у прозрачных
-  материалов и мешей с морф-таргетами контура нет. `Toon` всегда рисуется прямым проходом, даже у игры с отложенным освещением.
-  Плоские грани — копия меша, сделанная один раз на исходный меш. Системы идут в `PostUpdate` до распространения трансформов
-  (`LookSystems::Apply`) и только с картинкой (`ai_core::display::drawn`); меши, чьи материал или меш ещё грузятся, ждут.
-- Горячая перезагрузка: правка `*.look.ron` перекрашивает все меши в том же кадре, поставленный, сменённый или снятый `Look` — меши
-  под ним, меш, которому игра дала свой материал или меш, а также материал или меш, изменённые на месте (перезагрузка glTF,
-  `Assets::get_mut`), стилизуются заново; кэш копий и оболочек отпускает то, чей исходный ассет выгружен.
-- Инструменты `looks` (Dev, query: виды, число мешей каждого, меши без вида и ждущие файлов; без картинки отвечает, что рисовать
-  нечего) и `look_outlines on=false` (Dev, query: спрятать или вернуть контуры, они остаются построенными); поле `looks` в `ai/status`
-  (`looks`, `styled`, `outlined`, `outlines`); `Look` виден в `inspect`; два пункта раздела `world` меню разработчика (`looks`,
-  `look_outlines`).
-- Проверка контента: цвет не по формату, число полос вне 2…8, `roughness` и `metallic` вне 0…1, ширина контура вне (0, 16], пустое
-  имя материала, материал, который назвали два вида, имя материала, равное id другого вида, и префаб, чей `Look` называет вид,
-  которого нет (с подсказкой `did you mean …`; проверку добавляет к виду `prefab` `add_content_check`), `extends` на вид, которого
-  нет, и цикл пресетов.
-- `shards_content::parse_color`: один разбор цвета контента для тем и видов (`shards_ui::parse_color` остался как реэкспорт).
-- Песочница: `content/look/sandbox.look.ron` (пресеты `low_poly` и `cel` и девять видов: игрок, скелет и страж с плоскими гранями
-  и контуром, камень и стена с контуром, пол и песок на двух полосах, `dark` — `Matte`, `marker` — `Unlit`), `Look` в префабах
-  игрока, скелета, стража и колонны, `visuals.rs` рисует всё одним белым материалом и видами. Шаблон: `content/looks.look.ron`
-  (пресет `low_poly`, `hero`, `grunt`, `raider`, `stone`),
-  `Look` в префабах, `visuals.rs` с одним белым материалом. Проверено на GPU с `--offscreen`: на картинке песочницы полосы света,
-  плоские грани и контуры, `looks` — `11 looks · 49 meshes styled (36 outlined) · 2 without a look · outlines on`.
+- A new crate `shards_look` (module `look`, in `EnginePlugins` after the audio). The `look` content kind (`*.look.ron`, `LookDef`): `color` (`#rgb`, `#rrggbb` or `#rrggbbaa`; without it the mesh keeps its own colour, the game's material or the glTF file's), `shading` (`Toon(bands)` with 2 to 8 bands, three by default; `Matte`; `Unlit`; `Lit(roughness, metallic)`), `flat` (flat low-poly faces on any mesh), `outline` (`width` in pixels, more than 0 and at most 16, and `color`), `glow` (on `Unlit` it is added to the colour), `materials` (names of the glTF materials that the look draws), and `extends`, for presets: a look starts from another one and changes only its own fields (`materials` is not inherited), so a low-poly style (`low_poly`: flat faces and an outline) is set up once.
+- The `Look(String)` component (`Look::new`, in a prefab as `"Look": ("stone")`) styles the meshes of the entity and its children. A mesh's look is its own `Look`, then the nearest one above, then the look named after the glTF material (`GltfMaterialName`: in a look's `materials` or with the same id), so levels and tiles from Blender take their style without code. A mesh with no look keeps the game's material; its colour, texture, vertex colours and material transparency are kept (only an `#rrggbbaa` colour changes transparency). A `Look` in a prefab is an ordinary component: it goes into the replay and the snapshot and is sent to co-op clients; games put a `Look` that only the picture needs on the child meshes.
+- Drawing (feature `render`, which the umbrella crate's `render` turns on; a window or `--offscreen`; without a picture nothing is styled): `Toon` is `ExtendedMaterial<StandardMaterial, Toon>` with a WESL fragment shader. The sun (each directional light, with shadows) is drawn in bands; ambient light, lamps and spotlights are drawn evenly, with no highlight; camera exposure applies to the light but not to `glow`. The outline is an inside-out shell (`OutlineMaterial`, with an `OutlineHull` child of the mesh): back faces, with the vertices pushed out by `width` screen pixels, so the width is the same up close and far away. Normals are averaged over the mesh's points, so there are no gaps on the edges. A skinned mesh's outline gets the same `SkinnedMesh`. The outline casts no shadows and does not go into the prepass; it takes `RenderLayers`, `NoFrustumCulling` and `VisibilityRange` from the mesh. Transparent materials and meshes with morph targets get no outline. `Toon` is always drawn in a forward pass, even in a game with deferred lighting. Flat faces are a copy of the mesh, made once for each source mesh. The systems run in `PostUpdate`, before transforms propagate (`LookSystems::Apply`), and only with a picture (`ai_core::display::drawn`); meshes whose material or mesh is still loading wait.
+- Hot reload: an edit to `*.look.ron` recolours all meshes in the same frame. A `Look` that is set, changed or removed restyles the meshes under it. A mesh the game gave its own material or mesh is styled again, and so is a material or mesh changed in place (a glTF reload, `Assets::get_mut`). The cache of copies and hulls releases the ones whose source asset has been unloaded.
+- The `looks` tools (Dev, query: the looks, the number of meshes for each, meshes without a look and meshes waiting for files; without a picture it says there is nothing to draw) and `look_outlines on=false` (Dev, query: hides or shows the outlines; they stay built); the `looks` field in `ai/status` (`looks`, `styled`, `outlined`, `outlines`); `Look` is visible in `inspect`; two items in the `world` section of the developer menu (`looks`, `look_outlines`).
+- Content check: a colour not in the format, a band count outside 2…8, `roughness` or `metallic` outside 0…1, an outline width outside (0, 16], an empty material name, a material that two looks name, a material name equal to another look's id, a prefab whose `Look` names a look that does not exist (with a `did you mean …` hint; this check is added to the `prefab` kind with `add_content_check`), `extends` naming a look that does not exist, and a cycle of presets.
+- `shards_content::parse_color`: one colour parser for the content, used by themes and looks (`shards_ui::parse_color` stays as a re-export).
+- The sandbox: `content/look/sandbox.look.ron` (the presets `low_poly` and `cel` and nine looks: the player, a skeleton and a guard with flat faces and an outline; a rock and a wall with an outline; the floor and sand on two bands; `dark` is `Matte`, `marker` is `Unlit`), `Look` in the prefabs of the player, the skeleton, the guard and the column, and `visuals.rs` draws everything with one white material and the looks. The template: `content/looks.look.ron` (preset `low_poly`, `hero`, `grunt`, `raider`, `stone`), `Look` in the prefabs, and `visuals.rs` with one white material. Checked on a GPU with `--offscreen`: the sandbox picture shows light bands, flat faces and outlines, and `looks` gives `11 looks · 49 meshes styled (36 outlined) · 2 without a look · outlines on`.
 
-**Растительность и мелкие объекты (E10.2; новый крейт `shards_scatter`, `shards`, `shards_settings`, `shards_look`,
+**Foliage and small objects (E10.2; new crate `shards_scatter`, `shards`, `shards_settings`, `shards_look`,
 `shards_motion`):**
 
-- Вид контента `scatter` (`*.scatter.ron`, `ScatterDef`): что рассыпать по тайлам каких регионов (`tiles` по id и `#тегу`,
-  `regions`), как густо (`density`, `spacing`), какого размера и наклона (`scale`, `tilt`), на какой земле (`max_slope`,
-  полоса высот `height`, `clearance` до стен и колонн), какими видами (`looks`), с тенями или без (`shadows`), какие меши
-  вблизи и вдали (`lods`: от 1 до 4 уровней с `until`, `fade` для растворения). Меши — примитивы движка (`Blades` — пучок
-  травы, `Cone`, `Rock` со `squash`, `Box`) или `Gltf("file.glb#Mesh0/Primitive0")`. `--check-content` называет тайлы, теги,
-  регионы и виды, которых нет (с `did you mean`), вид с контуром (свой или от `extends`: контур — оболочка на каждый
-  экземпляр, и при растворении уровней она не растворяется), `spacing` меньше 0.01 м (кроме 0), больше 10 000
-  сущностей-мешей (экземпляры × уровни) на самом большом тайле или комнате, где определение растёт, числа вне пределов,
-  уровни не по порядку, `fade` длиннее уровня, файлы glTF без метки или вне папки ассетов.
-- Раскладка — чистая функция зерна региона, id региона, клетки тайла и id определения (через `DetRng`) и статичного мира: одни и
-  те же экземпляры в каждом запуске. Земля и твёрдое — только статичные коллайдеры мира (`Body::Static`, слой `WORLD`):
-  платформа, которая движется, не земля и не помеха. Луч и шар `clearance` спрашивают часть мира вокруг тайла (новый
-  `PhysicsWorld::subset` в `shards_motion`), а не весь; шар `clearance` лежит на земле по её нормали, так что склон под
-  экземпляром места не отнимает, а стены отнимают. Луч, начавшийся внутри твёрдого, земли не находит, так что внутри стен и на
-  верхушках колонн ничего не растёт. На тайл — не больше 10 000 сущностей-мешей определения (лишние экземпляры отброшены,
-  предупреждение в журнале). Экземпляры только для картинки (окно или `--offscreen`): без `AiId` и коллайдеров, под корнем
-  тайла (он получает `Visibility`), уходят вместе с тайлом; правка определения, тегов тайла или комнаты или настройки
-  рассыпает всё заново, правка вида только перекрашивает.
-- Рисование: сущность на экземпляр и уровень детализации с общим мешем, общим белым материалом и `VisibilityRange`; вид
-  (`Look`) — на сущности пары «определение, вид», поэтому Bevy рисует каждую пару «меш, вид» одним пакетом, а дальше
-  последнего уровня ничего не рисует. Шейдер `Toon` (`shards_look`) растворяет уровни детализации (`VISIBILITY_RANGE_DITHER`).
-- Инструменты `scatter` (Dev, query: определения, сколько рассыпано, что не нашло места на тайлах, которые есть сейчас, и
-  почему, сколько длилась последняя раскладка; без картинки — почему ничего)
-  и `scatter_set on=` (Dev, query), поле `scatter` в `ai/status`, пункты `scatter_set` и `scatter` меню разработчика (раздел
-  `world`). Настройка игрока `graphics.foliage` (от 0 до 1, `GraphicsSettings::foliage_density()`) оставляет начало того же
-  списка экземпляров.
-- `counts` в `ai/status` получил `mesh_assets` (сколько разных мешей среди рисуемых), бюджеты `perf` — `mesh_assets`, строка
-  замера — `N drawn (M distinct)`.
-- Песочница: `region/wilds.scatter.ron` (трава двух видов на всех тайлах, кусты, камни) и виды `grass`, `grass_dry`, `bush`,
-  `rock`; эталонная сцена `reference` теперь с растительностью (бюджет `mesh_assets: 80`); сценарий `scatter.scenario`.
-  Шаблон: `region/valley.scatter.ron` (трава на лугах, у ворот и колонн, камешки), виды `grass` и `pebble`.
-  Релизная `--perf reference --offscreen` с растительностью на RTX 5080: 379 кадров в секунду в 1080p, худший кадр 4.2 мс,
-  15 407 сущностей, 1364 рисуемых меша, все 8 бюджетов.
+- The `scatter` content kind (`*.scatter.ron`, `ScatterDef`): what to scatter over the tiles of which regions (`tiles` by id and `#tag`, `regions`), how dense (`density`, `spacing`), what size and tilt (`scale`, `tilt`), on what ground (`max_slope`, a height band `height`, `clearance` from walls and columns), with which looks (`looks`), with or without shadows (`shadows`), and which meshes up close and far away (`lods`: from 1 to 4 levels with `until`, and `fade` for dissolving). The meshes are engine primitives (`Blades`, a tuft of grass; `Cone`; `Rock` with `squash`; `Box`) or `Gltf("file.glb#Mesh0/Primitive0")`. `--check-content` names tiles, tags, regions and looks that do not exist (with `did you mean`), a look with an outline (its own, or from `extends`: the outline is a shell on each
+  instance, and when levels dissolve it does not dissolve), `spacing` less than 0.01 m (except 0), more than 10 000 mesh entities (instances × levels) on the largest tile or room where the definition grows, numbers out of range, levels out of order, `fade` longer than its level, and glTF files with no label or outside the assets folder.
+- The layout is a pure function of the region's seed, the region's id, the tile's cell and the definition's id (through `DetRng`), and of the static world: the same instances in every run. Ground and solid things come only from the world's static colliders (`Body::Static`, layer `WORLD`): a platform that moves is neither ground nor an obstacle. The ray and the `clearance` sphere query only the part of the world around the tile (a new `PhysicsWorld::subset` in `shards_motion`), not all of it. The `clearance` sphere lies on the ground along its normal, so a slope under an instance takes no room, but walls do. A ray that starts inside a solid finds no ground, so nothing grows inside walls or on top of columns. Up to 10 000 mesh entities of the definition per tile (extra instances are dropped, with a warning in the journal). Instances are for the picture only (a window or `--offscreen`): no `AiId` and no colliders. They sit under the tile's root (which gets `Visibility`) and go with the tile. An edit to the definition, to the tile's or room's tags, or to the setting scatters everything again; an edit to a look only recolours.
+- Drawing: one entity per instance and level of detail, with a shared mesh, a shared white material and a `VisibilityRange`. The look (`Look`) sits on the entity of the "definition, look" pair, so Bevy draws each "mesh, look" pair in one batch, and nothing past the last level is drawn. The `Toon` shader (`shards_look`) dissolves the levels of detail (`VISIBILITY_RANGE_DITHER`).
+- The `scatter` tools (Dev, query: the definitions, how many were scattered, what did not find room on the tiles that exist now and why, and how long the last layout took; without a picture, why nothing) and `scatter_set on=` (Dev, query); the `scatter` field in `ai/status`; the `scatter_set` and `scatter` items in the developer menu (the `world` section). The player's setting `graphics.foliage` (0 to 1, `GraphicsSettings::foliage_density()`) keeps the start of the same list of instances.
+- `counts` in `ai/status` gained `mesh_assets` (how many different meshes are among the drawn ones). The `perf` budgets gained `mesh_assets`, and the measurement line is `N drawn (M distinct)`.
+- The sandbox: `region/wilds.scatter.ron` (two kinds of grass on all tiles, bushes, rocks) and the looks `grass`, `grass_dry`, `bush` and `rock`; the reference scene `reference` now has foliage (budget `mesh_assets: 80`); the scenario `scatter.scenario`. The template: `region/valley.scatter.ron` (grass on the meadows, by the gates and columns, pebbles), the looks `grass` and `pebble`. The release `--perf reference --offscreen` with foliage on an RTX 5080: 379 frames per second at 1080p, worst frame 4.2 ms, 15 407 entities, 1364 drawn meshes, all 8 budgets.
 
-**Эффекты и декали (E10.3; `shards_fx`, `shards_action`, `shards`):**
+**Effects and decals (E10.3; `shards_fx`, `shards_action`, `shards`):**
 
-- Новый крейт `shards_fx` (модуль `fx`, в `EnginePlugins` после видов мешей). Вид контента `effect` (`*.effect.ron`, `EffectDef`):
-  `count`, `rate` и `duration` (до 10 с), `lifetime`, `speed`, `spread`, `aim` (`Up` или `Hit`) и `lift`, `gravity`, `drag`, `size` и
-  `size_end`, `color` и `color_end`, `shape` (`Quad`, `Cube`, `Shard`), `glow`, `offset`, `radius`, `spin`, `max_live` (пул, до 4096).
-  Вид `fx` (`*.fx.ron`, `FxDef`, один на игру): `effects` — событие движка (`damaged`, `blocked`, `parried`, `evaded`,
-  `guard_broken`, `staggered`, `died`, `healed`, `telegraph`) → эффект, `cues` — метка клипа → эффект (метка без записи играет
-  эффект своего имени). Событие `PlayEffect { effect, at: EffectAt::Entity | Point, toward }` и функция `shards::fx::play`.
-- Частицы свои (у `bevy_hanabi` нет версии под Bevy 0.20), на процессоре: пул из `max_live` мешей на эффект делается, когда загрузился
-  контент, свободные спрятаны, переполнение отдаёт слот самой старой частице; все частицы эффекта — один меш и один материал
-  (`ParticleMaterial`, шейдер WESL), цвет каждой в `MeshTag`, поэтому они рисуются пачками; квадраты повёрнуты к камере, кубики и
-  осколки кувыркаются и освещены сверху, `glow` прибавляется к картинке. Положение — функция возраста (полёт под гравитацией и
-  сопротивлением решён формулой) на часах симуляции (`Time<Fixed>` и его остаток): пауза замораживает, `step` двигает на свои тики.
-  Событие с нападающим играет эффект на стороне тела, обращённой к нему (край коллайдера), и `aim: Hit` шлёт частицы назад к нему.
-- Декали телеграфов: зона атаки на земле — `ForwardDecal` Bevy с материалом зоны (`ZoneDecalMaterial`, шейдер WESL): круг, сектор
-  конуса, прямоугольник бокса и линии, «стадион» капсулы; бледная зона с полосами под 45° к осям мира, которые сгущаются к удару
-  и сходятся к точке, откуда растёт заливка (отсчёт от неё, а не от начала мира: у зоны далеко от начала полосы не мелькают),
-  заливка растёт от центра следа к удару (`TelegraphStyle::horizon`) с кромкой и мерцает в момент удара (по настройке `flashes`), тёплая у врага и холодная у
-  союзника, как гизмо. Декали из пула, по одной на зону. Камеры с `AiCamera` получают `DepthPrepass` (`FxPrepass`), пока декали
-  включены.
-- Инструменты `effects` (Dev, query: эффекты, их пулы, таблица, декали на земле; без картинки отвечает, что рисовать нечего),
-  `effect_play effect=… at=eN | point=[x,y,z]` (Dev, control; без картинки отказывает с причиной) и `telegraph_decals on=false`
-  (Dev, query: заливка снова гизмо); поле `fx` в `ai/status` (`effects`, `live`, `decals`, `telegraph_decals`); пункты меню
-  разработчика `effects` (раздел `world`) и `telegraph_decals` (раздел `combat`).
-- Проверка контента: диапазоны наоборот и вне границ, цвет не по формату, пул меньше одного запуска, эффект без частиц, событие,
-  которого нет у движка (с подсказкой), вторая таблица, эффект, которого нет, в `effects` и `cues`. `rate`, которого не счесть
-  (`5e9`), — ошибка `one play starts 4294967295 particles …`, а не переполнение. Эффект с ошибкой при первой загрузке играет в
-  пределах проверки: пул до 4096 мешей, до 1024 частиц за раз, до 4096 по `rate`, жизнь до 30 с.
-- `shards_action::draw`: `shown_telegraphs` (какие зоны показывает земля: для гизмо и для декалей), `ShownTelegraph`,
-  `centroid` стал публичным, `TelegraphStyle::decals` (гизмо рисуют только контур, символ и ножку).
-- Песочница: `content/fx/sandbox.effect.ron` (`hit_spark`, `block_spark` — осколки, `parry_flash`, `death_dust` — кубики, `heal_glow`)
-  и `content/fx/sandbox.fx.ron`, сценарий `effects.scenario`. Шаблон: `content/effects.effect.ron` (`hit_spark`, `block_spark`,
-  `death_dust`) и `content/effects.fx.ron`. Проверено на GPU с `--offscreen` (RTX 5080): тест `offscreen` в пикселях (декаль красит
-  пол только в круге зоны, частицы светятся там, где играют) и снимки песочницы — декали под атаками стража и скелетов, искры
-  удара, пыль, свечение лечения. Автотест `--perf reference --offscreen` (релиз, RTX 5080) с растительностью E10.2 и
-  эффектами: 327.2 кадра в секунду, 2.84 мс на кадр, худший 4.47 мс, все 8 бюджетов; 15 836 сущностей и 14 641 меш — это и
-  растительность (около 13 900 сущностей-мешей), и 400 спрятанных мешей пулов песочницы (в `drawn` их нет), рисуется 1382 меша из
-  50 разных; без эффектов было 378.9 кадра в секунду (пример в README обновлён).
+- A new crate `shards_fx` (module `fx`, in `EnginePlugins` after the look module). The `effect` content kind (`*.effect.ron`, `EffectDef`): `count`, `rate` and `duration` (up to 10 s), `lifetime`, `speed`, `spread`, `aim` (`Up` or `Hit`) and `lift`, `gravity`, `drag`, `size` and `size_end`, `color` and `color_end`, `shape` (`Quad`, `Cube`, `Shard`), `glow`, `offset`, `radius`, `spin`, and `max_live` (the pool, up to 4096). The `fx` kind (`*.fx.ron`, `FxDef`, one per game): `effects` maps an engine event (`damaged`, `blocked`, `parried`, `evaded`, `guard_broken`, `staggered`, `died`, `healed`, `telegraph`) to an effect, and `cues` maps a clip label to an effect (a label with no entry plays the effect of its own name). The `PlayEffect { effect, at: EffectAt::Entity | Point, toward }` event and the `shards::fx::play` function.
+- The particles are written in-house (`bevy_hanabi` has no version for Bevy 0.20), on the CPU. A pool of `max_live` meshes per effect is made when the content has loaded; free ones are hidden; an overflow gives the slot to the oldest particle. All particles of an effect are one mesh and one material (`ParticleMaterial`, a WESL shader), and each particle's colour is in `MeshTag`, so they are drawn in batches. Squares turn toward the camera; cubes and shards tumble and are lit from above; `glow` is added to the picture. The position is a function of age (flight under gravity and drag is solved with a formula) on the simulation clock (`Time<Fixed>` and its remainder): a pause freezes it, and `step` moves it by its own ticks. An event with an attacker plays the effect on the side of the body that faces the attacker (the edge of the collider), and `aim: Hit` sends the particles back toward the attacker.
+- Telegraph decals: an attack zone on the ground is a Bevy `ForwardDecal` with the zone material (`ZoneDecalMaterial`, a WESL shader): a circle, a cone sector, a box's rectangle and lines, a capsule's "stadium" shape. A pale zone has stripes at 45° to the world axes, which thicken toward the strike and converge on the point the fill grows from (counted from that point, not from the world's origin: far from the origin, the stripes do not flicker). The fill grows from the centre of the footprint toward the strike (`TelegraphStyle::horizon`), with an edge, and flashes at the moment of the strike (per the `flashes` setting). It is warm for an enemy and cool for an ally, the same as the gizmo. Decals come from a pool, one per zone. Cameras with `AiCamera` get `DepthPrepass` (`FxPrepass`) while decals are on.
+- The `effects` tools (Dev, query: the effects, their pools, the table, decals on the ground; without a picture it says there is nothing to draw), `effect_play effect=… at=eN | point=[x,y,z]` (Dev, control; without a picture it refuses with a reason) and `telegraph_decals on=false` (Dev, query: the fill is a gizmo again); the `fx` field in `ai/status` (`effects`, `live`, `decals`, `telegraph_decals`); the developer menu items `effects` (the `world` section) and `telegraph_decals` (the `combat` section).
+- Content check: ranges reversed or out of bounds, a colour not in the format, a pool smaller than one play, an effect with no particles, an event the engine does not have (with a hint), a second table, and an effect that does not exist, in `effects` or `cues`. A `rate` too large to count (`5e9`) gives the error `one play starts 4294967295 particles …`, not an overflow. An effect with an error at first load plays within the check's limits: a pool up to 4096 meshes, up to 1024 particles at once, up to 4096 from `rate`, life up to 30 s.
+- `shards_action::draw`: `shown_telegraphs` (which zones the ground shows, for gizmos and for decals), `ShownTelegraph`, `centroid` became public, `TelegraphStyle::decals` (the gizmos draw only the outline, the symbol and the stem).
+- The sandbox: `content/fx/sandbox.effect.ron` (`hit_spark` and `block_spark` (shards), `parry_flash` and `death_dust` (cubes), `heal_glow`) and `content/fx/sandbox.fx.ron`, the scenario `effects.scenario`. The template: `content/effects.effect.ron` (`hit_spark`, `block_spark`, `death_dust`) and `content/effects.fx.ron`. Checked on a GPU with `--offscreen` (RTX 5080): the `offscreen` test in pixels (a decal paints the floor only inside the zone's circle, and particles glow where they play) and screenshots of the sandbox: decals under the attacks of the guard and the skeletons, hit sparks, dust, the healing glow. The release `--perf reference --offscreen` (RTX 5080) with the foliage of E10.2 and effects: 327.2 frames per second, 2.84 ms per frame, worst 4.47 ms, all 8 budgets. The 15 836 entities and 14 641 meshes come from the foliage (about 13 900 mesh entities) and the 400 hidden meshes of the sandbox's pools (they are not in `drawn`); 1382 meshes are drawn, from 50 different ones. Without effects it was 378.9 frames per second (the example in the README is updated).
 
-**Одни и те же биты на всех ОС одной архитектуры процессора, на x86_64 — Windows, Linux и Steam Deck (E10.6; `ai_core`,
+**The same bits on every OS of one CPU architecture, on x86_64 — Windows, Linux and Steam Deck (E10.6; `ai_core`,
 `shards_action`, `shards_motion`, `shards_npc`, `shards_scatter`, `shards_fx`, `shards_net`, `shards`):**
 
-- Трансцендентная математика симуляции идёт через чистую Rust-библиотеку `libm`, а не через математику платформы (у MSVC, glibc и
-  macOS последние биты `sin`, `exp`, `powf` разные, и реплей, записанный на одной ОС, расходился на другой): в Bevy, glam, simba и
-  коде движка. В `[workspace.dependencies]` у Bevy включена feature `libm` (`bevy_math`, glam: `Quat`, `normalize`, `slerp`,
-  кривые, цвета), у `parry3d` — `indexmap` (`IndexMap` вместо хэш-карт), а прямая зависимость `glamx =0.3.1` (только в
-  `shards_motion`, в коде не используется) с feature `libm` переводит на `libm` glamx и `simba` (`libm_force`). Это всё из
-  `enhanced-determinism` у parry3d, кроме `scalar-math`: SIMD у glam остаётся (SSE2 — одни и те же инструкции на любой ОС x86_64).
-  Шаблон получает это через `shards`.
-- Между архитектурами (x86_64 ↔ ARM, Apple Silicon) детерминизм не обещан: NEON у glam сливает умножение и сложение там, где
-  SSE2 округляет дважды. `enhanced-determinism` целиком дал бы его через `scalar-math` (glam без SIMD), но со `scalar-math`
-  у `Vec4` и `Mat4` нет выравнивания в 16 байт, и `MeshUniform` Bevy 0.20 становится 168 байт против 176 у шейдера: wgpu
-  отвечает `Binding size 168 of Buffer with '' label is less than minimum 176`, рендер встаёт (GPU-тест `shards_fx` не
-  дождался кадра).
-- `shards` не собирается с glam без SIMD: `const` в `crates/shards/src/lib.rs` проверяет `align_of::<Vec4>() == 16` и
-  `align_of::<Mat4>() == 16` и называет причину, в том числе в игре, которая включит `scalar-math` своей зависимостью. Сборка с
-  `-C target-cpu=native` или `+fma` тоже даёт другие биты: под `target_feature = "fma"` код SSE2 у glam сливает умножение и
-  сложение (`Quat`, `Vec3A::cross`, `slerp`, `lerp_monotonic`, `mul_add`).
-- Одинаковые биты проверены прогоном между ОС: девять эталонных реплеев (семь из песочницы — `obstacle_course` на 1010 тиков,
-  `combat_prototype` на 2307, `npc_director` на 1923, `npc_navmesh` на 1261, `region` на 353, `snapshot` на 369, `saves` на 157, — и
-  два из шаблона, `smoke` и `valley`) записаны на Windows 11 (`x86_64-pc-windows-msvc`) и на Ubuntu 24.04 (glibc 2.39) под WSL1
-  (`x86_64-unknown-linux-gnu`), Rust 1.99.0 с обеих сторон, и файлы совпали побайтово, все девять. Каждая ОС проверила записи
-  другой (`every_reference_replay_verifies_headless` у движка, `reference_replays_still_match` у шаблона): расхождений нет. Обе
-  стороны проверяли на `e635768` (тогда вершина ветки); запись на Linux сделана на `5d1dbfe` (код симуляции тот же, коммиты между ними
-  меняют только подсветку, которая лишь рисует, и документы). WSL1 запускает настоящие бинарники ELF на той же машине,
-  виртуальной машины нет, и процессор с обеих сторон один: проверены ОС, библиотека C и сборка, а не разные процессоры x86_64. Не
-  проверены: другие процессоры x86_64, macOS, ARM, железо Steam Deck.
-- Все прямые вызовы `sin`, `cos`, `atan2`, `exp`, `powf`, `powi` и родни заменены на `bevy::math::ops` (`ops::sin(x)`,
-  `FloatPow::squared`): 148 вызовов. В коде крейтов: `ai_core` 2, `shards` 1, `shards_action` 33, `shards_motion` 16, `shards_net` 1,
-  `shards_npc` 4, `shards_scatter` 7, `shards_fx` 12 (частицы и декали: картинка, но правило одно для всех); в тестах:
+- The simulation's transcendental math goes through the pure Rust library `libm`, not through the platform's math (on MSVC, glibc and
+  macOS the last bits of `sin`, `exp`, `powf` differ, and a replay recorded on one OS diverged on another): in Bevy, glam, simba and the
+  engine's code. In `[workspace.dependencies]`, the `libm` feature is enabled for Bevy (`bevy_math`, glam: `Quat`, `normalize`, `slerp`,
+  curves, colours), `parry3d` uses `indexmap` (`IndexMap` instead of hash maps), and the direct dependency `glamx =0.3.1` (only in
+  `shards_motion`, not used in the code) with the feature `libm` switches glamx and `simba` to `libm` (`libm_force`). All of this comes from
+  `enhanced-determinism` in parry3d, except `scalar-math`: glam keeps its SIMD (SSE2 — the same instructions on any x86_64 OS).
+  The template gets this through `shards`.
+- Across architectures (x86_64 ↔ ARM, Apple Silicon) determinism is not promised: glam's NEON fuses a multiply and an add where
+  SSE2 rounds twice. The full `enhanced-determinism` would give that through `scalar-math` (glam without SIMD), but with `scalar-math`
+  `Vec4` and `Mat4` are not 16-byte aligned, and `MeshUniform` in Bevy 0.20 becomes 168 bytes instead of the shader's 176: wgpu
+  reports `Binding size 168 of Buffer with '' label is less than minimum 176`, and rendering stalls (the GPU test in `shards_fx` did not
+  get a frame).
+- `shards` does not build with glam without SIMD: a `const` in `crates/shards/src/lib.rs` checks `align_of::<Vec4>() == 16` and
+  `align_of::<Mat4>() == 16` and names the reason, including in a game that turns on `scalar-math` through its own dependency. A build with
+  `-C target-cpu=native` or `+fma` also gives other bits: under `target_feature = "fma"`, glam's SSE2 code fuses a multiply and an
+  add (`Quat`, `Vec3A::cross`, `slerp`, `lerp_monotonic`, `mul_add`).
+- Identical bits were checked by running across OSes: nine reference replays (seven from the sandbox — `obstacle_course` for 1010 ticks,
+  `combat_prototype` for 2307, `npc_director` for 1923, `npc_navmesh` for 1261, `region` for 353, `snapshot` for 369, `saves` for 157 — and
+  two from the template, `smoke` and `valley`) were recorded on Windows 11 (`x86_64-pc-windows-msvc`) and on Ubuntu 24.04 (glibc 2.39) under WSL1
+  (`x86_64-unknown-linux-gnu`), with Rust 1.99.0 on both sides, and the files matched byte for byte, all nine. Each OS checked the other's
+  recordings (`every_reference_replay_verifies_headless` in the engine, `reference_replays_still_match` in the template): no divergences. Both
+  sides checked on `e635768` (the branch tip at the time); the Linux recording was made on `5d1dbfe` (the simulation code is the same; the commits between them
+  change only the highlight, which only draws, and the documents). WSL1 runs real ELF binaries on the same machine,
+  there is no virtual machine, and the CPU is the same on both sides: what was checked is the OS, the C library and the build, not different x86_64 CPUs. Not
+  checked: other x86_64 CPUs, macOS, ARM, Steam Deck hardware.
+- All direct calls to `sin`, `cos`, `atan2`, `exp`, `powf`, `powi` and the like are replaced with `bevy::math::ops` (`ops::sin(x)`,
+  `FloatPow::squared`): 148 calls. In the crates' code: `ai_core` 2, `shards` 1, `shards_action` 33, `shards_motion` 16, `shards_net` 1,
+  `shards_npc` 4, `shards_scatter` 7, `shards_fx` 12 (particles and decals: they only draw, but one rule covers them all); in the tests:
   `shards_motion` 18, `shards_npc` 5, `sandbox` 2, `shards_audio` 2, `shards_level` 2, `shards_fx` 2, `shards` 1, `shards_look` 1;
-  в примере `make_sounds` песочницы 39. Шейдеры WESL (`shards_fx`, `shards_look`) — не Rust, правило их не касается.
-- `clippy.toml` (в корне и в `template/`, это отдельные файлы: clippy берёт ближайший) запрещает методы `f32` и `f64` из std
-  (`disallowed-methods`, как у самого Bevy) и называет замену из `ops`; `cargo clippy --workspace --all-targets -- -D warnings`
-  падает на прямом вызове.
-- Тест `ai_core::determinism` держит несколько результатов `ops` побитово.
+  in the sandbox's `make_sounds` example, 39. WESL shaders (`shards_fx`, `shards_look`) are not Rust, so the rule does not touch them.
+- `clippy.toml` (in the root and in `template/`; these are separate files, and clippy takes the nearest one) forbids the `f32` and `f64` methods from std
+  (`disallowed-methods`, as Bevy itself does) and names the replacement from `ops`; `cargo clippy --workspace --all-targets -- -D warnings`
+  fails on a direct call.
+- The test `ai_core::determinism` checks several `ops` results bit for bit.
 
 **Steam (E10.5; `shards_steam`, `shards`, `shards_net`, `shards_save`, `shards_core`, `shards_cli`):**
 
-- Новый крейт `shards_steam` (модуль `steam`), за feature `steam` зонтика; по умолчанию выключена, шаблон и песочница без неё.
-  `steam_sdk` добавляет настоящий клиент Steam (`steamworks = "=0.13.1"`, `steam_api64.dll`); без неё модуль работает на
-  поддельном Steam процесса (`FakeSteam`: пользователи, лобби, приглашения, реле на `MemoryHub`, достижения, облако), а игра,
-  которую запустил игрок, честно говорит, что Steam нет. Типов `steamworks` в публичном API нет.
-- Кооператив по реле Steam: `--steam-host` (лобби на `max_players` игроков, по умолчанию «только друзья»; `--steam-lobby
-  friends|private|invisible|public` — кто его видит, тип называют журнал, `steam` и `ai/status` `lobby_type`; приглашение
-  `steam_invite` или оверлей), `--steam-server` (анонимный игровой сервер Steam без лобби: клиенты входят по его id; это хост, как
-  любой, со своим игроком 0), `--join steam:<id>` (лобби или
-  хост по его id; `steam:` — ждать приглашения), `+connect_lobby <id>` от Steam превращается в `--join steam:<id>`,
-  `--steam-relay-only` (только реле, без прямых маршрутов), `--steam-app N` (app id через `SteamAppId`, без `steam_appid.txt`).
-  Транспорт — `ISteamNetworkingMessages`, канал 0, ненадёжно без Nagle и с перезапуском оборванной сессии, поверх него
-  `--net-sim`; UDP не открывается. Сессии реле берутся только у участников лобби (хост), у всех (сервер, решают правила входа)
-  и у своего хоста (клиент); отказ — `warn` один раз на пира. Без Steam хост выходит с `cannot host` (`--exit-with-host` — код
-  2), клиент ждёт другого лобби (`steam_join`).
-- Достижения — контент `*.achievement.ron` (`AchievementDef`: `steam` — имя API, `name` и `description` — сообщения Fluent,
-  `hidden`). Открывает игра: `UnlockAchievement::everyone(id)` / `player(id, n)` (событие сети: хост шлёт клиентам, каждая
-  машина открывает своему игроку на своём аккаунте) или `unlock_achievement(world, id)`; клиент сам не открывает, во время
-  реплея не открывается ничего. Запись в Steam — через секунду после первого открытия (одна на несколько) и на выходе; запись, от которой Steam отказался, повторяется. Это не
-  состояние симуляции: журнал `local`, `Achievements` — запись этого запуска. Проверка контента: имя API, повтор имени, текст
-  вместо сообщения, сообщение, которого нет.
-- Облако: каждое записанное сохранение копируется в Steam Cloud как `<папка сохранений>/<вид>/<слот>.save` (копии, `.tmp` и
-  `.damaged` — никогда); при запуске, до загрузки слота, более новая копия облака становится сохранением (старое — первой копией),
-  более новая своя уходит вверх, ничья оставляет обе (облачная — слот `<слот>-cloud`), битая не берётся (её чинит файл с
-  диска), а из более новой версии игры (формат или секция) не берётся и не перезаписывается: в этом запуске в её слот облака
-  ничего не копируется. Копия облака ложится на диск той же защищённой записью, что сохранение (`write_guarded`: слот с
-  сохранением более новой версии она не трогает); во время реплея облако не сверяется и не пишется. Файл уходит в облако одним
-  `FileWrite` с проверкой ответа; когда не хватает квоты, ошибка говорит, сколько места (`Steam Cloud has 105 B free of 4 KB;
-  this save is 540 B`), а строка `cloud` в `steam` — свободное место. Файлы на диске остаются правдой.
-- Надёжность Steam: колбэки, разбор которых в `steamworks` 0.13 может упасть (`LobbyChatUpdate`, `UserStatsStored`,
-  `SteamServerConnectFailure`), движок читает сам числами, а записи-только-для-журнала о потере и возврате серверов Steam
-  убраны; если колбэк всё же падает, колбэки останавливаются до конца запуска (замок `steamworks` отравлен) с одной строкой
-  `error`, строкой `problem:` в `steam` и `note` в `ai/status`, а хост, ждавший лобби, и клиент, входивший в лобби, сразу
-  получают ошибку. Игра, которую запустил игрок, с `steam_sdk` запускает клиент Steam до рендера (`SteamClientPlugin` сразу за
-  `TaskPoolPlugin`), чтобы оверлей Steam прицепился к графическому устройству (в окне не проверено). На выходе хук Steam
-  отправляет копии сохранений, записанных хуками до него, пишет достижения, закрывает сессии реле (`CloseSessionWithUser`) и
-  выходит из лобби; Steam закрывается вместе с миром игры.
-- Инструменты `steam` (Player, query: кто эта машина в Steam, лобби или сервер, реле, маршрут до каждого пира — состояние,
-  через реле ли и через какое, пинг; достижения, облако), `steam_host`, `steam_join lobby=ID | host=ID`, `steam_invite
-  friend=ID`, `achievement_unlock id=… [player=N]` (только хост); поле `steam` в `ai/status`; раздел `steam` меню
-  разработчика. Строка готовности: `role host · net steam lobby`, `net steam game server`, `role client · net steam:<id>`.
-- `shards_net`: `ExternalTransport` — транспорт сессии открывает другой модуль (UDP не открывается); `conditioner_from` и
-  `session::unopened` публичны. `shards_save`: событие `SaveWritten` после каждой удачной записи слота. `shards_core`:
-  `EngineConfig::steam` (`SteamLaunch`, тип лобби `SteamLobby`). `shards package`: библиотека Steamworks SDK (`steam_api64.dll`,
-  копия из папки build-скрипта `steamworks-sys`, и только она: системные ALSA и udev в пакет не попадают) кладётся рядом с
-  программой, проверка импорта её принимает, `steam_appid.txt` из папки пакета удаляется.
-- Тесты на поддельном Steam: лобби (и его тип), хост и два клиента по реле, игровой сервер и клиент по id, приглашение, отказ
-  чужому, вход, который не удался (и вход после него через `steam_join`, код 2 с `--exit-with-host`), лобби, которое Steam не
-  создал, и `steam_host` после, сервер, который не вошёл, игра без Steam, упавшие колбэки, порядок выхода, достижения (контент,
-  запись, прошлый запуск, реплей, кооператив), облако (копия, выключенное облако, сверка при запуске до загрузки слота, копии из
-  более новой версии, реплей, квота), ответы инструментов, порядок плагинов. На настоящем Steam (приложение 480, один аккаунт)
-  проверены игровой сервер и игрок по id только через реле (`relayed via <pop>`, пинг 16–17 мс, рассинхронов 0), достижение от
-  хоста, записанное клиентом на свой аккаунт, отказ от копии облака, которая не сохранение, и квота облака 480 (4 КБ). Сборкой с
-  правками после этой проверки там же — лобби хоста `--steam-lobby private`, сообщение о квоте облака, достижение хоста
-  лобби и снова сервер с игроком через реле; вход в лобби вторым аккаунтом, оверлей и удачная запись в облако не проверены.
-- Поиск лобби (`shards_steam`): инструмент `steam_lobbies [all=true] [wait_ms=N]` (Player, query) ищет лобби этой игры, куда можно
-  войти: со свободным местом и той же сборки (в данных лобби хост теперь пишет `game`, `engine`, `content` и `rules`, как
-  и `host`). Строка на лобби: id, хост, сколько в нём и сколько мест, совпадает ли сборка; `all=true` показывает и лобби
-  других сборок, называя, чем они отличаются. Steam находит только `public` и `invisible` лобби (`friends` и `private` —
-  никогда, лобби самого хоста тоже), подделка ведёт себя так же, а ответ хоста говорит, почему его лобби в нём нет. Инструмент
-  сам крутит колбэки Steam, пока не придёт ответ (`wait_ms`, по умолчанию и не больше 5 с: ожидание держит кадр игры), а при
-  тишине отвечает ошибкой и не бросает поиск: ответ, пришедший с кадрами игры, получает следующий вызов. `steam_join` берёт id из ответа; пункт `steam_lobbies` — в меню разработчика. Бэкенд: `Backend::find_lobbies` (пустой,
-  поддельный с `FakeSteam::hold_searches`, `fail_searches` и `set_lobby_data` для тестов, настоящий — `RequestLobbyList` с
-  равенствами по строкам, одним свободным местом и дальностью «весь мир», подробности лобби читаются в `pump`);
-  `SteamLobby::in_search`. Тесты: 4 в `src/fake.rs`, 3 в `src/lobbies.rs`, 7 в `tests/steam/lobbies.rs`. Размер лобби, которого Steam не назвал, строка показывает как `2 of ?`. Вход в лобби, хозяин которого — этот же аккаунт (вторая игра на аккаунте хоста), отказывает прямо: `this Steam account owns the lobby: a second game on the same account cannot join it (join from another account)`, а не «its owner left»; Из такого лобби игра не выходит: Steam держит членство по аккаунту, и выход забирал из лобби и хоста (найдено на настоящем Steam: поиск хоста переставал находить его лобби). `FakeSteam::lobby_of` делает такое лобби для теста, и тест проверяет, что лобби и его владелец остались. На настоящем Steam (приложение 480, один аккаунт, вторая игра того же аккаунта) поиск проверен: невидимое лобби хоста находится (`1 of 3 · build matches`, с `all=true` тоже), лобби `friends` нет, и ответ хоста говорит почему; вход в лобби вторым аккаунтом не проверен.
-- Стенд поверх поддельного Steam (`shards`, `shards_net`, `shards_steam`): `--stand N --stand-steam [--steam-lobby TYPE]` (игра
-  со feature `steam`; без неё код 2) строит тот же стенд в одном процессе, но участники встречаются по `FakeSteam` с реле на
-  сети в памяти стенда без задержки (`--net-sim` работает поверх реле один раз, как у настоящего Steam): хост делает лобби, клиенты ждут лобби (`--join steam:`), ищут его `steam_lobbies` и входят
-  `steam_join`. `Stand::settle` и `loading_locally` не ждут клиента, которому нужен чужой транспорт
-  (`shards_net::client::waits_for_transport`), `SteamSession::from_launch` берёт хозяина лобби и из `NetLaunch::Stand`, строка
-  готовности такого клиента — `role client · joining: …`. Сценарий `crates/shards_steam/scenarios/lobby_search.scenario`:
-  хост делает невидимое лобби, клиент ищет, находит, входит по id из ответа, оба играют 300 тиков, рассинхронов 0; он идёт
-  в тесте (`tests/steam/scenarios.rs`) и против живого стенда. Тесты: `run` в `shards` (флаг и стенд, второй со `steam`).
-- Пакет для Linux (`shards package`): программа линкуется с `RUNPATH=$ORIGIN` (`cargo rustc … -- -Clink-arg=-Wl,--enable-new-dtags
-  -Clink-arg=-Wl,-rpath,$ORIGIN`), чтобы загрузчик нашёл `libsteam_api.so`, которая лежит рядом: без этого игра с `steam_sdk` из
-  пакета не стартовала. Аргументы после `--` относятся к одной программе: не `RUSTFLAGS` (он заменил бы `rustflags` из
-  `.cargo/config.toml` игры и пересобрал бы все зависимости) и не `cargo:rustc-link-arg` build-скрипта `steamworks-sys`
-  (до программы он не доходит). Результат проверяет запуск копии пакета в голом окружении. Проверено под WSL1 (Ubuntu 24.04) на
-  маленькой программе с `steamworks`: `readelf -d` — `RUNPATH [$ORIGIN]`, `ldd` копии пакета в другой папке при `env -i`
-  находит `libsteam_api.so` рядом (без неё — `not found`), флаги из `[build] rustflags` игры остаются (метка
-  `-Wl,-rpath,/opt/game-config-marker` в её конфиге — `RUNPATH [$ORIGIN:/opt/game-config-marker]`, а `--config
-  'target.<triple>.rustflags=[…]'` и `RUSTFLAGS` её теряют); до правки RUNPATH не было. Игра целиком с `steam_sdk` на Linux не собиралась. Тест: `package` в `shards_cli` (`build_command`).
+- The new crate `shards_steam` (module `steam`) is behind the `steam` feature of the umbrella crate. The feature is off by default; the template and the sandbox do not use it.
+  `steam_sdk` adds the real Steam client (`steamworks = "=0.13.1"`, `steam_api64.dll`). Without it, the module runs on a fake Steam inside the process
+  (`FakeSteam`: users, lobbies, invitations, a relay on `MemoryHub`, achievements, cloud), and a game that the player started
+  says plainly that there is no Steam. The public API has no `steamworks` types.
+- Co-op over the Steam relay: `--steam-host` (a lobby for `max_players` players, by default "friends only"; `--steam-lobby
+  friends|private|invisible|public` — who can see it; the journal, `steam` and `ai/status` show the type as `lobby_type`; an invitation through
+  `steam_invite` or the overlay), `--steam-server` (an anonymous Steam game server with no lobby: clients join it by its id; it is a host like
+  any other, with its own player 0), `--join steam:<id>` (a lobby or
+  a host by its id; `steam:` — wait for an invitation), `+connect_lobby <id>` from Steam becomes `--join steam:<id>`,
+  `--steam-relay-only` (relay only, no direct routes), `--steam-app N` (the app id through `SteamAppId`, without `steam_appid.txt`).
+  The transport is `ISteamNetworkingMessages`, channel 0, unreliable, without Nagle, and with a restart of a dropped session; `--net-sim` runs on top of it.
+  UDP is not opened. The host accepts relay sessions only from the lobby's members, the server from anyone (its entry rules decide), and a client only from its own host; a refusal logs one `warn` per peer. Without Steam, the host exits with `cannot host` (with `--exit-with-host` the exit code is 2),
+  and the client waits for another lobby (`steam_join`).
+- Achievements are content, `*.achievement.ron` (`AchievementDef`: `steam` is the API name, `name` and `description` are Fluent messages,
+  `hidden`). The game unlocks them with `UnlockAchievement::everyone(id)` / `player(id, n)` (a network event: the host sends it to the clients, and each
+  machine unlocks it for its own player on its own account) or `unlock_achievement(world, id)`; a client does not unlock on its own, and during
+  a replay nothing is unlocked. A write to Steam comes one second after the first unlock (one write covers several) and on exit; a write that Steam refused is retried. This is not
+  simulation state: the journal writes it as `local`, and `Achievements` is a record of this run only. The content check covers the API name, a repeated name, text
+  in place of a message, and a message that does not exist.
+- Cloud: each save that is written is copied to Steam Cloud as `<save folder>/<kind>/<slot>.save` (backup copies, `.tmp` and `.damaged` files are never copied); at launch, before a slot loads, a newer cloud copy becomes the save (the old save becomes the first copy),
+  a newer local copy goes up to the cloud, a tie keeps both (the cloud copy goes to the slot `<slot>-cloud`), a damaged copy is not taken (the file on disk repairs it),
+  and a copy from a newer game version (format or section) is neither taken nor overwritten: in this run nothing is copied to its slot in the cloud. The cloud copy lands on disk with the same guarded write as a save (`write_guarded`: it does not touch a slot that holds a save from a newer version);
+  during a replay the cloud is neither checked nor written. The file goes to the cloud in one `FileWrite`, and the reply is checked; when the quota is short, the error says how much space there is (`Steam Cloud has 105 B free of 4 KB;
+  this save is 540 B`), and the `cloud` line in `steam` shows the free space. Files on disk stay the source of truth.
+- Steam reliability: callbacks whose decoding can fail in `steamworks` 0.13 (`LobbyChatUpdate`, `UserStatsStored`,
+  `SteamServerConnectFailure`) are read by the engine itself, as raw numbers, and the journal-only entries about losing and regaining Steam servers
+  are removed. If a callback still fails, the callbacks stop until the run ends (the `steamworks` lock is poisoned), with one `error` line,
+  a `problem:` line in `steam` and a `note` in `ai/status`, and a host that is waiting for a lobby and a client that is joining one
+  get the error at once. A game the player launched, with `steam_sdk` on, starts the Steam client before rendering (`SteamClientPlugin` right after
+  `TaskPoolPlugin`), so that the Steam overlay attaches to the graphics device (not checked in a window). On exit, the Steam hook
+  sends copies of the saves written by the hooks that ran before it, writes the achievements, closes the relay sessions (`CloseSessionWithUser`) and
+  leaves the lobby; Steam shuts down along with the game world.
+- Tools `steam` (Player, query: who this machine is in Steam, lobby or server, relay, the route to each peer — state,
+  whether it goes through the relay and through which one, ping; achievements, cloud), `steam_host`, `steam_join lobby=ID | host=ID`, `steam_invite
+  friend=ID`, `achievement_unlock id=… [player=N]` (host only); the `steam` field in `ai/status`; the `steam` section of the developer menu. The readiness line: `role host · net steam lobby`, `net steam game server`, `role client · net steam:<id>`.
+- `shards_net`: `ExternalTransport` — another module opens the session's transport (UDP is not opened); `conditioner_from` and
+  `session::unopened` are public. `shards_save`: the `SaveWritten` event after each successful write of a slot. `shards_core`:
+  `EngineConfig::steam` (`SteamLaunch`, the lobby type `SteamLobby`). `shards package`: the Steamworks SDK library (`steam_api64.dll`,
+  a copy from the build-script folder of `steamworks-sys`, and only that: the system ALSA and udev do not go into the package) is put next to the
+  program, the import check accepts it, and `steam_appid.txt` is removed from the package folder.
+- Tests on the fake Steam: a lobby (and its type), a host and two clients over the relay, a game server and a client by id, an invitation, rejecting a
+  stranger, a join that failed (and a join after it through `steam_join`, code 2 with `--exit-with-host`), a lobby that Steam did not
+  create, and `steam_host` after it, a server that did not join, a game without Steam, failing callbacks, the exit order, achievements (content,
+  a write, the previous run, a replay, co-op), cloud (a copy, cloud turned off, a check at launch before a slot loads, copies from a
+  newer version, a replay, the quota), the tools' replies, the plugin order. On real Steam (app 480, one account),
+  the game server and a player by id were checked only through the relay (`relayed via <pop>`, ping 16–17 ms, 0 desyncs), an achievement from
+  the host written by a client to its own account, a refusal of a cloud copy that is not a save, and the cloud quota of 480 (4 KB). On a build with the fixes made after that check, also on real Steam: the host's lobby `--steam-lobby private`, the message about the cloud quota, the achievement of the lobby's host,
+  and the server with a player through the relay again; joining the lobby with a second account, the overlay and a successful cloud write were not checked.
+- Lobby search (`shards_steam`): the tool `steam_lobbies [all=true] [wait_ms=N]` (Player, query) finds this game's lobbies that can be joined: those with a free slot and the same build (in the lobby data the host now writes `game`, `engine`, `content` and `rules`, as well as `host`). One line per lobby: the id, the host, how many are in it and how many slots there are, and whether the build matches; `all=true` also shows lobbies of other builds, naming how they differ. Steam finds only `public` and `invisible` lobbies (`friends` and `private` never, the host's own lobby included); the fake behaves the same way, and the host's own reply says why its lobby is not listed. The tool runs the Steam callbacks itself until the reply comes (`wait_ms`, by default and no more than 5 s: the wait holds the game's frame), and if there is silence, it answers with an error and does not drop the search: the next call picks up a reply that arrives while the game keeps running. `steam_join` takes the id from the reply; the `steam_lobbies` item is in the developer menu. Backend: `Backend::find_lobbies` (the empty one; the fake one, with `FakeSteam::hold_searches`, `fail_searches` and `set_lobby_data` for tests; the real one, with `RequestLobbyList`, string-equality filters, one free slot and the "worldwide" distance, and the lobby details read in `pump`);
+  `SteamLobby::in_search`. Tests: 4 in `src/fake.rs`, 3 in `src/lobbies.rs`, 7 in `tests/steam/lobbies.rs`. A lobby size that Steam did not give is shown in the line as `2 of ?`. A join to a lobby whose owner is this same account (a second game on the host's account) is refused right away with `this Steam account owns the lobby: a second game on the same account cannot join it (join from another account)`, and not with "its owner left". The game does not leave such a lobby: Steam keeps membership per account, and leaving used to take the host out of its own lobby as well (found on real Steam: the host's search stopped finding its lobby). `FakeSteam::lobby_of` makes such a lobby for a test, and the test checks that the lobby and its owner stayed. On real Steam (app 480, one account, a second game of the same account), the search was checked: the host's invisible lobby is found (`1 of 3 · build matches`, with `all=true` too), there is no `friends` lobby, and the host's reply says why; joining the lobby with a second account was not checked.
+- A stand on top of the fake Steam (`shards`, `shards_net`, `shards_steam`): `--stand N --stand-steam [--steam-lobby TYPE]` (a game
+  with the `steam` feature; without it, code 2) builds the same stand in one process, but the players meet through `FakeSteam`, with the relay on
+  the stand's in-memory network, without delay (`--net-sim` runs over the relay once, as on real Steam): the host makes a lobby, the clients wait for the lobby (`--join steam:`), look for it with `steam_lobbies` and join with
+  `steam_join`. `Stand::settle` and `loading_locally` do not wait for a client that needs someone else's transport
+  (`shards_net::client::waits_for_transport`), `SteamSession::from_launch` also takes the lobby's host from `NetLaunch::Stand`, and the readiness line
+  of such a client is `role client · joining: …`. The scenario `crates/shards_steam/scenarios/lobby_search.scenario`:
+  the host makes an invisible lobby, the client searches, finds it, joins by the id from the reply, both play 300 ticks, 0 desyncs; it runs
+  in the test (`tests/steam/scenarios.rs`) and against a live stand. Tests: `run` in `shards` (the flag and the stand; the second with `steam`).
+- Linux package (`shards package`): the program is linked with `RUNPATH=$ORIGIN` (`cargo rustc … -- -Clink-arg=-Wl,--enable-new-dtags
+  -Clink-arg=-Wl,-rpath,$ORIGIN`), so that the loader finds `libsteam_api.so`, which lies next to it: without this, a game with `steam_sdk` from the
+  package would not start. Arguments after `--` apply to one program: not `RUSTFLAGS` (it would replace the game's `rustflags` from
+  `.cargo/config.toml` and rebuild all dependencies), and not the `cargo:rustc-link-arg` of the `steamworks-sys` build script
+  (it does not reach the program). The result is checked by running a copy of the package in a bare environment. Checked under WSL1 (Ubuntu 24.04) on a
+  small program with `steamworks`: `readelf -d` gives `RUNPATH [$ORIGIN]`, and `ldd` on a copy of the package in another folder under `env -i`
+  finds `libsteam_api.so` next to it (without it: `not found`); the flags from the game's `[build] rustflags` stay (the marker
+  `-Wl,-rpath,/opt/game-config-marker` in its config gives `RUNPATH [$ORIGIN:/opt/game-config-marker]`, while `--config
+  'target.<triple>.rustflags=[…]'` and `RUSTFLAGS` lose it); before the fix there was no RUNPATH. The whole game with `steam_sdk` did not build on Linux. Test: `package` in `shards_cli` (`build_command`).
 
-**Уровни из Blender проверены на настоящем экспорте (E4.2, `shards_level`)**
+**Levels from Blender are checked on a real export (E4.2, `shards_level`)**
 
-- `tools/blender/outpost_level.py`: уровень, собранный как у художника (неприменённые поворот и масштаб, модификатор *Array*,
-  родители через Ctrl+P, пустышки-маркеры всех видов, датчики, коллайдеры всех форм, префаб, компоненты из текста, словаря и
-  флажка, коллекция-инстанс, лампа, имена с пробелами и не латиницей), экспортируется Blender 5.2.2 LTS без окна
-  (`blender -b --factory-startup --python-exit-code 1 -P tools/blender/outpost_level.py -- <папка>`; байт в байт экспорт не
-  повторяется: порядок треугольников меша `Boulder` от запуска к запуску бывает разным, геометрия та же). Файлы — `crates/shards_level/tests/level/blender/`:
-  `outpost.glb`, `outpost_lights.gltf` + `.bin` (с лампой), `outpost_draco.glb`, `outpost_meshopt.glb` и
-  `outpost_meshopt_khr.glb` (meshopt с `EXT_` и с `KHR_`), `outpost_broken.glb` (ошибки художника).
-- Тесты `tests/level/from_blender.rs` (14) читают эти файлы: пути узлов, мировые позиции после Z-up → Y-up, формы и размеры
-  коллайдеров, датчики, все маркеры, префаб и компоненты, `content check`, `level_info`, `spawn_level`, `level_reload`, горячая
-  перезагрузка (сломанный экспорт поверх файла отклонён, исправленный заменяет уровень),
-  ошибки с путями узлов; `crates/shards/tests/level_render.rs` рисует `outpost.glb` загрузчиком Bevy.
-- `LevelAsset::scene` (сцена, из которой узлы уровня) и `LevelNode::mesh_extras` (свойства данных меша).
+- `tools/blender/outpost_level.py`: a level built the way an artist builds one (unapplied rotation and scale, an *Array* modifier,
+  parents set with Ctrl+P, empty markers of all kinds, sensors, colliders of all shapes, a prefab, components from text, a dictionary and
+  a flag, a collection instance, a lamp, names with spaces and non-Latin letters). It is exported by Blender 5.2.2 LTS without a window
+  (`blender -b --factory-startup --python-exit-code 1 -P tools/blender/outpost_level.py -- <folder>`; the export is not byte for byte
+  the same each time: the triangle order of the `Boulder` mesh can differ from run to run, the geometry is the same). The files are in `crates/shards_level/tests/level/blender/`:
+  `outpost.glb`, `outpost_lights.gltf` + `.bin` (with a lamp), `outpost_draco.glb`, `outpost_meshopt.glb` and
+  `outpost_meshopt_khr.glb` (meshopt with `EXT_` and with `KHR_`), `outpost_broken.glb` (the artist's mistakes).
+- The tests in `tests/level/from_blender.rs` (14) read these files: node paths, world positions after Z-up → Y-up, the shapes and sizes of
+  colliders, sensors, all the markers, the prefab and the components, `content check`, `level_info`, `spawn_level`, `level_reload`, hot
+  reload (a broken export over the file is rejected, a fixed one replaces the level),
+  errors with node paths; `crates/shards/tests/level_render.rs` draws `outpost.glb` with Bevy's loader.
+- `LevelAsset::scene` (the scene the level's nodes come from) and `LevelNode::mesh_extras` (the mesh data's properties).
 
-**Регион в сохранении — из его манифеста (E5.4, E8; `shards`, `shards_world`, `shards_save`):**
+**The region in a save comes from its manifest (E5.4, E8; `shards`, `shards_world`, `shards_save`):**
 
-- Секция `region` сохранения мира хранит сам манифест региона (`manifest`, версия секции 2) рядом с id, зерном, версией
-  генератора и хэшем. Загрузка строит регион из него (`change_region`), генератор не запускается: обновление игры, которое
-  меняет генератор (новая `version` региона, веса, шаги), сохранённый мир не перестраивает. Журнал говорит, откуда регион:
-  `region wilds seed 42 v1: built from the save's manifest (the generator is v2 now)` (скобки — когда версия генератора в
-  контенте другая; региона с таким id в контенте больше нет — `` (`old_wilds` is no longer in the content) ``). Строка
-  пишется, когда регион уже построен (после `region loaded`), а не перед сборкой, которая ещё может не удаться.
-- Тайл, комната или префаб из манифеста, которых контент уже не знает, — отказ до любых изменений мира с именами и выходом:
+- The `region` section of a world save keeps the region's manifest itself (`manifest`, section version 2), next to the id, the seed, the generator version and the hash. Loading builds the region from it (`change_region`), and the generator does not run: a game update that changes the generator (a new region `version`, weights, steps) does not rebuild the saved world. The journal says where the region comes from: `region wilds seed 42 v1: built from the save's manifest (the generator is v2 now)` (the brackets show up when the generator version in the content is different; a region with that id is no longer in the content — `` (`old_wilds` is no longer in the content) ``). The line is written once the region is built (after `region loaded`), not before the build, which may still fail.
+- A tile, room or prefab from the manifest that the content no longer knows is a refusal before any change to the world, with the names and a way out:
   `` the save's world cannot be built: the manifest of wilds seed 42 v1 names tiles content does not have: old_ruin (…); keep that
   content in the game, or write a migration for `region` that replaces it in the saved manifest ``.
-- Манифест, который не совпадает со своим хэшем, с id, зерном и версией рядом или чужого формата, — порча копии (`section region
-  does not read: the manifest of wilds seed 42 v1 is damaged: it hashes to …, the save says …`): загрузка берёт резервную копию,
-  как при неверной контрольной сумме. Так же и секция версии 2 без манифеста: без него читается только регион, пришедший
-  миграцией из версии 1 (она ставит метку `from_v1: true`), а не любая копия, где манифест пропал (`the save of wilds seed 42 v1
+- A manifest that does not match its hash, or is of a foreign format, with the id, seed and version next to it, counts as a damaged copy (`section region
+  does not read: the manifest of wilds seed 42 v1 is damaged: it hashes to …, the save says …`): loading takes the backup copy,
+  as with a wrong checksum. The same goes for a version 2 section without a manifest: without one, only a region that came from version 1 by
+  migration is read (the migration sets the mark `from_v1: true`), not any copy where the manifest has gone missing (`the save of wilds seed 42 v1
   keeps no manifest; only a save of version 1 of the section may lack it`).
-- `shards_world::check_manifest` (`region::check_manifest`): может ли контент построить манифест, ничего не меняя в мире (то, что
-  `change_region` проверяет до изменений).
-- Сценарий песочницы `world_save.scenario`; тесты в `saves.rs` (тот же мир после обновления, которое меняет генератор; тайла
-  нет; региона нет в контенте; порча и резервная копия; сохранение версии 1) и `net_coop.rs` (мир другой версии генератора:
-  хост строит его из манифеста, гость получает тот же).
+- `shards_world::check_manifest` (`region::check_manifest`): whether the content can build the manifest without changing anything in the world (what `change_region` checks before any change).
+- The sandbox scenario `world_save.scenario`; tests in `saves.rs` (the same world after an update that changes the generator; a tile
+  is missing; a region is not in the content; damage and a backup copy; a version 1 save) and `net_coop.rs` (a world of another generator version:
+  the host builds it from the manifest, the guest gets the same one).
 
-**Уклонение от тел (E6.2, `shards_npc`)** — вместо упреждающего поворота с расталкиванием:
+**Avoiding bodies (E6.2, `shards_npc`)** — instead of a pre-emptive turn with shoving:
 
-- Выборочные взаимные препятствия скоростей (`nav::avoid`): каждый NPC на пути берёт самую дешёвую из веера скоростей вокруг
-  той, что просит маршрут (отклонение плюс угроза столкновения в горизонте `horizon`), с оглядкой на тела персонажей рядом:
-  NPC, игроков, тела агентов. Другой уклоняющийся NPC берёт половину манёвра; встреча лоб в лоб расходится вправо; начав
-  обходить с одной стороны, NPC держится её; у самой цели за телом, которое не уступает, NPC ждёт, а не толкается. Соседи — по
-  зазору, затем по `AiId`, без случайности; веер — таблица констант. Пишет только `Intent`: новая система `nav_avoid` в
-  `NpcSystems::Drive` перед `drive_intents`; поводок держится и после уклонения.
-- Числа — контент: `avoidance: (weight, horizon, range, neighbours, margin)` у `npc_tuning` (для всех) или у поведения
-  (`BehaviorDef.avoidance`, перекрывает), `AvoidanceDef` с проверкой границ; `weight: 0.0` выключает уклонение.
-- `NavAgent`: поля `preferred` (скорость, которую просит маршрут), `avoiding` (кого обходит) и `side` (с какой стороны).
-  `npc_state` → `nav.avoiding`, `npc_overlay` → `avoiding e7`, условие `step --until named:npc_avoiding`; журнал об
-  уклонении молчит.
-- Прямой маршрут (цель на виду) больше не идёт вслепую, когда NPC сошёл с проверенной прямой: `NavAgent.planned_from` помнит,
-  откуда план строился, и NPC дальше своего радиуса от отрезка «оттуда — цель» (обходил тело, его толкнули или отбросили)
-  планирует заново с того места, где стоит. Раньше прямой маршрут к неподвижной цели не перепроверялся никогда, и NPC мог
-  уйти с края, которого `plain_sight` не видел. Запросов не прибавляется у тех, кто идёт по своей прямой: следующий план —
-  только после следующего радиуса в сторону (тест `an_npc_put_off_its_straight_line_plans_again_before_walking_off_a_ledge`).
-- Тесты `tests/npc/avoid.rs` (встреча в коридоре, стая у игрока с дуги и гуськом, без уклонения, детерминизм, `npc_state` и
-  оверлей), юнит-тесты `nav::avoid` и `avoidance_numbers_are_checked_in_the_tuning_and_in_a_behaviour` (границы `avoidance` у
-  `npc_tuning` и у поведения, убранные `avoid_time`/`avoid_margin`); сценарий песочницы `npc_avoidance.scenario`.
+- Selective reciprocal velocity obstacles (`nav::avoid`): each NPC on the path takes the cheapest option from the fan of velocities around the one the route asks for (the deviation plus the threat of a collision within the horizon `horizon`), allowing for nearby character bodies:
+  NPCs, players, agents' bodies. Another NPC that is avoiding takes half of the manoeuvre; a head-on meeting splits to the right; once it has started going around on one side, the NPC keeps to that side; right at the goal, behind a body that will not give way, the NPC waits instead of shoving. Neighbours are taken by gap, then by `AiId`, with no randomness; the fan is a table of constants. It writes only `Intent`: the new system `nav_avoid` runs in `NpcSystems::Drive` before `drive_intents`; the leash holds after avoidance too.
+- The numbers are content: `avoidance: (weight, horizon, range, neighbours, margin)` in `npc_tuning` (for all) or in a behaviour
+  (`BehaviorDef.avoidance`, which overrides it), `AvoidanceDef` with a bounds check; `weight: 0.0` turns avoidance off.
+- `NavAgent`: the fields `preferred` (the speed the route asks for), `avoiding` (who it goes around) and `side` (which side).
+  `npc_state` → `nav.avoiding`, `npc_overlay` → `avoiding e7`, the condition `step --until named:npc_avoiding`; the journal stays silent about
+  avoidance.
+- A straight route (the target in sight) no longer walks blind when the NPC has left the checked straight line: `NavAgent.planned_from` remembers
+  where the plan was made, and an NPC farther than its radius from the segment "from there to the target" (it went around a body, or was shoved or knocked away)
+  plans again from where it stands. Before, a straight route to a still target was never re-checked, and the NPC could
+  walk off an edge that `plain_sight` did not see. No extra queries are added for NPCs that walk their own straight line: the next plan comes
+  only after it drifts another radius to the side (test `an_npc_put_off_its_straight_line_plans_again_before_walking_off_a_ledge`).
+- Tests in `tests/npc/avoid.rs` (a meeting in a corridor, a pack closing in on the player in an arc and in single file, no avoidance, determinism, `npc_state` and
+  the overlay), unit tests of `nav::avoid` and `avoidance_numbers_are_checked_in_the_tuning_and_in_a_behaviour` (the bounds of `avoidance` in
+  `npc_tuning` and in a behaviour, the removed `avoid_time`/`avoid_margin`); the sandbox scenario `npc_avoidance.scenario`.
 
-**Классы тел навсетки (E6.1, `shards_npc`)** — навсетка больше не под одно тело:
+**Navmesh body classes (E6.1, `shards_npc`)** — the navmesh is no longer built for one body only:
 
-- У `nav` поле `bodies`: классы тел по имени (`"large": (locomotion: Some("warden"))`, `radius` и `height` поверх тела,
-  `NavBodyDef`). Имя — строчные буквы, цифры и `_` (это и папка файлов), `agent` занято; ссылку на `locomotion` и числа
-  проверяет контент. Свои `radius` и `height` класса должны оставить капсулу, какую допускает `locomotion` (рост не меньше
-  диаметра, радиус больше двух `skin_width`): иначе ошибка называет класс и что поправить (``bodies.wide: height 1.8 is less
-  than the capsule's diameter 2.4; give the class a height of at least 2.4 m or a smaller radius``). Без этой проверки такой
-  класс пёкся под более высокое тело, чем называл, и не подходил телам, для которых его писали.
-- Каждый тайл печётся под `agent` и под каждый класс, файл класса — в своей папке (`assets/nav/large/<тайл>.navtile.ron`).
-  Формат файла и `BAKE_VERSION` прежние, хэш файла класса берёт ещё его имя, а файлы `agent` байт в байт те же, что у игры без
-  классов. `--bake-nav` и `nav_bake` пекут все классы (`baked 18 files for 2 body classes (agent, large) into nav/`; без
-  классов — прежнее `baked 9 tiles into nav/`), `--check-content` называет пропавший или устаревший файл каждого класса
-  (``tile `pillars` has no bake file for the body `large` (nav/large/pillars.navtile.ron)``).
-- Регион строит навсетку каждого класса (`NavRegion::bodies`, `classes()`, `class(name)`) с вырезанием по телу класса;
-  журнал — строкой на класс (`navmesh (body large): 64 tiles, …`, предупреждения с той же меткой).
-- Маршрут идёт по самому тесному классу, который обслуживает всё тело ходока (`NavRegion::serving`): у NPC (`navmesh_path`,
-  `plain_sight`), у `move_to path=true`, `path_to`, `clearance` и `nav_path` (см. «Исправлено»: сначала NPC выбирал класс
-  только по радиусу). Тело, которое не обслуживает ни один класс, планирует по локальной сетке.
-- Инструменты: `nav_path body=large` (`"body"` в ответе, на опечатку — ошибка с подсказкой и списком классов), `nav_info` →
-  `bodies` (тело и навсетка каждого класса), `npc_state` → `nav.routes` (`navmesh, body large` или `local grid: …` с причиной,
-  в том числе `the NPC stands outside the region`: регион не покрывает места, где NPC стоит, и его маршруты — локальной сетки;
-  со своими маршрутами игры — имя её поставщика), `npc_overlay` дописывает `body large` или `local grid` по тому же правилу, а
-  со своими маршрутами игры — ничего. Функции `region_nav`, `route_on`, `routes_for` (по телу), `routes_at` (по телу и
-  месту).
-- Песочница: класс `large` под тело стража (`content/region/wilds.nav.ron`), файлы `assets/nav/large/` (9 тайлов); сценарий
-  `npc_bodies` (страж в пилонном зале wilds идёт к игроку по навсетке своего класса). У шаблона классов нет, его файлы прежние.
-- Тесты `tests/npc/bodies.rs` (7): большое тело идёт в широкую дверь, а не в проём под `agent`, и держит зазор; NPC шире
-  класса `agent` ходит по навсетке `large`, шире всех — по локальной сетке; NPC вне региона — по локальной сетке, и
-  `npc_state`, `nav_path` и `npc_overlay` говорят одно; со своими маршрутами игры инструменты класса не называют; байты файлов
-  обоих классов стабильны, файлы `agent` те же, что без классов; контент называет пропавший файл класса; проверка `bodies`
-  (и капсулы классов со своими размерами).
+- `nav` has a `bodies` field: body classes by name (`"large": (locomotion: Some("warden"))`, `radius` and `height` on top of the body,
+  `NavBodyDef`). The name is lowercase letters, digits and `_` (it is also the folder name); `agent` is taken; content checks the reference to `locomotion` and the numbers. A class's own `radius` and `height` must leave a capsule that `locomotion` allows (height at least the diameter, radius more than two `skin_width`). Otherwise the error names the class and what to fix (``bodies.wide: height 1.8 is less
+  than the capsule's diameter 2.4; give the class a height of at least 2.4 m or a smaller radius``). Without this check, such a class was baked for a taller body than it named, and did not fit the bodies it was written for.
+- Each tile is baked for `agent` and for each class; the class file goes in its own folder (`assets/nav/large/<tile>.navtile.ron`). The file format and `BAKE_VERSION` are unchanged. A class file's hash also takes in the class name, and the `agent` files are byte for byte the same as in a game without classes.
+  `--bake-nav` and `nav_bake` bake all classes (`baked 18 files for 2 body classes (agent, large) into nav/`; without classes it prints the old `baked 9 tiles into nav/`). `--check-content` names the missing or stale file of each class (``tile `pillars` has no bake file for the body `large` (nav/large/pillars.navtile.ron)``).
+- The region builds the navmesh of each class (`NavRegion::bodies`, `classes()`, `class(name)`), cut to the class's body. The journal has one line per class (`navmesh (body large): 64 tiles, …`; warnings carry the same label).
+- A route uses the tightest class that serves the whole body of the walker (`NavRegion::serving`): for NPCs (`navmesh_path`, `plain_sight`), `move_to path=true`, `path_to`, `clearance` and `nav_path` (see "Fixed": NPCs first picked the class by radius alone). A body that no class serves plans on the local grid.
+- Tools: `nav_path body=large` (`"body"` in the reply; a typo in it gives an error with a hint and the list of classes), `nav_info` → `bodies` (the body and the navmesh of each class), `npc_state` → `nav.routes` (`navmesh, body large` or `local grid: …` with the reason, including `the NPC stands outside the region`: the region does not cover the place where the NPC stands, so its routes use the local grid; with the game's own routes, the name of the game's provider), `npc_overlay` adds `body large` or `local grid` by the same rule, and with the game's own routes it adds nothing. Functions `region_nav`, `route_on`, `routes_for` (by body), `routes_at` (by body and
+  place).
+- Sandbox: the `large` class for the guard's body (`content/region/wilds.nav.ron`), files in `assets/nav/large/` (9 tiles); scenario `npc_bodies` (the guard in the wilds pylon hall walks to the player on the navmesh of its own class). The template has no classes; its files are unchanged.
+- Tests in `tests/npc/bodies.rs` (7): a large body goes through the wide door, not the gap sized for `agent`, and keeps its clearance; an NPC wider than the `agent` class walks on the `large` navmesh, and one wider than all of them walks on the local grid; an NPC outside the region walks on the local grid, and `npc_state`, `nav_path` and `npc_overlay` say the same thing; with the game's own routes, the tools do not name the class; the bytes of both classes' files are stable, and the `agent` files are the same as without classes; content names the missing class file; the `bodies` check (and the capsules of classes with their own sizes).
 
-**Модель персонажа, анимация в играх и смещение из клипа (F4: E3.1, E3.7; `shards_action`, `shards`, песочница, шаблон):**
+**Character model, animation in games and displacement from a clip (F4: E3.1, E3.7; `shards_action`, `shards`, sandbox, template):**
 
-- Скрипт `tools/blender/humanoid.py` строит в Blender без окна (`blender -b --factory-startup --python-exit-code 1 -P
-  tools/blender/humanoid.py -- sandbox|template ПАПКА`) low-poly гуманоида: 16 костей со скином, клипы `idle`, `walk`, `run`,
-  `light_1`, `light_2`, `light_3`, `heavy`, `roll`, `block`, `hit`, `death`, у песочницы ещё `bow` и `taunt` во втором файле
-  (`humanoid_gestures.glb`). Удары и перекат сделаны по фазам действий каждой игры (песочница — 60 кадров в секунду, шаблон —
-  100: замах героя 0.18 с и перекат 0.35 с — целые кадры только так), фазы уходят в glTF свойством `phases`, корневая кость
-  ставится только на целые кадры; оттенки частей — вершинные цвета `COLOR_0` (вид умножает на них свой цвет); два прогона дают
-  те же байты. Файлы: `crates/sandbox/assets/models/humanoid.glb` (250 728 байт), `humanoid_gestures.glb` (41 084),
+- The script `tools/blender/humanoid.py` builds a low-poly humanoid in Blender without a window (`blender -b --factory-startup --python-exit-code 1 -P
+  tools/blender/humanoid.py -- sandbox|template FOLDER`): 16 skinned bones, clips `idle`, `walk`, `run`,
+  `light_1`, `light_2`, `light_3`, `heavy`, `roll`, `block`, `hit`, `death`; the sandbox also has `bow` and `taunt` in a second file
+  (`humanoid_gestures.glb`). The strikes and the roll are timed to the action phases of each game (the sandbox is 60 frames per second, the template is
+  100: the hero's windup is 0.18 s and the roll is 0.35 s, whole frames only this way). The phases go into the glTF as the `phases` property; the root bone
+  is placed only on whole frames; the part shades are vertex colours `COLOR_0` (the look multiplies its own colour by them); two runs give
+  the same bytes. Files: `crates/sandbox/assets/models/humanoid.glb` (250 728 bytes), `humanoid_gestures.glb` (41 084),
   `template/assets/models/humanoid.glb` (310 888).
-- Вид `animset`: клип может лежать в другом файле с тем же скелетом (`source` у клипа), `root_motion` называет корневую кость:
-  мост держит её на месте по земле (x и z позы покоя, после `AnimationSystems`), тело двигает смещение действия. С папкой
-  ассетов проверка контента читает файлы набора: нет файла, анимации (с перечнем тех, что есть) или корневой кости, кость под
-  повёрнутым узлом — ошибка. Граф набора ждёт все его файлы.
-- Запекание смещения: поле `bake: (animset, clip)` у действия; `shards_action::bake` читает перенос корневой кости из glTF
-  (`clipfile`: GLB и `.gltf`, буферы файлом и `data:`, интерполяции `LINEAR`, `STEP`, `CUBICSPLINE`) с частотой тика 60 Гц, берёт
-  только вперёд (вбок — в отчёт, вертикаль — картинке), прореживает (0.5 мм) и правит `displacement` в файле действия на месте
-  (комментарии остаются; нет поля — встаёт перед `bake`). Тайминг клипа (`phases` или длина) должен совпадать с действием, иначе
-  ошибка с обоими. `--bake-motion [ДЕЙСТВИЯ]` (`shards::run`, код 0 или 1, без тиков) и инструмент `motion_bake` (Dev, control).
-  Проверка контента запекает заново и называет устаревшую кривую: ``displacement is stale: clip `roll` of `models/humanoid.glb`
+- The `animset` content kind: a clip can live in another file with the same skeleton (`source` on the clip), and `root_motion` names the root bone. The bridge keeps that bone in place on the ground (x and z of the rest pose, after `AnimationSystems`), and the body moves by the action's displacement. With the asset folder, the content check reads the set's files: a missing file, a missing animation (with the list of those there are), a missing root bone, or a bone under a rotated node is an error. The set's graph waits for all of its files.
+- Baking the displacement: the `bake: (animset, clip)` field on an action; `shards_action::bake` reads the root bone's translation from the glTF (`clipfile`: GLB and `.gltf`, buffers as files and `data:`, interpolations `LINEAR`, `STEP`, `CUBICSPLINE`) at the 60 Hz tick rate, takes only forward movement (sideways goes into the report, vertical goes to the picture), thins the keys (0.5 mm) and edits `displacement` in the action's file in place (comments stay; if there is no field, it is placed before `bake`). The clip's timing (`phases` or length) must match the action; otherwise an error names both. `--bake-motion [ACTIONS]` (`shards::run`, exit code 0 or 1, no ticks) and the `motion_bake` tool (Dev, control).
+  The content check bakes again and names the stale curve: ``displacement is stale: clip `roll` of `models/humanoid.glb`
   bakes to 21 keys (4.0 m forward); bake it again with `--bake-motion roll` (or the motion_bake tool)``.
-- Песочница: `content/anim/humanoid.animset.ron` (клипы движения, удары игрока, скелетов и стража на клипах героя, поклон и
-  насмешка из второго файла, метка `footstep`), персонажи носят гуманоида вместо капсулы с носом, удары и перекат
-  игрока (`light_1`–`light_3`, `heavy`, `roll`) запечены, эффект `step_dust` на метке шага. Шаблон: `content/anim.animset.ron`,
-  персонажи — гуманоид (мёртвые больше не прячутся: у них клип `death`), запечены `light_1`, `light_2`, `roll` героя, `step_dust`.
-  `Animated` и модель ставятся только с картинкой (окно, `--offscreen`); без окна ничего не меняется.
-- Звук взмаха — эффект действия, а не метка клипа. Метка клипа (`AnimationCue`) играет звук с тем же именем только там, где
-  нарисована модель (окно, `--offscreen`), и безоконный `audio` его не видел: это расходилось с правилом «звук решается на
-  часах симуляции и одинаков без окна». Теперь у `Effect` есть `Sound("whoosh")`: на тике, когда действие дошло до эффекта,
-  движок шлёт событие `ActionSound` (сущность, действие, звук), модуль звука играет звук от тела, хост пересылает событие
-  клиентам кооператива как удар (`net_event`; клиент эффекты не предсказывает, играет хостовы). Взмахи игрока песочницы
-  (`light_1`–`light_3`, `heavy`) и героя шаблона (`light_1`, `light_2`) называют `whoosh` в `effects`, метки `whoosh` из наборов
-  убраны; метки `footstep` остались картинке. Проверка контента звука знает и `Sound`: звук, которого нет в `*.sound.ron`,
-  называется ошибкой с подсказкой. Звук метки клипа остаётся единственным исключением, оно описано в README («Звук») и AGENTS.md.
-- Проверка контента: `anim` действия, который не играет ни один набор клипов игры (клип с таким именем, клип по `actions` или
-  `tags` набора), — ошибка со списком клипов и подсказкой, если в игре есть наборы. Питьё флакона в песочнице называло клип
-  `drink`, которого у гуманоида нет, и показывало клип движения; теперь у него нет `anim`, картинка та же.
-- Читатель glTF (`clipfile`) не виснет и не падает на битом файле: цикл в узлах (узел — предок самому себе) — ошибка, а не
-  бесконечный обход; доступы с нулевым числом элементов, `byteStride` меньше элемента, не тем типом и не там, где лежат
-  данные, — ошибки до того, как их увидит итератор крейта `gltf` (он на них паникует), разреженные доступы названы; имена
-  файлов буферов `.gltf` читаются с раскодированными `%XX` (`My%20Rig.bin`), как их читает загрузчик Bevy. Запекание берёт
-  отсчёт и в конце действия, если оно кончается между тиками (0.57 с — не 34 тика): кривая не обрывается на полтика раньше.
-- Тесты: `bake.rs` (10: в том числе проверки файлов набора `the_animset_files_are_checked_with_an_asset_folder` и отсчёт в конце
-  действия), `clipfile.rs` (8: цикл, доступы, `%20`), `anim.rs` (`anim` без клипа), `the_root_bone_stays_in_place_along_the_ground` (мост),
-  `Sound`: `a_sound_effect_*` (`shards_action`), `an_actions_sound_effect_plays_from_its_actor_*` (`shards_audio`), раздел 9 сценария
-  `audio.scenario` (без окна), `a_swings_whoosh_is_the_hosts_event_*` (кооператив), `the_heros_swing_whooshes_*` (шаблон), `bake_motion_writes_the_curves_content_checks` (`run`), `the_blender_humanoid_rolls_in_place_and_bows_with_a_clip_of_its_second_file`
-  (`action_render`: настоящий гуманоид).
-- Геймплей: фазы действий прежние, и каждая кривая доходит до прежнего расстояния в прежний момент, но выпады теперь
-  разгоняются и тормозят, а перекат тормозит к концу (за первые 0.1 с — 2 м вместо 1.1 м). Эталонные реплеи песочницы (все
-  семь) и шаблона (оба) на этой ветке записаны заново (`record_reference_replays`, Windows 11): контент другой (проверка
-  `content`), а у реплеев с ударами и перекатом игрока — и позиции. Linux (Ubuntu 24.04 под WSL1) их проверяет: там проходят
-  `every_reference_replay_verifies_headless` и `reference_replays_still_match`.
+- Sandbox: `content/anim/humanoid.animset.ron` (movement clips; the player's strikes; the skeletons and the guard, on the hero's clips; the bow and
+  the taunt from the second file; the `footstep` cue). Characters wear the humanoid instead of a capsule with a nose. The player's strikes and roll
+  (`light_1`–`light_3`, `heavy`, `roll`) are baked, and the `step_dust` effect is on the step cue. Template: `content/anim.animset.ron`;
+  characters are the humanoid (dead characters are no longer hidden: they have a `death` clip), the hero's `light_1`, `light_2` and `roll` are baked, and so is `step_dust`.
+  `Animated` and the model are set up only when there is a picture (window, `--offscreen`); without a window nothing changes.
+- The swing's sound is an action effect, not a clip cue. A clip cue (`AnimationCue`) plays a sound of the same name only where the model is drawn (window, `--offscreen`), and `audio` without a window did not see it. This went against the rule "sound is decided on the simulation clock and is the same without a window". Now `Effect` has `Sound("whoosh")`: on the tick when the action reaches the effect, the engine sends an `ActionSound` event (entity, action, sound), the sound module plays the sound from the body, and the host forwards the event to co-op clients as a hit (`net_event`; a client does not predict effects, it plays the host's). The player's swings in the sandbox (`light_1`–`light_3`, `heavy`) and the template hero's (`light_1`, `light_2`) name `whoosh` in `effects`; the `whoosh` cues are removed from the sets; the `footstep` cues stay for the picture. The sound content check also knows `Sound`: a sound that is not in `*.sound.ron` is reported as an error with a hint. The clip cue sound stays the only exception; it is described in the README, "Audio", and in AGENTS.md.
+- Content check: an action's `anim` that no clip set of the game plays (a clip with that name, or a clip by the set's `actions` or `tags`) is an error, with a list of clips and a hint, if the game has sets. Drinking from the flask in the sandbox named the clip `drink`, which the humanoid does not have, and showed a movement clip; now it has no `anim`, and the picture is the same.
+- The glTF reader (`clipfile`) does not hang or crash on a broken file: a cycle in the nodes (a node that is its own ancestor) is an error, not an endless walk. Accessors with zero elements, a `byteStride` smaller than the element, the wrong type, or pointing outside where the data lies are errors, raised before the `gltf` crate's iterator sees them (it panics on those). Sparse accessors are reported by name. Buffer file names in `.gltf`
+  are read with `%XX` decoded (`My%20Rig.bin`), as Bevy's loader reads them. Baking takes a sample at the end of the action too, if it ends between ticks (0.57 s, not 34 ticks): the curve does not end half a tick early.
+- Tests: `bake.rs` (10, including the set-file checks `the_animset_files_are_checked_with_an_asset_folder` and the sample at the end of the action), `clipfile.rs` (8: cycle, accessors, `%20`), `anim.rs` (`anim` without a clip), `the_root_bone_stays_in_place_along_the_ground` (the bridge),
+  `Sound`: `a_sound_effect_*` (`shards_action`), `an_actions_sound_effect_plays_from_its_actor_*` (`shards_audio`), section 9 of the scenario `audio.scenario` (without a window), `a_swings_whoosh_is_the_hosts_event_*` (co-op), `the_heros_swing_whooshes_*` (template), `bake_motion_writes_the_curves_content_checks` (`run`), `the_blender_humanoid_rolls_in_place_and_bows_with_a_clip_of_its_second_file`
+  (`action_render`: the real humanoid).
+- Gameplay: the action phases are unchanged, and each curve reaches the same distance at the same moment as before. But lunges now speed up and slow down, and the roll slows down towards its end (in the first 0.1 s — 2 m instead of 1.1 m). The sandbox's reference replays (all seven) and the template's (both) were re-recorded on this branch (`record_reference_replays`, Windows 11): the content differs (the `content` check), and in the replays with the player's strikes and roll the positions differ too. Linux (Ubuntu 24.04 under WSL1) checks them, and there these pass:
+  `every_reference_replay_verifies_headless` and `reference_replays_still_match`.
 
-**Слои анимации: верх и низ тела (D7: E3.7; `shards_action`, песочница):**
+**Animation layers: upper and lower body (D7: E3.7; `shards_action`, sandbox):**
 
-- Вид `animset`: поле `layers: {"upper": (root: "spine")}` называет часть тела — кость и всё под ней (не больше 64), а
-  значения `actions` и `tags` теперь строка (клип на всём теле, прежняя запись) или `(clip: "drink", layer: "upper")` (клип на
-  слое). Пока такое действие идёт, кости слоя следуют его клипу (подмотанному на прогресс действия), остальные — клипу
-  движения: фляга на ходу, защита при шаге вбок. Новые типы `ActionClip` и `LayerDef`, функция `select_layer` (что играет на
-  слое; `select_clip_for` выбирает так, будто слоёное действие не идёт), методы набора `action_shown`, `is_layered`,
-  `layer_index`; `AnimationBound::layer_clip` и `layer_share`; `Built::layer_node`. Только картинка (feature `render`):
-  `Animated` не реплеится, `ActionState`, реплей и снапшот слоёв не видят.
-- Устройство (`render::bridge`): у каждого клипа слоя в графе свой узел с маской от костей **вне** слоя (маска Bevy выключает
-  кость, а кость вне всех групп всегда играет, поэтому группа слоя — дополнение), группу собирает `bind_players` из костей
-  модели игрока (кость слоя, которой нет, — предупреждение, действие оставляет клип движения). Клипы движения идут по всем
-  костям через `AnimationTransitions`, как и без слоёв. Долю клипа слоя на его костях мост ведёт сам: вес `s / (1 − s)` против
-  движения, которое весит в сумме 1, доля до 0.99999; вход — за `blend` клипа действия, выход — за `blend` клипа движения, один
-  клип слоя переходит в другой без просвета; на остановленных часах клип слоя встаёт сразу, как и основной. Набор без слоёв
-  строит тот же граф и играет так же, как раньше.
-- Проверка контента: пустой `root` слоя, слой больше предела, слой действия или метки, которого нет в наборе (с подсказкой;
-  у набора без слоёв — как его завести), кость слоя, которой нет в файле набора (с папкой ассетов). Опечатка в записи
-  `(clip, layer)` — ошибка разбора с названием поля.
-- Скрипт `tools/blender/humanoid.py`: клип `drink` (рука к лицу, голова назад, вниз; двигает только позвоночник, голову и руки,
-  фазы флакона песочницы) во втором файле `humanoid_gestures.glb` (52 272 байта). Остальное не тронуто: `humanoid.glb`
-  песочницы и шаблона совпали побайтово при повторном прогоне, клипы `bow` и `taunt`, скелет, скин и меши второго файла — по
-  байтам данных каждой анимации.
-- Песочница: `layers: {"upper": ...}`, клип `drink` и `actions: {"drink": (clip: "drink", layer: "upper")}` в
-  `anim/humanoid.animset.ron`: флакон пьёт рукой, ноги идут или бегут. Действие `drink` прежнее (картинку решает набор).
-  Хэш контента входит в реплей и считает наборы, хотя те для картинки, поэтому семь эталонных реплеев песочницы записаны
-  заново (Windows 11): в них изменились только `content` и хэши, куда он входит; сущности и компоненты те же. Ubuntu 24.04
-  под WSL1 проверила эту запись. Реплеи шаблона не тронуты.
-- Тесты: `anim.rs` (7: две формы записи и разбор туда-обратно, выбор клипа слоя и тела, слой для мёртвого и шатающегося, проверки
-  контента, опечатка в записи, предел слоёв, пример из документации), `bake.rs` (`a_layer_must_start_at_a_bone_of_the_model`),
-  `render::bridge` (8: узел с маской и группа костей, руки по клипу слоя и ноги по ходьбе, смена клипа движения под слоем, вход и
-  выход, переход слоя в слой, метки клипа слоя, модель без кости слоя, набор без слоёв, доли и веса без Bevy),
-  `the_blender_humanoid_drinks_with_its_arm_while_its_legs_keep_walking` (`action_render`: у настоящего гуманоида таз и ноги
-  равны клипу ходьбы, руки, голова и позвоночник — клипу питья, оба взяты прямо из кривых клипов).
+- The `animset` content kind: the `layers: {"upper": (root: "spine")}` field names a part of the body: a bone and everything under it (no more than 64). The values of `actions` and `tags` are now either a string (a clip on the whole body, the old form) or `(clip: "drink", layer: "upper")` (a clip on a layer). While such an action runs, the layer's bones follow its clip (scrubbed to the action's progress), and the rest follow the movement clip: a flask while walking, and a block while sidestepping. New types `ActionClip` and `LayerDef`, the function `select_layer` (what plays on the layer; `select_clip_for` chooses as if the layered action were not running), the set's methods `action_shown`, `is_layered`,
+  `layer_index`; `AnimationBound::layer_clip` and `layer_share`; `Built::layer_node`. Picture only (feature `render`): `Animated` is not replayed, and `ActionState`, the replay and the snapshot do not see the layers.
+- How it works (`render::bridge`): each layer clip in the graph has its own node, with a mask from the bones **outside** the layer (Bevy's mask switches a bone off, and a bone outside all groups always plays, so the layer's group is the complement). The group is built by `bind_players` from the bones of the player's model (a layer bone that is missing gives a warning, and the action keeps the movement clip). The movement clips run over all bones through `AnimationTransitions`, as they do without layers. The bridge tracks the layer clip's share on its bones itself: a weight of `s / (1 − s)` against the movement, which weighs 1 in total, with the share up to 0.99999. Entry takes the `blend` of the action's clip, exit takes the `blend` of the movement clip, and one layer clip passes into another with no gap. On paused clocks the layer clip settles at once, as the main one does. A set without layers builds the same graph and plays as it did before.
+- Content check: an empty layer `root`; a layer over the limit; an action's or cue's layer that the set does not have (with a hint; for a set without layers, how to add one); a layer bone that is not in the set's file (with the assets folder). A typo in the `(clip, layer)` entry is a parse error that names the field.
+- The script `tools/blender/humanoid.py`: the `drink` clip (hand to the face, head back, down; it moves only the spine, the head and the arms, using the phases of the sandbox's flask) is in the second file `humanoid_gestures.glb` (52 272 bytes). The rest is untouched: the `humanoid.glb` of the sandbox and of the template matched byte for byte on a second run, as did the `bow` and `taunt` clips and the skeleton, skin and meshes of the second file, by the data bytes of each animation.
+- Sandbox: `layers: {"upper": ...}`, the `drink` clip, and `actions: {"drink": (clip: "drink", layer: "upper")}` in `anim/humanoid.animset.ron`: drinking from the flask uses the arm, and the legs walk or run. The `drink` action is unchanged (the set decides the picture). The content hash goes into the replay and counts the sets, although they are only for the picture. So the sandbox's seven reference replays were re-recorded (Windows 11): only `content` and the hashes it feeds changed in them, and the entities and components are the same. Ubuntu 24.04 under WSL1 verified this recording. The template's replays are untouched.
+- Tests: `anim.rs` (7: two forms of the entry and a parse round trip, choosing the layer's clip and the body's clip, a layer for a dead and a staggered character, content checks, a typo in the entry, the layer limit, the example from the documentation), `bake.rs` (`a_layer_must_start_at_a_bone_of_the_model`), `render::bridge` (8: a node with a mask and a bone group, arms by the layer clip and legs by walking, a change of the movement clip under a layer, entering and leaving, a layer-to-layer transition, the layer clip's cues, a model without the layer's bone, a set without layers, shares and weights without Bevy),
+  `the_blender_humanoid_drinks_with_its_arm_while_its_legs_keep_walking` (`action_render`: the real humanoid's pelvis and legs match the walking clip, and its arms, head and spine match the drinking clip; both are taken straight from the clips' curves).
 
-**Разрешение 3D-картинки: `graphics.render_scale` (E8.6, E10; `shards`, `ai_core`, `shards_settings`)** — только картинка:
-реплеи, снапшоты и симуляция те же:
+**3D picture resolution: `graphics.render_scale` (E8.6, E10; `shards`, `ai_core`, `shards_settings`)** — picture only:
+replays, snapshots and the simulation are the same:
 
-- 3D-мир рисуется в картинку размера `render_scale` x пикселей окна (или картинки `--offscreen`), а не в окно: на 0.5 это четверть
-  пикселей, на 2 — суперсэмплинг. Картинка растягивается на всё окно линейным фильтром, UI и HUD остаются в родном разрешении
-  окна. Модуль `shards::render_scale`: каждая `Camera3d`, нацеленная на окно (или на картинку `--offscreen`), рисует в образ
-  `SceneImage` (`ai_core::display`), который меняет размер вместе с окном и настройкой; одна `Camera2d` без слоёв (она не видит
-  мешей: `counts` те же, что на 1.0) над ними показывает его
-  узлом UI `ImageNode` под всеми экранами и несёт UI. На 1.0 ничего не добавляется: камеры рисуют в окно, как раньше. Выбрано
-  вместо `MainPassResolutionOverride` Bevy: он только сужает видовой экран главного прохода внутри текстуры полного размера и ждёт
-  апскейлера (DLSS), а без него картинка остаётся в углу, и тонмаппинг гоняет весь кадр.
-- Масштаб цели камеры — `render_scale` x масштаб окна, поэтому логический размер камеры прежний (размер окна): `world_to_viewport`,
-  маркеры угроз HUD и узлы UI не менялись. Легенда `shot` считается в пикселях картинки (`пиксели картинки / логический размер камеры`
-  по осям), метки `eN` стоят на тех же пикселях, что при 1.0 (с точностью до пикселя); `shot` снимает окно, а не образ 3D.
-- `settings_set group=graphics key=render_scale value=0.5` действует на идущую игру. Сторона образа не больше 8192 (предел текстуры
-  wgpu): окно больше при масштабе выше 1 рисуется в 8192 и растягивается.
-- `display` в `ai/status` получил `scene`: `{"size": [640, 360], "scale": 0.5}` (на 1.0 — размер самой картинки), у игры без
-  картинки `null`. Ресурс `ai_core::display::SceneImage` есть, пока 3D рисуется отдельно от картинки; `display::picture_size`.
-- Контуры `looks` и гизмо (линии и текст меток) рисуются в пикселях 3D-картинки, поэтому на 0.5 толще вдвое на экране, на 2 тоньше
-  вдвое; это не компенсируется.
-- Тесты: `shards::render_scale` (10: размер образа, окно, масштаб системы, возврат к 1.0, чужие образы камер, камеры без 3D),
-  `ai_core::shot` (метки в пикселях картинки), под `#[ignore]` в песочнице `render_scale_draws_the_world_at_a_fraction_of_the_picture_and_shows_it_over_all_of_it`
-  (на GPU: образ 640x360 при окне 1280x720, картинка целая и похожа на ту, что при 1.0, метка `e5` в пределах пикселя, возврат на 1.0).
+- The 3D world is drawn into a picture of `render_scale` x the window's pixels (or the `--offscreen` picture), not into the window: at 0.5 that is a quarter of the pixels, at 2 it is supersampling. The picture is stretched over the whole window with a linear filter; the UI and HUD stay at the window's native resolution. The module `shards::render_scale`: each `Camera3d` aimed at the window (or at the `--offscreen` picture) draws into the `SceneImage` image (`ai_core::display`), which changes size with the window and the setting. One `Camera2d` without layers (it does not see the meshes: `counts` are the same as at 1.0) shows it over them
+  as a UI `ImageNode` under all screens, and it carries the UI. At 1.0 nothing is added: the cameras draw into the window, as before. This was chosen
+  instead of Bevy's `MainPassResolutionOverride`: that one only narrows the main pass's viewport inside a full-size texture, and waits
+  for an upscaler (DLSS); without one, the picture stays in a corner, and tonemapping runs over the whole frame.
+- The camera target's scale is `render_scale` x the window's scale, so the camera's logical size is unchanged (the window's size): `world_to_viewport`,
+  HUD threat markers and UI nodes did not change. The `shot` legend is computed in picture pixels (`picture pixels / logical camera size`
+  per axis), and the `eN` labels sit on the same pixels as at 1.0 (to within a pixel); `shot` captures the window, not the 3D image.
+- `settings_set group=graphics key=render_scale value=0.5` takes effect in the running game. The image side is at most 8192 (the texture size limit of
+  wgpu): a window larger than that at a scale above 1 is drawn at 8192 and stretched.
+- `display` in `ai/status` got `scene`: `{"size": [640, 360], "scale": 0.5}` (at 1.0 — the size of the picture itself); for a game without
+  a picture, `null`. The resource `ai_core::display::SceneImage` exists while 3D is drawn apart from the picture; `display::picture_size`.
+- The outlines of `looks` and the gizmos (lines and label text) are drawn in the pixels of the 3D picture, so at 0.5 they are twice as thick on screen, and at 2 they are
+  twice as thin; this is not compensated for.
+- Tests: `shards::render_scale` (10: image size, window, the scale system, return to 1.0, other cameras' images, cameras without 3D),
+  `ai_core::shot` (labels in picture pixels), under `#[ignore]` in the sandbox `render_scale_draws_the_world_at_a_fraction_of_the_picture_and_shows_it_over_all_of_it`
+  (on a GPU: a 640x360 image with a 1280x720 window, the picture whole and like the one at 1.0, the `e5` label within a pixel, back to 1.0).
 
-**Команды отрисовки на кадр: `draws` в `frames` и в бюджетах `perf` (E10.4; `shards`)** — только картинка, реплеи и симуляция те же:
+**Draw commands per frame: `draws` in `frames` and in the `perf` budgets (E10.4; `shards`)** — picture only: replays and the simulation are the same:
 
-- Bevy 0.20 счётчика вызовов отрисовки не ведёт и не открывает: поле `batch_sets` у `BinnedRenderPhase` закрыто, а wgpu своих
-  счётчиков не даёт. `shards::draws` считает то, что фазы отдают проходу, в мире рендера после пакетирования (после
-  `PrepareBindGroups`, до графа рендера), по всем видам кадра, камерам и картам теней суммой: у бинных фаз (`Opaque3d`,
-  `AlphaMask3d`, проходы глубины и отложенный, `Shadow`, 2D) — набор мультиотрисовки, пакет (`batchable_meshes`: один меш и один
-  материал — один пакет) и каждая неукладываемая сущность; у сортируемых (`Transparent3d`, `Transmissive3d`, `TransparentUi`,
-  `Transparent2d`; в них гизмо и UI) — элемент, с которого начинается пакет (цикл `SortedRenderPhase::render`).
-  Мультиотрисовка — одна команда, сколько бы мешей она ни рисовала внутри. Не считаются полноэкранные проходы, не являющиеся
-  элементами фаз (апскейл, тонмаппинг, bloom), вычисления и копии; без предобработки на GPU (WebGL) числа нет (`null`).
-- `frames` в `ai/status` получил `draws` (среднее за 600 кадров) и `draws_max`; строка автотеста — `75 draws`; у `perf` новый
-  бюджет `draws` (команд на кадр в среднем, не больше; строка `-` там, где числа нет). Команды едут с кадром из мира рендера, как
-  его время, и ждать отчёта GPU не нужно. Эталонная сцена: 75 команд на 1395 рисуемых мешей (на арене песочницы 57, на
-  `render_scale` 0.5 — 62). Поле `draws` не попадает в JSON определения, пока его не задали: хэш контента (его сверяют реплеи)
-  считается по этому JSON, и определения без бюджета `draws`, как `reference.perf.ron` и `valley.perf.ron`, сохраняют прежний
-  хэш; бюджет в эталонную сцену (150) добавлен при следующей перезаписи эталонных реплеев (ниже, `reference96`).
-- Тесты: `frames` (команды едут со своим кадром, GPU с закрытыми пакетами), `bench` (вердикт и строка `draws`, неназванный бюджет не меняет JSON определения), под `#[ignore]` в
-  песочнице `draws_follow_how_bevy_batches_not_how_many_meshes_are_drawn` (на GPU: сорок кубов с сорока материалами одного
-  пайплайна не добавляют команд, четыре пайплайна добавляют, но не по команде на меш).
+- Bevy 0.20 neither keeps nor exposes a draw-call counter: the `batch_sets` field of `BinnedRenderPhase` is private, and wgpu gives no
+  counters of its own. `shards::draws` counts what the phases hand to the pass, in the render world after batching (after
+  `PrepareBindGroups`, before the render graph), summed over all frame kinds, cameras and shadow maps. For binned phases (`Opaque3d`,
+  `AlphaMask3d`, the depth and deferred passes, `Shadow`, 2D): a multi-draw set, a batch (`batchable_meshes`: one mesh and one
+  material is one batch), and each entity that cannot be batched. For sorted phases (`Transparent3d`, `Transmissive3d`, `TransparentUi`,
+  `Transparent2d`; they hold the gizmos and the UI): the item that starts a batch (the `SortedRenderPhase::render` loop).
+  A multi-draw is one command, however many meshes it draws inside. Full-screen passes that are not
+  phase items (upscaling, tonemapping, bloom), compute work and copies are not counted. Without GPU preprocessing (WebGL) there is no number (`null`).
+- `frames` in `ai/status` got `draws` (the average over 600 frames) and `draws_max`; the autotest line is `75 draws`; `perf` has a new
+  budget `draws` (commands per frame on average, at most; the line is `-` where there is no number). The commands come with the frame from the render world, as
+  its time does, and there is no need to wait for a GPU report. The reference scene: 75 commands for 1395 drawn meshes (on the sandbox arena 57, at
+  `render_scale` 0.5 — 62). The `draws` field does not go into a definition's JSON until it is set: the content hash (which the replays check)
+  is computed from that JSON, and definitions without a `draws` budget, such as `reference.perf.ron` and `valley.perf.ron`, keep their old hash;
+  the budget for the reference scene (150) is added at the next re-recording of the reference replays (below, `reference96`).
+- Tests: `frames` (commands travel with their frame, the GPU with the batches closed), `bench` (the verdict and the `draws` line; an unnamed budget does not change the definition's JSON), under `#[ignore]` in
+  the sandbox `draws_follow_how_bevy_batches_not_how_many_meshes_are_drawn` (on a GPU: forty cubes with forty materials of one
+  pipeline add no commands; four pipelines add some, but not one command per mesh).
 
-**Широкая фаза физики (E2.1, `shards_motion`)** — те же ответы в том же порядке, реплеи те же:
+**Broad phase of the physics (E2.1, `shards_motion`)** — the same answers in the same order, and the same replays:
 
-- Запросы `PhysicsWorld` (`raycast`, `shapecast`, ход и зонд земли контроллера, `overlaps`, `penetrations`, `closer_than`,
-  `volumes_at`, объёмы под капсулой) больше не перебирают все коллайдеры. `physics/broad.rs` — сетка по земле (x, z) в четыре
-  уровня, клетки 2, 16, 128 и 1024 м: коллайдер лежит в клетках своего AABB на первом уровне не уже его (как правило, в
-  четырёх), шире 1024 м — в списке, который читает каждый запрос; луч читает клетки своего отрезка кусками не шире клетки по
-  земле, с запасом шире округления проверки «луч — коробка». Найденное проверяется по порядку `ColliderId` теми же проверками,
-  что раньше шли по всем, поэтому ответы и их порядок — ответы перебора. Меньше 32 коллайдеров, запрос размером с мир, луч
-  через весь регион и запрос не конечный идут перебором. `PhysicsWorld` по-прежнему кэш из ECS: в снапшот, реплей и хэш ничего не
-  добавилось; тело, которое ходит в своих клетках, сетке ничего не стоит.
-- Замер в релизе (`broad_phase_timing`, `#[ignore]`): 2644 коллайдера на 8×8 тайлах по 96 м — восемь запросов тела 16 мкс
-  вместо 50 (`overlaps` в 17 раз, лучи вниз в 15, выталкивание в 9, шаг в 4); 212 коллайдеров на тайлах по 16 м — как
-  перебор. Регион полного размера (`reference96`) грузится за 0.6 с вместо 3.9, тик — 0.5 мс вместо 0.9.
-- Тесты: на случайных мирах из фиксированного зерна (от 40 до 2500 коллайдеров: от камешков до плит в 4 км, повёрнутые, со
-  смещением, объёмы, слои, движущиеся тела) каждый запрос через сетку отвечает так же, как перебор всех, и множество, и
-  порядок; после движений, удалений, новых id и новых коллайдеров сетка держит каждый живой коллайдер ровно в его клетках;
-  огромные, длинные и далёкие коллайдеры и коробки на краях клеток; часть большого мира. Эталонные реплеи песочницы и
-  шаблона, записанные с широкой фазой до правок контента, совпали с прежними байт в байт.
+- The `PhysicsWorld` queries (`raycast`, `shapecast`, the controller's move and ground probe, `overlaps`, `penetrations`, `closer_than`,
+  `volumes_at`, volumes under the capsule) no longer scan all colliders. `physics/broad.rs` is a grid on the ground plane (x, z) in four
+  levels, with cells of 2, 16, 128 and 1024 m: a collider is put in the cells of its AABB on the first level whose cells are not smaller than it (as a rule, in
+  four cells). Anything wider than 1024 m goes into a list that every query reads. A ray reads the cells of its segment in pieces no wider
+  than a ground cell, with a margin wider than the rounding of the ray-box test. What is found is checked in `ColliderId` order with the same checks
+  that used to run over all of them, so the answers and their order are those of the full scan. Below 32 colliders, a query the size of the world, a ray
+  across the whole region, and a query that is not finite, use the full scan. `PhysicsWorld` is still a cache from the ECS: nothing was added to the snapshot,
+  the replay or the hash; a body that moves within its own cells costs the grid nothing.
+- Timing in release (`broad_phase_timing`, `#[ignore]`): 2644 colliders on 8×8 tiles of 96 m — eight body queries take 16 µs
+  instead of 50 (`overlaps` 17 times faster, downward rays 15 times, pushing out 9 times, stepping 4 times); 212 colliders on tiles of 16 m — as
+  the full scan. The full-size region (`reference96`) loads in 0.6 s instead of 3.9, and a tick takes 0.5 ms instead of 0.9.
+- Tests: on random worlds from a fixed seed (from 40 to 2500 colliders: from pebbles to 4 km slabs, rotated, offset, with volumes, layers and moving bodies), every query through the grid answers the same as the full scan, both the set and the order;
+  after moves, removals, new ids and new colliders, the grid holds each live collider in exactly its cells;
+  huge, long and distant colliders, and boxes on cell edges; part of a large world. The sandbox's and
+  the template's reference replays, recorded with the broad phase before the content edits, matched the previous ones byte for byte.
 
-**Регион полного размера и его автотест: `reference96` (E5.7, E10.4; `shards_world`, `shards_npc`, `shards`, песочница)**:
+**The full-size region and its autotest: `reference96` (E5.7, E10.4; `shards_world`, `shards_npc`, `shards`, sandbox)**:
 
-- `TileDef::tile_size` (`shards_world`): под клетки какого размера сделан тайл. «Все тайлы» региона (пустой `tiles`) — тайлы
-  под его клетки (без поля или того же размера); регион, который называет тайл под другие клетки (по id, `#тегу` или в
-  `fixed`), — ошибка контента с обоими размерами. Без поля JSON определения прежний, и хэш контента регионов не сдвигается:
-  манифесты дебрей, луга и долины те же.
-- Бюджет `nav_bake_s` у `perf` (`shards`): секунды на запекание навигации всех тайлов региона под все классы тел, как
-  `--bake-nav`, без записи файлов (`shards_npc::bake_region`); меряется после загрузки региона и только если назван; строка
-  `nav bake 0.80 s, 8 tiles x body classes (at most 4.0 s)`, а `--perf` пишет его рядом с загрузкой. Как `draws`, в JSON
-  определения не попадает, пока не задан; без региона или не больше нуля — ошибка контента.
-- Песочница: регион `expanse` — 8×8 тайлов по 96 м, как в ТЗ (768 м на сторону), из четырёх своих тайлов (ворота посередине,
-  луг с тридцатью валунами, роща из 36 колонн, двор в стенах; около 1900 коллайдеров), три лагеря, своя растительность в
-  двадцать раз реже, чем в дебрях (она рассыпается по всем тайлам при загрузке: густота дебрей дала бы около 470 000
-  сущностей-мешей); растительность дебрей теперь только в дебрях (`regions: ["wilds"]`). Навсетка четырёх тайлов запечена под оба
-  класса (8 файлов по 1.4 МБ, в git около 0.1 МБ). Окно песочницы рисует и коллайдеры-шары (низкополигональный шар, вид `stone`).
-- `perf/reference96.perf.ron`: простор с зерном 42, игрок у ворот и двенадцать скелетов, 15 врагов, 1080p; бюджеты тика, кадра,
-  загрузки региона (3 с), запекания (4 с), сущностей, мешей, треугольников, команд. Релиз на RTX 5080: 352 кадра в секунду,
-  2.61 мс на кадр, худший 9 мс, тик 0.63 мс, загрузка 0.61 с, запекание 0.80 с, 62 команды, 34 976 сущностей; все 11 бюджетов.
-  Стриминг геометрии тайлов для физики по расстоянию не делали: он не нужен при таких числах (README, «Активные зоны и стриминг»).
-- В `reference.perf.ron` бюджет `draws` — 150 (измерено 76). Хэш контента песочницы сдвинулся, эталонные реплеи песочницы
-  записаны заново (Windows): разница — только хэш контента и хэши проверок и состояния, посчитанные по нему. Контент шаблона не
-  менялся, его реплеи те же байт в байт. `--worldgen-report wilds --seeds 1..1000` — как прежде, `expanse` — 1000/1000.
-- Тесты: `bench` (вердикт `nav_bake_s`, неназванный бюджет не меняет JSON, ошибки определения), `shards_world` (тайл под
-  другие клетки не входит в «все тайлы», ошибка, где назван), песочница (`reference96` без окна: загрузка, 8 запеканий, 15
-  врагов, 12 в бою; число определений контента — 134 в 40 файлах; сценарий `scatter` — 6 определений).
+- `TileDef::tile_size` (`shards_world`): the cell size that a tile is made for. A region's "all tiles" (an empty `tiles`) means the tiles
+  for its cells (with no field, or of the same size). A region that names a tile for other cells (by id, `#tag` or in
+  `fixed`) is a content error that reports both sizes. Without the field, the definition's JSON stays as it was, and the content hash of the regions does not shift:
+  the manifests of the wilds, the meadow and the valley are the same.
+- The `nav_bake_s` budget of `perf` (`shards`): seconds to bake the navigation of all the region's tiles for all body classes, like
+  `--bake-nav`, without writing files (`shards_npc::bake_region`). It is measured after the region loads, and only if it is set. The result line reads
+  `nav bake 0.80 s, 8 tiles x body classes (at most 4.0 s)`. `--perf` writes it next to the load. Like `draws`, it stays out of the definition's JSON
+  until it is set. Without a region, or with a value not above zero, it is a content error.
+- The sandbox: the `expanse` region is 8×8 tiles of 96 m each, as in the spec (768 m on a side). It is built from four of its own tiles (a gate in the middle,
+  a meadow with thirty boulders, a grove of 36 columns, a walled courtyard; about 1900 colliders), three camps, and its own foliage, twenty times
+  sparser than in the wilds (it is scattered over all the tiles on load; the wilds' density would give about 470 000
+  mesh entities). The wilds' foliage is now only in the wilds (`regions: ["wilds"]`). The navmesh of the four tiles is baked for both
+  classes (8 files of 1.4 MB, about 0.1 MB in git). The sandbox window also draws the collider spheres (a low-poly sphere, look `stone`).
+- `perf/reference96.perf.ron`: the expanse with seed 42, the player at the gate, twelve skeletons, 15 enemies, 1080p. Budgets for tick, frame,
+  region load (3 s), baking (4 s), entities, meshes, triangles, draw calls. A release build on RTX 5080: 352 frames per second,
+  2.61 ms per frame, worst 9 ms, tick 0.63 ms, load 0.61 s, baking 0.80 s, 62 draw calls, 34 976 entities; all 11 budgets.
+  We did not add streaming of tile geometry for physics by distance. At these numbers it is not needed (the README, "Active zones and streaming").
+- In `reference.perf.ron` the `draws` budget is 150 (measured 76). The sandbox's content hash shifted, and its reference replays were
+  recorded again (Windows). The difference is only the content hash and the check and state hashes computed from it. The template's content did not
+  change, and its replays are the same byte for byte. `--worldgen-report wilds --seeds 1..1000` is as before, `expanse` is 1000/1000.
+- Tests: `bench` (the verdict for `nav_bake_s`; a budget that is not set does not change the JSON; definition errors), `shards_world` (a tile for
+  other cells is not part of "all tiles"; an error where it is named), the sandbox (`reference96` without a window: load, 8 bakes, 15
+  enemies, 12 in combat; the number of content definitions is 134 in 40 files; the `scatter` scenario has 6 definitions).
 
-**Защита сессии кооператива (E7, E8.7; `shards_net`, `shards_content`, `shards_level`, `shards_save`, `shards::coop`)**:
+**Protecting a co-op session (E7, E8.7; `shards_net`, `shards_content`, `shards_level`, `shards_save`, `shards::coop`)**:
 
-- Вход начинается со стука, после которого хост ничего не хранит (`shards_net::cookie`): на стук (`wire::knock`, 64 байта)
-  хост отвечает cookie (`wire::challenge`, 20 байт) — SipHash-2-4 под случайным ключом хоста от адреса, сессии клиента, версии
-  протокола канала и окна в 30 с. Пира (запись в таблице чужаков, канал) заводит только датаграмма с сообщением и с cookie,
-  выданным этому адресу и этой сессии (живёт 30–60 с); клиент несёт его в полях подтверждений заголовка, пока не услышит хоста
-  (ни байта сверху), и стучится снова каждые 500 мс. Подделанный адрес больше не занимает таблицу; её пределы и бюджеты
-  разбора прежние. `Transport::reply` — ответ чужаку, который никого не связывает (UDP: адрес остаётся неизвестным
-  отправителем; `Conditioned` не заводит условий пира). `net_status` хоста: `strangers` — стуки, отброшенное без cookie, игры
-  прошлой сборки. Стук без ответа дольше `timeout_secs` кончает вход: `no answer from the host … to the hello in 10 s: is it
+- Joining starts with a knock, after which the host stores nothing (`shards_net::cookie`). On a knock (`wire::knock`, 64 bytes),
+  the host answers with a cookie (`wire::challenge`, 20 bytes): SipHash-2-4 under the host's random key, over the client's address and session, the channel's protocol version and a 30 s window. Only a datagram with a message and with a cookie
+  issued to this address and this session creates a peer (an entry in the strangers table, a channel); the cookie lives 30–60 s. The client carries it in the acknowledgement fields of its header until it hears any byte from the host,
+  and knocks again every 500 ms. A forged address no longer takes a slot in the table; its limits and parsing budgets
+  are as before. `Transport::reply` sends a reply to a stranger and sets up no peer (over UDP the address stays an unknown
+  sender; `Conditioned` does not create conditions for the peer). The host's `net_status`: `strangers` covers knocks, the things dropped without a cookie, and games
+  of the previous build. A knock with no answer for longer than `timeout_secs` ends the join: `no answer from the host … to the hello in 10 s: is it
   running there, and of this build?`.
-- Персонаж больше 64 КБ (до 1 МБ, `MAX_CHARACTER_BYTES`) идёт после `Hello` частями (`Msg::CharacterPart`, по 32 КБ JSON):
-  `Hello` называет число частей и байт, хост отказывает в слишком большом сразу, держит за пиром место игрока, пока части
-  идут (`PeerStage::Character`), собирает их по порядку и с пределами; не дошедший за срок входа — отказ с числом частей.
-- Клиент сохраняет своего персонажа через хоста: `save_game what=character [slot=…]` шлёт `Msg::CharacterAsk`, хост снимает
-  тело, которым игрок у него играет, и отвечает `CharacterSave` (причина `save_game`) или `CharacterNotSent` с причиной, не
-  чаще раза в секунду на игрока; клиент пишет названный слот (он сразу становится текущим). Запрос несёт номер, ответ
-  возвращает его: ответ ложится в слот своего запроса, даже если следующий уже сделал текущим другой. `shards_net::client::ask_character`,
+- A character over 64 KB (up to 1 MB, `MAX_CHARACTER_BYTES`) is sent in parts after `Hello` (`Msg::CharacterPart`, 32 KB of JSON each).
+  `Hello` names the number of parts and the number of bytes. The host refuses a character that is too large straight away, and it holds the player's place for the peer while the parts
+  arrive (`PeerStage::Character`). It assembles them in order and within the limits. A character that does not arrive in time for the join is refused, and the refusal gives the number of parts.
+- A client saves its own character through the host: `save_game what=character [slot=…]` sends `Msg::CharacterAsk`. The host captures the body
+  that the player controls on the host, and answers with `CharacterSave` (reason `save_game`) or `CharacterNotSent` with a reason, at most once a second per player. The client writes the named slot (it becomes the current one at once). The request carries a number, and the answer echoes it: the answer goes to the slot of its own request, even if a later request has already made another slot current. `shards_net::client::ask_character`,
   `SaveReport::asked`.
-- Контент не меняется, пока другие машины на нём играют: `ContentGuards` и `add_content_guard` (`shards_content`), `content_held`.
-  Сессия держит контент на хосте с клиентом дальше `Hello` и на клиенте в сессии: `content_reload`, `content_apply` и
-  `level_reload` отказывают (`refused: a content reload during a co-op session would desync its 2 clients; …`), правка с
-  диска ждёт и применяется, когда клиентов не осталось или сессия кончилась (журнал говорит один раз); из файла уровня,
-  чья правка ждёт, ничего не ставится (`spawn_level`, тайл региона): сервер ассетов уже прочёл новый, `shards_level::held_change`.
-- Тесты: `shards_net` (+15: SipHash на эталонных векторах и против std, cookie — адрес, сессия, срок, подделка; формат стука,
-  вызова, cookie и протокола 1; ответ чужаку по UDP; стук без следа на хосте, cookie чужого адреса и сессии, выдуманный и
-  просроченный, таблица чужаков с cookie, прошлая сборка на её протоколе и предел ответов, персонаж частями), `shards_content`
-  (+1: правка ждёт), `shards_level` (+1: файл со ждущей правкой не ставится), `shards_save` (текст отчёта «попросил у хоста»), песочница (`net_guards.rs` +5: чужак без cookie, стук
-  сотни адресов, прошлая сборка на стенде, стук без ответа, запрет правки контента на хосте и клиенте; `net_coop.rs` +4:
-  предел сообщения до входа для `Hello` и части, персонаж в 1 МБ частями по 150 мс и 2 % и отказ на байт больше, сохранение
-  своего персонажа через хоста и предел раза в секунду, ответ в слот своего запроса, отказ вне сессии; `net.rs`: по UDP клиент стучится), сценарий стенда
-  `stand/session_guards.scenario`. Эталонные реплеи не менялись: сеть в одиночной игре ничего не делает, контент тот же.
+- Content does not change while other machines are playing on it: `ContentGuards` and `add_content_guard` (`shards_content`), `content_held`.
+  A session holds the content on the host from a client's `Hello` on, and on the client while it is in the session. `content_reload`, `content_apply` and
+  `level_reload` refuse (`refused: a content reload during a co-op session would desync its 2 clients; …`). An edit from disk waits and is applied when no clients are left or the session has ended (the journal says so once). Nothing is spawned from a level file whose edit is waiting (`spawn_level`, a region's tile): the asset server has already read the new version, `shards_level::held_change`.
+- Tests: `shards_net` (+15: SipHash on reference vectors and against std; the cookie: address, session, lifetime, forgery; the format of the knock,
+  the challenge, the cookie and protocol 1; a reply to a stranger over UDP; a knock that leaves no trace on the host; the cookie of another address or session, a made-up one and
+  an expired one; the strangers table with a cookie; the previous build on its protocol and the limit on replies; a character in parts), `shards_content`
+  (+1: an edit waits), `shards_level` (+1: a file with a waiting edit is not spawned), `shards_save` (the text of the report "asked the host"), the sandbox (`net_guards.rs` +5: a stranger without a cookie; a knock from hundreds of addresses; the previous build on the stand; a knock with no answer; a ban on editing content on the host and the client; `net_coop.rs` +4: the message limit before joining, for `Hello` and a part; a 1 MB character in parts at 150 ms and 2 %, and a refusal at one byte more; saving one's own character through the host and the once-a-second limit; the answer goes to the slot of its own request; a refusal outside a session; `net.rs`: the client knocks over UDP), the stand scenario
+  `stand/session_guards.scenario`. The reference replays did not change: the network does nothing in single-player, and the content is the same.
 
-**Хвост интерфейса: крестовина, экран клавиш, главное меню, картинка загрузки, язык системы, шрифт с кириллицей (E9.2–4,
-E2.4, E1.3; `shards_ui`, `shards_motion`, `shards_core`, `shards_save`, `shards_locale`, `shards`, песочница, шаблон)**:
+**The rest of the interface: the D-pad, the key bindings screen, the main menu, the loading picture, the system language, the font with Cyrillic (E9.2–4,
+E2.4, E1.3; `shards_ui`, `shards_motion`, `shards_core`, `shards_save`, `shards_locale`, `shards`, the sandbox, the template)**:
 
-- Крестовина геймпада ходит по меню: привязка `Binding::Buttons2D { up, down, left, right }` (четыре кнопки как ось 2D, подпись
-  `Pad D-Pad`), стандартный `navigate` контекста `menu` читает её рядом со стрелками, WASD и левым стиком, с тем же повтором.
-- Экран клавиш: виджет `Binding` (`context`, `action`, `slot`, `prompt`, `taken`) показывает входы действия так, как их читает
-  игрок (`Binding::label`: `Space · Pad South`, `Left Shift`, `Mouse Right`), источник `input.bindings` даёт их из настроек
-  `controls`. Подтверждённая строка ждёт следующую клавишу, кнопку мыши или кнопку геймпада, и меню отдаёт её вызовом `ui_set`
-  от агента `input` (реплей записывает вызов); Escape и Start отменяют ожидание, не закрывая экран. Вход, который читает другое
-  действие контекста, отклоняется, и строка называет действие (`E is already used by Interact`, по-русски из `taken`);
-  `value=default` возвращает умолчания. В песочнице и шаблоне на странице управления — панель «Клавиши и кнопки» на 11 действий.
-- Главное меню: игра с `after_loading: EngineState::MainMenu` и экраном `main_menu: true` показывает его после загрузки там, где
-  может быть человек (`EngineConfig::menu`, `MenuLaunch::Auto`: окно или `--offscreen`, без сессии и названных сохранений);
-  без окна, в тестах, реплеях и проверках игра идёт прямо в мир с теми же id, `--menu` показывает меню и без окна, `--no-menu`
-  пропускает его и с окном. В меню время стоит; инструмент игрока `new_game` (и `start_game` в коде) начинает игру внутри
-  вызова, `continue_game` — с самого нового сохранения каждого вида (слот, который не читается, пропускается; без сохранений —
-  отказ с причиной); `shards::save::can_continue` — есть ли что продолжать (подсказка шаблона под «Продолжить»). Если в меню мир сдвинули (шаг разработчика, спавн), запись реплея начинается заново с мира, на котором
-  началась игра. Клавиша `pause` открывает `pause` только в игре. Виджет `Image` (`path`, `label`, `width`, `height`) рисует
-  картинку из папки ассетов; проверка контента называет файл, которого нет.
-- Картинка загрузки: `EngineConfig::loading_image` на всё окно поверх всех экранов, пока движок в `Loading` или `RegionLoading`
-  (feature `render`); `--check-content` называет картинку, которой нет. Смена региона внутри одного вызова кадра не рисует, и
-  картинки при ней не видно. Шаблон: главное меню (Новая игра, Продолжить, Настройки, Выход) на английском и русском и картинка
-  `assets/ui/loading.png` (1280×720, 51 КБ), которую рисует `cargo run -p sandbox --example make_art` по зерну.
-- Язык системы при первом запуске: если настройки хранятся на диске и языка в них нет, игра берёт первый язык системы, который
-  у неё есть (тот же тег, иначе тот же язык: `ru-RU` → `ru`, `pt-PT` → `pt-BR`), и сохраняет его в настройках
-  (`sys-locale =0.3.2`: Windows — языки интерфейса пользователя, Linux и macOS — `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG`).
-  Журнал: `locale: the system's language is ru-RU; playing ru (kept in the settings)`. Тесты, агент без окна и `--no-settings`
-  настроек не хранят и играют на языке игры. `shards_locale::SystemLanguages` подменяет языки системы в тестах.
-- Шрифт движка по умолчанию с кириллицей: `shards::ui::DEFAULT_FONT` (Fira Sans Regular, OFL 1.1, лицензия рядом) заменяет
-  шрифт Bevy (только ASCII), поэтому тема без `font` рисует русский, `·` и `…`. Свои копии шрифта песочницы и шаблона и их
-  темы ради шрифта удалены.
-- Тесты: `shards_ui` (+18: экран клавиш — `bindings.rs` 7, главное меню и картинка загрузки — `main_menu.rs` 7, крестовина и
-  стик, русский текст шрифтом движка и строка клавиши в окне, разбор `Binding` и главного меню), `shards_core` (+6: где меню
-  показывается, время в нём, `new_game`, перезапуск записи), `shards_save` (+4: `continue_game`, подсказка под «Продолжить» при испорченных копиях), `ai_core` (+1: буквы шрифта движка), `shards_locale` (+5: язык
-  системы), `shards_motion` (+1: подписи входов), шаблон (+7: путь через меню — та же игра и тот же реплей, «Продолжить»,
-  картинка, клавиши на странице управления), сценарий песочницы `remap.scenario`. Хэш контента песочницы и шаблона сменился
-  (экраны, тексты, тема ради шрифта): семь эталонных реплеев песочницы и два шаблона записаны заново на Windows 11, в них
-  изменились только `content`, `state_hash` и `hash`. Песочница: `ok: 133 definitions in 39 files` (было 134 в 40).
+- The gamepad D-pad moves through the menu: the binding `Binding::Buttons2D { up, down, left, right }` (four buttons as a 2D axis, label `Pad D-Pad`).
+  The standard `navigate` of the `menu` context reads it next to the arrows, WASD and the left stick, with the same repeat.
+- Key bindings screen: the `Binding` widget (`context`, `action`, `slot`, `prompt`, `taken`) shows an action's inputs the way the player reads them
+  (`Binding::label`: `Space · Pad South`, `Left Shift`, `Mouse Right`). The source `input.bindings` gives them from the `controls` settings.
+  A row that is confirmed waits for the next key, mouse button or gamepad button, and the menu passes it on with a `ui_set` call
+  from the `input` agent (the replay records the call). Escape and Start cancel the wait without closing the screen. An input that another action of the context reads is rejected, and the row names that action (`E is already used by Interact`; in Russian, the text comes from `taken`);
+  `value=default` restores the defaults. In the sandbox and the template, the controls page has a "Keys and buttons" panel for 11 actions.
+- Main menu: a game with `after_loading: EngineState::MainMenu` and a screen `main_menu: true` shows it after loading, where
+  a person can be (`EngineConfig::menu`, `MenuLaunch::Auto`: a window or `--offscreen`, with no session and no named saves).
+  Without a window, in tests, replays and checks, the game goes straight to the world, with the same ids. `--menu` shows the menu even without a window, and `--no-menu`
+  skips it, even with a window. Time stands still in the menu. The player tool `new_game` (and `start_game` in code) starts the game inside
+  the call. `continue_game` continues from the newest save of each kind (a slot that cannot be read is skipped; with no saves, it is refused with a reason).
+  `shards::save::can_continue` checks whether there is anything to continue (the template's hint under "Continue"). If the world is changed in the menu (a developer step, a spawn), the replay recording starts again from the world the game
+  started with. The `pause` key opens `pause` only in the game. The `Image` widget (`path`, `label`, `width`, `height`) draws
+  a picture from the assets folder. The content check names a file that does not exist.
+- Loading picture: `EngineConfig::loading_image` covers the whole window, above all the screens, while the engine is in `Loading` or `RegionLoading`
+  (feature `render`). `--check-content` names a picture that is missing. A region change inside one frame call draws no frames, so the loading picture is not visible during it. The template has the main menu (New game, Continue, Settings, Exit) in English and Russian, and the picture
+  `assets/ui/loading.png` (1280×720, 51 KB), which `cargo run -p sandbox --example make_art` draws from the seed.
+- System language on first launch: if the settings are stored on disk and have no language in them, the game takes the first system language that
+  it has (the same tag, otherwise the same language: `ru-RU` → `ru`, `pt-PT` → `pt-BR`), and saves it in the settings
+  (`sys-locale =0.3.2`: on Windows, the user's interface languages; on Linux and macOS, `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG`).
+  Journal: `locale: the system's language is ru-RU; playing ru (kept in the settings)`. Tests, a run by an agent without a window and `--no-settings`
+  do not keep settings and play in the game's language. `shards_locale::SystemLanguages` replaces the system languages in tests.
+- The engine's default font has Cyrillic: `shards::ui::DEFAULT_FONT` (Fira Sans Regular, OFL 1.1, licence next to it) replaces
+  Bevy's font (ASCII only), so a theme without `font` draws Russian, `·` and `…`. The font copies in the sandbox and the template, and their themes made for the font, are removed.
+- Tests: `shards_ui` (+18: the key bindings screen — `bindings.rs` 7; the main menu and the loading picture — `main_menu.rs` 7; the D-pad and the stick, Russian text in the engine's font and the key row in the window, parsing `Binding` and the main menu), `shards_core` (+6: where the menu is shown, time in it, `new_game`, restarting the recording), `shards_save` (+4: `continue_game`, the hint under "Continue" with damaged copies), `ai_core` (+1: the letters of the engine's font), `shards_locale` (+5: the system language),
+  `shards_motion` (+1: input labels), the template (+7: the path through the menu — the same game and the same replay, "Continue",
+  the picture, the keys on the controls page), the sandbox scenario `remap.scenario`. The content hash of the sandbox and the template changed
+  (screens, texts, the theme made for the font): seven reference replays of the sandbox and two of the template were recorded again on Windows 11; in them
+  only `content`, `state_hash` and `hash` changed. Sandbox: `ok: 133 definitions in 39 files` (was 134 in 40).
 
-**Мелочи движка и контента (E1.1, E4.1, E4.2, E4.4; `shards`, `shards_core`, `shards_content`, `shards_level`)**:
+**Small engine and content changes (E1.1, E4.1, E4.2, E4.4; `shards`, `shards_core`, `shards_content`, `shards_level`)**:
 
-- Игра выключает модули движка: `EngineConfig::without` (`--without audio,scatter`) называет их, как `ai/status`
-  (`engine.modules`), и `EnginePlugins` не добавляет их плагинов. Убрать можно 14 модулей (`shards::modules::OPTIONAL_MODULES`:
-  `level`, `world`, `npc`, `net`, `save`, `coop`, `locale`, `ui`, `audio`, `look`, `scatter`, `fx`, `steam`, `dev`), модуль,
-  нужный другому, — только вместе с ним (`ui` нужен `locale`, `steam` — `net`), а соединяющие (`coop`, уровни как тайлы)
-  уходят с любым из своих модулей. `--without net` с `--host`/`--join`/`--stand`, `--without save` с `--character`/`--world`,
-  `--without steam` с флагами Steam и `--without world` с `--worldgen-report` — ошибка с кодом 2. Клиенты стенда по UDP (`--stand-udp`, дочерние процессы) получают
-  `--without` хоста, как его настройку берут клиенты `--stand N`. Тесты: `shards` (+4: `modules` 2, `tests/engine.rs` 2 —
-  движок без каждого модуля и отказ без нужного; разбор `--without` в тесте флагов, `--without` у клиентов стенда в
-  `stand_udp`).
-- Контент (`shards_content`): определение, которое не подошло под свой тип (лишнее или недостающее поле, не то значение), —
-  ошибка само по себе, со строкой и столбцом внутри файла, видом и id; остальные определения файла загружены. Раньше такой
-  файл не давал в базу ничего, и следом шли ложные «unknown action …» из файлов, которые ссылались на его исправные
-  определения. Файл целиком по-прежнему не загружается, только если сломан сам словарь (синтаксис, пустой, повторный или
-  негодный id). Правка файла применяется целиком: пока в нём сломано хоть одно определение, прежняя версия действует для
-  всех его определений. Исправный контент читается как прежде (тот же хэш). Тесты: `shards_content` (+9: `tests/content.rs`
+- The game turns engine modules off: `EngineConfig::without` (`--without audio,scatter`) names them, as `ai/status`
+  (`engine.modules`) does, and `EnginePlugins` does not add their plugins. 14 modules can be removed (`shards::modules::OPTIONAL_MODULES`:
+  `level`, `world`, `npc`, `net`, `save`, `coop`, `locale`, `ui`, `audio`, `look`, `scatter`, `fx`, `steam`, `dev`). A module that another one needs can be removed only together with it (`ui` needs `locale`, `steam` needs `net`), and the connecting ones (`coop`, levels as tiles) are removed along with any one of their modules. `--without net` with `--host`/`--join`/`--stand`, `--without save` with `--character`/`--world`,
+  `--without steam` with the Steam flags, and `--without world` with `--worldgen-report` are errors with exit code 2. The stand's clients over UDP (`--stand-udp`, child processes) get the host's `--without`, as the clients of `--stand N` take its setting. Tests: `shards` (+4: `modules` 2, `tests/engine.rs` 2 — the engine without each module, and a refusal without the needed one; parsing `--without` in the flags test, `--without` for the stand's clients in `stand_udp`).
+- Content (`shards_content`): a definition that does not fit its type (an extra or missing field, a wrong value) is an error on its own, with the line and column inside the file, the kind and the id. The other definitions of the file are loaded. Before, such
+  a file gave nothing to the database, and false "unknown action …" errors followed from files that referred to its valid
+  definitions. A whole file still does not load only if the file's top-level map is broken (syntax, empty, a repeated or
+  invalid id). An edit to a file is applied as a whole: while even one definition in it is broken, the previous version applies to
+  all of its definitions. Valid content is read as before (the same hash). Tests: `shards_content` (+9: `tests/content.rs`
   7, `db.rs` 2).
-- `content check` читает файлы уровней тайлов так же, как файлы `level` (E4.4): компонент или префаб, которого нет,
-  `navlink` в никуда, свойство, которое не разбирается, и файл, который не читается, — ошибка тайла с именем файла и узла
+- `content check` reads the level files of tiles the same way as the `level` files (E4.4): a component or a prefab that does not exist,
+  a `navlink` that leads nowhere, a property that does not parse, and a file that cannot be read are errors of the tile, with the file name and the node
   (``tile `ruin`: geometry: tiles/ruin.gltf: node `Ruin/Column`: unknown component `Helth` (did you mean `Health`?)``).
-  Раньше проверялось только, что файл есть, а узлы — если файл назван ещё и определением `level`; такой файл и теперь
-  сообщает о себе один раз, через `level` (а без реестра типов, когда `level` файла не читает, — через тайл). Тесты:
+  Before, only the file's existence was checked, and the nodes only if the file was also named by a `level` definition. Such a file still
+  reports itself once: through `level`, or, with no type registry and `level` unable to read the file, through the tile. Tests:
   `shards_world` (+4, `tests/world/levels.rs`), `shards` (+1, `tile_levels`).
-- Уровни из Blender (E4.2): вариант glTF *Embedded* проверен на экспорте Blender 5.2.2 (в аддоне это настройка *Allow glTF
-  Embedded format*): `outpost_embedded.gltf` читается, ставится и рисуется так же, как `outpost.glb`
-  (`the_glb_and_the_embedded_gltf_read_and_spawn_alike`, `crates/shards/tests/level_render.rs`). `ruin.gltf` песочницы и
-  шаблона теперь экспорт Blender в этом варианте, а не вывод тестового генератора: его собирает `tools/blender/ruin_tile.py`
-  (`blender -b --factory-startup`, повторяется байт в байт), а `the_committed_ruin_is_the_tile_the_spec_describes` сверяет
-  его с описанием тайла (узлы, свойства, мировые трансформы, границы мешей). Геометрия та же: навигация руины запечена
-  заново, сетка проходимости не изменилась, сменился только дайджест исходника. Тесты: `shards_level` (+1). Эталонные
-  реплеи с руиной (`npc_navmesh` и `region` песочницы, `valley` шаблона) записаны заново на Windows 11: изменились только
-  `game.level` (дайджесты файлов уровней), `hash` проверок и `FromLevel` с `AiId` маркеров руины, которые поменялись местами
-  между собой (Blender пишет корневые узлы по имени, а генератор писал их в порядке создания); числа игры прежние.
-- Относительный `BEVY_ASSET_ROOT` (`BEVY_ASSET_ROOT=crates/sandbox target/debug/sandbox`) движок делает абсолютным от рабочей
-  папки, и горячая перезагрузка с ним работает (проверено правкой `player.action.ron` в запущенной игре): README и AGENTS.md
-  больше не требуют абсолютного пути, ограничение в `docs/engine-progress.md` снято.
+- Levels from Blender (E4.2): the glTF *Embedded* variant is checked on a Blender 5.2.2 export (in the add-on this is the setting *Allow glTF
+  Embedded format*): `outpost_embedded.gltf` reads, spawns and draws the same way as `outpost.glb`
+  (`the_glb_and_the_embedded_gltf_read_and_spawn_alike`, `crates/shards/tests/level_render.rs`). The sandbox's `ruin.gltf` and
+  the template's are now Blender exports in this variant, not the output of the test generator: `tools/blender/ruin_tile.py` builds it
+  (`blender -b --factory-startup`; the output is the same byte for byte), and `the_committed_ruin_is_the_tile_the_spec_describes` checks
+  it against the tile's description (nodes, properties, world transforms, mesh bounds). The geometry is the same: the ruin's navigation was baked
+  again, the walkability grid did not change, and only the source's digest changed. Tests: `shards_level` (+1). The reference
+  replays with the ruin (`npc_navmesh` and `region` of the sandbox, `valley` of the template) were recorded again on Windows 11: only
+  `game.level` (the digests of the level files), the `hash` of the checks, and the `FromLevel` with the `AiId`s of the ruin's markers changed, which swapped places
+  with each other (Blender writes the root nodes by name, and the generator wrote them in creation order); the game's numbers are as before.
+- A relative `BEVY_ASSET_ROOT` (`BEVY_ASSET_ROOT=crates/sandbox target/debug/sandbox`) is made absolute by the engine from the working folder, and hot reload works with it (checked by editing `player.action.ron` in a running game). The README and AGENTS.md no longer require an absolute path, and the limitation in `docs/engine-progress.md` is removed.
 
-**Связи навигации в проверке достижимости (E5.3; `shards_world`, `shards`)**:
+**Navigation links in the reachability check (E5.3; `shards_world`, `shards`)**:
 
-- У тайла поле `navlinks`: navlink-маркеры его файла уровня, как их берёт генератор, — имя маркера и группы `links`, откуда
-  и куда он ведёт (`[(name: "drop", from: 0, to: 1)]`). Связь односторонняя, от маркера к `to`, как у навсетки. Правило
-  `reachable` идёт и по ним: точка за обрывом достижима, если со стороны точки появления вниз ведёт navlink, а снизу верх
-  обрыва — нет. Группа `links` без сторон (`[]`) теперь допустима, если в неё ведёт navlink из другой: плато или яма в
-  середине тайла. `RegionGraph` — направленный граф вместо объединения множеств: `reaches(from, to)` — в одну сторону,
-  `connected` — в обе, как раньше.
-- Генерация остаётся чистой функцией зерна, версии и контента: файлов уровней она не открывает. Что `navlinks` тайла
-  совпадают с маркерами файла, проверяет `content check`: navlink в файле, не названный в `navlinks`; названный в `navlinks`,
-  но которого нет в файле; два navlink с одним именем. Это ошибки тайла с именем файла и узла. Проверяется и сам
-  список: группа за последней, пустое или повторное имя, `navlinks` у тайла без файла уровня.
-- Пустые `navlinks` в JSON определения не попадают: хэш контента, манифесты, `region.scenario` и эталонные реплеи прежние.
-  Тайлов с navlink в песочнице и шаблоне нет, поэтому результаты генератора не изменились и `version` регионов прежняя:
-  отчёты `wilds` и `valley` на 1000 зёрен совпадают с прежними строка в строку, кроме времени работы. Тесты: `shards_world` (+6:
-  `tests/world/checks.rs` 3 — связь в одну сторону, плато только по navlink, проверка списка; `tests/world/levels.rs` 3 —
-  сверка с файлом).
+- A tile has a `navlinks` field: the navlink markers of its level file, as the generator takes them. Each gives the marker's name and its `links` group, and where it leads from and to (`[(name: "drop", from: 0, to: 1)]`). A link is one-way, from the marker to `to`, as in the navmesh. The `reachable` rule uses them too: a point beyond a drop is reachable if a navlink leads down from the spawn point's side, and no navlink leads up from below the drop. A `links` group with no sides (`[]`) is now allowed if a navlink from another group leads into it: a plateau or a pit in the middle of a tile. `RegionGraph` is a directed graph instead of a union of sets: `reaches(from, to)` is one way, and `connected` is both ways, as before.
+- Generation is still a pure function of the seed, the version and the content: it does not open level files. `content check` verifies that a tile's `navlinks` match the markers of its file: a navlink in the file that is not in `navlinks`, a navlink named in `navlinks` that the file does not have, and two navlinks with one name are errors of the tile, with the file name and the node. The list itself is checked too: a group past the last one, an empty or repeated name, and `navlinks` on a tile with no level file.
+- Empty `navlinks` stay out of the definition's JSON: the content hash, the manifests, `region.scenario` and the reference replays are unchanged. The sandbox and the template have no tiles with a navlink, so the generator's results did not change and the regions' `version` is unchanged: the `wilds` and `valley` reports for 1000 seeds match the old ones line for line, except for the run time. Tests: `shards_world` (+6: `tests/world/checks.rs` 3 — a one-way link, a plateau only by navlink, the check of the list; `tests/world/levels.rs` 3 — the check against the file).
 
-**Хвост E11: снапшоты и реплеи, агент-игрок, сценарии фазы E, оверлеи (E11.2, E11.4, E11.6, E11.7; `ai_core`,
+**The rest of E11: snapshots and replays, the player agent, phase E scenarios, overlays (E11.2, E11.4, E11.6, E11.7; `ai_core`,
 `shards_content`, `shards_level`, `shards_world`, `shards_npc`, `sandbox`)**:
 
-- Правки контента идут в снапшоте: `ContentEdits` (ресурс снапшота, есть, только пока база отличается от своих файлов)
-  называет определения, которые поставил `content_apply`, а подготовка `content` кладёт их поверх файлов игры, куда снапшот
-  грузят, до проверки `content`. Раньше свежая игра отказывала (`the content files differ`), и реплей со снапшота, снятого
-  после правки, не играл. Правка, которая перестроила геометрию вне сущностей с `AiId` (стены `layout` песочницы),
-  по-прежнему останавливается проверкой `static_colliders`.
-- Уровни, поставленные по id (`spawn_level`, `spawn_level_by_id`), идут в снапшоте: `PlacedLevels` хранит номер экземпляра,
-  место и первый `ColliderId`; загрузка снимает уровни этой игры до региона и ставит уровни снапшота после него под теми же
-  номерами и id коллайдеров, отказ возвращает прежние. `LevelInstances` идут по номерам. Подсказки проверок `levels` и
-  `static_colliders` говорят о том, что в снапшот не входит: об уровне, который игра поставила сама не по id. Снапшот, снятый
-  раньше, пока стоял уровень, поставленный по id, теперь не грузится (уровень снимается, `levels` отказывает): его снимают
-  заново. Файл, которого игра ещё не загружала (тайл или уровень добавила правка), загрузка запрашивает и отказывает до
-  изменений: `… which this game is loading only now: load the snapshot again in a moment`.
-- `ai_core`: `add_snapshot_prepare_after(name, after, covers, fn)` — подготовка снапшота сразу после названной, в каком бы
-  порядке ни добавили модули; `add_playback_hook(fn(&mut World))` — модуль запрашивает то, что понадобится реплею, внутри
-  `replay::play`, до первого кадра и тика, и держит ворота загрузки. `shards_content::defs_ahead::<T>(&Replay)` — определения,
-  которые добавят правки старта реплея и его `content_apply`. Мир и уровни запрашивают по ним файлы тайлов, комнат и уровней.
-- `crash_report` принимает `path` (файл внутри `crashes/`, следующий вызов его заменяет; путь вне папки, `..` и абсолютный —
-  отказ с примером). Отчёт по запросу пишется при любом `crash_replays`: флаг выключает только отчёты, которые игра пишет
-  сама; документация говорила иначе.
-- Оверлеи тайлов и навсетки сначала вычисляют, что рисовать (`TileDraw`, `NavDraw`), и лишь потом отдают это гизмо, как
-  `CombatDraw`; картинка прежняя.
-- Сценарии песочницы: `budgets.scenario` (определения `perf` и отказы с причиной), `display.scenario` (`graphics.render_scale`,
-  ползунок экрана настроек, `shot` без окна), `crash_report.scenario`, `stand/agent_player.scenario` (E11.6: агент со
-  скоупом игрока на клиенте стенда ведёт игрока 1, отказ dev-инструмента с причиной, тело движется у хоста и обоих клиентов).
-  Сценарии модулей фазы E теперь все в CI: вид, растительность, эффекты, бюджеты, отчёт о падении, экран; поиск лобби
-  FakeSteam — через `crates/shards_steam/tests/steam/scenarios.rs`. Без сценария: `shards package` (сборка CLI) и `quit`.
-- Тесты: `shards_world` (+7 оверлей тайлов, +7 `tests/world/levels.rs`: файлы впереди реплея — тайл и уровень, снапшот
-  с правкой, которая добавила тайл, руками и реплеем, уровни по id в свежей игре, со столкновением номеров, в реплее и при
-  отказе), `shards_npc` (+6 оверлей навсетки, фича `render`), `ai_core` (+3: порядок подготовок, хук проигрывания,
-  `crash_report path`), песочница (+4 `snapshots.rs`: правка возвращается и уходит, бой после правки, реплей в свежей игре,
-  отказ на перестроенных стенах).
+- Content edits are included in the snapshot: `ContentEdits` (a snapshot resource, present only while the database differs from its files) names the definitions that `content_apply` set, and the `content` preparation puts them over the game's files, into which the snapshot is loaded, before the `content` check. Before, a fresh game refused (`the content files differ`), and a replay from a snapshot taken after an edit did not play. An edit that rebuilt geometry outside the entities with an `AiId` (the walls of the sandbox's `layout`) still stops at the `static_colliders` check.
+- Levels placed by id (`spawn_level`, `spawn_level_by_id`) are included in the snapshot. `PlacedLevels` keeps the instance number, the place and the first `ColliderId`. Loading removes this game's levels before the region, and puts the snapshot's levels after it, under the same numbers and collider ids. A refusal gives back the old ones. `LevelInstances` are ordered by number. The hints of the `levels` and `static_colliders` checks say what the snapshot does not include: a level that the game placed itself, not by id. A snapshot taken earlier, while a level placed by id was in place, no longer loads (the level is removed, and `levels` refuses): it must be taken again. For a file that the game has not loaded yet (a tile or a level that an edit added), loading asks for it and refuses before any change: `… which this game is loading only now: load the snapshot again in a moment`.
+- `ai_core`: `add_snapshot_prepare_after(name, after, covers, fn)` — a snapshot preparation that runs right after the named one, in whatever order the modules were added. `add_playback_hook(fn(&mut World))` — a module asks for what a replay will need inside `replay::play`, before the first frame and tick, and holds the loading gate. `shards_content::defs_ahead::<T>(&Replay)` — the definitions that the replay's start edits and its `content_apply` will add. The world and the levels request the tile, room and level files from them.
+- `crash_report` takes `path` (a file inside `crashes/`; the next call replaces it. A path outside the folder, `..` and an absolute path are refused, with an example). A report on request is written whatever `crash_replays` is set to: the flag turns off only the reports that the game writes by itself. The documentation said otherwise.
+- The tile and navmesh overlays first work out what to draw (`TileDraw`, `NavDraw`), and only then hand it to the gizmo, as `CombatDraw` does. The picture is the same as before.
+- Sandbox scenarios: `budgets.scenario` (the `perf` definitions and refusals with a reason), `display.scenario` (`graphics.render_scale`, the settings screen's slider, `shot` without a window), `crash_report.scenario`, `stand/agent_player.scenario` (E11.6: an agent with the player scope on a stand client drives player 1, a refusal of a dev tool with a reason, and the body moves on the host and on both clients). The phase E module scenarios are now all in CI: look, foliage, effects, budgets, crash report, screen. The lobby search with FakeSteam is in `crates/shards_steam/tests/steam/scenarios.rs`. Without a scenario: `shards package` (the CLI build) and `quit`.
+- Tests: `shards_world` (+7 the tile overlay, +7 `tests/world/levels.rs`: files ahead of the replay — a tile and a level; a snapshot with an edit that added a tile, by hand and by replay; levels by id in a fresh game, with a number collision, in a replay and on a refusal), `shards_npc` (+6 the navmesh overlay, feature `render`), `ai_core` (+3: the order of the preparations, the playback hook, `crash_report path`), the sandbox (+4 `snapshots.rs`: an edit comes back and goes away, a fight after an edit, a replay in a fresh game, a refusal on rebuilt walls).
 
-### Исправлено
+### Fixed
 
-- Реплей: `content_apply`, который добавляет тайл или уровень с файлом, и `regen` или `spawn_level` в тот же тик (так их
-  проигрывает реплей, без кадра между ними) не находили файл загруженным, и реплей расходился. Теперь реплей запрашивает
-  такие файлы, как только его взвели, и ворота загрузки ждут их.
-- Контент: правка файла, в котором определение выпало без позиции ошибки (его id уже занят другим файлом, у него нет
-  вида JSON), применялась, хотя файл применяется целиком или никак. Теперь её держит любая ошибка файла, а ошибка проверки
-  (битая ссылка) — только новая. Тест `a_file_loaded_with_a_taken_id_applies_no_edit_until_it_is_renamed`.
-- NPC (`shards_npc`): маршрут знает всё тело NPC, а не только радиус. Раньше `NavPaths::find`, `find_path` и `navmesh_path`
-  получали радиус, класс навсетки выбирался по нему (`NavRegion::for_radius`), и NPC шёл телом этого класса: NPC выше класса,
-  в который он влезает по радиусу, получал маршрут под навес или перемычку, под которыми его капсула не проходит, и упирался в
-  них; так же судили его прямую к цели на виду (`plain_sight`) и `nav_path` от NPC. Теперь они берут самый тесный класс,
-  который обслуживает тело NPC (`NavRegion::serving`: не уже, не ниже, ступенька, перелезание и склон не хуже, та же глубина
-  плавания; из таких — самый узкий, потом самый низкий), и идут его собственным телом; тело, которое не обслуживает ни один
-  класс, планирует по локальной сетке своим телом (раньше — радиусом и остальными числами по умолчанию). `npc_state`
-  (`nav.routes`) говорит, почему: ``local grid: no body class serves the body: agent has height 1.80 m, the body 2.40 m``
-  (`NavRegion::unserved`, `NavRegion::lack`; тело шире всех классов — прежнее ``no body class fits a 1.60 m radius …``),
-  `npc_overlay` — `local grid`. Прямая к цели вне навсетки (`straight_clear`) бросает капсулу тела от высоты ступеньки до
-  макушки, а не шар над ступенькой: под перемычкой ниже тела прямой нет. Тела NPC песочницы и шаблона совпадают со своими
-  классами: их маршруты и эталонные реплеи прежние. Тесты
-  `a_tall_npc_routes_on_a_class_as_tall_and_never_under_a_lintel_it_does_not_clear`,
+- `shards_locale`: through `shards::locale::def`, a type from the fluent crate was visible (`Parsed` with `FluentResource`,
+  `parse_language`, `syntax_problems`), although third-party crates are hidden behind the engine API. Games did not use them.
+  Now they stay inside the crate. A check of the common spec requirements for phases C–E (`docs/engine-progress.md`,
+  "General requirements of the spec") found this. The same check also recorded what C–E still lacks: the modules' own
+  `--until` conditions, except for the network; the network feel and sound attenuation numbers in the content; and tests
+  that the language, developer menu, effects and foliage do not change the replay hash.
+- The manual's `content_list` example named the kinds and numbers of old content (`theme 1`, a total of 125 against 133 definitions), and the sandbox's content table listed the deleted `ui/arena.theme.ron`.
+- Replay: `content_apply`, which adds a tile or a level with a file, and `regen` or `spawn_level` in the same tick (this is
+  how a replay plays them, with no frame between them) did not find the file loaded, and the replay diverged. Now the replay
+  requests such files as soon as it is armed, and the loading gate waits for them.
+- Content: an edit to a file in which a definition was dropped without an error position (its id is already taken by another
+  file, or it has no kind in its JSON) was applied, although a file is applied in full or not at all. Now any file error holds
+  it back, and a check error (a broken reference) holds it back only when it is new. Test
+  `a_file_loaded_with_a_taken_id_applies_no_edit_until_it_is_renamed`.
+- NPC (`shards_npc`): the route knows the whole body of an NPC, not only its radius. Before, `NavPaths::find`, `find_path` and
+  `navmesh_path` took a radius, the navmesh class was chosen by it (`NavRegion::for_radius`), and the NPC walked with the body
+  of that class. An NPC taller than the class it fits by radius got a route under an arch or a lintel that its capsule does not
+  pass, and it got stuck under them. Its straight line to a goal in view (`plain_sight`) and `nav_path` from an NPC were judged
+  the same way. Now they take the tightest class that serves the NPC's body (`NavRegion::serving`: not narrower, not lower, the
+  step, climbing and slope are no worse, the same swim depth; of those, the narrowest, then the lowest), and they walk with
+  that class's own body. A body that no class serves plans on the local grid with its whole body (before, with the radius and
+  the other default numbers). `npc_state` (`nav.routes`) says why: ``local grid: no body class serves the body: agent has height 1.80 m, the body 2.40 m``
+  (`NavRegion::unserved`, `NavRegion::lack`; a body wider than every class keeps the former text ``no body class fits a 1.60 m radius …``),
+  and `npc_overlay` shows `local grid`. A straight line to the goal outside the navmesh (`straight_clear`) sweeps the body's
+  capsule from the step height to the top of the head, not a sphere above the step: under a lintel lower than the body there is
+  no straight line. The NPC bodies of the sandbox and the template match their classes, so their routes and reference replays
+  are unchanged. Tests `a_tall_npc_routes_on_a_class_as_tall_and_never_under_a_lintel_it_does_not_clear`,
   `a_tall_npc_no_class_serves_plans_on_the_local_grid_with_its_whole_body`,
-  `a_goal_through_an_arch_is_in_plain_sight_only_for_a_body_that_clears_it`, юнит-тесты выбора класса `nav::region` (3).
-- Уровни (найдено настоящим экспортом Blender): `to` у `navlink` принимает и свойство *Data-Block* (объект, который экспортёр
-  пишет как `{"name", "type"}`), без второй, ложной ошибки «узел не navlink»; файл с обязательным расширением, которое не
-  меняет узлов (`KHR_lights_punctual` с *Punctual Lights*, `KHR_texture_transform`), читается и без фичи `render`, а сжатые
-  меши (Draco, meshopt с `EXT_meshopt_compression` и с `KHR_meshopt_compression`, квантование) отказывают одной строкой
-  с галочкой, которую снять (у квантования — с тем, что его писал не Blender); свойства движка на данных меша
-  вместо объекта — ошибка узла, а не молчание; картинка уровня — сцена по умолчанию файла, а не нулевая (Blender пишет все
-  сцены `.blend`, и сцена с коллекцией-инстансом шла первой).
-- Сохранения: `load_game`, у которого секция отказала до того, как что-то применилось, больше не пишет `The world is partly
-  loaded`: ответ `loading world/gone failed at section region: …; nothing was applied: fix the cause and load again`, и вызова
-  в записи нет. Когда что-то применилось, ошибка называет и секции, чей `missing` успел отработать (`weather (missing from the
-  file)`), и виды, загруженные раньше (`already loaded: world/camp`); такая загрузка перезапускает запись, даже если до отказа
-  отработали только `missing`. Ошибка из `apply` или `missing` теперь всегда значит «мир мог измениться»: секция запускалась
-  и могла изменить его до отказа, поэтому загрузка не пишет `nothing was applied`, не выбрасывает вызов из записи,
-  перезапускает её и сообщает хосту, что мир собран заново, а ошибка добавляет `the failed section may have changed the
-  world too` (или, когда до неё ничего не применилось, `no section before it was applied, but the failed section may have
-  changed the world`). Отказы, после которых мир должен остаться нетронутым, переехали в новый метод `SaveSection::check(&self,
-  &World, body)` (по умолчанию принимает; `&World` не даёт ему менять мир): все `check` всех загружаемых видов идут после
-  чтения файлов и до первого `apply`, отказ — `nothing was applied` и вызова нет в записи, даже у последней секции загрузки
-  (`apply_sections` тоже зовёт их до `apply`). Свои `check` у `region` (манифест и `plan()` содержимого, для сохранения
-  версии 1 — то же поколение региона и хэш), `position` и `vitals` (тело, числа, число и имена зарядов) и у компонента тела из
-  `save_component` (тело есть); `vitals` выдаёт телу `Charges` одним вызовом `entry`. У `SectionEntry` новый `check_in`, у
-  `ApplyError` новые поля `missing` и `failed_section` и `changed_anything()` (тесты
-  `a_load_that_fails_part_way_says_what_it_applied_and_records_the_load`,
+  `a_goal_through_an_arch_is_in_plain_sight_only_for_a_body_that_clears_it`, and unit tests for choosing the class in
+  `nav::region` (3).
+- Levels (found by a real export from Blender): `to` on `navlink` also accepts the *Data-Block* property (an object, which the
+  exporter writes as `{"name", "type"}`), with no second, false error "node is not a navlink". A file with a required extension
+  that changes no nodes (`KHR_lights_punctual` with *Punctual Lights*, `KHR_texture_transform`) is read even without the
+  `render` feature. Compressed meshes (Draco, meshopt with `EXT_meshopt_compression` and with `KHR_meshopt_compression`,
+  quantization) are refused with one line and a checkbox to untick (for quantization, the checkbox is for a file that was not
+  written by Blender). Engine properties on mesh data instead of an object are a node error, not silence. The level takes the
+  file's default scene, not the first scene (Blender writes all scenes of a `.blend`, and the scene with the instanced collection
+  came first).
+- Saves: `load_game`, where a section failed before anything was applied, no longer writes `The world is partly
+  loaded`. The reply is `loading world/gone failed at section region: …; nothing was applied: fix the cause and load again`, and no call is
+  written to the record. When something was applied, the error names the sections whose `missing` had already run
+  (`weather (missing from the
+  file)`) and the kinds loaded earlier (`already loaded: world/camp`). Such a load restarts the
+  record, even if only `missing` ran before the failure. An error from `apply` or `missing` now always means "the world may
+  have changed": a section ran and could change the world before it failed. So a load no longer writes `nothing was applied`,
+  does not drop the call from the record, restarts the record, and tells the host that the world was rebuilt. The error adds
+  `the failed section may have changed the
+  world too` (or, when nothing was applied before it, `no section before it was applied, but the failed section may have
+  changed the world`). Refusals after which the world must stay untouched moved to a
+  new method `SaveSection::check(&self,
+  &World, body)` (it accepts by default; `&World` stops it from changing the world). All
+  `check` calls of all loaded kinds run after the files are read and before the first `apply`. A refusal gives
+  `nothing was applied`, and there is no call in the record, even for the last section of the load (`apply_sections` also calls
+  them before `apply`). Its own `check` exists in `region` (the manifest and `plan()` of the content, for a save of version 1
+  — the same region generation and hash), in `position` and `vitals` (the body, the numbers, the count and names of the
+  charges), and in the body component from `save_component` (the body exists). `vitals` gives the body its `Charges` in one
+  `entry` call. `SectionEntry` has a new `check_in`. `ApplyError` has new fields `missing` and `failed_section`, and a
+  `changed_anything()` method (tests `a_load_that_fails_part_way_says_what_it_applied_and_records_the_load`,
   `a_section_that_refuses_in_check_applies_nothing_even_late_in_the_load`,
   `a_section_whose_apply_changes_the_world_and_fails_may_have_changed_it`).
-- Windows: `cargo clippy --workspace --all-targets -- -D warnings` молчит: помощники тестов `stand_udp`, которые нужны только
-  тестам с настоящим `sh` (unix), собираются только там.
-- D4: `clearance` по навсетке больше не проходит по диагонали мимо колонки, которую вырезал поставленный после загрузки
-  предмет: диагональный шаг `NavRegion::reach` требует, чтобы обе колонки сбоку были открыты (тест
-  `a_diagonal_reach_stops_where_a_side_column_is_switched_off`). Строки меню разработчика с ошибкой идут в журнал консоли
-  через тот же предел в 200 строк, что и остальные. Агент `console` получает scope Dev один раз, при сборке плагина, а не
-  перед каждой строкой: scope, заданный ему потом (`configure_session`), остаётся.
-- Windows: `shards stand stop` останавливает стенд. Раньше он завершал сессию, а процесс хоста оставлял (`signals processes
-  on unix only; end pid N yourself`): сигналов на Windows нет, теперь хост просят выйти через `quit`. Подключение к порту,
-  где никто не слушает, обрывается через 0,5 с, а не через две секунды повторов loopback. В ответах и файлах нет путей
-  `\\?\C:\…`. Тесты `shards_settings`, ожидание в тесте `plugins.rs` и сценарий `snapshot.scenario` теперь проходят и на
-  Windows.
-- Мир: тело могло уйти, уклониться или быть отброшено за край сгенерированного региона и падать без конца. Нашёл первый
-  `shards soak`: тело клиента ушло за западный край дебрей (`x -65.4` при крае `-64`), игра встала на инварианте
-  `bodies_in_world` на тике 4896. Дебри песочницы и долина шаблона теперь со стеной по краю (`edge_wall: 4.0`); хэш
-  манифеста дебрей с зерном 42 — `7bbfdc3b62623fbc`, долины шаблона — `36930e9ac5dc441e` (в них входит определение региона).
-- Шаблон: на клиенте кооператива наблюдатель `Died` засчитывал трофей второй раз (хост пересылает события боя для
-  эффектов); теперь он, как велит `shards_net::events`, возвращается сразу, если машина не симулирует.
-- Снапшоты: загрузка, которой отказали после подготовки (регион другого мира, другие тела или уровни), возвращает мир, каким
-  он был до неё: подготовка запускается снова со снимком, взятым перед загрузкой, сущности получают прежние id, запись
-  реплея идёт дальше без лишних входов. Вместо строк о выгруженном и построенном регионе журнал получает одну:
-  `snapshot of tick N not loaded (…): the world is as it was before the load`. Так же ведёт себя `restore_releasing`.
-- Уровни: счётчик номеров экземпляров (`LevelCounter`) — состояние снапшота. Уровень, поставленный после загрузки, получает
-  номер, который получил в исходной сессии, и смена региона не путает его с уровнями региона.
-- Реплеи: проверка `level` зарегистрирована с модулем и входит в хэш, пока стоит хоть один уровень, а не с первого уровня
-  навсегда. Снапшот, снятый до первого уровня, грузится точно и после смены региона, и запись с него сходится. Эталонные
-  реплеи прежние.
-- Реплеи: входы одного тика записываются по порядку `AiId`, а не в порядке запроса, поэтому одна и та же сессия даёт один и тот
-  же файл с окном и без него. Записанные раньше реплеи проигрываются как прежде.
-- Реплеи: проигрывание записанного вызова не сбрасывает привязку сессии агента к игроку (`possess player=N`) и не даёт
-  ей подменить записанное тело: вызов идёт от записанного тела, а привязка после него прежняя.
-- Уровни: перезагрузка файла, в котором у узла нет допустимой позы (нулевой масштаб из Blender: `S Z 0`), оставляет
-  экземпляр как был и называет узел. Раньше старый уровень пропадал, а экземпляр не возвращался до нового `spawn_level`.
-- Снапшоты: `snapshot_load` отказывает до любых изменений, если значение сохранённого ресурса игра не читает (раньше это
-  выяснялось уже в заменённом мире: «loaded …, but the restored state differs»), если в файле есть `AiId` как компонент
-  (ключ сущности пишет движок, а не файл; с `force` такую запись пропускают) или id сущности `u32::MAX`; совет «load with
-  force=true» стоит в отказе, только когда `force` действительно поможет. При сохранении ресурс, который не читается
-  обратно, попадает в `left_out`, как компонент (и `ai_core::state::encode_resources` его не отдаёт). `AiId(u32::MAX)`
-  больше не роняет счётчик id.
-- Действия: идущее действие подхватывает перезагруженное определение целиком — зону (`observe`), клип анимации и время, до
-  которого зона показывается, а не только фазы и окна.
-- Анимация: персонаж снова привязывается к проигрывателю, если прежний исчез (перезагрузка модели, смена сцены), а не
-  остаётся в T-позе, пока не поменяется граф.
-- Анимация: после зацикливания клипа метки (cues) конца прошлого прохода приходят раньше меток начала нового.
-- Песочница: layout, добавленный на лету, строится как при старте (с префабами), а удалённый убирает свою геометрию и
-  ориентиры; персонажи, которых он создал, остаются.
-- Инструменты: `attack` и `move_to` отказывают цели без позиции (ИИ-видимая сущность без `Transform`), а не отвечают `ok` и
-  молча роняют приказ на следующем тике.
-- Сеть: запрос (query) нельзя направить на хост — он не пишет журнал и идёт локально. `AiTools::set_route` отвечает
-  ошибкой, `app.net_route(.., NetRoute::Host)` для запроса роняет приложение при сборке.
-- Реплеи: действие агента во время проигрывания прерывает реплей («… took over»), даже если игра не пишет запись.
-- Сеть: `assert_add`, `assert_remove` и `assert_reset` на клиенте отказывают (`NetRoute::HostOnly`: `the rules are checked on
-  the host: call it there`), а не уходят хосту. Хост ограничивает вызовы гостя областью игрока, а это Dev-инструменты:
-  хост отказал бы, а вызов клиента ответил бы `ok`.
-- Реплеи: реплей со снапшота, чей старт восстанавливается не точно, расходится с тика старта и называет причину в заголовке
-  (`DIVERGED at tick 70: no details: the start does not restore exactly: the state hash is …`), а не печатает голый тик.
-- `shards::testing::run_to` (и `--verify`, и `testing::verify`): тик, на котором нарушено правило и началась загрузка (смена
-  региона за шлюзом), ждёт конца загрузки, а не выходит с «the game is still loading» и кодом 2.
-- Инварианты: тик, на котором в другом прогоне упала система, после возврата снапшотом проверяется как любой другой. Раньше
-  его правила пропускались, пока в игре помнился старый сбой.
-- Инструменты: законченный отложенный шаг, опрошенный через `step_poll` (`shards act step_poll id=N`), несёт `halted`, и
-  `shards` выходит с кодом 3, если шаг встал на сбое или нарушении. BRP `ai/step_poll` отвечает через тот же инструмент
-  (с проверкой scope).
-- `shards fuzz`: удар без цели — `light_attack`, а не `attack {}`, который отказывал (`attack` требует `target`). Прогоны
-  `fuzz` с тем же зерном идут иначе, выводы в README записаны заново.
-- `--tick-budget-ms`: слишком большое значение (`1e30`) и слишком малое (`1e-10`, то есть нулевой бюджет), `inf` и `nan` —
-  ошибка командной строки с кодом 2, а не паника и не бюджет в 0 нс.
-- Песочница: `bodies_in_world` считает каждый брус, пандус и объём отдельным прямоугольником, а не общей коробкой layout.
-  Пустота рядом с коридором арены и с дорожкой полосы препятствий больше не считается миром. `LayoutDef::footprint`
-  возвращает список прямоугольников. Эталонные реплеи прежние.
-- Сеть: клиент по UDP больше не ставит свой тик назад, когда его ввод приходит больше чем на 30 тиков раньше нужного
-  (после паузы или зависания хоста). Раньше `pace` ставил его на последний тик хоста плюс опережение, и новые кадры
-  получали номера тиков, на которые хост уже держал кадры: повторный кадр он отбрасывал как дубликат, а нажатие, которое
-  клиент уже забрал из `Intent`, пропадало; старое состояние применялось после нового. Теперь ввод, пришедший больше чем
-  на 30 тиков раньше нужного, идёт вдвое медленнее (`PACE_BRAKE`), пока запас не вернётся (клиент, ушедший от состояния
-  хоста дальше чем на `STARVE_AHEAD`, ждёт его); прыжок остаётся только вперёд (больше 30 тиков позади) и не ниже текущего
-  тика.
-- Сеть: клиент, получивший мир заново, отбрасывает все события `net_event`, которые ещё не показал. Раньше остались
-  события старого мира с тиком выше нового (хост загрузил снапшот более раннего тика): они показывались по сущностям
-  нового мира, а так как `retrigger_due` идёт по порядку, один такой тик держал и события нового мира, пока часы клиента
-  не доходили до него.
-- Стенд: `step` и `pause`/`resume`/`speed` одного участника стоят в одной очереди (`StepQueue::take_requests` вместо
-  `take_steps` и `take_clock`) и выполняются в порядке вызовов. Раньше драйвер брал часы раньше шагов: `step`, за ним
-  `resume` до очередного прохода драйвера оставляли стенд на паузе, хотя `resume` пришёл последним.
-- Снапшоты: `snapshot_load`, который восстановил бы мир неточно (`the restored state differs …`: состояние вне сущностей
-  с `AiId`, не зарегистрированное в снапшоте), возвращает мир, каким он был, вместе с тиком; запись реплея идёт дальше, а
-  `WorldRebuilt` не приходит (клиентам хоста мир заново не отправляется). Раньше мир оставался загруженным, запись
-  начиналась с этого снапшота и теряла всё записанное раньше, а инструмент отвечал ошибкой. Новая функция
-  `snapshot::restore_exact`; `restore` по-прежнему отдаёт отчёт с `differences` (старт реплея называет по нему расхождение).
-- Сеть: игрок, которого хост принял в том же кадре, где тик хоста скачнул (загрузка снапшота), больше не помечается
-  «тики сдвинулись» после приёма. Раньше скачок замечался только в `send_rebases`, уже после `admit`, и первый мир заново
-  (`net_resync`, рассинхрон, новое тело) шёл с `carry_inputs = false` без причины: ввод игрока начинался заново, а часы
-  клиента возвращались. Скачок замечается в начале приёма кадра (`note_ticks`) и перед отправкой миров.
+- Windows: `cargo clippy --workspace --all-targets -- -D warnings` reports nothing: the test helpers `stand_udp`, which only the
+  tests with a real `sh` (unix) need, are built only there.
+- D4: `clearance` on the navmesh no longer passes diagonally past a column that an item placed after loading has cut out. The
+  diagonal step of `NavRegion::reach` requires both side columns to be open (test
+  `a_diagonal_reach_stops_where_a_side_column_is_switched_off`). Developer-menu lines with an error go to the console journal
+  through the same limit of 200 lines as the others. The `console` agent gets the Dev scope once, when the plugin is built, not
+  before each line. A scope set on it later (`configure_session`) stays.
+- Windows: `shards stand stop` stops the stand. Before, it ended the session and left the host process running
+  (`signals processes
+  on unix only; end pid N yourself`). Windows has no signals, so now the host is asked to exit through
+  `quit`. A connection to a port where nobody listens is dropped after 0.5 s, not after two seconds of loopback retries.
+  Replies and files no longer contain paths like `\\?\C:\…`. The tests `shards_settings`, the wait in the test `plugins.rs`
+  and the scenario `snapshot.scenario` now pass on Windows too.
+- World: a body could leave the generated region, slip past its edge, or be thrown off it, and then fall without end. The first
+  `shards soak` run found this: a client's body left the western edge of the wilds (`x -65.4` with the edge at `-64`), and the
+  game stopped on the invariant `bodies_in_world` at tick 4896. The sandbox's wilds and the template's valley now have a wall
+  along the edge (`edge_wall: 4.0`). The manifest hash of the sandbox's wilds with seed 42 is `7bbfdc3b62623fbc`, and of the
+  template's valley `36930e9ac5dc441e` (these include the region definition).
+- Template: on a co-op client, the `Died` observer counted a trophy a second time (the host forwards combat events for
+  effects). Now, as `shards_net::events` requires, it returns at once if the machine does not simulate.
+- Snapshots: a load that was refused after preparation (a region of another world, other bodies or levels) returns the world to
+  what it was before. The preparation runs again with the snapshot taken before the load, the entities get their old ids, and
+  the replay record goes on with no extra inputs. Instead of lines about the region being unloaded and built, the journal gets
+  one line: `snapshot of tick N not loaded (…): the world is as it was before the load`. `restore_releasing` behaves the same
+  way.
+- Levels: the counter of instance numbers (`LevelCounter`) is snapshot state. A level placed after a load gets the number it got
+  in the original session, and a change of region does not confuse it with the region's levels.
+- Replays: the `level` check is registered with the module and is part of the hash while at least one level is present, not forever
+  from the first level on. A snapshot taken before the first level loads exactly, including after a change of region, and a
+  record made from it matches. The reference replays are unchanged.
+- Replays: the inputs of one tick are written in `AiId` order, not in the order of the request, so one session gives the same
+  file with a window and without one. Replays recorded earlier still play as before.
+- Replays: playing back a recorded call does not reset the agent session's link to the player (`possess player=N`), and it does
+  not let that link replace the recorded body. The call goes from the recorded body, and the link after it stays as it was.
+- Levels: reloading a file in which a node has no valid pose (a zero scale from Blender: `S Z 0`) leaves the instance as it was
+  and names the node. Before, the old level disappeared, and the instance did not come back until a new `spawn_level`.
+- Snapshots: `snapshot_load` refuses before making any change if the game cannot read the value of a saved resource (before,
+  this came out only in the replaced world: "loaded …, but the restored state differs"), if the file has `AiId` as a component
+  (the engine writes the entity key, not the file; with `force`, such an entry is skipped), or if an entity id is `u32::MAX`.
+  The advice "load with force=true" appears in the refusal only when `force` will really help. When saving, a resource that
+  cannot be read back goes to `left_out`, as a component does (and `ai_core::state::encode_resources` does not return it).
+  `AiId(u32::MAX)` no longer breaks the id counter.
+- Actions: a running action picks up the reloaded definition in full: the zone (`observe`), the animation clip and the time up
+  to which the zone is shown, not only the phases and windows.
+- Animation: a character binds to the animation player again if the old one has gone (a model reload, a scene change), instead of staying
+  in the T-pose until the graph changes.
+- Animation: after a clip loops, the cues of the end of the previous pass arrive before the cues of the start of the new one.
+- Sandbox: a layout added on the fly is built as it is at startup (with its prefabs), and a removed one takes away its geometry
+  and landmarks. The characters it created stay.
+- Tools: `attack` and `move_to` refuse a target that has no position (an AI-visible entity without a `Transform`), instead of
+  answering `ok` and silently dropping the order on the next tick.
+- Network: a query cannot be routed to the host. It does not write to the journal and runs locally. `AiTools::set_route` answers
+  with an error, and `app.net_route(.., NetRoute::Host)` for a query crashes the app while it is being set up.
+- Replays: an agent action during playback interrupts the replay ("… took over"), even if the game does not write a record.
+- Network: `assert_add`, `assert_remove` and `assert_reset` refuse on a client (`NetRoute::HostOnly`: `the rules are checked on
+  the host: call it there`), instead of going to the host. The host limits a client's calls to the player's scope, and these are
+  Dev tools: the host would refuse them, and the client's call would answer `ok`.
+- Replays: a replay from a snapshot whose start does not restore exactly diverges from the start tick and names the reason in
+  the header (`DIVERGED at tick 70: no details: the start does not restore exactly: the state hash is …`), instead of printing a
+  bare tick.
+- `shards::testing::run_to` (and both `--verify` and `testing::verify`): a tick at which a rule is violated and a load has
+  started (a change of region behind the loading gate) waits for the load to end, instead of exiting with "the game is still
+  loading" and code 2.
+- Invariants: a tick at which a system crashed in another run is checked, after a snapshot returns to it, like any other tick.
+  Before, its rules were skipped while the game still remembered the old crash.
+- Tools: a finished deferred step, polled with `step_poll` (`shards act step_poll id=N`), carries `halted`, and `shards` exits
+  with code 3 if the step stopped on a crash or a violation. BRP `ai/step_poll` answers through the same tool (with the scope
+  check).
+- `shards fuzz`: a strike without a target is `light_attack`, not `attack {}`, which used to be refused (`attack` needs
+  `target`). Runs of `fuzz` with the same seed now go differently, and the conclusions in the README are written again.
+- `--tick-budget-ms`: a value too large (`1e30`), too small (`1e-10`, that is, a zero budget), `inf` or `nan` is a
+  command-line error with code 2, not a panic and not a budget of 0 ns.
+- Sandbox: `bodies_in_world` counts each beam, ramp and volume as a separate rectangle, not as one common box of the layout.
+  Empty space next to the arena's corridor and next to the obstacle course's lane is no longer counted as the world.
+  `LayoutDef::footprint` returns a list of rectangles. The reference replays are unchanged.
+- Network: a client over UDP no longer sets its tick back when its input arrives more than 30 ticks earlier than needed (after a
+  pause or a freeze of the host). Before, `pace` set it to the host's last tick plus the lead, so the new frames got tick
+  numbers that the host already held frames for. The host dropped a repeated frame as a duplicate, and a press that the client
+  had already taken from `Intent` was lost. The old state was applied after the new one. Now input that arrives more than 30
+  ticks early is paced at half speed (`PACE_BRAKE`) until the margin comes back. A client that has moved away from the host's
+  state by more than `STARVE_AHEAD` waits for it. The jump goes forward only (when more than 30 ticks behind), and it never goes
+  below the current tick.
+- Network: a client that has received the world again discards all the `net_event` events it has not yet shown. Before, events
+  of the old world with a tick above the new one remained (the host loaded a snapshot of an earlier tick): they were shown for
+  the entities of the new world, and since `retrigger_due` runs in order, one such tick also held the events of the new world
+  until the client's clock reached it.
+- Stand: `step` and `pause`/`resume`/`speed` of one participant share one queue (`StepQueue::take_requests` instead of
+  `take_steps` and `take_clock`) and run in the order of the calls. Before, the driver took the clock before the steps, so a `step` followed by a `resume` left the stand paused until the driver's next pass, although `resume` came last.
+- Snapshots: a `snapshot_load` that would restore the world inexactly (`the restored state differs …`: state outside entities
+  with `AiId` that is not registered in the snapshot) returns the world as it was, together with the tick. The replay record
+  goes on, and `WorldRebuilt` is not sent (the world is not sent again to the host's clients). Before, the world stayed loaded,
+  the record started from this snapshot and lost everything recorded before, and the tool answered with an error. The new
+  function `snapshot::restore_exact`; `restore` still returns the report with `differences` (the start of a replay names the
+  divergence from it).
+- Network: a player whom the host admitted in the same frame in which the host's tick jumped (a snapshot load) is no longer
+  marked "ticks shifted" after it is admitted. Before, the jump was noticed only in `send_rebases`, after `admit`, and the first
+  world sent again (`net_resync`, desync, a new body) went with `carry_inputs = false` without a reason: the player's input
+  started over, and the client's clock went back. The jump is now noticed at the start of receiving a frame (`note_ticks`) and
+  before the worlds are sent.
 
-- Сеть: вид, у которого перестал срабатывать предел ссылок (64 сущности за видом), даёт клиенту мир заново один раз
-  (`the host's world again (view complete)`). Раньше ссылки хранителя, которые клиент прочёл как `Entity::PLACEHOLDER`, не
-  менялись в дельтах, и первая же сверка хэша после снятия предела находила рассинхрон и стоила мира заново с ошибкой в
-  журнале. Хэш в дельте этого перехода не отправляется.
+- Network: a view whose reference limit (64 entities per view) no longer applies gives the client the world again once
+  (`the host's world again (view complete)`). Before, the keeper's references, which the client read as
+  `Entity::PLACEHOLDER`, did not change in the deltas. The first hash check after the limit was lifted found a desync, and it
+  cost the client a fresh world, with an error in the journal. The hash is not sent in the delta of this transition.
 
-- Сеть: регион, который перестроил вызов гостя (`regen`, `region_load` при `guest_scope: Dev`), уходит клиентам миром
-  заново. Раньше событие `WorldRebuilt` терялось: наблюдатель не находил `NetHost`, снятый на время задач, и клиенты
-  оставались на старом мире до рассинхрона. Событие теперь ждёт в ресурсе `PendingRebuild`, а дельта состояния в тике
-  перестройки не отправляется (иначе клиент получал ресурсы нового мира, а мир заново находил регион уже построенным
-  и расходился по `static_colliders`).
+- Network: a region that a guest's call rebuilt (`regen`, `region_load` with `guest_scope: Dev`) is sent to the clients again,
+  as a whole world. Before, the `WorldRebuilt` event was lost: the observer did not find `NetHost`, which had been taken out
+  while tasks ran, and the clients stayed on the old world until a desync. The event now waits in the `PendingRebuild`
+  resource, and the state delta is not sent in the tick of the rebuild (otherwise the client got the resources of the new
+  world, and the fresh world found the region already built and diverged on `static_colliders`).
 
-- Сеть: хост ограничивает работу, которую пир делает за один опрос: у пира, который не играет, он разбирает не больше
-  160 КБ (`JOINING_POLL_BYTES`), у игрока не больше 4 МБ (`PLAYER_POLL_BYTES`), остальное отбрасывает нечитанным
-  (`unread` в `net_status`, строка в журнале раз в секунду). Раньше предел стоял на каждом сообщении, а не на опросе: один
-  опрос мог дать до 24 МБ JSON, и после отказа первому `Hello` хост разбирал и остальные сообщения того же пира. Теперь
-  всё, что пришло от отпущенного пира, не читается.
-- Сеть: пир, который не продвинулся в этапе входа за `6 × timeout_secs` (минуту по умолчанию, `HANDSHAKE_TIMEOUTS`),
-  отпускается с `Refused`; ушедший пир забывается, когда 10 секунд подряд не подтверждает ничего из отправленного ему (но не
-  позже 5 минут). Раньше пир без `Hello` (хватало одной
-  датаграммы с сообщением) жил, пока слал подтверждения, не отзывался на `net_kick` и занимал одну из 512 записей таблицы
-  адресов UDP, а тот, что не подтверждал отказ, оставался навсегда. Игру, которая сама держит игрока (`join_policy`
-  отвечает «не сейчас»), срок не касается. `net_kick` принимает `peer` (номер из `net_status`) вместо `player`.
-  Убрана запись «вход в сессию без срока» из известных ограничений.
+- Network: the host limits the work a peer does in one poll. For a peer that is not playing, it parses no more than 160 KB
+  (`JOINING_POLL_BYTES`). For a player, no more than 4 MB (`PLAYER_POLL_BYTES`). The rest it drops unread (`unread` in
+  `net_status`, one line in the journal per second). Before, the limit applied to each message, not to a poll: one poll could
+  give up to 24 MB of JSON, and after the first `Hello` was refused the host still parsed the other messages from the same
+  peer. Now the host reads nothing that comes from a released peer.
+- Network: a peer that has not got past the join stage within `6 × timeout_secs` (a minute by default, `HANDSHAKE_TIMEOUTS`)
+  is released with `Refused`. A peer that has left is forgotten once it has acknowledged nothing sent to it for 10 seconds in a row
+  (but no later than 5 minutes). Before, a peer without `Hello` (one datagram with a message was enough) lived on as long as it
+  sent acknowledgements, did not respond to `net_kick`, and took one of the 512 entries of the UDP address table. A peer that
+  did not acknowledge a refusal stayed forever. The time limit does not apply to a game that holds the player itself (`join_policy`
+  answers "not now"). `net_kick` takes `peer` (the number from `net_status`) instead of `player`. The entry "joining a session
+  with no time limit" is removed from the known limitations.
 
-- Сеть: мир, который больше 16 МБ (то, что канал берёт одним сообщением), не снимается и не кодируется заново каждый
-  тик. `rebase_fits` отвечал «влезет» для 16–32 МБ, отправка отказывала навсегда (`TooLarge`), а хост пробовал снова на
-  каждом тике; а размер больше 32 МБ запоминался и держал любой следующий, меньший мир. Теперь это окончательный отказ:
-  одна строка в журнале хоста, игрок уходит с причиной, запомненный размер сбрасывается.
+- Network: a world bigger than 16 MB (what the channel takes as one message) is not captured or encoded again on each tick.
+  `rebase_fits` answered "fits" for 16–32 MB, sending was refused for good (`TooLarge`), and the host tried again on every tick.
+  A size above 32 MB was remembered and held back any later, smaller world. Now it is a final refusal: one line in the host's
+  journal, the player leaves with a reason, and the remembered size is reset.
 
-- Снапшоты: загрузка, которой отказали, не теряет старые строки журнала. Строки попытки (регион выгружен и построен
-  заново, навсетка) убирались с конца, но в полном кольце на 2048 строк каждая выталкивала с начала по старой строке, и
-  они не возвращались (агент с курсором в них получал `missed N`). `AiJournal::mark` и `rewind` возвращают кольцо, как
-  было; номера строк по-прежнему не выдаются заново.
+- Snapshots: a load that was refused does not lose the old journal lines. The lines of the attempt (the region unloaded and
+  built again, the navmesh) were removed from the end. But in a full ring of 2048 lines, each one pushed an old line out from
+  the start, and those did not come back (an agent whose cursor was in them got `missed N`). `AiJournal::mark` and `rewind`
+  return the ring as it was. Line numbers are still not handed out again.
+- Network: a client over UDP that ran ahead of the host by more than `STARVE_AHEAD` (the host paused, frozen, or stepped from
+  the CLI) no longer hangs forever. It waited for a state while the clock was stopped (`Time<Virtual>` paused), but only a tick
+  applies the state (`apply_state` in `FixedFirst`). The delta that had arrived lay in `pending`, `newest_host_tick` did not
+  grow, and only a world sent again could end the wait. A delta that has arrived but is not yet applied now counts as news
+  (`newest_seen`) in `pace`, in the stand's `clock_ticks`, and in the target of the forward jump.
 
-- Сеть: клиент по UDP, ушедший вперёд хоста дальше чем на `STARVE_AHEAD` (хост на паузе, зависание, шаги из CLI), больше
-  не зависает навсегда. Он ждал состояния с остановленными часами (`Time<Virtual>` на паузе), а состояние применяет
-  только тик (`apply_state` в `FixedFirst`): пришедшая дельта лежала в `pending`, `newest_host_tick` не рос, и выйти из
-  ожидания мог только мир заново. Пришедшая и ещё не применённая дельта теперь считается вестью (`newest_seen`) в
-  `pace`, в `clock_ticks` стенда и в цели прыжка вперёд.
+- Network: a message that the channel of a leaving player did not accept (the kick's `Bye`, `CharacterSave`, `SessionEnd`) is
+  logged in the host's journal at once (`p1: the kick not sent: reliable queue is full …`, at most one line per second for each
+  player and kind of message). Before, such a refusal only raised `unsent`, and the channel check reads only connected players
+  and runs once a second. So the character did not arrive, the client did not learn that the session had ended, and the host
+  stayed silent.
 
-- Сеть: сообщение, которое канал уходящего игрока не принял (`Bye` кика, `CharacterSave`, `SessionEnd`), называется в
-  журнале хоста сразу (`p1: the kick not sent: reliable queue is full …`, не чаще строки в секунду на игрока и вид
-  сообщения). Раньше такой отказ только увеличивал `unsent`, а проверка канала читает одних подключённых игроков и идёт
-  раз в секунду: персонаж не доходил, клиент не узнавал о конце сессии, и хост молчал.
+- Documentation: the exit codes of `--exit-with-host` (0, 1, 2) are described in the flag's help and in
+  `EngineConfig::exit_with_host`, not only as "the client exits when the host has ended the session". The README and CHANGELOG
+  say that 2 also applies to `--host` (port in use), and that among the network flags only `--stand-udp` exits with code 2.
 
-- Документация: коды выхода `--exit-with-host` (0, 1, 2) описаны в справке флага и в `EngineConfig::exit_with_host`, а не
-  только «клиент выходит, когда хост кончил сессию»; README и CHANGELOG говорят, что 2 и у `--host` (порт занят), и что
-  из сетевых флагов с кодом 2 выходит только `--stand-udp`.
+- Documentation: the README and `docs/engine-progress.md` have no overall test count (1078 and 1109 disagreed with each other
+  and with the tables by crate). One document keeps the counts by crate, `docs/engine-progress.md`, "Tests". The rows for
+  `ai_core`, `shards_net`, `shards` and `sandbox` were recounted with `cargo test -p …`. The README kept the column "what they
+  check".
 
-- Документация: в README и в `docs/engine-progress.md` нет общего числа тестов (1078 и 1109 расходились друг с другом и с
-  таблицами по крейтам). Числа по крейтам ведёт один документ, `docs/engine-progress.md`, «Тесты»; строки `ai_core`,
-  `shards_net`, `shards` и `sandbox` пересчитаны по `cargo test -p …`. В README остался столбец «что проверяют».
+- Networking: the `view complete` world no longer repeats every 4 ticks. It wiped the view memory (`peer.view`, the hysteresis of the interest radius) that the link limit had been lifted from. On the next send the limit fell again, then was lifted again, and so on without a pause, while the player stood on the ring 60–70 m from the list's pillars (the client was not playable, and the host captured and encoded the world on every cycle). The view memory now stays through such a world. A region change and the other causes still wipe it, as before. The world itself goes out no more than once per `DESYNC_RESYNC_COOLDOWN_SECS`. Until the pause ends, the view counts as limited, and the hash is not checked.
 
-- Сеть: мир «view complete» больше не повторяется каждые 4 тика. Он стирал память вида (`peer.view`, гистерезис радиуса
-  интереса), с которой был снят предел ссылок, и на следующей отправке предел падал снова, потом снимался снова, и так без
-  паузы, пока игрок стоит на кольце 60–70 м от колонн списка (клиент не играбелен, хост снимает и кодирует мир на каждом
-  цикле). Память вида остаётся при таком мире (при смене региона и прочих причинах стирается, как раньше), а сам мир уходит не
-  чаще раза в `DESYNC_RESYNC_COOLDOWN_SECS`: до конца паузы вид считается ограниченным, хэш не сверяется.
+- Networking: after the world is rebuilt (a region change, a snapshot load, a guest's `regen`), no deltas go to the player until the world has been sent to them again, not just for one tick. Before, the block was lifted when `run_tasks` took the event. While the world waited for room in the channel (or while `capture` failed), the deltas of the new world went out in the epoch of the old one. The client accepted the record of the new region. The world that arrived later found the region already built, failed the `static_colliders` check, and a player on a poor channel left the session because of the region change. The flag sits on the peer (`rebuild_pending`) and is cleared when the world is sent.
 
-- Сеть: после перестройки мира (смена региона, загрузка снапшота, `regen` гостя) игроку не идут дельты, пока ему не
-  отправлен мир заново, а не один тик. Раньше запрет снимался, когда `run_tasks` брал событие, и пока мир ждал места в
-  канале (или `capture` не удавался), дельты нового мира шли в эпохе старого: клиент принимал запись нового региона,
-  мир, дошедший потом, находил регион построенным, не проходил `static_colliders`, и игрок с плохим каналом выходил из
-  сессии из-за смены региона. Флаг стоит у пира (`rebuild_pending`) и снимается отправкой мира.
+- Networking: a peer that has left is forgotten once it has confirmed nothing sent to it for 10 seconds in a row, not 10 seconds after it left (the ceiling is 5 minutes). Before, a player on a slow channel who had been kicked, or whose session had ended while a world of several megabytes was still on its way to them, lost `Bye`, `CharacterSave` and `SessionEnd` (they wait in the queue behind the world). The host forgot them while they were still confirming, and the client's game wrote `lost the host` instead of the reason. The `Link::reliable_acked` counter counts the confirmed messages and the blob chunks.
 
-- Сеть: ушедший пир забывается, когда 10 секунд подряд не подтверждает ничего из отправленного ему, а не через 10 секунд
-  после ухода (потолок — 5 минут). Раньше игрок на медленном канале, которого кикнули или чья сессия кончилась, пока
-  мир в несколько мегабайт ещё шёл к нему, терял `Bye`, `CharacterSave` и `SessionEnd` (они стоят в очереди за миром):
-  хост забывал его, пока он подтверждал, и игра клиента писала `lost the host` вместо причины. Счётчик
-  `Link::reliable_acked` считает подтверждённые сообщения и куски блоба.
+- Networking: a stranger costs the host less. If a peer that has not yet sent `Hello` sends a first message that is not a `Hello` (or a `Bye`), or one that does not decode, the host refuses it with `a join starts with a hello`. It no longer decodes 160 KB on every poll for a minute. Peers that are not playing yet share 4 × 80 KB per poll (`SHARED_JOINING_POLL_BYTES`). The poll starts with the peer that was skipped last time. Otherwise it goes in `PeerId` order: in the stand that is the order of creation, and over UDP it is the order of the address hash. Their number is limited (`max_strangers`, `2 × max_players + 4`). A new one pushes out, in this order: a refused peer that left earlier than the others, then the oldest silent peer (except up to `max_players` of the oldest of those who may still have a first message waiting, while they are under 5 s old), and last a peer that left earlier than the others. There is always someone to push out. The `flood` line is one line for all peers, not one key per address (`LineLimits` grew by one entry per stranger). Not done: the `calls_queued` check before the `Call` arguments are parsed for an admitted guest (their parsing is limited to 4 MB per poll).
 
-- Сеть: чужак стоит хосту меньше. Первое сообщение пира, который ещё не сказал `Hello`, — не `Hello` (и не `Bye`) или то,
-  что не разбирается, — отказ `a join starts with a hello`, а не 160 КБ разбора за каждый опрос в течение минуты. Пиры,
-  которые ещё не играют, делят 4 × 80 КБ за опрос (`SHARED_JOINING_POLL_BYTES`) и опрос начинается с того, кого пропустили в прошлый раз (иначе — по порядку `PeerId`:
-  в стенде это порядок создания, по UDP — порядок хэша адреса), и их число ограничено (`max_strangers`, `2 × max_players + 4`;
-  новый вытесняет отказанного, ушедшего раньше других, потом самого старого безмолвного (кроме не более `max_players` самых старых
-  из тех, у кого может лежать первое сообщение, пока им нет 5 с) и в последнюю очередь ушедшего раньше других; вытеснить всегда есть
-  кого). Строка
-  `flood` одна на всех пиров, а не по ключу на каждый адрес (`LineLimits` рос на запись на каждого чужака).
-  Не сделано: проверка `calls_queued` до разбора аргументов `Call` у допущенного гостя (его разбор ограничен 4 МБ за опрос).
+- Documentation: the help for `--exit-with-host` and `EngineConfig::exit_with_host` again speaks about the client ("the client exits when its session has ended"): exit codes 0 and 1, and code 2 also for `--host` with a busy port. It says directly that the host does not exit on `net_end`. The previous edit said "the game exits", and a script that started `--host … --exit-with-host` would wait for a process that never ends.
 
-- Документация: справка `--exit-with-host` и `EngineConfig::exit_with_host` снова говорят о клиенте («клиент выходит, когда
-  его сессия кончилась»: 0, 1, а код 2 ещё и у `--host` с занятым портом) и прямо — что хост по `net_end` не выходит. В
-  прошлой правке стояло «игра выходит», и скрипт, запустивший `--host … --exit-with-host`, ждал бы конца процесса, которого
-  нет.
+- Documentation: the per-crate test counts are kept in one "Tests" section of `docs/engine-progress.md` (recounted from one run). The E7 rows and the summary of numbers do not repeat them. The README and the template's README say the template has 24 tests (and one `#[ignore]`), and the co-op list includes `net_predict.rs`.
 
-- Документация: число тестов по крейтам держит один раздел «Тесты» в `docs/engine-progress.md` (пересчитан по одному прогону);
-  строки E7 и сводка чисел не несут, в README и в README шаблона у шаблона 24 теста (и один `#[ignore]`), и в списке кооператива
-  есть `net_predict.rs`.
+- Networking: a new address does not push out an incoming peer until that peer has been read, and the number of protected peers never exceeds the number of player slots. Eviction used to happen when a datagram arrived, before the poll. It took the oldest peer without `Hello` first: an honest incoming peer whose `Hello` the channel had already acknowledged (it is not sent again). With a table full of refused strangers, one more datagram from a new address in the same tick lost that peer, and a `Hello` split into parts was never assembled. Now the refused go first, then a peer without `Hello`, except up to `max_players` of the oldest of those who may have a first message waiting (unread, or a blob from number 0; 5 seconds since creation). Then a peer that has left, even an admitted one. A peer that comes back from new ports and acknowledges one chunk every 10 seconds does not hold a table slot for 5 minutes. A message with a gap in front (number 1 without 0), which a stranger could have used to occupy an entry, is not protected. Peers that left go in the order in which `flush` saw them leave. The one disconnected between ticks goes last. Before, it went first and lost `Bye` and `CharacterSave`. The host writes the eviction of an admitted peer to the journal (`forgot pN (gone) …`). Known limit: someone who sends without a pause from many real addresses can delay, or even break, the join of a player whose `Hello` comes in parts. Without a handshake that holds no state on the host, this cannot be closed.
 
-- Сеть: новый адрес не вытесняет входящего, пока тот не прочитан, а берегущихся не больше, чем мест игроков. Вытеснение шло при
-  приёме датаграммы, до опроса, и первым брало самого старого пира без `Hello`, то есть честного входящего, чей `Hello` канал уже
-  подтвердил (повторно его не пришлют): при таблице, полной отказанных чужаков, ещё одна датаграмма с нового адреса в тот же
-  тик теряла его, а `Hello` частями не собирался никогда. Теперь первыми уходят отказанные, потом пир без `Hello`, кроме не
-  более `max_players` самых старых из тех, у кого может лежать первое сообщение (непрочитанное или блоб с номера 0; 5 секунд от
-  создания), потом ушедший, даже допущенный: тот, кто возвращается с новых портов и подтверждает по куску раз в 10 секунд, не
-  занимает таблицу на 5 минут. Сообщение с пропуском впереди (номер 1 без 0), которым можно было занять запись чужому, не
-  берегут. Ушедшие идут по времени, когда `flush` увидел их ушедшими, а тот, кого отключили между тиками, последним: раньше
-  он шёл первым и терял `Bye` и `CharacterSave`. Вытеснение допущенного хост пишет в журнал (`forgot pN (gone) …`). Известный
-  предел: кто шлёт со многих настоящих адресов без остановки, может задержать, а то и сорвать вход игрока, чей `Hello` идёт по
-  частям; без рукопожатия, не держащего состояния у хоста, это не закрыть.
-- Сеть: отказ на первое сообщение, которое не разбирается, называет обе причины (`your first message does not decode (…); a
-  join starts with a hello, and both ends need the same build`): `Hello` другой сборки тоже может не разбираться.
-- Сеть: перестройка мира (смена региона, загрузка снапшота) сбрасывает признак «вид урезан» и срок после мира `view complete`: они
-  относились к миру, которого больше нет, и давали лишний мир через 1-5 секунд после мира региона. Любой мир целиком, кроме
-  `view complete` (новое тело, рассинхрон, `net_resync`), тоже сбрасывает признак «вид урезан» (срок остаётся: он держит
-  мигающий предел).
+- Networking: the refusal of a first message that does not decode names both causes (`your first message does not decode (…); a
+  join starts with a hello, and both ends need the same build`). A `Hello` from another build can also fail to decode.
+
+- Networking: rebuilding the world (a region change, a snapshot load) clears the "view limited" flag and the timer that runs after the `view complete` world. Both belonged to a world that no longer exists, and they produced an extra world 1-5 seconds after the region's world. Any full world other than `view complete` (a new body, a desync, `net_resync`) also clears the "view limited" flag. The timer stays, because it holds the blinking limit.
 
 
-### Изменено
+### Changed
 
-- **Протокол сессии 2 (`shards_net`).** Версия протокола канала (`wire::PROTO`) и сессии (`msg::PROTO`) — 2: вход со стуком и
-  cookie, флаги заголовка `COOKIE` и `KNOCK`, у `Hello` поля `character_parts` и `character_bytes`, новые сообщения
-  `CharacterPart`, `CharacterAsk`, `CharacterNotSent`, `PeerStage::Character`, `ClientStage::Knocking`. Игры прошлой сборки
-  с этой не играют: хост отвечает игре протокола 1 отказом на её протоколе (`the host runs a newer build: wire protocol 2 …;
-  run the same build`), игра этой сборки у прошлого хоста не слышит ответа на стук. `MAX_CHARACTER_BYTES` — 1 МБ (было
-  64 КБ; персонаж в самом `Hello` — до `MAX_INLINE_CHARACTER`, 64 КБ). `SaveRouting::route` получает слот:
-  `fn(&mut World, SaveKind, Option<Entity>, &str, &str)`.
-- **Маршруты NPC получают тело, а не радиус (`shards_npc`).** `NavPaths::find` — `fn(&World, Vec3, Vec3, &CharacterParams) ->
-  Option<Vec<Vec3>>`; `find_path`, `navmesh_path`, `local_grid_path`, `routes_for` и `routes_at` тоже берут `&CharacterParams`,
-  а `straight_clear` — его вместо радиуса и высоты ступеньки. Свой поставщик маршрутов игры меняет сигнатуру и может читать
-  рост и остальные числа тела. `NavRegion::serving` из классов одного радиуса берёт самый низкий; новые `NavRegion::lack` и
+- **The documentation is in English; the README is a project page, the manual is `docs/manual.md`.** `README.md` is now a short project page: what the project is, why it exists, a fight driven from the terminal (a GIF, the agent's real output and screenshots in `docs/media/`), quick start, making a game step by step, how it is built, status and links. The old README, the full manual, moved to `docs/manual.md`. Links from `AGENTS.md`, the template's README, documents, tests and code comments now point there. The manual, the spec, the progress file, this changelog, `AGENTS.md`, `CLAUDE.md` and the template's README were translated from Russian, and code comments that named a Russian section name the English one. The language rule in `AGENTS.md` says so. The template needs the engine of phases C–E (saves, co-op, screens, texts). The README, the manual, the template's README and the comment in its `Cargo.toml` name `0.4.0`, not `0.3.0`.
+- **Session protocol 2 (`shards_net`).** The channel protocol version (`wire::PROTO`) and the session version (`msg::PROTO`) are 2: joining uses a knock and a cookie, the header flags `COOKIE` and `KNOCK` are new, `Hello` has the fields `character_parts` and `character_bytes`, and there are new messages `CharacterPart`, `CharacterAsk`, `CharacterNotSent`, `PeerStage::Character`, `ClientStage::Knocking`. Games from the previous build do not play with this one. The host answers a protocol 1 game with a refusal on its protocol (`the host runs a newer build: wire protocol 2 …;
+  run the same build`), and a game of this build does not hear the reply to its knock from the previous host. `MAX_CHARACTER_BYTES` is 1 MB (it was 64 KB; a character in `Hello` itself can be up to `MAX_INLINE_CHARACTER`, 64 KB). `SaveRouting::route` gets the slot: `fn(&mut World, SaveKind, Option<Entity>, &str, &str)`.
+- **NPC routes take the body, not a radius (`shards_npc`).** `NavPaths::find` is `fn(&World, Vec3, Vec3, &CharacterParams) ->
+  Option<Vec<Vec3>>`. `find_path`, `navmesh_path`, `local_grid_path`, `routes_for` and `routes_at` also take `&CharacterParams`,
+  and `straight_clear` takes it instead of the radius and the step height. A game's own route provider changes the signature, and it can read
+  the height and the other numbers of the body. `NavRegion::serving` takes the lowest of the classes with the same radius. New: `NavRegion::lack` and
   `NavRegion::unserved`.
-- **`graphics.render_scale` — внутреннее разрешение 3D, не масштаб окна.** Раньше настройка ставила `scale_factor_override` окна
-  (оно и UI в нём становились крупнее или мельче); теперь окно и UI в родных пикселях, а 3D-мир рисуется в `render_scale` x
-  пикселей окна (см. «Добавлено»). `shards_settings::apply_graphics` больше не трогает масштаб окна. Значение 1.0 по-прежнему
-  ничего не меняет; файл настроек с другим значением даёт другую картинку, а не другое окно.
-- **Переназначение клавиш — настройки.** `rebind` пишет разницу с умолчаниями в `controls.bindings` и
-  `controls.hold_or_toggle` (запись через секунду) и больше не пишет `input.ron`; у него нет аргумента `save`.
-  `InputSettings` остался только как место старого файла (`app_name`, `file`, `import`, `config_dir`; поля `persist` нет):
-  перенос включает игра (`InputSettings::for_game("<папка игры>")`; по умолчанию выключен, чтобы игра не брала чужой общий
-  `~/.config/shards/input.ron`) и он идёт только в папке настроек платформы. Если в настройках ещё нет управления,
-  `input.ron` переносится в настройки и переименовывается в `input.ron.imported` только после того, как `settings.toml`
-  записан. `InputMap::save_overrides` удалён. Игре, которая задавала `InputSettings.app_name`, нужен `SettingsAppId`.
-- `settings_set` для `controls` проверяет то же, что `rebind` (неизвестное действие и контекст, вход, который читает другое
-  действие); запись, которая не читается, остаётся в файле, а не стирается при следующем сохранении. Правка управления не
-  пересобирает карту из умолчаний: контексты и действия, добавленные игрой, остаются. Судит он карту, какой её соберёт
-  игра: действие, добавленное игрой, занимает вход так же, как у `rebind`, а запись для него отклоняется словами «управление,
-  которое игра добавляет сама», а не «нет такого контекста». Возврат записи к умолчанию (`reset=true`, таблица без
-  записи) тоже отклоняется, если умолчание отдало бы действию вход, занятый другим. Отказ называет путь, доступный
-  вызывающему: освободить вход самим `settings_set` (`rebind … force=true` только для разработчика, сам он scope Dev); вход,
-  который держит управление, добавленное игрой, `settings_set` не сдвинет, и отказ просит выбрать другой.
-  `rebind` и `input_bindings` сразу после `settings_set` (в сценарии, в тесте, два запроса в одном кадре) видят его
-  результат, а не карту, от которой настройки уже ушли, и `rebind` больше не стирает такую настройку. Имя контекста с
-  точкой — ошибка контента: `context.action` по точке не разобрать.
-- `shards_motion` и `shards_action` зависят от `shards_settings`; `MotionPlugin` сам добавляет `ShardsSettingsPlugin`, если
-  его нет; feature `render` у `shards_motion` включает `bevy_post_process`.
+- **`graphics.render_scale` is the 3D internal resolution, not the window scale.** Before, the setting set the window's `scale_factor_override`, so the UI in the window got bigger or smaller too. Now the window and the UI are at native pixels, and the 3D world is drawn at `render_scale` x the window's pixels (see "Added"). `shards_settings::apply_graphics` no longer touches the window scale. A value of 1.0 still changes nothing. A settings file with another value gives a different picture, not a different window.
+- **Key rebinding is in the settings.** `rebind` writes the difference from the defaults to `controls.bindings` and
+  `controls.hold_or_toggle` (written a second later). It no longer writes `input.ron`, and it has no `save` argument.
+  `InputSettings` remains only to locate the old file (`app_name`, `file`, `import`, `config_dir`; there is no `persist` field).
+  The move is switched on by the game (`InputSettings::for_game("<game folder>")`). It is off by default, so a game does not take someone else's shared
+  `~/.config/shards/input.ron`. It only moves into the platform's settings folder. If the settings have no controls yet,
+  `input.ron` is moved into the settings and renamed to `input.ron.imported`, and only after `settings.toml`
+  is written. `InputMap::save_overrides` is removed. A game that set `InputSettings.app_name` needs `SettingsAppId`.
+- `settings_set` for `controls` checks the same things as `rebind`: an unknown action or context, and an input that another action reads. A record that is not read stays in the file, and it is not erased at the next save. Changing the controls does not rebuild the map from the defaults. Contexts and actions the game added stay. It judges the map that the game will build. An action the game adds takes its input the same way as with `rebind`, and a record for it is refused with the words "controls the game adds itself", not "no such context". Resetting a record to its default (`reset=true`, a table without a record) is also refused if the default would give the action an input held by another action. The refusal names a path open to the caller: freeing the input with `settings_set` itself (`rebind … force=true` only for the developer, since `rebind` itself has scope Dev). An input that holds controls the game added is not moved by `settings_set`, and the refusal asks for another one. `rebind` and `input_bindings` right after `settings_set` (in a scenario, in a test, two requests in one frame) see its result, not the map the settings have already moved away from, and `rebind` no longer erases such a setting. A context name with a dot is a content error: `context.action` cannot be split at the dot.
+- `shards_motion` and `shards_action` depend on `shards_settings`. `MotionPlugin` adds `ShardsSettingsPlugin` itself if it is missing. The `render` feature of `shards_motion` enables `bevy_post_process`.
 
-- Хуки `NetHooks` изменились: `capture_character` получает `&mut World` (хост запоминает снятое), `on_character_save` — тик
-  хоста и причину, `on_session_end` возвращает слот мира, появился `join_character`. `load_game` мира вызывает
-  `WorldRebuilt`. Клиент сети без `--character` играет слот по имени игрока, а не `slot1`. В списке модулей `ai/status` —
-  `coop`.
-- `observe` печатает после `LANDMARKS` разделы модулей (`AiAppExt::register_ai_observe_section`; первый — `UI`). В карте ввода
-  у `gameplay` новое действие `pause` (Escape, Start); в меню Escape — `back` контекста `menu`. `SettingsRegistry::value` читает
-  одну настройку текстом. В списке модулей `ai/status` — `ui`. Контент песочницы и шаблона прибавил экраны, поэтому
-  эталонные реплеи расходятся на `replay check content` и записываются заново (`record-replays.yml`).
-- Звук (D3): у `JournalKind` новый вид `Local` (`[local] …`) — то, что показывает только эта машина (смены музыки): хост его
-  клиентам не шлёт, и это не игровое событие; `match` по `JournalKind` в игре получает ещё одну ветку. У `AudioSettings` поле
-  `ui` (по умолчанию 1.0), `volume("ui")`. В `observe` раздел `MUSIC`, в списке модулей `ai/status` — `audio`. Песочница и
-  шаблон включают feature `audio` по умолчанию. Контент обеих игр прибавил звуки, музыку и микшер (песочница: `ok: 94
-  definitions in 29 files`), поэтому эталонные реплеи снова записываются заново; снапшот песочницы несёт на один ресурс
-  больше (`Music`).
-- D4: у `RoutePlanner` новое поле `reach` (планировщик, который игра ставит сама, его задаёт); у `Hazard` новый вариант
-  `Closed { by }` (`match` по `Hazard` получает ветку); ответ `path_to` получил поле `provider`, а в регионе маршрут идёт по
-  навсетке (длиннее 80 м без `max`, ошибка навсетки — `navmesh: …`). `worldgen_report` принимает `seeds` и числом (`seeds=7`
-  строкой `shards act` раньше давало ошибку типа). В списке модулей `ai/status` — `dev`. Контент песочницы прибавил пункты меню
-  (`ok: 98 definitions in 30 files`), поэтому её эталонные реплеи записываются заново.
-- E10.1: зонтик реэкспортирует `shards::look`, его feature `render` включает `shards_look/render`, в списке модулей `ai/status` —
-  `look`. `shards_ui::def::parse_color` теперь реэкспорт `shards_content::parse_color` (путь и разбор прежние). В песочнице
-  перечисление `gameplay::Look` (какая это коробка: `Stone`, `Floor`, `Wall`, `Sand`) переименовано в `Surface`, чтобы не путать
-  его с компонентом `Look` движка; поле `look:` в `*.layout.ron` называется как раньше. Контент песочницы и шаблона прибавил виды
-  и `Look` в префабах, хэш базы контента изменился, поэтому эталонные реплеи обеих игр записаны заново на вершине цепочки веток
-  (E10.1–E10.3, вместе с E10.6, на Windows и на Linux; см. E10.6 ниже).
-- Контент песочницы и шаблона прибавил растительность и её виды (E10.2; песочница — `ok: 117 definitions in 33 files`, шаблон —
-  `ok: 67 definitions in 27 files`): хэш контента другой, и эталонные реплеи записаны заново (на вершине цепочки веток, вместе
-  с E10.1, E10.3 и E10.6).
-- E10.3: зонтик реэкспортирует `shards::fx`, его feature `render` включает `shards_fx/render`, в списке модулей `ai/status` — `fx`
-  (после `scatter`). Пока декали включены (по умолчанию), гизмо телеграфов не рисуют штриховку и растущее кольцо: их рисует декаль;
-  `telegraph_decals on=false` возвращает прежнюю картинку. В меню разработчика 37 пунктов (с растительностью E10.2). Контент
-  песочницы и шаблона прибавил эффекты и таблицу (с растительностью: песочница — `ok: 123 definitions in 35 files`, шаблон —
-  `ok: 71 definitions in 29 files`), хэш базы контента изменился, поэтому эталонные реплеи обеих
-  игр записаны заново на вершине цепочки веток (вместе с E10.1, E10.2 и E10.6).
-- E10.6: математика идёт через `libm` (см. «Добавлено»), поэтому числа `f32` в игре могут отличаться от прежних в последних битах:
-  эталонные реплеи песочницы и шаблона, записанные с математикой glibc, расходятся на любой ОС и записываются заново
-  (`record_reference_replays`, `record-replays.yml`). Реплеи песочницы и шаблона в этом дереве записаны заново (после E10.1–E10.3 и
-  E10.6 вместе): Windows и Linux записали их побайтово одинаково (см. «Добавлено»). Игра, которая
-  звала `x.sin()` и подобные в симуляции, получает ошибку `clippy::disallowed_methods`, если скопирует `clippy.toml` шаблона:
-  заменить на `ops::sin(x)` (`ops` есть в `shards::prelude`).
-- **Формат сохранения мира: секция `region` — версия 2** (с манифестом региона; секция с манифестом `wilds` 8 × 8 — около
-  3 КБ, весь файл мира — 3392 байта). Файлы с версией 1 читаются миграцией `region` 1 → 2 (`manifest: null`): такой регион, как раньше, генерируется заново и сверяется с
-  хэшем, а следующее сохранение пишет версию 2. Сборка старее этой сохранение с `region` v2 не читает и не перезаписывает
-  (`saved by a newer version of the game (section region v2 > v1)`). Снапшоты, реплеи и эталонные реплеи не меняются.
-- `SaveRegistry::add`: секция другого крейта, которая заменяет секцию с тем же именем, начинает свою историю миграций — миграции
-  заменённой удаляются вместе с ней (игра, заменившая `region`, регистрирует миграции своих версий после неё; иначе миграция движка
-  `region` 1 → 2 уронила бы сборку её секции версии 1).
-- E6.2: `npc_tuning` больше не знает `avoid_time` и `avoid_margin` (контент с ними — ошибка ``Unexpected field named
-  `avoid_time` in `NpcTuning`, expected one of …``): их место заняла `avoidance`. У `NavAgent` новые поля (и `planned_from`),
-  NPC в толпе ходят иначе, а сошедшие с прямой планируют маршрут заново. Эталонные реплеи песочницы (все семь) и шаблона
-  (`smoke`, `valley`) записаны на этой ветке заново: `NavAgent` у NPC другой, а `avoidance` в `npc_tuning` меняет хэш контента.
-- E6.1: классы тел меняют контент песочницы (`wilds.nav.ron` с классом `large`), и хэш контента снова другой; новых
-  расходящихся компонентов они не добавляют: NPC в реплеях — скелеты, они идут по классу `agent`, а его навсетка и файлы
-  прежние. Журнал региона прибавил строку `navmesh (body large): …`.
+- The `NetHooks` hooks changed. `capture_character` gets `&mut World` (the host remembers what it captured). `on_character_save` gets the host's tick and the reason. `on_session_end` returns the world's slot. `join_character` is new. The world's `load_game` calls `WorldRebuilt`. A network client without `--character` plays the slot named after the player, not `slot1`. In the module list of `ai/status`, `coop` is listed.
+- `observe` prints the module sections after `LANDMARKS` (`AiAppExt::register_ai_observe_section`; the first is `UI`). In the input map, `gameplay` has a new action `pause` (Escape, Start). In the `menu` context, Escape is bound to `back`. `SettingsRegistry::value` reads one setting as text. In the module list of `ai/status`, `ui` is listed. The content of the sandbox and the template added screens, so the reference replays diverge on `replay check content` and are re-recorded (`record-replays.yml`).
+- Audio (D3): `JournalKind` has a new kind `Local` (`[local] …`). It is for what only this machine shows (music changes). The host does not send it to its clients, and it is not a game event. A `match` on `JournalKind` in a game gets one more branch. `AudioSettings` has a field `ui` (default 1.0), and `volume("ui")`. In `observe`, there is a `MUSIC` section. In the module list of `ai/status`, `audio` is listed. The sandbox and the template turn on the `audio` feature by default. The content of both games added sounds, music and a mixer (the sandbox: `ok: 94
+  definitions in 29 files`), so the reference replays are re-recorded again. The sandbox snapshot carries one more resource (`Music`).
+- D4: `RoutePlanner` has a new field `reach`. The planner that the game installs itself sets it. `Hazard` has a new variant `Closed { by }` (a `match` on `Hazard` gets a branch). The `path_to` reply got a field `provider`. In a region, the route goes along the navmesh (longer than 80 m without `max`; a navmesh error is `navmesh: …`). `worldgen_report` now also accepts `seeds` as a number (before, `seeds=7` given as a string in `shards act` gave a type error). In the module list of `ai/status`, `dev` is listed. The sandbox content added menu items (`ok: 98 definitions in 30 files`), so its reference replays are re-recorded.
+- E10.1: the umbrella crate re-exports `shards::look`. Its `render` feature enables `shards_look/render`. In the module list of `ai/status`, `look` is listed. `shards_ui::def::parse_color` is now a re-export of `shards_content::parse_color` (the path and the parsing are as before). In the sandbox, the enum `gameplay::Look` (the kind of box: `Stone`, `Floor`, `Wall`, `Sand`) is renamed to `Surface`, so that it is not confused with the engine's `Look` component. The field `look:` in `*.layout.ron` keeps its name. The content of the sandbox and the template added looks and `Look` in prefabs, and the content database hash changed. So the reference replays of both games are re-recorded at the top of the branch chain (E10.1–E10.3, together with E10.6, on Windows and on Linux; see E10.6 below).
+- The content of the sandbox and the template added foliage and its kinds (E10.2; sandbox — `ok: 117 definitions in 33 files`, template —
+  `ok: 67 definitions in 27 files`). The content hash is different, and the reference replays are re-recorded (at the top of the branch chain, together
+  with E10.1, E10.3 and E10.6).
+- E10.3: the umbrella crate re-exports `shards::fx`. Its `render` feature enables `shards_fx/render`. In the module list of `ai/status`, `fx` is listed (after `scatter`). While decals are on (the default), the telegraph gizmos do not draw the hatching or the growing ring; the decal draws them. `telegraph_decals on=false` brings back the old picture. The developer menu has 37 items (with the E10.2 foliage). The content of the sandbox and the template added effects and a table (with foliage: sandbox — `ok: 123 definitions in 35 files`, template — `ok: 71 definitions in 29 files`). The content database hash changed, so the reference replays of both games are re-recorded at the top of the branch chain (together with E10.1, E10.2 and E10.6).
+- E10.6: the math goes through `libm` (see "Added"), so `f32` numbers in the game may differ from the old ones in the last bits:
+  the reference replays of the sandbox and the template, recorded with glibc's math, diverge on any OS, and are re-recorded
+  (`record_reference_replays`, `record-replays.yml`). The sandbox and template replays in this tree were re-recorded (after E10.1–E10.3 and
+  E10.6 together). Windows and Linux recorded them byte for byte identically (see "Added"). A game that called `x.sin()` and
+  similar functions in the simulation gets the error `clippy::disallowed_methods` if it copies the template's `clippy.toml`:
+  replace them with `ops::sin(x)` (`ops` is in `shards::prelude`).
+- **World save format: the `region` section is version 2** (with the region manifest; the `wilds` 8 × 8 manifest section is about
+  3 KB, and the whole world file is 3392 bytes). Files with version 1 are read by the migration `region` 1 → 2 (`manifest: null`). Such a region, as before, is generated again and checked against
+  the hash. The next save writes version 2. A build older than this one does not read or overwrite a save with `region` v2
+  (`saved by a newer version of the game (section region v2 > v1)`). Snapshots, replays and reference replays do not change.
+- `SaveRegistry::add`: a section from another crate that replaces a section with the same name starts its own migration history. The migrations of the replaced section are removed with it. (A game that replaces `region` registers the migrations of its own versions after it. Otherwise the engine's migration `region` 1 → 2 would make its version 1 section fail to load.)
+- E6.2: `npc_tuning` no longer knows `avoid_time` and `avoid_margin` (content that still has them is an error ``Unexpected field named
+  `avoid_time` in `NpcTuning`, expected one of …``). Their place is taken by `avoidance`. `NavAgent` has new fields (and `planned_from`).
+  NPCs in a crowd move differently, and those who step off the straight line plan their route again. The reference replays of the sandbox (all seven) and of the template
+  (`smoke`, `valley`) were re-recorded on this branch. The NPCs' `NavAgent` is different, and `avoidance` in `npc_tuning` changes the content hash.
+- E6.1: body classes change the sandbox content (`wilds.nav.ron` with the class `large`), and the content hash is different again. They add no new components that diverge. The NPCs in the replays are skeletons, and they use the class `agent`, whose navmesh and files are as before. The region's journal got a new line `navmesh (body large): …`.
 
-### Планируется
+## [0.3.0] — phase B: world, enemies and snapshots (unreleased)
 
-- Фаза E: платформа (E10) — рендер и производительность, Steam, Windows, скриншоты без окна.
+The engine got a world and enemies. Levels are assembled in Blender (`shards_level`). Regions are generated from a seed and checked
+(`shards_world`). Enemies walk on the tile navmesh and share attacks by tokens (`shards_npc`). The state of any tick is saved to a
+file and can be loaded back (snapshots). The sandbox got the "wilds" region and NPCs on the engine. The template got a valley with raiders.
 
-## [0.3.0] — фаза B: мир, враги и снапшоты (не выпущена)
+The version in `[workspace.package]` is `0.2.0` for now. The maintainer raises it at release (section "Releasing a version (for the maintainer)"). A minor version
+changes the API. `0.3.x` does not accept snapshots, or replays with a snapshot, recorded on `0.2.x` (`force` skips the check). The reference
+`tests/replays/snapshot.json` is re-recorded at release.
 
-Движок получил мир и врагов. Уровни собираются в Blender (`shards_level`), регионы генерируются из зерна и проверяются
-(`shards_world`), враги ходят по навсетке тайлов и делят атаки по жетонам (`shards_npc`), состояние любого тика сохраняется в
-файл и возвращается (снапшоты). Песочница получила регион «дебри» и NPC на движке, шаблон — долину с рейдерами.
+### Added
 
-Версия в `[workspace.package]` пока `0.2.0`: поднимает её мейнтейнер при выпуске (раздел «Как выпустить версию»). Минорная версия
-меняет API: снапшоты и реплеи со снапшотом, записанные на `0.2.x`, `0.3.x` не принимает (`force` пропускает проверку), а
-эталон `tests/replays/snapshot.json` при выпуске записывается заново.
+**Levels from Blender (E4.2, `shards_level`)**
 
-### Добавлено
+- glTF 2.0 with custom properties becomes entities: colliders and sensors (`collider`, `volume`), markers (`spawn`, `socket`,
+  `navlink`, `trigger`, `interactable`, `camp`, `landmark`, `custom:<name>`), prefabs from the content (`prefab`) and any game components
+  by name (JSON in the property value, including as text). Nodes are spawned as top-level entities with a world
+  `Transform`, in file order: the same `AiId` and `ColliderId` in every run. Only the file's JSON is read
+  (crate `gltf =1.4.1`), with no window and no GPU.
+- Content kind `level` (`file`, `required_markers`, `at`): `content check` and `--check-content` read the file. An error names the content file, the level, the node (`Ruin/Column`) and the property, and suggests the nearest name.
+- Tools `level_info` (player), `spawn_level`, `level_reload` (developer). Hot reload replaces the instances with an action that is recorded. The replay check `level` and the snapshot check `levels` know the spawned levels and the file digests.
+- `shards::TileLevelsPlugin` (in `EnginePlugins`): levels as tile geometry (`geometry: Level(path: …)`). The files load behind the loading gate. A tile's marker nodes are also `Marker`.
 
-**Уровни из Blender (E4.2, `shards_level`)**
+**World (E5, `shards_world`)**
 
-- glTF 2.0 с custom properties становится сущностями: коллайдеры и датчики (`collider`, `volume`), маркеры (`spawn`, `socket`,
-  `navlink`, `trigger`, `interactable`, `camp`, `landmark`, `custom:<имя>`), префабы из контента (`prefab`) и любые компоненты
-  игры по имени (JSON в значении свойства, в том числе текстом). Узлы спавнятся сущностями верхнего уровня с мировым
-  `Transform`, в порядке файла: одни и те же `AiId` и `ColliderId` в каждом запуске. Читается только JSON файла
-  (крейт `gltf =1.4.1`): без окна и без GPU.
-- Вид контента `level` (`file`, `required_markers`, `at`): `content check` и `--check-content` читают файл, ошибка называет
-  файл контента, уровень, узел (`Ruin/Column`) и свойство и подсказывает ближайшее имя.
-- Инструменты `level_info` (игрок), `spawn_level`, `level_reload` (разработчик); горячая перезагрузка заменяет экземпляры
-  записываемым действием. Проверка реплея `level` и проверка снапшота `levels` знают поставленные уровни и дайджесты файлов.
-- `shards::TileLevelsPlugin` (в `EnginePlugins`): уровни как геометрия тайлов (`geometry: Level(path: …)`), файлы грузятся за
-  шлюзом загрузки, узлы-маркеры тайла — ещё и `Marker`.
+- Content kinds `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`. Errors name the file, the field and the nearest
+  id. A region has: a size, a tile size, a generator version, fixed cells, limits, points of interest, roads, checks,
+  a fallback map, `active_radius`, and `origin` (the corner of the region in the world, default (0, 0)).
+- The generator works in stages (`Points`, `Roads`, `Cells`, `Fill`, `Secondary`, `Decorate`, `Checks`). The engine's steps work on data.
+  A game adds a step (`add_worldgen_step`), replaces a stage (`replace_worldgen_stage`), or adds a check
+  (`add_worldgen_check`). The socket solver (rotations, heights, fixed cells, limits, propagation, a bounded
+  backtrack), checks (`spawn`, `reachable`, `slope`, `distance`, `isolated_roads`, and the game's own), attempts and the fallback map. Generation is
+  a pure function of the seed, the version, the attempts and the content. It draws its randomness from `DetRng`.
+- `RegionManifest` (`shards-region/1`): a canonical record, stable byte for byte, with a hash. Loading a manifest does not run
+  the generator. Dungeons are built from rooms, with a guaranteed path from the entrance to the goal. Hand-made rooms are fixed nodes.
+- Batch check without a window: `<game> --worldgen-report REGION --seeds 1..1000` (exit code 0 when every seed passes),
+  `shards worldgen --region R --seeds S --report`, and the tool `worldgen_report`.
+- Loading a region: `regen`, `region_load`, `goto_tile`, `region_info`, `world_overlay` (window), `start_region`,
+  `on_region_loaded`. The change goes through `EngineState::RegionLoading` within one call. It does not advance a single tick, and it is recorded in the replay. `ActiveZone`/`Dormant`: NPCs farther than the active radius from all players do not think or move. The tiles' picture streams by distance (only with a window). `observe` gets the `TILE` and `POI` lines, `ai/status` gets the `world` field, and `step --until` gets the condition `near_poi`.
 
-**Мир (E5, `shards_world`)**
+**Navigation and enemies (E6, `shards_npc`)**
 
-- Виды контента `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`; ошибки называют файл, поле и ближайший
-  id. Регион: размер, размер тайла, версия генератора, фиксированные клетки, лимиты, точки интереса, дороги, проверки,
-  запасная карта, `active_radius`, `origin` (угол региона в мире, по умолчанию (0, 0)).
-- Генератор по стадиям (`Points`, `Roads`, `Cells`, `Fill`, `Secondary`, `Decorate`, `Checks`): шаги движка работают на данных,
-  игра добавляет шаг (`add_worldgen_step`), заменяет стадию (`replace_worldgen_stage`) или добавляет проверку
-  (`add_worldgen_check`). Решатель сокетов (повороты, высоты, фиксированные клетки, лимиты, распространение, ограниченный
-  откат), проверки (`spawn`, `reachable`, `slope`, `distance`, `isolated_roads`, свои), попытки и запасная карта. Генерация —
-  чистая функция зерна, версии, попытки и контента на `DetRng`.
-- `RegionManifest` (`shards-region/1`): каноническая запись, побайтно стабильная, с хэшем; загрузка манифеста не запускает
-  генератор. Подземелья из комнат с гарантированным путём от входа к цели, ручные комнаты — фиксированные узлы.
-- Пакетная проверка без окна: `<игра> --worldgen-report REGION --seeds 1..1000` (код 0, если прошли все зёрна),
-  `shards worldgen --region R --seeds S --report`, инструмент `worldgen_report`.
-- Загрузка региона: `regen`, `region_load`, `goto_tile`, `region_info`, `world_overlay` (окно), `start_region`,
-  `on_region_loaded`; переход идёт через `EngineState::RegionLoading` внутри одного вызова, не сдвигает ни одного тика и
-  записывается в реплей. `ActiveZone`/`Dormant`: NPC дальше активного радиуса от всех игроков не думают и не ходят; картинка
-  тайлов стримится по расстоянию (только с окном). `observe` получает строки `TILE` и `POI`, `ai/status` — поле `world`,
-  `step --until` — условие `near_poi`.
-
-**Навигация и враги (E6, `shards_npc`)**
-
-- Поведение: автомат состояний в контенте (`behavior`), хуки состояний и условия движка (`idle`, `patrol`, `chase`,
+- Behaviour: a state machine in the content (`behavior`), the engine's state hooks and conditions (`idle`, `patrol`, `chase`,
   `return_home`, `wait_token`, `attack`, `flee`, `hold`, `investigate`; `target_seen`, `target_within`, `target_in_leash`,
-  `at_home`, `has_token`, …) и игры (`add_npc_condition`, `add_npc_state`). Восприятие (`perception`): зрение лучами физики,
-  слух (`Noise`), память. Режиссёр боя (`director`): жетоны атаки по числу игроков, бюджет столкновения, разрешённые сочетания,
-  роли ждущих (круг, шаг вбок, держаться). Планировщик атак (`attack_plan`): веса, окна дистанции, откаты, запреты
-  последовательностей, отдых. Поводок `Home`, `Patrol`. NPC управляют телом через `Intent`; всё состояние — в их компонентах, поэтому
-  входит в реплей и снапшот.
-- Навсетка по тайлам: запекание заранее (`<игра> --bake-nav [тайлы|all]`, инструмент `nav_bake`, файлы `assets/nav/*.navtile.ron`,
-  `.navroom.ron`) тем же правилом движения, что у `path_to` и контроллера; хэш файла против тайла, префабов, файла уровня и
-  настроек (вид `nav`: с ним устаревший файл — ошибка контента); при загрузке региона сшивка по открытым сокетам, `navlink`,
-  вырезание твёрдых тел, которых запекание не видело; маршрут по графу тайлов, по сетке коридора, натягивание нити. Без окна,
-  детерминированно.
-- Агенты: `NavPaths` (подмена источника маршрутов), цель на виду, уклонение, поводок. `move_to path=true` идёт по навсетке в
-  регионе; инструменты `nav_path`, `nav_info`, `npc_state`, `npc_set_state`, `nav_overlay` (окно); условия `npc_attacking`,
-  `npcs_calm`, `npc_beyond_leash`, `npc_detour`. В `observe` строка состояния NPC, в журнале переходы и жетоны.
+  `at_home`, `has_token`, …), and the game's own (`add_npc_condition`, `add_npc_state`). Perception (`perception`): sight by physics rays,
+  hearing (`Noise`), and memory. The combat director (`director`): attack tokens by the number of players, an encounter budget, allowed combinations,
+  the roles of those who wait (a circle, a sideways step, holding back). The attack planner (`attack_plan`): weights, distance windows, cooldowns, bans on sequences,
+  rest. Leash: `Home`, `Patrol`. NPCs drive the body through `Intent`. All their state is in their components, so it is
+  part of the replay and the snapshot.
+- Navmesh by tile: baked in advance (`<game> --bake-nav [tiles|all]`, tool `nav_bake`, files `assets/nav/*.navtile.ron`,
+  `.navroom.ron`) with the same movement rule as `path_to` and the controller. The file's hash is checked against the tile, the prefabs, the level file and the settings (with the kind `nav`, a stale file is a content error). When a region loads, the tiles are stitched along the open sockets and `navlink`, and solid bodies that the baking did not see are cut out. The route runs over the tile graph, along the corridor grid, with string pulling. No window is needed, and it is deterministic.
+- Navigation agents: `NavPaths` (a replacement of the route source), a target in sight, avoidance, the leash. `move_to path=true` walks along the navmesh in a region. Tools `nav_path`, `nav_info`, `npc_state`, `npc_set_state`, `nav_overlay` (window); conditions `npc_attacking`,
+  `npcs_calm`, `npc_beyond_leash`, `npc_detour`. `observe` shows a line with the NPC's state, and the journal shows the transitions and tokens.
 
-**Снапшоты (E11.4, `ai_core`)**
+**Snapshots (E11.4, `ai_core`)**
 
-- `snapshot_save` и `snapshot_load` (Dev, `control`; файлы только в `snapshots/`) и `shards save-snapshot` /
-  `load-snapshot`: состояние симуляции в любой тик в файл `shards-snapshot/1` и обратно, дальше `step` идёт как исходная
-  сессия. Сохраняются сущности с `AiId` и их отражаемые компоненты, тик, счётчик `AiId` с надгробиями и ресурсы,
-  зарегистрированные `add_snapshot_resource` (`ColliderIds`, `RegionBuild`); кэши пересобираются (`add_snapshot_rebuild`:
-  `PhysicsWorld`, навсетка региона); то, вокруг чего построен мир, проверяется хэшем (`add_snapshot_check`: контент,
-  коллайдеры без `AiId`, уровни). Загрузка другого seed, версии, контента или неизвестного компонента отвечает ошибкой до
-  изменений (`force` пропускает); после загрузки мир сохраняется снова и сверяется с файлом.
-- `add_snapshot_prepare(name, covers, fn)`: модуль строит заново то, что делает из сохранённого, до проверок. Регион снапшота
-  строится заново из манифеста с теми же `ColliderId` и номерами экземпляров уровней, в игре с другим регионом или без него;
-  снапшот без региона выгружает регион.
-- Реплеи `shards-replay/3` начинаются со снапшота (`start`): запись после `snapshot_load` стартует с него, проигрывание и
-  `--verify` грузят его перед первым тиком. Реплеи `shards-replay/2` проигрываются как раньше.
-- Для модулей: `add_snapshot_resource`, `add_snapshot_check`, `add_snapshot_rebuild`, `add_snapshot_prepare`,
-  `add_snapshot_entity_key`.
+- `snapshot_save` and `snapshot_load` (Dev, `control`; files only in `snapshots/`) and `shards save-snapshot` /
+  `load-snapshot`: save the simulation state at any tick to a `shards-snapshot/1` file, and load it back. After that, `step` runs the same way as the original session. The snapshot holds the entities with `AiId` and their reflected components, the tick, the `AiId` counter with its tombstones, and the resources registered with
+  `add_snapshot_resource` (`ColliderIds`, `RegionBuild`). Caches are rebuilt (`add_snapshot_rebuild`:
+  `PhysicsWorld`, the region's navmesh). What the world was built around is checked by a hash (`add_snapshot_check`: content,
+  colliders without `AiId`, levels). Loading a snapshot with a different seed, version, content or unknown component returns an error before anything changes (`force` skips the check). After loading, the world is saved again and compared with the file.
+- `add_snapshot_prepare(name, covers, fn)`: a module rebuilds what it makes from the saved data before the checks run. The snapshot's region is rebuilt from its manifest, with the same `ColliderId`s and level instance numbers, in a game with another region or with none. A snapshot without a region unloads the region.
+- `shards-replay/3` replays start from a snapshot (`start`). A recording made after `snapshot_load` starts from it, and playback and `--verify` load it before the first tick. `shards-replay/2` replays play back as before.
+- For modules: `add_snapshot_resource`, `add_snapshot_check`, `add_snapshot_rebuild`, `add_snapshot_prepare`, `add_snapshot_entity_key`.
 
-**Зонтик, слой ИИ, движение**
+**Umbrella, AI layer, movement**
 
-- `shards::level`, `shards::world`, `shards::npc` и их prelude; `EnginePlugins` включает `LevelPlugin`, `WorldPlugin`,
-  `TileLevelsPlugin`, `NpcPlugin` (`engine.modules` в `ai/status` называет `level`, `world`, `npc`). `shards::run`: флаги
-  `--worldgen-report REGION [--seeds S]` и `--bake-nav [TILES]`; `--verify` играет реплей со снапшота (код 2, если сборка снапшот
-  не принимает); `shards::testing::{run_to, verify}`.
-- `ai_core`: `register_ai_observe_lines` (модуль добавляет строки под `YOU`: `TILE`, `POI`), `add_snapshot_*`. CLI:
-  `save-snapshot`, `load-snapshot`, `worldgen`.
-- `shards_motion`: правило движения `step_onto` (и `hop_allowed`) публично, им запекается навсетка и планирует `path_to`;
-  `RoutePlanner`: `move_to path=true` спрашивает навсетку региона.
+- `shards::level`, `shards::world`, `shards::npc` and their preludes. `EnginePlugins` includes `LevelPlugin`, `WorldPlugin`, `TileLevelsPlugin` and `NpcPlugin` (`engine.modules` in `ai/status` lists `level`, `world`, `npc`). `shards::run`: the flags `--worldgen-report REGION [--seeds S]` and `--bake-nav [TILES]`. `--verify` plays a replay from a snapshot (exit code 2 if the build does not accept the snapshot). `shards::testing::{run_to, verify}`.
+- `ai_core`: `register_ai_observe_lines` (a module adds lines under `YOU`: `TILE`, `POI`), `add_snapshot_*`. CLI: `save-snapshot`, `load-snapshot`, `worldgen`.
+- `shards_motion`: the movement rule `step_onto` (and `hop_allowed`) is public. The navmesh is baked with it, and `path_to` plans with it. `RoutePlanner`: `move_to path=true` asks the region's navmesh.
 
-**Песочница, шаблон и CI**
+**The sandbox, the template and CI**
 
-- Песочница: монстры — NPC движка (поведение, восприятие, директор, планы атак — контент `content/npc/`; скелеты с поводком
-  30 м, страж 26 м и отдельным директором); третий скелет арены (`e14`); область «дебри» — регион `wilds` 8 × 8 тайлов по 16 м
-  к югу от арены (`regen region=wilds seed=42`), девять тайлов, один из файла уровня (`assets/tiles/ruin.gltf`), лагеря
-  скелетов и логово, запечённая навигация в `assets/nav/`. Сценарии `npc_director`, `npc_navmesh`, `region`, `snapshot` и
-  эталонные реплеи к ним (`tests/replays/`); условия `three_attacking`; снапшоты боя, региона и NPC в тестах.
-- Шаблон: долина `valley` (регион, один тайл из файла уровня, запечённая навсетка), рейдеры — NPC движка без кода игры,
-  сценарий `valley`, реплей `valley`, `tests/game/region.rs`.
-- CI: `--check-content` песочницы читает файлы уровней и навигацию; `--worldgen-report wilds --seeds 1..1000` и `valley`;
-  сценарии против живой игры идут вперёд, потом назад в одной игре.
+- The sandbox: the monsters are engine NPCs. Their behaviour, perception, director and attack plans are content in `content/npc/`. Skeletons have a 30 m leash, the guard a 26 m leash and its own director. The arena has a third skeleton (`e14`). The "wilds" area is the `wilds` region: 8 × 8 tiles of 16 m each, south of the arena (`regen region=wilds seed=42`). It has nine tiles, one of them from a level file (`assets/tiles/ruin.gltf`), skeleton camps and a lair, and baked navigation in `assets/nav/`. The scenarios `npc_director`, `npc_navmesh`, `region`, `snapshot` and their reference replays (`tests/replays/`); the `three_attacking` condition; snapshots of the fight, the region and the NPCs in the tests.
+- The template: the `valley` region (one tile from a level file, a baked navmesh), raiders that are engine NPCs with no game code, the `valley` scenario, the `valley` replay, `tests/game/region.rs`.
+- CI: the sandbox's `--check-content` reads the level files and the navigation. `--worldgen-report wilds --seeds 1..1000` and `valley`. Scenarios against a live game run forward, then back, in the same game.
 
-### Изменено
+### Changed
 
-- `RegionLoading` теперь рабочее состояние: через него идёт каждая смена региона.
-- Песочница: собственные мозги скелетов и стража заменены NPC движка; страж отдыхает между атаками, пока ничего не делает
-  (не пока оглушён); сценарии выводят монстров из боя состоянием `calm` (`npc_set_state`), а не полями старых мозгов.
-  Эталонные реплеи записаны заново.
-- `set` заменяет список целиком, а не пишет поверх его первых элементов.
+- `RegionLoading` is now a working state: every region change goes through it.
+- Sandbox: the skeletons' and the guard's own brains are replaced with engine NPCs. The guard rests between attacks while it has nothing to do (not while it is stunned). Scenarios take monsters out of combat with the `calm` state (`npc_set_state`), not with the fields of the old brains. The reference replays are recorded again.
+- `set` replaces the whole list. It no longer writes over its first elements.
 
-### Исправлено
+### Fixed
 
-- Мир: подземелья ставят каждую ручную комнату (минимум пути поднимается до их числа), ручная комната с одной дверью —
-  ошибка контента; перезагруженные тайлы уровней получают метки региона внутри перезагрузки, регион владеет всеми экземплярами;
-  смена региона отказывает до того, как старый ушёл, если не хватает префаба, а из `OnEnter(InGame)` не входит в состояние
-  заново; `ground_below` выходит из твёрдого тела, в котором начался луч; путь к файлу тайла вне папки ассетов называет тайл;
-  решатель пишет журнал изменений вместо копии сетки (сетка 64 × 64 укладывается в 8 МиБ); сломанный файл тайла виден в
-  журнале при загрузке; пакетный отчёт говорит, почему не прошло зерно, когда виновата не попытка.
-- NPC: атака без ударов держит жетон до конца; жетон на забытую цель возвращается; жетоны сверх уменьшившегося числа игроков
-  возвращаются сразу; NPC под приказом агента выпадает из боя; попавший звук не сдвигает цель, которую NPC видит.
-- Навсетка: вырезание зависит от твёрдых тел, стоящих сейчас, а не от порядка их появления; навсетка строится заново после
-  загрузки снапшота; уступы и спуски на краю тайла сшиваются; NPC не идёт к цели на виду через обрыв, а без маршрута стоит;
-  `navlink` только для движений, которые тело делает; устаревание запеканки видит префабы, которые расширяют префабы геометрии;
-  `move_to path=true` не ведёт по навсетке ходока, чьих движений она не знает.
+- World: dungeons place every hand-authored room (the minimum path is raised to their number). A hand-authored room with one door is a content error. Reloaded level tiles get their region tags inside the reload, and the region owns all the instances. A region change is refused before the old region leaves if a prefab is missing, and a change started from `OnEnter(InGame)` no longer re-enters the state. `ground_below` gets out of the solid body the ray started in. The error for a tile file path outside the assets folder names the tile. The solver writes a change log instead of a copy of the grid (a 64 × 64 grid fits in 8 MiB). A broken tile file shows in the journal on load. The batch report says why a seed failed, when the attempt itself is not to blame.
+- NPC: an attack with no hits holds its token until it ends. A token for a forgotten target is returned. Tokens above the reduced number of players are returned at once. An NPC under an agent's order drops out of the fight. A sound that reaches an NPC does not move the target the NPC sees.
+- Navmesh: carving depends on the solid bodies standing there now, not on the order they appeared in. The navmesh is rebuilt after a snapshot loads. Ledges and drops at a tile's edge are stitched together. An NPC does not walk to a target it sees across a drop, and without a route it stands still. `navlink` is only for moves the body makes. The bake's staleness check sees prefabs that extend geometry prefabs. `move_to path=true` does not guide a walker along the navmesh when it does not know that walker's moves.
 
-### Известные ограничения
+### Known limitations
 
-- Стримится только картинка тайлов, геометрия региона для физики создаётся вся.
-- Навсетка запекается под одно тело; `path_to` и `clearance` остались запросами к физике (по навсетке `nav_path` и
-  `move_to path=true`).
-- Уровни проверены на glTF, сделанном тестовым генератором, не на экспорте Blender; нет проверки, что сокеты файла совпадают
-  с сокетами тайла в RON.
-- При проигрывании реплея `content_apply`, добавляющий файл уровня тайла, и `regen` в тот же тик не успевают загрузить файл (исправлено в `[Unreleased]`).
+- Only the tiles' visuals are streamed. The region's geometry for physics is built in full.
+- The navmesh is baked for one body. `path_to` and `clearance` are still physics queries (over the navmesh: `nav_path` and `move_to path=true`).
+- Levels are tested on a glTF made by a test generator, not on a Blender export. Nothing checks that a file's sockets match the tile's sockets in RON.
+- When a replay runs `content_apply`, which adds a tile's level file, and `regen` in the same tick, they do not load the file in time (fixed in `[Unreleased]`).
 
-## [0.2.0] — фаза A: прототип боя
+## [0.2.0] — phase A: combat prototype
 
-Движок стал набором крейтов, на котором отдельный репозиторий собирает игру, не трогая код движка. Игра
-подключает один крейт, `shards`; песочница (`crates/sandbox`) собрана так же, как игра, а в `template/` лежит
-минимальная игра.
+The engine became a set of crates. A separate repository builds a game on it without touching the engine's code. A game depends on one crate, `shards`. The sandbox (`crates/sandbox`) is built the same way as a game, and `template/` holds a minimal game.
 
-### Добавлено
+### Added
 
-**Зонтик `shards` (E1)**
+**Umbrella crate `shards` (E1)**
 
-- `shards::EnginePlugins` — весь движок из одного `EngineConfig`: `DefaultPlugins`, слой ИИ, ядро, контент,
-  движение и бой. Режим без окна — те же плагины минус окно, GPU и звук; песочница больше не собирается из
-  `MinimalPlugins`.
-- `shards::run` — стандартный `main` игры: `--headless --seed --port --port-file --no-remote --paused --hz
-  --replay --verify [--windowed] --check-content`. `kill` и закрытый терминал завершают игру через `AppExit`, токен и
-  файл порта удаляются. `--verify --windowed` проигрывает реплей в окне (под `xvfb-run -a`) и даёт тот же отчёт, что без
-  окна: рендер, камера и карта ввода не меняют игру.
-- `shards::testing` — тестовые приложения без окна, загруженные и стоящие на паузе на тике 0
-  (`test_app`, `call`, `ok`); `shards::prelude`; реэкспорт `bevy`, `serde`, `schemars`, `serde_json`, чтобы игре
-  не нужны были свои зависимости на них.
-- `ai/status` показывает версию движка, включённые модули и состояние: `engine: {version, modules, state}`.
+- `shards::EnginePlugins`: the whole engine from one `EngineConfig`: `DefaultPlugins`, the AI layer, the core, content, movement and combat. The mode without a window uses the same plugins minus the window, the GPU and sound. The sandbox is no longer built from `MinimalPlugins`.
+- `shards::run`: the standard `main` of a game: `--headless --seed --port --port-file --no-remote --paused --hz
+  --replay --verify [--windowed] --check-content`. `kill` and a closed terminal stop the game through `AppExit`, and the token and port file are removed. `--verify --windowed` plays a replay in a window (under `xvfb-run -a`) and gives the same report as without a window: rendering, the camera and the input map do not change the game.
+- `shards::testing`: test apps without a window, loaded and paused at tick 0 (`test_app`, `call`, `ok`). `shards::prelude`. It re-exports `bevy`, `serde`, `schemars` and `serde_json`, so a game does not need its own dependencies on them.
+- `ai/status` shows the engine version, the enabled modules and the state: `engine: {version, modules, state}`.
 
 **`shards_core` (E1)**
 
-- `EngineConfig`, состояния `EngineState` (`Loading` → `MainMenu` | `InGame`, `RegionLoading`) и `PauseState`,
-  `LoadingGate`: пока что-то грузится, `ai_core::SimGate` не пускает ни одного тика, поэтому загрузка не сдвигает
-  тики. Игры создают мир в `OnEnter(EngineState::InGame)`.
-- `Intent`, `Press`, `Order`, `Target` и `input_names` — единственный вход персонажа: клавиатура, геймпад,
-  инструменты агента и реплей пишут в него. `PlayerId`, `LocalPlayer`, `NetRole` — задел под сеть (фаза C).
+- `EngineConfig`, the `EngineState` states (`Loading` → `MainMenu` | `InGame`, `RegionLoading`) and `PauseState`, and `LoadingGate`. While something loads, `ai_core::SimGate` lets no tick run, so loading does not move the ticks. Games create the world in `OnEnter(EngineState::InGame)`.
+- `Intent`, `Press`, `Order`, `Target` and `input_names` are the only input of a character. The keyboard, the gamepad, the agent's tools and replays write to it. `PlayerId`, `LocalPlayer` and `NetRole` are groundwork for networking (phase C).
 
 **`shards_content` (E4)**
 
-- База контента: типизированные определения в RON (`content/**/*.<вид>.ron`), проверка схемы, повторных id и
-  ссылок между определениями, ошибки с файлом и строкой, горячая перезагрузка (запись в реплее),
-  `--check-content` для CI, префабы (`*.prefab.ron`, `extends`, правка полей при спавне).
-- Инструменты: `content_list`, `content_get`, `content_check`, `content_reload`, `content_apply`, `spawn_prefab`.
+- Content base: typed definitions in RON (`content/**/*.<kind>.ron`). It checks the schema, duplicate ids and references between definitions, and reports errors with the file and line. Hot reload (recorded in the replay). `--check-content` for CI. Prefabs (`*.prefab.ron`, `extends`, field overrides at spawn).
+- Tools: `content_list`, `content_get`, `content_check`, `content_reload`, `content_apply`, `spawn_prefab`.
 
 **`shards_motion` (E2)**
 
-- Физический слой на parry3d (за API движка): коллайдеры с детерминированными `ColliderId`, слои, датчики
-  (вода, восходящие потоки, триггеры), запросы `raycast`, `shapecast`, `overlaps`, `volumes_at`.
-- Кинематический контроллер персонажа: ходьба, бег, спринт, склоны, ступени, прыжок, лазание на уступ, плавание,
-  планирование. Числа — контент (`*.locomotion.ron`).
-- Карта ввода: клавиатура, мышь и геймпад становятся `Intent`; контексты, нажатие, удержание, переключатель,
-  переназначение клавиш с сохранением в папке настроек пользователя. Камера от третьего лица (орбита,
-  столкновение со стенами, захват цели, помощь в прицеливании, тряска), оверлей коллайдеров.
-- Инструменты агента: `move_to` (с `path`), `move`, `stop`, `jump`, `sprint`, `glide`, запросы `clearance` и
-  `path_to`, `input_bindings` и `rebind`; `physics_overlay` в окне. `path_to` — локальный сеточный A* (0.5 м) по
-  тому, что умеет контроллер: ступени, перелезание, плавание, спуск; навсетка — в E6. Видимость в `observe` считается
-  лучами по физике.
+- A physics layer built on parry3d (behind the engine API): colliders with deterministic `ColliderId`s, layers, sensors (water, updrafts, triggers), and the queries `raycast`, `shapecast`, `overlaps` and `volumes_at`.
+- A kinematic character controller: walking, running, sprinting, slopes, steps, jumping, climbing onto a ledge, swimming and gliding. The numbers are content (`*.locomotion.ron`).
+- An input map: the keyboard, mouse and gamepad become `Intent`. It has contexts, press, hold, toggle, and key rebinding saved in the user's settings folder. A third-person camera (orbit, collision with walls, lock-on, aim assist, shake), and a collider overlay.
+- Agent tools: `move_to` (with `path`), `move`, `stop`, `jump`, `sprint`, `glide`, the queries `clearance` and `path_to`, and `input_bindings` and `rebind`. `physics_overlay` in the window. `path_to` is a local grid A* (0.5 m) over what the controller can do: steps, climbing over, swimming, descent. The navmesh is in E6. Visibility in `observe` is worked out with physics rays.
 
 **`shards_action` (E3)**
 
-- Действие — временная шкала из контента (`*.action.ron`): окна ударов, неуязвимость, блок и идеальный блок,
-  гиперброня, отмены и комбо, смещение, стоимость. Мувсет (`*.moveset.ron`) сопоставляет ввод действию. Одна
-  машина действий ведёт игрока, врагов и боссов.
-- Попадания через физический слой, конвейер урона (бессмертие, неуязвимость, парирование, блок, броня, хуки игры),
-  ресурсы бойца (`Health`, `Stamina`, `Poise`, `Armor`, `Team`, `Charges`), статусы (`*.status.ron`), телеграфы и
-  зоны поражения.
-- Инструменты: `light_attack`, `heavy_attack`, `block`, `parry`, `dodge`, `use_technique`, `use_item`, `lock_on`,
-  `attack` (игрок); `god`, `heal`, `stagger`, `combat_overlay` (разработчик). Один и тот же `can_start` отвечает машине и
-  инструментам: отказ называет причину и время. Под строкой `YOU` в `observe` — подсказка, куда выйти из зоны удара.
-- Сторона окна (feature `render`): анимационный мост (вид `animset`: клипы glTF, какой клип какому состоянию и
-  действию, смешивание, метки `AnimationCue` для эффектов и звука; геймплей ведёт, анимация догоняет); телеграфы на
-  земле с символами (опасность читается без цвета); оверлей боя (хитбоксы, хёртбоксы, дуги защиты, i-frames, F2);
-  маркеры на краю экрана для атак за кадром (`threat_indicators`); `SoundCue` для будущего модуля звука.
+- An action is a timeline from content (`*.action.ron`): hit windows, invulnerability, block and perfect block, hyperarmour, cancels and combos, displacement, and cost. A moveset (`*.moveset.ron`) maps input to actions. One action machine drives the player, enemies and bosses.
+- Hits go through the physics layer. A damage pipeline (immortality, invulnerability, parry, block, armour, game hooks). Fighter resources (`Health`, `Stamina`, `Poise`, `Armor`, `Team`, `Charges`), statuses (`*.status.ron`), telegraphs and hit zones.
+- Tools: `light_attack`, `heavy_attack`, `block`, `parry`, `dodge`, `use_technique`, `use_item`, `lock_on`, `attack` (player); `god`, `heal`, `stagger`, `combat_overlay` (developer). The same `can_start` answers the machine and the tools: a refusal names the reason and the time. Under the `YOU` line in `observe`, a hint says where to leave an attack's zone.
+- Window side (feature `render`): an animation bridge (the `animset` content kind: glTF clips, which clip goes to which state and action, blending, `AnimationCue` markers for effects and sound; gameplay leads, animation follows). Telegraphs on the ground with symbols (danger reads without colour). The fight overlay (hitboxes, hurtboxes, guard arcs, i-frames, F2). Markers at the screen edge for attacks from off-screen (`threat_indicators`). `SoundCue` for a future audio module.
 
-**Слой ИИ и сценарии**
+**The AI layer and scenarios**
 
-- `shards_script` (без Bevy): формат сценариев и разбор условий `--until`, общие для CLI и тестов.
-  `shards scenario FILE...` гоняет файлы против запущенной игры, `ai_core::scenario::run_file` — в процессе, в
-  `cargo test`.
-- `ai_core`: `SimGate` (удержание симуляции на время загрузки), `register_ai_advice` (подсказки под строкой `YOU`
-  в `observe`), `add_ai_status`.
-- `shards content check` (CLI) и `shards wait`, который ждёт конца загрузки.
+- `shards_script` (no Bevy): the scenario format and the parsing of `--until` conditions, shared by the CLI and the tests. `shards scenario FILE...` runs the files against a running game. `ai_core::scenario::run_file` runs them in-process, in `cargo test`.
+- `ai_core`: `SimGate` (holds the simulation while loading), `register_ai_advice` (hints under the `YOU` line in `observe`), `add_ai_status`.
+- `shards content check` (CLI) and `shards wait`, which waits for loading to finish.
 
-**Песочница и документация**
+**The sandbox and documentation**
 
-- Песочница на модулях движка: арена с боем-прототипом (игрок, скелеты, страж Frost Warden с четырьмя атаками и двумя
-  фазами) и полоса препятствий (ступени, уступ, бассейн, обрыв с планером и восходящим потоком, площадка цели). Мир,
-  персонажи и числа — контент (`crates/sandbox/assets/content/`).
-- Эталонные сценарии `obstacle_course` и `combat_prototype` (играет агент со scope `player`), их сессии как эталонные
-  реплеи в `tests/replays/`; тест `cargo test` проверяет их `--verify`, CI — ещё и в окне под Xvfb.
-- README переписан как руководство по движку: быстрый старт, «Как сделать игру на Shards: по шагам», архитектура и порядок
-  тика, раздел на каждый модуль. Новый `docs/engine-progress.md` сверяет движок с ТЗ по пунктам E1–E11; `AGENTS.md`
-  описывает инструменты и правила изменения движка.
+- The sandbox is built from engine modules: an arena with a combat prototype (the player, skeletons, the Frost Warden guard with four attacks and two phases), and an obstacle course (steps, a ledge, a pool, a drop with a glider and an updraft, a target platform). The world, the characters and the numbers are content (`crates/sandbox/assets/content/`).
+- Reference scenarios `obstacle_course` and `combat_prototype` (played by an agent with the `player` scope). Their sessions are the reference replays in `tests/replays/`. The `cargo test` test checks them with `--verify`, and CI also checks them in a window under Xvfb.
+- The README was rewritten as an engine guide: a quick start, "Make a game on Shards, step by step", the architecture and the tick order, and a section for each module. The new `docs/engine-progress.md` checks the engine against the spec, item by item, E1–E11. `AGENTS.md` describes the tools and the rules for changing the engine.
 
-**Версии, шаблон и CI (E1)**
+**Versions, template and CI (E1)**
 
-- `CHANGELOG.md`, версия `0.2.0` у всех крейтов, правила подключения движка по тегу git.
-- `template/` — минимальная игра только на `shards`: персонаж, враг, арена, числа в контенте, сценарий и тесты;
-  отдельный workspace с единственной зависимостью `shards`.
-- CI на GitHub Actions: тесты, clippy, сборка и тесты шаблона, сценарии против запущенной игры, `--verify`
-  реплеев (в том числе под Xvfb).
+- `CHANGELOG.md`, version `0.2.0` for all crates, the rules for depending on the engine by its git tag.
+- `template/` is a minimal game that uses only `shards`: a character, an enemy, an arena, the numbers in content, a scenario and tests. It is a separate workspace with a single dependency, `shards`.
+- CI on GitHub Actions: tests, clippy, the build and tests of the template, scenarios against a running game, and `--verify` of replays (including under Xvfb).
 
-### Изменено
+### Changed
 
-- Песочница собрана на `shards`, как игра: `shards::run`, `shards::testing`, числа атак и префабы скелетов — контент
-  (`assets/content`), мир создаётся в `OnEnter(EngineState::InGame)`; сценарии `boss_fight`, `dodge`, `errors` идут в
-  `cargo test`. Её собственные бой и движение (свои `move_to`, `attack`, `dodge`, `heal`, таймеры атак, круги столкновений)
-  заменены модулями движка: инструменты теперь отвечают по правилам действий (`ok: roll (W)`, `ok: queued, heavy starts
-  in 0.10s` или отказ с причиной и временем), выносливость и стойкость есть у всех, а клавиши окна — карта ввода движка.
-  Телеграфы рисует движок (`render` у `shards_action`), клавиши разработчика: F1 id, F2 оверлей боя, F3 коллайдеры, F4
-  воскресить, F12 снимок.
-- Корневой `Cargo.toml` исключает `template` из workspace: шаблон собирается отдельно и зависит только от
-  `shards`.
+- The sandbox is built on `shards`, as a game is: `shards::run`, `shards::testing`. The attack numbers and skeleton prefabs are content (`assets/content`). The world is created in `OnEnter(EngineState::InGame)`. The scenarios `boss_fight`, `dodge` and `errors` run in `cargo test`. The sandbox's own combat and movement (its own `move_to`, `attack`, `dodge`, `heal`, attack timers, collision circles) are replaced by engine modules. Tools now answer by the action rules (`ok: roll (W)`, `ok: queued, heavy starts
+  in 0.10s`, or a refusal with the reason and the time). Everyone has stamina and poise, and the window keys are the engine's input map. The engine draws the telegraphs (`render` in `shards_action`). Developer keys: F1 id, F2 fight overlay, F3 colliders, F4 revive, F12 screenshot.
+- The root `Cargo.toml` excludes `template` from the workspace. The template builds on its own and depends only on `shards`.
 
-### Исправлено
+### Fixed
 
-- Горячая перезагрузка видит правку, которая задела несколько файлов, а также созданные и удалённые файлы.
-- Реплей начинает с контента, с которым был записан, ещё до создания мира.
-- Ошибки контента: обязательный id, определение, которое не помещается в JSON, отсутствующая папка контента.
-- Префабы: опечатка в ключе — ошибка, форматирование файла не меняет определение и хэш реплея.
-- `testing::ok` падает, если шаг остановила паника системы геймплея.
-- Действия ждут загрузки, а сбой во время загрузки оставляет игру на паузе.
-- Сценарий проваливается, если игра оборвала шаг или потеряла записи журнала.
-- Смерть не трогает уже удалённую сущность.
-- Движение: быстрое падение в воду заканчивается плаванием, а не приземлением; физика пропускает коллайдер с
-  нечисловой позицией; телепорт начинает движение персонажа заново; нет лазания в воздухе на уступ, на который
-  можно просто шагнуть; лестница не останавливает идущего; `path_to` проводит через крутое дно бассейна и ходит
-  по пандусу, не лазая по нему. Контроллер, планировщик, `clearance` и `jump` решают, что можно перелезть, одним
-  правилом; `clearance` называет высокую стену стеной и не считает собственный коллайдер субъекта (`around=ID`);
-  `move_to path=true` останавливается на нужном расстоянии, а с `queue=true` при ожидающих приказах отказывает; `jump` в
-  воде отвечает `ok` только там, где прыжок вылезет на берег; наклон пола учитывается в допуске склона.
-- Ввод и камера: камера не снимает захват цели, который поставил агент; применённое состояние управления принадлежит
-  телу, для которого оно записано; сохранение переназначения не затирает файл управления, который не удалось прочитать;
-  инструменты движения сначала синхронизируют физику.
-- Бой: тик, в котором действие кончается, ещё бьёт и защищает; удержание не выпадает при некоторых частотах тиков, а
-  окна, которые открывались бы на каждом круге удержания, отвергает проверка контента; выжатый досуха спринт не
-  включается, пока кнопку не отпустят; приказ `attack` побеждает захват другой цели, не оставляет прицела и говорит,
-  когда не может начаться; `dodge` и `block` отвечают, что сделает машина; подсказка «выйди из зоны» называет румб, который
-  действительно выводит из зоны (в том числе у конуса шире полукруга); мёртвые не получают статусов, а их статусы не
-  тикают; телеграфы показывают и атаки по игроку без предупреждения.
+- Hot reload sees an edit that touches several files, and also created and deleted files.
+- A replay starts with the content it was recorded with, before the world is created.
+- Content errors: a missing required id, a definition that does not fit in JSON, a missing content folder.
+- Prefabs: a typo in a key is an error. Reformatting a file does not change the definition or the replay hash.
+- `testing::ok` fails if a gameplay system's panic stopped the step.
+- Actions wait for loading to finish, and a failure during loading leaves the game paused.
+- A scenario fails if the game cut a step short or lost journal entries.
+- A death no longer touches an entity that is already removed.
+- Movement: a fast fall into water ends in swimming, not a landing; physics skips a collider with a non-numeric position; a teleport restarts the character's movement; there is no climbing in the air onto a ledge that
+  you can simply step onto. Stairs do not stop a walker. `path_to` routes through the steep bottom of a pool and walks along a ramp without climbing it. The controller, the planner, `clearance` and `jump` decide what can be climbed over by one rule. `clearance` calls a high wall a wall, and does not count the subject's own collider (`around=ID`). `move_to path=true` stops at the required distance, and with `queue=true` it refuses while orders are pending. `jump` in water answers `ok` only where the jump gets out onto the shore. The floor's tilt counts in the slope tolerance.
+- Input and camera: the camera does not drop a lock-on that the agent set. The applied control state belongs to the body it was recorded for. Saving a rebinding does not overwrite a controls file that could not be read. Movement tools sync the physics first.
+- Combat: the tick in which an action ends still hits and defends. A held input does not drop out at some tick rates. The content check rejects windows that would open on every hold cycle. A sprint drained dry does not start until the button is released. The `attack` order overrides a lock-on to another target, leaves no aim behind, and says when it cannot start. `dodge` and `block` report what the machine will do. The "get out of the zone" hint names a compass direction that really takes you out of the zone (including for a cone wider than a half-circle). The dead get no statuses, and their statuses do not tick. Telegraphs also show attacks on the player that have no warning.
 
-## [0.1.0] — слой ИИ
+## [0.1.0] — the AI layer
 
-Первая версия: движок как среда, которой управляют снаружи, без LLM внутри.
+The first version: the engine as an environment that is driven from outside, with no LLM inside.
 
-### Добавлено
+### Added
 
-- `ai_core`: стабильные `AiId` с надгробиями, текстовый срез мира (`observe`, `inspect`, `nearby`), журнал событий
-  с перехватом `warn!`/`error!`, типизированные инструменты (`add_ai_tool`, `add_ai_query`, scope Player и Dev),
-  пауза, пошаговый `step` и стоп-условия, детерминированный `SimRng`.
-- Реплеи `shards-replay/2`: запись входов с тика 0, проигрывание, хэши состояния, отчёт о первом разошедшемся
-  тике, ветвление; `--verify` для CI.
-- Снимки окна с метками `eN` и легендой (`ai/shot`).
-- Песочница (`crates/sandbox`): игрок, скелеты, босс Frost Warden.
-- CLI `shards` поверх BRP `ai/*` на 127.0.0.1 с токеном: `observe`, `step`, `act`, `shot`, `save-replay`, `tools`,
-  `inspect`, `wait` и другие; параллельные headless-инстансы (`--port`, `--port 0`, `--port-file`).
+- `ai_core`: stable `AiId`s with tombstones, a text view of the world (`observe`, `inspect`, `nearby`), an event journal that catches `warn!`/`error!`, typed tools (`add_ai_tool`, `add_ai_query`, scope Player and Dev), pause, single-step `step` and stop conditions, and a deterministic `SimRng`.
+- `shards-replay/2` replays: input recording from tick 0, playback, state hashes, a report of the first tick that diverged, and branching. `--verify` for CI.
+- Window screenshots with `eN` labels and a legend (`ai/shot`).
+- The sandbox (`crates/sandbox`): the player, skeletons, the Frost Warden boss.
+- The `shards` CLI on top of BRP `ai/*` on 127.0.0.1, with a token: `observe`, `step`, `act`, `shot`, `save-replay`, `tools`, `inspect`, `wait` and others. Parallel headless instances (`--port`, `--port 0`, `--port-file`).
 
-### Исправлено
+### Fixed
 
-- `AiId` нельзя переписать мимо индекса; занятый порт останавливает игру (код 3); BRP закрыт токеном, файлы
-  инструментов пишутся только в `replays/` и `shots/`.
-- Паника системы геймплея останавливает `step` и ставит игру на паузу, сессия сохраняется в `replays/crash-tick<N>.json`.
-- Строки лога внутри `step` сохраняют свой тик, не больше 64 на тик, видны `--until`.
-- Хэши реплея считаются по игровым данным, а не по тексту для ИИ; `observe` определяет видимость от субъекта, а
-  не от камеры окна.
-- `dodge` и `attack` объясняют отказ вместо пустого `ok`.
+- An `AiId` cannot be rewritten without going through the index. A busy port stops the game (exit code 3). BRP is locked with a token, and tool files are written only to `replays/` and `shots/`.
+- A panic in a gameplay system stops `step` and pauses the game. The session is saved to `replays/crash-tick<N>.json`.
+- Log lines inside `step` keep their own tick, at most 64 per tick, and are visible to `--until`.
+- Replay hashes are computed from game data, not from the text for the AI. `observe` works out visibility from the subject, not from the window's camera.
+- `dodge` and `attack` explain a refusal instead of an empty `ok`.
 
-[Unreleased]: https://github.com/larelgit/airustcargo/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/larelgit/airustcargo/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/larelgit/airustcargo/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/larelgit/airustcargo/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/larelgit/airustcargo/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/larelgit/airustcargo/commits/v0.1.0

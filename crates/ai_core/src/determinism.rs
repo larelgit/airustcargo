@@ -1,4 +1,4 @@
-//! The simulation's float math must give the same bits on every OS (README, "Время и детерминизм").
+//! The simulation's float math must give the same bits on every OS (docs/manual.md, "Time and determinism").
 //!
 //! `bevy::math::ops` takes `sin`, `exp`, `powf` and the rest from the pure-Rust `libm` crate when Bevy's `libm` feature
 //! is on (`[workspace.dependencies]` of the root `Cargo.toml`); without it, it calls std, that is the platform's C

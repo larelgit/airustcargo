@@ -107,15 +107,15 @@ pub fn read_language(root: &Path, id: &str) -> Result<Vec<FtlFile>, String> {
 
 /// A language's files parsed: what parsed of each (a file with a mistake keeps the messages
 /// around it), the message ids by file, and every problem as `file:line:col: what`.
-pub struct Parsed {
-    pub resources: Vec<(String, FluentResource)>,
+pub(crate) struct Parsed {
+    pub(crate) resources: Vec<(String, FluentResource)>,
     /// Message ids (`menu-resume`, and `menu-resume.tooltip` for attributes) and the file of each.
-    pub ids: BTreeMap<String, String>,
-    pub problems: Vec<String>,
+    pub(crate) ids: BTreeMap<String, String>,
+    pub(crate) problems: Vec<String>,
 }
 
 /// Parses `files`; a message in two files is a problem (the second is left out).
-pub fn parse_language(files: &[FtlFile]) -> Parsed {
+pub(crate) fn parse_language(files: &[FtlFile]) -> Parsed {
     let mut parsed = Parsed { resources: Vec::new(), ids: BTreeMap::new(), problems: Vec::new() };
     for file in files {
         let (resource, problems) = parse_file(file);
@@ -155,7 +155,7 @@ fn parse_file(file: &FtlFile) -> (FluentResource, Vec<String>) {
 }
 
 /// The syntax mistakes of `file` (`locale/ru/menus.ftl:2:14: …`), none when it parses.
-pub fn syntax_problems(file: &FtlFile) -> Vec<String> {
+pub(crate) fn syntax_problems(file: &FtlFile) -> Vec<String> {
     parse_file(file).1
 }
 

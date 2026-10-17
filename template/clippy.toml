@@ -1,4 +1,4 @@
-# Determinism guard (README of the engine, "Время и детерминизм"). The simulation must give the same bits on Windows,
+# Determinism guard (the engine's docs/manual.md, "Time and determinism"). The simulation must give the same bits on Windows,
 # Linux and macOS, but std's `f32::sin`, `f32::exp`, `f32::powf` and the rest call the platform's C math
 # library, whose last bits differ between MSVC, glibc and the others. `bevy::math::ops` (in the Bevy prelude
 # as `ops`) takes the same functions from the pure-Rust `libm` crate (the `libm` feature of `bevy`, which `shards` turns on),

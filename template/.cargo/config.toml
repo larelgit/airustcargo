@@ -11,4 +11,4 @@
 # `shards::run`.
 game = "run --"
 # There is no `cargo shards` here: install the CLI once, at the engine version this game
-# depends on (see the README, "Управление через shards"), and run `shards observe`.
+# depends on (see the README, "Driving the game with `shards`"), and run `shards observe`.

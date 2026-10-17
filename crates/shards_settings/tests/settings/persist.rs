@@ -352,7 +352,7 @@ fn a_write_that_fails_in_the_exit_frame_leaves_the_last_good_copy_in_place() {
 }
 
 /// A write that leaves a bad file puts the good one back and waits before the next try, as the
-/// README says; when the tries are over the exit hook writes the change once more.
+/// manual (docs/manual.md) says; when the tries are over the exit hook writes the change once more.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_write_that_leaves_a_bad_file_is_tried_again_a_pause_later() {

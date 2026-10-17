@@ -27,7 +27,7 @@ It writes into the folder given after `--`:
   nowhere, a property on the mesh data instead of the object), for the error messages.
 
 Every export ticks *Include -> Custom Properties* and *Data -> Mesh -> Apply Modifiers*, as
-the README tells artists to; every other option keeps the exporter's default.
+the manual (docs/manual.md) tells artists to; every other option keeps the exporter's default.
 """
 
 import math

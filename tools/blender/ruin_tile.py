@@ -19,7 +19,7 @@ spec, and that the two copies are the same file.
 
 *glTF Embedded* sits behind the exporter's preference *Allow glTF Embedded format*; the script
 turns it on. The export ticks *Include -> Custom Properties* and *Data -> Mesh -> Apply
-Modifiers*, as the README tells artists to; every other option keeps the exporter's default.
+Modifiers*, as the manual (docs/manual.md) tells artists to; every other option keeps the exporter's default.
 """
 
 import math
