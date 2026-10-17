@@ -305,6 +305,19 @@ pub(super) fn current_map<'a>(map: &'a InputMap, defaults: &InputMap, controls: 
     Cow::Owned(desired)
 }
 
+/// The map in play as the `controls` settings make it now, even right after `settings_set` changed
+/// them and before the next frame builds [`InputMap`] again (see [`current_map`]): what a menu that
+/// shows the controls reads. `None` without the input module.
+pub fn map_now(world: &World) -> Option<Cow<'_, InputMap>> {
+    let map = world.get_resource::<InputMap>()?;
+    let (Some(InputDefaults(defaults)), Some(controls), Some(sync)) =
+        (world.get_resource::<InputDefaults>(), world.get_resource::<ControlSettings>(), world.get_resource::<ControlSync>())
+    else {
+        return Some(Cow::Borrowed(map));
+    };
+    Some(current_map(map, defaults, controls, sync))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
