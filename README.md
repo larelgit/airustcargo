@@ -105,8 +105,8 @@ cargo sandbox --bake-motion            # смещение ударов и пер
 
 `cargo sandbox` — это `cargo run -p sandbox --`, `cargo shards` — `cargo run -q -p shards_cli --` (алиасы в
 `.cargo/config.toml`); все флаги после `--` уходят в `shards::run` или в CLI. Если запустить собранный бинарник
-напрямую (`target/debug/sandbox`), игра ищет `assets/` рядом с исполняемым файлом: укажите `BEVY_ASSET_ROOT=$PWD/crates/sandbox`
-(абсолютный путь: относительный не принимает наблюдатель за файлами).
+напрямую (`target/debug/sandbox`), игра ищет `assets/` рядом с исполняемым файлом: укажите `BEVY_ASSET_ROOT=crates/sandbox`
+(относительный путь движок при запуске делает абсолютным от рабочей папки, и горячая перезагрузка с ним работает).
 
 **Rust** ставится через rustup, он добавляет `~/.cargo/bin` в PATH; версия берётся из `rust-toolchain.toml`. В уже
 открытых терминалах выполните `source ~/.cargo/env` или откройте новый.
@@ -1110,8 +1110,8 @@ Blender (.blend) ── экспорт glTF ──► tiles/ruin.gltf ──► 
    ошибкой.
 3. *File → Export → glTF 2.0*. В разделе *Include* отметьте **Custom Properties**: без этого все свойства теряются. В *Data
    → Mesh* отметьте **Apply Modifiers**: без этого в файл уходят меши до модификаторов, и `auto`-коллайдер обнимет их, а не
-   то, что видно в Blender. *Transform → +Y Up* оставьте. Подходят `.glb` и `.gltf` *Separate* (вариант *Embedded* в
-   Blender 5.2 спрятан за настройкой аддона и не проверен), лампы (*Include → Punctual Lights*) и материалы. *Data → Draco Compression* и *Data → Meshopt Compression*
+   то, что видно в Blender. *Transform → +Y Up* оставьте. Подходят `.glb`, `.gltf` *Separate* и `.gltf` *Embedded* (в
+   Blender 5.2 он спрятан за настройкой аддона *Allow glTF Embedded format*), лампы (*Include → Punctual Lights*) и материалы. *Data → Draco Compression* и *Data → Meshopt Compression*
    (с любым из двух её расширений) не подходят: Bevy такие меши не
    рисует, и движок отказывает с подсказкой, какую галочку снять.
 4. Положите файл в папку ассетов игры (`assets/tiles/ruin.gltf`), назовите его в контенте (вид `level`, ниже) и выполните
@@ -1161,10 +1161,19 @@ Locked  = true                           (компонент без полей)
 | `landmark` | `LevelMarker`, `AiLandmark`, `AiKind` по имени маркера | в строке LANDMARKS |
 | `custom:<имя>` | `LevelMarker` | нет (нужен `AiKind` — добавьте компонентом) |
 
-Узлы файла `crates/sandbox/assets/tiles/ruin.gltf` (руина 16 × 16 м; этот файл пишет тестовый генератор glTF
-`crates/sandbox/tests/sandbox/tiles.rs`, а не Blender): пол `Ground` и стены `Wall.North`, `Wall.West`, `Rubble`, `Column` с
+Узлы файла `crates/sandbox/assets/tiles/ruin.gltf` (руина 16 × 16 м; экспорт Blender 5.2.2 в варианте *Embedded*, его
+собирает `tools/blender/ruin_tile.py`, шаблон держит копию того же файла): пол `Ground` и стены `Wall.North`, `Wall.West`, `Rubble`, `Column` с
 `collider = auto`; `Camp` (`marker = camp`, `name = ruin_camp`), `Arch` (`marker = landmark`, `name = Ruin`) и четыре
-`Edge.N/E/S/W` с `socket = grass`.
+`Edge.N/E/S/W` с `socket = grass`. Тест `the_committed_ruin_is_the_tile_the_spec_describes` (`crates/sandbox/tests/sandbox/tiles.rs`)
+сверяет экспорт с описанием тайла: те же узлы, свойства, мировые трансформы и границы мешей. После правки руины:
+
+```text
+blender -b --factory-startup --python-exit-code 1 -P tools/blender/ruin_tile.py -- crates/sandbox/assets/tiles
+cp crates/sandbox/assets/tiles/ruin.gltf template/assets/tiles/
+cargo sandbox --bake-nav ruin         # и в template/: cargo run -- --bake-nav ruin
+```
+
+Экспорт руины повторяется байт в байт.
 
 **Проверено на настоящем экспорте Blender 5.2.2 LTS** (Windows x64, экспортёр `Khronos glTF Blender I/O v5.2.40`). Скрипт
 `tools/blender/outpost_level.py` собирает уровень `outpost`, как его собрал бы художник, и экспортирует его самим Blender:
@@ -1172,10 +1181,10 @@ Locked  = true                           (компонент без полей)
 без), пустышки-маркеры всех видов, датчики (вода, поток, триггер), коллайдеры всех форм, префаб с переопределениями,
 компоненты из текста-JSON, словаря *Python* и флажка, коллекция, поставленная дважды, лампа и камера, имена с пробелами,
 `Säule` и `Костёр`. Файлы лежат в `crates/shards_level/tests/level/blender/` (`outpost.glb`; `outpost_lights.gltf` +
-`.bin` с лампой; `outpost_draco.glb` с Draco; `outpost_meshopt.glb` и `outpost_meshopt_khr.glb` с meshopt,
+`.bin` с лампой; `outpost_embedded.gltf` — та же сцена одним файлом, буфер внутри как `data:`-URI; `outpost_draco.glb` с Draco; `outpost_meshopt.glb` и `outpost_meshopt_khr.glb` с meshopt,
 `EXT_meshopt_compression` и `KHR_meshopt_compression`; `outpost_broken.glb` с ошибками художника), тесты
 `crates/shards_level/tests/level/from_blender.rs` читают их без Blender, а `crates/shards/tests/level_render.rs` рисует
-`outpost.glb` загрузчиком Bevy. Байт в байт экспорт не повторяется (порядок треугольников меша `Boulder` от запуска к запуску
+`outpost.glb` и `outpost_embedded.gltf` загрузчиком Bevy. Байт в байт экспорт не повторяется (порядок треугольников меша `Boulder` от запуска к запуску
 бывает разным, геометрия та же), поэтому после правки скрипта перепишите только те файлы, которые она меняет (только без окна):
 
 ```text
@@ -1198,8 +1207,9 @@ blender -b --factory-startup --python-exit-code 1 -P tools/blender/outpost_level
   нулевой, и картинкой уровня (сцена 0) была она. Движок читает сцену по умолчанию (`LevelAsset::scene`) и рисует её же.
 
 Остальное совпало с тем, что здесь описано: оси и масштабы, пути узлов, все маркеры, формы и размеры коллайдеров, префабы и
-компоненты, `content check`, `level_info`, `spawn_level`, `level_reload` и горячая перезагрузка. Не проверено на экспорте:
-вариант glTF Embedded (в Blender 5.2 он спрятан за настройкой аддона), анимация и скины (конвейер уровней их не читает).
+компоненты, `content check`, `level_info`, `spawn_level`, `level_reload` и горячая перезагрузка. Вариант glTF Embedded читается и
+рисуется так же, как `.glb` (`the_glb_and_the_embedded_gltf_read_and_spawn_alike`). Не проверено на экспорте: анимация и
+скины (конвейер уровней их не читает).
 
 **Файл в контенте.** Вид `level` (`LevelDef`): путь файла, обязательные маркеры, место по умолчанию.
 
