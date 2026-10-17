@@ -3391,18 +3391,18 @@ NPCs plan on the local grid`).
 Строка пишется, когда регион уже построен, после `region loaded`. Тот же регион уже в мире (тот же хэш) — ничего не строится.
 
 - **Контента нет.** Тайл, комната или префаб (кусок тайла, декор, префаб точки интереса), которые называет манифест, а контент
-  уже не знает, — отказ до любых изменений, мир остаётся как был: `section region: the save's world cannot be built: the
+  уже не знает, — отказ до любых изменений, мир остаётся как был: `` section region: the save's world cannot be built: the
   manifest of wilds seed 42 v1 names tiles content does not have: old_ruin (it was made from other content, hash …); keep that
-  content in the game, or write a migration for `region` that replaces it in the saved manifest`. Это не порча: копии не
+  content in the game, or write a migration for `region` that replaces it in the saved manifest ``. Это не порча: копии не
   перебираются.
 - **Манифест не тот.** Манифест, который не совпадает со своим хэшем, с id, зерном или версией рядом или чужого формата,
   делает копию порченой (секция не читается): загрузка берёт первую хорошую копию, как при неверной контрольной сумме, и
   журнал называет причину (`save: world/slot1.save is damaged (section region does not read: the manifest of wilds seed 42 v1
   is damaged: it hashes to …, the save says …); restored from backup 1`).
 - **Старые сохранения.** Версия 1 секции манифеста не хранила. Миграция `region` 1 → 2 даёт ей `manifest: null` и метку
-  `from_v1: true`, и такой регион, как раньше, генерируется заново из зерна и сверяется с хэшем: выходит другим — отказ до изменений (`wilds seed 42
+  `from_v1: true`, и такой регион, как раньше, генерируется заново из зерна и сверяется с хэшем: выходит другим — отказ до изменений (`` wilds seed 42
   v1 comes out differently now (manifest … when saved, … now, generator v2): …; write a migration for `region` or keep the old
-  content`). Следующее сохранение пишет версию 2 с манифестом. Секция версии 2 без манифеста (`null` или без поля) и без этой
+  content ``). Следующее сохранение пишет версию 2 с манифестом. Секция версии 2 без манифеста (`null` или без поля) и без этой
   метки — порча копии, а не старое сохранение: `section region does not read: the save of wilds seed 42 v1 keeps no manifest;
   only a save of version 1 of the section may lack it`, и загрузка берёт резервную копию.
 - **Размер.** Секция `region` с манифестом `wilds` 8 × 8 — 3151 байт канонического JSON, весь файл мира — 3392 байта

@@ -783,8 +783,8 @@ Bevy (`bevy::settings`, feature `bevy_settings`; в `Cargo.lock` добавля�
   контенте другая; региона с таким id в контенте больше нет — `` (`old_wilds` is no longer in the content) ``). Строка
   пишется, когда регион уже построен (после `region loaded`), а не перед сборкой, которая ещё может не удаться.
 - Тайл, комната или префаб из манифеста, которых контент уже не знает, — отказ до любых изменений мира с именами и выходом:
-  `the save's world cannot be built: the manifest of wilds seed 42 v1 names tiles content does not have: old_ruin (…); keep that
-  content in the game, or write a migration for `region` that replaces it in the saved manifest`.
+  `` the save's world cannot be built: the manifest of wilds seed 42 v1 names tiles content does not have: old_ruin (…); keep that
+  content in the game, or write a migration for `region` that replaces it in the saved manifest ``.
 - Манифест, который не совпадает со своим хэшем, с id, зерном и версией рядом или чужого формата, — порча копии (`section region
   does not read: the manifest of wilds seed 42 v1 is damaged: it hashes to …, the save says …`): загрузка берёт резервную копию,
   как при неверной контрольной сумме. Так же и секция версии 2 без манифеста: без него читается только регион, пришедший
