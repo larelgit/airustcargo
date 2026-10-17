@@ -708,6 +708,19 @@ fn a_level_placed_by_id_before_a_snapshot_stands_again_with_its_numbers_in_a_fre
     ok(&mut copy, "step", json!({"ticks": 30}));
     assert_eq!(state_hash(copy.world()), state_hash(original.world()));
 
+    // A fresh game that placed the annex twice: its second has the number of the snapshot's first
+    // mixed tile. Both go before the region comes back (else that tile's number would stand twice,
+    // and taking the annex away would take the tile with it).
+    let mut placer = app_in(&dir, 7, Some("ruins"));
+    ok(&mut placer, "spawn_level", json!({"id": "annex", "z": -30.0}));
+    ok(&mut placer, "spawn_level", json!({"id": "annex", "z": -60.0}));
+    let mixed = standing(&original).into_iter().find(|(n, ..)| *n > annex.0).expect("mixed tiles after the annex");
+    assert!(standing(&placer).iter().any(|(n, label, _)| *n == mixed.0 && label == "annex"), "{:?}", standing(&placer));
+    let report = restore(placer.world_mut(), &snapshot, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    assert!(report.warnings.iter().any(|w| w.contains("levels: 2 levels placed by id taken away")), "{:?}", report.warnings);
+    assert_eq!(standing(&placer), standing(&original));
+
     // Loaded where it was taken, the snapshot finds the annex standing as it was: nothing to place.
     let report = restore(original.world_mut(), &snapshot, false).unwrap();
     assert!(report.exact(), "{:?}", report.differences);
@@ -740,10 +753,12 @@ fn a_load_refused_after_the_levels_were_placed_puts_back_the_ones_that_stood() {
     let mut broken = capture(original.world()).unwrap();
     broken.checks.insert("static_colliders".into(), "0000000000000000".into());
 
-    // This game placed the annex elsewhere, early: the load takes it away and places the
-    // snapshot's, then the colliders do not compare, and it is refused.
+    // This game placed the annex twice elsewhere: the load takes both away, builds the mixed fields,
+    // places the snapshot's annex, then the colliders do not compare, and it is refused: the ruins
+    // and both annexes are back.
     let mut copy = app_in(&dir, 7, Some("ruins"));
     ok(&mut copy, "spawn_level", json!({"id": "annex", "z": -30.0}));
+    ok(&mut copy, "spawn_level", json!({"id": "annex", "z": -60.0}));
     ok(&mut copy, "step", json!({"ticks": 3}));
     let (before, hash) = (standing(&copy), state_hash(copy.world()));
     let err = restore(copy.world_mut(), &broken, false).unwrap_err();

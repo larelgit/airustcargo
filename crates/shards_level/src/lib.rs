@@ -213,7 +213,8 @@ impl Plugin for LevelPlugin {
             // colliders, and every level that stands, and its file, with this.
             .add_snapshot_resource::<PlacedLevels>()
             .net_ignore_resource::<PlacedLevels>()
-            .add_snapshot_prepare("levels", &["levels"], placed::take_away)
+            // Right after content: before the region, whichever module was added first.
+            .add_snapshot_prepare_after("levels", "content", &["levels"], placed::take_away)
             .add_snapshot_prepare_after("placed levels", "region", &["levels"], placed::put_in)
             .add_snapshot_check(
                 "levels",
