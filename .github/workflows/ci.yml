@@ -4,9 +4,13 @@
 #   clippy         warnings are errors, engine and template
 #   template       the template game builds and passes its tests apart from the workspace
 #   headless-cli   a live sandbox without a window, driven by the `shards` CLI; content and
-#                  1000-seed worldgen checks through the game's binary; a live stand (host and
-#                  two clients, `--stand 2`) running the stand scenarios
+#                  1000-seed worldgen checks through the game's binary; live stands (a host and
+#                  clients, `--stand N`) running the stand scenarios, each on the links its
+#                  `stand` line names, and a three-minute soak on E7's stand
 #   replays-window the same replays verified with a window (Xvfb + software Vulkan); optional
+#
+# Elsewhere: soak.yml (half an hour of a live stand, weekly), record-replays.yml (the reference
+# replays recorded again on Linux, on demand).
 #
 # What the jobs run you can run by hand: the commands are the same.
 
@@ -166,27 +170,62 @@ jobs:
           # ran before (a region loaded, a snapshot's tick).
           cargo shards --port-file "$port_file" scenario $(ls crates/sandbox/scenarios/*.scenario | sort -r)
       # E7 / E11.6: the stand scenarios (crates/sandbox/scenarios/stand/, outside the glob above:
-      # a single game cannot run a file that names a host and clients) against a live stand: a
-      # host and two clients, each a game of its own with its own `shards` port, on simulated
-      # links (150 ms one way, 2% loss). `wait --peer all` checks that the three are one session.
-      - name: Stand scenarios against a live stand
+      # a single game cannot run a file that names a host and clients) against live stands: a host
+      # and clients, each a game of its own with its own `shards` port. Each file's `stand` line
+      # names its stand (`stand clients=2 latency=150 loss=0.02`, or clean links), and a stand runs
+      # only the files that want its links: the files are grouped by that line, and each group gets
+      # a stand started with the same clients and `--net-sim` conditions. `wait --peer all` checks
+      # that the members are one session.
+      - name: Stand scenarios and a soak against live stands
         run: |
-          port_file="$RUNNER_TEMP/stand.port"
-          log="$RUNNER_TEMP/stand.log"
+          log=
           stand_pid=
-          # `stand stop` ends it the polite way; the signal is only for a stand that never came up.
-          trap 'status=$?; if [ -n "$stand_pid" ]; then kill "$stand_pid" || true; fi; if [ "$status" -ne 0 ]; then cat "$log"; fi' EXIT
-          cargo sandbox --stand 2 --headless --paused --port 0 --port-file "$port_file" --net-sim latency=150,loss=0.02 > "$log" 2>&1 &
-          # The stand's pid from the start (`cargo run` replaces itself with the game): a stand that
-          # never came up is the one the trap has to end.
-          stand_pid=$!
-          # One line per member: "member=c1 role=client player=1 body=e15 port=… pid=… seed=42 tick=14".
-          ready=$(cargo shards --port-file "$port_file" wait --peer all --timeout 180)
-          echo "$ready"
-          cargo shards --port-file "$port_file" scenario crates/sandbox/scenarios/stand/*.scenario
-          cargo shards --port-file "$port_file" stand
-          cargo shards --port-file "$port_file" stand stop
-          stand_pid=
+          stands=0
+          # `stand stop` ends a stand the polite way; the signal is only for one that never came up.
+          trap 'status=$?; if [ -n "$stand_pid" ]; then kill "$stand_pid" || true; fi; if [ "$status" -ne 0 ] && [ -n "$log" ]; then cat "$log"; fi' EXIT
+          # Starts a stand from the words of a `stand` line (`clients=2 latency=150 loss=0.02`): the
+          # other keys (latency, jitter, loss, dup) are the `--net-sim` spec, comma-separated.
+          start_stand() {
+            local clients= net= word
+            for word in $1; do
+              case "$word" in
+                clients=*) clients=${word#clients=} ;;
+                *) net="${net:+$net,}$word" ;;
+              esac
+            done
+            stands=$((stands + 1))
+            port_file="$RUNNER_TEMP/stand$stands.port"
+            log="$RUNNER_TEMP/stand$stands.log"
+            echo "== stand $stands: clients=$clients links=${net:-none}"
+            cargo sandbox --stand "$clients" --headless --paused --port 0 --port-file "$port_file" ${net:+--net-sim "$net"} > "$log" 2>&1 &
+            # The stand's pid from the start (`cargo run` replaces itself with the game): a stand
+            # that never came up is the one the trap has to end.
+            stand_pid=$!
+            # One line per member: "member=c1 role=client player=1 body=e15 port=… pid=… seed=42 tick=14".
+            cargo shards --port-file "$port_file" wait --peer all --timeout 180
+          }
+          stop_stand() {
+            cargo shards --port-file "$port_file" stand
+            cargo shards --port-file "$port_file" stand stop
+            stand_pid=
+          }
+          declare -A group
+          for file in crates/sandbox/scenarios/stand/*.scenario; do
+            line=$(sed -n 's/^[[:space:]]*stand[[:space:]]\{1,\}//p' "$file" | head -n 1)
+            if [ -z "$line" ]; then echo "::error file=$file::a stand scenario without a \`stand\` line"; exit 1; fi
+            group[$line]+=" $file"
+          done
+          while IFS= read -r line; do
+            start_stand "$line"
+            cargo shards --port-file "$port_file" scenario ${group[$line]}
+            stop_stand
+          done < <(printf '%s\n' "${!group[@]}" | sort)
+          # Three minutes of seeded play on every member of E7's stand (two clients, 150 ms one way,
+          # 2% loss), the host changing the region and saving on the way: no member may desync
+          # (soak.yml plays the half hour of E7's acceptance).
+          start_stand "clients=2 latency=150 loss=0.02"
+          cargo shards --port-file "$port_file" soak --seed 7 --minutes 3 --regen wilds --regen-minutes 1 --save-minutes 1
+          stop_stand
 
   # ---------------------------------------------------------------------------------------
   # E1: the same replay matches with a window (under Xvfb, drawn by a software Vulkan driver)

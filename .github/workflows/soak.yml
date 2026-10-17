@@ -1,0 +1,70 @@
+# E7's acceptance, played again: a live stand of a host and two clients (`--stand 2`) on links of
+# 150 ms one way with 2% loss, played by the seeded agents of `shards soak` for half an hour of
+# game time, the host changing the region and saving on the way. Exit code 3 (and the stand's log)
+# on the first desync. Every Monday, by hand, and on a push whose message contains `[soak]`.
+# CI's headless-cli job plays three minutes of the same on every push.
+
+name: soak
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  push:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: Minutes of game time
+        default: "30"
+      seed:
+        description: Seed of the agents' inputs
+        default: "30"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  soak:
+    name: soak
+    if: github.event_name != 'push' || contains(github.event.head_commit.message, '[soak]')
+    # On the job, not the workflow: every push starts this workflow, and a push without `[soak]`
+    # (its job skipped) must not cancel a soak that is running.
+    concurrency:
+      group: soak-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: dev
+          save: "false"
+      - name: Build the sandbox and the CLI
+        run: cargo build --locked -p sandbox -p shards_cli
+      - name: Half an hour on a live stand
+        env:
+          MINUTES: ${{ inputs.minutes || '30' }}
+          SEED: ${{ inputs.seed || '30' }}
+        run: |
+          port_file="$RUNNER_TEMP/soak.port"
+          log="$RUNNER_TEMP/soak-stand.log"
+          stand_pid=
+          trap 'status=$?; if [ -n "$stand_pid" ]; then kill "$stand_pid" || true; fi; if [ "$status" -ne 0 ]; then tail -200 "$log"; fi' EXIT
+          cargo sandbox --stand 2 --headless --paused --port 0 --port-file "$port_file" --net-sim latency=150,loss=0.02 > "$log" 2>&1 &
+          stand_pid=$!
+          cargo shards --port-file "$port_file" wait --peer all --timeout 180
+          cargo shards --port-file "$port_file" soak --seed "$SEED" --minutes "$MINUTES" --report-minutes 5 \
+            --regen wilds --regen-minutes 5 --save-minutes 3
+          cargo shards --port-file "$port_file" stand stop
+          stand_pid=

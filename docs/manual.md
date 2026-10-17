@@ -4446,14 +4446,14 @@ the toolchain from `rust-toolchain.toml`, the cargo cache). All of the jobs' com
 | `test` | `cargo test --workspace --locked`: unit tests, sandbox scenarios (including the world and NPCs), reference replays (`--verify`) |
 | `clippy` | `cargo clippy --all-targets --locked -- -D warnings` for the engine and for the template |
 | `template` | `template/Cargo.lock` does not diverge from the root one; the template's `cargo test`; `cargo run -- --check-content`, `--verify` of its replays and `--worldgen-report valley --seeds 1..1000` through the game binary |
-| `headless-cli` | `cargo sandbox --check-content` (the tile level files and the baked navigation too), `--worldgen-report wilds --seeds 1..1000`; a live sandbox without a window (`--port 0 --port-file`), `shards wait`, `shards scenario crates/sandbox/scenarios/*.scenario`, then the same scenarios in reverse order in the same game; `kill` at the end; a live stand (`--stand 2 --net-sim latency=150,loss=0.02`): `shards wait --peer all`, `shards scenario crates/sandbox/scenarios/stand/*.scenario`, three minutes of `shards soak` (a region change and a save every minute), `shards stand`, `shards stand stop` |
+| `headless-cli` | `cargo sandbox --check-content` (the tile level files and the baked navigation too), `--worldgen-report wilds --seeds 1..1000`; a live sandbox without a window (`--port 0 --port-file`), `shards wait`, `shards scenario crates/sandbox/scenarios/*.scenario`, then the same scenarios in reverse order in the same game; `kill` at the end; live stands: the files in `crates/sandbox/scenarios/stand/` grouped by their `stand` line, each group on a stand started with the same clients and `--net-sim` links (`shards wait --peer all`, `shards scenario`, `shards stand`, `shards stand stop`); then three minutes of `shards soak` on a fresh E7 stand (`--stand 2 --net-sim latency=150,loss=0.02`, a region change and a save every minute) |
 | `replays-window` | the same replays (the sandbox's and the template's) in a window under Xvfb: `--verify --windowed`; optional (`continue-on-error`) until it proves stable |
 
 Two more files. `soak.yml` — the E7 acceptance check, run again: half an hour of `shards soak` on a live stand of a host and two clients (150 ms,
 2 %), with a region change every 5 minutes and a save every 3; on Mondays, by hand (`minutes`, `seed`), and on a push with
-`[soak]` in the commit message. `record-replays.yml` records the sandbox's and the template's reference replays again on Linux (CI checks them there; recording on Windows gives the same bytes: a run has verified this, see "Time and determinism") and delivers them as the artifact
-`reference-replays`: a push with `[record replays]` in the commit message, then `gh run download <id> --name reference-replays --dir .` in
-the root of the repository. Neither file is in this tree yet (`.github/workflows/` holds only `ci.yml`). The reference replays were re-recorded after
+`[soak]` in the commit message. `record-replays.yml` records the sandbox's and the template's reference replays again on Linux (CI checks them there; Windows records the same bytes: the nine files in the tree were recorded on Windows and again on Linux, byte for byte, see "Time and determinism") and delivers them as the artifact
+`reference-replays`: a push with `[record replays]` in the commit message (or a run by hand, once the file is on the default branch), then `gh run download <id> --name reference-replays --dir .` in
+the root of the repository. The reference replays were re-recorded after
 E10.1–E10.3 (looks, foliage and effects change the content hash) and E10.6 (`libm`); Windows and Linux recorded them
 identically.
 
@@ -4469,8 +4469,9 @@ and decals, budgets and the performance test, Steam, Windows builds, the crash r
 simulation maths goes through `libm`, the same on all x86_64 operating systems (section "Time and determinism"): Windows and
 Linux record reference replays byte for byte identically and check each other's recordings.
 
-CI (`.github/workflows/ci.yml`) is set up to check every push and pull request, but GitHub has not run its jobs since
-15 October (account billing). Until it does, the same checks run locally before each push. Still open:
+CI (`.github/workflows/ci.yml`) runs on every push and pull request: `test`, `clippy`, `template`, `headless-cli` (with a
+three-minute soak on a live stand) and `replays-window` (optional: `continue-on-error`). `soak.yml` plays the half hour of
+E7's acceptance every Monday, and `record-replays.yml` records the reference replays on Linux on demand. Still open:
 
 1. **What needs hardware or accounts the maintainer has:** the packaged build (`shards package`, section "Builds for players
    and Windows (E10.6)") on a real clean Windows machine, and 60 FPS at 1080p on the target PC. Steam (section "Steam
