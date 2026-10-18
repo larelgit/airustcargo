@@ -735,4 +735,13 @@ fn a_body_with_no_step_height_sees_flat_floor_as_free_not_as_ledges() {
     let e = *reach(&at(4.9, 0.0), "E");
     assert_eq!(e.hazard, Hazard::Wall);
     assert!((e.distance - 0.7).abs() < 0.05, "{e:?}");
+    // With no drop safe at all (`safe_drop: 0`) the same noise is no cliff either: the
+    // tolerance holds downward too.
+    for (x, z) in [(4.9, 0.0), (4.6, 0.0), (0.0, 22.0), (0.0, 0.0), (2.0, 3.0), (5.5, 0.0), (-3.0, -10.0)] {
+        let reaches = clearance(physics(&app), &p, Vec3::new(x, 0.0, z), None, 15.0, 0.0, &[]);
+        let line = reaches.iter().map(|r| r.describe()).collect::<Vec<_>>().join(" · ");
+        for r in &reaches {
+            assert!(!matches!(r.hazard, Hazard::Cliff { drop: Some(d) } if d < 0.05), "at ({x}, {z}): {line}");
+        }
+    }
 }
