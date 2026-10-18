@@ -809,6 +809,34 @@ fn face_keep_moves_the_body_without_turning_it() {
     assert!(at.x > 1.4, "{at}");
 }
 
+#[test]
+fn a_lock_on_target_still_turns_a_face_keep_body() {
+    // The same roll east with a target 6 m south: the run still points east (a `steer: Move` roll
+    // ignores the target), and the lock-on, which faces the body outside actions too, turns it
+    // toward the target meanwhile; `face: Run` turns it where the run points instead.
+    let roll = |input: &str| {
+        let mut app = arena();
+        let hero = me(&mut app, "t_more");
+        let south = dummy(&mut app, Vec3::new(0.0, 0.0, 6.0));
+        lock(&mut app, hero, south);
+        app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = Vec3::X;
+        press(&mut app, hero, input);
+        step(&mut app, 1);
+        app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = Vec3::ZERO;
+        step(&mut app, 20);
+        assert_eq!(action(&app, hero), input.replace("dodge", "t_roll_keep").replace("light", "t_roll_turn"));
+        let body = *app.world().get::<Transform>(hero).unwrap().forward();
+        (body, feet(&app, hero), facing_deg(&app, hero))
+    };
+    let (body, at, facing) = roll("dodge");
+    assert!(close(facing, -90.0), "the run points east: {facing}");
+    assert!(at.x > 1.4 && at.z.abs() < 0.05, "it rolled east: {at}");
+    let to_target = (Vec3::new(0.0, 0.0, 6.0) - at).normalize();
+    assert!(body.dot(to_target) > 0.999, "the body faces its target: {body}, the target is {to_target} away");
+    let (body, _, _) = roll("light");
+    assert!(body.dot(Vec3::X) > 0.999, "`face: Run` faces where the run points: {body}");
+}
+
 // --- what a cut and a charge pay ------------------------------------------------------------
 
 #[test]

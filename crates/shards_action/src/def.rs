@@ -422,7 +422,8 @@ pub enum Steer {
     /// lock-on target or an aim point turns it), so the backstep hops back still looking ahead and a
     /// second one goes the same way; with `face: Run` (the default) the body turns to the action's
     /// direction like it does for any action, so a standing backstep turns it around. An action with
-    /// `turn` spans starts from the body's facing whatever its steer says, so a backstep has none.
+    /// `turn` spans starts from the body's facing whatever its steer says, so the content check
+    /// refuses spans on a backstep (it would go forward).
     MoveOrBack,
 }
 
@@ -1193,6 +1194,12 @@ impl Check<'_, '_, '_> {
         if !def.turn.is_empty() && def.track_until > 0.0 {
             self.refs.error("turn and track_until both say how the action turns; give one (turn spans, or track_until)");
         }
+        if !def.turn.is_empty() && def.steer == Steer::MoveOrBack {
+            self.refs.error(
+                "a `steer: MoveOrBack` action with turn spans starts from the body's facing, so a standing backstep would go \
+                 forward; leave the turn spans out (or use steer: Move)",
+            );
+        }
         if let Some(assist) = &def.assist {
             if !(assist.angle > 0.0 && assist.angle <= 180.0) {
                 self.refs.error(format!("assist.angle must be in (0, 180] degrees (is {})", assist.angle));
@@ -1797,6 +1804,7 @@ mod tests {
             "f": (net_id: 7, phases: [("windup", 0.3)], assist: (angle: 20)),
             "g": (net_id: 8, phases: [("roll", 0.3)], steer: Move, track_until: 0.2, assist: (angle: 20)),
             "i": (net_id: 10, phases: [("roll", 0.3)], steer: MoveOrBack, track_until: 0.2, assist: (angle: 20)),
+            "j": (net_id: 11, phases: [("roll", 0.3)], steer: MoveOrBack, turn: [(Phase("roll"), 90)]),
             "h": (net_id: 9, phases: [("windup", 0.3)], cost: (stamina: 5, cooldown_if_interrupted: 0.4)),
             "ok": (net_id: 6, phases: [("windup", 0.3), ("active", 0.1)],
                 hits: [(span: Phase("active"), shape: Sphere(radius: 1), damage: 5)], charge: (after: 0.35, into: "a", until: 0.38),
@@ -1822,7 +1830,10 @@ mod tests {
         assert!(has("action `f`: assist limits how the action tracks its target, and it does not track"), "{errors:#?}");
         assert!(has("action `g`: assist limits tracking a lock-on target, which a `steer: Move` action never does"), "{errors:#?}");
         assert!(has("action `i`: assist limits tracking a lock-on target, which a `steer: MoveOrBack` action never does"), "{errors:#?}");
-        assert!(has("action `h`: cost.cooldown_if_interrupted is a share of cost.cooldown, which is 0"), "{errors:#?}");
+        assert!(
+            has("action `j`: a `steer: MoveOrBack` action with turn spans starts from the body's facing, so a standing backstep would go forward"),
+            "{errors:#?}"
+        );        assert!(has("action `h`: cost.cooldown_if_interrupted is a share of cost.cooldown, which is 0"), "{errors:#?}");
         assert!(has("cost.cooldown_key is empty") && has("cost.cooldown_if_interrupted must be between 0 and 1 (is 1.5)"));
         assert!(has("action `c`: charge.after 0.5 must lie in the action [0, 0.3)"), "{errors:#?}");
         assert!(has("charge.into is the action itself") && has("miss_recovery needs hit windows"));
