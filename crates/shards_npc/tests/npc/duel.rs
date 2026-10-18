@@ -49,15 +49,11 @@ fn cut_short(plan: &str, after: u64, until: u64) -> (u64, Vec<u64>) {
 }
 
 #[test]
-fn a_rest_counts_only_while_free_unless_it_runs_while_busy() {
+fn a_rest_counts_only_while_the_npc_is_free() {
     // The jab is cut after 10 ticks by a 36-tick stagger; the rest is 30 ticks.
     let (at, next) = cut_short("rest_plain", 10, 200);
-    // Plain: the stagger is no rest, the 30 ticks start when it ends.
+    // The stagger is no rest, the 30 ticks start when it ends.
     assert_eq!(next.first().copied(), Some(at + 36 + 30), "stagger {at}: {next:?}");
-    let (at, next) = cut_short("rest_busy", 10, 200);
-    // Counting while busy, the whole rest ran during the stagger: the next jab starts the
-    // first free tick after it.
-    assert_eq!(next.first().copied(), Some(at + 36 + 1), "stagger {at}: {next:?}");
 }
 
 #[test]

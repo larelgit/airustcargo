@@ -3,7 +3,6 @@
     // The reference: a rest of 0.5 s counted while the NPC runs no action.
     "rest_plain": (options: [(input: "light")], rest: (0.5, 0.5)),
     // Counted in every state: a stagger after the attack is part of the rest.
-    "rest_busy": (options: [(input: "light")], rest: (0.5, 0.5), rest_runs_while_busy: true),
     // A cut-short attack rests 0.3 s, a finished one 0.5 s.
     "rest_interrupted": (options: [(input: "light")], rest: (0.5, 0.5), rest_interrupted: Some((0.3, 0.3))),
     // A pause of a second at spawn.
@@ -50,7 +49,6 @@
         ],
         rest: (0.3, 0.5),
         rest_interrupted: Some((0.2, 0.2)),
-        rest_runs_while_busy: true,
         first_rest: Some((0.2, 0.4)),
     ),
 }

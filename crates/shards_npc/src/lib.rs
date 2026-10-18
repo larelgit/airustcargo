@@ -22,7 +22,7 @@
 //! - **Duel rules** (all optional, neutral unless a definition asks): strike spacing between the
 //!   NPCs of one director ([`strike`]: [`DirectorDef::min_spacing`], `spacing_exempt_tags`, the
 //!   rule `npc.strike_spacing`), conditional plan options (`AttackOption::when`) and a state's
-//!   rest clamp, rest semantics (`rest_interrupted`, `rest_runs_while_busy`, `first_rest`), combo
+//!   rest clamp, rest semantics (`rest_interrupted`, `first_rest`), combo
 //!   continuation ([`chain`]: `AttackOption::chain`), a decision cadence (`BehaviorDef::think`,
 //!   [`NpcCtx::deciding`]) and a perception keep range (`PerceptionDef::keep_range`).
 //! - **Navigation** ([`nav`]): every tile baked ahead of time into a walkable grid (the

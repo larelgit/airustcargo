@@ -211,8 +211,7 @@ pub(crate) fn direct(
     for &(id, entity) in &order {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         let plan_def = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p));
-        let counts_busy = plan_def.is_some_and(|p| p.rest_runs_while_busy);
-        f.plan.tick(dt, f.state.current.is_none() || counts_busy);
+        f.plan.tick(dt, f.state.current.is_none());
         // A director that no longer spaces its strikes (a hot reload) leaves no notes behind.
         if f.strike.is_some() && DirectorDef::of(&db, &f.npc.director).min_spacing <= 0.0 {
             commands.entity(entity).remove::<NpcStrike>();

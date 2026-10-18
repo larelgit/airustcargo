@@ -624,18 +624,13 @@ pub struct AttackPlanDef {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub bans: Vec<SequenceBan>,
     /// Seconds of rest after an attack before it asks for the next token: `(min, max)`,
-    /// counted while it runs no action (a stagger after a parried attack is no rest, unless
-    /// `rest_runs_while_busy`).
+    /// counted while it runs no action (a stagger after a parried attack is no rest).
     pub rest: (f32, f32),
     /// The rest after an attack that was interrupted (a stagger cut it short) instead of
     /// `rest`: `(min, max)` seconds, drawn as it is, replacing the finished attack's pause.
     /// `None`: an interrupted attack rests like a finished one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rest_interrupted: Option<(f32, f32)>,
-    /// The rest counts down in every state, a stagger or another action included, as a
-    /// cooldown does. Off (the default): it counts only while the NPC runs no action.
-    #[serde(skip_serializing_if = "is_false")]
-    pub rest_runs_while_busy: bool,
     /// The rest an NPC starts with when its brain first runs (its pause at spawn), `(min,
     /// max)` seconds. `None`: it starts without rest.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -652,7 +647,6 @@ impl Default for AttackPlanDef {
             bans: Vec::new(),
             rest: (0.5, 1.0),
             rest_interrupted: None,
-            rest_runs_while_busy: false,
             first_rest: None,
         }
     }
@@ -940,7 +934,7 @@ mod tests {
         let mut kinds = shards_content::ContentKinds::default();
         kinds.register::<AttackPlanDef>();
         kinds.register::<ActionDef>();
-        let text = r#"{ "p": (auto: true, rest: (0.5, 1), rest_interrupted: Some((1, 0.5)), first_rest: Some((-1, 2)), rest_runs_while_busy: true) }"#;
+        let text = r#"{ "p": (auto: true, rest: (0.5, 1), rest_interrupted: Some((1, 0.5)), first_rest: Some((-1, 2))) }"#;
         let db = ContentDb::build(&kinds, &[shards_content::db::Source { path: "content/p.attack_plan.ron".into(), text: text.into() }]);
         let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
         assert_eq!(
@@ -951,7 +945,7 @@ mod tests {
             ]
         );
         let neutral = serde_json::to_string(&AttackPlanDef::default()).unwrap();
-        for field in ["rest_interrupted", "rest_runs_while_busy", "first_rest"] {
+        for field in ["rest_interrupted", "first_rest"] {
             assert!(!neutral.contains(field), "{field} stays out of a plan that does not use it: {neutral}");
         }
     }
