@@ -440,3 +440,25 @@ fn a_leap_starts_on_the_ground_and_within_coyote_time() {
         assert!(err.reason().ends_with("; a leap starts from the ground"), "{}", err.reason());
     }
 }
+
+#[test]
+fn a_run_whose_action_stops_leaping_keeps_no_leap_state() {
+    let mut app = arena();
+    let hero = me(&mut app);
+    press(&mut app, hero, "technique.1");
+    step(&mut app, 5);
+    assert!(app.world().get::<LeapRun>(hero).is_some(), "crouching for the leap");
+    // A hot reload takes the leap out of the running action: its leap state goes with it, so
+    // nothing scales the run's displacement and nothing launches.
+    let before = serde_json::to_value(app.world().resource::<ContentDb>().get::<ActionDef>("b_leap").unwrap()).unwrap();
+    let mut def = before.clone();
+    def.as_object_mut().unwrap().remove("leap");
+    ok(&mut app, "content_apply", json!({"changes": [{"kind": "action", "id": "b_leap", "def": def, "before": before}]}));
+    let mut top: f32 = 0.0;
+    for _ in 0..40 {
+        step(&mut app, 1);
+        assert!(app.world().get::<LeapRun>(hero).is_none());
+        top = top.max(feet(&app, hero).y);
+    }
+    assert!(top < 0.05, "no launch: peaked at {top}");
+}

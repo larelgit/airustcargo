@@ -440,7 +440,10 @@ pub(crate) fn predict_actions(
     if let Some(s) = shown.as_mut() {
         match db.get::<ActionDef>(&s.run.action) {
             Some(mut def) => {
-                if s.leap.is_none() && def.leap.is_some() {
+                if def.leap.is_none() {
+                    // An action that stopped leaping on the way (a hot reload) keeps no leap state.
+                    s.leap = None;
+                } else if s.leap.is_none() {
                     s.leap = Some(LeapRun { instance: s.run.instance, ..default() });
                 }
                 let aimed = tracked(def, b.intent, target, sees);

@@ -985,7 +985,10 @@ pub(crate) fn run_machines(
                             ..default()
                         });
                     }
-                    if leap.is_none() && def.leap.is_some() {
+                    if def.leap.is_none() {
+                        // A run whose action stopped leaping on the way (a hot reload) keeps no leap state.
+                        leap = None;
+                    } else if leap.is_none() {
                         // A run whose action came to leap on the way (a hot reload).
                         leap = Some(LeapRun { instance: run.instance, ..default() });
                     }
@@ -1077,7 +1080,11 @@ pub(crate) fn run_machines(
             (None, None) => {}
         }
         // The leap's state the same way.
-        let leap = leap.filter(|x| f.state.current.as_ref().is_some_and(|r| r.instance == x.instance));
+        let leap = leap.filter(|x| {
+            f.state.current.as_ref().is_some_and(|r| {
+                r.instance == x.instance && db.get::<ActionDef>(&r.action).is_some_and(|d| d.leap.is_some())
+            })
+        });
         match (leap, f.leap.as_mut()) {
             (Some(x), Some(there)) => {
                 if **there != x {
@@ -1380,14 +1387,19 @@ fn settle_extras(entity: Entity, extras: Option<RunExtras>) -> impl FnOnce(&mut 
 /// [`settle_extras`] for the [`LeapRun`].
 fn settle_leap(entity: Entity, leap: Option<LeapRun>) -> impl FnOnce(&mut World) {
     move |world: &mut World| {
+        let run = world.get::<ActionState>(entity).and_then(|s| s.current.as_ref()).map(|r| (r.instance, r.action.clone()));
+        // Whether the running action leaps now: a hot reload can take the leap out of it.
+        let leaps = run.as_ref().is_some_and(|(_, action)| {
+            world.get_resource::<ContentDb>().and_then(|db| db.get::<ActionDef>(action)).is_some_and(|d| d.leap.is_some())
+        });
+        let running = run.map(|(instance, _)| instance);
         let Ok(mut e) = world.get_entity_mut(entity) else { return };
-        let running = e.get::<ActionState>().and_then(|s| s.current.as_ref()).map(|r| r.instance);
         match leap {
             Some(x) if running == Some(x.instance) => {
                 e.insert(x);
             }
             _ => {
-                if e.get::<LeapRun>().is_some_and(|x| running != Some(x.instance)) {
+                if e.get::<LeapRun>().is_some_and(|x| running != Some(x.instance) || !leaps) {
                     e.remove::<LeapRun>();
                 }
             }

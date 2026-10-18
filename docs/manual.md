@@ -1661,7 +1661,7 @@ it) is a listed one, only actions with one of the tags start (`Blocker::Mode`, `
 cooldown share. Forced actions (a stagger, a death) are never cut. `Water` is the swimming mode: wading stays `Ground`.
 
 **Intangible and ghost.** `intangible: [span]`: hits find nothing of the body while a span is open in the tick (no hit, no ledger
-mark, so a hit window that is still open when it comes out hits it then), a perception does not see it, and
+mark, so a hit window that is still open when it comes out hits it then), a perception neither sees nor hears it (an NPC that knew it remembers where it was until its `memory` runs out, as for a body out of sight), and
 `intangible(world, entity)` says so (computed from the running action, never read from how the body looks; the condition
 `intangible` is true while any fighter is). `ghost: true` (needs `intangible`): the body also carries `Ghost` while intangible,
 and the separation pass skips every pair it is in, so characters pass through each other. On a fighter the `Ghost` is the
