@@ -8,7 +8,7 @@
 //!
 //! **Generation is a pure function of (seed, version, attempt, the step list with versions,
 //! params, palette)**: every random number comes from [`DetRng`] keyed by those and the step's
-//! place in the list ([`VoxelGen::rng`]), every height from [`Noise`] ([`VoxelGen::noise`]); never
+//! place in the list ([`VoxelGen::rng`], [`VoxelGen::rng_keyed`]), every height from [`Noise`] ([`VoxelGen::noise`], keyed by a salt instead of the place); never
 //! `SimRng`, never a clock, never the iteration order of a hash map (params and marks are
 //! ordered). The same input gives the same volume, bit for bit, on every machine of one
 //! architecture, and [`Generated::hash`] says so in one number.
@@ -355,7 +355,7 @@ pub struct Generated {
     pub attempt: u32,
     /// The step list with versions it was made by.
     pub steps: Vec<(String, u32)>,
-    /// [`world_hash`]: the volume's hash with the step set folded in. What `voxel.volume` will
+    /// [`world_hash`]: the volume's hash with the palette fingerprint and the step set folded in. What `voxel.volume` will
     /// compare.
     pub hash: u64,
 }

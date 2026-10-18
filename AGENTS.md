@@ -77,7 +77,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
 - Engine tools (`shards tools`): **movement** — `move_to` (`path=true` follows `path_to`), `move`, `stop`, `jump`,
   `sprint`, `glide`, the `clearance` and `path_to` queries (in a region over the navmesh: `path_to` names the `provider`, `clearance` —
   `closed`, where the navmesh ends before the physics does), `input_bindings`, `rebind`; **combat** — `light_attack`, `heavy_attack`,
-  `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on`, `attack`, `god`, `heal`, `stagger`, `motion_bake`
+  `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on`, `attack`, `god`, `heal`, `stagger`, `react` (a developer tool: it forces a reaction), `motion_bake`
   (the same as `--bake-motion`); **content** —
   `content_list`, `content_get`, `content_check`, `content_reload`, `spawn_prefab`; **world** — `regen`, `region_load`,
   `goto_tile`, `region_info`, `worldgen_report`, `spawn_level`, `level_info`, `level_reload`; **NPCs and navigation** —
@@ -108,7 +108,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   the panel for `shot`. The game puts its own items in content (`*.devmenu.ron`), and a module does it with `add_dev_entry`. **Exit** — `quit`
   (`shards quit`: exit hooks run, the token and the port file are removed). Conditions for
   `step --until named:…`: `near_poi`, `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`,
-  `npc_engaged`, `npc_near`; the game adds its own (in the sandbox `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`; in the template
+  `npc_engaged`, `npc_near`, `reacting` (a fighter runs one of its moveset's reaction actions, not a stagger); the game adds its own (in the sandbox `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`; in the template
   `arena_cleared`, `foe_near`, `in_fight`).
 - Sound is resolved on the simulation clock and is the same without a window: listen to the game through `audio` and the `MUSIC` line in `observe`, not through
   the speakers (except the sound of the `AnimationCue` clip marker: it exists only if a model is drawn). Music changes go
@@ -275,8 +275,9 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   stay as they are. To rebuild the references: `--worldgen-report` on 1000 seeds, `record_reference_replays`, the manifest hash in
   `region.scenario`.
 - **Voxel generation.** A voxel region is made by steps registered by name and version (`add_voxel_step("hills", 1, hills)`;
-  `shards_voxel`), run in the order the region lists them, with randomness only from `VoxelGen::rng` / `VoxelGen::noise` (`DetRng`, keyed by
-  seed, region version, attempt and the step's place) and heights from `Noise` (no `powf`, no `sin`). A step is code the content hash cannot
+  `shards_voxel`), run in the order the region lists them, with randomness only from `VoxelGen::rng` / `VoxelGen::rng_keyed` (`DetRng`, keyed by
+  seed, region version, attempt and the step's place) and `VoxelGen::noise` (keyed by seed, region version, attempt and a salt: the same salt
+  is the same field in every step of an attempt), heights from `Noise` (no `powf`, no `sin`). A step is code the content hash cannot
   see: when you change what a step produces, raise its registered version and the version the content lists, so a client with other step
   code fails content validation instead of desyncing. The volume hash (`VoxelVolume::hash`, `world_hash`) is the backstop; its golden
   tests change only on purpose.
@@ -378,7 +379,7 @@ It is written when a panic happens on another thread (the render thread, a task)
   (`ok`, `OVER`, `-`) and exits with code 0, 1 (a budget is exceeded or the game did not reach the measurement) or 2 (no such definition, or `--offscreen`
   has no GPU). A debug build gives no verdict.
 - The reference replays `tests/replays/*.json` (obstacle course, combat prototype, token director, guard on the navmesh, region changes,
-  a replay from a snapshot and a replay of the sandbox's saves) are checked by `cargo test` (and by nextest). After a deliberate change to gameplay or content, record them again:
+  a replay from a snapshot, a replay of the sandbox's saves and the hit-outcome sparring) are checked by `cargo test` (and by nextest). After a deliberate change to gameplay or content, record them again:
   `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays` (for the template —
   `cargo test --test game record_reference_replays -- --ignored` in `template/`).
 - The long checks are not run by hand but by `.github/workflows/nightly.yml` (every reference replay with `--heavy 10 --heavy-span 30`, worldgen on 100000 seeds, the GPU tests, performance), `soak.yml` (half an hour of a live stand) and `cross.yml` (the reference replays on Windows and Ubuntu 22.04, weekly); a failed night opens an issue labelled `nightly`. Their commands are the ones above with bigger numbers: the nightly worldgen is `--worldgen-report wilds --seeds 1..100000` (and `valley` in the template), not the 1000 seeds of `ci.yml`.

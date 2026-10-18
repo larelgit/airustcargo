@@ -97,7 +97,8 @@ use shards_motion::perception::{
 };
 use shards_world::ActiveRegion;
 use shards_motion::{
-    CharacterController, CharacterParams, LayerMask, MotionAi, MotionState, PhysicsWorld, QueryFilter, Shape,
+    CharacterController, CharacterParams, LayerMask, MotionAi, MotionState, MoveModifiers, PhysicsWorld, QueryFilter,
+    Shape,
 };
 
 use crate::brain::{npcs_in_order, Home, Npc, NpcBrain, NpcDrive, LEASH_ROOM};
@@ -474,6 +475,7 @@ type Agents<'w, 's> = Query<
         Option<&'static Home>,
         Option<&'static CharacterController>,
         Option<&'static CharacterParams>,
+        Option<&'static MoveModifiers>,
     ),
     With<Npc>,
 >;
@@ -486,7 +488,9 @@ pub(crate) fn nav_steer(db: Res<ContentDb>, mut agents: Agents) {
     let mut order: Vec<(AiId, Entity)> = agents.iter().map(|(e, id, ..)| (*id, e)).collect();
     order.sort();
     for (_, entity) in order {
-        let Ok((_, _, mut agent, drive, brain, tf, home, controller, own)) = agents.get_mut(entity) else { continue };
+        let Ok((_, _, mut agent, drive, brain, tf, home, controller, own, modifiers)) = agents.get_mut(entity) else {
+            continue;
+        };
         let params = params_of(&db, controller, own);
         let here = tf.translation;
         let mut next = agent.clone();
@@ -508,7 +512,7 @@ pub(crate) fn nav_steer(db: Res<ContentDb>, mut agents: Agents) {
                 let toward = next.path.get(index).copied().unwrap_or(goal);
                 let dir = flat(toward - here).try_normalize().unwrap_or(Vec3::ZERO);
                 let speed = next.speed.clamp(0.0, 1.0);
-                let (top, _) = params.ground_speed(speed, false);
+                let (top, _) = ground_speed(&params, modifiers, speed);
                 let mut vel = dir * top;
                 if drive.leashed
                     && let Some(home) = home
@@ -525,6 +529,15 @@ pub(crate) fn nav_steer(db: Res<ContentDb>, mut agents: Agents) {
     }
 }
 
+/// The ground speed an NPC walking at input `speed` makes: its params' through its
+/// `MoveModifiers` (slowed, capped or rooted), the same the controller moves it by.
+fn ground_speed(params: &CharacterParams, modifiers: Option<&MoveModifiers>, speed: f32) -> (f32, bool) {
+    match modifiers {
+        Some(modifiers) => modifiers.ground_speed(params, speed, false),
+        None => params.ground_speed(speed, false),
+    }
+}
+
 /// The movement input for velocity `vel` of a walker whose input `speed` makes `top` m/s.
 fn input_of(vel: Vec3, top: f32, speed: f32) -> Vec3 {
     if top > 0.0 { (vel / top).clamp_length_max(1.0) * speed } else { Vec3::ZERO }
@@ -536,7 +549,7 @@ type Bodies<'w, 's> = Query<
     (
         Entity,
         (&'static AiId, &'static Transform, &'static CharacterController, Option<&'static CharacterParams>),
-        (Option<&'static MotionState>, Has<Dead>, Option<&'static Intent>),
+        (Option<&'static MotionState>, Has<Dead>, Option<&'static Intent>, Option<&'static MoveModifiers>),
         (Option<&'static Npc>, Option<&'static NpcBrain>, Option<&'static NpcDrive>, Option<&'static Home>),
         Option<&'static mut NavAgent>,
     ),
@@ -567,7 +580,7 @@ pub(crate) fn nav_avoid(db: Res<ContentDb>, mut bodies: Bodies) {
     let mut all: Vec<Body> = Vec::new();
     let mut asking: Vec<Asking> = Vec::new();
     let mut idle: Vec<Entity> = Vec::new();
-    for (entity, (id, tf, controller, own), (motion, dead, intent), (npc, brain, drive, home), agent) in bodies.iter() {
+    for (entity, (id, tf, controller, own), (motion, dead, intent, modifiers), (npc, brain, drive, home), agent) in bodies.iter() {
         let params = params_of(&db, Some(controller), own);
         let def = npc
             .and_then(|n| db.get::<BehaviorDef>(&n.behavior))
@@ -599,7 +612,7 @@ pub(crate) fn nav_avoid(db: Res<ContentDb>, mut bodies: Bodies) {
             continue;
         }
         let speed = agent.speed.clamp(0.0, 1.0);
-        let (top, _) = params.ground_speed(speed, false);
+        let (top, _) = ground_speed(&params, modifiers, speed);
         let pace = agent.preferred.length();
         asking.push(Asking {
             entity,

@@ -15,7 +15,6 @@ use shards_core::input_names::{GLIDE, JUMP, SPRINT};
 use shards_core::{Intent, Order, Target};
 
 use crate::ai::MotionAi;
-use crate::controller::locomotion::CLIMB_OUT_REACH;
 use crate::controller::{CharacterController, CharacterParams, LocomotionInput, MotionMode, MotionState};
 use crate::intent::GlideUntilLanded;
 use crate::perception::{self, reach_toward, Bodies, Hazard, PathPlan};
@@ -30,6 +29,7 @@ pub(crate) fn plugin(app: &mut App) {
     register_tool(world, "jump", Scope::Player, Action, fresh::<NoArgs>.pipe(jump));
     register_tool(world, "sprint", Scope::Player, Action, sprint);
     register_tool(world, "glide", Scope::Player, Action, glide);
+    register_tool(world, "move_info", Scope::Player, ToolKind::Query, move_info);
 }
 
 /// Where to go: an entity id (42 or "e42") or a ground point {"x": 3, "z": -4}.
@@ -266,27 +266,31 @@ fn jump(
             let forward = tf.forward();
             let facing = Vec3::new(forward.x, 0.0, forward.z);
             let toward = if intent.move_dir.length_squared() > 1e-4 { intent.move_dir } else { facing };
+            let reach = params.climb_reach();
+            // Probe past the reach, so a ledge just out of it is named (and the reach itself is covered).
+            let probe = (reach + 0.9).max(1.2);
             let (distance, hazard) =
-                reach_toward(&physics, &params, tf.translation, state.water_surface, toward, 1.2, ai.safe_drop, Some(entity));
+                reach_toward(&physics, &params, tf.translation, state.water_surface, toward, probe, ai.safe_drop, Some(entity));
             // The one rule for what is climbed (a swimmer's rise counts its skin), the same the
             // controller, the planner and `clearance` ask.
             match hazard {
-                Hazard::Ledge { rise } if params.can_climb(rise, true) && distance <= CLIMB_OUT_REACH + 0.02 => {
+                Hazard::Ledge { rise } if params.can_jump_out(rise) && distance <= reach + 0.02 => {
                     format!("ok: jumping out of the water onto the ledge {distance:.1}m ahead (+{rise:.1}m)")
                 }
                 // The controller climbs out only from right at the ledge: an "ok" here would
                 // press a jump that does nothing.
-                Hazard::Ledge { rise } if params.can_climb(rise, true) => {
+                Hazard::Ledge { rise } if params.can_jump_out(rise) => {
                     return Err(format!(
                         "the ledge is {distance:.1}m ahead (+{rise:.1}m), out of reach from the water: swim within \
-                         {CLIMB_OUT_REACH:.1}m of it and jump, or keep swimming into it (that climbs out too)"
+                         {reach:.1}m of it and jump (a low enough ledge is also climbed by swimming into it)"
                     ));
                 }
                 _ => {
+                    // The highest ledge top the jump climbs, over the water.
+                    let over_water = params.climb_out_max_height.unwrap_or(params.mantle_height - params.float_depth);
                     return Err(format!(
                         "cannot jump while swimming: there is no ledge within 1m in front of you that you can climb \
-                         (at most {:.1}m above the water); swim to the shore or use move_to to climb out",
-                        params.mantle_height
+                         (at most {over_water:.1}m above the water); swim to the shore or use move_to to climb out"
                     ));
                 }
             }
@@ -349,4 +353,60 @@ fn glide(In(call): In<Call<GlideArgs>>, mut commands: Commands, db: Option<Res<C
     intent.set_held(GLIDE, true);
     commands.entity(entity).insert(GlideUntilLanded { flown: matches!(state.mode, MotionMode::Air | MotionMode::Glide) });
     Ok(message.into())
+}
+
+/// What moves a character, and how fast it can go right now: its modifiers (slow, caps, root,
+/// sprint cost), the walk, run and sprint speeds they leave (m/s), the swim speeds, and the
+/// wading factor. Read-only.
+#[derive(Deserialize, JsonSchema)]
+pub struct MoveInfoArgs {
+    /// The character: 42 or "e42". Default: you.
+    pub id: Option<Id>,
+}
+
+fn move_info(In(call): In<Call<MoveInfoArgs>>, world: &World) -> ToolResult<serde_json::Value> {
+    let entity = match call.args.id {
+        Some(id) => id.entity(world)?,
+        None => call.caller.require_subject()?,
+    };
+    let e = world.entity(entity);
+    let Some(controller) = e.get::<CharacterController>() else {
+        return Err("it is not a character (no CharacterController)".to_owned());
+    };
+    let params = controller.resolve(e.get::<CharacterParams>(), world.get_resource::<ContentDb>());
+    let m = e.get::<crate::MoveModifiers>().copied().unwrap_or_default();
+    let round = |v: f32| (v * 100.0).round() / 100.0;
+    let speed = |amount: f32, sprint: bool| round(m.ground_speed(params, amount, sprint).0);
+    // The depth wading reads (water over the feet plus the params' offset) and the factor it makes.
+    let depth = e
+        .get::<MotionState>()
+        .filter(|s| params.wades_in(s.mode))
+        .and_then(|s| s.water_surface.map(|surface| (surface, s.mode)))
+        .zip(e.get::<Transform>())
+        .map(|((surface, mode), tf)| params.wade_depth_for(mode, surface, tf.translation.y));
+    let wade = depth.map(|depth| params.wade_scale(depth));
+    Ok(serde_json::json!({
+        "modifiers": m.describe(),
+        "factor": m.factor,
+        "ground_factor": m.ground_factor,
+        "cap": m.cap,
+        "unsprinted_cap": m.unsprinted_cap,
+        "no_sprint": m.no_sprint,
+        "rooted": m.rooted,
+        "sprint_cost": m.sprint_cost,
+        "wade": m.wade,
+        "stance": m.stance.map(|s| serde_json::json!({ "top": s.top, "by_input": s.by_input })),
+        "acceleration": m.acceleration,
+        "deceleration": m.deceleration,
+        "walk": speed(0.5, false),
+        "run": speed(1.0, false),
+        "sprint": speed(1.0, true),
+        "swim": round(m.swim_speed(params.swim_speed)),
+        "swim_fast": (params.swim_fast_speed > 0.0).then(|| round(m.swim_speed(params.swim_fast_speed))),
+        "wade_factor": wade.map(round),
+        "wade_depth": depth.map(round),
+        "wade_depth_offset": params.wade_depth_offset,
+        "wade_air_depth_offset": params.wade_air_depth_offset,
+        "climb_out_reach": params.climb_reach(),
+    }))
 }

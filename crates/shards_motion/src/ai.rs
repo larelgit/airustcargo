@@ -33,8 +33,13 @@ pub(crate) fn plugin(app: &mut App) {
         .register_ai_component::<MotionState>(describe_motion)
         .journal_event::<Landed>(|e, w| {
             let min = w.get_resource::<MotionAi>().map_or(2.0, |m| m.landed_min_fall);
-            (e.fall_height >= min).then(|| tracked(w, e.entity)).flatten().map(|who| {
-                format!("{who} landed from {:.1}m", e.fall_height)
+            // A tiered landing is told even from a small fall: the tiers start at a few m/s.
+            (e.fall_height >= min || e.tier > 0).then(|| tracked(w, e.entity)).flatten().map(|who| {
+                let how = if e.jumped { "jump" } else { "drop" };
+                match e.tier {
+                    0 => format!("{who} landed from {:.1}m", e.fall_height),
+                    tier => format!("{who} landed from {:.1}m at {:.1}m/s, tier {tier} ({how})", e.fall_height, e.impact_speed),
+                }
             })
         })
         .journal_event::<Jumped>(|e, w| tracked(w, e.entity).map(|who| format!("{who} jumped")))

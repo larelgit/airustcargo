@@ -20,11 +20,11 @@ use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::input_names::SPRINT;
 use shards_core::{flat, Intent};
-use shards_motion::LocomotionInput;
+use shards_motion::{CharacterController, CharacterParams, LocomotionInput, MotionMode, MotionState, MoveModifiers};
 
 use crate::cue::ActionSound;
-use crate::def::{touches, ActionDef, CancelTo, CombatTuning, Effect, MovesetDef, Steer, EPS};
-use crate::fighter::{report_once, Charges, Cooldowns, Dead, Fighter, Health, Stamina};
+use crate::def::{touches, ActionDef, CancelTo, CombatTuning, Effect, MovesetDef, StaminaMode, Steer, EPS};
+use crate::fighter::{report_once, sprint_rule, Charges, Cooldowns, Dead, Fighter, Health, Stamina};
 use crate::status::add_status_buildup;
 use crate::zone::{action_zones, WorldShape};
 
@@ -459,10 +459,20 @@ pub fn can_start(v: &FighterView, input: &str, dt: f32) -> Result<Start, Blocker
         }
     }
     let need = def.cost.stamina;
-    if let Some(s) = v.stamina
-        && s.current + EPS < need
-    {
-        blockers.push(Blocker::Stamina { have: s.current, need, ready_in: stamina_ready_in(s, need, dt) });
+    if let Some(s) = v.stamina {
+        match def.cost.stamina_mode {
+            StaminaMode::Full => {
+                if s.current + EPS < need {
+                    blockers.push(Blocker::Stamina { have: s.current, need, ready_in: stamina_ready_in(s, need, dt) });
+                }
+            }
+            // Any stamina above 0 starts it; `pay` drains to 0 at most. The wait is for any at all.
+            StaminaMode::Any => {
+                if need > 0.0 && s.current <= EPS {
+                    blockers.push(Blocker::Stamina { have: s.current, need, ready_in: stamina_ready_in(s, 2.0 * EPS, dt) });
+                }
+            }
+        }
     }
     // Longest wait wins; `None` (never) is longest of all; earlier in the list on ties.
     let worst = blockers.into_iter().reduce(|a, b| match (a.ready_in(), b.ready_in()) {
@@ -500,6 +510,46 @@ pub struct ActionStarted {
     /// ([`PredictedAction`](crate::PredictedAction)); the host's own `ActionStarted` for it
     /// comes later (forwarded, `false`), so presentation of a predicted body plays the first.
     pub predicted: bool,
+}
+
+/// An action stopped running. Triggered before the [`ActionStarted`] of what replaces it. Not a
+/// net event: a client has no use for every end of every action. `finish_actions` triggers it
+/// through `Commands` (applied at the next sync point), while [`force_action`], [`kill`](crate::kill)
+/// and [`revive`](crate::revive) trigger it at once; an observer must not depend on the order of
+/// the two paths (the test `action_ended_order_is_pinned` records what the engine produces).
+#[derive(Event, Reflect, Clone, Debug, PartialEq)]
+pub struct ActionEnded {
+    pub entity: Entity,
+    pub action: String,
+    /// The run's `Running::instance`.
+    pub instance: u32,
+    pub end: ActionEnd,
+}
+
+impl ActionEnded {
+    /// The event for `run` ending in `end`; one function for every place a run stops, which
+    /// later modules extend.
+    pub(crate) fn of(entity: Entity, run: &Running, end: ActionEnd) -> Self {
+        Self { entity, action: run.action.clone(), instance: run.instance, end }
+    }
+}
+
+/// How an action stopped ([`ActionEnded`]).
+#[derive(Reflect, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActionEnd {
+    /// Its time ran out.
+    Finished,
+    /// Another action started through one of its cancel windows.
+    Cancelled,
+    /// The engine forced another action, killed or revived the fighter.
+    Interrupted,
+    /// Its definition left content (a hot reload).
+    Removed,
+    /// It turned into its charge action (same instance, same time). Nothing ends this way
+    /// yet: the variant is here so the type does not change again.
+    Branched,
+    /// Its `while_held` input was let go. Nothing ends this way yet, as `Branched`.
+    Released,
 }
 
 /// A buffered press never got to start.
@@ -559,6 +609,9 @@ pub(crate) struct FighterData {
     charges: Option<&'static mut Charges>,
     transform: &'static Transform,
     loco: Option<&'static mut LocomotionInput>,
+    motion: Option<&'static MotionState>,
+    modifiers: Option<&'static MoveModifiers>,
+    body: Option<(&'static CharacterController, Option<&'static CharacterParams>)>,
     dead: Has<Dead>,
 }
 
@@ -620,6 +673,9 @@ pub(crate) fn run_machines(
                 f.state.started += 1;
                 let run =
                     Running::new(&choice.start.action, def, instance, facing, choice.dir, Some(choice.input.clone()));
+                if let Some(old) = &f.state.current {
+                    commands.trigger(ActionEnded::of(entity, old, ActionEnd::Cancelled));
+                }
                 begin(entity, def, &run, here, &mut pending.0, &mut |e| commands.trigger(e));
                 commands.trigger(ActionStarted {
                     entity,
@@ -655,8 +711,8 @@ pub(crate) fn run_machines(
                 None => gone = true,
             }
         }
-        if gone {
-            f.state.current = None;
+        if gone && let Some(old) = f.state.current.take() {
+            commands.trigger(ActionEnded::of(entity, &old, ActionEnd::Removed));
         }
 
         // Presses that did not start age; those out of time are rejected.
@@ -899,15 +955,22 @@ fn telegraph(attacker: Entity, def: &ActionDef, run: &Running, feet: Vec3) -> Te
 /// owns the body, where to face; no sprinting without stamina, nor after sprinting it
 /// dry until the button is let go.
 fn steer_body(f: &mut FighterDataItem, db: &ContentDb, external: Vec3) {
-    if let Some(s) = f.stamina.as_mut()
-        && s.exhausted
-        && !f.intent.is_held(SPRINT)
-    {
-        s.exhausted = false;
+    let rule = sprint_rule(db, f.motion, f.body);
+    let held = f.intent.is_held(SPRINT);
+    if let Some(s) = f.stamina.as_mut() {
+        s.settle_exhaustion(rule, held);
     }
-    let out_of_stamina = f.stamina.as_ref().is_some_and(|s| s.current <= EPS || s.exhausted);
+    let out_of_stamina =
+        !free_sprint(f.modifiers, f.motion) && f.stamina.as_ref().is_some_and(|s| s.sprint_blocked(rule, held));
     let Some(loco) = f.loco.as_mut() else { return };
     steer_locomotion(loco, f.state.current.as_ref(), db, f.dead, out_of_stamina, external);
+}
+
+/// Whether a sprint costs no stamina, so an empty one does not stop it: the body's
+/// `MoveModifiers::sprint_cost` is 0 and it is not in water (a fast swim always costs).
+/// The machine and a client's prediction ask the same question.
+pub(crate) fn free_sprint(modifiers: Option<&MoveModifiers>, motion: Option<&MotionState>) -> bool {
+    modifiers.is_some_and(|m| m.sprint_cost == 0.0) && !motion.is_some_and(|m| m.mode == MotionMode::Water)
 }
 
 /// What `run` (the body's action, if any) wants of the controller this tick: the
@@ -939,10 +1002,19 @@ pub(crate) fn steer_locomotion(
 /// `SimSet::Resolve`, after hits: actions whose time ran out in this tick end now. The
 /// machine leaves them in place so the tick that ends an action still hits and
 /// defends (hit windows, i-frames, guards), as the timing rules say.
-pub(crate) fn finish_actions(mut fighters: Query<&mut ActionState>) {
-    for mut state in &mut fighters {
+pub(crate) fn finish_actions(mut fighters: Query<(Entity, Option<&AiId>, &mut ActionState)>, mut commands: Commands) {
+    // The query follows `Entity` order, which a window shifts: end them in `AiId` order.
+    let mut ending: Vec<(u32, Entity)> = Vec::new();
+    for (entity, id, state) in &fighters {
         if state.current.as_ref().is_some_and(|r| r.t >= r.length - EPS) {
-            state.current = None;
+            ending.push((id.map_or(u32::MAX, |i| i.0), entity));
+        }
+    }
+    ending.sort();
+    for (_, entity) in ending {
+        let Ok((_, _, mut state)) = fighters.get_mut(entity) else { continue };
+        if let Some(run) = state.current.take() {
+            commands.trigger(ActionEnded::of(entity, &run, ActionEnd::Finished));
         }
     }
 }
@@ -1007,7 +1079,10 @@ pub fn force_action(world: &mut World, entity: Entity, action: &str) -> bool {
     let mut effects = Vec::new();
     let mut telegraphs = Vec::new();
     begin(entity, &def, &run, feet.0, &mut effects, &mut |t| telegraphs.push(t));
-    state.current = Some(run);
+    let replaced = state.current.replace(run);
+    if let Some(old) = replaced {
+        world.trigger(ActionEnded::of(entity, &old, ActionEnd::Interrupted));
+    }
     world.trigger(ActionStarted { entity, action: action.to_owned(), input: None, predicted: false });
     for t in telegraphs {
         world.trigger(t);

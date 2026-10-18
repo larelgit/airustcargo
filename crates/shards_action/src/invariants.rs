@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use shards_content::ContentDb;
 
 use crate::def::ActionDef;
-use crate::fighter::{Fighter, Health, Poise, Stamina};
+use crate::fighter::{Fighter, Health, Knockback, Poise, Protection, Stamina};
 use crate::machine::ActionState;
 
 /// The engine rule `action.resources_in_range`: `Health`, `Stamina` and `Poise` hold finite
@@ -79,5 +79,46 @@ pub fn running_sane(world: &World) -> Option<String> {
             }
         }
     })?;
+    bad.report()
+}
+
+/// The engine rule `action.protection_sane`: every [`Protection`] holds finite timers, none below 0.
+///
+/// `grant_protection` takes the longer of two times and `tick_protection` clamps at 0, so a
+/// violation names a writer that put a timer there by hand (a NaN stays a NaN through the countdown
+/// and would shield its fighter for ever).
+pub fn protection_sane(world: &World) -> Option<String> {
+    let mut bad = Offenders::default();
+    with_query::<(&AiId, &Protection), (), _>(world, |query| {
+        for (id, p) in query.iter(world) {
+            if !(p.reactions.is_finite() && p.reactions >= 0.0 && p.poise.is_finite() && p.poise >= 0.0) {
+                bad.note(*id, || {
+                    format!("Protection reactions = {}, poise = {}: timers are finite and >= 0", p.reactions, p.poise)
+                });
+            }
+        }
+    });
+    bad.report()
+}
+
+/// The engine rule `action.knockback_sane`: every [`Knockback`] has a finite flat velocity (`y` is 0)
+/// and a finite `decel` above 0.
+///
+/// A push moves the body on the ground plane (the controller owns the vertical axis), and
+/// `ReactionDef::decel` is validated above 0 because any hit's `knockback` may start a push: a push
+/// that does not slow down would never stop, and a vertical component would be thrown into the
+/// displacement the machine writes.
+pub fn knockback_sane(world: &World) -> Option<String> {
+    let mut bad = Offenders::default();
+    with_query::<(&AiId, &Knockback), (), _>(world, |query| {
+        for (id, k) in query.iter(world) {
+            let v = k.velocity;
+            if !(v.is_finite() && v.y == 0.0 && k.decel.is_finite() && k.decel > 0.0) {
+                bad.note(*id, || {
+                    format!("Knockback velocity = {v}, decel = {}: a flat finite velocity and a deceleration above 0", k.decel)
+                });
+            }
+        }
+    });
     bad.report()
 }

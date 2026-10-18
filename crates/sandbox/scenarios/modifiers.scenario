@@ -1,0 +1,174 @@
+# Locomotion modifiers (C1): a slow, a root and a speed cap from statuses, then fast swimming,
+# the two-tier climb-out and landing tiers from the locomotion params. The definitions are
+# added by `content_apply` and taken away again at the end, so the sandbox's own content (and
+# the reference replays' content hash) is what it was.
+
+seed 42
+
+# --- the world as the game spawns it, whatever was played in it before
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act sprint on=false
+act set id=e5 component=Statuses value='[]'
+act? content_apply changes='[{"kind": "status", "id": "slow", "def": {"threshold": 100, "duration": 30, "speed_factor": 0.6}}, {"kind": "status", "id": "root", "def": {"threshold": 100, "duration": 30, "root": true}}, {"kind": "status", "id": "burden", "def": {"threshold": 100, "duration": 30, "speed_cap": 3.0}}]'
+act teleport id=e5 x=0 z=-3 y=0
+step 5
+invariant field e5 Health.current > 0
+
+# --- 1. no modifier: a second of running covers about 4.7 m, and the AI says nothing
+session --agent runner --scope player
+act move_info
+expect result contains "\"modifiers\": \"\""
+expect result contains "\"run\": 5.0"
+act move dir=E meters=40
+session --agent scenario
+step 60
+expect field e5 Transform.translation.x > 4.4
+expect field e5 Transform.translation.x < 4.9
+session --agent runner
+act stop
+
+# --- 2. a slow status: 0.6 of the speed, and the line says so
+session --agent scenario
+step 30
+act teleport id=e5 x=0 z=-3 y=0
+act set id=e5 component=Statuses value='[{"id": "slow", "buildup": 100, "threshold": 100, "active": 30, "stacks": 1}]'
+step 2
+expect shows e5 "slowed x0.60"
+session --agent runner
+act move_info
+expect result contains "\"run\": 3.0"
+act move dir=E meters=40
+session --agent scenario
+step 60
+expect field e5 Transform.translation.x > 2.5
+expect field e5 Transform.translation.x < 3.0
+session --agent runner
+act stop
+
+# --- 3. a root: nowhere to go, but a roll still moves the body
+session --agent scenario
+step 30
+act teleport id=e5 x=0 z=-3 y=0
+act set id=e5 component=Statuses value='[{"id": "root", "buildup": 100, "threshold": 100, "active": 30, "stacks": 1}]'
+step 2
+expect shows e5 "rooted"
+session --agent runner
+act move dir=E meters=40
+session --agent scenario
+step 60
+expect field e5 Transform.translation.x < 0.1
+session --agent runner
+act dodge dir=E
+session --agent scenario
+step 30
+expect field e5 Transform.translation.x > 1.0
+session --agent runner
+act stop
+
+# --- 4. a cap: a sprint is held to 3 m/s
+session --agent scenario
+step 30
+act teleport id=e5 x=0 z=-3 y=0
+act set id=e5 component=Statuses value='[{"id": "burden", "buildup": 100, "threshold": 100, "active": 30, "stacks": 1}]'
+session --agent runner
+act sprint on=true
+act move dir=E meters=40
+session --agent scenario
+step 60
+expect shows e5 "capped 3.0m/s"
+expect field e5 Transform.translation.x < 3.0
+session --agent runner
+act sprint on=false
+act stop
+session --agent scenario
+act set id=e5 component=Statuses value='[]'
+step 30
+
+# --- 5. locomotion params, as extra definitions the player is switched to: a fast swim with a
+# high auto climb-out height off (0.1 m), another with 0.35 m, and landing tiers
+act content_apply changes='[{"kind": "locomotion", "id": "swim_a", "def": {"radius": 0.4, "height": 1.8, "walk_speed": 2.0, "run_speed": 5.0, "sprint_speed": 7.5, "jump_height": 1.2, "mantle_height": 1.6, "mantle_time": 0.45, "swim_speed": 3.0, "glide_speed": 9.0, "glide_fall_speed": 2.0, "glide_accel": 8.0, "turn_speed_deg": 720.0, "swim_fast_speed": 4.0, "swim_fast_drain": 14.0, "climb_out_auto_height": 0.1}}, {"kind": "locomotion", "id": "swim_b", "def": {"radius": 0.4, "height": 1.8, "walk_speed": 2.0, "run_speed": 5.0, "sprint_speed": 7.5, "jump_height": 1.2, "mantle_height": 1.6, "mantle_time": 0.45, "swim_speed": 3.0, "glide_speed": 9.0, "glide_fall_speed": 2.0, "glide_accel": 8.0, "turn_speed_deg": 720.0, "climb_out_auto_height": 0.35}}, {"kind": "locomotion", "id": "tiers", "def": {"radius": 0.4, "height": 1.8, "walk_speed": 2.0, "run_speed": 5.0, "sprint_speed": 7.5, "jump_height": 1.2, "mantle_height": 1.6, "mantle_time": 0.45, "swim_speed": 3.0, "glide_speed": 9.0, "glide_fall_speed": 2.0, "glide_accel": 8.0, "turn_speed_deg": 720.0, "landing_tiers": [4.0, 6.5, 13.0], "landing_drop_tiers": [6.5, 13.0]}}]'
+act heal id=e5
+act set id=e5 component=CharacterController path=params value=swim_a
+act set id=e5 component=Stamina path=current value=100
+act teleport id=e5 x=57 z=0 y=3.4
+step 90 --until "journal:→ water"
+expect journal "e5 air → water"
+step 30
+session --agent runner
+act sprint on=true
+act move dir=E meters=12
+session --agent scenario
+step 60
+expect shows e5 "water 4.0m/s"
+expect field e5 Stamina.current < 90
+expect field e5 Stamina.current > 70
+
+# at the far wall (a deck 0.2 m above the water): pushing does not climb out with an auto height of 0.1, a jump does
+step 300 --until field:e5:Transform.translation.x>65.3
+step 60
+expect !journal "climbs a"
+expect shows e5 "water"
+session --agent runner
+act sprint on=false
+act jump
+session --agent scenario
+step 120 --until "journal:e5 climbs a"
+expect journal "e5 water → climbing"
+
+# with an auto height of 0.35, pushing is enough
+step 90
+session --agent runner
+act stop
+session --agent scenario
+act set id=e5 component=CharacterController path=params value=swim_b
+act teleport id=e5 x=64 z=0 y=3.4
+step 90 --until "journal:e5 air → water"
+mark
+session --agent runner
+act move dir=E meters=3
+session --agent scenario
+step 200 --until "journal:e5 climbs a"
+expect journal "e5 climbs a"
+session --agent runner
+act stop
+
+# landing tiers: a 3 m drop lands at about 11 m/s, tier 1 of the drop tiers
+session --agent scenario
+step 90
+act set id=e5 component=CharacterController path=params value=tiers
+act heal id=e5
+act teleport id=e5 x=40 z=0 y=3
+mark
+step 90 --until "journal:landed"
+expect journal "tier 1 (drop)"
+
+# --- 6. a game can ask for caps that scale with the stick, as an analog top speed does: the same
+# cap of 3.0 (the burden status) holds a run of 6.0 at half the stick, so a half-stick walk is 1.5
+act content_apply changes='[{"kind": "locomotion", "id": "parity", "def": {"radius": 0.4, "height": 1.8, "walk_speed": 3.0, "run_speed": 6.0, "sprint_speed": 7.5, "jump_height": 1.2, "mantle_height": 1.6, "mantle_time": 0.45, "swim_speed": 3.0, "glide_speed": 9.0, "glide_fall_speed": 2.0, "glide_accel": 8.0, "turn_speed_deg": 720.0, "caps_scale_with_input": true, "climb_out_reach": 0.55, "wade_air_depth_offset": 0.1, "sprint_in_air": true}}]'
+act set id=e5 component=CharacterController path=params value=parity
+act set id=e5 component=Statuses value='[{"id": "burden", "buildup": 100, "threshold": 100, "active": 30, "stacks": 1}]'
+step 2
+session --agent runner
+act move_info
+expect result contains "\"walk\": 1.5"
+expect result contains "\"run\": 3.0"
+# the reach of the water climb-out and the airborne wading offset are the params' own numbers
+expect result contains "\"climb_out_reach\": 0.55"
+expect result contains "\"wade_air_depth_offset\": 0.1"
+session --agent scenario
+act set id=e5 component=Statuses value='[]'
+step 2
+
+# --- the world as it was: the player's own numbers and none of the test definitions
+act set id=e5 component=CharacterController path=params value=player
+act content_apply changes='[{"kind": "locomotion", "id": "swim_a", "before": {"acceleration":40.0,"air_control":0.35,"coyote_time":0.12,"deceleration":50.0,"float_depth":1.1,"glide_accel":8.0,"glide_fall_speed":2.0,"glide_speed":9.0,"gravity":20.0,"height":1.8,"jump_buffer":0.12,"jump_height":1.2,"mantle_height":1.6,"mantle_time":0.45,"max_slope_deg":45.0,"radius":0.4,"run_speed":5.0,"skin_width":0.02,"snap_distance":0.35,"sprint_speed":7.5,"step_height":0.35,"swim_depth":1.3,"swim_speed":3.0,"terminal_speed":40.0,"turn_speed_deg":720.0,"walk_speed":2.0,"climb_out_auto_height":0.1,"swim_fast_drain":14.0,"swim_fast_speed":4.0}}, {"kind": "locomotion", "id": "swim_b", "before": {"acceleration":40.0,"air_control":0.35,"coyote_time":0.12,"deceleration":50.0,"float_depth":1.1,"glide_accel":8.0,"glide_fall_speed":2.0,"glide_speed":9.0,"gravity":20.0,"height":1.8,"jump_buffer":0.12,"jump_height":1.2,"mantle_height":1.6,"mantle_time":0.45,"max_slope_deg":45.0,"radius":0.4,"run_speed":5.0,"skin_width":0.02,"snap_distance":0.35,"sprint_speed":7.5,"step_height":0.35,"swim_depth":1.3,"swim_speed":3.0,"terminal_speed":40.0,"turn_speed_deg":720.0,"walk_speed":2.0,"climb_out_auto_height":0.35}}, {"kind": "locomotion", "id": "tiers", "before": {"acceleration":40.0,"air_control":0.35,"coyote_time":0.12,"deceleration":50.0,"float_depth":1.1,"glide_accel":8.0,"glide_fall_speed":2.0,"glide_speed":9.0,"gravity":20.0,"height":1.8,"jump_buffer":0.12,"jump_height":1.2,"mantle_height":1.6,"mantle_time":0.45,"max_slope_deg":45.0,"radius":0.4,"run_speed":5.0,"skin_width":0.02,"snap_distance":0.35,"sprint_speed":7.5,"step_height":0.35,"swim_depth":1.3,"swim_speed":3.0,"terminal_speed":40.0,"turn_speed_deg":720.0,"walk_speed":2.0,"landing_tiers":[4.0,6.5,13.0],"landing_drop_tiers":[6.5,13.0]}}, {"kind": "locomotion", "id": "parity", "before": {"acceleration":40,"air_control":0.35,"coyote_time":0.12,"deceleration":50,"float_depth":1.1,"glide_accel":8,"glide_fall_speed":2,"glide_speed":9,"gravity":20,"height":1.8,"jump_buffer":0.12,"jump_height":1.2,"mantle_height":1.6,"mantle_time":0.45,"max_slope_deg":45,"radius":0.4,"run_speed":6,"skin_width":0.02,"snap_distance":0.35,"sprint_speed":7.5,"step_height":0.35,"swim_depth":1.3,"swim_speed":3,"terminal_speed":40,"turn_speed_deg":720,"walk_speed":3,"caps_scale_with_input":true,"climb_out_reach":0.55,"wade_air_depth_offset":0.1,"sprint_in_air":true}}, {"kind": "status", "id": "slow", "before": {"threshold":100.0,"decay_per_s":0.0,"duration":30.0,"stacks":false,"speed_factor":0.6}}, {"kind": "status", "id": "root", "before": {"threshold":100.0,"decay_per_s":0.0,"duration":30.0,"stacks":false,"root":true}}, {"kind": "status", "id": "burden", "before": {"threshold":100.0,"decay_per_s":0.0,"duration":30.0,"stacks":false,"speed_cap":3.0}}]'
+act heal id=e5
+act teleport id=e5 x=0 z=-3 y=0
+step 29

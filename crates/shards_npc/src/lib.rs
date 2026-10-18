@@ -242,6 +242,7 @@ impl Plugin for NpcPlugin {
                     .chain()
                     .in_set(SimSet::Input)
                     .after(ActionSystems::Orders)
+                    .after(shards_motion::ModifierSystems::Contribute)
                     .after(WorldSystems::Zones),
             )
             .add_systems(

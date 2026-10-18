@@ -85,8 +85,9 @@ impl VoxelVolume {
             return Err(format!("chunk {chunk} must have no zero side"));
         }
         if (size % chunk).cmpne(UVec3::ZERO).any() {
-            let up = (size + chunk - UVec3::ONE) / chunk * chunk;
-            return Err(format!("size {size} is not a whole number of {chunk} chunks: try {up}, or change the chunk size"));
+            let up = |s: u32, c: u32| (s as u64).div_ceil(c as u64) * c as u64;
+            let (ux, uy, uz) = (up(size.x, chunk.x), up(size.y, chunk.y), up(size.z, chunk.z));
+            return Err(format!("size {size} is not a whole number of {chunk} chunks: try [{ux}, {uy}, {uz}], or change the chunk size"));
         }
         if size.y > u16::MAX as u32 {
             return Err(format!("a volume is at most {} cells tall, not {}", u16::MAX, size.y));
@@ -744,6 +745,9 @@ mod tests {
         VoxelVolume::check_shape(UVec3::new(1024, 64, 1024), 1.0, Vec3::ZERO, UVec3::new(64, 32, 64)).unwrap();
         let e = VoxelVolume::check_shape(UVec3::new(10, 8, 16), 1.0, Vec3::ZERO, UVec3::new(8, 8, 8)).unwrap_err();
         assert!(e.contains("try [16, 8, 16]"), "{e}");
+        // A side near u32::MAX is an error, not an overflow in the suggestion.
+        let e = VoxelVolume::check_shape(UVec3::new(u32::MAX, 8, 8), 1.0, Vec3::ZERO, UVec3::new(64, 8, 8)).unwrap_err();
+        assert!(e.contains("try [4294967296, 8, 8]"), "{e}");
     }
 
     #[test]

@@ -1006,3 +1006,51 @@ fn an_edit_that_rebuilt_the_arenas_walls_before_the_snapshot_is_refused_by_the_g
     let arena = b.world().resource::<shards::content::ContentDb>().get_json("layout", "arena").unwrap().clone();
     assert_eq!(arena["solids"][1]["max"][1].as_f64(), Some(3.0), "the content is the files' again");
 }
+
+/// The player (a duelist) 1.8 m south of the skeleton e7 (a sparring partner), facing it; both calm.
+fn sparring_pair() -> App {
+    let mut app = sandbox::test_app(42);
+    calm_skeletons(&mut app);
+    calm_warden(&mut app);
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "Fighter", "path": "moveset", "value": "duelist"}));
+    ok(&mut app, "set", json!({"id": "e7", "component": "Fighter", "path": "moveset", "value": "sparring"}));
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 0, "z": 0}));
+    ok(&mut app, "teleport", json!({"id": "e7", "x": 0, "z": -1.8}));
+    ok(&mut app, "lock_on", json!({"target": "e7"}));
+    step(&mut app, 2);
+    app
+}
+
+#[test]
+fn a_reaction_with_its_push_and_timers_comes_back() {
+    use shards::action::{Knockback, Protection};
+    // The tick after a tier 2 reaction: the push is live, and so is the immunity.
+    let mut app = sparring_pair();
+    ok(&mut app, "heavy_attack", json!({}));
+    ok(&mut app, "step", json!({"ticks": 80, "until": [{"journal": "e7 reacts heavy"}]}));
+    step(&mut app, 1);
+    assert_eq!(action(&app, "e7"), "spar_react_heavy");
+    assert!(get::<Knockback>(&app, "e7").velocity.length() > 1.0, "the push is running");
+    assert!(get::<Protection>(&app, "e7").reactions > 0.0, "the immunity is running");
+    assert_continues_alike("a heavy reaction", app, |app| {
+        step(app, 60);
+    });
+}
+
+#[test]
+fn a_break_and_the_protection_after_it_come_back() {
+    use shards::action::Protection;
+    // A poise break that has just run out: the poise protection is live, and the reaction protection
+    // the stagger's end granted with it.
+    let mut app = sparring_pair();
+    ok(&mut app, "set", json!({"id": "e7", "component": "Poise", "path": "current", "value": 1}));
+    ok(&mut app, "light_attack", json!({}));
+    ok(&mut app, "step", json!({"ticks": 80, "until": [{"journal": "e7 staggered (poise broken)"}]}));
+    step(&mut app, 50);
+    assert_eq!(action(&app, "e7"), "idle");
+    let protection = get::<Protection>(&app, "e7");
+    assert!(protection.poise > 1.0 && protection.reactions > 0.0, "{protection:?}");
+    assert_continues_alike("after a break", app, |app| {
+        step(app, 200);
+    });
+}

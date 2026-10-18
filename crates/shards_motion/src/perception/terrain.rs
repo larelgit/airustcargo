@@ -80,7 +80,10 @@ impl<'a> Terrain<'a> {
     /// [`probe`](Self::probe), and the solids in the way of a [`Block::Tight`] spot.
     fn survey(&self, x: f32, z: f32, from_y: f32) -> (Probe, Vec<Entity>) {
         let p = self.params;
-        let reach = p.mantle_height + 0.1;
+        // A jump out of the water reaches a surface-relative height (`climb_out_max_height`), which can be
+        // above the ordinary mantle height from where a swimmer floats.
+        let climb = p.climb_out_max_height.map_or(p.mantle_height, |h| p.mantle_height.max(h + p.float_depth));
+        let reach = climb + 0.1;
         let Some(hit) = self.physics.raycast(Vec3::new(x, from_y + reach, z), Dir3::NEG_Y, reach + FALL_PROBE, &self.filter)
         else {
             return (Probe::Void, Vec::new());

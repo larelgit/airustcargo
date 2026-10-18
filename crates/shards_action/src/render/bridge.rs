@@ -61,7 +61,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 use shards_content::ContentDb;
 use shards_core::Predicted;
-use shards_motion::MotionState;
+use shards_motion::{MotionState, MoveModifiers};
 
 use crate::anim::{
     crossed_cues, select_clip_for, select_layer, AnimSet, Animated, AnimationCue, BodyStatus, ClipChoice, LayerChoice,
@@ -520,6 +520,7 @@ pub struct Driven {
     shown: Option<&'static PredictedAction>,
     predicted: Has<Predicted>,
     motion: Option<&'static MotionState>,
+    modifiers: Option<&'static MoveModifiers>,
     fighter: Option<&'static Fighter>,
     dead: Has<Dead>,
 }
@@ -540,7 +541,7 @@ pub fn drive(
     let overstep = fixed.overstep().as_secs_f32();
     let frozen = time.delta_secs() <= 0.0;
     let standing = MotionState::default();
-    for DrivenItem { entity, animated: set_ref, mut bound, state, shown, predicted, motion, fighter, dead } in &mut animated {
+    for DrivenItem { entity, animated: set_ref, mut bound, state, shown, predicted, motion, modifiers, fighter, dead } in &mut animated {
         let (Some(set), Some(built)) = (db.get::<AnimSet>(&set_ref.animset), graphs.built(&set_ref.animset)) else {
             continue;
         };
@@ -563,7 +564,7 @@ pub fn drive(
             .and_then(|m| m.stagger.as_deref())
             .zip(run)
             .is_some_and(|(stagger, r)| r.forced && r.action == stagger);
-        let status = BodyStatus { dead, staggered: staggers };
+        let status = BodyStatus { dead, staggered: staggers, pace: modifiers.map_or(1.0, MoveModifiers::pace) };
         let choice = select_clip_for(action, motion.unwrap_or(&standing), status, set);
         drive_body(&mut commands, entity, set, built, &clips, &mut bound, &mut player, &mut transitions, &choice, frozen);
         if !built.layered.is_empty() || !bound.overlays.is_empty() {
