@@ -539,13 +539,37 @@ pub struct AttackPlanDef {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub bans: Vec<SequenceBan>,
     /// Seconds of rest after an attack before it asks for the next token: `(min, max)`,
-    /// counted while it runs no action (a stagger after a parried attack is no rest).
+    /// counted while it runs no action (a stagger after a parried attack is no rest, unless
+    /// `rest_runs_while_busy`).
     pub rest: (f32, f32),
+    /// The rest after an attack that was interrupted (a stagger cut it short) instead of
+    /// `rest`: `(min, max)` seconds, drawn as it is, replacing the finished attack's pause.
+    /// `None`: an interrupted attack rests like a finished one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rest_interrupted: Option<(f32, f32)>,
+    /// The rest counts down in every state, a stagger or another action included, as a
+    /// cooldown does. Off (the default): it counts only while the NPC runs no action.
+    #[serde(skip_serializing_if = "is_false")]
+    pub rest_runs_while_busy: bool,
+    /// The rest an NPC starts with when its brain first runs (its pause at spawn), `(min,
+    /// max)` seconds. `None`: it starts without rest.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_rest: Option<(f32, f32)>,
 }
 
 impl Default for AttackPlanDef {
     fn default() -> Self {
-        Self { options: Vec::new(), auto: false, cover: 0.8, in_range_only: false, bans: Vec::new(), rest: (0.5, 1.0) }
+        Self {
+            options: Vec::new(),
+            auto: false,
+            cover: 0.8,
+            in_range_only: false,
+            bans: Vec::new(),
+            rest: (0.5, 1.0),
+            rest_interrupted: None,
+            rest_runs_while_busy: false,
+            first_rest: None,
+        }
     }
 }
 
@@ -594,9 +618,12 @@ impl ContentDef for AttackPlanDef {
         if !(self.cover > 0.0 && self.cover.is_finite()) {
             refs.error(format!("cover must be > 0 (is {})", self.cover));
         }
-        let (lo, hi) = self.rest;
-        if !(lo >= 0.0 && hi >= lo && hi.is_finite()) {
-            refs.error(format!("rest ({lo}, {hi}) must be 0 <= min <= max"));
+        for (name, range) in [("rest", Some(self.rest)), ("rest_interrupted", self.rest_interrupted), ("first_rest", self.first_rest)] {
+            if let Some((lo, hi)) = range
+                && !(lo >= 0.0 && hi >= lo && hi.is_finite())
+            {
+                refs.error(format!("{name} ({lo}, {hi}) must be 0 <= min <= max"));
+            }
         }
         for (i, b) in self.bans.iter().enumerate() {
             if b.after.is_empty() || b.then.is_empty() {
@@ -716,6 +743,10 @@ impl ContentDef for NpcTuning {
     }
 }
 
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
 fn non_negative(refs: &mut Refs, field: &str, v: f32) {
     if !(v >= 0.0 && v.is_finite()) {
         refs.error(format!("{field} must be a number >= 0 (is {v})"));
@@ -800,6 +831,27 @@ mod tests {
             "content/b.behavior.ron: behavior `b`: states.idle.transitions[0].to names an unknown state `chace` (did you mean `chase`?); states: chase, idle",
         ];
         assert_eq!(errors, expected);
+    }
+
+    #[test]
+    fn rest_semantics_are_checked_and_neutral_by_default() {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<AttackPlanDef>();
+        kinds.register::<ActionDef>();
+        let text = r#"{ "p": (auto: true, rest: (0.5, 1), rest_interrupted: Some((1, 0.5)), first_rest: Some((-1, 2)), rest_runs_while_busy: true) }"#;
+        let db = ContentDb::build(&kinds, &[shards_content::db::Source { path: "content/p.attack_plan.ron".into(), text: text.into() }]);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        assert_eq!(
+            errors,
+            [
+                "content/p.attack_plan.ron: attack_plan `p`: rest_interrupted (1, 0.5) must be 0 <= min <= max",
+                "content/p.attack_plan.ron: attack_plan `p`: first_rest (-1, 2) must be 0 <= min <= max",
+            ]
+        );
+        let neutral = serde_json::to_string(&AttackPlanDef::default()).unwrap();
+        for field in ["rest_interrupted", "rest_runs_while_busy", "first_rest"] {
+            assert!(!neutral.contains(field), "{field} stays out of a plan that does not use it: {neutral}");
+        }
     }
 
     #[test]

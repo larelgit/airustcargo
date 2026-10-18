@@ -43,6 +43,10 @@ pub(crate) mod salt {
     pub const PICK: u64 = 0x4E50_0002;
     /// The rest after an attack.
     pub const REST: u64 = 0x4E50_0003;
+    /// The rest after an attack that was interrupted.
+    pub const REST_INTERRUPTED: u64 = 0x4E50_0004;
+    /// The rest an NPC starts with.
+    pub const FIRST_REST: u64 = 0x4E50_0005;
     /// Condition `chance`: plus the transition and condition index.
     pub const CONDITION: u64 = 0x4E50_1000;
 }
@@ -441,6 +445,8 @@ struct Decided {
     brain: NpcBrain,
     drive: Option<NpcOutput>,
     changed: Option<(String, String)>,
+    /// The rest its plan starts with, drawn when its brain first runs.
+    first_rest: Option<f32>,
 }
 
 /// `NpcSystems::Decide`: every active NPC, in `AiId` order, takes at most one transition and
@@ -461,6 +467,11 @@ pub(crate) fn decide(world: &mut World) {
             && *brain != d.brain
         {
             *brain = d.brain;
+        }
+        if let Some(rest) = d.first_rest
+            && let Some(mut plan) = e.get_mut::<NpcPlan>()
+        {
+            plan.rest = rest;
         }
         let heal = d.drive.as_ref().map_or(0.0, |o| o.heal);
         if let Some(mut drive) = e.get_mut::<NpcDrive>() {
@@ -490,12 +501,12 @@ fn decide_all(world: &World, hooks: &NpcHooks, dt: f32) -> (Vec<Decided>, Vec<(S
     for (id, entity) in npcs_in_order(world) {
         let (Some(npc), Some(brain)) = (world.get::<Npc>(entity), world.get::<NpcBrain>(entity)) else { continue };
         if !brain.active {
-            decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None });
+            decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None, first_rest: None });
             continue;
         }
         check_ids(db, id, npc, &mut problems);
         let Some(behavior) = db.get::<BehaviorDef>(&npc.behavior) else {
-            decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None });
+            decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None, first_rest: None });
             continue;
         };
         decided.push(decide_one(world, entity, brain, behavior, &npc.behavior, hooks, dt, &mut problems));
@@ -573,7 +584,7 @@ fn decide_one(
         enter(world, entity, &mut next, behavior, to);
     }
     let Some(state) = behavior.states.get(&next.state) else {
-        return Decided { entity, brain: next, drive: None, changed: None };
+        return Decided { entity, brain: next, drive: None, changed: None, first_rest: None };
     };
     let kind = behavior.kind_of(&next.state);
     let mut out = NpcOutput::default();
@@ -601,9 +612,20 @@ fn decide_one(
     if let Some(point) = out.point.take() {
         next.point = point;
     }
-    // The first state of a new NPC is no change worth a journal line.
+    // The first state of a new NPC is no change worth a journal line, but its pause is drawn.
+    let first_rest = changed.as_ref().filter(|(from, _)| from.is_empty()).and_then(|_| first_rest(world, entity));
     let changed = changed.filter(|(from, _)| !from.is_empty());
-    Decided { entity, brain: next, drive: Some(out), changed }
+    Decided { entity, brain: next, drive: Some(out), changed, first_rest }
+}
+
+/// The pause an NPC starts with (its plan's `first_rest`), drawn from its own stream.
+fn first_rest(world: &World, entity: Entity) -> Option<f32> {
+    let db = world.get_resource::<ContentDb>()?;
+    let plan = world.get::<Npc>(entity)?.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p))?;
+    let (lo, hi) = plan.first_rest?;
+    let id = world.get::<AiId>(entity).copied().unwrap_or_default();
+    let seed = world.get_resource::<SimSeed>().map_or(0, |s| s.0);
+    Some(DetRng::from_keys(&[seed, ai_core::sim::tick(world), id.0 as u64, salt::FIRST_REST]).range(lo, hi.max(lo)))
 }
 
 /// Enters state `to`: its clock restarts and its timer is drawn from its `duration`.

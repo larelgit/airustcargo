@@ -206,7 +206,8 @@ pub(crate) fn direct(
     for &(id, entity) in &order {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         let plan_def = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p));
-        f.plan.tick(dt, f.state.current.is_none());
+        let counts_busy = plan_def.is_some_and(|p| p.rest_runs_while_busy);
+        f.plan.tick(dt, f.state.current.is_none() || counts_busy);
         let Some(mut grant) = f.token.held.clone() else { continue };
         grant.age += dt;
         let running = running_attack(f.state, &grant);
@@ -245,7 +246,12 @@ pub(crate) fn direct(
                 let rest = plan_def.map_or((0.0, 0.0), |p| p.rest);
                 if grant.started {
                     f.brain.attacks_done += 1;
-                    f.plan.rest = rng.stream(id, salt::REST).range(rest.0, rest.1.max(rest.0));
+                    // A forced action in the attack's place (a stagger) cut it short.
+                    let interrupted = f.state.current.as_ref().is_some_and(|r| r.forced);
+                    f.plan.rest = match plan_def.and_then(|p| p.rest_interrupted).filter(|_| interrupted) {
+                        Some((lo, hi)) => rng.stream(id, salt::REST_INTERRUPTED).range(lo, hi.max(lo)),
+                        None => rng.stream(id, salt::REST).range(rest.0, rest.1.max(rest.0)),
+                    };
                 } else {
                     // Back of the queue, after a short breath.
                     f.plan.rest = f.plan.rest.max(rest.0);

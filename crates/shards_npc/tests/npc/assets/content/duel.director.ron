@@ -1,0 +1,5 @@
+// Directors of the duel rules: those without a token stay where they are (a hold at 1.2 m),
+// so a rest costs no walking.
+{
+    "duel": (tokens: {1: 1}, waiting: [(role: Hold, distance: 1.2)], patience: 3.0),
+}
