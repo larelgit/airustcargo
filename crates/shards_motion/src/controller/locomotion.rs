@@ -458,7 +458,8 @@ impl Step<'_, '_> {
     /// most `reach` above the feet (the params' `mantle_height`, or a surface-relative limit
     /// turned into a height over the feet) and the capsule fits up there. `push`: only
     /// when the input points at the wall; `top_limit`: and only if the ledge top (world height)
-    /// is no higher than that.
+    /// is no higher than that (plus `MANTLE_SLACK`, like the reach check, so a ledge exactly at a
+    /// content limit climbs whatever the last bit of an `f32` says).
     fn try_mantle(
         &mut self,
         feet: Vec3,
@@ -488,7 +489,7 @@ impl Step<'_, '_> {
         let top = m.obstacle_top(feet, wall.point, dir, reach)?;
         let rest = top + m.skin;
         let height = rest - feet.y;
-        if height <= min_height || height > reach + MANTLE_SLACK || top_limit.is_some_and(|limit| top > limit) {
+        if height <= min_height || height > reach + MANTLE_SLACK || top_limit.is_some_and(|limit| top > limit + MANTLE_SLACK) {
             return None;
         }
         // Prefer standing fully on top; a narrow top takes a shorter step.

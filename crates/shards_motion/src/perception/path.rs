@@ -27,7 +27,7 @@ use ai_core::spatial::compass;
 use bevy::prelude::*;
 use serde_json::{json, Value};
 
-use super::terrain::{Block, Probe, Terrain};
+use super::terrain::{Block, Probe, Terrain, FLOOR_NOISE};
 use crate::controller::CharacterParams;
 use crate::physics::PhysicsWorld;
 
@@ -263,7 +263,7 @@ pub fn step_onto(terrain: &Terrain, from: Stance, (x, z): (f32, f32), probe: Pro
             let dy = y - from.pos.y;
             let up = normal.y;
             let allowance = terrain.slope_rise(dist, from.up, up);
-            let walkable_up = p.step_height + allowance;
+            let walkable_up = p.step_height + allowance + FLOOR_NOISE;
             let pos = Vec3::new(x, y, z);
             let base = (dist * UNIT) as u32;
             let floor = |kind, cost, rise| Some(Step { pos, swimming: false, up, kind, cost, rise });
@@ -273,7 +273,7 @@ pub fn step_onto(terrain: &Terrain, from: Stance, (x, z): (f32, f32), probe: Pro
                 if climbable { floor(StepKind::Mantle, base + ((MANTLE_COST + dy * 0.5) * UNIT) as u32, dy) } else { None }
             } else if dy < -safe_drop {
                 None
-            } else if dy < -(p.step_height + allowance) {
+            } else if dy < -(p.step_height + allowance + FLOOR_NOISE) {
                 floor(StepKind::Drop, base + (-dy * DROP_COST * UNIT) as u32, -dy)
             } else {
                 floor(StepKind::Walk, base, 0.0)

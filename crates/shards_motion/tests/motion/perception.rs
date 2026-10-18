@@ -681,3 +681,58 @@ fn move_to_with_path_already_in_range_stops_a_walk_under_way() {
     let stopped = feet(&app, e);
     assert!(Vec2::new(stopped.x - at.x, stopped.z - at.z).length() < 1.0, "it kept running: {at} -> {stopped}");
 }
+
+
+/// The frontier game's `course` arena: the floor in pieces round a basin (4 m thick, so a ray
+/// down reports the floor's height with float noise), standing boxes, tilted ramps, a fence.
+fn course_arena(world: &mut World) {
+    let thick = 4.0f32;
+    let (xs, zs) = ([-30.0f32, 13.0, 23.0, 30.0], [-30.0f32, 8.0, 16.0, 30.0]);
+    for xw in xs.windows(2) {
+        for zw in zs.windows(2) {
+            if xw[0] == 13.0 && zw[0] == 8.0 {
+                continue; // the basin
+            }
+            let (hx, hz) = ((xw[1] - xw[0]) * 0.5, (zw[1] - zw[0]) * 0.5);
+            world.spawn((Collider::new(Shape::cuboid(Vec3::new(hx, thick * 0.5, hz))), Transform::from_xyz(xw[0] + hx, -thick * 0.5, zw[0] + hz)));
+        }
+    }
+    world.spawn((Collider::new(Shape::cuboid(Vec3::new(5.0, 0.5, 4.0))), Transform::from_xyz(18.0, -3.5, 12.0)));
+    for (x, z, hx, hz) in [(0.0, -30.0, 30.0, 0.5), (0.0, 30.0, 30.0, 0.5), (-30.0, 0.0, 0.5, 30.0), (30.0, 0.0, 0.5, 30.0)] {
+        world.spawn((Collider::standing_box(Vec3::new(hx, 2.0, hz)), Transform::from_xyz(x, 0.0, z)));
+    }
+    let boxes = [(-8.0, 8.0, 1.5, 0.5, 1.5), (-3.0, 8.0, 1.5, 0.65, 1.5), (2.0, 8.0, 1.5, 0.8, 1.5), (7.0, 8.0, 1.5, 1.0, 1.5), (-14.0, -2.0, 3.0, 0.5, 3.0)]
+        .into_iter()
+        .chain([(-4.0, -4.0, 3.0, 1.0, 3.0), (-4.0, 0.5, 1.5, 0.5, 1.5), (8.0, 2.0, 2.0, 0.625, 1.5), (8.0, -1.0, 2.0, 1.25, 1.5), (8.0, -4.0, 2.0, 1.875, 1.5), (8.0, -7.0, 2.0, 2.5, 1.5)]);
+    for (x, z, hx, hy, hz) in boxes {
+        world.spawn((Collider::standing_box(Vec3::new(hx, hy, hz)), Transform::from_xyz(x, 0.0, z)));
+    }
+    for (x, z, deg) in [(-8.0f32, 16.0f32, 20.0f32), (0.0, 16.0, 40.0), (8.0, 16.0, 55.0)] {
+        let rise = deg.to_radians();
+        let mid = 3.0 * ops::sin(rise) - 0.25 * ops::cos(rise);
+        world.spawn((Collider::new(Shape::cuboid(Vec3::new(1.5, 0.25, 3.0))), Transform::from_xyz(x, mid, z).with_rotation(Quat::from_rotation_x(rise))));
+    }
+}
+
+#[test]
+fn a_body_with_no_step_height_sees_flat_floor_as_free_not_as_ledges() {
+    // `step_height: 0` (no auto step): the float noise of a ray's hit height used to read as a
+    // ledge of 0.0 m in every direction ("ledge 0.5m (+0.0m)") at some spots of a thick floor.
+    let mut app = app();
+    course_arena(app.world_mut());
+    settle(&mut app);
+    let p = CharacterParams { radius: 0.4, height: 1.7, step_height: 0.0, mantle_height: 1.3, skin_width: 0.001, ..default() };
+    for (x, z) in [(4.9, 0.0), (4.6, 0.0), (0.0, 22.0), (0.0, 0.0), (2.0, 3.0), (5.5, 0.0), (-3.0, -10.0)] {
+        let reaches = clearance(physics(&app), &p, Vec3::new(x, 0.0, z), None, 15.0, 2.0, &[]);
+        let line = reaches.iter().map(|r| r.describe()).collect::<Vec<_>>().join(" · ");
+        for r in &reaches {
+            assert!(!matches!(r.hazard, Hazard::Ledge { rise } if rise < 0.05), "at ({x}, {z}): {line}");
+            assert!(r.distance > 0.09 || r.hazard == Hazard::Wall, "at ({x}, {z}): {line}");
+        }
+    }
+    let at = |x, z| clearance(physics(&app), &p, Vec3::new(x, 0.0, z), None, 15.0, 2.0, &[]);
+    assert_eq!(reach(&at(0.0, 22.0), "W"), &perception::Reach { dir: "W", distance: 15.0, hazard: Hazard::Free });
+    let e = *reach(&at(4.9, 0.0), "E");
+    assert_eq!(e.hazard, Hazard::Wall);
+    assert!((e.distance - 0.7).abs() < 0.05, "{e:?}");
+}

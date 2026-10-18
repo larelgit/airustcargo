@@ -171,7 +171,8 @@ pub struct CharacterParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub climb_out_time: Option<f32>,
     /// Two-tier climb-out: a swimmer pushing against a ledge climbs onto it by itself when the
-    /// ledge top is at most this high **above the water surface** (m); a higher ledge (up to
+    /// ledge top is at most this high **above the water surface** (m, plus the 1 mm of float slack
+    /// `mantle_height` has: a ledge exactly this high climbs); a higher ledge (up to
     /// `mantle_height` above the feet) needs a jump. `None`: every ledge `mantle_height` allows
     /// is climbed by pushing, as before.
     #[serde(skip_serializing_if = "Option::is_none")]

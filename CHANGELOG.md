@@ -206,6 +206,12 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   test: one cuboid per cell, merged boxes, the field with the merge on and off), `tests/motion/voxel.rs`, the field-against-cells test
   and the timing `field_timing` (`#[ignore]`) in `physics/world.rs`.
 
+### Fixed
+
+- A swimmer's push climbs a ledge exactly `climb_out_auto_height` above the surface: the limit now takes the same `MANTLE_SLACK` (1 mm) as the reach check beside it, so the result no longer depends on the last bit of an `f32` (a game had to make its 0.35 m ledge 0.34 m). The jump's limits (`climb_out_max_height`, `mantle_height`) already had it. Test `the_auto_climb_out_height_takes_the_mantle_slack`.
+- `clearance` and `path_to` no longer read float noise as a step: a body with `step_height: 0` (no auto step) saw "ledge 0.5m (+0.0m)" in every direction at some spots of flat floor (the height a ray reports for a thick floor differs by ~1e-7 from the height under the feet, and any rise above `step_height` counted). Both now allow `FLOOR_NOISE` (1 mm) on the walk-up and walk-down comparisons. Test `a_body_with_no_step_height_sees_flat_floor_as_free_not_as_ledges` rebuilds the frontier game's `course` arena.
+- `npc_navmesh.scenario` waits on the event it means everywhere (the return home waits for `home → idle` instead of a fixed 900 ticks) and states the measured timings; it passes from every start tick tried (live and in-process, `npc_navmesh_passes_from_any_start_tick`). Its reference replay `tests/replays/npc_navmesh.json` is recorded again (shorter: only the scenario changed, no gameplay).
+
 ### Changed
 
 - The engine rule `voxel.body_in_solid` is on by default (it was off, behind `--engine-invariant`): 50 runs of `shards fuzz
