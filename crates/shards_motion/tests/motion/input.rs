@@ -994,3 +994,27 @@ fn content_sets_the_defaults_and_an_edit_keeps_the_players_changes() {
     let out = ok(&mut app, "content_check", json!({}));
     assert!(out.contains("context `ui.inventory`: a context name cannot contain `.`") && out.contains("`ui_inventory`"), "{out}");
 }
+
+#[test]
+fn a_stick_with_a_bad_curve_or_scale_is_a_content_error_that_names_the_file() {
+    let dir = temp_dir("input_stick_content");
+    let controls = |stick: &str| format!(r#"{{ "default": (contexts: [(name: "gameplay", actions: [
+        (action: "look", bindings: [Stick(stick: Right{stick})]) ])]) }}"#);
+    write(&dir, "content/controls.input_map.ron", &controls(", deadzone: 0.2, scale_x: Some(3.2), scale_y: Some(2.0), curve: 1.6"));
+    let mut app = engine_app(&dir);
+    app.init_resource::<ButtonInput<KeyCode>>().init_resource::<ButtonInput<MouseButton>>();
+    frame(&mut app);
+    let out = ok(&mut app, "content_check", json!({}));
+    assert!(!out.contains("curve"), "a good stick passes: {out}");
+    for (bad, want) in [
+        (", curve: 0.0", "`curve` is 0"),
+        (", curve: -1.0", "`curve` is -1"),
+        (", curve: inf", "`curve` is inf"),
+        (", scale: NaN", "`scale` is not a finite number"),
+        (", scale_y: Some(inf)", "`scale_y` is not a finite number"),
+    ] {
+        write(&dir, "content/controls.input_map.ron", &controls(bad));
+        let out = ok(&mut app, "content_check", json!({}));
+        assert!(out.contains("controls.input_map.ron") && out.contains(want), "{bad}: {out}");
+    }
+}

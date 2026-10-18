@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [features]
 # The real Steam client through Steamworks (the `steamworks` crate, Valve's SDK 1.64): the program

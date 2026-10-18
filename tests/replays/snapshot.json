@@ -9,7 +9,7 @@
     "tick": 121,
     "seed": 42,
     "tick_hz": 59.99999880000003,
-    "engine": "0.2.0",
+    "engine": "0.4.0",
     "state_hash": "6e610d38e32aa18b",
     "checks": {
       "content": "6a7ce1cecf3e9094",
