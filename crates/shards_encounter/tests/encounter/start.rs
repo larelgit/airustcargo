@@ -141,3 +141,19 @@ fn starting_wave_one_of_a_placed_encounter_is_the_plain_start_and_spawns_nothing
     assert_eq!(members(&app, &key).len(), 2, "the placed pack stands once: {:?}", run(&app, &key).members);
     assert_eq!(state(&app, &key), RunState::Running);
 }
+
+#[test]
+fn starting_wave_two_of_a_placed_encounter_skips_the_placed_wave_and_warns_and_spawns_wave_two() {
+    let mut app = watched(1);
+    let _p0 = player(&mut app, 0, FAR);
+    let key = place(&mut app, "camp", "camp", Vec3::ZERO);
+    step(&mut app, 3);
+    assert_eq!(members(&app, &key).len(), 1, "the placed member stands");
+    ok(&mut app, "encounter_start", json!({"key": key, "wave": 2}));
+    assert!(matches!(state(&app, &key), RunState::Between { .. }), "wave 2 is due, not the placed wave fought: {:?}", state(&app, &key));
+    run_until(&mut app, 200, |a| run(a, &key).wave == 2);
+    let seen = app.world().resource::<Seen>().0.clone();
+    assert!(seen.iter().any(|s| s.starts_with("warned 2 ")), "{seen:?}");
+    assert!(seen.iter().any(|s| s.starts_with("started 2 members=1")), "{seen:?}");
+    assert_eq!(members(&app, &key).len(), 2, "the placed member and wave 2's");
+}

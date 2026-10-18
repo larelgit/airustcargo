@@ -57,14 +57,21 @@ fn encounter_join_gate(world: &World, _: &JoinRequest) -> Option<String> {
 struct OurNetAlways;
 
 /// Adds `NetAlways` to the members of every `net_always` run in a fighting state, and takes it
-/// off the members of those that stopped. It touches only members of a `net_always` run: another
+/// off the members of those that stopped and the bodies a run let go. It touches only members of
+/// a `net_always` run: another
 /// module's `NetAlways` on a member of an ordinary run is its own.
 fn encounter_net_always(
     mut commands: Commands,
     runs: Option<Res<EncounterRuns>>,
     db: Res<ContentDb>,
     members: Query<(Entity, &EncounterMember, Has<NetAlways>, Has<OurNetAlways>)>,
+    left: Query<Entity, (With<OurNetAlways>, Without<EncounterMember>)>,
 ) {
+    // A body the run let go (a corpse at a wave clear, a released add, a dead member of a won run)
+    // lost its marker: take off what this module put on it, and only that.
+    for entity in &left {
+        commands.entity(entity).remove::<(NetAlways, OurNetAlways)>();
+    }
     for (entity, member, has, ours) in &members {
         let Some(run) = runs.as_ref().and_then(|r| r.get(&member.key)) else { continue };
         // Peeked: presentation of replication, not something the simulation's outcome reads.

@@ -527,13 +527,13 @@ pub fn start(world: &mut World, key: &str, wave: Option<u32>) -> Result<String, 
         if wave == 0 || wave as usize > def.waves.len() {
             return Err(format!("wave {wave} is outside 1..={} for encounter `{}`", def.waves.len(), run.encounter));
         }
-        // Wave 1 of a placed encounter already stands: starting it is the plain start.
+        // Wave 1 of a placed encounter already stands: starting it is the plain start; wave 2 and later skip it.
         if !(def.placed() && wave == 1) {
             run.wave = wave - 1;
         }
     }
     let mut fx = Vec::new();
-    machine::start_now(&mut run, &def, &obs, &mut fx);
+    machine::start_now(&mut run, &def, &obs, wave.is_some_and(|w| w >= 2), &mut fx);
     let state = run.state.name();
     apply(world, &mut run, &def, fx, &parts, tile);
     reconcile_lock(world, &mut run, &def);

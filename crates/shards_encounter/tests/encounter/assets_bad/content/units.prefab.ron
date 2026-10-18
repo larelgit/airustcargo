@@ -14,6 +14,7 @@
     "binder": (extends: "grunt", components: { "EncounterRole": (cost: 1, tags: ["controller"]) }),
     "priest": (extends: "grunt", components: { "EncounterRole": (cost: 1, tags: ["support"]) }),
     "plain": (components: { "Name": "Plain", "AiKind": ("Plain"), "Health": (current: 5.0, max: 5.0) }),
+    "walker": (extends: "grunt", components: { "Npc": (behavior: "walker", perception: "walker", plan: None, director: "") }),
     "once_anchor": (components: { "EncounterAnchor": (encounter: "once_fight") }),
     "lost_anchor": (components: { "EncounterAnchor": (encounter: "once_figth", key: Some("x")) }),
     "good_anchor": (components: { "EncounterAnchor": (encounter: "once_fight", key: Some("x")) }),

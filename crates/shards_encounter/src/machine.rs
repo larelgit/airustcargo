@@ -245,13 +245,19 @@ fn tick_timers(run: &mut Run) {
 
 /// The start: `Armed` to the first wave. `participants` is what the event reports.
 pub fn begin(run: &mut Run, def: &EncounterDef, obs: &Obs, fx: &mut Vec<Fx>) {
+    begin_at(run, def, obs, false, fx);
+}
+
+/// [`begin`]; with `skip_placed`, a placed first wave that stands is not the one to fight: the
+/// run goes on to `run.wave + 1` (a start that asked for wave 2).
+fn begin_at(run: &mut Run, def: &EncounterDef, obs: &Obs, skip_placed: bool, fx: &mut Vec<Fx>) {
     fx.push(Fx::Started(EncounterStarted {
         key: run.key.clone(),
         encounter: run.encounter.clone(),
         participants: obs.standing,
         of: obs.participants,
     }));
-    let placed_stands = def.placed() && run.wave == 1 && run.members.iter().any(|m| is_placed(def, m));
+    let placed_stands = !skip_placed && def.placed() && run.wave == 1 && run.members.iter().any(|m| is_placed(def, m));
     if placed_stands {
         // The placed wave fights: `Running` clears it when its members are out, also when they
         // were all out before the start.
@@ -270,8 +276,8 @@ pub fn begin(run: &mut Run, def: &EncounterDef, obs: &Obs, fx: &mut Vec<Fx>) {
 /// `start_encounter` and the dev tool: the start as the start condition would make it, between
 /// ticks. A timer set here is counted as set by the tick that just ran, so it expires the same
 /// number of ticks after the call as one set by a tick.
-pub fn start_now(run: &mut Run, def: &EncounterDef, obs: &Obs, fx: &mut Vec<Fx>) {
-    begin(run, def, obs, fx);
+pub fn start_now(run: &mut Run, def: &EncounterDef, obs: &Obs, skip_placed: bool, fx: &mut Vec<Fx>) {
+    begin_at(run, def, obs, skip_placed, fx);
     tick_timers(run);
 }
 

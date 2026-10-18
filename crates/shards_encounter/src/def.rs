@@ -515,6 +515,11 @@ impl EncounterDef {
                         "pull_back.state: behaviour `{}` of prefab `{}` has no state `{state}`{}",
                         npc.behavior, group.prefab, problem
                     ));
+                } else if let Some(kind) = crate::anchor::state_not_return_home(refs.db(), &npc.behavior, state) {
+                    refs.error(format!(
+                        "pull_back.state: state `{state}` of behaviour `{}` (prefab `{}`) is kind `{kind}`, not `return_home`: name a state with `kind: \"return_home\"`, or give that state the kind",
+                        npc.behavior, group.prefab
+                    ));
                 }
             }
         }

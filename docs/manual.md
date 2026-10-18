@@ -516,7 +516,7 @@ The game's numbers and definitions live in files, not in code: attacks, prefabs,
 - The engine registers its own content kinds: `prefab`, `locomotion`, `action`, `moveset`, `status`, `combat_tuning`, `animset`,
   `input_map`, the camera `camera` and `lock_on`, levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`,
   voxels `voxel_palette` and `voxel_region`, enemies `behavior`, `perception`, `director`, `attack_plan`, `npc_tuning` and `nav`,
-  sound `audio`, `sound` and `music`, screens `screen` and `theme`, `locale`, `save`, `net`, `perf`, `devmenu`, mesh looks `look` (see "Stylised materials (E10.1)"),
+  encounters `encounter` and `encounter_rules` (see "Encounters (G9)"), sound `audio`, `sound` and `music`, screens `screen` and `theme`, `locale`, `save`, `net`, `perf`, `devmenu`, mesh looks `look` (see "Stylised materials (E10.1)"),
   foliage `scatter` (see "Foliage and small objects (E10.2)"), effects `effect` and `fx` (see "Effects and decals
   (E10.3)"), with the `steam` feature, achievements `achievement` (see "Steam (E10.5)"). The game adds its own: the sandbox has `layout` and `bounds`, the template has
   `arena`.
@@ -2451,7 +2451,7 @@ The rows: numbers finite and in range; at least one wave and one group per wave;
 count >= 1`; an `Offsets` point per member at the highest count; no `avoid_behind` on `Offsets`; `overrides` read as a prefab
 spawn reads them, and no `Home`; `rules` exists; when `budget`, `allowed`, `forbidden` or `rules` is set every member prefab has an
 `EncounterRole` (read through `extends`); the budget, the allowed and forbidden tags, the limits and the needs; the cue's effect,
-sound and message exist; `pull_back.state` needs a `deadline > 0` and exists in each member prefab's behaviour; and, on every
+sound and message exist; `pull_back.state` needs a `deadline > 0` and exists in each member prefab's behaviour and is a `return_home` state there (a pull-back forces it; another kind would leave survivors standing); and, on every
 prefab, an `EncounterAnchor` names an existing encounter and has a key if the encounter is `once`.
 
 ### The state machine
@@ -2552,9 +2552,9 @@ with no members and no events; everything else starts over). The phase of a figh
 |---|---|
 | `encounters` | One line per run: `yard/ring ring_waves Running wave 2/3 members 2 alive (e14 e15) absent 0.0 s`, and `completed: [...]`; `no encounters` without runs. |
 | `encounter key=K` | The run in full: state and timers, the start condition now (`all_players_in: 1/2 standing participants inside yard_ring`), members with their `eN`, wave, counted, out, distance from home, the definition's waves, budget and tags, the lock. |
-| `encounter_start key=K [wave=N]` | Dev: starts a run in `Idle` or `Armed` as its start condition would; `wave=N` skips to wave `N`. |
+| `encounter_start key=K [wave=N]` | Dev: starts a run in `Idle` or `Armed` as its start condition would; `wave=N` skips to wave `N` (`wave=1` of a placed encounter is the plain start; `wave=2` skips the placed wave and warns for wave 2). |
 | `encounter_reset key=K\|all [forget=true]` | Dev: resets (`why: Dev`); `forget` also drops the run and its remembered key. |
-| `encounter_clear key=K` | Dev: kills the counted members of the wave in progress the way their health running out would (a fighter dies the engine's way, with no killer); for scenarios, which cannot name members before they spawn. |\|all [forget=true]` | Dev: resets (`why: Dev`); `forget` also drops the run and its remembered key. |
+ `encounter_clear key=K` | Dev: kills the counted members of the wave in progress the way their health running out would (a fighter dies the engine's way, with no killer); for scenarios, which cannot name members before they spawn. |
 
 Conditions for `step --until named:...`: `encounter_active` (a run in a fighting state), `encounter_between`, `encounter_wiped`,
 `encounter_won`. The NPC condition `encounter_returning` is true while a member walks home after a pull-back (a behaviour can use it to

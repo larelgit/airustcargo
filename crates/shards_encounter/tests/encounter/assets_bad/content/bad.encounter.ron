@@ -32,6 +32,8 @@
         (prefab: "grunt", at: Offsets([(1.0, 0.0, 0.0)])),
     ])]),
     "state_no_time": (radius: 10.0, start: Manual, pull_back: (state: Some("return_home"), deadline: 0.0), waves: [(members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, 0.0)]))])]),
+    "pull_to_fight": (radius: 10.0, start: Manual, pull_back: (state: Some("fight"), deadline: 4.0), waves: [(members: [(prefab: "walker", at: Offsets([(0.0, 0.0, 0.0)]))])]),
+    "pull_to_home": (radius: 10.0, start: Manual, pull_back: (state: Some("home"), deadline: 4.0), waves: [(members: [(prefab: "walker", at: Offsets([(0.0, 0.0, 0.0)]))])]),
     "once_fight": (radius: 10.0, start: Manual, once: true, waves: [(members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, 0.0)]))])]),
     "bad_cue_sound": (radius: 10.0, start: Manual, waves: [(warn: Some((sound: Some("whosh"))), members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, 0.0)]))])]),
     "bad_cue_message": (radius: 10.0, start: Manual, waves: [(warn: Some((message: Some("@no-such-message"))), members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, 0.0)]))])]),

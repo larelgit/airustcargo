@@ -87,6 +87,16 @@ pub(crate) fn behavior_lacks_state(db: &ContentDb, behavior: &str, state: &str) 
     Some(format!("{}; states: {}", did_you_mean(state, names.iter().copied()), names.join(", ")))
 }
 
+/// `Some(kind)` when state `state` of behaviour `behavior` exists and is not a `return_home`
+/// state (the hook that walks an NPC home); a pull-back forces that state, so any other kind
+/// would leave the survivors where they stand.
+pub(crate) fn state_not_return_home(db: &ContentDb, behavior: &str, state: &str) -> Option<String> {
+    let def = db.peek::<BehaviorDef>(behavior)?;
+    def.states.get(state)?;
+    let kind = def.kind_of(state);
+    (kind != "return_home").then(|| kind.to_owned())
+}
+
 /// The `PrefabDef` check: an `EncounterAnchor` names an existing encounter, and a `once`
 /// encounter's anchor has a key.
 pub(crate) fn check_anchor(def: &PrefabDef, _id: &str, refs: &mut Refs) {

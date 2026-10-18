@@ -163,6 +163,36 @@ fn net_always_is_on_the_members_only_while_the_fight_is_on() {
 }
 
 #[test]
+fn net_always_leaves_corpses_and_released_members_when_a_wave_clears_and_the_run_is_won() {
+    let mut app = yard();
+    into_the_ring(&mut app);
+    // Another module's NetAlways on a body that is no encounter member is not ours to take off.
+    let foreign = app.world_mut().spawn(NetAlways).id();
+    let mut seen: Vec<Entity> = Vec::new();
+    for _ in 0..40 {
+        if run_state(&app, RING) == RunState::Won {
+            break;
+        }
+        let mut query = app.world_mut().query_filtered::<Entity, With<NetAlways>>();
+        seen.extend(query.iter(app.world()).filter(|e| *e != foreign));
+        if run_state(&app, RING) == RunState::Running {
+            ok(&mut app, "encounter_clear", json!({"key": RING}));
+        }
+        step(&mut app, 30);
+    }
+    step(&mut app, 5);
+    assert_eq!(run_state(&app, RING), RunState::Won);
+    assert!(seen.len() >= 3, "every wave's members were in every client's view: {seen:?}");
+    for e in seen {
+        assert!(
+            app.world().get_entity(e).map_or(true, |e| e.get::<NetAlways>().is_none()),
+            "{e:?} (a corpse or a released add) is still in every client's view"
+        );
+    }
+    assert!(app.world().get::<NetAlways>(foreign).is_some(), "another module's NetAlways stays");
+}
+
+#[test]
 fn a_ring_spawn_keeps_to_the_navmesh_and_falls_back_to_the_anchor_when_none_is_walkable() {
     let mut app = yard();
     let kinds = app.world().resource::<ContentKinds>().clone();

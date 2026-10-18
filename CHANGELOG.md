@@ -76,7 +76,7 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   content). Two components: `EncounterAnchor` (a prefab, a tile piece, a level node or `place_encounter` puts an encounter anywhere;
   `shards_world` does not change) and `EncounterRole` (a prefab's cost and tags for the checks). Content checks name the file, the
   encounter, the wave, the group and the fix (budget, tags, limits, needs, overrides read like a prefab spawn, `pull_back.state` in each
-  member's behaviour, cue effects, sounds and messages, an anchor's encounter and key on every prefab). The state machine
+  member's behaviour and a `return_home` state there, cue effects, sounds and messages, an anchor's encounter and key on every prefab). The state machine
   (`Idle`, `Armed`, `Running`, `Between`, `Wiped`, `Resetting`, `Won`) is a pure function with its table in the docs; every timer is a count of whole
   ticks set and counted down in one tick (1.2 s is 72 ticks, 2.5 s 150, 2.0 s 120), and one transition happens per tick. Counting is level
   based (a member is out when it is `Dead` or gone, so every death counts); a wipe despawns the wave silently and rewinds one wave (not
@@ -92,8 +92,8 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   and replay check `encounters` (absent without runs, so other snapshots and replays keep their bytes) and a snapshot prepare that
   removes stale runs (a co-op host keeps the resource, empty, once it had one, because a removal does not replicate); the world save section `encounters` (the keys of won `once` encounters; a fight in progress is not saved).
   `EncounterAppExt::add_encounter_out_rule` (a downed state counts as out) and `add_encounter_despawn_hook` (what a member owns is
-  cleaned up before a silent despawn); `adopt`, `start_encounter`, `reset_encounter`, `place_encounter`, `join_blocked`. The umbrella
-  sends the events to clients, plays a warning's effect and sound, keeps `NetAlways` on the members of a `net_always` fight, and holds
+  cleaned up before a silent despawn); `adopt`, `start_encounter` (`wave` 1 of a placed encounter is the plain start, 2 and later skip the placed wave), `reset_encounter`, `place_encounter`, `join_blocked`. The umbrella
+  sends the events to clients, plays a warning's effect and sound, keeps `NetAlways` on the members of a `net_always` fight (and takes it off a corpse or released add the run let go), and holds
   joiners while a `blocks_join` fight is on. Module `encounter` (out with `npc` or `world`). A placed pack that has begun once does not begin again for a casualty after a reset; a resume cue leads the spawn by `resume_after`; `count` and `up_to` are at most 64; `Face::Yaw(d)` is the anchor's yaw plus `d`. Manual: "Encounters (G9)".
 - `NetHooks::join_gates`: a list of gates (`fn(&World, &JoinRequest) -> Option<String>`) that the new default `join_policy`
   (`default_join_policy`) consults; a gate's reason makes a newcomer wait. A request whose player already has a body (a rejoin within the

@@ -1,0 +1,11 @@
+// Behaviours of the pull-back state checks: `home` walks home, `fight` does not.
+{
+    "walker": (
+        initial: "idle",
+        states: {
+            "idle": (),
+            "fight": (kind: "attack"),
+            "home": (kind: "return_home"),
+        },
+    ),
+}

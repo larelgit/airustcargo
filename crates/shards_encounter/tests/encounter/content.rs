@@ -83,6 +83,10 @@ fn every_row_of_the_validation_table_gives_its_error() {
             "state_no_time",
             "pull_back.deadline: 0 leaves no time to walk to the state `return_home`: give the deadline in seconds, or drop the state to place survivors home at once",
         ),
+        (
+            "pull_to_fight",
+            "pull_back.state: state `fight` of behaviour `walker` (prefab `walker`) is kind `attack`, not `return_home`: name a state with `kind: \"return_home\"`, or give that state the kind",
+        ),
         ("huge_count", "waves[0].members[0].count: a group spawns at most 64 members"),
         ("big_up_to", "waves[0].members[0].count: a group spawns at most 64 members"),
         ("zero_count", "waves[0].members[0].count: a group needs at least 1 member"),
@@ -104,7 +108,7 @@ fn every_row_of_the_validation_table_gives_its_error() {
     }
     // Valid ones stay valid: the special arena allows two controllers, an override of a field
     // the prefab has is fine.
-    for id in ["special_controllers", "good_override", "once_fight"] {
+    for id in ["special_controllers", "good_override", "once_fight", "pull_to_home"] {
         let own: Vec<String> = errors(&db, id).into_iter().filter(|e| e.starts_with("content/bad.encounter.ron")).collect();
         assert_eq!(own, Vec::<String>::new(), "{id}");
     }
