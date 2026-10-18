@@ -808,7 +808,7 @@ pub struct Reaction {
 
 impl Reaction {
     /// A hit's own reaction: immunity and armour apply, and it starts the immunity. `armor` is
-    /// what the hit's [`DamageCtx::armor`] says.
+    /// what the hit's [`DamageCtx::reaction_armor`] says.
     pub fn hit(tier: u8, from: Option<Entity>, dir: Vec3, knockback: f32, armor: u8) -> Self {
         Self {
             tier,
