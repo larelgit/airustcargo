@@ -5746,6 +5746,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "shards_voxel"
+version = "0.2.0"
+dependencies = [
+ "ai_core",
+ "bevy",
+ "serde",
+ "shards_motion",
+ "shards_npc",
+]
+
+[[package]]
 name = "shards_world"
 version = "0.2.0"
 dependencies = [

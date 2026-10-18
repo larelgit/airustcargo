@@ -1,0 +1,17 @@
+[package]
+name = "shards_voxel"
+description = "Shards voxel terrain (G1 spike): a chunked block volume, a block palette, generation edits, rectangle-merged colliders and a chunk mesher with vertex colours and corner AO."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ai_core.workspace = true
+shards_motion.workspace = true
+bevy = { workspace = true, features = ["std", "serialize", "bevy_asset"] }
+serde.workspace = true
+
+[dev-dependencies]
+# The spike's measurements bake navigation over the candidates' colliders.
+shards_npc.workspace = true
