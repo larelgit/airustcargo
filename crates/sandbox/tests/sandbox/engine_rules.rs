@@ -185,12 +185,13 @@ fn two_planned_strikes_closer_than_the_spacing_stop_the_game() {
     called(
         &mut app,
         "content_apply",
-        json!({"changes": [{"kind": "director", "id": "default", "def": {
-            "tokens": {"1": 2, "2": 3, "3": 4},
-            "waiting": [{"role": "Circle", "distance": 3.5, "orbit": 1.2}],
-            "patience": 3.0,
-            "min_spacing": 0.7
-        }}]}),
+        json!({"changes": [{"kind": "director", "id": "default",
+            "before": {"patience": 3.0, "tokens": {"1": 2, "2": 3, "3": 4}, "waiting": [
+                {"distance": 3.5, "orbit": 1.2, "period": 2.0, "role": "Circle", "speed": 0.5},
+                {"distance": 3.0, "orbit": 1.0, "period": 1.5, "role": "Strafe", "speed": 0.5},
+                {"distance": 5.0, "orbit": 1.0, "period": 2.0, "role": "Hold", "speed": 0.5}
+            ]},
+            "def": {"tokens": {"1": 2, "2": 3, "3": 4}, "waiting": [{"role": "Circle", "distance": 3.5, "orbit": 1.2}], "patience": 3.0, "min_spacing": 0.7}}]}),
     );
     plant(&mut app, 3, |world| {
         for (id, at) in [(7, 100), (8, 110)] {

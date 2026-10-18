@@ -19,6 +19,12 @@
 //! - **Attack planner** ([`planner`]), for enemies and bosses: weights, distance windows,
 //!   cooldowns and forbidden sequences over the fighter's moveset ([`AttackPlanDef`]); it asks
 //!   the action machine's own rule ([`shards_action::can_start`]) before it presses.
+//! - **Duel rules** (all optional, neutral unless a definition asks): strike spacing between the
+//!   NPCs of one director ([`strike`]: [`DirectorDef::min_spacing`], `spacing_exempt_tags`, the
+//!   rule `npc.strike_spacing`), conditional plan options (`AttackOption::when`) and a state's
+//!   rest clamp, rest semantics (`rest_interrupted`, `rest_runs_while_busy`, `first_rest`), combo
+//!   continuation ([`chain`]: `AttackOption::chain`), a decision cadence (`BehaviorDef::think`,
+//!   [`NpcCtx::deciding`]) and a perception keep range (`PerceptionDef::keep_range`).
 //! - **Navigation** ([`nav`]): every tile baked ahead of time into a walkable grid (the
 //!   motion module's own probe and move rule), stitched over the region's tile graph when it
 //!   loads ([`NavRegion`]), routes by A* over the tile graph, then over the grid of the
@@ -63,9 +69,9 @@
 //!
 //! ```text
 //! NpcSystems::Sense     who is active (NpcActivity), perception: sight, hearing, memory, focus
-//! NpcSystems::Decide    each NPC: one transition at most, its state hook → NpcDrive
+//! NpcSystems::Decide    each NPC: one transition at most, its state hook → NpcDrive; its decision timer and the plan options its conditions open
 //! NpcSystems::Direct    tokens: started attacks remembered, finished ones back, grants; waiting roles
-//! NpcSystems::Plan      token holders: choose an attack, close in, press it (budget, combinations)
+//! NpcSystems::Plan      combo continuations at the start of a recovery, then token holders: choose an attack, close in, press it (budget, combinations)
 //! NpcSystems::Navigate  routes (NavPaths), following, leash → the velocity the route asks for
 //! NpcSystems::Drive     avoidance between bodies (leash again), then → Intent: move_dir, aim,
 //!                       presses, held inputs

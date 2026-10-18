@@ -1835,6 +1835,8 @@ e25 skeleton: fight e5 · token · leash 0/10m · sees e5 10.0m N · detour, 3 w
 e26 skeleton: idle · leash 2/10m · lost e5 4.0s ago at (31.0, 120.5)
 ```
 
+The words of the duel rules appear only on NPCs that use them: `waits 31t for e7` (held back by the director's strike spacing, with the ticks left), `think 0.07s` (the decision timer), `chain light` (a combo continuation rolled, `(pressed)` once it is) and `keeps e5 17.2m N` (a target seen beyond the sight range, kept by `keep_range`). `npc_state` has the same as fields (`strike`, `spacing`, `think`, `chain`, `plan.options`, `perception`, `kept`).
+
 In the window, the same things are drawn as gizmos: a line above the NPC, a line to the target (red while it holds an attack token), the view cone and the proximity circle (yellow while it sees someone), crosses where it last knew the target, the last noise, and the leash circle around home (red when the NPC is beyond it). `npc_overlay on=false` turns it off. The overlay does not change anything in the world.
 
 ### Limitations

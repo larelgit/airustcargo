@@ -208,7 +208,7 @@ pub struct BehaviorDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avoidance: Option<AvoidanceDef>,
     /// Decision cadence (seconds): a per-NPC timer that ticks down only while the NPC runs
-    /// no action. Each time it runs out is a decision tick ([`NpcCtx::deciding`], the
+    /// no action. Each time it runs out is a decision tick ([`NpcCtx::deciding`](crate::NpcCtx::deciding), the
     /// condition `deciding`), and it starts over; the first tick the NPC is free is one.
     /// Without it every tick is a decision tick. The state hooks and conditions that decide
     /// consult it; the engine's own states re-derive their output every tick and ignore it.
