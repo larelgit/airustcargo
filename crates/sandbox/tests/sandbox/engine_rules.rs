@@ -288,6 +288,30 @@ fn a_lock_on_a_dead_or_missing_target_stops_the_game() {
 }
 
 #[test]
+fn run_extras_of_another_run_stop_the_game() {
+    use shards::action::RunExtras;
+    // Extras left behind by a run that is over (nothing runs now).
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(RunExtras { instance: 999, ..default() });
+    });
+    let line = stops_on(&mut app, "action.extras_follow_run", 2);
+    assert!(line.contains("e5 RunExtras of instance 999 while it runs no action"), "{line}");
+
+    // A recovery made shorter than nothing.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        assert!(shards::action::force_action(world, player, "player_stagger"));
+        let instance = world.get::<shards::action::ActionState>(player).unwrap().current.as_ref().unwrap().instance;
+        world.entity_mut(player).insert(RunExtras { instance, extra: -1.0, ..default() });
+    });
+    let line = stops_on(&mut app, "action.extras_follow_run", 2);
+    assert!(line.contains("e5 RunExtras extra = -1, closed = 0: finite numbers >= 0"), "{line}");
+}
+
+#[test]
 fn an_npc_in_a_state_its_behavior_lacks_stops_the_game() {
     use shards::npc::NpcBrain;
     let mut app = sandbox::test_app(42);

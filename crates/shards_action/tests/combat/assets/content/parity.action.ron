@@ -1,5 +1,7 @@
 // Movement options for an exact action-RPG rulebook (C4): a roll that backsteps with no input,
-// and a guard that turns slowly and holds the stamina regeneration while it is up.
+// and a guard that turns slowly and holds the stamina regeneration while it is up. With the
+// action timeline (B2a): the backstep that keeps the body's facing, and a swing whose turn spans
+// turn the run while a stance rate turns the body.
 {
     "back_roll": (
         net_id: 62,
@@ -17,5 +19,28 @@
         move_speed: 0.4,
         turn_speed_deg: 90,
         regen_hold: 1.3,
+    ),
+    // `back_roll` that leaves the body looking where it looked (`face: Keep`).
+    "back_roll_keep": (
+        net_id: 64,
+        phases: [("roll", 0.4), ("recover", 0.1)],
+        cost: (stamina: 25),
+        iframes: [Secs(0.0, 0.18)],
+        displacement: [(0.35, 4.0)],
+        steer: MoveOrBack,
+        face: Keep,
+    ),
+    // The run turns at 360 degrees a second through the windup; the body follows at 90.
+    "span_stance": (
+        net_id: 65,
+        phases: [("windup", 0.5), ("active", 0.1)],
+        turn: [(Phase("windup"), 360)],
+        turn_speed_deg: 90,
+    ),
+    // The same swing with no rate of its own: the body follows at the free 720.
+    "span_free": (
+        net_id: 66,
+        phases: [("windup", 0.5), ("active", 0.1)],
+        turn: [(Phase("windup"), 360)],
     ),
 }

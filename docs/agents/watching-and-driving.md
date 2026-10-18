@@ -33,7 +33,7 @@ cargo sandbox --coverage --headless --paused --port 0 --port-file /tmp/g.port & 
 cargo shards coverage [--since K]       # distinct signatures, the rarest, what is new since K, what content declares and was never reached; `coverage reset` clears it
 cargo shards soak --minutes 30 --regen wilds   # stand: agents with a seed play for all participants, until the first desync
 kill <pid>                              # pid from `wait`; on Windows (and everywhere) — cargo shards quit
-cargo shards package --manifest-path template/Cargo.toml   # build for players in template/dist/ and its check (`--smoke`, DLL)
+cargo shards package --manifest-path template/Cargo.toml   # build for players in template/dist/ and its check (`--smoke-ticks`, DLL)
 cargo run -p sandbox --release -- --perf reference --offscreen   # performance test: a line per budget, exit code 0, 1 or 2 (no GPU)
 ```
 

@@ -232,6 +232,9 @@ fn resolve_tuning(db: Option<Res<ContentDb>>, mut tuning: ResMut<CameraTuning>, 
         return;
     }
     match db.get::<CameraTuning>("default") {
+        // A first load keeps a definition with errors in the database (hot reload refuses one):
+        // an invalid tuning is not taken, so the camera keeps what it has.
+        Some(def) if !def.problems().is_empty() => {}
         Some(def) => {
             *from_content = true;
             if *tuning != *def {

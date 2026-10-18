@@ -9,7 +9,7 @@ use shards::serde_json::{self, json, Value};
 use crate::common::{act, text, BOSS};
 
 /// The engine's rules, in the order the modules register them.
-pub(crate) const ENGINE_RULES: [&str; 11] = [
+pub(crate) const ENGINE_RULES: [&str; 12] = [
     "ai.index_consistent",
     "core.intent_sane",
     "motion.finite",
@@ -18,6 +18,7 @@ pub(crate) const ENGINE_RULES: [&str; 11] = [
     "action.protection_sane",
     "action.knockback_sane",
     "action.lock_on_valid",
+    "action.extras_follow_run",
     "npc.state_known",
     "npc.strike_spacing",
     "npc.tokens_within_limit",

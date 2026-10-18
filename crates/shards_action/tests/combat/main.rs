@@ -11,6 +11,7 @@ mod modifiers;
 mod outcome;
 mod parity;
 mod reactions;
+mod timeline;
 mod replay;
 #[cfg(feature = "render")]
 mod render;

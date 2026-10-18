@@ -53,12 +53,16 @@ fn input_bindings(
             BindMode::Press => "",
             BindMode::Hold => "[hold] ",
             BindMode::Toggle => "[toggle] ",
+            BindMode::PressHold => "[press+hold] ",
         };
         let bindings: Vec<String> = action.bindings.iter().map(Binding::text).collect();
         out.push_str(&format!("\n  {:<width$}  {mode}{}", action.action, bindings.join(" · ")));
     }
     if accessibility.is_some_and(|a| a.hold_to_toggle) {
-        out.push_str("\naccessibility.hold_to_toggle is on: [hold] actions work as toggles (a press holds, the next lets go)");
+        out.push_str(
+            "\naccessibility.hold_to_toggle is on: [hold] actions work as toggles (a press holds, the next lets go); \
+             [press+hold] ones press and hold on the first press, the next lets go",
+        );
     }
     let others: Vec<&str> = map.contexts.iter().map(|c| c.name.as_str()).filter(|n| *n != name).collect();
     if !others.is_empty() {
@@ -83,7 +87,7 @@ pub struct RebindArgs {
     /// Which binding to replace: 0 is the primary; one past the last adds an alternative.
     #[serde(default)]
     pub slot: usize,
-    /// `press`, `hold` or `toggle`.
+    /// `press`, `hold`, `toggle` or `press_hold`.
     pub mode: Option<String>,
     /// Remove the binding in `slot` instead.
     #[serde(default)]
@@ -149,7 +153,8 @@ fn rebind(
             "press" => BindMode::Press,
             "hold" => BindMode::Hold,
             "toggle" => BindMode::Toggle,
-            other => return Err(format!("unknown mode `{other}`; use press, hold or toggle")),
+            "press_hold" => BindMode::PressHold,
+            other => return Err(format!("unknown mode `{other}`; use press, hold, toggle or press_hold")),
         };
         next.set_mode(&context, &action, mode).map_err(explain)?;
         done.push(format!("mode {mode:?}").to_lowercase());
