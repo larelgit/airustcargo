@@ -29,10 +29,12 @@ use shards_content::ContentDb;
 use shards_core::{flat, Intent, PlayerId};
 use shards_motion::Collider;
 
-use crate::brain::{clamp_to_leash, salt, Home, Npc, NpcBrain, NpcDrive};
+use crate::brain::{clamp_to_leash, salt, Home, Npc, NpcBrain, NpcDrive, NpcThink};
 use crate::def::{AttackPlanDef, DirectorDef, Role, WaitRole};
 use crate::perception::Perceived;
-use crate::planner::{feasible, resolve, InFlight, NpcPlan};
+use crate::chain::NpcChain;
+use crate::planner::{feasible, resolve, InFlight, NpcOptions, NpcPlan};
+use crate::strike::{chain_note, note_list, pool, spacing_ticks, waiting, NpcStrike};
 
 /// An NPC's attack token, while it holds one, and its place in the queue while it asks.
 #[derive(Component, Reflect, Clone, Debug, PartialEq, Default)]
@@ -131,9 +133,13 @@ pub(crate) struct Fighting {
     pub drive: &'static mut NpcDrive,
     pub token: &'static mut AttackToken,
     pub plan: &'static mut NpcPlan,
+    pub strike: Option<&'static NpcStrike>,
+    pub options: Option<&'static NpcOptions>,
+    pub chain: Option<&'static mut NpcChain>,
+    pub think: Option<&'static NpcThink>,
     pub fighter: &'static Fighter,
     pub state: &'static ActionState,
-    pub buffer: &'static InputBuffer,
+    pub buffer: &'static mut InputBuffer,
     pub transform: &'static Transform,
     pub perceived: &'static Perceived,
     pub home: Option<&'static Home>,
@@ -207,6 +213,10 @@ pub(crate) fn direct(
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         let plan_def = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p));
         f.plan.tick(dt, f.state.current.is_none());
+        // A director that no longer spaces its strikes (a hot reload) leaves no notes behind.
+        if f.strike.is_some() && DirectorDef::of(&db, &f.npc.director).min_spacing <= 0.0 {
+            commands.entity(entity).remove::<NpcStrike>();
+        }
         let Some(mut grant) = f.token.held.clone() else { continue };
         grant.age += dt;
         let running = running_attack(f.state, &grant);
@@ -245,7 +255,12 @@ pub(crate) fn direct(
                 let rest = plan_def.map_or((0.0, 0.0), |p| p.rest);
                 if grant.started {
                     f.brain.attacks_done += 1;
-                    f.plan.rest = rng.stream(id, salt::REST).range(rest.0, rest.1.max(rest.0));
+                    // A forced action in the attack's place (a stagger) cut it short.
+                    let interrupted = f.state.current.as_ref().is_some_and(|r| r.forced);
+                    f.plan.rest = match plan_def.and_then(|p| p.rest_interrupted).filter(|_| interrupted) {
+                        Some((lo, hi)) => rng.stream(id, salt::REST_INTERRUPTED).range(lo, hi.max(lo)),
+                        None => rng.stream(id, salt::REST).range(rest.0, rest.1.max(rest.0)),
+                    };
                 } else {
                     // Back of the queue, after a short breath.
                     f.plan.rest = f.plan.rest.max(rest.0);
@@ -311,6 +326,7 @@ pub(crate) fn direct(
 
     // 3. Grants, longest-waiting first.
     let inflight = InFlight::collect(npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
+    let notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), chain_note(f.chain, Some(f.buffer), tick.0))));
     let mut asking: Vec<(u64, AiId, Entity)> = Vec::new();
     for &(id, entity) in &order {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
@@ -329,7 +345,14 @@ pub(crate) fn direct(
             continue;
         }
         let since = *f.token.asking_since.get_or_insert(tick.0);
-        asking.push((since, id, entity));
+        // With `press_on_decision` the token, like the choice and the press, is taken on the NPC's
+        // decision tick only; it keeps its place in the queue between decisions, and no token
+        // sits idle until the next one.
+        let on_decision = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)).is_none_or(|p| !p.press_on_decision)
+            || f.think.is_none_or(|t| t.decided == Some(tick.0));
+        if on_decision {
+            asking.push((since, id, entity));
+        }
     }
     asking.sort();
     for (_, id, entity) in asking {
@@ -355,7 +378,9 @@ pub(crate) fn direct(
             dead: f.dead,
         };
         let (budget, overlapping) = inflight.on(target, id, &director);
-        let any = options.iter().any(|o| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director));
+        // No token for a strike that would come too soon after another NPC's.
+        let spaced_out = !plan_def.ignores_spacing && waiting(&notes, id, &d, tick.0, spacing_ticks(director.min_spacing, dt)).is_some();
+        let any = options.iter().any(|o| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director, spaced_out, f.options));
         if !any {
             continue;
         }
@@ -406,11 +431,6 @@ pub(crate) fn direct(
         let home = f.home.map(|h| (h.pos.unwrap_or(f.transform.translation), h.leash));
         wait_in_role(&mut f, &role, center, home, dt);
     }
-}
-
-/// The director an NPC fights by: its own, or `default`.
-fn pool(director: &str) -> String {
-    if director.is_empty() { DirectorDef::DEFAULT.to_owned() } else { director.to_owned() }
 }
 
 /// Tokens held per director, in the order directors first come up.

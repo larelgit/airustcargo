@@ -325,9 +325,15 @@ impl Step<'_, '_> {
         let rate = swim_rate(p, wish != Vec3::ZERO);
         let h = step_toward(flat(v0), wish * top, rate * self.dt, p.axis_stepping);
         let float_y = surface - p.float_depth;
-        let vy = ((float_y - feet.y) * FLOAT_RATE).clamp(-p.swim_speed, p.swim_speed);
-        let mut v = h + Vec3::Y * vy;
-        let moved = self.mover.slide(feet, (v0 + v) * 0.5 * self.dt + self.input.external, false);
+        let (mut v, travel) = if p.buoyancy_omega > 0.0 {
+            let (vy, dy) = buoyancy(p, feet.y - float_y, v0.y, self.dt);
+            (h + Vec3::Y * vy, (flat(v0) + h) * 0.5 * self.dt + Vec3::Y * dy)
+        } else {
+            let vy = ((float_y - feet.y) * FLOAT_RATE).clamp(-p.swim_speed, p.swim_speed);
+            let v = h + Vec3::Y * vy;
+            (v, (v0 + v) * 0.5 * self.dt)
+        };
+        let moved = self.mover.slide(feet, travel + self.input.external, false);
         for touch in &moved.touches {
             v = clip(v, touch.normal);
         }
@@ -404,13 +410,27 @@ impl Step<'_, '_> {
     }
 
     fn enter_water(&mut self) {
+        let p = self.params;
         let s = &mut *self.state;
         s.grounded = false;
         s.ground_normal = Vec3::Y;
         s.fall_from_y = None;
         s.coyote_left = 0.0;
         s.sprinting = false;
-        s.velocity.y = s.velocity.y.max(-self.params.swim_speed);
+        // With a spring under the swimmer the plunge keeps its speed (up to the water's own limit);
+        // without one the fall stops at the swim speed, as before.
+        let fastest = if p.buoyancy_omega > 0.0 { water_vertical_limit(p) } else { p.swim_speed };
+        s.velocity.y = s.velocity.y.max(-fastest);
+        // The brake on the way in: the horizontal speed is scaled down to the cap, once.
+        if p.entry_max_speed > 0.0 {
+            let across = flat(s.velocity);
+            let speed = across.length();
+            if speed > p.entry_max_speed {
+                let scaled = across * (p.entry_max_speed / speed);
+                s.velocity.x = scaled.x;
+                s.velocity.z = scaled.z;
+            }
+        }
         self.set_mode(MotionMode::Water);
     }
 
@@ -453,6 +473,14 @@ impl Step<'_, '_> {
         }
         let p = self.params;
         let dir = (-flat(wall.normal)).try_normalize()?;
+        // A swimmer must face the ledge it climbs onto: the body turns at the swim rate, so a push
+        // from the side or a jump with the back turned does not climb.
+        if self.state.mode == MotionMode::Water
+            && let Some(min) = p.climb_out_min_facing
+            && self.facing.dot(dir) < min
+        {
+            return None;
+        }
         if push && self.wish().normalize_or_zero().dot(dir) < PUSH_COS {
             return None;
         }
@@ -479,8 +507,10 @@ impl Step<'_, '_> {
             }
             Some((to, m.climb_corner(feet, to)?))
         })?;
+        // A climb out of the water has its own length when the params give one.
+        let duration = if self.state.mode == MotionMode::Water { p.climb_out_time.unwrap_or(p.mantle_time) } else { p.mantle_time };
         let s = &mut *self.state;
-        s.mantle = Some(Mantle { from: feet, corner, to, t: 0.0, duration: p.mantle_time });
+        s.mantle = Some(Mantle { from: feet, corner, to, t: 0.0, duration });
         s.velocity = Vec3::ZERO;
         s.grounded = false;
         s.coyote_left = 0.0;
@@ -529,6 +559,30 @@ impl Mantle {
             self.corner + (self.to - self.corner) * ((along - up) / over.max(f32::EPSILON))
         }
     }
+}
+
+/// The fastest vertical speed in the water while a spring holds the swimmer.
+fn water_vertical_limit(p: &CharacterParams) -> f32 {
+    if p.water_max_vertical_speed > 0.0 { p.water_max_vertical_speed } else { p.swim_speed }
+}
+
+/// One tick of the buoyancy spring in closed form: a critically damped oscillator toward the float
+/// line, `x'' = -w^2 x - 2 w x'`, whose exact solution over `dt` is
+/// `x(dt) = (x0 + (v0 + w x0) dt) e^(-w dt)`. `offset`: the feet's height over the float line,
+/// `v0` the vertical speed. Returns the new vertical speed and the vertical travel of the tick.
+/// No tick rate changes where the swimmer ends up, and nothing is integrated step by step. A fall
+/// in the water is first slowed by `water_fall_drag` (`exp(-drag dt)`), and the speed and the
+/// travel stay within the water's vertical limit.
+fn buoyancy(p: &CharacterParams, offset: f32, v0: f32, dt: f32) -> (f32, f32) {
+    let w = p.buoyancy_omega;
+    let limit = water_vertical_limit(p);
+    let v0 = if v0 < 0.0 && p.water_fall_drag > 0.0 { v0 * ops::exp(-p.water_fall_drag * dt) } else { v0 };
+    let v0 = v0.clamp(-limit, limit);
+    let decay = ops::exp(-w * dt);
+    let push = v0 + w * offset;
+    let next = (offset + push * dt) * decay;
+    let speed = ((v0 - w * push * dt) * decay).clamp(-limit, limit);
+    (speed, (next - offset).clamp(-limit * dt, limit * dt))
 }
 
 /// How fast a swimmer changes its speed: toward an input (`has_input`) or to rest.
@@ -596,5 +650,41 @@ mod tests {
         assert!((m.position() - Vec3::Y * 0.5).length() < 1e-6);
         assert!((Mantle { t: 0.75, ..m }.position() - Vec3::new(0.5, 1.0, 0.0)).length() < 1e-6);
         assert_eq!(Mantle { t: 1.0, ..m }.position(), m.to);
+    }
+
+    #[test]
+    fn the_buoyancy_spring_is_the_same_whatever_the_tick_rate() {
+        let p = CharacterParams { buoyancy_omega: 4.0, water_max_vertical_speed: 50.0, ..default() };
+        // One second at 60, 30 and 240 ticks per second from a plunge: the same place and speed.
+        let run = |ticks: u32| {
+            let dt = 1.0 / ticks as f32;
+            let (mut x, mut v) = (-1.5f32, -9.0f32);
+            for _ in 0..ticks {
+                let (nv, dy) = buoyancy(&p, x, v, dt);
+                x += dy;
+                v = nv;
+            }
+            (x, v)
+        };
+        let (x60, v60) = run(60);
+        for ticks in [30, 240] {
+            let (x, v) = run(ticks);
+            assert!((x - x60).abs() < 2e-4 && (v - v60).abs() < 2e-3, "{ticks}: {x} {v} vs {x60} {v60}");
+        }
+        // And it is the exact solution: x(t) = (x0 + (v0 + w x0) t) e^(-w t) at t = 1 s.
+        let exact = (-1.5 + (-9.0 + 4.0 * -1.5)) * ops::exp(-4.0);
+        assert!((x60 - exact).abs() < 2e-4, "{x60} vs {exact}");
+    }
+
+    #[test]
+    fn the_buoyancy_limit_clamps_speed_and_travel() {
+        let p = CharacterParams { buoyancy_omega: 4.0, water_max_vertical_speed: 7.0, ..default() };
+        let (v, dy) = buoyancy(&p, -3.0, -30.0, 1.0 / 60.0);
+        assert!(v >= -7.0 - 1e-5 && dy >= -7.0 / 60.0 - 1e-6, "{v} {dy}");
+        // A fall is slowed by the drag before the spring acts.
+        let drag = CharacterParams { water_fall_drag: 3.0, ..p.clone() };
+        let (slowed, _) = buoyancy(&drag, 0.0, -5.0, 0.1);
+        let (plain, _) = buoyancy(&p, 0.0, -5.0, 0.1);
+        assert!(slowed.abs() < plain.abs(), "{slowed} {plain}");
     }
 }

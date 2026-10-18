@@ -1,0 +1,44 @@
+// Actions of the duel rules. `hop_back` is a retreat: no hits, tagged as a repositioning.
+// The swings are a combo: `swing_1` may be continued into `swing_2` by a `light` press during
+// its recovery, `swing_2` into `swing_3`. Each is 48 ticks long (windup 18, active 6,
+// recovery 24); the recovery of the first two starts at 24 ticks.
+{
+    "hop_back": (net_id: 40, phases: [("hop", 0.3)], tags: ["reposition"]),
+
+    // The window opens 3 ticks into the recovery: the press (alive 9 ticks) reaches it.
+    "swing_1": (
+        net_id: 41,
+        phases: [("windup", 0.3), ("active", 0.1), ("recovery", 0.4)],
+        hits: [(span: Phase("active"), shape: Cone(range: 1.8, angle: 100), damage: 4, poise: 2)],
+        cancels: [(span: Secs(0.45, 0.8), into: [Combo("light", "swing_2")])],
+        telegraph: (symbol: "!"),
+    ),
+    "swing_2": (
+        net_id: 42,
+        phases: [("windup", 0.3), ("active", 0.1), ("recovery", 0.4)],
+        hits: [(span: Phase("active"), shape: Cone(range: 1.8, angle: 100), damage: 4, poise: 2)],
+        cancels: [(span: Secs(0.45, 0.8), into: [Combo("light", "swing_3")])],
+        telegraph: (symbol: "!"),
+    ),
+    "swing_3": (
+        net_id: 43,
+        phases: [("windup", 0.3), ("active", 0.1), ("recovery", 0.4)],
+        hits: [(span: Phase("active"), shape: Cone(range: 1.8, angle: 100), damage: 4, poise: 2)],
+        telegraph: (symbol: "!"),
+    ),
+    // The window opens 18 ticks into the recovery, long after a press (alive 9 ticks) died:
+    // a chain that never fires.
+    "slow_1": (
+        net_id: 44,
+        phases: [("windup", 0.3), ("active", 0.1), ("recovery", 0.8)],
+        hits: [(span: Phase("active"), shape: Cone(range: 1.8, angle: 100), damage: 4, poise: 2)],
+        cancels: [(span: Secs(0.7, 1.2), into: [Combo("light", "slow_2")])],
+        telegraph: (symbol: "!"),
+    ),
+    "slow_2": (
+        net_id: 45,
+        phases: [("windup", 0.3), ("active", 0.1), ("recovery", 0.4)],
+        hits: [(span: Phase("active"), shape: Cone(range: 1.8, angle: 100), damage: 4, poise: 2)],
+        telegraph: (symbol: "!"),
+    ),
+}

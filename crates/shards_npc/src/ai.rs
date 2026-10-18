@@ -14,11 +14,13 @@ use shards_core::flat;
 use shards_motion::perception::{Leg, PathPlan, StepKind};
 use shards_motion::{physics::sync_physics, CharacterController, CharacterParams, LayerMask, PhysicsWorld, QueryFilter, TargetArg};
 
-use crate::brain::{force_state, Home, Npc, NpcBrain, NpcDrive, NpcStateChanged};
+use crate::brain::{force_state, Home, Npc, NpcBrain, NpcDrive, NpcStateChanged, NpcThink};
+use crate::chain::{ChainPressed, ChainRefused, NpcChain};
 use crate::director::{AttackToken, TokenGranted, TokenReturned};
 use crate::nav::{local_grid_path, local_grid_route, NavAgent, NavPaths, NAVMESH};
 use crate::perception::Perceived;
-use crate::planner::NpcPlan;
+use crate::planner::{NpcOptions, NpcPlan};
+use crate::strike::{wait_of, NpcStrike};
 
 pub(crate) fn register(app: &mut App) {
     app.register_ai_describer("npc", describe_npc)
@@ -36,6 +38,18 @@ pub(crate) fn register(app: &mut App) {
                 Some(attack) => format!("{who} returns its attack token after {attack} ({}/{})", e.held, e.limit),
                 None => format!("{who} returns its attack token unused: {} ({}/{})", e.reason, e.held, e.limit),
             })
+        })
+        .journal_event::<ChainPressed>(|e, w| Some(format!("{} chains {} after {}", label(w, e.entity), e.input, e.after)))
+        .journal_event::<ChainRefused>(|e, w| {
+            Some(format!(
+                "{} chain {} refused after {}: {} began a strike less than {} ticks ago ({} to go)",
+                label(w, e.entity),
+                e.input,
+                e.after,
+                e.by,
+                e.spacing,
+                e.ticks_left
+            ))
         })
         .add_ai_query("npc_state", Scope::Player, npc_state)
         .add_ai_query("nav_path", Scope::Player, nav_path)
@@ -213,7 +227,7 @@ fn npc_state(In(call): In<Call<NpcStateArgs>>, world: &World) -> ToolResult<Valu
         json!({"at": fmt_pos(at), "leash": h.leash, "distance": round(flat(here - at).length())})
     });
     let drive = e.get::<NpcDrive>().cloned().unwrap_or_default();
-    Ok(json!({
+    let mut out = json!({
         "id": call.args.id.to_string(),
         "line": describe_npc(e),
         "behavior": npc.behavior,
@@ -242,7 +256,82 @@ fn npc_state(In(call): In<Call<NpcStateArgs>>, world: &World) -> ToolResult<Valu
         "heard": perceived.noise.map(|n| json!({"at": fmt_pos(n.pos), "since": round(n.age)})),
         "nav": nav,
         "home": home,
-    }))
+    });
+    extras(world, entity, npc, &perceived, here, &mut out);
+    Ok(out)
+}
+
+/// The perception of an NPC: its own definition, else the engine's defaults.
+fn perception_of(world: &World, npc: &Npc) -> crate::def::PerceptionDef {
+    world.get_resource::<shards_content::ContentDb>().and_then(|db| db.get::<crate::def::PerceptionDef>(&npc.perception)).cloned().unwrap_or_default()
+}
+
+/// Targets seen beyond the sight range, kept in sight by the perception's `keep_range`.
+fn kept<'a>(def: &crate::def::PerceptionDef, perceived: &'a Perceived, here: Vec3) -> impl Iterator<Item = &'a crate::perception::Sensed> + 'a {
+    let sight = def.sight_range;
+    let keeps = def.keep_range.is_some();
+    perceived.known.iter().filter(move |k| keeps && k.seen && flat(k.pos - here).length() > sight)
+}
+
+/// What only the duel rules put on an NPC's mind, for `npc_state`: strike notes and the spacing
+/// it waits out, the decision timer, a pending combo continuation, the options its conditions
+/// open and close, the keep range. Nothing for an NPC that uses none of them.
+fn extras(world: &World, entity: Entity, npc: &Npc, perceived: &Perceived, here: Vec3, out: &mut Value) {
+    let e = world.entity(entity);
+    let round = |v: f32| (v * 100.0).round() / 100.0;
+    if let Some(s) = e.get::<NpcStrike>() {
+        out["strike"] = json!({"last_start": s.last_start, "gated": s.gated});
+    }
+    if let Some((by, left)) = wait_of(world, entity) {
+        out["spacing"] = json!({"waits_for": by.to_string(), "ticks_left": left});
+    }
+    if let Some(t) = e.get::<NpcThink>() {
+        let every = world.get_resource::<shards_content::ContentDb>().and_then(|db| db.get::<crate::def::BehaviorDef>(&npc.behavior)).and_then(|b| b.think);
+        out["think"] = json!({"left": round(t.left), "every": every.map(round), "decided": t.decided});
+    }
+    if let Some(c) = e.get::<NpcChain>() {
+        out["chain"] = json!({"input": c.input, "pressed": c.pressed.is_some(), "gate_at_start": c.at_start});
+    }
+    if let Some(o) = e.get::<NpcOptions>() {
+        let gated: Vec<String> = world
+            .get_resource::<shards_content::ContentDb>()
+            .and_then(|db| npc.plan.as_deref().and_then(|p| db.get::<crate::def::AttackPlanDef>(p)))
+            .map(|p| p.options.iter().filter(|opt| !opt.when.is_empty()).map(|opt| opt.label().to_owned()).collect())
+            .unwrap_or_default();
+        let closed: Vec<&String> = gated.iter().filter(|g| !o.allowed.contains(g)).collect();
+        out["plan"]["options"] = json!({"open": o.allowed, "closed": closed});
+    }
+    let def = perception_of(world, npc);
+    if let Some(keep) = def.keep_range {
+        out["perception"] = json!({"sight_range": def.sight_range, "keep_range": keep});
+        let kept: Vec<String> = kept(&def, perceived, here).map(|k| k.id.to_string()).collect();
+        if let Some(list) = out["perceived"].as_array_mut() {
+            for entry in list {
+                if kept.iter().any(|id| entry["id"] == json!(id)) {
+                    entry["kept"] = json!(true);
+                }
+            }
+        }
+    }
+}
+
+/// The same for `npc_overlay`'s line: `waits 31t for e7`, `think 0.07s`, `chain light`,
+/// `keeps e5 17.2m N`.
+pub(crate) fn extra_parts(world: &World, entity: Entity, npc: &Npc, perceived: &Perceived, here: Vec3) -> Vec<String> {
+    let e = world.entity(entity);
+    let mut parts = Vec::new();
+    if let Some((by, left)) = wait_of(world, entity) {
+        parts.push(format!("waits {left}t for {by}"));
+    }
+    if let Some(t) = e.get::<NpcThink>() {
+        parts.push(format!("think {:.2}s", t.left));
+    }
+    if let Some(c) = e.get::<NpcChain>() {
+        parts.push(format!("chain {}{}", c.input, if c.pressed.is_some() { " (pressed)" } else { "" }));
+    }
+    let def = perception_of(world, npc);
+    parts.extend(kept(&def, perceived, here).map(|k| format!("keeps {} {}", k.id, relative(here, k.pos))));
+    parts
 }
 
 /// The route an NPC would take, as `path_to` reports one: `path 23.5m, 4 turns: 6.0m NE →

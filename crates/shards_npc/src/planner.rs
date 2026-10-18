@@ -25,6 +25,7 @@ use shards_core::flat;
 use crate::brain::{clamp_to_leash, salt};
 use crate::def::{AttackPlanDef, DirectorDef, SequenceBan};
 use crate::director::{order, target_of, Fighting, Grant, Targets};
+use crate::strike::{chain_note, note_list, pool, spacing_ticks, strike_pressed, waiting};
 
 /// An NPC's attack history and timers: gameplay state, kept in replays.
 #[derive(Component, Reflect, Clone, Debug, PartialEq, Default)]
@@ -38,6 +39,15 @@ pub struct NpcPlan {
     pub rest: f32,
     /// Attacks started in all.
     pub attacks: u32,
+}
+
+/// Which gated options of an NPC\'s plan are open: the names of those whose `when` holds,
+/// decided each tick with its other decisions (`NpcSystems::Decide`). Only NPCs whose plan
+/// has an option with `when` carry it; such an option is closed without it.
+#[derive(Component, Reflect, Clone, Debug, PartialEq, Default)]
+#[reflect(Component, Default)]
+pub struct NpcOptions {
+    pub allowed: Vec<String>,
 }
 
 /// An attack that started: its option name and tags.
@@ -105,6 +115,8 @@ pub struct Resolved {
     /// The option's tags, the action's tags and the option's name.
     pub tags: Vec<String>,
     pub cost: f32,
+    /// The option has `when` conditions: it may be chosen only while the NPC's [`NpcOptions`] lists it.
+    pub gated: bool,
 }
 
 /// The options of `plan` for a fighter with moveset `moveset`, against a target of body
@@ -127,6 +139,7 @@ pub fn resolve(plan: &AttackPlanDef, db: &ContentDb, moveset: &str, target_radiu
             max: o.and_then(|o| o.max).unwrap_or(reach),
             cooldown: o.map_or(0.0, |o| o.cooldown),
             cost: o.map_or(1.0, |o| o.cost),
+            gated: o.is_some_and(|o| !o.when.is_empty()),
             tags,
             name,
         }
@@ -247,6 +260,8 @@ pub(crate) fn feasible(
     budget_left: Option<f32>,
     overlapping: &[Vec<String>],
     director: &DirectorDef,
+    spaced_out: bool,
+    open: Option<&NpcOptions>,
 ) -> bool {
     o.weight > 0.0
         && plan.cooldown(&o.name) <= 0.0
@@ -257,6 +272,8 @@ pub(crate) fn feasible(
         }
         && budget_left.is_none_or(|left| o.cost <= left + 1e-4)
         && overlapping.iter().all(|tags| director.may_overlap(&o.tags, tags))
+        && (!spaced_out || !director.is_strike(&o.tags))
+        && (!o.gated || open.is_some_and(|options| options.allowed.contains(&o.name)))
 }
 
 /// `NpcSystems::Plan`: every token holder that strikes, in `AiId` order, chooses an attack,
@@ -274,6 +291,14 @@ pub(crate) fn plan_attacks(
 ) {
     let dt = time.delta_secs();
     let mut inflight = InFlight::collect(npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
+    let mut notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), chain_note(f.chain, Some(f.buffer), tick.0))));
+    // Presses already made this tick (a hook's, a continuation's) are starts of this tick.
+    notes.extend(
+        npcs.iter()
+            .filter(|f| strike_pressed(&db, f, dt))
+            .map(|f| (*f.id, pool(&f.npc.director), tick.0)),
+    );
+    let spacing = |director: &DirectorDef| spacing_ticks(director.min_spacing, dt);
     for (id, entity) in order(&npcs) {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         if !f.drive.strike || f.dead || !f.brain.active || f.under_orders() {
@@ -294,6 +319,10 @@ pub(crate) fn plan_attacks(
         let director = DirectorDef::of(&db, &f.npc.director);
         let options = resolve(plan_def, &db, &f.fighter.moveset, radius);
         let (budget, overlapping) = inflight.on(grant.target, id, &director);
+        // Another NPC of its director began a strike less than `min_spacing` ago: its strikes wait.
+        let spaced_out = !plan_def.ignores_spacing && waiting(&notes, id, &pool(&f.npc.director), tick.0, spacing(&director)).is_some();
+        // With `press_on_decision` a new choice, like the press, waits for the NPC's decision tick.
+        let decides = !plan_def.press_on_decision || f.think.is_none_or(|t| t.decided == Some(tick.0));
         let chosen = {
             let view = FighterView {
                 db: &db,
@@ -305,15 +334,21 @@ pub(crate) fn plan_attacks(
                 held: &f.drive.held,
                 dead: f.dead,
             };
-            let ok = |o: &Resolved| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director);
+            let ok = |o: &Resolved| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director, spaced_out, f.options);
             let kept = grant.attack.as_ref().and_then(|name| options.iter().position(|o| o.name == *name));
             // In range only: choose again every tick among what fits (a boss picks what
             // reaches); else keep the choice while it stays possible.
-            match kept.filter(|&i| !plan_def.in_range_only && ok(&options[i])) {
+            match kept.filter(|&i| (!plan_def.in_range_only || !decides) && ok(&options[i])) {
                 Some(i) => Some(i),
+                None if !decides => None,
                 None => choose(&options, ok, distance, plan_def.in_range_only, &mut rng.stream(id, salt::PICK)),
             }
         };
+        if chosen.is_none() && !decides {
+            // Between two decisions with no choice yet: it stands.
+            f.drive.goal = None;
+            continue;
+        }
         let home = f.home.map(|h| (h.pos.unwrap_or(here), h.leash));
         let leash = |p: Vec3| clamp_to_leash(home.map(|h| h.0), home.map_or(0.0, |h| h.1), p);
         let Some(i) = chosen else {
@@ -359,11 +394,12 @@ pub(crate) fn plan_attacks(
                 && overlapping.iter().all(|tags| director.may_overlap(&o.tags, tags));
             // It swings at what it perceives now, not at a memory.
             let sensed = f.perceived.get(grant.target).is_some_and(|k| k.age <= 1e-4);
-            if starts && fits && sensed {
+            if starts && fits && sensed && decides {
                 grant.pressed = Some(tick.0);
                 grant.instance = f.state.started;
                 f.drive.press.push(o.input.clone());
                 inflight.add(grant.target, id, o.cost, o.tags.clone());
+                notes.push((id, pool(&f.npc.director), tick.0));
             }
         }
         f.token.held = Some(grant);
@@ -387,6 +423,7 @@ mod tests {
             cooldown: 0.0,
             tags,
             cost: 1.0,
+            gated: false,
         }
     }
 
