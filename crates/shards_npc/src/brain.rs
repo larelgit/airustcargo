@@ -33,7 +33,7 @@ use crate::def::{AttackPlanDef, BehaviorDef, Cond, DirectorDef, Params, Percepti
 use crate::director::{AttackToken, Grant};
 use crate::nav::NavAgent;
 use crate::perception::Perceived;
-use crate::planner::NpcPlan;
+use crate::planner::{NpcOptions, NpcPlan};
 
 /// Salts of the NPC's random streams (`SimRng`: seed, tick, id, salt).
 pub(crate) mod salt {
@@ -47,6 +47,10 @@ pub(crate) mod salt {
     pub const REST_INTERRUPTED: u64 = 0x4E50_0004;
     /// The rest an NPC starts with.
     pub const FIRST_REST: u64 = 0x4E50_0005;
+    /// Whether an attack chains.
+    pub const CHAIN: u64 = 0x4E50_0006;
+    /// A plan option's `when`: plus the option and condition index.
+    pub const OPTION: u64 = 0x4E50_2000;
     /// Condition `chance`: plus the transition and condition index.
     pub const CONDITION: u64 = 0x4E50_1000;
 }
@@ -212,6 +216,10 @@ pub struct NpcOutput {
     pub timer: Option<f32>,
     /// New value of [`NpcBrain::point`].
     pub point: Option<Option<Vec3>>,
+    /// Clamp [`NpcPlan::rest`](crate::NpcPlan::rest) to at most this many seconds. Once, not
+    /// every tick: a hook that sets it every tick clamps every pause drawn later too (a state
+    /// whose `rest_clamp` content field does it on entry needs no hook).
+    pub rest_cap: Option<f32>,
 }
 
 impl NpcOutput {
@@ -469,6 +477,20 @@ struct Decided {
     first_rest: Option<f32>,
     /// What its decision timer comes to.
     think: Think,
+    /// Clamp of its plan's rest: a state's `rest_clamp` on entry, a hook's `rest_cap`.
+    rest_cap: Option<f32>,
+    /// Which of its gated plan options are open.
+    options: Gates,
+}
+
+/// Which gated options of an NPC's plan are open this tick.
+enum Gates {
+    /// Untouched (an inactive NPC).
+    Keep,
+    /// The plan has no gated option: no component.
+    Off,
+    /// The names of the gated options whose `when` holds.
+    Open(Vec<String>),
 }
 
 /// What an NPC's decision timer is after this tick.
@@ -505,6 +527,30 @@ pub(crate) fn decide(world: &mut World) {
             && let Some(mut plan) = e.get_mut::<NpcPlan>()
         {
             plan.rest = rest;
+        }
+        if let Some(cap) = d.rest_cap
+            && let Some(mut plan) = e.get_mut::<NpcPlan>()
+            && plan.rest > cap
+        {
+            plan.rest = cap;
+        }
+        match d.options {
+            Gates::Keep => {}
+            Gates::Open(allowed) => match e.get_mut::<NpcOptions>() {
+                Some(mut options) => {
+                    if options.allowed != allowed {
+                        options.allowed = allowed;
+                    }
+                }
+                None => {
+                    e.insert(NpcOptions { allowed });
+                }
+            },
+            Gates::Off => {
+                if e.contains::<NpcOptions>() {
+                    e.remove::<NpcOptions>();
+                }
+            }
         }
         match d.think {
             Think::Keep => {}
@@ -552,12 +598,12 @@ fn decide_all(world: &World, hooks: &NpcHooks, dt: f32) -> (Vec<Decided>, Vec<(S
     for (id, entity) in npcs_in_order(world) {
         let (Some(npc), Some(brain)) = (world.get::<Npc>(entity), world.get::<NpcBrain>(entity)) else { continue };
         if !brain.active {
-            decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None, first_rest: None, think: Think::Keep });
+            decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None, first_rest: None, think: Think::Keep, rest_cap: None, options: Gates::Keep });
             continue;
         }
         check_ids(db, id, npc, &mut problems);
         let Some(behavior) = db.get::<BehaviorDef>(&npc.behavior) else {
-            decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None, first_rest: None, think: Think::Keep });
+            decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None, first_rest: None, think: Think::Keep, rest_cap: None, options: Gates::Keep });
             continue;
         };
         decided.push(decide_one(world, entity, brain, behavior, &npc.behavior, hooks, dt, &mut problems));
@@ -636,7 +682,7 @@ fn decide_one(
         enter(world, entity, &mut next, behavior, to);
     }
     let Some(state) = behavior.states.get(&next.state) else {
-        return Decided { entity, brain: next, drive: None, changed: None, first_rest: None, think };
+        return Decided { entity, brain: next, drive: None, changed: None, first_rest: None, think, rest_cap: None, options: Gates::Keep };
     };
     let kind = behavior.kind_of(&next.state);
     let mut out = NpcOutput::default();
@@ -666,8 +712,52 @@ fn decide_one(
     }
     // The first state of a new NPC is no change worth a journal line, but its pause is drawn.
     let first_rest = changed.as_ref().filter(|(from, _)| from.is_empty()).and_then(|_| first_rest(world, entity));
+    // Entering a state with a `rest_clamp` shortens the plan's rest once.
+    let entry_clamp = changed.as_ref().and_then(|_| state.rest_clamp);
+    let rest_cap = match (entry_clamp, out.rest_cap) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    };
+    let options = option_gates(world, entity, &next, hooks, dt, deciding, behavior_id, problems);
     let changed = changed.filter(|(from, _)| !from.is_empty());
-    Decided { entity, brain: next, drive: Some(out), changed, first_rest, think }
+    Decided { entity, brain: next, drive: Some(out), changed, first_rest, think, rest_cap, options }
+}
+
+/// Which of the NPC's gated plan options are open now: the names of those whose every `when`
+/// condition holds. `Off` for a plan without gated options (or none).
+#[allow(clippy::too_many_arguments, reason = "one NPC\'s decision: its world, its data and where to report")]
+fn option_gates(
+    world: &World,
+    entity: Entity,
+    brain: &NpcBrain,
+    hooks: &NpcHooks,
+    dt: f32,
+    deciding: bool,
+    behavior_id: &str,
+    problems: &mut Vec<(String, String)>,
+) -> Gates {
+    let Some(db) = world.get_resource::<ContentDb>() else { return Gates::Off };
+    let Some(plan) = world.get::<Npc>(entity).and_then(|n| n.plan.as_deref()).and_then(|p| db.get::<AttackPlanDef>(p)) else {
+        return Gates::Off;
+    };
+    if plan.options.iter().all(|o| o.when.is_empty()) {
+        return Gates::Off;
+    }
+    let Some(ctx) = NpcCtx::new(world, entity, brain, dt).map(|c| NpcCtx { deciding, ..c }) else { return Gates::Off };
+    let open = plan
+        .options
+        .iter()
+        .enumerate()
+        .filter(|(_, o)| !o.when.is_empty())
+        .filter(|(oi, o)| {
+            o.when.iter().enumerate().all(|(ci, cond)| {
+                let salt = salt::OPTION + (*oi as u64) * 64 + ci as u64;
+                holds(hooks, &NpcCtx { salt, ..ctx }, cond, behavior_id, problems)
+            })
+        })
+        .map(|(_, o)| o.label().to_owned())
+        .collect();
+    Gates::Open(open)
 }
 
 /// Whether this tick is a decision tick of NPC `entity`, and what its timer is after it:
@@ -733,6 +823,13 @@ pub fn force_state(world: &mut World, entity: Entity, state: &str) -> Result<Str
     let target = brain.target;
     if let Some(mut slot) = world.get_mut::<NpcBrain>(entity) {
         *slot = brain;
+    }
+    // Entering a state by hand clamps the rest as entering it by a transition does.
+    if let Some(cap) = behavior.states.get(state).and_then(|s| s.rest_clamp)
+        && let Some(mut plan) = world.get_mut::<NpcPlan>(entity)
+        && plan.rest > cap
+    {
+        plan.rest = cap;
     }
     world.trigger(NpcStateChanged { entity, from: from.clone(), to: state.to_owned(), target, forced: true });
     Ok(from)

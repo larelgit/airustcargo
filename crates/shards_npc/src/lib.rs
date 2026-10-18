@@ -87,6 +87,7 @@
 
 pub mod ai;
 pub mod brain;
+pub mod chain;
 mod coverage;
 pub mod def;
 pub mod director;
@@ -112,9 +113,11 @@ pub use brain::{
     NpcState, NpcStateChanged, NpcThink, Patrol, TargetView,
 };
 pub use def::{
+    ChainDef,
     AttackOption, AttackPlanDef, AvoidanceDef, BehaviorDef, Cond, DirectorDef, NpcTuning, Param, Params, PerceptionDef, Role,
     SequenceBan, StateDef, TransitionDef, WaitRole,
 };
+pub use chain::{ChainPressed, ChainRefused, NpcChain};
 pub use director::{AttackToken, Grant, TokenGranted, TokenReturned};
 pub use nav::{
     bake_files, bake_region, find_path, local_grid_path, local_grid_route, navmesh_path, navmesh_route, plain_sight, region_nav, route_on,
@@ -123,7 +126,7 @@ pub use nav::{
 };
 pub use overlay::NpcOverlay;
 pub use perception::{sees, sees_within, sight_clear, HeardAt, Noise, Perceived, Sensed, Sound};
-pub use planner::{banned, choose, pick_weighted, resolve, NpcPlan, PastAttack, Resolved};
+pub use planner::{banned, choose, pick_weighted, resolve, NpcOptions, NpcPlan, PastAttack, Resolved};
 pub use strike::{spacing_ticks, wait_of, NpcStrike};
 
 /// Version of the NPC module.
@@ -200,7 +203,9 @@ impl Plugin for NpcPlugin {
             .register_type::<AttackToken>()
             .register_type::<NpcPlan>()
             .register_type::<NpcThink>()
-            .register_type::<NpcStrike>();
+            .register_type::<NpcStrike>()
+            .register_type::<NpcOptions>()
+            .register_type::<NpcChain>();
         // Known to the world from the start, so `&World` queries (tools) work before the
         // first NPC.
         let world = app.world_mut();
@@ -256,14 +261,14 @@ impl Plugin for NpcPlugin {
                     (brain::update_activity, perception::perceive).chain().in_set(NpcSystems::Sense),
                     brain::decide.in_set(NpcSystems::Decide),
                     director::direct.in_set(NpcSystems::Direct),
-                    planner::plan_attacks.in_set(NpcSystems::Plan),
+                    (chain::chain_press, planner::plan_attacks).chain().in_set(NpcSystems::Plan),
                     (nav::nav_paths, nav::nav_steer).chain().in_set(NpcSystems::Navigate),
                     (nav::nav_avoid, nav::drive_intents).chain().in_set(NpcSystems::Drive),
                 ),
             )
             .add_observer(perception::hear_noise)
             .add_observer(perception::hit_noise)
-            .add_observer(strike::strike_started);
+            .add_observer(strike::action_started);
         // The token rule judges the director's books right after it closed them.
         if app.engine_invariants_on() {
             app.init_resource::<TokenAudit>()

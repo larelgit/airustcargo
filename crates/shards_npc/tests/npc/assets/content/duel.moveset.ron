@@ -1,3 +1,5 @@
 {
     "duelist": (inputs: {"light": "jab", "heavy": "smash", "hop": "hop_back"}, stagger: "grunt_stagger"),
+    // A combo fighter: `light` starts the swing, and a `light` pressed in its recovery continues it.
+    "combo": (inputs: {"light": "swing_1", "slow": "slow_1"}, stagger: "grunt_stagger"),
 }

@@ -41,6 +41,15 @@ pub struct NpcPlan {
     pub attacks: u32,
 }
 
+/// Which gated options of an NPC\'s plan are open: the names of those whose `when` holds,
+/// decided each tick with its other decisions (`NpcSystems::Decide`). Only NPCs whose plan
+/// has an option with `when` carry it; such an option is closed without it.
+#[derive(Component, Reflect, Clone, Debug, PartialEq, Default)]
+#[reflect(Component, Default)]
+pub struct NpcOptions {
+    pub allowed: Vec<String>,
+}
+
 /// An attack that started: its option name and tags.
 #[derive(Reflect, Clone, Debug, PartialEq)]
 pub struct PastAttack {
@@ -106,6 +115,8 @@ pub struct Resolved {
     /// The option's tags, the action's tags and the option's name.
     pub tags: Vec<String>,
     pub cost: f32,
+    /// The option has `when` conditions: it may be chosen only while the NPC's [`NpcOptions`] lists it.
+    pub gated: bool,
 }
 
 /// The options of `plan` for a fighter with moveset `moveset`, against a target of body
@@ -128,6 +139,7 @@ pub fn resolve(plan: &AttackPlanDef, db: &ContentDb, moveset: &str, target_radiu
             max: o.and_then(|o| o.max).unwrap_or(reach),
             cooldown: o.map_or(0.0, |o| o.cooldown),
             cost: o.map_or(1.0, |o| o.cost),
+            gated: o.is_some_and(|o| !o.when.is_empty()),
             tags,
             name,
         }
@@ -249,6 +261,7 @@ pub(crate) fn feasible(
     overlapping: &[Vec<String>],
     director: &DirectorDef,
     spaced_out: bool,
+    open: Option<&NpcOptions>,
 ) -> bool {
     o.weight > 0.0
         && plan.cooldown(&o.name) <= 0.0
@@ -260,6 +273,7 @@ pub(crate) fn feasible(
         && budget_left.is_none_or(|left| o.cost <= left + 1e-4)
         && overlapping.iter().all(|tags| director.may_overlap(&o.tags, tags))
         && (!spaced_out || !director.is_strike(&o.tags))
+        && (!o.gated || open.is_some_and(|options| options.allowed.contains(&o.name)))
 }
 
 /// `NpcSystems::Plan`: every token holder that strikes, in `AiId` order, chooses an attack,
@@ -312,7 +326,7 @@ pub(crate) fn plan_attacks(
                 held: &f.drive.held,
                 dead: f.dead,
             };
-            let ok = |o: &Resolved| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director, spaced_out);
+            let ok = |o: &Resolved| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director, spaced_out, f.options);
             let kept = grant.attack.as_ref().and_then(|name| options.iter().position(|o| o.name == *name));
             // In range only: choose again every tick among what fits (a boss picks what
             // reaches); else keep the choice while it stays possible.
@@ -395,6 +409,7 @@ mod tests {
             cooldown: 0.0,
             tags,
             cost: 1.0,
+            gated: false,
         }
     }
 

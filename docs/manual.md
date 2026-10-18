@@ -1510,7 +1510,7 @@ State: `kind` (the hook; by default, the state's own name), `params` (parameters
 
 Engine conditions: `target_known`, `target_seen`, `target_heard`, `target_lost`, `target_within {meters}`, `target_in_leash
 {margin}`, `beyond_leash {margin}`, `at_home {within}`, `arrived`, `has_token`, `attack_done`, `resting`, `busy`, `timer_done`,
-`in_state {secs}`, `health_below {fraction}`, `heard_noise`, `chance {p}` (from `SimRng`).
+`in_state {secs}`, `health_below {fraction}`, `heard_noise`, `chance {p}` (from `SimRng`), `deciding` (see "Decision cadence").
 
 **Your own functions in the game**: named functions that the content refers to. A game function with the same name as an engine function replaces it.
 
@@ -1523,11 +1523,15 @@ app.add_npc_condition("low_morale", |c, p| c.health_fraction() < p.num("below", 
    });
 ```
 
-`NpcCtx` gives access to the NPC itself, its target (`target`: the distance, and whether it is visible), its leash, its token, its plan, the world (read only), and `rng(salt)` from `SimRng`.
+`NpcCtx` gives access to the NPC itself, its target (`target`: the distance, and whether it is visible), its leash, its token, its plan, the world (read only), `rng(salt)` from `SimRng`, `deciding()` (a decision tick, see below) and `strike_ready()` (the strike spacing allows a strike now, see "Strike spacing").
+
+**Decision cadence.** `think: Some(0.15)` on a behaviour gives each of its NPCs a decision timer (the component `NpcThink`, present only on NPCs of such behaviours). The timer counts down only while the NPC runs no action, and a busy NPC freezes it. Each time it runs out, the tick is a decision tick: `NpcCtx::deciding()` and the condition `deciding` hold, and the timer starts over (the remainder is not carried). It starts at zero, so the first tick the NPC is free is a decision tick. The period is whole ticks: `think: 0.15` at 60 Hz decides every 9 ticks (`ceil(0.15 / tick)`, with the usual hair of slack for sums of tick lengths), and `0.25` every 15. A behaviour without `think` has every tick as a decision tick, and nothing is stored. The states and conditions that *decide* (roll a die, pick a move) ask `deciding()`; what has to be done every tick (aiming, moving) does not wait for it. The engine's own states re-derive their output every tick and ignore the cadence. Transitions are not held back by it: a transition that should wait for a decision lists `deciding` among its conditions (`when: ["deciding", ("chance", {"p": 0.08})]` is a roll once per decision).
+
+**Rest clamp.** A state can shorten the plan's rest. `rest_clamp: Some(0.25)` on a state clamps `NpcPlan.rest` to at most that many seconds once, when the NPC enters the state (a rage that makes the next attack come sooner); a state hook can do the same on any tick with `out.rest_cap = Some(0.25)` (set it once: a hook that sets it every tick clamps every pause drawn later).
 
 ### Perception
 
-The parameters belong to the `perception` kind: `sight_range`, `fov_deg`, `eye_height`, `near`, `line_of_sight`, `hearing`, `memory`.
+The parameters belong to the `perception` kind: `sight_range`, `fov_deg`, `eye_height`, `near`, `line_of_sight`, `hearing`, `memory`, `keep_range`.
 
 ```ron
 // content/npc/monsters.perception.ron
@@ -1538,6 +1542,8 @@ The parameters belong to the `perception` kind: `sight_range`, `fov_deg`, `eye_h
 ```
 
 Sight: a hostile fighter (`Team`) within `sight_range`, in the field of view (or closer than `near`, whichever way it faces), with a clear ray from the eyes to the body through the `WORLD` layer. Hearing: `Noise { position, radius, source, origin }` events (the game fires them itself; the engine makes a noise on every hit and every sprint) reach an NPC within `radius × hearing` of `position` and are kept in its `Perceived`. An NPC that does not see the source learns its place from `origin` (where the source stands; `None` means `position`). A hit's noise sounds where the hit happened, and the attacker is marked where it stands. Memory: what was noticed stays known for `memory` seconds, at the last place. The focus target sticks to the one already known, until another one is much closer. What an NPC knows lies in its components (`Perceived`), and goes into the replay hash and the snapshot in full.
+
+**Keep range.** `keep_range: Some(18.0)` makes `sight_range` govern only what is noticed *anew*: a target that is still known (inside its `memory`) is seen, and its place refreshed, up to `keep_range` metres, with the same field of view and a clear ray. Without it, a target between `sight_range` and where the NPC's chase should end is "lost" at once and chased to a stale point until the memory runs out. `keep_range` must be at least `sight_range` (a content error otherwise). Hearing and the focus rule are unchanged. `npc_state` shows `perception.keep_range` and marks a target seen beyond `sight_range` as `kept`; `npc_overlay` says `keeps e5 17.2m N`.
 
 ### Combat director and tokens
 
@@ -1554,6 +1560,17 @@ Sight: a hostile fighter (`Team`) within `sight_range`, in the field of view (or
 Only an NPC with a token starts an attack, and it holds the token until the attack ends. The director has as many tokens as the table gives for the number of living players. (With more players than the table has, the last entry applies; with fewer, the first.) Those who ask are served in the order they started waiting, then by `AiId`. A token comes back when the attack ends; when it was not used for `patience` seconds (`unused`); when its holder dies, falls asleep (`dormant`), forgets the target (`target gone`), leaves the fight (`left the fight`), or is put under an agent's orders (`under orders`). When the number of living players drops, the tokens above the new limit come back at once, the newest first (`limit lowered`). The exception is an attack that is already running: it goes on to its end with its token. An attack is an action that a pressed input started, not a forced one (a stun, a flinch, a death). Whether it has hits does not matter. A cast with a projectile from an effect is an attack too: it holds its token to the end, and the planner remembers it (cooldown, bans on sequences, counter). A target that the NPC has forgotten (it has left its perception) is gone for the director and the planner. The planner presses only on a target that the NPC senses now. An NPC under an agent's orders (via the `move_to` and `attack` tools) drops out of the fight: it takes no tokens and no waiting places, presses nothing, and lets go of what it held.
 
 Without a token, an NPC waits in a **role** around its target. The waiting NPCs get places in turn: place `n` takes role `n % number of roles` from `waiting` (`Circle` walks in a circle, `Strafe` steps sideways, switching sides every `period` seconds, `Hold` keeps its distance). Also: `budget` is how much danger (the `cost` of attacks) may be in flight at one target. `allowed` is which pairs of tags may hit the target at the same time (`("light", "heavy")`, and `"*"` for any tag). The planner checks them when it presses. The director has no state of its own. Everything is in the NPC's components (`AttackToken`, `NpcPlan`), and the replay and the snapshot carry all of it.
+
+**Strike spacing.** `min_spacing: 0.7` on a director means that strikes of different NPCs of that director start at least 0.7 s apart (two nearly simultaneous blows cannot both be parried). `spacing_exempt_tags: ["reposition", "support"]` names the actions that are no strike: a retreat or a buff neither waits nor counts (matched against the action's tags, the plan option's tags and the option's name). The rules:
+
+- Every strike an NPC of such a director starts is *noted* on the NPC, as the component `NpcStrike { last_start, gated }`, at the tick its action began: a planner press, a combo continuation, or something a state hook pressed itself. Exempt actions are not noted, forced actions (a stagger) are not strikes, and an NPC of a director with no `min_spacing` never gets the component, so a game that does not use the rule stores and hashes nothing.
+- A strike is *spaced* when no other NPC of the same director noted one within the last `ceil(min_spacing / tick)` ticks (0.7 s at 60 Hz is 42: the second NPC may start on the 42nd tick after the first). An NPC's own series is not held back by itself. A press that has not started yet counts from the tick it was pressed, and so do the presses of the current tick, in `AiId` order, so two NPCs never press on the same tick.
+- The director grants no token for a strike that is not spaced (only if every option it could choose is exempt), the planner does not press one and a combo continuation (`chain`, below) that is not spaced is refused and ends its chain. A token holder that has to wait keeps its token like any holder that cannot press yet (until `patience` runs out), and the options the director exempts stay open to it.
+- A state hook that presses a strike itself asks `NpcCtx::strike_ready()` first (it is true for an NPC of a director without a spacing). Every NPC decides on the same world, so two hooks that are both ready on the same tick both press; for ordered strikes use the token path.
+- The clock is the simulation's tick count: the spacing is the same with a window and without one, in replays and in snapshots. All NPCs of a director are one encounter; telling encounters apart by distance is not done yet.
+- The engine rule `npc.strike_spacing` holds the starts that went through the rule (`gated`: the planner's presses and checked continuations) to it; a hook's own press is noted but not held to it.
+
+`npc_state` shows `strike: {last_start, gated}` and, while the NPC is held back, `spacing: {waits_for: "e7", ticks_left: 31}`; `npc_overlay` adds `waits 31t for e7` to its line.
 
 ```text
 $ shards scenario crates/sandbox/scenarios/npc_director.scenario   # three skeletons against one player
@@ -1583,11 +1600,23 @@ The `attack_plan` content kind lists the attacks an NPC picks its next one from.
 }
 ```
 
-Option (`AttackOption`): `input` of the moveset or `action`, `name`, `weight`, the distance window `min`/`max` (by default, the action's reach times `cover`), `cooldown`, `tags`, `cost` (the share of the target's budget).
+Option (`AttackOption`): `input` of the moveset or `action`, `name`, `weight`, the distance window `min`/`max` (by default, the action's reach times `cover`), `cooldown`, `tags`, `cost` (the share of the target's budget), `when` (conditions), `chain` (a combo continuation).
 The planner keeps the options it can pick: not on cooldown, not banned by the previous attacks, whose `can_start` in the action machine says "now or later", and that fit the budget and the allowed combinations.
 It picks one by weight from the options whose window holds the distance (otherwise from all of them, unless `in_range_only`), using the `SimRng` stream.
 Then it moves into that window and presses the input.
 The `rest` pause counts down only while the NPC is not busy with any action. A stun after a parry does not count as rest. Cooldowns always run.
+
+**Rest semantics.** Three more fields of the plan shape the pauses (all optional; unset, the plan behaves as above):
+
+- `rest_interrupted: Some((0.2, 0.45))`: the pause after an attack that was *interrupted*, that is, cut short by a forced action in its place (a stagger), instead of `rest`. It is drawn as it is, with no scaling. Without it an interrupted attack rests like a finished one.
+- `rest_runs_while_busy: true`: the rest counts down in every state, a stagger or any other action included, as a cooldown does (a rest of 0.5 s drawn when a 0.6 s stagger begins is over when it ends). Off, a stagger is no rest.
+- `first_rest: Some((0.5, 0.5))`: the rest an NPC starts with, drawn on the tick its brain first runs (its pause at spawn). Without it the NPC asks for a token at once.
+
+Every draw comes from the NPC's own `SimRng` stream with its own salt.
+
+**Conditional options.** `when: ["enraged", ("health_below", {"fraction": 0.5})]` on an option (the same conditions as a behaviour's transitions, `!` negates) keeps the option out of the choice, and out of the director's reckoning of whether the NPC has anything to strike with, while the conditions do not all hold. A phase that adds a move or takes one away is a condition on the option, not a second plan. The conditions are evaluated with the NPC's other decisions (`NpcSystems::Decide`, on the world as it is) and the result is kept on the NPC as `NpcOptions { allowed }`, a component that only NPCs whose plan has gated options carry; an option that has `when` and no entry there (the NPC's first tick) is closed. An unknown condition is named once in the journal and never holds. `npc_state` lists `plan.options: {open, closed}` for such a plan.
+
+**Combo continuation.** `chain: Some((input: "light", chance: 0.7))` on an option says that when its action starts, a die is rolled (the NPC's `SimRng` stream, its own salt) and, on success, the NPC presses `input` at the *start of the action's recovery phase* (the phase named `recovery`, else the last one). The press goes into the same press queue as anyone's, with the same buffer life (`input_buffer`, 0.15 s), so it takes effect only if the action has a cancel window that lets the input through (`Combo(...)`) opening before the press dies: a window that opens later than the buffer life makes a chain that never fires, as the content says, with no special case in the engine. The continuation is itself an action start and rolls the odds written on the option that names its action (an `action: "swing_2"` option of `weight: 0.0` carries the link of a continuation that no moveset input starts; the planner never picks it). The state is the component `NpcChain { input, instance, pressed }` (inserted when a roll succeeds, removed when the attack ends, is cut short by a forced action, or its continuation starts or is refused). If the director spaces strikes and the continuation is a strike, a continuation that is not spaced is *refused*: nothing is pressed and the chain ends. `ChainPressed` and `ChainRefused` are journaled (`e7 chains light after swing_1`, `e7 chain refused after swing_1: e8 began a strike 12 ticks ago (30 left)`); `npc_state` shows `chain`.
 
 ### Leash, home and zones
 
@@ -2641,7 +2670,7 @@ The sandbox has two of them: `health_in_range` (health is in `0..=max`) and `bod
 `e7 fell out of the world: y = -80.0`. No sandbox scenario, test or reference replay breaks them. A panic inside
 a rule is a violation too: `the rule itself panicked: …`.
 
-**The engine's own rules.** A game with all the engine modules gets seven rules of the engine, one or two from each module (a game that leaves out `npc` has no NPC rules). They are named
+**The engine's own rules.** A game with all the engine modules gets eight rules of the engine, one or two from each module (a game that leaves out `npc` has no NPC rules). They are named
 `<module>.<rule>`, checked before the game's rules, and listed by `shards assert list` as `engine rule`. Like a game's
 rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `add_ai_invariant` refuse its name), and
 `assert_reset` re-arms it after it fires. A module registers its rules with `add_engine_invariant(name, rule)` from
@@ -2655,6 +2684,7 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `action.resources_in_range` | `Health`, `Stamina` and `Poise` are finite with `max > 0` and `0 <= current <= max`. Dead bodies are checked too (`current` is 0). A game that wants a buff above `max` raises `max` with it |
 | `action.running_sane` | a running action of a fighter exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. Without a content database the rule passes |
 | `npc.state_known` | `NpcBrain.state` is a state of the NPC's behaviour. Three carve-outs, each a state the engine itself leaves behind: an empty state (before the NPC's first decided tick), an inactive NPC (dormant or dead: the brain passes it through, so a state a hot reload removed stays until it wakes), and an NPC whose behaviour is not in content (that is reported once as a content problem) |
+| `npc.strike_spacing` | two NPCs of one director whose `min_spacing` is set never began strikes less than that apart (in whole ticks), for the starts that went through the spacing rule: the planner's presses and checked combo continuations (`NpcStrike::gated`). Judged from the last strike each NPC noted. Two carve-outs: a strike a state hook pressed itself is noted but not held to the rule (the hook may or may not have asked `strike_ready`), and an action with one of the director's `spacing_exempt_tags` is not noted at all. A director without a `min_spacing` is never judged |
 | `npc.tokens_within_limit` | after the director ran, no token is held by a dead body, and each director holds no more tokens than its limit for the living players, unless every holder beyond the limit has its attack in flight (an attack under way keeps its token to its end). It is judged right after the director, not at the end of the tick: a holder that dies in `Resolve` keeps its token until the next tick's director takes it back, so the end of the tick would fire on every kill. A small system next to the director writes what it found to the resource `TokenAudit`, which the rule reads; it is recomputed every tick and is not part of a snapshot or a replay |
 
 Each rule reports the lowest id first and `(+N more)`, in the style `e6 Health.current = 700 outside 0..=600`, and
@@ -2677,13 +2707,14 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-11 rules, checked after every tick
+12 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
   action.resources_in_range  engine rule  armed
   action.running_sane  engine rule  armed
   npc.state_known  engine rule  armed
+  npc.strike_spacing  engine rule  armed
   npc.tokens_within_limit  engine rule  armed
   health_in_range  game rule  armed
   bodies_in_world  game rule  armed

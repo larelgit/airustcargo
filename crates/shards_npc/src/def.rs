@@ -186,6 +186,10 @@ pub struct StateDef {
     /// ran out.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<(f32, f32)>,
+    /// On entry the plan's rest is clamped to at most this many seconds, once (a rage that
+    /// brings the next attack sooner). A rest that is already shorter stays.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rest_clamp: Option<f32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub transitions: Vec<TransitionDef>,
 }
@@ -250,6 +254,11 @@ impl ContentDef for BehaviorDef {
                 && !(lo >= 0.0 && hi >= lo && hi.is_finite())
             {
                 refs.error(format!("states.{name}.duration ({lo}, {hi}) must be 0 <= min <= max"));
+            }
+            if let Some(cap) = state.rest_clamp
+                && !(cap >= 0.0 && cap.is_finite())
+            {
+                refs.error(format!("states.{name}.rest_clamp {cap} must be a number >= 0"));
             }
             for (i, t) in state.transitions.iter().enumerate() {
                 if !self.states.contains_key(&t.to) {
@@ -526,11 +535,51 @@ pub struct AttackOption {
     pub tags: Vec<String>,
     /// Its share of the target's collision budget while it is in flight.
     pub cost: f32,
+    /// Conditions (the behaviour's: `["enraged", ("health_below", {"fraction": 0.5})]`, `!`
+    /// negates) that must all hold for the option to be chosen; the planner and the director
+    /// do not count it while one does not. Evaluated with the NPC's other decisions.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub when: Vec<Cond>,
+    /// A combo continuation: when this option's action starts, the NPC rolls `chance` and, on
+    /// success, presses `input` at the start of the action's recovery.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain: Option<ChainDef>,
+}
+
+/// A combo continuation of an attack ([`AttackOption::chain`]). The input goes into the press
+/// queue like anyone's, so it continues the attack only if the action has a cancel window
+/// (`Combo`) that lets it through before the press runs out (`input_buffer`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct ChainDef {
+    /// The moveset input pressed at the start of the recovery: the one a `Combo` of the
+    /// action answers.
+    pub input: String,
+    /// The odds, 0 to 1, rolled once when the attack starts.
+    pub chance: f32,
+}
+
+impl Default for ChainDef {
+    fn default() -> Self {
+        Self { input: String::new(), chance: 1.0 }
+    }
 }
 
 impl Default for AttackOption {
     fn default() -> Self {
-        Self { input: None, action: None, name: None, weight: 1.0, min: 0.0, max: None, cooldown: 0.0, tags: Vec::new(), cost: 1.0 }
+        Self {
+            input: None,
+            action: None,
+            name: None,
+            weight: 1.0,
+            min: 0.0,
+            max: None,
+            cooldown: 0.0,
+            tags: Vec::new(),
+            cost: 1.0,
+            when: Vec::new(),
+            chain: None,
+        }
     }
 }
 
@@ -646,6 +695,19 @@ impl ContentDef for AttackPlanDef {
                 && !(max >= o.min && max.is_finite())
             {
                 refs.error(format!("{at}.max {max} must be at least min {}", o.min));
+            }
+            for (ci, c) in o.when.iter().enumerate() {
+                if c.name.is_empty() {
+                    refs.error(format!("{at}.when[{ci}] is a condition without a name"));
+                }
+            }
+            if let Some(chain) = &o.chain {
+                if chain.input.is_empty() {
+                    refs.error(format!("{at}.chain names no input; give the moveset input the continuation presses, e.g. (input: \"light\", chance: 0.7)"));
+                }
+                if !(0.0..=1.0).contains(&chain.chance) {
+                    refs.error(format!("{at}.chain.chance is a probability in 0..1 (is {})", chain.chance));
+                }
             }
         }
         if !self.options.is_empty() && self.options.iter().all(|o| o.weight <= 0.0) {

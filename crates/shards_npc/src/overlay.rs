@@ -116,12 +116,20 @@ pub fn overlay_lines(world: &World) -> Vec<String> {
     let db = world.get_resource::<ContentDb>();
     let mut rows: Vec<_> = npcs.iter(world).filter(|row| near_players(&players, row.3.translation)).collect();
     rows.sort_by_key(|row| *row.0);
+    // What only the duel rules put on an NPC's mind (the entity is needed to read it).
+    let entities: Vec<Entity> = {
+        let Some(mut q) = world.try_query::<(Entity, &AiId)>() else { return Vec::new() };
+        let all: Vec<(AiId, Entity)> = q.iter(world).map(|(e, id)| (*id, e)).collect();
+        rows.iter().filter_map(|row| all.iter().find(|(id, _)| id == row.0).map(|(_, e)| *e)).collect()
+    };
     rows.into_iter()
-        .map(|(id, npc, brain, tf, token, home, perceived, agent, controller, own)| {
+        .zip(entities)
+        .map(|((id, npc, brain, tf, token, home, perceived, agent, controller, own), entity)| {
             let here = tf.translation;
             let mut parts = vec![npc_line(brain, token, home, Some(tf)).unwrap_or_else(|| "(not started)".into())];
             if brain.active {
                 parts.extend(perceived.map(|p| senses(here, p)).unwrap_or_default());
+                parts.extend(perceived.map(|p| crate::ai::extra_parts(world, entity, npc, p, here)).unwrap_or_default());
                 parts.extend(agent.map(route).unwrap_or_default());
                 let body = controller.map_or_else(|| own.cloned().unwrap_or_default(), |c| c.resolve(own, db).clone());
                 let walking = agent.is_some_and(|a| a.goal.is_some() && !a.arrived);

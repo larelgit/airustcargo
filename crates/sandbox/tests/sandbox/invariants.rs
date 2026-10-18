@@ -127,7 +127,7 @@ fn a_session_rule_fires_once_until_it_is_reset() {
 fn rules_are_listed_and_checked_before_they_are_added() {
     let mut app = sandbox::test_app(42);
     let list = text(&called(&mut app, "assert_list", json!({}))).to_owned();
-    assert!(list.starts_with("9 rules, checked after every tick"), "{list}");
+    assert!(list.starts_with("10 rules, checked after every tick"), "{list}");
     for engine in ENGINE_RULES {
         assert!(list.contains(&format!("  {engine}  engine rule  armed")), "{engine}: {list}");
     }

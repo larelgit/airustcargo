@@ -16,4 +16,22 @@
     ),
     // Presses a strike itself (the test's hook `press_when_ready`), with no token.
     "presser": (initial: "go", states: {"go": (kind: "press_when_ready")}),
+    // Fights; below half health it enters `rage_fight`, which clamps the plan's rest to 0.1 s once.
+    "raging": (
+        initial: "fight",
+        states: {
+            "fight": (kind: "attack", transitions: [(to: "rage_fight", when: [("health_below", {"fraction": 0.5})])]),
+            "rage_fight": (kind: "attack", rest_clamp: Some(0.1)),
+        },
+    ),
+    // The same, with a hook that sets the cap itself, once, on entering.
+    "hooked": (
+        initial: "fight",
+        states: {
+            "fight": (kind: "attack", transitions: [(to: "rage_fight", when: [("health_below", {"fraction": 0.5})])]),
+            "rage_fight": (kind: "cap_rest"),
+        },
+    ),
+    // Presses a strike whenever it is free, without asking the spacing (the test's hook `unruly`).
+    "unruly_fighter": (initial: "go", states: {"go": (kind: "unruly")}),
 }

@@ -32,7 +32,8 @@ use shards_motion::Collider;
 use crate::brain::{clamp_to_leash, salt, Home, Npc, NpcBrain, NpcDrive};
 use crate::def::{AttackPlanDef, DirectorDef, Role, WaitRole};
 use crate::perception::Perceived;
-use crate::planner::{feasible, resolve, InFlight, NpcPlan};
+use crate::chain::NpcChain;
+use crate::planner::{feasible, resolve, InFlight, NpcOptions, NpcPlan};
 use crate::strike::{note_list, pool, spacing_ticks, waiting, NpcStrike};
 
 /// An NPC's attack token, while it holds one, and its place in the queue while it asks.
@@ -133,6 +134,8 @@ pub(crate) struct Fighting {
     pub token: &'static mut AttackToken,
     pub plan: &'static mut NpcPlan,
     pub strike: Option<&'static NpcStrike>,
+    pub options: Option<&'static NpcOptions>,
+    pub chain: Option<&'static mut NpcChain>,
     pub fighter: &'static Fighter,
     pub state: &'static ActionState,
     pub buffer: &'static InputBuffer,
@@ -366,7 +369,7 @@ pub(crate) fn direct(
         let (budget, overlapping) = inflight.on(target, id, &director);
         // No token for a strike that would come too soon after another NPC's.
         let spaced_out = waiting(&notes, id, &d, tick.0, spacing_ticks(director.min_spacing, dt)).is_some();
-        let any = options.iter().any(|o| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director, spaced_out));
+        let any = options.iter().any(|o| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director, spaced_out, f.options));
         if !any {
             continue;
         }

@@ -176,6 +176,10 @@ fn a_transition_can_wait_for_a_decision_tick() {
 
 /// Two duelists on `plan` facing a hero between them, fighting by `director`.
 fn pair(director: &str, plan: &str, seed: u64, setup: impl FnOnce(&mut App)) -> (App, [Entity; 2]) {
+    pair_of("duelist", director, plan, seed, setup)
+}
+
+fn pair_of(moveset: &str, director: &str, plan: &str, seed: u64, setup: impl FnOnce(&mut App)) -> (App, [Entity; 2]) {
     let mut app = app_seeded(seed, |app| {
         record_starts(app);
         setup(app);
@@ -183,7 +187,7 @@ fn pair(director: &str, plan: &str, seed: u64, setup: impl FnOnce(&mut App)) -> 
     let world = app.world_mut();
     player(world, 0, Vec3::ZERO);
     let make = |world: &mut World, z: f32| {
-        npc(world, "duelist", Npc::new("grunt", "grunt").with_plan(plan).with_director(director), Vec3::new(0.0, 0.0, z), if z > 0.0 { N } else { S })
+        npc(world, moveset, Npc::new("grunt", "grunt").with_plan(plan).with_director(director), Vec3::new(0.0, 0.0, z), if z > 0.0 { N } else { S })
     };
     let a = make(world, 1.2);
     let b = make(world, -1.2);
@@ -279,4 +283,224 @@ fn a_state_hook_that_asks_strike_ready_keeps_the_spacing_too() {
     assert!(gaps.iter().all(|g| *g == 0 || *g >= 42), "{gaps:?}");
     // Noted, but not held to the engine rule: the hook is in charge.
     assert!(app.world().get::<NpcStrike>(who[1]).is_some_and(|n| !n.gated));
+}
+
+// --- N2: conditional options and the rest clamp --------------------------------------------
+
+fn rage(c: &NpcCtx, _: &Params) -> bool {
+    c.health_fraction() < 0.5
+}
+
+fn cap_rest(c: &NpcCtx, _: &Params, out: &mut NpcOutput) {
+    out.request_token = true;
+    out.strike = true;
+    out.waiting = true;
+    out.leashed = true;
+    out.face = c.target.map(|t| t.pos);
+    if c.brain.since <= 1e-6 {
+        out.rest_cap = Some(0.1);
+    }
+}
+
+/// Which attacks `who` started, in order.
+fn started(app: &App, who: Entity) -> Vec<(u64, String)> {
+    app.world().resource::<Started>().0.iter().filter(|(_, e, a)| *e == who && a != "grunt_stagger").map(|(t, _, a)| (*t, a.clone())).collect()
+}
+
+#[test]
+fn an_option_with_conditions_is_chosen_only_while_they_hold() {
+    let (mut app, who) = duel("gated", |app| {
+        app.add_npc_condition("rage", rage);
+    });
+    step(&mut app, 400);
+    let calm: Vec<String> = started(&app, who).into_iter().map(|(_, a)| a).collect();
+    assert!(calm.len() >= 3 && calm.iter().all(|a| a == "jab"), "only the calm option while healthy: {calm:?}");
+    let opts = app.world().get::<shards_npc::NpcOptions>(who).expect("a plan with gated options has the component");
+    assert_eq!(opts.allowed, vec!["calm"]);
+    // Wounded, the other option opens and the first closes.
+    app.world_mut().get_mut::<shards_action::Health>(who).unwrap().current = 20.0;
+    let mark = started(&app, who).len();
+    step(&mut app, 400);
+    let fierce: Vec<String> = started(&app, who).into_iter().skip(mark).map(|(_, a)| a).collect();
+    assert!(fierce.len() >= 3 && fierce.iter().skip(1).all(|a| a == "smash"), "only the fierce one when raging: {fierce:?}");
+    assert_eq!(app.world().get::<shards_npc::NpcOptions>(who).unwrap().allowed, vec!["fierce"]);
+}
+
+#[test]
+fn a_plan_without_conditions_carries_no_options_component() {
+    let (mut app, who) = duel("pair", |_| {});
+    step(&mut app, 60);
+    assert!(app.world().get::<shards_npc::NpcOptions>(who).is_none());
+}
+
+#[test]
+fn an_option_whose_condition_is_unknown_is_closed_and_named_once() {
+    let (mut app, who) = duel("gated", |_| {});
+    step(&mut app, 120);
+    let named: Vec<String> = all_journal(&app).into_iter().filter(|l| l.contains("unknown condition `rage`")).collect();
+    assert_eq!(named.len(), 1, "{named:?}");
+    // `!rage` never holds either (an unknown condition never holds, negated or not): nothing opens.
+    assert!(app.world().get::<shards_npc::NpcOptions>(who).unwrap().allowed.is_empty());
+    assert!(started(&app, who).is_empty());
+}
+
+/// Plays `behavior` until its first attack ends, wounds the NPC, and returns the ticks from the
+/// wound to the next attack's start.
+fn wounded_then_strikes(behavior: &str) -> u64 {
+    let mut app = app_with(|app| {
+        record_starts(app);
+        app.add_npc_state("cap_rest", cap_rest);
+    });
+    let world = app.world_mut();
+    player(world, 0, Vec3::ZERO);
+    let who = npc(world, "duelist", Npc::new(behavior, "grunt").with_plan("long_rest").with_director("duel"), Vec3::new(0.0, 0.0, 1.2), N);
+    // The first jab, then its token comes back and a rest of 1 s (60 ticks) begins.
+    step(&mut app, 60);
+    assert_eq!(started(&app, who).len(), 1);
+    let rest = app.world().get::<shards_npc::NpcPlan>(who).unwrap().rest;
+    assert!(rest > 0.5, "resting: {rest}");
+    app.world_mut().get_mut::<shards_action::Health>(who).unwrap().current = 20.0;
+    let wounded = app.world().resource::<ai_core::SimTick>().0;
+    step(&mut app, 120);
+    let next = started(&app, who)[1].0;
+    next - wounded
+}
+
+#[test]
+fn entering_a_state_can_clamp_the_rest_once() {
+    // The wound is seen on the next tick; the new state clamps the 1 s rest to 0.1 s.
+    let clamped = wounded_then_strikes("raging");
+    let hooked = wounded_then_strikes("hooked");
+    assert!((6..=9).contains(&clamped), "{clamped} ticks: 0.1 s of rest is 6, plus the tick it was seen on");
+    assert_eq!(clamped, hooked, "a hook that sets rest_cap once does the same");
+    // The control: the same wound without a state that clamps leaves the second to run.
+    let control = wounded_then_strikes("grunt");
+    assert!(control > clamped + 20, "{control} ticks without a clamp");
+}
+
+// --- N4: combo continuation ----------------------------------------------------------------
+
+/// A lone combat fighter with `plan` against a hero 1.2 m away.
+fn combo_duel(plan: &str, seed: u64) -> (App, Entity) {
+    let mut app = app_seeded(seed, record_starts);
+    let world = app.world_mut();
+    player(world, 0, Vec3::ZERO);
+    let who = npc(world, "combo", Npc::new("grunt", "grunt").with_plan(plan).with_director("duel"), Vec3::new(0.0, 0.0, 1.2), N);
+    (app, who)
+}
+
+#[test]
+fn a_chain_presses_at_the_start_of_the_recovery_and_the_combo_window_does_the_rest() {
+    let (mut app, who) = combo_duel("chain_always", 7);
+    step(&mut app, 300);
+    let all: Vec<(u64, String)> = started(&app, who);
+    let names: Vec<&str> = all.iter().map(|(_, a)| a.as_str()).collect();
+    assert_eq!(&names[..4], ["swing_1", "swing_2", "swing_3", "swing_1"], "{all:?}");
+    // swing_1 begins; its recovery starts 24 ticks in and the press is made on the first tick the NPC
+    // sees it; the window opens 27 ticks in, within the press's 9 ticks of life: the continuation
+    // starts at the first tick of the window.
+    let (first, second, third) = (all[0].0, all[1].0, all[2].0);
+    assert_eq!(second - first, 27, "{all:?}");
+    assert_eq!(third - second, 27, "the continuation rolls the link written on its own option: {all:?}");
+    // swing_3 has no link: it ends, rests, and the series starts over.
+    assert!(all[3].0 - third > 48, "{all:?}");
+    let story = journal(&app);
+    assert!(story.iter().any(|l| l.contains("chains light after swing_1")), "{story:?}");
+    assert!(story.iter().any(|l| l.contains("chains light after swing_2")));
+}
+
+#[test]
+fn a_chain_whose_window_opens_after_the_press_died_never_fires() {
+    let (mut app, who) = combo_duel("chain_slow", 7);
+    step(&mut app, 400);
+    let names: Vec<String> = started(&app, who).into_iter().map(|(_, a)| a).collect();
+    assert!(names.len() >= 3 && names.iter().all(|a| a == "slow_1"), "{names:?}");
+    // The press was made and died in the queue.
+    assert!(lines(&app, "chains light after slow_1").len() >= 3);
+    assert!(!lines(&app, "slow_2").iter().any(|l| l.contains("slow_2 ")), "no continuation");
+}
+
+#[test]
+fn odds_of_zero_and_one_and_in_between_are_kept() {
+    let (mut app, who) = combo_duel("chain_never", 7);
+    step(&mut app, 600);
+    assert!(started(&app, who).iter().all(|(_, a)| a == "swing_1"));
+    assert!(app.world().get::<shards_npc::NpcChain>(who).is_none());
+    let (mut app, who) = combo_duel("chain_none", 7);
+    step(&mut app, 600);
+    assert!(started(&app, who).iter().all(|(_, a)| a == "swing_1"));
+    assert!(lines(&app, "chains").is_empty(), "nothing is journaled when no chain is written");
+    // Half: about half of the attacks continue, over many seeds.
+    let (mut first, mut second) = (0, 0);
+    for seed in 0..40 {
+        let (mut app, who) = combo_duel("chain_half", seed);
+        step(&mut app, 900);
+        for (_, a) in started(&app, who) {
+            match a.as_str() {
+                "swing_1" => first += 1,
+                "swing_2" => second += 1,
+                other => panic!("{other}"),
+            }
+        }
+    }
+    let share = second as f32 / first as f32;
+    assert!((0.4..0.6).contains(&share), "{second} continued of {first} ({share:.2})");
+}
+
+#[test]
+fn a_chain_is_cut_with_its_attack() {
+    let (mut app, who) = combo_duel("chain_always", 7);
+    // Into the first swing: the roll has been made.
+    step(&mut app, 8);
+    let chain = app.world().get::<shards_npc::NpcChain>(who).cloned().expect("rolled when the attack began");
+    assert_eq!((chain.input.as_str(), chain.pressed), ("light", false));
+    // A stagger cuts the attack: the chain goes with it and nothing is pressed.
+    assert!(stagger(app.world_mut(), who, StaggerCause::Dev));
+    step(&mut app, 60);
+    assert!(app.world().get::<shards_npc::NpcChain>(who).is_none() || started(&app, who).len() > 1);
+    assert!(lines(&app, "chains").is_empty(), "{:?}", journal(&app));
+    assert!(started(&app, who).iter().take(1).all(|(_, a)| a == "swing_1"));
+}
+
+/// A hook that presses a strike without asking: its starts are noted but the planner cannot hold
+/// them back.
+fn unruly(_: &NpcCtx, _: &Params, out: &mut NpcOutput) {
+    out.press.push("light".into());
+}
+
+#[test]
+fn a_refused_continuation_ends_the_chain() {
+    // The first duelist strikes whenever it can (a hook that never asks); the second plans its
+    // strikes, and its continuations meet the other's starts.
+    let (mut app, who) = pair_of("combo", "spaced", "chain_always", 7, |app| {
+        app.add_npc_state("unruly", unruly);
+    });
+    app.world_mut().entity_mut(who[0]).insert(Npc::new("unruly_fighter", "grunt").with_director("spaced"));
+    step(&mut app, 1500);
+    let refused = lines(&app, "refused after");
+    assert!(!refused.is_empty(), "no continuation was refused: {:?}", journal(&app).len());
+    assert!(refused[0].contains("began a strike less than 42 ticks ago"), "{refused:?}");
+    // The refusal ended the chain: the planner's fighter went on to rest instead of swinging the second blow.
+    let planned = started(&app, who[1]);
+    assert!(planned.iter().any(|(_, a)| a == "swing_1"), "{planned:?}");
+    let firsts = planned.iter().filter(|(_, a)| a == "swing_1").count();
+    let seconds = planned.iter().filter(|(_, a)| a == "swing_2").count();
+    assert!(seconds < firsts, "refused chains did not continue: {firsts} first blows, {seconds} second");
+    // The planner's own strikes stay 42 ticks from the other's that came before them (the engine rule
+    // `npc.strike_spacing` held every tick, or `step` would have stopped).
+    assert!(app.world().get::<shards_npc::NpcStrike>(who[0]).is_some_and(|n| !n.gated), "the hook's starts are not held to the rule");
+}
+
+#[test]
+fn chain_numbers_are_checked() {
+    use shards_content::{db::Source, ContentDb, ContentKinds};
+    let mut kinds = ContentKinds::default();
+    kinds.register::<shards_npc::AttackPlanDef>();
+    kinds.register::<shards_action::ActionDef>();
+    let text = r#"{ "p": (options: [(input: "light", chain: Some((input: "", chance: 1.5)))]) }"#;
+    let db = ContentDb::build(&kinds, &[Source { path: "content/p.attack_plan.ron".into(), text: text.into() }]);
+    let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert!(errors[0].contains("options[0].chain names no input"), "{errors:?}");
+    assert!(errors[1].contains("options[0].chain.chance is a probability in 0..1 (is 1.5)"), "{errors:?}");
 }

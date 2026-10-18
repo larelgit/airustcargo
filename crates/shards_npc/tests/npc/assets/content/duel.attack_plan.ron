@@ -12,4 +12,26 @@
     "pair": (options: [(input: "light")], rest: (0.1, 0.1)),
     // A retreat, tagged by its action as a repositioning.
     "hopper": (options: [(input: "hop", max: Some(5.0))], rest: (0.1, 0.1)),
+    // The first swing continues with the odds written on it; the second has its own link
+    // (an option of weight 0 that only a chain reaches, named by its action).
+    "chain_always": (
+        options: [(input: "light", chain: Some((input: "light", chance: 1.0))), (action: "swing_2", weight: 0.0, chain: Some((input: "light", chance: 1.0)))],
+        rest: (0.3, 0.3),
+    ),
+    "chain_never": (options: [(input: "light", chain: Some((input: "light", chance: 0.0)))], rest: (0.3, 0.3)),
+    "chain_half": (options: [(input: "light", chain: Some((input: "light", chance: 0.5)))], rest: (0.3, 0.3)),
+    // No chain written: a plain swing.
+    "chain_none": (options: [(input: "light")], rest: (0.3, 0.3)),
+    // The window of the first swing opens after the press died.
+    "chain_slow": (options: [(input: "slow", chain: Some((input: "light", chance: 1.0)))], rest: (0.3, 0.3)),
+    // A second option that exists only on one side of a condition (N2).
+    "gated": (
+        options: [
+            (input: "light", name: "calm", when: ["!rage"]),
+            (input: "heavy", name: "fierce", when: ["rage"]),
+        ],
+        rest: (0.3, 0.3),
+    ),
+    // A long rest, to be clamped.
+    "long_rest": (options: [(input: "light")], rest: (1.0, 1.0)),
 }

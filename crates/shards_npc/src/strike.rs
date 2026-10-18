@@ -19,13 +19,14 @@
 //! without one and survives replays and snapshots (the notes are components of the NPCs).
 //! Encounters are not told apart by distance yet: all NPCs of a director share one clock.
 
-use ai_core::{AiId, SimTick};
+use ai_core::{AiId, SimRng, SimTick};
 use bevy::prelude::*;
-use shards_action::{ActionDef, ActionStarted, Fighter};
+use shards_action::{ActionDef, ActionStarted, ActionState, Fighter};
 use shards_content::ContentDb;
 use shards_core::NetRole;
 
 use crate::brain::{Npc, NpcCtx};
+use crate::chain::NpcChain;
 use crate::def::{AttackPlanDef, DirectorDef};
 use crate::director::{AttackToken, Grant};
 use crate::planner::resolve;
@@ -114,40 +115,62 @@ impl NpcCtx<'_> {
     }
 }
 
-/// An action began: a strike of an NPC whose director spaces its strikes is noted.
-#[allow(clippy::too_many_arguments, reason = "an observer: one parameter per thing it reads")]
-pub(crate) fn strike_started(
-    started: On<ActionStarted>,
-    role: Option<Res<NetRole>>,
-    tick: Res<SimTick>,
-    db: Res<ContentDb>,
-    npcs: Query<(&Npc, &Fighter, Option<&AttackToken>)>,
-    mut commands: Commands,
-) {
-    let e = started.event();
-    // A client is shown the host's world: the host's notes arrive with it.
-    if role.is_some_and(|r| !r.simulates()) || e.predicted || e.input.is_none() {
-        return;
-    }
-    let Ok((npc, fighter, token)) = npcs.get(e.entity) else { return };
-    let director = DirectorDef::of(&db, &npc.director);
-    if director.min_spacing <= 0.0 {
-        return;
-    }
-    // The tags it counts by: the action's, and those of the plan option that names it.
-    let mut tags: Vec<String> = db.get::<ActionDef>(&e.action).map(|d| d.tags.clone()).unwrap_or_default();
+/// The tags a start of `action` by `npc` counts by: the action's own, and those of the plan
+/// options that name it (their tags and their names).
+pub(crate) fn tags_for(db: &ContentDb, npc: &Npc, moveset: &str, action: &str) -> Vec<String> {
+    let mut tags: Vec<String> = db.get::<ActionDef>(action).map(|d| d.tags.clone()).unwrap_or_default();
     if let Some(plan) = npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)) {
-        for r in resolve(plan, &db, &fighter.moveset, 0.4) {
-            if r.action == e.action {
+        for r in resolve(plan, db, moveset, 0.4) {
+            if r.action == action {
                 tags.extend(r.tags);
             }
         }
     }
-    if !director.is_strike(&tags) {
+    tags
+}
+
+/// An action began on an NPC: a strike of one whose director spaces its strikes is noted, and
+/// the attack rolls its combo continuation ([`crate::chain`]). A forced action (a stagger)
+/// is neither: it ends a chain.
+#[allow(clippy::too_many_arguments, reason = "an observer: one parameter per thing it reads")]
+pub(crate) fn action_started(
+    started: On<ActionStarted>,
+    role: Option<Res<NetRole>>,
+    tick: Res<SimTick>,
+    rng: SimRng,
+    db: Res<ContentDb>,
+    npcs: Query<(&AiId, &Npc, &Fighter, &ActionState, Option<&AttackToken>, Option<&NpcChain>)>,
+    mut commands: Commands,
+) {
+    let e = started.event();
+    // A client is shown the host's world: the host's notes and chains arrive with it.
+    if role.is_some_and(|r| !r.simulates()) || e.predicted {
         return;
     }
-    let planned = token.and_then(|t| t.held.as_ref()).is_some_and(|g| g.pressed.is_some() && !g.started);
-    commands.entity(e.entity).insert(NpcStrike { last_start: tick.0, gated: planned });
+    let Ok((id, npc, fighter, state, token, chain)) = npcs.get(e.entity) else { return };
+    if e.input.is_none() {
+        if chain.is_some() {
+            commands.entity(e.entity).remove::<NpcChain>();
+        }
+        return;
+    }
+    let director = DirectorDef::of(&db, &npc.director);
+    if director.min_spacing > 0.0 && director.is_strike(&tags_for(&db, npc, &fighter.moveset, &e.action)) {
+        let planned = token.and_then(|t| t.held.as_ref()).is_some_and(|g| g.pressed.is_some() && !g.started);
+        let continued = chain.is_some_and(|c| c.pressed);
+        commands.entity(e.entity).insert(NpcStrike { last_start: tick.0, gated: planned || continued });
+    }
+    // The attack that began rolls its own continuation; the one it replaces is spent.
+    let rolled = state.current.as_ref().and_then(|r| crate::chain::roll(&db, &rng, *id, npc, &fighter.moveset, &e.action, r.instance));
+    match rolled {
+        Some(next) => {
+            commands.entity(e.entity).insert(next);
+        }
+        None if chain.is_some() => {
+            commands.entity(e.entity).remove::<NpcChain>();
+        }
+        None => {}
+    }
 }
 
 #[cfg(test)]
