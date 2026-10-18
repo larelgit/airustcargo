@@ -25,6 +25,8 @@ const PUSH_COS: f32 = 0.5;
 pub(crate) enum Note {
     Mode(MotionMode, MotionMode),
     Jumped,
+    /// A [`Launch`](super::Launch) took the body up: a jump for landing tiers, with no event.
+    Launched,
     Landed { fall_height: f32, impact_speed: f32, tier: u8, jumped: bool },
     Mantled { height: f32 },
     Entered(Entity),
@@ -44,6 +46,8 @@ pub(crate) struct Step<'a, 'w> {
     pub facing: Vec3,
     /// The fall this tick continues began with a jump (tracked with landing tiers only).
     pub jumped_flight: bool,
+    /// A launch asked for this tick: the height (m) the body should peak at.
+    pub launch: Option<f32>,
     pub notes: Vec<Note>,
 }
 
@@ -61,6 +65,8 @@ impl Step<'_, '_> {
         let climbing = self.state.mode == MotionMode::Mantle;
         let feet = if climbing { feet } else { self.mover.depenetrate(feet) };
         let feet = match self.state.mode {
+            // A launch asked for by the body's owner: on the ground, or within coyote time of it.
+            MotionMode::Ground | MotionMode::Air if self.launches() => self.launch(feet),
             MotionMode::Mantle => self.mantle(feet),
             MotionMode::Ground => self.ground(feet),
             MotionMode::Air | MotionMode::Glide => self.air(feet),
@@ -178,6 +184,33 @@ impl Step<'_, '_> {
                 feet
             }
         }
+    }
+
+    /// Whether a [`Launch`](super::Launch) takes the body up this tick: it stands on the ground, or
+    /// walked off it within `coyote_time` (the test a jump makes, without its buffer), and an action
+    /// that owns the body does not stop it.
+    fn launches(&self) -> bool {
+        self.launch.is_some()
+            && match self.state.mode {
+                MotionMode::Ground => true,
+                MotionMode::Air => self.state.coyote_left > 0.0,
+                _ => false,
+            }
+    }
+
+    /// Launches the body up so that it peaks `launch` metres above the feet, then the tick goes on
+    /// in the air.
+    fn launch(&mut self, feet: Vec3) -> Vec3 {
+        let height = self.launch.unwrap_or(0.0).max(0.0);
+        let s = &mut *self.state;
+        s.velocity.y = (2.0 * self.params.gravity.max(0.0) * height).sqrt();
+        s.coyote_left = 0.0;
+        s.grounded = false;
+        s.ground_normal = Vec3::Y;
+        s.fall_from_y = Some(feet.y);
+        self.notes.push(Note::Launched);
+        self.set_mode(MotionMode::Air);
+        self.air(feet)
     }
 
     fn jump(&mut self, feet: Vec3) -> Vec3 {

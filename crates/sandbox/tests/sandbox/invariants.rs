@@ -9,10 +9,11 @@ use shards::serde_json::{self, json, Value};
 use crate::common::{act, text, BOSS};
 
 /// The engine's rules, in the order the modules register them.
-pub(crate) const ENGINE_RULES: [&str; 15] = [
+pub(crate) const ENGINE_RULES: [&str; 18] = [
     "ai.index_consistent",
     "core.intent_sane",
     "motion.finite",
+    "motion.launch_sane",
     "voxel.body_in_solid",
     "action.resources_in_range",
     "action.running_sane",
@@ -21,6 +22,8 @@ pub(crate) const ENGINE_RULES: [&str; 15] = [
     "action.damage_taken_sane",
     "action.knockback_sane",
     "action.extras_follow_run",
+    "action.leap_follows_run",
+    "action.ghost_follows_run",
     "action.lock_on_valid",
     "npc.state_known",
     "npc.strike_spacing",
@@ -134,7 +137,7 @@ fn a_session_rule_fires_once_until_it_is_reset() {
 fn rules_are_listed_and_checked_before_they_are_added() {
     let mut app = sandbox::test_app(42);
     let list = text(&called(&mut app, "assert_list", json!({}))).to_owned();
-    assert!(list.starts_with("17 rules, checked after every tick"), "{list}");
+    assert!(list.starts_with("20 rules, checked after every tick"), "{list}");
     for engine in ENGINE_RULES {
         assert!(list.contains(&format!("  {engine}  engine rule  armed")), "{engine}: {list}");
     }

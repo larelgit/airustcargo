@@ -13,7 +13,10 @@ use crate::fighter::{
     describe_charges, describe_cooldowns, describe_health, describe_poise, describe_stamina, Charges, Cooldowns, Dead,
     Health, Invulnerable, Knockback, Poise, Protection, Stamina,
 };
-use crate::machine::{describe_action, describe_buffer, ActionMissed, ActionRejected, ActionState, Healed, InputBuffer, RunExtras, Telegraph};
+use crate::machine::{
+    describe_action, describe_buffer, state_intangible, ActionMissed, ActionRejected, ActionState, Healed, InputBuffer, LeapRun,
+    RunExtras, Telegraph,
+};
 use crate::status::{describe_statuses, StatusApplied, StatusExpired, Statuses};
 use crate::zone::{body_radius, zones_threatening};
 
@@ -34,7 +37,9 @@ pub(crate) fn register(app: &mut App) {
         .register_ai_component::<ProcGates>(describe_proc_gates)
         .register_ai_component::<Knockback>(describe_knockback)
         .register_ai_describer("run", describe_run)
+        .register_ai_describer("body", describe_body)
         .add_ai_condition("charging", charging)
+        .add_ai_condition("intangible", any_intangible)
         .register_ai_advice(advice)
         .journal_event::<Telegraph>(|e, w| {
             let zone = e.zone.map(|z| format!(" {}", z.shape)).unwrap_or_default();
@@ -190,6 +195,27 @@ fn describe_run(e: EntityRef) -> Option<String> {
         parts.push(format!("missed +{:.2}s", x.extra));
     }
     (!parts.is_empty()).then(|| parts.join("  "))
+}
+
+/// `intangible, passes through bodies` while a body has its `ghost` window open (a describer cannot
+/// look up content: an `intangible` span without `ghost` shows in the `intangible` condition and in
+/// the phase's name); `leaping` from the launch of a leap on.
+fn describe_body(e: EntityRef) -> Option<String> {
+    let state = e.get::<ActionState>()?;
+    let mut parts = Vec::new();
+    if e.contains::<shards_motion::Ghost>() {
+        parts.push("intangible, passes through bodies");
+    }
+    if e.get::<LeapRun>().is_some_and(|x| x.launched && state.current.as_ref().is_some_and(|r| r.instance == x.instance)) {
+        parts.push("leaping");
+    }
+    (!parts.is_empty()).then(|| parts.join("  "))
+}
+
+/// Some fighter is intangible now (a burrowed body).
+fn any_intangible(world: &World) -> bool {
+    let Some(db) = world.get_resource::<shards_content::ContentDb>() else { return false };
+    world.try_query::<&ActionState>().is_some_and(|mut q| q.iter(world).any(|s| state_intangible(db, s)))
 }
 
 /// Some fighter holds the input of an action that may still turn into its charge.

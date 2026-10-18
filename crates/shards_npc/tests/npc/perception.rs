@@ -68,6 +68,23 @@ fn what_is_out_of_sight_is_remembered_for_a_while() {
 }
 
 #[test]
+fn a_burrowed_body_is_not_perceived_but_remembered() {
+    let mut app = app();
+    let (watcher, hero) = watcher_and_hero(&mut app, Vec3::new(0.0, 0.0, -6.0));
+    step(&mut app, 1);
+    assert!(sees(&app, watcher, hero));
+    // `hide`: under the ground from 0.3 s to 0.9 s, in plain view 6 m ahead.
+    assert!(shards_action::force_action(app.world_mut(), hero, "hide"));
+    step(&mut app, 30);
+    let k = knows(&app, watcher, hero).expect("a burrowed body is hidden, not gone: still remembered");
+    assert!(!k.seen, "not seen while under the ground: {k:?}");
+    assert_eq!(app.world().get::<Perceived>(watcher).unwrap().focus, Some(aid(&app, hero)), "still its focus");
+    // Out again: seen at once.
+    step(&mut app, 30);
+    assert!(sees(&app, watcher, hero));
+}
+
+#[test]
 fn noises_are_heard_within_their_radius() {
     let mut app = app();
     let (watcher, hero) = watcher_and_hero(&mut app, Vec3::new(0.0, 0.0, 6.0));

@@ -21,7 +21,8 @@ use shards_content::ContentDb;
 use shards_core::input_names::{ASSIST_OFF, SPRINT};
 use shards_core::{flat, Intent, NetRole};
 use shards_motion::{
-    CharacterController, CharacterParams, LayerMask, LocomotionInput, MotionMode, MotionState, MoveModifiers, PhysicsWorld, QueryFilter,
+    CharacterController, CharacterParams, Collider, Ghost, LayerMask, Launch, LocomotionInput, MotionMode, MotionState, MoveModifiers,
+    PhysicsWorld, QueryFilter,
 };
 
 use std::ops::DerefMut;
@@ -30,6 +31,7 @@ use crate::body::grant_barrier;
 use crate::cue::ActionSound;
 use crate::def::{touches, ActionDef, BufferMode, CancelTo, CombatTuning, Effect, Face, MovesetDef, StaminaMode, Steer, EPS};
 use crate::fighter::{report_once, sprint_rule, Charges, Cooldowns, Dead, Fighter, Health, Stamina};
+use crate::leap::{plan_leap, radius_of, LeapSite};
 use crate::status::add_status_buildup;
 use crate::zone::{action_zones, WorldShape};
 
@@ -118,6 +120,27 @@ pub struct RunExtras {
     /// When the held input turns this run into its charged action (`charge.after`), while it
     /// still may; `None` once it no longer can (let go, past `until`, turned). For observers.
     pub charge_at: Option<f32>,
+}
+
+/// What a run of a `leap` action needs beyond [`Running`]: the scale its `displacement` is stretched
+/// by (the chosen distance over the authored one) and whether it has launched. Inserted when such an
+/// action starts, removed when its run ends; a fighter whose actions do not leap never has one.
+/// (Apart from [`RunExtras`], so that a fighter that never leaps keeps the state it always had.)
+#[derive(Component, Reflect, Clone, Copy, Debug, PartialEq)]
+#[reflect(Component, Default)]
+pub struct LeapRun {
+    /// `Running::instance` of the run this belongs to.
+    pub instance: u32,
+    /// `displacement` is scaled by this; 1: as authored.
+    pub scale: f32,
+    /// The launch has been asked for ([`Launch`]).
+    pub launched: bool,
+}
+
+impl Default for LeapRun {
+    fn default() -> Self {
+        Self { instance: 0, scale: 1.0, launched: false }
+    }
 }
 
 impl Default for RunExtras {
@@ -317,7 +340,9 @@ pub fn describe_buffer(b: &InputBuffer) -> String {
 
 // --- the shared start rule -----------------------------------------------------------
 
-/// What [`can_start`] reads about a fighter: from a system's query or from `&World`.
+/// What [`can_start`] reads about a fighter: from a system's query or from `&World`. Build it with
+/// [`FighterView::new`] and set what the caller has; what it leaves out is not judged.
+#[derive(Clone, Copy)]
 pub struct FighterView<'a> {
     pub db: &'a ContentDb,
     pub moveset: &'a str,
@@ -328,9 +353,22 @@ pub struct FighterView<'a> {
     /// `Intent::held`: decides whether a hold loop keeps going.
     pub held: &'a [String],
     pub dead: bool,
+    /// How the body moves now: the mode gate ([`MovesetDef::only_in`]) judges it. `None`: not judged.
+    pub mode: Option<MotionMode>,
+    /// The body is somewhere the controller drops a launch ([`off_ground`]): a leap would launch
+    /// nothing, so it does not start. `None`: on the ground, within coyote time, or not judged.
+    pub off_ground: Option<MotionMode>,
+    /// Where the body stands, for the landing a leap needs. `None`: a leap's landing is not judged.
+    pub leap: Option<LeapSite<'a>>,
 }
 
 impl<'a> FighterView<'a> {
+    /// A view of a fighter with the moveset `moveset`, in `state`, holding `held`; every resource
+    /// absent, the mode and the leap site not judged. Set the fields the caller has.
+    pub fn new(db: &'a ContentDb, moveset: &'a str, state: &'a ActionState, held: &'a [String], dead: bool) -> Self {
+        Self { db, moveset, state, stamina: None, cooldowns: None, charges: None, held, dead, mode: None, off_ground: None, leap: None }
+    }
+
     /// The fighter `entity` as the world has it now; `None` if it is no fighter.
     pub fn of(world: &'a World, entity: Entity) -> Option<Self> {
         let e = world.get_entity(entity).ok()?;
@@ -343,6 +381,9 @@ impl<'a> FighterView<'a> {
             charges: e.get::<Charges>(),
             held: e.get::<Intent>().map_or(&[], |i| i.held.as_slice()),
             dead: e.contains::<Dead>(),
+            mode: e.get::<MotionState>().map(|m| m.mode),
+            off_ground: off_ground(e.get::<MotionState>()),
+            leap: LeapSite::of(world, entity),
         })
     }
 
@@ -403,6 +444,24 @@ pub enum Blocker {
         have: u32,
         max: u32,
     },
+    /// The moveset lets only some actions start in the motion mode the body is in
+    /// ([`MovesetDef::only_in`]), and this is not one of them. Waiting will not do.
+    Mode {
+        mode: MotionMode,
+        action: String,
+        /// The tags that would let an action start.
+        tags: Vec<String>,
+    },
+    /// A leap (`leap.search`) has no landing between its `min` and `max`. Waiting will not do;
+    /// moving may.
+    NoLanding {
+        min: f32,
+        max: f32,
+    },
+    /// A leap needs the ground: the body is in `mode` (the air past its coyote time, water, a glide
+    /// or a climb), where the controller drops the launch. Waiting does not help by the clock
+    /// (`ready_in` is `None`); getting onto the ground does.
+    OffGround { mode: MotionMode },
 }
 
 impl Blocker {
@@ -427,6 +486,9 @@ impl Blocker {
             Blocker::Stamina { have, need, .. } => format!("stamina {have:.0}/{need:.0}"),
             Blocker::Cooldown { action, ready_in } => format!("cooldown {action} {ready_in:.2}s"),
             Blocker::NoCharges { charge, have, max } => format!("no {charge} charges ({have}/{max})"),
+            Blocker::Mode { mode, tags, .. } => format!("not while in {}: only actions tagged {}", mode_name(*mode), tags.join(" or ")),
+            Blocker::NoLanding { min, max } => format!("no landing spot within {}-{}m", fmt_m(*min), fmt_m(*max)),
+            Blocker::OffGround { mode } => format!("in {}; a leap starts from the ground", mode_name(*mode)),
         }
     }
 
@@ -457,8 +519,54 @@ impl Blocker {
             Blocker::Stamina { have, need, ready_in: None } => format!("not enough stamina: {have:.0}/{need:.0}"),
             Blocker::Cooldown { action, ready_in } => format!("{action} is on cooldown (ready in {ready_in:.2}s)"),
             Blocker::NoCharges { charge, have, max } => format!("no {charge} charges left ({have}/{max})"),
+            Blocker::Mode { mode, action, tags } => format!(
+                "{action} cannot start while in {}: only actions tagged {} do",
+                mode_name(*mode),
+                tags.join(" or ")
+            ),
+            Blocker::NoLanding { min, max } => {
+                format!(
+                    "no landing spot within {}-{}m; leap toward open, level ground, and not at a target nearer than {}m",
+                    fmt_m(*min),
+                    fmt_m(*max),
+                    fmt_m(*min)
+                )
+            }
+            Blocker::OffGround { mode } => {
+                let then = if *mode == MotionMode::Air { "land first" } else { "get onto the ground first" };
+                format!("you are in {}; a leap starts from the ground, so {then}", mode_name(*mode))
+            }
         }
     }
+}
+
+/// The mode the body is in when the controller would drop a [`Launch`]: anything but the ground
+/// and the air within coyote time of it (the controller's own rule). `None`: a launch would be
+/// taken, or there is no body to judge.
+pub fn off_ground(motion: Option<&MotionState>) -> Option<MotionMode> {
+    let m = motion?;
+    match m.mode {
+        MotionMode::Ground => None,
+        MotionMode::Air if m.coyote_left > 0.0 => None,
+        mode => Some(mode),
+    }
+}
+
+/// How a motion mode reads in a message: `water`, `the air`.
+fn mode_name(mode: MotionMode) -> &'static str {
+    match mode {
+        MotionMode::Ground => "the ground",
+        MotionMode::Air => "the air",
+        MotionMode::Water => "water",
+        MotionMode::Glide => "a glide",
+        MotionMode::Mantle => "a climb",
+    }
+}
+
+/// A distance in metres without trailing zeros (`1.5`, `6`).
+fn fmt_m(v: f32) -> String {
+    let s = format!("{v:.2}");
+    s.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 /// Ticks until `secs` have passed (0 when they already have).
@@ -480,6 +588,12 @@ pub fn fits_buffer(ready_in: f32, left: f32) -> bool {
 /// and as which action; if not, what blocks it, and for how long. When several things
 /// block it, the one that lasts longest is reported.
 pub fn can_start(v: &FighterView, input: &str, dt: f32) -> Result<Start, Blocker> {
+    can_start_toward(v, input, dt, None)
+}
+
+/// [`can_start`] for a press toward `dir` (a queued press keeps its direction): a leap's landing is
+/// searched along it.
+pub(crate) fn can_start_toward(v: &FighterView, input: &str, dt: f32, dir: Option<Vec3>) -> Result<Start, Blocker> {
     if v.dead {
         return Err(Blocker::Dead);
     }
@@ -532,6 +646,26 @@ pub fn can_start(v: &FighterView, input: &str, dt: f32) -> Result<Start, Blocker
         });
     };
     let def = v.db.get::<ActionDef>(&action).ok_or_else(|| Blocker::NoAction { action: action.clone() })?;
+    // The mode gate: in a mode `only_in` names, only the actions with a listed tag start.
+    if let Some(mode) = v.mode
+        && !moveset.allows(mode, def)
+    {
+        let tags = moveset.only_in.iter().filter(|(m, _)| *m == mode).flat_map(|(_, tags)| tags.iter().cloned()).collect();
+        blockers.push(Blocker::Mode { mode, action: action.clone(), tags });
+    }
+    // A leap launches from the ground (or within coyote time of it): anywhere else it would pay and slide with no arc.
+    if let Some(mode) = v.off_ground
+        && def.leap.is_some()
+    {
+        blockers.push(Blocker::OffGround { mode });
+    }
+    // A leap with a search starts only where it has a landing.
+    if let (Some(leap), Some(site)) = (def.leap.as_ref(), v.leap.as_ref())
+        && let Some(search) = leap.search.as_ref()
+        && plan_leap(def, search, site, dir).is_none()
+    {
+        blockers.push(Blocker::NoLanding { min: search.min, max: search.max });
+    }
     let key = def.cooldown_key(&action);
     if let Some(left) = v.cooldowns.map(|c| c.left(key)).filter(|l| *l > EPS) {
         blockers.push(Blocker::Cooldown { action: key.to_owned(), ready_in: ticks_until(left, dt) as f32 * dt });
@@ -708,6 +842,8 @@ pub(crate) struct FighterData {
     modifiers: Option<&'static MoveModifiers>,
     body: Option<(&'static CharacterController, Option<&'static CharacterParams>)>,
     extras: Option<&'static mut RunExtras>,
+    leap: Option<&'static mut LeapRun>,
+    ghost: Has<Ghost>,
     dead: Has<Dead>,
 }
 
@@ -731,7 +867,7 @@ pub(crate) fn run_machines(
     physics: Res<PhysicsWorld>,
     mut pending: ResMut<PendingEffects>,
     mut commands: Commands,
-    positions: Query<(&Transform, Option<&CharacterParams>)>,
+    positions: Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>,
     mut fighters: Query<FighterData>,
 ) {
     let dt = time.delta_secs();
@@ -745,6 +881,17 @@ pub(crate) fn run_machines(
     for (_, entity) in order {
         let Ok(mut f) = fighters.get_mut(entity) else { continue };
         let moveset = db.get::<MovesetDef>(&f.fighter.moveset);
+        // The mode gate: a run whose action lacks the tag the body's motion mode now asks for is cut
+        // (a dodge or a guard when swimming begins), with no cooldown share. Forced runs (a stagger,
+        // a death) are never cut.
+        if let (Some(in_mode), Some(allowed), Some(run)) = (f.motion.map(|m| m.mode), moveset, f.state.current.as_ref())
+            && !run.forced
+            && db.get::<ActionDef>(&run.action).is_some_and(|d| !allowed.allows(in_mode, d))
+            && let Some(old) = f.state.current.take()
+        {
+            cap_buffer(&mut f.buffer, ttl);
+            commands.trigger(ActionEnded::of(entity, &old, ActionEnd::Interrupted));
+        }
         let mode = moveset.map_or(&BufferMode::PerInput, |m| &m.buffer);
         let running_def = f.state.current.as_ref().and_then(|r| db.get::<ActionDef>(&r.action));
         if f.dead {
@@ -757,26 +904,38 @@ pub(crate) fn run_machines(
             take_presses(&mut f.intent, &mut f.buffer, mode, moveset, run, running_def, ttl, &mut reject);
         }
 
-        let choice = choose(&f, &db, dt);
         let here = f.transform.translation;
         let forward = *f.transform.forward();
         let locked = f.intent.target.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok().map(|p| (e, p)));
-        let target = locked.map(|(_, (t, _))| t.translation);
+        let target = locked.map(|(_, (t, _, _))| t.translation);
+        // The lock-on target as a leap sees it: where it stands and how wide its body is.
+        let target_body = locked.map(|(_, (t, _, collider))| (t.translation, radius_of(collider)));
+        // A start judges a leap's landing from where the body stands, on the host as on a client.
+        let choice = choose(&f, &db, leap_site(&f, &physics, &db, (here, forward), target_body), dt);
         // Whether the lock-on target is in sight of the fighter, for an assist that needs it (asked only then).
         let mine = body_height(f.body.and_then(|(_, p)| p));
         let sees = || {
-            let Some((them, (there, params))) = locked else { return true };
+            let Some((them, (there, params, _))) = locked else { return true };
             in_sight(&physics, (entity, here, mine), (them, there.translation, body_height(params)), sight)
         };
         // This run's extras, if it has any (a local copy: a run started this tick has none in the world yet).
         let mut extras: Option<RunExtras> =
             f.extras.as_deref().copied().filter(|x| f.state.current.as_ref().is_some_and(|r| r.instance == x.instance));
+        let mut leap: Option<LeapRun> =
+            f.leap.as_deref().copied().filter(|x| f.state.current.as_ref().is_some_and(|r| r.instance == x.instance));
 
         if let Some(choice) = &choice {
             if let Some(i) = choice.queued {
                 f.buffer.queued.remove(i);
             }
-            if let Some(def) = db.get::<ActionDef>(&choice.start.action) {
+            // A leap's landing, searched once more with the press's direction: the same answer
+            // `can_start` gave, unless the world changed in between (then the press is rejected, unpaid).
+            if let Some(def) = db.get::<ActionDef>(&choice.start.action)
+                && let Some((plan_dir, scale)) =
+                    leap_plan(def, &f, &db, &physics, (here, forward), target_body, choice.dir, &mut |reason| {
+                        commands.trigger(ActionRejected { entity, input: choice.input.clone(), reason });
+                    })
+            {
                 // A windup cut short keeps its cooldown share before the new action pays its own: on a
                 // shared key the new action's full cooldown is the one that stays.
                 let cut = f.state.current.as_ref().and_then(|old| {
@@ -788,7 +947,7 @@ pub(crate) fn run_machines(
                     f.cooldowns.cut_to(&key, secs);
                 }
                 pay(&mut f, &choice.start.action, def);
-                let facing = start_facing(def, choice.dir, &f.intent, here, forward, target);
+                let facing = plan_dir.unwrap_or_else(|| start_facing(def, choice.dir, &f.intent, here, forward, target));
                 let instance = f.state.started;
                 f.state.started += 1;
                 let run =
@@ -798,6 +957,7 @@ pub(crate) fn run_machines(
                     commands.trigger(ActionEnded::of(entity, &old, ActionEnd::Cancelled));
                 }
                 extras = def.needs_extras().then(|| RunExtras::start(def, &run, &f.intent, here, target));
+                leap = def.leap.as_ref().map(|_| LeapRun { instance, scale, launched: false });
                 begin(entity, def, &run, here, &mut pending.0, &mut |e| commands.trigger(e));
                 commands.trigger(ActionStarted {
                     entity,
@@ -825,9 +985,28 @@ pub(crate) fn run_machines(
                             ..default()
                         });
                     }
+                    if def.leap.is_none() {
+                        // A run whose action stopped leaping on the way (a hot reload) keeps no leap state.
+                        leap = None;
+                    } else if leap.is_none() {
+                        // A run whose action came to leap on the way (a hot reload).
+                        leap = Some(LeapRun { instance: run.instance, ..default() });
+                    }
                     let spans;
                     let aimed = tracked(def, &f.intent, target, sees);
-                    (spans, external) = step_run(run, def, extras.as_mut(), &f.intent, here, aimed, dt);
+                    let scale = leap.map_or(1.0, |l| l.scale);
+                    (spans, external) = step_run(run, def, extras.as_mut(), scale, &f.intent, here, aimed, dt);
+                    // The launch: once, in the tick that crosses `leap.at` (a body with no controller has
+                    // nothing to launch).
+                    if let (Some(l), Some(state)) = (def.leap.as_ref(), leap.as_mut())
+                        && !state.launched
+                        && spans.iter().any(|&(lo, hi)| launch_due(l.at, lo, hi))
+                    {
+                        state.launched = true;
+                        if f.body.is_some() {
+                            commands.entity(entity).try_insert(Launch { height: l.height });
+                        }
+                    }
                     for &(lo, hi) in &spans {
                         for e in def.effects.iter().filter(|e| crosses(e.at, lo, hi)) {
                             pending.0.push((entity, run.action.clone(), e.effect.clone()));
@@ -900,6 +1079,39 @@ pub(crate) fn run_machines(
             }
             (None, None) => {}
         }
+        // The leap's state the same way.
+        let leap = leap.filter(|x| {
+            f.state.current.as_ref().is_some_and(|r| {
+                r.instance == x.instance && db.get::<ActionDef>(&r.action).is_some_and(|d| d.leap.is_some())
+            })
+        });
+        match (leap, f.leap.as_mut()) {
+            (Some(x), Some(there)) => {
+                if **there != x {
+                    **there = x;
+                }
+            }
+            (Some(x), None) => {
+                commands.queue(settle_leap(entity, Some(x)));
+            }
+            (None, Some(_)) => {
+                commands.queue(settle_leap(entity, None));
+            }
+            (None, None) => {}
+        }
+        // The body passes through characters while the run's `ghost` window is open, and not otherwise.
+        let ghost = f
+            .state
+            .current
+            .as_ref()
+            .is_some_and(|r| db.get::<ActionDef>(&r.action).is_some_and(|d| d.ghost_in(r.prev, r.t)));
+        if ghost != f.ghost {
+            if ghost {
+                commands.entity(entity).try_insert(Ghost);
+            } else {
+                commands.entity(entity).try_remove::<Ghost>();
+            }
+        }
 
         // Presses that did not start age; those out of time are rejected.
         if !f.buffer.queued.is_empty() {
@@ -913,7 +1125,7 @@ pub(crate) fn run_machines(
             if !expired.is_empty() {
                 f.buffer.queued.retain(|q| q.left >= -EPS);
                 for input in expired {
-                    let view = view(&f, &db);
+                    let view = view(&f, &db, leap_site(&f, &physics, &db, (here, forward), target_body));
                     let reason = match can_start(&view, &input, dt) {
                         Err(blocker) => blocker.reason(),
                         Ok(_) => "another action started first".to_owned(),
@@ -926,32 +1138,79 @@ pub(crate) fn run_machines(
     }
 }
 
-fn view<'a>(f: &'a FighterDataItem, db: &'a ContentDb) -> FighterView<'a> {
+/// The body of `f` as a leap's landing search sees it; `None` for a fighter with no controller.
+fn leap_site<'a>(
+    f: &'a FighterDataItem,
+    physics: &'a PhysicsWorld,
+    db: &ContentDb,
+    at: (Vec3, Vec3),
+    target: Option<(Vec3, f32)>,
+) -> Option<LeapSite<'a>> {
+    let (controller, own) = f.body?;
+    Some(LeapSite::body(physics, f.entity, at, controller.resolve(own, Some(db)), &f.intent, target))
+}
+
+fn view<'a>(f: &'a FighterDataItem, db: &'a ContentDb, leap: Option<LeapSite<'a>>) -> FighterView<'a> {
     FighterView {
-        db,
-        moveset: &f.fighter.moveset,
-        state: &f.state,
+        leap,
         stamina: f.stamina.as_deref(),
         cooldowns: Some(&f.cooldowns),
         charges: f.charges.as_deref(),
-        held: &f.intent.held,
-        dead: f.dead,
+        mode: f.motion.map(|m| m.mode),
+        off_ground: off_ground(f.motion),
+        ..FighterView::new(db, &f.fighter.moveset, &f.state, &f.intent.held, f.dead)
     }
 }
 
+/// Where a leap of `def` goes for the fighter `f`, and how far the run's `displacement` stretches:
+/// `Some((direction, scale))` (no direction and a scale of 1 for an action that does not search),
+/// or `None` after saying why through `refuse` when there is no landing. A fighter with no body
+/// searches nothing (it launches nothing either).
+#[allow(clippy::too_many_arguments, reason = "the machine's state for one fighter, passed apart for the borrows")]
+fn leap_plan(
+    def: &ActionDef,
+    f: &FighterDataItem,
+    db: &ContentDb,
+    physics: &PhysicsWorld,
+    at: (Vec3, Vec3),
+    target: Option<(Vec3, f32)>,
+    press: Option<Vec3>,
+    refuse: &mut impl FnMut(String),
+) -> Option<(Option<Vec3>, f32)> {
+    let Some(search) = def.leap.as_ref().and_then(|l| l.search.as_ref()) else { return Some((None, 1.0)) };
+    let Some((controller, own)) = f.body else { return Some((None, 1.0)) };
+    let site = LeapSite::body(physics, f.entity, at, controller.resolve(own, Some(db)), &f.intent, target);
+    match plan_leap(def, search, &site, press) {
+        Some(plan) => {
+            let total = def.displacement_at(def.length());
+            Some((Some(plan.dir), if total > EPS { plan.distance / total } else { 1.0 }))
+        }
+        None => {
+            refuse(Blocker::NoLanding { min: search.min, max: search.max }.reason());
+            None
+        }
+    }
+}
+
+/// Whether a leap that launches `at` seconds in launches in the tick `(lo, hi]` (one that launches
+/// at 0 in the tick that starts the action).
+pub(crate) fn launch_due(at: f32, lo: f32, hi: f32) -> bool {
+    crosses(at, lo, hi) || (at <= EPS && lo <= EPS)
+}
+
 /// The first buffered press that can start, else a held input that can.
-fn choose(f: &FighterDataItem, db: &ContentDb, dt: f32) -> Option<Choice> {
+fn choose<'a>(f: &'a FighterDataItem, db: &'a ContentDb, leap: Option<LeapSite<'a>>, dt: f32) -> Option<Choice> {
     if f.dead {
         return None;
     }
-    choose_in(&view(f, db), &f.buffer.queued, dt)
+    choose_in(&view(f, db, leap), &f.buffer.queued, dt)
 }
 
 /// [`choose`] over a view: the first of `queued` that can start, else a held input (the
 /// view's `held`) whose action starts held and is not running yet.
 pub(crate) fn choose_in(view: &FighterView, queued: &[Queued], dt: f32) -> Option<Choice> {
     for (i, q) in queued.iter().enumerate() {
-        if let Ok(start) = can_start(view, &q.input, dt) {
+        if let Ok(start) = can_start_toward(view, &q.input, dt, q.dir) {
             return Some(Choice { start, input: q.input.clone(), dir: q.dir, queued: Some(i) });
         }
     }
@@ -1096,6 +1355,13 @@ pub(crate) fn interrupted(world: &mut World, entity: Entity, old: &Running) {
     if world.get::<RunExtras>(entity).is_some_and(|x| x.instance == old.instance) {
         world.entity_mut(entity).remove::<RunExtras>();
     }
+    if world.get::<LeapRun>(entity).is_some_and(|x| x.instance == old.instance) {
+        world.entity_mut(entity).remove::<LeapRun>();
+    }
+    // The body is solid again at once (the machine's next tick would also see to it).
+    if world.get::<Ghost>(entity).is_some() {
+        world.entity_mut(entity).remove::<Ghost>();
+    }
 }
 
 /// A command that makes `entity`'s [`RunExtras`] agree with its run when it applies: `extras`
@@ -1112,6 +1378,29 @@ fn settle_extras(entity: Entity, extras: Option<RunExtras>) -> impl FnOnce(&mut 
             _ => {
                 if e.get::<RunExtras>().is_some_and(|x| running != Some(x.instance)) {
                     e.remove::<RunExtras>();
+                }
+            }
+        }
+    }
+}
+
+/// [`settle_extras`] for the [`LeapRun`].
+fn settle_leap(entity: Entity, leap: Option<LeapRun>) -> impl FnOnce(&mut World) {
+    move |world: &mut World| {
+        let run = world.get::<ActionState>(entity).and_then(|s| s.current.as_ref()).map(|r| (r.instance, r.action.clone()));
+        // Whether the running action leaps now: a hot reload can take the leap out of it.
+        let leaps = run.as_ref().is_some_and(|(_, action)| {
+            world.get_resource::<ContentDb>().and_then(|db| db.get::<ActionDef>(action)).is_some_and(|d| d.leap.is_some())
+        });
+        let running = run.map(|(instance, _)| instance);
+        let Ok(mut e) = world.get_entity_mut(entity) else { return };
+        match leap {
+            Some(x) if running == Some(x.instance) => {
+                e.insert(x);
+            }
+            _ => {
+                if e.get::<LeapRun>().is_some_and(|x| running != Some(x.instance) || !leaps) {
+                    e.remove::<LeapRun>();
                 }
             }
         }
@@ -1252,11 +1541,14 @@ pub(crate) fn start_facing(
 /// is held), it turns while it tracks, and it moves the body. Returns the stretches of the
 /// timeline the tick covered and the displacement it makes (the machine's and a client's
 /// prediction's). `extras`: the run's [`RunExtras`], when it has them (the hold for a charge,
-/// turn spans, the assist and its closing cap).
+/// turn spans, the assist and its closing cap). `scale`: what a leap stretches `displacement` by
+/// ([`LeapRun::scale`]; 1 for any other run).
+#[allow(clippy::too_many_arguments, reason = "one tick of a run: the run, its definition, what it reads and what moves it")]
 pub(crate) fn step_run(
     run: &mut Running,
     def: &ActionDef,
     extras: Option<&mut RunExtras>,
+    scale: f32,
     intent: &Intent,
     here: Vec3,
     target: Option<Vec3>,
@@ -1264,7 +1556,8 @@ pub(crate) fn step_run(
 ) -> (Vec<(f32, f32)>, Vec3) {
     let holding = def.hold.as_ref().is_some_and(|h| intent.is_held(&h.input));
     let spans = advance(run, def, dt, holding);
-    let moved = |spans: &[(f32, f32)]| spans.iter().map(|&(a, b)| def.displacement_at(b) - def.displacement_at(a)).sum::<f32>();
+    let moved =
+        |spans: &[(f32, f32)]| spans.iter().map(|&(a, b)| def.displacement_at(b) - def.displacement_at(a)).sum::<f32>() * scale;
     let external = match extras {
         None => {
             if run.t <= def.track_until + EPS
@@ -1491,7 +1784,9 @@ pub(crate) fn steer_locomotion(
     external: Vec3,
 ) {
     let def = run.and_then(|r| db.get::<ActionDef>(&r.action));
-    let owns = dead || (run.is_some() && def.is_none_or(|d| d.move_speed.is_none()));
+    // A walk span open: the body walks at its share of the walking speed, the action's own displacement on top.
+    let walk = run.zip(def).and_then(|(r, d)| d.walk_factor(r.prev, r.t));
+    let owns = dead || (run.is_some() && walk.is_none() && def.is_none_or(|d| d.move_speed.is_none()));
     loco.external = external;
     loco.locked = owns;
     if let Some(r) = run
@@ -1499,10 +1794,10 @@ pub(crate) fn steer_locomotion(
     {
         loco.face = Some(r.facing);
     }
-    if let Some(m) = def.filter(|_| run.is_some()).and_then(|d| d.move_speed) {
+    if let Some(m) = walk.or_else(|| def.filter(|_| run.is_some()).and_then(|d| d.move_speed)) {
         loco.move_dir *= m;
     }
-    if owns || out_of_stamina {
+    if owns || walk.is_some() || out_of_stamina {
         loco.sprint = false;
     }
 }
@@ -1513,7 +1808,7 @@ pub(crate) fn steer_locomotion(
 #[allow(clippy::type_complexity, reason = "a Bevy query")]
 pub(crate) fn finish_actions(
     db: Res<ContentDb>,
-    mut fighters: Query<(Entity, Option<&AiId>, &mut ActionState, Option<&mut InputBuffer>, Has<RunExtras>)>,
+    mut fighters: Query<(Entity, Option<&AiId>, &mut ActionState, Option<&mut InputBuffer>, Has<RunExtras>, Has<LeapRun>, Has<Ghost>)>,
     mut commands: Commands,
 ) {
     // The query follows `Entity` order, which a window shifts: end them in `AiId` order.
@@ -1529,13 +1824,19 @@ pub(crate) fn finish_actions(
     ending.sort();
     let ttl = CombatTuning::of(&db).input_buffer;
     for (_, entity) in ending {
-        let Ok((_, _, mut state, buffer, has_extras)) = fighters.get_mut(entity) else { continue };
+        let Ok((_, _, mut state, buffer, has_extras, has_leap, has_ghost)) = fighters.get_mut(entity) else { continue };
         if let Some(run) = state.current.take() {
             if let Some(mut buffer) = buffer {
                 cap_buffer(&mut buffer, ttl);
             }
             if has_extras {
                 commands.queue(settle_extras(entity, None));
+            }
+            if has_leap {
+                commands.queue(settle_leap(entity, None));
+            }
+            if has_ghost {
+                commands.entity(entity).try_remove::<Ghost>();
             }
             commands.trigger(ActionEnded::of(entity, &run, ActionEnd::Finished));
         }
@@ -1602,6 +1903,20 @@ pub fn extend_recovery(world: &mut World, entity: Entity, seconds: f32) -> bool 
         run.length = length + x.extra;
     }
     true
+}
+
+/// Whether `entity` is intangible now: its running action has an `intangible` span open in the tick
+/// (a burrowed body). Hits find nothing of it (no hit, no ledger mark), a pair does not pick it as a
+/// victim, and perception does not see it. Computed from the action, never read from how it looks.
+pub fn intangible(world: &World, entity: Entity) -> bool {
+    let (Some(db), Some(state)) = (world.get_resource::<ContentDb>(), world.get::<ActionState>(entity)) else { return false };
+    state_intangible(db, state)
+}
+
+/// [`intangible`] over a state a system already has.
+pub fn state_intangible(db: &ContentDb, state: &ActionState) -> bool {
+    let Some(run) = state.current.as_ref() else { return false };
+    db.get::<ActionDef>(&run.action).is_some_and(|d| d.intangible_in(run.prev, run.t))
 }
 
 /// `SimSet::Act`, after the machine: the effects actions reached, in order.
@@ -1676,11 +1991,15 @@ pub fn force_action(world: &mut World, entity: Entity, action: &str) -> bool {
     // `from` is the closing cap's baseline: the run's own facing, as `RunExtras::start` sets it.
     let extras =
         def.needs_extras().then(|| RunExtras { instance, start_facing: run.facing, from: run.facing, ..default() });
+    let leap = def.leap.is_some().then(|| LeapRun { instance, ..default() });
     let replaced = state.current.replace(run);
     if let Some(old) = &replaced {
         interrupted(world, entity, old);
     }
     if let Some(x) = extras {
+        world.entity_mut(entity).insert(x);
+    }
+    if let Some(x) = leap {
         world.entity_mut(entity).insert(x);
     }
     if let Some(old) = replaced {
@@ -1786,7 +2105,7 @@ mod tests {
         stamina: Option<&'a Stamina>,
         held: &'a [String],
     ) -> FighterView<'a> {
-        FighterView { db, moveset: "hero", state, stamina, cooldowns: None, charges: None, held, dead: false }
+        FighterView { stamina, ..FighterView::new(db, "hero", state, held, false) }
     }
 
     #[test]
