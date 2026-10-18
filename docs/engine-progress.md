@@ -434,6 +434,14 @@ the input record (`applied_input_tick`, `inputs.newest`) is started again, and t
 | every item of the 32.8 GDD list is available both from the developer menu and from `shards` | ✅ region seed (`region_info`), hundreds of regions (`worldgen_200`), reachability (`region_check`), the boss phase (`boss_phase_2` of the sandbox), invulnerability and slowdown (`god`, `slow`), the network journal (`net_overlay`), the save check (`save_check`), hitboxes (`combat_overlay`), AI state (`npc_overlay`), lag (`net_lag`): test `every_item_of_the_gdd_list_has_an_entry_whose_tool_exists`, scenario `dev_menu`; from `shards` — the same tools and `dev_menu run=<id>` |
 | all module scenarios run in CI | ✅ the scenarios of the modules of phases A–D run (`test`, `headless-cli`). Phase E: `looks`, `scatter`, `effects`, `budgets`, `crash_report` and `display` in `crates/sandbox/scenarios/` run in the same two jobs (`scenario_files.rs`: on a fresh game, one after another and back; `headless-cli`: against a live game, forward and back), the lobby search with a fake Steam (`crates/shards_steam/scenarios/lobby_search.scenario`) runs through `crates/shards_steam/tests/steam/scenarios.rs` in `cargo test --workspace` (the sandbox has no `steam` feature). There is no scenario for `shards package` (a build run by the CLI, not a game tool) or `quit` (it ends the game that a scenario drives); the `ticks:` line of `step` and the `perf` field of `status` are covered by the test `perf.rs`, not by a scenario: the test game does not print the line, and `status` is not a tool. `crash_report` writes to `crashes/scenario.json` and replaces the file on every run, so after `cargo test` one file stays in `crates/sandbox/crashes/` (the folder is in `.gitignore`) |
 
+## Port gaps
+
+Work that is not in the E1-E11 spec: gaps found when porting a game, each done in lane-sized pull requests. The status is set from the code and the tests, as above.
+
+| № | What to do | Status |
+|---|---|---|
+| G1 | voxel terrain | 🟡 `crates/shards_voxel`. **A2b (core) ✅**: `VoxelVolume` (chunked blocks, the chunk size a parameter, edits for generation, FNV hash), the content kind `voxel_palette` (`*.voxel_palette.ron`, validated with the file named), deterministic `Noise`, the registry of generation steps and checks with versions (`add_voxel_step`, `add_voxel_check`, `generate`), the stock steps `noise_hills` and `fill_water`, `column_boxes` and `water_boxes` against a brute-force reference; the module `voxel` in `EnginePlugins` (it may be left out); no sandbox content, so the reference replays are unchanged. Not yet: the physics field (A2a), the region kind (A2c), navigation (A2e), meshing (A2f), the AI layer (A2g) |
+
 ## Tests
 
 Tests by crate, `cargo test -p <crate>`: all the rows, except the template's, are taken from one full run of `cargo test --workspace`
