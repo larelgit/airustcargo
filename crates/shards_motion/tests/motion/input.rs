@@ -464,7 +464,7 @@ fn an_inverted_look_stick_keeps_its_flipped_side_in_the_flick() {
     local_player(&mut app);
     app.world_mut()
         .resource_mut::<InputMap>()
-        .rebind("gameplay", "look", 1, Binding::Stick { stick: shards_motion::input::Stick::Right, deadzone: 0.15, scale: -2.8 })
+        .rebind("gameplay", "look", 1, Binding::Stick { stick: shards_motion::input::Stick::Right, deadzone: 0.15, scale: -2.8, scale_x: None, scale_y: None, curve: 1.0 })
         .unwrap();
     let pad = app.world_mut().spawn(Gamepad::default()).id();
     app.world_mut().get_mut::<Gamepad>(pad).unwrap().analog_mut().set(GamepadInput::Axis(GamepadAxis::RightStickX), 0.9);
@@ -473,6 +473,30 @@ fn an_inverted_look_stick_keeps_its_flipped_side_in_the_flick() {
     assert!(state.look_stick().x < 0.0, "the look axis turns left, so does the flick: {}", state.look_stick());
     assert!(state.axis("look").x < 0.0);
     assert!((state.look_stick().x.abs() - (0.9 - 0.15) / 0.85).abs() < 1e-4);
+}
+
+#[test]
+fn the_flick_reads_the_stick_before_its_curve_and_per_axis_scales() {
+    let mut app = input_app();
+    local_player(&mut app);
+    let stick = Binding::Stick {
+        stick: shards_motion::input::Stick::Right,
+        deadzone: 0.15,
+        scale: 2.8,
+        scale_x: Some(-4.0),
+        scale_y: Some(0.0),
+        curve: 2.0,
+    };
+    app.world_mut().resource_mut::<InputMap>().rebind("gameplay", "look", 1, stick).unwrap();
+    let pad = app.world_mut().spawn(Gamepad::default()).id();
+    let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).unwrap();
+    gamepad.analog_mut().set(GamepadInput::Axis(GamepadAxis::RightStickX), 0.9);
+    gamepad.analog_mut().set(GamepadInput::Axis(GamepadAxis::RightStickY), 0.0);
+    frame(&mut app);
+    let state = app.world().resource::<ControlState>();
+    let linear = (0.9 - 0.15) / 0.85;
+    assert!((state.look_stick().x + linear).abs() < 1e-4, "linear and flipped, not curved: {}", state.look_stick());
+    assert!(state.axis("look").x < 0.0 && state.axis("look").y == 0.0, "{}", state.axis("look"));
 }
 
 #[test]
@@ -1048,4 +1072,28 @@ fn content_sets_the_defaults_and_an_edit_keeps_the_players_changes() {
         (action: "close", bindings: [Key(Escape)]) ])]) }"#);
     let out = ok(&mut app, "content_check", json!({}));
     assert!(out.contains("context `ui.inventory`: a context name cannot contain `.`") && out.contains("`ui_inventory`"), "{out}");
+}
+
+#[test]
+fn a_stick_with_a_bad_curve_or_scale_is_a_content_error_that_names_the_file() {
+    let dir = temp_dir("input_stick_content");
+    let controls = |stick: &str| format!(r#"{{ "default": (contexts: [(name: "gameplay", actions: [
+        (action: "look", bindings: [Stick(stick: Right{stick})]) ])]) }}"#);
+    write(&dir, "content/controls.input_map.ron", &controls(", deadzone: 0.2, scale_x: Some(3.2), scale_y: Some(2.0), curve: 1.6"));
+    let mut app = engine_app(&dir);
+    app.init_resource::<ButtonInput<KeyCode>>().init_resource::<ButtonInput<MouseButton>>();
+    frame(&mut app);
+    let out = ok(&mut app, "content_check", json!({}));
+    assert!(!out.contains("curve"), "a good stick passes: {out}");
+    for (bad, want) in [
+        (", curve: 0.0", "`curve` is 0"),
+        (", curve: -1.0", "`curve` is -1"),
+        (", curve: inf", "`curve` is inf"),
+        (", scale: NaN", "`scale` is not a finite number"),
+        (", scale_y: Some(inf)", "`scale_y` is not a finite number"),
+    ] {
+        write(&dir, "content/controls.input_map.ron", &controls(bad));
+        let out = ok(&mut app, "content_check", json!({}));
+        assert!(out.contains("controls.input_map.ron") && out.contains(want), "{bad}: {out}");
+    }
 }

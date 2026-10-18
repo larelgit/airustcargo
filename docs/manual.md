@@ -149,17 +149,17 @@ are in [template/README.md](../template/README.md).
    ```
 2. **Depend on the engine by tag or commit.** In `Cargo.toml`, use a git dependency instead of the path
    (`../crates/shards`). Versions and tags are described in [CHANGELOG.md](../CHANGELOG.md). The template uses saves,
-   co-op, screens and texts, so it needs the engine of phases C–E (the future `0.4.0`). The earlier versions `0.2.0` and
-   `0.3.0` will not work. Until the maintainer sets a tag, pin a commit:
+   co-op, screens and texts, so it needs the engine of phases C–E (`0.4.0`). The earlier versions `0.2.0` and
+   `0.3.0` will not work. Pin the tag `v0.4.0`:
    ```toml
    [dependencies]
-   shards = { git = "https://github.com/larelgit/airustcargo", rev = "<hash>", default-features = false }
+   shards = { git = "https://github.com/larelgit/shards-engine", tag = "v0.4.0", default-features = false }
    ```
-   After the `v0.4.0` release, replace `rev = "<hash>"` with `tag = "v0.4.0"`. The build does not change until you change
-   `rev` or `tag` yourself. `default-features = false` is needed so that the game turns on the features (`render`,
+   To follow unreleased changes on the main branch instead, pin a commit with `rev = "<hash>"`. The build does not change
+   until you change `tag` or `rev` yourself. `default-features = false` is needed so that the game turns on the features (`render`,
    `remote`, `hot_reload`, `audio`, `gamepad`, …) in its own `[features]`. There are no other dependencies: Bevy, serde
    and schemars come through `shards` (`shards::prelude::*`, `shards::serde`, `shards::schemars`). Install the CLI at the
-   same version: `cargo install shards_cli --git … --rev <hash>` (after the release, `--tag v0.4.0`).
+   same version: `cargo install shards_cli --git … --tag v0.4.0` (or `--rev <hash>` for a pinned commit).
 3. **`main` is one line.** `shards::run` reads the command line (`--headless --seed --port --port-file --no-remote
    --paused --hz --replay --verify --windowed --check-every --check-detail --tick-budget-ms --frame-budget-ms --check-content
    --worldgen-report --seeds --bake-nav --smoke --perf`), catches `kill` and a closed terminal:
@@ -883,6 +883,7 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
 - `InputMap { contexts }`: context (`gameplay`, `menu`, or the game's own) → actions → bindings. A binding is one of: `Key`, `Mouse`,
   `GamepadButton`, `GamepadAxis` (dead zone, scale), `KeyAxis`, `Keys2D` (WASD as a 2D axis), `Buttons2D` (the gamepad's D-pad as a 2D axis), `Stick`,
   `MouseMotion`.
+  `Stick` has `deadzone` (radial, the rest rescaled to 0..1), `scale` for both axes, and three optional fields for stick look (C9): `scale_x` / `scale_y` (`Some(3.2)`; a per-axis scale where set, `scale` where absent) and `curve` (the exponent on the magnitude after the dead zone, `m -> m^curve`, direction kept; default 1.0 is linear; it must be above 0 and finite, otherwise a content error names the file; `rebind` and a saved `controls` string are refused the same way). A look stick that turns 3.2 units per second of yaw and 2.0 of pitch (the scale is in the `look` action's units per second) with a 1.6 response is `Stick(stick: Right, deadzone: 0.2, scale_x: Some(3.2), scale_y: Some(2.0), curve: 1.6)`. The new fields are not written while they are default, so every old `input_map` file and saved `controls` string reads and writes as before; `rebind` takes the same text.
   Action mode: `Press` (one press), `Hold` (while held), `Toggle` (a press turns it on until the next press: "hold or press" for accessibility). `directional: true` — a press carries the direction the player is moving in (a roll towards where the stick points). Slot 0 is the main binding; slot 1 and up are spares.
 - The context stack `InputContexts`: only the top one fires; `menu` blocks `gameplay` until it is removed.
 - Defaults come from content (`*.input_map.ron`, id `default`, hot reload) or from the built-in
@@ -933,7 +934,7 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
 
 **Camera** (`ThirdPersonCamera`, only with a window; the maths without one). Orbit with the mouse and the right stick; collision with walls (a ray from the head to the desired position pulls the camera in); lock-on: the `lock_on` key picks the target closest to the centre of the frame within the cone and range of `CameraSettings::{lock_cone_deg, lock_range}`, a look to one side switches to a neighbour, a target that leaves the range, dies or loses its `LockOnTarget` ends the lock; aim assist, and shake (`AddTrauma`; its strength, and the field of view, sensitivity and Y-axis inversion, come from the player's settings, see "Settings (E8.6)"). The chosen target is written to `Intent.target` between ticks (it is an input, and the replay records it), but the camera never clears someone else's target. **The camera is only a view:** gameplay and `observe` do not read it (`observe` sees through the eyes of the subject), so a window with the camera plays the same game as one without.
 
-**Camera numbers and offsets (C7).** No number the camera decides by is a constant in code. They are the resource `CameraTuning` (content kind `camera`, `*.camera.ron`, one map of ids to definitions; the camera reads the id `default`, hot-reloaded; without one it runs on the code defaults, which are the numbers it always had, so a game without a camera definition sees no change; a definition that is removed puts the defaults back; a game may also set the resource from code, and content that exists wins whenever it loads or changes). Missing fields take the defaults, unknown ones are an error, and `--check-content` names the file and the field of an out-of-range number. A default serializes to nothing, so adding a field never changes the hash of a definition that does not set it.
+**Camera numbers and offsets (C7).** The camera's feel numbers are not constants in code (the two exceptions are named below: the 30..120 field-of-view limit and the shake's noise frequencies). They are the resource `CameraTuning` (content kind `camera`, `*.camera.ron`, one map of ids to definitions; the camera reads the id `default`, hot-reloaded; without one it runs on the code defaults, which are the numbers it always had, so a game without a camera definition sees no change; a definition that is removed puts the defaults back; a game may also set the resource from code, and content that exists wins whenever it loads or changes). Missing fields take the defaults, unknown ones are an error, and `--check-content` names the file and the field of an out-of-range number. A default serializes to nothing, so adding a field never changes the hash of a definition that does not set it.
 
 | field | default (the old constant) | meaning |
 |---|---|---|

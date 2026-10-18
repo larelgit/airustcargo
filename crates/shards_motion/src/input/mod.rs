@@ -427,7 +427,7 @@ impl Devices<'_> {
                 let live = if raw.abs() < *deadzone { 0.0 } else { raw };
                 Vec2::new(live * scale, 0.0)
             }
-            Binding::Stick { stick, deadzone, scale } => {
+            Binding::Stick { stick, deadzone, scale, scale_x, scale_y, curve } => {
                 let raw = self
                     .pads
                     .iter()
@@ -436,8 +436,7 @@ impl Devices<'_> {
                         Stick::Right => p.right_stick(),
                     })
                     .fold(Vec2::ZERO, |best, v| if v.length_squared() > best.length_squared() { v } else { best });
-                let len = raw.length();
-                if len <= *deadzone { Vec2::ZERO } else { raw / len * ((len - deadzone) / (1.0 - deadzone).max(1e-3)).min(1.0) * *scale }
+                map::stick_response(raw, *deadzone, *scale, *scale_x, *scale_y, *curve)
             }
             // Mouse deltas are per frame already; a stick's value is a rate, so the look
             // axis multiplies sticks by the frame time (see `read_input`).
@@ -515,9 +514,16 @@ fn read_input(
                 for binding in action.bindings.iter().filter(|b| b.is_axis()) {
                     match binding {
                         Binding::MouseMotion { .. } => frame.look_pointer_px += Vec2::new(devices.motion.x, -devices.motion.y),
-                        Binding::Stick { scale, .. } if *scale != 0.0 => {
-                            // Divided by the size of the scale, not the scale: an inverted binding (negative scale) keeps its flipped side, as the look axis does.
-                            let deflection = devices.value(binding) / scale.abs();
+                        &Binding::Stick { stick, deadzone, scale, scale_x, scale_y, .. } => {
+                            // The deflection past the deadzone, before the response curve and the scales,
+                            // keeping only each scale's sign: an inverted binding keeps its flipped side, as
+                            // the look axis does, and an axis scaled to 0 stays off.
+                            let side = |s: Option<f32>| {
+                                let s = s.unwrap_or(scale);
+                                Some(if s == 0.0 { 0.0 } else { s.signum() })
+                            };
+                            let raw = Binding::Stick { stick, deadzone, scale: 1.0, scale_x: side(scale_x), scale_y: side(scale_y), curve: 1.0 };
+                            let deflection = devices.value(&raw);
                             if deflection.length_squared() > frame.look_stick.length_squared() {
                                 frame.look_stick = deflection;
                             }
