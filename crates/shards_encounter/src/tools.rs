@@ -209,9 +209,7 @@ fn encounter_reset(In(call): In<Call<ResetArgs>>, world: &mut World) -> ToolResu
     if forget && let Some(mut runs) = world.get_resource_mut::<EncounterRuns>() {
         runs.completed.clear();
     }
-    if world.get_resource::<EncounterRuns>().is_some_and(EncounterRuns::is_empty) {
-        world.remove_resource::<EncounterRuns>();
-    }
+    crate::step::drop_when_empty(world);
     Ok(if done.is_empty() { "no run to reset".to_owned() } else { format!("reset {}: {}", done.len(), done.join(", ")) })
 }
 

@@ -125,9 +125,7 @@ pub fn step(world: &mut World) {
         let tile = found.iter().find(|a| a.key == key).and_then(|a| a.tile);
         visit(world, &key, &parts, tile, dt);
     }
-    if world.get_resource::<EncounterRuns>().is_some_and(EncounterRuns::is_empty) {
-        world.remove_resource::<EncounterRuns>();
-    }
+    drop_when_empty(world);
 }
 
 fn def_of(world: &World, id: &str) -> Option<EncounterDef> {
@@ -599,6 +597,7 @@ pub fn adopt(world: &mut World, key: &str, entity: Entity, counted: bool) -> Res
 /// and no events, the rest `Idle` (placed waves spawned anew). The phase of a fight is not saved.
 /// Returns the journal line.
 pub fn restore_completed(world: &mut World, mut completed: Vec<String>) -> Option<String> {
+    let had = world.contains_resource::<EncounterRuns>();
     let runs = world.remove_resource::<EncounterRuns>().unwrap_or_default();
     for run in &runs.runs {
         let mut ids: Vec<AiId> = run.members.iter().map(|m| m.id).collect();
@@ -608,7 +607,8 @@ pub fn restore_completed(world: &mut World, mut completed: Vec<String>) -> Optio
     completed.sort();
     completed.dedup();
     let note = (!completed.is_empty()).then(|| format!("encounters: {} won restored ({})", completed.len(), completed.join(", ")));
-    if !completed.is_empty() {
+    // A host that had the resource keeps it (see `drop_when_empty`).
+    if !completed.is_empty() || (had && world.get_resource::<shards_core::NetRole>().is_some_and(|r| *r == shards_core::NetRole::Host)) {
         world.insert_resource(EncounterRuns { completed, ..default() });
     }
     note
@@ -617,4 +617,15 @@ pub fn restore_completed(world: &mut World, mut completed: Vec<String>) -> Optio
 /// The keys of the encounters won for good (the `encounters` save section).
 pub fn completed(world: &World) -> Vec<String> {
     world.get_resource::<EncounterRuns>().map(|r| r.completed.clone()).unwrap_or_default()
+}
+
+/// Removes the resource when it holds nothing, so that a game with no run has the snapshots and
+/// replay hashes it had before the module. Not on a host: the net layer replicates a resource
+/// that appears or changes, not one that goes, so a client would keep the runs it was last sent
+/// (and desync on `EncounterRuns`). A host keeps the empty resource instead.
+pub(crate) fn drop_when_empty(world: &mut World) {
+    let host = world.get_resource::<shards_core::NetRole>().is_some_and(|r| *r == shards_core::NetRole::Host);
+    if !host && world.get_resource::<EncounterRuns>().is_some_and(EncounterRuns::is_empty) {
+        world.remove_resource::<EncounterRuns>();
+    }
 }

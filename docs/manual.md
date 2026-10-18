@@ -2447,7 +2447,7 @@ its own `join_policy` calls `shards::net::gates_say` or `shards::encounter::join
 ### Snapshots and saves
 
 `EncounterRuns` is a snapshot resource: a snapshot taken mid-wave resumes the fight tick for tick with the same ids. It is present
-only while there is a run or a remembered key, and a snapshot that holds none removes the runs of the world it is loaded into (their
+only while there is a run or a remembered key (a co-op host keeps it, empty, once it had one: the net layer replicates a resource that appears or changes, not one that goes), and a snapshot that holds none removes the runs of the world it is loaded into (their
 members were replaced). The replay check `encounters` hashes it. The world save section `encounters` holds the keys of won `once`
 encounters; a load despawns the runs silently, remembers the keys and lets the next tick make fresh runs (a won key comes back `Won`
 with no members and no events; everything else starts over). The phase of a fight is not saved.

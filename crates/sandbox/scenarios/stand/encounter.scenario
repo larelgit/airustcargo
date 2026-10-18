@@ -52,6 +52,18 @@ step 120
 @host expect !journal "wiped"
 @c1 expect !journal "wiped"
 
+# --- 4. the region changes: every run goes with its anchors; the clients drop theirs without a desync
+# (the host keeps an empty `EncounterRuns`, because the net layer replicates a resource that appears
+# or changes, not one that is removed)
+mark
+@host act regen region=wilds seed=42
+step 200
+@c1 act encounters
+@c1 expect result contains "0 encounter runs"
+@c2 act encounters
+@c2 expect result contains "0 encounter runs"
+@c1 expect !journal "desync"
+
 # --- clean up
 @host act encounter_reset key=all forget=true
 @host act heal id=e5

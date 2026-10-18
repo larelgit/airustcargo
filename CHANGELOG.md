@@ -90,7 +90,7 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   `encounter_active`, `encounter_between`, `encounter_wiped`, `encounter_won` and the NPC condition `encounter_returning`; the engine
   rules `encounter.members_tracked`, `encounter.state_sane` and `encounter.lock_matches`; the dev menu entries; the snapshot resource
   and replay check `encounters` (absent without runs, so other snapshots and replays keep their bytes) and a snapshot prepare that
-  removes stale runs; the world save section `encounters` (the keys of won `once` encounters; a fight in progress is not saved).
+  removes stale runs (a co-op host keeps the resource, empty, once it had one, because a removal does not replicate); the world save section `encounters` (the keys of won `once` encounters; a fight in progress is not saved).
   `EncounterAppExt::add_encounter_out_rule` (a downed state counts as out) and `add_encounter_despawn_hook` (what a member owns is
   cleaned up before a silent despawn); `adopt`, `start_encounter`, `reset_encounter`, `place_encounter`, `join_blocked`. The umbrella
   sends the events to clients, plays a warning's effect and sound, keeps `NetAlways` on the members of a `net_always` fight, and holds
