@@ -3174,7 +3174,7 @@ cargo sandbox --replay tests/replays/combat_prototype.json --verify --heavy 30
 
 Which states has a session reached? Coverage answers it for a fuzz run or a soak, and tells a fuzzer which of its calls led somewhere new. It is test-only bookkeeping: off by default, on with `--coverage` (`EngineConfig::coverage`; `cargo sandbox --headless --paused --coverage …`). It only reads the world: the resource `AiCoverage` exists only when coverage is on, and it is not in the replay hash, the replay checks or a snapshot (heavy mode's twins keep it off). A game with coverage on records the same replay as one without; `tests/sandbox/coverage.rs` compares the two recordings, and the combat prototype's reference replay verifies with `--coverage`.
 
-**Signatures.** After every tick each entity with `AiVisible` gets one signature: the **parts** modules contribute, joined in registration order (`add_coverage_part(name, |world, entity| Option<String>)`, a part returns `None` for an entity that has no such aspect). The engine's own: `kind` (`AiKind`), `motion` (the `MotionState` mode: `ground`, `air`, `water`, `glide`, `mantle`), `action` (`light_1:recovery`, or `idle`), `statuses` (the ids of the active statuses, sorted: `bleed,slow`) and `npc` (the `NpcBrain` state). Each module registers its part in its own plugin. Example: `kind=Boss motion=ground action=slash:active npc=fight`. The resource counts every distinct signature (entity-ticks) and the tick it first appeared at; within one tick the entities' signatures are counted in sorted order, so a window that shifts `Entity` indices changes nothing.
+**Signatures.** After every tick each entity with `AiVisible` gets one signature: the **parts** modules contribute, joined in registration order (`add_coverage_part(name, |world, entity| Option<String>)`, a part returns `None` for an entity that has no such aspect). The engine's own: `kind` (`AiKind`), `motion` (the `MotionState` mode: `ground`, `air`, `water`, `glide`, `mantle`), `action` (`light_1:recovery`, or `idle`), `statuses` (the ids of the active statuses, sorted: `bleed,slow`), `stamina` (where it stands: `below_zero`, `empty`, `low`, `mid`, `high` or `full`, so that a session which drains it or overshoots it is a new state) and `npc` (the `NpcBrain` state). Each module registers its part in its own plugin. Example: `kind=Boss motion=ground action=slash:active stamina=mid npc=fight`. The resource counts every distinct signature (entity-ticks) and the tick it first appeared at; within one tick the entities' signatures are counted in sorted order, so a window that shifts `Entity` indices changes nothing.
 
 **What content declares.** `add_coverage_catalog(label, part, declared, reached)` names a kind of thing content declares (`declared(world)` lists the ids) and how a part's values show it was reached (`reached(value)` gives the ids: `slash:active` reached the action `slash`). The engine registers `actions` (every `action` definition; `idle` is the value of a free fighter), `statuses` (every `status`, reached when it was active on some entity) and `behaviour states` (every state of every `behavior`). A state name shared by two behaviours counts as reached once any entity of either is in it.
 
@@ -3184,8 +3184,8 @@ Which states has a session reached? Coverage answers it for a fuzz run or a soak
 coverage: 51 distinct signatures, 32298 entity-ticks
 distinct: 51
 rarest 5:
-  2x first at tick 436  kind=Player motion=ground action=block:lower
-  3x first at tick 1156  kind=Boss motion=ground action=shockwave_enraged:active npc=fight
+  2x first at tick 436  kind=Player motion=ground action=block:lower stamina=low
+  3x first at tick 1156  kind=Boss motion=ground action=shockwave_enraged:active stamina=full npc=fight
 never reached, actions (7 of 23): claw, player_death, player_stagger, skeleton_death, skeleton_flinch, skeleton_stagger, slam
 never reached, behaviour states (3 of 5): guard, home, idle
 ```

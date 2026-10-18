@@ -100,7 +100,7 @@ struct Args {
     #[arg(long, value_name = "O", requires = "heavy")]
     heavy_offset: Option<u64>,
     /// Keep state coverage: the `coverage` tool lists the states the session reached (an entity's kind,
-    /// motion mode, action and phase, behaviour state, statuses) and what content declares that it
+    /// motion mode, action and phase, statuses, stamina level, behaviour state) and what content declares that it
     /// never did. Only reads the world; for fuzzing and soak.
     #[arg(long, conflicts_with_all = ["check_content", "worldgen_report", "bake_nav", "bake_motion", "smoke", "perf"])]
     coverage: bool,

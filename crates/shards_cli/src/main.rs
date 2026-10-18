@@ -1094,8 +1094,11 @@ fn run_fuzz(client: &Client, plan: FuzzPlan, minimize: Option<u32>) -> Result<Ex
             if let Some(replay) = &report.replay {
                 say(format!("replay: {replay}"));
             }
-            if let Some(budget) = minimize {
-                minimize_run(client, &mut driver, &plan, &report, &start, budget)?;
+            // The finding is the exit code; a failed shrink must not hide it.
+            if let Some(budget) = minimize
+                && let Err(e) = minimize_run(client, &mut driver, &plan, &report, &start, budget)
+            {
+                eprintln!("warning: --minimize did not finish: {e}");
             }
             Ok(ExitCode::from(exit::HALTED))
         }
@@ -1104,8 +1107,11 @@ fn run_fuzz(client: &Client, plan: FuzzPlan, minimize: Option<u32>) -> Result<Ex
             if let Some(replay) = &report.replay {
                 say(format!("replay: {replay}"));
             }
-            if let Some(budget) = minimize {
-                minimize_run(client, &mut driver, &plan, &report, &start, budget)?;
+            // The finding is the exit code; a failed shrink must not hide it.
+            if let Some(budget) = minimize
+                && let Err(e) = minimize_run(client, &mut driver, &plan, &report, &start, budget)
+            {
+                eprintln!("warning: --minimize did not finish: {e}");
             }
             Ok(ExitCode::from(exit::HALTED))
         }
