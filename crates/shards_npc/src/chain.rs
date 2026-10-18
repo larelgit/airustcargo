@@ -19,7 +19,7 @@
 use ai_core::{AiId, SimRng, SimTick};
 use bevy::prelude::*;
 use shards_action::def::CancelTo;
-use shards_action::{ActionDef, MovesetDef};
+use shards_action::{can_start, ActionDef, FighterView, MovesetDef};
 use shards_content::ContentDb;
 
 use crate::brain::{salt, Npc};
@@ -42,6 +42,11 @@ pub struct NpcChain {
     /// The continuation is a strike for the director's spacing: until it starts, the press
     /// counts as a start of the pressed tick for the other NPCs.
     pub strike: bool,
+    /// The spacing is asked when the machine would take the buffered input into the combo window
+    /// ([`ChainDef::gate_at_start`]), not when it is pressed.
+    pub at_start: bool,
+    /// The tick the spacing let such a continuation through (it starts that tick).
+    pub cleared: Option<u64>,
 }
 
 /// An NPC pressed the input of its combo continuation (journaled: `e7 chains light after
@@ -98,7 +103,7 @@ pub(crate) fn definition<'a>(db: &'a ContentDb, npc: &Npc, open: Option<&NpcOpti
 #[allow(clippy::too_many_arguments, reason = "the roll reads the die, the NPC, its open options and the action that began")]
 pub(crate) fn roll(db: &ContentDb, rng: &SimRng, id: AiId, npc: &Npc, open: Option<&NpcOptions>, moveset: &str, action: &str, instance: u32) -> Option<NpcChain> {
     let chain = definition(db, npc, open, moveset, action)?;
-    rng.stream(id, salt::CHAIN).chance(chain.chance).then(|| NpcChain { input: chain.input.clone(), instance, pressed: None, strike: false })
+    rng.stream(id, salt::CHAIN).chance(chain.chance).then(|| NpcChain { input: chain.input.clone(), instance, pressed: None, strike: false, at_start: chain.gate_at_start, cleared: None })
 }
 
 /// `NpcSystems::Plan`, before the planner: every NPC with a chain whose action has reached its
@@ -128,6 +133,9 @@ pub(crate) fn chain_press(
             continue;
         };
         if chain.pressed.is_some() {
+            if chain.at_start && chain.strike {
+                gate_buffered(&mut f, &chain, &mut notes, &mut commands, &db, tick.0, dt);
+            }
             continue;
         }
         let Some(def) = db.get::<ActionDef>(&run.action) else {
@@ -147,7 +155,11 @@ pub(crate) fn chain_press(
         let strike = next.as_deref().is_none_or(|a| director.is_strike(&tags_for(&db, f.npc, &f.fighter.moveset, a)));
         let spacing = spacing_ticks(director.min_spacing, dt);
         let pool = pool(&f.npc.director);
-        if strike && let Some((by, ticks_left)) = waiting(&notes, *f.id, &pool, tick.0, spacing) {
+        // A continuation gated at its start is asked only if the machine takes it this very tick
+        // (the combo window is already open); else it is asked when it would start.
+        let takes_now = chain.at_start && takes_input(&f, &db, &chain.input, dt);
+        let asked = strike && (!chain.at_start || takes_now);
+        if asked && let Some((by, ticks_left)) = waiting(&notes, *f.id, &pool, tick.0, spacing) {
             commands.entity(entity).remove::<NpcChain>();
             commands.trigger(ChainRefused { entity, after, input: chain.input, by, ticks_left, spacing });
             continue;
@@ -156,10 +168,58 @@ pub(crate) fn chain_press(
         if let Some(c) = f.chain.as_mut() {
             c.pressed = Some(tick.0);
             c.strike = strike;
+            c.cleared = (asked && chain.at_start).then_some(tick.0);
         }
-        if strike {
+        if asked {
             notes.push((*f.id, pool, tick.0));
         }
         commands.trigger(ChainPressed { entity, after, input: chain.input });
     }
+}
+
+/// Whether the action machine would take `input` this tick.
+fn takes_input(f: &crate::director::FightingItem, db: &ContentDb, input: &str, dt: f32) -> bool {
+    let view = FighterView {
+        db,
+        moveset: &f.fighter.moveset,
+        state: f.state,
+        stamina: f.stamina,
+        cooldowns: f.cooldowns,
+        charges: f.charges,
+        held: &f.drive.held,
+        dead: f.dead,
+    };
+    can_start(&view, input, dt).is_ok()
+}
+
+/// A gated continuation ([`ChainDef::gate_at_start`]) waits in the input queue. On the tick the
+/// machine would take it, the spacing is asked, as Godot's `chain_gate` does when it consumes
+/// the buffered press: refused, the input is withdrawn from the queue and the chain ends;
+/// allowed, it counts as a start of this tick for the planners that come after.
+fn gate_buffered(
+    f: &mut crate::director::FightingItem,
+    chain: &NpcChain,
+    notes: &mut Vec<crate::strike::Note>,
+    commands: &mut Commands,
+    db: &ContentDb,
+    now: u64,
+    dt: f32,
+) {
+    if !f.buffer.queued.iter().any(|q| q.input == chain.input) || !takes_input(f, db, &chain.input, dt) {
+        return;
+    }
+    let director = DirectorDef::of(db, &f.npc.director);
+    let spacing = spacing_ticks(director.min_spacing, dt);
+    let pool = pool(&f.npc.director);
+    if let Some((by, ticks_left)) = waiting(notes, *f.id, &pool, now, spacing) {
+        f.buffer.queued.retain(|q| q.input != chain.input);
+        let after = f.state.current.as_ref().map_or_else(String::new, |r| r.action.clone());
+        commands.entity(f.entity).remove::<NpcChain>();
+        commands.trigger(ChainRefused { entity: f.entity, after, input: chain.input.clone(), by, ticks_left, spacing });
+        return;
+    }
+    if let Some(c) = f.chain.as_mut() {
+        c.cleared = Some(now);
+    }
+    notes.push((*f.id, pool, now));
 }

@@ -53,4 +53,18 @@
         rest_runs_while_busy: true,
         first_rest: Some((0.2, 0.4)),
     ),
+    // G4: the roll covers the whole table (a strike that the spacing holds back is a decision that does nothing).
+    "pick_plain": (options: [(input: "light", weight: 0.78), (input: "hop", weight: 0.22, max: Some(5.0))], rest: (0.1, 0.1), press_on_decision: true),
+    "pick_godot": (options: [(input: "light", weight: 0.78), (input: "hop", weight: 0.22, max: Some(5.0))], rest: (0.1, 0.1), press_on_decision: true, gate_after_pick: true),
+    // G8: a token that comes back unused costs the NPC its rest, or does not.
+    "unused_default": (options: [(input: "light")], rest: (0.5, 0.5), gate_after_pick: true),
+    "unused_free": (options: [(input: "light")], rest: (0.5, 0.5), gate_after_pick: true, unused_rest: false),
+    // G8: presses only on decision ticks, and the same plan on any tick.
+    "decide_press": (options: [(input: "light")], rest: (0.5, 0.5), press_on_decision: true),
+    "any_press": (options: [(input: "light")], rest: (0.5, 0.5)),
+    // G7: the same chain as chain_always, asking the spacing when the continuation would start.
+    "chain_gated": (
+        options: [(input: "light", chain: Some((input: "light", chance: 1.0, gate_at_start: true))), (action: "swing_2", weight: 0.0, chain: Some((input: "light", chance: 1.0, gate_at_start: true)))],
+        rest: (0.3, 0.3),
+    ),
 }

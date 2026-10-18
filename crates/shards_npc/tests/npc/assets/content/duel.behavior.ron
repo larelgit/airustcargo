@@ -44,4 +44,19 @@
     ),
     // Presses a strike on its second tick, which is when a planner NPC takes its first token (test hook `press_at_two`).
     "presser_at_two": (initial: "go", states: {"go": (kind: "press_at_two")}),
+    // G5: a cadence that is not a whole number of ticks: 0.16 s is 9.6 ticks, decided every 10.
+    "thinker16": (initial: "probe", think: Some(0.16), states: {"probe": ()}),
+    // Fights like `grunt`, deciding every 0.15 s of free time.
+    "grunt_think": (
+        initial: "idle",
+        think: Some(0.15),
+        states: {
+            "idle": (transitions: [(to: "fight", when: ["target_known"])]),
+            "fight": (kind: "attack", transitions: [(to: "idle", when: ["target_lost"])]),
+        },
+    ),
+    // Stands where it is.
+    "stand": (initial: "idle", states: {"idle": ()}),
+    // Presses a strike a set time after the other NPC began its first swing (test hook `press_after_swing`).
+    "late_presser": (initial: "go", states: {"go": (kind: "press_after_swing")}),
 }

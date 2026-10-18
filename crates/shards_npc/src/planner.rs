@@ -219,6 +219,35 @@ pub fn choose(
     pick_weighted(rng, &eligible)
 }
 
+/// What a decision comes to ([`decide`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Decision {
+    /// Nothing may be chosen.
+    Nothing,
+    /// Chosen: walk into its window and press it.
+    Pick(usize),
+    /// Chosen, but the director holds it back (`gate_after_pick`): the NPC does nothing this
+    /// decision, and the choice is forgotten.
+    Wait(usize),
+}
+
+/// The choice of an attack: [`choose`] among what `allowed` lets through. The pick `held_back`
+/// names (a strike the spacing refuses, with `gate_after_pick`) is a [`Decision::Wait`], not a press.
+pub fn decide(
+    options: &[Resolved],
+    allowed: impl Fn(&Resolved) -> bool,
+    held_back: impl Fn(&Resolved) -> bool,
+    distance: f32,
+    in_range_only: bool,
+    rng: &mut DetRng,
+) -> Decision {
+    match choose(options, allowed, distance, in_range_only, rng) {
+        None => Decision::Nothing,
+        Some(i) if held_back(&options[i]) => Decision::Wait(i),
+        Some(i) => Decision::Pick(i),
+    }
+}
+
 /// Whether `distance` lies in the option's window.
 pub fn in_window(o: &Resolved, distance: f32) -> bool {
     distance >= o.min - 1e-4 && distance <= o.max + 1e-4
@@ -321,7 +350,12 @@ pub(crate) fn plan_attacks(
         let (budget, overlapping) = inflight.on(grant.target, id, &director);
         // Another NPC of its director began a strike less than `min_spacing` ago: its strikes wait.
         let spaced_out = waiting(&notes, id, &pool(&f.npc.director), tick.0, spacing(&director)).is_some();
-        let chosen = {
+        // With `gate_after_pick` the roll ignores the spacing and the director refuses after it.
+        let gate = plan_def.gate_after_pick;
+        let held_back = |o: &Resolved| gate && spaced_out && director.is_strike(&o.tags);
+        // With `press_on_decision` a new choice, like the press, waits for the NPC's decision tick.
+        let decides = !plan_def.press_on_decision || f.think.is_none_or(|t| t.decided == Some(tick.0));
+        let decision = {
             let view = FighterView {
                 db: &db,
                 moveset: &f.fighter.moveset,
@@ -332,13 +366,32 @@ pub(crate) fn plan_attacks(
                 held: &f.drive.held,
                 dead: f.dead,
             };
-            let ok = |o: &Resolved| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director, spaced_out, f.options);
+            let ok = |o: &Resolved| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director, spaced_out && !gate, f.options);
             let kept = grant.attack.as_ref().and_then(|name| options.iter().position(|o| o.name == *name));
             // In range only: choose again every tick among what fits (a boss picks what
             // reaches); else keep the choice while it stays possible.
-            match kept.filter(|&i| !plan_def.in_range_only && ok(&options[i])) {
-                Some(i) => Some(i),
-                None => choose(&options, ok, distance, plan_def.in_range_only, &mut rng.stream(id, salt::PICK)),
+            let keeps = kept.filter(|&i| (!plan_def.in_range_only || !decides) && ok(&options[i]));
+            match keeps {
+                Some(i) if held_back(&options[i]) => Decision::Wait(i),
+                Some(i) => Decision::Pick(i),
+                None if !decides => Decision::Nothing,
+                None => decide(&options, ok, held_back, distance, plan_def.in_range_only, &mut rng.stream(id, salt::PICK)),
+            }
+        };
+        let chosen = match decision {
+            Decision::Pick(i) => Some(i),
+            // Between two decisions of a `press_on_decision` NPC with no choice yet: it stands.
+            Decision::Nothing if !decides => {
+                f.drive.goal = None;
+                continue;
+            }
+            Decision::Nothing => None,
+            Decision::Wait(_) => {
+                // Nothing this decision: no press, no walking, no second roll; the next one rolls anew.
+                grant.attack = None;
+                f.drive.goal = None;
+                f.token.held = Some(grant);
+                continue;
             }
         };
         let home = f.home.map(|h| (h.pos.unwrap_or(here), h.leash));
@@ -386,7 +439,7 @@ pub(crate) fn plan_attacks(
                 && overlapping.iter().all(|tags| director.may_overlap(&o.tags, tags));
             // It swings at what it perceives now, not at a memory.
             let sensed = f.perceived.get(grant.target).is_some_and(|k| k.age <= 1e-4);
-            if starts && fits && sensed {
+            if starts && fits && sensed && decides {
                 grant.pressed = Some(tick.0);
                 grant.instance = f.state.started;
                 f.drive.press.push(o.input.clone());
@@ -436,6 +489,38 @@ mod tests {
             let share = counts[i] as f64 / n as f64;
             assert!((share - expected).abs() < 0.01, "option {i}: {share:.3} instead of {expected:.3} ({counts:?})");
         }
+    }
+
+    /// Godot rolls over the whole table, then asks the director: with the spacing blocking, a
+    /// strike that falls is a decision that does nothing, a retreat (exempt) still goes. Over many
+    /// seeds the retreat's share is its weight, 0.22, not 1.
+    #[test]
+    fn a_roll_over_the_whole_table_leaves_the_exempt_option_its_weight() {
+        let options = [
+            option("slash", 0.5, 0.0, 5.0, &[]),
+            option("thrust", 0.28, 0.0, 5.0, &[]),
+            option("backstep", 0.22, 0.0, 5.0, &["reposition"]),
+        ];
+        let strike = |o: &Resolved| !o.tags.contains(&"reposition".to_owned());
+        let (mut gated, mut plain) = ([0u32; 3], [0u32; 2]);
+        let n = 60_000u64;
+        for seed in 0..n {
+            let mut rng = DetRng::from_keys(&[seed, 7, 3, salt::PICK]);
+            match decide(&options, |_| true, strike, 1.0, false, &mut rng) {
+                Decision::Pick(i) => { assert_eq!(options[i].name, "backstep"); gated[0] += 1 },
+                Decision::Wait(i) => gated[if options[i].name == "slash" { 1 } else { 2 }] += 1,
+                Decision::Nothing => panic!("something is always allowed"),
+            }
+            // The rule off: the strikes are taken out before the roll.
+            match decide(&options, |o| !strike(o), |_| false, 1.0, false, &mut DetRng::from_keys(&[seed, 7, 3, salt::PICK])) {
+                Decision::Pick(i) => plain[usize::from(options[i].name != "backstep")] += 1,
+                other => panic!("{other:?}"),
+            }
+        }
+        let share = |k: u32| f64::from(k) / n as f64;
+        assert!((share(gated[0]) - 0.22).abs() < 0.01, "retreats: {gated:?}");
+        assert!((share(gated[1]) - 0.50).abs() < 0.01 && (share(gated[2]) - 0.28).abs() < 0.01, "waits: {gated:?}");
+        assert_eq!(plain, [n as u32, 0], "without the rule the retreat is rolled with probability 1");
     }
 
     #[test]

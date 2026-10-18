@@ -557,11 +557,17 @@ pub struct ChainDef {
     pub input: String,
     /// The odds, 0 to 1, rolled once when the attack starts.
     pub chance: f32,
+    /// Where the director's `min_spacing` is asked (G7). Off (the default): when the input is
+    /// pressed, at the start of the recovery. On: when the action machine would take the buffered
+    /// input into the combo window, as Godot's `chain_gate` does; a strike another NPC began in
+    /// between refuses the continuation, which is withdrawn from the queue and ends the chain.
+    #[serde(skip_serializing_if = "is_false")]
+    pub gate_at_start: bool,
 }
 
 impl Default for ChainDef {
     fn default() -> Self {
-        Self { input: String::new(), chance: 1.0 }
+        Self { input: String::new(), chance: 1.0, gate_at_start: false }
     }
 }
 
@@ -640,6 +646,25 @@ pub struct AttackPlanDef {
     /// max)` seconds. `None`: it starts without rest.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_rest: Option<(f32, f32)>,
+    /// Godot's order of choosing (G4): roll over the whole option table first, then ask the
+    /// director. Off (the default): a strike the director's `min_spacing` holds back is left out
+    /// before the roll, so the roll falls on what may start now. On: the roll ignores the
+    /// spacing; if it lands on a strike the spacing holds back, the NPC does nothing this decision
+    /// (no press, no second roll; the next decision rolls again), and an exempt action is never
+    /// held back. The director grants a token without looking at the spacing too.
+    #[serde(skip_serializing_if = "is_false")]
+    pub gate_after_pick: bool,
+    /// The planner presses an attack, and rolls a new choice, only on the NPC's decision ticks
+    /// (`BehaviorDef::think`), as the whole decision is one in Godot; between decisions it keeps
+    /// the choice it made and walks into its window. Off (the default): any tick. A behaviour
+    /// without a `think` cadence decides every tick, so there it changes nothing.
+    #[serde(skip_serializing_if = "is_false")]
+    pub press_on_decision: bool,
+    /// A token that came back unused (never pressed within `patience`, or taken back because the
+    /// limit fell) still costs the NPC the minimum of `rest`. Off: it costs nothing, a decision
+    /// that did nothing has no penalty. On by default.
+    #[serde(skip_serializing_if = "is_true")]
+    pub unused_rest: bool,
 }
 
 impl Default for AttackPlanDef {
@@ -654,6 +679,9 @@ impl Default for AttackPlanDef {
             rest_interrupted: None,
             rest_runs_while_busy: false,
             first_rest: None,
+            gate_after_pick: false,
+            press_on_decision: false,
+            unused_rest: true,
         }
     }
 }
@@ -847,6 +875,10 @@ fn is_zero(v: &f32) -> bool {
 
 fn is_false(v: &bool) -> bool {
     !*v
+}
+
+fn is_true(v: &bool) -> bool {
+    *v
 }
 
 fn non_negative(refs: &mut Refs, field: &str, v: f32) {

@@ -160,6 +160,9 @@ pub struct NpcBrain {
 pub struct NpcThink {
     /// Seconds until its next decision tick; counted down only while it runs no action.
     pub left: f32,
+    /// The tick of its last decision: the planner presses on it only, if its plan says so
+    /// (`AttackPlanDef::press_on_decision`).
+    pub decided: Option<u64>,
 }
 
 /// What an NPC wants this tick: its state hook's [`NpcOutput`], refined by the director
@@ -500,8 +503,8 @@ enum Think {
     Keep,
     /// The behaviour has no cadence: no timer.
     Off,
-    /// Seconds left.
-    Left(f32),
+    /// Seconds left, and whether this tick decides.
+    Left(f32, bool),
 }
 
 /// `NpcSystems::Decide`: every active NPC, in `AiId` order, takes at most one transition and
@@ -511,6 +514,7 @@ pub(crate) fn decide(world: &mut World) {
     if !world.contains_resource::<NpcHooks>() {
         world.init_resource::<NpcHooks>();
     }
+    let now = ai_core::sim::tick(world);
     let (decided, problems) = world.resource_scope(|world, hooks: Mut<NpcHooks>| decide_all(world, &hooks, dt));
     for (key, text) in problems {
         report_once(world, key, text);
@@ -554,14 +558,17 @@ pub(crate) fn decide(world: &mut World) {
         }
         match d.think {
             Think::Keep => {}
-            Think::Left(left) => match e.get_mut::<NpcThink>() {
+            Think::Left(left, deciding) => match e.get_mut::<NpcThink>() {
                 Some(mut think) => {
                     if think.left != left {
                         think.left = left;
                     }
+                    if deciding {
+                        think.decided = Some(now);
+                    }
                 }
                 None => {
-                    e.insert(NpcThink { left });
+                    e.insert(NpcThink { left, decided: deciding.then_some(now) });
                 }
             },
             Think::Off => {
@@ -767,11 +774,11 @@ fn think_tick(world: &World, entity: Entity, behavior: &BehaviorDef, dt: f32) ->
     let Some(period) = behavior.think else { return (true, Think::Off) };
     let left = world.get::<NpcThink>(entity).map_or(0.0, |t| t.left);
     if world.get::<ActionState>(entity).is_some_and(|s| s.current.is_some()) {
-        return (false, Think::Left(left));
+        return (false, Think::Left(left, false));
     }
     // Sums of tick lengths: a hair of slack, as every timer here.
     let left = left - dt;
-    if left <= 1e-4 { (true, Think::Left(period)) } else { (false, Think::Left(left)) }
+    if left <= 1e-4 { (true, Think::Left(period, true)) } else { (false, Think::Left(left, false)) }
 }
 
 /// The pause an NPC starts with (its plan's `first_rest`), drawn from its own stream.

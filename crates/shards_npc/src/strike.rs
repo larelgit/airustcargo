@@ -91,10 +91,14 @@ pub(crate) fn notes_of(world: &World) -> Vec<Note> {
 pub(crate) type NoteRow<'a> = (AiId, &'a str, Option<&'a NpcStrike>, Option<&'a Grant>, Option<u64>);
 
 /// The tick a combo continuation was pressed, while it is still on its way: a press of this tick,
-/// or one whose input still waits in the queue. A press that died unused (the combo window did
+/// or one whose input still waits in the queue. A continuation gated at its start counts only on the tick it is let through. A press that died unused (the combo window did
 /// not open within the buffer life) started nothing and is no note.
 pub(crate) fn chain_note(chain: Option<&NpcChain>, buffer: Option<&InputBuffer>, now: u64) -> Option<u64> {
     let chain = chain.filter(|c| c.strike)?;
+    // Gated at its start, the continuation is a start only on the tick the spacing let it through.
+    if chain.at_start {
+        return (chain.cleared == Some(now)).then_some(now);
+    }
     let at = chain.pressed?;
     (at == now || buffer.is_some_and(|b| b.queued.iter().any(|q| q.input == chain.input))).then_some(at)
 }

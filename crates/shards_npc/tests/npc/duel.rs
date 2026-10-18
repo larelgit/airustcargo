@@ -744,3 +744,213 @@ fn a_press_that_died_unused_is_no_start_for_the_others() {
     assert!(chain.pressed.is_some_and(|p| p < now - 9), "the press is over: {chain:?}");
     assert_eq!(shards_npc::wait_of(app.world(), other).map(|(_, left)| left), Some(42 - 36), "counted from the start");
 }
+
+// --- G5: the cadence is a whole number of ticks --------------------------------------------
+
+#[test]
+fn a_cadence_of_sixteen_hundredths_decides_every_ten_ticks() {
+    // 0.15 s is 9 ticks of 1/60 s, 0.16 s is 9.6: the timer runs out on the tenth.
+    let (mut app, e) = watcher("thinker16");
+    let ticks = decision_ticks(&mut app, e, 100);
+    assert_eq!(&ticks[..4], &[1, 11, 21, 31], "{ticks:?}");
+    assert!(ticks.windows(2).all(|w| w[1] - w[0] == 10), "{ticks:?}");
+}
+
+// --- G4: Godot rolls the whole table, then asks the director -------------------------------
+
+/// A duelist of `plan` 1.2 m from the hero, and a passive NPC of the same director whose last strike is
+/// always this tick: the spacing holds every strike of the duelist back.
+fn blocked(plan: &str, behavior: &str, seed: u64) -> (App, Entity, Entity) {
+    let mut app = app_seeded(seed, record_starts);
+    let world = app.world_mut();
+    player(world, 0, Vec3::ZERO);
+    let a = npc(world, "duelist", Npc::new(behavior, "grunt").with_plan(plan).with_director("spaced"), Vec3::new(0.0, 0.0, 1.2), N);
+    let blocker = npc(world, "duelist", Npc::new("stand", "grunt").with_director("spaced"), Vec3::new(6.0, 0.0, 0.0), W);
+    (app, a, blocker)
+}
+
+/// Steps one tick at a time, refreshing the blocker's note so the spacing never runs out.
+fn step_blocked(app: &mut App, blocker: Entity, ticks: u64) {
+    for _ in 0..ticks {
+        let now = app.world().resource::<ai_core::SimTick>().0;
+        app.world_mut().entity_mut(blocker).insert(NpcStrike { last_start: now, gated: false });
+        step(app, 1);
+    }
+}
+
+/// Over `seeds` runs of `ticks` ticks, in how many the duelist began a retreat, and in how many a strike.
+fn hops_and_jabs(plan: &str, seeds: u64, ticks: u64) -> (u64, u64) {
+    let (mut hops, mut jabs) = (0, 0);
+    for seed in 0..seeds {
+        let (mut app, a, blocker) = blocked(plan, "grunt_think", seed);
+        step_blocked(&mut app, blocker, ticks);
+        hops += starts(&app, a, "hop_back").len().min(1) as u64;
+        jabs += starts(&app, a, "jab").len().min(1) as u64;
+    }
+    (hops, jabs)
+}
+
+#[test]
+fn a_strike_rolled_under_the_spacing_is_a_decision_that_does_nothing() {
+    // Rule off: the strike is taken out of the table before the roll, so the retreat is the
+    // only thing left to roll: the duelist always retreats at its first decision.
+    let seeds = 400;
+    let (hops, jabs) = hops_and_jabs("pick_plain", seeds, 12);
+    assert_eq!((hops, jabs), (seeds, 0));
+    // Rule on: the roll covers the table; a strike is refused (the duelist stands), a retreat is not.
+    // The retreat's share is its weight in the table: 0.22.
+    let (hops, jabs) = hops_and_jabs("pick_godot", seeds, 12);
+    let share = hops as f64 / seeds as f64;
+    assert!((share - 0.22).abs() < 0.06, "{hops} of {seeds} retreated at the first decision ({share:.3}), expected 0.22");
+    assert_eq!(jabs, 0, "the spacing held every strike back");
+}
+
+#[test]
+fn a_refused_strike_is_forgotten_and_the_next_decision_rolls_again() {
+    // One long run: after each refusal the next decision rolls anew, so the retreats keep coming.
+    let (mut app, a, blocker) = blocked("pick_godot", "grunt_think", 5);
+    step_blocked(&mut app, blocker, 900);
+    let hops = starts(&app, a, "hop_back");
+    assert!(hops.len() >= 3, "{hops:?}");
+    assert!(starts(&app, a, "jab").is_empty());
+}
+
+// --- G8: the press belongs to the decision tick; an unused token may cost nothing ----------
+
+fn duel_with(behavior: &str, plan: &str) -> (App, Entity) {
+    let mut app = app_with(record_starts);
+    let world = app.world_mut();
+    player(world, 0, Vec3::ZERO);
+    let grunt = npc(world, "duelist", Npc::new(behavior, "grunt").with_plan(plan).with_director("duel"), Vec3::new(0.0, 0.0, 1.2), N);
+    (app, grunt)
+}
+
+/// Decision ticks (as `NpcThink.decided` shows them) and the ticks `action` started, over `ticks`.
+fn decided_and_started(plan: &str, action: &str, ticks: u64) -> (Vec<u64>, Vec<u64>) {
+    let (mut app, grunt) = duel_with("grunt_think", plan);
+    let mut decided: Vec<u64> = Vec::new();
+    for _ in 0..ticks {
+        step(&mut app, 1);
+        if let Some(d) = app.world().get::<NpcThink>(grunt).and_then(|t| t.decided)
+            && decided.last() != Some(&d)
+        {
+            decided.push(d);
+        }
+    }
+    (decided, starts(&app, grunt, action))
+}
+
+#[test]
+fn the_planner_presses_only_on_decision_ticks_when_the_plan_says_so() {
+    let (decided, jabs) = decided_and_started("decide_press", "jab", 500);
+    assert!(jabs.len() >= 4 && decided.len() >= 20, "{jabs:?} {decided:?}");
+    assert!(jabs.iter().all(|t| decided.contains(t)), "a press on a tick that did not decide: {jabs:?} vs {decided:?}");
+    // The same plan without the rule presses on any tick: right after the first token, off the cadence.
+    let (decided, jabs) = decided_and_started("any_press", "jab", 500);
+    assert!(jabs.iter().any(|t| !decided.contains(t)), "{jabs:?} vs {decided:?}");
+}
+
+/// The ticks at which the duelist was granted its tokens, under a spacing that never runs out.
+fn grant_ticks(plan: &str, ticks: u64) -> Vec<u64> {
+    let (mut app, a, blocker) = blocked(plan, "grunt", 3);
+    let mut since: Vec<u64> = Vec::new();
+    for _ in 0..ticks {
+        step_blocked(&mut app, blocker, 1);
+        if let Some(g) = app.world().get::<shards_npc::AttackToken>(a).unwrap().held.as_ref()
+            && since.last() != Some(&g.since)
+        {
+            since.push(g.since);
+        }
+    }
+    since
+}
+
+#[test]
+fn an_unused_token_costs_the_rest_unless_the_plan_says_it_does_not() {
+    // Every strike is held back, so the token comes back unused after the director's patience (3 s).
+    let costly = grant_ticks("unused_default", 900);
+    let free = grant_ticks("unused_free", 900);
+    assert!(costly.len() >= 3 && free.len() >= 3, "{costly:?} {free:?}");
+    let patience = free[1] - free[0];
+    assert!((180..=182).contains(&patience), "no rest: the next token comes the tick the old one goes: {free:?}");
+    // The default keeps the minimum rest of the plan, 0.5 s = 30 ticks, after each unused token.
+    assert_eq!(costly[1] - costly[0], patience + 30, "{costly:?} {free:?}");
+}
+
+// --- G7: the continuation is asked when it would start -------------------------------------
+
+/// The test's state hook: presses a strike 25 ticks after the other NPC began its first swing (a tick
+/// after the chain's press, two before its combo window opens), without asking the spacing.
+fn press_after_swing(c: &NpcCtx, _: &Params, out: &mut NpcOutput) {
+    let first = c.world.resource::<Started>().0.iter().find(|(_, e, a)| *e != c.entity && a == "swing_1").map(|(t, ..)| *t);
+    if first.is_some_and(|t| c.tick == t + 25) {
+        out.press.push("light".into());
+    }
+}
+
+/// A planner on `plan` against a presser; the presser strikes between the planner's press and its combo window.
+fn interrupted(plan: &str) -> (App, [Entity; 2]) {
+    let (mut app, who) = pair_of("combo", "spaced", plan, 7, |app| {
+        app.add_npc_state("press_after_swing", press_after_swing);
+    });
+    app.world_mut().entity_mut(who[1]).insert(Npc::new("late_presser", "grunt").with_director("spaced"));
+    (app, who)
+}
+
+#[test]
+fn a_continuation_gated_at_its_start_is_refused_by_a_strike_begun_after_the_press() {
+    // Asked at the press (the default), the continuation passes: nothing had begun yet.
+    let (mut app, who) = interrupted("chain_always");
+    step(&mut app, 120);
+    let names: Vec<(u64, String)> = started(&app, who[0]);
+    assert_eq!(names.iter().map(|(_, a)| a.as_str()).take(2).collect::<Vec<_>>(), ["swing_1", "swing_2"], "{names:?}");
+    let s = names[0].0;
+    assert_eq!(names[1].0, s + 27);
+    assert_eq!(started(&app, who[1]).first().map(|(t, _)| *t), Some(s + 25), "the presser struck between the press and the window");
+    assert!(lines(&app, "refused after swing_1").is_empty());
+    // Asked when the machine would take it (the rule on): the presser's strike, 25 ticks in, is in the way.
+    let (mut app, who) = interrupted("chain_gated");
+    let now = app.world().resource::<ai_core::SimTick>().0;
+    step(&mut app, s + 26 - now);
+    let chain = app.world().get::<shards_npc::NpcChain>(who[0]).cloned().expect("pressed, waiting in the queue");
+    assert!(chain.pressed.is_some() && chain.at_start && chain.cleared.is_none(), "{chain:?}");
+    assert!(app.world().get::<shards_action::InputBuffer>(who[0]).unwrap().queued.iter().any(|q| q.input == "light"));
+    step(&mut app, 3);
+    assert!(app.world().get::<shards_npc::NpcChain>(who[0]).is_none(), "the chain is over");
+    assert!(app.world().get::<shards_action::InputBuffer>(who[0]).unwrap().queued.is_empty(), "and the input is out of the queue");
+    step(&mut app, 100);
+    let names = started(&app, who[0]);
+    assert_eq!(names.iter().map(|(_, a)| a.as_str()).take(2).collect::<Vec<_>>(), ["swing_1", "swing_1"], "the chain ended: {names:?}");
+    let refused = lines(&app, "refused after swing_1");
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert!(refused[0].contains("began a strike less than 42 ticks ago"), "{refused:?}");
+}
+
+#[test]
+fn a_continuation_gated_at_its_start_starts_on_the_same_tick_when_nothing_is_in_the_way() {
+    let (mut app, who) = combo_duel("chain_gated", 7);
+    step(&mut app, 300);
+    let all = started(&app, who);
+    let names: Vec<&str> = all.iter().map(|(_, a)| a.as_str()).collect();
+    assert_eq!(&names[..3], ["swing_1", "swing_2", "swing_3"], "{all:?}");
+    assert_eq!((all[1].0 - all[0].0, all[2].0 - all[1].0), (27, 27), "the same ticks as when asked at the press: {all:?}");
+    assert!(lines(&app, "refused").is_empty());
+}
+
+#[test]
+fn two_planners_gating_their_continuations_at_the_start_keep_the_spacing() {
+    for seed in [7, 11, 23] {
+        let (mut app, who) = pair_of("combo", "spaced", "chain_gated", seed, |_| {});
+        // `step` fails the test if the rule `npc.strike_spacing` is violated on the way.
+        step(&mut app, 2400);
+        let mut all: Vec<(u64, usize, String)> = Vec::new();
+        for (i, e) in who.iter().enumerate() {
+            all.extend(started(&app, *e).into_iter().map(|(t, a)| (t, i, a)));
+        }
+        all.sort();
+        assert!(all.iter().any(|(_, _, a)| a == "swing_2"), "seed {seed}: chains went through");
+        let gaps: Vec<u64> = all.windows(2).filter(|w| w[0].1 != w[1].1).map(|w| w[1].0 - w[0].0).collect();
+        assert!(!gaps.is_empty() && gaps.iter().all(|g| *g >= 42), "seed {seed}: {gaps:?}");
+    }
+}
+

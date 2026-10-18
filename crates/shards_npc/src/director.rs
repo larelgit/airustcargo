@@ -29,7 +29,7 @@ use shards_content::ContentDb;
 use shards_core::{flat, Intent, PlayerId};
 use shards_motion::Collider;
 
-use crate::brain::{clamp_to_leash, salt, Home, Npc, NpcBrain, NpcDrive};
+use crate::brain::{clamp_to_leash, salt, Home, Npc, NpcBrain, NpcDrive, NpcThink};
 use crate::def::{AttackPlanDef, DirectorDef, Role, WaitRole};
 use crate::perception::Perceived;
 use crate::chain::NpcChain;
@@ -136,9 +136,10 @@ pub(crate) struct Fighting {
     pub strike: Option<&'static NpcStrike>,
     pub options: Option<&'static NpcOptions>,
     pub chain: Option<&'static mut NpcChain>,
+    pub think: Option<&'static NpcThink>,
     pub fighter: &'static Fighter,
     pub state: &'static ActionState,
-    pub buffer: &'static InputBuffer,
+    pub buffer: &'static mut InputBuffer,
     pub transform: &'static Transform,
     pub perceived: &'static Perceived,
     pub home: Option<&'static Home>,
@@ -263,7 +264,9 @@ pub(crate) fn direct(
                     };
                 } else {
                     // Back of the queue, after a short breath.
-                    f.plan.rest = f.plan.rest.max(rest.0);
+                    if plan_def.is_none_or(|p| p.unused_rest) {
+                        f.plan.rest = f.plan.rest.max(rest.0);
+                    }
                 }
                 returned.push((entity, grant, reason));
             }
@@ -294,7 +297,7 @@ pub(crate) fn direct(
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         let Some(grant) = f.token.held.take() else { continue };
         f.token.asking_since = None;
-        let rest = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)).map_or(0.0, |p| p.rest.0);
+        let rest = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)).filter(|p| p.unused_rest).map_or(0.0, |p| p.rest.0);
         f.plan.rest = f.plan.rest.max(rest);
         out.remove(&director);
         returned.push((entity, grant, "limit lowered"));
@@ -373,6 +376,8 @@ pub(crate) fn direct(
         let (budget, overlapping) = inflight.on(target, id, &director);
         // No token for a strike that would come too soon after another NPC's.
         let spaced_out = waiting(&notes, id, &d, tick.0, spacing_ticks(director.min_spacing, dt)).is_some();
+        // Godot rolls first and asks the director after: the grant does not look at the spacing.
+        let spaced_out = spaced_out && !plan_def.gate_after_pick;
         let any = options.iter().any(|o| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director, spaced_out, f.options));
         if !any {
             continue;
