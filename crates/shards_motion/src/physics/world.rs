@@ -508,6 +508,12 @@ impl PhysicsWorld {
         self.order.is_empty()
     }
 
+    /// How many colliders are wider than the broad phase's widest cell (a sea box kilometres
+    /// across): every query that reaches volumes or colliders near a point reads all of them.
+    pub fn wide_colliders(&self) -> usize {
+        self.grid.wide_len()
+    }
+
     /// All colliders in id order (not the voxel fields: [`fields`](Self::fields)).
     pub fn colliders(&self) -> impl Iterator<Item = &ColliderInfo> {
         self.order.iter().map(|(_, slot)| &self.slots[*slot as usize].info)
@@ -1372,6 +1378,90 @@ mod tests {
         }
         check_grid(&world);
         assert!(world.is_empty() && world.grid.entries().is_empty() && world.grid.per_level() == [0; LEVELS.len()]);
+    }
+
+    /// A voxel region's sea: four water boxes kilometres long around its grid, wider than the
+    /// broad phase's widest level, so they are on the list every query reads. A ray and a sweep
+    /// near them read that list and the cells on their own path, never the colliders elsewhere.
+    #[test]
+    fn a_ray_and_a_sweep_by_the_sea_read_the_wide_list_and_the_cells_on_their_path() {
+        let mut world = PhysicsWorld::default();
+        let mut n = 0;
+        let mut add = |world: &mut PhysicsWorld, shape: Shape, at: Vec3, volume: Option<Volume>| {
+            n += 1;
+            let collider = if volume.is_some() { Collider::new(shape).with_layers(CollisionLayers::VOLUME) } else { Collider::new(shape) };
+            let spec = Spec { entity: Entity::from_raw_u32(n).unwrap(), id: ColliderId(n), collider, tf: Transform::from_translation(at), body: Body::Static, volume };
+            spec.put(world);
+            ColliderId(n)
+        };
+        let water = || Some(Volume { kind: VolumeKind::Water });
+        // A 256 m grid (x and z -128..128); the sea 3 km out, from y -8 to 0.
+        let (reach, half_grid) = (3000.0, 128.0);
+        let mut sea = Vec::new();
+        for (centre, half) in [
+            (Vec3::new(0.0, -4.0, -half_grid - reach * 0.5), Vec3::new(half_grid + reach, 4.0, reach * 0.5)),
+            (Vec3::new(0.0, -4.0, half_grid + reach * 0.5), Vec3::new(half_grid + reach, 4.0, reach * 0.5)),
+            (Vec3::new(-half_grid - reach * 0.5, -4.0, 0.0), Vec3::new(reach * 0.5, 4.0, half_grid)),
+            (Vec3::new(half_grid + reach * 0.5, -4.0, 0.0), Vec3::new(reach * 0.5, 4.0, half_grid)),
+        ] {
+            sea.push(add(&mut world, Shape::cuboid(half), centre, water()));
+        }
+        // 441 one-metre boxes, 10 m apart, over the grid.
+        for i in -10..=10 {
+            for j in -10..=10 {
+                add(&mut world, Shape::cuboid(Vec3::splat(0.5)), Vec3::new(i as f32 * 10.0, 0.5, j as f32 * 10.0), None);
+            }
+        }
+        check_grid(&world);
+        assert_eq!(world.wide_colliders(), 4, "the four sea boxes are wide");
+        let budget = cell_budget(world.order.len());
+        let read = |gather: &dyn Fn(&mut Vec<u32>) -> bool| -> Vec<ColliderId> {
+            let mut out = Vec::new();
+            assert!(gather(&mut out), "the grid answers, not a scan");
+            let mut ids: Vec<ColliderId> = out.into_iter().map(|s| world.slots[s as usize].info.id).collect();
+            ids.sort_unstable();
+            ids.dedup();
+            ids
+        };
+        // Within this of a query's path, a box shares one of its cells (2 m, the first level).
+        let near = |id: &ColliderId, lo: Vec3, hi: Vec3| {
+            #[expect(clippy::disallowed_methods, reason = "this world has boxes only, no voxel field")]
+            let c = world.by_id(*id).unwrap();
+            aabb_overlap(lo - Vec3::splat(LEVELS[0] + 0.1), hi + Vec3::splat(LEVELS[0] + 0.1), c.aabb_min, c.aabb_max)
+        };
+        let filter = QueryFilter::default();
+
+        // A ray across the gap between boxes at x 0 and 10: the sea, nothing else.
+        let (origin, dir) = (Vec3::new(3.0, 0.5, 5.0), Dir3::X);
+        let ray = read(&|out| world.grid.near_ray(origin, *dir, 4.0, budget, out));
+        assert_eq!(ray, sea, "a ray between the boxes reads the wide list alone");
+        assert!(world.raycast(origin, dir, 4.0, &filter).is_none());
+        // A ray onto the box at (10, 0): the sea and that box.
+        let origin = Vec3::new(7.0, 0.5, 0.0);
+        let ray = read(&|out| world.grid.near_ray(origin, *dir, 4.0, budget, out));
+        assert!(sea.iter().all(|s| ray.contains(s)), "{ray:?}");
+        let others: Vec<&ColliderId> = ray.iter().filter(|id| !sea.contains(id)).collect();
+        assert!(!others.is_empty() && others.len() <= 2, "the box on the path, at most one neighbour: {others:?}");
+        assert!(others.iter().all(|id| near(id, origin, origin + *dir * 4.0)), "{others:?}");
+        assert_eq!(world.raycast(origin, dir, 4.0, &filter).map(|h| h.point.x), Some(9.5), "it hits the box");
+
+        // A capsule swept 3 m along z past the box at (20, 20): the sea and the boxes by its path.
+        let (shape, from) = (Shape::capsule(0.3, 0.9), Vec3::new(20.0, 1.0, 16.5));
+        let geom = Geom::new(&shape);
+        let pose = Pose::from_parts(from, Quat::IDENTITY);
+        let (lo, hi) = geom.aabb(&pose);
+        let (lo, hi) = (lo, hi + Vec3::Z * 3.0);
+        let swept = read(&|out| world.grid.near_box(lo, hi, budget, out));
+        assert!(sea.iter().all(|s| swept.contains(s)), "{swept:?}");
+        let others: Vec<&ColliderId> = swept.iter().filter(|id| !sea.contains(id)).collect();
+        assert!(!others.is_empty() && others.len() <= 2, "{others:?}");
+        assert!(others.iter().all(|id| near(id, lo, hi)), "{others:?}");
+        let hit = world.shapecast(&shape, from, Quat::IDENTITY, Dir3::Z, 3.0, &filter).expect("the sweep meets the box");
+        assert!((hit.distance - 2.7).abs() < 0.01, "{}", hit.distance);
+        // Of all that, a ray and a sweep test no volume: water is never what they hit.
+        let volumes_tested = world.near_box(lo, hi).filter(|c| c.passes(&filter)).filter(|c| c.volume.is_some()).count();
+        assert_eq!(volumes_tested, 0, "the sea boxes are skipped by the default filter");
+        assert!(world.volumes_at(Vec3::new(500.0, -1.0, 0.0), None).iter().any(|(_, k)| *k == VolumeKind::Water), "but a point in the sea is in water");
     }
 
     #[test]

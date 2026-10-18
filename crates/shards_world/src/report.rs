@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use shards_content::ContentDb;
 
 use crate::content::RegionDef;
-use crate::generate::{self, unknown_region, GenError, Generated, WorldGen};
+use crate::generate::{self, unknown_region_of, GenError, Generated, WorldGen};
 use crate::manifest::RegionManifest;
 
 /// How seeds are written, for errors that teach it.
@@ -93,6 +93,9 @@ pub struct BatchReport {
     /// Distance (m) from each point of interest to the nearest of another type (or another
     /// of its own type), per pair `a–b`, over the passing regions.
     pub distances: BTreeMap<String, Vec<f32>>,
+    /// What the region kind counted, summed over the seeds that made a region (`solid
+    /// cells`, `water boxes`; empty for tiles and rooms).
+    pub counts: BTreeMap<String, u64>,
     pub elapsed: Duration,
 }
 
@@ -155,6 +158,11 @@ impl fmt::Display for BatchReport {
                 writeln!(f, "  {}× {message} (e.g. seeds {})", reason.count, seeds(&reason.examples))?;
             }
         }
+        if !self.counts.is_empty() {
+            let made = (self.passed + self.fell_back.len()).max(1) as u64;
+            let items: Vec<String> = self.counts.iter().map(|(what, n)| format!("{what} {n} ({} a region)", n / made)).collect();
+            writeln!(f, "totals: {}", items.join(", "))?;
+        }
         if !self.distances.is_empty() {
             writeln!(f, "distances between points (m, min / median / max):")?;
             for pair in self.distances.keys() {
@@ -179,14 +187,16 @@ impl fmt::Display for BatchReport {
 pub fn run(db: &ContentDb, worldgen: &WorldGen, region: &str, seeds_text: &str) -> Result<BatchReport, String> {
     let seeds = parse_seeds(seeds_text)?;
     let started = Instant::now();
+    let kind = worldgen.kind_of(db, region);
     let compiled = match db.get::<RegionDef>(region) {
         Some(def) => Some(generate::compile(db, region, def)?),
-        None if db.get::<crate::content::DungeonDef>(region).is_some() => None,
-        None => return Err(unknown_region(db, region)),
+        None if db.get::<crate::content::DungeonDef>(region).is_some() || kind.is_some() => None,
+        None => return Err(unknown_region_of(db, Some(worldgen), region)),
     };
-    let version = match &compiled {
-        Some(c) => c.def.version,
-        None => db.get::<crate::content::DungeonDef>(region).map_or(0, |d| d.version),
+    let version = match (&compiled, kind) {
+        (Some(c), _) => c.def.version,
+        (None, Some(kind)) if db.get::<crate::content::DungeonDef>(region).is_none() => (kind.version)(db, region).unwrap_or(0),
+        (None, _) => db.get::<crate::content::DungeonDef>(region).map_or(0, |d| d.version),
     };
     let mut report = BatchReport {
         region: region.to_owned(),
@@ -201,6 +211,7 @@ pub fn run(db: &ContentDb, worldgen: &WorldGen, region: &str, seeds_text: &str) 
         reasons: BTreeMap::new(),
         errors: BTreeMap::new(),
         distances: BTreeMap::new(),
+        counts: BTreeMap::new(),
         elapsed: Duration::ZERO,
     };
     for seed in seeds {
@@ -209,9 +220,12 @@ pub fn run(db: &ContentDb, worldgen: &WorldGen, region: &str, seeds_text: &str) 
             None => generate::generate(db, worldgen, region, seed),
         }));
         match outcome {
-            Ok(Ok(Generated { manifest, failures, .. })) => {
+            Ok(Ok(Generated { manifest, failures, counts, .. })) => {
                 for failure in &failures {
                     tally(&mut report.reasons, &failure.rule, seed);
+                }
+                for (what, n) in counts {
+                    *report.counts.entry(what).or_default() += n;
                 }
                 if manifest.fallback.is_some() {
                     report.fell_back.push(seed);

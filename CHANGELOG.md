@@ -67,6 +67,42 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
 
 ### Added
 
+- Voxel regions (`shards_voxel`, G1, A2c): a region kind of its own behind the same region API as tiles. `shards_world` gains
+  `Layout::Volume` (`"volume"`) and a registry of region kinds (`RegionKind`, `app.add_region_kind`, `WorldGen::kinds`,
+  `kind::generation_problems`); the manifest gains `steps` (the steps with versions that made it, written only when set, so other
+  manifests keep their bytes). The content kind `voxel_region` (`*.voxel_region.ron`: size, chunk, palette, version, anchor,
+  attempts, steps and params, checks, required `marks`, `markers`, `spawn`, `water.surface_drop`, `sea` with an optional
+  `current`, `near_edge`, `check_seed`, `fallback_seed`, `active_radius`; neutral defaults: no sea, no current, no drop),
+  validated against the game's registered steps and checks (the content kinds' context, `ContentKinds::set_context`,
+  `Refs::context`). `regen`, `change_region` and `region_load` build it: the terrain field, a water volume per water box, four
+  sea boxes, `Current` on the water, the markers, then the points of interest from the steps' marks; `VoxelTerrain` holds the
+  volume, palette, field and hash. A manifest made by another step version is refused, naming the step (saves, snapshots,
+  `region_load`). The optional snapshot and replay check `voxel.volume` (absent outside a voxel region); the in-process rebuild
+  cache (`SHARDS_VOXEL_CACHE=off`, `VoxelSettings`); hot reload (`ContentAppliedHooks`, `on_content_applied`: a changed
+  definition makes the region again for its seed, a colour does not); `--check-content` generates each voxel region for its
+  `check_seed` and `fallback_seed`; the worldgen report's `totals:` line (`Generated::counts`). `Current`, `current_at` and
+  `edge_distance` in `shards_motion` (nothing moves bodies by it yet); `PhysicsWorld::wide_colliders`. Tools `sea_current_at`
+  (player) and `voxel_info` (dev, and in the developer menu; its build time only where timing is reported); conditions
+  `in_water`, `in_current` and `near_grid_edge`, registered when the app is built and answering in a region of any kind; the
+  journal line `region loaded: <id> seed N vV (X x Y x Z, N water boxes, …)`. Until the navigation bake, a voxel region has no
+  navmesh: `npc_state`, `nav_path` (refused: `use path_to`), `nav_info` and `nav_bake` say so, and the journal line
+  `navmesh: none for this region` is an event there, not a warning. A voxel region's markers carry the `TileId` of their
+  chunk, as a tile's do; `RegionManifest::area`. A voxel manifest whose grid is not the one its definition makes (size, chunk
+  edge, corner, a point outside, tiles or links) is refused before anything is built, as is a mark a step makes off the
+  volume; a chunk must be as tall as the volume, and a sea reach at most 100 km (`MAX_SEA_REACH`). A content-applied hook
+  returns the line it adds to the call's answer (`fn(&mut World) -> Option<String>`): `content_apply` says that a region was
+  made again. `VoxelPlugin` added before `WorldPlugin` panics when the app is finished, naming the order. `Layout::Volume`
+  needs no save `FORMAT` bump: a save of a tile region keeps its bytes, and an older build cannot read a volume's manifest (its parser says `unknown variant volume`).
+  Snapshot checks may be optional (`add_optional_snapshot_check`). Manual: "Voxel regions (A2c)", with what differs when a
+  region of tiles is swapped for a volume.
+- Sandbox: the voxel arena (`regen region=voxel_arena seed=7`), a voxel region of 256 x 32 x 256 cells north of the arena,
+  made by the sandbox's own steps (`island`, `lake`, `flat_arena`, `arena_pieces`, `cave`, `trees`, then the stock `fill_water`;
+  `src/gameplay/terrain.rs`) and checks (`arena_flat`, `spawn_on_ground`, `pool_depth`, `cave_open`) from
+  `content/world/arena.voxel_region.ron` and `terrain.voxel_palette.ron`. The scenario `voxel_arena.scenario` (steps, a ledge, the pool, the
+  overhang, the cave, the current and the conditions; no NPC chase, no `nav_path`) is the new reference replay `voxel_arena.json`;
+  `--worldgen-report voxel_arena --seeds 1..1000` runs in CI and 10000 seeds every night. `bounds` gains `past_grid` (meters past a
+  region's grid that still count: the arena's sea). The other reference replays were recorded again for the new content: only their
+  content hash changed.
 - Render interpolation (C8), presentation only (no game component, content hash or replay changes): a body is drawn between its last two ticks instead of at the last tick's pose, so a 144 Hz display is not shown 60 Hz steps. `shards_motion::interp`: `Interpolated` (on the visual child of a `CharacterController` body, added by the engine; `NotInterpolated` opts out) keeps the previous and current tick pose captured in `FixedLast` (`InterpSystems::Capture`); in `PostUpdate` before transform propagation (`InterpSystems::Blend`) the child's local transform is moved by `lerp/slerp(prev, cur, overstep_fraction) - cur` (`visual_offset`), and the body's own `Transform` is never written. The follow camera follows the same blended pose (`shown_translation`). The history starts over on a jump: `CameraTuning::body_snap_distance` (content, default 4 m per tick), a `MotionState::placed` mismatch, a body moved between ticks, a gap in the tick counter. Does nothing without a picture, with the clock paused, and on a co-op client for bodies it does not predict (`shards_net` already blends those). New setting `graphics.interpolation` (default `true`); off draws exactly the old picture. Tests: pose blend at 0, 0.5 and 1, resets, the setting, pause and co-op in `shards_motion`; a replay verifies identically with it on, off and headless. Review fixes: blended children are put back at rest in `FixedFirst` (`restore_rest`) so the simulation reads the game's own child transform; parented bodies are not blended; `adopt_visuals` uses `try_insert`.
 - Camera as content and effect hooks (C7), presentation only (no simulation change; content hashes and the reference replays do not change, since the sandbox has no `camera` definition): the camera's numbers are no longer constants in `systems.rs` but the resource `CameraTuning`, the content kind `camera` (`*.camera.ron`, id `default`, hot reload, ranges validated): pitch limits, follow rate, release factor, lock framing (yaw and pitch rate, fixed pitch target or the clamped line pitch, minimum horizontal distance), the arm (sphere radius, minimum distance, length-follow rate) and the flick (mouse pixel threshold, decay and cooldown, stick threshold and re-arm level), the trauma decay and amplitudes. Defaults are the old values, so a game without a definition sees no change. `CameraOffsets` (`fov_add_deg`, `focus_dip_m`, `pitch_min`/`pitch_max`) is read by `orbit_camera` after the base values and written by the game's systems (sprint field of view, landing dip, finisher punch, swim cap); the writer owns its value, the camera keeps none of it; `CameraSystems::Orbit` orders writers. After a wall lets go of the arm it grows back smoothly at `arm.follow_rate` (it still shortens at once); every smoothing is the exact exponential through `ops::exp`; new pure helpers `critically_damped_step`, `pitch_limits`, `lock_framing`, `arm_reach`, `arm_length`, `shake_offset_with` and `FlickState` in `camera::math`. `ControlState` gains `look_pointer_px()` and `look_stick()` for the flick. Tests: `camera::math` (15 new), `camera::tuning` (3), `tests/motion/camera_content.rs` (4), `camera.rs` (6 new), `input.rs` (2 new, among them: the walk is turned by the stored yaw, not by a shake). Manual: "Camera numbers and offsets (C7)".
 - Stick look (C9): `Binding::Stick` gains optional `scale_x` / `scale_y` (per-axis scale, `scale` where absent) and `curve` (exponent on the magnitude after the radial dead zone, default 1.0 = linear). Unserialized while default, so old `input_map` files, saved controls strings and the reference replays are unchanged; the text form of `rebind` and `controls` carries them (`Stick(stick: Right, deadzone: 0.2, scale_x: Some(3.2), scale_y: Some(2.0), curve: 1.6)`). A bad `curve` or a non-finite scale is a content error that names the file. The same check runs on `rebind` and on a saved controls string, so a NaN never reaches `Intent`.
@@ -153,7 +189,7 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   `PhysicsWorld::extent_at`, `top_under` and `solid_span` answer what readers used to read off a collider's box, and every such reader
   uses them (the gate of `clearance` and `path_to`, `Terrain::blocker_top`, the nav bake's seed, `ground_below`);
   `PhysicsWorld::subset` keeps fields (the scatter's solids take the fields near a tile); the snapshot check `static_colliders` hashes
-  every field. The engine rule `voxel.body_in_solid` (`BODY_IN_SOLID`), off by default. Engine rules off by default:
+  every field. The engine rule `voxel.body_in_solid` (`BODY_IN_SOLID`), off by default (on by default since A2c, under Changed). Engine rules off by default:
   `add_opt_in_engine_invariant(name, rule)` registers one only when `EngineConfig::opt_in_invariants` names it, and `shards::run` takes
   `--engine-invariant NAME` (repeatable; only the names offered; not with `--no-engine-invariants`). A world without fields runs the code it ran
   before: the reference replays verify byte for byte. The guard against a reader that forgets fields: `PhysicsWorld::collider`,
@@ -165,6 +201,15 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
 
 ### Changed
 
+- The engine rule `voxel.body_in_solid` is on by default (it was off, behind `--engine-invariant`): 50 runs of `shards fuzz
+  --steps 600` on the sandbox's voxel arena with it on (20 without chaos, 20 with `--chaos 0.02`, 10 more steered by coverage) stopped on
+  nothing, nor did the reference replays. The runs: `cargo sandbox --coverage --headless --paused --port 0 --port-file F
+  --engine-invariant voxel.body_in_solid`, `shards act regen region=voxel_arena seed=7`, then `shards fuzz --seed S --steps 600`
+  (`--chaos 0.02`, `--chaos 0.02 --steer`); the seeds were not kept. `--engine-invariant` offers no name today.
+- The palette's part of a generated voxel world's hash is `VoxelPalette::semantics` (names, order, solid, liquid, foliage, tags), not
+  `fingerprint` (which also covers colours): a recoloured palette is the same world. The golden world hash changed with it.
+- `regen` of a dungeon says `N rooms` (it said `N tiles`), as does `region_load`; `goto_tile` outside a region says `chunks` or
+  `tiles` by its layout.
 - The replay check `content` covers only the definitions the session's simulation read, not the whole database: adding content, or changing a definition a recording never read (or any kind outside the simulation), no longer makes it diverge, and a divergence names the definition. Replays are `shards-replay/4` and snapshots `shards-snapshot/2` (the versions before, with `check_parts`), so a build from before refuses them by their tag instead of reporting a divergence that is not there; this build reads `shards-replay/3` and `/2` and `shards-snapshot/1`, and a file without `check_parts` is checked over the whole database as before. A snapshot part whose hash does not read is refused as a damaged file. The co-op handshake and Steam lobbies keep the whole `ContentDb::hash`. A snapshot load compares only the definitions its session read. The reference replays of the sandbox and the template were recorded again for it (only their content check values and hashes changed, no entity).
 - `shards_action`'s status tick reads the definitions of the statuses an entity carries by id, at its turn (a status a hook gave it earlier in the tick decays by its definition), and a prefab's chain is read by id: neither counts its whole kind any longer.
 - Breaking: `ThirdPersonCamera` gained the public fields `arm_length` and `arm_reach` (C7); a struct literal needs them (or `..default()`).

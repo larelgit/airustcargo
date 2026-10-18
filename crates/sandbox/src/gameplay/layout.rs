@@ -10,6 +10,8 @@
 //! file added while the game runs is built the same way, prefabs included; one removed
 //! takes its geometry and landmarks with it, and again leaves the characters.
 
+use std::collections::BTreeMap;
+
 use shards::motion::{Collider, CollisionLayers, Shape, Volume, VolumeKind};
 use shards::prelude::*;
 
@@ -163,8 +165,9 @@ impl LayoutDef {
 }
 
 /// Where bodies may be (content kind `bounds`, id `world`): over what the built layouts and
-/// the loaded region cover on the ground, up to `margin` meters beyond, and no lower than
-/// `fall_below`. The `bodies_in_world` invariant ([`crate::ai`]) holds every character to it.
+/// the loaded region cover on the ground (a region's grid, `past_grid` wider for the regions it
+/// names), up to `margin` meters beyond, and no lower than `fall_below`. The `bodies_in_world`
+/// invariant ([`crate::ai`]) holds every character to it.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(crate = "shards::serde", deny_unknown_fields)]
 pub struct BoundsDef {
@@ -172,6 +175,10 @@ pub struct BoundsDef {
     pub margin: f32,
     /// A body below this height has fallen out of the world.
     pub fall_below: f32,
+    /// Meters past a region's grid that still count, by region id: water around a voxel
+    /// region's grid (its `sea`) is in the world as far as it reaches.
+    #[serde(default)]
+    pub past_grid: BTreeMap<String, f32>,
 }
 
 impl ContentDef for BoundsDef {
@@ -183,6 +190,11 @@ impl ContentDef for BoundsDef {
         }
         if !self.fall_below.is_finite() {
             refs.error("fall_below must be a number of meters");
+        }
+        for (region, meters) in &self.past_grid {
+            if !(meters.is_finite() && *meters >= 0.0) {
+                refs.error(format!("past_grid: {region} {meters} must be 0 or more"));
+            }
         }
     }
 }

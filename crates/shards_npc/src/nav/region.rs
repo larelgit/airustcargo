@@ -661,7 +661,10 @@ pub fn rebuild(world: &mut World) {
         Err(why) => {
             let content = content_changed(world);
             world.insert_resource(NavFailed { region, content });
-            journal::emit(world, JournalKind::Warn, format!("navmesh: none for this region: {why}; NPCs plan on the local grid"));
+            // A voxel region has no navmesh yet by design (its bake is a later change): not a
+            // warning, which `warning` rules and stop conditions would catch on every `regen`.
+            let kind = if super::region_is_volume(world) { JournalKind::Event } else { JournalKind::Warn };
+            journal::emit(world, kind, format!("navmesh: none for this region: {why}; NPCs plan on the local grid"));
         }
     }
 }
@@ -746,6 +749,11 @@ fn tile_ids(world: &mut World) -> BTreeMap<ColliderId, TileId> {
 
 /// The navmesh of the region in the world for the body class of `settings`.
 fn build(world: &mut World, settings: &NavSettings) -> Result<NavRegion, String> {
+    if super::region_is_volume(world) {
+        // A volume has no tiles to bake: its navigation is its own (an in-memory bake of its
+        // chunks), not built yet; NPCs plan over the local grid.
+        return Err(super::VOXEL_NO_NAV.to_owned());
+    }
     let region = world.get_resource::<ActiveRegion>().ok_or("no region")?.clone();
     let graph = region.graph.clone().ok_or("content no longer describes every tile of its manifest")?;
     let manifest = &region.manifest;
@@ -753,6 +761,8 @@ fn build(world: &mut World, settings: &NavSettings) -> Result<NavRegion, String>
         return Err(format!("its tile size {} m is not a whole number of {} m cells (nav settings `cell`)", manifest.tile_size, settings.cell));
     }
     let per = (manifest.tile_size / settings.cell).round() as u32;
+    // Not reached for a volume: refused at the top.
+    debug_assert!(manifest.layout != Layout::Volume, "a voxel region has no tile navmesh");
     let kind = if manifest.layout == Layout::Rooms { TileKind::Room } else { TileKind::Tile };
     let mut report = NavReport::default();
 

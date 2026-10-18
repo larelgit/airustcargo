@@ -38,6 +38,7 @@ use shards_motion::{Collider, ColliderId, ColliderIds, CollisionLayers, LayerMas
 use crate::checks::RegionGraph;
 use crate::content::{level_path_problem, PoiDef, RegionDef, RoomDef, TileDef, TileGeometry, TilePiece, EDGE_WALL_DEPTH, EDGE_WALL_THICKNESS};
 use crate::generate::{self, Generated, WorldGen};
+use crate::kind::RegionKind;
 use crate::grid::{rotation, turn, turns_of};
 use crate::manifest::{Layout, PlacedTile, RegionManifest};
 
@@ -474,6 +475,17 @@ struct TilePlan {
 /// anything changes.
 fn plan(world: &World, manifest: &RegionManifest) -> Result<Vec<TilePlan>, String> {
     let db = world.resource::<ContentDb>();
+    if manifest.layout == Layout::Volume {
+        // A volume has no tiles: its kind says whether content (and the code that made it)
+        // can build it again; the world module checks the prefabs of its points.
+        if !manifest.tiles.is_empty() {
+            return Err(format!("the manifest of {} is a volume and names {} tiles: a volume has none", manifest.title(), manifest.tiles.len()));
+        }
+        let kind = kind_for(world, manifest)?;
+        (kind.check)(world, manifest)?;
+        check_prefabs(world, manifest, &[])?;
+        return Ok(Vec::new());
+    }
     let loader = world.get_resource::<LevelSpawner>().copied();
     let mut checked = BTreeSet::new();
     let mut missing = Vec::new();
@@ -482,6 +494,8 @@ fn plan(world: &World, manifest: &RegionManifest) -> Result<Vec<TilePlan>, Strin
         let found = match manifest.layout {
             Layout::Grid => db.get::<TileDef>(&t.tile).map(|d| (d.geometry.clone(), d.visual.clone())),
             Layout::Rooms => db.get::<RoomDef>(&t.tile).map(|d| (d.geometry.clone(), d.visual.clone())),
+            // Refused above: a volume names no tiles.
+            Layout::Volume => None,
         };
         if let Some((TileGeometry::Level { path }, _)) = &found {
             let Some(loader) = &loader else {
@@ -507,7 +521,11 @@ fn plan(world: &World, manifest: &RegionManifest) -> Result<Vec<TilePlan>, Strin
     if !missing.is_empty() {
         missing.sort();
         missing.dedup();
-        let kind = if manifest.layout == Layout::Grid { "tile" } else { "room" };
+        let kind = match manifest.layout {
+            Layout::Grid => "tile",
+            Layout::Rooms => "room",
+            Layout::Volume => "chunk",
+        };
         return Err(format!(
             "the manifest of {} names {kind}s content does not have: {} (it was made from other content, hash {})",
             manifest.title(),
@@ -555,8 +573,16 @@ fn check_prefabs(world: &World, manifest: &RegionManifest, plans: &[TilePlan]) -
     Ok(())
 }
 
-/// Builds `manifest` in the world (it does not generate anything). Nothing is left behind
-/// when it fails.
+/// The region kind that builds `manifest` (a [`Layout::Volume`] one), or why there is none.
+fn kind_for(world: &World, manifest: &RegionManifest) -> Result<RegionKind, String> {
+    let db = world.resource::<ContentDb>();
+    world.get_resource::<WorldGen>().and_then(|g| g.kind_for(db, manifest)).cloned().ok_or_else(|| {
+        format!("{} is a {:?} region, and no region kind of that layout is registered (is its module in this game?)", manifest.title(), manifest.layout)
+    })
+}
+
+/// Builds `manifest` in the world (it does not generate anything; a region kind may make its
+/// volume again from the manifest's seed). Nothing is left behind when it fails.
 pub fn spawn_region(world: &mut World, manifest: &RegionManifest) -> Result<RegionSpawned, String> {
     // It builds the simulation's world: what it reads is the simulation's ([`ai_core::SimScope`]).
     let _sim = ai_core::scope::open(world);
@@ -572,12 +598,36 @@ pub fn spawn_region(world: &mut World, manifest: &RegionManifest) -> Result<Regi
                     e.despawn();
                 }
             }
+            // What the kind of this manifest kept outside its entities; a region of another kind
+            // in the world (a caller that did not unload it first) keeps its own.
+            if manifest.layout == Layout::Volume
+                && let Ok(kind) = kind_for(world, manifest)
+            {
+                (kind.unload)(world);
+            }
             Err(e)
         }
     }
 }
 
+/// Every region kind forgets what it kept of the region outside its entities.
+fn unload_kinds(world: &mut World) {
+    let kinds: Vec<RegionKind> = world.get_resource::<WorldGen>().map(|g| g.kinds().to_vec()).unwrap_or_default();
+    for kind in kinds {
+        (kind.unload)(world);
+    }
+}
+
 fn spawn_parts(world: &mut World, manifest: &RegionManifest, plans: &[TilePlan], spawned: &mut Vec<Entity>) -> Result<(), String> {
+    if manifest.layout == Layout::Volume {
+        // The kind's own parts first (terrain, water), then the points of interest below, as
+        // tiles come before them.
+        let kind = kind_for(world, manifest)?;
+        for entity in (kind.spawn)(world, manifest)? {
+            world.entity_mut(entity).insert(RegionPart);
+            spawned.push(entity);
+        }
+    }
     for (placed, plan) in manifest.tiles.iter().zip(plans) {
         let turns = turns_of(placed.rot).unwrap_or(0);
         let center = manifest.tile_center(placed);
@@ -710,6 +760,7 @@ pub fn despawn_region(world: &mut World) -> usize {
             e.despawn();
         }
     }
+    unload_kinds(world);
     world.remove_resource::<ActiveRegion>();
     world.remove_resource::<RegionBuild>();
     count
@@ -783,8 +834,13 @@ fn generated_line(generated: &Generated) -> String {
         Some(map) => format!("fallback {map} after {} attempts", generated.failures.len()),
         None => format!("attempt {}", m.attempt),
     };
-    let tiles = if m.layout == Layout::Grid { "tiles" } else { "rooms" };
-    format!("region generated: {} ({how}, {} {tiles}, {} POIs)", m.title(), m.tiles.len(), m.pois.len())
+    let (count, tiles) = match m.layout {
+        Layout::Grid => (m.tiles.len(), "tiles"),
+        Layout::Rooms => (m.tiles.len(), "rooms"),
+        // A volume's cells are its chunks.
+        Layout::Volume => ((u64::from(m.size[0]) * u64::from(m.size[1])) as usize, "chunks"),
+    };
+    format!("region generated: {} ({how}, {count} {tiles}, {} POIs)", m.title(), m.pois.len())
 }
 
 /// Journals how a region came about: its failed attempts, remarks and the result.
@@ -850,11 +906,13 @@ fn install(world: &mut World, manifest: RegionManifest) -> Result<RegionSpawned,
     let first_level = world.get_resource::<LevelSpawner>().copied().map_or(0, |l| (l.next_instance)(world));
     let spawned = spawn_region(world, &manifest)?;
     world.insert_resource(RegionBuild { manifest: manifest.to_canonical(), first_collider, first_level });
+    let kind = if manifest.layout == Layout::Volume { Some(kind_for(world, &manifest)?) } else { None };
     let (graph, radius) = {
         let db = world.resource::<ContentDb>();
         let radius = match manifest.layout {
             Layout::Grid => db.get::<crate::content::RegionDef>(&manifest.region).and_then(|d| d.active_radius),
             Layout::Rooms => db.get::<crate::content::DungeonDef>(&manifest.region).and_then(|d| d.active_radius),
+            Layout::Volume => kind.as_ref().and_then(|k| (k.active_radius)(db, &manifest.region)),
         };
         (RegionGraph::build(db, &manifest).ok(), radius)
     };
@@ -865,7 +923,11 @@ fn install(world: &mut World, manifest: RegionManifest) -> Result<RegionSpawned,
         Some(at) => format!(", players at {}", ai_core::spatial::fmt_pos(at)),
         None => String::new(),
     };
-    let what = format!("{} tiles, {} entities{players}", spawned.tiles, spawned.entities);
+    let what = match &kind {
+        // `voxel_arena seed 7 v1 (128 x 32 x 128, 3 water boxes, 9 entities, players at …)`.
+        Some(kind) => format!("{}, {} entities{players}", (kind.summary)(world), spawned.entities),
+        None => format!("{} tiles, {} entities{players}", spawned.tiles, spawned.entities),
+    };
     journal::emit(world, JournalKind::Event, format!("region loaded: {title} ({what})"));
     if let Some(RegionLoadedHooks(hooks)) = world.get_resource::<RegionLoadedHooks>().cloned() {
         for hook in hooks {
@@ -930,6 +992,8 @@ fn request_files(world: &mut World, manifest: &RegionManifest) -> Result<(), Str
             .filter_map(|t| match manifest.layout {
                 Layout::Grid => db.get::<TileDef>(&t.tile).map(|d| d.geometry.clone()),
                 Layout::Rooms => db.get::<RoomDef>(&t.tile).map(|d| d.geometry.clone()),
+                // No tiles, no level files.
+                Layout::Volume => None,
             })
             .filter_map(|geometry| match geometry {
                 TileGeometry::Level { path } if level_path_problem(&path).is_none() => Some(path),

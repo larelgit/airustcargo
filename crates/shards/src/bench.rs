@@ -71,7 +71,7 @@ fn default_ticks() -> u64 {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PerfRegion {
-    /// A `region` or `dungeon` content id.
+    /// A region content id of any kind (`region`, `dungeon`, `voxel_region`, ...).
     pub region: String,
     pub seed: u64,
 }

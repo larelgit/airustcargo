@@ -1,5 +1,5 @@
-//! The engine rules `motion.finite` and `motion.launch_sane` (on by default) and `voxel.body_in_solid` (opt-in: off unless a game
-//! or a run turns it on with `--engine-invariant voxel.body_in_solid`).
+//! The engine rules `motion.finite`, `motion.launch_sane` and `voxel.body_in_solid`, all on by default (the last since its fuzz
+//! runs on the voxel arena).
 
 use ai_core::{with_query, AiId, AiVisible, Offenders};
 use bevy::prelude::*;
@@ -80,13 +80,12 @@ pub const BODY_IN_SOLID: &str = "voxel.body_in_solid";
 /// its translation, or it has not been placed yet): a `teleport`, a spawn or a region change put it
 /// there this tick, and the next tick's depenetration starts from there.
 ///
-/// **Off by default.** Mantle, slide and sloped-step ticks may put the centre in a cell for a tick
-/// (a body hugging a ledge corner), so the motion plugin offers the rule with
-/// `add_opt_in_engine_invariant`: it is checked only when `EngineConfig::opt_in_invariants` names
-/// it (`--engine-invariant voxel.body_in_solid`, for the fuzz runs on voxel terrain). It becomes an
-/// ordinary engine rule, on by default, once those runs have passed (the voxel design, 6.4: twenty
-/// seeds of `shards fuzz` on the voxel arena, each stop explained and carved out here with a test).
-/// A world without fields never breaks it.
+/// **On by default** since the fuzz runs on the sandbox's voxel arena (the voxel design, 6.4): it was
+/// offered off by default because mantle, slide and sloped-step ticks might put the centre in a cell
+/// for a tick, and 50 runs of `shards fuzz --steps 600` there with it on (20 without chaos, all in
+/// the arena; 20 with `--chaos 0.02`; 10 more with it, steered by coverage, `--steer`), whose walks
+/// climb the arena's risers, ledge and pool, stopped on nothing, nor did the reference replays. No
+/// motion mode needed a carve-out. A world without fields never breaks it.
 pub fn body_in_solid(world: &World) -> Option<String> {
     let physics = world.get_resource::<crate::physics::PhysicsWorld>()?;
     // A world without fields: nothing to judge.
