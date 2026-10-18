@@ -1,4 +1,5 @@
-// The movesets `reactions.scenario` switches two arena fighters to (see `sparring.action.ron`).
+// The movesets `reactions.scenario` switches two arena fighters to (see `sparring.action.ron`), and
+// the one `timeline.scenario` gives the player.
 {
     // The skeleton's body, with reaction tiers: three reactions with their pushes, a short
     // immunity after each, protection when one ends, a guard-broken action.
@@ -32,5 +33,24 @@
         reaction_protection: 1.0,
         guard_broken: "spar_guard_broken",
         guard_broken_push: (0.2, 10.0),
+    ),
+    // The player's kit for `timeline.scenario` (the action timeline, B2a): a heavy that charges
+    // while held, a lunge and its variant on one cooldown, a channel that lasts while held, a roll
+    // that keeps the facing; one press waits at a time, the stronger first.
+    "timeline": (
+        inputs: {
+            "light": "spar_jab",
+            "heavy": "spar_heavy",
+            "dodge": "spar_roll_keep",
+            "block": "spar_guard",
+            "technique.1": "spar_lunge",
+            "technique.2": "spar_lunge_far",
+            "technique.3": "spar_channel",
+        },
+        stagger: "player_stagger",
+        death: "player_death",
+        buffer: SingleSlot(
+            priority: [("dodge", 60), ("technique.1", 55), ("technique.2", 55), ("technique.3", 55), ("heavy", 40), ("light", 30)],
+        ),
     ),
 }

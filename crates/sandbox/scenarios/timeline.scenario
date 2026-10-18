@@ -1,0 +1,174 @@
+# The action timeline: a heavy held from the press turns into its charged version and a tap does not;
+# a light pressed while the heavy winds up waits for the window its recovery opens; a lunge into
+# nothing recovers 0.6 s longer; a lunge cut in its windup keeps 40% of its cooldown, on the slot its
+# variant shares; a channel lasts while its button is held; a roll keeps the body looking at its
+# lock-on target (`face: Keep`).
+#
+# The player e5 borrows the `timeline` moveset (`content/combat/sparring.*.ron`: one press waits at a
+# time, by priority) and gets its own back at the end; the skeleton e7 stands still as the target.
+# The player's presses come from a player-scope agent through the same controls a human has.
+
+seed 42
+
+# --- the arena as the game spawns it, whatever was played in it before: everyone stands down
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+# (a dead player is brought back first: its own controls refuse a dead body)
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god on=false
+step 150
+act heal id=e5
+act heal id=e6
+act heal id=e7
+act set id=e6 component=Boss path=phase value=1
+act set id=e5 component=Fighter path=moveset value=timeline
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-2 y=0
+act teleport id=e6 x=0 z=-14 y=0
+act teleport id=e8 x=18 z=18 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+step 2
+invariant field e5 Health.current > 0
+
+session --agent bot --scope player
+act lock_on target=e7
+expect result contains "ok: locked on e7"
+session --agent scenario
+
+# --- 1. the heavy, held: 0.25 s after the press it turns into the charged heavy, which hits harder
+mark
+session --agent bot
+act heavy_attack hold=true
+expect result contains "ok: spar_heavy (holding)"
+session --agent scenario
+step 30 --until named:charging
+expect stopped "charging"
+expect shows e5 "charging, turns in 0.23s"
+step 20
+expect shows e5 "spar_heavy_full"
+session --agent bot
+act heavy_attack hold=false
+expect result contains "ok: heavy released"
+session --agent scenario
+step 90
+expect journal "e5 -> e7 spar_heavy_full -25"
+
+# --- 2. the heavy, tapped: it stays the plain heavy
+act heal id=e7
+step 30
+mark
+session --agent bot
+act heavy_attack
+expect result contains "ok: spar_heavy"
+session --agent scenario
+step 90
+expect journal "e5 -> e7 spar_heavy -12"
+expect !journal "spar_heavy_full"
+
+# --- 3. a light pressed while the heavy winds up waits for the window that opens with its recovery
+# (the press would have run out long before without it), and the jab starts there
+act heal id=e7
+step 30
+mark
+session --agent bot
+act heavy_attack
+session --agent scenario
+step 6
+session --agent bot
+act light_attack
+expect result contains "ok: queued, light starts in 0.5"
+session --agent scenario
+step 60
+expect journal "e5 -> e7 spar_jab -6"
+expect !journal "light rejected"
+
+# --- 4. a lunge into nothing: 0.6 s more recovery
+session --agent bot
+act lock_on off=true
+session --agent scenario
+act teleport id=e7 x=-12 z=2 y=0
+step 30
+mark
+session --agent bot
+act use_technique slot=1
+expect result contains "ok: spar_lunge"
+session --agent scenario
+step 40
+expect journal "e5 spar_lunge missed: +0.60s recovery"
+expect shows e5 "missed +0.60s"
+
+# --- 5. a lunge cut in its windup (a stagger) keeps 40% of its 3 s cooldown, and the variant that
+# shares its slot waits for it too
+step 200
+mark
+session --agent bot
+act use_technique slot=1
+expect result contains "ok: spar_lunge"
+session --agent scenario
+step 5
+act stagger id=e5
+step 40
+session --agent bot
+act? use_technique slot=2
+expect result contains "lunge is on cooldown (ready in 0.5"
+session --agent scenario
+step 60
+
+# --- 6. a channel lasts while its button is held, and ends when it is let go
+mark
+session --agent bot
+act use_technique slot=3 hold=true
+expect result contains "ok: spar_channel (holding)"
+session --agent scenario
+step 30
+expect shows e5 "spar_channel"
+session --agent bot
+act use_technique slot=3 hold=false
+expect result contains "ok: technique.3 released"
+session --agent scenario
+step 2
+act inspect id=e5
+expect result !contains "spar_channel"
+
+# --- 7. a roll that keeps the facing: locked on the skeleton to the north, the player rolls east and
+# keeps looking at it (a roll that turned the body would face east)
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-3 y=0
+session --agent bot
+act lock_on target=e7
+expect result contains "ok: locked on e7"
+session --agent scenario
+step 30
+expect shows e5 "facing N"
+mark
+session --agent bot
+act dodge dir=E
+expect result contains "ok: spar_roll_keep"
+session --agent scenario
+step 12
+expect shows e5 "spar_roll_keep"
+expect shows e5 "facing N"
+step 30
+
+# --- the arena as it was: the player's own moveset, nobody locked on, everybody healed, every timer run out
+session --agent bot
+act lock_on off=true
+session --agent scenario
+act set id=e5 component=Fighter path=moveset value=player
+act heal id=e5
+act heal id=e6
+act heal id=e7
+act teleport id=e5 x=0 z=12 y=0
+act teleport id=e7 x=-12 z=2 y=0
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e8 x=12 z=-2 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+step 150
+act inspect id=e5
+expect result !contains "RunExtras"
+expect result contains "queued: []"
