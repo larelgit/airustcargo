@@ -1,0 +1,15 @@
+// Statuses for the body-state tests (B2b).
+{
+    // The gate: a proc swallows the next one for 2 s and empties the bar; no cooling and a
+    // restart while active.
+    "b_chill": (threshold: 100, decay_per_s: 14, duration: 4, min_proc_interval: 2.0,
+                cool_while_active: false, refresh: true, reset_on_refuse: true),
+    // Only no cooling while active (it stacks, so buildup keeps coming while it is active).
+    "b_steady": (threshold: 100, decay_per_s: 50, duration: 3, cool_while_active: false, stacks: true),
+    // Instant and outside the cap.
+    "b_jolt": (threshold: 100, decay_per_s: 14, duration: 0, capped: false, reset_on_refuse: true),
+    // Plain capped statuses.
+    "b_a": (threshold: 100, duration: 5),
+    "b_b": (threshold: 100, duration: 5),
+    "b_c": (threshold: 100, duration: 5),
+}

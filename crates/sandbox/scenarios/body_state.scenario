@@ -1,0 +1,195 @@
+# Body state (B2b): a barrier that takes damage before health, a named damage-taken multiplier that ends
+# on a tick, and the status proc rules (a gate after a proc, a refused proc that empties the bar, a
+# re-proc that restarts the duration, an instant status that needs no slot).
+#
+# Two arena fighters are borrowed: the player e5 gets the `bodystate` moveset (a ward, a jab that chills,
+# a jab that jolts) and the skeleton e7 the `sparring` one (`content/combat/sparring.*.ron`, with the
+# statuses of `sparring.status.ron`); both go back at the end. The skeleton's swings are pressed by a dev
+# agent possessing it (`session --subject e7`, its behaviour kept `calm`), the player's by a player-scope
+# agent through the same controls a human has. The scenario ends with no barrier, multiplier or proc gate
+# left on either: it steps past every timer it started and clears the rest with the dev tools.
+
+seed 42
+
+# --- the arena as the game spawns it, whatever was played in it before: everyone stands down
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+# (a dead player is brought back first: its own controls refuse a dead body)
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god on=false
+step 150
+act heal id=e5
+act heal id=e6
+act heal id=e7
+act set id=e6 component=Boss path=phase value=1
+act set id=e5 component=Fighter path=moveset value=bodystate
+act set id=e7 component=Fighter path=moveset value=sparring
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-1.8 y=0
+act teleport id=e6 x=0 z=-14 y=0
+act teleport id=e8 x=18 z=18 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+step 2
+invariant field e5 Health.current > 0
+
+session --agent skeleton --scope dev --subject e7
+act lock_on target=e5
+session --agent bot --scope player
+act lock_on target=e7
+expect result contains "ok: locked on e7"
+session --agent scenario
+
+# --- 1. a ward: half of the caster's health as a barrier, for 8 s
+mark
+session --agent bot
+act use_technique slot=1
+expect result contains "ok: spar_ward"
+session --agent scenario
+step 30
+expect journal "e5 barrier 50 for 8.0s"
+expect shows e5 "barrier 50 (7."
+
+# --- 2. a slam of 15 comes out of the barrier: health is whole and the journal says what the barrier took
+act heal id=e7
+mark
+session --agent skeleton
+act heavy_attack
+session --agent scenario
+step 80
+expect journal "e7 -> e5 spar_slam -15 (hp 100) [barrier -15]"
+expect field e5 Health.current == 100
+expect shows e5 "barrier 35 ("
+
+# --- 3. two more slams use it up; the fourth hurts only for what the barrier could not take
+act heal id=e7
+mark
+session --agent skeleton
+act heavy_attack
+session --agent scenario
+step 80
+expect journal "e7 -> e5 spar_slam -15 (hp 100) [barrier -15]"
+act heal id=e7
+mark
+session --agent skeleton
+act heavy_attack
+session --agent scenario
+step 80
+expect journal "e7 -> e5 spar_slam -15 (hp 100) [barrier -15]"
+expect shows e5 "barrier 5 ("
+act heal id=e7
+mark
+session --agent skeleton
+act heavy_attack
+session --agent scenario
+step 80
+expect journal "e7 -> e5 spar_slam -15 (hp 90) [barrier -5]"
+act inspect id=e5
+expect result !contains "Barrier"
+expect field e5 Health.current == 90
+
+# --- 4. a multiplier on the skeleton doubles a jab, and it ends on a tick, with the same jab hurting less after
+step 100
+act heal id=e5
+act heal id=e7
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-1.8 y=0
+step 2
+act damage_taken id=e7 key=core mult=2 seconds=1
+expect result contains "takes x2.00 (core 1.0s)"
+mark
+session --agent bot
+act light_attack
+expect result contains "ok: spar_jab"
+session --agent scenario
+step 30
+expect journal "e5 -> e7 spar_jab -12 (hp 28)"
+step 60
+act inspect id=e7
+expect result !contains "DamageTaken"
+step 60
+act heal id=e7
+mark
+session --agent bot
+act light_attack
+session --agent scenario
+step 30
+expect journal "e5 -> e7 spar_jab -6 (hp 34)"
+
+# --- 5. a jab that chills procs the chill; a second inside 2 s is swallowed and empties the bar
+step 60
+act heal id=e7
+mark
+session --agent bot
+act use_technique slot=2
+expect result contains "ok: spar_frost"
+session --agent scenario
+step 20
+expect journal "e7 spar_chill applied"
+expect shows e7 "spar_chill 3."
+expect shows e7 "proc gate spar_chill"
+mark
+session --agent bot
+act use_technique slot=2
+session --agent scenario
+step 30
+expect !journal "e7 spar_chill applied"
+expect shows e7 "spar_chill 3."
+expect field e7 Statuses.0[0].buildup == 0
+
+# --- 6. past the gate the next proc restarts the duration (no second stack)
+step 90
+mark
+session --agent bot
+act use_technique slot=2
+session --agent scenario
+step 20
+expect journal "e7 spar_chill applied"
+expect shows e7 "spar_chill 3."
+
+# --- 7. an instant status needs no slot: it procs and is over in a tick
+step 30
+mark
+session --agent bot
+act use_technique slot=3
+expect result contains "ok: spar_zap"
+session --agent scenario
+step 20
+expect journal "e7 spar_jolt applied"
+expect journal "e7 spar_jolt expired"
+
+# --- the arena as it was: movesets back, nobody locked on, everybody healed, every timer cleared or run out
+session --agent skeleton
+act lock_on off=true
+session --agent bot
+act lock_on off=true
+act block on=false
+session --agent scenario
+act barrier id=e5 amount=0
+act barrier id=e7 amount=0
+act damage_taken id=e5 key=core clear=true
+act damage_taken id=e7 key=core clear=true
+act set id=e5 component=Fighter path=moveset value=player
+act set id=e7 component=Fighter path=moveset value=skeleton
+act heal id=e5
+act heal id=e6
+act heal id=e7
+act teleport id=e5 x=0 z=12 y=0
+act teleport id=e7 x=-12 z=2 y=0
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e8 x=12 z=-2 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+step 300
+act inspect id=e5
+expect result !contains "Barrier"
+expect result !contains "DamageTaken"
+expect result !contains "ProcGates"
+act inspect id=e7
+expect result !contains "Barrier"
+expect result !contains "DamageTaken"
+expect result !contains "ProcGates"
+expect result !contains "spar_chill"

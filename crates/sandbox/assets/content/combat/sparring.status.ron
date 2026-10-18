@@ -1,0 +1,10 @@
+// The status rules of the body-state module (B2b), on neutral numbers; `body_state.scenario` uses them.
+// Net ids do not apply: statuses are content only.
+{
+    // Chill: a proc swallows the next one for 2 s (and empties the bar), buildup keeps coming while
+    // it is active, and a proc after the gate restarts its 4 s.
+    "spar_chill": (threshold: 100, decay_per_s: 14, duration: 4, min_proc_interval: 2.0,
+                   cool_while_active: false, refresh: true, reset_on_refuse: true),
+    // Jolt: an instant status (it needs no slot and takes none); the game's hook does the work.
+    "spar_jolt": (threshold: 100, decay_per_s: 14, duration: 0, capped: false, reset_on_refuse: true),
+}

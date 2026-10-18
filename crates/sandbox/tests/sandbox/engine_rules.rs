@@ -228,6 +228,80 @@ fn a_protection_timer_that_is_not_a_time_stops_the_game() {
 }
 
 #[test]
+fn a_barrier_that_is_not_a_pool_stops_the_game() {
+    use shards::action::Barrier;
+    // A negative pool would heal what it absorbs.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(Barrier { amount: -1.0, left: 5.0 });
+    });
+    let line = stops_on(&mut app, "action.barrier_sane", 2);
+    assert!(line.contains("e5 Barrier amount = -1, left = 5"), "{line}");
+
+    // A NaN time never runs out.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let boss = body(world, 6);
+        world.entity_mut(boss).insert(Barrier { amount: 10.0, left: f32::NAN });
+    });
+    let line = stops_on(&mut app, "action.barrier_sane", 2);
+    assert!(line.contains("e6 Barrier amount = 10, left = NaN"), "{line}");
+}
+
+#[test]
+fn damage_taken_that_is_not_sorted_unique_and_finite_stops_the_game() {
+    use shards::action::{DamageTaken, TakenMult};
+    fn mult(key: &str, mult: f32) -> TakenMult {
+        TakenMult { key: key.into(), mult, left: None, then: None }
+    }
+    // Two entries under one key.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(DamageTaken(vec![mult("core", 1.35), mult("core", 1.2)]));
+    });
+    let line = stops_on(&mut app, "action.damage_taken_sane", 2);
+    assert!(line.contains("e5 DamageTaken keys `core`, `core` are not sorted and unique"), "{line}");
+
+    // Keys out of order.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let boss = body(world, 6);
+        world.entity_mut(boss).insert(DamageTaken(vec![mult("core", 1.35), mult("armor", 0.5)]));
+    });
+    let line = stops_on(&mut app, "action.damage_taken_sane", 2);
+    assert!(line.contains("e6 DamageTaken keys `core`, `armor`"), "{line}");
+
+    // A multiplier that is not a number, and a negative one.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(DamageTaken(vec![mult("core", f32::NAN)]));
+    });
+    let line = stops_on(&mut app, "action.damage_taken_sane", 2);
+    assert!(line.contains("e5 DamageTaken `core` mult = NaN"), "{line}");
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(DamageTaken(vec![mult("core", -0.5)]));
+    });
+    let line = stops_on(&mut app, "action.damage_taken_sane", 2);
+    assert!(line.contains("e5 DamageTaken `core` mult = -0.5"), "{line}");
+
+    // A base under a permanent multiplier: it only lives under a window.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        let mut m = mult("core", 1.35);
+        m.then = Some(1.2);
+        world.entity_mut(player).insert(DamageTaken(vec![m]));
+    });
+    let line = stops_on(&mut app, "action.damage_taken_sane", 2);
+    assert!(line.contains("e5 DamageTaken `core` mult = 1.35, left = None, then = Some(1.2)"), "{line}");
+}
+
+#[test]
 fn a_push_that_is_not_flat_or_never_slows_stops_the_game() {
     use shards::action::Knockback;
     // A vertical component.

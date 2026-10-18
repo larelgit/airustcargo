@@ -365,7 +365,7 @@ fn registered<T: 'static>(app: &App) -> bool {
 #[test]
 fn combat_events_reflect_for_the_network_layer() {
     use shards_action::{
-        ActionRejected, ActionStarted, Blocked, Damaged, Died, Evaded, GuardBroken, Healed, HitShape, Knockback, Parried,
+        ActionRejected, ActionStarted, Barrier, BarrierGranted, Blocked, DamageTaken, DamageTakenExpired, ProcGates, Damaged, Died, Evaded, GuardBroken, Healed, HitShape, Knockback, Parried,
         PerfectEvaded, Protection, Reacted, Staggered,
         Telegraph, WorldShape,
     };
@@ -386,6 +386,11 @@ fn combat_events_reflect_for_the_network_layer() {
         registered::<Reacted>(&app),
         registered::<Protection>(&app),
         registered::<Knockback>(&app),
+        registered::<BarrierGranted>(&app),
+        registered::<DamageTakenExpired>(&app),
+        registered::<Barrier>(&app),
+        registered::<DamageTaken>(&app),
+        registered::<ProcGates>(&app),
     ];
     assert!(all.iter().all(|r| *r), "{all:?}");
     let shape = WorldShape { shape: HitShape::Circle { radius: 4.0, height: 1.0 }, origin: Vec3::X, facing: Vec3::NEG_Z };
