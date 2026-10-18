@@ -21,7 +21,7 @@
 
 use ai_core::{AiId, SimRng, SimTick};
 use bevy::prelude::*;
-use shards_action::{can_start, ActionDef, ActionStarted, ActionState, Fighter, FighterView};
+use shards_action::{can_start, ActionDef, ActionStarted, ActionState, Fighter, FighterView, InputBuffer};
 use shards_content::ContentDb;
 use shards_core::NetRole;
 
@@ -29,7 +29,7 @@ use crate::brain::{Npc, NpcCtx};
 use crate::chain::NpcChain;
 use crate::def::{AttackPlanDef, DirectorDef};
 use crate::director::{AttackToken, Grant};
-use crate::planner::resolve;
+use crate::planner::{resolve, NpcOptions};
 
 /// The last strike an NPC began, for the spacing of its director. Gameplay state: kept in
 /// replays and snapshots. Only NPCs of a director with a `min_spacing` carry it.
@@ -77,23 +77,34 @@ pub(crate) fn waiting(notes: &[Note], me: AiId, pool: &str, now: u64, ticks: u64
 /// The notes in `world`: every noted strike, and every press that has not started yet
 /// (counted from the tick it was pressed).
 pub(crate) fn notes_of(world: &World) -> Vec<Note> {
-    let Some(mut q) = world.try_query::<(&AiId, &Npc, Option<&NpcStrike>, Option<&AttackToken>, Option<&NpcChain>)>() else {
+    let Some(mut q) = world.try_query::<(&AiId, &Npc, Option<&NpcStrike>, Option<&AttackToken>, Option<&NpcChain>, Option<&InputBuffer>)>() else {
         return Vec::new();
     };
-    note_list(q.iter(world).map(|(id, npc, strike, token, chain)| (*id, npc.director.as_str(), strike, token.and_then(|t| t.held.as_ref()), chain)))
+    let now = ai_core::sim::tick(world);
+    note_list(q.iter(world).map(|(id, npc, strike, token, chain, buffer)| {
+        (*id, npc.director.as_str(), strike, token.and_then(|t| t.held.as_ref()), chain_note(chain, buffer, now))
+    }))
 }
 
 /// What [`note_list`] reads of an NPC: its id, its director, the last strike it noted, the
-/// token it holds, its pending combo continuation.
-pub(crate) type NoteRow<'a> = (AiId, &'a str, Option<&'a NpcStrike>, Option<&'a Grant>, Option<&'a NpcChain>);
+/// token it holds, the tick of its pending combo continuation ([`chain_note`]).
+pub(crate) type NoteRow<'a> = (AiId, &'a str, Option<&'a NpcStrike>, Option<&'a Grant>, Option<u64>);
+
+/// The tick a combo continuation was pressed, while it is still on its way: a press of this tick,
+/// or one whose input still waits in the queue. A press that died unused (the combo window did
+/// not open within the buffer life) started nothing and is no note.
+pub(crate) fn chain_note(chain: Option<&NpcChain>, buffer: Option<&InputBuffer>, now: u64) -> Option<u64> {
+    let chain = chain.filter(|c| c.strike)?;
+    let at = chain.pressed?;
+    (at == now || buffer.is_some_and(|b| b.queued.iter().any(|q| q.input == chain.input))).then_some(at)
+}
 
 /// The notes of NPCs given as [`NoteRow`]s: their noted strikes, and the presses that have not
 /// started yet (a planner press, a combo continuation that is a strike), from the tick pressed.
 pub(crate) fn note_list<'a>(rows: impl Iterator<Item = NoteRow<'a>>) -> Vec<Note> {
     let mut notes: Vec<Note> = Vec::new();
-    for (id, director, strike, grant, chain) in rows {
+    for (id, director, strike, grant, continuing) in rows {
         let pending = grant.filter(|g| !g.started).and_then(|g| g.pressed);
-        let continuing = chain.filter(|c| c.strike).and_then(|c| c.pressed);
         for at in strike.map(|s| s.last_start).into_iter().chain(pending).chain(continuing) {
             notes.push((id, pool(director), at));
         }
@@ -177,7 +188,7 @@ pub(crate) fn action_started(
     tick: Res<SimTick>,
     rng: SimRng,
     db: Res<ContentDb>,
-    npcs: Query<(&AiId, &Npc, &Fighter, &ActionState, Option<&AttackToken>, Option<&NpcChain>)>,
+    npcs: Query<(&AiId, &Npc, &Fighter, &ActionState, Option<&AttackToken>, Option<&NpcChain>, Option<&NpcOptions>)>,
     mut commands: Commands,
 ) {
     let e = started.event();
@@ -185,7 +196,7 @@ pub(crate) fn action_started(
     if role.is_some_and(|r| !r.simulates()) || e.predicted {
         return;
     }
-    let Ok((id, npc, fighter, state, token, chain)) = npcs.get(e.entity) else { return };
+    let Ok((id, npc, fighter, state, token, chain, open)) = npcs.get(e.entity) else { return };
     if e.input.is_none() {
         if chain.is_some() {
             commands.entity(e.entity).remove::<NpcChain>();
@@ -199,7 +210,7 @@ pub(crate) fn action_started(
         commands.entity(e.entity).insert(NpcStrike { last_start: tick.0, gated: planned || continued });
     }
     // The attack that began rolls its own continuation; the one it replaces is spent.
-    let rolled = state.current.as_ref().and_then(|r| crate::chain::roll(&db, &rng, *id, npc, &fighter.moveset, &e.action, r.instance));
+    let rolled = state.current.as_ref().and_then(|r| crate::chain::roll(&db, &rng, *id, npc, open, &fighter.moveset, &e.action, r.instance));
     match rolled {
         Some(next) => {
             commands.entity(e.entity).insert(next);

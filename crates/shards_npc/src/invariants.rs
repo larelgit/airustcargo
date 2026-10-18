@@ -118,7 +118,9 @@ pub fn tokens_within_limit(world: &World) -> Option<String> {
 /// noted ([`NpcStrike`](crate::strike::NpcStrike)), for the starts that went through the spacing
 /// rule (`gated`: the planner's presses and checked combo continuations).
 ///
-/// Two carve-outs: a strike a state hook pressed itself is noted but not held to the rule
+/// Two carve-outs: a strike a state hook pressed itself is noted but neither held to the rule
+/// nor held against others (a hook may start between a planned press and its start, so a gated start
+/// that follows it is not a breach)
 /// (the hook may or may not have asked [`NpcCtx::strike_ready`](crate::NpcCtx::strike_ready)),
 /// and an action tagged with one of the director's `spacing_exempt_tags` is not noted at all.
 /// A start that broke the rule is found on its own tick; the rule judges the notes still on the NPCs,
@@ -139,8 +141,8 @@ pub fn strike_spacing(world: &World) -> Option<String> {
             if !gated || *ticks == 0 {
                 continue;
             }
-            for (other, other_pool, other_at, ..) in &notes {
-                if other == id || other_pool != pool || other_at > at || at - other_at >= *ticks {
+            for (other, other_pool, other_at, other_gated, _) in &notes {
+                if other == id || other_pool != pool || !other_gated || other_at > at || at - other_at >= *ticks {
                     continue;
                 }
                 bad.note(*id, || {
@@ -258,6 +260,18 @@ mod tests {
         w.get_mut::<Npc>(late).unwrap().director = "loose".into();
         assert_eq!(strike_spacing(&w), None);
         w.get_mut::<Npc>(late).unwrap().director = "arena".into();
+        assert!(strike_spacing(&w).is_some());
+    }
+
+    /// A hook's start between a planned press and its start is not a breach by the planned one.
+    #[test]
+    fn a_planned_start_that_follows_a_hooks_start_inside_the_spacing_is_not_a_breach() {
+        let mut w = spaced_world();
+        striker(&mut w, "arena", 120, false);
+        striker(&mut w, "arena", 130, true);
+        assert_eq!(strike_spacing(&w), None);
+        // Two planned starts still are.
+        striker(&mut w, "arena", 140, true);
         assert!(strike_spacing(&w).is_some());
     }
 }

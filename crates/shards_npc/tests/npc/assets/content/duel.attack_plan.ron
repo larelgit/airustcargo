@@ -32,6 +32,14 @@
         ],
         rest: (0.3, 0.3),
     ),
+    // One action, two odds: the chain rolled is the one of the open option.
+    "chain_odds": (
+        options: [
+            (input: "light", name: "calm", when: ["!rage"], chain: Some((input: "light", chance: 0.0))),
+            (input: "light", name: "fierce", when: ["rage"], chain: Some((input: "light", chance: 1.0))),
+        ],
+        rest: (0.3, 0.3),
+    ),
     // A long rest, to be clamped.
     "long_rest": (options: [(input: "light")], rest: (1.0, 1.0)),
     // Every rule of the duel at once, for the snapshot and the replay.

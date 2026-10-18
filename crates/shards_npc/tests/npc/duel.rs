@@ -709,3 +709,38 @@ fn two_chaining_planners_keep_the_spacing_through_their_continuations() {
         assert!(!gaps.is_empty() && gaps.iter().all(|g| *g >= 42), "seed {seed}: {gaps:?}");
     }
 }
+
+#[test]
+fn a_chain_rolls_the_odds_of_the_option_that_is_open() {
+    let (mut app, who) = combo_duel("chain_odds", 7);
+    app.add_npc_condition("rage", rage);
+    step(&mut app, 400);
+    let calm: Vec<String> = started(&app, who).into_iter().map(|(_, a)| a).collect();
+    assert!(calm.len() >= 3 && calm.iter().all(|a| a == "swing_1"), "the calm option never chains: {calm:?}");
+    app.world_mut().get_mut::<shards_action::Health>(who).unwrap().current = 20.0;
+    let mark = started(&app, who).len();
+    step(&mut app, 400);
+    let fierce: Vec<String> = started(&app, who).into_iter().skip(mark).map(|(_, a)| a).collect();
+    assert!(fierce.iter().any(|a| a == "swing_2"), "the fierce option chains every time: {fierce:?}");
+}
+
+#[test]
+fn a_press_that_died_unused_is_no_start_for_the_others() {
+    // `slow_1` presses its continuation 24 ticks in; its combo window opens at 42, after the
+    // press (9 ticks of life) died: the other NPC is held back by the start, not by the press.
+    let (mut app, who) = pair_of("combo", "spaced", "chain_slow", 7, |_| {});
+    let first = loop {
+        step(&mut app, 1);
+        if let Some((t, i)) = all_starts(&app, who, "slow_1").first() {
+            break (*t, *i);
+        }
+        assert!(app.world().resource::<ai_core::SimTick>().0 < 400, "no strike started");
+    };
+    let other = who[1 - first.1];
+    step(&mut app, 36);
+    let now = app.world().resource::<ai_core::SimTick>().0;
+    assert_eq!(now, first.0 + 36);
+    let chain = app.world().get::<shards_npc::NpcChain>(who[first.1]).expect("the chain is still there");
+    assert!(chain.pressed.is_some_and(|p| p < now - 9), "the press is over: {chain:?}");
+    assert_eq!(shards_npc::wait_of(app.world(), other).map(|(_, left)| left), Some(42 - 36), "counted from the start");
+}

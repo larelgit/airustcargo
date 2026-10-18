@@ -34,7 +34,7 @@ use crate::def::{AttackPlanDef, DirectorDef, Role, WaitRole};
 use crate::perception::Perceived;
 use crate::chain::NpcChain;
 use crate::planner::{feasible, resolve, InFlight, NpcOptions, NpcPlan};
-use crate::strike::{note_list, pool, spacing_ticks, waiting, NpcStrike};
+use crate::strike::{chain_note, note_list, pool, spacing_ticks, waiting, NpcStrike};
 
 /// An NPC's attack token, while it holds one, and its place in the queue while it asks.
 #[derive(Component, Reflect, Clone, Debug, PartialEq, Default)]
@@ -326,7 +326,7 @@ pub(crate) fn direct(
 
     // 3. Grants, longest-waiting first.
     let inflight = InFlight::collect(npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
-    let notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), f.chain)));
+    let notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), chain_note(f.chain, Some(f.buffer), tick.0))));
     let mut asking: Vec<(u64, AiId, Entity)> = Vec::new();
     for &(id, entity) in &order {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };

@@ -25,7 +25,8 @@ use shards_content::ContentDb;
 use crate::brain::{salt, Npc};
 use crate::def::{AttackPlanDef, ChainDef, DirectorDef};
 use crate::director::{order, Fighting};
-use crate::strike::{note_list, pool, spacing_ticks, strike_pressed, tags_for, waiting};
+use crate::planner::NpcOptions;
+use crate::strike::{chain_note, note_list, pool, spacing_ticks, strike_pressed, tags_for, waiting};
 
 /// An NPC's pending combo continuation: gameplay state, kept in replays and snapshots. Only an
 /// NPC whose attack rolled a chain carries it, from the roll to the end of the attack.
@@ -77,20 +78,26 @@ pub fn recovery_start(def: &ActionDef) -> f32 {
 }
 
 /// The chain `npc` rolls when `action` starts: the odds are those of the first option of its
-/// plan that has a chain and names the action (by `action`, or by the action of its `input`).
-pub(crate) fn definition<'a>(db: &'a ContentDb, npc: &Npc, moveset: &str, action: &str) -> Option<&'a ChainDef> {
+/// plan that has a chain, is open (an option with `when` counts only while the NPC's
+/// [`NpcOptions`] lists it) and names the action (by `action`, or by the action of its `input`).
+pub(crate) fn definition<'a>(db: &'a ContentDb, npc: &Npc, open: Option<&NpcOptions>, moveset: &str, action: &str) -> Option<&'a ChainDef> {
     let plan = npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p))?;
     let moveset = db.get::<MovesetDef>(moveset);
     plan.options.iter().find_map(|o| {
         let chain = o.chain.as_ref()?;
+        // An option with `when` rolls only while it is open, so one action can carry different odds.
+        if !o.when.is_empty() && !open.is_some_and(|options| options.allowed.iter().any(|a| a == o.label())) {
+            return None;
+        }
         let named = o.action.as_deref().or_else(|| o.input.as_deref().and_then(|i| moveset?.action(i)))?;
         (named == action).then_some(chain)
     })
 }
 
 /// The roll when `action` starts: a chain, if the option has one and the die falls its way.
-pub(crate) fn roll(db: &ContentDb, rng: &SimRng, id: AiId, npc: &Npc, moveset: &str, action: &str, instance: u32) -> Option<NpcChain> {
-    let chain = definition(db, npc, moveset, action)?;
+#[allow(clippy::too_many_arguments, reason = "the roll reads the die, the NPC, its open options and the action that began")]
+pub(crate) fn roll(db: &ContentDb, rng: &SimRng, id: AiId, npc: &Npc, open: Option<&NpcOptions>, moveset: &str, action: &str, instance: u32) -> Option<NpcChain> {
+    let chain = definition(db, npc, open, moveset, action)?;
     rng.stream(id, salt::CHAIN).chance(chain.chance).then(|| NpcChain { input: chain.input.clone(), instance, pressed: None, strike: false })
 }
 
@@ -105,7 +112,7 @@ pub(crate) fn chain_press(
     mut npcs: Query<Fighting>,
 ) {
     let dt = time.delta_secs();
-    let mut notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), f.chain)));
+    let mut notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), chain_note(f.chain, Some(f.buffer), tick.0))));
     // Presses already made this tick (a hook's, a continuation's) are starts of this tick.
     notes.extend(
         npcs.iter()
