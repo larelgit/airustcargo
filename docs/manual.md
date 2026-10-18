@@ -60,7 +60,8 @@ Instructions for agents are in [AGENTS.md](../AGENTS.md) (the short core and an 
 32. [The sandbox](#the-sandbox)
 33. [Tests and CI](#tests-and-ci)
 34. [What's next](#whats-next)
-35. [Conventions and building](#conventions-and-building)
+35. [Building and iterating fast](#building-and-iterating-fast)
+36. [Conventions and building](#conventions-and-building)
 
 ## Quick start
 
@@ -5288,7 +5289,71 @@ E7's acceptance every night, and `record-replays.yml` records the reference repl
    foliage is not scattered by distance either, so it is sparser on a large region. The navmesh for several bodies is already there
    (body classes, E6.1).
 3. **Minidumps and a crash dialog for the player** (E10.7 beyond the one-file crash report): postponed by the owner's decision.
-4. Hot reload of code (`--features dynamic`, subsecond).
+4. Hot reload of code (not done: `--features dynamic` is only a link-time option, see "Building and iterating fast"; patching a running game, for example with subsecond, is still open).
+
+## Building and iterating fast
+
+A cold build of the sandbox takes 8 to 16 minutes, and a Bevy rebuild is the slowest part of an agent's loop. These are the levers, from the cheapest to the most invasive, with what was measured for each. The variants checked against the reference replays, `link.exe`, `rust-lld` and `--features dynamic`, do not change what the code does: all eight verify byte for byte (`--verify`) with each. The job count and `sccache` were not replay-checked; neither changes the code rustc generates.
+
+### Change content, not code
+
+An edit of these needs no rebuild and no restart of a running game (`cargo sandbox --headless --paused` keeps running):
+
+- **Every `*.<kind>.ron` content file** (actions, movesets, prefabs, attacks, movement and camera parameters that are in content, NPC behaviours, perception, attack plans, directors, looks, effects, sounds, music, screens, themes, regions, generators, perf budgets): hot reload checks the edit together with the whole database and applies it (`content_apply`; `content_reload` rereads everything). A broken edit leaves the previous version in effect and prints the file and the line. Check without a game: `cargo sandbox --check-content`.
+- **Levels** (`level_reload`), **text** (`assets/locale/<language>/*.ftl`, hot reload; `settings_set group=locale key=language value=ru`), **settings** (`settings_set`), **bindings** (`rebind`).
+- **Behaviour you can describe with `shards` commands**: a `.scenario` file runs against a live game (`cargo shards scenario FILE`), and a rule is a `shards assert add`, with no Rust.
+- **Tools that set state**: `set`, `teleport`, `heal`, `god`, `spawn_prefab`, `regen`, `npc_set_state`, `console line="speed x=0.25"`. To try a number before it goes into a file, `set` it on the entity.
+
+Two limits: during a co-op session the host refuses `content_apply`, `content_reload` and `level_reload` (clients would desync), and a change to a baked file needs its bake command (`--bake-nav`, `--bake-motion`).
+
+### Faster Rust builds: what was measured
+
+Measured on one Windows 11 PC (16 threads, 31 GB, other agents building on it), `x86_64-pc-windows-msvc`, Rust 1.99.0, the dev profile of `Cargo.toml`. Times are seconds.
+
+**Method.** The two configurations are built in their own target directories and sampled one after the other (A B A B ...), four or five samples each; the table gives the median and the spread (min-max). Before each sample the `rustc` processes on the machine were counted (`Get-Process rustc`), because other builds ran on it; the load column is the range of that count, and series are compared only inside one block of the table (they ran at different loads). Sampled changes: **leaf** adds a public function to `crates/sandbox/src/main.rs` (one crate compiles, then the executable links); **deep** adds one to `crates/shards_action/src/machine.rs` (every crate above it recompiles, then the executable links). The rebuild is `cargo build -p sandbox`. A cold build is one sample per configuration (it takes 7-16 minutes), so its spread is unknown and it only tells large differences. Rerun the samples on your machine before relying on a number: load on a shared machine moves them by tens of percent.
+
+| change | configuration | metric | median | spread | load (rustc running) |
+|---|---|---|---|---|---|
+| linker | MSVC `link.exe` | leaf rebuild + link, n=5 | 7.1 | 5.4-11.5 | 1-4 |
+| linker | `rust-lld` | leaf rebuild + link, n=5 | 3.0 | 2.9-3.7 | 1-4 |
+| linker | MSVC `link.exe` | deep rebuild + link, n=4 | 17.1 | 11.5-20.1 | 0-1 |
+| linker | `rust-lld` | deep rebuild + link, n=4 | 11.2 | 9.1-14.4 | 0-1 |
+| linker | `link.exe` / `rust-lld` | cold build, n=1 each | 929 / 977 | - | 4-5 |
+| dynamic | `rust-lld`, static Bevy | leaf rebuild + link, n=4 | 4.9 | 4.1-21.0 (one outlier) | 9 |
+| dynamic | `rust-lld`, `--features dynamic` | leaf rebuild + link, n=4 | 2.3 | 2.1-2.9 | 9 |
+| dynamic | `rust-lld`, static Bevy | deep rebuild + link, n=7 | 13.9 | 12.6-22.4 | 9-11 |
+| dynamic | `rust-lld`, `--features dynamic` | deep rebuild + link, n=7 | 16.2 | 10.2-27.9 | 9-11 |
+| test binary | MSVC `link.exe` | `perf` test relinked after a change, n=4 | 14.6 | 9.6-23.5 | 8-9 |
+| test binary | `rust-lld` | `perf` test relinked after a change, n=4 | 6.0 | 4.8-31.0 (first sample) | 9-11 |
+| test build size | static Bevy / `--features sandbox/dynamic` | `cargo test --workspace --no-run`, 51 executables, disk | 22 GB / 17 GB | - | - |
+| jobs | 4 / 8 / 12 jobs, `rust-lld` | cold build, n=1 each | 977 / 633 / 445 | - | 4 / 1 / 4 |
+| jobs baseline | no wrapper, 8 jobs (the 633 s of the row above; the reference for the sccache rows, not an A/B: the load differs) | cold build, n=1 | 633 | - | 1 |
+| sccache | `RUSTC_WRAPPER=sccache`, empty cache | cold build, n=1 | 494 | - | 5 |
+| sccache | same, new target directory, full cache | cold build, n=1 | 526 (0 of 399 hits) | - | 16 |
+| sccache | same, the first directory emptied, full cache | cold build, n=1 | 339 (337 of 399 hits) | - | 10 |
+
+- **Linker: `rust-lld` is faster and is the default of the engine repository on Windows.** One changed crate plus the link takes about 3 s instead of 7 s (the spreads do not overlap). A deep rebuild was 2-7 s shorter in each of the four A/B pairs, but with n=4 and overlapping spreads (11.5-20.1 against 9.1-14.4) that is suggestive, not shown. The cold build is the same within what one sample can tell. `.cargo/config.toml` of the engine sets `linker = "rust-lld"` for `x86_64-pc-windows-msvc`; the linker is part of cargo's fingerprint, so switching rebuilds everything once. `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=link.exe` brings the old linker back. The template stays on `link.exe`: the executables a game ships (`shards package`, a `dist` build with thin LTO) still come from it, because the PE file (PDB, CFG, debug info, imports, how antivirus products judge it) was not compared. Cargo reads every `.cargo/config.toml` from the working folder up, so inside this repository the template would inherit the root's `rust-lld`; `template/.cargo/config.toml` therefore sets `linker = "link.exe"`, and `shards package`, which runs cargo in the game's folder, links with it (a game kept outside the repository gets `link.exe` either way). A build run from the repository root with `--manifest-path template/Cargo.toml` (the tests, CI) reads only the root's config and links with `rust-lld`: those are test builds, not shipped ones. A game may opt in for its dev builds with `linker = "rust-lld"` in its own `.cargo/config.toml`. With no `LIB` set in the shell the build still works: rustc finds the Visual Studio and Windows SDK libraries itself for this linker, so a missing VS or SDK install fails the link, as it does with `link.exe`. CI: the only Windows job is `cross.yml` (weekly, also `workflow_dispatch`), so Windows CI first sees `rust-lld` in its next run; `ci.yml` is Linux only. `rust-lld` is in every rustup toolchain (`lib/rustlib/<host>/bin`), so nothing is installed. Not measured: Linux. Per its release notes Rust has linked `x86_64-unknown-linux-gnu` with `rust-lld` by default since 1.90, so there is probably nothing to switch on there, but that was not tried; `mold` was neither measured nor configured.
+- **`--features dynamic` (Bevy as one DLL): a small win for the link, none for a deep rebuild.** It builds and runs on Windows MSVC (`bevy_dylib.dll` is 140 MB; the 65535-export limit is not hit), and the eight reference replays verify identically with it. With `rust-lld` the static link is only about 3-5 s, so the DLL seems to save about 2-3 s on a leaf rebuild (n=4, all at load 9, one static outlier: suggestive, not shown) and nothing visible on a deep one (seven samples each, medians 13.9 s static and 16.2 s dynamic, spreads 12.6-22.4 and 10.2-27.9, load 9-11). The blocks ran at different loads, so compare only inside a block: a deep rebuild is dominated by compiling the crates above the changed one. What it does save is disk: the workspace's 51 test executables take 17 GB instead of 22 GB, and `cargo test -p sandbox --features dynamic` passes, reference replays included. It stays an option: `cargo sandbox --features dynamic`, or `--features sandbox/dynamic` together with `--workspace`. Do not use it for `dist` builds. Run the executable through cargo (`cargo run`, `cargo test`): cargo puts the DLL and Rust's `std-*.dll` on the search path. Started by hand, both folders (`target/debug`, and `lib/rustlib/<host>/lib` of the toolchain) must be in `PATH`.
+- **Jobs: more is faster, until the machine runs out of memory.** A cold sandbox build took 977 s with 4 jobs, 633 s with 8 and 445 s with 12 (single samples, other builds running; at one moment 21 `rustc` processes on the machine held 8.7 GB). But a `cargo test --workspace --no-run` with sixteen jobs next to ten other `rustc` processes ran out of memory (`memory allocation failed` in `rustc`). The same run had `rust-lld` exit with `0xc000001d` (`STATUS_ILLEGAL_INSTRUCTION`), seen there once and not explained; it is not an out-of-memory status. So `.cargo/config.toml` keeps `jobs = 4`, and a machine with free RAM sets `CARGO_BUILD_JOBS=8` (or 12) for the run; the environment beats the file. Rule of thumb: about 2-4 GB of RAM per job at peak. Do not raise it when several agents or builds share the machine: each of them setting 12 jobs hits the same out-of-memory failure.
+- **sccache: not adopted; it helps only a rebuild into the same target directory.** It is not in `.cargo/config.toml`. To try it: `cargo install sccache --locked`, then `RUSTC_WRAPPER=sccache cargo build`. A new target directory in another place got 0 hits out of 399 compilations, also with `SCCACHE_BASEDIRS` set, so the cache does not carry a Bevy build over to a new worktree whose `target/` is elsewhere. In the same directory (after `cargo clean`, for instance) 337 of 399 compilations hit (84%) and the build took 339 s against 494 s for the filling build (single samples at loads 10 and 5). The workspace's own crates build incrementally and are never cached.
+- **Test binaries: not consolidated.** The workspace builds 51 test executables; only `shards` (5 integration-test files), `sandbox` (5) and `shards_save` (2) have more than one, the others are already one `tests/<crate>/main.rs`. Relinking the `perf` test binary took a median 6.0 s with `rust-lld` against 14.6 s with `link.exe` (this includes recompiling the test crate), so the linker already cut most of what a binary costs; merging the three crates would save perhaps 8 links of 3-5 s, well under a minute of a full test build, while `perf` has to stay a binary of its own (CI selects `binary_id(sandbox::perf)` and runs it with `-j 1`), and `log_capture` and `system_failures` rely on process-wide state. Nothing was merged.
+
+### Target directory size
+
+Each worktree has a `target/` of its own: 6-7 GB after a sandbox build, 22 GB after `cargo test --workspace --no-run` (17 GB with `--features sandbox/dynamic`). Run `cargo clean` in finished worktrees, or point a long job at a scratch `CARGO_TARGET_DIR` and remove it afterwards. For the sandbox build alone the dynamic build is no smaller (6 GB against 6-7 GB); it pays off with many test executables, each of which links Bevy statically otherwise.
+
+### Numbers still in Rust code (follow-ups)
+
+These are constants in gameplay code that a designer would tune, so changing one needs a rebuild and, if it changes gameplay, new reference replays. Moving them into content (for example a `*.camera.ron`) is a separate change; none was moved here. Epsilons and tolerances (`TINY`, `EPS`, `STRAIGHT`, `ROTATION_TOLERANCE`) belong in code.
+
+| place | constants |
+|---|---|
+| camera and lock-on, `shards_motion/src/camera/` | `FLICK`, `FLICK_COOLDOWN`, `LOCK_FRAMING_RATE`, `ASSIST_CONE`, `RELEASE_FACTOR`, `MIN_DISTANCE`, `CAMERA_RADIUS`, `TRAUMA_DECAY` |
+| controller, `shards_motion/src/controller/` | `FLOAT_RATE`, `SHALLOW_MARGIN`, `LAND_PROBE`, `PUSH_COS` (`locomotion.rs`); `EDGE_PROBE`, `MIN_LEDGE_ROOM`, `MIN_GAP` (`mover.rs`); the defaults of `CharacterParams` (`params.rs`) |
+| movement planning, `shards_motion/src/perception/path.rs` | `MANTLE_COST`, `DROP_COST`, `SWIM_FACTOR`, `WATER_DROP`, `GOAL_BAND` |
+| navmesh routes, `shards_npc/src/nav/query.rs` | `START_REACH`, `GOAL_REACH`, `GOAL_BAND` |
+| NPC avoidance and senses, `shards_npc/src/` | `nav/avoid.rs`: `CROWD`, `SWITCH`, `STILL`; `ai.rs`: `LEASH_SLACK`, `NEAR_SIGHT`; `perception.rs`: `SWITCH` |
+| orders, `shards_action/src/` | `orders.rs`: `APPROACH`, `MIN_REACH`; `def.rs`: `SIGHT_HEIGHT` |
 
 ## Conventions and building
 
@@ -5298,7 +5363,7 @@ E7's acceptance every night, and `record-replays.yml` records the reference repl
 - The Bevy version is pinned (`0.20.0`). Update it deliberately, as a separate step: Bevy's API changes in every release.
   Third-party crates (now `parry3d =0.31.1` and its `glamx =0.3.1`, `ron =0.12.2`, `gltf =1.4.1` in `shards_level`) are added after their Bevy 0.20 support is checked, are pinned to an exact
   version, and are hidden behind the engine's API.
-- `.cargo/config.toml` sets `jobs = 4`, because this machine has little RAM. If you have more memory, raise it. Dependencies
+- `.cargo/config.toml` sets `jobs = 4` (a small or shared machine can run out of memory with more; `CARGO_BUILD_JOBS=8` or `12` when RAM is free, about 2-4 GB per job) and, on Windows, links with `rust-lld`. See "Building and iterating fast". Dependencies
   are built with `opt-level = 3`, the project's own code with `opt-level = 1`.
 - Versions and tags: SemVer; all engine crates share one version (`[workspace.package]`); the maintainer sets the tag; the rules are in
   [CHANGELOG.md](../CHANGELOG.md).
