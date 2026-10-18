@@ -604,6 +604,7 @@ content: 162 definitions in 46 files
   dungeon  0
   effect  6
   fx  1
+  hitstop  1
   input_map  0
   layout  3
   level  1
@@ -635,7 +636,7 @@ content: 162 definitions in 46 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 161 definitions in 45
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 162 definitions in 46
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -3171,7 +3172,7 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-19 rules, checked after every tick
+20 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
@@ -4881,7 +4882,7 @@ So "finisher, then poise break, then counter, then a heavy reaction, then the re
 |---|---|
 | alone (`NetRole::Single`), a window or `--offscreen`, in real time | the **clock hold** (`ai_core::ClockHold`): the virtual clock's relative speed is forced to 0 for the real time of the hold (not a pause: no pause menu, no muted sound, the gate does not refuse). `Time<Fixed>` gathers nothing, so no tick is due and none is added when it ends; everything on the simulation's clock stands still, the pose and the particles with it; the camera and the input run on real time. A hold lasts its time plus less than a frame. `speed` still reports the player's speed, and a `speed` call during a hold changes what the clock comes back to |
 | a co-op host or client | **no clock hold at all**: the picture of each body in the blow stands still (`ai_core::PresentationHolds`, by `AiId`): the animation bridge pauses the body's `AnimationPlayer` and switches nothing until it ends, and the body's whole drawn pose (position and rotation, on the visual child; for a client's remote body in `shards_net`'s interpolation) stays where it was when the hold began, then blends linearly to the live drawn pose over as long as the hold lasted, so a held 0.1 s catches up over 0.1 s without a snap; no `Transform` of an `AiId` entity is touched. A client decides for itself from the combat events its host forwards; a headless host or stand records the same holds, and nothing draws them |
-| headless, `--paused`, a `step` (it ends a hold that runs), a replay playing back (`--verify`, also with `--windowed`), a stand's driven clocks, a paused clock, a loading gate | nothing is held. The event and the journal line are still there, and `hitstop` says why nothing was held |
+| alone, and headless, `--paused`, a `step` (it ends a hold that runs), a replay playing back (`--verify`, also with `--windowed`), a driven clock, a paused clock, a loading gate | nothing is held (a co-op host or client, headless or in a stand, still holds the pictures as the row above says). The event and the journal line are still there, and `hitstop` says why nothing was held |
 
 A hold is never part of the simulation: `ClockHold` and `PresentationHolds` are not in snapshots or replays, the `hitstop` kind is outside the replay's content hash, and a replay recorded with the clock held verifies identical with hit stop off, headless and in a window that plays it (a test in `crates/sandbox/tests/sandbox/hitstop.rs`).
 
