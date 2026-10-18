@@ -125,8 +125,9 @@ pub struct HitStops {
     pub clock: u64,
     pub picture: u64,
     pub skipped: u64,
-    /// `Time<Real>` the newest hold ends at, for the table's cooldown.
-    pub ends: Duration,
+    /// `Time<Real>` the newest hold ends at, for the table's cooldown (`None` before the first hold:
+    /// the cooldown runs after a hold, never from the start of the app).
+    pub ends: Option<Duration>,
 }
 
 /// The hit stop module: the `hitstop` content kind, the combat events turned into holds, the
@@ -319,7 +320,7 @@ fn decide(world: &mut World, stop: &HitStopped) -> (f32, Outcome) {
     let now = frame_start(world);
     let cooldown = table(world).map_or(0.0, |t| t.cooldown.clamp(0.0, 5.0));
     let ends = world.resource::<HitStops>().ends;
-    if now >= ends && now < ends + Duration::from_secs_f32(cooldown) {
+    if ends.is_some_and(|ends| now >= ends && now < ends + Duration::from_secs_f32(cooldown)) {
         return skip("cooldown");
     }
     let until = now + Duration::from_secs_f32(seconds);
@@ -343,7 +344,7 @@ fn decide(world: &mut World, stop: &HitStopped) -> (f32, Outcome) {
         Outcome::Picture
     };
     let mut stops = world.resource_mut::<HitStops>();
-    stops.ends = stops.ends.max(until);
+    stops.ends = Some(stops.ends.map_or(until, |ends| ends.max(until)));
     (seconds, outcome)
 }
 

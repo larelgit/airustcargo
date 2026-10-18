@@ -199,6 +199,26 @@ fn a_pause_a_step_and_the_gate_are_not_the_holds() {
 }
 
 #[test]
+fn the_cooldown_runs_after_a_hold_not_from_the_start_of_the_app() {
+    // The longest cooldown the engine allows: the first blow comes well within it of the app's start.
+    let assets = Folder::new("cooldown_first");
+    assets.put(
+        "content/feel/test.hitstop.ron",
+        r#"{"feel": (max_seconds: 0.12, cooldown: 5.0, rules: [(name: "hit", when: (event: Damaged), seconds: 0.06)])}"#,
+    );
+    let mut app = drawn(&assets);
+    let hero = fighter(app.world_mut(), "hero", "heroes", Vec3::ZERO, Vec3::NEG_Z, 100.0);
+    let brute = fighter(app.world_mut(), "brute", "monsters", Vec3::new(0.0, 0.0, -1.5), Vec3::Z, 100.0);
+    app.insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
+    app.update();
+    sim::resume(app.world_mut());
+    app.update();
+    assert_eq!(app.world().resource::<HitStops>().ends, None, "no hold yet");
+    hit(&mut app, hero, brute, HitWeight::Light);
+    assert_eq!(app.world().resource::<HitStops>().log.back().unwrap().outcome, Outcome::Clock);
+}
+
+#[test]
 fn the_cooldown_keeps_a_flurry_from_stuttering() {
     let assets = Folder::new("cooldown");
     assets.put(
