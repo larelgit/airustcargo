@@ -428,17 +428,8 @@ impl Devices<'_> {
                 let live = if raw.abs() < *deadzone { 0.0 } else { raw };
                 Vec2::new(live * scale, 0.0)
             }
-            Binding::Stick { stick, deadzone, scale } => {
-                let raw = self
-                    .pads
-                    .iter()
-                    .map(|p| match stick {
-                        Stick::Left => p.left_stick(),
-                        Stick::Right => p.right_stick(),
-                    })
-                    .fold(Vec2::ZERO, |best, v| if v.length_squared() > best.length_squared() { v } else { best });
-                let len = raw.length();
-                if len <= *deadzone { Vec2::ZERO } else { raw / len * ((len - deadzone) / (1.0 - deadzone).max(1e-3)).min(1.0) * *scale }
+            Binding::Stick { stick, deadzone, scale, scale_x, scale_y, curve } => {
+                map::stick_response(self.stick_raw(*stick), *deadzone, *scale, *scale_x, *scale_y, *curve)
             }
             // Mouse deltas are per frame already; a stick's value is a rate, so the look
             // axis multiplies sticks by the frame time (see `read_input`).
@@ -446,6 +437,27 @@ impl Devices<'_> {
             Binding::MouseWheel { scale } => self.scroll * *scale,
             Binding::Key(_) | Binding::Mouse(_) | Binding::GamepadButton(_) => Vec2::ZERO,
         }
+    }
+
+    /// The stick deflected the most among the gamepads, as they report it.
+    fn stick_raw(&self, stick: Stick) -> Vec2 {
+        self.pads
+            .iter()
+            .map(|p| match stick {
+                Stick::Left => p.left_stick(),
+                Stick::Right => p.right_stick(),
+            })
+            .fold(Vec2::ZERO, |best, v| if v.length_squared() > best.length_squared() { v } else { best })
+    }
+
+    /// What a flick measures of a stick binding: its deflection past the dead zone, rescaled to
+    /// 0..1, before its curve and its scales (C9's `scale_x`/`scale_y` included). An axis whose
+    /// scale is negative keeps its flipped side, as the look axis does; one whose scale is 0 reads 0.
+    fn stick_deflection(&self, binding: &Binding) -> Option<Vec2> {
+        let Binding::Stick { stick, deadzone, scale, scale_x, scale_y, .. } = binding else { return None };
+        let side = |s: f32| if s == 0.0 { 0.0 } else { s.signum() };
+        let (x, y) = (side(scale_x.unwrap_or(*scale)), side(scale_y.unwrap_or(*scale)));
+        Some(map::stick_response(self.stick_raw(*stick), *deadzone, 1.0, Some(x), Some(y), 1.0))
     }
 }
 
@@ -515,13 +527,13 @@ fn read_input(
                 frame.axes.insert(action.action.clone(), axis);
             }
             if action.action == "look" {
-                // What a flick is measured in: the mouse's pixels and the stick's deflection, each before its scale.
+                // What a flick is measured in: the mouse's pixels and the stick's deflection, each before its scale
+                // (and the stick's before its curve: `stick_deflection`).
                 for binding in action.bindings.iter().filter(|b| b.is_axis()) {
                     match binding {
                         Binding::MouseMotion { .. } => frame.look_pointer_px += Vec2::new(devices.motion.x, -devices.motion.y),
-                        Binding::Stick { scale, .. } if *scale != 0.0 => {
-                            // Divided by the size of the scale, not the scale: an inverted binding (negative scale) keeps its flipped side, as the look axis does.
-                            let deflection = devices.value(binding) / scale.abs();
+                        Binding::Stick { .. } => {
+                            let deflection = devices.stick_deflection(binding).unwrap_or_default();
                             if deflection.length_squared() > frame.look_stick.length_squared() {
                                 frame.look_stick = deflection;
                             }

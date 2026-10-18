@@ -10,19 +10,19 @@ From `1.0.0` on, breaking changes come only in a major version. All engine crate
 ## How a game depends on the engine
 
 A game depends on one crate, `shards`, and pins the engine to a **git tag**. This way the build does not change until
-you change the tag yourself. While there are no tags, pin a commit: `rev = "<hash>"` (and `--rev <hash>` for the CLI).
+you change the tag yourself. To follow unreleased changes on the main branch, pin a commit instead: `rev = "<hash>"` (and `--rev <hash>` for the CLI).
 
 ```toml
 # The game's Cargo.toml
 [dependencies]
-shards = { git = "https://github.com/larelgit/airustcargo", tag = "v0.4.0" }
+shards = { git = "https://github.com/larelgit/shards-engine", tag = "v0.4.0" }
 ```
 
 Use the `shards` CLI of the same version as the engine in the game (the `ai/*` protocol may change between minor
 versions):
 
 ```bash
-cargo install shards_cli --git https://github.com/larelgit/airustcargo --tag v0.4.0
+cargo install shards_cli --git https://github.com/larelgit/shards-engine --tag v0.4.0
 ```
 
 To move to a new version, change `tag`, run `cargo update -p shards`, read the "Changed" section of this
@@ -35,7 +35,7 @@ Tags are set by the maintainer, not by agents or CI. For a release `X.Y.Z`:
 
 1. Raise `version` in `[workspace.package]` of the root `Cargo.toml` and run `cargo update --workspace`
    (it updates `Cargo.lock`). Move the entries from `Unreleased` into a new section `[X.Y.Z] — date` and fix the
-   links at the bottom of the file. The section may already be prepared (phase B is recorded in `[0.3.0]`, phases C–E in `[0.4.0]`, both marked "unreleased"): then set the
+   links at the bottom of the file. The section may already be prepared (phase B is recorded in `[0.3.0]`, phases C–E in `[0.4.0]`): then set the
    date in it. Raising the minor version rejects the snapshots of the previous one: record `tests/replays/snapshot.json` again
    (`cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`).
 2. Update the `vX.Y.Z` tag in `template/Cargo.toml` (the comment about the dependency), in `template/README.md` (steps 3 and 5), in
@@ -75,6 +75,7 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   - **Co-op**: `Intent.target` and the `lock_switch` press are input; the check and the switch run where the simulation runs. `InputCapture::adopt_target`: a client takes over a lock the host changed itself (lost by its check, moved by a switch or an order) once the host has every held state of the client, so the client's next state does not lock the host's body on the old target again; stand scenario `scenarios/stand/lock_on.scenario`.
   - Sandbox: `content/combat/lock.lock_on.ron` (the defaults written out), scenario `lock_on.scenario` (a lock lost to a death, to a pillar after 2 s with the count starting again after a break, to the range; switches right and left by the rule); `reactions.scenario` locks again after its pillar section (both locks are lost behind the pillar now), and the reference replays are recorded again (the content hash; `reactions.json` also by that pillar section). Tests: `camera::lock` (7), `tests/motion/camera.rs` (2 new), `camera_content.rs` (1 new), `shards_action/tests/combat/lock.rs` (6), `shards_net::inputs` (1 new), the sandbox's control test of `action.lock_on_valid`. Manual: "Lock-on rules (C6)".
 - Camera as content and effect hooks (C7), presentation only (no simulation change; content hashes and the reference replays do not change, since the sandbox has no `camera` definition): the camera's numbers are no longer constants in `systems.rs` but the resource `CameraTuning`, the content kind `camera` (`*.camera.ron`, id `default`, hot reload, ranges validated): pitch limits, follow rate, release factor, lock framing (yaw and pitch rate, fixed pitch target or the clamped line pitch, minimum horizontal distance), the arm (sphere radius, minimum distance, length-follow rate) and the flick (mouse pixel threshold, decay and cooldown, stick threshold and re-arm level), the trauma decay and amplitudes. Defaults are the old values, so a game without a definition sees no change. `CameraOffsets` (`fov_add_deg`, `focus_dip_m`, `pitch_min`/`pitch_max`) is read by `orbit_camera` after the base values and written by the game's systems (sprint field of view, landing dip, finisher punch, swim cap); the writer owns its value, the camera keeps none of it; `CameraSystems::Orbit` orders writers. After a wall lets go of the arm it grows back smoothly at `arm.follow_rate` (it still shortens at once); every smoothing is the exact exponential through `ops::exp`; new pure helpers `critically_damped_step`, `pitch_limits`, `lock_framing`, `arm_reach`, `arm_length`, `shake_offset_with` and `FlickState` in `camera::math`. `ControlState` gains `look_pointer_px()` and `look_stick()` for the flick. Tests: `camera::math` (15 new), `camera::tuning` (3), `tests/motion/camera_content.rs` (4), `camera.rs` (6 new), `input.rs` (2 new, among them: the walk is turned by the stored yaw, not by a shake). Manual: "Camera numbers and offsets (C7)".
+- Stick look (C9): `Binding::Stick` gains optional `scale_x` / `scale_y` (per-axis scale, `scale` where absent) and `curve` (exponent on the magnitude after the radial dead zone, default 1.0 = linear). Unserialized while default, so old `input_map` files, saved controls strings and the reference replays are unchanged; the text form of `rebind` and `controls` carries them (`Stick(stick: Right, deadzone: 0.2, scale_x: Some(3.2), scale_y: Some(2.0), curve: 1.6)`). A bad `curve` or a non-finite scale is a content error that names the file. The same check runs on `rebind` and on a saved controls string, so a NaN never reaches `Intent`.
 - Action timeline (B2a): more of what an action does over its own time is content, all off by default and unserialized at its default (so content hashes and the reference replays do not change, and an action that uses none of it takes the old code path). `ActionDef::charge: (after, into, until)` (held from the press, the run turns into `into`: the same instance, clock, ledger and input, paying the stamina difference, `into`'s charge when it differs and `into`'s cooldown, whose slot must be ready; retried each tick while something is missing; `ActionEnded { end: Branched }` then `ActionStarted`), `turn: [(span, deg_per_s)]` (turn at a rate from the body's facing, toward the target, the aim, else the movement input), `assist: (angle, close, sight)` (within `angle` degrees of where the run started; the turning adds at most `close` metres of approach; no tracking of a target out of sight; off for every action while the fighter holds `assist_off`, which the controls hold while the setting `controls.attack_assist` is false), `face: Keep` (the run moves the body without turning it), `miss_recovery` (a run none of whose hits landed by the end of its last hit window, the checking tick's hits included, lasts that much longer; `ActionMissed`, `extend_recovery(world, entity, seconds)`, which does nothing on a co-op client; the check runs in `ActionSystems::Hits` after `resolve_hits`), `while_held: input` (`ActionEnded { end: Released }`; a tool press without `hold=true` says it is a tap); `Cost::cooldown_key` (a cooldown slot shared by variants; the HUD's `you.cooldown` reads it) and `cooldown_if_interrupted` (a run cut before its windup is over keeps that share, set before the next action pays; not on a `Combo` continuation; it needs a cooldown); `CancelDef::queue` (a press made while the span is open waits for the window: `press_life`; a queue window at the action's end never cuts it short; an NPC's early chain press rides it, the director's token kept) and `MovesetDef::buffer: SingleSlot(priority)` (one press at a time by priority, tried until it starts or runs out). Every end of a run but a charge's turn caps the waiting presses to `input_buffer`. Runtime: the lazy component `RunExtras` (in the replay and the snapshot only while a run needs it), `Cooldowns::set`, the engine rule `action.extras_follow_run`, the describer `charging, turns in …` / `missed +…s`, the journal line `e5 lunge missed: +0.60s recovery`, the condition `charging`, `shown_queue` (a client's buffer for its own body, which the tools read). `light_attack`, `heavy_attack` and `use_technique` take `hold=true|false`; `BindMode::PressHold` (`press_hold`: a press and a hold from one button; the standard map's `heavy` and `interact`; under hold-to-toggle the first push presses and holds, the next lets go). A client predicts all of it with the same functions and reconciles by `(instance, action)`: a host's turn of a charge, a turn the host refused (reverted after `until`), the host's extra recovery, and a host's run that ended with no word. See "Action timeline (B2a)" in the manual. With C4 (turn rates per source, the backstep): `turn` spans turn the run's facing (its hits, guard arc and displacement) and an action's `turn_speed_deg` the body that follows it, once a tick in the controller, so the two never both turn the body (with both, each bounds its own); a `steer: MoveOrBack` backstep with `face: Keep` hops back and keeps the body's gameplay facing (the content check refuses `turn` spans on a backstep: they would start it from the body's facing, forward), while a lock-on target or an aim point still turns a `face: Keep` body; a client's own body takes its stance rate only from the action it shows (`PredictedAction`), not from the host's replicated one once its own has ended. Tests: `parity.rs` (`a_backstep_with_face_keep_goes_back_and_keeps_the_body_facing`, `turn_spans_turn_the_run_and_a_stance_rate_the_body_never_both_the_body`), `timeline.rs` (`a_lock_on_target_still_turns_a_face_keep_body`), the unit test in `stance.rs`.
 - Sandbox, for the action timeline: in `combat/sparring.action.ron` the actions `spar_heavy` (held 0.25 s it turns into `spar_heavy_full`; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; turning at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, 0.6 s more recovery on a whiff, 40% of the cooldown kept when cut in the windup), `spar_channel` (`while_held`) and `spar_roll_keep` (`face: Keep`), net ids 120-125; in `sparring.moveset.ron` the moveset `timeline` (`SingleSlot` by priority); the scenario `timeline.scenario` and the reference replay `tests/replays/timeline.json`; the snapshot test `mid_charge_and_after_a_whiff`; the stand tests `predicted_charge_matches_the_host`, `predicted_charge_keeps_its_time`, `predicted_charge_refused_by_the_host_reverts`, `predicted_run_adopts_host_miss_recovery`, `host_cut_drops_the_shown_run`. The eight older sandbox replays were recorded again for the new content: only their `content` and `hash` lines changed (and `state_hash` where a start snapshot carries one), no `entities` line; the engine commits before it changed none of them (they verified as they were).
 - `AGENTS.md` is a short core (7 KB instead of 44 KB) with an index; the detail moved verbatim to topic files in `docs/agents/` (watching and driving, determinism, content, world and navmesh, NPCs, co-op and Steam, checking changes, and others). A test checks that every topic file is linked from the index and every link exists.
@@ -180,12 +181,11 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
 - The host cleans a network client's input before it reaches `Intent`: a `move_dir` that is not finite becomes zero, one longer than 1 is cut to 1, a non-finite `aim` is dropped. An honest client sends clamped input, so replays do not change. Without it a bad frame would stop the host on `core.intent_sane`.
 - A world that breaks an engine rule and the game's `health_in_range` at once now stops with the engine rule's name first (`stopped: invariant action.resources_in_range violated at tick 1 (+1 more)`); the sandbox keeps `health_in_range` as the example of a game rule.
 
-## [0.4.0] — phases C–E: co-op, saves, UI and platform (unreleased)
+## [0.4.0] — 2026-10-18 — phases C–E: co-op, saves, UI and platform
 
 Everything that landed in the main branch after phase B (`0.3.0`): co-op and saves (phase C), UI, localization and audio
 (phase D), the platform — rendering, performance, Steam, builds for players (phase E), and the spec follow-ups after them (the
-leftovers of E4, E5, E6, E9, E11). The section is prepared in advance, like `[0.3.0]`: the version in `Cargo.toml` is not raised, the tag is not set; at
-release, set the date (see "Releasing a version (for the maintainer)").
+leftovers of E4, E5, E6, E9, E11). Released as the tag `v0.4.0`; the version in `[workspace.package]` is `0.4.0`.
 
 ### Added
 
@@ -344,7 +344,7 @@ replays are unchanged):
   save; a save made at zero health leaves it dead.
 - The reference replay `tests/replays/saves.json` and the extended scenario `saves.scenario`.
 
-**Invariants, divergence details of the replay, tick time (E11, tasks 9–11; larelgit/airustcargo#4, merged into this branch)**:
+**Invariants, divergence details of the replay, tick time (E11, tasks 9–11; larelgit/shards-engine#4, merged into this branch)**:
 
 - Invariants (`ai_core::invariants`): game rules `add_ai_invariant(name, |w| -> Option<String>)` and session rules
   (`assert_add`, `assert_list`, `assert_remove`, `assert_reset`; CLI `shards assert add|list|remove|reset`). They are checked
@@ -1441,8 +1441,8 @@ The first version: the engine as an environment that is driven from outside, wit
 - Replay hashes are computed from game data, not from the text for the AI. `observe` works out visibility from the subject, not from the window's camera.
 - `dodge` and `attack` explain a refusal instead of an empty `ok`.
 
-[Unreleased]: https://github.com/larelgit/airustcargo/compare/v0.4.0...HEAD
-[0.4.0]: https://github.com/larelgit/airustcargo/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/larelgit/airustcargo/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/larelgit/airustcargo/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/larelgit/airustcargo/commits/v0.1.0
+[Unreleased]: https://github.com/larelgit/shards-engine/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/larelgit/shards-engine/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/larelgit/shards-engine/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/larelgit/shards-engine/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/larelgit/shards-engine/commits/v0.1.0

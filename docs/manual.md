@@ -149,17 +149,17 @@ are in [template/README.md](../template/README.md).
    ```
 2. **Depend on the engine by tag or commit.** In `Cargo.toml`, use a git dependency instead of the path
    (`../crates/shards`). Versions and tags are described in [CHANGELOG.md](../CHANGELOG.md). The template uses saves,
-   co-op, screens and texts, so it needs the engine of phases C–E (the future `0.4.0`). The earlier versions `0.2.0` and
-   `0.3.0` will not work. Until the maintainer sets a tag, pin a commit:
+   co-op, screens and texts, so it needs the engine of phases C–E (`0.4.0`). The earlier versions `0.2.0` and
+   `0.3.0` will not work. Pin the tag `v0.4.0`:
    ```toml
    [dependencies]
-   shards = { git = "https://github.com/larelgit/airustcargo", rev = "<hash>", default-features = false }
+   shards = { git = "https://github.com/larelgit/shards-engine", tag = "v0.4.0", default-features = false }
    ```
-   After the `v0.4.0` release, replace `rev = "<hash>"` with `tag = "v0.4.0"`. The build does not change until you change
-   `rev` or `tag` yourself. `default-features = false` is needed so that the game turns on the features (`render`,
+   To follow unreleased changes on the main branch instead, pin a commit with `rev = "<hash>"`. The build does not change
+   until you change `tag` or `rev` yourself. `default-features = false` is needed so that the game turns on the features (`render`,
    `remote`, `hot_reload`, `audio`, `gamepad`, …) in its own `[features]`. There are no other dependencies: Bevy, serde
    and schemars come through `shards` (`shards::prelude::*`, `shards::serde`, `shards::schemars`). Install the CLI at the
-   same version: `cargo install shards_cli --git … --rev <hash>` (after the release, `--tag v0.4.0`).
+   same version: `cargo install shards_cli --git … --tag v0.4.0` (or `--rev <hash>` for a pinned commit).
 3. **`main` is one line.** `shards::run` reads the command line (`--headless --seed --port --port-file --no-remote
    --paused --hz --replay --verify --windowed --check-every --check-detail --tick-budget-ms --frame-budget-ms --check-content
    --worldgen-report --seeds --bake-nav --smoke --perf`), catches `kill` and a closed terminal:
@@ -883,6 +883,7 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
 - `InputMap { contexts }`: context (`gameplay`, `menu`, or the game's own) → actions → bindings. A binding is one of: `Key`, `Mouse`,
   `GamepadButton`, `GamepadAxis` (dead zone, scale), `KeyAxis`, `Keys2D` (WASD as a 2D axis), `Buttons2D` (the gamepad's D-pad as a 2D axis), `Stick`,
   `MouseMotion`, `MouseWheel` (this frame's scroll as a 2D axis, `y` away from the player; the standard map binds it to `lock_switch`).
+  `Stick` has `deadzone` (radial, the rest rescaled to 0..1), `scale` for both axes, and three optional fields for stick look (C9): `scale_x` / `scale_y` (`Some(3.2)`; a per-axis scale where set, `scale` where absent) and `curve` (the exponent on the magnitude after the dead zone, `m -> m^curve`, direction kept; default 1.0 is linear; it must be above 0 and finite, otherwise a content error names the file; `rebind` and a saved `controls` string are refused the same way). A look stick that turns 3.2 units per second of yaw and 2.0 of pitch (the scale is in the `look` action's units per second) with a 1.6 response is `Stick(stick: Right, deadzone: 0.2, scale_x: Some(3.2), scale_y: Some(2.0), curve: 1.6)`. The new fields are not written while they are default, so every old `input_map` file and saved `controls` string reads and writes as before; `rebind` takes the same text.
   Action mode: `Press` (one press), `Hold` (while held), `Toggle` (a press turns it on until the next press: "hold or press" for accessibility). `directional: true` — a press carries the direction the player is moving in (a roll towards where the stick points). Slot 0 is the main binding; slot 1 and up are spares.
 - The context stack `InputContexts`: only the top one fires; `menu` blocks `gameplay` until it is removed.
 - Defaults come from content (`*.input_map.ron`, id `default`, hot reload) or from the built-in
@@ -960,7 +961,7 @@ The ranges of `pitch`, `follow_rate`, the rates, thresholds and amplitudes are c
 
 *Smoothing.* Every smoothing is the exact exponential `1 - exp(-rate * dt)` through `bevy::math::ops::exp`, so it does not depend on the frame rate (`damp`, `lock_framing`, `arm_reach`). `critically_damped_step(x, v, target, omega, dt)` is the closed form of a critically damped spring (for a landing dip: kick `v`, aim at 0); one step of `2 dt` equals two of `dt`. *The arm*: a wall pulls it in at once; once it lets go the shortfall below the nominal length shrinks at `arm.follow_rate` (the rate acts on the shortfall, so a plain zoom is smoothed once, by `arm_length`; `ThirdPersonCamera::arm_reach` is where it stood last frame, `arm_length` its nominal length), never past what is free and never closer than `arm.min_distance` (as far as the room allows). A jump of the focus (a teleport) resets it.
 
-*Flick.* The flick thresholds are in raw units, so they are the old constants only at the standard map, mouse sensitivity 1.0 and 60 Hz: before, the mouse flick read the scaled, sensitivity-adjusted axis (0.035 rad) and the stick flick also carried the frame time. Now the player's sensitivity and a binding's scale do not move the flick, and the stick flick does not depend on the frame rate. An inverted stick binding (negative scale) keeps its flipped side. If both devices flick in one frame the mouse wins and the stick is not asked. The mouse is measured in raw pixels and the stick in deflection, both from `ControlState` (`look_pointer_px()`, `look_stick()`); the `look` axis stays the scaled sum. The cooldown runs on the simulation clock, `Time<Virtual>`: a paused game does not run it down, a slowed one runs it down slowly. The mouse's sum drains on the frame clock (`Time<Real>`): that is input, not the game. Follow, framing, arm and shake stay on `Time<Real>`, so a paused game still shows its camera settle. There is no look grace after a spawn. Gameplay reads the stored `ThirdPersonCamera::yaw` (`input` turns the move axes by it): the shake only moves the camera's `Transform`.
+*Flick.* The flick thresholds are in raw units, so they are the old constants only at the standard map, mouse sensitivity 1.0 and 60 Hz: before, the mouse flick read the scaled, sensitivity-adjusted axis (0.035 rad) and the stick flick also carried the frame time. Now the player's sensitivity and a binding's scale do not move the flick, and the stick flick does not depend on the frame rate. A stick's flick reads its deflection before its response `curve` and its scales (`scale`, or C9's `scale_x` / `scale_y` per axis), so a look curve or a faster yaw does not move the stick threshold either. An inverted stick binding (a negative scale on that axis) keeps its flipped side. If both devices flick in one frame the mouse wins and the stick is not asked. The mouse is measured in raw pixels and the stick in deflection, both from `ControlState` (`look_pointer_px()`, `look_stick()`); the `look` axis stays the scaled sum. The cooldown runs on the simulation clock, `Time<Virtual>`: a paused game does not run it down, a slowed one runs it down slowly. The mouse's sum drains on the frame clock (`Time<Real>`): that is input, not the game. Follow, framing, arm and shake stay on `Time<Real>`, so a paused game still shows its camera settle. There is no look grace after a spawn. Gameplay reads the stored `ThirdPersonCamera::yaw` (`input` turns the move axes by it): the shake only moves the camera's `Transform`.
 
 *Offsets.* `CameraOffsets` (a resource, neutral by default) is what a game's systems add to the base values; `orbit_camera` reads it after them, every frame: `fov_add_deg` is added to the player's field of view before the engine's 30..120 limit (sprint widening, a finisher's punch); `focus_dip_m` lowers the camera and what it looks at together, so the picture drops without tilting (a landing dip; negative raises); `pitch_min` / `pitch_max` narrow the tuning's pitch range (an override outside it is held to it), and the stored pitch is clamped to the result (a swim cap: the camera stays above the water; lifting the cap does not push the pitch back up). **The writer owns its value**: the system that writes a field sets it on every frame it wants an effect and puts it back to `0.0` / `None` itself when it is done. The camera only reads: it never decays, sums or stores an offset, and it never writes `CameraSettings`, `ThirdPersonCamera::focus` or the stored pitch except through the clamp above, so an offset nobody writes any more is gone the next frame. Two systems that want the same field must be combined by the game into one writer. Write in `PostUpdate` before `CameraSystems::Orbit` to be seen on the same frame (the set is empty without the `render` feature, so the writers run and are testable headless).
 
@@ -3041,8 +3042,8 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `action.running_sane` | a running action of a fighter exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. The length is the run's own when that is longer than the definition's (miss recovery and `extend_recovery` lengthen a run, B2a). Without a content database the rule passes |
 | `action.protection_sane` | every `Protection` (the reaction and poise timers, B1) holds finite timers, none below 0. A NaN stays a NaN through the countdown and would shield its fighter for ever |
 | `action.knockback_sane` | every `Knockback` (a push in progress, B1) has a finite flat velocity (`y` is 0) and a finite `decel` above 0: a push that does not slow down never stops |
-| `action.lock_on_valid` | with a `lock_on` definition, no body's `Intent.target` names an entity that no longer exists or is dead: the lock-on check (`LockSystems::Check`) lets go of such a lock at the end of every tick, after the deaths of that tick, so a violation names a lock set later in the tick (a game system in `SimSet::Cleanup` after the check). Without a definition locks are not checked and the rule passes (C6) |
 | `action.extras_follow_run` | every `RunExtras` (what a charging, turning or miss-recovering run keeps, B2a) belongs to the run its fighter is running (the same `instance`), with a finite `extra >= 0` and a finite `closed >= 0`. The machine puts extras in when such a run starts and takes them out on every way a run ends, so extras left behind would hand a later run a stale hold, hit or recovery |
+| `action.lock_on_valid` | with a `lock_on` definition, no body's `Intent.target` names an entity that no longer exists or is dead: the lock-on check (`LockSystems::Check`) lets go of such a lock at the end of every tick, after the deaths of that tick, so a violation names a lock set later in the tick (a game system in `SimSet::Cleanup` after the check). Without a definition locks are not checked and the rule passes (C6) |
 | `npc.state_known` | `NpcBrain.state` is a state of the NPC's behaviour. Three carve-outs, each a state the engine itself leaves behind: an empty state (before the NPC's first decided tick), an inactive NPC (dormant or dead: the brain passes it through, so a state a hot reload removed stays until it wakes), and an NPC whose behaviour is not in content (that is reported once as a content problem) |
 | `npc.strike_spacing` | two NPCs of one director whose `min_spacing` is set never began strikes less than that apart (in whole ticks), for the starts that went through the spacing rule: the planner's presses and checked combo continuations (`NpcStrike::gated`). Judged from the last strike each NPC noted. Three carve-outs: an NPC whose plan has `ignores_spacing` is not the one held to the rule (its starts still hold the others), a strike a state hook pressed itself is noted but neither held to the rule nor held against other NPCs (the hook may or may not have asked `strike_ready`, and may start between another NPC's planned press and its start), and an action with one of the director's `spacing_exempt_tags` is not noted at all. A director without a `min_spacing` is never judged |
 | `npc.tokens_within_limit` | after the director ran, no token is held by a dead body, and each director holds no more tokens than its limit for the living players, unless every holder beyond the limit has its attack in flight (an attack under way keeps its token to its end). It is judged right after the director, not at the end of the tick: a holder that dies in `Resolve` keeps its token until the next tick's director takes it back, so the end of the tick would fire on every kill. A small system next to the director writes what it found to the resource `TokenAudit`, which the rule reads; it is recomputed every tick and is not part of a snapshot or a replay |
@@ -3067,7 +3068,7 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-15 rules, checked after every tick
+16 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
@@ -3075,8 +3076,8 @@ $ shards assert list
   action.running_sane  engine rule  armed
   action.protection_sane  engine rule  armed
   action.knockback_sane  engine rule  armed
-  action.lock_on_valid  engine rule  armed
   action.extras_follow_run  engine rule  armed
+  action.lock_on_valid  engine rule  armed
   npc.state_known  engine rule  armed
   npc.strike_spacing  engine rule  armed
   npc.tokens_within_limit  engine rule  armed
