@@ -5065,9 +5065,9 @@ other does. `fallback` is `seed N` for a volume (the fallback seed whose first a
 its `tile_map`.
 
 **A manifest is refused, not built otherwise** (`RegionKind::check`, run by `region::check_manifest`, `change_region`,
-`region_load`, a snapshot load and a save load): a step this build has at another version (`isle seed 7 v1 was made by voxel
-step `plaza` v1, and this build has `plaza` v2: its volume would come out otherwise, so it is not built; keep step `plaza` at
-v1, or generate the region again`), a step it does not have, steps or a version the content no longer lists, or a content hash
+`region_load`, a snapshot load and a save load): a step this build has at another version ("isle seed 7 v1 was made by voxel
+step plaza v1, and this build has plaza v2: its volume would come out otherwise, so it is not built; keep step plaza at
+v1, or generate the region again"), a step it does not have, steps or a version the content no longer lists, or a content hash
 that changed. A manifest is data a player can edit (a save, a snapshot file), so its grid is checked too: `size`, `tile_size`
 and `origin` must be what the definition makes, every point of interest in one of its chunks, and no tiles or links
 (`… the manifest was changed; generate the region again`), before anything is built or allocated. The save section's
