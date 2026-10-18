@@ -1,0 +1,5 @@
+// Perception of the duel rules: aggro is gained at 10 m and kept to 16 m.
+{
+    "keeper": (sight_range: 10.0, fov_deg: 360.0, memory: 2.0, keep_range: Some(16.0)),
+    "plain": (sight_range: 10.0, fov_deg: 360.0, memory: 2.0),
+}

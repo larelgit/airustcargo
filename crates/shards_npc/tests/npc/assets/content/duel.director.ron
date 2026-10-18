@@ -1,0 +1,11 @@
+// Directors of the duel rules: those without a token stay where they are (a hold at 1.2 m),
+// so a rest costs no walking.
+{
+    "duel": (tokens: {1: 1}, waiting: [(role: Hold, distance: 1.2)], patience: 3.0),
+    // Two attackers whose strikes start at least 0.7 s apart (42 ticks); a retreat is no strike.
+    "spaced": (tokens: {1: 2}, waiting: [(role: Hold, distance: 1.2)], patience: 3.0, min_spacing: 0.7, spacing_exempt_tags: ["reposition"]),
+    // The same two attackers without spacing.
+    // A second spaced pool, for an NPC that changes director.
+    "spaced_b": (tokens: {1: 2}, waiting: [(role: Hold, distance: 1.2)], patience: 3.0, min_spacing: 0.7),
+    "loose": (tokens: {1: 2}, waiting: [(role: Hold, distance: 1.2)], patience: 3.0),
+}

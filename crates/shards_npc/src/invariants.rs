@@ -113,6 +113,55 @@ pub fn tokens_within_limit(world: &World) -> Option<String> {
     world.get_resource::<TokenAudit>()?.0.clone()
 }
 
+/// The engine rule `npc.strike_spacing`: two NPCs of one director whose `min_spacing` is set
+/// never began *planned* strikes less than that apart. Judged from the last strike each NPC
+/// noted ([`NpcStrike`](crate::strike::NpcStrike)), for the starts that went through the spacing
+/// rule (`gated`: the planner's presses and checked combo continuations).
+///
+/// A note counts only while the NPC is still in the pool it was made in.
+///
+/// Three carve-outs: an NPC whose plan `ignores_spacing` is never the one held to the rule (its
+/// starts still hold the others to it), a strike a state hook pressed itself is noted but neither held to the rule
+/// nor held against others (a hook may start between a planned press and its start, so a gated start
+/// that follows it is not a breach)
+/// (the hook may or may not have asked [`NpcCtx::strike_ready`](crate::NpcCtx::strike_ready)),
+/// and an action tagged with one of the director's `spacing_exempt_tags` is not noted at all.
+/// A start that broke the rule is found on its own tick; the rule judges the notes still on the NPCs,
+/// which is every start that is within the spacing of another.
+pub fn strike_spacing(world: &World) -> Option<String> {
+    let db = world.get_resource::<ContentDb>()?;
+    let dt = world.get_resource::<Time<Fixed>>()?.timestep().as_secs_f32();
+    let mut bad = Offenders::default();
+    with_query::<(&AiId, &Npc, &crate::strike::NpcStrike), (), _>(world, |query| {
+        let notes: Vec<(AiId, String, u64, bool, u64, bool)> = query
+            .iter(world)
+            .filter(|(_, npc, s)| s.pool == crate::strike::pool(&npc.director))
+            .map(|(id, npc, s)| {
+                let ticks = crate::strike::spacing_ticks(DirectorDef::of(db, &npc.director).min_spacing, dt);
+                (*id, crate::strike::pool(&npc.director), s.last_start, s.gated, ticks, crate::strike::ignores_spacing(db, npc))
+            })
+            .collect();
+        for (id, pool, at, gated, ticks, ignores) in &notes {
+            if !gated || *ignores || *ticks == 0 {
+                continue;
+            }
+            for (other, other_pool, other_at, other_gated, _, _) in &notes {
+                if other == id || other_pool != pool || !other_gated || other_at > at || at - other_at >= *ticks {
+                    continue;
+                }
+                bad.note(*id, || {
+                    format!(
+                        "NpcStrike: began a strike on tick {at}, {} ticks after {other}'s on tick {other_at}, within the {ticks} ticks \
+                         director `{pool}` spaces strikes by",
+                        at - other_at
+                    )
+                });
+            }
+        }
+    })?;
+    bad.report()
+}
+
 #[cfg(test)]
 mod tests {
     use ai_core::AiIndex;
@@ -174,5 +223,85 @@ mod tests {
         assert!(text.contains("held by a dead body"), "{text}");
         // The rule reports what the audit found.
         assert_eq!(tokens_within_limit(&w), Some(text));
+    }
+
+    /// A world whose director `arena` spaces strikes 0.7 s apart (42 ticks at 60 Hz).
+    fn spaced_world() -> World {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<DirectorDef>();
+        kinds.register::<crate::def::AttackPlanDef>();
+        let source = shards_content::db::Source {
+            path: "content/d.director.ron".into(),
+            text: r#"{ "arena": (min_spacing: 0.7), "loose": () }"#.into(),
+        };
+        let plans = shards_content::db::Source {
+            path: "content/p.attack_plan.ron".into(),
+            text: r#"{ "boss": (ignores_spacing: true), "adds": () }"#.into(),
+        };
+        let mut w = World::new();
+        w.init_resource::<AiIndex>();
+        w.insert_resource(ContentDb::build(&kinds, &[source, plans]));
+        w.insert_resource(Time::<Fixed>::from_hz(60.0));
+        w
+    }
+
+    fn striker(w: &mut World, director: &str, at: u64, gated: bool) -> Entity {
+        let npc = Npc { director: director.into(), ..default() };
+        w.spawn((npc, crate::strike::NpcStrike { last_start: at, gated, pool: crate::strike::pool(director) })).id()
+    }
+
+    /// The control test: planted notes that break the rule are found, the carve-outs are not.
+    #[test]
+    fn strikes_closer_than_the_spacing_are_found_unless_they_are_exempt_from_the_rule() {
+        let mut w = spaced_world();
+        striker(&mut w, "arena", 100, true);
+        let late = striker(&mut w, "arena", 142, true);
+        assert_eq!(strike_spacing(&w), None, "42 ticks apart is spaced");
+        w.get_mut::<crate::strike::NpcStrike>(late).unwrap().last_start = 141;
+        let text = strike_spacing(&w).expect("41 ticks apart is not");
+        let id = w.get::<AiId>(late).unwrap();
+        assert!(text.starts_with(&format!("{id} NpcStrike: began a strike on tick 141, 41 ticks after ")), "{text}");
+        // A hook's own press is noted but not held to the rule.
+        w.get_mut::<crate::strike::NpcStrike>(late).unwrap().gated = false;
+        assert_eq!(strike_spacing(&w), None);
+        // Another director, or none that spaces, is not in the way.
+        w.get_mut::<crate::strike::NpcStrike>(late).unwrap().gated = true;
+        w.get_mut::<Npc>(late).unwrap().director = "loose".into();
+        assert_eq!(strike_spacing(&w), None);
+        w.get_mut::<Npc>(late).unwrap().director = "arena".into();
+        assert!(strike_spacing(&w).is_some());
+    }
+
+    /// A noting-only NPC (its plan `ignores_spacing`) is never held to the rule, but its starts still
+    /// hold the others to it: the control test plants both.
+    #[test]
+    fn a_noting_only_npc_is_not_held_to_the_rule_but_holds_the_others() {
+        let mut w = spaced_world();
+        let boss = |w: &mut World, at| {
+            let npc = Npc { director: "arena".into(), plan: Some("boss".into()), ..default() };
+            w.spawn((npc, crate::strike::NpcStrike { last_start: at, gated: true, pool: "arena".into() })).id()
+        };
+        let add = |w: &mut World, at| {
+            let npc = Npc { director: "arena".into(), plan: Some("adds".into()), ..default() };
+            w.spawn((npc, crate::strike::NpcStrike { last_start: at, gated: true, pool: "arena".into() })).id()
+        };
+        boss(&mut w, 100);
+        boss(&mut w, 110);
+        assert_eq!(strike_spacing(&w), None, "two bosses strike as they like");
+        let late = add(&mut w, 120);
+        let text = strike_spacing(&w).expect("an add 10 ticks after a boss's strike is a breach");
+        assert!(text.starts_with(&format!("{} NpcStrike:", w.get::<AiId>(late).unwrap())), "{text}");
+    }
+
+    /// A hook's start between a planned press and its start is not a breach by the planned one.
+    #[test]
+    fn a_planned_start_that_follows_a_hooks_start_inside_the_spacing_is_not_a_breach() {
+        let mut w = spaced_world();
+        striker(&mut w, "arena", 120, false);
+        striker(&mut w, "arena", 130, true);
+        assert_eq!(strike_spacing(&w), None);
+        // Two planned starts still are.
+        striker(&mut w, "arena", 140, true);
+        assert!(strike_spacing(&w).is_some());
     }
 }
