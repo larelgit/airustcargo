@@ -4,11 +4,15 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use parry3d::math::Pose;
-use parry3d::query::{self, Ray, ShapeCastOptions};
-use parry3d::shape::{Ball, Capsule, Cone, Cuboid, Cylinder, Segment, Shape as ParryShape};
+use std::sync::Arc;
+
+use parry3d::bounding_volume::BoundingVolume;
+use parry3d::query::{self, Contact, Ray, ShapeCastOptions};
+use parry3d::shape::{Ball, Capsule, Cone, Cuboid, Cylinder, Segment, Shape as ParryShape, Voxels};
 
 use super::broad::{Cells, Grid};
-use super::{Body, ColliderData, ColliderId, CollisionLayers, QueryFilter, Shape, VolumeKind};
+use super::field::VoxelField;
+use super::{Body, ColliderData, ColliderId, CollisionLayers, LayerMask, QueryFilter, Shape, VolumeKind};
 
 /// What a ray hit first.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -78,8 +82,9 @@ impl ColliderInfo {
     }
 }
 
-/// Our [`Shape`] as a parry shape. Small value types: kept by value, no allocation.
-#[derive(Clone, Copy, Debug)]
+/// Our [`Shape`] as a parry shape. Small value types: kept by value, no allocation (the G1
+/// spike's voxels excepted, shared behind an `Arc`).
+#[derive(Clone, Debug)]
 pub(crate) enum Geom {
     Cuboid(Cuboid),
     Ball(Ball),
@@ -88,6 +93,8 @@ pub(crate) enum Geom {
     Cone(Cone),
     /// The core of a capsule (see [`Geom::split`]).
     Segment(Segment),
+    /// G1 spike, candidate (a): parry's voxel shape, one collider for a whole volume.
+    Voxels(Arc<Voxels>),
 }
 
 impl Geom {
@@ -111,6 +118,7 @@ impl Geom {
             Geom::Cylinder(s) => s,
             Geom::Cone(s) => s,
             Geom::Segment(s) => s,
+            Geom::Voxels(s) => &**s,
         }
     }
 
@@ -121,7 +129,7 @@ impl Geom {
         match self {
             Geom::Capsule(c) => (Geom::Segment(c.segment), c.radius),
             Geom::Ball(b) => (Geom::Ball(Ball::new(0.0)), b.radius),
-            other => (*other, 0.0),
+            other => (other.clone(), 0.0),
         }
     }
 
@@ -136,9 +144,34 @@ impl Geom {
 /// `None` when they are farther apart than `prediction`.
 fn separation(p1: &Pose, g1: &Geom, p2: &Pose, g2: &Geom, prediction: f32) -> Option<(f32, Vec3, Vec3)> {
     let ((c1, r1), (c2, r2)) = (g1.split(), g2.split());
-    let contact = query::contact(p1, c1.as_dyn(), p2, c2.as_dyn(), prediction + r1 + r2).ok()??;
+    let contact = match &c2 {
+        Geom::Voxels(voxels) => voxel_contact(p1, &c1, p2, voxels, prediction + r1 + r2)?,
+        _ => query::contact(p1, c1.as_dyn(), p2, c2.as_dyn(), prediction + r1 + r2).ok()??,
+    };
     let normal = contact.normal1.try_normalize()?;
     Some((contact.dist - r1 - r2, normal, contact.point2 - normal * r2))
+}
+
+/// G1 spike: parry 0.31 has no `contact` between a shape and `Voxels` (its dispatcher answers
+/// `Unsupported`, and the queries above would take that for "far apart"), so the nearest of the
+/// solid cells under the shape's box, each as a cuboid, stands in for it.
+fn voxel_contact(p1: &Pose, g1: &Geom, p2: &Pose, voxels: &Voxels, prediction: f32) -> Option<Contact> {
+    let local = p2.inverse() * *p1;
+    let aabb = g1.as_dyn().compute_aabb(&local).loosened(prediction);
+    let cuboid = Cuboid::new(voxels.voxel_size() * 0.5);
+    let mut best: Option<Contact> = None;
+    for cell in voxels.voxels_intersecting_local_aabb(&aabb) {
+        if cell.state.is_empty() {
+            continue;
+        }
+        let at = *p2 * Pose::from_translation(cell.center);
+        if let Ok(Some(c)) = query::contact(p1, g1.as_dyn(), &at, &cuboid, prediction)
+            && best.is_none_or(|b| c.dist < b.dist)
+        {
+            best = Some(c);
+        }
+    }
+    best
 }
 
 /// GJK may overestimate a time of impact by this much (m), so later candidates are
@@ -178,6 +211,32 @@ fn refine(geom: &Geom, pose: &Pose, dir: Vec3, max: f32, c: &ColliderInfo, hit: 
         best.distance = t;
     }
     Some(best)
+}
+
+/// One collider of a [`PhysicsWorld::sweep`]: where `geom` moving along `dir` meets `c` within
+/// `reach` (refined), if it does.
+fn sweep_one(geom: &Geom, pose: &Pose, dir: Vec3, max: f32, reach: f32, start: StartOverlap, c: &ColliderInfo) -> Option<ShapeHit> {
+    let options = ShapeCastOptions {
+        max_time_of_impact: reach,
+        target_distance: 0.0,
+        stop_at_penetration: start == StartOverlap::Hit,
+        compute_impact_geometry_on_penetration: true,
+    };
+    let other = c.pose();
+    let hit = query::cast_shapes(pose, dir, geom.as_dyn(), &other, Vec3::ZERO, c.geom.as_dyn(), options).ok()??;
+    let rough = ShapeHit {
+        entity: c.entity,
+        distance: hit.time_of_impact.max(0.0),
+        point: other * hit.witness2,
+        normal: -(pose.rotation * hit.normal1).normalize_or(Vec3::Y),
+    };
+    // Touching at the start and sliding along (a body resting against a wall) is
+    // no hit. Parry tells that from GJK's normal, which is noise for shapes that
+    // touch and reports a hit just past the start; the cores' normal is clean.
+    if start == StartOverlap::LetOut && rough.distance < REFINE_SLACK && !approaches(geom, pose, dir, c) {
+        return None;
+    }
+    refine(geom, pose, dir, max, c, rough)
 }
 
 /// Whether moving along `dir` takes `geom` nearer to `c`, by more than rounding. By
@@ -228,9 +287,59 @@ pub struct PhysicsWorld {
     order: Vec<(ColliderId, u32)>,
     ids: HashMap<Entity, ColliderId>,
     grid: Grid,
+    /// G1 spike, candidate (b): grids of solid cells every query asks besides the colliders.
+    fields: Vec<FieldSlot>,
     /// Tests every collider, as before the broad phase: what tests compare it with.
     #[cfg(test)]
     scan_all: bool,
+}
+
+/// A [`VoxelField`] and who it is in query results.
+#[derive(Clone, Debug)]
+struct FieldSlot {
+    entity: Entity,
+    id: ColliderId,
+    field: VoxelField,
+}
+
+impl FieldSlot {
+    fn passes(&self, filter: &QueryFilter) -> bool {
+        filter.mask.intersects(self.field.layers.memberships) && !filter.exclude.contains(&self.entity)
+    }
+
+    /// Cell `c` as a box collider, for the queries that test colliders one by one.
+    fn cell(&self, c: IVec3) -> ColliderInfo {
+        let half = Vec3::splat(self.field.cell * 0.5);
+        let position = self.field.center(c);
+        ColliderInfo {
+            entity: self.entity,
+            id: self.id,
+            shape: Shape::Cuboid { half },
+            position,
+            rotation: Quat::IDENTITY,
+            aabb_min: position - half,
+            aabb_max: position + half,
+            layers: self.field.layers,
+            body: Body::Static,
+            volume: None,
+            geom: Geom::Cuboid(Cuboid::new(half)),
+        }
+    }
+
+    /// The solid cells under the box `lo..hi`, as colliders: those with a face to air, and any
+    /// under `start` (a shape that begins inside the solid must meet it there).
+    fn cells<'a>(&'a self, lo: Vec3, hi: Vec3, start: Option<(Vec3, Vec3)>) -> impl Iterator<Item = ColliderInfo> + 'a {
+        let range = self.field.cells_in(lo, hi);
+        let start = start.and_then(|(a, b)| self.field.cells_in(a, b));
+        range.into_iter().flat_map(move |(a, b)| {
+            (a.x..=b.x).flat_map(move |x| (a.z..=b.z).flat_map(move |z| (a.y..=b.y).map(move |y| IVec3::new(x, y, z))))
+        })
+        .filter(move |c| {
+            self.field.solid(*c)
+                && (self.field.exposed(*c) || start.is_some_and(|(a, b)| c.cmpge(a).all() && c.cmple(b).all()))
+        })
+        .map(|c| self.cell(c))
+    }
 }
 
 impl PhysicsWorld {
@@ -430,6 +539,14 @@ impl PhysicsWorld {
                 });
             }
         }
+        for f in self.fields.iter().filter(|f| f.passes(filter)) {
+            if let Some(hit) = f.field.raycast(origin, *dir, reach)
+                && best.is_none_or(|b| hit.distance < b.distance)
+            {
+                reach = hit.distance;
+                best = Some(RayHit { entity: f.entity, distance: hit.distance, point: origin + *dir * hit.distance, normal: hit.normal });
+            }
+        }
         best
     }
 
@@ -468,37 +585,22 @@ impl PhysicsWorld {
             if !aabb_overlap(sweep_min, sweep_max, c.aabb_min, c.aabb_max) {
                 continue;
             }
-            let options = ShapeCastOptions {
-                max_time_of_impact: reach,
-                target_distance: 0.0,
-                stop_at_penetration: start == StartOverlap::Hit,
-                compute_impact_geometry_on_penetration: true,
-            };
-            let other = c.pose();
-            let Ok(Some(hit)) =
-                query::cast_shapes(pose, dir, geom.as_dyn(), &other, Vec3::ZERO, c.geom.as_dyn(), options)
-            else {
-                continue;
-            };
-            let rough = ShapeHit {
-                entity: c.entity,
-                distance: hit.time_of_impact.max(0.0),
-                point: other * hit.witness2,
-                normal: -(pose.rotation * hit.normal1).normalize_or(Vec3::Y),
-            };
-            // Touching at the start and sliding along (a body resting against a wall) is
-            // no hit. Parry tells that from GJK's normal, which is noise for shapes that
-            // touch and reports a hit just past the start; the cores' normal is clean.
-            if start == StartOverlap::LetOut && rough.distance < REFINE_SLACK && !approaches(geom, pose, dir, c) {
-                continue;
-            }
-            let Some(hit) = refine(geom, pose, dir, max, c, rough) else {
-                continue;
-            };
             // Strict: on a tie the lower id (seen first) wins.
-            if best.is_none_or(|b| hit.distance < b.distance) {
+            if let Some(hit) = sweep_one(geom, pose, dir, max, reach, start, c)
+                && best.is_none_or(|b| hit.distance < b.distance)
+            {
                 reach = (hit.distance + REFINE_SLACK).min(max);
                 best = Some(hit);
+            }
+        }
+        for f in self.fields.iter().filter(|f| f.passes(filter)) {
+            for c in f.cells(sweep_min, sweep_max, Some((lo, hi))) {
+                if let Some(hit) = sweep_one(geom, pose, dir, max, reach, start, &c)
+                    && best.is_none_or(|b| hit.distance < b.distance)
+                {
+                    reach = (hit.distance + REFINE_SLACK).min(max);
+                    best = Some(hit);
+                }
             }
         }
         best
@@ -508,7 +610,17 @@ impl PhysicsWorld {
     pub fn overlaps(&self, shape: &Shape, pos: Vec3, rot: Quat, filter: &QueryFilter) -> Vec<Entity> {
         let geom = Geom::new(shape);
         let pose = Pose::from_parts(pos, rot.normalize());
-        self.overlapping(&geom, &pose, filter).map(|c| c.entity).collect()
+        let mut found: Vec<Entity> = self.overlapping(&geom, &pose, filter).map(|c| c.entity).collect();
+        let (lo, hi) = geom.aabb(&pose);
+        for f in self.fields.iter().filter(|f| f.passes(filter)) {
+            let touches = f.cells(lo, hi, Some((lo, hi))).any(|c| {
+                query::intersection_test(&pose, geom.as_dyn(), &c.pose(), c.geom.as_dyn()).is_ok_and(|t| t.intersecting)
+            });
+            if touches {
+                found.push(f.entity);
+            }
+        }
+        found
     }
 
     pub(crate) fn overlapping<'a>(
@@ -538,13 +650,16 @@ impl PhysicsWorld {
     pub(crate) fn closer_than(&self, geom: &Geom, pose: &Pose, filter: &QueryFilter, margin: f32) -> Vec<Penetration> {
         let (lo, hi) = geom.aabb(pose);
         let (lo, hi) = (lo - Vec3::splat(margin), hi + Vec3::splat(margin));
-        self.near_box(lo, hi)
-            .filter(|c| c.passes(filter) && aabb_overlap(lo, hi, c.aabb_min, c.aabb_max))
-            .filter_map(|c| {
-                let (dist, normal, _) = separation(pose, geom, &c.pose(), &c.geom, margin)?;
-                (dist < margin).then_some(Penetration { entity: c.entity, normal: -normal, depth: margin - dist })
-            })
-            .collect()
+        let one = |c: &ColliderInfo| {
+            let (dist, normal, _) = separation(pose, geom, &c.pose(), &c.geom, margin)?;
+            (dist < margin).then_some(Penetration { entity: c.entity, normal: -normal, depth: margin - dist })
+        };
+        let mut out: Vec<Penetration> =
+            self.near_box(lo, hi).filter(|c| c.passes(filter) && aabb_overlap(lo, hi, c.aabb_min, c.aabb_max)).filter_map(one).collect();
+        for f in self.fields.iter().filter(|f| f.passes(filter)) {
+            out.extend(f.cells(lo, hi, Some((lo, hi))).filter_map(|c| one(&c)));
+        }
+        out
     }
 
     /// Volumes containing `point`, in id order. `filter` narrows them by layer and
@@ -574,6 +689,106 @@ impl PhysicsWorld {
                 && query::intersection_test(pose, geom.as_dyn(), &c.pose(), c.geom.as_dyn())
                     .is_ok_and(|t| t.intersecting)
         })
+    }
+}
+
+/// G1 spike only: what the voxel benchmark (`shards_voxel/tests/spike.rs`) needs from outside
+/// the crate. Not an API: the engine module replaces it.
+#[doc(hidden)]
+impl PhysicsWorld {
+    /// Candidate (a): the solid `cells` (grid coordinates) of a volume as one parry `Voxels`
+    /// collider, `cell` m a side, cell `(0, 0, 0)`'s least corner at `origin`.
+    pub fn spike_insert_voxels(&mut self, entity: Entity, id: ColliderId, origin: Vec3, cell: f32, cells: &[IVec3]) {
+        let voxels = Voxels::new(Vec3::splat(cell), cells);
+        let geom = Geom::Voxels(Arc::new(voxels));
+        let pose = Pose::from_translation(origin);
+        let (aabb_min, aabb_max) = geom.aabb(&pose);
+        let info = ColliderInfo {
+            entity,
+            id,
+            // `Shape` cannot say "voxels" (it is `Copy`): its bounding box stands in.
+            shape: Shape::Cuboid { half: (aabb_max - aabb_min) * 0.5 },
+            position: origin,
+            rotation: Quat::IDENTITY,
+            aabb_min,
+            aabb_max,
+            layers: CollisionLayers::WORLD,
+            body: Body::Static,
+            volume: None,
+            geom,
+        };
+        self.put(info);
+        self.ids.insert(entity, id);
+    }
+
+    /// Bytes the `Voxels` of these solid cells keep: 512 states per 8³ chunk with a solid cell,
+    /// plus its key, header and BVH leaf.
+    pub fn spike_voxels_bytes(cells: &[IVec3]) -> usize {
+        let chunks: std::collections::BTreeSet<[i32; 3]> = cells.iter().map(|c| c.div_euclid(IVec3::splat(8)).to_array()).collect();
+        chunks.len() * (512 + 12 + 16 + 64)
+    }
+
+    /// Candidate (b): a grid of solid cells asked by every query.
+    pub fn spike_insert_field(&mut self, entity: Entity, id: ColliderId, field: VoxelField) {
+        self.fields.push(FieldSlot { entity, id, field });
+        self.fields.sort_by_key(|f| f.id);
+    }
+
+    pub fn spike_field(&self, entity: Entity) -> Option<&VoxelField> {
+        self.fields.iter().find(|f| f.entity == entity).map(|f| &f.field)
+    }
+
+    /// The controller's cast: `shape` (centre `at`) along unit `dir`, a body inside a solid may
+    /// move out.
+    pub fn spike_sweep(&self, shape: &Shape, at: Vec3, dir: Vec3, max: f32, filter: &QueryFilter) -> Option<ShapeHit> {
+        self.sweep(&Geom::new(shape), &Pose::from_translation(at), dir, max, filter, StartOverlap::LetOut)
+    }
+
+    /// The controller's depenetration query.
+    pub fn spike_closer_than(&self, shape: &Shape, at: Vec3, filter: &QueryFilter, margin: f32) -> Vec<Penetration> {
+        self.closer_than(&Geom::new(shape), &Pose::from_translation(at), filter, margin)
+    }
+
+    /// The controller's volume query: how many volumes the shape touches.
+    pub fn spike_volumes_touching(&self, shape: &Shape, at: Vec3) -> usize {
+        let (geom, pose) = (Geom::new(shape), Pose::from_translation(at));
+        self.volumes_touching(&geom, &pose).count()
+    }
+
+    /// What upstream code reads off a collider's bounding box, asked of the solid instead (the
+    /// hook a field needs; for a collider these are its box's numbers, so nothing changes).
+    ///
+    /// The top of solid `entity` where `shape` at `at` overlaps it: a collider's box top; a
+    /// field's tallest column run among the cells the shape overlaps.
+    pub fn spike_top_where(&self, entity: Entity, shape: &Shape, at: Vec3) -> Option<f32> {
+        if let Some(c) = self.collider(entity) {
+            return Some(c.aabb_max.y);
+        }
+        let f = self.fields.iter().find(|f| f.entity == entity)?;
+        let (geom, pose) = (Geom::new(shape), Pose::from_translation(at));
+        let (lo, hi) = geom.aabb(&pose);
+        f.cells(lo, hi, Some((lo, hi)))
+            .filter(|c| query::intersection_test(&pose, geom.as_dyn(), &c.pose(), c.geom.as_dyn()).is_ok_and(|t| t.intersecting))
+            .filter_map(|c| f.field.column_top(c.position.x, c.position.z, c.position.y))
+            .reduce(f32::max)
+    }
+
+    /// The bottom of solid `entity` under `point` inside it: a collider's box bottom; the bottom
+    /// of a field's run of solid cells there.
+    pub fn spike_bottom_under(&self, entity: Entity, point: Vec3) -> Option<f32> {
+        if let Some(c) = self.collider(entity) {
+            return Some(c.aabb_min.y);
+        }
+        self.fields.iter().find(|f| f.entity == entity)?.field.column_bottom(point.x, point.z, point.y)
+    }
+
+    /// The lowest bottom and the highest top of the fields on `mask`.
+    pub fn spike_fields_span(&self, mask: LayerMask) -> Option<(f32, f32)> {
+        self.fields
+            .iter()
+            .filter(|f| f.field.layers.memberships.intersects(mask))
+            .map(|f| (f.field.origin.y, f.field.origin.y + f.field.size.y as f32 * f.field.cell))
+            .reduce(|(a, b), (c, d)| (a.min(c), b.max(d)))
     }
 }
 
@@ -1094,6 +1309,138 @@ mod tests {
         let mut tally = Tally::default();
         random_queries(&mut rng, &mut part, &kept, 600, &mut tally);
         assert!(tally.by_grid * 2 > tally.queries, "{tally:?}");
+    }
+
+    /// G1 spike: one blocky world three ways (a cuboid collider per solid cell, parry `Voxels`,
+    /// a [`VoxelField`]); rays, casts and contacts agree.
+    #[test]
+    fn voxels_and_fields_answer_as_cell_cuboids_do() {
+        // Rolling steps, a wall, an overhang and a hole, 24 x 10 x 24 cells of 1 m from (-12, -2, -12).
+        let size = UVec3::new(24, 10, 24);
+        let origin = Vec3::new(-12.0, -2.0, -12.0);
+        let solid = |c: IVec3| {
+            let h = 2 + (c.x / 3 + c.z / 4) % 3;
+            (c.y < h && !(c.x == 5 && c.z == 7)) || (c.x == 16 && c.y < 7) || (c.y == 5 && (8..12).contains(&c.x) && (8..12).contains(&c.z))
+        };
+        let cells: Vec<IVec3> = (0..size.x as i32)
+            .flat_map(|x| (0..size.y as i32).flat_map(move |y| (0..size.z as i32).map(move |z| IVec3::new(x, y, z))))
+            .filter(|c| solid(*c))
+            .collect();
+        let mut boxes = PhysicsWorld::default();
+        for (n, c) in cells.iter().enumerate() {
+            let tf = Transform::from_translation(origin + c.as_vec3() + Vec3::splat(0.5));
+            let collider = Collider::new(Shape::cuboid(Vec3::splat(0.5)));
+            boxes.upsert((Entity::from_raw_u32(n as u32 + 1).unwrap(), &ColliderId(n as u32 + 1), &collider, &tf, None, None));
+        }
+        let mut voxels = PhysicsWorld::default();
+        voxels.spike_insert_voxels(Entity::from_raw_u32(1).unwrap(), ColliderId(1), origin, 1.0, &cells);
+        let mut field = PhysicsWorld::default();
+        field.spike_insert_field(Entity::from_raw_u32(1).unwrap(), ColliderId(1), VoxelField::new(origin, 1.0, size, solid));
+        let filter = QueryFilter::default();
+        let capsule = Shape::capsule(0.4, 1.8);
+        let mut rng = Rng(0x5eed_0006);
+        let (mut rays, mut casts, mut contacts, mut voxel_let_out) = (0, 0, 0, 0);
+        for q in 0..600 {
+            let at = Vec3::new(rng.range(-10.0, 10.0), rng.range(1.0, 6.0), rng.range(-10.0, 10.0));
+            let dir = if q % 3 == 0 { Dir3::NEG_Y } else { rng.dir() };
+            let reference = boxes.raycast(at, dir, 20.0, &filter).map(|h| (h.distance, h.normal));
+            for (name, w) in [("voxels", &voxels), ("field", &field)] {
+                let got = w.raycast(at, dir, 20.0, &filter).map(|h| (h.distance, h.normal));
+                match (reference, got) {
+                    (None, None) => {}
+                    (Some((d0, n0)), Some((d1, n1))) => {
+                        assert!((d0 - d1).abs() < 1e-3, "{name} ray {q} from {at} along {dir:?}: {d1} against {d0}");
+                        assert!(d0 == 0.0 || n0.dot(n1) > 0.99, "{name} ray {q}: normal {n1} against {n0}");
+                        rays += 1;
+                    }
+                    other => panic!("{name} ray {q} from {at} along {dir:?}: {other:?}"),
+                }
+            }
+            let walk = Vec3::new(rng.range(-1.0, 1.0), if q % 4 == 0 { -1.0 } else { 0.0 }, rng.range(-1.0, 1.0)).normalize_or(Vec3::X);
+            let sweep = |w: &PhysicsWorld| w.spike_sweep(&capsule, at, walk, 3.0, &filter).map(|h| h.distance);
+            let reference = sweep(&boxes);
+            let buried = !boxes.overlaps(&capsule, at, Quat::IDENTITY, &filter).is_empty();
+            for (name, w) in [("voxels", &voxels), ("field", &field)] {
+                match (reference, sweep(w)) {
+                    (None, None) => {}
+                    (Some(d0), Some(d1)) => {
+                        assert!((d0 - d1).abs() < 2e-3, "{name} cast {q} from {at} along {walk}: {d1} against {d0}");
+                        casts += 1;
+                    }
+                    // A body that starts inside the volume: one `Voxels` collider is let out (or
+                    // not) as a whole, on its deepest cell (see `shallow_contacts_let_out_alike`).
+                    _ if name == "voxels" && buried => voxel_let_out += 1,
+                    other => panic!("{name} cast {q} from {at} along {walk}: {other:?}"),
+                }
+            }
+            let deepest = |w: &PhysicsWorld| w.spike_closer_than(&capsule, at, &filter, 0.05).iter().map(|p| p.depth).fold(None, |m: Option<f32>, d| Some(m.map_or(d, |m| m.max(d))));
+            let reference = deepest(&boxes);
+            for (name, w) in [("voxels", &voxels), ("field", &field)] {
+                match (reference, deepest(w)) {
+                    (None, None) => {}
+                    (Some(d0), Some(d1)) => {
+                        assert!((d0 - d1).abs() < 1e-3, "{name} contact {q} at {at}: {d1} against {d0}");
+                        contacts += 1;
+                    }
+                    other => panic!("{name} contact {q} at {at}: {other:?}"),
+                }
+                let o = |w: &PhysicsWorld| !w.overlaps(&capsule, at, Quat::IDENTITY, &filter).is_empty();
+                assert_eq!(o(&boxes), o(w), "{name} overlap {q} at {at}");
+            }
+        }
+        assert!(rays > 300 && casts > 150 && contacts > 50, "{rays} {casts} {contacts}");
+        println!("voxels: {voxel_let_out} casts from inside the volume answered otherwise than per-cell boxes");
+    }
+
+    /// G1 spike: the controller's cast lets a body out of a collider it starts in when the motion
+    /// leads away from it or along it. Per box (or per field cell) that is the box it touches; a
+    /// whole volume as one `Voxels` collider is decided as a whole. Sunk a few millimeters (what
+    /// rounding leaves) the three agree: parry's voxel cast already skips cells the motion
+    /// leaves. They part only for a body buried deep (its core inside the solid), where boxes say
+    /// "stuck at 0" and one `Voxels` collider may say "free".
+    #[test]
+    fn shallow_contacts_let_out_alike() {
+        // A corridor one cell wide: walls at x cells 0 and 2, no floor. The body sinks 5 mm into
+        // the west wall and walks east: 0.205 m to the east wall.
+        let cells: Vec<IVec3> = (0..4).flat_map(|z| [IVec3::new(0, 0, z), IVec3::new(2, 0, z), IVec3::new(0, 1, z), IVec3::new(2, 1, z)]).collect();
+        let solid = |c: IVec3| (c.x == 0 || c.x == 2) && c.y < 2 && (0..4).contains(&c.z);
+        let ball = Shape::sphere(0.4);
+        let at = Vec3::new(1.395, 1.0, 2.0);
+        let filter = QueryFilter::default();
+        let mut boxes = PhysicsWorld::default();
+        for (n, c) in cells.iter().enumerate() {
+            let tf = Transform::from_translation(c.as_vec3() + Vec3::splat(0.5));
+            boxes.upsert((Entity::from_raw_u32(n as u32 + 1).unwrap(), &ColliderId(n as u32 + 1), &Collider::new(Shape::cuboid(Vec3::splat(0.5))), &tf, None, None));
+        }
+        let mut voxels = PhysicsWorld::default();
+        voxels.spike_insert_voxels(Entity::from_raw_u32(1).unwrap(), ColliderId(1), Vec3::ZERO, 1.0, &cells);
+        let mut field = PhysicsWorld::default();
+        field.spike_insert_field(Entity::from_raw_u32(1).unwrap(), ColliderId(1), VoxelField::new(Vec3::ZERO, 1.0, UVec3::new(4, 2, 4), solid));
+        let east = |w: &PhysicsWorld| w.spike_sweep(&ball, at, Vec3::X, 0.3, &filter).map(|h| h.distance);
+        let boxed = east(&boxes).expect("per box: the east wall stops it");
+        assert!((boxed - 0.205).abs() < 1e-3, "{boxed}");
+        assert_eq!(east(&field), Some(boxed), "per field cell: the same");
+        assert!(east(&voxels).is_some_and(|d| (d - boxed).abs() < 1e-4), "corridor: {:?}", east(&voxels));
+
+        // A floor (y cell 0) and a wall at x cell 3; the ball sunk 5 mm into the floor walks east
+        // along it: 0.2 m to the wall.
+        let cells: Vec<IVec3> = (0..4).flat_map(|x| (0..4).map(move |z| IVec3::new(x, 0, z))).chain((0..4).map(|z| IVec3::new(3, 1, z))).collect();
+        let solid = |c: IVec3| c.y == 0 || (c.x == 3 && c.y == 1);
+        let at = Vec3::new(2.4, 1.395, 2.0);
+        let mut boxes = PhysicsWorld::default();
+        for (n, c) in cells.iter().enumerate() {
+            let tf = Transform::from_translation(c.as_vec3() + Vec3::splat(0.5));
+            boxes.upsert((Entity::from_raw_u32(n as u32 + 1).unwrap(), &ColliderId(n as u32 + 1), &Collider::new(Shape::cuboid(Vec3::splat(0.5))), &tf, None, None));
+        }
+        let mut voxels = PhysicsWorld::default();
+        voxels.spike_insert_voxels(Entity::from_raw_u32(1).unwrap(), ColliderId(1), Vec3::ZERO, 1.0, &cells);
+        let mut field = PhysicsWorld::default();
+        field.spike_insert_field(Entity::from_raw_u32(1).unwrap(), ColliderId(1), VoxelField::new(Vec3::ZERO, 1.0, UVec3::new(4, 2, 4), solid));
+        let east = |w: &PhysicsWorld| w.spike_sweep(&ball, at, Vec3::X, 0.3, &filter).map(|h| h.distance);
+        let boxed = east(&boxes).expect("per box: the wall stops it");
+        assert!((boxed - 0.2).abs() < 1e-3, "{boxed}");
+        assert_eq!(east(&field), Some(boxed), "per field cell: the same");
+        assert!(east(&voxels).is_some_and(|d| (d - boxed).abs() < 1e-4), "sunk in the floor: {:?}", east(&voxels));
     }
 
     /// Times the queries a tick asks (bodies walking, probing the ground, looking at each other,

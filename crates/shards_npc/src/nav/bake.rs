@@ -52,6 +52,25 @@ pub fn bake(main: &World, root: Option<&std::path::Path>, kind: TileKind, id: &s
     NavTile::from_file(&tile.to_file())
 }
 
+/// G1 spike: bakes `size` cells of `settings.cell` m from world `(origin.x, origin.y)` of a
+/// physics world built elsewhere (a voxel volume's colliders), in memory, as a tile bake does:
+/// the flood, then numbering, areas, portals and their costs. Answers the tile; the colliders it
+/// keeps are the static solids over its square.
+#[doc(hidden)]
+pub fn spike_bake(physics: &PhysicsWorld, settings: &NavSettings, size: [u32; 2], origin: Vec2) -> Result<NavTile, String> {
+    let mut sampler = Sampler::new(physics, settings, size);
+    sampler.origin = origin;
+    let sampled = sampler.run();
+    let far = origin + Vec2::new(size[0] as f32, size[1] as f32) * settings.cell;
+    let colliders = physics
+        .colliders()
+        .filter(|c| solid(c) && c.aabb_max.x >= origin.x && c.aabb_min.x <= far.x && c.aabb_max.z >= origin.y && c.aabb_min.z <= far.y)
+        .map(|c| BakedCollider { shape: c.shape, pos: c.position, rot: c.rotation })
+        .collect();
+    let tile_size = size[0] as f32 * settings.cell;
+    assemble(TileKind::Tile, "spike", String::new(), tile_size, settings.cell, size, sampled, colliders)
+}
+
 /// An empty world with what spawning a tile reads: content, the type registry (prefabs and
 /// level components), collider ids, a physics world.
 fn scratch_world(main: &World, db: &ContentDb) -> World {
@@ -142,6 +161,8 @@ pub(crate) struct Sampler<'a> {
     cell: f32,
     safe_drop: f32,
     size: [u32; 2],
+    /// World x, z of the corner of cell (0, 0): zero for a tile.
+    origin: Vec2,
     probes: HashMap<(i32, i32, i32), Probe>,
     nodes: Vec<Raw>,
     index: HashMap<Key, usize>,
@@ -156,6 +177,7 @@ impl<'a> Sampler<'a> {
             cell: settings.cell,
             safe_drop: settings.safe_drop,
             size,
+            origin: Vec2::ZERO,
             probes: HashMap::new(),
             nodes: Vec::new(),
             index: HashMap::new(),
@@ -167,12 +189,17 @@ impl<'a> Sampler<'a> {
         (i as f32 + 0.5) * self.cell
     }
 
+    /// World x, z of the centre of cell `(i, j)`.
+    fn at(&self, i: i32, j: i32) -> (f32, f32) {
+        (self.origin.x + self.centre(i), self.origin.y + self.centre(j))
+    }
+
     fn inside(&self, i: i32, j: i32) -> bool {
         i >= 0 && j >= 0 && (i as u32) < self.size[0] && (j as u32) < self.size[1]
     }
 
     fn probe(&mut self, i: i32, j: i32, from_y: f32) -> Probe {
-        let (x, z) = (self.centre(i), self.centre(j));
+        let (x, z) = self.at(i, j);
         let terrain = &self.terrain;
         *self.probes.entry((i, j, level(from_y))).or_insert_with(|| terrain.probe(x, z, from_y))
     }
@@ -191,6 +218,11 @@ impl<'a> Sampler<'a> {
     fn seed(&mut self) {
         let solids = self.physics.colliders().filter(|c| c.volume.is_none() && c.layers.memberships.intersects(LayerMask::WORLD));
         let (top, bottom) = solids.fold((f32::MIN, f32::MAX), |(t, b), c| (t.max(c.aabb_max.y), b.min(c.aabb_min.y)));
+        // G1 spike: and the voxel fields' (none outside the spike).
+        let (top, bottom) = match self.physics.spike_fields_span(LayerMask::WORLD) {
+            Some((low, high)) => (top.max(high), bottom.min(low)),
+            None => (top, bottom),
+        };
         if top < bottom {
             return;
         }
@@ -199,7 +231,7 @@ impl<'a> Sampler<'a> {
         let filter = QueryFilter::new(LayerMask::WORLD);
         for j in 0..self.size[1] as i32 {
             for i in 0..self.size[0] as i32 {
-                let (x, z) = (self.centre(i), self.centre(j));
+                let (x, z) = self.at(i, j);
                 let mut from = top;
                 for _ in 0..32 {
                     if from <= bottom {
@@ -208,7 +240,7 @@ impl<'a> Sampler<'a> {
                     let Some(hit) = self.physics.raycast(Vec3::new(x, from, z), Dir3::NEG_Y, from - bottom, &filter) else { break };
                     if hit.distance <= 1e-4 {
                         // Inside a solid: go on below it.
-                        let below = self.physics.collider(hit.entity).map_or(from - 0.25, |c| c.aabb_min.y - 0.01);
+                        let below = self.physics.spike_bottom_under(hit.entity, hit.point).map_or(from - 0.25, |b| b - 0.01);
                         from = below.min(from - 0.01);
                         continue;
                     }
@@ -244,7 +276,7 @@ impl<'a> Sampler<'a> {
 
     /// The move from `from` to cell `(i, j)` (`dist`: a two-cell hop's length).
     fn step(&mut self, from: Stance, i: i32, j: i32, dist: Option<f32>) -> Option<Step> {
-        let (x, z) = (self.centre(i), self.centre(j));
+        let (x, z) = self.at(i, j);
         let dist = dist.unwrap_or_else(|| Vec2::new(x - from.pos.x, z - from.pos.z).length());
         let probe = self.probe(i, j, from.pos.y);
         step_onto(&self.terrain, from, (x, z), probe, dist, self.safe_drop)

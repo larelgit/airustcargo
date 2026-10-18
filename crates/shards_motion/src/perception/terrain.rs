@@ -73,34 +73,44 @@ impl<'a> Terrain<'a> {
     /// feet are at `from_y` (`None`: the spot is not tight): how high the thing is that the
     /// body would stand against.
     pub fn blocker_top(&self, x: f32, z: f32, from_y: f32) -> Option<f32> {
-        let blockers = self.survey(x, z, from_y).1;
-        blockers.into_iter().filter_map(|e| self.physics.collider(e)).map(|c| c.aabb_max.y).reduce(f32::max)
+        let (_, blockers, capsule) = self.survey_at(x, z, from_y);
+        let (shape, at) = capsule?;
+        blockers.into_iter().filter_map(|e| self.physics.spike_top_where(e, &shape, at)).reduce(f32::max)
     }
 
     /// [`probe`](Self::probe), and the solids in the way of a [`Block::Tight`] spot.
     fn survey(&self, x: f32, z: f32, from_y: f32) -> (Probe, Vec<Entity>) {
+        let (probe, blockers, _) = self.survey_at(x, z, from_y);
+        (probe, blockers)
+    }
+
+    /// [`survey`](Self::survey), and the capsule it tested for blockers.
+    #[allow(clippy::type_complexity, reason = "G1 spike")]
+    fn survey_at(&self, x: f32, z: f32, from_y: f32) -> (Probe, Vec<Entity>, Option<(Shape, Vec3)>) {
         let p = self.params;
         let reach = p.mantle_height + 0.1;
         let Some(hit) = self.physics.raycast(Vec3::new(x, from_y + reach, z), Dir3::NEG_Y, reach + FALL_PROBE, &self.filter)
         else {
-            return (Probe::Void, Vec::new());
+            return (Probe::Void, Vec::new(), None);
         };
         if hit.distance <= 1e-4 {
-            return (Probe::Blocked(Block::Wall), Vec::new());
+            return (Probe::Blocked(Block::Wall), Vec::new(), None);
         }
         let (floor, normal) = (hit.point.y, hit.normal);
         // Deep water first: a swimmer does not care how steep the bottom is.
         if let Some(surface) = self.water_at(x, floor, z)
             && surface - floor > p.swim_depth
         {
-            let blockers = self.in_the_way(x, z, self.swim_height(surface), 1.0, 0.0);
-            return if blockers.is_empty() { (Probe::Water { surface }, blockers) } else { (Probe::Blocked(Block::Tight), blockers) };
+            let capsule = self.capsule(x, z, self.swim_height(surface), 1.0, 0.0);
+            let blockers = self.overlapping(capsule);
+            return if blockers.is_empty() { (Probe::Water { surface }, blockers, None) } else { (Probe::Blocked(Block::Tight), blockers, Some(capsule)) };
         }
         if normal.y < self.min_ground_y {
-            return (Probe::Blocked(Block::Steep(ops::acos(normal.y.clamp(-1.0, 1.0)).to_degrees())), Vec::new());
+            return (Probe::Blocked(Block::Steep(ops::acos(normal.y.clamp(-1.0, 1.0)).to_degrees())), Vec::new(), None);
         }
-        let blockers = self.in_the_way(x, z, floor, normal.y, p.step_height);
-        if blockers.is_empty() { (Probe::Floor { y: floor, normal }, blockers) } else { (Probe::Blocked(Block::Tight), blockers) }
+        let capsule = self.capsule(x, z, floor, normal.y, p.step_height);
+        let blockers = self.overlapping(capsule);
+        if blockers.is_empty() { (Probe::Floor { y: floor, normal }, blockers, None) } else { (Probe::Blocked(Block::Tight), blockers, Some(capsule)) }
     }
 
     /// How much higher than a step a floor `dist` meters away may be and still be walked
@@ -131,12 +141,20 @@ impl<'a> Terrain<'a> {
     /// the controller steps over) and by the tilt of the floor (a capsule on a slope sits
     /// higher than the ray point), and shortened to keep its top where it was.
     fn in_the_way(&self, x: f32, z: f32, feet_y: f32, normal_y: f32, climb: f32) -> Vec<Entity> {
+        self.overlapping(self.capsule(x, z, feet_y, normal_y, climb))
+    }
+
+    /// The capsule [`in_the_way`](Self::in_the_way) tests, and its centre.
+    fn capsule(&self, x: f32, z: f32, feet_y: f32, normal_y: f32, climb: f32) -> (Shape, Vec3) {
         let p = self.params;
         let radius = p.radius.max(0.01);
         let lift = climb + radius * (1.0 / normal_y.max(0.1) - 1.0);
         let height = (p.height - lift).max(2.0 * radius);
-        let center = Vec3::new(x, feet_y + p.skin_width + GRAZE + lift + height * 0.5, z);
-        self.physics.overlaps(&Shape::capsule(radius, height), center, Quat::IDENTITY, &self.filter)
+        (Shape::capsule(radius, height), Vec3::new(x, feet_y + p.skin_width + GRAZE + lift + height * 0.5, z))
+    }
+
+    fn overlapping(&self, (shape, center): (Shape, Vec3)) -> Vec<Entity> {
+        self.physics.overlaps(&shape, center, Quat::IDENTITY, &self.filter)
     }
 
     /// Whether a standing capsule fits with its feet at `feet_y` (no lift for steps).

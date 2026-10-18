@@ -20,6 +20,7 @@
 //! test of every collider would give.
 
 mod broad;
+pub mod field;
 pub(crate) mod world;
 
 use std::fmt;
@@ -33,6 +34,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_core::{predicts, NetSet};
 
+pub use field::{FieldRay, VoxelField};
 pub use world::{ColliderInfo, Penetration, PhysicsWorld, RayHit, ShapeHit};
 
 /// A convex collision shape in the entity's local frame (Y up).
