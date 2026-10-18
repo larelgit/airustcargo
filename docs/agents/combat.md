@@ -12,5 +12,8 @@ Read this when you drive a fight through `dodge`, `light_attack`, `block`, `use_
   simulation's, not yours to keep: it goes when the target dies, leaves the range or stays hidden behind the world for 2 s in a row,
   and the journal says why (`e5 lock lost: e6 obstructed 2.0s`); `observe` shows `lock e6 (obstructed 0.8s)` while it is hidden.
   Lock on again after a loss if you still need the facing. `lock_on side=left|right` moves the lock to the nearest target on that
-  side seen from your body; `lock_on` without `target` picks by the definition's score among what your body sees. A game system
-  that sets `Intent.target` goes before `LockSystems::Check` (`SimSet::Cleanup`), or the rule `action.lock_on_valid` stops the game.
+  side seen from your body; `lock_on` without `target` picks by the definition's score among what your body sees, and
+  `lock_on target=eN` refuses an ally, a dead or too far target and a body with no position (the error says which). This holds for
+  every body an agent drives through `lock_on`, a monster too. A game system that sets `Intent.target` or despawns a body that may
+  be locked on to goes before `LockSystems::Check` (`SimSet::Cleanup`, after `CoreSystems::ClearPresses`), or the rule
+  `action.lock_on_valid` stops the game.

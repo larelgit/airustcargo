@@ -9,16 +9,19 @@
 //!   past the dead band on that side, measured from the locker. It works without a definition
 //!   too (the definition's defaults, `CombatTuning::lock_on_range` as the range): a press nobody
 //!   sends changes nothing.
-//! - **Check** ([`LockSystems::Check`], `SimSet::Cleanup` before `CoreSystems::ClearPresses`,
-//!   after the deaths of the tick): a lock is lost when its target is gone, dead ([`Dead`]),
+//! - **Check** ([`LockSystems::Check`], `SimSet::Cleanup` after `CoreSystems::ClearPresses`, so
+//!   after the deaths of the tick and after the engine's despawns of that tick (a co-op body whose
+//!   rejoin grace is over goes before `ClearPresses`); a game system that despawns a body that may
+//!   be locked on to runs before it): a lock is lost when its target is gone, dead ([`Dead`]),
 //!   farther than `range` (3D, between the positions) or hidden from the locker's eye behind the
 //!   world for `obstruction_s` without a break. The count is [`LockSight`], on the locker only
 //!   while its target is hidden (part of the replay and the snapshot); the journal says why a
 //!   lock went (`e5 lock lost: e6 obstructed 2.0s`, `dead`, `gone`, `out of range`).
 //!
-//! The journal also says when a lock is taken (`e5 locks e6`): the `lock_on` tool and the camera
-//! write it where they set the target ([`LockTaken`]), a switch where it moves it
-//! ([`LockSwitched`]).
+//! The journal also says when a lock is taken (`e5 locks e6`) and let go of (`e5 lock released:
+//! e6`, the player's cancel): the `lock_on` tool and the camera write it where they set the
+//! target ([`LockTaken`], [`LockReleased`]; the camera as a local line), a switch where it moves
+//! it ([`LockSwitched`]).
 //!
 //! Without a definition the check does nothing at all: no component, no journal line, no lock
 //! taken away (a game keeps what it had). The hooks that tell motion's lock-on who may be
@@ -44,7 +47,9 @@ use crate::zone::{body_radius, zones_threatening};
 pub enum LockSystems {
     /// `SimSet::Act`, before `MotionSystems::Intent`: `lock_switch` presses move locks.
     Switch,
-    /// `SimSet::Cleanup`, before `CoreSystems::ClearPresses`: every lock is checked.
+    /// `SimSet::Cleanup`, after `CoreSystems::ClearPresses` (and so after the engine's despawns
+    /// of the tick): every lock is checked. A game system that despawns a body that may be
+    /// locked on to goes before it, or the rule `action.lock_on_valid` stops the game.
     Check,
 }
 
@@ -101,6 +106,14 @@ pub struct LockLost {
     pub reason: LockLoss,
 }
 
+/// A body let go of its lock (with a `lock_on` definition, the `lock_on` tool's `off`): `e5 lock
+/// released: e6`.
+#[derive(Event, Clone, Copy, Debug, PartialEq)]
+pub struct LockReleased {
+    pub entity: Entity,
+    pub target: AiId,
+}
+
 /// A switch moved a lock: `e5 locks e7 (switched right from e6)`.
 #[derive(Event, Clone, Copy, Debug, PartialEq)]
 pub struct LockSwitched {
@@ -117,11 +130,14 @@ pub(crate) fn plugin(app: &mut App) {
             FixedUpdate,
             (
                 LockSystems::Switch.in_set(SimSet::Act).before(MotionSystems::Intent),
-                LockSystems::Check.in_set(SimSet::Cleanup).before(CoreSystems::ClearPresses),
+                // After the presses are cleared: whatever goes before `ClearPresses` (the co-op
+                // despawn of a body whose rejoin grace is over) is gone when the check looks.
+                LockSystems::Check.in_set(SimSet::Cleanup).after(CoreSystems::ClearPresses),
             ),
         )
         .add_systems(FixedUpdate, (switch_locks.in_set(LockSystems::Switch), check_locks.in_set(LockSystems::Check)))
         .journal_event::<LockTaken>(|e, w| Some(format!("{} locks {}", label(w, e.entity), e.target)))
+        .journal_event::<LockReleased>(|e, w| Some(format!("{} lock released: {}", label(w, e.entity), e.target)))
         .journal_event::<LockLost>(|e, w| Some(format!("{} lock lost: {} {}", label(w, e.entity), e.target, e.reason)))
         .journal_event::<LockSwitched>(|e, w| {
             Some(format!("{} locks {} (switched {} from {})", label(w, e.entity), e.to, e.side.name(), e.from))
@@ -204,12 +220,10 @@ pub fn pick_for_body(world: &World, me: Entity, def: &LockOnDef) -> Option<AiId>
 /// `SimSet::Act`, before `MotionSystems::Intent` (so the body faces its new target on the same
 /// tick): every body's `lock_switch` presses, in `AiId` order, each in the order pressed. A
 /// press with no side, with no lock to move, or with nobody on that side is used up and changes
-/// nothing.
-pub fn switch_locks(world: &mut World) {
-    let mut bodies: Vec<(AiId, Entity)> = {
-        let Some(mut q) = world.try_query::<(Entity, &AiId, &Intent)>() else { return };
-        q.iter(world).filter(|(_, _, i)| i.pressed.iter().any(|p| p.input == LOCK_SWITCH)).map(|(e, id, _)| (*id, e)).collect()
-    };
+/// nothing. The query is kept between ticks, so a tick without a press only looks at the presses.
+pub fn switch_locks(world: &mut World, bodies: &mut QueryState<(Entity, &'static AiId, &'static Intent)>) {
+    let mut bodies: Vec<(AiId, Entity)> =
+        bodies.iter(world).filter(|(_, _, i)| i.pressed.iter().any(|p| p.input == LOCK_SWITCH)).map(|(e, id, _)| (*id, e)).collect();
     if bodies.is_empty() {
         return;
     }
@@ -237,10 +251,11 @@ type Lockers<'w, 's> =
 /// What the check reads of a target.
 type Targets<'w, 's> = Query<'w, 's, (&'static Transform, Option<&'static Collider>, Has<Dead>)>;
 
-/// `SimSet::Cleanup`, before `CoreSystems::ClearPresses`, with a `lock_on` definition: every
-/// body's lock, in `AiId` order. Lost when the target is gone, dead, out of range or hidden for
-/// `obstruction_s` in a row ([`LockSight`] counts while it is hidden). Without a definition it
-/// does nothing (a count a removed definition left is taken away).
+/// `SimSet::Cleanup`, after `CoreSystems::ClearPresses`, with a `lock_on` definition: every
+/// body's lock (the player's, an agent's: whatever `Intent.target` names), in `AiId` order.
+/// Lost when the target is gone, dead, out of range or hidden for `obstruction_s` in a row
+/// ([`LockSight`] counts while it is hidden). Without a definition it does nothing (a count a
+/// removed definition left is taken away).
 pub fn check_locks(
     mut commands: Commands,
     db: Option<Res<ContentDb>>,
@@ -318,11 +333,13 @@ pub fn describe_lock(entity: EntityRef) -> Option<String> {
 /// The engine rule `action.lock_on_valid`: with a `lock_on` definition, no body's lock-on target
 /// (`Intent.target`) names an entity that no longer exists or is dead.
 ///
-/// [`check_locks`] takes such a lock away at the end of every tick, after the deaths of that
-/// tick, so after a tick none is left; a violation names a lock set some other way inside the
-/// tick after the check (a game system in `SimSet::Cleanup` after `LockSystems::Check`), or a
-/// check that missed it. Without a definition locks are not checked and the rule passes (a game
-/// keeps the old behaviour, where a lock on a dead target stays until somebody lets go).
+/// [`check_locks`] takes such a lock away at the end of every tick, after the deaths and the
+/// engine's despawns of that tick, so after a tick none is left; a violation names a lock set
+/// some other way inside the tick after the check, or a target taken away after it (a game
+/// system in `SimSet::Cleanup` after `LockSystems::Check` that sets a lock or despawns a body
+/// that may be locked on to: it belongs before the check), or a check that missed it. Without a
+/// definition locks are not checked and the rule passes (a game keeps the old behaviour, where a
+/// lock on a dead target stays until somebody lets go).
 pub fn lock_on_valid(world: &World) -> Option<String> {
     LockOnDef::active(world.get_resource::<ContentDb>())?;
     let index = world.get_resource::<AiIndex>()?;
@@ -357,4 +374,40 @@ pub fn take_lock(world: &mut World, entity: Entity, target: AiId) {
     if LockOnDef::active(world.get_resource::<ContentDb>()).is_some() && simulating(world) {
         world.trigger(LockTaken { entity, target });
     }
+}
+
+/// `entity` lets go of its lock (the `lock_on` tool's `off`): with a `lock_on` definition on a
+/// machine that simulates, the journal says so ([`LockReleased`]). Returns the target it held.
+pub fn release_lock(world: &mut World, entity: Entity) -> Option<AiId> {
+    let target = world.get_mut::<Intent>(entity)?.target.take()?;
+    if LockOnDef::active(world.get_resource::<ContentDb>()).is_some() && simulating(world) {
+        world.trigger(LockReleased { entity, target });
+    }
+    Some(target)
+}
+
+/// Whether `me` may lock on to `target` by the lock-on rules (a `lock_on` definition): `Err`
+/// says why not, the way the `lock_on` tool answers. What the check would take away at once (a
+/// dead target, one beyond `def.range`) and what the pick would never name (yourself, an ally,
+/// something that is neither a fighter of another team nor a `LockOnTarget`, a body with no
+/// position) are refused.
+pub fn may_lock_on(world: &World, me: Entity, target: Entity, id: AiId, def: &LockOnDef) -> Result<(), String> {
+    if world.get::<Dead>(target).is_some() {
+        return Err(format!("{id} is dead; lock on to a living target"));
+    }
+    let (Some(here), Some(there)) = (world.get::<Transform>(me), world.get::<Transform>(target)) else {
+        return Err(format!("{id} has no position to lock on to; lock on to a body in the world"));
+    };
+    let distance = there.translation.distance(here.translation);
+    if distance > def.range {
+        return Err(format!("{id} is {distance:.1}m away, beyond the lock-on range of {:.0}m; come closer", def.range));
+    }
+    let hooks = world.get_resource::<LockHooks>().copied().unwrap_or_default();
+    if !(hooks.lockable)(world, me, target) {
+        return Err(format!(
+            "{id} is not something you can lock on to (an ally, or neither a fighter of another team nor a lock-on target); \
+             lock on to an enemy, or call `lock_on` without `target` for the best one you can see"
+        ));
+    }
+    Ok(())
 }

@@ -17,7 +17,7 @@ use shards_motion::camera::{LockOnDef, Side};
 use crate::combat::{react, revive, stagger, Reaction, StaggerCause};
 use crate::def::{ActionDef, BufferMode, CombatTuning, MovesetDef, Steer, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team};
-use crate::lock::{pick_for_body, switch_lock_of, switch_rules, take_lock};
+use crate::lock::{may_lock_on, pick_for_body, release_lock, switch_lock_of, switch_rules, take_lock};
 use crate::machine::{
     buffer_press, can_start, fits_buffer, press_life, understands, ActionState, FighterView, Healed, InputBuffer, Queued,
 };
@@ -386,7 +386,8 @@ fn lock_on(In(call): In<Call<LockOnArgs>>, world: &mut World) -> ToolResult {
     let me = me(world, &call.caller)?;
     let here = world.get::<Transform>(me).map(|t| t.translation).unwrap_or_default();
     if call.args.off {
-        world.get_mut::<Intent>(me).ok_or("no Intent")?.target = None;
+        world.get::<Intent>(me).ok_or("no Intent")?;
+        release_lock(world, me);
         return Ok("ok: lock-on released".into());
     }
     // Without a `lock_on` definition: the nearest living enemy within the combat tuning's
@@ -414,14 +415,8 @@ fn lock_on(In(call): In<Call<LockOnArgs>>, world: &mut World) -> ToolResult {
                 return Err("you cannot lock on to yourself".into());
             }
             if let Some(def) = rules {
-                // What the check would take away at once is refused here.
-                if world.get::<Dead>(e).is_some() {
-                    return Err(format!("{} is dead; lock on to a living target", id.0));
-                }
-                let distance = world.get::<Transform>(e).map_or(0.0, |t| t.translation.distance(here));
-                if distance > def.range {
-                    return Err(format!("{} is {distance:.1}m away, beyond the lock-on range of {:.0}m; come closer", id.0, def.range));
-                }
+                // What the check would take away at once, and what the pick would never name.
+                may_lock_on(world, me, e, id.0, def)?;
             }
             id.0
         }

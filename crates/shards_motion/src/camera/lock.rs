@@ -214,7 +214,10 @@ impl LockOnDef {
 impl ContentDef for LockOnDef {
     const KIND: &'static str = "lock_on";
 
-    fn validate(&self, _id: &str, refs: &mut Refs) {
+    fn validate(&self, id: &str, refs: &mut Refs) {
+        if id != Self::ID {
+            refs.error(format!("the engine reads only the lock-on rules `{}`; rename this one (under another id they are never in force)", Self::ID));
+        }
         for problem in self.problems() {
             refs.error(problem);
         }
@@ -276,9 +279,11 @@ impl PickView {
     }
 }
 
-/// The angle between two directions (0 when either has no length).
-fn angle(a: Vec3, b: Vec3) -> f32 {
-    if a.length_squared() < 1e-12 || b.length_squared() < 1e-12 { 0.0 } else { a.angle_between(b) }
+/// The angle between two directions, 0..π (0 when either has no length): `ops::atan2` of the
+/// cross and the dot, as the engine's maths goes, not glam's `angle_between` (an approximated
+/// `acos`, which also loses digits near 0 and π).
+pub fn angle(a: Vec3, b: Vec3) -> f32 {
+    if a.length_squared() < 1e-12 || b.length_squared() < 1e-12 { 0.0 } else { ops::atan2(a.cross(b).length(), a.dot(b)) }
 }
 
 /// The score of `c` (lower is better): distance per range, screen angle per half view, look
@@ -567,5 +572,9 @@ mod tests {
         assert!((b - FRAC_PI_2).abs() < 1e-5, "{b}");
         assert!(signed_bearing(Vec3::ZERO, Vec3::NEG_Z, Vec3::X).unwrap() < 0.0);
         assert_eq!(signed_bearing(Vec3::ZERO, Vec3::Y, Vec3::X), None);
+        // The plain angle: 0..π, 0 for no direction.
+        assert!((angle(Vec3::NEG_Z, Vec3::X) - FRAC_PI_2).abs() < 1e-6);
+        assert!((angle(Vec3::NEG_Z, Vec3::Z) - PI).abs() < 1e-6 && angle(Vec3::X, Vec3::X * 3.0) == 0.0);
+        assert_eq!(angle(Vec3::ZERO, Vec3::X), 0.0);
     }
 }

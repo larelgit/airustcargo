@@ -518,7 +518,7 @@ fn with_lock_rules_the_camera_picks_by_score_and_leaves_the_switch_to_the_simula
 }
 
 #[test]
-fn with_lock_rules_the_wheel_switches_and_the_camera_never_lets_go() {
+fn with_lock_rules_the_wheel_switches_and_the_camera_lets_go_only_when_the_player_cancels() {
     use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
     let mut s = scene();
     with_lock_rules(&mut s);
@@ -526,11 +526,28 @@ fn with_lock_rules_the_wheel_switches_and_the_camera_never_lets_go() {
     // The wheel turned toward the player: to the right.
     s.app.insert_resource(AccumulatedMouseScroll { unit: MouseScrollUnit::Line, delta: Vec2::new(0.0, -1.0) });
     s.app.update();
-    s.app.insert_resource(AccumulatedMouseScroll::default());
     assert_eq!(switch_presses(&s), [1.0]);
+    // A touchpad that keeps scrolling past the cooldown is still that one switch ...
+    s.app.insert_resource(AccumulatedMouseScroll { unit: MouseScrollUnit::Pixel, delta: Vec2::new(0.0, -3.0) });
+    run_sim(&mut s, 0.6);
+    assert_eq!(switch_presses(&s), [1.0]);
+    // ... and after a frame standing still the next turn switches again.
+    s.app.insert_resource(AccumulatedMouseScroll::default());
+    frame(&mut s.app);
+    s.app.insert_resource(AccumulatedMouseScroll { unit: MouseScrollUnit::Line, delta: Vec2::new(0.0, -1.0) });
+    frame(&mut s.app);
+    s.app.insert_resource(AccumulatedMouseScroll::default());
+    assert_eq!(switch_presses(&s), [1.0, 1.0]);
     // Far beyond the camera's own release distance: the simulation decides, not the camera.
     s.app.world_mut().get_mut::<Transform>(s.near).unwrap().translation = Vec3::new(0.5, 0.0, -60.0);
     frame(&mut s.app);
     frame(&mut s.app);
     assert_eq!(target(&s), Some(id(&s.app, s.near)));
+    // The player's cancel lets go, and says so as a local line (the camera is input).
+    tap_lock(&mut s);
+    assert_eq!(target(&s), None);
+    let near = id(&s.app, s.near);
+    let journal = s.app.world().resource::<ai_core::AiJournal>();
+    let local: Vec<String> = journal.after(0).0.filter(|e| e.kind == ai_core::JournalKind::Local).map(|e| e.to_string()).collect();
+    assert!(local.iter().any(|l| l.ends_with(&format!("lock released: {near}"))), "{local:?}");
 }

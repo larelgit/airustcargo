@@ -12,10 +12,10 @@ use shards_core::input_names::{LOCK_ON, LOCK_SWITCH};
 use shards_core::{Intent, LocalPlayer, Press};
 use shards_settings::AccessibilitySettings;
 
-use super::lock::{half_width, in_frustum, lock_candidates, pick_lock, sight_clear, switch_target, LockOnDef, Lockable, PickView};
+use super::lock::{angle, half_width, in_frustum, lock_candidates, pick_lock, sight_clear, switch_target, LockOnDef, Lockable, PickView};
 use super::math::{
     aim_assist, arm_length, arm_reach, lock_framing, lock_holds, next_lock_target, orbit_angles, orbit_position, pick_lock_target,
-    pitch_limits, resolve_camera_collision, shake_offset_with, wrap_angle, FlickState, LockCandidate, LockView, Side,
+    pitch_limits, resolve_camera_collision, shake_offset_with, wrap_angle, FlickState, LockCandidate, LockView,
 };
 use super::{CameraOffsets, CameraSettings, CameraShake, CameraSystems, CameraTuning, LockOnTarget, ThirdPersonCamera};
 use crate::input::{ControlState, ControlSystems};
@@ -25,6 +25,10 @@ use crate::physics::{LayerMask, PhysicsWorld, QueryFilter};
 type LocalPlayerFilter = (With<LocalPlayer>, Without<ThirdPersonCamera>);
 
 type LockOnTargets<'w, 's> = Query<'w, 's, (&'static AiId, &'static Transform), (With<LockOnTarget>, Without<ThirdPersonCamera>)>;
+
+/// What the lock-on rules read of the camera, and the local player they lock for.
+type RuleCamera = (&'static Transform, Option<&'static Projection>);
+type RulePlayer = (With<LocalPlayer>, With<Intent>, Without<ThirdPersonCamera>);
 
 pub(super) fn plugin(app: &mut App) {
     // Without a `lock_on` definition the camera picks and lets go as it always did; with one it
@@ -163,12 +167,20 @@ fn lock_rules(db: Option<Res<ContentDb>>) -> bool {
 
 /// `PreUpdate`, with a `lock_on` definition: the `lock_on` button takes the target the scored
 /// pick names among what the camera sees (inside its frustum at the player's base field of view,
-/// or the cone, and a clear ray from the eye), or lets go of the lock; a look flick or the mouse
-/// wheel is a `lock_switch` press to that side, which the simulation carries out by its own rule
+/// or the cone, and a clear ray from the eye), or lets go of the lock (the player's cancel: a
+/// local line `e5 lock released: e6`); a look flick or a turn of the mouse wheel (one switch per
+/// turn) is a `lock_switch` press to that side, which the simulation carries out by its own rule
 /// (sent only when that rule finds somebody there, so a flick into nothing does not start the
-/// cooldown unless the tuning says so). The camera never lets go of a lock by itself here: the
-/// action module checks every lock on every tick, with a window or without.
-fn lock_by_rules(world: &mut World, mut flick: Local<FlickState>, mut last_lock: Local<Option<AiId>>) {
+/// cooldown unless the tuning says so). The camera lets go of a lock only on that cancel: the
+/// action module checks every lock on every tick, with a window or without. The queries are kept
+/// between frames.
+fn lock_by_rules(
+    world: &mut World,
+    cameras: &mut QueryState<RuleCamera, With<ThirdPersonCamera>>,
+    players: &mut QueryState<Entity, RulePlayer>,
+    mut flick: Local<FlickState>,
+    mut last_lock: Local<Option<AiId>>,
+) {
     flick.tick(world.resource::<Time<Virtual>>().delta_secs());
     let Some(def) = LockOnDef::active(world.get_resource::<ContentDb>()).cloned() else { return };
     let frame_dt = world.resource::<Time<Real>>().delta_secs();
@@ -178,11 +190,9 @@ fn lock_by_rules(world: &mut World, mut flick: Local<FlickState>, mut last_lock:
         let state = world.resource::<ControlState>();
         (state.just_pressed(LOCK_ON), state.look_pointer_px().x, state.look_stick().x, state.axis(LOCK_SWITCH))
     };
-    let mut cameras = world.query_filtered::<(&Transform, Option<&Projection>), With<ThirdPersonCamera>>();
     let Some((camera, aspect)) = cameras.iter(world).next().map(|(tf, projection)| (*tf, aspect_of(projection))) else {
         return;
     };
-    let mut players = world.query_filtered::<Entity, (With<LocalPlayer>, With<Intent>, Without<ThirdPersonCamera>)>();
     let Ok(me) = players.single(world) else { return };
     let target = world.get::<Intent>(me).and_then(|i| i.target);
 
@@ -195,10 +205,13 @@ fn lock_by_rules(world: &mut World, mut flick: Local<FlickState>, mut last_lock:
     }
 
     if lock_pressed {
-        if target.is_some() {
+        if let Some(held) = target {
             if let Some(mut intent) = world.get_mut::<Intent>(me) {
                 intent.target = None;
             }
+            // The player's cancel, the one way a lock goes that the check does not see.
+            let line = format!("{} lock released: {held}", label(world, me));
+            journal::emit(world, JournalKind::Local, line);
         } else if let Some(pick) = pick_in_view(world, me, &def, &camera, &settings, aspect) {
             if let Some(mut intent) = world.get_mut::<Intent>(me) {
                 intent.target = Some(pick);
@@ -215,9 +228,10 @@ fn lock_by_rules(world: &mut World, mut flick: Local<FlickState>, mut last_lock:
     let locked = target.is_some();
     let by_mouse = flick.mouse(&flick_tuning, px, frame_dt, locked);
     let by_stick = if by_mouse.is_some() { None } else { flick.stick(&flick_tuning, deflection, locked) };
-    // The wheel: down (toward the player) is to the right, a tilt to the right is too.
+    // The wheel: down (toward the player) is to the right, a tilt to the right is too; one
+    // switch per turn of the wheel (`FlickState::wheel`). Asked every frame so it sees it stop.
     let notch = if wheel.y != 0.0 { -wheel.y } else { wheel.x };
-    let by_wheel = Side::from_x(notch).filter(|_| locked && flick.cooldown <= 0.0);
+    let by_wheel = flick.wheel(notch, locked);
     let Some(side) = by_mouse.or(by_stick).or(by_wheel) else { return };
     let found = switch_target(world, me, side, &def).is_some();
     if found && let Some(mut intent) = world.get_mut::<Intent>(me) {
@@ -246,7 +260,7 @@ fn pick_in_view(world: &World, me: Entity, def: &LockOnDef, camera: &Transform, 
     let cone = settings.lock_cone_deg.to_radians();
     let seen = |aim: Vec3| match def.frustum {
         true => in_frustum(eye, camera.rotation, fov_y, aspect, aim),
-        false => (aim - eye).length_squared() > 1e-6 && forward.angle_between(aim - eye) <= cone,
+        false => (aim - eye).length_squared() > 1e-6 && angle(forward, aim - eye) <= cone,
     };
     let candidates: Vec<Lockable> = lock_candidates(world, me, def)
         .into_iter()

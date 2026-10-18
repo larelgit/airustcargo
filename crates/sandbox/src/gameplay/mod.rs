@@ -58,7 +58,8 @@ impl Plugin for GameplayPlugin {
             .add_systems(OnEnter(EngineState::InGame), layout::spawn_world)
             .add_plugins(fate::plugin);
         // The engine's systems decide (NPCs), move, fight and resolve; the sandbox's react
-        // (phases, after deaths) and tidy up.
+        // (phases, after deaths) and tidy up, before the lock-on check: a lock on what they
+        // take away is let go of on the same tick (`action.lock_on_valid`).
         app.add_systems(
             FixedUpdate,
             (
@@ -66,7 +67,8 @@ impl Plugin for GameplayPlugin {
                 (fate::remove_corpses, layout::rebuild_changed_layouts)
                     .chain()
                     .in_set(SimSet::Cleanup)
-                    .after(CoreSystems::ClearPresses),
+                    .after(CoreSystems::ClearPresses)
+                    .before(shards::action::LockSystems::Check),
             ),
         );
     }

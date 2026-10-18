@@ -288,6 +288,21 @@ fn a_lock_on_a_dead_or_missing_target_stops_the_game() {
 }
 
 #[test]
+fn a_living_target_the_engine_despawns_at_the_end_of_a_tick_is_let_go_of_without_a_stop() {
+    // The co-op despawn of a body whose rejoin grace is over runs in `SimSet::Cleanup` before
+    // `CoreSystems::ClearPresses`; the lock-on check runs after it, so it sees the body gone.
+    let mut app = sandbox::test_app(42);
+    let (player, skeleton) = (body(app.world(), 5), body(app.world(), 7));
+    app.world_mut().get_mut::<Intent>(player).unwrap().target = Some(AiId(7));
+    app.world_mut().entity_mut(skeleton).insert(shards::net::NetLeft { since: 0, until: 3 });
+    assert_eq!(step(&mut app, 5), "ran 5 ticks (0 → 5)");
+    assert!(app.world().get_entity(skeleton).is_err(), "the grace is over: the body went");
+    assert_eq!(app.world().get::<Intent>(player).unwrap().target, None);
+    let events = journal(&app, JournalKind::Event);
+    assert!(events.iter().any(|l| l.contains("e5 lock lost: e7 gone")), "{events:?}");
+}
+
+#[test]
 fn run_extras_of_another_run_stop_the_game() {
     use shards::action::RunExtras;
     // Extras left behind by a run that is over (nothing runs now).

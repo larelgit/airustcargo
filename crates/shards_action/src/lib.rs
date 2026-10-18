@@ -155,7 +155,7 @@ pub use machine::{
     ActionStarted,
     ActionState, Blocker, FighterView, Healed, InputBuffer, Queued, RunExtras, Running, Start, Telegraph,
 };
-pub use lock::{LockLoss, LockLost, LockSight, LockSwitched, LockSystems};
+pub use lock::{LockLoss, LockLost, LockReleased, LockSight, LockSwitched, LockSystems};
 pub use predict::{shown_queue, shown_state, ActionPredictor, PredictedAction, CONFIRM_SLACK};
 pub use stance::{actions_to_modifiers, hold_regen_during_actions};
 pub use status::{

@@ -307,11 +307,13 @@ pub struct FlickState {
     pub cooldown: f32,
     /// Whether the stick has come back below its re-arm level since its last switch.
     pub stick_ready: bool,
+    /// Whether the mouse wheel has stood still for a frame since its last switch.
+    pub wheel_ready: bool,
 }
 
 impl Default for FlickState {
     fn default() -> Self {
-        Self { accum_px: 0.0, cooldown: 0.0, stick_ready: true }
+        Self { accum_px: 0.0, cooldown: 0.0, stick_ready: true, wheel_ready: true }
     }
 }
 
@@ -359,6 +361,22 @@ impl FlickState {
         }
         self.stick_ready = false;
         Some(if x > 0.0 { Side::Right } else { Side::Left })
+    }
+
+    /// The mouse wheel turned `notch` this frame (right is positive, 0 while it stands still):
+    /// one switch per turn of the wheel. After a switch it must stand still for a frame before
+    /// it can switch again, so a touchpad's long or coasting scroll is one switch, not one per
+    /// cooldown. A turn on a locked camera with the cooldown over switches.
+    pub fn wheel(&mut self, notch: f32, locked: bool) -> Option<Side> {
+        if notch == 0.0 {
+            self.wheel_ready = true;
+            return None;
+        }
+        if !locked || !self.wheel_ready || self.cooldown > 0.0 {
+            return None;
+        }
+        self.wheel_ready = false;
+        Side::from_x(notch)
     }
 
     /// A lock was just taken from nothing, with the stick at `x`: a stick already pushed over
@@ -753,6 +771,28 @@ mod tests {
         assert_eq!(s.stick(&flick, 1.0, true), None);
         s.tick(0.4);
         assert_eq!(s.stick(&flick, 1.0, true), Some(Side::Right));
+    }
+
+    #[test]
+    fn a_turn_of_the_wheel_is_one_switch_however_long_it_scrolls() {
+        let flick = FlickTuning { cooldown_s: 0.3, ..default() };
+        let mut s = FlickState::default();
+        assert_eq!(s.wheel(1.0, false), None, "unlocked: nothing");
+        assert_eq!(s.wheel(-1.0, true), Some(Side::Left));
+        s.flicked(&flick, true);
+        // A touchpad that keeps scrolling (and coasting) past the cooldown: still that one switch.
+        for _ in 0..60 {
+            s.tick(1.0 / 60.0);
+            assert_eq!(s.wheel(-0.4, true), None);
+        }
+        // It stood still for a frame: the next turn switches, once the cooldown is over.
+        assert_eq!(s.wheel(0.0, true), None);
+        assert_eq!(s.wheel(2.0, true), Some(Side::Right));
+        s.flicked(&flick, true);
+        assert_eq!(s.wheel(0.0, true), None);
+        assert_eq!(s.wheel(1.0, true), None, "the cooldown holds a fresh turn");
+        s.tick(0.4);
+        assert_eq!(s.wheel(1.0, true), Some(Side::Right), "a turn the cooldown held switches when it is over");
     }
 
     #[test]

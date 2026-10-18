@@ -6,11 +6,12 @@ use std::path::Path;
 
 use bevy::prelude::*;
 use serde_json::json;
-use shards_action::{kill, LockSight};
+use shards_action::lock::lock_on_valid;
+use shards_action::{kill, LockSight, LockSystems};
 use shards_content::db::{read_dir, Source};
 use shards_content::{ContentDb, ContentKinds};
 use shards_core::input_names::LOCK_SWITCH;
-use shards_core::Intent;
+use shards_core::{CoreSystems, Intent};
 
 use crate::common::*;
 
@@ -203,4 +204,98 @@ fn the_tool_picks_by_the_score_among_what_the_body_sees() {
     let (_hidden, ahead, _side) = (id(&app, hidden), id(&app, ahead), id(&app, side));
     assert!(ok(&mut app, "lock_on", json!({})).starts_with(&format!("ok: locked on {ahead} ")));
     assert!(fails(&mut app, "lock_on", json!({ "side": "left", "target": ahead })).contains("not both"));
+}
+
+#[test]
+fn with_the_rules_the_tool_refuses_what_the_pick_would_never_name() {
+    let mut app = app();
+    with_rules(&mut app, "()");
+    let world = app.world_mut();
+    let hero = hero(world, "hero", Vec3::ZERO, N);
+    let ally = fighter(world, "Squire", "brute", "heroes", Vec3::new(2.0, 0.0, -3.0), S);
+    let nowhere = world.spawn((Name::new("note"), ai_core::AiVisible)).id();
+    let brute = brute(world, Vec3::new(0.0, 0.0, -4.0), S);
+    step(&mut app, 1);
+    let (a, n, b, h) = (id(&app, ally), id(&app, nowhere), id(&app, brute), id(&app, hero));
+    let err = fails(&mut app, "lock_on", json!({ "target": a }));
+    assert!(err.contains(&format!("{a} is not something you can lock on to")), "{err}");
+    assert!(fails(&mut app, "lock_on", json!({ "target": n })).contains("has no position"));
+    assert_eq!(target(&app, hero), None);
+    ok(&mut app, "lock_on", json!({ "target": b }));
+    // The cancel says so, with the rules on.
+    assert_eq!(ok(&mut app, "lock_on", json!({ "off": true })), "ok: lock-on released");
+    step(&mut app, 1);
+    assert_eq!(target(&app, hero), None);
+    assert_eq!(lines(&app, &format!("{h} lock released: {b}")).len(), 1, "{:?}", journal(&app));
+
+    // Without the rules an id is taken as before, an ally too, and a cancel has no line.
+    let mut app = crate::common::app();
+    let world = app.world_mut();
+    let hero = crate::common::hero(world, "hero", Vec3::ZERO, N);
+    let ally = fighter(world, "Squire", "brute", "heroes", Vec3::new(2.0, 0.0, -3.0), S);
+    step(&mut app, 1);
+    let a = id(&app, ally);
+    ok(&mut app, "lock_on", json!({ "target": a }));
+    assert_eq!(target(&app, hero), Some(a));
+    ok(&mut app, "lock_on", json!({ "off": true }));
+    step(&mut app, 1);
+    assert!(lines(&app, "lock").is_empty(), "{:?}", journal(&app));
+}
+
+/// A game system that takes the locked-on body away at the end of the tick, placed like the
+/// co-op despawn of a body whose rejoin grace is over (`SimSet::Cleanup`, before
+/// `CoreSystems::ClearPresses`), or after the lock-on check: on the first tick it runs.
+fn despawner(app: &mut App, victim: Entity, after_check: bool) {
+    let despawn = move |mut commands: Commands, mut done: Local<bool>| {
+        if !std::mem::replace(&mut *done, true) {
+            commands.entity(victim).despawn();
+        }
+    };
+    let placed = despawn.in_set(ai_core::SimSet::Cleanup);
+    match after_check {
+        false => app.add_systems(FixedUpdate, placed.before(CoreSystems::ClearPresses)),
+        true => app.add_systems(FixedUpdate, placed.after(LockSystems::Check)),
+    };
+}
+
+#[test]
+fn a_target_despawned_before_the_presses_are_cleared_is_let_go_of_on_that_tick() {
+    let mut app = app();
+    with_rules(&mut app, "()");
+    let world = app.world_mut();
+    let hero = hero(world, "hero", Vec3::ZERO, N);
+    let brute = brute(world, Vec3::new(0.0, 0.0, -3.0), S);
+    let (b, h) = (id(&app, brute), id(&app, hero));
+    ok(&mut app, "lock_on", json!({ "target": b }));
+    step(&mut app, 1);
+    despawner(&mut app, brute, false);
+    step(&mut app, 1);
+    assert_eq!(target(&app, hero), None, "the living target went in Cleanup: let go of on that tick");
+    assert_eq!(lines(&app, &format!("{h} lock lost: {b} gone")).len(), 1, "{:?}", journal(&app));
+    assert_eq!(lock_on_valid(app.world()), None);
+
+    // Control: the same despawn after the check leaves a lock on nobody, and the rule says so.
+    let mut app = crate::common::app();
+    with_rules(&mut app, "()");
+    let world = app.world_mut();
+    let hero = crate::common::hero(world, "hero", Vec3::ZERO, N);
+    let brute = crate::common::brute(world, Vec3::new(0.0, 0.0, -3.0), S);
+    let b = id(&app, brute);
+    ok(&mut app, "lock_on", json!({ "target": b }));
+    step(&mut app, 1);
+    despawner(&mut app, brute, true);
+    step(&mut app, 1);
+    assert_eq!(target(&app, hero), Some(b.clone()));
+    let report = lock_on_valid(app.world()).expect("a lock on a body taken away after the check is reported");
+    assert!(report.contains(&format!("Intent.target = {b}, which no longer exists")), "{report}");
+}
+
+#[test]
+fn a_lock_on_definition_under_another_id_is_a_content_error() {
+    let app = app();
+    let kinds = app.world().resource::<ContentKinds>().clone();
+    let sources = vec![Source { path: "content/lock.lock_on.ron".into(), text: "{ \"defualt\": (range: 25.0) }".into() }];
+    let db = ContentDb::build(&kinds, &sources);
+    let errors: Vec<String> = db.errors().map(ToString::to_string).collect();
+    assert!(errors.iter().any(|e| e.contains("reads only the lock-on rules `default`")), "{errors:?}");
 }
