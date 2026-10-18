@@ -63,12 +63,12 @@ mod tools;
 use bevy::prelude::*;
 use shards_core::EngineAppExt;
 
-pub use invariants::{body_in_solid, motion_finite, BODY_IN_SOLID};
+pub use invariants::{body_in_solid, launch_sane, motion_finite, BODY_IN_SOLID};
 
 pub use ai::{describe_motion, physics_line_of_sight, MotionAi};
 pub use camera::{CameraSettings, LockOnTarget, ThirdPersonCamera};
 pub use controller::{
-    character, CharacterController, CharacterParams, ControllerPlugin, ControllerSystems, Jumped, JumpedFlight, Landed,
+    character, CharacterController, CharacterParams, ControllerPlugin, ControllerSystems, Ghost, Jumped, JumpedFlight, Landed, Launch,
     SprintResume,
     LocomotionInput, Mantle, Mantled, ModeChanged, MotionMode, MotionState,
 };
@@ -115,6 +115,7 @@ impl Plugin for MotionPlugin {
         }
         app.add_engine_module("motion", VERSION);
         app.add_engine_invariant("motion.finite", motion_finite);
+        app.add_engine_invariant("motion.launch_sane", launch_sane);
         // Off until fuzzed on voxel terrain (`EngineConfig::opt_in_invariants`, `--engine-invariant`).
         app.add_opt_in_engine_invariant(BODY_IN_SOLID, body_in_solid);
         ai::plugin(app);
