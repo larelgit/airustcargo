@@ -7,12 +7,11 @@
 #
 # The locks and where they stand under nextest:
 #   - sandbox `scenario_files::SNAPSHOT_FILE`, `snapshots::Scratch`: fixed names in crates/sandbox/
-#        | test(/^fuzz_shrink::/)
- (snapshots/boss_phase2.json, crashes/scenario.json) and `remove_dir("snapshots")`: group `snapshot-file`.
+#     (snapshots/boss_phase2.json, crashes/scenario.json) and `remove_dir("snapshots")`: group `snapshot-file`.
 #   - sandbox `system_failures` `ONE_AT_A_TIME`: the process-global panic memory, which a process of
 #     its own per test makes harmless; but the same tests write crashes/ and replays/crash-tick50.json
 #     in crates/sandbox/: group `snapshot-file`.
-#   - sandbox `tool_contracts` and `fuzz` (tools write snapshots/ and replays/ in crates/sandbox/, and a
+#   - sandbox `tool_contracts`, `fuzz` and `fuzz_shrink` (tools write snapshots/ and replays/ in crates/sandbox/, and a
 #     test that ends removes an empty snapshots/): group `snapshot-file`.
 #   - sandbox `log_capture` `ONE_AT_A_TIME`: the process-global tracing subscriber; a process per
 #     test needs no group.
