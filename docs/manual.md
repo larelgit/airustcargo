@@ -726,7 +726,8 @@ ledge`, `e5 air → water`, `e5 reached goal`).
   (mantle and sloped-step ticks may graze a cell) and a game turns it on with `app.add_engine_invariant(BODY_IN_SOLID, body_in_solid)`.
 - Checked by `crates/shards_motion/tests/motion/seams.rs`: each scenario runs in four worlds, one cuboid collider per cell, the merged
   boxes as colliders, the field, and the field with the merge off (stand on seams, an edge and a corner; one-cell walls; mixed
-  heights; steps of 0.3, 0.5 and 1 m; a mantle; tunnels; landing on a seam; a checkerboard diagonal; 16 bodies on rolling hills). The
+  heights; steps of 0.3, 0.5 and 1 m; a mantle; tunnels, with the probe, the hooks and `clearance` at 1350 spots in and around
+  them against the merged boxes; landing on a seam; a checkerboard diagonal; 16 bodies on rolling hills). The
   field with the merge off equals the cells to the bit on every tick; with the merge on, the scripted scenarios stay within 3e-6 m and
   2.4e-4 m/s of the cells with the same modes, and one step from the same state (16 bodies, 600 ticks) within 3.4e-6 m. Ground normals
   are not compared: at a seam or an edge GJK's normal off a cell is noise (up to 56° on the checkerboard, positions equal). A free-running
@@ -735,7 +736,8 @@ ledge`, `e5 air → water`, `e5 reached goal`).
   where a step-up decided on an edge ride went the other way at tick 147). The merged boxes as colliders part as soon or sooner
   and for more bodies (7 and 14; 32 cm at tick 102 on seed 1). With the merge off the field never parts from the cells.
   `field_timing` (`#[ignore]`, release): on 64 m of 0.5 m-cell hills the ground cast takes 8.5 µs with the merge, 17.4 µs without
-  and 19.4 µs as column boxes; rays 0.24–1.3 µs (1.2–2.3 times faster than the boxes, the sight ray 12 times).
+  and 19.4 µs as column boxes; rays 0.24–1.3 µs (1.7–2.2 times faster than the boxes, the sight ray 12 times), `overlaps` 8 times
+  faster; the walk cast (0.1 m) is slower than the boxes, 6.3 against 5.0 µs.
 
 **Why parry3d and not avian3d.** The spec named avian3d as a candidate and required checking Bevy 0.20 support before taking a third-party crate. Checked against the crates.io index (13–14 October 2026): avian3d 0.7.0 requires Bevy 0.19, and Bevy is pinned
 to 0.20.0 (the same goes for bevy_enhanced_input 0.26.0 and lightyear 0.30.1). A kinematic controller needs collision queries, not dynamics, so `parry3d =0.31.1` was taken (dimforge geometry, it does not depend on Bevy; avian is built on it too).

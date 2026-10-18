@@ -527,6 +527,48 @@ fn walking_tunnels_under_a_slab_and_a_plateau() {
     assert!((physics.extent_at(terrain, up.point).unwrap().1 - 4.0).abs() < 1e-4, "the plateau's run, 2.2..4 m");
     let body = Shape::capsule(0.4, 1.8);
     assert_eq!(physics.top_under(terrain, &body, Vec3::new(3.0, 0.88, 3.0), Quat::IDENTITY), Some(0.0), "standing in the tunnel");
+
+    // A grid of spots in and around both tunnels, off the cells' lines by 7 cm (down a line
+    // between boxes parry's ray may slip through either world): the probe, the blocker's top,
+    // the room, a ray down and `extent_at` where it stops (from inside the solid too),
+    // `top_under` of a capsule sunk 5 cm at three heights, and `clearance` on a coarser grid, the field
+    // against the merged boxes.
+    let (voxels, boxes) = (worlds[2].0.world().resource::<PhysicsWorld>(), worlds[1].0.world().resource::<PhysicsWorld>());
+    let walls = QueryFilter::new(LayerMask::WORLD);
+    // Heights to 0.1 mm: a box's faces are its centre and half, rounded (-0.40000004 for -0.4).
+    let mm = |y: f32| (y * 1e4).round() as i32;
+    let probe_mm = |p: Probe| match p {
+        Probe::Floor { y, normal } => format!("floor {} {:?}", mm(y), normal.to_array().map(mm)),
+        Probe::Water { surface } => format!("water {}", mm(surface)),
+        other => format!("{other:?}"),
+    };
+    let (mut spots, mut ways) = (0, 0);
+    for i in 0..30 {
+        for k in 0..15 {
+            let (x, z) = (-2.93 + 0.4 * i as f32, -0.93 + 0.4 * k as f32);
+            for from_y in [0.0, 2.1, 4.5] {
+                let looks = |physics: &PhysicsWorld| {
+                    let terrain = Terrain::new(physics, &params, &[]);
+                    let ray = physics.raycast(Vec3::new(x, from_y + 0.5, z), Dir3::NEG_Y, 6.0, &walls).map(|h| (mm(h.distance), mm(h.point.y), physics.extent_at(h.entity, h.point).map(|(a, b)| (mm(a), mm(b)))));
+                    (probe_mm(terrain.probe(x, z, from_y)), terrain.blocker_top(x, z, from_y).map(mm), terrain.room_for(x, z, from_y), ray)
+                };
+                assert_eq!(looks(voxels), looks(boxes), "at ({x}, {from_y}, {z}): the field and the merged boxes");
+                let tops = |physics: &PhysicsWorld| {
+                    // 5 cm into a floor at `from_y`: a capsule exactly touching a face is rounding.
+                    let centre = Vec3::new(x, from_y + 0.85, z);
+                    physics.overlaps(&body, centre, Quat::IDENTITY, &walls).into_iter().filter_map(|e| physics.top_under(e, &body, centre, Quat::IDENTITY)).reduce(f32::max).map(mm)
+                };
+                assert_eq!(tops(voxels), tops(boxes), "top_under at ({x}, {from_y}, {z})");
+                spots += 1;
+            }
+            if i % 3 == 0 && k % 3 == 0 {
+                let ways_at = |physics: &PhysicsWorld| clearance(physics, &params, Vec3::new(x, 0.0, z), None, 4.0, 3.0, &[]).iter().map(|r| r.describe()).collect::<Vec<_>>();
+                assert_eq!(ways_at(voxels), ways_at(boxes), "clearance at ({x}, {z})");
+                ways += 1;
+            }
+        }
+    }
+    println!("the hooks at {spots} spots and clearance at {ways}: the field answers as the merged boxes");
 }
 
 #[test]
