@@ -4,13 +4,15 @@
 //! The engine does the rest: characters move with its controller, fight with its action
 //! machine, collide through its physics layer; the monsters are its NPCs (behaviours,
 //! perception, the combat director and attack plans are content in `content/npc/`); the
-//! generated region south of the arena is its world module's (`content/region/`). What is the
+//! generated region south of the arena is its world module's (`content/region/`), and so is the
+//! voxel arena north of it, made by the sandbox's generation steps ([`terrain`]). What is the
 //! sandbox's own: the world it spawns from content ([`layout`]) when the engine enters
 //! `InGame` (content exists only after loading), the boss's phases and what is left of the
 //! dead ([`fate`]).
 
 pub mod fate;
 pub mod layout;
+pub mod terrain;
 
 use shards::core::CoreSystems;
 use shards::prelude::*;
@@ -56,9 +58,10 @@ impl Plugin for GameplayPlugin {
             .add_content::<LayoutDef>()
             .add_content::<BoundsDef>()
             .add_systems(OnEnter(EngineState::InGame), layout::spawn_world)
-            .add_plugins(fate::plugin);
+            .add_plugins((fate::plugin, terrain::plugin));
         // The engine's systems decide (NPCs), move, fight and resolve; the sandbox's react
-        // (phases, after deaths) and tidy up.
+        // (phases, after deaths) and tidy up, before the lock-on check: a lock on what they
+        // take away is let go of on the same tick (`action.lock_on_valid`).
         app.add_systems(
             FixedUpdate,
             (
@@ -66,7 +69,8 @@ impl Plugin for GameplayPlugin {
                 (fate::remove_corpses, layout::rebuild_changed_layouts)
                     .chain()
                     .in_set(SimSet::Cleanup)
-                    .after(CoreSystems::ClearPresses),
+                    .after(CoreSystems::ClearPresses)
+                    .before(shards::action::LockSystems::Check),
             ),
         );
     }

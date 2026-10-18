@@ -67,7 +67,7 @@ use shards_core::EngineAppExt;
 pub use invariants::{body_in_solid, motion_finite, BODY_IN_SOLID};
 
 pub use ai::{describe_motion, physics_line_of_sight, MotionAi};
-pub use camera::{CameraSettings, LockOnTarget, ThirdPersonCamera};
+pub use camera::{CameraSettings, LockHooks, LockOnDef, LockOnTarget, ThirdPersonCamera};
 pub use controller::{
     character, CharacterController, CharacterParams, ControllerPlugin, ControllerSystems, Jumped, JumpedFlight, Landed,
     SprintResume,
@@ -78,7 +78,7 @@ pub use intent::{intent_to_locomotion, GlideUntilLanded, MotionSystems};
 pub use interp::{adopt_visuals, shown_translation, InterpSystems, Interpolated, NotInterpolated, Pose, visual_offset};
 pub use modifiers::{ModifierSystems, MoveModifiers, StanceSpeed};
 pub use physics::{
-    Body, Collider, ColliderId, ColliderIds, ColliderInfo, CollisionLayers, LayerMask, Penetration, PhysicsPlugin,
+    current_at, edge_distance, Body, Collider, ColliderId, ColliderIds, ColliderInfo, CollisionLayers, Current, LayerMask, Penetration, PhysicsPlugin,
     PhysicsSystems, PhysicsWorld, QueryFilter, RayHit, Shape, ShapeHit, SpatialQuery, Volume, VolumeEntered,
     VolumeExited, VolumeKind, VoxelCollider, VoxelField,
 };
@@ -117,8 +117,8 @@ impl Plugin for MotionPlugin {
         }
         app.add_engine_module("motion", VERSION);
         app.add_engine_invariant("motion.finite", motion_finite);
-        // Off until fuzzed on voxel terrain (`EngineConfig::opt_in_invariants`, `--engine-invariant`).
-        app.add_opt_in_engine_invariant(BODY_IN_SOLID, body_in_solid);
+        // On since the fuzz runs on the voxel arena (A2c; see its doc comment).
+        app.add_engine_invariant(BODY_IN_SOLID, body_in_solid);
         ai::plugin(app);
         coverage::plugin(app);
         intent::plugin(app);

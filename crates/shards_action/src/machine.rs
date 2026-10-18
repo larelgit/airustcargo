@@ -27,6 +27,7 @@ use shards_motion::{
 use std::ops::DerefMut;
 
 use crate::context::{fresh_press, ContextInputs, GuardArm, PendingPair, PendingPairs, RunHalted};
+use crate::body::grant_barrier;
 use crate::cue::ActionSound;
 use crate::def::{touches, ActionDef, BufferMode, CancelTo, CombatTuning, Effect, Face, MovesetDef, StaminaMode, Steer, EPS};
 use crate::fighter::{report_once, sprint_rule, Charges, Cooldowns, Dead, Fighter, Health, Stamina};
@@ -1693,6 +1694,15 @@ pub fn apply_effect(world: &mut World, entity: Entity, action: &str, effect: &Ef
             }
         }
         Effect::Status(status, amount) => add_status_buildup(world, entity, status, *amount),
+        Effect::Barrier { amount, seconds, of_max } => {
+            let amount = if *of_max {
+                let Some(max) = world.get::<Health>(entity).map(|h| h.max) else { return };
+                amount * max
+            } else {
+                *amount
+            };
+            grant_barrier(world, entity, amount, *seconds);
+        }
         Effect::Sound(sound) => world.trigger(ActionSound { entity, action: action.to_owned(), sound: sound.clone() }),
         Effect::Custom(name) => {
             let hook = world.resource::<ActionEffects>().0.iter().find(|(n, _)| n == name).map(|(_, f)| *f);

@@ -12,6 +12,9 @@ ai_core.workspace = true
 shards_core.workspace = true
 shards_content.workspace = true
 shards_look.workspace = true
+shards_motion.workspace = true
+shards_world.workspace = true
+schemars.workspace = true
 bevy = { workspace = true, features = ["std", "serialize", "bevy_asset"] }
 serde.workspace = true
 serde_json.workspace = true

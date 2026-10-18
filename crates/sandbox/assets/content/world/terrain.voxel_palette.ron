@@ -1,0 +1,18 @@
+// The blocks of the voxel arena (`arena.voxel_region.ron`). Neutral names and colours: the
+// region's steps name them in their params.
+{
+    "terrain": (
+        blocks: [
+            (name: "grass", top: "#5b8f3a", side: "#6f5a3c", bottom: "#5c4730", tags: ["ground"]),
+            (name: "dirt", top: "#6f5a3c"),
+            (name: "stone", top: "#8a8a8a", side: "#7a7a7a"),
+            (name: "sand", top: "#d8c890"),
+            (name: "snow", top: "#f2f4f6", side: "#d6dbe0"),
+            (name: "wood", top: "#8a6a3f", side: "#6b4f2c"),
+            (name: "leaves", top: "#3f7f2f", solid: false, foliage: true, tags: ["tree"]),
+            (name: "brick", top: "#9c4a3a"),
+            (name: "glow", top: "#ffd27f", emissive: true),
+            (name: "water", top: "#2a6f9f", solid: false, liquid: true),
+        ],
+    ),
+}

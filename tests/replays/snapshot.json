@@ -10,9 +10,9 @@
     "seed": 42,
     "tick_hz": 59.99999880000003,
     "engine": "0.4.0",
-    "state_hash": "6e610d38e32aa18b",
+    "state_hash": "caff4fb4280c5a7c",
     "checks": {
-      "content": "6a7ce1cecf3e9094",
+      "content": "9dde39ef59bc2eff",
       "levels": "cbf29ce484222325",
       "static_colliders": "b16a4682932b69b4"
     },
@@ -28,6 +28,7 @@
         "layout/arena": "091851d57d80f2e4",
         "layout/course": "f65397f9b47f46e1",
         "layout/watch": "dc738a5676554d89",
+        "lock_on/default": "0c3315c53fabe323",
         "locomotion/player": "25720e5c56082052",
         "locomotion/skeleton": "ba33bb652bf0630e",
         "locomotion/warden": "9a9e3ea79d7406f7",
@@ -1628,7 +1629,7 @@
   },
   "end": {
     "tick": 369,
-    "hash": "6236399262aaa966",
+    "hash": "58f4d3246ccc8e13",
     "parts": {
       "entities": {
         "e1": {
@@ -1851,7 +1852,7 @@
         }
       },
       "game": {
-        "content": "dbfc4c5006ed47b5"
+        "content": "fe6f865f2f138b5c"
       }
     }
   },
@@ -1934,7 +1935,7 @@
   "checks": [
     {
       "tick": 180,
-      "hash": "8e386af33d4af45b",
+      "hash": "e57ffe038af5f52f",
       "parts": {
         "entities": {
           "e1": {
@@ -2157,13 +2158,13 @@
           }
         },
         "game": {
-          "content": "bc2068a1f725b88e"
+          "content": "81bce2336ceb1961"
         }
       }
     },
     {
       "tick": 240,
-      "hash": "ce901e6e6a11d3f9",
+      "hash": "8c7c42a24bba3b2f",
       "parts": {
         "entities": {
           "e1": {
@@ -2386,13 +2387,13 @@
           }
         },
         "game": {
-          "content": "59b93f339ae1c303"
+          "content": "1b1cf58861d1cbee"
         }
       }
     },
     {
       "tick": 300,
-      "hash": "fa6d43b6e7ff7591",
+      "hash": "713b9e49460e1bd8",
       "parts": {
         "entities": {
           "e1": {
@@ -2615,13 +2616,13 @@
           }
         },
         "game": {
-          "content": "dbfc4c5006ed47b5"
+          "content": "fe6f865f2f138b5c"
         }
       }
     },
     {
       "tick": 360,
-      "hash": "502f6240bcc2101f",
+      "hash": "01b03d0393ae40ae",
       "parts": {
         "entities": {
           "e1": {
@@ -2844,7 +2845,7 @@
           }
         },
         "game": {
-          "content": "dbfc4c5006ed47b5"
+          "content": "fe6f865f2f138b5c"
         }
       }
     }
@@ -2870,6 +2871,7 @@
           "layout/arena": "091851d57d80f2e4",
           "layout/course": "f65397f9b47f46e1",
           "layout/watch": "dc738a5676554d89",
+          "lock_on/default": "0c3315c53fabe323",
           "locomotion/player": "25720e5c56082052",
           "locomotion/skeleton": "ba33bb652bf0630e",
           "locomotion/warden": "9a9e3ea79d7406f7",

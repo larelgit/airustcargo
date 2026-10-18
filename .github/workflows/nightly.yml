@@ -2,7 +2,8 @@
 # Nothing here is cheap enough for every push; everything is the same commands you can run by hand.
 #
 #   heavy      every reference replay with `--verify --heavy 10 --heavy-span 30` from the seed's offset (heavy mode)
-#   worldgen   the generator's check on 100000 seeds: the sandbox's `wilds` and the template's `valley`
+#   worldgen   the generator's check on 100000 seeds: the sandbox's `wilds` and the template's `valley`;
+#              10000 seeds of the sandbox's voxel arena (about 60 ms a seed in the dev profile)
 #   gpu        the #[ignore]d tests that need a GPU, on Mesa's software Vulkan driver under Xvfb
 #   fuzz       the fuzz campaign: seeded runs with chaos, coverage steering and heavy mode; a run that stops is
 #              shrunk to a regression scenario (artifact `fuzz`: scenarios, replays, coverage report)
@@ -153,6 +154,10 @@ jobs:
         run: |
           set -o pipefail
           cargo run --locked -p sandbox -- --worldgen-report wilds --seeds 1..100000 2>&1 | tee "$RUNNER_TEMP/worldgen-wilds.log"
+      - name: Worldgen report, 10000 seeds of the voxel arena (sandbox)
+        run: |
+          set -o pipefail
+          cargo run --locked -p sandbox -- --worldgen-report voxel_arena --seeds 1..10000 2>&1 | tee "$RUNNER_TEMP/worldgen-voxel_arena.log"
       - name: Worldgen report, 100000 seeds of the valley (template)
         working-directory: template
         run: |

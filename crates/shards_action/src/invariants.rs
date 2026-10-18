@@ -1,11 +1,12 @@
 //! The engine rules `action.resources_in_range`, `action.running_sane`, `action.protection_sane`,
-//! `action.knockback_sane`, `action.extras_follow_run`, `action.pairs_match` and `action.memory_sane`.
+//! `action.knockback_sane`, `action.extras_follow_run`, `action.barrier_sane`, `action.damage_taken_sane`, `action.pairs_match` and `action.memory_sane`.
 
 use ai_core::{with_query, AiId, AiIndex, Offenders, SimTick};
 use bevy::prelude::*;
 use shards_content::ContentDb;
 
 use crate::context::{GuardArm, Memory, Paired, Pairing};
+use crate::body::{Barrier, DamageTaken};
 use crate::def::ActionDef;
 use crate::fighter::{Fighter, Health, Knockback, Poise, Protection, Stamina};
 use crate::machine::{ActionState, RunExtras};
@@ -153,6 +154,25 @@ pub fn extras_follow_run(world: &World) -> Option<String> {
     bad.report()
 }
 
+/// The engine rule `action.barrier_sane`: every [`Barrier`] holds a finite `amount >= 0` and a finite
+/// `left`.
+///
+/// `grant_barrier` takes the larger pool and a positive time, `hurt` empties the pool and removes the
+/// component, and `tick_body_state` clamps `left` at 0 and removes the component with it, so a
+/// violation names a writer that put a number there by hand (a NaN time would never run out, a
+/// negative pool would heal what it absorbs).
+pub fn barrier_sane(world: &World) -> Option<String> {
+    let mut bad = Offenders::default();
+    with_query::<(&AiId, &Barrier), (), _>(world, |query| {
+        for (id, b) in query.iter(world) {
+            if !(b.amount.is_finite() && b.amount >= 0.0 && b.left.is_finite()) {
+                bad.note(*id, || format!("Barrier amount = {}, left = {}: a finite amount >= 0 and a finite time", b.amount, b.left));
+            }
+        }
+    });
+    bad.report()
+}
+
 /// The engine rule `action.pairs_match`: a pair's two marks agree. Every [`Pairing`] runs: its
 /// attacker runs `Pairing.action` with `Pairing.instance`, and its victim, while it exists, holds
 /// a [`Paired`] naming the attacker; every `Paired` names an attacker, while it exists, whose
@@ -182,6 +202,37 @@ pub fn pairs_match(world: &World) -> Option<String> {
             {
                 let holds = world.get::<Pairing>(attacker).map_or("no Pairing".to_owned(), |p| format!("Pairing of {}", p.victim));
                 bad.note(*id, || format!("Paired by {} which has {holds}", v.by));
+            }
+        }
+    });
+    bad.report()
+}
+
+/// The engine rule `action.damage_taken_sane`: every [`DamageTaken`] holds finite multipliers `>= 0`, finite
+/// times, and its keys sorted and unique.
+///
+/// `set_damage_taken` inserts in key order and replaces a key, so a violation names a writer that
+/// pushed an entry by hand: two entries under one key would multiply twice and make `clear` leave
+/// one behind, and a NaN multiplier would poison every hit the fighter takes.
+pub fn damage_taken_sane(world: &World) -> Option<String> {
+    let mut bad = Offenders::default();
+    with_query::<(&AiId, &DamageTaken), (), _>(world, |query| {
+        for (id, t) in query.iter(world) {
+            let ok = |m: &crate::TakenMult| {
+                m.mult.is_finite()
+                    && m.mult >= 0.0
+                    && m.left.is_none_or(f32::is_finite)
+                    && m.then.is_none_or(|b| b.is_finite() && b >= 0.0 && m.left.is_some())
+            };
+            if let Some(m) = t.0.iter().find(|m| !ok(m)) {
+                bad.note(*id, || {
+                    format!(
+                        "DamageTaken `{}` mult = {}, left = {:?}, then = {:?}: a finite mult >= 0, a finite time, and a base only under a window",
+                        m.key, m.mult, m.left, m.then
+                    )
+                });
+            } else if let Some(w) = t.0.windows(2).find(|w| w[0].key >= w[1].key) {
+                bad.note(*id, || format!("DamageTaken keys `{}`, `{}` are not sorted and unique", w[0].key, w[1].key));
             }
         }
     });

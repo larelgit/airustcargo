@@ -66,6 +66,11 @@ pub(crate) struct Grid {
 }
 
 impl Grid {
+    /// How many colliders are on the list every query reads.
+    pub(crate) fn wide_len(&self) -> usize {
+        self.wide.len()
+    }
+
     pub(crate) fn insert(&mut self, slot: u32, cells: Cells) {
         match cells {
             Cells::Wide => self.wide.push(slot),

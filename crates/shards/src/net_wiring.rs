@@ -7,7 +7,7 @@ use serde_json::json;
 use shards_motion::{ColliderId, ColliderIds};
 use shards_action::combat::{Blocked, Damaged, Died, Evaded, GuardBroken, Parried, PerfectEvaded, Reacted, Staggered};
 use shards_action::machine::{ActionRejected, ActionStarted, Healed, Telegraph};
-use shards_action::{ActionSound, PairEnded, PairStarted};
+use shards_action::{ActionSound, BarrierGranted, PairEnded, PairStarted};
 use shards_net::{NetEventAppExt, NetHooks};
 use shards_npc::{AttackToken, NavAgent, NpcDrive, Perceived};
 use shards_world::ActiveRegion;
@@ -31,6 +31,8 @@ impl Plugin for EngineNetPlugin {
             .net_event::<Staggered>()
             .net_event::<Died>()
             .net_event::<Healed>()
+            // The HUD shows a barrier when it is granted; nothing of it is predicted.
+            .net_event::<BarrierGranted>()
             .net_event::<ActionStarted>()
             .net_event::<ActionRejected>()
             .net_event::<Telegraph>()

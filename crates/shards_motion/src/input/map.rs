@@ -89,6 +89,12 @@ pub enum Binding {
         #[serde(default = "one")]
         scale: f32,
     },
+    /// The mouse wheel as a 2D axis: this frame's scroll times `scale`, `y` up (away from the
+    /// player), `x` a tilt to the right. A notch is one line, or the pixels a touchpad sends.
+    MouseWheel {
+        #[serde(default = "one")]
+        scale: f32,
+    },
 }
 
 /// A physical input without its settings, to tell whether two bindings use the same one.
@@ -100,6 +106,7 @@ enum Physical {
     PadAxis(GamepadAxis),
     Stick(Stick),
     MouseMotion,
+    MouseWheel,
 }
 
 impl Binding {
@@ -118,6 +125,7 @@ impl Binding {
             }
             Binding::Stick { stick, .. } => vec![Physical::Stick(stick)],
             Binding::MouseMotion { .. } => vec![Physical::MouseMotion],
+            Binding::MouseWheel { .. } => vec![Physical::MouseWheel],
         }
     }
 
@@ -138,7 +146,21 @@ impl Binding {
                 | Binding::Buttons2D { .. }
                 | Binding::Stick { .. }
                 | Binding::MouseMotion { .. }
+                | Binding::MouseWheel { .. }
         )
+    }
+
+    /// Why this binding cannot be `action`'s, if it cannot. `lock_switch` is read as an axis (its
+    /// sign is the side the lock moves to), so a button binding on it would make a press with no
+    /// side, which does nothing: the wheel, a key pair, a stick or a gamepad axis are what it takes.
+    pub fn refused_for(&self, action: &str) -> Option<String> {
+        (action == shards_core::input_names::LOCK_SWITCH && !self.is_axis()).then(|| {
+            format!(
+                "{self} is a button, and `{action}` is read as an axis (its sign is the side the lock moves to); \
+                 bind it to MouseWheel(), KeyAxis(neg: KeyQ, pos: KeyE), GamepadAxis(axis: ...) or Stick(stick: ...) \
+                 (a keyboard \"next target\" action is not there yet)"
+            )
+        })
     }
 
     /// The binding as the text of a content file: `Key(Space)`, `Mouse(Left)`,
@@ -176,6 +198,7 @@ impl Binding {
             }
             Binding::Stick { stick, .. } => format!("{stick:?} Stick"),
             Binding::MouseMotion { .. } => "Mouse".to_owned(),
+            Binding::MouseWheel { .. } => "Mouse Wheel".to_owned(),
         }
     }
 
@@ -186,7 +209,7 @@ impl Binding {
                 "`{text}` is not a binding ({e}); write Key(KeyE), Mouse(Left), GamepadButton(South), \
                  GamepadAxis(axis: LeftStickX), KeyAxis(neg: KeyA, pos: KeyD), \
                  Keys2D(up: KeyW, down: KeyS, left: KeyA, right: KeyD), \
-                 Buttons2D(up: DPadUp, down: DPadDown, left: DPadLeft, right: DPadRight), Stick(stick: Left) (optionally deadzone, scale, scale_x: Some(n), scale_y: Some(n), curve) or MouseMotion()"
+                 Buttons2D(up: DPadUp, down: DPadDown, left: DPadLeft, right: DPadRight), Stick(stick: Left) (optionally deadzone, scale, scale_x: Some(n), scale_y: Some(n), curve), MouseMotion() or MouseWheel()"
             )
         })?;
         binding.check().map_err(|e| format!("`{text}`: {e}"))?;
@@ -428,6 +451,9 @@ impl InputMap {
     /// takes it over instead.
     pub fn rebind(&mut self, context: &str, action: &str, slot: usize, binding: Binding) -> Result<(), RebindError> {
         binding.check().map_err(RebindError::Invalid)?;
+        if let Some(why) = binding.refused_for(action) {
+            return Err(RebindError::Invalid(why));
+        }
         if let Some(other) = self.used_by(context, &binding, action) {
             return Err(RebindError::Conflict { context: context.to_owned(), binding, action: other.to_owned() });
         }
@@ -439,6 +465,9 @@ impl InputMap {
     pub fn rebind_taking(&mut self, context: &str, action: &str, slot: usize, binding: Binding) -> Result<Vec<String>, RebindError> {
         // Check the binding and the target first: a mistake must not strip another action for nothing.
         binding.check().map_err(RebindError::Invalid)?;
+        if let Some(why) = binding.refused_for(action) {
+            return Err(RebindError::Invalid(why));
+        }
         let bound = self.action_mut(context, action)?.bindings.len();
         if slot > bound {
             return Err(RebindError::BadSlot { action: action.to_owned(), slot, bound });
@@ -572,6 +601,9 @@ impl ContentDef for InputMap {
                     if let Err(e) = binding.check() {
                         refs.error(format!("context `{}`: action `{}`: {e}", ctx.name, action.action));
                     }
+                    if let Some(why) = binding.refused_for(&action.action) {
+                        refs.error(format!("context `{}`: action `{}`: {why}", ctx.name, action.action));
+                    }
                 }
             }
             if ctx.name.is_empty() {
@@ -641,6 +673,8 @@ impl InputMap {
             ActionBinding::new("use_item", [Key(KeyCode::KeyC), Pad(GamepadButton::DPadDown)]),
             ActionBinding::new("interact", [Key(KeyCode::KeyE), Pad(GamepadButton::North)]).press_held(),
             ActionBinding::new("lock_on", [Key(KeyCode::Tab), Mouse(MouseButton::Middle), Pad(GamepadButton::RightThumb)]),
+            // The wheel switches the lock-on target (the camera turns it into `lock_switch` presses).
+            ActionBinding::new("lock_switch", [Binding::MouseWheel { scale: 1.0 }]),
             // Opens the game's `pause` screen (shards_ui); in a menu `back` closes it.
             ActionBinding::new("pause", [Key(KeyCode::Escape), Pad(GamepadButton::Start)]),
         ];

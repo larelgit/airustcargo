@@ -1137,3 +1137,27 @@ fn mid_pair_and_with_a_guard_press_armed() {
         step(app, 40);
     });
 }
+
+#[test]
+fn a_barrier_a_timed_multiplier_and_a_proc_gate_come_back() {
+    use shards::action::{Barrier, DamageTaken, ProcGates};
+    // The player (a `bodystate` kit) has a barrier of 30 and the skeleton takes x1.35 for 3 s; the
+    // player's frost jab has just procced the chill on the skeleton, so its proc gate runs.
+    let mut app = sparring_pair();
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "Fighter", "path": "moveset", "value": "bodystate"}));
+    ok(&mut app, "barrier", json!({"id": PLAYER, "amount": 30, "seconds": 5}));
+    ok(&mut app, "damage_taken", json!({"id": "e7", "key": "core", "mult": 1.35, "seconds": 3}));
+    ok(&mut app, "use_technique", json!({"slot": 2}));
+    ok(&mut app, "step", json!({"ticks": 60, "until": [{"journal": "e7 spar_chill applied"}]}));
+    step(&mut app, 3);
+    assert_eq!(get::<Barrier>(&app, PLAYER).amount, 30.0);
+    assert!(get::<DamageTaken>(&app, "e7").get("core").is_some_and(|m| m.mult == 1.35 && m.left.is_some()));
+    assert!(get::<ProcGates>(&app, "e7").gated("spar_chill"), "the gate is closed");
+    assert_continues_alike("a barrier, a multiplier and a gate", app, |app| {
+        // The frost jab again inside the gate (swallowed), then time past all three timers.
+        step(app, 20);
+        ok(app, "use_technique", json!({"slot": 2}));
+        step(app, 30);
+        step(app, 250);
+    });
+}

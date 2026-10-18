@@ -12,11 +12,14 @@ use serde::Deserialize;
 use shards_content::ContentDb;
 use shards_core::input_names::{BLOCK, DODGE, HEAVY, LIGHT, PARRY, TECHNIQUE, USE_ITEM};
 use shards_core::{flat, Intent, NetRole, Order, Predicted};
+use shards_motion::camera::{LockOnDef, Side};
 
+use crate::body::{clear_barrier, clear_damage_taken, describe_damage_taken, extend_damage_taken, grant_barrier, set_damage_taken, Barrier, DamageTaken};
 use crate::combat::{react, revive, stagger, Reaction, StaggerCause};
 use crate::context::{forget, remember, resolve as resolve_context};
 use crate::def::{ActionDef, BufferMode, CombatTuning, MovesetDef, Steer, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team};
+use crate::lock::{may_lock_on, pick_for_body, release_lock, switch_lock_of, switch_rules, take_lock};
 use crate::machine::{
     buffer_press, can_start, fits_buffer, press_life, understands, ActionState, FighterView, Healed, InputBuffer, Queued,
 };
@@ -35,6 +38,8 @@ pub(crate) fn register(app: &mut App) {
         .add_ai_tool("attack", Scope::Player, attack)
         .add_ai_tool("god", Scope::Dev, god)
         .add_ai_tool("heal", Scope::Dev, heal)
+        .add_ai_tool("barrier", Scope::Dev, barrier)
+        .add_ai_tool("damage_taken", Scope::Dev, damage_taken)
         .add_ai_tool("stagger", Scope::Dev, stagger_tool)
         .add_ai_tool("react", Scope::Dev, react_tool)
         .add_ai_tool("remember", Scope::Dev, remember_tool)
@@ -374,43 +379,73 @@ fn require_input(world: &World, me: Entity, input: &str, prefix: &str, what: &st
     })
 }
 
-/// Lock on to a target (your attacks and facing follow it), the nearest enemy, or let
-/// go with `off`.
+/// Lock on to a target (your attacks and facing follow it), or to the best one you can see,
+/// or let go with `off`; `side` moves the lock you hold to the next target on that side.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct LockOnArgs {
     pub target: Option<Id>,
     /// Release the lock-on.
     #[serde(default)]
     pub off: bool,
+    /// Move the lock you hold to the next target on this side, seen from you: `left` or
+    /// `right` (the nearest angle past a small dead band; only what you can see).
+    pub side: Option<Side>,
 }
 
 fn lock_on(In(call): In<Call<LockOnArgs>>, world: &mut World) -> ToolResult {
     let me = me(world, &call.caller)?;
     let here = world.get::<Transform>(me).map(|t| t.translation).unwrap_or_default();
     if call.args.off {
-        world.get_mut::<Intent>(me).ok_or("no Intent")?.target = None;
+        world.get::<Intent>(me).ok_or("no Intent")?;
+        release_lock(world, me);
         return Ok("ok: lock-on released".into());
     }
-    let target = match call.args.target {
-        Some(id) => {
+    // Without a `lock_on` definition: the nearest living enemy within the combat tuning's
+    // range, and any target asked for by id (as before the lock-on rules).
+    let rules = LockOnDef::active(world.get_resource::<ContentDb>()).cloned();
+    if let Some(side) = call.args.side {
+        if call.args.target.is_some() {
+            return Err("pass `target` or `side`, not both: `side` moves the lock you hold".into());
+        }
+        let switch = switch_rules(world);
+        return match switch_lock_of(world, me, side, &switch) {
+            Ok((from, to)) => Ok(format!("ok: locked on {to} (switched {} from {from}){}", side.name(), where_is(world, here, to))),
+            Err(None) => Err(format!("you hold no lock to move {}; lock on first (`lock_on`, or `lock_on target=eN`)", side.name())),
+            Err(Some(from)) => Err(format!(
+                "nobody you can see to the {} of {from} within {:.0}m; the lock stays on {from}",
+                side.name(),
+                switch.range
+            )),
+        };
+    }
+    let target = match (call.args.target, &rules) {
+        (Some(id), rules) => {
             let e = id.entity(world)?;
             if e == me {
                 return Err("you cannot lock on to yourself".into());
             }
+            if let Some(def) = rules {
+                // What the check would take away at once, and what the pick would never name.
+                may_lock_on(world, me, e, id.0, def)?;
+            }
             id.0
         }
-        None => {
+        (None, Some(def)) => pick_for_body(world, me, def)
+            .ok_or_else(|| format!("nothing you can see within {:.0}m to lock on to; pass `target`", def.range))?,
+        (None, None) => {
             let range = CombatTuning::of(world.resource::<ContentDb>()).lock_on_range;
             nearest_enemy(world, me, here, range)
                 .ok_or_else(|| format!("no enemy within {range:.0}m to lock on to; pass `target`"))?
         }
     };
+    take_lock(world, me, target);
+    Ok(format!("ok: locked on {target}{}", where_is(world, here, target)))
+}
+
+/// ` (6.2m N)`: where `target` is from `here`, or nothing when it has no position.
+fn where_is(world: &World, here: Vec3, target: AiId) -> String {
     let there = world.resource::<AiIndex>().get(target).and_then(|e| world.get::<Transform>(e)).map(|t| t.translation);
-    world.get_mut::<Intent>(me).ok_or("no Intent")?.target = Some(target);
-    Ok(match there {
-        Some(p) => format!("ok: locked on {target} ({})", relative(here, p)),
-        None => format!("ok: locked on {target}"),
-    })
+    there.map_or(String::new(), |p| format!(" ({})", relative(here, p)))
 }
 
 /// The nearest living hostile fighter within `range`, lowest id on ties.
@@ -534,6 +569,91 @@ fn heal(In(call): In<Call<HealArgs>>, world: &mut World) -> ToolResult {
     let revived = revive(world, e);
     world.trigger(Healed { entity: e, amount: gained, hp });
     Ok(format!("healed {who} to {hp:.0}{}", if revived { ", revived" } else { "" }))
+}
+
+/// Grant `id` (default: you) a barrier that takes damage before health: the larger of its pool and
+/// `amount`, for `seconds`. `amount=0` removes it.
+#[derive(Deserialize, JsonSchema, Default)]
+pub struct BarrierArgs {
+    pub id: Option<Id>,
+    /// Damage it absorbs (health points, not a share). 0 removes the barrier.
+    pub amount: f32,
+    /// Seconds it lasts. Required unless `amount` is 0.
+    pub seconds: Option<f32>,
+}
+
+fn barrier(In(call): In<Call<BarrierArgs>>, world: &mut World) -> ToolResult {
+    let e = dev_target(world, &call.caller, call.args.id)?;
+    let who = label(world, e);
+    let amount = call.args.amount;
+    if !(amount >= 0.0 && amount.is_finite()) {
+        return Err(format!("amount {amount} must be a number >= 0 (0 removes the barrier)"));
+    }
+    if amount == 0.0 {
+        clear_barrier(world, e);
+        return Ok(format!("{who} has no barrier"));
+    }
+    let seconds = call.args.seconds.ok_or("seconds is required with an amount above 0 (barrier id=e5 amount=20 seconds=8)")?;
+    if !(seconds > 0.0 && seconds.is_finite()) {
+        return Err(format!("seconds {seconds} must be a number above 0"));
+    }
+    if world.get::<Dead>(e).is_some() {
+        return Err(format!("{who} is dead; a barrier is not granted to the dead"));
+    }
+    if world.get::<Health>(e).is_none() {
+        return Err(format!("{who} has no Health; a barrier only guards health (pick a fighter)"));
+    }
+    grant_barrier(world, e, amount, seconds);
+    let b = world.get::<Barrier>(e).copied().unwrap_or_default();
+    Ok(format!("{who} has a barrier of {:.0} for {:.1}s", b.amount, b.left))
+}
+
+/// Set a named multiplier on the damage `id` (default: you) takes. The key is replaced; the product of
+/// all keys multiplies every hit.
+#[derive(Deserialize, JsonSchema, Default)]
+pub struct DamageTakenArgs {
+    pub id: Option<Id>,
+    /// The multiplier's name (`core`).
+    pub key: String,
+    /// The multiplier (1.35: a third more damage). Required unless `clear` is true.
+    pub mult: Option<f32>,
+    /// Seconds it lasts; none: until cleared.
+    pub seconds: Option<f32>,
+    /// true removes the key instead.
+    pub clear: Option<bool>,
+    /// true keeps the later end of a window the key already holds, and a permanent set never cuts a
+    /// timed one short (`extend_damage_taken`). Default false: the key is replaced.
+    pub keep_later: Option<bool>,
+}
+
+fn damage_taken(In(call): In<Call<DamageTakenArgs>>, world: &mut World) -> ToolResult {
+    let e = dev_target(world, &call.caller, call.args.id)?;
+    let who = label(world, e);
+    let key = call.args.key.as_str();
+    if key.is_empty() {
+        return Err("key must be a name, e.g. key=core".into());
+    }
+    if call.args.clear.unwrap_or(false) {
+        clear_damage_taken(world, e, key);
+        return Ok(format!("{who} takes no `{key}` multiplier"));
+    }
+    let mult = call.args.mult.ok_or("mult is required unless clear=true (damage_taken key=core mult=1.35 seconds=3)")?;
+    if !(mult >= 0.0 && mult.is_finite()) {
+        return Err(format!("mult {mult} must be a number >= 0"));
+    }
+    if let Some(s) = call.args.seconds
+        && !(s > 0.0 && s.is_finite())
+    {
+        return Err(format!("seconds {s} must be a number above 0 (clear=true removes the key)"));
+    }
+    let changed = if call.args.keep_later.unwrap_or(false) {
+        extend_damage_taken(world, e, key, mult, call.args.seconds)
+    } else {
+        set_damage_taken(world, e, key, mult, call.args.seconds);
+        true
+    };
+    let now = world.get::<DamageTaken>(e).map(describe_damage_taken).unwrap_or_default();
+    Ok(format!("{who} {}: {now}", if changed { "now" } else { "unchanged, the timed window runs on" }))
 }
 
 /// Stagger a fighter now (its moveset's `stagger` action). `poise=true` breaks its poise too, as
