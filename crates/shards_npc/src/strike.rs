@@ -21,7 +21,7 @@
 
 use ai_core::{AiId, SimRng, SimTick};
 use bevy::prelude::*;
-use shards_action::{can_start, ActionDef, ActionStarted, ActionState, Fighter, FighterView, InputBuffer};
+use shards_action::{can_start, ActionDef, ActionStarted, ActionState, Fighter, InputBuffer};
 use shards_content::ContentDb;
 use shards_core::NetRole;
 
@@ -181,16 +181,8 @@ pub(crate) fn strike_pressed(db: &ContentDb, f: &crate::director::FightingReadOn
     if director.min_spacing <= 0.0 {
         return false;
     }
-    let view = FighterView {
-        db,
-        moveset: &f.fighter.moveset,
-        state: f.state,
-        stamina: f.stamina,
-        cooldowns: f.cooldowns,
-        charges: f.charges,
-        held: &f.drive.held,
-        dead: f.dead,
-    };
+    // No leap site: a leap is not judged for its landing here (the planner and the director did when they granted the strike).
+    let view = crate::director::npc_view(db, f.fighter, f.state, &f.drive.held, f.dead, (f.stamina, f.cooldowns, f.charges), f.motion, None);
     f.drive.press.iter().any(|input| match can_start(&view, input, dt) {
         Ok(start) => director.is_strike(&tags_for(db, f.npc, &f.fighter.moveset, &start.action)),
         Err(_) => false,

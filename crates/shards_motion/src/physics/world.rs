@@ -931,6 +931,17 @@ impl PhysicsWorld {
         self.volumes_containing(point, filter).filter_map(|c| Some((c.entity, c.volume.clone()?))).collect()
     }
 
+    /// The surface (the top) of the highest water volume containing `point`; `None` where there is
+    /// no water. The controller asks it 5 cm above the feet; a landing search (a leap that must
+    /// not come down in deep water) asks it at the landing.
+    #[expect(clippy::disallowed_methods, reason = "water volumes are colliders (a voxel field is never a volume): the surface is the box's top")]
+    pub fn water_surface_at(&self, point: Vec3) -> Option<f32> {
+        self.volumes_containing(point, None)
+            .filter(|volume| matches!(volume.volume, Some(VolumeKind::Water)))
+            .map(|volume| volume.bounds().1.y)
+            .reduce(f32::max)
+    }
+
     pub(crate) fn volumes_containing<'a>(
         &'a self,
         point: Vec3,

@@ -88,6 +88,7 @@ mod tests {
             run: run_of("roll", 4),
             confirmed: false,
             extras: None,
+            leap: None,
         };
         assert_eq!(shown_run(&host, Some(&shown), true).map(|r| r.action.as_str()), Some("roll"), "the action it shows");
         assert_eq!(shown_run(&host, None, true), None, "shows none: moves free, turns free");

@@ -1,0 +1,43 @@
+// Body and motion (B2c), for the `mover` and `burrower` movesets (`body.moveset.ron`) and
+// `body_motion.scenario`: a leap with a landing search, walking while a span is open, a burrow
+// (intangible, passing through bodies) and a stroke, the one action that starts in water. Net ids 126-129.
+{
+    // Crouches 0.3 s, then leaps 1.2 m up and up to 6 m ahead (at least 1.5 m, toward the lock-on target
+    // as far as its edge), landing within 1.5 m below or 0.6 m above where it stands and not in water
+    // more than 1 m deep; the shock of the landing hits around it. The body's own gravity (20) makes
+    // the flight 0.69 s, the length of its displacement.
+    "spar_leap": (
+        net_id: 126,
+        phases: [("crouch", 0.3), ("air", 0.7), ("land", 0.4)],
+        cost: (stamina: 15, cooldown: 3.0),
+        hits: [(span: Secs(1.0, 1.1), shape: Circle(radius: 2.5), damage: 12, poise: 10, reaction: 3)],
+        displacement: [(0.3, 0.0), (1.0, 6.0)],
+        leap: (height: 1.2, at: 0.3, search: (min: 1.5, max: 6.0, step: 0.5, max_rise: 0.6, max_drop: 1.5,
+               probe_height: 1.0, lift: 0.05, toward_target: true, max_water_depth: 1.0)),
+    ),
+    // Walks at 35% of its speed while it spins.
+    "spar_spin": (
+        net_id: 127,
+        phases: [("windup", 0.2), ("spin", 1.2), ("recovery", 0.3)],
+        cost: (stamina: 20),
+        hits: [(span: Phase("spin"), shape: Circle(radius: 1.8), damage: 8, poise: 5, reaction: 1)],
+        walk: [(Phase("spin"), 0.35)],
+    ),
+    // Underground for 0.7 s: nothing hits it, and it passes through other bodies.
+    "burrow": (
+        net_id: 128,
+        phases: [("dig", 0.4), ("under", 0.7), ("emerge", 0.5)],
+        cost: (cooldown: 1.0),
+        intangible: [Phase("under")],
+        ghost: true,
+        tags: ["reposition"],
+    ),
+    // A swimmer's stroke: the only thing the `mover` moveset starts in water.
+    "spar_stroke": (
+        net_id: 129,
+        phases: [("stroke", 0.5)],
+        cost: (stamina: 5),
+        steer: Move,
+        tags: ["afloat"],
+    ),
+}

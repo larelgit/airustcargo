@@ -1,0 +1,26 @@
+// The movesets of `body_motion.scenario` (B2c), which gives them to the player and to a skeleton for its
+// length: the player's kit with a leap, a spin, a burrow and a stroke (in water only an `afloat`
+// action starts), and a monster that only burrows.
+{
+    "mover": (
+        inputs: {
+            "light": "spar_jab",
+            "heavy": "spar_slam",
+            "dodge": "spar_roll",
+            "block": "spar_guard",
+            "technique.1": "spar_leap",
+            "technique.2": "spar_spin",
+            "technique.3": "spar_stroke",
+            "technique.4": "burrow",
+        },
+        stagger: "player_stagger",
+        death: "player_death",
+        only_in: [(Water, ["afloat"])],
+    ),
+    "burrower": (
+        inputs: {"light": "burrow"},
+        stagger: "skeleton_stagger",
+        hit: "skeleton_flinch",
+        death: "skeleton_death",
+    ),
+}

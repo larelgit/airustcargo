@@ -34,7 +34,7 @@ use std::fmt;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::{ContentDef, Refs};
-use shards_motion::SprintResume;
+use shards_motion::{MotionMode, SprintResume};
 
 use crate::status::StatusDef;
 
@@ -521,6 +521,50 @@ pub struct ChargeDef {
     pub until: Option<f32>,
 }
 
+/// A leap ([`ActionDef::leap`]).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LeapDef {
+    /// Height of the arc (m): the body is launched up at `at` so that it peaks this high (with its
+    /// own gravity, [`Launch`](shards_motion::Launch)).
+    pub height: f32,
+    /// Seconds into the action of the launch; the body must stand on the ground then (or a
+    /// jump's coyote time from it) or nothing launches and the action goes on.
+    pub at: f32,
+    /// Choose the distance when the action starts; without it the authored `displacement` is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<LeapSearch>,
+}
+
+/// How a leap picks where it lands ([`LeapDef::search`], [`crate::leap_distance`]): candidate
+/// distances from the farthest to the nearest, the first whose landing point is clear and level
+/// enough wins.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LeapSearch {
+    /// The shortest leap (m); a leap with no landing from `max` down to here is refused.
+    pub min: f32,
+    pub max: f32,
+    /// How much shorter each next candidate is.
+    pub step: f32,
+    /// How much higher (m) the landing may be than the feet.
+    pub max_rise: f32,
+    /// How much lower.
+    pub max_drop: f32,
+    /// Height (m) of the wall ray above the feet.
+    pub probe_height: f32,
+    /// The body is placed this far above the floor for the overlap test.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub lift: f32,
+    /// With a lock-on target: leap toward it, as far as its edge.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub toward_target: bool,
+    /// A landing where the water is deeper than this (m) is refused. `None`: water is no reason.
+    /// The depth is the top of the highest water volume at the landing point above the floor there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_water_depth: Option<f32>,
+}
+
 /// How an action's stamina cost gates its start.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StaminaMode {
@@ -658,6 +702,22 @@ pub struct ActionDef {
     /// roll that moves the body without turning it).
     #[serde(default, skip_serializing_if = "Face::is_run")]
     pub face: Face,
+    /// A leap: a launch up at `leap.at` (the body must stand on the ground then) and, with a
+    /// `search`, a distance chosen when the action starts (`displacement` is scaled to it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leap: Option<LeapDef>,
+    /// The body walks while a span is open, at this share of its walking speed (the largest of the
+    /// spans open in a tick); the action's own `displacement` still applies, and outside every span
+    /// the action owns the body. Empty: `move_speed` decides (the old rule). Not both.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub walk: Vec<(Span, f32)>,
+    /// Hits find nothing while a span is open (burrowed): no hit, no ledger mark, no pair.
+    /// Sampled like `iframes`, over the whole tick ([`ActionDef::intangible_in`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub intangible: Vec<Span>,
+    /// While intangible the body also passes through other characters ([`Ghost`](shards_motion::Ghost)).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub ghost: bool,
 }
 
 /// What a press turns into when a cancel window allows it.
@@ -834,6 +894,28 @@ impl ActionDef {
             .filter(|(span, _)| self.span(span).is_some_and(|w| touches(w, prev, t)))
             .map(|(_, rate)| *rate)
             .max_by(f32::total_cmp)
+    }
+
+    /// The share of its walking speed the body walks at in the tick `(prev, t]`: the largest of the
+    /// `walk` spans open in it; `None` when none is (the action owns the body).
+    pub fn walk_factor(&self, prev: f32, t: f32) -> Option<f32> {
+        self.walk
+            .iter()
+            .filter(|(span, _)| self.span(span).is_some_and(|w| touches(w, prev, t)))
+            .map(|(_, m)| *m)
+            .max_by(f32::total_cmp)
+    }
+
+    /// Whether an `intangible` span is open in the tick `(prev, t]` (the tick counts as a whole, like
+    /// `iframes`): hits, pairs and perception find nothing of the body.
+    pub fn intangible_in(&self, prev: f32, t: f32) -> bool {
+        self.any_open(&self.intangible, prev, t)
+    }
+
+    /// Whether the body passes through other characters in the tick `(prev, t]`: the action has
+    /// `ghost` and is intangible then.
+    pub fn ghost_in(&self, prev: f32, t: f32) -> bool {
+        self.ghost && self.intangible_in(prev, t)
     }
 
     /// Whether a run of this action keeps a [`RunExtras`](crate::RunExtras): it charges, turns
@@ -1154,6 +1236,75 @@ impl Check<'_, '_, '_> {
         }
     }
 
+    /// The leap, the walk spans, the intangible spans and ghost.
+    fn body_and_motion(&mut self) {
+        let def = self.def;
+        if let Some(leap) = &def.leap {
+            if !(leap.height > 0.0 && leap.height.is_finite()) {
+                self.refs.error(format!("leap.height must be a number > 0 (is {}): the peak of the arc in metres", leap.height));
+            }
+            if !(leap.at >= 0.0 && leap.at < self.length - EPS) {
+                self.refs.error(format!(
+                    "leap.at {} must lie in the action [0, {}): it is when the body launches",
+                    leap.at,
+                    meters(self.length)
+                ));
+            }
+            if def.hold.is_some() {
+                self.refs.error("a leap and a hold loop in one action: the loop would pass the launch again; leave one out");
+            }
+            if leap.search.is_some() && (!def.turn.is_empty() || def.assist.is_some()) {
+                self.refs.error(
+                    "a leap with a search and `turn` spans or an `assist`: the run would turn away from the direction the search chose, and the landing with it; leave them out",
+                );
+            }
+            if let Some(s) = &leap.search {
+                if def.displacement_at(self.length) <= EPS {
+                    self.refs.error(
+                        "leap.search chooses a distance and scales `displacement` to it, which is empty or 0: give the action the displacement of its longest leap",
+                    );
+                }
+                for (name, v) in [
+                    ("min", s.min),
+                    ("max", s.max),
+                    ("max_rise", s.max_rise),
+                    ("max_drop", s.max_drop),
+                    ("lift", s.lift),
+                ] {
+                    self.number(&format!("leap.search.{name}"), v);
+                }
+                if !(s.step > 0.0 && s.step.is_finite()) {
+                    self.refs.error(format!("leap.search.step must be a number > 0 (is {}): each candidate is this much shorter", s.step));
+                }
+                if !(s.probe_height > 0.0 && s.probe_height.is_finite()) {
+                    self.refs.error(format!(
+                        "leap.search.probe_height must be a number > 0 (is {}): the height of the wall ray above the feet",
+                        s.probe_height
+                    ));
+                }
+                if s.min > s.max {
+                    self.refs.error(format!("leap.search.min {} is above max {}", s.min, s.max));
+                }
+                if let Some(depth) = s.max_water_depth {
+                    self.number("leap.search.max_water_depth", depth);
+                }
+            }
+        }
+        for (i, (span, m)) in def.walk.iter().enumerate() {
+            self.span(&format!("walk[{i}]"), span);
+            self.number(&format!("walk[{i}] share"), *m);
+        }
+        if !def.walk.is_empty() && def.move_speed.is_some() {
+            self.refs.error("walk and move_speed both say how the body walks during the action; give one (walk spans, or move_speed)");
+        }
+        for (i, span) in def.intangible.iter().enumerate() {
+            self.window(&format!("intangible[{i}]"), span);
+        }
+        if def.ghost && def.intangible.is_empty() {
+            self.refs.error("ghost passes through characters while intangible, and the action has no intangible span: give one, or leave ghost out");
+        }
+    }
+
     /// Charge, turn spans, assist, miss recovery, `while_held` and the cooldown key and share.
     fn timeline(&mut self, id: &str) {
         let def = self.def;
@@ -1252,6 +1403,7 @@ impl Check<'_, '_, '_> {
                 self.refs.error("cost.cooldown_if_interrupted is a share of cost.cooldown, which is 0: give the cooldown, or leave the share out");
             }
         }
+        self.body_and_motion();
     }
 }
 
@@ -1308,6 +1460,11 @@ pub struct MovesetDef {
     /// How presses wait for their action ([`BufferMode`]); default: each input its own.
     #[serde(default, skip_serializing_if = "BufferMode::is_per_input")]
     pub buffer: BufferMode,
+    /// While the body is in a motion mode named here, only actions with one of these tags start, and
+    /// a running action without one ends when the mode is entered: `[(Water, ["afloat"])]`. A list,
+    /// not a map: `MotionMode` has no `Ord`. Forced actions (a stagger, a death) are never cut.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub only_in: Vec<(MotionMode, Vec<String>)>,
     /// Statuses active at once on this fighter; `None`: `CombatTuning::max_statuses`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_statuses: Option<u32>,
@@ -1363,6 +1520,12 @@ impl MovesetDef {
     /// The action `input` starts.
     pub fn action(&self, input: &str) -> Option<&str> {
         self.inputs.get(input).map(String::as_str)
+    }
+
+    /// Whether `def` may run while the body is in motion mode `mode`: no `only_in` names the mode,
+    /// or `def` has one of its tags.
+    pub fn allows(&self, mode: MotionMode, def: &ActionDef) -> bool {
+        self.only_in.iter().filter(|(m, _)| *m == mode).all(|(_, tags)| def.tags.iter().any(|t| tags.contains(t)))
     }
 }
 
@@ -1422,6 +1585,23 @@ impl ContentDef for MovesetDef {
             refs.error(format!(
                 "guard_broken_push ({scale}, {decel}) needs a scale >= 0 and a deceleration above 0, or the push never stops"
             ));
+        }
+        for (i, (mode, tags)) in self.only_in.iter().enumerate() {
+            if self.only_in[..i].iter().any(|(other, _)| other == mode) {
+                refs.error(format!("only_in names {mode:?} twice; give each mode one list of tags"));
+            }
+            if tags.iter().any(|t| t.is_empty() || t.contains(char::is_whitespace)) {
+                refs.error(format!("only_in {mode:?} has a tag that is empty or has spaces; tags are names like `afloat`"));
+            }
+            // A tag no action of the moveset carries (a typo) would leave the body unable to act in that mode.
+            let carried: Vec<&ActionDef> = self.inputs.values().filter_map(|a| refs.get::<ActionDef>(a)).collect();
+            if carried.len() == self.inputs.len() {
+                for tag in tags.iter().filter(|t| !carried.iter().any(|d| d.tags.contains(t))) {
+                    refs.error(format!(
+                        "only_in {mode:?} names the tag `{tag}`, which no action among the inputs carries: the body could not act in that mode (a typo?)"
+                    ));
+                }
+            }
         }
         if let BufferMode::SingleSlot { priority } = &self.buffer {
             for (i, (input, _)) in priority.iter().enumerate() {
@@ -1867,6 +2047,69 @@ mod tests {
     }
 
     #[test]
+    fn validation_names_bad_body_fields() {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<ActionDef>();
+        kinds.register::<MovesetDef>();
+        let actions = r#"{
+            "a": (net_id: 1, phases: [("crouch", 0.2), ("air", 0.5)],
+                leap: (height: 0, at: 0.7, search: (min: 5, max: 2, step: 0, max_rise: -1, max_drop: 1, probe_height: 0, max_water_depth: -2))),
+            "b": (net_id: 2, phases: [("crouch", 0.2), ("air", 0.5)], displacement: [(0.7, 4.0)], leap: (height: 1, at: 0.1, search: (min: 1, max: 4, step: 0.5, max_rise: 0.5, max_drop: 1, probe_height: 1, lift: 0.05, toward_target: true, max_water_depth: 1))),
+            "c": (net_id: 3, phases: [("crouch", 0.2), ("air", 0.5)], leap: (height: 1, at: 0.1, search: (min: 1, max: 4, step: 0.5, max_rise: 0.5, max_drop: 1, probe_height: 1))),
+            "d": (net_id: 4, phases: [("spin", 1.0)], walk: [(Phase("nope"), -0.5)], move_speed: 0.5),
+            "e": (net_id: 5, phases: [("under", 1.0)], ghost: true),
+            "f": (net_id: 6, phases: [("dig", 0.3), ("under", 0.6)], intangible: [Phase("under")], ghost: true, walk: [(Phase("dig"), 0.5)]),
+            "g": (net_id: 7, phases: [("windup", 0.3), ("loop", 0.5)], hold: (input: "block", span: Phase("loop")), leap: (height: 1, at: 0.1)),
+            "h": (net_id: 8, phases: [("crouch", 0.2), ("air", 0.5)], displacement: [(0.7, 4.0)], turn: [(Phase("crouch"), 90)], leap: (height: 1, at: 0.1, search: (min: 1, max: 4, step: 0.5, max_rise: 0.5, max_drop: 1, probe_height: 1))),
+            "t": (net_id: 9, phases: [("a", 0.2)], tags: ["afloat", "glide"]),
+        }"#;
+        let movesets = r#"{
+            "twice": (inputs: {}, only_in: [(Water, ["afloat"]), (Water, ["swim"])]),
+            "blank": (inputs: {}, only_in: [(Water, ["two words"])]),
+            "typo": (inputs: {"x": "t"}, only_in: [(Water, ["afloat", "afoat"])]),
+            "fine": (inputs: {"x": "t"}, only_in: [(Water, ["afloat"]), (Glide, ["afloat", "glide"])]),
+        }"#;
+        let sources = [
+            shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
+            shards_content::db::Source { path: "content/m.moveset.ron".into(), text: movesets.into() },
+        ];
+        let db = shards_content::ContentDb::build(&kinds, &sources);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        let has = |part: &str| errors.iter().any(|e| e.contains(part));
+        assert!(has("leap.height must be a number > 0 (is 0)"), "{errors:#?}");
+        assert!(has("leap.at 0.7 must lie in the action [0, 0.7)"), "{errors:#?}");
+        assert!(has("leap.search chooses a distance and scales `displacement` to it, which is empty or 0"), "{errors:#?}");
+        assert!(has("leap.search.max_rise must be a number >= 0 (is -1)") && has("leap.search.step must be a number > 0 (is 0)"), "{errors:#?}");
+        assert!(has("leap.search.probe_height must be a number > 0") && has("leap.search.min 5 is above max 2"), "{errors:#?}");
+        assert!(has("leap.search.max_water_depth must be a number >= 0 (is -2)"), "{errors:#?}");
+        assert!(has("action `c`: leap.search chooses a distance"), "{errors:#?}");
+        assert!(!has("action `b`"), "{errors:#?}");
+        assert!(has("walk[0] names an unknown phase `nope`") && has("walk[0] share must be a number >= 0"), "{errors:#?}");
+        assert!(has("walk and move_speed both say how the body walks"), "{errors:#?}");
+        assert!(has("action `e`: ghost passes through characters while intangible"), "{errors:#?}");
+        assert!(!has("action `f`"), "{errors:#?}");
+        assert!(has("action `g`: a leap and a hold loop in one action"), "{errors:#?}");
+        assert!(has("action `h`: a leap with a search and `turn` spans or an `assist`"), "{errors:#?}");
+        assert!(has("moveset `typo`: only_in Water names the tag `afoat`") && !has("moveset `typo`: only_in Water names the tag `afloat`"), "{errors:#?}");
+        assert!(has("moveset `twice`: only_in names Water twice"), "{errors:#?}");
+        assert!(has("moveset `blank`: only_in Water has a tag that is empty or has spaces"), "{errors:#?}");
+        assert!(!has("moveset `fine`"), "{errors:#?}");
+    }
+
+    #[test]
+    fn only_in_lets_the_tagged_actions_through_in_the_named_mode() {
+        let moveset: MovesetDef = ron::Options::default()
+            .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+            .from_str(r#"(inputs: {}, only_in: [(Water, ["afloat"])])"#)
+            .unwrap();
+        let tagged = def(r#"(net_id: 1, phases: [("a", 0.2)], tags: ["afloat", "x"])"#);
+        let plain = def(r#"(net_id: 2, phases: [("a", 0.2)])"#);
+        assert!(moveset.allows(MotionMode::Water, &tagged));
+        assert!(!moveset.allows(MotionMode::Water, &plain));
+        assert!(moveset.allows(MotionMode::Ground, &plain), "other modes are not named");
+    }
+
+    #[test]
     fn timeline_fields_keep_old_json() {
         let d = def(
             r#"(net_id: 1, phases: [("windup", 0.2), ("active", 0.1)], cost: (stamina: 10, cooldown: 1),
@@ -1884,6 +2127,11 @@ mod tests {
             "cooldown_key",
             "cooldown_if_interrupted",
             "face",
+            "leap",
+            "walk",
+            "intangible",
+            "ghost",
+            "only_in",
         ] {
             assert!(!json.contains(&format!("\"{new}\"")), "`{new}` leaked into {json}");
         }
