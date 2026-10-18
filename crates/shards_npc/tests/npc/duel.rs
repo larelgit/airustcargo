@@ -850,12 +850,12 @@ fn the_planner_presses_only_on_decision_ticks_when_the_plan_says_so() {
     assert!(jabs.iter().any(|t| !decided.contains(t)), "{jabs:?} vs {decided:?}");
 }
 
-/// The ticks at which the duelist was granted its tokens, under a spacing that never runs out.
+/// The ticks at which the duelist was granted its tokens.
 fn grant_ticks(plan: &str, ticks: u64) -> Vec<u64> {
-    let (mut app, a, blocker) = blocked(plan, "grunt", 3);
+    let (mut app, a) = duel_with("grunt", plan);
     let mut since: Vec<u64> = Vec::new();
     for _ in 0..ticks {
-        step_blocked(&mut app, blocker, 1);
+        step(&mut app, 1);
         if let Some(g) = app.world().get::<shards_npc::AttackToken>(a).unwrap().held.as_ref()
             && since.last() != Some(&g.since)
         {
@@ -867,7 +867,7 @@ fn grant_ticks(plan: &str, ticks: u64) -> Vec<u64> {
 
 #[test]
 fn an_unused_token_costs_the_rest_unless_the_plan_says_it_does_not() {
-    // Every strike is held back, so the token comes back unused after the director's patience (3 s).
+    // The only option is out of reach, so the token comes back unused after the director's patience (3 s).
     let costly = grant_ticks("unused_default", 900);
     let free = grant_ticks("unused_free", 900);
     assert!(costly.len() >= 3 && free.len() >= 3, "{costly:?} {free:?}");
@@ -964,4 +964,32 @@ fn the_open_options_stay_as_decided_between_two_decisions() {
         let open = app.world().get::<shards_npc::NpcOptions>(grunt).map(|o| o.allowed.clone());
         assert_eq!(open, Some(vec!["light".to_owned()]), "tick {}", app.world().resource::<ai_core::SimTick>().0);
     }
+}
+
+#[test]
+fn a_token_is_taken_on_the_decision_tick_and_a_refused_strike_takes_none() {
+    // The Godot recipe: think + press_on_decision + gate_after_pick + in_range_only. The spacing
+    // refuses every strike here; the token is taken, used and given back inside the decision.
+    let (mut app, a, blocker) = blocked("pick_godot", "grunt_think", 11);
+    let (mut decided, mut idle, mut grants) = (Vec::<u64>::new(), 0, Vec::<u64>::new());
+    for _ in 0..600 {
+        step_blocked(&mut app, blocker, 1);
+        if let Some(d) = app.world().get::<NpcThink>(a).and_then(|t| t.decided)
+            && decided.last() != Some(&d)
+        {
+            decided.push(d);
+        }
+        if let Some(g) = app.world().get::<shards_npc::AttackToken>(a).unwrap().held.as_ref() {
+            if g.pressed.is_none() {
+                idle += 1;
+            }
+            if grants.last() != Some(&g.since) {
+                grants.push(g.since);
+            }
+        }
+    }
+    assert_eq!(idle, 0, "a token sat unused between two decisions");
+    assert!(!grants.is_empty(), "the retreats are granted");
+    assert!(grants.iter().all(|t| decided.contains(t)), "granted off the cadence: {grants:?} vs {decided:?}");
+    assert!(starts(&app, a, "jab").is_empty() && !starts(&app, a, "hop_back").is_empty());
 }

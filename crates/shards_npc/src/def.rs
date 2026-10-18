@@ -651,12 +651,12 @@ pub struct AttackPlanDef {
     /// before the roll, so the roll falls on what may start now. On: the roll ignores the
     /// spacing; if it lands on a strike the spacing holds back, the NPC does nothing this decision
     /// (no press, no second roll; the next decision rolls again), and an exempt action is never
-    /// held back. The director grants a token without looking at the spacing too.
+    /// held back. The director grants a token without looking at the spacing too, and the NPC gives it back at once, with no rest, when the roll is refused (a refused strike takes no token). Godot's whole recipe is this together with `press_on_decision`, `in_range_only: true` and a behaviour with `think`; a plan with `gate_after_pick` rolls again at each decision, as `in_range_only` does, and without a `think` cadence every tick is a decision.
     #[serde(skip_serializing_if = "is_false")]
     pub gate_after_pick: bool,
     /// The planner presses an attack, and rolls a new choice, only on the NPC's decision ticks
     /// (`BehaviorDef::think`), as the whole decision is one in Godot; between decisions it keeps
-    /// the choice it made and walks into its window. Off (the default): any tick. A behaviour
+    /// the choice it made and walks into its window. The director grants such an NPC its token on a decision tick only (the grant, the pick and the press share one tick). Off (the default): any tick. A behaviour
     /// without a `think` cadence decides every tick, so there it changes nothing.
     #[serde(skip_serializing_if = "is_false")]
     pub press_on_decision: bool,

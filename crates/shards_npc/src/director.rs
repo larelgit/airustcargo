@@ -329,7 +329,7 @@ pub(crate) fn direct(
 
     // 3. Grants, longest-waiting first.
     let inflight = InFlight::collect(npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
-    let notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), chain_note(f.chain, Some(f.buffer), tick.0))));
+    let notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), chain_note(f.chain, Some(f.buffer), tick.0))), &|d, tags| DirectorDef::of(&db, d).is_strike(tags));
     let mut asking: Vec<(u64, AiId, Entity)> = Vec::new();
     for &(id, entity) in &order {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
@@ -348,7 +348,14 @@ pub(crate) fn direct(
             continue;
         }
         let since = *f.token.asking_since.get_or_insert(tick.0);
-        asking.push((since, id, entity));
+        // With `press_on_decision` the token, like the pick and the press, is taken on the NPC's
+        // decision tick only (Godot asks the director inside the decision); it keeps its place in
+        // the queue between decisions, and no token sits idle until the next one.
+        let on_decision = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)).is_none_or(|p| !p.press_on_decision)
+            || f.think.is_none_or(|t| t.decided == Some(tick.0));
+        if on_decision {
+            asking.push((since, id, entity));
+        }
     }
     asking.sort();
     for (_, id, entity) in asking {

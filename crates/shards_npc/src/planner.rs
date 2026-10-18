@@ -20,11 +20,12 @@ use ai_core::{AiId, AiIndex, DetRng, SimRng, SimTick};
 use bevy::prelude::*;
 use shards_action::{can_start, ActionDef, FighterView, MovesetDef};
 use shards_content::ContentDb;
-use shards_core::flat;
+use shards_action::Dead;
+use shards_core::{flat, PlayerId};
 
 use crate::brain::{clamp_to_leash, salt};
 use crate::def::{AttackPlanDef, DirectorDef, SequenceBan};
-use crate::director::{order, target_of, Fighting, Grant, Targets};
+use crate::director::{order, target_of, Fighting, Grant, TokenReturned, Targets};
 use crate::strike::{chain_note, note_list, pool, spacing_ticks, strike_pressed, waiting};
 
 /// An NPC's attack history and timers: gameplay state, kept in replays.
@@ -310,17 +311,20 @@ pub(crate) fn feasible(
 /// (budget, combinations).
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
 pub(crate) fn plan_attacks(
+    mut commands: Commands,
     time: Res<Time>,
     tick: Res<SimTick>,
     rng: SimRng,
     db: Res<ContentDb>,
     index: Res<AiIndex>,
+    players: Query<(), (With<PlayerId>, Without<Dead>)>,
     targets: Targets,
     mut npcs: Query<Fighting>,
 ) {
     let dt = time.delta_secs();
+    let players = players.iter().count() as u32;
     let mut inflight = InFlight::collect(npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
-    let mut notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), chain_note(f.chain, Some(f.buffer), tick.0))));
+    let mut notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), chain_note(f.chain, Some(f.buffer), tick.0))), &|d, tags| DirectorDef::of(&db, d).is_strike(tags));
     // Presses already made this tick (a hook's, a continuation's) are starts of this tick.
     notes.extend(
         npcs.iter()
@@ -370,7 +374,8 @@ pub(crate) fn plan_attacks(
             let kept = grant.attack.as_ref().and_then(|name| options.iter().position(|o| o.name == *name));
             // In range only: choose again every tick among what fits (a boss picks what
             // reaches); else keep the choice while it stays possible.
-            let keeps = kept.filter(|&i| (!plan_def.in_range_only || !decides) && ok(&options[i]));
+            let rerolls = plan_def.in_range_only || plan_def.gate_after_pick;
+            let keeps = kept.filter(|&i| (!rerolls || !decides) && ok(&options[i]));
             match keeps {
                 Some(i) if held_back(&options[i]) => Decision::Wait(i),
                 Some(i) => Decision::Pick(i),
@@ -388,9 +393,16 @@ pub(crate) fn plan_attacks(
             Decision::Nothing => None,
             Decision::Wait(_) => {
                 // Nothing this decision: no press, no walking, no second roll; the next one rolls anew.
-                grant.attack = None;
+                // The director refused the strike, so the NPC takes no token for it (Godot's
+                // request is refused before it takes one) and pays no rest.
                 f.drive.goal = None;
-                f.token.held = Some(grant);
+                let (pool_key, entity) = (pool(&f.npc.director), f.entity);
+                let target = grant.target;
+                f.token.held = None;
+                f.token.asking_since = None;
+                let held = npcs.iter().filter(|n| n.token.held.is_some() && pool(&n.npc.director) == pool_key).count() as u32;
+                let limit = DirectorDef::of(&db, &pool_key).limit(players);
+                commands.trigger(TokenReturned { entity, target, attack: None, used: false, reason: "held back".to_owned(), held, limit });
                 continue;
             }
         };
@@ -444,7 +456,10 @@ pub(crate) fn plan_attacks(
                 grant.instance = f.state.started;
                 f.drive.press.push(o.input.clone());
                 inflight.add(grant.target, id, o.cost, o.tags.clone());
-                notes.push((id, pool(&f.npc.director), tick.0));
+                // Only a strike counts as a start for the spacing; an exempt press (a retreat) does not.
+                if director.is_strike(&o.tags) {
+                    notes.push((id, pool(&f.npc.director), tick.0));
+                }
             }
         }
         f.token.held = Some(grant);

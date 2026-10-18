@@ -117,7 +117,7 @@ pub(crate) fn chain_press(
     mut npcs: Query<Fighting>,
 ) {
     let dt = time.delta_secs();
-    let mut notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), chain_note(f.chain, Some(f.buffer), tick.0))));
+    let mut notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), chain_note(f.chain, Some(f.buffer), tick.0))), &|d, tags| DirectorDef::of(&db, d).is_strike(tags));
     // Presses already made this tick (a hook's, a continuation's) are starts of this tick.
     notes.extend(
         npcs.iter()

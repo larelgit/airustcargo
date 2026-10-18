@@ -81,9 +81,14 @@ pub(crate) fn notes_of(world: &World) -> Vec<Note> {
         return Vec::new();
     };
     let now = ai_core::sim::tick(world);
-    note_list(q.iter(world).map(|(id, npc, strike, token, chain, buffer)| {
-        (*id, npc.director.as_str(), strike, token.and_then(|t| t.held.as_ref()), chain_note(chain, buffer, now))
-    }))
+    let db = world.get_resource::<ContentDb>();
+    let is_strike = |d: &str, tags: &[String]| db.is_none_or(|db| DirectorDef::of(db, d).is_strike(tags));
+    note_list(
+        q.iter(world).map(|(id, npc, strike, token, chain, buffer)| {
+            (*id, npc.director.as_str(), strike, token.and_then(|t| t.held.as_ref()), chain_note(chain, buffer, now))
+        }),
+        &is_strike,
+    )
 }
 
 /// What [`note_list`] reads of an NPC: its id, its director, the last strike it noted, the
@@ -105,10 +110,11 @@ pub(crate) fn chain_note(chain: Option<&NpcChain>, buffer: Option<&InputBuffer>,
 
 /// The notes of NPCs given as [`NoteRow`]s: their noted strikes, and the presses that have not
 /// started yet (a planner press, a combo continuation that is a strike), from the tick pressed.
-pub(crate) fn note_list<'a>(rows: impl Iterator<Item = NoteRow<'a>>) -> Vec<Note> {
+pub(crate) fn note_list<'a>(rows: impl Iterator<Item = NoteRow<'a>>, is_strike: &dyn Fn(&str, &[String]) -> bool) -> Vec<Note> {
     let mut notes: Vec<Note> = Vec::new();
     for (id, director, strike, grant, continuing) in rows {
-        let pending = grant.filter(|g| !g.started).and_then(|g| g.pressed);
+        // An exempt press (a retreat) is no strike start: it holds nobody back, as in Godot.
+        let pending = grant.filter(|g| !g.started && is_strike(director, &g.tags)).and_then(|g| g.pressed);
         for at in strike.map(|s| s.last_start).into_iter().chain(pending).chain(continuing) {
             notes.push((id, pool(director), at));
         }
@@ -251,5 +257,25 @@ mod tests {
         assert_eq!(waiting(&notes, AiId(8), "elsewhere", 101, 42), None);
         // No spacing, no waiting.
         assert_eq!(waiting(&notes, AiId(8), "arena", 101, 0), None);
+    }
+}
+
+#[cfg(test)]
+mod note_tests {
+    use super::*;
+
+    /// A press that has not started yet is a note only when it is a strike: a retreat (exempt)
+    /// holds nobody back, neither before it starts nor after.
+    #[test]
+    fn a_pending_exempt_press_is_no_note() {
+        let grant = |tags: &[&str]| Grant {
+            pressed: Some(7),
+            tags: tags.iter().map(|t| (*t).to_owned()).collect(),
+            ..Grant::for_tests(AiId(1))
+        };
+        let (strike, retreat) = (grant(&["slash"]), grant(&["reposition"]));
+        let is_strike = |_: &str, tags: &[String]| !tags.contains(&"reposition".to_owned());
+        let rows = [(AiId(2), "d", None, Some(&strike), None), (AiId(3), "d", None, Some(&retreat), None)];
+        assert_eq!(note_list(rows.into_iter(), &is_strike), vec![(AiId(2), "d".to_owned(), 7)]);
     }
 }
