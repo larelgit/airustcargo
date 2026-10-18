@@ -6,7 +6,7 @@
 //!
 //! - no gameplay system fails and the tool does not panic;
 //! - an error says something (it is not empty), and an error for a call the schema rejects names
-//!   the tool's signature or the bad argument: an error says how to fix the call (AGENTS.md).
+//!   the tool's signature or the bad argument: an error says how to fix the call (docs/agents/watching-and-driving.md).
 //!
 //! At the end of a tool, the session's replay is played from tick 0 in a fresh game and must
 //! match: that proves every successful action call was recorded.
