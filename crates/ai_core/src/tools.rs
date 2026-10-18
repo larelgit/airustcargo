@@ -441,7 +441,11 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
     // Earlier log lines go in before the mark: they are not this call's.
     journal::drain_logs(world);
     let mark = journal::log(world, JournalKind::Agent, format!("{}: {tool} {args_text}", caller.agent));
+    // An action is the simulation's work, live between ticks as replayed inside one: what it reads
+    // counts the same in both ([`SimScope`](crate::SimScope)). The digests around it only describe.
+    let opened = if is_action { crate::scope::open(world) } else { None };
     let result = (entry.run)(world, caller, args);
+    drop(opened);
     if is_action {
         crate::replay::end_action(world);
     }

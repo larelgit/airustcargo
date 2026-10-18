@@ -150,17 +150,17 @@ are in [template/README.md](../template/README.md).
    ```
 2. **Depend on the engine by tag or commit.** In `Cargo.toml`, use a git dependency instead of the path
    (`../crates/shards`). Versions and tags are described in [CHANGELOG.md](../CHANGELOG.md). The template uses saves,
-   co-op, screens and texts, so it needs the engine of phases C–E (the future `0.4.0`). The earlier versions `0.2.0` and
-   `0.3.0` will not work. Until the maintainer sets a tag, pin a commit:
+   co-op, screens and texts, so it needs the engine of phases C–E (`0.4.0`). The earlier versions `0.2.0` and
+   `0.3.0` will not work. Pin the tag `v0.4.0`:
    ```toml
    [dependencies]
-   shards = { git = "https://github.com/larelgit/airustcargo", rev = "<hash>", default-features = false }
+   shards = { git = "https://github.com/larelgit/shards-engine", tag = "v0.4.0", default-features = false }
    ```
-   After the `v0.4.0` release, replace `rev = "<hash>"` with `tag = "v0.4.0"`. The build does not change until you change
-   `rev` or `tag` yourself. `default-features = false` is needed so that the game turns on the features (`render`,
+   To follow unreleased changes on the main branch instead, pin a commit with `rev = "<hash>"`. The build does not change
+   until you change `tag` or `rev` yourself. `default-features = false` is needed so that the game turns on the features (`render`,
    `remote`, `hot_reload`, `audio`, `gamepad`, …) in its own `[features]`. There are no other dependencies: Bevy, serde
    and schemars come through `shards` (`shards::prelude::*`, `shards::serde`, `shards::schemars`). Install the CLI at the
-   same version: `cargo install shards_cli --git … --rev <hash>` (after the release, `--tag v0.4.0`).
+   same version: `cargo install shards_cli --git … --tag v0.4.0` (or `--rev <hash>` for a pinned commit).
 3. **`main` is one line.** `shards::run` reads the command line (`--headless --seed --port --port-file --no-remote
    --paused --hz --replay --verify --windowed --check-every --check-detail --tick-budget-ms --frame-budget-ms --check-content
    --worldgen-report --seeds --bake-nav --smoke --perf`), catches `kill` and a closed terminal:
@@ -482,7 +482,7 @@ starts at tick N: the main menu moved the world`), and the session's replay stil
 | `pressed` | presses since the last tick (`Press { input, dir }`); gameplay takes them, the rest are cleared at the end of the tick |
 | `orders` | orders that last many ticks: `Order::MoveTo { target, within }`, `Order::Attack { target, input, repeat }` |
 
-The engine's input names are in `shards::core::input_names` (`jump`, `sprint`, `glide`, `dodge`, `light`, `heavy`, `block`, `parry`, `technique.N`, `use_item`, `interact`, `lock_on`); the game adds its own. `Intent` is the replay input (the engine makes `replay_input::<Intent>()` itself): changes between ticks are recorded. `PlayerId` and `LocalPlayer` mark players, and `NetRole` (`Single` by default) is groundwork for networking.
+The engine's input names are in `shards::core::input_names` (`jump`, `sprint`, `glide`, `dodge`, `light`, `heavy`, `block`, `parry`, `technique.N`, `use_item`, `interact`, `lock_on`, and `assist_off`, held while the player has turned the attack assist off); the game adds its own. `Intent` is the replay input (the engine makes `replay_input::<Intent>()` itself): changes between ticks are recorded. `PlayerId` and `LocalPlayer` mark players, and `NetRole` (`Single` by default) is groundwork for networking.
 
 **Groundwork for networking (phase C).** None of this changes a single-player game.
 
@@ -549,7 +549,7 @@ content/combat/fighters.moveset.ron: moveset `player`: inputs.light -> unknown a
 The cause is the first line; the second follows from it. The whole file adds nothing to the database only when its map is broken: a syntax error (an unpaired bracket, no comma between definitions, a cut-off value), an empty id, an id repeated within the file, or an id with a space. That is one error per file (a failure inside a definition names its id). A running game does not stop on errors: they go to the journal, and it runs with what did load (`content loaded: 2 definitions in 1 file, 1 with
 errors`); `--check-content` exits with code 1 on any error.
 
-**Reading content.** In systems, use `Content<T>` (`attacks.get("sword")`); outside them, use `ContentDb::get::<T>(id)`. Gameplay does not write content.
+**Reading content.** In systems, use `Content<T>` (`attacks.get("sword")`); outside them, use `ContentDb::get::<T>(id)`. Gameplay does not write content. A read the simulation makes is noted for the replay check `content`; read one definition by its id when that is all you need (going over a kind with `iter` or `ids` makes the whole kind count). Code that runs in the simulation's scope and is not the simulation (a describer, a picture) reads with `peek`, `peek_ids`, `peek_iter`. A kind only the picture, the sound or services outside the session read sets `const SIMULATION: bool = false;` (see "What the content check covers").
 
 **Hot reload** (`hot_reload`, on by default): an edit, a creation or a deletion of a file is checked together with the whole database. A clean edit is applied with the `content_apply` tool, so it is written to the replay on its own tick and
 the replay repeats it; the journal shows `content reloaded: combat/player.action.ron (1 definition changed)`. A broken
@@ -561,7 +561,7 @@ edit stays in the journal as an error with the file and the line, and the previo
 
 A file is applied as a whole: while even one definition in the changed file is broken (and also if it was broken since loading), the previous version applies to all of its definitions, including the valid ones, and the edit waits until the errors are fixed.
 
-The database hash is part of the replay checks: a recording made with other numbers diverges at the next check (that is expected; the reference replays are recorded again). How edits apply on the fly: movement and combat numbers take effect from the next tick; levels and prefabs are read when entities are created (new entities, for example after `spawn_prefab`, see the edit, but entities that already exist do not).
+What the session's simulation read is part of the replay checks: a recording made with other numbers in a definition it read diverges at the next check (that is expected; the reference replays are recorded again), and one it never read changes nothing ("What the content check covers"). How edits apply on the fly: movement and combat numbers take effect from the next tick; levels and prefabs are read when entities are created (new entities, for example after `spawn_prefab`, see the edit, but entities that already exist do not).
 
 **Prefabs** are entities defined as data. Components are named by short names or full paths, and their values are read through
 reflection, as in Bevy scenes; each component must have `#[derive(Reflect)]` and `#[reflect(Component)]`. Fields that
@@ -858,7 +858,7 @@ so a fast swim lock survives a walk on land, and a dry land sprint under `Fracti
 
 *Controller options for an exact rulebook (C4).* Each is content, off by default and unserialized when off, so content hashes and the reference replays do not change.
 
-- *Turning speed by who asks.* `turn_speed_deg` is the free rate. `locked_turn_speed_deg` (0: the free rate) applies while the input names a facing: a lock-on target, an aim point, or a running action's own facing (`LocomotionInput::face`). An action can set its own rate with `ActionDef::turn_speed_deg` (a raised guard); it reaches the controller through `MoveModifiers::turn_speed_deg` (`turn_at(deg)`, the lowest source wins), filled by `actions_to_modifiers` from the action the last tick left, so the rate takes hold one tick after the action starts. A swimmer keeps `swim_turn_speed_deg`. The order is: swim (in water, when set), then a stance's rate, then the locked rate, then the free one. `turn_toward_input` makes the body turn toward the movement input while there is one, not toward its velocity, so a body pressed against a wall (velocity held at 0) still turns to face it; with no input it turns toward its velocity as before. `move_info` shows `turn_free_deg`, `turn_locked_deg`, `turn_swim_deg`, `turn_toward_input` and the stance's `turn_speed_deg`.
+- *Turning speed by who asks.* `turn_speed_deg` is the free rate. `locked_turn_speed_deg` (0: the free rate) applies while the input names a facing: a lock-on target, an aim point, or a running action's own facing (`LocomotionInput::face`). An action can set its own rate with `ActionDef::turn_speed_deg` (a raised guard); it reaches the controller through `MoveModifiers::turn_speed_deg` (`turn_at(deg)`, the lowest source wins), filled by `actions_to_modifiers` from the action the last tick left, so the rate takes hold one tick after the action starts (a client's own body reads the action it shows, its `PredictedAction`, and none while it shows none, as the prediction moves it). A swimmer keeps `swim_turn_speed_deg`. The order is: swim (in water, when set), then a stance's rate, then the locked rate, then the free one. These are rates of the body only: an action's `turn` spans (B2a, "Turning" under the action timeline) turn the run's own facing, where its hits, guard and displacement point, and the controller turns the body toward that facing once a tick at the rate above. On a tick where both apply, each bounds its own: the run turns at the spans' rate, the body follows no faster than its rate, and nothing turns the body twice. An action with turn spans (and `face: Run`) names a facing on every tick, so its body follows at the locked rate when that is set; a rate below the spans' leaves the body behind its swing. `turn_toward_input` makes the body turn toward the movement input while there is one, not toward its velocity, so a body pressed against a wall (velocity held at 0) still turns to face it; with no input it turns toward its velocity as before. `move_info` shows `turn_free_deg`, `turn_locked_deg`, `turn_swim_deg`, `turn_toward_input` and the stance's `turn_speed_deg`.
 - *Water entry, in closed form.* `entry_max_speed` (m/s, 0: no brake) scales the horizontal velocity down to that speed once, in the tick the water takes the body (a run or a jump into a pool). `buoyancy_omega` (1/s, 0: the first-order drift to the float line and an entry fall held to `swim_speed`, as before) replaces the drift by a critically damped spring toward the float line, stepped by its exact solution `x(dt) = (x0 + (v0 + w x0) dt) e^(-w dt)`, `v(dt) = (v0 - w (v0 + w x0) dt) e^(-w dt)` through `ops::exp`: no step-by-step integration, so the plunge does not depend on the tick rate. With the spring the entry fall is not held to the swim speed, so a dive plunges past the float line and rises back to it; `water_max_vertical_speed` (0: `swim_speed`, so set it above `swim_speed` to let a dive plunge; with only `buoyancy_omega` the fall is still held to `swim_speed`) bounds the speed and the travel of a tick, and `water_fall_drag` slows a fall in the water as `exp(-drag t)`. Entering the water already takes the body out of the air and the ground (`MotionMode::Water`), so there is nothing to force.
 - *Climb-out.* `climb_out_min_facing` (a dot product, 0.5 is within 60 degrees; `None`: no test) needs the body to face the ledge (the direction into the wall, opposite its normal) for both the push and the jump; a land mantle is never tested. A swimmer that does not face the ledge does not climb and keeps swimming, in control; there is no search to the sides (set `turn_toward_input` so that pressing against a ledge turns the body to it). `climb_out_time` (`None`: `mantle_time`) is the length of a climb that starts in the water.
 - *Crawl lock.* The fast swim's lock that ends at a fraction of the bar with no sprint input is `swim_fast_resume: Fraction(0.25)` (see "Stamina after a dry sprint"); the lock arms when the crawl runs the bar dry and opens by itself once the bar is at a quarter, whether or not the button is held, so no emulation of a check that runs only while crawling is needed.
@@ -885,6 +885,7 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
 - `InputMap { contexts }`: context (`gameplay`, `menu`, or the game's own) → actions → bindings. A binding is one of: `Key`, `Mouse`,
   `GamepadButton`, `GamepadAxis` (dead zone, scale), `KeyAxis`, `Keys2D` (WASD as a 2D axis), `Buttons2D` (the gamepad's D-pad as a 2D axis), `Stick`,
   `MouseMotion`.
+  `Stick` has `deadzone` (radial, the rest rescaled to 0..1), `scale` for both axes, and three optional fields for stick look (C9): `scale_x` / `scale_y` (`Some(3.2)`; a per-axis scale where set, `scale` where absent) and `curve` (the exponent on the magnitude after the dead zone, `m -> m^curve`, direction kept; default 1.0 is linear; it must be above 0 and finite, otherwise a content error names the file; `rebind` and a saved `controls` string are refused the same way). A look stick that turns 3.2 units per second of yaw and 2.0 of pitch (the scale is in the `look` action's units per second) with a 1.6 response is `Stick(stick: Right, deadzone: 0.2, scale_x: Some(3.2), scale_y: Some(2.0), curve: 1.6)`. The new fields are not written while they are default, so every old `input_map` file and saved `controls` string reads and writes as before; `rebind` takes the same text.
   Action mode: `Press` (one press), `Hold` (while held), `Toggle` (a press turns it on until the next press: "hold or press" for accessibility). `directional: true` — a press carries the direction the player is moving in (a roll towards where the stick points). Slot 0 is the main binding; slot 1 and up are spares.
 - The context stack `InputContexts`: only the top one fires; `menu` blocks `gameplay` until it is removed.
 - Defaults come from content (`*.input_map.ron`, id `default`, hot reload) or from the built-in
@@ -934,6 +935,38 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
 - A real gamepad needs the feature `gamepad` (gilrs, needs libudev). Without the feature, `Gamepad` entities work if the game or a test creates them.
 
 **Camera** (`ThirdPersonCamera`, only with a window; the maths without one). Orbit with the mouse and the right stick; collision with walls (a ray from the head to the desired position pulls the camera in); lock-on: the `lock_on` key picks the target closest to the centre of the frame within the cone and range of `CameraSettings::{lock_cone_deg, lock_range}`, a look to one side switches to a neighbour, a target that leaves the range, dies or loses its `LockOnTarget` ends the lock; aim assist, and shake (`AddTrauma`; its strength, and the field of view, sensitivity and Y-axis inversion, come from the player's settings, see "Settings (E8.6)"). The chosen target is written to `Intent.target` between ticks (it is an input, and the replay records it), but the camera never clears someone else's target. **The camera is only a view:** gameplay and `observe` do not read it (`observe` sees through the eyes of the subject), so a window with the camera plays the same game as one without.
+
+**Camera numbers and offsets (C7).** The camera's feel numbers are not constants in code (the two exceptions are named below: the 30..120 field-of-view limit and the shake's noise frequencies). They are the resource `CameraTuning` (content kind `camera`, `*.camera.ron`, one map of ids to definitions; the camera reads the id `default`, hot-reloaded; without one it runs on the code defaults, which are the numbers it always had, so a game without a camera definition sees no change; a definition that is removed puts the defaults back; a game may also set the resource from code, and content that exists wins whenever it loads or changes). Missing fields take the defaults, unknown ones are an error, and `--check-content` names the file and the field of an out-of-range number. A default serializes to nothing, so adding a field never changes the hash of a definition that does not set it.
+
+| field | default (the old constant) | meaning |
+|---|---|---|
+| `pitch` | `(-0.45, 1.35)` (`PITCH`) | lowest and highest tilt, radians, positive looks down from above; within ±(π/2 − 0.02) |
+| `follow_rate` | `None`: each camera's `ThirdPersonCamera::follow_rate` (14) | how fast the focus catches up with the character, 1/s |
+| `release_factor` | `1.3` (`RELEASE_FACTOR`) | a lock the camera picked lets go at this many times its range |
+| `snap_distance` | `12` (was a constant) | a followed character farther than this from the focus (m) is a jump: the focus lands on it at once |
+| `framing.yaw_rate` / `pitch_rate` | `7` / `7` (`LOCK_FRAMING_RATE`) | how fast a locked camera turns to frame its target, 1/s |
+| `framing.pitch_target` | `None`: the pitch of the line from the target to the focus | a fixed pitch to frame at |
+| `framing.pitch_clamp` | `(0.15, 0.7)` | the range that geometric pitch is held to |
+| `framing.min_horizontal` | `0` (always frames) | nearer than this to the target (m, on the ground, from the focus) the camera stops framing |
+| `arm.radius` / `arm.min_distance` | `0.25` / `0.7` (`CAMERA_RADIUS`, `MIN_DISTANCE`) | the sphere a wall pulls in; never closer than this to the focus |
+| `arm.follow_rate` | `None`: at once | how fast the arm grows back after a wall let go of it, and how fast its nominal length follows `ThirdPersonCamera::distance`, 1/s. It always shortens at once |
+| `flick.mouse_threshold_px` | `14` (`FLICK` 0.035 rad at the standard map's 0.0025 rad/px) | horizontal mouse pixels, summed, that switch the lock-on target |
+| `flick.mouse_decay_px_s` | `None`: one frame's motion only | how fast the sum drains, px/s |
+| `flick.cooldown_s` | `0.35` (`FLICK_COOLDOWN`) | seconds before the next switch |
+| `flick.cooldown_on_miss` | `false` | whether a flick that found nobody starts the cooldown |
+| `flick.stick_threshold` | `0.75` | right-stick deflection (0..1, after the dead zone) that switches |
+| `flick.stick_rearm` | `None`: no latch | the stick must come back below this before it can switch again; a lock taken with the stick already over starts disarmed |
+| `trauma.decay` | `1.4` (`TRAUMA_DECAY`, linear) | trauma drained per second |
+| `trauma.shift_m` / `pitch_deg` / `yaw_deg` / `roll_deg` | `0.12` / `2` / `2` / `3` | the most a shake of trauma 1 moves and turns the view (scaled by trauma squared) |
+
+The ranges of `pitch`, `follow_rate`, the rates, thresholds and amplitudes are content errors when out of range (a rate must be above 0, a re-arm level below the threshold, and so on). `framing.pitch_clamp` must not have its low end above its high end; it may be wider than `pitch`, since the framed pitch is then held to the pitch limits like any other. Two things stay constants on purpose: the engine's 30..120 limit on the field of view (the player's setting is clamped to it too) and the shake's noise frequencies (the look of the noise, not a feel number).
+
+*Smoothing.* Every smoothing is the exact exponential `1 - exp(-rate * dt)` through `bevy::math::ops::exp`, so it does not depend on the frame rate (`damp`, `lock_framing`, `arm_reach`). `critically_damped_step(x, v, target, omega, dt)` is the closed form of a critically damped spring (for a landing dip: kick `v`, aim at 0); one step of `2 dt` equals two of `dt`. *The arm*: a wall pulls it in at once; once it lets go the shortfall below the nominal length shrinks at `arm.follow_rate` (the rate acts on the shortfall, so a plain zoom is smoothed once, by `arm_length`; `ThirdPersonCamera::arm_reach` is where it stood last frame, `arm_length` its nominal length), never past what is free and never closer than `arm.min_distance` (as far as the room allows). A jump of the focus (a teleport) resets it.
+
+*Flick.* The flick thresholds are in raw units, so they are the old constants only at the standard map, mouse sensitivity 1.0 and 60 Hz: before, the mouse flick read the scaled, sensitivity-adjusted axis (0.035 rad) and the stick flick also carried the frame time. Now the player's sensitivity and a binding's scale do not move the flick, and the stick flick does not depend on the frame rate. An inverted stick binding (negative scale) keeps its flipped side. If both devices flick in one frame the mouse wins and the stick is not asked. The mouse is measured in raw pixels and the stick in deflection, both from `ControlState` (`look_pointer_px()`, `look_stick()`); the `look` axis stays the scaled sum. The cooldown runs on the simulation clock, `Time<Virtual>`: a paused game does not run it down, a slowed one runs it down slowly. The mouse's sum drains on the frame clock (`Time<Real>`): that is input, not the game. Follow, framing, arm and shake stay on `Time<Real>`, so a paused game still shows its camera settle. There is no look grace after a spawn. Gameplay reads the stored `ThirdPersonCamera::yaw` (`input` turns the move axes by it): the shake only moves the camera's `Transform`.
+
+*Offsets.* `CameraOffsets` (a resource, neutral by default) is what a game's systems add to the base values; `orbit_camera` reads it after them, every frame: `fov_add_deg` is added to the player's field of view before the engine's 30..120 limit (sprint widening, a finisher's punch); `focus_dip_m` lowers the camera and what it looks at together, so the picture drops without tilting (a landing dip; negative raises); `pitch_min` / `pitch_max` narrow the tuning's pitch range (an override outside it is held to it), and the stored pitch is clamped to the result (a swim cap: the camera stays above the water; lifting the cap does not push the pitch back up). **The writer owns its value**: the system that writes a field sets it on every frame it wants an effect and puts it back to `0.0` / `None` itself when it is done. The camera only reads: it never decays, sums or stores an offset, and it never writes `CameraSettings`, `ThirdPersonCamera::focus` or the stored pitch except through the clamp above, so an offset stays as its writer left it until the writer puts it back (a writer that stops without resetting
+leaves its effect on). Two systems that want the same field must be combined by the game into one writer. Write in `PostUpdate` before `CameraSystems::Orbit` to be seen on the same frame (the set is empty without the `render` feature, so the writers run and are testable headless).
 
 **Warnings about attacks off screen** (E2.6): `threat_indicators(world, viewer, forward)` from the combat module gives, for each attack zone, a direction for the indicator; markers at the edge of the screen are drawn by `shards_action::render::hud` (see "Actions and combat (E3)").
 
@@ -1013,7 +1046,7 @@ The `shards_action` crate. An attack, a block, a parry, a roll and a flask are a
 { "default": (input_buffer: 0.15, max_statuses: 3, sprint_stamina_per_s: 10, lock_on_range: 20) }
 ```
 
-- *Backstep, turning speed and regeneration holds (C4).* `steer: MoveOrBack` is `Move` that goes **backward**, away from where the body faces, when no direction is pressed and nothing is held (a pressed direction or the stick still wins); the `dodge` tool names it (`ok: roll (back)`, read from the moveset's plain `dodge` input). Until an action can keep the body's facing, a standing backstep turns the body around to face the way it goes. A `turn_speed_deg` of 0 means "turns at once", as in the locomotion params. `turn_speed_deg` on an action is the body's turning speed while it runs (a raised guard; see "Controller options", C4), and `regen_hold` (seconds) keeps the stamina from regenerating while the action runs and for that long after it ends: a guard with `regen_hold: 1.3` holds the regeneration while it is up and 1.3 s after it is let go. A hold is the longer of two waits: it moves `Stamina::since_use` back so that `secs` remain (`Stamina::hold_regen`), so it never shortens the delay a spend left. A paid spend sets the delay (`Stamina::delay`). `CombatTuning::free_sprint_regen_hold` (seconds; `None`: today's behaviour) makes a sprint that costs nothing (`MoveModifiers::sprint_cost` 0, or a fast swim without drain) hold the regeneration for that time instead of restarting the whole delay (0.3 s next to a delay of 0.65 s). Tests: `crates/shards_action/tests/combat/parity.rs`.
+- *Backstep, turning speed and regeneration holds (C4).* `steer: MoveOrBack` is `Move` that goes **backward**, away from where the body faces, when no direction is pressed and nothing is held (a pressed direction or the stick still wins); the `dodge` tool names it (`ok: roll (back)`, read from the moveset's plain `dodge` input). With `face: Keep` (see the action timeline) the backstep hops back and the body keeps looking where it looked, its gameplay facing included, so a second standing backstep goes the same way again; with `face: Run` (the default) the body turns around to face the way it goes, and the next one goes back the other way. An action with `turn` spans starts from the body's facing whatever its `steer`, so the content check refuses spans on a `MoveOrBack` action (the backstep would go forward). A `turn_speed_deg` of 0 means "turns at once", as in the locomotion params. `turn_speed_deg` on an action is the body's turning speed while it runs (a raised guard; see "Controller options", C4), and `regen_hold` (seconds) keeps the stamina from regenerating while the action runs and for that long after it ends: a guard with `regen_hold: 1.3` holds the regeneration while it is up and 1.3 s after it is let go. A hold is the longer of two waits: it moves `Stamina::since_use` back so that `secs` remain (`Stamina::hold_regen`), so it never shortens the delay a spend left. A paid spend sets the delay (`Stamina::delay`). `CombatTuning::free_sprint_regen_hold` (seconds; `None`: today's behaviour) makes a sprint that costs nothing (`MoveModifiers::sprint_cost` 0, or a fast swim without drain) hold the regeneration for that time instead of restarting the whole delay (0.3 s next to a delay of 0.65 s). Tests: `crates/shards_action/tests/combat/parity.rs`.
 
 - A window is a `Span`: a phase (`Phase("active")`), from one phase to another (`Phases("raise", "hold")`), or seconds (`Secs(0.3, 0.45)`).
   A timeline can hold: hit windows (shape: `Sphere`, `Capsule`, `Cone`, `Box`, `Circle`, `Line` — a line along the ground; damage, poise damage, status build-up, the flags `Unblockable`/`GuardBreak`/`NoParry`, tags for the game's hooks), invulnerability (`iframes`), a block and a perfect block (`guard`), hyper armour (`hyper_armor`), cancels (combos — a chain of transitions `Combo`, `Input`, `Any`), hold (`hold`: the block stays up while the input is held), timed effects (`Heal`, `RestoreStamina`, `Status`, `Sound` — a sound from the body, `Custom` — a game hook), a telegraph (`telegraph`).
@@ -1021,7 +1054,7 @@ The `shards_action` crate. An attack, a block, a parry, a roll and a flask are a
 - An action hands its displacement (`displacement`) to the controller through `LocomotionInput::external`: only the controller moves the body, so a lunge stops at a wall. You do not have to write it by hand: it can be baked from a clip (`bake`, see "Displacement from a clip" below).
 - Animation and sound are names only: `anim: "light_1"` (a clip; if the game has clip sets, the content check requires one of them to play it), `telegraph.sound` (a sound from `*.sound.ron`: the audio module plays it where the hit lands), and the effect `Sound("whoosh")` (it is played from the body at its moment, for example a swing: `effects: [(at: 0.2, effect: Sound("whoosh"))]`), see "Audio".
 
-**The machine.** A press from `Intent` waits in the input buffer `CombatTuning::input_buffer` (0.15 s by default) until its action becomes possible; cancel windows let one action be interrupted by another (combos); a held action repeats (a raised block). One rule, `can_start`, answers both the machine and the tools: `ok: light_1`, `ok: queued, light starts in 0.10s`, `not enough stamina: 20/40 (ready in 1.5s)`, `busy: windup light_1 0.17s (ready in 0.27s, when a cancel window opens)`. A press whose time has run out is written to the journal: `e5 light rejected: busy (active light_1 0.10s)`.
+**The machine.** A press from `Intent` waits in the input buffer `CombatTuning::input_buffer` (0.15 s by default) until its action becomes possible; cancel windows let one action be interrupted by another (combos); a held action repeats (a raised block). One rule, `can_start`, answers both the machine and the tools: `ok: light_1`, `ok: queued, light starts in 0.10s`, `not enough stamina: 20/40 (ready in 1.5s)`, `busy: windup light_1 0.17s (ready in 0.27s, when a cancel window opens)`. A press whose time has run out is written to the journal: `e5 light rejected: busy (active light_1 0.10s)`. A cancel window with a `queue` span holds a press made while that span is open until the window opens (the press lives until then plus the buffer time), and a moveset can keep one press at a time by priority (`buffer: SingleSlot(..)`); a cooldown can be shared by several actions (`cost.cooldown_key`). See "Action timeline (B2a)" below.
 
 **Hits** are detected in `SimSet::Resolve` after movement. Attack shapes overlap hurtboxes (colliders with the `HURTBOX` layer; the `Fighter` collider gets it). Attackers and targets are taken in `AiId` order. One target is hit once per action (and once per `group`). The damage pipeline: immortality (`god`) → invulnerability (`Evaded`, `PerfectEvaded` inside a perfect-evade window) → parry (`Parried`, the attacker staggers unless the guard says otherwise) / block (`Blocked`, costs stamina) / guard break (`GuardBroken`) → armour → game hooks (`add_damage_hook`, in registration order) → health, statuses, poise (a break is `stagger`; otherwise a reaction of the tier the hit asked for, or the old flinch) → death; see "Hit outcome: reactions, protection, pushes (B1)" below. Events: `Damaged`, `Staggered`, `Died`, `Healed`, `ActionStarted`, `ActionRejected`, `ActionSound` (the `Sound` effect).
 
@@ -1034,7 +1067,7 @@ The `shards_action` crate. An attack, a block, a parry, a roll and a flask are a
 **Window side** (feature `render`; without a window the same systems are built, but they draw nothing):
 
 - **Animation** (`anim`, `render::bridge`). The `animset` content kind is a library of clips from glTF. It says which clip shows which movement state and which action, the blending, and the time cues (`cues` → `AnimationCue`; these are for effects and sound only, gameplay does not depend on them). **Gameplay leads, animation follows:** an action's clip is scrubbed to the action's progress (gameplay time, scaled to the clip's length), and movement clips loop at a speed matched to the body's speed. There is one `AnimationGraph` per set, shared by all `Animated` characters. Characters with the same skeleton (the same node names) share clips. A clip can sit in another file with the same skeleton (the clip's `source`): the graph waits for every file of the set. The model is a child entity of the character (`WorldAssetRoot`). `root_motion` names the root bone. The bridge keeps it in place on the ground (x and z as in the rest pose, after `AnimationSystems`). The body is moved by the action's displacement, which is baked from that same bone (see "Displacement from a clip"). With the asset folder (`--check-content`, `content_check`), the set is checked against the files. A missing file, a missing animation (the error lists the ones that exist), a missing root bone, or a missing layer bone is a content error.
-  **Layers (upper and lower body).** An action can play on part of the body while the movement clip keeps the rest: drinking from a flask while walking, or blocking while stepping sideways. A part of the body is a layer of the set: `layers: {"upper": (root: "spine")}` is a bone and everything under it (no more than 64 layers). The action mapping picks the layer: `actions: {"drink": (clip: "drink", layer: "upper")}` (the same in `tags`). The old form `"drink": "drink"` plays on the whole body. While the action runs, the layer's bones follow its clip (scrubbed to the action's progress, like any action clip), and the rest of the body follows the movement clip. The content decides this, not the code. The mechanism uses Bevy masks. A layer clip has its own node in the graph, and a mask keeps it off the bones **outside** the layer. (The layer's mask group is built from the model's bones when the player is bound.) Movement clips run on all the bones, as they do without layers. The weight is set by the share. On the layer's bones the pose is the weighted average of the clips, and the movement clips sum to 1. So a layer clip with share `s` plays at weight `s / (1 − s)`. The bridge ramps the share up and down itself. (`AnimationTransitions` keeps one "main" clip, and a layer clip in its place would push the movement out of the legs too.) The ramp takes the same time as normal blending: into the action clip, its `blend` (or `action_blend`); back to movement, the `blend` of the movement clip. One layer clip changes into another with no gap in the movement. The share never reaches 1 (the last 0.001% of movement on the layer's bones is not visible). A layer bone that the model does not have is a warning, and the action keeps the movement clip. Layers are for the picture only: `ActionState`, the replay and the snapshot do not see them. (For the replay, one thing matters: the content hash also counts the animation sets, so editing a set changes `content` in the reference replays.)
+  **Layers (upper and lower body).** An action can play on part of the body while the movement clip keeps the rest: drinking from a flask while walking, or blocking while stepping sideways. A part of the body is a layer of the set: `layers: {"upper": (root: "spine")}` is a bone and everything under it (no more than 64 layers). The action mapping picks the layer: `actions: {"drink": (clip: "drink", layer: "upper")}` (the same in `tags`). The old form `"drink": "drink"` plays on the whole body. While the action runs, the layer's bones follow its clip (scrubbed to the action's progress, like any action clip), and the rest of the body follows the movement clip. The content decides this, not the code. The mechanism uses Bevy masks. A layer clip has its own node in the graph, and a mask keeps it off the bones **outside** the layer. (The layer's mask group is built from the model's bones when the player is bound.) Movement clips run on all the bones, as they do without layers. The weight is set by the share. On the layer's bones the pose is the weighted average of the clips, and the movement clips sum to 1. So a layer clip with share `s` plays at weight `s / (1 − s)`. The bridge ramps the share up and down itself. (`AnimationTransitions` keeps one "main" clip, and a layer clip in its place would push the movement out of the legs too.) The ramp takes the same time as normal blending: into the action clip, its `blend` (or `action_blend`); back to movement, the `blend` of the movement clip. One layer clip changes into another with no gap in the movement. The share never reaches 1 (the last 0.001% of movement on the layer's bones is not visible). A layer bone that the model does not have is a warning, and the action keeps the movement clip. Layers are for the picture only: `ActionState`, the replay and the snapshot do not see them. (Animation sets are outside the replay check `content`, `SIMULATION = false`: editing a set never makes a replay diverge. A baked `displacement` lives in the action, which does count.)
   The game adds `Animated` and the model to the body only when it draws (`config.draws()`). The replay does not check `Animated`, and the host does not send it to its clients. Gameplay does not depend on the clip. Without a window nothing is loaded. A snapshot taken with the picture on records `Animated`. (Without a model, it does nothing.)
   ```ron
   // content/anim/humanoid.animset.ron (sandbox, shortened)
@@ -1093,6 +1126,11 @@ error: your moveset `player` has no `parry`; it has: block, dodge, heavy, light,
 Refusals for resources and timing name the cause and the wait: `not enough stamina: 10/20 (ready in 0.2s)`, `busy: windup heavy
 0.50s (ready in 0.90s, when a cancel window opens)`. On an error, run `step` for the named time and try again.
 
+`light_attack`, `heavy_attack` and `use_technique` take `hold=true` (press and keep the button held: an action that charges
+while held turns into its charged version; the answer ends in ` (holding)`) and `hold=false` (let go, no press:
+`ok: heavy released`). A person does the same with a `press_hold` binding (`BindMode::PressHold`, the standard map's `heavy`
+and `interact`).
+
 ### Hit outcome: reactions, protection, pushes (B1)
 
 A hit can ask for more than damage: a **reaction tier** (what the target is put into), a **push**, a cost on a guard, a wall in the way. All of it is content with a default that leaves old content as it was (a field at its default does not serialize, so the content half of a replay check is unchanged), and all of it is generic: a game picks the numbers.
@@ -1139,9 +1177,159 @@ A hit can ask for more than damage: a **reaction tier** (what the target is put 
 
 **Pushes.** `Knockback { velocity, decel }` (flat, m/s and m/s per s) is a lazy component. `push_bodies` (`ActionSystems::Push`, after the effects, in `AiId` order) decays the speed first and moves by the decayed speed (`v1 = max(0, v0 - decel * dt)`, `external += dir * v1 * dt`): Euler, not a trapezoid; the first tick moves `(v0 - decel * dt) * dt`. It adds to `LocomotionInput::external` after the machine wrote it, so a wall stops it; a dead body, a body with no `LocomotionInput`, and a body that is no longer in one of its moveset's reaction, `stagger` or `guard_broken` actions lose their push (the push is the reaction's own motion and ends with it, however it ended). A reaction or a guard break with `guard_broken_push` also drops the body's own flat velocity, so the push alone moves it.
 
-**`ActionEnded { entity, action, instance, end }`** is triggered when a run stops, before the `ActionStarted` of what replaces it: `Finished` (its time ran out), `Cancelled` (a cancel window started another), `Interrupted` (a forced action, a kill, a revival), `Removed` (its definition left content). `Branched` and `Released` are reserved: nothing ends this way yet. `finish_actions` ends them in `AiId` order through `Commands` (applied at the next sync point); `force_action`, `kill` and `revive` trigger it at once. It is not a net event, and a client's prediction never emits it.
+**`ActionEnded { entity, action, instance, end }`** is triggered when an action ends or changes (the run may go on, see `Branched`), before the `ActionStarted` of what replaces it: `Finished` (its time ran out), `Cancelled` (a cancel window started another), `Interrupted` (a forced action, a kill, a revival), `Removed` (its definition left content), `Branched` (a charge turned it into its charged action: the same run goes on under the new name, B2a), `Released` (its `while_held` input was let go, B2a). `finish_actions` ends them in `AiId` order through `Commands` (applied at the next sync point); `force_action`, `kill` and `revive` trigger it at once. It is not a net event, and a client's prediction never emits it.
 
 **What the AI sees.** `protected 0.82s`, `poise protected 2.40s`, `pushed 3.2m/s` in describe; the journal says `e7 reacts heavy (e5 spar_react_heavy)`, `e6 perfectly evaded e5 spar_slam`, `e6 parried e5 spar_slam, -10 stamina` (the suffix only when the perfect guard costs something), and an ignored hit prints why: `... -0 (hp 100, god mode)`, `grace`, `downed` or `ignored`. The dev tool `react id=e7 tier=2` forces a reaction (backwards from where the body faces); `step --until named:reacting` waits for any fighter to run a reaction action. The engine rules `action.protection_sane` (timers finite and `>= 0`) and `action.knockback_sane` (a flat, finite velocity and a `decel` above 0) stop the game on a bad write. `PerfectEvaded` and `Reacted` travel to clients like the other combat events.
+
+### Action timeline: charge, turning, miss recovery, cooldown keys, queue (B2a)
+
+More of what an action does over its own time is content. Every field has a default that keeps old content and old runs
+exactly as they were (it does not serialize at its default, and an action that uses none of them takes the old code path).
+
+```ron
+{
+    "heavy": (
+        net_id: 70,
+        phases: [("windup", 0.4), ("active", 0.1), ("recovery", 0.3)],
+        cost: (stamina: 20),
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 20)],
+        charge: (after: 0.2, into: "heavy_full"),           // held 0.2 s: it turns into `heavy_full`
+        turn: [(Phase("windup"), 90)],                       // turns at 90 degrees a second while it winds up
+    ),
+    "lunge": (
+        net_id: 75,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.2)],
+        cost: (cooldown: 3.0, cooldown_key: "lunge", cooldown_if_interrupted: 0.4),
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 10)],
+        miss_recovery: 0.6,                                  // a whiff recovers 0.6 s longer
+        // never more than 22 degrees off where it started, at most 0.4 m closer for the turning,
+        // and no tracking of a target behind a wall
+        assist: (angle: 22, close: 0.4, sight: true),
+        track_until: 0.2,
+    ),
+    "light": (
+        net_id: 78,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.4)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 100), damage: 5)],
+        // The chain opens at 0.5 s; a press made in the recovery waits for it.
+        cancels: [(span: Secs(0.5, 0.7), into: [Combo("light", "light_2")], queue: Phase("recovery"))],
+    ),
+    "beam": (net_id: 83, phases: [("beam", 2.0)], while_held: "technique.2"),   // lasts while held
+    "roll": (net_id: 84, phases: [("roll", 0.4)], displacement: [(0.4, 2.0)], steer: Move, face: Keep),
+}
+// a moveset: one press waits at a time, the stronger first
+"fencer": (inputs: {..}, buffer: SingleSlot(priority: [("dodge", 60), ("technique.1", 55), ("technique.2", 55),
+                                                       ("heavy", 40), ("light", 30)])),
+```
+
+**Charge** (`charge: (after, into, until)`). While the input that started the run has been held on every tick of it, the run
+turns into `into` on the first tick with `after <= t <= until` (`until` defaults to the end of the windup: the start of the
+first hit window, else the end of the first phase). The turn keeps the run: the same `instance`, the same clock `t`, the same
+hit ledger (a target the first action already hit is not hit again by the same hit group), and the same input. It costs what
+`into` costs beyond the start: the difference of the two actions' stamina under `into`'s `stamina_mode`, one of `into`'s
+charges when it uses another charge than the action it turns from, and `into`'s cooldown, whose slot must be ready unless it
+is the slot of the action it turns from (this run started that one). When something is not there, nothing is paid and it is
+tried again on the next tick, until `until` (no event: the client cannot see a refusal, see prediction below). It triggers
+`ActionEnded { end: Branched }`, then `ActionStarted { action: into }`; the effects and the telegraph `into` has before the
+turn's `t` do not fire (the run is already past them; an accepted rule of the design). A press let go once never charges again in that run. Validation:
+`after` inside the action, `until >= after`, `into` exists, is not the action itself, and charges do not form a cycle.
+
+**Turning.** `turn: [(span, degrees_per_second)]`: an action with turn spans starts facing where the body faced (no snap) and
+turns at the highest rate of the spans open in the tick, toward its lock-on target, else the aim point, else the movement input
+(a player steering the swing; a `steer: Move` action follows only the movement input, and a `MoveOrBack` one has no spans). The rate holds for the whole tick: a
+span that opens or closes inside a tick turns it a full tick. Outside the spans the facing holds. An action with no `turn`
+keeps the old `track_until` snap exactly. `turn` and `track_until` are not used together. A steering share of a design
+("60% of the normal control") is a turn rate: the share times the body's own free turn rate
+(`CharacterParams::turn_speed_deg`). The spans turn the run's facing (its hits, guard arc and displacement), not the body: the controller turns the body toward it once a tick at its
+own rate (an action's `turn_speed_deg`, else the locked rate, else the free one; see "Controller options", C4), so a span
+faster than that rate leaves the body behind the swing, and the two never both turn the body. Angles go through `ops::atan2` and
+`ops::sin_cos`.
+
+**Attack assist** (`assist: (angle, close, sight)`, for an action that tracks: `turn` or `track_until`, not `steer: Move` or `MoveOrBack`).
+With a lock-on target, the facing stays within `angle` degrees of the direction to the target when the run started (with
+`track_until` and no `turn`, it snaps to the clamped direction). `close: metres` caps the approach the run's turning adds: what
+moving along the turned facing brings the body closer to the target than moving along the facing the run started with
+(`RunExtras::from`) is counted in `RunExtras::closed`, and past `close` the excess is taken off the displacement along the
+direction to the target (the body still moves sideways). `sight: true` turns the assist off while a `LayerMask::WORLD` collider
+lies between the chests of the fighter and its target (the ray a `LineOfSight` hit casts, at `CombatTuning::sight_height`):
+the run then does not track the target and turns toward the aim point or the movement input instead. The player turns the
+assist off with the setting `controls.attack_assist = false`: the controls then hold the input `assist_off` for the
+player's body (it is an `Intent` input: replays and the host see it), and every action with an `assist` acts as if out of
+sight. An action without `assist` tracks its target as it always did.
+
+**`face: Keep`.** The run moves the body along its own facing but does not turn it: the body keeps the facing it had, and only
+what faces it outside actions (a lock-on target, an aim point) still turns it. A roll in a direction other than the body's
+facing leaves the body looking where it looked. `face: Run` (the default) turns the body where the run points. A `face: Keep`
+roll locked on a target turns the body toward the target while the run goes where it was steered
+(`a_lock_on_target_still_turns_a_face_keep_body`), at the action's `turn_speed_deg` when it has one.
+
+**Miss recovery** (`miss_recovery: seconds`, the action needs hits). On the first tick whose `t` reaches the end of its last hit
+window, after that tick's hits are resolved (`check_misses`, `ActionSystems::Hits`, after `resolve_hits`, before
+`finish_actions`), the run is checked once: if none of its hits landed by then (a hit, a block, a parry or a guard break all
+count, the checking tick's own included), it lasts `miss_recovery` longer (`Running::length` grows; its cancel windows stay
+where they are; the phase past the end stays the last one) and `ActionMissed { entity, action, extra }` is triggered. A game
+adds its own bonus from an observer with `extend_recovery(world, entity, seconds)`; on a machine that does not simulate (a
+co-op client, where the host's state brings the longer run) it changes nothing and returns `false`, so an observer that
+calls it needs no check of its own.
+
+**Cooldown keys and shares.** `cost.cooldown_key: "lunge"` puts the cooldown on that slot instead of the action's id, so
+variants of one technique share it (`can_start` names the key: `lunge is on cooldown (ready in 2.40s)`). A key may be another
+action's id: the two then share that action's slot. `cost.cooldown_if_interrupted: 0.4` (it needs a `cost.cooldown`): a run cut
+before its windup is over keeps only that share of its cooldown (forced over, killed, revived, released, or cancelled into
+anything but a `Combo` continuation; a dodge out of the windup counts; its own end, a charge's turn and a removal do not). The
+share never lengthens a slot: a slot already below it (or ready) stays as it is. It is set before the action that cut it pays, so a new action on the same slot keeps its own full cooldown. The HUD source
+`you.cooldown` reads an action's slot through its key.
+
+**The press queue.** A cancel window's `queue: span`: a press of an input the window lets through, made while `span` is open
+and before the window opens, lives until the window opens plus `input_buffer` (`press_life`, which the machine, a client's
+prediction and the tools all use). A window with a `queue` that starts where the action ends (`Secs(L, L)`) never cuts the
+action short: it holds its presses until the action is over, and they start the tick after. Every end of a run but a
+charge's turn caps the waiting presses to `input_buffer` again. The usual press lives:
+
+| press life | content |
+|---|---|
+| a chain: the buffer's time, or past the chain's opening for a press in the recovery | `(span: Secs(open, end), into: [Combo(..)], queue: Phase("recovery"))` |
+| a chain pressed early: past the chain's opening from the first tick | `queue: Phases("windup", "recovery")` |
+| an action with no chain: its window is the end of the action | `(span: Secs(L, L), into: [Input("light")], queue: Phase("recovery"))` |
+| a technique another one may cut from `cancel`: past `cancel`, at any time | `(span: Secs(cancel, L), into: [Input("technique.1"), ..], queue: Secs(0, L))`; no window: no `queue` |
+
+An enemy's chain uses the same rule: an NPC whose brain presses the next link early (in the first link's windup) has it start
+on the tick after the combo window opens, and the director's token stays with it through the chain (the continuation is the
+same attack).
+
+**The single slot** (`MovesetDef::buffer`). `PerInput` (the default) keeps one press per input, as before. `SingleSlot {
+priority }` keeps one press. `priority` is a list of `(input, rank)` (equal ranks are allowed, inputs not listed rank 0): a press
+that ranks below the waiting one is dropped (`e5 light rejected: heavy is waiting and comes first`); an equal or higher one takes
+its place (`e5 light rejected: heavy took its place`); the same input again keeps the later expiry. The press in the slot is tried
+on every tick until it starts or its time runs out, as with `PerInput`. Only presses of inputs the moveset understands go in;
+others (a jump) keep their own buffers. The tools answer the same before pressing (`heavy is waiting and comes first: one press
+waits at a time, and light ranks below it`; a press that pushes one out says `(light no longer waits)`), and on a client's own
+body they read the predicted run and the predictor's buffer (`shown_state`, `shown_queue`), with the presses not taken yet.
+
+**`while_held: input`.** The run ends the tick its input is not held (`ActionEnded { end: Released }`). A tool press without
+`hold=true` says so: `ok: beam (a tap: it stops as soon as technique.2 is not held; hold=true keeps it going)`. An action with
+both `while_held` and a `hold` loop is a channel that loops while held and ends when let go.
+
+**State.** What a run needs beyond `Running` lives in the lazy component `RunExtras { instance, held, landed, checked, extra,
+start_facing, from, closed, charge_at }`, put in when a run whose action needs it starts and taken out when the run ends
+(every way a run ends; the engine rule `action.extras_follow_run` stops the game on extras of another run). A fighter whose
+actions use none of it never has one, so the replay hash of old content does not change. It is a component of an `AiId` entity:
+snapshots, replay checks and co-op clients get it by the default rules. No resource is added. The setting
+`controls.attack_assist` is not simulation state: what reaches the simulation is the held `assist_off` input. While a recording plays, the controls do not hold it: a recording made with the assist on verifies the same on a machine whose setting is off (test `a_replay_with_the_assist_on_verifies_on_a_machine_with_it_off`).
+
+**Prediction.** A client predicts a charge, turning, the assist (with its sight ray), `while_held` and the queue with the same
+functions (`charge_due`, `step_run`, `tracked`, `press_life`, the single slot), and reconciles by `(instance, action)`: a host
+run of the same instance under another action is the host's turn of a charge (the client takes the host's action and keeps its
+own `t` and hold); the host's start of a run the client has already turned (it arrives a round trip late) confirms the start
+and leaves the turn shown, so the body does not go back to the uncharged action and turn again; a turn the host did not make
+(its stamina, a charge or the cooldown) is kept until `until` has passed and then reverted to the host's action at the host's
+time; a same-instance, same-action run adopts what only the host changes (a miss's extra recovery: the client's run does not
+end before the host's); and when the host's run is gone with no new one and nothing is pending (a cut, a release), the shown
+run is dropped and the body goes back to the host's state.
+
+**What the AI sees.** Describe: `charging, turns in 0.12s` while the starting input is held (`charging, turns when the stamina is
+there` once it waits for stamina), `missed +0.60s` after a whiff. Journal: `e5 lunge missed: +0.60s recovery`, and the
+single slot's drops as `rejected` lines. `step --until named:charging` waits for any fighter holding a charge.
 
 ## Levels from Blender (E4.2)
 
@@ -2827,9 +3015,10 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `motion.finite` | every `AiVisible` entity has a finite `Transform` translation and a finite rotation of length 1 ± 1e-3, and a finite `MotionState` (velocity, ground normal, timers, mantle, fall height, water surface, updraft, placed position). Scale is not judged |
 | `voxel.body_in_solid` | no character has its capsule centre in a solid cell of a voxel field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). On by default since the fuzz runs on the voxel arena (see "Voxel fields") |
 | `action.resources_in_range` | `Health`, `Stamina` and `Poise` are finite with `max > 0` and `0 <= current <= max`. Dead bodies are checked too (`current` is 0). A game that wants a buff above `max` raises `max` with it |
-| `action.running_sane` | a running action of a fighter exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. Without a content database the rule passes |
+| `action.running_sane` | a running action of a fighter exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. The length is the run's own when that is longer than the definition's (miss recovery and `extend_recovery` lengthen a run, B2a). Without a content database the rule passes |
 | `action.protection_sane` | every `Protection` (the reaction and poise timers, B1) holds finite timers, none below 0. A NaN stays a NaN through the countdown and would shield its fighter for ever |
 | `action.knockback_sane` | every `Knockback` (a push in progress, B1) has a finite flat velocity (`y` is 0) and a finite `decel` above 0: a push that does not slow down never stops |
+| `action.extras_follow_run` | every `RunExtras` (what a charging, turning or miss-recovering run keeps, B2a) belongs to the run its fighter is running (the same `instance`), with a finite `extra >= 0` and a finite `closed >= 0`. The machine puts extras in when such a run starts and takes them out on every way a run ends, so extras left behind would hand a later run a stale hold, hit or recovery |
 | `npc.state_known` | `NpcBrain.state` is a state of the NPC's behaviour. Three carve-outs, each a state the engine itself leaves behind: an empty state (before the NPC's first decided tick), an inactive NPC (dormant or dead: the brain passes it through, so a state a hot reload removed stays until it wakes), and an NPC whose behaviour is not in content (that is reported once as a content problem) |
 | `npc.strike_spacing` | two NPCs of one director whose `min_spacing` is set never began strikes less than that apart (in whole ticks), for the starts that went through the spacing rule: the planner's presses and checked combo continuations (`NpcStrike::gated`). Judged from the last strike each NPC noted. Three carve-outs: an NPC whose plan has `ignores_spacing` is not the one held to the rule (its starts still hold the others), a strike a state hook pressed itself is noted but neither held to the rule nor held against other NPCs (the hook may or may not have asked `strike_ready`, and may start between another NPC's planned press and its start), and an action with one of the director's `spacing_exempt_tags` is not noted at all. A director without a `min_spacing` is never judged |
 | `npc.tokens_within_limit` | after the director ran, no token is held by a dead body, and each director holds no more tokens than its limit for the living players, unless every holder beyond the limit has its attack in flight (an attack under way keeps its token to its end). It is judged right after the director, not at the end of the tick: a holder that dies in `Resolve` keeps its token until the next tick's director takes it back, so the end of the tick would fire on every kill. A small system next to the director writes what it found to the resource `TokenAudit`, which the rule reads; it is recomputed every tick and is not part of a snapshot or a replay |
@@ -2862,6 +3051,7 @@ $ shards assert list
   action.running_sane  engine rule  armed
   action.protection_sane  engine rule  armed
   action.knockback_sane  engine rule  armed
+  action.extras_follow_run  engine rule  armed
   npc.state_known  engine rule  armed
   npc.strike_spacing  engine rule  armed
   npc.tokens_within_limit  engine rule  armed
@@ -3040,7 +3230,7 @@ A frame in which a call ran ticks on pause (`step`) is one the player does not s
   built is counted, although Bevy will skip it (during warm-up the number can be higher than what is drawn; the measurement runs after it). Without
   GPU preprocessing (no compute shaders: WebGL), the binned phases' sets are hidden inside Bevy, and there is no number: `null`, and the `draws`
   budget shows `-`. At a `render_scale` other than 1, the commands of the camera that shows the image are added to each frame (5 of them in the sandbox).
-  The `draws` budget in `reference.perf.ron` is 150 (measured at 75–76). The `perf` definitions are part of the sandbox's content hash (it is computed from the definition's JSON), so a budget that was not set (`draws`, `nav_bake_s`) does not appear in the JSON: a new field does not shift the hash for those who did not name it, but a line with it in the file does, and the reference replays are then recorded again.
+  The `draws` budget in `reference.perf.ron` is 150 (measured at 75–76). The `perf` definitions are part of the content hash a co-op session compares (it is computed from the definition's JSON), so a budget that was not set (`draws`, `nav_bake_s`) does not appear in the JSON: a new field does not shift the hash for those who did not name it. They are outside the replay check `content` (`SIMULATION = false`): a budget changed never makes a replay diverge.
 - The `counts` field is always there: `entities` is every entity in the world (with `AiId`, the `entities` field next to it), `meshes` is the entities with
   `Mesh3d`, `visible_meshes` is the meshes that some view draws (a camera or a light's shadow map; a directional light sees
   the whole region), `camera_meshes` is the meshes of the active cameras, each camera with its own count: the draws of the picture before Bevy puts them into batches;
@@ -3234,7 +3424,7 @@ Recording always runs from tick 0 and costs almost nothing. It records:
 - **action calls** (`teleport`, `set`, `spawn_prefab`, `attack`, `content_apply`, `regen`, `region_load`, `goto_tile`,
   `spawn_level`, `level_reload`, `npc_set_state`, …) along with the scope and the agent's "body". Calls made from inside another tool are not written: the outer call repeats them. `control` tools (pause, step, possess, content_reload, rebind) are not written. Raw edits through BRP (`world.insert_components`) bypass the tools and are not written either. A live content edit is written as `content_apply` on its own tick;
 - **rules**: `assert_add`, `assert_remove`, `assert_reset` with the tick they were called on (see "Invariants (E11)");
-- **checks**: a hash of the game data every `check_every` ticks (60 by default) and at the end of the recording. For each entity with `AiVisible`, in `AiId` order, it covers the entity's id and all reflectable game components (serialised through reflection, components in type-name order). It also covers the values of `add_replay_check` (the content database hash is one of them). Next to the hash is its breakdown, computed in the same pass: the hash of each component of each entity, and each `add_replay_check` value under its own name. The report uses it to say what exactly diverged.
+- **checks**: a hash of the game data every `check_every` ticks (60 by default) and at the end of the recording. For each entity with `AiVisible`, in `AiId` order, it covers the entity's id and all reflectable game components (serialised through reflection, components in type-name order). It also covers the values of `add_replay_check` (`content` is one of them: the definitions the session's simulation read, see "What the content check covers"). Next to the hash is its breakdown, computed in the same pass: the hash of each component of each entity, and each `add_replay_check` value under its own name. The report uses it to say what exactly diverged.
 
 ```bash
 shards save-replay                          # or ai/act {"tool": "replay_save", "args": {"path": …}}
@@ -3247,7 +3437,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
 # replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 3.00s, 22 frames]
 ```
 
-**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`) and the voxel arena (`voxel_arena`), each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay or content has changed on purpose, record them again: `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
+**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`) and the voxel arena (`voxel_arena`), each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
 (for the template: `cargo test --test game record_reference_replays -- --ignored`).
 
 - Game data follows the same rule as `inspect`: everything except the `bevy_*` types and the internal markers of `ai_core`, plus `Transform` and `Name`. So components that only the window adds (`Visibility`, `GlobalTransform`, meshes) do not change the hash, and an `Entity` inside a component is hashed as its `AiId`. Labels and describe fragments are text for the AI and are not part of the hash: a new wording or a new describer does not break old replays.
@@ -3260,8 +3450,8 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
   (teleport)`).
 - During playback, recording continues, so a branch is saved as one replay.
 - The state of recording and playback is shown in `ai/status` (the `replay` field), and the result is written to the journal.
-- There is one format: JSON `shards-replay/3` — `seed`, `tick_hz`, `check_every`, `check_detail`, an optional `start` (the snapshot the replay starts from), `end`, `events`, `checks`; hashes are hex strings. Events are `call`, `input` and `assert` (rules). A check has `parts` besides `tick` and `hash`: `{"entities": {"e6": {"Health": "…", "Transform":
-  "…"}}, "game": {"content": "…"}}`. Everything added to the format is optional: a `/3` file without `check_every` and `check_detail` (as the build before the breakdown wrote them) is read as checks every 60 ticks without a breakdown, and is checked by the overall hash. A divergence there names only the tick (`no details: the recording keeps hashes only (check detail none)`). The overall hash is computed the same way, byte for byte, at any detail level. This build also plays `shards-replay/2` replays (always from tick 0, with no rules, interval or breakdown) and checks them by the overall hash (`no details: replay format 2`). A `shards-replay/1` replay hashed text, and this build does not check it: `play` replies `this replay was recorded by an older
+- There is one format: JSON `shards-replay/4` — `seed`, `tick_hz`, `check_every`, `check_detail`, an optional `start` (the snapshot the replay starts from), `end`, `events`, `checks`, and `check_parts` (what the `content` check was made of, as it changed: see "What the content check covers"); hashes are hex strings. Events are `call`, `input` and `assert` (rules). A check has `parts` besides `tick` and `hash`: `{"entities": {"e6": {"Health": "…", "Transform":
+  "…"}}, "game": {"content": "…"}}`. Everything added to the format is optional. Version 4 is version 3 with `check_parts`, and this build plays `/3` files as they are, with the `content` check over the whole database (see "Older files" under "What the content check covers"). A `/3` file without `check_every` and `check_detail` (as the build before the breakdown wrote them) is read as checks every 60 ticks without a breakdown, and is checked by the overall hash. A divergence there names only the tick (`no details: the recording keeps hashes only (check detail none)`). The overall hash is computed the same way, byte for byte, at any detail level. This build also plays `shards-replay/2` replays (always from tick 0, with no rules, interval or breakdown) and checks them by the overall hash (`no details: replay format 2`). A `shards-replay/1` replay hashed text, and this build does not check it: `play` replies `this replay was recorded by an older
   build (…); record it again`, and `--verify` exits with code 2.
 - A replay starts at tick 0 or from a snapshot: see "Snapshots (E11.4)". A replay from a snapshot keeps the same breakdown of checks.
 - The reference replays (`tests/replays/` of the sandbox and of the template) are recorded with a breakdown by component: a `--verify` that fails in CI names the entity, the component and the value at once. Because of this the files are larger: the sandbox's are 66–392 KB, the template's 17–250 KB.
@@ -3288,7 +3478,7 @@ cargo sandbox --replay replays/boss-pillar.json --verify
 #   e1 now: Transform { translation: Vec3(-18.0, 0.0, -19.0), rotation: Quat(0.0, -0.0, -0.0, 1.0), scale: Vec3(1.0, 1.0, 1.0) }
 ```
 
-- The list can contain: `e6 Boss: Health, Transform differ` (components diverged, including missing or extra ones), `e15 missing (Skeleton despawned at tick 40)` (the entity is in the recording but not in the game; in brackets, what the index knows about its id), `e27 extra (Skeleton)` (in the game but not in the recording), `replay check content differs` (the value of `add_replay_check`). The list shows no more than 10 entities; the rest are on one line: `… and 7 more`.
+- The list can contain: `e6 Boss: Health, Transform differ` (components diverged, including missing or extra ones), `e15 missing (Skeleton despawned at tick 40)` (the entity is in the recording but not in the game; in brackets, what the index knows about its id), `e27 extra (Skeleton)` (in the game but not in the recording), `replay check weather differs` (the value of `add_replay_check`), `replay check content differs: action/light_1 differs` (a check with parts names them). The list shows no more than 10 entities; the rest are on one line: `… and 7 more`.
 - A value is the debug output of reflection without module paths, no longer than 240 characters. Only the first divergence is explained. The later checks diverge because of it.
 - The journal gets the error `replay diverged at tick 60: e6 Boss: Health differs` and one `replay: e6 now: …` entry for each value. The `replay.last_report` field in `ai/status` holds the same text.
 - The check rate is set when recording: `--check-every N` for the game, or `check_every` in `EngineConfig` (60 by default). It is stored in the file, and playback checks on the same ticks. `--check-every` together with `--replay` is an error. At a check rate of 60, the tick in the report is the first check after the divergence. To find the exact tick, record the replay with `--check-every 1`.
@@ -3304,6 +3494,136 @@ cargo sandbox --replay replays/boss-pillar.json --verify
   differs`). `none`: only the overall hash; the report names the tick (`no details: the recording keeps hashes only (check detail
   none)`). The overall hash does not depend on the detail level.
 - Size: the replay above (the arena, 14 entities, a check on every tick) weighs 2.2 MB with `components` (about 8.6 KB per tick; at a check rate of 60, the same per second of game time), 183 KB with `entities`, and 19 KB with `none`.
+
+### What the content check covers
+
+The replay check `content` ties a recording to the content it was played with, but only to the definitions the session's
+simulation read. Adding a definition, or changing one the session never read, leaves a recorded replay verifying; changing one it
+read makes it diverge at the first check after the read, and the report names it. Real output, on copies of the sandbox's
+assets (`BEVY_ASSET_ROOT` at the copy): the first with `light_1` hitting for 21 instead of 20; the second with a prefab added, the
+health of a prefab the session never spawns changed, and the player's look recoloured:
+
+```text
+$ cargo sandbox --replay tests/replays/combat_prototype.json --verify
+replay finished at tick 2307: DIVERGED at tick 300: replay check content differs: action/light_1 differs [2307 ticks in 1.34s]
+$ cargo sandbox --replay tests/replays/combat_prototype.json --verify
+replay finished at tick 2307: identical to the recording (39 checks) [2307 ticks in 2.18s]
+```
+
+What still makes a recording diverge: a change to a definition it read (by id, or a kind it read whole), a definition added to or
+removed from a kind it read whole, a definition it read removed, a definition added under an id it looked for and did not find
+(below), and of course any change to gameplay. What no longer does: a new definition of a kind it reads by id, a change to one it
+never read, and any change to a kind outside the simulation (below). A kind read whole is a dependency of every session that reads
+it so: the sandbox builds every layout there is, so `layout (all)` is a part of each of its reference replays and a new layout makes
+all of them diverge (`layout/empty extra`), as it should, since the new layout is in their world; `tile (all)` is a part of
+those that generate a region.
+
+**What counts as read.** Each definition in the database carries a flag, and each kind a second one ("read whole"). A typed read
+(`ContentDb::get`, `Content<T>::get`, `get_json`) sets the definition's flag; going over a kind (`iter`, `ids`, `ids_of`: the
+generator choosing among all tiles, the sandbox building every layout) sets the kind's, and then every definition of the kind
+counts, so a definition added to it counts too. A lookup of an id that does not exist sets nothing, and no part says it was made: a recording that
+looked for an id while there was none diverges once there is one, because its playback finds and reads it. The engine looks up
+its tunings this way every tick, so a game that defines no `npc_tuning` `default` and then adds one records its replays again, even
+with the numbers the engine used without it (`npc_tuning/default extra`; the test
+`a_definition_added_for_an_id_the_session_looked_for_and_did_not_find_is_extra`). The engine's
+own readers look up by id what they need by id: a spawn reads its prefab and the prefabs it extends, the statuses tick with the
+definitions of the statuses someone carries. A flag is set only while the **simulation's scope** is open (`ai_core::SimScope`, one
+per world), and only for kinds the simulation depends on:
+
+- *Open*: every fixed tick (`FixedMain`, around Bevy's `run_fixed_main`: the recorded calls too, which play back in `FixedFirst`);
+  the body of every `action` tool call (live calls run between ticks, recorded ones inside a tick: both count the same); a change
+  of `EngineState` (`OnEnter(InGame)` builds the world); and the builders, whatever calls them: the start region before tick 0,
+  `change_region`, `spawn_region`, `spawn_level`. So the reads that build the world before tick 0 count. A prefab spawned anywhere
+  inside these (a tick, an action, a region being built) counts.
+- *Suspended* inside it, for what only watches: the invariants (engine invariants are off in a `dist` build and with
+  `--no-engine-invariants`, so their reads must not count), coverage, replay and snapshot hashing, a snapshot load putting a state
+  back, the digests of an action call (its `CHANGES`), the tiles' visuals streaming in, and the database's own work (validation and
+  `refs`, `content_apply` checking an edit against what is there, a playback restoring the recording's definitions).
+- *Closed*: everything else. Frames (`Update`, `PostUpdate`, the render world, a window's input), query and control tools
+  (`content_list`, `observe`, `npc_state`), validation without a game (`--check-content`). Queries are not replay events: a read
+  they made could never be repeated by a playback, so it never counts.
+- *Kinds outside the simulation* (`ContentDef::SIMULATION = false`) never count, read anywhere: `look`, `effect`, `fx`,
+  `scatter`, `animset`, `sound`, `music`, `audio`, `theme`, `locale`, `devmenu`, `input_map` (a replay records `Intent`, not keys),
+  `achievement`, `save` and `perf`. What only the picture, the sound, menus and services outside the session read. A game's own
+  kind of that sort sets `const SIMULATION: bool = false;` in its `ContentDef`; one the simulation reads keeps the default `true`.
+  `net` counts (the host spawns `player_prefab` for a joining player). `save` stays out because a playback writes no saves and
+  never asks the autosave numbers (`debounce_secs`): if it counted, every recording that autosaved would list `save/world` and its
+  playback would not (`save/world missing`); the test `autosave_numbers_never_change_a_playback` plays the saves replay on other
+  numbers. `screen` counts only when a screen is pressed (`ui_click`, `ui_navigate`, `ui_set` are recorded, and the screen decides
+  what a press does; the press finds its screen from the widget, not from its id); showing one reads it with `ContentDb::peek`,
+  the read that never counts. Code that runs inside the scope and is not the simulation (a describer, a picture) reads with `peek`,
+  `peek_ids` and `peek_iter`.
+
+**Why the counted set is the same headless, offscreen and in a window.** It changes only inside the scope, and the scope holds
+only what the recording and its playback both run, tick for tick: the fixed tick, the recorded action calls and the world they
+build. What differs between those modes (drawing, a window's input, looks, effects, foliage, animation, the HUD, the tiles'
+visuals, a person's or an agent's queries) runs outside the scope, suspends it, or reads kinds that never count. The checks:
+`content_reads_are_the_same_headless_and_drawn` (an ignored test, it needs a GPU) plays one session headless and offscreen, with
+frames between the ticks and some 14 700 meshes drawn, and compares what each counted, part by part; every reference replay
+verifies headless (`--verify`) and plays identically in an offscreen game; CI verifies them in a window under Xvfb. Bevy's
+multithreaded executor does not get in the way: the flags are atomics set once (a read after that only loads), and the scope
+belongs to the world (a heavy-mode twin and a stand's players have their own), whose schedules run one at a time. A gameplay system
+that panics does not leave the scope open: the engine's error handler takes the panic inside the schedule, the tick runs to its
+end and closes it (`system_failures.rs` checks it).
+
+**What the check does not see.** The parts are what the simulation read while the scope was open. A definition read with the scope
+closed and used by the simulation later is not one: a read in `Startup`, in a system of a loading state, or a cache built when
+content finishes loading. A change to such a definition does not show as `content differs`; what it changes in the world still
+makes the replay diverge, through the entities' hashes, at a later check and without the definition's name. So a module whose
+simulation depends on content reads it in the scope: in a fixed tick, an action call, or a builder that opens it
+(`ai_core::scope::open`). The engine's readers do: a review build that logged every read of a simulation kind made with the scope
+closed and never inside it, on every reference replay, found only the start-up and asset loading (`tile`, `room`, `level (all)`:
+which files to load; what is built from them is read again, by id, when it is spawned) and a halting invariant (`bounds/world`, in
+a suspension).
+
+**What the replay keeps.** The check's value hashes its parts: `kind/id` → the definition's hash (FNV-1a of its kind, id and JSON)
+for each counted definition, and `kind (all)` for each kind read whole, followed by all of its definitions. Next to `checks`, the
+file has `check_parts`: for each check with parts, the parts that appeared, changed (`set`) or went (`gone`) at each check tick,
+`{"tick": 60, "set": {"action/light_1": "…", …}}`. The set grows while the session meets new things and then stays, so the lists
+are short (1 to 3 KB a file: 2.6 KB of the combat prototype's 372). A divergence of the check folds the lists up to its tick and names each part
+that differs, is missing (counted in the recording, not now) or is extra (counted now, not in the recording): `action/light_1
+differs`, `layout/empty extra`, no more than 10, then `… and N more`. A check whose recording keeps hashes only
+(`--check-detail none`) still names them after its `no details` reason. Any module can make a check of this kind:
+`add_parts_check(name, hint, parts, whole)` registers it for replays and snapshots at once.
+
+**Content edits in a session.** `content_apply` (and `content_reload` and hot reload, which go through it) is a replay event: a
+changed definition keeps its flag and gets its new hash, at the same tick in the recording and in its playback, which starts from
+the recording's versions as before. A definition the edit adds or changes and the session never read stays out of the parts.
+
+**Snapshots** compare the same parts. A snapshot stores the counted parts with their hashes (`check_parts.content`); a load
+compares the loading game's versions of those definitions (others may differ) and refuses one that differs, naming it:
+`content differs (action/light_1 differs): the content the session read differs from this game's: …`; a part whose hash does not
+read is refused as a damaged file (``the snapshot's check `content` does not read: part …``). Then it sets the flags to exactly the
+snapshot's, so the restored state hashes as the original did, a heavy-mode twin counts what the original counts, and a replay from
+a snapshot plays in a game whose unread content has changed. A refused load puts the game's own flags back with its state. A
+snapshot taken whole (below) makes the session hash every definition from the load on, as the session it was taken in did, and
+leaves it no reads (none count then); a later load of a snapshot with parts makes it check by parts again. The recording restarts
+at a load with the snapshot as its start, so its playback checks the same way. A refused load in a session that hashes every
+definition leaves it so, with no reads.
+
+**Co-op** keeps the hash of the whole database (`ContentDb::hash`): the host and a client compare it when the client joins (and a
+Steam lobby shows it), because a client must be able to run anything the host may read later, not only what was read so far. The
+desync check (`world_hash`) does not include replay checks, so nothing changes there.
+
+**Older files.** The value of `content` changed its meaning, so the formats changed their version: replays are `shards-replay/4`
+and snapshots `shards-snapshot/2`, each the version before with `check_parts`. A build from before them refuses such a file by its
+tag (``not a replay this build can play: format `shards-replay/4`, expected `shards-replay/3` …``) instead of computing `content`
+over its whole database and reporting a divergence that is not there (a crash report a player sends from a newer build to an older
+checkout, say). This build reads the older versions (`shards-replay/3` and `/2`, `shards-snapshot/1`). A replay or snapshot without
+`check_parts` (a file in one of those older formats; `shards-replay/1` is not checked at all, see above) was made when the content check hashed the whole database, and it plays, loads and verifies as
+before: the game computes the check over the whole database for that session (and for the snapshots it takes and the branches it
+saves), and says so in the journal (``replay: the recording does not list the parts of check `content`: …``); a divergence there
+reads `replay check content differs (recorded whole: the recording lists no parts of it)`. So old recordings and crash reports keep
+verifying with the content they were made with, and are recorded again only to stop depending on content they never read.
+
+**Cost.** A read by id checks the definition's flag first (one atomic load, set already after the first read), then the scope (two
+atomic loads); no lock. Going over a kind finds the kind's table and its "read whole" flag in one lookup, as it found the table
+before. The parts are listed at each check (every 60 ticks), and each definition's hash is computed once, when it is loaded or
+edited, instead of hashing every definition's JSON at every check as before. Measured on the combat prototype (release build,
+`--replay … --verify`, six runs of each build in turns, on a machine busy with other builds): 1.02–1.33 s for its 2307 ticks
+(median 1.18 s, 0.51 ms a tick), against 1.05–1.60 s (median 1.20 s) for the build before. The ranges overlap and the machine was
+loaded, so this says only that the difference is within that noise, not that there is none; a clean comparison is the
+`--perf reference` autotest of both builds, from copies of the programs, in turns on an idle machine.
 
 ## Snapshots (E11.4)
 
@@ -3327,9 +3647,10 @@ shards load-snapshot snapshots/boss_phase2.json   # or act snapshot_load path=�
 - **rebuilt** after loading (`add_snapshot_rebuild`): caches derived from what was saved — `PhysicsWorld`,
   the remembered values of the replay recording's inputs, **the region's navmesh** (`navmesh`: built again for the region and the solid bodies
   that the snapshot brought back; the NPCs of a game loaded from a snapshot walk the same routes as in the original one);
-- **checked** (`add_snapshot_check`): what the world is built around. The snapshot stores hashes of the content database, of colliders without
-  `AiId` (level geometry) and of placed levels, and does not load where they differ: `content differs (snapshot …, this
-  game …): the content files differ …`. `force=true` loads it anyway;
+- **checked** (`add_snapshot_check`, `add_parts_check`): what the world is built around. The snapshot stores hashes of the content the session
+  read (each definition, `check_parts.content`), of colliders without `AiId` (level geometry) and of placed levels, and does not load where they
+  differ: `content differs (action/light_1 differs): the content the session read differs …` (content it never read may differ; see "What the
+  content check covers"). `force=true` loads it anyway;
 - **not state**: settings (tools, hooks, registries), the journal, agent sessions (they name entities by id), and everything that
   only the window shows. The seed and the tick rate are in the header and must match (`start the game with --seed 7`);
   the engine version in the header must match too: a different minor version (`0.2` and `0.3`) is refused (`force` skips this check), and a different patch version only gives a warning.
@@ -3361,7 +3682,7 @@ ran 120 ticks (332 → 452)
   ~ e25 Skeleton "Den Guard": +ground 1.6m/s; fight e5 · token · leash 9/10m → fight e5 · circle · leash 7/10m; -active claw 0.10s (zone cone 1.8m 100°); moved 1.8m S
 ```
 
-**Content edits and levels placed by id.** Content is files, and the snapshot checks their hash. But `content_apply` puts
+**Content edits and levels placed by id.** Content is files, and the snapshot checks the hashes of the definitions its session read. But `content_apply` puts
 definitions that are not in the files, and they are part of the session. `ContentEdits` lists the definitions where the database differs from
 its files (the resource exists only while such an edit exists, so the snapshot of a game with no edits is the same file as before), and
 the `content` preparation puts the snapshot's edits on top of the files of the game it is loaded into, before the `content` check (the game's own edits are dropped in the process).
@@ -3397,7 +3718,7 @@ entity id `0` or `u32::MAX`, and an `AiId` written by hand (the engine sets the 
 `force=true` skips only what the game does not know, and such service records; it does not load a value that cannot be read; a refusal after the region has been prepared puts the world back as it was (see above). A replay recording after a load starts from this snapshot, and everything recorded before it is discarded
 (`save-replay` before the load, if it is needed). A load during replay playback ends the playback.
 
-**Replay from a snapshot** (`shards-replay/3`, field `start`): `cargo sandbox --replay FILE --verify` loads the snapshot right after
+**Replay from a snapshot** (`shards-replay/3` and `/4`, field `start`): `cargo sandbox --replay FILE --verify` loads the snapshot right after
 the game loads, before the first tick, and then plays the events and compares the checks as usual. A snapshot that this build does not accept
 (other content or version) makes it exit with code 2 and give the reason. The region, content edits and levels placed by id go into the snapshot (see above), so a replay of a session that edited content or placed levels before the snapshot plays in a fresh
 game. Files that the replay needs (tile and level files that the edits of its start and its `content_apply` add) are requested by the modules as soon as the replay is set up: `add_playback_hook(fn(&mut World))` runs inside `replay::play`, before the first frame and tick. The module asks for the files and holds the loading gate under its own requirement (`tile levels: 1 level file left`
@@ -3587,6 +3908,7 @@ hold_to_toggle = false       # held buttons work as toggles
 [controls]
 mouse_sensitivity = 1.0      # 0.05…5
 invert_y = false
+attack_assist = true         # false: attacks do not correct their direction toward the lock-on target (holds `assist_off`)
 
 [controls.bindings]          # only what the player changed
 "gameplay.jump" = ["Key(KeyJ)", "GamepadButton(South)"]
@@ -3600,7 +3922,7 @@ invert_y = false
 |---|---|
 | `graphics` | `shards_settings::apply_graphics`: the main window (fullscreen, vsync, size). The window changes when the settings change, not every frame, so the size the player dragged with the mouse is not taken back. Without a window the values are only stored. `render_scale` is applied by `shards::render_scale`: the resolution of the 3D picture, not the window scale (see "3D picture resolution" below). `shadows` is read by the game: `GraphicsSettings::shadow_quality()`; `foliage` is read by `shards_scatter` (`GraphicsSettings::foliage_density()`): at 0.5 half of the same instances stays, with no new ones (see "Foliage and small objects (E10.2)") |
 | `audio` | `shards_audio`: the volume of the buses `music`, `sfx`, `voice`, `ui` with `master` taken into account (`AudioSettings::volume("music")`), applied to what is already playing (see "Audio") |
-| `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (see "Input" in "Movement (E2)"); sensitivity and the Y-axis inversion go to `CameraSettings` |
+| `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (see "Input" in "Movement (E2)"); sensitivity and the Y-axis inversion go to `CameraSettings`; `attack_assist = false` makes the controls hold `assist_off` for the player's body (see "Action timeline (B2a)") |
 | `accessibility` | `shards_motion`: the field of view and the strength of the camera shake, `MotionBlur` on the cameras that have it (the game adds the component, the setting sets the strength, 0 turns it off), `hold_to_toggle` in the input map; `shards_action`: `flashes` for the blinking of telegraphs and of off-screen markers (`reduced` — half as big and no more than 2 times a second, `off` — a steady light, `draw::pulse_at`) |
 
 **3D picture resolution: `graphics.render_scale` (E8.6, E10).** The 3D world is drawn into a picture of `render_scale` x the window's pixels (with `--offscreen`, the base is the size of the `--offscreen` picture, 1280×720 by default), and the picture is stretched over the whole window with a linear filter;
@@ -4117,7 +4439,7 @@ What a surface looks like is set by content of the `look` kind (`*.look.ron`). T
 
 **Outline.** The mesh is drawn once more, inside out. A child entity, `OutlineHull`, draws only its back faces. Its vertices move `width` screen pixels along the normal on screen, so the line stays one width near and far. The outline's normals are averaged over the mesh's points: positions closer than 0.1 mm count as one point, and each face is weighted by its corner's angle. So there are no gaps on a cube's edges or at flat faces. The outline is built from the source mesh, not from a flat copy. A skinned mesh gives its outline the same `SkinnedMesh`, so the outline bends with it. The outline casts no shadow and is not drawn in the prepass. It is only around the silhouette, so there are no edges inside. The outline takes the mesh's `RenderLayers` (and follows them), `NoFrustumCulling` and `VisibilityRange`. These meshes get no outline: transparent materials (`alpha_mode` not `Opaque`: glass, cut-out leaf cards, where the shell would show through or outline the whole card), meshes with morph targets (the shell would not follow them), a mesh whose data has gone to the GPU, and a mesh that is not a triangle list. A mesh with morph targets has no flat copy either.
 
-**Only the picture.** Meshes change only with the `render` feature of the umbrella crate, in a window or with `--offscreen`. Without a picture (`--headless`) nothing is styled: the look systems run only when there is a picture (`ai_core::display::drawn`). A `Look` on a body from a prefab is an ordinary component of the prefab. It is part of the replay and the snapshot, and it goes to co-op clients. Otherwise a client would draw the bodies that the host spawned after the client joined, without a look. So code that sets a `Look` only for the picture sets it on mesh children without an `AiId`, not on the bodies (this is what `visuals.rs` in the sandbox and the template do). The outline is an entity without an `AiId`. Look definitions are part of the content base's hash, like any content: a new look, or an edit to a look, makes an old replay diverge at the `content` check, and the reference replays are recorded again.
+**Only the picture.** Meshes change only with the `render` feature of the umbrella crate, in a window or with `--offscreen`. Without a picture (`--headless`) nothing is styled: the look systems run only when there is a picture (`ai_core::display::drawn`). A `Look` on a body from a prefab is an ordinary component of the prefab. It is part of the replay and the snapshot, and it goes to co-op clients. Otherwise a client would draw the bodies that the host spawned after the client joined, without a look. So code that sets a `Look` only for the picture sets it on mesh children without an `AiId`, not on the bodies (this is what `visuals.rs` in the sandbox and the template do). The outline is an entity without an `AiId`. Looks are part of the content hash a co-op session compares, but not of the replay check `content` (`SIMULATION = false`): a new look, or an edit to one, never makes a replay diverge.
 
 **For agents.** `looks` (Dev, query) lists the looks (colour, light, flat faces, outline, glow, glTF materials) and how many meshes each one draws now, then the meshes without a look, then the meshes that wait for their files. `look_outlines on=false` (Dev, query; with no argument, it turns them on) hides the outlines or brings them back. They stay built, so turning them on again costs nothing. The setting is the resource `LookSettings`, not part of the replay or the snapshot.
 
@@ -4272,7 +4594,7 @@ content/region/wilds.scatter.ron: scatter `grass`: spacing: meters, 0 (any) or 0
 content/region/wilds.scatter.ron: scatter `grass`: density: 20/m² on a tile of `wilds` (256 m²) with 2 levels of detail is 10240 mesh entities a tile, more than 10000; lower the density or the levels (each tile keeps its first 5000 instances)
 ```
 
-Also checked: a tag that no tile has, a region that does not exist, an empty `looks`, more than 4 levels of detail, numbers outside their allowed ranges, and a glTF file that is not in the assets folder. Definitions are part of the content hash, like all content: a new definition makes an old replay diverge at the `content` check, and the reference replays are recorded again.
+Also checked: a tag that no tile has, a region that does not exist, an empty `looks`, more than 4 levels of detail, numbers outside their allowed ranges, and a glTF file that is not in the assets folder. Definitions are part of the content hash a co-op session compares, but not of the replay check `content` (`SIMULATION = false`): a new or edited definition never makes a replay diverge.
 
 **How the game uses it.** (1) Foliage looks without an outline in `*.look.ron` (in the sandbox: `grass`, `grass_dry`, `bush`,
 `rock`). (2) A `*.scatter.ron` file with tiles, density and meshes: in the sandbox, `region/wilds.scatter.ron`, and in the template,
@@ -5080,7 +5402,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 | `characters/bodies.locomotion.ron` | how the player, the skeleton and the guard walk |
 | `combat/player.action.ron` | the combo `light_1`–`light_3`, `heavy`, the roll (i-frames 0.18 s), the block with a perfect block, the flask |
 | `combat/warden.action.ron` | the guard's four attacks (`slash`, `slam`, `sweep`, `shockwave`), calm and enraged |
-| `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters |
+| `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player |
 | `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | the skeleton's claw, the movesets, the input buffer |
 | `npc/monsters.behavior.ron`, `monsters.perception.ron`, `monsters.director.ron`, `monsters.attack_plan.ron` | how the monsters think: the `skeleton` and `warden` state machines (with a `calm` state that the scenarios do not let the monster leave), sight, the `default` director (two tokens for one player) and the `boss` director (the guard strikes on its own), the guard's attack plans |
 | `region/wilds.*.ron` | the wilds: tiles, socket rules, points of interest, the region, a fallback map, navmesh settings |
@@ -5109,6 +5431,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   invariants: alive, never below the start;
 - `combat_prototype.scenario` — the guard is beaten in 11 rounds. Each round starts from its warning (`step --until
   "journal:e6 winds up"`), then a roll out of the zone, a block, a perfect block with a heavy hit, an exchange of blows under hyper-armour, the flask, the combo. The test runs it after six different pauses (other attacks in another order): a win every time;
+- `timeline.scenario` (B2a) — the player borrows the `timeline` moveset (`combat/sparring.*.ron`) against a still skeleton: a heavy held from the press shows `charging, turns in 0.23s` (`step --until named:charging`) and turns into `spar_heavy_full` (-25), a tapped one stays `spar_heavy` (-12); a light pressed while the heavy winds up answers `ok: queued, light starts in 0.5…` and the jab lands with no `light rejected`; a lunge into nothing writes `e5 spar_lunge missed: +0.60s recovery` and shows `missed +0.60s`; a lunge staggered in its windup keeps 40% of its cooldown on the `lunge` slot, so its variant on `technique.2` answers `lunge is on cooldown (ready in 0.5…)`; a channel started with `hold=true` lasts while held and ends on `hold=false`; locked on the skeleton to the north, a roll east (`spar_roll_keep`, `face: Keep`) keeps the player `facing N`. At the end the player has its own moveset, no `RunExtras` and nothing queued;
 - `boss_fight`, `dodge`, `errors` — the switch to phase 2, a roll to dodge a hit, errors that teach;
 - `npc_director.scenario` (E6) — three skeletons against one player in god mode, 30 s of combat: the sandbox condition `three_attacking`
   (three hit at once) is never met on any tick, but each skeleton gets its own turn, and the tokens rotate;
@@ -5143,8 +5466,8 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   generated`), the hash is `7bbfdc3b62623fbc` again, and `save_check` agrees.
 
 The scenarios start with `heal`/`teleport`/`set`/`npc_set_state … calm`, so they run on a fresh game and after other scenarios, in any order:
-CI runs them forward and then backward in one game. Sessions of seven of them are recorded as reference replays in `tests/replays/`
-(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`; see "Replays").
+CI runs them forward and then backward in one game. Sessions of nine of them are recorded as reference replays in `tests/replays/`
+(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `timeline`; see "Replays").
 
 ## Tests and CI
 
@@ -5184,7 +5507,7 @@ a separate workspace; one `#[ignore]`: recording its references).
 | `shards_steam` | on a fake Steam: lobbies and invitations, relay sessions (held datagrams, refusal, hub delay), the game server, achievements and the fake's cloud, `steam:` and `+connect_lobby` addresses, the cloud check and its file names; `tests/steam/`: a lobby host and two friends over the stand's relay, the game server and a client by id, an invitation, refusal of a stranger, a failed join and `--exit-with-host`, a check of the achievement content, a write to Steam after a second and a retry of a refused write, the previous run, a replay, co-op (the host decides, each one opens its own), a copy of each record, cloud turned off, the check at start-up before a slot is loaded, the answers of `steam` and `ai/status`. The real backend is only built (`--features sdk`) |
 | `shards_net` | `src/`, without Bevy: transports (an in-memory hub, UDP, a reply to a stranger that binds no one), link simulation, the channel (reliable and latest-only messages, blobs, acknowledgements, RTT, loss, timeouts), the datagram format (knock, challenge, cookie in the acknowledgement fields, protocol 1 is recognised), the cookie (SipHash-2-4 on reference vectors, address, session, expiry, forgery); the session (a knock leaves no trace on the host, a peer only with the cookie of its own address and session, an expired cookie, the table of strangers as before, refusal of an older build on its protocol and no more than 8 times a second, the character in parts: the place is held, order, size, `Hello` bytes, JSON; the limits on input frames and on the largest honest packet, what is held after the world is reloaded, replication rules, waiting for room in the channel by count and by bytes, `NetDef`, departed tokens). The whole session is covered in the sandbox tests `net*.rs` |
 | `shards` | how networking and saves fit together (`coop`: what the host knows about the player's character, how it travels as text), engine sections (a number that a body never has), the stand's slot, a replay from a snapshot (`--verify`: the same result, code 2 for a foreign snapshot), the mode without a window: the same plugins, but no image (`display` and the `shot` hint), `--offscreen`: the window's plugins without a window (an image for `shot`, into which the cameras aimed at the window draw, also after a change of target), the internal 3D resolution (`render_scale`: an image of the right size, the cameras into it and back, shown on the whole window, the window changes size, the system scale, the game camera with its own image), the test app, `testing::ok` on a gameplay failure, `testing::run_to` and `verify`, when a violated rule matched the start of loading, the tick budget on the command line, frame time (`frames`: a frame is the slower of the two worlds, a frame with `step` does not count, the GPU report, draw commands travel with their own frame), the performance test (`bench`: verdicts, including `draws` and `nav_bake_s`, a definition check, `--perf` and its codes), `counts` without a window, the animation bridge on a real model with a skin and on a humanoid from Blender (a roll in place, a clip from a second file), `--bake-motion` |
-| `sandbox` | in one binary, `tests/sandbox`: snapshots (`snapshots.rs`: the state after loading is the same as in the original session, during a roll, a combo, a telegraph, planning, swimming, a flask, NPC fights and in a generated region), the ruin tile (`tiles.rs`: the file from the test glTF generator matches the one committed), scenarios (`scenario_files`: each file on a fresh game, all of them in a row in one game, the combat prototype after six different pauses), reference replays, actions, content, the obstacle course, determinism, visibility, scope permissions, replays, `kill` and SIGHUP; invariants (`invariants.rs`, the engine's rules `engine_rules.rs` (a control test per rule): the sandbox rules and their limits, sessions, a stop in real time, the replay of a violation, a snapshot; `net_seams.rs`: the client does not check the rules); co-op on a stand (`net.rs`, `net_guards.rs`, `net_lifecycle.rs`, `net_sync.rs`, `net_predict.rs`, `net_seams.rs`, `net_coop.rs`, of which 2 are measurements under `#[ignore]`: joining and leaving, limits and the peer's text, the world reloaded, input, desync, the end of a session and exit codes, stand clocks, UDP on loopback, client prediction, characters and saves); a long game (`soak.rs`: two minutes with a host and two clients at 150 ms and 2 % with a region change and saves, half an hour under `#[ignore]`); the screenshot without a window (`offscreen.rs`, `#[ignore]`: needs a GPU or software rendering); separately `system_failures` (a gameplay failure, a crash replay, a crash report, a panic in another thread, `crash_report`, a return to a snapshot after a failure), `log_capture` (log lines in `step`) and `perf` (tick time: budget, journal, `ai/status`; the performance test on the reference scene without a window, with `offscreen` under `#[ignore]`): these run in their own processes |
+| `sandbox` | in one binary, `tests/sandbox`: snapshots (`snapshots.rs`: the state after loading is the same as in the original session, during a roll, a combo, a held charge, a whiff's extra recovery, a telegraph, planning, swimming, a flask, NPC fights and in a generated region), the ruin tile (`tiles.rs`: the file from the test glTF generator matches the one committed), scenarios (`scenario_files`: each file on a fresh game, all of them in a row in one game, the combat prototype after six different pauses), reference replays, actions, content, the obstacle course, determinism, visibility, scope permissions, replays, `kill` and SIGHUP; invariants (`invariants.rs`, the engine's rules `engine_rules.rs` (a control test per rule): the sandbox rules and their limits, sessions, a stop in real time, the replay of a violation, a snapshot; `net_seams.rs`: the client does not check the rules); co-op on a stand (`net.rs`, `net_guards.rs`, `net_lifecycle.rs`, `net_sync.rs`, `net_predict.rs`, `net_seams.rs`, `net_coop.rs`, of which 2 are measurements under `#[ignore]`: joining and leaving, limits and the peer's text, the world reloaded, input, desync, the end of a session and exit codes, stand clocks, UDP on loopback, client prediction, characters and saves); a long game (`soak.rs`: two minutes with a host and two clients at 150 ms and 2 % with a region change and saves, half an hour under `#[ignore]`); the screenshot without a window (`offscreen.rs`, `#[ignore]`: needs a GPU or software rendering); separately `system_failures` (a gameplay failure, a crash replay, a crash report, a panic in another thread, `crash_report`, a return to a snapshot after a failure), `log_capture` (log lines in `step`) and `perf` (tick time: budget, journal, `ai/status`; the performance test on the reference scene without a window, with `offscreen` under `#[ignore]`): these run in their own processes |
 
 The template's tests (`template/tests/game`, 45 and one `#[ignore]`) are built into one binary: scenarios (and the stand scenario), determinism,
 replays, content, co-op (host and guest at 150 ms and 2 %: the guest's trophy on each copy and in its file, the next game with it,

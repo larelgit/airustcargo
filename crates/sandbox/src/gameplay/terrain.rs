@@ -199,6 +199,9 @@ fn arena_pieces(g: &mut VoxelGen) -> Result<(), String> {
     let p: PiecesParams = g.params()?;
     let (stone, brick, sand, water, glow) = (block(g, &p.stone)?, block(g, &p.brick)?, block(g, &p.sand)?, block(g, &p.water)?, block(g, &p.glow)?);
     let IVec2 { x: cx, y: cz } = middle(g);
+    if p.height < 4 {
+        return Err(format!("height {} leaves no room for a pool three blocks deep over a bed (at least 4)", p.height));
+    }
     let ah = p.height as i32;
     let v = g.volume_mut();
     for s in 0..4 {
@@ -283,6 +286,9 @@ fn trees(g: &mut VoxelGen) -> Result<(), String> {
     let p: TreesParams = g.params()?;
     let (ground, trunk, leaves) = (block(g, &p.ground)?, block(g, &p.trunk)?, block(g, &p.leaves)?);
     let size = g.volume().size();
+    if size.x <= 8 || size.z <= 8 {
+        return Err(format!("the volume ({} x {}) is too narrow for trees (more than 8 cells a side)", size.x, size.z));
+    }
     let c = middle(g).as_vec2();
     let mut rng = g.rng();
     let (mut planted, mut tries) = (0, 0);

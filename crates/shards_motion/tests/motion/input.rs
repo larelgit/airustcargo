@@ -142,6 +142,25 @@ fn the_move_axis_is_turned_by_the_camera() {
 }
 
 #[test]
+fn the_move_axis_is_turned_by_the_stored_yaw_not_by_a_shake() {
+    // Shake moves the camera's picture (its `Transform`), never `ThirdPersonCamera::yaw`, and
+    // gameplay reads only the yaw: a hit that shakes the view does not bend the walk.
+    let mut app = input_app();
+    let e = local_player(&mut app);
+    let yaw = 0.7;
+    let camera = app.world_mut().spawn((ThirdPersonCamera { yaw, ..default() }, Transform::from_rotation(Quat::from_rotation_y(yaw + 0.3)))).id();
+    app.world_mut().resource_mut::<shards_motion::camera::CameraShake>().add_trauma(1.0);
+    press(&mut app, KeyCode::KeyW);
+    for _ in 0..5 {
+        frame(&mut app);
+    }
+    let want = Quat::from_rotation_y(yaw) * Vec3::NEG_Z;
+    let dir = intent(&app, e).move_dir;
+    assert!((dir - want).length() < 1e-5, "the stored yaw {yaw} turns the walk, not the jittered view: {dir} vs {want}");
+    assert!((app.world().get::<ThirdPersonCamera>(camera).unwrap().yaw - yaw).abs() < 1e-6);
+}
+
+#[test]
 fn keys_held_before_the_player_exists_reach_it_when_it_appears() {
     let mut app = input_app();
     press(&mut app, KeyCode::KeyW);
@@ -236,6 +255,98 @@ fn press_hold_and_toggle_modes() {
     assert!(!state.held("sprint"));
 }
 
+fn mouse(app: &mut App) -> Mut<'_, ButtonInput<MouseButton>> {
+    app.world_mut().resource_mut::<ButtonInput<MouseButton>>()
+}
+
+#[test]
+fn press_hold_bind_writes_press_and_held() {
+    let mut app = input_app();
+    let e = local_player(&mut app);
+    frame(&mut app);
+    assert_eq!(app.world().resource::<InputMap>().action("gameplay", "heavy").unwrap().mode, BindMode::PressHold);
+
+    // Down: a press, and held while it stays down.
+    mouse(&mut app).press(MouseButton::Right);
+    frame(&mut app);
+    assert_eq!(pressed_names(&app, e), ["heavy"]);
+    assert!(intent(&app, e).is_held("heavy"));
+    edit_intent(&mut app, e, |i| i.pressed.clear());
+    frame(&mut app);
+    assert!(pressed_names(&app, e).is_empty(), "one press per push");
+    assert!(intent(&app, e).is_held("heavy"));
+    mouse(&mut app).release(MouseButton::Right);
+    frame(&mut app);
+    assert!(!intent(&app, e).is_held("heavy"));
+    assert!(ok(&mut app, "input_bindings", json!({})).contains("[press+hold] "));
+
+    // "Hold to toggle": the first push presses and holds, the next lets go and presses nothing.
+    app.world_mut().resource_mut::<AccessibilitySettings>().hold_to_toggle = true;
+    mouse(&mut app).press(MouseButton::Right);
+    frame(&mut app);
+    mouse(&mut app).release(MouseButton::Right);
+    frame(&mut app);
+    assert_eq!(pressed_names(&app, e), ["heavy"]);
+    assert!(intent(&app, e).is_held("heavy"), "held though the button is up");
+    edit_intent(&mut app, e, |i| i.pressed.clear());
+    mouse(&mut app).press(MouseButton::Right);
+    frame(&mut app);
+    mouse(&mut app).release(MouseButton::Right);
+    frame(&mut app);
+    assert!(pressed_names(&app, e).is_empty(), "letting go is not a press");
+    assert!(!intent(&app, e).is_held("heavy"));
+    app.world_mut().resource_mut::<AccessibilitySettings>().hold_to_toggle = false;
+
+    // The mode is a control setting like the others.
+    let out = ok(&mut app, "rebind", json!({"action": "sprint", "mode": "press_hold"}));
+    assert!(out.contains("mode presshold"), "{out}");
+    assert_eq!(app.world().resource::<InputMap>().action("gameplay", "sprint").unwrap().mode, BindMode::PressHold);
+}
+
+#[test]
+fn press_hold_bind_replays() {
+    let session = |app: &mut App| {
+        mouse(app).press(MouseButton::Right);
+        app.update();
+        crate::common::step(app, 5);
+        mouse(app).clear();
+        app.update();
+        crate::common::step(app, 5);
+        mouse(app).release(MouseButton::Right);
+        app.update();
+        crate::common::step(app, 5);
+    };
+    let fresh = || {
+        let mut app = bare_engine("press_hold_replays");
+        app.init_resource::<ButtonInput<KeyCode>>().init_resource::<ButtonInput<MouseButton>>();
+        let e = player(app.world_mut(), Vec3::ZERO);
+        app.world_mut().entity_mut(e).insert(LocalPlayer);
+        app.update();
+        (app, e)
+    };
+    let (mut original, e) = fresh();
+    session(&mut original);
+    assert!(!intent(&original, e).is_held("heavy"));
+    let recorded = ai_core::replay::save(original.world());
+    let intents: Vec<String> = recorded
+        .events
+        .iter()
+        .filter_map(|ev| match ev {
+            ai_core::replay::ReplayEvent::Input { component, value, .. } if component == "Intent" => Some(value.to_string()),
+            _ => None,
+        })
+        .collect();
+    assert!(intents.first().is_some_and(|v| v.contains("\"heavy\"") && v.contains("held")), "{intents:#?}");
+    assert!(intents.len() >= 2, "the press and hold, then the release: {intents:#?}");
+
+    let (mut copy, _) = fresh();
+    ai_core::replay::play(copy.world_mut(), recorded.clone()).unwrap();
+    crate::common::step(&mut copy, recorded.end.tick);
+    copy.update();
+    let report = copy.world().resource::<ai_core::AiReplay>().report().cloned().expect("playback has finished");
+    assert!(report.identical(), "{report}");
+}
+
 #[test]
 fn a_dodge_goes_where_you_steer() {
     let mut app = input_app();
@@ -323,9 +434,69 @@ fn the_look_axis_collects_mouse_and_stick_for_the_camera() {
     let look = app.world().resource::<ControlState>().axis("look");
     // 40 px right, 20 px up, 0.0025 per pixel.
     assert!((look - Vec2::new(0.1, 0.05)).length() < 1e-5, "{look}");
+    // A flick is measured in the raw pixels, whatever the binding scales them to.
+    assert_eq!(app.world().resource::<ControlState>().look_pointer_px(), Vec2::new(40.0, 20.0));
+    assert_eq!(app.world().resource::<ControlState>().look_stick(), Vec2::ZERO);
     app.insert_resource(AccumulatedMouseMotion::default());
     frame(&mut app);
     assert_eq!(app.world().resource::<ControlState>().axis("look"), Vec2::ZERO);
+    assert_eq!(app.world().resource::<ControlState>().look_pointer_px(), Vec2::ZERO);
+}
+
+#[test]
+fn the_look_stick_is_reported_as_a_deflection_before_its_scale_and_the_frame() {
+    let mut app = input_app();
+    local_player(&mut app);
+    let pad = app.world_mut().spawn(Gamepad::default()).id();
+    app.world_mut().get_mut::<Gamepad>(pad).unwrap().analog_mut().set(GamepadInput::Axis(GamepadAxis::RightStickX), 0.9);
+    frame(&mut app);
+    let state = app.world().resource::<ControlState>();
+    // Past the 0.15 dead zone, rescaled: (0.9 - 0.15) / 0.85; the axis itself is that times the 2.8 rad/s and the frame.
+    let want = (0.9 - 0.15) / 0.85;
+    assert!((state.look_stick().x - want).abs() < 1e-4, "{}", state.look_stick());
+    assert!(state.axis("look").x.abs() < 2.8 * want, "the axis is a per-frame turn, not the deflection");
+    assert_eq!(state.look_pointer_px(), Vec2::ZERO);
+}
+
+#[test]
+fn an_inverted_look_stick_keeps_its_flipped_side_in_the_flick() {
+    let mut app = input_app();
+    local_player(&mut app);
+    app.world_mut()
+        .resource_mut::<InputMap>()
+        .rebind("gameplay", "look", 1, Binding::Stick { stick: shards_motion::input::Stick::Right, deadzone: 0.15, scale: -2.8, scale_x: None, scale_y: None, curve: 1.0 })
+        .unwrap();
+    let pad = app.world_mut().spawn(Gamepad::default()).id();
+    app.world_mut().get_mut::<Gamepad>(pad).unwrap().analog_mut().set(GamepadInput::Axis(GamepadAxis::RightStickX), 0.9);
+    frame(&mut app);
+    let state = app.world().resource::<ControlState>();
+    assert!(state.look_stick().x < 0.0, "the look axis turns left, so does the flick: {}", state.look_stick());
+    assert!(state.axis("look").x < 0.0);
+    assert!((state.look_stick().x.abs() - (0.9 - 0.15) / 0.85).abs() < 1e-4);
+}
+
+#[test]
+fn the_flick_reads_the_stick_before_its_curve_and_per_axis_scales() {
+    let mut app = input_app();
+    local_player(&mut app);
+    let stick = Binding::Stick {
+        stick: shards_motion::input::Stick::Right,
+        deadzone: 0.15,
+        scale: 2.8,
+        scale_x: Some(-4.0),
+        scale_y: Some(0.0),
+        curve: 2.0,
+    };
+    app.world_mut().resource_mut::<InputMap>().rebind("gameplay", "look", 1, stick).unwrap();
+    let pad = app.world_mut().spawn(Gamepad::default()).id();
+    let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).unwrap();
+    gamepad.analog_mut().set(GamepadInput::Axis(GamepadAxis::RightStickX), 0.9);
+    gamepad.analog_mut().set(GamepadInput::Axis(GamepadAxis::RightStickY), 0.0);
+    frame(&mut app);
+    let state = app.world().resource::<ControlState>();
+    let linear = (0.9 - 0.15) / 0.85;
+    assert!((state.look_stick().x + linear).abs() < 1e-4, "linear and flipped, not curved: {}", state.look_stick());
+    assert!(state.axis("look").x < 0.0 && state.axis("look").y == 0.0, "{}", state.axis("look"));
 }
 
 #[test]
@@ -829,6 +1000,25 @@ fn hold_to_toggle_turns_held_buttons_into_toggles() {
 }
 
 #[test]
+fn turning_the_attack_assist_off_holds_assist_off() {
+    let mut app = input_app();
+    let e = local_player(&mut app);
+    frame(&mut app);
+    assert!(!intent(&app, e).is_held("assist_off"), "on by default");
+    set_control(&mut app, "attack_assist", "false");
+    frame(&mut app);
+    assert!(intent(&app, e).is_held("assist_off"), "the setting holds it for the player's body");
+    // A menu does not let go of it: it is a setting, not a button.
+    app.world_mut().resource_mut::<InputContexts>().push("menu");
+    frame(&mut app);
+    assert!(intent(&app, e).is_held("assist_off"));
+    app.world_mut().resource_mut::<InputContexts>().pop();
+    set_control(&mut app, "attack_assist", "true");
+    frame(&mut app);
+    assert!(!intent(&app, e).is_held("assist_off"));
+}
+
+#[test]
 fn the_look_and_accessibility_settings_reach_the_camera() {
     let mut app = input_app();
     assert_eq!(*app.world().resource::<CameraSettings>(), CameraSettings::default(), "the defaults agree");
@@ -882,4 +1072,28 @@ fn content_sets_the_defaults_and_an_edit_keeps_the_players_changes() {
         (action: "close", bindings: [Key(Escape)]) ])]) }"#);
     let out = ok(&mut app, "content_check", json!({}));
     assert!(out.contains("context `ui.inventory`: a context name cannot contain `.`") && out.contains("`ui_inventory`"), "{out}");
+}
+
+#[test]
+fn a_stick_with_a_bad_curve_or_scale_is_a_content_error_that_names_the_file() {
+    let dir = temp_dir("input_stick_content");
+    let controls = |stick: &str| format!(r#"{{ "default": (contexts: [(name: "gameplay", actions: [
+        (action: "look", bindings: [Stick(stick: Right{stick})]) ])]) }}"#);
+    write(&dir, "content/controls.input_map.ron", &controls(", deadzone: 0.2, scale_x: Some(3.2), scale_y: Some(2.0), curve: 1.6"));
+    let mut app = engine_app(&dir);
+    app.init_resource::<ButtonInput<KeyCode>>().init_resource::<ButtonInput<MouseButton>>();
+    frame(&mut app);
+    let out = ok(&mut app, "content_check", json!({}));
+    assert!(!out.contains("curve"), "a good stick passes: {out}");
+    for (bad, want) in [
+        (", curve: 0.0", "`curve` is 0"),
+        (", curve: -1.0", "`curve` is -1"),
+        (", curve: inf", "`curve` is inf"),
+        (", scale: NaN", "`scale` is not a finite number"),
+        (", scale_y: Some(inf)", "`scale_y` is not a finite number"),
+    ] {
+        write(&dir, "content/controls.input_map.ron", &controls(bad));
+        let out = ok(&mut app, "content_check", json!({}));
+        assert!(out.contains("controls.input_map.ron") && out.contains(want), "{bad}: {out}");
+    }
 }

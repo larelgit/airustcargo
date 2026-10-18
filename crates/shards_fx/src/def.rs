@@ -218,6 +218,8 @@ fn range(refs: &mut Refs, field: &str, (min, max): (f32, f32), positive: bool) {
 
 impl ContentDef for EffectDef {
     const KIND: &'static str = "effect";
+    // Only what a machine shows or plays, or what lies outside a session: never in the replay check.
+    const SIMULATION: bool = false;
 
     fn validate(&self, _: &str, refs: &mut Refs) {
         if !(1..=MAX_LIVE).contains(&self.max_live) {
@@ -316,6 +318,8 @@ pub struct FxDef {
 
 impl ContentDef for FxDef {
     const KIND: &'static str = "fx";
+    // Only what a machine shows or plays, or what lies outside a session: never in the replay check.
+    const SIMULATION: bool = false;
 
     fn validate(&self, id: &str, refs: &mut Refs) {
         let others: Vec<&str> = refs.iter::<FxDef>().map(|(other, _)| other).filter(|other| *other != id).collect();

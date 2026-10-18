@@ -96,18 +96,18 @@ The template is a **separate workspace** with its own `Cargo.lock`: the engine's
    folder and overwrite each other's keys and volume (the test `the_settings_folder_is_named_after_the_package_the_way_a_rename_finds_it`
    will remind you). The line `InputSettings::for_game` migrates the keys from the old `~/.config/my_game/input.ron`,
    which earlier versions of the template wrote. A new game does not need it, and you can delete it.
-3. **Connect the engine.** In `Cargo.toml`, replace the path with a git dependency. The template uses saves, co-op, screens and the texts of phases C–E, so you need the engine of those phases (the coming `0.4.0`); the earlier versions `0.2.0` and `0.3.0` will not do.
-   Until the repository has any tags (the maintainer adds `v0.4.0`, see the engine's `CHANGELOG.md`), pin a commit:
+3. **Connect the engine.** In `Cargo.toml`, replace the path with a git dependency. The template uses saves, co-op, screens and the texts of phases C–E, so you need the engine of those phases (`0.4.0`); the earlier versions `0.2.0` and `0.3.0` will not do.
+   Pin the tag `v0.4.0` (versions are listed in the engine's `CHANGELOG.md`):
    ```toml
    [dependencies]
-   shards = { git = "https://github.com/larelgit/airustcargo", rev = "<hash>", default-features = false }
+   shards = { git = "https://github.com/larelgit/shards-engine", tag = "v0.4.0", default-features = false }
    ```
-   Then run `cargo update`. When `v0.4.0` is released, replace `rev = "<hash>"` with `tag = "v0.4.0"`. The build does not change until you change `rev` (or `tag`) yourself. To move to a new version, change `rev` (or `tag`), run `cargo update -p shards`, read the "Changed" section of `CHANGELOG.md`, and run the tests and replays.
+   Then run `cargo update`. To follow unreleased changes on the main branch instead, pin a commit with `rev = "<hash>"`. The build does not change until you change `tag` (or `rev`) yourself. To move to a new version, change `tag` (or `rev`), run `cargo update -p shards`, read the "Changed" section of `CHANGELOG.md`, and run the tests and replays.
    The `[features]` list (`render`, `remote`, `hot_reload`, …) passes the engine's features through; `default-features = false` is needed so that the game's own list chooses them.
 4. **Build and run it.** `cargo test`, then `cargo game`. If the game is run without `cargo` (directly, as `target/debug/my_game`), it looks for `assets/` next to the executable; set `BEVY_ASSET_ROOT=$PWD`.
-5. **Install the `shards` CLI** (once; use the same version of the engine as the game, the same `rev`):
+5. **Install the `shards` CLI** (once; use the same version of the engine as the game, the same `tag`):
    ```bash
-   cargo install shards_cli --git https://github.com/larelgit/airustcargo --rev <hash>   # after the release: --tag v0.4.0
+   cargo install shards_cli --git https://github.com/larelgit/shards-engine --tag v0.4.0   # or --rev <hash> for a pinned commit
    ```
    Inside the engine repository, you can do it this way: `cargo install --path ../crates/shards_cli`.
 6. **Change the content first, then the code.** First check whether files can do the job (section "Content").

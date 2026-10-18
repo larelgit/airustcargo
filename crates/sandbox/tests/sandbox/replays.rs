@@ -247,7 +247,12 @@ fn missing_and_extra_entities_are_named_and_the_list_is_capped() {
     assert_eq!(found.more, 2, "{gone}");
     assert!(found.entities.iter().all(|e| matches!(e.change, EntityChange::Missing { .. })), "{gone}");
     let listed: Vec<String> = (15..25).map(|id| format!("e{id} missing")).collect();
-    assert!(gone.headline().ends_with(&format!("DIVERGED at tick 60: {}; … and 2 more", listed.join("; "))), "{gone}");
+    // What the spawned skeletons read is missing too: their claw, and the director they share.
+    let unread = "replay check content differs: action/claw missing, director/default missing";
+    assert!(
+        gone.headline().ends_with(&format!("DIVERGED at tick 60: {}; … and 2 more; {unread}", listed.join("; "))),
+        "{gone}"
+    );
 
     // And one where a thirteenth one joins them: e27 is extra.
     let mut more = replay;
@@ -294,7 +299,10 @@ fn a_version_2_replay_verifies_by_its_hashes() {
     for check in file["checks"].as_array_mut().unwrap() {
         check.as_object_mut().unwrap().remove("parts");
     }
-    assert!(!v2.to_string().contains("parts"));
+    // The content parts stay: this recording's hashes are of them (a file without them is
+    // checked with every definition hashed, as the builds before them did).
+    assert!(v2.get("check_parts").is_some());
+    assert!(v2["checks"].as_array().unwrap().iter().chain([&v2["end"]]).all(|c| c.get("parts").is_none()));
     let v2: Replay = serde_json::from_value(v2).unwrap();
 
     let same = report(&played(v2.clone()));
@@ -636,4 +644,33 @@ fn check_flags_are_for_recording() {
     // A replay checks at its own ticks.
     let both = refused(&["--check-every", "1"]);
     assert!(both.contains("the argument '--replay <FILE>' cannot be used with '--check-every <TICKS>'"), "{both}");
+}
+
+/// The player's setting that turns the attack assist off (`controls.attack_assist`) makes the
+/// controls hold `assist_off` on the local player. A recording made with the assist on must
+/// still play back identically on a machine whose setting is off: playback undoes input changes
+/// nobody recorded (`inputs_between_ticks`), the way it undoes keys pressed while watching.
+#[test]
+fn a_replay_with_the_assist_on_verifies_on_a_machine_with_it_off() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/replays/timeline.json");
+    let recording = replay::load(&path).expect("the timeline reference replay");
+    assert!(
+        !recording.events.iter().any(|e| matches!(e, ReplayEvent::Input { value, .. } if value.to_string().contains("assist_off"))),
+        "the recording was made with the assist on"
+    );
+    let end = recording.end.tick;
+    let mut app = sandbox::test_app(recording.seed);
+    app.world_mut().resource_mut::<shards::settings::ControlSettings>().attack_assist = false;
+    replay::play(app.world_mut(), recording).unwrap();
+    let mut held_while_playing = false;
+    for _ in 0..end {
+        ok(&mut app, "step", json!({"ticks": 1}));
+        let world = app.world_mut();
+        let mut q = world.query_filtered::<&Intent, With<Player>>();
+        held_while_playing |= q.single(world).is_ok_and(|i| i.is_held("assist_off"));
+    }
+    app.update();
+    let report = report(&app);
+    assert!(report.identical(), "{report}");
+    assert!(!held_while_playing, "playback let the setting's input reach the replayed body");
 }

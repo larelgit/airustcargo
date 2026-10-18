@@ -628,7 +628,14 @@ fn check(world: &World, manifest: &RegionManifest) -> Result<(), String> {
     if manifest.links.len() + manifest.tiles.len() > 0 {
         return Err(format!("{title}: a volume has no tiles or links, and the manifest names some: the manifest was changed"));
     }
-    made_with(manifest)?;
+    let (made, attempt) = made_with(manifest)?;
+    let fits = if manifest.attempt > 0 { manifest.fallback.is_none() && attempt < def.attempts } else { Some(made) == def.fallback_seed };
+    if !fits {
+        return Err(format!(
+            "{title}: attempt {} with fallback {:?} is not one its definition makes ({} attempts, fallback seed {:?}): the manifest was changed",
+            manifest.attempt, manifest.fallback, def.attempts, def.fallback_seed
+        ));
+    }
     Ok(())
 }
 

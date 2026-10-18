@@ -686,12 +686,14 @@ fn a_manifest_whose_grid_was_changed_is_refused_and_the_world_stays() {
     ok(&mut app, "regen", json!({"region": "isle", "seed": 7}));
     let (m, hash) = (manifest(&app), terrain(&app).hash);
     type Forge = fn(&mut RegionManifest);
-    let forgeries: [(&str, Forge); 5] = [
+    let forgeries: [(&str, Forge); 7] = [
         ("no chunks", |m| m.size = [0, 0]),
         ("chunks past counting", |m| m.size = [400_000, 400_000]),
         ("another chunk edge", |m| m.tile_size = 8.0),
         ("another corner", |m| m.origin = [0.0, 0.0]),
         ("a point outside", |m| m.pois[0].cell = [5, 0]),
+        ("an attempt past the definition's", |m| m.attempt = 1000),
+        ("a fallback beside an attempt", |m| m.fallback = Some("seed 5".to_owned())),
     ];
     for (what, forge) in forgeries {
         let mut forged = m.clone();

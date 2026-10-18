@@ -86,6 +86,8 @@ fn game_group() -> String {
 
 impl ContentDef for DevMenuDef {
     const KIND: &'static str = "devmenu";
+    // Only what a machine shows or plays, or what lies outside a session: never in the replay check.
+    const SIMULATION: bool = false;
 
     fn validate(&self, _: &str, refs: &mut Refs) {
         if self.label.trim().is_empty() {

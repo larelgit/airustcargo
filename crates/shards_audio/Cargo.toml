@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [features]
 # Playing what the mixer decides through Bevy's audio (rodio): WAV and Ogg Vorbis files, an output

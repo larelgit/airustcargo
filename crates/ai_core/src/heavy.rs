@@ -419,6 +419,8 @@ fn check(world: &mut World, point: Point) {
         end: Check { tick, hash, parts: None },
         events,
         checks: Vec::new(),
+        // The twin computes the checks with parts as this session does (the start says so too).
+        check_parts: replay::empty_parts_lists(world),
     };
     let twin = world.resource::<HeavyTwin>().clone();
     let started = Instant::now();

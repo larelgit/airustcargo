@@ -43,7 +43,9 @@ impl Plugin for EngineUiPlugin {
                 charge.map(|c| ratio(c.current as f32, c.max as f32))
             })
             .add_ui_source("you.cooldown", |w, action| {
-                viewer(w).map(|e| UiValue::Cooldown { left: w.get::<Cooldowns>(e).map_or(0.0, |c| c.left(action)) })
+                // An action whose cooldown sits in a shared slot (`cost.cooldown_key`) shows that slot.
+                let key = w.resource::<ContentDb>().get::<shards_action::ActionDef>(action).map_or(action, |d| d.cooldown_key(action));
+                viewer(w).map(|e| UiValue::Cooldown { left: w.get::<Cooldowns>(e).map_or(0.0, |c| c.left(key)) })
             })
             .add_ui_source("you.heading", heading)
             .add_ui_source("allies", allies)
@@ -185,7 +187,7 @@ fn menu_controls(world: &mut World) {
         world.resource_mut::<MenuControls>().settle = false;
     }
     if !menu_open {
-        let has_pause = world.get_resource::<ContentDb>().is_some_and(|db| db.get::<ScreenDef>(PAUSE_SCREEN).is_some());
+        let has_pause = world.get_resource::<ContentDb>().is_some_and(|db| db.peek::<ScreenDef>(PAUSE_SCREEN).is_some());
         // Only a game in play pauses: not its main menu, not while it loads.
         let in_game = world.get_resource::<State<EngineState>>().is_some_and(|s| *s.get() == EngineState::InGame);
         if controls.just_pressed("pause") && has_pause && in_game {

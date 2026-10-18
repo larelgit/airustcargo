@@ -39,11 +39,12 @@ mod tools;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use ai_core::{journal, JournalKind};
+use ai_core::{journal, AiReplay, JournalKind};
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::input::InputSystems;
 use bevy::prelude::*;
 use shards_content::{ContentAppExt, ContentDb};
+use shards_core::input_names::ASSIST_OFF;
 use shards_core::{Intent, LocalPlayer, Press};
 use shards_settings::{AccessibilitySettings, ControlSettings, SettingsAppExt, SettingsStorage};
 
@@ -166,6 +167,8 @@ pub struct ControlState {
     pressed: BTreeSet<String>,
     held: BTreeSet<String>,
     axes: BTreeMap<String, Vec2>,
+    look_pointer_px: Vec2,
+    look_stick: Vec2,
 }
 
 impl ControlState {
@@ -182,6 +185,19 @@ impl ControlState {
     /// The value of a 2D axis action (`look`, `navigate`), zero when idle. A 1D axis is in `x`.
     pub fn axis(&self, action: &str) -> Vec2 {
         self.axes.get(action).copied().unwrap_or(Vec2::ZERO)
+    }
+
+    /// The mouse's part of the `look` axis as the raw motion of this frame in pixels (right and
+    /// up are positive), before the binding's scale and the player's sensitivity. What a flick
+    /// is measured in.
+    pub fn look_pointer_px(&self) -> Vec2 {
+        self.look_pointer_px
+    }
+
+    /// The sticks' part of the `look` axis as a deflection (right and up are positive, length
+    /// up to 1, after the dead zone), before the binding's scale and the frame time.
+    pub fn look_stick(&self) -> Vec2 {
+        self.look_stick
     }
 }
 
@@ -411,7 +427,7 @@ impl Devices<'_> {
                 let live = if raw.abs() < *deadzone { 0.0 } else { raw };
                 Vec2::new(live * scale, 0.0)
             }
-            Binding::Stick { stick, deadzone, scale } => {
+            Binding::Stick { stick, deadzone, scale, scale_x, scale_y, curve } => {
                 let raw = self
                     .pads
                     .iter()
@@ -420,8 +436,7 @@ impl Devices<'_> {
                         Stick::Right => p.right_stick(),
                     })
                     .fold(Vec2::ZERO, |best, v| if v.length_squared() > best.length_squared() { v } else { best });
-                let len = raw.length();
-                if len <= *deadzone { Vec2::ZERO } else { raw / len * ((len - deadzone) / (1.0 - deadzone).max(1e-3)).min(1.0) * *scale }
+                map::stick_response(raw, *deadzone, *scale, *scale_x, *scale_y, *curve)
             }
             // Mouse deltas are per frame already; a stick's value is a rate, so the look
             // axis multiplies sticks by the frame time (see `read_input`).
@@ -458,6 +473,8 @@ fn read_input(
     map: Res<InputMap>,
     contexts: Res<InputContexts>,
     accessibility: Option<Res<AccessibilitySettings>>,
+    controls: Option<Res<ControlSettings>>,
+    replay: Option<Res<AiReplay>>,
     mut state: ResMut<ControlState>,
     mut applied: ResMut<Applied>,
     mut players: Query<(Entity, &mut Intent), With<LocalPlayer>>,
@@ -492,15 +509,65 @@ fn read_input(
             if axis != Vec2::ZERO {
                 frame.axes.insert(action.action.clone(), axis);
             }
+            if action.action == "look" {
+                // What a flick is measured in: the mouse's pixels and the stick's deflection, each before its scale.
+                for binding in action.bindings.iter().filter(|b| b.is_axis()) {
+                    match binding {
+                        Binding::MouseMotion { .. } => frame.look_pointer_px += Vec2::new(devices.motion.x, -devices.motion.y),
+                        &Binding::Stick { stick, deadzone, scale, scale_x, scale_y, .. } => {
+                            // The deflection past the deadzone, before the response curve and the scales,
+                            // keeping only each scale's sign: an inverted binding keeps its flipped side, as
+                            // the look axis does, and an axis scaled to 0 stays off.
+                            let side = |s: Option<f32>| {
+                                let s = s.unwrap_or(scale);
+                                Some(if s == 0.0 { 0.0 } else { s.signum() })
+                            };
+                            let raw = Binding::Stick { stick, deadzone, scale: 1.0, scale_x: side(scale_x), scale_y: side(scale_y), curve: 1.0 };
+                            let deflection = devices.value(&raw);
+                            if deflection.length_squared() > frame.look_stick.length_squared() {
+                                frame.look_stick = deflection;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
             if action.action == "move" {
                 move_axis = axis.clamp_length_max(1.0);
             }
             // "Hold to toggle" (accessibility): a held button is pressed once to hold, again to let go.
             let mode = if hold_to_toggle && action.mode == BindMode::Hold { BindMode::Toggle } else { action.mode };
-            if mode != BindMode::Toggle {
+            // A press-and-hold under "hold to toggle" latches: the first press presses and holds, the next lets go.
+            let latch = hold_to_toggle && mode == BindMode::PressHold;
+            if mode != BindMode::Toggle && !latch {
                 applied.toggled.remove(&action.action);
             }
             match mode {
+                BindMode::PressHold if latch => {
+                    if just {
+                        if applied.toggled.remove(&action.action) {
+                            // The second press lets go and presses nothing: a new press would start it again.
+                        } else {
+                            applied.toggled.insert(action.action.clone());
+                            frame.pressed.insert(action.action.clone());
+                            presses.push((action.action.clone(), action.directional));
+                        }
+                    }
+                    if applied.toggled.contains(&action.action) {
+                        frame.held.insert(action.action.clone());
+                        desired_held.insert(action.action.clone());
+                    }
+                }
+                BindMode::PressHold => {
+                    if just {
+                        frame.pressed.insert(action.action.clone());
+                        presses.push((action.action.clone(), action.directional));
+                    }
+                    if down {
+                        frame.held.insert(action.action.clone());
+                        desired_held.insert(action.action.clone());
+                    }
+                }
                 BindMode::Press => {
                     if just {
                         frame.pressed.insert(action.action.clone());
@@ -542,6 +609,12 @@ fn read_input(
         presses.clear();
         desired_held.clear();
         move_axis = Vec2::ZERO;
+    }
+    // The player turned the attack assist off: the body holds `assist_off` (in menus too: it is a
+    // setting, not a button). Not while a recording plays: the recorded session is the one that
+    // counts, whatever this machine's setting says.
+    if controls.is_some_and(|c| !c.attack_assist) && !replay.is_some_and(|r| r.is_playing()) {
+        desired_held.insert(ASSIST_OFF.to_owned());
     }
 
     // Nobody to hear it: nothing counts as written, so a body that appears later (or

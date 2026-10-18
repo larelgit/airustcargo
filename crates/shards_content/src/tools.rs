@@ -26,7 +26,7 @@ pub(crate) fn register(world: &mut World) {
 
 /// The kind `kind`, or an error that lists the kinds there are.
 fn known_kind(db: &ContentDb, kind: &str) -> Result<(), String> {
-    if db.ids_of(kind).is_some() {
+    if db.has_kind(kind) {
         return Ok(());
     }
     let kinds: Vec<&str> = db.kinds().collect();
@@ -168,7 +168,7 @@ fn content_apply(In(call): In<Call<ContentApplyArgs>>, world: &mut World) -> Too
 /// replay of the session starts from.
 fn check_before(kinds: &ContentKinds, db: &ContentDb, change: &DefChange) -> Result<(), String> {
     let what = format!("{} `{}`", change.kind, change.id);
-    match (db.get_json(&change.kind, &change.id), &change.before) {
+    match (db.json_of(&change.kind, &change.id), &change.before) {
         (None, None) => Ok(()),
         (Some(now), None) => Err(format!("{what} exists: give its current definition as `before`: {now}")),
         (None, Some(_)) => Err(format!("{what} does not exist: leave `before` out for a new definition")),
@@ -192,7 +192,7 @@ fn apply(world: &mut World, args: ContentApplyArgs) -> ToolResult {
     if !problems.is_empty() {
         return Err(format!("refused, it would break content: {}", problems.join("; ")));
     }
-    world.insert_resource(next);
+    crate::install(world, next);
     crate::edits::refresh(world);
     let n = changes.len();
     let defs = if n == 1 { "definition" } else { "definitions" };

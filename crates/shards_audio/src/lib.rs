@@ -205,7 +205,7 @@ fn menu_sound(mut commands: Commands, event: &'static str) {
 fn on_screen_changed(changed: On<UiScreenChanged>, mut commands: Commands) {
     let UiScreenChanged { screen, open } = changed.event().clone();
     commands.queue(move |world: &mut World| {
-        let hud = world.resource::<ContentDb>().get::<ScreenDef>(&screen).is_some_and(|s| s.layer == Layer::Hud);
+        let hud = world.resource::<ContentDb>().peek::<ScreenDef>(&screen).is_some_and(|s| s.layer == Layer::Hud);
         if !hud {
             let event = if open { "ui_opened" } else { "ui_closed" };
             if let Some(sound) = mixer::audio_def(world).and_then(|d| d.sounds.get(event).cloned()) {

@@ -1,12 +1,12 @@
 {
-  "format": "shards-replay/3",
+  "format": "shards-replay/4",
   "seed": 42,
   "tick_hz": 59.99999880000003,
   "check_every": 60,
   "check_detail": "components",
   "end": {
     "tick": 1685,
-    "hash": "2207a8294f2f6a26",
+    "hash": "bf6962ab9d4de144",
     "parts": {
       "entities": {
         "e1": {
@@ -275,7 +275,7 @@
         }
       },
       "game": {
-        "content": "a1084fd935b8f410",
+        "content": "06b3c7e3a2b8afb6",
         "voxel.volume": "fbb8f8bd63197f0d"
       }
     }
@@ -1070,7 +1070,7 @@
   "checks": [
     {
       "tick": 60,
-      "hash": "36a84523fd9efa25",
+      "hash": "257f66276f6c2bcb",
       "parts": {
         "entities": {
           "e1": {
@@ -1340,14 +1340,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 120,
-      "hash": "f0465e328a509487",
+      "hash": "852bd06f3d3931c5",
       "parts": {
         "entities": {
           "e1": {
@@ -1617,14 +1617,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 180,
-      "hash": "bf0f198dbb29af43",
+      "hash": "5e27bc583854a9e9",
       "parts": {
         "entities": {
           "e1": {
@@ -1894,14 +1894,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 240,
-      "hash": "89b522bd58c2b6a3",
+      "hash": "c073da16d2c1f349",
       "parts": {
         "entities": {
           "e1": {
@@ -2171,14 +2171,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 300,
-      "hash": "4a19f89a553caed9",
+      "hash": "6115346687f063a7",
       "parts": {
         "entities": {
           "e1": {
@@ -2448,14 +2448,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 360,
-      "hash": "575333fbf533503d",
+      "hash": "1e02bbed493baf63",
       "parts": {
         "entities": {
           "e1": {
@@ -2725,14 +2725,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 420,
-      "hash": "001d0aca2c6185d6",
+      "hash": "3bef5b93558c9d34",
       "parts": {
         "entities": {
           "e1": {
@@ -3002,14 +3002,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 480,
-      "hash": "45fbe2b0b78c974c",
+      "hash": "29f47c794e19030a",
       "parts": {
         "entities": {
           "e1": {
@@ -3279,14 +3279,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 540,
-      "hash": "cf8c1275fd7b1170",
+      "hash": "90ccbadb1faac876",
       "parts": {
         "entities": {
           "e1": {
@@ -3556,14 +3556,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 600,
-      "hash": "4fed4cdd5fa692ae",
+      "hash": "997c0c97d047332c",
       "parts": {
         "entities": {
           "e1": {
@@ -3833,14 +3833,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 660,
-      "hash": "eaca8db43f38b1a5",
+      "hash": "a1fb9007b4ca184b",
       "parts": {
         "entities": {
           "e1": {
@@ -4110,14 +4110,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 720,
-      "hash": "cfce3c1550b6c9b4",
+      "hash": "6c6f11c15b59c4f2",
       "parts": {
         "entities": {
           "e1": {
@@ -4387,14 +4387,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 780,
-      "hash": "77ae1bde1a31ea38",
+      "hash": "16cbd0778434c03e",
       "parts": {
         "entities": {
           "e1": {
@@ -4664,14 +4664,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 840,
-      "hash": "19d79fbf0c1b1c5f",
+      "hash": "d3967c1155fd645d",
       "parts": {
         "entities": {
           "e1": {
@@ -4941,14 +4941,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 900,
-      "hash": "f17cdb147cbae29d",
+      "hash": "3046ff68e7fd2843",
       "parts": {
         "entities": {
           "e1": {
@@ -5218,14 +5218,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 960,
-      "hash": "62a519dff1c2fc7d",
+      "hash": "2c5ad7b470b8f623",
       "parts": {
         "entities": {
           "e1": {
@@ -5495,14 +5495,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 1020,
-      "hash": "a6a81ce59a632651",
+      "hash": "380f6b39bfee7fff",
       "parts": {
         "entities": {
           "e1": {
@@ -5772,14 +5772,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 1080,
-      "hash": "e06535fe98a89117",
+      "hash": "4dc8a14be27440d5",
       "parts": {
         "entities": {
           "e1": {
@@ -6049,14 +6049,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 1140,
-      "hash": "9531efbda55bd5c5",
+      "hash": "e2ebbb73b33f846b",
       "parts": {
         "entities": {
           "e1": {
@@ -6326,14 +6326,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 1200,
-      "hash": "f4b22ae595b6d98f",
+      "hash": "376ab1ea0f30858d",
       "parts": {
         "entities": {
           "e1": {
@@ -6603,14 +6603,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 1260,
-      "hash": "59bd7268eef649d8",
+      "hash": "8ea1e69329fa8f5e",
       "parts": {
         "entities": {
           "e1": {
@@ -6880,14 +6880,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 1320,
-      "hash": "b146e05e6078f919",
+      "hash": "9365b4e28f5fc967",
       "parts": {
         "entities": {
           "e1": {
@@ -7157,14 +7157,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 1380,
-      "hash": "389c48a742d048fd",
+      "hash": "5be6002c2810e5a3",
       "parts": {
         "entities": {
           "e1": {
@@ -7434,14 +7434,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 1440,
-      "hash": "2bfbe75c0b2b6849",
+      "hash": "14a87c3ff7235557",
       "parts": {
         "entities": {
           "e1": {
@@ -7711,14 +7711,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 1500,
-      "hash": "87a5612c4e379455",
+      "hash": "e6f520940bb3ee3b",
       "parts": {
         "entities": {
           "e1": {
@@ -7988,14 +7988,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 1560,
-      "hash": "4b0ac8d1cedc78d0",
+      "hash": "206c9f95bd569456",
       "parts": {
         "entities": {
           "e1": {
@@ -8265,14 +8265,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 1620,
-      "hash": "f22cd1188e3108da",
+      "hash": "8ff28e88e867c300",
       "parts": {
         "entities": {
           "e1": {
@@ -8542,14 +8542,14 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     },
     {
       "tick": 1680,
-      "hash": "fa86ff3016069baf",
+      "hash": "4cee89f742f44bad",
       "parts": {
         "entities": {
           "e1": {
@@ -8819,10 +8819,43 @@
           }
         },
         "game": {
-          "content": "a1084fd935b8f410",
+          "content": "06b3c7e3a2b8afb6",
           "voxel.volume": "fbb8f8bd63197f0d"
         }
       }
     }
-  ]
+  ],
+  "check_parts": {
+    "content": [
+      {
+        "tick": 60,
+        "set": {
+          "attack_plan/skeleton": "ae670062e200e500",
+          "attack_plan/warden": "68e4d9a58c9130e5",
+          "behavior/skeleton": "0ca103408741deda",
+          "behavior/warden": "7b30285714479162",
+          "combat_tuning/default": "7fc354d607b29452",
+          "layout (all)": "0000000000000000",
+          "layout/arena": "091851d57d80f2e4",
+          "layout/course": "f65397f9b47f46e1",
+          "layout/watch": "dc738a5676554d89",
+          "locomotion/player": "25720e5c56082052",
+          "locomotion/skeleton": "ba33bb652bf0630e",
+          "locomotion/warden": "9a9e3ea79d7406f7",
+          "moveset/player": "e4c47a54d6754e1d",
+          "moveset/skeleton": "b6201dac07a1f664",
+          "moveset/warden": "425a35b2df390679",
+          "nav/default": "2dc1d1a458e871b3",
+          "poi/spawn": "c7361f8f593f6acf",
+          "prefab/frost_warden": "396192b3dab6d75f",
+          "prefab/pillar": "47858a8acf05b851",
+          "prefab/player": "7c4beeeaf906c152",
+          "prefab/skeleton": "0bffca73f472ecd8",
+          "voxel_palette/terrain": "f2eb503bb72b8d9f",
+          "voxel_region (all)": "0000000000000000",
+          "voxel_region/voxel_arena": "da14bf92a58ed83c"
+        }
+      }
+    ]
+  }
 }
