@@ -1,4 +1,5 @@
-//! The engine rules `motion.finite` and `voxel.body_in_solid` (off by default).
+//! The engine rules `motion.finite` (on by default) and `voxel.body_in_solid` (opt-in: off unless a game
+//! or a run turns it on with `--engine-invariant voxel.body_in_solid`).
 
 use ai_core::{with_query, AiId, AiVisible, Offenders};
 use bevy::prelude::*;
