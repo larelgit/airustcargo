@@ -165,6 +165,10 @@ pub fn decode(defaults: &InputMap, settings: &ControlSettings) -> (InputMap, Vec
             .iter()
             .map(|t| Binding::parse(t))
             .collect::<Result<Vec<Binding>, String>>()
+            .and_then(|bindings| match split(key).and_then(|(_, action)| bindings.iter().find_map(|b| b.refused_for(action))) {
+                Some(why) => Err(why),
+                None => Ok(bindings),
+            })
             .and_then(|bindings| with_action(&mut map, key, |action| action.bindings = bindings));
         if let Err(why) = applied {
             problems.push(format!("controls.bindings.{key}: {why}"));
@@ -193,7 +197,10 @@ fn with_action<R>(map: &mut InputMap, key: &str, f: impl FnOnce(&mut ActionBindi
 pub fn check(settings: &ControlSettings) -> Result<(), String> {
     for (key, texts) in &settings.bindings {
         for text in texts {
-            Binding::parse(text).map_err(|why| format!("controls.bindings.{key}: {why}"))?;
+            let binding = Binding::parse(text).map_err(|why| format!("controls.bindings.{key}: {why}"))?;
+            if let Some(why) = split(key).and_then(|(_, action)| binding.refused_for(action)) {
+                return Err(format!("controls.bindings.{key}: {why}"));
+            }
         }
     }
     Ok(())

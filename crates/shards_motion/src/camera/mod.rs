@@ -1,11 +1,15 @@
 //! The third-person camera (E2.5): orbit, wall collision, lock-on, aim assist, shake, FOV.
+//! The lock-on rules (C6) are in [`lock`]: data (content kind `lock_on`) and plain functions
+//! that the camera and the action module share.
 //!
 //! **Presentation only.** The simulation and the AI's `observe` never read the camera:
 //! what the AI sees comes from its subject's eyes, and a window with this camera plays the
 //! same game as a headless run. The one thing the camera writes into the game is the
 //! lock-on target it picks, as `Intent.target` between ticks (it is input, so replays
-//! record it). It never takes away a target anybody else set: that is gameplay's, and the
-//! camera is only where the eye happens to be.
+//! record it), and, with a `lock_on` definition, the `lock_switch` presses of a flick or the
+//! mouse wheel. It never takes away a target anybody else set: that is gameplay's, and the
+//! camera is only where the eye happens to be. With a `lock_on` definition it lets go of none
+//! by itself either: the action module checks every lock on every tick.
 //!
 //! The math is in [`math`] as plain functions (`orbit_position`, `resolve_camera_collision`,
 //! `pick_lock_target`, `next_lock_target`, `shake_offset`, `aim_assist`); the systems that
@@ -18,6 +22,7 @@
 //! commands.trigger(AddTrauma(0.4));
 //! ```
 
+pub mod lock;
 pub mod math;
 #[cfg(feature = "render")]
 mod systems;
@@ -32,6 +37,10 @@ pub use math::{
     aim_assist, arm_length, arm_reach, critically_damped_step, damp, lock_framing, lock_holds, next_lock_target, orbit_angles,
     orbit_offset, orbit_position, pick_lock_target, pitch_limits, resolve_camera_collision, shake_offset, shake_offset_with,
     wrap_angle, FlickState, LockCandidate, LockView, ShakeOffset, Side,
+};
+pub use lock::{
+    body_point, in_frustum, lock_candidates, lock_score, pick_lock, signed_bearing, sight_clear, switch_lock, switch_target, LockHooks,
+    LockOnDef, LockWeights, Lockable, PickView,
 };
 pub use tuning::{ArmTuning, CameraOffsets, CameraTuning, FlickTuning, FramingTuning, TraumaTuning};
 
@@ -106,9 +115,11 @@ pub struct CameraSettings {
     pub shake_intensity: f32,
     /// How much the look bends toward a target near the crosshair (0 off, 1 full).
     pub aim_assist: f32,
-    /// A lock-on picks and holds targets this close (m).
+    /// A lock-on picks and holds targets this close (m), when the game has no `lock_on`
+    /// definition (with one, its `range` decides).
     pub lock_range: f32,
-    /// Half the width of the cone in front of the camera a lock-on picks from (degrees).
+    /// Half the width of the cone in front of the camera a lock-on picks from (degrees): always
+    /// without a `lock_on` definition, and with one whose `frustum` is off.
     pub lock_cone_deg: f32,
 }
 
@@ -165,7 +176,10 @@ pub(crate) fn plugin(app: &mut App) {
         .register_type::<CameraTuning>()
         .register_type::<CameraOffsets>()
         .register_type::<LockOnTarget>()
+        .register_type::<LockOnDef>()
         .add_content::<CameraTuning>()
+        .add_content::<LockOnDef>()
+        .init_resource::<LockHooks>()
         .init_resource::<CameraSettings>()
         .init_resource::<CameraTuning>()
         .init_resource::<CameraOffsets>()

@@ -328,6 +328,21 @@ impl InputCapture {
         intent.orders = host.orders.clone();
         self.orders = host.orders.clone();
     }
+
+    /// The host's lock-on target for the body, taken over when the host changed it itself (the
+    /// lock-on check let go of a target that died, went out of range or stayed hidden; a
+    /// `lock_switch` press or an attack order moved it): when the host has every held state of
+    /// ours and this machine did not change its target since it sent it. Otherwise the next
+    /// held state this machine sends (any change carries the target along) would lock the
+    /// host's body on the old target again, and the prediction would face a target the host let
+    /// go of. A client never checks a lock itself: its prediction keeps whatever the host keeps.
+    pub fn adopt_target(&mut self, applied: u64, intent: &mut Intent, host: &Intent) {
+        if host.target == intent.target || self.state_sent_at > applied || intent.target != self.state.target {
+            return;
+        }
+        intent.target = host.target;
+        self.state.target = host.target;
+    }
 }
 
 #[cfg(test)]
@@ -562,5 +577,33 @@ mod tests {
         intent.target = Some(AiId(9));
         capture.adopt_orders(30, &mut intent, &ended);
         assert_eq!((intent.orders.len(), intent.target), (0, Some(AiId(9))));
+    }
+
+    #[test]
+    fn a_lock_the_host_let_go_of_is_not_sent_back() {
+        let mut intent = Intent { target: Some(AiId(6)), ..default() };
+        let mut capture = InputCapture::starting_from(&Intent::default());
+        assert_eq!(capture.capture(10, &mut intent, 32).unwrap().state.unwrap().target, Some(AiId(6)));
+        let let_go = Intent::default();
+        // The host has not applied the lock yet: its `None` is from before it, kept.
+        capture.adopt_target(9, &mut intent, &let_go);
+        assert_eq!(intent.target, Some(AiId(6)));
+        // Applied, and the host let go of it (its target died): taken over, and walking on does
+        // not send the old target back.
+        capture.adopt_target(10, &mut intent, &let_go);
+        assert_eq!(intent.target, None);
+        intent.move_dir = Vec3::X;
+        assert_eq!(capture.capture(11, &mut intent, 32).unwrap().state.unwrap().target, None);
+        // A switch the host made (a `lock_switch` press) is taken over the same way.
+        intent.target = Some(AiId(6));
+        capture.capture(12, &mut intent, 32).unwrap();
+        capture.adopt_target(12, &mut intent, &Intent { target: Some(AiId(7)), ..default() });
+        assert_eq!(intent.target, Some(AiId(7)));
+        assert_eq!(capture.capture(13, &mut intent, 32), None, "nothing of ours changed");
+        // A target this machine set since it sent its state is its own: kept, and sent.
+        intent.target = Some(AiId(8));
+        capture.adopt_target(13, &mut intent, &let_go);
+        assert_eq!(intent.target, Some(AiId(8)));
+        assert_eq!(capture.capture(14, &mut intent, 32).unwrap().state.unwrap().target, Some(AiId(8)));
     }
 }

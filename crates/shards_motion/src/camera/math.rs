@@ -101,10 +101,41 @@ pub fn pick_lock_target(view: &LockView, candidates: &[LockCandidate]) -> Option
 }
 
 /// Which way a lock-on switches.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum Side {
     Left,
     Right,
+}
+
+impl Side {
+    /// The side a `lock_switch` press names in `dir.x`: right when positive, left when
+    /// negative, none at 0 (or not a number).
+    pub fn from_x(x: f32) -> Option<Side> {
+        if x > 0.0 {
+            Some(Side::Right)
+        } else if x < 0.0 {
+            Some(Side::Left)
+        } else {
+            None
+        }
+    }
+
+    /// The `dir.x` of a `lock_switch` press for this side: `+1` right, `-1` left.
+    pub fn x(self) -> f32 {
+        match self {
+            Side::Left => -1.0,
+            Side::Right => 1.0,
+        }
+    }
+
+    /// `left` or `right`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Side::Left => "left",
+            Side::Right => "right",
+        }
+    }
 }
 
 /// Signed bearing of `position` from the view's forward on the ground plane: positive to
@@ -276,11 +307,13 @@ pub struct FlickState {
     pub cooldown: f32,
     /// Whether the stick has come back below its re-arm level since its last switch.
     pub stick_ready: bool,
+    /// Whether the mouse wheel has stood still for a frame since its last switch.
+    pub wheel_ready: bool,
 }
 
 impl Default for FlickState {
     fn default() -> Self {
-        Self { accum_px: 0.0, cooldown: 0.0, stick_ready: true }
+        Self { accum_px: 0.0, cooldown: 0.0, stick_ready: true, wheel_ready: true }
     }
 }
 
@@ -328,6 +361,23 @@ impl FlickState {
         }
         self.stick_ready = false;
         Some(if x > 0.0 { Side::Right } else { Side::Left })
+    }
+
+    /// The mouse wheel turned `notch` this frame (right is positive, 0 while it stands still):
+    /// one switch per turn of the wheel. After a switch it must stand still for a frame before
+    /// it can switch again, so a touchpad's long or coasting scroll is one switch, not one per
+    /// cooldown. A turn on a locked camera with the cooldown over switches. A turn of
+    /// `threshold` or less (a touchpad's tremor, in the wheel axis' units) counts as standing still.
+    pub fn wheel(&mut self, notch: f32, locked: bool, threshold: f32) -> Option<Side> {
+        if notch.abs() <= threshold {
+            self.wheel_ready = true;
+            return None;
+        }
+        if !locked || !self.wheel_ready || self.cooldown > 0.0 {
+            return None;
+        }
+        self.wheel_ready = false;
+        Side::from_x(notch)
     }
 
     /// A lock was just taken from nothing, with the stick at `x`: a stick already pushed over
@@ -722,6 +772,39 @@ mod tests {
         assert_eq!(s.stick(&flick, 1.0, true), None);
         s.tick(0.4);
         assert_eq!(s.stick(&flick, 1.0, true), Some(Side::Right));
+    }
+
+    #[test]
+    fn a_turn_of_the_wheel_is_one_switch_however_long_it_scrolls() {
+        let flick = FlickTuning { cooldown_s: 0.3, ..default() };
+        let mut s = FlickState::default();
+        assert_eq!(s.wheel(1.0, false, 0.0), None, "unlocked: nothing");
+        assert_eq!(s.wheel(-1.0, true, 0.0), Some(Side::Left));
+        s.flicked(&flick, true);
+        // A touchpad that keeps scrolling (and coasting) past the cooldown: still that one switch.
+        for _ in 0..60 {
+            s.tick(1.0 / 60.0);
+            assert_eq!(s.wheel(-0.4, true, 0.0), None);
+        }
+        // It stood still for a frame: the next turn switches, once the cooldown is over.
+        assert_eq!(s.wheel(0.0, true, 0.0), None);
+        assert_eq!(s.wheel(2.0, true, 0.0), Some(Side::Right));
+        s.flicked(&flick, true);
+        assert_eq!(s.wheel(0.0, true, 0.0), None);
+        assert_eq!(s.wheel(1.0, true, 0.0), None, "the cooldown holds a fresh turn");
+        s.tick(0.4);
+        assert_eq!(s.wheel(1.0, true, 0.0), Some(Side::Right), "a turn the cooldown held switches when it is over");
+    }
+
+    #[test]
+    fn a_wheel_threshold_makes_a_small_scroll_stand_still() {
+        let mut s = FlickState::default();
+        assert_eq!(s.wheel(4.0, true, 5.0), None, "a touchpad's tremor below the threshold is no turn");
+        assert_eq!(s.wheel(-5.0, true, 5.0), None, "the threshold itself is still below a turn");
+        assert_eq!(s.wheel(-6.0, true, 5.0), Some(Side::Left));
+        assert_eq!(s.wheel(-9.0, true, 5.0), None, "one switch per turn");
+        assert_eq!(s.wheel(1.0, true, 5.0), None, "a scroll under the threshold counts as stopping");
+        assert_eq!(s.wheel(9.0, true, 5.0), Some(Side::Right));
     }
 
     #[test]
