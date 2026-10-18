@@ -1,7 +1,7 @@
 [build]
 # Four parallel jobs is the safe default for a small or shared machine: a test build of the whole
-# workspace with sixteen jobs ran out of memory next to other builds (rustc "memory allocation failed",
-# rust-lld exit 0xc000001d). With free RAM, raise it for the run: `CARGO_BUILD_JOBS=12 cargo build` in a Unix
+# workspace with sixteen jobs ran out of memory next to other builds (rustc "memory allocation failed";
+# the same run had rust-lld exit 0xc000001d, an illegal-instruction status, not explained). With free RAM, raise it for the run: `CARGO_BUILD_JOBS=12 cargo build` in a Unix
 # shell, `$env:CARGO_BUILD_JOBS=12; cargo build` in PowerShell
 # (env beats this line; about 2-4 GB of RAM per job, so do not raise it when several builds share the machine). Measured: a cold sandbox build took 16 min with 4 jobs and 7.5 min with 12
 # ("Building and iterating fast", docs/manual.md).
