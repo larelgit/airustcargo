@@ -350,6 +350,8 @@ pub enum RebindError {
     BadSlot { action: String, slot: usize, bound: usize },
     /// Another action of the same context already reads this input.
     Conflict { context: String, binding: Binding, action: String },
+    /// The binding's numbers are unusable (a stick's `curve` or scale is NaN, infinite or not above 0).
+    Invalid(String),
 }
 
 impl fmt::Display for RebindError {
@@ -361,6 +363,7 @@ impl fmt::Display for RebindError {
                 let hint = if *bound == 0 { "slot 0 adds the first".to_owned() } else { format!("slots 0..{} replace, slot {bound} adds one", bound - 1) };
                 write!(f, "`{action}` has {bound} binding(s), so slot {slot} does not exist ({hint})")
             }
+            RebindError::Invalid(why) => write!(f, "{why}"),
             RebindError::Conflict { context, binding, action } => write!(
                 f,
                 "{binding} is already bound to `{action}` in `{context}`; rebind `{action}` first, or force it to take the input over"
@@ -413,6 +416,7 @@ impl InputMap {
     /// context already uses the input (the error names it); [`rebind_taking`](Self::rebind_taking)
     /// takes it over instead.
     pub fn rebind(&mut self, context: &str, action: &str, slot: usize, binding: Binding) -> Result<(), RebindError> {
+        binding.check().map_err(RebindError::Invalid)?;
         if let Some(other) = self.used_by(context, &binding, action) {
             return Err(RebindError::Conflict { context: context.to_owned(), binding, action: other.to_owned() });
         }
@@ -422,7 +426,8 @@ impl InputMap {
     /// Like [`rebind`](Self::rebind), but the other action loses the input (its bindings
     /// that read it are removed). Returns the actions that lost something.
     pub fn rebind_taking(&mut self, context: &str, action: &str, slot: usize, binding: Binding) -> Result<Vec<String>, RebindError> {
-        // Check the target first: a mistake must not strip another action for nothing.
+        // Check the binding and the target first: a mistake must not strip another action for nothing.
+        binding.check().map_err(RebindError::Invalid)?;
         let bound = self.action_mut(context, action)?.bindings.len();
         if slot > bound {
             return Err(RebindError::BadSlot { action: action.to_owned(), slot, bound });
@@ -873,8 +878,15 @@ mod tests {
         // A whole saved map is checked the same way.
         let mut map = InputMap::standard();
         let bad = Binding::Stick { stick: Stick::Right, deadzone: 0.2, scale: 1.0, scale_x: None, scale_y: None, curve: f32::NAN };
-        map.rebind("gameplay", "look", 1, bad).unwrap();
-        let err = InputMap::from_text(&map.to_text().unwrap()).expect_err("NaN curve");
-        assert!(err.contains("gameplay") && err.contains("look") && err.contains("curve"), "{err}");
+        // A caller's binding is checked too, and a refusal changes nothing.
+        let err = map.rebind("gameplay", "look", 1, bad).unwrap_err();
+        assert!(matches!(err, RebindError::Invalid(_)) && err.to_string().contains("curve"), "{err}");
+        assert_eq!(map, InputMap::standard());
+        // `rebind_taking` refuses before it strips the other action: `move` reads the left stick.
+        let bad_left = Binding::Stick { stick: Stick::Left, deadzone: 0.2, scale: 1.0, scale_x: None, scale_y: None, curve: f32::NAN };
+        let err = map.rebind_taking("gameplay", "look", 1, bad_left).unwrap_err();
+        assert!(matches!(err, RebindError::Invalid(_)), "{err}");
+        assert_eq!(map, InputMap::standard());
+        assert!(InputMap::from_text(&map.to_text().unwrap()).is_ok());
     }
 }
