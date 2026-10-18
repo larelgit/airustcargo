@@ -355,9 +355,10 @@ impl CameraTuning {
 ///
 /// **Who owns a value.** The system that writes a field owns it: it sets the value on every
 /// frame it wants an effect, and puts it back to the neutral one (`0.0`, `None`) itself when it
-/// is done. The camera only reads: it never decays, sums or stores an offset, so an offset
-/// nobody writes any more is gone the next frame, and two systems that both want the same
-/// field must be combined by the game into one writer (add their parts, then write once).
+/// is done. The camera only reads: it never decays, sums or resets an offset, so a value
+/// stays as its writer left it (a writer that stops without resetting leaves its effect on),
+/// and two systems that both want the same field must be combined by the game into one
+/// writer (add their parts, then write once).
 /// Write before `CameraSystems::Orbit` (`PostUpdate`) to be seen the same frame.
 ///
 /// Offsets are presentation: they change the picture only, never the stored `yaw`/`pitch`
