@@ -2,6 +2,7 @@
 
 mod common;
 mod controller;
+mod controller_parity;
 mod course;
 mod drive;
 mod edge_cases;
