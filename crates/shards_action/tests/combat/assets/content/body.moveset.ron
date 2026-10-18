@@ -1,0 +1,12 @@
+{
+    "b_attacker": (
+        inputs: {"light": "b_hit", "heavy": "b_hit_big", "technique.1": "b_hit_two"},
+    ),
+    // Casts the three wards.
+    "b_caster": (
+        inputs: {"technique.1": "b_ward", "technique.2": "b_ward_big", "technique.3": "b_ward_max", "block": "b_guard"},
+    ),
+    // The victim: the tuning's cap (2) and a cap of one of its own.
+    "b_victim": (inputs: {"block": "b_guard"}),
+    "b_capped": (inputs: {}, max_statuses: 1),
+}

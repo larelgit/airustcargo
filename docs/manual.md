@@ -1022,11 +1022,11 @@ The `shards_action` crate. An attack, a block, a parry, a roll and a flask are a
 
 **The machine.** A press from `Intent` waits in the input buffer `CombatTuning::input_buffer` (0.15 s by default) until its action becomes possible; cancel windows let one action be interrupted by another (combos); a held action repeats (a raised block). One rule, `can_start`, answers both the machine and the tools: `ok: light_1`, `ok: queued, light starts in 0.10s`, `not enough stamina: 20/40 (ready in 1.5s)`, `busy: windup light_1 0.17s (ready in 0.27s, when a cancel window opens)`. A press whose time has run out is written to the journal: `e5 light rejected: busy (active light_1 0.10s)`. A cancel window with a `queue` span holds a press made while that span is open until the window opens (the press lives until then plus the buffer time), and a moveset can keep one press at a time by priority (`buffer: SingleSlot(..)`); a cooldown can be shared by several actions (`cost.cooldown_key`). See "Action timeline (B2a)" below.
 
-**Hits** are detected in `SimSet::Resolve` after movement. Attack shapes overlap hurtboxes (colliders with the `HURTBOX` layer; the `Fighter` collider gets it). Attackers and targets are taken in `AiId` order. One target is hit once per action (and once per `group`). The damage pipeline: immortality (`god`) → invulnerability (`Evaded`, `PerfectEvaded` inside a perfect-evade window) → parry (`Parried`, the attacker staggers unless the guard says otherwise) / block (`Blocked`, costs stamina) / guard break (`GuardBroken`) → armour → game hooks (`add_damage_hook`, in registration order) → health, statuses, poise (a break is `stagger`; otherwise a reaction of the tier the hit asked for, or the old flinch) → death; see "Hit outcome: reactions, protection, pushes (B1)" below. Events: `Damaged`, `Staggered`, `Died`, `Healed`, `ActionStarted`, `ActionRejected`, `ActionSound` (the `Sound` effect).
+**Hits** are detected in `SimSet::Resolve` after movement. Attack shapes overlap hurtboxes (colliders with the `HURTBOX` layer; the `Fighter` collider gets it). Attackers and targets are taken in `AiId` order. One target is hit once per action (and once per `group`). The damage pipeline: immortality (`god`) → invulnerability (`Evaded`, `PerfectEvaded` inside a perfect-evade window) → parry (`Parried`, the attacker staggers unless the guard says otherwise) / block (`Blocked`, costs stamina) / guard break (`GuardBroken`) → damage taken (`DamageTaken`, B2b) → armour → game hooks (`add_damage_hook`, in registration order) → barrier and health, statuses, poise (a break is `stagger`; otherwise a reaction of the tier the hit asked for, or the old flinch) → death; see "Hit outcome: reactions, protection, pushes (B1)" below. Events: `Damaged`, `Staggered`, `Died`, `Healed`, `ActionStarted`, `ActionRejected`, `ActionSound` (the `Sound` effect).
 
 **Fighter resources** are components: `Health`; `Stamina` (it regenerates after a delay; sprinting spends it, and once it is drained to zero, sprint does not start again until the button is released); `Poise` (it regenerates after a delay; at 0 the poise breaks and forces a `stagger` action); `Armor`; `Team` (they hit only members of other teams); `Charges` (named consumables, such as the flask); `Cooldowns`; `Dead`.
 
-**Statuses** are a framework with no specific effects. Hits build a status up (`status: [("bleed", 30)]`), with decay and resistance multipliers (`StatusResist`). At a threshold, the status turns on for `duration`. The number active at once is capped (`max_statuses`). Burning, cold or bleeding are game hooks: `add_status_effect(name, on_apply, on_tick, on_expire)`. Action effects `Custom(name)` use `add_action_effect`. The engine runs the `Sound(name)` effect itself. Whoever simulates sends the `ActionSound` event (entity, action, sound) on its own tick. The sound module plays the sound from the body. The host forwards the event to co-op clients as a hit. A client does not run or predict its own effects. So the sound is the same without a window, with one, and on a client.
+**Statuses** are a framework with no specific effects. Hits build a status up (`status: [("bleed", 30)]`), with decay and resistance multipliers (`StatusResist`). At a threshold, the status turns on for `duration`. The number active at once is capped (`max_statuses`). A status can also gate its next proc, refresh instead of stacking, keep building up while active, empty its bar when refused or stay out of the cap, and a moveset can set its own cap; see "Body state: barrier, damage taken, status rules (B2b)" below. Burning, cold or bleeding are game hooks: `add_status_effect(name, on_apply, on_tick, on_expire)`. Action effects `Custom(name)` use `add_action_effect`. The engine runs the `Sound(name)` effect itself. Whoever simulates sends the `ActionSound` event (entity, action, sound) on its own tick. The sound module plays the sound from the body. The host forwards the event to co-op clients as a hit. A client does not run or predict its own effects. So the sound is the same without a window, with one, and on a client.
 
 **Telegraphs and zones.** An enemy warns ahead of time. The `Telegraph` event carries a symbol and a sound label. `hit_zones(world)` is for decals and AI. It returns each zone of a hit window that has not yet played out, or is still running, at the place where the attacker will be by the time of the hit. `threat_indicators(world, viewer, forward)` gives the direction for off-screen warnings. "Leave the zone" is worked out from the zone's footprint on the ground (a sphere counts as a circle, a cone as a sector). The path runs along one of 8 compass directions, with the length rounded up, so that walking exactly that path takes you out of the zone.
 
@@ -1078,7 +1078,7 @@ A new curve changes gameplay (the lunge, the roll): replays recorded with the ol
 **What the AI sees.** In describe: `windup slam 0.78s (zone circle 4.5m) hyper-armor`, `stam 75/100`, `poise broken 0.8s`, `bleed 60%`, `queued light 0.13s`, `roll roll 0.33s i-frames`. Under the `YOU` line, the hint `ALERT in hit zone of e6 shockwave (lands in 0.50s): move 1.3m E to leave it`. In the journal: `e2 winds up slam (0.80s) ⚠
 circle 4.5m`, `e1 -> e2 heavy -45 (hp 55)`, `e1 blocked e2 swipe: -2 hp, -15 stamina (hp 98)`, `e2 staggered (parried)`.
 
-**Tools** (for the player, only through `Intent`): `light_attack`, `heavy_attack`, `block on=…`, `parry`, `dodge dir=…|away_from=…`, `use_technique slot=1`, `use_item item=flask`, `lock_on target=…|off=true`, `attack target=… input=… repeat=true`. For the developer: `god`, `heal`, `stagger`, `react id=… tier=1..3`, `combat_overlay`. One-shot tools answer by `can_start`:
+**Tools** (for the player, only through `Intent`): `light_attack`, `heavy_attack`, `block on=…`, `parry`, `dodge dir=…|away_from=…`, `use_technique slot=1`, `use_item item=flask`, `lock_on target=…|off=true`, `attack target=… input=… repeat=true`. For the developer: `god`, `heal`, `stagger`, `react id=… tier=1..3`, `barrier id=… amount=… seconds=…`, `damage_taken id=… key=… mult=… seconds=…`, `combat_overlay`. One-shot tools answer by `can_start`:
 
 ```text
 $ shards act dodge
@@ -1296,6 +1296,83 @@ run is dropped and the body goes back to the host's state.
 **What the AI sees.** Describe: `charging, turns in 0.12s` while the starting input is held (`charging, turns when the stamina is
 there` once it waits for stamina), `missed +0.60s` after a whiff. Journal: `e5 lunge missed: +0.60s recovery`, and the
 single slot's drops as `rejected` lines. `step --until named:charging` waits for any fighter holding a charge.
+
+### Body state: barrier, damage taken, status rules (B2b)
+
+What sits on a fighter between hits. Three lazy components (a fighter has one only while it matters, and the tick removes
+each when it is empty), all of them in the replay and the snapshot, none predicted by a co-op client.
+
+```ron
+// combat/sparring.action.ron
+"spar_ward": (net_id: 140, phases: [("cast", 0.5)],
+              effects: [(at: 0.3, effect: Barrier(amount: 0.15, seconds: 8, of_max: true))]),   // 15 % of max health, 8 s
+
+// combat/sparring.status.ron
+{
+    "spar_chill": (threshold: 100, decay_per_s: 14, duration: 4, min_proc_interval: 2.0,
+                   cool_while_active: false, refresh: true, reset_on_refuse: true),
+    "spar_jolt":  (threshold: 100, decay_per_s: 14, duration: 0, capped: false, reset_on_refuse: true),
+}
+// a moveset: max_statuses: 1   (else CombatTuning::max_statuses)
+```
+
+**Barrier.** `Barrier { amount, left }` takes damage before health. `grant_barrier(world, entity, amount, seconds)` gives the
+larger of the pool it holds and `amount`, for `seconds` from now (a smaller grant keeps the pool and restarts the time); it is
+ignored for a dead or gone entity and for an `amount` or `seconds` that is not above 0. The `Barrier` action effect is the
+same call; with `of_max: true` the amount is a share of the actor's max health (`0.15`). It triggers `BarrierGranted {
+entity, amount, seconds }` (the pool now), a net event for the HUD. `hurt` is the one place damage reaches health: the
+barrier takes `min(amount, damage)` first, `Damaged`, `Blocked` and `GuardBroken` carry it as `absorbed` (their `amount`
+stays the whole hit), and the journal line gains ` [barrier -20]` only when it is above 0. A barrier that emptied is removed
+at once; poise, statuses and reactions are decided by the hit as before. `clear_barrier(world, entity)` removes it.
+
+**Damage taken.** `DamageTaken(Vec<TakenMult { key, mult, left: Option<f32> }>)` holds named multipliers, sorted by key,
+unique; `left: None` lasts until cleared. Their product is `DamageCtx::taken`, applied in `modifiers` after the guard and
+before `Armor` (so a guard's cost is still decided from the hit as it is written, and a hook sees both `taken` and
+`guard_mult`); a fighter without the component is not touched. `set_damage_taken(world, entity, key, mult, seconds:
+Option<f32>)` replaces the key; `clear_damage_taken(world, entity, key)` removes it (no event). A timed multiplier that runs
+out on a tick is removed and triggers `DamageTakenExpired { entity, key }`, in `AiId` order, then key order. A game that keeps
+a base under the key puts it back from an observer of that event. A `mult` below 0 or not finite, or `seconds` of 0 or less,
+is ignored (`clear_damage_taken` cancels).
+
+*The later end wins (E46).* The Godot game let a shorter core window replace a longer one and a permanent base cancel a timed
+window; the engine does not. `extend_damage_taken(world, entity, key, mult, seconds) -> bool` is `set_damage_taken` that never
+shortens what the key holds: a timed window over a held one ends at the later of the two ends (the `mult` is the new one); a
+timed window over a permanent multiplier takes the key (the base comes back from `DamageTakenExpired`); a permanent set over a
+timed window changes nothing (returns `false`). The game needs no timer of its own for this: one key (`core`), `extend` for the
+windows and the base, an observer of `DamageTakenExpired` for the base. To read what is there, `DamageTaken::get(key) ->
+Option<&TakenMult>`, `DamageTaken::left(key)` (`None` absent, `Some(None)` permanent, `Some(Some(s))` timed) and `product()`.
+The dev tool takes `keep_later=true` for it.
+
+**Timers.** Stored like `Protection` and `Cooldowns`: `f32` seconds left, checked as `left > EPS`, run down by the tick
+length after the tick's checks in `ActionSystems::Fighters` (`tick_body_state`, after `tick_protection`, one system in `AiId`
+order), removed when `left <= EPS`. A timer of `s` seconds set between ticks acts on the next `ceil(60 s)` ticks and is gone
+for the one after; every end is a simulation tick, never a frame or a mesh. They are components on the fighter, so replays and
+snapshots carry them.
+
+**`deal_damage(world, target, amount, credit: Option<Entity>) -> f32`** is damage that is not a hit (a status hook's burn,
+a hazard): the barrier, then health, then `kill_with(.., credit, None, None)` when health ran out; it returns the health left.
+It does nothing to a dead or gone entity, to one in god mode (`Invulnerable`), or for an amount that is not above 0, and it
+runs none of the pipeline (no guard, armor, `DamageTaken`, hooks, reaction or poise) and triggers no `Damaged` (that event names
+a hit's action); a game that wants a line for it triggers its own event.
+
+**Status rules.** `StatusDef` gains `min_proc_interval` (after a proc, buildup that reaches the threshold again within this
+many seconds is swallowed: a `ProcGates` entry on the fighter), `cool_while_active: false` (buildup does not decay while the
+status is active), `refresh` (reaching the threshold while active restarts the duration, no stack; buildup keeps coming while
+active), `reset_on_refuse` (a refused proc empties the bar; else it waits at full, the old rule) and `capped: false` (an
+instant status: it needs no free slot and does not use one). A moveset's `max_statuses` replaces the tuning's cap for that
+fighter. Order, as in Godot: add buildup (an active status that neither stacks nor refreshes ignores it); below the threshold:
+done; reached while gated: refused; else active: `stacks` adds a stack, `refresh` restarts; else if capped and no free slot:
+refused; else it procs, and `min_proc_interval` closes its gate. `Statuses::add` and `Statuses::tick` are unchanged for old
+callers; `Statuses::add_with(id, def, amount, limit, gated, capped)` and `Statuses::tick_with(.., gated)` hold the new rules,
+and `add_status_buildup` (hits and `Status` effects) uses them with the target's `ProcGates` and its moveset's cap. An instant
+status is active for one tick: `StatusApplied`, its `on_apply` (and `on_tick` once), then `StatusExpired`. Chill's longer
+recovery and burn's explosion are the game's.
+
+**What the AI sees.** Describe: `barrier 15 (6.2s)`, `takes x1.35 (core 3.1s)` (several: `takes x0.50 (armor), x1.35 (core
+3.1s)`), `proc gate spar_chill 1.2s`. Journal: `e5 barrier 50 for 8.0s`, ` [barrier -15]` on a hit line. Dev tools: `barrier
+id= amount= seconds=` (a grant; `amount=0` removes it), `damage_taken id= key= mult= seconds=` (`clear=true` removes the key,
+`keep_later=true` extends). The engine rules `action.barrier_sane` (finite `amount >= 0` and finite `left`) and
+`action.damage_taken_sane` (finite `mult >= 0`, finite times, keys sorted and unique) stop the game on a bad write.
 
 ## Levels from Blender (E4.2)
 
@@ -2981,6 +3058,8 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `action.resources_in_range` | `Health`, `Stamina` and `Poise` are finite with `max > 0` and `0 <= current <= max`. Dead bodies are checked too (`current` is 0). A game that wants a buff above `max` raises `max` with it |
 | `action.running_sane` | a running action of a fighter exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. The length is the run's own when that is longer than the definition's (miss recovery and `extend_recovery` lengthen a run, B2a). Without a content database the rule passes |
 | `action.protection_sane` | every `Protection` (the reaction and poise timers, B1) holds finite timers, none below 0. A NaN stays a NaN through the countdown and would shield its fighter for ever |
+| `action.barrier_sane` | every `Barrier` (B2b) holds a finite `amount >= 0` and a finite `left`. `grant_barrier` takes the larger pool and a positive time and `hurt` removes an empty one, so a violation names a writer that put a number there by hand (a NaN time never runs out, a negative pool would heal what it absorbs) |
+| `action.damage_taken_sane` | every `DamageTaken` (B2b) holds finite multipliers `>= 0`, finite times and its keys sorted and unique. `set_damage_taken` inserts in key order and replaces a key; two entries under one key would multiply twice and make `clear` leave one behind |
 | `action.knockback_sane` | every `Knockback` (a push in progress, B1) has a finite flat velocity (`y` is 0) and a finite `decel` above 0: a push that does not slow down never stops |
 | `action.extras_follow_run` | every `RunExtras` (what a charging, turning or miss-recovering run keeps, B2a) belongs to the run its fighter is running (the same `instance`), with a finite `extra >= 0` and a finite `closed >= 0`. The machine puts extras in when such a run starts and takes them out on every way a run ends, so extras left behind would hand a later run a stale hold, hit or recovery |
 | `npc.state_known` | `NpcBrain.state` is a state of the NPC's behaviour. Three carve-outs, each a state the engine itself leaves behind: an empty state (before the NPC's first decided tick), an inactive NPC (dormant or dead: the brain passes it through, so a state a hot reload removed stays until it wakes), and an NPC whose behaviour is not in content (that is reported once as a content problem) |
@@ -3007,13 +3086,15 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-14 rules, checked after every tick
+17 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
   action.resources_in_range  engine rule  armed
   action.running_sane  engine rule  armed
   action.protection_sane  engine rule  armed
+  action.barrier_sane  engine rule  armed
+  action.damage_taken_sane  engine rule  armed
   action.knockback_sane  engine rule  armed
   action.extras_follow_run  engine rule  armed
   npc.state_known  engine rule  armed
@@ -4991,7 +5072,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 | `characters/bodies.locomotion.ron` | how the player, the skeleton and the guard walk |
 | `combat/player.action.ron` | the combo `light_1`–`light_3`, `heavy`, the roll (i-frames 0.18 s), the block with a perfect block, the flask |
 | `combat/warden.action.ron` | the guard's four attacks (`slash`, `slam`, `sweep`, `shockwave`), calm and enraged |
-| `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player |
+| `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player; for body state (B2b), `spar_ward` (a barrier of half the caster's health for 8 s), `spar_frost` and `spar_zap` (jabs that carry a full bar of chill or jolt), the moveset `bodystate`, and in `combat/sparring.status.ron` the statuses `spar_chill` (a 2 s proc gate, no cooling and a restart while active, a refused proc empties the bar) and `spar_jolt` (an instant status outside the cap), which `body_state.scenario` lends to the player |
 | `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | the skeleton's claw, the movesets, the input buffer |
 | `npc/monsters.behavior.ron`, `monsters.perception.ron`, `monsters.director.ron`, `monsters.attack_plan.ron` | how the monsters think: the `skeleton` and `warden` state machines (with a `calm` state that the scenarios do not let the monster leave), sight, the `default` director (two tokens for one player) and the `boss` director (the guard strikes on its own), the guard's attack plans |
 | `region/wilds.*.ron` | the wilds: tiles, socket rules, points of interest, the region, a fallback map, navmesh settings |
@@ -5021,6 +5102,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 - `combat_prototype.scenario` — the guard is beaten in 11 rounds. Each round starts from its warning (`step --until
   "journal:e6 winds up"`), then a roll out of the zone, a block, a perfect block with a heavy hit, an exchange of blows under hyper-armour, the flask, the combo. The test runs it after six different pauses (other attacks in another order): a win every time;
 - `timeline.scenario` (B2a) — the player borrows the `timeline` moveset (`combat/sparring.*.ron`) against a still skeleton: a heavy held from the press shows `charging, turns in 0.23s` (`step --until named:charging`) and turns into `spar_heavy_full` (-25), a tapped one stays `spar_heavy` (-12); a light pressed while the heavy winds up answers `ok: queued, light starts in 0.5…` and the jab lands with no `light rejected`; a lunge into nothing writes `e5 spar_lunge missed: +0.60s recovery` and shows `missed +0.60s`; a lunge staggered in its windup keeps 40% of its cooldown on the `lunge` slot, so its variant on `technique.2` answers `lunge is on cooldown (ready in 0.5…)`; a channel started with `hold=true` lasts while held and ends on `hold=false`; locked on the skeleton to the north, a roll east (`spar_roll_keep`, `face: Keep`) keeps the player `facing N`. At the end the player has its own moveset, no `RunExtras` and nothing queued;
+- `body_state.scenario` (B2b) — the player borrows the `bodystate` moveset and the skeleton the `sparring` one: a ward gives the player `barrier 50 (7.…)` and journals `e5 barrier 50 for 8.0s`; three slams of 15 come out of it (`e7 -> e5 spar_slam -15 (hp 100) [barrier -15]`, health whole, `barrier 35`, `20`, `5`) and the fourth hurts for 10 (`(hp 90) [barrier -5]`, no `Barrier` left); `damage_taken id=e7 key=core mult=2 seconds=1` doubles a jab (`-12`) and the next one a second later is `-6` again with no `DamageTaken`; a jab that chills procs `spar_chill`, shows `proc gate spar_chill`, a second inside 2 s is swallowed and empties the bar (`Statuses.0[0].buildup == 0`, the chill not restarted), one past the gate restarts it, and a jolt procs and expires in a tick with no slot. At the end both have their own movesets and no barrier, multiplier, proc gate or chill;
 - `boss_fight`, `dodge`, `errors` — the switch to phase 2, a roll to dodge a hit, errors that teach;
 - `npc_director.scenario` (E6) — three skeletons against one player in god mode, 30 s of combat: the sandbox condition `three_attacking`
   (three hit at once) is never met on any tick, but each skeleton gets its own turn, and the tokens rotate;

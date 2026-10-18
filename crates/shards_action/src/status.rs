@@ -21,8 +21,9 @@ use serde::{Deserialize, Serialize};
 use shards_content::{ContentDb, ContentDef, Refs};
 use shards_motion::MoveModifiers;
 
-use crate::def::{CombatTuning, EPS};
-use crate::fighter::{report_once, Dead};
+use crate::body::ProcGates;
+use crate::def::{CombatTuning, MovesetDef, EPS};
+use crate::fighter::{report_once, Dead, Fighter};
 
 /// A status (content kind `status`).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -55,6 +56,24 @@ pub struct StatusDef {
     /// pushes still move it.
     #[serde(default, skip_serializing_if = "is_false")]
     pub root: bool,
+    /// After a proc, buildup that reaches the threshold again within this many seconds is
+    /// swallowed (no proc). The gate is a [`ProcGates`](crate::ProcGates) entry on the fighter.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub min_proc_interval: f32,
+    /// Buildup decays while the status is active (the old rule). `false`: it decays only
+    /// while inactive and keeps building up while active.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub cool_while_active: bool,
+    /// Reaching the threshold while active restarts its duration (no stacks), and buildup
+    /// keeps coming while it is active.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub refresh: bool,
+    /// A proc refused (gate or cap) empties the bar. `false`: it waits at full (the old rule).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reset_on_refuse: bool,
+    /// Counts toward the active cap (the old rule). `false`: an instant status (an impulse).
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub capped: bool,
 }
 
 fn one() -> f32 {
@@ -69,6 +88,18 @@ fn is_false(v: &bool) -> bool {
     !*v
 }
 
+fn is_true(v: &bool) -> bool {
+    *v
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
 impl ContentDef for StatusDef {
     const KIND: &'static str = "status";
 
@@ -80,6 +111,9 @@ impl ContentDef for StatusDef {
             if !(v >= 0.0 && v.is_finite()) {
                 refs.error(format!("{name} must be a number >= 0 (is {v})"));
             }
+        }
+        if !(self.min_proc_interval >= 0.0 && self.min_proc_interval.is_finite()) {
+            refs.error(format!("min_proc_interval must be a number >= 0 (is {})", self.min_proc_interval));
         }
         for (name, v) in [("speed_factor", Some(self.speed_factor)), ("speed_cap", self.speed_cap)] {
             if v.is_some_and(|v| !(v >= 0.0 && v.is_finite())) {
@@ -184,7 +218,8 @@ impl Statuses {
     }
 
     /// Adds `amount` of buildup (resistance already applied) under a limit of `limit`
-    /// active statuses.
+    /// active statuses. The old rules, with every status counting toward the limit; see
+    /// [`Statuses::add_with`] for the proc rules a status definition can ask for.
     pub fn add(&mut self, id: &str, def: &StatusDef, amount: f32, limit: usize) -> Option<StatusChange> {
         if amount <= 0.0 {
             return None;
@@ -211,6 +246,63 @@ impl Statuses {
         Some(StatusChange::Applied(id.to_owned()))
     }
 
+    /// [`Statuses::add`] with the proc rules of `def` (B2b), in the order Godot checks them:
+    ///
+    /// 1. an active status that neither `stacks` nor `refresh`es ignores the buildup (the old rule);
+    /// 2. below the threshold: done;
+    /// 3. reached while `gated` (a `min_proc_interval` gate is running): refused;
+    /// 4. else active: `stacks` adds a stack (the old rule), `refresh` restarts the duration;
+    /// 5. else, if `def.capped` and `limit` capped statuses are active already: refused;
+    /// 6. else it procs.
+    ///
+    /// A refusal empties the bar with `reset_on_refuse`, else leaves it at the threshold (the old
+    /// rule). `capped` says which statuses count toward the limit, by id (`StatusDef::capped`).
+    /// The caller sets the `ProcGates` entry when this returns `Applied` and `min_proc_interval`
+    /// is above 0 ([`add_status_buildup`] does).
+    pub fn add_with(
+        &mut self,
+        id: &str,
+        def: &StatusDef,
+        amount: f32,
+        limit: usize,
+        gated: bool,
+        capped: impl Fn(&str) -> bool,
+    ) -> Option<StatusChange> {
+        if amount <= 0.0 {
+            return None;
+        }
+        let used = self.0.iter().filter(|e| e.active > 0.0 && e.id != id && capped(&e.id)).count();
+        let entry = self.entry(id, def.threshold);
+        let active = entry.active > 0.0;
+        if active && !def.stacks && !def.refresh {
+            return None;
+        }
+        entry.buildup += amount;
+        if entry.buildup + EPS < def.threshold {
+            return None;
+        }
+        let refused = if gated {
+            true
+        } else if active {
+            if def.stacks {
+                entry.stacks += 1;
+            }
+            false
+        } else if def.capped && used >= limit {
+            true
+        } else {
+            entry.stacks = 1;
+            false
+        };
+        if refused {
+            entry.buildup = if def.reset_on_refuse { 0.0 } else { def.threshold };
+            return None;
+        }
+        entry.active = def.duration.max(EPS);
+        entry.buildup = 0.0;
+        Some(StatusChange::Applied(id.to_owned()))
+    }
+
     /// One tick: active statuses tick and run out, buildup decays, a status waiting at
     /// full buildup takes a free slot. `def` finds definitions (a status whose
     /// definition is gone just runs out).
@@ -219,6 +311,19 @@ impl Statuses {
         def: impl Fn(&str) -> Option<&'d StatusDef>,
         dt: f32,
         limit: usize,
+    ) -> Vec<StatusChange> {
+        self.tick_with(def, dt, limit, |_| false)
+    }
+
+    /// [`Statuses::tick`] with the rules of B2b: a status with `cool_while_active: false` does not
+    /// decay while active, a `capped: false` one needs no free slot and does not use one, and one
+    /// for which `gated` says its proc is gated does not take its slot from the waiting.
+    pub fn tick_with<'d>(
+        &mut self,
+        def: impl Fn(&str) -> Option<&'d StatusDef>,
+        dt: f32,
+        limit: usize,
+        gated: impl Fn(&str) -> bool,
     ) -> Vec<StatusChange> {
         let mut changes = Vec::new();
         for entry in &mut self.0 {
@@ -231,13 +336,21 @@ impl Statuses {
                     changes.push(StatusChange::Expired(entry.id.clone()));
                 }
             }
-            let decay = def(&entry.id).map_or(entry.buildup / dt.max(EPS), |d| d.decay_per_s);
+            let d = def(&entry.id);
+            if entry.active > 0.0 && d.is_some_and(|d| !d.cool_while_active) {
+                continue;
+            }
+            let decay = d.map_or(entry.buildup / dt.max(EPS), |d| d.decay_per_s);
             entry.buildup = (entry.buildup - decay * dt).max(0.0);
         }
         for i in 0..self.0.len() {
             let entry = &self.0[i];
             let Some(d) = def(&entry.id) else { continue };
-            if entry.active == 0.0 && entry.buildup + EPS >= d.threshold && self.active() < limit {
+            if entry.active == 0.0
+                && entry.buildup + EPS >= d.threshold
+                && !gated(&entry.id)
+                && (!d.capped || self.0.iter().filter(|e| e.active > 0.0 && def(&e.id).is_none_or(|d| d.capped)).count() < limit)
+            {
                 let entry = &mut self.0[i];
                 entry.active = d.duration.max(EPS);
                 entry.stacks = 1;
@@ -304,18 +417,55 @@ pub struct StatusExpired {
 
 /// Adds `amount` of status `status` buildup to `entity`, scaled by its
 /// [`StatusResist`]; applies it (event, `on_apply`) if it reaches the threshold. An
-/// unknown status is reported once and ignored.
+/// unknown status is reported once and ignored. The proc rules of the definition apply
+/// ([`Statuses::add_with`]): the fighter's [`ProcGates`] gate it, its moveset's `max_statuses`
+/// (else the tuning's) caps it, and a proc of a status with `min_proc_interval` closes its gate.
 pub fn add_status_buildup(world: &mut World, entity: Entity, status: &str, amount: f32) {
     let Some(def) = world.resource::<ContentDb>().get::<StatusDef>(status).cloned() else {
         let text = format!("status `{status}` is not in content; buildup ignored (content_list kind=status)");
         report_once(world, format!("status {status}"), text);
         return;
     };
-    let limit = CombatTuning::of(world.resource::<ContentDb>()).max_statuses as usize;
+    let limit = status_limit(world, entity);
+    let gated = world.get::<ProcGates>(entity).is_some_and(|g| g.gated(status));
     let resist = world.get::<StatusResist>(entity).map_or(1.0, |r| r.of(status));
+    let uncapped: Vec<String> =
+        world.resource::<ContentDb>().iter::<StatusDef>().filter(|(_, d)| !d.capped).map(|(id, _)| id.to_owned()).collect();
+    let capped = |id: &str| !uncapped.iter().any(|u| u == id);
     let Some(mut statuses) = world.get_mut::<Statuses>(entity) else { return };
-    if let Some(change) = statuses.add(status, &def, amount * resist, limit) {
-        run_changes(world, entity, vec![change]);
+    if let Some(change) = statuses.add_with(status, &def, amount * resist, limit, gated, capped) {
+        let changes = vec![change];
+        close_gates(world, entity, &changes);
+        run_changes(world, entity, changes);
+    }
+}
+
+/// How many statuses `entity` may have active at once: its moveset's `max_statuses`, else the tuning's.
+fn status_limit(world: &World, entity: Entity) -> usize {
+    let db = world.resource::<ContentDb>();
+    world
+        .get::<Fighter>(entity)
+        .and_then(|f| db.get::<MovesetDef>(&f.moveset))
+        .and_then(|m| m.max_statuses)
+        .unwrap_or_else(|| CombatTuning::of(db).max_statuses) as usize
+}
+
+/// A proc of a status with a `min_proc_interval` closes its gate for that long.
+fn close_gates(world: &mut World, entity: Entity, changes: &[StatusChange]) {
+    for change in changes {
+        let StatusChange::Applied(id) = change else { continue };
+        let Some(secs) = world.resource::<ContentDb>().get::<StatusDef>(id).map(|d| d.min_proc_interval).filter(|s| *s > 0.0)
+        else {
+            continue;
+        };
+        match world.get_mut::<ProcGates>(entity) {
+            Some(mut g) => g.set(id, secs),
+            None => {
+                let mut g = ProcGates::default();
+                g.set(id, secs);
+                world.entity_mut(entity).insert(g);
+            }
+        }
     }
 }
 
@@ -369,7 +519,6 @@ fn run_changes(world: &mut World, entity: Entity, changes: Vec<StatusChange>) {
 pub fn update_statuses(world: &mut World) {
     let dt = world.resource::<Time>().delta_secs();
     let db = world.resource::<ContentDb>();
-    let limit = CombatTuning::of(db).max_statuses as usize;
     let defs: Vec<(String, StatusDef)> = db.iter::<StatusDef>().map(|(id, d)| (id.to_owned(), d.clone())).collect();
     let def = |id: &str| defs.iter().find(|(d, _)| d == id).map(|(_, d)| d);
     let mut order: Vec<(u32, Entity)> = world
@@ -380,8 +529,11 @@ pub fn update_statuses(world: &mut World) {
         .collect();
     order.sort();
     for (_, entity) in order {
+        let limit = status_limit(world, entity);
+        let gates = world.get::<ProcGates>(entity).cloned().unwrap_or_default();
         let Some(mut statuses) = world.get_mut::<Statuses>(entity) else { continue };
-        let changes = statuses.tick(def, dt, limit);
+        let changes = statuses.tick_with(def, dt, limit, |id| gates.gated(id));
+        close_gates(world, entity, &changes);
         run_changes(world, entity, changes);
     }
 }
@@ -400,6 +552,11 @@ mod tests {
             speed_factor: 1.0,
             speed_cap: None,
             root: false,
+            min_proc_interval: 0.0,
+            cool_while_active: true,
+            refresh: false,
+            reset_on_refuse: false,
+            capped: true,
         }
     }
 
@@ -445,6 +602,88 @@ mod tests {
         assert!(changes.contains(&StatusChange::Expired("a".into())));
         assert!(!changes.contains(&StatusChange::Applied("b".into())), "{changes:?}");
         assert_eq!(s.add("b", &def, 10.0, 1), Some(StatusChange::Applied("b".into())));
+    }
+
+    fn chill() -> StatusDef {
+        StatusDef { min_proc_interval: 2.0, cool_while_active: false, refresh: true, reset_on_refuse: true, duration: 4.0, ..bleed() }
+    }
+
+    fn all_capped(_: &str) -> bool {
+        true
+    }
+
+    #[test]
+    fn add_with_the_old_rules_is_add() {
+        // The same calls on a definition that asks for nothing new answer alike.
+        let def = StatusDef { stacks: true, ..bleed() };
+        let (mut old, mut new) = (Statuses::default(), Statuses::default());
+        for (id, amount, limit) in [("a", 60.0, 1), ("a", 60.0, 1), ("b", 150.0, 1), ("a", 100.0, 1), ("b", 20.0, 2)] {
+            assert_eq!(old.add(id, &def, amount, limit), new.add_with(id, &def, amount, limit, false, all_capped));
+        }
+        assert_eq!(old, new);
+    }
+
+    #[test]
+    fn a_gate_refuses_and_a_reset_empties_the_bar() {
+        let (def, mut s) = (chill(), Statuses::default());
+        assert!(s.add_with("chill", &def, 100.0, 3, false, all_capped).is_some());
+        assert_eq!(s.add_with("chill", &def, 100.0, 3, true, all_capped), None, "gated");
+        assert_eq!(s.get("chill").unwrap().buildup, 0.0, "reset_on_refuse");
+        assert_eq!(s.get("chill").unwrap().active, 4.0, "the running one is untouched");
+        // Without reset_on_refuse the refused proc waits at full (the old rule).
+        let plain = StatusDef { reset_on_refuse: false, ..chill() };
+        let mut s = Statuses::default();
+        s.add_with("chill", &plain, 100.0, 3, false, all_capped);
+        s.add_with("chill", &plain, 150.0, 3, true, all_capped);
+        assert_eq!(s.get("chill").unwrap().buildup, 100.0);
+    }
+
+    #[test]
+    fn refresh_restarts_and_buildup_comes_while_active() {
+        let (def, mut s) = (chill(), Statuses::default());
+        s.add_with("chill", &def, 100.0, 3, false, all_capped);
+        s.tick_with(|_| Some(&def), 1.0, 3, |_| false);
+        assert_eq!(s.add_with("chill", &def, 40.0, 3, false, all_capped), None, "below the threshold: it adds up while active");
+        assert_eq!(s.get("chill").unwrap().buildup, 40.0, "and did not cool in the tick before");
+        assert_eq!(s.add_with("chill", &def, 60.0, 3, false, all_capped), Some(StatusChange::Applied("chill".into())));
+        let e = s.get("chill").unwrap();
+        assert_eq!((e.active, e.stacks, e.buildup), (4.0, 1, 0.0));
+    }
+
+    #[test]
+    fn uncapped_statuses_neither_need_nor_use_a_slot() {
+        let jolt = StatusDef { capped: false, duration: 0.0, ..bleed() };
+        let (a, mut s) = (bleed(), Statuses::default());
+        s.add_with("a", &a, 100.0, 1, false, |_| true);
+        assert!(s.add_with("jolt", &jolt, 100.0, 1, false, |id| id != "jolt").is_some(), "the cap is full of `a`");
+        // `b` still finds no slot: the jolt is active but does not count.
+        let b = bleed();
+        assert_eq!(s.add_with("b", &b, 100.0, 1, false, |id| id != "jolt"), None);
+        assert_eq!(s.get("b").unwrap().buildup, 100.0);
+    }
+
+    #[test]
+    fn a_gated_status_waiting_at_full_does_not_take_its_slot() {
+        let def = StatusDef { decay_per_s: 0.0, ..bleed() };
+        let mut s = Statuses::default();
+        // Waiting at full: the cap (0) refused it, the old rule.
+        assert_eq!(s.add_with("b", &def, 100.0, 0, false, all_capped), None);
+        assert!(s.tick_with(|_| Some(&def), 0.1, 0, |_| false).is_empty(), "still no slot");
+        assert!(s.tick_with(|_| Some(&def), 0.1, 1, |_| true).is_empty(), "a slot, but the gate is closed");
+        let changes = s.tick_with(|_| Some(&def), 0.1, 1, |_| false);
+        assert_eq!(changes, [StatusChange::Applied("b".into())]);
+    }
+
+    #[test]
+    fn cool_while_active_off_stops_decay_only_while_active() {
+        let def = StatusDef { cool_while_active: false, stacks: true, ..bleed() };
+        let mut s = Statuses::default();
+        s.add_with("b", &def, 100.0, 3, false, all_capped);
+        s.add_with("b", &def, 60.0, 3, false, all_capped);
+        s.tick_with(|_| Some(&def), 0.5, 3, |_| false);
+        assert_eq!(s.get("b").unwrap().buildup, 60.0, "active: it does not cool");
+        s.tick_with(|_| Some(&def), 0.5, 3, |_| false); // runs out; cooling resumes in the same tick
+        assert_eq!(s.get("b").unwrap().buildup, 55.0);
     }
 
     #[test]

@@ -1,0 +1,30 @@
+// Actions for the body-state tests (B2b). Net ids 100 and up.
+{
+    // Barriers of 30 for 2 s, of 50 for 1 s, of a quarter of max health for 2 s.
+    "b_ward": (net_id: 100, phases: [("cast", 0.2)], effects: [(at: 0.1, effect: Barrier(amount: 30, seconds: 2))]),
+    "b_ward_big": (net_id: 101, phases: [("cast", 0.2)], effects: [(at: 0.1, effect: Barrier(amount: 50, seconds: 1))]),
+    "b_ward_max": (net_id: 102, phases: [("cast", 0.2)], effects: [(at: 0.1, effect: Barrier(amount: 0.25, seconds: 2, of_max: true))]),
+    // Hits of 10 and of 40.
+    "b_hit": (
+        net_id: 103,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.1)],
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 10)],
+    ),
+    "b_hit_big": (
+        net_id: 104,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.1)],
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 40)],
+    ),
+    // A hit that carries two plain statuses.
+    "b_hit_two": (
+        net_id: 105,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.1)],
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 1, status: [("b_a", 100), ("b_b", 100)])],
+    ),
+    "b_guard": (
+        net_id: 106,
+        phases: [("raise", 0.18), ("hold", 0.3), ("lower", 0.1)],
+        hold: (input: "block", span: Phase("hold")),
+        guard: (span: Phases("raise", "hold"), stamina_per_damage: 0.8, damage_mult: 0.5),
+    ),
+}

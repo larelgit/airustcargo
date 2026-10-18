@@ -9,10 +9,10 @@
     "tick": 121,
     "seed": 42,
     "tick_hz": 59.99999880000003,
-    "engine": "0.2.0",
-    "state_hash": "37184db193ecc26d",
+    "engine": "0.4.0",
+    "state_hash": "58f3d3653eb75c89",
     "checks": {
-      "content": "b39a82e581fe50a7",
+      "content": "03e77ece055c0291",
       "levels": "cbf29ce484222325",
       "static_colliders": "b16a4682932b69b4"
     },
@@ -1602,7 +1602,7 @@
   },
   "end": {
     "tick": 369,
-    "hash": "21dd7510a001db3e",
+    "hash": "0987320b5e2d2326",
     "parts": {
       "entities": {
         "e1": {
@@ -1825,7 +1825,7 @@
         }
       },
       "game": {
-        "content": "b39a82e581fe50a7"
+        "content": "03e77ece055c0291"
       }
     }
   },
@@ -1908,7 +1908,7 @@
   "checks": [
     {
       "tick": 180,
-      "hash": "2066caf225fef1a2",
+      "hash": "55d757b59521d0ba",
       "parts": {
         "entities": {
           "e1": {
@@ -2131,13 +2131,13 @@
           }
         },
         "game": {
-          "content": "b39a82e581fe50a7"
+          "content": "03e77ece055c0291"
         }
       }
     },
     {
       "tick": 240,
-      "hash": "ac366105d9925b16",
+      "hash": "476337dd46b69b4e",
       "parts": {
         "entities": {
           "e1": {
@@ -2360,13 +2360,13 @@
           }
         },
         "game": {
-          "content": "b39a82e581fe50a7"
+          "content": "03e77ece055c0291"
         }
       }
     },
     {
       "tick": 300,
-      "hash": "9ddec99e8ed96025",
+      "hash": "5154a9b36db13511",
       "parts": {
         "entities": {
           "e1": {
@@ -2589,13 +2589,13 @@
           }
         },
         "game": {
-          "content": "b39a82e581fe50a7"
+          "content": "03e77ece055c0291"
         }
       }
     },
     {
       "tick": 360,
-      "hash": "cc2d75891b13e8cb",
+      "hash": "89aa571d85268437",
       "parts": {
         "entities": {
           "e1": {
@@ -2818,7 +2818,7 @@
           }
         },
         "game": {
-          "content": "b39a82e581fe50a7"
+          "content": "03e77ece055c0291"
         }
       }
     }
