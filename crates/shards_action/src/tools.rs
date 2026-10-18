@@ -14,10 +14,12 @@ use shards_core::input_names::{BLOCK, DODGE, HEAVY, LIGHT, PARRY, TECHNIQUE, USE
 use shards_core::{flat, Intent, Order, Predicted};
 
 use crate::combat::{react, revive, stagger, Reaction, StaggerCause};
-use crate::def::{ActionDef, CombatTuning, MovesetDef, Steer, EPS};
+use crate::def::{ActionDef, BufferMode, CombatTuning, MovesetDef, Steer, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team};
-use crate::machine::{can_start, fits_buffer, ActionState, FighterView, Healed};
-use crate::predict::shown_state;
+use crate::machine::{
+    buffer_press, can_start, fits_buffer, press_life, understands, ActionState, FighterView, Healed, InputBuffer, Queued,
+};
+use crate::predict::{shown_queue, shown_state};
 use crate::zone::{body_radius, zones_threatening};
 
 pub(crate) fn register(app: &mut App) {
@@ -66,8 +68,11 @@ enum When {
     In(f32),
 }
 
-/// The shared rule's answer for `input`: now, within the input buffer, or the error. On a
-/// client's own body it asks about the action shown there ([`shown_state`]).
+/// The shared rule's answer for `input`: now, within the press's life in the buffer
+/// ([`press_life`]: longer while a `queue` span holds it for a window), or the error. A moveset
+/// with a single slot answers as its buffer will: a press weaker than the one waiting is dropped.
+/// On a client's own body it asks about the action and the presses shown there ([`shown_state`],
+/// [`shown_queue`]).
 fn when(world: &World, me: Entity, input: &str) -> Result<When, String> {
     let dt = world.resource::<Time<Fixed>>().timestep().as_secs_f32();
     let ttl = CombatTuning::of(world.resource::<ContentDb>()).input_buffer;
@@ -76,29 +81,96 @@ fn when(world: &World, me: Entity, input: &str) -> Result<When, String> {
     if let Some(state) = &shown {
         view.state = state;
     }
+    let run = view.state.current.as_ref();
+    let def = run.and_then(|r| view.db.get::<ActionDef>(&r.action));
+    let life = press_life(def, run, input, ttl);
+    if let Some(mode @ BufferMode::SingleSlot { .. }) = view.moveset_def().map(|m| &m.buffer)
+        && let Some(waiting) = waiting(world, me, &view).into_iter().next()
+        && mode.rank(input) < mode.rank(&waiting.input)
+    {
+        return Err(format!(
+            "{} is waiting and comes first: one press waits at a time, and {input} ranks below it",
+            waiting.input
+        ));
+    }
     match can_start(&view, input, dt) {
         Ok(start) => Ok(When::Now(start.action)),
         Err(blocker) => match blocker.ready_in() {
-            Some(t) if fits_buffer(t, ttl) => Ok(When::In(t)),
+            Some(t) if fits_buffer(t, life) => Ok(When::In(t)),
             _ => Err(blocker.message()),
         },
     }
 }
 
+/// The presses `me` has waiting as its next tick takes them: its buffer (on a client's own body,
+/// the predictor's), with the presses still in its `Intent` added the way the buffer adds them.
+fn waiting(world: &World, me: Entity, view: &FighterView) -> Vec<Queued> {
+    let mut queued = shown_queue(world, me)
+        .unwrap_or_else(|| world.get::<InputBuffer>(me).map(|b| b.queued.clone()).unwrap_or_default());
+    let moveset = view.moveset_def();
+    let mode = moveset.map_or(&BufferMode::PerInput, |m| &m.buffer);
+    let running = view.state.current.as_ref().and_then(|r| view.db.get::<ActionDef>(&r.action));
+    for p in world.get::<Intent>(me).map_or(&[][..], |i| &i.pressed[..]) {
+        if understands(&p.input, moveset, running) {
+            buffer_press(&mut queued, mode, Queued { input: p.input.clone(), dir: p.dir, left: 0.0 });
+        }
+    }
+    queued
+}
+
 /// Presses `input` (towards `dir`) when the rule says it will start. `detail` follows the
-/// answer (a dodge's direction).
+/// answer (a dodge's direction). `hold`: `Some(true)` presses and keeps the input held (a
+/// charge, an action that goes on while held), `Some(false)` lets go of it without a press.
 fn press(world: &mut World, caller: &Caller, input: &str, dir: Option<Vec3>, detail: &str) -> ToolResult {
+    press_held(world, caller, input, dir, detail, None)
+}
+
+fn press_held(world: &mut World, caller: &Caller, input: &str, dir: Option<Vec3>, detail: &str, hold: Option<bool>) -> ToolResult {
     let me = me(world, caller)?;
+    if hold == Some(false) {
+        world.get_mut::<Intent>(me).ok_or("no Intent")?.set_held(input, false);
+        return Ok(format!("ok: {input} released"));
+    }
     let when = when(world, me, input)?;
     let note = predicted_note(world, me);
+    let (displaced, tap) = {
+        let view = FighterView::of(world, me).ok_or("your body is not a complete fighter")?;
+        let shown = shown_state(world, me);
+        let view = FighterView { state: shown.as_ref().unwrap_or(view.state), ..view };
+        let slot = matches!(view.moveset_def().map(|m| &m.buffer), Some(BufferMode::SingleSlot { .. }));
+        let displaced = waiting(world, me, &view)
+            .into_iter()
+            .next()
+            .filter(|q| slot && q.input != input)
+            .map(|q| format!(" ({} no longer waits)", q.input))
+            .unwrap_or_default();
+        // An action that goes on only while its input is held, pressed without holding it.
+        let action = match &when {
+            When::Now(action) => Some(action.as_str()),
+            When::In(_) => view.moveset_def().and_then(|m| m.inputs.get(input)).map(String::as_str),
+        };
+        let lets_go = action.and_then(|a| view.db.get::<ActionDef>(a)).is_some_and(|d| d.while_held.as_deref() == Some(input));
+        let tap = if lets_go && hold != Some(true) && !view.held.iter().any(|h| h == input) {
+            format!(" (a tap: it stops as soon as {input} is not held; hold=true keeps it going)")
+        } else {
+            String::new()
+        };
+        (displaced, tap)
+    };
     let mut intent = world.get_mut::<Intent>(me).ok_or("no Intent")?;
     match dir {
         Some(dir) => intent.press_dir(input, dir),
         None => intent.press(input),
     }
+    let holding = if hold == Some(true) {
+        intent.set_held(input, true);
+        " (holding)"
+    } else {
+        ""
+    };
     Ok(match when {
-        When::Now(action) => format!("ok: {action}{detail}{note}"),
-        When::In(t) => format!("ok: queued, {input} starts in {t:.2}s{detail}{note}"),
+        When::Now(action) => format!("ok: {action}{holding}{detail}{displaced}{tap}{note}"),
+        When::In(t) => format!("ok: queued, {input} starts in {t:.2}s{holding}{detail}{displaced}{tap}{note}"),
     })
 }
 
@@ -108,16 +180,25 @@ fn predicted_note(world: &World, me: Entity) -> &'static str {
     if world.get::<Predicted>(me).is_some() { " · predicted, host confirms" } else { "" }
 }
 
+/// Whether to hold the button after the press.
+#[derive(Deserialize, JsonSchema, Default)]
+pub struct HoldArgs {
+    /// true presses and keeps the button held (an attack that charges while held turns into
+    /// its charged version); false lets go of it (no press). Default: a plain press.
+    pub hold: Option<bool>,
+}
+
 /// Light attack in the direction you face (or at your lock-on target). Chains into a
 /// combo when pressed again inside the attack's cancel window. Answers `ok`, `ok:
 /// queued` (it starts within the input buffer) or why not and when it would work.
-fn light_attack(In(call): In<Call<NoArgs>>, world: &mut World) -> ToolResult {
-    press(world, &call.caller, LIGHT, None, "")
+fn light_attack(In(call): In<Call<HoldArgs>>, world: &mut World) -> ToolResult {
+    press_held(world, &call.caller, LIGHT, None, "", call.args.hold)
 }
 
-/// Heavy attack: slower, costs more stamina, hits harder.
-fn heavy_attack(In(call): In<Call<NoArgs>>, world: &mut World) -> ToolResult {
-    press(world, &call.caller, HEAVY, None, "")
+/// Heavy attack: slower, costs more stamina, hits harder. `hold=true` keeps the button down
+/// (a charged heavy turns while it is held), `hold=false` lets go.
+fn heavy_attack(In(call): In<Call<HoldArgs>>, world: &mut World) -> ToolResult {
+    press_held(world, &call.caller, HEAVY, None, "", call.args.hold)
 }
 
 /// Parry: a short perfect guard. A hit landing in it does no damage and staggers the
@@ -231,6 +312,8 @@ fn dodge(In(call): In<Call<DodgeArgs>>, world: &mut World) -> ToolResult {
 #[derive(Deserialize, JsonSchema)]
 pub struct TechniqueArgs {
     pub slot: Slot,
+    /// true presses and keeps the button held; false lets go of it (no press). Default: a press.
+    pub hold: Option<bool>,
 }
 
 /// A technique slot: its number (1) or its name.
@@ -249,7 +332,7 @@ fn use_technique(In(call): In<Call<TechniqueArgs>>, world: &mut World) -> ToolRe
     let input = format!("{TECHNIQUE}.{slot}");
     let me = me(world, &call.caller)?;
     require_input(world, me, &input, TECHNIQUE, "technique")?;
-    press(world, &call.caller, &input, None, "")
+    press_held(world, &call.caller, &input, None, "", call.args.hold)
 }
 
 /// Use an item, e.g. a healing flask (`use_item.<item>` in your moveset). Items with

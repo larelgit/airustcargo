@@ -43,7 +43,9 @@ impl Plugin for EngineUiPlugin {
                 charge.map(|c| ratio(c.current as f32, c.max as f32))
             })
             .add_ui_source("you.cooldown", |w, action| {
-                viewer(w).map(|e| UiValue::Cooldown { left: w.get::<Cooldowns>(e).map_or(0.0, |c| c.left(action)) })
+                // An action whose cooldown sits in a shared slot (`cost.cooldown_key`) shows that slot.
+                let key = w.resource::<ContentDb>().get::<shards_action::ActionDef>(action).map_or(action, |d| d.cooldown_key(action));
+                viewer(w).map(|e| UiValue::Cooldown { left: w.get::<Cooldowns>(e).map_or(0.0, |c| c.left(key)) })
             })
             .add_ui_source("you.heading", heading)
             .add_ui_source("allies", allies)

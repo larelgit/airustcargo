@@ -236,6 +236,98 @@ fn press_hold_and_toggle_modes() {
     assert!(!state.held("sprint"));
 }
 
+fn mouse(app: &mut App) -> Mut<'_, ButtonInput<MouseButton>> {
+    app.world_mut().resource_mut::<ButtonInput<MouseButton>>()
+}
+
+#[test]
+fn press_hold_bind_writes_press_and_held() {
+    let mut app = input_app();
+    let e = local_player(&mut app);
+    frame(&mut app);
+    assert_eq!(app.world().resource::<InputMap>().action("gameplay", "heavy").unwrap().mode, BindMode::PressHold);
+
+    // Down: a press, and held while it stays down.
+    mouse(&mut app).press(MouseButton::Right);
+    frame(&mut app);
+    assert_eq!(pressed_names(&app, e), ["heavy"]);
+    assert!(intent(&app, e).is_held("heavy"));
+    edit_intent(&mut app, e, |i| i.pressed.clear());
+    frame(&mut app);
+    assert!(pressed_names(&app, e).is_empty(), "one press per push");
+    assert!(intent(&app, e).is_held("heavy"));
+    mouse(&mut app).release(MouseButton::Right);
+    frame(&mut app);
+    assert!(!intent(&app, e).is_held("heavy"));
+    assert!(ok(&mut app, "input_bindings", json!({})).contains("[press+hold] "));
+
+    // "Hold to toggle": the first push presses and holds, the next lets go and presses nothing.
+    app.world_mut().resource_mut::<AccessibilitySettings>().hold_to_toggle = true;
+    mouse(&mut app).press(MouseButton::Right);
+    frame(&mut app);
+    mouse(&mut app).release(MouseButton::Right);
+    frame(&mut app);
+    assert_eq!(pressed_names(&app, e), ["heavy"]);
+    assert!(intent(&app, e).is_held("heavy"), "held though the button is up");
+    edit_intent(&mut app, e, |i| i.pressed.clear());
+    mouse(&mut app).press(MouseButton::Right);
+    frame(&mut app);
+    mouse(&mut app).release(MouseButton::Right);
+    frame(&mut app);
+    assert!(pressed_names(&app, e).is_empty(), "letting go is not a press");
+    assert!(!intent(&app, e).is_held("heavy"));
+    app.world_mut().resource_mut::<AccessibilitySettings>().hold_to_toggle = false;
+
+    // The mode is a control setting like the others.
+    let out = ok(&mut app, "rebind", json!({"action": "sprint", "mode": "press_hold"}));
+    assert!(out.contains("mode presshold"), "{out}");
+    assert_eq!(app.world().resource::<InputMap>().action("gameplay", "sprint").unwrap().mode, BindMode::PressHold);
+}
+
+#[test]
+fn press_hold_bind_replays() {
+    let session = |app: &mut App| {
+        mouse(app).press(MouseButton::Right);
+        app.update();
+        crate::common::step(app, 5);
+        mouse(app).clear();
+        app.update();
+        crate::common::step(app, 5);
+        mouse(app).release(MouseButton::Right);
+        app.update();
+        crate::common::step(app, 5);
+    };
+    let fresh = || {
+        let mut app = bare_engine("press_hold_replays");
+        app.init_resource::<ButtonInput<KeyCode>>().init_resource::<ButtonInput<MouseButton>>();
+        let e = player(app.world_mut(), Vec3::ZERO);
+        app.world_mut().entity_mut(e).insert(LocalPlayer);
+        app.update();
+        (app, e)
+    };
+    let (mut original, e) = fresh();
+    session(&mut original);
+    assert!(!intent(&original, e).is_held("heavy"));
+    let recorded = ai_core::replay::save(original.world());
+    let intents: Vec<String> = recorded
+        .events
+        .iter()
+        .filter_map(|ev| match ev {
+            ai_core::replay::ReplayEvent::Input { component, value, .. } if component == "Intent" => Some(value.to_string()),
+            _ => None,
+        })
+        .collect();
+    assert!(intents.first().is_some_and(|v| v.contains("\"heavy\"") && v.contains("held")), "{intents:#?}");
+    assert!(intents.len() >= 2, "the press and hold, then the release: {intents:#?}");
+
+    let (mut copy, _) = fresh();
+    ai_core::replay::play(copy.world_mut(), recorded.clone()).unwrap();
+    crate::common::step(&mut copy, recorded.end.tick);
+    copy.update();
+    let report = copy.world().resource::<ai_core::AiReplay>().report().cloned().expect("playback has finished");
+    assert!(report.identical(), "{report}");
+}
+
 #[test]
 fn a_dodge_goes_where_you_steer() {
     let mut app = input_app();
@@ -826,6 +918,25 @@ fn hold_to_toggle_turns_held_buttons_into_toggles() {
     release(&mut app, KeyCode::ShiftLeft);
     frame(&mut app);
     assert!(!intent(&app, e).is_held(SPRINT));
+}
+
+#[test]
+fn turning_the_attack_assist_off_holds_assist_off() {
+    let mut app = input_app();
+    let e = local_player(&mut app);
+    frame(&mut app);
+    assert!(!intent(&app, e).is_held("assist_off"), "on by default");
+    set_control(&mut app, "attack_assist", "false");
+    frame(&mut app);
+    assert!(intent(&app, e).is_held("assist_off"), "the setting holds it for the player's body");
+    // A menu does not let go of it: it is a setting, not a button.
+    app.world_mut().resource_mut::<InputContexts>().push("menu");
+    frame(&mut app);
+    assert!(intent(&app, e).is_held("assist_off"));
+    app.world_mut().resource_mut::<InputContexts>().pop();
+    set_control(&mut app, "attack_assist", "true");
+    frame(&mut app);
+    assert!(!intent(&app, e).is_held("assist_off"));
 }
 
 #[test]

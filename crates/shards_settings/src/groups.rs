@@ -202,17 +202,27 @@ pub struct ControlSettings {
     /// `"context.action"` to its bindings in slot order, written like a content file
     /// (`"gameplay.jump" = ["Key(KeyJ)", "GamepadButton(South)"]`). An empty list unbinds.
     pub bindings: std::collections::BTreeMap<String, Vec<String>>,
-    /// `"context.action"` to `press`, `hold` or `toggle`.
+    /// `"context.action"` to `press`, `hold`, `toggle` or `press_hold`.
     pub hold_or_toggle: std::collections::BTreeMap<String, String>,
     /// Look speed multiplier (0.05 to 5).
     pub mouse_sensitivity: f64,
     /// Looking up moves the camera up instead of down.
     pub invert_y: bool,
+    /// Attacks may correct their direction toward the lock-on target (the attack assist). Off:
+    /// the controls hold `assist_off` for the player's body, and an attack with an assist does not
+    /// track the target.
+    pub attack_assist: bool,
 }
 
 impl Default for ControlSettings {
     fn default() -> Self {
-        Self { bindings: Default::default(), hold_or_toggle: Default::default(), mouse_sensitivity: 1.0, invert_y: false }
+        Self {
+            bindings: Default::default(),
+            hold_or_toggle: Default::default(),
+            mouse_sensitivity: 1.0,
+            invert_y: false,
+            attack_assist: true,
+        }
     }
 }
 
@@ -226,8 +236,8 @@ impl ControlSettings {
     pub fn check(&self) -> Result<(), String> {
         range("controls.mouse_sensitivity", self.mouse_sensitivity, 0.05, 5.0)?;
         for (key, mode) in &self.hold_or_toggle {
-            if !matches!(mode.trim().to_ascii_lowercase().as_str(), "press" | "hold" | "toggle") {
-                return Err(format!("controls.hold_or_toggle.{key} `{mode}` is not one of press, hold, toggle"));
+            if !matches!(mode.trim().to_ascii_lowercase().as_str(), "press" | "hold" | "toggle" | "press_hold") {
+                return Err(format!("controls.hold_or_toggle.{key} `{mode}` is not one of press, hold, toggle, press_hold"));
             }
         }
         for key in self.bindings.keys().chain(self.hold_or_toggle.keys()) {
