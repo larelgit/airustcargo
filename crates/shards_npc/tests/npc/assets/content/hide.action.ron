@@ -1,0 +1,8 @@
+// Under the ground from 0.3 s to 0.9 s: not perceived while there (B2c intangible spans).
+{
+    "hide": (
+        net_id: 61,
+        phases: [("dig", 0.3), ("under", 0.6), ("emerge", 0.3)],
+        intangible: [Phase("under")],
+    ),
+}

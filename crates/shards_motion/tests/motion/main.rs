@@ -9,6 +9,7 @@ mod drive;
 mod edge_cases;
 mod engine;
 mod input;
+mod launch;
 mod modifiers;
 mod modifiers_parity;
 mod perception;

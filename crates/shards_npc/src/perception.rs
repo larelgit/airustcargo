@@ -24,7 +24,7 @@
 use ai_core::AiId;
 use bevy::prelude::*;
 use shards_action::fighter::hostile;
-use shards_action::{Damaged, Dead, Fighter, Team};
+use shards_action::{state_intangible, ActionState, Damaged, Dead, Fighter, Team};
 use shards_content::ContentDb;
 use shards_core::flat;
 use shards_motion::{LayerMask, MotionState, PhysicsWorld, QueryFilter};
@@ -156,6 +156,9 @@ struct Candidate {
     point: Vec3,
     team: Option<Team>,
     sprinting: bool,
+    /// Burrowed (an intangible span is open): neither seen nor heard, but not gone either, so
+    /// what an NPC remembers of it stays until its memory runs out.
+    intangible: bool,
 }
 
 /// `NpcSystems::Sense`: every active NPC, in `AiId` order, looks, listens and remembers.
@@ -164,20 +167,21 @@ pub(crate) fn perceive(
     time: Res<Time>,
     db: Res<ContentDb>,
     physics: Res<PhysicsWorld>,
-    bodies: Query<(Entity, &AiId, &Transform, Option<&Team>, Option<&MotionState>), (With<Fighter>, Without<Dead>)>,
+    bodies: Query<(Entity, &AiId, &Transform, Option<&Team>, Option<&MotionState>, Option<&ActionState>), (With<Fighter>, Without<Dead>)>,
     mut npcs: Query<(Entity, &AiId, &Npc, &NpcBrain, &Transform, Option<&Team>, &mut Perceived)>,
 ) {
     let dt = time.delta_secs();
     let tuning = NpcTuning::of(&db);
     let mut candidates: Vec<Candidate> = bodies
         .iter()
-        .map(|(entity, id, tf, team, motion)| Candidate {
+        .map(|(entity, id, tf, team, motion, state)| Candidate {
             entity,
             id: *id,
             feet: tf.translation,
             point: body_point(&physics, entity, tf.translation),
             team: team.cloned(),
             sprinting: motion.is_some_and(|m| m.sprinting),
+            intangible: state.is_some_and(|s| state_intangible(&db, s)),
         })
         .collect();
     candidates.sort_by_key(|c| c.id);
@@ -234,7 +238,8 @@ fn sense(
             Err(i) => known.insert(i, Sensed { id, pos, seen, heard, age: 0.0 }),
         }
     };
-    let hostiles = candidates.iter().filter(|c| c.entity != entity && c.id != me && hostile(team, c.team.as_ref()));
+    // A burrowed body is not perceived; it is still there, so the memory below keeps it.
+    let hostiles = candidates.iter().filter(|c| c.entity != entity && c.id != me && !c.intangible && hostile(team, c.team.as_ref()));
     for c in hostiles.clone() {
         // A target still known is kept in sight farther out than a new one is noticed.
         let range = match def.keep_range {
