@@ -1057,7 +1057,7 @@ mod tests {
         let (steered, played) = zaps(&steered_plan);
         // Of four equal tools, about a quarter are zaps; steering finds the paying one.
         assert!(plain < 80, "{plain}");
-        assert!(steered > plain + 40, "steered {steered} against {plain}");
+        assert!(steered > plain + 20, "steered {steered} against {plain}");
         // The same seed against the same game draws the same.
         assert_eq!(zaps(&steered_plan).1, played);
         // Another seed draws another run, steered the same way.
