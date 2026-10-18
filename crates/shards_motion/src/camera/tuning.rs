@@ -23,6 +23,7 @@ macro_rules! is_default {
 is_default!(pitch_is_default, (f32, f32), (-0.45, 1.35));
 is_default!(release_factor_is_default, f32, 1.3);
 is_default!(snap_distance_is_default, f32, 12.0);
+is_default!(body_snap_distance_is_default, f32, 4.0);
 is_default!(yaw_rate_is_default, f32, 7.0);
 is_default!(pitch_rate_is_default, f32, 7.0);
 is_default!(pitch_clamp_is_default, (f32, f32), (0.15, 0.7));
@@ -201,6 +202,13 @@ pub struct CameraTuning {
     /// respawn): the focus lands on it at once instead of catching up.
     #[serde(skip_serializing_if = "snap_distance_is_default")]
     pub snap_distance: f32,
+    /// A body that moved farther than this (m) in one tick was placed, not walked (a teleport, a
+    /// respawn, a region change): the render interpolation ([`Interpolated`](crate::Interpolated))
+    /// starts over there instead of drawing the body flying across.
+    /// Presentation tuning only: it lives in the non-simulation `camera` kind (a headless game never
+    /// reads it, so it is outside the replay content check), not in a character definition.
+    #[serde(skip_serializing_if = "body_snap_distance_is_default")]
+    pub body_snap_distance: f32,
     /// Framing a locked target.
     #[serde(skip_serializing_if = "FramingTuning::is_default")]
     pub framing: FramingTuning,
@@ -222,6 +230,7 @@ impl Default for CameraTuning {
             follow_rate: None,
             release_factor: 1.3,
             snap_distance: 12.0,
+            body_snap_distance: 4.0,
             framing: FramingTuning::default(),
             arm: ArmTuning::default(),
             flick: FlickTuning::default(),
@@ -297,6 +306,9 @@ impl CameraTuning {
         }
         if finite("snap_distance", self.snap_distance, &mut out) && self.snap_distance <= 0.0 {
             out.push(format!("snap_distance is {}, it must be above 0", self.snap_distance));
+        }
+        if finite("body_snap_distance", self.body_snap_distance, &mut out) && self.body_snap_distance <= 0.0 {
+            out.push(format!("body_snap_distance is {}, it must be above 0", self.body_snap_distance));
         }
         let framing = &self.framing;
         positive_rate("framing.yaw_rate", framing.yaw_rate, &mut out);
@@ -438,6 +450,7 @@ mod tests {
         assert!(bad(|t| t.flick.stick_threshold = 1.5)[0].contains("stick_threshold"));
         assert!(bad(|t| t.release_factor = 0.5)[0].contains("release_factor"));
         assert!(bad(|t| t.snap_distance = 0.0)[0].contains("snap_distance"));
+        assert!(bad(|t| t.body_snap_distance = 0.0)[0].contains("body_snap_distance"));
         assert!(bad(|t| t.framing.pitch_clamp = (0.7, 0.15))[0].contains("pitch_clamp"));
         assert!(bad(|t| t.trauma.roll_deg = 90.0)[0].contains("roll_deg"));
         assert!(bad(|t| t.flick.mouse_decay_px_s = Some(f32::NAN))[0].contains("finite"));
