@@ -3574,7 +3574,7 @@ and snapshots `shards-snapshot/2`, each the version before with `check_parts`. A
 tag (``not a replay this build can play: format `shards-replay/4`, expected `shards-replay/3` …``) instead of computing `content`
 over its whole database and reporting a divergence that is not there (a crash report a player sends from a newer build to an older
 checkout, say). This build reads the older versions (`shards-replay/3` and `/2`, `shards-snapshot/1`). A replay or snapshot without
-`check_parts` (every older file) was made when the content check hashed the whole database, and it plays, loads and verifies as
+`check_parts` (a file in one of those older formats; `shards-replay/1` is not checked at all, see above) was made when the content check hashed the whole database, and it plays, loads and verifies as
 before: the game computes the check over the whole database for that session (and for the snapshots it takes and the branches it
 saves), and says so in the journal (``replay: the recording does not list the parts of check `content`: …``); a divergence there
 reads `replay check content differs (recorded whole: the recording lists no parts of it)`. So old recordings and crash reports keep
