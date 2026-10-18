@@ -132,7 +132,7 @@ pub(crate) fn tags_for(db: &ContentDb, npc: &Npc, moveset: &str, action: &str) -
 /// An action began on an NPC: a strike of one whose director spaces its strikes is noted, and
 /// the attack rolls its combo continuation ([`crate::chain`]). A forced action (a stagger)
 /// is neither: it ends a chain.
-#[allow(clippy::too_many_arguments, reason = "an observer: one parameter per thing it reads")]
+#[allow(clippy::too_many_arguments, clippy::type_complexity, reason = "an observer: one parameter and one query per thing it reads")]
 pub(crate) fn action_started(
     started: On<ActionStarted>,
     role: Option<Res<NetRole>>,

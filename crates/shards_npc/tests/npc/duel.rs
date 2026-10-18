@@ -242,11 +242,10 @@ fn the_notes_say_who_struck_when_and_the_state_tool_shows_the_wait() {
     for _ in 0..120 {
         step(&mut app, 1);
         let tick = app.world().resource::<ai_core::SimTick>().0;
-        for i in 0..2 {
-            let note = app.world().get::<NpcStrike>(who[i]);
-            if let Some(n) = note {
+        for e in who {
+            if let Some(n) = app.world().get::<NpcStrike>(e) {
                 assert!(n.gated && n.last_start <= tick);
-                assert_eq!(starts(&app, who[i], "jab").last().copied(), Some(n.last_start), "the note is the last start");
+                assert_eq!(starts(&app, e, "jab").last().copied(), Some(n.last_start), "the note is the last start");
             }
         }
         for i in 0..2 {

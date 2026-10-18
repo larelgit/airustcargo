@@ -713,7 +713,7 @@ fn decide_one(
     // The first state of a new NPC is no change worth a journal line, but its pause is drawn.
     let first_rest = changed.as_ref().filter(|(from, _)| from.is_empty()).and_then(|_| first_rest(world, entity));
     // Entering a state with a `rest_clamp` shortens the plan's rest once.
-    let entry_clamp = changed.as_ref().and_then(|_| state.rest_clamp);
+    let entry_clamp = changed.as_ref().and(state.rest_clamp);
     let rest_cap = match (entry_clamp, out.rest_cap) {
         (Some(a), Some(b)) => Some(a.min(b)),
         (a, b) => a.or(b),

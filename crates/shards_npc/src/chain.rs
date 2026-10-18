@@ -128,7 +128,7 @@ pub(crate) fn chain_press(
             _ => db.get::<MovesetDef>(&f.fighter.moveset).and_then(|m| m.action(&chain.input)).map(str::to_owned),
         };
         let director = DirectorDef::of(&db, &f.npc.director);
-        let strike = next.as_deref().is_none_or(|a| director.is_strike(&tags_for(&db, &f.npc, &f.fighter.moveset, a)));
+        let strike = next.as_deref().is_none_or(|a| director.is_strike(&tags_for(&db, f.npc, &f.fighter.moveset, a)));
         let spacing = spacing_ticks(director.min_spacing, dt);
         let pool = pool(&f.npc.director);
         if strike && let Some((by, ticks_left)) = waiting(&notes, *f.id, &pool, tick.0, spacing) {
