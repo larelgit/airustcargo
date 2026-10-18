@@ -607,3 +607,11 @@ What does not work the way you might expect, and what is deliberately deferred:
   the `\\?\` paths of `snapshot_save` (three `scenario_files` tests), path separators
   (`a_relative_root_makes_the_asset_folder_absolute`), the Unix signals of `shards stand stop` (two `peer` tests) and the writing
   of the settings (two `persist` tests), because of which eight more engine tests used to fail. The game and the stand work on Windows: the half-hour `shards soak` runs listed in the phase C acceptance table ran there.
+
+## Port gaps
+
+Gaps found by porting a larger game onto the engine (`docs/port/` of the port), closed one change at a time.
+
+| Gap | What | Status | Where and how it was checked |
+|---|---|---|---|
+| G7 / C1 | locomotion modifiers: speed factors, caps, root, sprint cost, wading, fast swim, two-tier climb-out, landing tiers (the motion half) | ✅ | `crates/shards_motion/src/modifiers.rs`, `controller/`; tests `tests/motion/modifiers.rs`, `shards_action/tests/combat/modifiers.rs`, `scenarios/modifiers.scenario`. Not in C1: the sea current, per-span move speed in actions and the afloat-only start gate (`shards_action`), hit stop |

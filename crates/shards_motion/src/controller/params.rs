@@ -87,6 +87,54 @@ pub struct CharacterParams {
     pub glide_accel: f32,
     /// Turning speed (degrees per second); 0 turns instantly.
     pub turn_speed_deg: f32,
+    /// Swimming speed while `sprint` is held and the input is not zero (a fast swim). 0: sprint
+    /// does nothing in water. It costs [`swim_fast_drain`](Self::swim_fast_drain) stamina per
+    /// second (a fighter with `Stamina`), ends when there is none, and shows as
+    /// `MotionState::sprinting`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub swim_fast_speed: f32,
+    /// Stamina per second a fast swim costs. Not scaled by `MoveModifiers::sprint_cost`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub swim_fast_drain: f32,
+    /// How fast a swimmer speeds up toward its input (m/s²). 0: `acceleration`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub swim_acceleration: f32,
+    /// How fast a swimmer slows with no input (m/s²). 0: the same as `swim_acceleration`
+    /// (or `acceleration`).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub swim_deceleration: f32,
+    /// Turning speed of a swimmer (degrees per second). 0: `turn_speed_deg`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub swim_turn_speed_deg: f32,
+    /// Two-tier climb-out: a swimmer pushing against a ledge climbs onto it by itself when the
+    /// ledge top is at most this high **above the water surface** (m); a higher ledge (up to
+    /// `mantle_height` above the feet) needs a jump. `None`: every ledge `mantle_height` allows
+    /// is climbed by pushing, as before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub climb_out_auto_height: Option<f32>,
+    /// Wading: from this depth of water over the feet (m) the walk slows down. Needs
+    /// `wade_factor` below 1.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub wade_min_depth: f32,
+    /// Wading: at this depth and deeper the slowdown is the whole `wade_factor`; between
+    /// `wade_min_depth` and here it grows in a straight line from 1.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub wade_full_depth: f32,
+    /// Wading: the speed factor at `wade_full_depth`. 1: wading does not slow (the default).
+    #[serde(skip_serializing_if = "is_one")]
+    pub wade_factor: f32,
+    /// Landing tiers after a jump: impact speeds (m/s, ascending). `Landed::tier` is how many of
+    /// them the impact reached (`[4.0, 6.5, 13.0]`: 0 below 4, 3 from 13). Empty (with
+    /// `landing_drop_tiers`): tier 0 always, and `Landed::jumped` is not tracked.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub landing_tiers: Vec<f32>,
+    /// The same for a fall that did not follow a jump (a ledge walked off). Empty: `landing_tiers`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub landing_drop_tiers: Vec<f32>,
+    /// No `Landed` while the feet stand in water deeper than this (m): the shallows break the
+    /// fall. `None`: every landing is reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub landing_wade_limit: Option<f32>,
 }
 
 impl Default for CharacterParams {
@@ -118,6 +166,18 @@ impl Default for CharacterParams {
             glide_speed: 9.0,
             glide_accel: 8.0,
             turn_speed_deg: 720.0,
+            swim_fast_speed: 0.0,
+            swim_fast_drain: 0.0,
+            swim_acceleration: 0.0,
+            swim_deceleration: 0.0,
+            swim_turn_speed_deg: 0.0,
+            climb_out_auto_height: None,
+            wade_min_depth: 0.0,
+            wade_full_depth: 0.0,
+            wade_factor: 1.0,
+            landing_tiers: Vec::new(),
+            landing_drop_tiers: Vec::new(),
+            landing_wade_limit: None,
         }
     }
 }
@@ -130,6 +190,14 @@ impl ContentDef for CharacterParams {
             refs.error(problems);
         }
     }
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
 }
 
 /// What a character without content moves by: the code defaults.
@@ -197,6 +265,30 @@ impl CharacterParams {
         }
     }
 
+    /// The speed factor of wading in water `depth` meters over the feet: 1 up to
+    /// `wade_min_depth`, `wade_factor` from `wade_full_depth`, a straight line between.
+    pub fn wade_scale(&self, depth: f32) -> f32 {
+        if self.wade_factor == 1.0 || depth <= self.wade_min_depth {
+            return 1.0;
+        }
+        let span = self.wade_full_depth - self.wade_min_depth;
+        let k = if span > 1e-6 { ((depth - self.wade_min_depth) / span).clamp(0.0, 1.0) } else { 1.0 };
+        1.0 + (self.wade_factor - 1.0) * k
+    }
+
+    /// Whether landings are told apart (any tier thresholds): the controller then tracks
+    /// whether a fall followed a jump.
+    pub fn tracks_landings(&self) -> bool {
+        !self.landing_tiers.is_empty() || !self.landing_drop_tiers.is_empty()
+    }
+
+    /// The landing tier of an impact at `impact_speed` m/s: how many thresholds it reached.
+    pub fn landing_tier(&self, impact_speed: f32, jumped: bool) -> u8 {
+        let tiers =
+            if !jumped && !self.landing_drop_tiers.is_empty() { &self.landing_drop_tiers } else { &self.landing_tiers };
+        tiers.iter().filter(|t| impact_speed >= **t).count().min(u8::MAX as usize) as u8
+    }
+
     /// Everything wrong with these numbers, so content errors name the field.
     pub fn check(&self) -> Result<(), String> {
         let mut errors = Vec::new();
@@ -230,6 +322,37 @@ impl CharacterParams {
         }
         if self.skin_width >= self.radius * 0.5 {
             errors.push(format!("skin_width {} is too large for radius {}", self.skin_width, self.radius));
+        }
+        let non_negative = [
+            ("swim_fast_speed", self.swim_fast_speed),
+            ("swim_fast_drain", self.swim_fast_drain),
+            ("swim_acceleration", self.swim_acceleration),
+            ("swim_deceleration", self.swim_deceleration),
+            ("swim_turn_speed_deg", self.swim_turn_speed_deg),
+            ("wade_min_depth", self.wade_min_depth),
+            ("wade_full_depth", self.wade_full_depth),
+            ("wade_factor", self.wade_factor),
+        ];
+        for (name, v) in non_negative {
+            if !(v >= 0.0 && v.is_finite()) {
+                errors.push(format!("{name} must be >= 0 (is {v})"));
+            }
+        }
+        if self.wade_factor != 1.0 && self.wade_full_depth < self.wade_min_depth {
+            errors.push(format!(
+                "wade_full_depth {} is below wade_min_depth {}",
+                self.wade_full_depth, self.wade_min_depth
+            ));
+        }
+        for (name, tiers) in [("landing_tiers", &self.landing_tiers), ("landing_drop_tiers", &self.landing_drop_tiers)] {
+            if tiers.iter().any(|t| !(*t > 0.0 && t.is_finite())) || tiers.windows(2).any(|w| w[0] >= w[1]) {
+                errors.push(format!("{name} must be speeds > 0 in ascending order (is {tiers:?})"));
+            }
+        }
+        for (name, v) in [("climb_out_auto_height", self.climb_out_auto_height), ("landing_wade_limit", self.landing_wade_limit)] {
+            if v.is_some_and(|v| !(v >= 0.0 && v.is_finite())) {
+                errors.push(format!("{name} must be >= 0 (is {v:?})"));
+            }
         }
         if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
     }

@@ -709,6 +709,47 @@ The other fields (`acceleration`, `deceleration`, `snap_distance`, `gravity`, `c
 `terminal_speed`, `mantle_height`, `mantle_time`, `swim_depth`, `float_depth`, `swim_speed`, `glide_fall_speed`,
 `glide_speed`, `glide_accel`, `turn_speed_deg`) are described in `shards_motion::CharacterParams`.
 
+**Locomotion modifiers (port gap G7, motion half).** `MoveModifiers` is a component every `CharacterController` gets. It is *derived and
+stateless*: each tick it is put back to neutral, then the sources add what they want, so nothing is remembered, and the component is
+in no snapshot and no replay (the sources are). It holds: `factor` (multiplies every voluntary speed, a swim too), `ground_factor`
+(ground and air only: combat pace, wading), `cap` (no ground speed above it, a sprint included), `unsprinted_cap` (a walk or run only: a
+lock-on's pace, which a sprint passes), `no_sprint`, `rooted` and `sprint_cost` (a multiplier, 0 is a free sprint). Sources use
+`slow`, `slow_on_ground`, `cap_at`, `cap_unsprinted_at`, `forbid_sprint`, `root`, `scale_sprint_cost`: factors multiply, caps take the lowest.
+
+Order inside `SimSet::Input` (after the orders, before the NPC brains), so every reader sees this tick's value:
+`ModifierSystems::Reset` → `Contribute` (`Wade`, then `Statuses`, then the game's systems, which must be ordered among themselves:
+`.in_set(ModifierSystems::Contribute).after(ModifierSystems::Statuses)`). A client's own body does the same in `NetSet::Predict`
+(`PredictReset`, `PredictWade`, `PredictStatuses`, `PredictContribute`); a game adds its source to both. A source that reads an
+action sees last tick's end state.
+
+The controller composes for walking and air control: `speed = min(min(ground_speed, cap), unsprinted_cap unless sprinting) * factor *
+ground_factor`; a swim is `swim_speed` (or `swim_fast_speed`) `* factor`; a root zeroes voluntary motion exactly like an action's
+`locked` (no walking, jumping, gliding, climbing; gravity and `external` still apply). All neutral takes the plain path (replays
+are unchanged). The NPC route follower (`top` speed), the animation picker (`BodyStatus::pace`: a slowed run still plays the run clip,
+slower), the action machine and `update_fighters` (sprint cost) read the same component.
+
+*Statuses.* `StatusDef` has `speed_factor`, `speed_cap` and `root` (all optional); an active status adds them (`shards_action::
+statuses_to_modifiers`). *Wading* is in the params: `wade_min_depth`, `wade_full_depth`, `wade_factor` (1: off); the walk slows in a straight
+line with the depth of water over the feet, and a swimmer does not wade.
+
+*Reproducing the Godot player* (`speed = base * pace * stat * wade`, base 6.7 sprinting, else 4.5 locked on, else 5.0; guard `3.0 * wade`): content
+`walk_speed` 2.5, `run_speed` 5.0, `sprint_speed` 6.7 (a stick's length maps linearly), `wade_*`; game sources: combat `slow_on_ground(0.85)` (not
+while guarding or swimming), lock-on `cap_unsprinted_at(4.5)`, guard `cap_at(3.0)` + `forbid_sprint()`, out of combat `scale_sprint_cost(0.0)`
+(a free sprint still holds the stamina regeneration back), chill `speed_factor: 0.75`. The caps come before the factors, so a locked-on walk is
+`4.5 * 0.85`. Known differences: a status slow also applies while guarding; the caps do not apply to a swim.
+
+*Swimming.* `swim_fast_speed` (a sprint in water) costs `swim_fast_drain` stamina per second, always (the sprint cost multiplier does not
+apply) and ends at no stamina or `no_sprint`; `swim_acceleration`, `swim_deceleration`, `swim_turn_speed_deg` (0: the ground's numbers).
+Two-tier climb-out: with `climb_out_auto_height` (above the water surface), pushing against a ledge climbs it by itself up to that height; a higher
+one (up to `mantle_height`) needs the jump. *Landing:* `Landed` has `tier` (how many of `landing_tiers` the impact speed reached) and `jumped`
+(`landing_drop_tiers` for a fall that did not follow a jump; the controller marks a jump's flight with `JumpedFlight` only when tiers are set);
+`landing_wade_limit` drops the event where the water over the feet is deeper. The journal says `e5 landed from 0.4m at 4.9m/s, tier 1 (jump)`.
+Coyote time is `coyote_time` (0.12 s by default).
+
+For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, sprint cost x0.00` after the entity's motion; the query tool `move_info`
+(`id` optional) gives the modifiers, the walk / run / sprint / swim speeds they leave and the wading factor. Scenario:
+`crates/sandbox/scenarios/modifiers.scenario`.
+
 **Input.** The action map turns the keyboard, mouse and gamepad into an `Intent` for the entity with `LocalPlayer`. It is read between ticks (`PreUpdate`); `Intent` is written only when something changes (the replay records every change).
 
 - `InputMap { contexts }`: context (`gameplay`, `menu`, or the game's own) → actions → bindings. A binding is one of: `Key`, `Mouse`,
@@ -774,6 +815,7 @@ The other fields (`acceleration`, `deceleration`, `snap_distance`, `gravity`, `c
 | `move`, `stop` | walk N metres by compass (N = −Z, E = +X); stop |
 | `jump`, `sprint`, `glide` | jump (out of water, onto the shore); sprint and glide as a state that is on (`on=false` turns it off) |
 | `clearance` | query: how far in the eight directions, and what will stop you |
+| `move_info` | query: what modifies a character's movement (slow, caps, root, sprint cost) and the walk, run, sprint and swim speeds they leave |
 | `path_to` | query: the route over what can be walked, swum and climbed |
 | `input_bindings` (player), `rebind` (developer) | controls; `rebind` writes to the `controls` settings |
 | `physics_overlay` (developer, window) | colliders and volumes |

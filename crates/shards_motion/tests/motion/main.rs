@@ -7,6 +7,7 @@ mod drive;
 mod edge_cases;
 mod engine;
 mod input;
+mod modifiers;
 mod perception;
 mod physics;
 mod replays;

@@ -52,6 +52,7 @@ mod coverage;
 pub mod input;
 mod intent;
 mod invariants;
+mod modifiers;
 #[cfg(feature = "render")]
 mod overlay;
 pub mod perception;
@@ -67,11 +68,12 @@ pub use invariants::motion_finite;
 pub use ai::{describe_motion, physics_line_of_sight, MotionAi};
 pub use camera::{CameraSettings, LockOnTarget, ThirdPersonCamera};
 pub use controller::{
-    character, CharacterController, CharacterParams, ControllerPlugin, ControllerSystems, Jumped, Landed,
+    character, CharacterController, CharacterParams, ControllerPlugin, ControllerSystems, Jumped, JumpedFlight, Landed,
     LocomotionInput, Mantle, Mantled, ModeChanged, MotionMode, MotionState,
 };
 pub use input::{BindMode, Binding, ControlState, ControlSystems, InputContext, InputContexts, InputMap, InputSettings};
 pub use intent::{intent_to_locomotion, GlideUntilLanded, MotionSystems};
+pub use modifiers::{ModifierSystems, MoveModifiers};
 pub use physics::{
     Body, Collider, ColliderId, ColliderIds, ColliderInfo, CollisionLayers, LayerMask, Penetration, PhysicsPlugin,
     PhysicsSystems, PhysicsWorld, QueryFilter, RayHit, Shape, ShapeHit, SpatialQuery, Volume, VolumeEntered,

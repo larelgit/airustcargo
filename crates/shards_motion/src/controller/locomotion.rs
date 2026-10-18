@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use super::mover::{clip, flat, Mover, Slide, Touch};
 use super::params::CharacterParams;
 use super::{LocomotionInput, Mantle, MotionMode, MotionState};
+use crate::modifiers::MoveModifiers;
 
 /// Landing is noticed this far above the ground (m).
 const LAND_PROBE: f32 = 0.05;
@@ -26,7 +27,7 @@ pub(crate) const CLIMB_OUT_REACH: f32 = 0.3;
 pub(crate) enum Note {
     Mode(MotionMode, MotionMode),
     Jumped,
-    Landed { fall_height: f32, impact_speed: f32 },
+    Landed { fall_height: f32, impact_speed: f32, tier: u8, jumped: bool },
     Mantled { height: f32 },
     Entered(Entity),
     Exited(Entity),
@@ -35,12 +36,16 @@ pub(crate) enum Note {
 pub(crate) struct Step<'a, 'w> {
     pub mover: &'a Mover<'w>,
     pub params: &'a CharacterParams,
+    /// What slows, caps or roots the character this tick.
+    pub modifiers: &'a MoveModifiers,
     /// This tick's input, `jump` and `external` included (the component's are consumed).
     pub input: &'a LocomotionInput,
     pub state: &'a mut MotionState,
     pub dt: f32,
     /// Where the character faces, on the ground plane.
     pub facing: Vec3,
+    /// The fall this tick continues began with a jump (tracked with landing tiers only).
+    pub jumped_flight: bool,
     pub notes: Vec<Note>,
 }
 
@@ -110,7 +115,7 @@ impl Step<'_, '_> {
             return self.jump(feet);
         }
         let wish = self.wish();
-        let (speed, sprinting) = p.ground_speed(wish.length(), self.input.sprint);
+        let (speed, sprinting) = self.modifiers.ground_speed(p, wish.length(), self.input.sprint);
         self.state.sprinting = sprinting;
         let target = wish.normalize_or_zero() * speed;
         let v0 = flat(self.state.velocity);
@@ -124,7 +129,7 @@ impl Step<'_, '_> {
         self.state.velocity = v;
         if !stepped
             && let Some(wall) = moved.wall()
-            && let Some(feet) = self.try_mantle(moved.feet, &wall, p.step_height, true)
+            && let Some(feet) = self.try_mantle(moved.feet, &wall, p.step_height, true, None)
         {
             return feet;
         }
@@ -218,7 +223,7 @@ impl Step<'_, '_> {
         } else {
             let h = match wish.try_normalize() {
                 Some(dir) => {
-                    let (speed, _) = p.ground_speed(wish.length(), self.input.sprint);
+                    let (speed, _) = self.modifiers.ground_speed(p, wish.length(), self.input.sprint);
                     approach(h0, dir * speed, p.acceleration * p.air_control * dt)
                 }
                 None => h0,
@@ -234,7 +239,7 @@ impl Step<'_, '_> {
         // A lip no higher than a step is no ledge: the fall ends on the tread below it,
         // and the walk steps up.
         if let Some(wall) = moved.wall()
-            && let Some(feet) = self.try_mantle(moved.feet, &wall, p.step_height, true)
+            && let Some(feet) = self.try_mantle(moved.feet, &wall, p.step_height, true, None)
         {
             return feet;
         }
@@ -259,7 +264,15 @@ impl Step<'_, '_> {
             s.grounded = true;
             s.ground_normal = ground.normal;
             s.coyote_left = p.coyote_time;
-            self.notes.push(Note::Landed { fall_height, impact_speed: -vy });
+            // Shallows break a fall: no landing is reported where the water is deeper than the limit.
+            let wet = p.landing_wade_limit.is_some_and(|limit| {
+                self.mover.water(feet).is_some_and(|surface| surface - feet.y > limit)
+            });
+            if !wet {
+                let jumped = self.jumped_flight;
+                let tier = p.landing_tier(-vy, jumped);
+                self.notes.push(Note::Landed { fall_height, impact_speed: -vy, tier, jumped });
+            }
             self.set_mode(MotionMode::Ground);
             return feet;
         }
@@ -279,7 +292,7 @@ impl Step<'_, '_> {
         if self.state.jump_buffer_left > 0.0 && !self.input.locked {
             let dir = self.wish().try_normalize().unwrap_or(self.facing);
             if let Some(wall) = self.wall_ahead(feet, dir)
-                && let Some(feet) = self.try_mantle(feet, &wall, 0.0, false)
+                && let Some(feet) = self.try_mantle(feet, &wall, 0.0, false, None)
             {
                 self.state.jump_buffer_left = 0.0;
                 return feet;
@@ -287,7 +300,13 @@ impl Step<'_, '_> {
         }
         let v0 = self.state.velocity;
         let wish = self.wish();
-        let h = approach(flat(v0), wish * p.swim_speed, p.acceleration * self.dt);
+        let fast = p.swim_fast_speed > 0.0
+            && self.input.sprint
+            && !self.modifiers.no_sprint
+            && wish != Vec3::ZERO;
+        let top = self.modifiers.swim_speed(if fast { p.swim_fast_speed } else { p.swim_speed });
+        let rate = swim_rate(p, wish != Vec3::ZERO);
+        let h = approach(flat(v0), wish * top, rate * self.dt);
         let float_y = surface - p.float_depth;
         let vy = ((float_y - feet.y) * FLOAT_RATE).clamp(-p.swim_speed, p.swim_speed);
         let mut v = h + Vec3::Y * vy;
@@ -296,9 +315,12 @@ impl Step<'_, '_> {
             v = clip(v, touch.normal);
         }
         self.state.velocity = v;
-        self.state.sprinting = false;
+        self.state.sprinting = fast;
+        // Pushing against a ledge climbs it by itself up to the auto height above the surface
+        // (when the params have one); a higher ledge needs the jump above.
+        let auto = p.climb_out_auto_height.map(|height| surface + height);
         if let Some(wall) = moved.wall()
-            && let Some(feet) = self.try_mantle(moved.feet, &wall, 0.0, true)
+            && let Some(feet) = self.try_mantle(moved.feet, &wall, 0.0, true, auto)
         {
             return feet;
         }
@@ -397,8 +419,16 @@ impl Step<'_, '_> {
 
     /// Climbs onto the obstacle behind `wall` if its top is more than `min_height` and at
     /// most `mantle_height` above the feet and the capsule fits up there. `push`: only
-    /// when the input points at the wall.
-    fn try_mantle(&mut self, feet: Vec3, wall: &Touch, min_height: f32, push: bool) -> Option<Vec3> {
+    /// when the input points at the wall; `top_limit`: and only if the ledge top (world height)
+    /// is no higher than that.
+    fn try_mantle(
+        &mut self,
+        feet: Vec3,
+        wall: &Touch,
+        min_height: f32,
+        push: bool,
+        top_limit: Option<f32>,
+    ) -> Option<Vec3> {
         if self.input.locked {
             return None;
         }
@@ -411,7 +441,7 @@ impl Step<'_, '_> {
         let top = m.obstacle_top(feet, wall.point, dir, p.mantle_height)?;
         let rest = top + m.skin;
         let height = rest - feet.y;
-        if height <= min_height || !p.can_mantle(height) {
+        if height <= min_height || !p.can_mantle(height) || top_limit.is_some_and(|limit| top > limit) {
             return None;
         }
         // Prefer standing fully on top; a narrow top takes a shorter step.
@@ -463,6 +493,12 @@ impl Mantle {
             self.corner + (self.to - self.corner) * ((along - up) / over.max(f32::EPSILON))
         }
     }
+}
+
+/// How fast a swimmer changes its speed: toward an input (`has_input`) or to rest.
+fn swim_rate(p: &CharacterParams, has_input: bool) -> f32 {
+    let speed_up = if p.swim_acceleration > 0.0 { p.swim_acceleration } else { p.acceleration };
+    if has_input || p.swim_deceleration <= 0.0 { speed_up } else { p.swim_deceleration }
 }
 
 /// Moves `v` toward `target` by at most `max_step`.

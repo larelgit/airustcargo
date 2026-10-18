@@ -11,7 +11,7 @@ use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::Intent;
-use shards_motion::{Collider, LayerMask, MotionState};
+use shards_motion::{CharacterController, CharacterParams, Collider, LayerMask, MotionMode, MotionState, MoveModifiers};
 
 use crate::def::{CombatTuning, EPS};
 use crate::machine::{ActionState, InputBuffer};
@@ -251,19 +251,39 @@ pub struct Dead;
 pub struct Invulnerable;
 
 /// What [`update_fighters`] reads and changes on a fighter.
-type Resources<'a> =
-    (Option<&'a mut Stamina>, Option<&'a mut Poise>, &'a mut Cooldowns, Option<&'a MotionState>, Has<Dead>);
+type Resources<'a> = (
+    Option<&'a mut Stamina>,
+    Option<&'a mut Poise>,
+    &'a mut Cooldowns,
+    Option<&'a MotionState>,
+    Has<Dead>,
+    Option<&'a MoveModifiers>,
+    Option<(&'a CharacterController, Option<&'a CharacterParams>)>,
+);
 
-/// `SimSet::Resolve`, after hits: sprinting drains stamina, then stamina and poise
-/// regenerate after their delays, broken poise recovers, cooldowns run down.
+/// `SimSet::Resolve`, after hits: sprinting drains stamina (`sprint_stamina_per_s` times the
+/// character's `MoveModifiers::sprint_cost`; a fast swim drains the params' `swim_fast_drain`
+/// instead), then stamina and poise regenerate after their delays, broken poise recovers,
+/// cooldowns run down. A free sprint (cost 0) still holds the regeneration back.
 pub fn update_fighters(time: Res<Time>, db: Res<ContentDb>, mut fighters: Query<Resources, With<Fighter>>) {
     let dt = time.delta_secs();
     let drain = CombatTuning::of(&db).sprint_stamina_per_s;
-    for (stamina, poise, mut cooldowns, motion, dead) in &mut fighters {
+    for (stamina, poise, mut cooldowns, motion, dead, modifiers, body) in &mut fighters {
         if let Some(mut s) = stamina {
             if motion.is_some_and(|m| m.sprinting) && !dead {
-                s.spend(drain * dt);
-                s.exhausted |= s.current <= EPS;
+                let swimming = motion.is_some_and(|m| m.mode == MotionMode::Water);
+                let (amount, costly) = if swimming {
+                    let rate = body.map_or(0.0, |(c, own)| c.resolve(own, Some(&*db)).swim_fast_drain);
+                    (rate * dt, rate > 0.0)
+                } else {
+                    match modifiers.map_or(1.0, |m| m.sprint_cost) {
+                        1.0 => (drain * dt, true),
+                        cost => (drain * cost * dt, cost > 0.0),
+                    }
+                };
+                s.spend(amount);
+                // A sprint that costs nothing cannot run the stamina dry.
+                s.exhausted |= costly && s.current <= EPS;
             } else {
                 regen_stamina(&mut s, dt);
             }

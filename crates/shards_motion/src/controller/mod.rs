@@ -37,6 +37,7 @@ use shards_core::{Intent, NetSet, Predicted};
 
 pub use params::CharacterParams;
 
+use crate::modifiers::MoveModifiers;
 use crate::physics::{Body, Collider, ColliderId, PhysicsPlugin, PhysicsWorld, VolumeEntered, VolumeExited};
 use locomotion::{Note, Step};
 use mover::{flat, Mover};
@@ -48,7 +49,13 @@ use mover::{flat, Mover};
 #[derive(Component, Reflect, Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[reflect(Component, Default)]
 #[serde(default)]
-#[require(Collider = CharacterParams::default().collider(), Body = Body::Kinematic, LocomotionInput, MotionState)]
+#[require(
+    Collider = CharacterParams::default().collider(),
+    Body = Body::Kinematic,
+    LocomotionInput,
+    MotionState,
+    MoveModifiers
+)]
 #[component(on_insert = fit_collider)]
 pub struct CharacterController {
     /// Content id of the `locomotion` definition ([`CharacterParams`]) to move by. Empty:
@@ -181,12 +188,26 @@ impl Default for MotionState {
 /// Touched walkable ground after being airborne. `fall_height` counts from the highest
 /// point since leaving the ground, gliding included: base fall damage on
 /// `impact_speed` (m/s downward), which a glider keeps low from any height.
+///
+/// `tier` and `jumped` need `landing_tiers` in the [`CharacterParams`]: `tier` is how many of
+/// the impact-speed thresholds were reached (0: none), `jumped` whether the fall followed a
+/// jump rather than a ledge walked off. Without tiers they stay 0 and `false`. A landing in
+/// water deeper than `landing_wade_limit` is not reported at all.
 #[derive(Event, Clone, Copy, Debug, PartialEq)]
 pub struct Landed {
     pub entity: Entity,
     pub fall_height: f32,
     pub impact_speed: f32,
+    pub tier: u8,
+    pub jumped: bool,
 }
+
+/// On a character in the air after a jump, while its params have `landing_tiers`: what tells
+/// a landing after a jump from one after a fall. Put by the controller on the jump and taken
+/// off when the feet touch ground, water or a ledge again; never there with no tiers.
+#[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[reflect(Component, Default)]
+pub struct JumpedFlight;
 
 #[derive(Event, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ModeChanged {
@@ -230,6 +251,9 @@ impl Plugin for ControllerPlugin {
             .register_type::<LocomotionInput>()
             .register_type::<MotionMode>()
             .register_type::<Mantle>()
+            .register_type::<JumpedFlight>()
+            // Like the glide latch: the own body's on a client.
+            .net_predicted::<JumpedFlight>()
             .register_type::<MotionState>()
             // A client moves its own body itself and is corrected toward the host's.
             .net_predicted::<Transform>()
@@ -247,6 +271,7 @@ impl Plugin for ControllerPlugin {
                     move_characters::<With<Predicted>>.in_set(ControllerSystems::PredictMove),
                 ),
             );
+        crate::modifiers::plugin(app);
         crate::predict::plugin(app);
     }
 }
@@ -270,6 +295,8 @@ type CharacterQuery<'w, 's, F = ()> = Query<
         &'static mut MotionState,
         &'static mut Transform,
         &'static mut Collider,
+        Option<&'static MoveModifiers>,
+        Has<JumpedFlight>,
     ),
     F,
 >;
@@ -307,9 +334,12 @@ pub fn move_characters<F: QueryFilter + 'static>(
     order.sort_unstable();
     let mut placed = Vec::with_capacity(order.len());
     for &(_, entity) in &order {
-        let Ok((_, _, controller, own, mut input, mut state, mut tf, mut collider)) = characters.get_mut(entity) else {
+        let Ok((_, _, controller, own, mut input, mut state, mut tf, mut collider, modifiers, flight)) =
+            characters.get_mut(entity)
+        else {
             continue;
         };
+        let modifiers = modifiers.unwrap_or(&MoveModifiers::NEUTRAL);
         if controller.is_dangling(own, db) && dangling.insert(controller.params.clone()) {
             let text = format!(
                 "{entity}: locomotion `{}` is not defined in content, so its character moves by the engine defaults; \
@@ -322,7 +352,11 @@ pub fn move_characters<F: QueryFilter + 'static>(
         }
         let params = controller.resolve(own, db);
         fit(&mut collider, &params.collider());
-        let now = sanitized(&input);
+        let mut now = sanitized(&input);
+        // A root takes the body from the walker the way an action does; `external` and gravity stay.
+        if modifiers.rooted {
+            now.locked = true;
+        }
         if input.jump || input.external != Vec3::ZERO {
             input.jump = false;
             input.external = Vec3::ZERO;
@@ -333,15 +367,28 @@ pub fn move_characters<F: QueryFilter + 'static>(
         }
         let mover = Mover::new(&physics, params, entity, collider.layers);
         let facing = flat(*tf.forward()).try_normalize().unwrap_or(Vec3::NEG_Z);
-        let mut step = Step { mover: &mover, params, input: &now, state: &mut state, dt, facing, notes: Vec::new() };
+        let mut step = Step {
+            mover: &mover,
+            params,
+            modifiers,
+            input: &now,
+            state: &mut state,
+            dt,
+            facing,
+            jumped_flight: flight,
+            notes: Vec::new(),
+        };
         let feet = step.run(tf.translation);
         let notes = std::mem::take(&mut step.notes);
         if tf.translation != feet {
             tf.translation = feet;
         }
-        turn(&mut tf, look_dir(&now, &state), params.turn_speed_deg, dt);
+        let turn_speed =
+            if state.mode == MotionMode::Water && params.swim_turn_speed_deg > 0.0 { params.swim_turn_speed_deg } else { params.turn_speed_deg };
+        turn(&mut tf, look_dir(&now, &state), turn_speed, dt);
+        let tracks = params.tracks_landings();
         for note in notes {
-            trigger(&mut commands, entity, note);
+            trigger(&mut commands, entity, note, tracks);
         }
         let pinned = state.mode == MotionMode::Mantle;
         let (radius, height) = (mover.radius, params.height.max(2.0 * mover.radius));
@@ -349,7 +396,7 @@ pub fn move_characters<F: QueryFilter + 'static>(
     }
     separate(&physics, &mut characters, &placed);
     for body in &placed {
-        if let Ok((.., mut state, tf, _)) = characters.get_mut(body.entity) {
+        if let Ok((.., mut state, tf, _, _, _)) = characters.get_mut(body.entity) {
             state.placed = Some(tf.translation);
         }
     }
@@ -367,11 +414,25 @@ fn sanitized(input: &LocomotionInput) -> LocomotionInput {
     }
 }
 
-fn trigger(commands: &mut Commands, entity: Entity, note: Note) {
+/// `tracks`: the params tell landings apart, so the flight after a jump is marked.
+fn trigger(commands: &mut Commands, entity: Entity, note: Note, tracks: bool) {
     match note {
-        Note::Mode(from, to) => commands.trigger(ModeChanged { entity, from, to }),
-        Note::Jumped => commands.trigger(Jumped { entity }),
-        Note::Landed { fall_height, impact_speed } => commands.trigger(Landed { entity, fall_height, impact_speed }),
+        Note::Mode(from, to) => {
+            // Ground, water and a ledge end the flight, whether or not a landing was reported.
+            if tracks && matches!(to, MotionMode::Ground | MotionMode::Water | MotionMode::Mantle) {
+                commands.entity(entity).remove::<JumpedFlight>();
+            }
+            commands.trigger(ModeChanged { entity, from, to })
+        }
+        Note::Jumped => {
+            if tracks {
+                commands.entity(entity).insert(JumpedFlight);
+            }
+            commands.trigger(Jumped { entity })
+        }
+        Note::Landed { fall_height, impact_speed, tier, jumped } => {
+            commands.trigger(Landed { entity, fall_height, impact_speed, tier, jumped })
+        }
         Note::Mantled { height } => commands.trigger(Mantled { entity, height }),
         Note::Entered(volume) => commands.trigger(VolumeEntered { entity, volume }),
         Note::Exited(volume) => commands.trigger(VolumeExited { entity, volume }),
@@ -439,7 +500,7 @@ fn separate<F: QueryFilter>(physics: &PhysicsWorld, characters: &mut CharacterQu
         if push == Vec3::ZERO {
             continue;
         }
-        let Ok((.., mut tf, collider)) = characters.get_mut(body.entity) else {
+        let Ok((.., mut tf, collider, _, _)) = characters.get_mut(body.entity) else {
             continue;
         };
         let mover = Mover::new(physics, &body.params, body.entity, collider.layers);

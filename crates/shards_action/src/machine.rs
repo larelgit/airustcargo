@@ -20,7 +20,7 @@ use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::input_names::SPRINT;
 use shards_core::{flat, Intent};
-use shards_motion::LocomotionInput;
+use shards_motion::{LocomotionInput, MotionMode, MotionState, MoveModifiers};
 
 use crate::cue::ActionSound;
 use crate::def::{touches, ActionDef, CancelTo, CombatTuning, Effect, MovesetDef, Steer, EPS};
@@ -559,6 +559,8 @@ pub(crate) struct FighterData {
     charges: Option<&'static mut Charges>,
     transform: &'static Transform,
     loco: Option<&'static mut LocomotionInput>,
+    motion: Option<&'static MotionState>,
+    modifiers: Option<&'static MoveModifiers>,
     dead: Has<Dead>,
 }
 
@@ -905,9 +907,17 @@ fn steer_body(f: &mut FighterDataItem, db: &ContentDb, external: Vec3) {
     {
         s.exhausted = false;
     }
-    let out_of_stamina = f.stamina.as_ref().is_some_and(|s| s.current <= EPS || s.exhausted);
+    let out_of_stamina =
+        !free_sprint(f.modifiers, f.motion) && f.stamina.as_ref().is_some_and(|s| s.current <= EPS || s.exhausted);
     let Some(loco) = f.loco.as_mut() else { return };
     steer_locomotion(loco, f.state.current.as_ref(), db, f.dead, out_of_stamina, external);
+}
+
+/// Whether a sprint costs no stamina, so an empty one does not stop it: the body's
+/// `MoveModifiers::sprint_cost` is 0 and it is not in water (a fast swim always costs).
+/// The machine and a client's prediction ask the same question.
+pub(crate) fn free_sprint(modifiers: Option<&MoveModifiers>, motion: Option<&MotionState>) -> bool {
+    modifiers.is_some_and(|m| m.sprint_cost == 0.0) && !motion.is_some_and(|m| m.mode == MotionMode::Water)
 }
 
 /// What `run` (the body's action, if any) wants of the controller this tick: the
