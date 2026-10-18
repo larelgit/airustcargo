@@ -3179,6 +3179,71 @@ cargo sandbox --replay replays/boss-pillar.json --verify
   none)`). The overall hash does not depend on the detail level.
 - Size: the replay above (the arena, 14 entities, a check on every tick) weighs 2.2 MB with `components` (about 8.6 KB per tick; at a check rate of 60, the same per second of game time), 183 KB with `entities`, and 19 KB with `none`.
 
+### What the content check covers
+
+The replay check `content` ties a recording to the content it was played with, but only to the definitions the session's
+simulation read. Adding a definition, or changing one the session never read, leaves a recorded replay verifying; changing one it
+read makes it diverge at the next check, and the report names it:
+
+```text
+replay finished at tick 2307: DIVERGED at tick 60: replay check content differs: action/light_1 differs [2307 ticks in 3.21s]
+```
+
+**What counts as read.** Each definition in the database carries a flag, and each kind a second one ("read whole"). A typed read
+(`ContentDb::get`, `Content<T>::get`, `get_json`) sets the definition's flag; going over a kind (`iter`, `ids`, `ids_of`: a
+director choosing among all plans, the generator choosing among all tiles) sets the kind's, and then every definition of that kind
+counts, so adding one to it diverges too. A flag is set only while the **simulation's scope** is open (`ai_core::SimScope`, one
+per world), and only for kinds that the simulation may read:
+
+- *Open*: every fixed tick (`FixedMain`, around Bevy's `run_fixed_main`: also the recorded calls, which play back in `FixedFirst`);
+  the body of every `action` tool call (live calls run between ticks, recorded ones inside a tick: both count the same); the
+  engine's state transitions (`OnEnter(InGame)` builds the world, `RegionLoading`); and the builders themselves, whatever schedule
+  calls them: the start region, `change_region`, `spawn_prefab`, `spawn_level`. Reads that build the world before tick 0 count.
+- *Suspended* inside it, for what only watches: invariants (engine invariants are off in a `dist` build and with
+  `--no-engine-invariants`, so their reads must not change what counts), coverage counting, replay and snapshot hashing, a snapshot
+  load putting a state back, and the database's own work (validation, `refs.require`, `content_apply` checking an edit,
+  playback restoring the recording's definitions).
+- *Closed*: everything else. Frames (`Update`, `PostUpdate`, the render world, a window's input), query and control tools
+  (`content_list`, `observe`, `npc_state`, `step`'s stop conditions), validation without a game (`--check-content`). Queries are
+  not replay events: a read they made could never be repeated by the playback, so they never count.
+- *Kinds outside the simulation* (`ContentDef::SIMULATION = false`) never count, read anywhere: what only the picture, the sound,
+  menus and services outside the simulation read: `look`, `effect`, `fx`, `scatter`, `animset`, `sound`, `music`, `audio`,
+  `theme`, `locale`, `devmenu`, `input_map`, `net`, `achievement`, `save`, `perf`. The engine guarantees they never change the
+  world. `screen` does count, but only when a screen is pressed (`ui_click`, `ui_navigate`, `ui_set` are recorded, and the
+  screen decides what a press does); opening one reads it with `ContentDb::peek`, the read that never counts.
+
+**Why the counted set is the same headless, offscreen and in a window.** It changes only inside the scope, and the scope holds
+only what the recording and its playback both run, tick for tick: the fixed tick, the recorded action calls and the world they
+build. Whatever differs between those modes (drawing, a window's input, looks, effects, foliage, animation, the HUD, a person's
+or an agent's queries) runs outside it or reads kinds that never count. A drawing path inside a tick that must read a
+simulation kind (a model put on a body only when the game draws) reads it with `peek`. The proof is the reference replays: each
+verifies headless, `--offscreen` and in a window with the content check compared at every check, and
+`content_reads_are_the_same_headless_and_drawn` compares the counted sets of each directly. Bevy's multithreaded executor
+does not get in the way: the flags are atomics, and the scope belongs to the world (a heavy-mode twin and a stand's players have
+their own), whose schedules run one at a time.
+
+**What the replay keeps.** The check's value hashes its parts: `kind/id` → the definition's hash for each counted definition, and
+`kind (all)` for each kind read whole. Next to `checks`, the file has `check_parts`: for each check with parts, the parts that
+appeared, changed or went at each check tick (a handful of lists per file: the set grows early and then stays). A divergence of
+the check folds the lists up to its tick and names each part that differs, is missing (counted in the recording, not now) or is
+extra (counted now, not in the recording): `action/light_1 differs`, `tile/swamp extra`.
+
+**Content edits in a session.** `content_apply` (and `content_reload` and hot reload, which go through it) is a replay event: a
+changed definition keeps its flag and gets its new hash, at the same tick in the recording and in the playback, which starts from
+the recording's versions as before.
+
+**Snapshots** check the same parts. A snapshot stores the counted parts with their hashes (`check_parts.content`); a load
+compares the loading game's definitions with them (other definitions may differ: `content differs (…): action/light_1 differs`)
+and then sets the flags to exactly the snapshot's, so the restored state hashes as the original did, a heavy-mode twin goes on
+counting what the original counts, and a replay from a snapshot plays where the content it never read has changed.
+
+**Co-op** keeps the hash of the whole database: the host and its clients compare it when one joins (and a Steam lobby shows it),
+because a client must be able to run anything the host may read later, not only what the session read so far.
+
+**Older files.** A replay or snapshot without `check_parts` was made when the content check hashed the whole database. It plays,
+loads and verifies as before: the game computes the check over the whole database for that session (and for the snapshots it
+takes and the branches it saves), so old recordings and crash reports keep verifying with the content they were made with.
+
 ## Snapshots (E11.4)
 
 A snapshot is the state of the simulation at one tick, stored in a file. You can save it at any tick and return to it in this game or in a fresh one built the same way. After that, `step` runs the way the original session would have.
