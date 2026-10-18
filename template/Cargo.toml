@@ -47,8 +47,8 @@ dist = ["render", "audio", "gamepad", "shards/dist"]
 # your own repository pin the engine instead (see CHANGELOG.md of the engine). The template
 # needs saves, co-op, screens and texts of phases C-E (0.4.0), so neither v0.2.0 nor v0.3.0;
 # until the maintainer tags v0.4.0 pin a commit, afterwards a tag:
-#   shards = { git = "https://github.com/larelgit/airustcargo", rev = "<commit>", default-features = false }
-#   shards = { git = "https://github.com/larelgit/airustcargo", tag = "v0.4.0", default-features = false }
+#   shards = { git = "https://github.com/larelgit/shards-engine", rev = "<commit>", default-features = false }
+#   shards = { git = "https://github.com/larelgit/shards-engine", tag = "v0.4.0", default-features = false }
 shards = { path = "../crates/shards", default-features = false }
 
 # A workspace of its own: the engine repository's workspace must not swallow the template,

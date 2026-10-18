@@ -153,7 +153,7 @@ are in [template/README.md](../template/README.md).
    `0.3.0` will not work. Until the maintainer sets a tag, pin a commit:
    ```toml
    [dependencies]
-   shards = { git = "https://github.com/larelgit/airustcargo", rev = "<hash>", default-features = false }
+   shards = { git = "https://github.com/larelgit/shards-engine", rev = "<hash>", default-features = false }
    ```
    After the `v0.4.0` release, replace `rev = "<hash>"` with `tag = "v0.4.0"`. The build does not change until you change
    `rev` or `tag` yourself. `default-features = false` is needed so that the game turns on the features (`render`,

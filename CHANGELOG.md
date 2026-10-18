@@ -15,14 +15,14 @@ you change the tag yourself. While there are no tags, pin a commit: `rev = "<has
 ```toml
 # The game's Cargo.toml
 [dependencies]
-shards = { git = "https://github.com/larelgit/airustcargo", tag = "v0.4.0" }
+shards = { git = "https://github.com/larelgit/shards-engine", tag = "v0.4.0" }
 ```
 
 Use the `shards` CLI of the same version as the engine in the game (the `ai/*` protocol may change between minor
 versions):
 
 ```bash
-cargo install shards_cli --git https://github.com/larelgit/airustcargo --tag v0.4.0
+cargo install shards_cli --git https://github.com/larelgit/shards-engine --tag v0.4.0
 ```
 
 To move to a new version, change `tag`, run `cargo update -p shards`, read the "Changed" section of this
@@ -332,7 +332,7 @@ replays are unchanged):
   save; a save made at zero health leaves it dead.
 - The reference replay `tests/replays/saves.json` and the extended scenario `saves.scenario`.
 
-**Invariants, divergence details of the replay, tick time (E11, tasks 9–11; larelgit/airustcargo#4, merged into this branch)**:
+**Invariants, divergence details of the replay, tick time (E11, tasks 9–11; larelgit/shards-engine#4, merged into this branch)**:
 
 - Invariants (`ai_core::invariants`): game rules `add_ai_invariant(name, |w| -> Option<String>)` and session rules
   (`assert_add`, `assert_list`, `assert_remove`, `assert_reset`; CLI `shards assert add|list|remove|reset`). They are checked
@@ -1429,8 +1429,8 @@ The first version: the engine as an environment that is driven from outside, wit
 - Replay hashes are computed from game data, not from the text for the AI. `observe` works out visibility from the subject, not from the window's camera.
 - `dodge` and `attack` explain a refusal instead of an empty `ok`.
 
-[Unreleased]: https://github.com/larelgit/airustcargo/compare/v0.4.0...HEAD
-[0.4.0]: https://github.com/larelgit/airustcargo/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/larelgit/airustcargo/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/larelgit/airustcargo/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/larelgit/airustcargo/commits/v0.1.0
+[Unreleased]: https://github.com/larelgit/shards-engine/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/larelgit/shards-engine/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/larelgit/shards-engine/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/larelgit/shards-engine/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/larelgit/shards-engine/commits/v0.1.0

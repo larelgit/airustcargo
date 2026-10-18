@@ -193,9 +193,9 @@ A game is a separate repository with one dependency, `shards`. The starting poin
 2. **Depend on the engine by git.** In `Cargo.toml`, replace the path (`../crates/shards`) with a git dependency. The template uses saves, co-op, screens and texts, so it needs the engine of phases C–E (the future `0.4.0`); the earlier versions `0.2.0` and `0.3.0` will not do. Until the maintainer sets a tag, pin a commit:
    ```toml
    [dependencies]
-   shards = { git = "https://github.com/larelgit/airustcargo", rev = "<hash>", default-features = false }
+   shards = { git = "https://github.com/larelgit/shards-engine", rev = "<hash>", default-features = false }
    ```
-   After `v0.4.0` is released, replace `rev = "<hash>"` with `tag = "v0.4.0"`. The build does not change until you change `rev` or `tag`. `default-features = false` lets your game switch features (`render`, `remote`, `hot_reload`, `audio`, `gamepad`, …) on in its own `[features]`. There are no other dependencies: Bevy, serde and schemars come through `shards`. Install the CLI of the same version with `cargo install shards_cli --git https://github.com/larelgit/airustcargo --rev <hash>` (after the release: `--tag v0.4.0`). Versions and tags are described in [CHANGELOG.md](CHANGELOG.md).
+   After `v0.4.0` is released, replace `rev = "<hash>"` with `tag = "v0.4.0"`. The build does not change until you change `rev` or `tag`. `default-features = false` lets your game switch features (`render`, `remote`, `hot_reload`, `audio`, `gamepad`, …) on in its own `[features]`. There are no other dependencies: Bevy, serde and schemars come through `shards`. Install the CLI of the same version with `cargo install shards_cli --git https://github.com/larelgit/shards-engine --rev <hash>` (after the release: `--tag v0.4.0`). Versions and tags are described in [CHANGELOG.md](CHANGELOG.md).
 3. **`main` is one line, `build_app` assembles the engine and the game.** `shards::run` reads the command line and handles `kill` and a closed terminal; `EnginePlugins` is the whole engine from one `EngineConfig`.
    ```rust
    fn main() -> std::process::ExitCode {
