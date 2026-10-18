@@ -1,0 +1,38 @@
+# The code that reaches a collider or a collider's box (`.collider(`, `.colliders()`, `.by_id(`,
+# `get::<Collider>`, `.aabb_min`, `.aabb_max`, the `PhysicsWorld::` paths of the first three, and a
+# `&Collider` in a query or an argument) in `crates/*/src` outside `shards_motion/src/physics/`. A
+# voxel field is no collider, has no box and is no entity with a `Collider`: such a line is right
+# only where a field cannot be what it looks at, or where it leaves fields out on purpose.
+# `tests/readers.rs` fails on a line that is not here and on a row here that matches no line, so a
+# new reader comes with its reason (the voxel design, 6.3).
+#
+# One row per line: file :: the line's text, trimmed :: why a field does not need it. A line the
+# file has twice is listed twice. Code that reads the solid under a hit asks
+# `PhysicsWorld::extent_at`, `top_under` or `solid_span`.
+
+crates/sandbox/src/visuals.rs :: fn draw_updrafts(mut gizmos: Gizmos, time: Res<Time<Real>>, q: Query<(&Volume, &Collider, &Transform)>) { :: draws updraft volumes, which are colliders; a field is never a volume
+crates/shards_action/src/combat.rs :: let height = world.get::<Collider>(entity).map_or(1.7, |c| c.shape.half_extents().y * 2.0); :: the height of an attacker or a target, a character's own body, for its line of sight
+crates/shards_action/src/draw.rs :: for c in physics.colliders().filter(|c| c.layers.memberships.contains(LayerMask::HURTBOX)) { :: hurtbox drawing: hurtboxes are colliders on HURTBOX, which a field never is
+crates/shards_action/src/draw.rs :: .get::<Collider>(entity) :: the i-frame outline of a fighter's own body
+crates/shards_action/src/draw.rs :: && let Some(mut q) = world.try_query_filtered::<(&Transform, &Collider), With<Invulnerable>>() :: the god-mode outline of an invulnerable body; a field is never invulnerable
+crates/shards_action/src/fighter.rs :: fn make_hurtbox(collider: &mut Collider) { :: puts a fighter's own collider on HURTBOX; writes, reads no world
+crates/shards_action/src/fighter.rs :: pub(crate) fn hurtbox_on_collider(add: On<Insert<Collider>>, mut colliders: Query<&mut Collider, With<Fighter>>) { :: a fighter's own collider, made a hurtbox when it is inserted
+crates/shards_action/src/orders.rs :: targets: Query<(&Transform, Has<Dead>, Option<&Collider>)>, :: an attack order's target is a character; its body's size sets the reach
+crates/shards_action/src/orders.rs :: targets: Query<(&Transform, Has<Dead>, Option<&Collider>)>, :: an attack order's target is a character; its body's size sets the reach (the steering on a client)
+crates/shards_action/src/orders.rs :: collider: Option<&Collider>, :: the target's body, from the query above
+crates/shards_action/src/zone.rs :: physics.collider(*e).is_some_and(|c| self.contains(c.position, c.shape.half_extents().x.max(c.shape.half_extents().z))) :: hit zones ask the HURTBOX layer, which a field is never on
+crates/shards_motion/src/ai.rs :: let kind = world.get_resource::<PhysicsWorld>()?.collider(volume)?.volume.clone()?; :: the kind of a trigger volume: volumes are colliders, fields are never volumes
+crates/shards_motion/src/controller/mod.rs :: Collider = CharacterParams::default().collider(), :: builds a character's own collider from its numbers; reads nothing
+crates/shards_motion/src/controller/mod.rs :: .collider(); :: builds a character's own collider from its numbers; reads nothing
+crates/shards_motion/src/controller/mod.rs :: fit(&mut collider, &params.collider()); :: builds a character's own collider from its numbers; reads nothing
+crates/shards_motion/src/controller/mod.rs :: fn fit(collider: &mut Mut<Collider>, want: &Collider) { :: fits a character's own collider to its numbers
+crates/shards_motion/src/invariants.rs :: type Character = (&'static AiId, &'static Transform, &'static MotionState, &'static Collider, &'static Body); :: `voxel.body_in_solid` reads a character's own capsule, and judges it against the fields
+crates/shards_motion/src/overlay.rs :: for c in physics.colliders() { :: the collider overlay draws colliders; a field is drawn by the chunk overlay (A2g)
+crates/shards_motion/src/perception/terrain.rs :: .filter_map(|(entity, _)| self.physics.collider(entity).map(|c| c.bounds().1.y)) :: water surfaces are the tops of water volumes, which stay boxes
+crates/shards_npc/src/director.rs :: pub(crate) type Targets<'w, 's> = Query<'w, 's, (&'static Transform, Has<Dead>, Option<&'static Collider>)>; :: the director's targets are characters; a body's size sets the reach
+crates/shards_npc/src/nav/bake.rs :: .colliders() :: a tile bake stores its static colliders for carving; by decision a chunk bake stores none for its field, which the volume hash names instead (the voxel design, 6.3 and 9)
+crates/shards_npc/src/nav/region.rs :: let mut now = physics.colliders().filter(|c| tracked(c)); :: carving tracks static colliders and water; a field never changes after it is built
+crates/shards_npc/src/nav/region.rs :: .colliders() :: kinematic WORLD colliders (movers); a field is never kinematic
+crates/shards_npc/src/nav/region.rs :: for c in physics.colliders().filter(|c| tracked(c)) { :: carving tracks static colliders and water; a field never changes after it is built
+crates/shards_npc/src/nav/region.rs :: boxes.push((old.aabb_min, old.aabb_max)); :: the box carving kept of a collider it tracked (its own record, not a query's hit)
+crates/shards_npc/src/perception.rs :: physics.collider(entity).map_or(feet + Vec3::Y, |c| c.position) :: an NPC's target is a character's collider; a field is never a target

@@ -78,14 +78,13 @@ impl WorldShape {
         let filter = QueryFilter::new(shards_motion::LayerMask::HURTBOX).excluding(exclude);
         let found = physics.overlaps(&shape, center, rot, &filter);
         match self.shape {
-            HitShape::Cone { .. } => found
-                .into_iter()
-                .filter(|e| {
-                    physics.collider(*e).is_some_and(|c| {
-                        self.contains(c.position, c.shape.half_extents().x.max(c.shape.half_extents().z))
-                    })
-                })
-                .collect(),
+            HitShape::Cone { .. } => {
+                #[expect(clippy::disallowed_methods, reason = "hurtboxes are colliders on HURTBOX (a voxel field is never one): the cone tests the body's place and size")]
+                let inside = |e: &Entity| {
+                    physics.collider(*e).is_some_and(|c| self.contains(c.position, c.shape.half_extents().x.max(c.shape.half_extents().z)))
+                };
+                found.into_iter().filter(inside).collect()
+            }
             _ => found,
         }
     }

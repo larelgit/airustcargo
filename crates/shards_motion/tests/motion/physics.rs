@@ -247,6 +247,7 @@ fn removing_a_volume_makes_the_collider_solid() {
 }
 
 #[test]
+#[expect(clippy::disallowed_methods, reason = "tests what the world keeps for a collider")]
 fn kinematic_bodies_refresh_every_tick() {
     let mut app = app();
     let mover = app
@@ -264,6 +265,7 @@ fn kinematic_bodies_refresh_every_tick() {
 }
 
 #[test]
+#[expect(clippy::disallowed_methods, reason = "tests what the world keeps for a collider")]
 fn a_collider_without_a_real_transform_is_left_out_until_it_has_one() {
     // A NaN pose would make every ray in the world "hit" it at distance 0.
     let mut app = app();

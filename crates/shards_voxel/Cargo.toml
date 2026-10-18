@@ -1,0 +1,21 @@
+[package]
+name = "shards_voxel"
+description = "Shards voxel terrain (core): a chunked block volume, the block palette content kind, deterministic noise, generation edits, the volume hash, the generation step registry, and the merged boxes physics can use as a fallback."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+shards_look.workspace = true
+bevy = { workspace = true, features = ["std", "serialize", "bevy_asset"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+# Integration tests build apps the way a game does: the whole engine (`shards::testing`).
+shards = { workspace = true, features = ["render", "remote", "hot_reload"] }
+ron.workspace = true

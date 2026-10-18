@@ -12,6 +12,8 @@ mod modifiers_parity;
 mod perception;
 mod physics;
 mod replays;
+mod seams;
 mod tools;
+mod voxel;
 #[cfg(feature = "render")]
 mod camera;

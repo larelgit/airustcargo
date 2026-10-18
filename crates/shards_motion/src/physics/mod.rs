@@ -18,8 +18,17 @@
 //! The broad phase is a grid over the ground plane in levels of growing cells (`broad.rs`):
 //! a query tests the colliders in the cells it covers, in id order, and gets the answer a
 //! test of every collider would give.
+//!
+//! Besides colliders, a world may hold voxel fields ([`VoxelCollider`], `field.rs`): static
+//! grids of solid cells that every query asks after the colliders, one entity for a whole
+//! terrain. A field has no bounding box: code that reads the top or the bottom of what a query
+//! hit asks [`PhysicsWorld::extent_at`], [`PhysicsWorld::top_under`] or
+//! [`PhysicsWorld::solid_span`], never `collider(entity)` and its box (`docs/manual.md`,
+//! "Movement", has the rule for new readers). A world without a field runs the colliders'
+//! code alone.
 
 mod broad;
+pub mod field;
 pub(crate) mod world;
 
 use std::fmt;
@@ -33,6 +42,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_core::{predicts, NetSet};
 
+pub use field::{FieldRay, VoxelField};
 pub use world::{ColliderInfo, Penetration, PhysicsWorld, RayHit, ShapeHit};
 
 /// A convex collision shape in the entity's local frame (Y up).
@@ -242,6 +252,28 @@ impl Collider {
     }
 }
 
+/// Static solid cells that every physics query asks besides the colliders: a voxel terrain as
+/// one entity. Gets a [`ColliderId`] when added, as a [`Collider`] does, and takes its place
+/// among the fields in id order; removing the component or despawning the entity takes the
+/// field out, and a new value replaces it. The field is in world space (its own `origin`): the
+/// entity's `Transform` is not read. An entity carries a `Collider` or a `VoxelCollider`, not
+/// both.
+///
+/// Not reflected and not saved: the entity has no `AiId` (as level geometry), the region that
+/// spawned it spawns it again, and the snapshot check `static_colliders` compares its field.
+#[derive(Component, Clone, Debug)]
+#[require(ColliderId)]
+#[component(on_add = assign_collider_id, on_remove = forget_field)]
+pub struct VoxelCollider {
+    pub field: std::sync::Arc<VoxelField>,
+}
+
+impl VoxelCollider {
+    pub fn new(field: VoxelField) -> Self {
+        Self { field: std::sync::Arc::new(field) }
+    }
+}
+
 /// How a collider moves. Static colliders are cached and refreshed only when they
 /// change; kinematic ones (moved by code every tick, like characters) every sync.
 #[derive(Component, Reflect, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -358,6 +390,12 @@ fn assign_collider_id(mut world: DeferredWorld, ctx: HookContext) {
 fn forget_collider(mut world: DeferredWorld, ctx: HookContext) {
     if let Some(mut physics) = world.get_resource_mut::<PhysicsWorld>() {
         physics.remove(ctx.entity);
+    }
+}
+
+fn forget_field(mut world: DeferredWorld, ctx: HookContext) {
+    if let Some(mut physics) = world.get_resource_mut::<PhysicsWorld>() {
+        physics.remove_field(ctx.entity);
     }
 }
 
@@ -479,21 +517,26 @@ impl Plugin for PhysicsPlugin {
 }
 
 /// Snapshot check: every collider without an `AiId`, by id: its shape, pose, layers and
-/// volume. Those are not saved (a snapshot is loaded into a world that spawned them the
-/// same way), so they must match.
+/// volume, and every voxel field (its size, cell, origin and bits through [`VoxelField::hash`],
+/// and its layers). Those are not saved (a snapshot is loaded into a world that spawned them
+/// the same way), so they must match. An entity without a field hashes as it always did.
 fn static_colliders_hash(world: &World) -> u64 {
     let mut found: Vec<(ColliderId, String)> = world
         .iter_entities()
         .filter(|e| !e.contains::<AiId>())
         .filter_map(|e| {
             let id = *e.get::<ColliderId>()?;
-            let facts = format!(
+            let mut facts = format!(
                 "{:?} {:?} {:?} {:?}",
                 e.get::<Collider>(),
                 e.get::<Transform>().map(|t| (t.translation, t.rotation, t.scale)),
                 e.get::<Body>(),
                 e.get::<Volume>()
             );
+            if let Some(v) = e.get::<VoxelCollider>() {
+                let f = &v.field;
+                facts += &format!(" field {:016x} {:?}", f.hash(), f.layers());
+            }
             Some((id, facts))
         })
         .collect();
@@ -530,17 +573,28 @@ pub(crate) type ColliderData<'a> =
 /// Anything the sync reads changed.
 type ColliderChanged = Or<(Changed<Collider>, Changed<Transform>, Changed<Body>, Changed<Volume>, Changed<ColliderId>)>;
 
-/// Brings [`PhysicsWorld`] up to date: changed colliders, then every kinematic one.
-/// Removals already happened in the `Collider` hook.
+/// What the sync reads from a voxel field entity, when it changed (new, replaced, renumbered).
+pub(crate) type FieldsChanged<'w, 's> =
+    Query<'w, 's, (Entity, &'static ColliderId, &'static VoxelCollider, Has<Collider>), Or<(Changed<VoxelCollider>, Changed<ColliderId>)>>;
+
+/// Brings [`PhysicsWorld`] up to date: changed colliders, then every kinematic one, then new or
+/// replaced voxel fields. Removals already happened in the `Collider` and `VoxelCollider` hooks.
 pub fn sync_physics(
     mut physics: ResMut<PhysicsWorld>,
     changed: Query<ColliderData, ColliderChanged>,
     colliders: Query<ColliderData>,
+    fields: FieldsChanged,
 ) {
     for data in &changed {
         physics.upsert(data);
     }
     physics.refresh_kinematic(|entity| colliders.get(entity).ok());
+    for (entity, id, voxels, collider) in &fields {
+        if collider {
+            warn!("{entity}: carries both a Collider and a VoxelCollider; give the field an entity of its own");
+        }
+        physics.upsert_field(entity, *id, &voxels.field);
+    }
 }
 
 /// The first half of a tool that asks [`PhysicsWorld`] something (`fresh::<Args>.pipe(tool)`):
@@ -553,14 +607,47 @@ pub(crate) fn fresh<A: Send + Sync + 'static>(
     physics: ResMut<PhysicsWorld>,
     changed: Query<ColliderData, ColliderChanged>,
     colliders: Query<ColliderData>,
+    fields: FieldsChanged,
 ) -> ai_core::prelude::Call<A> {
-    sync_physics(physics, changed, colliders);
+    sync_physics(physics, changed, colliders, fields);
     call
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_static_colliders_hash_follows_a_field_and_leaves_colliders_as_they_were() {
+        let block = |solid: fn(IVec3) -> bool, origin: Vec3| VoxelCollider::new(VoxelField::new(origin, 0.5, UVec3::new(4, 2, 4), solid));
+        let hash = |field: Option<VoxelCollider>| {
+            let mut world = World::new();
+            world.spawn((ColliderId(1), Collider::new(Shape::cuboid(Vec3::ONE)), Transform::from_xyz(1.0, 2.0, 3.0)));
+            if let Some(field) = field {
+                world.spawn((ColliderId(2), field));
+            }
+            static_colliders_hash(&world)
+        };
+        let all: fn(IVec3) -> bool = |_| true;
+        let base = hash(Some(block(all, Vec3::ZERO)));
+        assert_eq!(base, hash(Some(block(all, Vec3::ZERO))));
+        assert_ne!(base, hash(Some(block(|c| c != IVec3::ZERO, Vec3::ZERO))), "one cell");
+        assert_ne!(base, hash(Some(block(all, Vec3::X))), "the place");
+        let ghost = VoxelCollider::new(VoxelField::new(Vec3::ZERO, 0.5, UVec3::new(4, 2, 4), all).with_layers(CollisionLayers::VOLUME));
+        assert_ne!(base, hash(Some(ghost)), "the layers");
+        assert_ne!(base, hash(None));
+
+        // A collider is hashed as before fields: the same facts, the same order, no more.
+        let mut world = World::new();
+        let (collider, tf) = (Collider::new(Shape::cuboid(Vec3::ONE)), Transform::from_xyz(1.0, 2.0, 3.0));
+        let e = world.spawn((ColliderId(1), collider, tf)).id();
+        let facts = format!("{:?} {:?} {:?} {:?}", Some(&collider), Some((tf.translation, tf.rotation, tf.scale)), world.get::<Body>(e), world.get::<Volume>(e));
+        let mut want: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in 1u32.to_le_bytes().iter().chain(facts.as_bytes()).chain(&[0xff]) {
+            want = (want ^ *b as u64).wrapping_mul(0x0100_0000_01b3);
+        }
+        assert_eq!(static_colliders_hash(&world), want);
+    }
 
     #[test]
     fn shapes_describe_their_full_size() {

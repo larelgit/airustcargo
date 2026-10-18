@@ -21,7 +21,8 @@ is driven from outside: by you, through the `shards` CLI. Anything an agent need
   `shards_action`, `shards_level` (levels from Blender), `shards_world` (regions, generation), `shards_npc` (enemies, navmesh),
   `shards_save` (saves: sections, slots, migrations, copies), `shards_ui` (screens and menus from content), `shards_locale`
   (languages: texts in Fluent, switching on the fly), `shards_audio` (sound: buses, voices, music in layers), `shards_look` (look: light
-  in bands, flat faces, outlines from content), `shards_scatter` (foliage and small objects by tile), `shards_fx`
+  in bands, flat faces, outlines from content), `shards_scatter` (foliage and small objects by tile), `shards_voxel` (voxel terrain core: chunked block volume,
+  palette, generation steps, hash), `shards_fx`
   (effects: particles from pools, telegraph decals), `shards_steam` (Steam: lobbies, relay for co-op, achievements, cloud;
   the umbrella's `steam` feature, off by default), `shards_dev` (developer menu and console), `ai_core`, `shards_script`,
   `shards_cli`, `sandbox` (the engine's arena). The map is in `docs/manual.md`, "Architecture".
@@ -218,7 +219,8 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   are not part of the replay hash or the snapshot; the replay records session rules (`assert_add`) as events.
   The engine's own rules are named `<module>.<rule>` and registered with `add_engine_invariant(name, rule)` (shards_core): on by
   default, off in a `dist` build and with `--no-engine-invariants` (`EngineConfig::engine_invariants`; tests, `--verify`, fuzz and soak
-  keep them on). Each states in its doc comment what it checks and why any carve-out exists, and has a control test that breaks the
+  keep them on). A rule not yet proven on all content (`voxel.body_in_solid`) is offered with `add_opt_in_engine_invariant`
+  and checked only when named: `--engine-invariant NAME` (`EngineConfig::opt_in_invariants`). Each states in its doc comment what it checks and why any carve-out exists, and has a control test that breaks the
   state on purpose. If one fires, it is a bug in the engine or the game: fix the bug, do not weaken the rule without saying why.
 - A new tool is an argument struct with doc comments (they become the schema's description)
   and a Bevy system `In<Call<Args>> -> ToolResult`. Kinds: `query` reads, `action` changes the world
@@ -273,6 +275,13 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   (steps, weights, solver rules), raise the region's `version`: the old seeds will give new worlds, and the saved manifests
   stay as they are. To rebuild the references: `--worldgen-report` on 1000 seeds, `record_reference_replays`, the manifest hash in
   `region.scenario`.
+- **Voxel generation.** A voxel region is made by steps registered by name and version (`add_voxel_step("hills", 1, hills)`;
+  `shards_voxel`), run in the order the region lists them, with randomness only from `VoxelGen::rng` / `VoxelGen::rng_keyed` (`DetRng`, keyed by
+  seed, region version, attempt and the step's place) and `VoxelGen::noise` (keyed by seed, region version, attempt and a salt: the same salt
+  is the same field in every step of an attempt), heights from `Noise` (no `powf`, no `sin`). A step is code the content hash cannot
+  see: when you change what a step produces, raise its registered version and the version the content lists, so a client with other step
+  code fails content validation instead of desyncing. The volume hash (`VoxelVolume::hash`, `world_hash`) is the backstop; its golden
+  tests change only on purpose.
 - **Navmesh.** Baked tiles are in `assets/nav/` (`cargo sandbox --bake-nav`, tool `nav_bake`) and are committed; with
   the `nav` definition, `--check-content` checks them (a stale file is an error that names the command to run). If you change what a tile is baked with
   (the ground probe and the step rule in `shards_motion`, the sampling in `shards_npc::nav`), raise `BAKE_VERSION` and bake everything.
