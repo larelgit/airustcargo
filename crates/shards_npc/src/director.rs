@@ -24,10 +24,10 @@
 use ai_core::{AiId, AiIndex, SimRng, SimTick};
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
-use shards_action::{ActionState, Charges, Cooldowns, Dead, Fighter, InputBuffer, Stamina};
+use shards_action::{ActionState, Charges, Cooldowns, Dead, Fighter, FighterView, InputBuffer, LeapSite, Stamina};
 use shards_content::ContentDb;
 use shards_core::{flat, Intent, PlayerId};
-use shards_motion::Collider;
+use shards_motion::{CharacterController, CharacterParams, Collider, MotionState, PhysicsWorld};
 
 use crate::brain::{clamp_to_leash, salt, Home, Npc, NpcBrain, NpcDrive, NpcThink};
 use crate::def::{AttackPlanDef, DirectorDef, Role, WaitRole};
@@ -146,6 +146,9 @@ pub(crate) struct Fighting {
     pub stamina: Option<&'static Stamina>,
     pub cooldowns: Option<&'static Cooldowns>,
     pub charges: Option<&'static Charges>,
+    /// How it moves now (the mode gate) and what it moves by (a leap's landing).
+    pub motion: Option<&'static MotionState>,
+    pub body: Option<(&'static CharacterController, Option<&'static CharacterParams>)>,
     pub dead: Has<Dead>,
     /// Orders in it: an agent took the NPC over (`move_to`, `attack`), it is out of the fight.
     pub intent: Option<&'static Intent>,
@@ -156,6 +159,44 @@ impl FightingItem<'_, '_> {
     pub(crate) fn under_orders(&self) -> bool {
         self.intent.is_some_and(|i| !i.orders.is_empty())
     }
+}
+
+/// What `can_start` reads about a fighting NPC: its action state and resources, how it moves now,
+/// and, for the landing a leap needs, `site`.
+#[allow(clippy::too_many_arguments, reason = "the fields of one fighter, passed apart for the borrows")]
+pub(crate) fn npc_view<'a>(
+    db: &'a ContentDb,
+    fighter: &'a Fighter,
+    state: &'a ActionState,
+    held: &'a [String],
+    dead: bool,
+    resources: (Option<&'a Stamina>, Option<&'a Cooldowns>, Option<&'a Charges>),
+    motion: Option<&MotionState>,
+    site: Option<LeapSite<'a>>,
+) -> FighterView<'a> {
+    FighterView {
+        stamina: resources.0,
+        cooldowns: resources.1,
+        charges: resources.2,
+        mode: motion.map(|m| m.mode),
+        leap: site,
+        ..FighterView::new(db, &fighter.moveset, state, held, dead)
+    }
+}
+
+/// Where an NPC stands for a leap that aims at `target` (where it perceives it, and its radius): `None`
+/// without a body or an `Intent` (nothing to judge a landing by).
+pub(crate) fn npc_site<'a>(
+    physics: &'a PhysicsWorld,
+    db: &ContentDb,
+    entity: Entity,
+    transform: &Transform,
+    intent: Option<&'a Intent>,
+    body: Option<(&CharacterController, Option<&CharacterParams>)>,
+    target: Option<(Vec3, f32)>,
+) -> Option<LeapSite<'a>> {
+    let (controller, own) = body?;
+    Some(LeapSite::body(physics, entity, (transform.translation, *transform.forward()), controller.resolve(own, Some(db)), intent?, target))
 }
 
 /// Where a target stands, its body radius, whether it is alive.
@@ -198,6 +239,7 @@ pub(crate) fn direct(
     rng: SimRng,
     db: Res<ContentDb>,
     index: Res<AiIndex>,
+    physics: Res<PhysicsWorld>,
     players: Query<(), (With<PlayerId>, Without<Dead>)>,
     targets: Targets,
     mut npcs: Query<Fighting>,
@@ -363,20 +405,12 @@ pub(crate) fn direct(
             continue;
         }
         let Some(target) = f.brain.target else { continue };
-        let Some((_, radius)) = target_of(&index, &targets, f.perceived, target) else { continue };
+        let Some((there, radius)) = target_of(&index, &targets, f.perceived, target) else { continue };
         let director = DirectorDef::of(&db, &f.npc.director);
         let Some(plan_def) = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)) else { continue };
         let options = resolve(plan_def, &db, &f.fighter.moveset, radius);
-        let view = shards_action::FighterView {
-            db: &db,
-            moveset: &f.fighter.moveset,
-            state: f.state,
-            stamina: f.stamina,
-            cooldowns: f.cooldowns,
-            charges: f.charges,
-            held: &f.drive.held,
-            dead: f.dead,
-        };
+        let site = npc_site(&physics, &db, f.entity, f.transform, f.intent, f.body, Some((there, radius)));
+        let view = npc_view(&db, f.fighter, f.state, &f.drive.held, f.dead, (f.stamina, f.cooldowns, f.charges), f.motion, site);
         let (budget, overlapping) = inflight.on(target, id, &director);
         // No token for a strike that would come too soon after another NPC's.
         let spaced_out = !plan_def.ignores_spacing && waiting(&notes, id, &d, tick.0, spacing_ticks(director.min_spacing, dt)).is_some();

@@ -24,7 +24,7 @@
 use ai_core::AiId;
 use bevy::prelude::*;
 use shards_action::fighter::hostile;
-use shards_action::{Damaged, Dead, Fighter, Team};
+use shards_action::{state_intangible, ActionState, Damaged, Dead, Fighter, Team};
 use shards_content::ContentDb;
 use shards_core::flat;
 use shards_motion::{LayerMask, MotionState, PhysicsWorld, QueryFilter};
@@ -164,14 +164,16 @@ pub(crate) fn perceive(
     time: Res<Time>,
     db: Res<ContentDb>,
     physics: Res<PhysicsWorld>,
-    bodies: Query<(Entity, &AiId, &Transform, Option<&Team>, Option<&MotionState>), (With<Fighter>, Without<Dead>)>,
+    bodies: Query<(Entity, &AiId, &Transform, Option<&Team>, Option<&MotionState>, Option<&ActionState>), (With<Fighter>, Without<Dead>)>,
     mut npcs: Query<(Entity, &AiId, &Npc, &NpcBrain, &Transform, Option<&Team>, &mut Perceived)>,
 ) {
     let dt = time.delta_secs();
     let tuning = NpcTuning::of(&db);
     let mut candidates: Vec<Candidate> = bodies
         .iter()
-        .map(|(entity, id, tf, team, motion)| Candidate {
+        // A burrowed body (an intangible span is open) is not there to be perceived.
+        .filter(|(.., state)| !state.is_some_and(|s| state_intangible(&db, s)))
+        .map(|(entity, id, tf, team, motion, _)| Candidate {
             entity,
             id: *id,
             feet: tf.translation,

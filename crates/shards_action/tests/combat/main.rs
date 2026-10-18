@@ -3,6 +3,7 @@
 
 mod actions;
 mod agents;
+mod body;
 mod common;
 mod golden;
 mod hits;

@@ -19,7 +19,7 @@
 use ai_core::{AiId, SimRng, SimTick};
 use bevy::prelude::*;
 use shards_action::def::CancelTo;
-use shards_action::{can_start, ActionDef, FighterView, MovesetDef};
+use shards_action::{can_start, ActionDef, MovesetDef};
 use shards_content::ContentDb;
 
 use crate::brain::{salt, Npc};
@@ -180,16 +180,7 @@ pub(crate) fn chain_press(
 
 /// Whether the action machine would take `input` this tick.
 fn takes_input(f: &crate::director::FightingItem, db: &ContentDb, input: &str, dt: f32) -> bool {
-    let view = FighterView {
-        db,
-        moveset: &f.fighter.moveset,
-        state: f.state,
-        stamina: f.stamina,
-        cooldowns: f.cooldowns,
-        charges: f.charges,
-        held: &f.drive.held,
-        dead: f.dead,
-    };
+    let view = crate::director::npc_view(db, f.fighter, f.state, &f.drive.held, f.dead, (f.stamina, f.cooldowns, f.charges), f.motion, None);
     can_start(&view, input, dt).is_ok()
 }
 

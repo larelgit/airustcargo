@@ -274,6 +274,38 @@ fn run_extras_of_another_run_stop_the_game() {
 }
 
 #[test]
+fn body_and_motion_state_that_does_not_belong_stops_the_game() {
+    use shards::action::LeapRun;
+    use shards::motion::{Ghost, Launch};
+    // A leap's state with no run.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(LeapRun { instance: 999, ..default() });
+    });
+    let line = stops_on(&mut app, "action.leap_follows_run", 2);
+    assert!(line.contains("e5 LeapRun of instance 999 while it runs no action"), "{line}");
+
+    // A ghost that is not in a burrow.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(Ghost);
+    });
+    let line = stops_on(&mut app, "action.ghost_follows_run", 2);
+    assert!(line.contains("e5 Ghost while it runs no action, which has no open ghost window"), "{line}");
+
+    // A launch with no height, and one on something that is no character.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(Launch { height: f32::NAN });
+    });
+    let line = stops_on(&mut app, "motion.launch_sane", 2);
+    assert!(line.contains("e5 Launch height = NaN: a finite height above 0"), "{line}");
+}
+
+#[test]
 fn an_npc_in_a_state_its_behavior_lacks_stops_the_game() {
     use shards::npc::NpcBrain;
     let mut app = sandbox::test_app(42);

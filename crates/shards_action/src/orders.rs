@@ -9,10 +9,11 @@ use ai_core::{AiId, AiIndex};
 use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::{flat, Intent, Order, Predicted};
-use shards_motion::Collider;
+use shards_motion::{CharacterController, CharacterParams, Collider, MotionState, PhysicsWorld};
 
 use crate::def::{ActionDef, MovesetDef};
 use crate::fighter::{Charges, Cooldowns, Dead, Fighter, Stamina};
+use crate::leap::{radius_of, LeapSite};
 use crate::machine::{can_start, ActionRejected, ActionState, FighterView};
 
 /// Walks this close (a share of the action's reach) before attacking.
@@ -32,6 +33,9 @@ type Attackers<'w, 's> = Query<
         Option<&'static Stamina>,
         Option<&'static Cooldowns>,
         Option<&'static Charges>,
+        Option<&'static MotionState>,
+        Option<&'static CharacterController>,
+        Option<&'static CharacterParams>,
         Has<Dead>,
     ),
 >;
@@ -43,11 +47,12 @@ pub(crate) fn follow_attack_orders(
     time: Res<Time>,
     db: Res<ContentDb>,
     index: Res<AiIndex>,
+    physics: Res<PhysicsWorld>,
     targets: Query<(&Transform, Has<Dead>, Option<&Collider>)>,
     mut fighters: Attackers,
 ) {
     let dt = time.delta_secs();
-    for (entity, fighter, mut intent, state, tf, stamina, cooldowns, charges, dead) in &mut fighters {
+    for (entity, fighter, mut intent, state, tf, stamina, cooldowns, charges, motion, controller, params, dead) in &mut fighters {
         let Some(order) = intent.orders.front().cloned() else { continue };
         let Order::Attack { target, ref input, repeat } = order else { continue };
         if dead {
@@ -65,15 +70,17 @@ pub(crate) fn follow_attack_orders(
         if !approach(&db, fighter, &mut intent, tf.translation, target, input, target_tf.translation, collider) {
             continue;
         }
+        let site = controller.map(|c| {
+            let target = Some((target_tf.translation, radius_of(collider)));
+            LeapSite::body(&physics, entity, (tf.translation, *tf.forward()), c.resolve(params, Some(&db)), &intent, target)
+        });
         let view = FighterView {
-            db: &db,
-            moveset: &fighter.moveset,
-            state,
             stamina,
             cooldowns,
             charges,
-            held: &intent.held,
-            dead,
+            mode: motion.map(|m| m.mode),
+            leap: site,
+            ..FighterView::new(&db, &fighter.moveset, state, &intent.held, dead)
         };
         match can_start(&view, input, dt) {
             Ok(_) => {

@@ -1481,6 +1481,69 @@ seed ─► Points ─► Roads ─► Cells ─► Fill (socket solver) ─► 
               any step or check fails ─► next attempt ─► … ─► fallback map (tile_map)
 ```
 
+### Body and motion: leap, walking spans, mode gate, intangible (B2c)
+
+What an action does to the body, as data. Everything is off by default and unserialized at its default (content hashes and the reference replays of older content do not change).
+
+```ron
+{
+    "leap": (
+        net_id: 126,
+        phases: [("crouch", 0.3), ("air", 0.7), ("land", 0.4)],
+        displacement: [(0.3, 0.0), (1.0, 6.0)],         // the longest leap; stretched to the landing chosen
+        leap: (height: 1.2, at: 0.3, search: (min: 1.5, max: 6.0, step: 0.5, max_rise: 0.6, max_drop: 1.5,
+               probe_height: 1.0, lift: 0.05, toward_target: true, max_water_depth: 1.0)),
+    ),
+    "spin": (net_id: 127, phases: [("windup", 0.2), ("spin", 1.2), ("recovery", 0.3)], walk: [(Phase("spin"), 0.35)]),
+    "burrow": (net_id: 128, phases: [("dig", 0.4), ("under", 0.7), ("emerge", 0.5)], intangible: [Phase("under")], ghost: true),
+    "stroke": (net_id: 129, phases: [("stroke", 0.5)], tags: ["afloat"]),
+}
+// moveset: only_in: [(Water, ["afloat"])]
+```
+
+**Leap.** `leap: (height, at, search)`: at `at` seconds the machine puts `Launch { height }` on the body
+(`shards_motion`): the controller launches it up with its own gravity so that it peaks `height` metres above the take-off
+(`v = sqrt(2 * gravity * height)`, whatever the gravity), in the same tick, even while the action owns the body, and removes
+the component. It only launches a body on the ground or within `coyote_time` of it (a jump's test, without its buffer): on
+a body that is not grounded the launch does nothing and the action goes on. A launch counts as a jump for landing tiers
+(`JumpedFlight`) but is no `Jumped` event. The run's flat movement is its `displacement`; without `search` the authored
+distance is used. With `search`, the distance is chosen when the action starts ([`plan_leap`]): candidates from the aimed distance
+down by `step` to `min`, the first whose landing point passes wins: the wall ray at `probe_height` above the feet to the same
+height above the landing is clear (`WORLD`), the floor ray finds a floor at most `max_rise` above and `max_drop` below the feet,
+the body's capsule `lift` above that floor overlaps no `WORLD` collider, and the water there is no deeper than `max_water_depth`
+(the top of the highest water volume at the landing minus the floor; no limit when the field is left out; the volumes are
+`PhysicsWorld::water_surface_at`, so voxel terrain is not involved). The aimed distance is `max`, or with `toward_target` and a
+lock-on target more than 5 cm away: the flat distance to it minus both body radii, within `max`, and the run points at it. The
+run's `displacement` is scaled by `distance / displacement_at(length)` (`LeapRun::scale`). No candidate from there down to `min`:
+`can_start` answers `Blocker::NoLanding { min, max }` (`no landing spot within 1.5-6m`, `ready_in: None`), so the tools refuse,
+the attack order is dropped, an NPC's planner does not grant a token for it, and a press made anyway is rejected with the
+reason, unpaid. Leaps with `search` and `hold` loops are refused by the content check. A game that refuses a leap for the world
+(a challenge, say) removes the press from `Intent::pressed` before the machine, as for any technique.
+
+`LeapRun { instance, scale, launched }` is a lazy component beside `RunExtras` (a fighter that never leaps has none; it is a
+component of its own so that the replays of fighters that never leap keep the state they have). It follows its run
+(`action.leap_follows_run`).
+
+**Walking spans.** `walk: [(span, share)]`: while a span is open the body is not locked: it walks at `share` of its walking speed
+(the largest share of the spans open in the tick), the action's `displacement` on top, no sprint; outside the spans the action owns
+the body. Not together with `move_speed`.
+
+**Mode gate.** `MovesetDef::only_in: [(mode, [tags])]`: while the body's motion mode (`MotionState::mode`, as the controller left
+it) is a listed one, only actions with one of the tags start (`Blocker::Mode`, `not while in water: only actions tagged afloat`,
+`ready_in: None`), and a running action without one ends the moment the mode is entered, as `ActionEnd::Interrupted` with no
+cooldown share. Forced actions (a stagger, a death) are never cut. `Water` is the swimming mode: wading stays `Ground`.
+
+**Intangible and ghost.** `intangible: [span]`: hits find nothing of the body while a span is open in the tick (no hit, no ledger
+mark, so a hit window that is still open when it comes out hits it then), a perception does not see it, and
+`intangible(world, entity)` says so (computed from the running action, never read from how the body looks; the condition
+`intangible` is true while any fighter is). `ghost: true` (needs `intangible`): the body also carries `Ghost` while intangible,
+and the separation pass skips every pair it is in, so characters pass through each other. On a fighter the `Ghost` is the
+action machine's (`action.ghost_follows_run`); it comes off at once when the run is cut.
+
+Prediction: the client's predictor searches the landing on its own colliders, launches its own body, applies the mode gate and
+the ghost, and adopts the host's scale of the leap; `Ghost` is a predicted component. Engine rules: `motion.launch_sane`,
+`action.leap_follows_run`, `action.ghost_follows_run`.
+
 ### Content formats
 
 Seven kinds: `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`. All are checked together with the base, and errors name the file, the field and the nearest id. The sandbox's real files are in `crates/sandbox/assets/content/region/`.
@@ -3015,6 +3078,9 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `action.protection_sane` | every `Protection` (the reaction and poise timers, B1) holds finite timers, none below 0. A NaN stays a NaN through the countdown and would shield its fighter for ever |
 | `action.knockback_sane` | every `Knockback` (a push in progress, B1) has a finite flat velocity (`y` is 0) and a finite `decel` above 0: a push that does not slow down never stops |
 | `action.extras_follow_run` | every `RunExtras` (what a charging, turning or miss-recovering run keeps, B2a) belongs to the run its fighter is running (the same `instance`), with a finite `extra >= 0` and a finite `closed >= 0`. The machine puts extras in when such a run starts and takes them out on every way a run ends, so extras left behind would hand a later run a stale hold, hit or recovery |
+| `motion.launch_sane` | every `Launch` (the one-shot that launches a body up, B2c) asks for a finite height above 0 and sits on a character (`CharacterController`). The controller takes it in the tick it is put and removes it |
+| `action.leap_follows_run` | every `LeapRun` (what a leap keeps, B2c) belongs to the run its fighter is running (the same `instance`) of an action that leaps, with a finite `scale >= 0` |
+| `action.ghost_follows_run` | a fighter carries `Ghost` only while its running action has `ghost` and an `intangible` span open in the tick. On a fighter the ghost is the machine's |
 | `npc.state_known` | `NpcBrain.state` is a state of the NPC's behaviour. Three carve-outs, each a state the engine itself leaves behind: an empty state (before the NPC's first decided tick), an inactive NPC (dormant or dead: the brain passes it through, so a state a hot reload removed stays until it wakes), and an NPC whose behaviour is not in content (that is reported once as a content problem) |
 | `npc.strike_spacing` | two NPCs of one director whose `min_spacing` is set never began strikes less than that apart (in whole ticks), for the starts that went through the spacing rule: the planner's presses and checked combo continuations (`NpcStrike::gated`). Judged from the last strike each NPC noted. Three carve-outs: an NPC whose plan has `ignores_spacing` is not the one held to the rule (its starts still hold the others), a strike a state hook pressed itself is noted but neither held to the rule nor held against other NPCs (the hook may or may not have asked `strike_ready`, and may start between another NPC's planned press and its start), and an action with one of the director's `spacing_exempt_tags` is not noted at all. A director without a `min_spacing` is never judged |
 | `npc.tokens_within_limit` | after the director ran, no token is held by a dead body, and each director holds no more tokens than its limit for the living players, unless every holder beyond the limit has its attack in flight (an attack under way keeps its token to its end). It is judged right after the director, not at the end of the tick: a holder that dies in `Resolve` keeps its token until the next tick's director takes it back, so the end of the tick would fire on every kill. A small system next to the director writes what it found to the resource `TokenAudit`, which the rule reads; it is recomputed every tick and is not part of a snapshot or a replay |
@@ -5155,6 +5221,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 | `combat/player.action.ron` | the combo `light_1`–`light_3`, `heavy`, the roll (i-frames 0.18 s), the block with a perfect block, the flask |
 | `combat/warden.action.ron` | the guard's four attacks (`slash`, `slam`, `sweep`, `shockwave`), calm and enraged |
 | `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player |
+| `combat/body.action.ron`, `combat/body.moveset.ron` | body and motion (B2c): `spar_leap` (a landing search toward the lock-on target, no landing in water over 1 m), `spar_spin` (walks while it spins), `burrow` (intangible, a ghost), `spar_stroke` (`afloat`), the movesets `mover` and `burrower`; net ids 126-129 |
 | `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | the skeleton's claw, the movesets, the input buffer |
 | `npc/monsters.behavior.ron`, `monsters.perception.ron`, `monsters.director.ron`, `monsters.attack_plan.ron` | how the monsters think: the `skeleton` and `warden` state machines (with a `calm` state that the scenarios do not let the monster leave), sight, the `default` director (two tokens for one player) and the `boss` director (the guard strikes on its own), the guard's attack plans |
 | `region/wilds.*.ron` | the wilds: tiles, socket rules, points of interest, the region, a fallback map, navmesh settings |

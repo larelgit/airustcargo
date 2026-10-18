@@ -655,3 +655,62 @@ fn host_cut_drops_the_shown_run() {
     assert!(here.distance(there) < 0.05, "{here} vs {there}");
     assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
 }
+
+// --- body and motion (B2c) -------------------------------------------------------------------
+
+/// The client's body gets the `mover` moveset (a leap, a spin, a burrow, a stroke) on the host and is
+/// put on open ground far from everyone.
+fn mover_stand() -> (Stand, String, Entity) {
+    let mut stand = stand_with(1, lossy());
+    calm(&mut stand);
+    let id = body(&stand, C1);
+    let out = stand.call(HOST, "set", json!({"id": id, "component": "Fighter", "path": "moveset", "value": "mover"}));
+    assert!(out.ok, "{}", out.result);
+    put(&mut stand, &id, -20.0, 0.0, 20.0);
+    stand.run(60);
+    let mine = own(&stand, C1);
+    assert_eq!(stand.world(C1).get::<shards::action::Fighter>(mine).unwrap().moveset, "mover");
+    (stand, id, mine)
+}
+
+#[test]
+fn predicted_leap_matches_the_host() {
+    let (mut stand, id, mine) = mover_stand();
+    let out = stand.call(C1, "use_technique", json!({"slot": 1}));
+    assert!(text(&out).starts_with("ok: spar_leap"), "{}", out.result);
+    // The client launches its own body: it is in the air while the leap is shown, and the run's
+    // landing search gave the same stretch as the host's.
+    let mut top = f32::MIN;
+    let start = position(&stand, C1, &id).y;
+    for _ in 0..120 {
+        stand.run(1);
+        top = top.max(position(&stand, C1, &id).y - start);
+    }
+    assert!(top > 1.0, "the predicted body left the ground: {top}");
+    assert!(shown(&stand, mine).is_none(), "the leap ended");
+    stand.run(60);
+    let (here, there) = (position(&stand, C1, &id), position(&stand, HOST, &id));
+    assert!(here.distance(there) < 0.1, "{here} vs {there}");
+    assert!(there.distance(Vec3::new(-20.0, 0.0, 20.0)) > 4.0, "it went somewhere: {there}");
+    assert_eq!(prediction(&stand, C1).mispredicted, 0, "{:#?}", journal(&stand, C1));
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+    verify_host(&stand);
+}
+
+#[test]
+fn predicted_burrow_ghosts_like_the_host() {
+    let (mut stand, id, mine) = mover_stand();
+    let out = stand.call(C1, "use_technique", json!({"slot": 4}));
+    assert!(text(&out).starts_with("ok: burrow"), "{}", out.result);
+    let theirs = entity(&stand, HOST, &id).unwrap();
+    // 0.4 s of digging, then 0.7 s under: both ends hold the ghost at the same time.
+    run_until(&mut stand, 200, "the host is under", |s| s.world(HOST).get::<shards::motion::Ghost>(theirs).is_some());
+    stand.run(10);
+    assert!(stand.world(C1).get::<shards::motion::Ghost>(mine).is_some(), "the client's own body ghosts too");
+    run_until(&mut stand, 200, "the host is out", |s| s.world(HOST).get::<shards::motion::Ghost>(theirs).is_none());
+    stand.run(30);
+    assert!(stand.world(C1).get::<shards::motion::Ghost>(mine).is_none());
+    assert_eq!(prediction(&stand, C1).mispredicted, 0, "{:#?}", journal(&stand, C1));
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+    verify_host(&stand);
+}

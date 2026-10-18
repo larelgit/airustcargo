@@ -1,5 +1,5 @@
 //! The engine rules `action.resources_in_range`, `action.running_sane`, `action.protection_sane`,
-//! `action.knockback_sane` and `action.extras_follow_run`.
+//! `action.knockback_sane`, `action.extras_follow_run`, `action.leap_follows_run` and `action.ghost_follows_run`.
 
 use ai_core::{with_query, AiId, Offenders};
 use bevy::prelude::*;
@@ -7,7 +7,8 @@ use shards_content::ContentDb;
 
 use crate::def::ActionDef;
 use crate::fighter::{Fighter, Health, Knockback, Poise, Protection, Stamina};
-use crate::machine::{ActionState, RunExtras};
+use crate::machine::{ActionState, LeapRun, RunExtras};
+use shards_motion::Ghost;
 
 /// The engine rule `action.resources_in_range`: `Health`, `Stamina` and `Poise` hold finite
 /// numbers with `max > 0` and `0 <= current <= max`.
@@ -146,6 +147,57 @@ pub fn extras_follow_run(world: &World) -> Option<String> {
                 bad.note(*id, || format!("RunExtras of instance {} while it runs {now}", x.instance));
             } else if !(x.extra.is_finite() && x.extra >= 0.0 && x.closed.is_finite() && x.closed >= 0.0) {
                 bad.note(*id, || format!("RunExtras extra = {}, closed = {}: finite numbers >= 0", x.extra, x.closed));
+            }
+        }
+    });
+    bad.report()
+}
+
+/// The engine rule `action.leap_follows_run`: a [`LeapRun`] belongs to the run its fighter is
+/// running (same `instance`), whose action leaps, and its `scale` is a finite number `>= 0`.
+///
+/// The machine puts it in when a run of a `leap` action starts and takes it out on every path a run
+/// ends by, like [`RunExtras`]; one left behind would stretch a later leap's displacement by the
+/// last one's landing.
+pub fn leap_follows_run(world: &World) -> Option<String> {
+    let db = world.get_resource::<ContentDb>()?;
+    let mut bad = Offenders::default();
+    with_query::<(&AiId, &LeapRun, Option<&ActionState>), (), _>(world, |query| {
+        for (id, x, state) in query.iter(world) {
+            let running = state.and_then(|s| s.current.as_ref());
+            if running.is_none_or(|r| r.instance != x.instance) {
+                let now = running.map_or("no action".to_owned(), |r| format!("instance {} ({})", r.instance, r.action));
+                bad.note(*id, || format!("LeapRun of instance {} while it runs {now}", x.instance));
+            } else if !running.and_then(|r| db.get::<ActionDef>(&r.action)).is_some_and(|d| d.leap.is_some()) {
+                bad.note(*id, || format!("LeapRun while it runs `{}`, which does not leap", running.map_or("", |r| &r.action)));
+            } else if !(x.scale.is_finite() && x.scale >= 0.0) {
+                bad.note(*id, || format!("LeapRun scale = {}: a finite number >= 0", x.scale));
+            }
+        }
+    });
+    bad.report()
+}
+
+/// The engine rule `action.ghost_follows_run`: a fighter passes through other characters
+/// ([`Ghost`]) only while its running action has `ghost` and an `intangible` span open.
+///
+/// On a fighter the `Ghost` is the action machine's: it puts it on when such a window opens and takes
+/// it off when the window closes or the run ends, by any path. One left behind keeps a body that
+/// should be solid out of the separation pass; one a game puts there by hand is taken off again on
+/// the next tick, so a game that wants a passing-through body without an action makes it a body
+/// that is not a fighter.
+pub fn ghost_follows_run(world: &World) -> Option<String> {
+    let db = world.get_resource::<ContentDb>()?;
+    let mut bad = Offenders::default();
+    with_query::<(&AiId, &ActionState), (With<Ghost>, With<Fighter>), _>(world, |query| {
+        for (id, state) in query.iter(world) {
+            let due = state
+                .current
+                .as_ref()
+                .is_some_and(|r| db.get::<ActionDef>(&r.action).is_some_and(|d| d.ghost_in(r.prev, r.t)));
+            if !due {
+                let now = state.current.as_ref().map_or("no action".to_owned(), |r| format!("`{}`", r.action));
+                bad.note(*id, || format!("Ghost while it runs {now}, which has no open ghost window"));
             }
         }
     });

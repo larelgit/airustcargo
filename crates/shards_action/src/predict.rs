@@ -37,14 +37,18 @@ use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::input_names::SPRINT;
 use shards_core::{Intent, NetPrediction, Predicted};
-use shards_motion::{CharacterController, CharacterParams, LocomotionInput, MotionState, MoveModifiers, PhysicsWorld};
+use shards_motion::{
+    CharacterController, CharacterParams, Collider, Ghost, Launch, LocomotionInput, MotionState, MoveModifiers, PhysicsWorld,
+};
 
 use crate::combat::Died;
 use crate::def::{ActionDef, BufferMode, CombatTuning, MovesetDef, EPS};
 use crate::fighter::{sprint_rule, Charges, Cooldowns, Dead, Fighter, Stamina};
+use crate::leap::{plan_leap, radius_of, LeapSite};
 use crate::machine::{
-    advance, body_height, buffer_press, cap_queue, charge_due, choose_in, free_sprint, in_sight, press_life, start_facing,
-    steer_locomotion, step_run, tracked, understands, ActionRejected, ActionStarted, ActionState, FighterView, Queued, RunExtras, Running,
+    advance, body_height, buffer_press, cap_queue, charge_due, choose_in, free_sprint, in_sight, launch_due, press_life, start_facing,
+    steer_locomotion, step_run, tracked, understands, ActionRejected, ActionStarted, ActionState, FighterView, LeapRun, Queued, RunExtras,
+    Running,
 };
 
 /// Ticks past a press's tick (and the lead) after which a prediction the host has not
@@ -73,6 +77,9 @@ pub struct PredictedAction {
     /// The run's [`RunExtras`] as this machine keeps them (its own hold; the host's extra
     /// recovery and landing), when its action needs them.
     pub extras: Option<RunExtras>,
+    /// The run's [`LeapRun`] as this machine keeps it: the scale of its own landing search and
+    /// whether it launched its own body, when the action leaps.
+    pub leap: Option<LeapRun>,
 }
 
 /// A prediction the host has not answered yet.
@@ -137,6 +144,8 @@ pub(crate) struct PredictedBody {
     body: Option<(&'static CharacterController, Option<&'static CharacterParams>)>,
     /// The host's, replicated.
     extras: Option<&'static RunExtras>,
+    leap: Option<&'static LeapRun>,
+    ghost: Has<Ghost>,
     shown: Option<&'static mut PredictedAction>,
     dead: Has<Dead>,
 }
@@ -153,7 +162,7 @@ pub(crate) fn predict_actions(
     mut predictor: ResMut<ActionPredictor>,
     physics: Res<PhysicsWorld>,
     mut commands: Commands,
-    positions: Query<(&Transform, Option<&CharacterParams>)>,
+    positions: Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>,
     mut bodies: Query<PredictedBody, With<Predicted>>,
 ) {
     let dt = time.delta_secs();
@@ -221,6 +230,7 @@ pub(crate) fn predict_actions(
     let behind = now.saturating_sub(1).saturating_sub(host);
     let host_run = b.state.current.as_ref();
     let host_extras = b.extras.copied().filter(|x| host_run.is_some_and(|r| r.instance == x.instance));
+    let host_leap = b.leap.copied().filter(|x| host_run.is_some_and(|r| r.instance == x.instance));
     for (p, verdict) in settled {
         let mine = shown.as_ref().is_some_and(|s| s.start_tick == p.start_tick && s.action == p.action && !s.confirmed);
         match verdict {
@@ -236,7 +246,7 @@ pub(crate) fn predict_actions(
                 if mine {
                     // A charge the host did not turn: back to the host's action, at the host's time.
                     let unturned = p.branch_from.is_some().then(|| host_run.filter(|r| r.instance == p.instance)).flatten();
-                    shown = unturned.and_then(|r| take_over(r, host_extras, &db, b.intent, behind, dt, now));
+                    shown = unturned.and_then(|r| take_over(r, (host_extras, host_leap), &db, b.intent, behind, dt, now));
                 }
             }
         }
@@ -255,6 +265,7 @@ pub(crate) fn predict_actions(
             let s = shown.as_mut().expect("turned here");
             s.expect_instance = r.instance + 1;
             adopt(&mut s.extras, host_extras);
+            adopt_leap(&mut s.leap, host_leap);
         } else if same {
             let s = shown.as_mut().expect("same");
             s.confirmed = true;
@@ -263,6 +274,7 @@ pub(crate) fn predict_actions(
                 Some(run) => {
                     s.run = run;
                     adopt(&mut s.extras, host_extras);
+                    adopt_leap(&mut s.leap, host_leap);
                 }
                 None => shown = None,
             }
@@ -278,6 +290,7 @@ pub(crate) fn predict_actions(
                 run,
                 confirmed: true,
                 extras: host_extras,
+                leap: host_leap,
             });
         }
     } else if let Some(r) = host_run {
@@ -286,12 +299,16 @@ pub(crate) fn predict_actions(
             if s.run.action == r.action {
                 // The same run: it takes what only the host changes (a miss's extra recovery).
                 adopt(&mut s.extras, host_extras);
+                adopt_leap(&mut s.leap, host_leap);
             } else if !predictor.pending.iter().any(|p| p.instance == r.instance && p.branch_from.is_some()) {
                 // The host turned a charge this machine did not: its action and time, the hold kept here.
                 let kept = s.extras;
-                shown = take_over(r, host_extras, &db, b.intent, behind, dt, now).map(|mut taken| {
+                let kept_leap = s.leap;
+                shown = take_over(r, (host_extras, host_leap), &db, b.intent, behind, dt, now).map(|mut taken| {
                     taken.extras = kept.or(taken.extras);
                     adopt(&mut taken.extras, host_extras);
+                    taken.leap = kept_leap.or(taken.leap);
+                    adopt_leap(&mut taken.leap, host_leap);
                     taken
                 });
             }
@@ -301,7 +318,7 @@ pub(crate) fn predict_actions(
             && host_extras.is_some_and(|x| x.extra > extra + EPS)
         {
             // Its time ran out here, but the host's recovery is longer (a miss): the host's run again.
-            shown = take_over(r, host_extras, &db, b.intent, behind, dt, now);
+            shown = take_over(r, (host_extras, host_leap), &db, b.intent, behind, dt, now);
         }
     }
     // The host ended the run shown here with no new one and no word (a cut, a release): the body
@@ -318,6 +335,15 @@ pub(crate) fn predict_actions(
     let mode = moveset.map_or(&BufferMode::PerInput, |m| &m.buffer);
     let tuning = CombatTuning::of(&db);
     let (ttl, sight) = (tuning.input_buffer, tuning.sight_height);
+    // The mode gate: a run whose action lacks the tag the body's motion mode asks for is cut here as it is
+    // on the host (a forced run never is).
+    if let (Some(s), Some(in_mode)) = (shown.as_ref(), b.motion.map(|m| m.mode))
+        && !s.run.forced
+        && moveset.zip(db.get::<ActionDef>(&s.run.action)).is_some_and(|(m, d)| !m.allows(in_mode, d))
+    {
+        shown = None;
+        cap_queue(&mut predictor.queued, ttl);
+    }
     if b.dead {
         predictor.queued.clear();
     } else {
@@ -331,24 +357,27 @@ pub(crate) fn predict_actions(
     let here = b.transform.translation;
     let forward = *b.transform.forward();
     let locked = b.intent.target.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok().map(|p| (e, p)));
-    let target = locked.map(|(_, (t, _))| t.translation);
+    let target = locked.map(|(_, (t, _, _))| t.translation);
+    let target_body = locked.map(|(_, (t, _, collider))| (t.translation, radius_of(collider)));
     // The machine's sight check for an assist that needs it.
     let mine = body_height(b.body.and_then(|(_, p)| p));
     let sees = || {
-        let Some((them, (there, params))) = locked else { return true };
+        let Some((them, (there, params, _))) = locked else { return true };
         in_sight(&physics, (entity, here, mine), (them, there.translation, body_height(params)), sight)
     };
     let instance = shown.as_ref().map_or(0, |s| s.run.instance + 1).max(b.state.started).max(predictor.seen);
     let local = ActionState { current: shown.as_ref().map(|s| s.run.clone()), started: instance };
+    // The leap's landing is searched on this machine's colliders, from where the own body stands.
+    let site = b.body.map(|(controller, own)| {
+        LeapSite::body(&physics, entity, (here, forward), controller.resolve(own, Some(&db)), b.intent, target_body)
+    });
     let view = FighterView {
-        db: &db,
-        moveset: &b.fighter.moveset,
-        state: &local,
         stamina: b.stamina,
         cooldowns: b.cooldowns,
         charges: b.charges,
-        held: &b.intent.held,
-        dead: b.dead,
+        mode: b.motion.map(|m| m.mode),
+        leap: site,
+        ..FighterView::new(&db, &b.fighter.moveset, &local, &b.intent.held, b.dead)
     };
     let choice = (!b.dead).then(|| choose_in(&view, &predictor.queued, dt)).flatten();
     if let Some(choice) = choice
@@ -360,7 +389,13 @@ pub(crate) fn predict_actions(
         if shown.is_some() {
             cap_queue(&mut predictor.queued, ttl);
         }
-        let facing = start_facing(def, choice.dir, b.intent, here, forward, target);
+        // The landing, searched again with the press's direction; the scale is the machine's (same inputs).
+        let plan = def.leap.as_ref().and_then(|l| l.search.as_ref()).zip(site).and_then(|(search, site)| plan_leap(def, search, &site, choice.dir));
+        let scale = plan.map_or(1.0, |p| {
+            let total = def.displacement_at(def.length());
+            if total > EPS { p.distance / total } else { 1.0 }
+        });
+        let facing = plan.map_or_else(|| start_facing(def, choice.dir, b.intent, here, forward, target), |p| p.dir);
         let run = Running::new(&choice.start.action, def, instance, facing, choice.dir, Some(choice.input.clone()));
         commands.trigger(ActionStarted {
             entity,
@@ -388,6 +423,7 @@ pub(crate) fn predict_actions(
             run,
             confirmed: false,
             extras,
+            leap: def.leap.as_ref().map(|_| LeapRun { instance, scale, launched: false }),
         });
     }
     if !predictor.queued.is_empty() {
@@ -403,9 +439,21 @@ pub(crate) fn predict_actions(
     if let Some(s) = shown.as_mut() {
         match db.get::<ActionDef>(&s.run.action) {
             Some(mut def) => {
+                if s.leap.is_none() && def.leap.is_some() {
+                    s.leap = Some(LeapRun { instance: s.run.instance, ..default() });
+                }
                 let aimed = tracked(def, b.intent, target, sees);
-                (_, external) = step_run(&mut s.run, def, s.extras.as_mut(), b.intent, here, aimed, dt);
+                let spans;
+                (spans, external) = step_run(&mut s.run, def, s.extras.as_mut(), s.leap.map_or(1.0, |l| l.scale), b.intent, here, aimed, dt);
                 s.run.refresh(def, RunExtras::extra_of(s.extras.as_ref()));
+                // The leap launches the predicted body in the tick it crosses `leap.at`, as the host's does.
+                if let (Some(l), Some(state)) = (def.leap.as_ref(), s.leap.as_mut())
+                    && !state.launched
+                    && spans.iter().any(|&(lo, hi)| launch_due(l.at, lo, hi))
+                {
+                    state.launched = true;
+                    commands.entity(entity).try_insert(Launch { height: l.height });
+                }
                 if let Some(into) = charge_due(&s.run, def, s.extras.as_ref())
                     && let Some(into_def) = db.get::<ActionDef>(into)
                 {
@@ -442,6 +490,17 @@ pub(crate) fn predict_actions(
     let held = b.intent.is_held(SPRINT);
     let out_of_stamina = !free_sprint(b.modifiers, b.motion) && b.stamina.is_some_and(|s| s.sprint_blocked(rule, held));
     steer_locomotion(&mut b.loco, shown.as_ref().map(|s| &s.run), &db, b.dead, out_of_stamina, external);
+    // The own body passes through characters while the run it shows has its ghost window open.
+    let ghost = shown
+        .as_ref()
+        .is_some_and(|s| db.get::<ActionDef>(&s.run.action).is_some_and(|d| d.ghost_in(s.run.prev, s.run.t)));
+    if ghost != b.ghost {
+        if ghost {
+            commands.entity(entity).try_insert(Ghost);
+        } else {
+            commands.entity(entity).try_remove::<Ghost>();
+        }
+    }
     // It ends in the tick its time runs out, as on the host.
     if let Some(s) = shown.as_ref()
         && s.run.t >= s.run.length - EPS
@@ -492,10 +551,10 @@ fn catch_up(mut run: Running, extra: f32, db: &ContentDb, intent: &Intent, ticks
     (run.t < run.length - EPS).then_some(run)
 }
 
-/// The host's run `r` (with its replicated extras), caught up to now and shown as this machine's.
+/// The host's run `r` (with its replicated extras and leap), caught up to now and shown as this machine's.
 fn take_over(
     r: &Running,
-    extras: Option<RunExtras>,
+    (extras, leap): (Option<RunExtras>, Option<LeapRun>),
     db: &ContentDb,
     intent: &Intent,
     ticks: u64,
@@ -511,7 +570,22 @@ fn take_over(
         run,
         confirmed: true,
         extras,
+        leap,
     })
+}
+
+/// What only the host knows of a leap shown here: the scale of its landing (this machine's search
+/// may have seen another world) and the numbering of the run. Whether the launch happened stays this
+/// machine's, which launches its own body.
+fn adopt_leap(mine: &mut Option<LeapRun>, host: Option<LeapRun>) {
+    let Some(h) = host else { return };
+    match mine {
+        Some(x) => {
+            x.instance = h.instance;
+            x.scale = h.scale;
+        }
+        None => *mine = Some(h),
+    }
 }
 
 /// What only the host changes in the extras of a run shown here: the extra recovery of a miss,
