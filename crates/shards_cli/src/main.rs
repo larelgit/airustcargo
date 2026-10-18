@@ -1137,7 +1137,8 @@ fn minimize_run(client: &Client, driver: &mut FuzzDriver, plan: &FuzzPlan, repor
     };
     say("warning: --minimize plays each attempt in THIS game after loading the snapshot taken before the first round; a game that has run for a while is not a fresh one, so a result can differ from a fresh game's (the scenario is checked on a fresh game by `cargo test`)");
     if report.from_tick != 0 {
-        say(format!("warning: the run began at tick {}, not 0; the scenario starts a fresh game and may not reach the same state", report.from_tick));
+        say(format!("not minimising: the run began at tick {}, and a scenario starts a fresh game at tick 0, so it could not keep the starting state (start the game paused and fuzz from tick 0)", report.from_tick));
+        return Ok(());
     }
     let game_seed = client.call("ai/status", Value::Null)?["seed"].as_u64().unwrap_or(plan.seed);
     let agent = plan.agent.clone();
