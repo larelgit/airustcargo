@@ -23,6 +23,7 @@ use shards_save::SavePlugin;
 use shards_locale::LocalePlugin;
 use shards_settings::ShardsSettingsPlugin;
 use shards_ui::UiPlugin as ShardsUiPlugin;
+use shards_voxel::VoxelPlugin;
 use shards_world::WorldPlugin;
 
 use crate::audio_wiring::EngineAudioPlugin;
@@ -139,6 +140,8 @@ impl PluginGroup for EnginePlugins {
             .add(LookPlugin)
             // Scatter: foliage and small props strewn over the tiles, drawn in batches, by distance.
             .add(ScatterPlugin)
+            // Voxel terrain (core): the palette content kind and the registry of generation steps.
+            .add(VoxelPlugin)
             // Effects: particles from content in pools, the telegraphs on the ground as decals.
             .add(FxPlugin);
         // Steam (feature `steam`): lobbies, the relay as a transport, achievements, cloud saves.
@@ -175,6 +178,7 @@ fn leave_out(mut group: PluginGroupBuilder, without: &[&str]) -> PluginGroupBuil
             "audio" => off::<EngineAudioPlugin>(off::<ShardsAudioPlugin>(group)),
             "look" => off::<LookPlugin>(group),
             "scatter" => off::<ScatterPlugin>(group),
+            "voxel" => off::<VoxelPlugin>(group),
             "fx" => off::<FxPlugin>(group),
             #[cfg(feature = "steam")]
             "steam" => off::<shards_steam::SteamClientPlugin>(off::<shards_steam::SteamPlugin>(group)),
