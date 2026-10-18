@@ -321,6 +321,8 @@ pub(crate) fn plan_attacks(
         let (budget, overlapping) = inflight.on(grant.target, id, &director);
         // Another NPC of its director began a strike less than `min_spacing` ago: its strikes wait.
         let spaced_out = waiting(&notes, id, &pool(&f.npc.director), tick.0, spacing(&director)).is_some();
+        // With `press_on_decision` a new choice, like the press, waits for the NPC's decision tick.
+        let decides = !plan_def.press_on_decision || f.think.is_none_or(|t| t.decided == Some(tick.0));
         let chosen = {
             let view = FighterView {
                 db: &db,
@@ -336,11 +338,17 @@ pub(crate) fn plan_attacks(
             let kept = grant.attack.as_ref().and_then(|name| options.iter().position(|o| o.name == *name));
             // In range only: choose again every tick among what fits (a boss picks what
             // reaches); else keep the choice while it stays possible.
-            match kept.filter(|&i| !plan_def.in_range_only && ok(&options[i])) {
+            match kept.filter(|&i| (!plan_def.in_range_only || !decides) && ok(&options[i])) {
                 Some(i) => Some(i),
+                None if !decides => None,
                 None => choose(&options, ok, distance, plan_def.in_range_only, &mut rng.stream(id, salt::PICK)),
             }
         };
+        if chosen.is_none() && !decides {
+            // Between two decisions with no choice yet: it stands.
+            f.drive.goal = None;
+            continue;
+        }
         let home = f.home.map(|h| (h.pos.unwrap_or(here), h.leash));
         let leash = |p: Vec3| clamp_to_leash(home.map(|h| h.0), home.map_or(0.0, |h| h.1), p);
         let Some(i) = chosen else {
@@ -386,7 +394,7 @@ pub(crate) fn plan_attacks(
                 && overlapping.iter().all(|tags| director.may_overlap(&o.tags, tags));
             // It swings at what it perceives now, not at a memory.
             let sensed = f.perceived.get(grant.target).is_some_and(|k| k.age <= 1e-4);
-            if starts && fits && sensed {
+            if starts && fits && sensed && decides {
                 grant.pressed = Some(tick.0);
                 grant.instance = f.state.started;
                 f.drive.press.push(o.input.clone());

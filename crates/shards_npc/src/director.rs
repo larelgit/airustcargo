@@ -29,7 +29,7 @@ use shards_content::ContentDb;
 use shards_core::{flat, Intent, PlayerId};
 use shards_motion::Collider;
 
-use crate::brain::{clamp_to_leash, salt, Home, Npc, NpcBrain, NpcDrive};
+use crate::brain::{clamp_to_leash, salt, Home, Npc, NpcBrain, NpcDrive, NpcThink};
 use crate::def::{AttackPlanDef, DirectorDef, Role, WaitRole};
 use crate::perception::Perceived;
 use crate::chain::NpcChain;
@@ -136,6 +136,7 @@ pub(crate) struct Fighting {
     pub strike: Option<&'static NpcStrike>,
     pub options: Option<&'static NpcOptions>,
     pub chain: Option<&'static mut NpcChain>,
+    pub think: Option<&'static NpcThink>,
     pub fighter: &'static Fighter,
     pub state: &'static ActionState,
     pub buffer: &'static InputBuffer,
@@ -344,7 +345,14 @@ pub(crate) fn direct(
             continue;
         }
         let since = *f.token.asking_since.get_or_insert(tick.0);
-        asking.push((since, id, entity));
+        // With `press_on_decision` the token, like the choice and the press, is taken on the NPC's
+        // decision tick only; it keeps its place in the queue between decisions, and no token
+        // sits idle until the next one.
+        let on_decision = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)).is_none_or(|p| !p.press_on_decision)
+            || f.think.is_none_or(|t| t.decided == Some(tick.0));
+        if on_decision {
+            asking.push((since, id, entity));
+        }
     }
     asking.sort();
     for (_, id, entity) in asking {

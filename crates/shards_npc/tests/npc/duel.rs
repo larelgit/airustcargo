@@ -740,3 +740,57 @@ fn a_press_that_died_unused_is_no_start_for_the_others() {
     assert!(chain.pressed.is_some_and(|p| p < now - 9), "the press is over: {chain:?}");
     assert_eq!(shards_npc::wait_of(app.world(), other).map(|(_, left)| left), Some(42 - 36), "counted from the start");
 }
+
+// --- E17: the press belongs to the decision tick -------------------------------------------
+
+/// A duelist on `plan` with a decision cadence, 1.2 m from the hero.
+fn deciding_duelist(plan: &str) -> (App, Entity) {
+    let mut app = app_with(record_starts);
+    let world = app.world_mut();
+    player(world, 0, Vec3::ZERO);
+    let who = npc(world, "grunt", Npc::new("grunt_think", "grunt").with_plan(plan).with_director("duel"), Vec3::new(0.0, 0.0, 1.2), N);
+    (app, who)
+}
+
+/// The decision ticks (as `NpcThink.decided` shows them), the ticks `jab` started and the ticks
+/// tokens were granted, over `ticks`.
+fn decisions_jabs_grants(plan: &str, ticks: u64) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
+    let (mut app, who) = deciding_duelist(plan);
+    let (mut decided, mut grants) = (Vec::<u64>::new(), Vec::<u64>::new());
+    for _ in 0..ticks {
+        step(&mut app, 1);
+        if let Some(d) = app.world().get::<NpcThink>(who).and_then(|t| t.decided)
+            && decided.last() != Some(&d)
+        {
+            decided.push(d);
+        }
+        if let Some(g) = app.world().get::<shards_npc::AttackToken>(who).and_then(|t| t.held.as_ref())
+            && grants.last() != Some(&g.since)
+        {
+            grants.push(g.since);
+        }
+    }
+    (decided, starts(&app, who, "jab"), grants)
+}
+
+#[test]
+fn the_token_the_choice_and_the_press_share_a_decision_tick_when_the_plan_says_so() {
+    let (decided, jabs, grants) = decisions_jabs_grants("decide_press", 500);
+    assert!(jabs.len() >= 4 && decided.len() >= 20, "{jabs:?} {decided:?}");
+    assert!(grants.len() >= 4 && grants.iter().all(|t| decided.contains(t)), "a token granted off the cadence: {grants:?} vs {decided:?}");
+    assert!(jabs.iter().all(|t| decided.contains(t)), "a press on a tick that did not decide: {jabs:?} vs {decided:?}");
+}
+
+#[test]
+fn without_the_rule_the_planner_presses_on_any_tick() {
+    let (decided, jabs, grants) = decisions_jabs_grants("any_press", 500);
+    assert!(jabs.len() >= 4, "{jabs:?}");
+    assert!(jabs.iter().any(|t| !decided.contains(t)), "right after the token, off the cadence: {jabs:?} vs {decided:?}");
+    assert!(grants.iter().any(|t| !decided.contains(t)), "{grants:?} vs {decided:?}");
+}
+
+#[test]
+fn a_decision_cadence_of_nine_ticks_gives_a_press_every_nine_ticks_at_best() {
+    let (decided, _, _) = decisions_jabs_grants("decide_press", 120);
+    assert!(decided.windows(2).all(|w| w[1] - w[0] >= 9), "{decided:?}");
+}

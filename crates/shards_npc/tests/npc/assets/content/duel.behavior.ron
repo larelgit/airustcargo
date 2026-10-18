@@ -44,4 +44,13 @@
     ),
     // Presses a strike on its second tick, which is when a planner NPC takes its first token (test hook `press_at_two`).
     "presser_at_two": (initial: "go", states: {"go": (kind: "press_at_two")}),
+    // Fights like `grunt`, deciding every 0.15 s of free time.
+    "grunt_think": (
+        initial: "idle",
+        think: Some(0.15),
+        states: {
+            "idle": (transitions: [(to: "fight", when: ["target_known"])]),
+            "fight": (kind: "attack", transitions: [(to: "idle", when: ["target_lost"])]),
+        },
+    ),
 }

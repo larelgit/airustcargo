@@ -287,7 +287,7 @@ fn extras(world: &World, entity: Entity, npc: &Npc, perceived: &Perceived, here:
     }
     if let Some(t) = e.get::<NpcThink>() {
         let every = world.get_resource::<shards_content::ContentDb>().and_then(|db| db.get::<crate::def::BehaviorDef>(&npc.behavior)).and_then(|b| b.think);
-        out["think"] = json!({"left": round(t.left), "every": every.map(round)});
+        out["think"] = json!({"left": round(t.left), "every": every.map(round), "decided": t.decided});
     }
     if let Some(c) = e.get::<NpcChain>() {
         out["chain"] = json!({"input": c.input, "pressed": c.pressed.is_some()});

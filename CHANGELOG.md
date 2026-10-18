@@ -70,6 +70,7 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   - **N2 conditional options**: `AttackOption::when` (the behaviour's `Cond`s, evaluated in `NpcSystems::Decide`, kept as `NpcOptions`); `StateDef::rest_clamp` (a one-shot clamp of `NpcPlan.rest` on entering a state) and `NpcOutput::rest_cap`.
   - **N3 rest semantics**: `AttackPlanDef::rest_interrupted`, `first_rest`.
   - **N4 combo continuation**: `AttackOption::chain: Option<ChainDef { input, chance }>`, rolled when the attack starts, the input pressed at the start of its recovery (`NpcChain`), spacing-gated, a refused continuation ends the chain; the journal lines `chains` and `chain refused`. A chain rolls the odds of the first open option (one with `when` counts only while open) that names its action; a pending continuation press counts as a strike start for the others only while its input waits in the queue.
+  - **Press on decision (E17)**: `AttackPlanDef::press_on_decision` (optional, off by default): the token, the new choice and the press only on the NPC's decision ticks (`NpcThink.decided`).
   - **N5 decision cadence**: `BehaviorDef::think`, `NpcThink`, `NpcCtx::deciding()` and the condition `deciding`.
   - **N6 perception**: `PerceptionDef::keep_range` (`sees_within`): a known target stays seen farther out than a new one is noticed.
   - The AI layer shows them: `npc_state` (`strike`, `spacing`, `think`, `chain`, `plan.options`, `perception.keep_range`, `kept` targets) and `npc_overlay`. Scenario `npc_duel.scenario`, tests `shards_npc/tests/npc/duel.rs`.

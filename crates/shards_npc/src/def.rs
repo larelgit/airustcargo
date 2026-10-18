@@ -635,6 +635,14 @@ pub struct AttackPlanDef {
     /// max)` seconds. `None`: it starts without rest.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_rest: Option<(f32, f32)>,
+    /// The planner asks the director for a token, makes a new choice and presses only on the NPC's
+    /// decision ticks (`BehaviorDef::think`, `NpcThink.decided`); between two decisions it keeps the
+    /// choice it made and walks into its window. The TDD has the brain decide at 5-10 Hz and the
+    /// attack press is part of the decision, so grant, choice and press share one tick. Off (the
+    /// default): any tick. A behaviour without a `think` cadence decides every tick, so there it
+    /// changes nothing.
+    #[serde(skip_serializing_if = "is_false")]
+    pub press_on_decision: bool,
 }
 
 impl Default for AttackPlanDef {
@@ -648,6 +656,7 @@ impl Default for AttackPlanDef {
             rest: (0.5, 1.0),
             rest_interrupted: None,
             first_rest: None,
+            press_on_decision: false,
         }
     }
 }
@@ -945,7 +954,7 @@ mod tests {
             ]
         );
         let neutral = serde_json::to_string(&AttackPlanDef::default()).unwrap();
-        for field in ["rest_interrupted", "first_rest"] {
+        for field in ["rest_interrupted", "first_rest", "press_on_decision"] {
             assert!(!neutral.contains(field), "{field} stays out of a plan that does not use it: {neutral}");
         }
     }

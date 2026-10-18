@@ -51,4 +51,7 @@
         rest_interrupted: Some((0.2, 0.2)),
         first_rest: Some((0.2, 0.4)),
     ),
+    // Asks, chooses and presses on decision ticks only, and the same plan on any tick.
+    "decide_press": (options: [(input: "light")], rest: (0.5, 0.5), press_on_decision: true),
+    "any_press": (options: [(input: "light")], rest: (0.5, 0.5)),
 }
