@@ -93,9 +93,14 @@ fn merge_runs(s: UVec3, cols: Vec<Vec<(u16, u16)>>, spare: impl Fn(i32, i32, (u1
                 while x1 < w && takes(&used, x1, z) {
                     x1 += 1;
                 }
-                // ...then whole rows along z.
+                // A box ends on a real column: spare columns past the last one would stretch it
+                // over a hill to the edge of the volume.
+                while x1 > x + 1 && find(&cols, &used, x1 - 1, z, run).is_none() {
+                    x1 -= 1;
+                }
+                // ...then whole rows along z, each with a real column of its own.
                 let mut z1 = z + 1;
-                while z1 < d && (x..x1).all(|xx| takes(&used, xx, z1)) {
+                while z1 < d && (x..x1).all(|xx| takes(&used, xx, z1)) && (x..x1).any(|xx| find(&cols, &used, xx, z1, run).is_some()) {
                     z1 += 1;
                 }
                 for zz in z..z1 {
@@ -319,7 +324,8 @@ mod tests {
             }
         }
         let boxes = water_boxes(&v, |id| id == WATER, solid);
-        assert_eq!(boxes, vec![CellBox { min: IVec3::ZERO, max: IVec3::new(16, 6, 16) }]);
+        // The box ends on its last real column: the shore (x = 15) is not stretched over.
+        assert_eq!(boxes, vec![CellBox { min: IVec3::ZERO, max: IVec3::new(15, 6, 16) }]);
         check_water(1, &v);
     }
 

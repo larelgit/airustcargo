@@ -87,7 +87,7 @@ pub fn mix(mut z: u64) -> u64 {
 /// A cell's hash in `0..1`, from its position and a salt: per-block variation that needs no
 /// stream of random numbers (so no order of calls to keep).
 pub fn cell_hash(x: i32, y: i32, z: i32, salt: u64) -> f32 {
-    let h = mix(salt ^ mix((x as u64) ^ ((y as u64) << 21) ^ ((z as u64) << 42)));
+    let h = mix(mix(mix(salt ^ (x as u32 as u64)) ^ (y as u32 as u64)) ^ (z as u32 as u64));
     (h >> 40) as f32 / (1u64 << 24) as f32
 }
 
@@ -124,7 +124,7 @@ mod tests {
 
     const GOLDEN_SAMPLES: [u32; 6] = [0xbf2c2600, 0xbf27d711, 0xbec305e0, 0x3e98b9dd, 0x3e936c46, 0xbe93e8ad];
     const GOLDEN_ONE: u32 = 0xbd97a81c;
-    const GOLDEN_CELL: u32 = 0x3f389101;
+    const GOLDEN_CELL: u32 = 0x3d8fa660;
 
     #[test]
     fn octaves_and_gain_shape_the_field() {
@@ -154,5 +154,14 @@ mod tests {
         assert_eq!((fade(0.0), fade(1.0), fade(0.5)), (0.0, 1.0, 0.5));
         assert_eq!((smoothstep(-1.0), smoothstep(0.0), smoothstep(0.5), smoothstep(1.0), smoothstep(7.0)), (0.0, 0.0, 0.5, 1.0, 1.0));
         assert_eq!(lerp(2.0, 4.0, 0.25), 2.5);
+    }
+
+    #[test]
+    fn cell_hash_keeps_far_and_negative_cells_apart() {
+        // With the three coordinates packed into one word, (2^21, 0, 0) met (0, 1, 0).
+        assert_ne!(cell_hash(1 << 21, 0, 0, 5), cell_hash(0, 1, 0, 5));
+        assert_ne!(cell_hash(-1, 0, 0, 5), cell_hash(0, 0, 0, 5));
+        assert_ne!(cell_hash(0, 0, 1 << 10, 5), cell_hash(1 << 21, 0, 0, 5));
+        assert_ne!(cell_hash(1, 2, 3, 5), cell_hash(3, 2, 1, 5), "the axes are not interchangeable");
     }
 }

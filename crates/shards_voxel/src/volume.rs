@@ -30,6 +30,10 @@ pub const AIR: u8 = 0;
 /// The most cells a volume holds (a byte each): 128 Mi, far above any region the engine draws.
 pub const MAX_CELLS: u64 = 1 << 27;
 
+/// The most chunks a volume holds: the chunk table is allocated whole, so a tiny chunk over a
+/// big volume must be refused before anything is built.
+pub const MAX_CHUNKS: u64 = 1 << 16;
+
 /// One chunk: all one block, or a byte per cell.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Chunk {
@@ -38,8 +42,9 @@ enum Chunk {
 }
 
 /// A box of blocks `size` cells big, each `block` m on a side, its cell `(0, 0, 0)` with its
-/// least corner at `origin`.
-#[derive(Clone, Debug, PartialEq)]
+/// least corner at `origin`. Two volumes are equal when they hold the same world (a
+/// [`compact`](Self::compact)ed copy equals the original).
+#[derive(Clone, Debug)]
 pub struct VoxelVolume {
     size: UVec3,
     block: f32,
@@ -54,19 +59,34 @@ pub struct VoxelVolume {
     surface: Vec<u16>,
 }
 
+impl PartialEq for VoxelVolume {
+    fn eq(&self, other: &Self) -> bool {
+        self.size == other.size
+            && self.chunk == other.chunk
+            && self.block == other.block
+            && self.origin == other.origin
+            && self.surface == other.surface
+            && self.chunks.iter().zip(&other.chunks).all(|pair| match pair {
+                (Chunk::Uniform(a), Chunk::Uniform(b)) => a == b,
+                (Chunk::Dense(a), Chunk::Dense(b)) => a == b,
+                (Chunk::Uniform(u), Chunk::Dense(d)) | (Chunk::Dense(d), Chunk::Uniform(u)) => d.iter().all(|c| c == u),
+            })
+    }
+}
+
 impl VoxelVolume {
-    /// An empty (all air) volume. `size` must be a whole number of `chunk`s on every axis, no
-    /// side zero, at most [`u16::MAX`] cells tall and [`MAX_CELLS`] cells in all; `block` (the
-    /// edge of a cell, m) above 0 and finite; `origin` finite.
-    pub fn new(size: UVec3, block: f32, origin: Vec3, chunk: UVec3) -> Result<Self, String> {
+    /// Checks a shape without allocating anything: what [`new`](Self::new) and the generation
+    /// spec's validation share, so checking content never builds a volume.
+    pub fn check_shape(size: UVec3, block: f32, origin: Vec3, chunk: UVec3) -> Result<(), String> {
         if size.cmpeq(UVec3::ZERO).any() {
-            return Err(format!("size {size} must have no zero side"));
+            return Err(format!("size {size} must have no zero side: give every side at least one chunk"));
         }
         if chunk.cmpeq(UVec3::ZERO).any() {
             return Err(format!("chunk {chunk} must have no zero side"));
         }
         if (size % chunk).cmpne(UVec3::ZERO).any() {
-            return Err(format!("size {size} is not a whole number of {chunk} chunks"));
+            let up = (size + chunk - UVec3::ONE) / chunk * chunk;
+            return Err(format!("size {size} is not a whole number of {chunk} chunks: try {up}, or change the chunk size"));
         }
         if size.y > u16::MAX as u32 {
             return Err(format!("a volume is at most {} cells tall, not {}", u16::MAX, size.y));
@@ -75,12 +95,26 @@ impl VoxelVolume {
         if cells > MAX_CELLS {
             return Err(format!("size {size} is {cells} cells: a volume holds at most {MAX_CELLS}"));
         }
+        let n = size / chunk;
+        let count = n.x as u64 * n.y as u64 * n.z as u64;
+        if count > MAX_CHUNKS {
+            return Err(format!("size {size} in {chunk} chunks is {count} chunks: a volume holds at most {MAX_CHUNKS}; use a bigger chunk"));
+        }
         if !(block.is_finite() && block > 0.0) {
             return Err(format!("block size {block} must be above 0 and finite"));
         }
         if !origin.is_finite() {
             return Err(format!("origin {origin} must be finite"));
         }
+        Ok(())
+    }
+
+    /// An empty (all air) volume. `size` must be a whole number of `chunk`s on every axis, no
+    /// side zero, at most [`u16::MAX`] cells tall, [`MAX_CELLS`] cells and [`MAX_CHUNKS`] chunks
+    /// in all; `block` (the edge of a cell, m) above 0 and finite; `origin` finite. See
+    /// [`check_shape`](Self::check_shape).
+    pub fn new(size: UVec3, block: f32, origin: Vec3, chunk: UVec3) -> Result<Self, String> {
+        Self::check_shape(size, block, origin, chunk)?;
         let chunks_n = size / chunk;
         let count = (chunks_n.x * chunks_n.y * chunks_n.z) as usize;
         Ok(Self {
@@ -123,6 +157,31 @@ impl VoxelVolume {
     /// Chunks along each axis.
     pub fn chunk_count(&self) -> UVec3 {
         self.chunks_n
+    }
+
+    /// The block every cell of chunk `c` holds, if the chunk is stored as one byte (so a mesher
+    /// can skip an empty or solid chunk without reading its cells); `None` for a chunk stored
+    /// per cell or outside the volume. A chunk that is uniform but stored per cell reads `None`
+    /// until [`compact`](Self::compact).
+    pub fn chunk_uniform(&self, c: IVec3) -> Option<u8> {
+        match self.chunks.get(self.chunk_index(c)?)? {
+            Chunk::Uniform(id) => Some(*id),
+            Chunk::Dense(_) => None,
+        }
+    }
+
+    /// The cells of chunk `c` when it is stored per cell, in storage order (x, then z, then y
+    /// fastest, local to the chunk); `None` for a uniform chunk or outside the volume.
+    pub fn chunk_cells(&self, c: IVec3) -> Option<&[u8]> {
+        match self.chunks.get(self.chunk_index(c)?)? {
+            Chunk::Uniform(_) => None,
+            Chunk::Dense(cells) => Some(cells),
+        }
+    }
+
+    fn chunk_index(&self, c: IVec3) -> Option<usize> {
+        (c.cmpge(IVec3::ZERO).all() && c.cmplt(self.chunks_n.as_ivec3()).all())
+            .then(|| ((c.z as u32 * self.chunks_n.y + c.y as u32) * self.chunks_n.x + c.x as u32) as usize)
     }
 
     /// Whether cell `p` is in the volume.
@@ -343,8 +402,9 @@ impl VoxelVolume {
     /// Every cell whose centre is within `radius` cells of `center` (a position in cell units)
     /// becomes `id` (air carves). Surfaces stay.
     pub fn sphere(&mut self, center: Vec3, radius: f32, id: u8) {
-        let lo = (center - Vec3::splat(radius)).floor().as_ivec3();
-        let hi = (center + Vec3::splat(radius)).ceil().as_ivec3();
+        // Clipped to the volume: a huge radius costs the volume, not its bounding box.
+        let lo = (center - Vec3::splat(radius)).floor().as_ivec3().max(IVec3::ZERO);
+        let hi = (center + Vec3::splat(radius)).ceil().as_ivec3().min(self.size.as_ivec3() - IVec3::ONE);
         let r2 = radius * radius;
         for x in lo.x..=hi.x {
             for z in lo.z..=hi.z {
@@ -361,17 +421,42 @@ impl VoxelVolume {
     /// A tube of `radius` from `a` to `b` (positions in cell units): [`sphere`](Self::sphere)s
     /// every half cell along it.
     pub fn tube(&mut self, a: Vec3, b: Vec3, radius: f32, id: u8) {
-        let steps = ((b - a).length() * 2.0).ceil().max(1.0) as u32;
-        for i in 0..=steps {
-            self.sphere(a.lerp(b, i as f32 / steps as f32), radius, id);
+        let len = (b - a).length();
+        if !(len.is_finite() && radius.is_finite()) {
+            return;
+        }
+        let steps = (len * 2.0).ceil().max(1.0);
+        // Only the spheres that can touch the volume: the segment is clipped to the box grown by
+        // the radius (the slab method), and the positions stay those of the unclipped tube.
+        let (mut t0, mut t1) = (0.0f32, 1.0f32);
+        let (min, max) = (Vec3::splat(-radius - 1.0), self.size.as_vec3() + Vec3::splat(radius + 1.0));
+        let d = b - a;
+        for k in 0..3 {
+            if d[k] == 0.0 {
+                if a[k] < min[k] || a[k] > max[k] {
+                    return;
+                }
+            } else {
+                let (u, v) = ((min[k] - a[k]) / d[k], (max[k] - a[k]) / d[k]);
+                t0 = t0.max(u.min(v));
+                t1 = t1.min(u.max(v));
+            }
+        }
+        if t0 > t1 {
+            return;
+        }
+        let first = (t0 * steps).floor().max(0.0) as u64;
+        let last = (t1 * steps).ceil().min(steps) as u64;
+        for i in first..=last {
+            self.sphere(a.lerp(b, i as f32 / steps), radius, id);
         }
     }
 
     /// Flattens the disc of `radius` (cells) around the column position `center` to height `h`:
     /// higher columns are lowered, lower ones raised (`fill` under a `top`).
     pub fn flatten(&mut self, center: Vec2, radius: f32, h: u32, fill: u8, top: u8) {
-        let lo = (center - Vec2::splat(radius)).floor().as_ivec2();
-        let hi = (center + Vec2::splat(radius)).ceil().as_ivec2();
+        let lo = (center - Vec2::splat(radius)).floor().as_ivec2().max(IVec2::ZERO);
+        let hi = (center + Vec2::splat(radius)).ceil().as_ivec2().min(IVec2::new(self.size.x as i32, self.size.z as i32) - IVec2::ONE);
         for x in lo.x..=hi.x {
             for z in lo.y..=hi.y {
                 if (Vec2::new(x as f32 + 0.5, z as f32 + 0.5) - center).length() <= radius {
@@ -396,7 +481,8 @@ impl VoxelVolume {
             h.bytes(&v.to_le_bytes());
         }
         for v in [self.block, self.origin.x, self.origin.y, self.origin.z] {
-            h.bytes(&v.to_bits().to_le_bytes());
+            // `+ 0.0` turns -0.0 into +0.0: an anchor at 0 and a zero origin are the same volume.
+            h.bytes(&(v + 0.0).to_bits().to_le_bytes());
         }
         let per = (self.chunk.x * self.chunk.y * self.chunk.z) as usize;
         for chunk in &self.chunks {
@@ -644,5 +730,62 @@ mod tests {
         let v = VoxelVolume::new(UVec3::new(256, 32, 256), 1.0, origin, UVec3::new(64, 32, 64)).unwrap();
         assert_eq!(v.corner(IVec3::new(160, 12, 96)), Vec3::ZERO);
         assert_eq!(v.cell_at(Vec3::new(0.2, -0.2, 0.2)), IVec3::new(160, 11, 96), "just below the anchor is the cell under it");
+    }
+
+    #[test]
+    fn a_shape_is_checked_without_allocating_it() {
+        // 134 M one-cell chunks would be 2 GB of headers: refused by the check alone.
+        let e = VoxelVolume::check_shape(UVec3::splat(512), 1.0, Vec3::ZERO, UVec3::ONE).unwrap_err();
+        assert!(e.contains("chunks") && e.contains("bigger chunk"), "{e}");
+        assert!(VoxelVolume::new(UVec3::splat(512), 1.0, Vec3::ZERO, UVec3::ONE).is_err());
+        // One-cell columns over the cap on cells: the check says so, nothing is built.
+        assert!(VoxelVolume::check_shape(UVec3::new(1 << 27, 2, 1), 1.0, Vec3::ZERO, UVec3::new(1 << 20, 2, 1)).is_err());
+        // The default chunk over a big region is fine.
+        VoxelVolume::check_shape(UVec3::new(1024, 64, 1024), 1.0, Vec3::ZERO, UVec3::new(64, 32, 64)).unwrap();
+        let e = VoxelVolume::check_shape(UVec3::new(10, 8, 16), 1.0, Vec3::ZERO, UVec3::new(8, 8, 8)).unwrap_err();
+        assert!(e.contains("try [16, 8, 16]"), "{e}");
+    }
+
+    #[test]
+    fn edits_far_beyond_the_volume_return_at_once() {
+        let mut v = small();
+        v.sphere(Vec3::new(8.0, 4.0, 8.0), 1e9, 3);
+        assert_eq!(v.count(|id| id == 3), 16 * 8 * 16, "a huge sphere fills the volume");
+        v.tube(Vec3::new(-1e6, 4.0, 4.0), Vec3::new(1e6, 4.0, 4.0), 1.0, AIR);
+        assert_eq!(v.get(IVec3::new(5, 4, 4)), AIR, "a long tube carves the part inside");
+        assert_eq!(v.get(IVec3::new(5, 1, 4)), 3);
+        v.tube(Vec3::new(1e30, 0.0, 0.0), Vec3::new(-1e30, 0.0, 0.0), 1.0, AIR);
+        v.tube(Vec3::new(0.0, 0.0, f32::INFINITY), Vec3::ZERO, 1.0, AIR);
+        v.sphere(Vec3::splat(f32::NAN), f32::NAN, 1);
+        v.flatten(Vec2::new(8.0, 8.0), 1e9, 3, 2, 1);
+        assert_eq!(v.surface(0, 0), 3);
+        assert_eq!(v.surface(15, 15), 3);
+        // The clipped tube is the unclipped tube: the same cells inside.
+        let (mut a, mut b) = (small(), small());
+        a.tube(Vec3::new(1.0, 2.0, 3.0), Vec3::new(14.0, 5.0, 9.0), 1.5, 2);
+        b.tube(Vec3::new(1.0, 2.0, 3.0), Vec3::new(14.0, 5.0, 9.0), 1.5, 2);
+        assert_eq!(a, b);
+        assert!(a.count(|id| id == 2) > 20);
+    }
+
+    #[test]
+    fn negative_zero_and_zero_hash_alike_and_compacting_changes_no_equality() {
+        let anchor = VoxelVolume::origin_for_anchor(UVec3::new(0, 4, 0), 1.0);
+        let a = VoxelVolume::new(UVec3::new(16, 8, 16), 1.0, anchor, UVec3::new(8, 8, 8)).unwrap();
+        let b = VoxelVolume::new(UVec3::new(16, 8, 16), 1.0, Vec3::new(0.0, -4.0, 0.0), UVec3::new(8, 8, 8)).unwrap();
+        assert_eq!(a.hash(), b.hash(), "-0.0 and 0.0 are the same origin");
+        let mut v = small();
+        v.set(IVec3::ZERO, 2);
+        v.set(IVec3::ZERO, AIR);
+        let c = v.clone();
+        v.compact();
+        assert_eq!(v, c, "a dense all-air chunk equals its uniform form");
+        assert_eq!(v.hash(), c.hash());
+        assert_eq!(v.chunk_uniform(IVec3::ZERO), Some(AIR));
+        assert_eq!(c.chunk_uniform(IVec3::ZERO), None);
+        assert_eq!(c.chunk_cells(IVec3::ZERO).map(<[u8]>::len), Some(512));
+        assert!(v.chunk_cells(IVec3::ZERO).is_none() && v.chunk_uniform(IVec3::new(2, 0, 0)).is_none());
+        v.set(IVec3::new(1, 1, 1), 5);
+        assert_ne!(v, c);
     }
 }

@@ -19,11 +19,11 @@ use shards_motion::MotionPlugin;
 use shards_net::NetPlugin;
 use shards_npc::NpcPlugin;
 use shards_scatter::ScatterPlugin;
-use shards_voxel::VoxelPlugin;
 use shards_save::SavePlugin;
 use shards_locale::LocalePlugin;
 use shards_settings::ShardsSettingsPlugin;
 use shards_ui::UiPlugin as ShardsUiPlugin;
+use shards_voxel::VoxelPlugin;
 use shards_world::WorldPlugin;
 
 use crate::audio_wiring::EngineAudioPlugin;

@@ -143,12 +143,13 @@ pub struct VoxelPaletteDef {
     pub variation: VariationDef,
     #[serde(default)]
     pub meshing: Meshing,
-    /// The look (`*.look.ron`) of the terrain mesh, of the foliage mesh and of the water surface.
-    /// Unset: the meshes use the engine's default material.
+    /// The look (`*.look.ron`) of the terrain mesh. Unset: the engine's default material.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub look: Option<String>,
+    /// The look of the foliage mesh (blocks with `foliage`). Unset: the engine's default material.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foliage_look: Option<String>,
+    /// The look of the water surface (blocks with `liquid`). Unset: the engine's default material.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub water_look: Option<String>,
 }
@@ -188,10 +189,12 @@ impl VoxelPaletteDef {
                 out.push(format!("{at}: the name is used by an earlier block"));
             }
             for (face, color) in [("top", Some(&block.top)), ("side", block.side.as_ref()), ("bottom", block.bottom.as_ref())] {
-                if let Some(color) = color
-                    && let Err(e) = parse_color(color)
-                {
-                    out.push(format!("{at}: {face}: {e}"));
+                if let Some(color) = color {
+                    match parse_color(color) {
+                        Err(e) => out.push(format!("{at}: {face}: {e}")),
+                        Ok(c) if c[3] != 255 => out.push(format!("{at}: {face}: `{color}` has an alpha: blocks are opaque, write `#rrggbb`")),
+                        Ok(_) => {}
+                    }
                 }
             }
             if block.liquid && block.solid {
@@ -307,6 +310,21 @@ impl VoxelPalette {
     /// The block under `id`; none for air and for an id past the palette.
     pub fn block(&self, id: u8) -> Option<&BlockDef> {
         if id == AIR { None } else { self.def.blocks.get(id as usize - 1) }
+    }
+
+    /// A hash of what the blocks are: their order, names, flags and colours. A world generated
+    /// under another palette is another world even when its ids are the same, so it goes into
+    /// the generated world's hash. FNV-1a, the same on every run.
+    pub fn fingerprint(&self) -> u64 {
+        let mut h = crate::volume::Fnv::default();
+        for (b, colors) in self.def.blocks.iter().zip(&self.colors[1..]) {
+            h.bytes(b.name.as_bytes());
+            h.bytes(&[0, b.solid as u8, b.liquid as u8, b.foliage as u8, b.emissive as u8]);
+            for c in colors {
+                h.bytes(c);
+            }
+        }
+        h.0
     }
 
     /// The id of the block called `name`.
@@ -426,6 +444,7 @@ mod tests {
                 (name: "w", top: "#fff", liquid: true),
                 (name: "f", top: "#fff", foliage: true),
                 (name: "both", top: "#fff", solid: false, liquid: true, foliage: true),
+                (name: "al", top: "#ffffff80"),
             ], shade: (up: 1.5), ao: (step: -0.1), variation: (patch: 2.0))"##,
         );
         let problems = def.problems();
@@ -438,6 +457,7 @@ mod tests {
         has("blocks[4] `w`: a liquid is never solid");
         has("blocks[5] `f`: foliage is never solid");
         has("blocks[6] `both`: a block is a liquid or foliage, not both");
+        has("blocks[7] `al`: top: `#ffffff80` has an alpha");
         has("shade.up: 0 to 1, not 1.5");
         has("ao.step: 0 to 1, not -0.1");
         has("variation.patch: 0 to 1, not 2");

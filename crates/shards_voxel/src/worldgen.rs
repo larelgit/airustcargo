@@ -32,6 +32,12 @@ use crate::volume::{Fnv, VoxelVolume, AIR};
 /// The most attempts a generation may ask for.
 pub const MAX_ATTEMPTS: u32 = 64;
 
+/// Domain tags: the first key of each kind of stream, so a step's stream, a keyed stream and a
+/// noise field never meet whatever the keys after them are.
+const STREAM_STEP: u64 = 0x7374_6570;
+const STREAM_KEYED: u64 = 0x006b_6579_6564;
+const STREAM_NOISE: u64 = 0x006e_6f69_7365;
+
 /// A generation step: edits the volume, may fail the attempt with a reason.
 pub type StepFn = fn(&mut VoxelGen) -> Result<(), String>;
 /// A check of the finished volume: `Err` with a reason fails the attempt.
@@ -118,7 +124,7 @@ impl VoxelSteps {
                     out.push(message);
                 }
                 Some((registered, _)) if registered != version => {
-                    out.push(format!("steps[{i}]: voxel step `{name}` is at version {registered} in this build, the content expects {version}"));
+                    out.push(format!("steps[{i}]: voxel step `{name}` is at version {registered} in this build, the content expects {version}: set the version in the content to {registered}, or register {version} in the game"));
                 }
                 Some(_) => {}
             }
@@ -159,10 +165,12 @@ pub fn step_set_hash(steps: &[(String, u32)]) -> u64 {
     h.0
 }
 
-/// Folds a step list into a volume hash: the hash of a generated world.
-pub fn world_hash(volume_hash: u64, steps: &[(String, u32)]) -> u64 {
+/// Folds the palette ([`VoxelPalette::fingerprint`]) and a step list into a volume hash: the hash
+/// of a generated world.
+pub fn world_hash(volume_hash: u64, palette: &VoxelPalette, steps: &[(String, u32)]) -> u64 {
     let mut h = Fnv::default();
     h.bytes(&volume_hash.to_le_bytes());
+    h.bytes(&palette.fingerprint().to_le_bytes());
     h.bytes(&step_set_hash(steps).to_le_bytes());
     h.0
 }
@@ -219,7 +227,7 @@ impl GenSpec {
     /// shape, the attempts, the step list, the checks, a `params` key that names no listed step.
     pub fn problems(&self, steps: &VoxelSteps) -> Vec<String> {
         let mut out = Vec::new();
-        if let Err(e) = VoxelVolume::new(self.size, self.block, self.origin, self.chunk) {
+        if let Err(e) = VoxelVolume::check_shape(self.size, self.block, self.origin, self.chunk) {
             out.push(e);
         }
         if !(1..=MAX_ATTEMPTS).contains(&self.attempts) {
@@ -294,23 +302,23 @@ impl<'a> VoxelGen<'a> {
         T::deserialize(value).map_err(|e| format!("params of step `{}`: {e}", self.step))
     }
 
-    /// The step's random stream: `DetRng::from_keys(&[seed, version, attempt, step_index])`.
+    /// The step's random stream: `DetRng::from_keys(&[domain, seed, version, attempt, step_index])`.
     /// Every call starts the same stream over: take it once per step (`let mut rng = g.rng();`),
     /// or [`rng_keyed`](Self::rng_keyed) for more.
     pub fn rng(&self) -> DetRng {
-        DetRng::from_keys(&[self.spec.seed, self.spec.version as u64, self.attempt as u64, self.step_index as u64])
+        DetRng::from_keys(&[STREAM_STEP, self.spec.seed, self.spec.version as u64, self.attempt as u64, self.step_index as u64])
     }
 
     /// A stream of its own beside [`rng`](Self::rng), by `key` (a cell, a salt).
     pub fn rng_keyed(&self, key: u64) -> DetRng {
-        DetRng::from_keys(&[self.spec.seed, self.spec.version as u64, self.attempt as u64, self.step_index as u64, key])
+        DetRng::from_keys(&[STREAM_KEYED, self.spec.seed, self.spec.version as u64, self.attempt as u64, self.step_index as u64, key])
     }
 
     /// Value noise for this attempt, told apart by `salt`, `frequency` lattice cells per cell
     /// (coordinates in cells). The same salt gives the same field in every step of an attempt, so
     /// two steps may sample one terrain; another attempt gives another field.
     pub fn noise(&self, salt: u64, frequency: f32) -> Noise {
-        Noise::new(DetRng::from_keys(&[self.spec.seed, self.spec.version as u64, self.attempt as u64, salt, 0x006e_6f69_7365]).next_u64(), frequency)
+        Noise::new(DetRng::from_keys(&[STREAM_NOISE, self.spec.seed, self.spec.version as u64, self.attempt as u64, salt]).next_u64(), frequency)
     }
 
     /// Leaves a named point at world position `pos` (the spawn, a point of interest). A name used
@@ -391,7 +399,7 @@ fn attempt_once(registry: &VoxelSteps, palette: &VoxelPalette, spec: &GenSpec, a
     for name in &spec.checks {
         registry.checks[name.as_str()](&g).map_err(|e| format!("check `{name}`: {e}"))?;
     }
-    let hash = world_hash(g.volume.hash(), &spec.steps);
+    let hash = world_hash(g.volume.hash(), palette, &spec.steps);
     Ok(Generated { volume: g.volume, marks: g.marks, remarks: g.remarks, attempt, steps: spec.steps.clone(), hash })
 }
 
@@ -558,7 +566,7 @@ mod tests {
         assert!(steps.validate_steps(&list(&[("noise_hills", 1), ("arena", 3), ("arena", 3)])).is_empty());
         let bad = steps.validate_steps(&list(&[("noise_hils", 1), ("arena", 2), ("nowhere", 1)]));
         assert_eq!(bad[0], "steps[0]: unknown voxel step `noise_hils` (did you mean `noise_hills`?)");
-        assert_eq!(bad[1], "steps[1]: voxel step `arena` is at version 3 in this build, the content expects 2");
+        assert_eq!(bad[1], "steps[1]: voxel step `arena` is at version 3 in this build, the content expects 2: set the version in the content to 3, or register 2 in the game");
         assert!(bad[2].starts_with("steps[2]: unknown voxel step `nowhere`"), "{bad:?}");
         assert_eq!(steps.validate_steps(&[]), vec!["steps: a region lists at least one step".to_owned()]);
         assert!(VoxelSteps { steps: BTreeMap::new(), checks: BTreeMap::new() }.validate_steps(&list(&[("a", 1)]))[0].contains("no step is registered"));
@@ -621,9 +629,9 @@ mod tests {
         let a = generate(&VoxelSteps::default(), &palette(), &hills_spec(1)).unwrap();
         let mut spec = hills_spec(1);
         spec.steps[1].1 = 1;
-        assert_eq!(world_hash(a.volume.hash(), &spec.steps), a.hash);
+        assert_eq!(world_hash(a.volume.hash(), &palette(), &spec.steps), a.hash);
         let other = [("noise_hills".to_owned(), 1), ("fill_water".to_owned(), 2)];
-        assert_ne!(world_hash(a.volume.hash(), &other), a.hash, "the same cells under another step version are another world");
+        assert_ne!(world_hash(a.volume.hash(), &palette(), &other), a.hash, "the same cells under another step version are another world");
         let swapped = [("fill_water".to_owned(), 1), ("noise_hills".to_owned(), 1)];
         assert_ne!(step_set_hash(&swapped), step_set_hash(&spec.steps), "the order of steps counts");
         assert_ne!(step_set_hash(&[("ab".into(), 1)]), step_set_hash(&[("a".into(), 1), ("b".into(), 1)]));
@@ -635,7 +643,7 @@ mod tests {
         assert_eq!((a.volume.hash(), a.hash), GOLDEN_WORLD, "{:#018x} {:#018x}", a.volume.hash(), a.hash);
     }
 
-    const GOLDEN_WORLD: (u64, u64) = (0xa7eb074a16f9dbb7, 0x4e2bc40909948f6c);
+    const GOLDEN_WORLD: (u64, u64) = (0x4214394880047bc2, 0x1c55608147bab276);
 
     #[test]
     fn rng_and_noise_are_keyed_by_seed_version_attempt_and_step() {
@@ -696,16 +704,20 @@ mod tests {
         // A check that passes on some attempt ends the loop at it, and the marks are that attempt's.
         spec.checks = vec!["flat".into()];
         spec.attempts = 40;
-        let done = generate(&steps, &palette(), &spec);
-        match done {
-            Ok(g) => {
-                assert!(g.attempt > 0, "attempt 0 is bumpy at this frequency");
-                assert_eq!(g.marks.len(), 1, "a name used again replaces the point");
-                assert_eq!(g.find_mark("spawn").unwrap().y, g.volume.surface(8, 8) as f32 + 1.0);
-                assert_eq!(g.remarks, vec!["spawned".to_owned()]);
+        let mut retried = false;
+        for seed in 1..=8 {
+            spec.seed = seed;
+            match generate(&steps, &palette(), &spec) {
+                Ok(g) => {
+                    retried |= g.attempt > 0;
+                    assert_eq!(g.marks.len(), 1, "a name used again replaces the point");
+                    assert_eq!(g.find_mark("spawn").unwrap().y, g.volume.surface(8, 8) as f32 + 1.0);
+                    assert_eq!(g.remarks, vec!["spawned".to_owned()]);
+                }
+                Err(e) => assert!(e.contains("not flat"), "{e}"),
             }
-            Err(e) => assert!(e.contains("not flat"), "{e}"),
         }
+        assert!(retried, "some seed is bumpy at attempt 0 at this frequency");
         // Reproducible: the same failure text twice.
         assert_eq!(generate(&steps, &palette(), &spec).map(|g| g.hash), generate(&steps, &palette(), &spec).map(|g| g.hash));
     }
@@ -768,5 +780,17 @@ mod tests {
         let params: BTreeMap<String, Value> = ron::from_str(r#"{ "noise_hills": (top: "grass", fill: "dirt", amplitude: 7.0, octaves: 3), "fill_water": (level: 4) }"#).unwrap();
         assert_eq!(params["noise_hills"]["amplitude"], json!(7.0));
         assert_eq!(params["fill_water"], json!({"level": 4}));
+    }
+
+    #[test]
+    fn the_palette_and_the_stream_kind_are_part_of_a_world() {
+        let spec = hills_spec(1);
+        let a = generate(&VoxelSteps::default(), &palette(), &spec).unwrap();
+        // Same cells, the blocks renamed: another world.
+        let mut def = palette().def().clone();
+        def.blocks[0].name = "renamed".to_owned();
+        let other = VoxelPalette::from_def(&def).unwrap();
+        assert_ne!(world_hash(a.volume.hash(), &other, &spec.steps), a.hash);
+        assert_ne!(other.fingerprint(), palette().fingerprint());
     }
 }
