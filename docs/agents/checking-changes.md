@@ -1,6 +1,6 @@
 # Checking changes
 
-Read this when you choose how to verify a change: tests, CI and nextest, scenarios, content checks, replays, heavy mode, performance, nightly jobs. The gate commands are in [AGENTS.md](../../AGENTS.md). Part of its index.
+Read this when you choose how to verify a change: tests, CI and nextest, scenarios, content checks, replays, heavy mode, performance, nightly jobs. The gate commands are in [AGENTS.md](../../AGENTS.md). Part of the AGENTS.md index.
 
 - What CI runs, with `cargo-nextest` (`.config/nextest.toml`, `template/.config/nextest.toml`; profile `ci`: two retries, and a test that
   passes only on a retry **fails** the run, so a flaky test is a bug to fix, not to rerun):

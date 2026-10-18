@@ -89,7 +89,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   `arena_cleared`, `foe_near`, `in_fight`).
 - Exit codes of `shards`: 0 — done, 1 — a tool refused (the error says why), 2 — `shards` itself failed
   (no game, no token, wrong command), 3 — the game stopped: `step` (or `fuzz`, `soak`) halted on a crashed
-  system, a broken invariant or a failed heavy check (`--heavy`, see "Checking changes").
+  system, a broken invariant or a failed heavy check (`--heavy`, see [checking-changes.md](checking-changes.md)).
 - Looking for a bug? Describe it as a rule: `shards assert add NAME COND`, where `COND` uses the `--until` syntax
   (plus `warning` and `error`). After each tick the game checks the game's rules and yours; on a violation
   `step` answers `stopped: invariant NAME violated at tick N (replay: …)`, and the replay is already saved.

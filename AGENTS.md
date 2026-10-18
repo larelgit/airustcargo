@@ -18,7 +18,7 @@ How this file works: it is the short core that every agent loads. Detail lives i
 - `cargo build --workspace`, `cargo test --workspace`. The first build of Bevy is slow;
   `.cargo/config.toml` limits it to four threads. `template/` is a separate workspace:
   `cargo test --manifest-path template/Cargo.toml`. CI runs the tests with `cargo-nextest` (`cargo install cargo-nextest --locked`; a
-  process per test, see "Checking changes"); `cargo test` stays a supported local command.
+  process per test, see [checking-changes.md](docs/agents/checking-changes.md)); `cargo test` stays a supported local command.
 - The crate map is in [docs/agents/crates.md](docs/agents/crates.md).
 
 ## Watching the game and acting in it (brief)
@@ -41,18 +41,18 @@ Run `shards` from the game's folder or below it (the token lives in `.shards/`),
 - **The boundary.** The game (the template, the sandbox) depends only on the `shards` crate and does not change the engine's code. The engine has no names
   from a particular game: if a mechanism will be useful to a second game with a different story, it goes in the engine; if it is a particular
   "what" (a weapon, an enemy, a number), it goes in the game, that is, in content.
-- **Determinism essentials.** Gameplay runs in `FixedUpdate` in a `SimSet`, randomness comes only from `SimRng`, simulation maths goes through `bevy::math::ops` and never through `f32` methods (clippy fails on them), physics reads `Transform`, the world is created in `OnEnter(EngineState::InGame)`. Full rules: [determinism.md](docs/agents/determinism.md).
-- **Order by `AiId` or `ColliderId`, never by `Entity`** and not by the order of a query: a replay must match with a window and without one.
+- **Determinism essentials.** Gameplay runs in `FixedUpdate` in a `SimSet`, randomness comes only from `SimRng`, simulation maths goes through `bevy::math::ops` and never through `f32` methods (clippy fails on them), physics reads `Transform` (colliders on top-level entities, size in `Shape`, never in `Transform::scale`), the world is created in `OnEnter(EngineState::InGame)`. An event observer that changes gameplay returns at once on a machine that does not simulate (`shards::core::simulates`), or co-op desyncs. Never build with `-C target-cpu=native` or `+fma`, and never enable `scalar-math` in glam (or parry3d `enhanced-determinism`): replays diverge and rendering breaks. Full rules: [determinism.md](docs/agents/determinism.md).
+- **Order by `AiId` or `ColliderId`, never by `Entity`**, not by the order of a query, and never by `HashMap`/`HashSet` order (use indices and `BTreeMap`): a replay must match with a window and without one.
 - **Content, not constants.** Numbers and definitions are `assets/content/**/*.<kind>.ron`; player-read text is Fluent (`@id`). See [content.md](docs/agents/content.md).
 - Characters are driven only through `Intent`: the keyboard, the agent's tools, the enemy brains and the replay write to it.
   Register a new input component through `replay_input::<C>()`, otherwise replays will diverge.
-- New simulation state outside entities with `AiId` must be registered for snapshots and replay checks ([determinism.md](docs/agents/determinism.md)); the engine assigns `AiId`, never write it ([tools-and-invariants.md](docs/agents/tools-and-invariants.md)).
+- New simulation state outside entities with `AiId` must be registered: `add_snapshot_resource` (and `add_snapshot_rebuild`/`add_snapshot_check`) for snapshots, `replay_ignore::<C>()` for cosmetics and `add_replay_check` for state outside `AiVisible` entities in replays ([determinism.md](docs/agents/determinism.md)); invariants (`add_ai_invariant`): if one fires, fix the bug, do not weaken the rule without saying why; the engine assigns `AiId`, never write it ([tools-and-invariants.md](docs/agents/tools-and-invariants.md)).
 
 ## Gate: checking a change
 
 - `cargo test --workspace`: unit tests and scenarios in `crates/sandbox/tests/`; `cargo clippy --workspace --all-targets
   -- -D warnings` must stay silent. If you changed something the template uses, run `cargo test --manifest-path template/Cargo.toml`.
-- Content: `cargo sandbox --check-content`; world: `cargo sandbox --worldgen-report wilds --seeds 1..1000` must return 0. After a deliberate gameplay or content change, record the reference replays again. Everything else (CI, nextest, scenarios, replays, heavy mode, perf, nightly): [checking-changes.md](docs/agents/checking-changes.md).
+- Content: `cargo sandbox --check-content`; world: `cargo sandbox --worldgen-report wilds --seeds 1..1000` must return 0. After a deliberate gameplay or content change, record the reference replays again (`cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`; template: `cargo test --test game record_reference_replays -- --ignored` in `template/`). Check a replay with `cargo sandbox --replay FILE --verify`; the template's worldgen region is `valley`. Everything else (CI, nextest, scenarios, replays, heavy mode, perf, nightly): [checking-changes.md](docs/agents/checking-changes.md).
 - If you change a module's behaviour, update its section in `docs/manual.md`, `docs/engine-progress.md` (statuses) and `CHANGELOG.md`
   (`Unreleased`); update `README.md` only when what it says about the project changes (features, quick start, steps).
 
