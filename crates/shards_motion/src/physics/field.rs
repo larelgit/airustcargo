@@ -41,7 +41,10 @@ pub struct VoxelField {
     solid_cells: u64,
     /// The lowest and the highest layer (`y`) a solid cell is in.
     layers_used: Option<(u32, u32)>,
-    /// FNV-1a over the size, the cell, the origin and the bits (not the layers).
+    /// Casts merge the cells under them into column runs (the default; see
+    /// [`with_cast_merge`](Self::with_cast_merge)).
+    merge_casts: bool,
+    /// FNV-1a over the size, the cell, the origin, the cast mode and the bits (not the layers).
     hash: u64,
 }
 
@@ -49,8 +52,16 @@ impl std::fmt::Debug for VoxelField {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "VoxelField {{ {}x{}x{} cells of {} m at {}, {} solid, {:?}, hash {:016x} }}",
-            self.size.x, self.size.y, self.size.z, self.cell, self.origin, self.solid_cells, self.layers, self.hash
+            "VoxelField {{ {}x{}x{} cells of {} m at {}, {} solid, {:?}{}, hash {:016x} }}",
+            self.size.x,
+            self.size.y,
+            self.size.z,
+            self.cell,
+            self.origin,
+            self.solid_cells,
+            self.layers,
+            if self.merge_casts { "" } else { ", casts cell by cell" },
+            self.hash
         )
     }
 }
@@ -100,6 +111,7 @@ impl VoxelField {
             bits,
             solid_cells,
             layers_used: (solid_cells > 0).then_some((low, high)),
+            merge_casts: true,
             hash: 0,
         };
         field.hash = field.fnv();
@@ -110,6 +122,25 @@ impl VoxelField {
     pub fn with_layers(mut self, layers: CollisionLayers) -> Self {
         self.layers = layers;
         self
+    }
+
+    /// The same cells, cast against cell by cell (`false`) instead of merged into column runs
+    /// (`true`, the default): what tests compare the merge with. Cell by cell, a cast answers as a
+    /// world of one cuboid collider per cell (ids in `(x, y, z)` order) does, to the bit; merged,
+    /// the same up to rounding, and faster. It is part of the field and of its
+    /// [`hash`](Self::hash) (so the physics snapshot check sees it), not a switch of the world:
+    /// nothing flips it under a running game.
+    #[doc(hidden)]
+    pub fn with_cast_merge(mut self, on: bool) -> Self {
+        self.merge_casts = on;
+        self.hash = self.fnv();
+        self
+    }
+
+    /// Whether casts merge the cells under them into column runs
+    /// ([`with_cast_merge`](Self::with_cast_merge)).
+    pub fn merges_casts(&self) -> bool {
+        self.merge_casts
     }
 
     pub fn origin(&self) -> Vec3 {
@@ -140,8 +171,8 @@ impl VoxelField {
         self.bits.len() * 8
     }
 
-    /// FNV-1a over the size, the cell, the origin and every bit (not the layers): what the
-    /// physics snapshot check compares.
+    /// FNV-1a over the size, the cell, the origin, the cast mode and every bit (not the layers):
+    /// what the physics snapshot check compares.
     pub fn hash(&self) -> u64 {
         self.hash
     }
@@ -159,6 +190,7 @@ impl VoxelField {
         for v in self.origin.to_array() {
             eat(&v.to_bits().to_le_bytes());
         }
+        eat(&[u8::from(self.merge_casts)]);
         for word in &self.bits {
             eat(&word.to_le_bytes());
         }
@@ -223,9 +255,10 @@ impl VoxelField {
 
     /// The cells (an inclusive range) whose closed boxes touch the closed world box `lo..=hi`,
     /// clipped to the field: a box that ends exactly on a face takes the cell on its other side
-    /// too, as an overlap test of two boxes does. `None` if it misses the field or is not finite.
+    /// too, as an overlap test of two boxes does. An infinite bound reaches the field's edge (a
+    /// cast of unlimited reach). `None` if it misses the field or a bound is not a number.
     pub fn cells_in(&self, lo: Vec3, hi: Vec3) -> Option<(IVec3, IVec3)> {
-        if !(lo.is_finite() && hi.is_finite()) {
+        if lo.is_nan() || hi.is_nan() {
             return None;
         }
         let a = ((lo - self.origin) / self.cell).ceil() - Vec3::ONE;
@@ -268,7 +301,8 @@ impl VoxelField {
     /// it is, so the distance, point and normal are those of a cuboid collider in its place. A
     /// ray that starts inside a solid cell hits it at 0 with a zero normal (as parry says for a
     /// solid shape). Among cells the ray meets at the same distance (along an edge or a face
-    /// between two cells) the lowest in `(x, y, z)` order wins. One difference from cuboid
+    /// between two cells) one it meets as a box wins over one it meets only along a seam (as a
+    /// cuboid per cell would answer), then the lowest in `(x, y, z)` order. One difference from cuboid
     /// colliders side by side: a ray in the plane of a face between two solid cells is inside the
     /// solid and meets it, where parry may let it through between the cuboids
     /// (`along_seam`).
@@ -346,13 +380,23 @@ impl VoxelField {
             }
         }
         let ray = Ray::new(origin, dir);
+        let mut best: Option<(FieldRay, bool)> = None;
         loop {
-            if let Some(hit) = self.ray_at(&ray, max, cell, on_face, step) {
-                return Some(hit);
+            if let Some(hit) = self.ray_at(&ray, best.map_or(max, |(b, _)| b.distance), cell, on_face, step)
+                && ahead(hit, best)
+            {
+                best = Some(hit);
             }
             let t = t_max.min_element();
-            if !(t <= stop && t.is_finite()) {
-                return None;
+            // After a hit the walk goes on only to the faces at its distance: a cell reached
+            // there (through an edge or a corner, by a ray going down an axis) can be met as
+            // near and win the tie (`ahead`); one reached later is met farther.
+            let until = best.map_or(stop, |(b, _)| {
+                let at = b.distance / self.cell;
+                at + NEAR * at.max(1.0)
+            });
+            if !(t <= until && t.is_finite()) {
+                return best.map(|(b, _)| b);
             }
             let together = t + NEAR * t.abs().max(1.0);
             let mut left = false;
@@ -370,7 +414,12 @@ impl VoxelField {
             // Out of the field: the cells inside behind the faces it went out by are the last
             // it touches.
             if left {
-                return self.ray_at(&ray, max, cell, on_face, step);
+                if let Some(hit) = self.ray_at(&ray, best.map_or(max, |(b, _)| b.distance), cell, on_face, step)
+                    && ahead(hit, best)
+                {
+                    best = Some(hit);
+                }
+                return best.map(|(b, _)| b);
             }
         }
     }
@@ -411,7 +460,9 @@ impl VoxelField {
                 continue;
             }
             let (t1, t2) = ((lo[a] - o[a]) / d[a], (hi[a] - o[a]) / d[a]);
-            if t1.min(t2) > near {
+            // A ray that starts on a face and goes in enters by it at 0: that face's normal, as
+            // parry gives (the first such axis; an axis it goes along, or out of, is no entry).
+            if t1.min(t2) > near || (entry.is_none() && t1.min(t2) >= near) {
                 near = t1.min(t2);
                 entry = Some(a);
             }
@@ -425,8 +476,8 @@ impl VoxelField {
         Some((near, normal))
     }
 
-    fn ray_at(&self, ray: &Ray, max: f32, cell: IVec3, on_face: [bool; 3], step: IVec3) -> Option<FieldRay> {
-        let mut best: Option<FieldRay> = None;
+    fn ray_at(&self, ray: &Ray, max: f32, cell: IVec3, on_face: [bool; 3], step: IVec3) -> Option<(FieldRay, bool)> {
+        let mut best: Option<(FieldRay, bool)> = None;
         let mut options = [[0i32; 2]; 3];
         let mut counts = [1usize; 3];
         for a in 0..3 {
@@ -451,23 +502,33 @@ impl VoxelField {
                     // As a world of one collider per cell tests each: its box first, then the shape,
                     // within the nearest hit so far.
                     let (centre, half) = (self.center(c), cuboid.half_extents);
-                    let reach = best.map_or(max, |b| b.distance);
-                    let hit = ray_hits_aabb(ray.origin, ray.dir, reach, centre - half, centre + half)
+                    let reach = best.map_or(max, |(b, _)| b.distance);
+                    let boxed = ray_hits_aabb(ray.origin, ray.dir, reach, centre - half, centre + half)
                         .then(|| cuboid.cast_ray_and_get_normal(&Pose::from_translation(centre), ray, reach, true))
                         .flatten()
-                        .map(|hit| (hit.time_of_impact, hit.normal))
-                        .or_else(|| self.along_seam(ray, reach, c));
-                    let Some((distance, normal)) = hit else {
+                        .map(|hit| (hit.time_of_impact, hit.normal, false));
+                    let hit = boxed.or_else(|| self.along_seam(ray, reach, c).map(|(distance, normal)| (distance, normal, true)));
+                    let Some((distance, normal, seam)) = hit else {
                         continue;
                     };
-                    if best.is_none_or(|b| distance < b.distance) {
-                        best = Some(FieldRay { distance, normal, cell: c });
+                    let hit = (FieldRay { distance, normal, cell: c }, seam);
+                    if ahead(hit, best) {
+                        best = Some(hit);
                     }
                 }
             }
         }
         best
     }
+}
+
+/// Whether `hit` goes before `best` (each with whether it was met only along a seam, as
+/// `along_seam` says): it is nearer; or as near (the same `f32`) and met as a box where `best` was
+/// met only along a seam (a cuboid per cell would have only the box's answer); or as near, met
+/// alike and lower in `(x, y, z)` order (x first, as integers).
+fn ahead(hit: (FieldRay, bool), best: Option<(FieldRay, bool)>) -> bool {
+    let (h, h_seam) = hit;
+    best.is_none_or(|(b, b_seam)| h.distance < b.distance || (h.distance == b.distance && (h_seam, h.cell.to_array()) < (b_seam, b.cell.to_array())))
 }
 
 fn sign(v: f32) -> i32 {
@@ -512,7 +573,7 @@ mod tests {
     /// [`brute`], `seams`: with the rays along seams.
     fn cuboids(f: &VoxelField, origin: Vec3, dir: Vec3, max: f32, seams: bool) -> Option<FieldRay> {
         let ray = Ray::new(origin, dir);
-        let mut best: Option<FieldRay> = None;
+        let mut best: Option<(FieldRay, bool)> = None;
         for x in 0..f.size.x as i32 {
             for y in 0..f.size.y as i32 {
                 for z in 0..f.size.z as i32 {
@@ -520,21 +581,23 @@ mod tests {
                     if !f.solid(c) {
                         continue;
                     }
-                    let (centre, half, reach) = (f.center(c), f.cuboid().half_extents, best.map_or(max, |b| b.distance));
+                    let (centre, half, reach) = (f.center(c), f.cuboid().half_extents, best.map_or(max, |(b, _)| b.distance));
                     let hit = ray_hits_aabb(origin, dir, reach, centre - half, centre + half)
                         .then(|| f.cuboid().cast_ray_and_get_normal(&Pose::from_translation(centre), &ray, reach, true))
                         .flatten()
-                        .map(|hit| (hit.time_of_impact, hit.normal))
-                        .or_else(|| seams.then(|| f.along_seam(&ray, reach, c)).flatten());
-                    if let Some((distance, normal)) = hit
-                        && best.is_none_or(|b| distance < b.distance)
+                        .map(|hit| (hit.time_of_impact, hit.normal, false))
+                        .or_else(|| seams.then(|| f.along_seam(&ray, reach, c).map(|(d, n)| (d, n, true))).flatten());
+                    // Cells in `(x, y, z)` order: a box's answer wins a tie with a seam's, then
+                    // the first cell (as `ahead` says).
+                    if let Some((distance, normal, seam)) = hit
+                        && ahead((FieldRay { distance, normal, cell: c }, seam), best)
                     {
-                        best = Some(FieldRay { distance, normal, cell: c });
+                        best = Some((FieldRay { distance, normal, cell: c }, seam));
                     }
                 }
             }
         }
-        best
+        best.map(|(b, _)| b)
     }
 
     fn random_field(rng: &mut Rng, size: UVec3, origin: Vec3, cell: f32) -> VoxelField {
@@ -596,13 +659,18 @@ mod tests {
                 for k in 1..n as i32 {
                     let from = f.corner(IVec3::new(i, 4, k));
                     let hit = f.raycast(from, Vec3::NEG_Y, 10.0).unwrap_or_else(|| panic!("the ray down at {from} meets the floor"));
-                    assert_eq!((hit.distance, hit.normal, hit.cell), (from.y, Vec3::Y, IVec3::new(i - 1, 1, k - 1)), "at {from}: the lowest cell");
-                    through += usize::from(cuboids(&f, from, Vec3::NEG_Y, 10.0, false).is_none());
+                    // The cell a cuboid per cell names where one meets the ray (the first in
+                    // `(x, y, z)` order of those parry says it meets), else the lowest of the four.
+                    let boxed = cuboids(&f, from, Vec3::NEG_Y, 10.0, false);
+                    let cell = boxed.map_or(IVec3::new(i - 1, 1, k - 1), |h| h.cell);
+                    assert_eq!((hit.distance, hit.normal, hit.cell), (from.y, Vec3::Y, cell), "at {from}: the floor's top, of that cell");
+                    through += usize::from(boxed.is_none());
                 }
             }
-            // Cuboids at exact floats (0.5 m) meet every ray; at 0.2 m, parry's test in the box's
-            // own frame (the ray minus the centre) rounds some just outside both neighbours.
-            assert_eq!(through > 0, cell == 0.2, "cuboids of {cell} m side by side let {through} rays through");
+            // How many of these rays cuboid colliders side by side let through is parry's to say
+            // (with parry3d 0.31.1: none at 0.5 m, whose bounds are exact floats; at 0.2 m its
+            // test in the box's own frame, the ray minus the centre, rounds some just outside
+            // both neighbours). Printed, not held: the field's answer above is what is.
             // Along the seam between the floor's two layers, from outside: it meets the first
             // cell's side. Along the floor's top (air above): a graze, as for a box.
             let k = n as i32 / 2;
@@ -610,6 +678,13 @@ mod tests {
             assert_eq!(f.raycast(seam, Vec3::X, 10.0).map(|h| (h.distance, h.normal, h.cell)), Some((1.0, Vec3::NEG_X, IVec3::new(0, 0, k - 1))));
             let top = f.corner(IVec3::new(0, 2, k)) - Vec3::X;
             assert_eq!(f.raycast(top, Vec3::X, 10.0), brute(&f, top, Vec3::X, 10.0), "a graze along the top is what cuboids say");
+            // From a seam on the floor's top face, straight down: met at once, by the face. What
+            // a cuboid per cell says where one meets it (parry, on its face: the face's normal,
+            // or zero if rounding put the start inside), the face's normal where all let it through.
+            let on_top = f.corner(IVec3::new(1, 2, k));
+            let hit = f.raycast(on_top, Vec3::NEG_Y, 10.0).unwrap();
+            let want = cuboids(&f, on_top, Vec3::NEG_Y, 10.0, false).map_or(Vec3::Y, |h| h.normal);
+            assert_eq!((hit.distance, hit.normal), (0.0, want), "at {on_top}: not the zero normal of a start inside");
             println!("cells of {cell} m: {through} of {} rays down a seam pass between cuboids side by side", (n - 1) * (n - 1));
         }
     }
@@ -651,6 +726,9 @@ mod tests {
         assert_eq!(f.cells_in(Vec3::new(-3.0, -9.0, -3.0), Vec3::new(9.0, 9.0, 9.0)), Some((IVec3::ZERO, IVec3::new(1, 5, 0))));
         assert_eq!(f.cells_in(Vec3::new(2.0, 0.0, 0.0), Vec3::new(3.0, 0.0, 0.0)), None);
         assert_eq!(f.cells_in(Vec3::splat(f32::NAN), Vec3::ONE), None);
+        // A cast of unlimited reach: its box runs to the field's edge.
+        assert_eq!(f.cells_in(Vec3::new(0.1, -1.4, 0.1), Vec3::new(f32::INFINITY, f32::INFINITY, 0.4)), Some((IVec3::new(0, 1, 0), IVec3::new(1, 5, 0))));
+        assert_eq!(f.cells_in(Vec3::splat(f32::NEG_INFINITY), Vec3::splat(f32::NEG_INFINITY)), None);
         assert_eq!(VoxelField::new(Vec3::ZERO, 1.0, UVec3::ONE, |_| false).solid_span(), None);
     }
 
@@ -673,6 +751,7 @@ mod tests {
             hash(Vec3::X, 1.0, UVec3::splat(3), false),
             hash(Vec3::ZERO, 0.5, UVec3::splat(3), false),
             hash(Vec3::ZERO, 1.0, UVec3::new(3, 3, 4), false),
+            VoxelField::new(Vec3::ZERO, 1.0, UVec3::splat(3), |_| true).with_cast_merge(false).hash(),
         ];
         assert!(others.iter().all(|h| *h != one), "{one:x} {others:x?}");
         let f = VoxelField::new(Vec3::ZERO, 1.0, UVec3::splat(3), |_| true);

@@ -162,7 +162,7 @@ pub(crate) fn swimming_at(state: Option<&MotionState>) -> Option<f32> {
 /// Both queries measure against solids (colliders and voxel fields on `WORLD`); a world without
 /// any would answer "cliff" everywhere.
 fn no_physics(physics: &PhysicsWorld) -> Result<(), String> {
-    if physics.solid_span(LayerMask::WORLD).is_none() {
+    if !physics.has_solid(LayerMask::WORLD) {
         return Err("this world has no colliders to measure against: give the ground and the walls a `Collider` \
                     (shards_motion), or use `observe` and `nearby`, which work from positions"
             .into());

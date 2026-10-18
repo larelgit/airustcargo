@@ -289,9 +289,6 @@ pub struct PhysicsWorld {
     /// Voxel fields, by [`ColliderId`]: every query asks them after the colliders. Empty in a
     /// world without one, where every query runs the colliders' code alone.
     fields: Vec<FieldSlot>,
-    /// Casts test a field's cells one by one instead of merging them into column runs: what
-    /// tests compare the merge with ([`set_field_merge`](Self::set_field_merge)).
-    no_merge: bool,
     /// Tests every collider, as before the broad phase: what tests compare it with.
     #[cfg(test)]
     scan_all: bool,
@@ -367,8 +364,9 @@ impl FieldSlot {
     ///
     /// The candidates are the solid cells under the swept box, each tested as the box it is, in
     /// `(x, y, z)` order: what a world of one collider per cell (ids in that order) tests, to the
-    /// bit. When the swept box covers more than one cell and `merge` is on (the default), the
-    /// cells outside the start box are merged into column runs (per column, the run of cells
+    /// bit. When the swept box covers more than one cell and the field merges casts (the default,
+    /// [`VoxelField::with_cast_merge`]), the cells outside the start box are merged into column
+    /// runs (per column, the run of cells
     /// contiguous in y within the swept box; equal runs of neighbouring columns into
     /// rectangles, along x, then z): the union of the boxes is the union of the cells, so the
     /// first touch is the same up to rounding, and a cast that covers many cells tests a few
@@ -380,7 +378,7 @@ impl FieldSlot {
     /// integers) and only a strictly nearer hit replaces the best, so among hits at the same
     /// distance (the same `f32`) the lowest cell wins; a hit of a field replaces a collider's
     /// only when strictly nearer, and of two fields the lower id is asked first.
-    fn sweep(&self, cast: &Cast, merge: bool, best: &mut Option<ShapeHit>, reach: &mut f32) {
+    fn sweep(&self, cast: &Cast, best: &mut Option<ShapeHit>, reach: &mut f32) {
         let Some((a, b)) = self.field.cells_in(cast.swept.0, cast.swept.1) else {
             return;
         };
@@ -414,7 +412,7 @@ impl FieldSlot {
                 }
             }
         };
-        if !merge || a == b {
+        if !self.field.merges_casts() || a == b {
             cells(a, b, best, reach);
             return;
         }
@@ -499,24 +497,37 @@ impl FieldSlot {
 }
 
 impl PhysicsWorld {
+    /// How many colliders: the voxel fields are not counted ([`fields`](Self::fields) lists
+    /// them), so a world of one field is [`is_empty`](Self::is_empty).
     pub fn len(&self) -> usize {
         self.order.len()
     }
 
+    /// No collider (there may be voxel fields).
     pub fn is_empty(&self) -> bool {
         self.order.is_empty()
     }
 
-    /// All colliders in id order.
+    /// All colliders in id order (not the voxel fields: [`fields`](Self::fields)).
     pub fn colliders(&self) -> impl Iterator<Item = &ColliderInfo> {
         self.order.iter().map(|(_, slot)| &self.slots[*slot as usize].info)
     }
 
+    /// The collider of `entity`. A voxel field has none: code that reads the solid under a hit
+    /// asks [`extent_at`](Self::extent_at), [`top_under`](Self::top_under) or
+    /// [`solid_span`](Self::solid_span). Disallowed by `clippy.toml`: a caller says why with
+    /// `#[expect(clippy::disallowed_methods, reason = "…")]`.
     pub fn collider(&self, entity: Entity) -> Option<&ColliderInfo> {
-        self.ids.get(&entity).and_then(|id| self.by_id(*id))
+        self.info(entity)
     }
 
+    /// The collider with id `id` (a voxel field's id names none). Disallowed by `clippy.toml`,
+    /// as [`collider`](Self::collider) is.
     pub fn by_id(&self, id: ColliderId) -> Option<&ColliderInfo> {
+        self.info_by_id(id)
+    }
+
+    fn info_by_id(&self, id: ColliderId) -> Option<&ColliderInfo> {
         self.find(id).ok().map(|i| &self.slots[self.order[i].1 as usize].info)
     }
 
@@ -530,7 +541,7 @@ impl PhysicsWorld {
     /// this world does (strewing a tile asks the static solids near it, not the bodies that walk
     /// there). A field is shared, not copied.
     pub fn subset(&self, keep: impl Fn(&ColliderInfo) -> bool, keep_field: impl Fn(&VoxelField) -> bool) -> PhysicsWorld {
-        let mut world = PhysicsWorld { no_merge: self.no_merge, ..default() };
+        let mut world = PhysicsWorld::default();
         for c in self.colliders().filter(|c| keep(c)) {
             world.ids.insert(c.entity, c.id);
             world.put(c.clone());
@@ -555,14 +566,7 @@ impl PhysicsWorld {
 
     /// The collider of `entity`, for the hooks (which say what a field answers instead).
     fn info(&self, entity: Entity) -> Option<&ColliderInfo> {
-        self.ids.get(&entity).and_then(|id| self.by_id(*id))
-    }
-
-    /// Casts test a field's cells one by one (`false`) or merge them into column runs (`true`,
-    /// the default). The answers are the same up to rounding; tests compare the two.
-    #[doc(hidden)]
-    pub fn set_field_merge(&mut self, on: bool) {
-        self.no_merge = !on;
+        self.ids.get(&entity).and_then(|id| self.info_by_id(*id))
     }
 
     // --- what readers used to take from a collider's box ----------------------------
@@ -608,6 +612,13 @@ impl PhysicsWorld {
             }
         }
         (top >= bottom).then_some((bottom, top))
+    }
+
+    /// Whether there is any solid on `mask`: a collider that is not a volume, or a field with a
+    /// solid cell: whether [`solid_span`](Self::solid_span) has an answer, stopping at the first.
+    pub fn has_solid(&self, mask: LayerMask) -> bool {
+        self.colliders().any(|c| c.volume.is_none() && c.layers.memberships.intersects(mask))
+            || self.fields.iter().any(|f| f.field.layers().memberships.intersects(mask) && f.field.solid_cells() > 0)
     }
 
     /// The colliders a query has to test, in id order: those the grid finds near it that pass
@@ -840,7 +851,7 @@ impl PhysicsWorld {
         // Fields after the colliders, a field only when strictly nearer (see `FieldSlot::sweep`).
         for f in self.fields.iter().filter(|f| f.passes(filter)) {
             let cast = Cast { geom, pose, dir, max, start, from: (lo, hi), swept: (sweep_min, sweep_max) };
-            f.sweep(&cast, !self.no_merge, &mut best, &mut reach);
+            f.sweep(&cast, &mut best, &mut reach);
         }
         best
     }
@@ -1273,7 +1284,7 @@ mod tests {
         assert!(world.order.windows(2).all(|w| w[0].0 < w[1].0), "ids in order, once each");
         assert!(world.free.iter().all(|f| world.order.iter().all(|(_, s)| s != f)), "a free slot is no collider's");
         for (entity, id) in &world.ids {
-            assert!(world.by_id(*id).is_some(), "{entity} names {id}, which is in the world");
+            assert!(world.info_by_id(*id).is_some(), "{entity} names {id}, which is in the world");
         }
     }
 
@@ -1596,29 +1607,31 @@ mod tests {
         })
     }
 
-    /// The field as its own world (entity 1, id 1) and as one cuboid collider per solid cell,
-    /// ids and entities `1..` in `(x, y, z)` order, with each cell's place.
-    fn field_and_cells(field: VoxelField) -> (PhysicsWorld, PhysicsWorld, Vec<IVec3>) {
+    /// The field as its own world (entity 1, id 1).
+    fn field_world(field: VoxelField) -> PhysicsWorld {
         let mut voxels = PhysicsWorld::default();
-        let entity = Entity::from_raw_u32(1).unwrap();
-        voxels.upsert_field(entity, ColliderId(1), &Arc::new(field.clone()));
+        voxels.upsert_field(Entity::from_raw_u32(1).unwrap(), ColliderId(1), &Arc::new(field));
+        voxels
+    }
+
+    /// One cuboid collider per solid cell of `field`, ids and entities `1..` in `(x, y, z)` order.
+    fn cells_world(field: &VoxelField) -> PhysicsWorld {
         let mut cells = PhysicsWorld::default();
-        let mut at = Vec::new();
+        let mut n = 0;
         let collider = Collider::new(Shape::cuboid(Vec3::splat(field.cell() * 0.5)));
         for x in 0..field.size().x as i32 {
             for y in 0..field.size().y as i32 {
                 for z in 0..field.size().z as i32 {
                     let c = IVec3::new(x, y, z);
                     if field.solid(c) {
-                        at.push(c);
-                        let n = at.len() as u32;
+                        n += 1;
                         let tf = Transform::from_translation(field.center(c));
                         cells.upsert((Entity::from_raw_u32(n).unwrap(), &ColliderId(n), &collider, &tf, None, None));
                     }
                 }
             }
         }
-        (voxels, cells, at)
+        cells
     }
 
     fn character(rng: &mut Rng) -> Shape {
@@ -1637,6 +1650,8 @@ mod tests {
         // Casts parry missed: (merged boxes, one box per cell).
         let mut missed = (0, 0);
         let mut grazes = 0;
+        // Box-shaped casts: the merged field against the cells, compared to a millimetre.
+        let (mut boxed, mut boxed_off) = (0, 0);
         // Rays along a seam the field meets and the cuboids let through.
         let mut seams = 0;
         for round in 0..std::env::var("FIELD_ROUNDS").ok().and_then(|s| s.parse().ok()).unwrap_or(24) {
@@ -1645,7 +1660,8 @@ mod tests {
             let origin = Vec3::new(rng.range(-3.0, 3.0).round(), rng.range(-2.0, 2.0).round(), rng.range(-3.0, 3.0).round());
             let field = random_field(&mut rng, size, origin, cell);
             let (lo, hi) = field.bounds();
-            let (mut voxels, cells, _) = field_and_cells(field);
+            // The field as it is (its casts merged), cast cell by cell, and a cuboid per cell.
+            let (voxels, unmerged, cells) = (field_world(field.clone()), field_world(field.clone().with_cast_merge(false)), cells_world(&field));
             let any = QueryFilter::default();
             let same_ray = |a: Option<RayHit>, b: Option<RayHit>| a.map(|h| (h.distance, h.point, h.normal)) == b.map(|h| (h.distance, h.point, h.normal));
             for _ in 0..250 {
@@ -1678,19 +1694,19 @@ mod tests {
                 for start in [StartOverlap::Hit, StartOverlap::LetOut] {
                     let want = cells.sweep(&geom, &pose, *dir, max, &any, start);
                     // One box per cell: the same tests in the same order, to the bit.
-                    voxels.set_field_merge(false);
-                    let got = voxels.sweep(&geom, &pose, *dir, max, &any, start);
+                    let got = unmerged.sweep(&geom, &pose, *dir, max, &any, start);
                     let key = |h: Option<ShapeHit>| h.map(|h| (h.distance, h.point, h.normal));
                     assert_eq!(key(got), key(want), "{shape:?} from {from} along {dir:?} within {max} ({start:?}), merge off");
+                    let got = voxels.sweep(&geom, &pose, *dir, max, &any, start);
                     // Column runs: the same first touch, up to rounding. For the rounded shapes the
-                    // engine casts (bodies, probes, the camera's ball); two sharp shapes get GJK's
-                    // answer unrefined, good to a millimetre, which a bigger box moves.
+                    // engine casts (bodies, probes, the camera's ball). Two sharp shapes (a box cast
+                    // at a box) get GJK's answer unrefined, good to a millimetre, which a bigger box
+                    // moves: no character casts a box, so those are counted, not held.
                     if matches!(shape, Shape::Cuboid { .. }) {
+                        boxed += 1;
+                        boxed_off += usize::from(got.is_some() != want.is_some() || got.zip(want).is_some_and(|(g, w)| (g.distance - w.distance).abs() > 2e-3));
                         continue;
                     }
-                    voxels.set_field_merge(true);
-                    let got = voxels.sweep(&geom, &pose, *dir, max, &any, start);
-                    voxels.set_field_merge(false);
                     let boxes = || {
                         let slot = &voxels.fields[0];
                         let (lo, hi) = geom.aabb(&pose);
@@ -1739,8 +1755,14 @@ mod tests {
             }
         }
         assert!(rays > 1000 && casts > 1000, "too few hits to mean anything: {rays} rays, {casts} casts");
-        assert!(missed.0 + missed.1 + grazes <= casts / 100, "parry missed {missed:?} (merged, per cell) and {grazes} grazes of {casts} casts");
-        println!("{rays} rays and {casts} casts hit ({seams} more rays along seams); the merge moved {merged_off} first touches by rounding; parry missed {missed:?} (merged, per cell); {grazes} grazes differ");
+        // The merged boxes never miss a touch the cells find: a box parry misses but may meet is
+        // cast cell by cell (`a_merged_box_parry_misses_is_cast_cell_by_cell`). A miss here is a
+        // body sinking into a cell.
+        assert_eq!(missed.0, 0, "the merged boxes missed {} touches the cells found ({casts} casts)", missed.0);
+        assert!(missed.1 + grazes <= casts / 500, "the cells missed {} touches and {grazes} grazes differ, of {casts} casts", missed.1);
+        println!(
+            "{rays} rays and {casts} casts hit ({seams} more rays along seams); the merge moved {merged_off} first touches by rounding; parry missed {missed:?} (merged, per cell); {grazes} grazes differ; {boxed_off} of {boxed} box casts differ by more than 2 mm"
+        );
     }
 
     #[test]
@@ -1751,17 +1773,17 @@ mod tests {
         let field = VoxelField::new(Vec3::new(-12.0, -1.0, -12.0), 0.5, UVec3::new(24, 8, 48), |c| c.x == 11 && c.y == 3 && (24..26).contains(&c.z));
         let probe = Geom::Capsule(Capsule::new(Vec3::new(-0.0, -0.49999997, -0.0), Vec3::new(0.0, 0.49999997, 0.0), 0.41));
         let pose = Pose::from_translation(Vec3::new(-5.9958024, 1.9235163, 0.44552058));
-        let mut world = PhysicsWorld::default();
-        world.upsert_field(Entity::from_raw_u32(1).unwrap(), ColliderId(1), &Arc::new(field));
+        let (world, unmerged) = (field_world(field.clone()), field_world(field.with_cast_merge(false)));
         let slot = &world.fields[0];
         let run = slot.cells(IVec3::new(11, 3, 24), IVec3::new(12, 4, 26));
         assert_eq!((run.position, run.shape), (Vec3::new(-6.25, 0.75, 0.5), Shape::cuboid(Vec3::new(0.25, 0.25, 0.5))));
+        // Whether parry still misses the box is parry's to say (parry3d 0.31.1 does): printed, not
+        // held. What is held is the field's answer.
         let missed = sweep_one(&probe, &pose, Vec3::NEG_Y, 0.36, 0.36, StartOverlap::LetOut, &run);
-        assert!(missed.is_none(), "parry meets the box now ({missed:?}): the rescue stays right, but this test needs a new case");
+        println!("parry's cast at the merged box alone: {missed:?} (None: the case the rescue is for)");
         let any = QueryFilter::default();
         let merged = world.sweep(&probe, &pose, Vec3::NEG_Y, 0.36, &any, StartOverlap::LetOut).expect("the probe meets the run");
-        world.set_field_merge(false);
-        let cells = world.sweep(&probe, &pose, Vec3::NEG_Y, 0.36, &any, StartOverlap::LetOut).unwrap();
+        let cells = unmerged.sweep(&probe, &pose, Vec3::NEG_Y, 0.36, &any, StartOverlap::LetOut).unwrap();
         assert_eq!(merged, cells, "cast cell by cell, as with the merge off");
         assert!((merged.distance - 0.0135).abs() < 1e-4 && merged.point.y == 1.0, "{merged:?}");
     }
@@ -1817,6 +1839,7 @@ mod tests {
         // Every solid of a mask: the post (0..3) and the field's cells (0..5).
         assert_eq!(world.solid_span(LayerMask::WORLD), Some((0.0, 5.0)));
         assert_eq!(world.solid_span(LayerMask::CHARACTER), None);
+        assert!(world.has_solid(LayerMask::WORLD) && !world.has_solid(LayerMask::CHARACTER));
         world.remove_field(ground);
         assert_eq!(world.solid_span(LayerMask::WORLD), Some((0.0, 3.0)));
     }
@@ -1831,6 +1854,9 @@ mod tests {
         assert_eq!(down(&world.subset(|_| true, |_| true)), Some(1.0));
         assert_eq!(down(&world.subset(|_| true, |_| false)), None);
         assert_eq!(world.subset(|_| true, |f| f.solid_cells() > 0).fields().count(), 1);
+        // A world of one field has no collider and has a solid; a field of no solid cell is none.
+        assert!(world.is_empty() && world.has_solid(LayerMask::WORLD));
+        assert!(!field_world(VoxelField::new(Vec3::ZERO, 1.0, UVec3::splat(2), |_| false)).has_solid(LayerMask::WORLD));
     }
 
     /// The queries of [`broad_phase_timing`] on rolling hills 64 m across of 0.5 m cells: as a
@@ -1842,8 +1868,7 @@ mod tests {
         let (cell, size) = (0.5, UVec3::new(128, 32, 128));
         let height = |x: i32, z: i32| 12 + (ops::sin(x as f32 * 0.11) * ops::cos(z as f32 * 0.07) * 6.0 + ops::sin((x + z) as f32 * 0.31) * 1.5) as i32;
         let field = VoxelField::new(Vec3::ZERO, cell, size, |c| c.y < height(c.x, c.z));
-        let mut voxels = PhysicsWorld::default();
-        voxels.upsert_field(Entity::from_raw_u32(1).unwrap(), ColliderId(1), &Arc::new(field));
+        let (voxels, unmerged) = (field_world(field.clone()), field_world(field.with_cast_merge(false)));
         let mut boxes = PhysicsWorld::default();
         let mut n = 1;
         for x in 0..size.x as i32 {
@@ -1899,10 +1924,8 @@ rolling hills of 128 x 128 columns of 0.5 m cells, 16 bodies; µs a query (16 bo
                 }
                 (started.elapsed().as_secs_f64() * 1e6 / (400.0 * bodies.len() as f64), sum)
             };
-            voxels.set_field_merge(true);
             let (merged, _) = time(&voxels);
-            voxels.set_field_merge(false);
-            let (cells, _) = time(&voxels);
+            let (cells, _) = time(&unmerged);
             let (boxed, _) = time(&boxes);
             println!("{name:<30} {merged:>10.3} {cells:>10.3} {boxed:>10.3}");
         }

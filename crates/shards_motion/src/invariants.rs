@@ -79,10 +79,13 @@ pub const BODY_IN_SOLID: &str = "voxel.body_in_solid";
 /// its translation, or it has not been placed yet): a `teleport`, a spawn or a region change put it
 /// there this tick, and the next tick's depenetration starts from there.
 ///
-/// **Not registered by default.** Mantle, slide and sloped-step ticks may put the centre in a cell
-/// for a tick (a body hugging a ledge corner); the rule is turned on for a game only after it has
-/// been fuzzed on voxel terrain (`docs/port`, the voxel design, 6.4). A game or a test turns it on with
-/// `app.add_engine_invariant(BODY_IN_SOLID, body_in_solid)`. A world without fields never breaks it.
+/// **Off by default.** Mantle, slide and sloped-step ticks may put the centre in a cell for a tick
+/// (a body hugging a ledge corner), so the motion plugin offers the rule with
+/// `add_opt_in_engine_invariant`: it is checked only when `EngineConfig::opt_in_invariants` names
+/// it (`--engine-invariant voxel.body_in_solid`, for the fuzz runs on voxel terrain). It becomes an
+/// ordinary engine rule, on by default, once those runs have passed (the voxel design, 6.4: twenty
+/// seeds of `shards fuzz` on the voxel arena, each stop explained and carved out here with a test).
+/// A world without fields never breaks it.
 pub fn body_in_solid(world: &World) -> Option<String> {
     let physics = world.get_resource::<crate::physics::PhysicsWorld>()?;
     // A world without fields: nothing to judge.

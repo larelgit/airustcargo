@@ -111,46 +111,49 @@ fn block(app: &mut App) {
     app.world_mut().spawn(VoxelCollider::new(VoxelField::new(Vec3::new(112.0, -28.0, -8.0), 1.0, UVec3::splat(16), |_| true)));
 }
 
-/// Puts the player's feet at the block's middle (its capsule centre in cell (8, 8, 8)), as the
-/// controller (`placed` says it put it there) or something else (a teleport) would.
-fn bury(world: &mut World, by_the_controller: bool) {
+/// Teleports the player into the block: its feet at the block's middle, its capsule centre in cell
+/// (8, 8, 8), placed by something other than the controller (as `teleport` does).
+fn bury(world: &mut World) {
     let player = body(world, 5);
-    let at = Vec3::new(120.5, -20.0, 0.5);
-    world.get_mut::<Transform>(player).unwrap().translation = at;
-    if by_the_controller {
-        world.get_mut::<shards::motion::MotionState>(player).unwrap().placed = Some(at);
-    }
+    world.get_mut::<Transform>(player).unwrap().translation = Vec3::new(120.5, -20.0, 0.5);
+}
+
+/// The sandbox with `voxel.body_in_solid` on (`--engine-invariant voxel.body_in_solid`), or not.
+fn voxel_rule(on: bool) -> App {
+    sandbox::test_app_with(|config| {
+        config.seed = 42;
+        if on {
+            config.opt_in_invariants = vec![shards::motion::BODY_IN_SOLID.into()];
+        }
+    })
 }
 
 #[test]
 fn a_body_in_a_solid_voxel_cell_stops_the_game_once_the_rule_is_on() {
     use shards::motion::{body_in_solid, BODY_IN_SOLID};
-    // A world without fields is not judged.
-    let app = sandbox::test_app(42);
-    assert_eq!(body_in_solid(app.world()), None);
-
-    // Placed in the solid by the controller: the rule names the body, the centre and the cell.
-    let mut app = sandbox::test_app(42);
-    app.add_engine_invariant(BODY_IN_SOLID, body_in_solid);
+    let names = |app: &App| app.world().resource::<AiInvariants>().rule_names().join(",");
+    // Off by default: not even listed, and a body in rock goes unjudged.
+    let mut app = voxel_rule(false);
+    assert!(!names(&app).contains(BODY_IN_SOLID), "{}", names(&app));
     block(&mut app);
-    plant(&mut app, 3, |world| bury(world, true));
-    let line = stops_on(&mut app, BODY_IN_SOLID, 3);
-    assert!(line.contains("e5 capsule centre [120.5, -19.1, 0.5] is in solid cell [8, 8, 8] of field "), "{line}");
-
-    // Put there by something else (a teleport): not on that tick; on the next, the controller
-    // has placed the body, still deep in the block.
-    let mut app = sandbox::test_app(42);
-    app.add_engine_invariant(BODY_IN_SOLID, body_in_solid);
-    block(&mut app);
-    plant(&mut app, 3, |world| bury(world, false));
-    stops_on(&mut app, BODY_IN_SOLID, 4);
-
-    // Off by default.
-    let mut app = sandbox::test_app(42);
-    block(&mut app);
-    plant(&mut app, 3, |world| bury(world, true));
+    plant(&mut app, 3, bury);
     let out = called(&mut app, "step", json!({"ticks": 20}));
     assert!(out.halted.is_none(), "{}", text(&out));
+
+    // On. A world without fields is not judged.
+    let app = voxel_rule(true);
+    assert!(names(&app).starts_with("ai.index_consistent") && names(&app).contains(BODY_IN_SOLID), "{}", names(&app));
+    assert_eq!(body_in_solid(app.world()), None);
+
+    // Teleported into the rock: not on that tick (the controller did not put it there); on the
+    // next, the controller has run and placed the body where it is, still deep in a block no
+    // depenetration gets out of in a tick: a real controller tick that leaves the centre in a
+    // solid cell, named with the body, its centre and the cell.
+    let mut app = voxel_rule(true);
+    block(&mut app);
+    plant(&mut app, 3, bury);
+    let line = stops_on(&mut app, BODY_IN_SOLID, 4);
+    assert!(line.contains("e5 capsule centre [") && line.contains("] is in solid cell [") && line.contains(" of field "), "{line}");
 }
 
 #[test]

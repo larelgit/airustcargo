@@ -115,6 +115,8 @@ impl Plugin for MotionPlugin {
         }
         app.add_engine_module("motion", VERSION);
         app.add_engine_invariant("motion.finite", motion_finite);
+        // Off until fuzzed on voxel terrain (`EngineConfig::opt_in_invariants`, `--engine-invariant`).
+        app.add_opt_in_engine_invariant(BODY_IN_SOLID, body_in_solid);
         ai::plugin(app);
         coverage::plugin(app);
         intent::plugin(app);

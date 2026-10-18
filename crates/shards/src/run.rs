@@ -14,6 +14,10 @@ use clap::Parser;
 use shards_content::{asset_root, check_dir, ContentKinds};
 use shards_core::{EngineConfig, MenuLaunch, NetLaunch, SettingsStore, SteamLaunch, SteamLobby};
 
+/// The engine's rules that are off by default, as `--engine-invariant` names them
+/// (`EngineConfig::opt_in_invariants`).
+const OPT_IN_INVARIANTS: [&str; 1] = [shards_motion::BODY_IN_SOLID];
+
 /// A game on the Shards engine.
 #[derive(Parser, Debug)]
 #[command(version, group(clap::ArgGroup::new("lobby_host").args(["steam_host", "stand_steam"])))]
@@ -191,6 +195,15 @@ struct Args {
     /// rule`). They are on by default and off in a `dist` build; `--verify` always checks them.
     #[arg(long)]
     no_engine_invariants: bool,
+    /// Also check an engine rule that is off by default (the flag once a rule): `voxel.body_in_solid`,
+    /// a character's capsule centre in a solid voxel cell, for fuzz runs on voxel terrain.
+    #[arg(
+        long = "engine-invariant",
+        value_name = "NAME",
+        conflicts_with = "no_engine_invariants",
+        value_parser = clap::builder::PossibleValuesParser::new(OPT_IN_INVARIANTS)
+    )]
+    engine_invariant: Vec<String>,
     /// Keep player settings in DIR instead of the platform's settings folder.
     #[arg(long, value_name = "DIR", conflicts_with = "no_settings")]
     settings_dir: Option<String>,
@@ -419,6 +432,7 @@ impl Args {
                 }
             }),
             engine_invariants: defaults.engine_invariants && !self.no_engine_invariants,
+            opt_in_invariants: self.engine_invariant.clone(),
             check_every: self.check_every,
             check_detail: self.check_detail,
             tick_budget: self.tick_budget_ms,
@@ -1603,6 +1617,19 @@ mod tests {
         assert!(parse(&["game", "--replay", "r.json", "--windowed"]).is_err());
         let args = parse(&["game", "--replay", "r.json", "--verify", "--windowed"]).unwrap();
         assert!(args.verify && args.windowed);
+    }
+
+    #[test]
+    fn an_engine_rule_off_by_default_is_turned_on_by_name() {
+        let parse = |args: &[&str]| Args::try_parse_from(args.iter().copied());
+        assert!(parse(&["game"]).unwrap().config().opt_in_invariants.is_empty(), "off by default");
+        let config = parse(&["game", "--engine-invariant", "voxel.body_in_solid"]).unwrap().config();
+        assert_eq!(config.opt_in_invariants, ["voxel.body_in_solid"]);
+        assert!(config.engine_invariants);
+        let typo = parse(&["game", "--engine-invariant", "voxel.body_in_rock"]).unwrap_err().to_string();
+        assert!(typo.contains("invalid value") && typo.contains("voxel.body_in_solid"), "{typo}");
+        let clash = parse(&["game", "--engine-invariant", "voxel.body_in_solid", "--no-engine-invariants"]).unwrap_err().to_string();
+        assert!(clash.contains("cannot be used with"), "{clash}");
     }
 
     #[test]

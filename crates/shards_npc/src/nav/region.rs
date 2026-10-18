@@ -966,8 +966,8 @@ impl NavRegion {
     /// The nodes collider `c` may switch off: in the instances near it whose bakes did not
     /// have it, in the columns within reach of its box (clipped to each instance), at
     /// heights where it would be in the baked body's way (above its step, below its head).
-    #[expect(clippy::disallowed_methods, reason = "carving tracks the colliders only; a voxel field is never carved (it does not change after it is built)")]
     fn zone_of(&self, c: &ColliderInfo, tiles: &BTreeMap<ColliderId, TileId>, settings: &NavSettings, reach: f32) -> Vec<NodeId> {
+        #[expect(clippy::disallowed_methods, reason = "carving tracks the colliders only; a voxel field is never carved (it does not change after it is built)")]
         let (min, max) = c.bounds();
         let owner = tiles.get(&c.id).and_then(|t| {
             let cell = [t.x, t.y];
@@ -1024,7 +1024,6 @@ impl NavRegion {
     /// since the last look leaves its zone or enters it, and every node and edge link near
     /// such a change is decided again from the world as it is (see [`Carve`]). Whether
     /// anything changed.
-    #[expect(clippy::disallowed_methods, reason = "carving tracks the colliders only; a voxel field is never carved (it does not change after it is built)")]
     fn update(&mut self, physics: &PhysicsWorld, settings: &NavSettings, tiles: &BTreeMap<ColliderId, TileId>, edges: Option<&RegionGraph>) -> bool {
         let count = self.node_count() as usize;
         if self.carve.held.len() != count {
@@ -1066,6 +1065,7 @@ impl NavRegion {
             for &n in &zone {
                 self.carve.held[n as usize] += 1;
             }
+            #[expect(clippy::disallowed_methods, reason = "carving tracks the colliders only; a voxel field is never carved (it does not change after it is built)")]
             let (aabb_min, aabb_max) = c.bounds();
             boxes.push((aabb_min, aabb_max));
             seen.push(Seen {

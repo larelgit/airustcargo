@@ -12,6 +12,7 @@ disallowed-methods = [
   # what a query hit asks PhysicsWorld::extent_at, top_under or solid_span. A reader that really means a collider (a water
   # volume, a hurtbox) says why with #[expect(clippy::disallowed_methods, reason = "...")] (docs/manual.md, "Movement").
   { path = "shards_motion::physics::PhysicsWorld::collider", reason = "a voxel field has no ColliderInfo: ask PhysicsWorld::extent_at, top_under or solid_span, or say why this is a collider with #[expect(clippy::disallowed_methods, reason = ...)]" },
+  { path = "shards_motion::physics::PhysicsWorld::by_id", reason = "a voxel field's id names no ColliderInfo: ask PhysicsWorld::extent_at, top_under or solid_span, or say why this is a collider with #[expect(clippy::disallowed_methods, reason = ...)]" },
   { path = "shards_motion::physics::ColliderInfo::bounds", reason = "a collider's box is not the solid (a voxel field has none): ask PhysicsWorld::extent_at, top_under or solid_span, or say why this is a collider with #[expect(clippy::disallowed_methods, reason = ...)]" },
   { path = "f32::powi", reason = "use bevy::math::ops::FloatPow::squared, bevy::math::ops::FloatPow::cubed, or bevy::math::ops::powf instead for libm determinism" },
   { path = "f32::log", reason = "use bevy::math::ops::ln, bevy::math::ops::log2, or bevy::math::ops::log10 instead for libm determinism" },
