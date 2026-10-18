@@ -1,0 +1,125 @@
+# The lock-on rules (C6, `content/combat/lock.lock_on.ron`): a lock goes when its target dies, when
+# it stays hidden behind the world for 2 s in a row (120 ticks), or when it is farther than 30 m;
+# `lock_on side=left|right` moves it to the nearest target on that side, seen from the player.
+# The simulation checks every lock at the end of every tick, so the journal says why it went.
+
+seed 42
+
+# --- the arena as the game spawns it, whatever was played in it before
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god on=true
+step 30
+act heal id=e5
+act heal id=e6
+act heal id=e7
+act heal id=e8
+act heal id=e14
+act teleport id=e5 x=0 z=2 y=0
+act teleport id=e7 x=0 z=-3 y=0
+act teleport id=e6 x=-18 z=-18 y=0
+act teleport id=e8 x=18 z=18 y=0
+act teleport id=e14 x=-18 z=18 y=0
+step 2
+invariant field e5 Health.current > 0
+
+# --- 1. the target dies: the lock goes on the tick it does
+mark
+session --agent hero --scope player
+act lock_on target=e7
+expect result contains "ok: locked on e7"
+session --agent scenario
+step 1
+expect journal "e5 locks e7"
+expect shows e5 "lock e7"
+act set id=e7 component=Health path=current value=0
+step 2
+expect journal "e5 lock lost: e7 dead"
+# (a dead target is refused, and nothing else is in sight to pick from: the warden is far)
+session --agent hero
+act? lock_on target=e7
+expect result contains "e7 is dead"
+session --agent scenario
+act heal id=e7
+
+# --- 2. hidden behind a pillar (e2: x 7, z -7, 2 x 4 x 2 m): 1 s is not enough, and coming
+# out of its shadow starts the count again (1 s later it is 1.0 s, not 2.0 s); 2 s in a row is
+act teleport id=e5 x=7 z=-4.5 y=0
+act teleport id=e7 x=7 z=-9.5 y=0
+step 2
+mark
+session --agent hero
+act lock_on target=e7
+expect result contains "ok: locked on e7"
+session --agent scenario
+step 60
+expect shows e5 "lock e7 (obstructed 1.0s)"
+act teleport id=e7 x=12 z=-9.5 y=0
+step 1
+expect shows e5 "lock e7"
+act teleport id=e7 x=7 z=-9.5 y=0
+step 60
+expect shows e5 "lock e7 (obstructed 1.0s)"
+step 59
+expect !journal "lock lost"
+step 1
+expect journal "e5 lock lost: e7 obstructed 2.0s"
+
+# --- 3. out of range: 31 m from the player, past the 30 m of the definition
+act teleport id=e5 x=0 z=12 y=0
+act teleport id=e7 x=0 z=4 y=0
+step 2
+mark
+session --agent hero
+act lock_on target=e7
+expect result contains "ok: locked on e7"
+session --agent scenario
+act teleport id=e7 x=0 z=-19 y=0
+step 1
+expect journal "e5 lock lost: e7 out of range (31.0m > 30.0m)"
+session --agent hero
+act? lock_on target=e7
+expect result contains "beyond the lock-on range of 30m"
+session --agent scenario
+
+# --- 4. switching: measured from the player, the nearest angle on the side asked for wins.
+# From e5 at z 2, looking at e7 straight ahead: e8 is 27 degrees to the right, the warden e6
+# 72 degrees to the right, e14 32 degrees to the left.
+act teleport id=e5 x=0 z=2 y=0
+act teleport id=e7 x=0 z=-6 y=0
+act teleport id=e8 x=4 z=-6 y=0
+act teleport id=e6 x=12 z=-2 y=0
+act teleport id=e14 x=-5 z=-6 y=0
+step 2
+mark
+session --agent hero
+act lock_on target=e7
+act lock_on side=right
+expect result contains "ok: locked on e8 (switched right from e7)"
+act lock_on side=right
+expect result contains "ok: locked on e6 (switched right from e8)"
+act? lock_on side=right
+expect result contains "nobody you can see to the right of e6"
+act lock_on side=left
+expect result contains "ok: locked on e8 (switched left from e6)"
+act lock_on side=left
+act lock_on side=left
+expect result contains "ok: locked on e14 (switched left from e7)"
+session --agent scenario
+step 1
+expect journal "e5 locks e8 (switched right from e7)"
+expect journal "e5 locks e14 (switched left from e7)"
+expect shows e5 "lock e14"
+
+# --- back as it was found
+session --agent hero
+act lock_on off=true
+session --agent scenario
+act god on=false
+act teleport id=e6 x=0 z=-6 y=0

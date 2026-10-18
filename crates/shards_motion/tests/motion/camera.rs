@@ -480,6 +480,78 @@ fn the_arm_grows_back_after_a_wall_at_the_tunings_rate() {
     assert!((one - 5.5).abs() < 0.05, "without a rate it is back at once, as the camera always did: {one}");
 }
 
+/// The scene with a `lock_on` definition: the lock-on rules are on.
+fn with_lock_rules(s: &mut Scene) {
+    use shards_content::db::Source;
+    use shards_content::{ContentDb, ContentKinds};
+    let mut kinds = ContentKinds::default();
+    kinds.register::<shards_motion::camera::LockOnDef>();
+    let db = ContentDb::build(&kinds, &[Source { path: "content/lock.lock_on.ron".into(), text: "{ \"default\": () }".into() }]);
+    assert_eq!(db.errors().count(), 0);
+    s.app.insert_resource(db);
+}
+
+fn switch_presses(s: &Scene) -> Vec<f32> {
+    let intent = s.app.world().get::<Intent>(s.player).unwrap();
+    intent.pressed.iter().filter(|p| p.input == "lock_switch").map(|p| p.dir.unwrap().x).collect()
+}
+
+#[test]
+fn with_lock_rules_the_camera_picks_by_score_and_leaves_the_switch_to_the_simulation() {
+    let mut s = scene();
+    with_lock_rules(&mut s);
+    tap_lock(&mut s);
+    assert_eq!(target(&s), Some(id(&s.app, s.near)), "the scored pick: near and in the middle of the view");
+    // A flick to the right is a `lock_switch` press to the right, which the action module
+    // carries out on the next tick (this scene has none): the camera does not switch itself.
+    s.app.insert_resource(AccumulatedMouseMotion { delta: Vec2::new(30.0, 0.0) });
+    s.app.update();
+    s.app.insert_resource(AccumulatedMouseMotion::default());
+    assert_eq!(target(&s), Some(id(&s.app, s.near)));
+    assert_eq!(switch_presses(&s), [1.0]);
+    // A flick to the left finds nobody there: no press (and, by the tuning, no cooldown).
+    run_sim(&mut s, 0.4);
+    s.app.insert_resource(AccumulatedMouseMotion { delta: Vec2::new(-30.0, 0.0) });
+    s.app.update();
+    s.app.insert_resource(AccumulatedMouseMotion::default());
+    assert_eq!(switch_presses(&s), [1.0]);
+}
+
+#[test]
+fn with_lock_rules_the_wheel_switches_and_the_camera_lets_go_only_when_the_player_cancels() {
+    use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
+    let mut s = scene();
+    with_lock_rules(&mut s);
+    tap_lock(&mut s);
+    // The wheel turned toward the player: to the right.
+    s.app.insert_resource(AccumulatedMouseScroll { unit: MouseScrollUnit::Line, delta: Vec2::new(0.0, -1.0) });
+    s.app.update();
+    assert_eq!(switch_presses(&s), [1.0]);
+    // A touchpad that keeps scrolling past the cooldown is still that one switch ...
+    s.app.insert_resource(AccumulatedMouseScroll { unit: MouseScrollUnit::Pixel, delta: Vec2::new(0.0, -3.0) });
+    run_sim(&mut s, 0.6);
+    assert_eq!(switch_presses(&s), [1.0]);
+    // ... and after a frame standing still the next turn switches again.
+    s.app.insert_resource(AccumulatedMouseScroll::default());
+    frame(&mut s.app);
+    s.app.insert_resource(AccumulatedMouseScroll { unit: MouseScrollUnit::Line, delta: Vec2::new(0.0, -1.0) });
+    frame(&mut s.app);
+    s.app.insert_resource(AccumulatedMouseScroll::default());
+    assert_eq!(switch_presses(&s), [1.0, 1.0]);
+    // Far beyond the camera's own release distance: the simulation decides, not the camera.
+    s.app.world_mut().get_mut::<Transform>(s.near).unwrap().translation = Vec3::new(0.5, 0.0, -60.0);
+    frame(&mut s.app);
+    frame(&mut s.app);
+    assert_eq!(target(&s), Some(id(&s.app, s.near)));
+    // The player's cancel lets go, and says so as a local line (the camera is input).
+    tap_lock(&mut s);
+    assert_eq!(target(&s), None);
+    let near = id(&s.app, s.near);
+    let journal = s.app.world().resource::<ai_core::AiJournal>();
+    let local: Vec<String> = journal.after(0).0.filter(|e| e.kind == ai_core::JournalKind::Local).map(|e| e.to_string()).collect();
+    assert!(local.iter().any(|l| l.ends_with(&format!("lock released: {near}"))), "{local:?}");
+}
+
 /// The player moved from x = 0 to x = 1 over the last tick, and half of the next is owed: the
 /// focus is where the body is drawn (x = 0.5), not where the tick left it.
 fn halfway_scene(interpolation: bool) -> Scene {

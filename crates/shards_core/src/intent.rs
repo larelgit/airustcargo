@@ -44,6 +44,9 @@ pub mod input_names {
     pub const INTERACT: &str = "interact";
     /// Press: lock onto a target, or let go.
     pub const LOCK_ON: &str = "lock_on";
+    /// Press, with `dir.x` the side (`+1` right, `-1` left): switch the lock-on target to the
+    /// next one on that side (the action module's lock-on rules).
+    pub const LOCK_SWITCH: &str = "lock_switch";
     /// Held: the attack assist is off (an action with an `assist` does not track the lock-on target).
     /// The controls hold it while the player has turned the assist off (`controls.attack_assist`).
     pub const ASSIST_OFF: &str = "assist_off";
