@@ -3731,7 +3731,7 @@
     },
     {
       "tick": 660,
-      "hash": "46884f2cb4c8c205",
+      "hash": "061a46033a5a757d",
       "parts": {
         "entities": {
           "e1": {
@@ -3836,7 +3836,7 @@
             "Collider": "24c98f83e815c6ca",
             "ColliderId": "c640126548e138ca",
             "Cooldowns": "e590eaa870b29409",
-            "DamageTaken": "22931b5d8c4652c7",
+            "DamageTaken": "5b32048e63b01c7b",
             "Fighter": "899de4349a7a3dc5",
             "Health": "8cf354eefa030a68",
             "Home": "54cb820fd1f7c854",
