@@ -1362,7 +1362,8 @@ each when it is empty), all of them in the replay and the snapshot, none predict
 
 **Barrier.** `Barrier { amount, left }` takes damage before health. `grant_barrier(world, entity, amount, seconds)` gives the
 larger of the pool it holds and `amount`, for `seconds` from now (a smaller or shorter grant keeps the pool and still restarts the time to its own `seconds`: the rule of the design, since a barrier is re-cast, not extended; a game that wants the later end reads `Barrier::left` and grants `max`); it is
-ignored for a dead or gone entity and for an `amount` or `seconds` that is not above 0. The `Barrier` action effect is the
+ignored for a dead or gone entity, one without `Health` (a barrier only guards health), and an `amount` or `seconds` that is
+not a finite number above 0 (above the engine's epsilon, 1e-4). The `Barrier` action effect is the
 same call; with `of_max: true` the amount is a share of the actor's max health (`0.5` is half of it). It triggers `BarrierGranted {
 entity, amount, seconds }` (the pool now), a net event for the HUD. `hurt` is the one place damage reaches health: the
 barrier takes `min(amount, damage)` first, `Damaged`, `Blocked` and `GuardBroken` carry it as `absorbed` (their `amount`
