@@ -63,7 +63,7 @@ mod tools;
 use bevy::prelude::*;
 use shards_core::EngineAppExt;
 
-pub use invariants::motion_finite;
+pub use invariants::{body_in_solid, motion_finite, BODY_IN_SOLID};
 
 pub use ai::{describe_motion, physics_line_of_sight, MotionAi};
 pub use camera::{CameraSettings, LockOnTarget, ThirdPersonCamera};
@@ -78,7 +78,7 @@ pub use modifiers::{ModifierSystems, MoveModifiers, StanceSpeed};
 pub use physics::{
     Body, Collider, ColliderId, ColliderIds, ColliderInfo, CollisionLayers, LayerMask, Penetration, PhysicsPlugin,
     PhysicsSystems, PhysicsWorld, QueryFilter, RayHit, Shape, ShapeHit, SpatialQuery, Volume, VolumeEntered,
-    VolumeExited, VolumeKind,
+    VolumeExited, VolumeKind, VoxelCollider, VoxelField,
 };
 pub use tools::TargetArg;
 

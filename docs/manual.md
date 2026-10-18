@@ -685,6 +685,57 @@ ledge`, `e5 air → water`, `e5 reached goal`).
   a body that moves within its own cells costs the grid nothing. A measurement in the release build (`broad_phase_timing`, `#[ignore]`):
   on 8×8 tiles of 96 m (2644 colliders), eight queries from a body and the ground probe take 16 µs instead of 50 (`overlaps` 17 times faster, rays down
   15 times, pushing out 9 times, a capsule step 4 times; a ray across half the region, 300 m, 1.1 times), on 16 m tiles (212) it is the same as a full search.
+- **Voxel fields.** `VoxelCollider::new(VoxelField::new(origin, cell, size, |c| solid))` puts a static grid of solid cells (a
+  voxel terrain as one entity) into the physics world beside the colliders: one bit a cell, `cell` m on a side, the least corner of
+  cell `(0, 0, 0)` at `origin`, in world space (the entity's `Transform` is not read), on `WORLD` unless `with_layers` says otherwise. It
+  gets a `ColliderId` from the same counter as a collider and takes its place among the fields in id order; a new `VoxelCollider` on the
+  entity replaces the field (an edit is a new field), and removing it or despawning the entity takes the field out. Every query asks
+  the fields after the colliders: a field's hit replaces a collider's only when strictly nearer, and of two fields the lower id is asked
+  first. A world without a field runs exactly the colliders' code (the reference replays verify byte for byte, heavy mode included).
+  A ray walks the cells it crosses (Amanatides–Woo) and tests each solid one as the box it is, so the distance, point and normal are a
+  cuboid collider's in its place; at the same distance the lowest cell in `(x, y, z)` order (x first) wins. One difference from cuboids
+  side by side: a ray lying in the plane of a face between two solid cells is inside the solid and meets it, where parry's cuboid ray can
+  slip between the boxes (on 0.2 m cells, 165 of 361 rays down the inner grid lines of a solid slab did; none on 0.5 m cells). A cast
+  (`sweep`, `shapecast`) tests the solid cells under its swept box; when that box covers more than one cell, the cells outside the start
+  box are merged into column runs and equal runs of neighbouring columns into rectangles, so a long cast tests a few boxes, not every
+  cell. The union is the same, so the first touch is the same up to rounding; the cells under the start box stay single, so a body that
+  starts touching the solid is let out of each cell as with one collider per cell. Among candidates the box with the lowest least cell
+  in `(x, y, z)` order wins a tie (with the merge off, `set_field_merge(false)`, that is exactly a world of one cuboid collider per cell
+  with ids in `(x, y, z)` order, to the bit). parry's cast now and then misses a box it touches near an edge (a merged run box 13.5 mm
+  away, in a test): a merged box the cast misses but may meet (within reach and drawing nearer, by convexity of the distance under a
+  translation) is cast cell by cell. `overlaps` and `closer_than` test the cells under the shape's box, one penetration a cell, where the
+  field's id puts it. The cost grows with the cells a query touches, never with the size of the field.
+- **A field has no box: readers ask the hooks.** Code that reads the top or the bottom of what a query hit (how tall a blocker is, where
+  the floor under a solid starts) asks `PhysicsWorld::extent_at(entity, point)` (the run of solid cells, contiguous in y, that holds the
+  cell of `point`, tried at the point, 0.1 mm below and 0.1 mm above; a collider's box, wherever the point is), `top_under(entity, shape,
+  pos, rot)` (the tallest top of the runs of the cells the shape overlaps; a collider's box top) or `solid_span(mask)` (the lowest bottom
+  and the highest top of every solid on a mask). Runs, not columns: under a plateau with a tunnel through it, a point in the tunnel's
+  floor gets the floor and a body in the tunnel is not blocked by the plateau above. The readers that used a collider's box use them:
+  `clearance` and `path_to` (their gate, whether the world has solids at all: `solid_span`; how tall a blocker is, `Terrain::blocker_top`:
+  `top_under`), the nav bake's seed (`solid_span`, and `extent_at` to go on below a solid) and `ground_below` in `shards_world`
+  (`extent_at` to climb out of a solid). `PhysicsWorld::subset` keeps the fields its second
+  predicate keeps (the scatter's solids near a tile take the fields that reach it). **The rule for a new reader:** a field is no
+  collider, so `PhysicsWorld::collider(e)` and `ColliderInfo::bounds()` are `disallowed-methods` in `clippy.toml`, and each allowed
+  call carries `#[expect(clippy::disallowed_methods, reason = "…")]` saying why a field cannot be what it reads; the source scan
+  `crates/shards_motion/tests/readers.rs` fails on any `.collider(`, `.colliders()`, `.aabb_min` or `.aabb_max` in `crates/*/src`
+  outside `shards_motion/src/physics/` that is not in `tests/readers.allow` with its reason, and on a row that matches no line.
+- A field is not saved and has no `AiId` (as level geometry, the region that spawned it spawns it again); the snapshot check
+  `static_colliders` hashes every field (size, cell, origin, bits and layers), and a world without one hashes as before. The engine rule
+  `voxel.body_in_solid` (`BODY_IN_SOLID`, `body_in_solid`) names a character whose capsule centre is in a solid cell of a field it
+  collides with, except on the tick something other than the controller placed it (`MotionState::placed`); it is **off by default**
+  (mantle and sloped-step ticks may graze a cell) and a game turns it on with `app.add_engine_invariant(BODY_IN_SOLID, body_in_solid)`.
+- Checked by `crates/shards_motion/tests/motion/seams.rs`: each scenario runs in four worlds, one cuboid collider per cell, the merged
+  boxes as colliders, the field, and the field with the merge off (stand on seams, an edge and a corner; one-cell walls; mixed
+  heights; steps of 0.3, 0.5 and 1 m; a mantle; tunnels; landing on a seam; a checkerboard diagonal; 16 bodies on rolling hills). The
+  field with the merge off equals the cells to the bit on every tick; with the merge on, the scripted scenarios stay within 3e-6 m and
+  2.4e-4 m/s of the cells with the same modes, and one step from the same state (16 bodies, 600 ticks) within 3.4e-6 m. Ground normals
+  are not compared: at a seam or an edge GJK's normal off a cell is noise (up to 56° on the checkerboard, positions equal). A free-running
+  walk amplifies rounding at corners as any chaotic system does (a step-up decided on an edge ride), so on the hills the merged field and
+  the cells part by more than 1e-4 m after 147 to 558 ticks (3 of 16 bodies on seed 1, 10 on seed 7; one of them by 32 cm on seed 7,
+  where a step-up decided on an edge ride went the other way at tick 147). The merged boxes as colliders part as soon or sooner
+  and for more bodies (7 and 14; 32 cm at tick 102 on seed 1). With the merge off the field never parts from the cells.
+  `field_timing` (`#[ignore]`, release): on 64 m of 0.5 m-cell hills the ground cast takes 8.5 µs with the merge, 17.4 µs without
+  and 19.4 µs as column boxes; rays 0.24–1.3 µs (1.2–2.3 times faster than the boxes, the sight ray 12 times).
 
 **Why parry3d and not avian3d.** The spec named avian3d as a candidate and required checking Bevy 0.20 support before taking a third-party crate. Checked against the crates.io index (13–14 October 2026): avian3d 0.7.0 requires Bevy 0.19, and Bevy is pinned
 to 0.20.0 (the same goes for bevy_enhanced_input 0.26.0 and lightyear 0.30.1). A kinematic controller needs collision queries, not dynamics, so `parry3d =0.31.1` was taken (dimforge geometry, it does not depend on Bevy; avian is built on it too).
@@ -4674,7 +4725,7 @@ a separate workspace; one `#[ignore]`: recording its references).
 | `shards_cli` | the port from `--port-file`, the `ready` line, the token by port number; `shards scenario` against a fake game on localhost (exit codes 0/1/2); the exit code from the outcome of `step` (3 — the game stopped) |
 | `shards_core` | loading does not shift ticks, pause, `after_loading`, presses last one tick, `move_to`, `ai/status` names the modules |
 | `shards_content` | definitions and their files, duplicates and references name the file and the field, `check_dir`, prefabs (`extends`, overrides), a reload is written to a replay and played back, a broken edit is rejected (and so is an edit to a file where even one definition is broken, as a whole), a broken definition gets its own error, the other definitions of the file are loaded, an edit to a file in a running game |
-| `shards_motion` | physics (queries, layers, order by `ColliderId`, the broad phase: the same answers as a scan over all colliders, on random worlds; the grid after moves, removals and new ids), the controller (steps, climbing over, swimming, glider, jump, walls), numbers from content, input (modes, contexts, rebinding, saving), the camera, `clearance` and `path_to`, tools, replays and independence from `Entity` indices |
+| `shards_motion` | physics (queries, layers, order by `ColliderId`, the broad phase: the same answers as a scan over all colliders, on random worlds; the grid after moves, removals and new ids; voxel fields: the same answers as a cuboid collider per cell on random fields, the seam differential test `seams.rs`, the hooks in a tunnel under a plateau, the reader guard `tests/readers.rs`), the controller (steps, climbing over, swimming, glider, jump, walls), numbers from content, input (modes, contexts, rebinding, saving), the camera, `clearance` and `path_to`, tools, replays and independence from `Entity` indices |
 | `shards_action` | actions, the buffer, cancels and combos, `can_start`, hits and the damage pipeline (dodge, block, parry, poise, hyper armour), statuses, zones and the "get out" hint, animation (`select_clip`, the files of the set: clip, source, root bone), baking of the offset (clip timing, thinning, an in-place file edit, a stale curve), reading glTF clips, telegraph geometry, tools and their errors, the combat replay |
 | `shards_level` | glTF and nodes, properties (`collider`, `volume`, `prefab`, components by name, text JSON), markers and their errors, colliders of the right sizes and layers, the `level` kind and its check in `content check`, spawning (world positions, order, ids), hot reload, the replay and the `level` hash, the level image; a real export from Blender 5.2.2 (`from_blender.rs`: markers, collider shapes, prefabs, components, the artist's errors, lamps, Draco and both meshopt, the default scene) |
 | `shards_world` | the format of tiles, regions and rooms (errors name the file and the nearest id; a tile for cells of a different size, `tile_size`, is not part of "all tiles", and the error is reported where it was named); the solver, checks (unreachable areas, slope, distances, a road to nowhere), hundreds and a thousand seeds, `worldgen_report` with a single seed number, the manifest byte for byte, the fallback map, a panic in a game step with the seed number; dungeons; a region change through `RegionLoading`, the start region, `goto_tile`, a replay with region changes, a snapshot in a region; tiles from level files in all four quarter turns; the socket markers of a level file against the sockets of a tile; a tile file that cannot be read, or that has an error in one of its nodes, is a content error that names the tile, the file and the node, and it is exactly one error if the file is also named by a `level` definition; active zones; a wall at the edge of a region (it holds a body; an open edge drops it; the collider numbers of tiles stay as before, and it leaves with the region) |

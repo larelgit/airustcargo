@@ -73,6 +73,7 @@ impl WorldShape {
 
     /// Entities whose hurtboxes it overlaps, in collider id order. `exclude`: the
     /// attacker itself.
+    #[expect(clippy::disallowed_methods, reason = "hurtboxes are colliders on HURTBOX (a voxel field is never one): the cone tests the body's place and size")]
     pub fn overlapping(&self, physics: &PhysicsWorld, exclude: Entity) -> Vec<Entity> {
         let (shape, center, rot) = self.physics();
         let filter = QueryFilter::new(shards_motion::LayerMask::HURTBOX).excluding(exclude);

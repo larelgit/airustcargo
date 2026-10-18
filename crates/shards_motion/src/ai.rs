@@ -68,6 +68,7 @@ fn tracked(world: &World, entity: Entity) -> Option<String> {
 
 /// `trigger "goal"` (with its id when the AI sees the volume): only named triggers are
 /// journaled. Water and updrafts show as modes and speeds instead.
+#[expect(clippy::disallowed_methods, reason = "a volume is a collider (a voxel field never is): its kind, not its box")]
 fn trigger_name(world: &World, volume: Entity) -> Option<String> {
     let kind = world.get_resource::<PhysicsWorld>()?.collider(volume)?.volume.clone()?;
     matches!(kind, VolumeKind::Trigger { .. }).then(|| match world.get::<AiId>(volume) {

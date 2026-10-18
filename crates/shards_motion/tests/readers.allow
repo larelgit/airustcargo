@@ -1,0 +1,23 @@
+# The code that reaches a collider or a collider's box (`.collider(`, `.colliders()`, `.aabb_min`,
+# `.aabb_max`) in `crates/*/src` outside `shards_motion/src/physics/`. A voxel field is no collider
+# and has no box: such a line is right only where a field cannot be what it looks at, or where it
+# leaves fields out on purpose. `tests/readers.rs` fails on a line that is not here and on a row
+# here that matches no line, so a new reader comes with its reason (the voxel design, 6.3).
+#
+# One row per line: file :: the line's text, trimmed :: why a field does not need it. Code that
+# reads the solid under a hit asks `PhysicsWorld::extent_at`, `top_under` or `solid_span`.
+
+crates/shards_action/src/draw.rs :: for c in physics.colliders().filter(|c| c.layers.memberships.contains(LayerMask::HURTBOX)) { :: hurtbox drawing: hurtboxes are colliders on HURTBOX, which a field never is
+crates/shards_action/src/zone.rs :: physics.collider(*e).is_some_and(|c| { :: hit zones ask the HURTBOX layer, which a field is never on
+crates/shards_motion/src/ai.rs :: let kind = world.get_resource::<PhysicsWorld>()?.collider(volume)?.volume.clone()?; :: the kind of a trigger volume: volumes are colliders, fields are never volumes
+crates/shards_motion/src/controller/mod.rs :: #[require(Collider = CharacterParams::default().collider(), Body = Body::Kinematic, LocomotionInput, MotionState)] :: builds a character's own collider from its numbers; reads nothing
+crates/shards_motion/src/controller/mod.rs :: .collider(); :: builds a character's own collider from its numbers; reads nothing
+crates/shards_motion/src/controller/mod.rs :: fit(&mut collider, &params.collider()); :: builds a character's own collider from its numbers; reads nothing
+crates/shards_motion/src/overlay.rs :: for c in physics.colliders() { :: the collider overlay draws colliders; a field is drawn by the chunk overlay (A2g)
+crates/shards_motion/src/perception/terrain.rs :: .filter_map(|(entity, _)| self.physics.collider(entity).map(|c| c.bounds().1.y)) :: water surfaces are the tops of water volumes, which stay boxes
+crates/shards_npc/src/nav/bake.rs :: .colliders() :: a tile bake stores its static colliders for carving; by decision a chunk bake stores none for its field, which the volume hash names instead (the voxel design, 6.3 and 9)
+crates/shards_npc/src/nav/region.rs :: let mut now = physics.colliders().filter(|c| tracked(c)); :: carving tracks static colliders and water; a field never changes after it is built
+crates/shards_npc/src/nav/region.rs :: .colliders() :: kinematic WORLD colliders (movers); a field is never kinematic
+crates/shards_npc/src/nav/region.rs :: for c in physics.colliders().filter(|c| tracked(c)) { :: carving tracks static colliders and water; a field never changes after it is built
+crates/shards_npc/src/nav/region.rs :: boxes.push((old.aabb_min, old.aabb_max)); :: the box carving kept of a collider it tracked (its own record, not a query's hit)
+crates/shards_npc/src/perception.rs :: physics.collider(entity).map_or(feet + Vec3::Y, |c| c.position) :: an NPC's target is a character's collider; a field is never a target
