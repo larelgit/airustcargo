@@ -1,0 +1,274 @@
+# Hit outcome: reaction tiers and pushes, a short immunity, the guard's per-hit price, a perfect guard
+# that leaves its attacker free, a perfect evade, a wall in the way and a roll on the last of the
+# stamina; a crusher that breaks a guard and one that knocks a body down; reaction armour while a slam winds up.
+#
+# Two arena fighters are borrowed: the skeleton e7 gets the `sparring` moveset (three reactions with
+# pushes, an immunity after each, protection when one ends, a guard-broken action) and the player e5
+# the `duelist` one (`content/combat/sparring.*.ron`); both go back at the end. The skeleton's swings
+# are pressed by a dev agent possessing it (`session --subject e7`, its behaviour kept `calm`), the
+# player's by a player-scope agent through the same controls a human has.
+
+seed 42
+
+# --- the arena as the game spawns it, whatever was played in it before: everyone stands down
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+# (a dead player is brought back first: its own controls refuse a dead body)
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god on=false
+step 150
+act heal id=e5
+act heal id=e6
+act heal id=e7
+act set id=e6 component=Boss path=phase value=1
+act set id=e5 component=Fighter path=moveset value=duelist
+act set id=e7 component=Fighter path=moveset value=sparring
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-1.8 y=0
+act teleport id=e6 x=0 z=-14 y=0
+act teleport id=e8 x=18 z=18 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+step 2
+invariant field e5 Health.current > 0
+
+session --agent skeleton --scope dev --subject e7
+act lock_on target=e5
+session --agent bot --scope player
+act lock_on target=e7
+expect result contains "ok: locked on e7"
+session --agent scenario
+
+# --- 1. a jab asks for a light reaction: the skeleton is put into its light reaction and pushed
+mark
+session --agent bot
+act light_attack
+expect result contains "ok: spar_jab"
+session --agent scenario
+step 40 --until "journal:e7 reacts light"
+expect journal "e5 -> e7 spar_jab -6 (hp 34)"
+expect journal "e7 reacts light (e5 spar_react_light)"
+expect shows e7 "spar_react_light"
+
+# --- 2. a second jab inside the 0.2 s that follows a reaction causes none: the chained jab lands
+# a few ticks after the first, and only its damage does
+mark
+session --agent bot
+act light_attack
+expect result contains "ok: queued"
+session --agent scenario
+step 40
+expect journal "e5 -> e7 spar_jab_2 -6 (hp 28)"
+expect !journal "reacts"
+
+# --- 3. a slam asks for a heavy reaction and a push: the skeleton is knocked back
+# (the earlier reaction's protection is over by now)
+step 100
+act heal id=e7
+act teleport id=e7 x=0 z=-1.8 y=0
+step 2
+mark
+session --agent bot
+act heavy_attack
+expect result contains "ok: spar_slam"
+session --agent scenario
+step 80 --until "journal:e7 reacts heavy"
+expect journal "e5 -> e7 spar_slam -15 (hp 25)"
+expect journal "e7 reacts heavy (e5 spar_react_heavy)"
+step 40
+expect field e7 Transform.translation.z < -2.3
+
+# --- 4. a raised guard pays the hit's own price: the slam asks 25 of the guard, 0.8 stamina each
+step 100
+act heal id=e5
+act heal id=e7
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-1.8 y=0
+step 2
+session --agent bot
+act block
+expect result contains "holding block"
+session --agent scenario
+step 30
+mark
+session --agent skeleton
+act heavy_attack
+session --agent scenario
+step 60 --until "journal:e5 blocked"
+expect journal "e5 blocked e7 spar_slam: -0 hp, -20 stamina (hp 100)"
+expect field e5 Stamina.current == 80
+session --agent bot
+act block on=false
+session --agent scenario
+
+# --- 5. a perfect guard costs half and leaves the attacker standing: the raise is timed to the slam
+step 100
+act heal id=e5
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-1.8 y=0
+step 2
+mark
+session --agent skeleton
+act heavy_attack
+session --agent scenario
+step 24
+session --agent bot
+act block
+session --agent scenario
+step 40 --until "journal:e5 parried"
+expect journal "e5 parried e7 spar_slam, -10 stamina"
+expect field e5 Stamina.current == 90
+expect !journal "e7 staggered"
+expect field e5 Health.current == 100
+session --agent bot
+act block on=false
+session --agent scenario
+
+# --- 6. a roll timed into the swing is a perfect evade (the middle of its i-frames)
+step 100
+act heal id=e5
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-1.8 y=0
+step 2
+mark
+session --agent skeleton
+act heavy_attack
+session --agent scenario
+step 20
+session --agent bot
+act dodge
+expect result contains "ok: spar_roll"
+session --agent scenario
+step 40 --until "journal:perfectly evaded"
+expect journal "e5 perfectly evaded e7 spar_slam"
+expect journal "e5 evaded e7 spar_slam"
+expect field e5 Health.current == 100
+
+# --- 7. a pillar between them stops the slam (the pillar e2 stands at x 7, z -7, 2 m square)
+step 100
+act heal id=e5
+act teleport id=e5 x=7 z=-5.5 y=0
+act teleport id=e7 x=7 z=-8.5 y=0
+step 2
+mark
+session --agent skeleton
+act heavy_attack
+session --agent scenario
+step 60
+expect journal "e7 winds up spar_slam"
+expect !journal "e7 -> e5"
+expect !journal "e5 blocked"
+expect field e5 Health.current == 100
+# (the same slam with the pillar out of the way hits: the ray along the pillar's side is clear)
+step 100
+act teleport id=e5 x=9.5 z=-8.5 y=0
+act teleport id=e7 x=7 z=-8.5 y=0
+step 2
+mark
+session --agent skeleton
+act heavy_attack
+session --agent scenario
+step 60 --until "journal:e7 -> e5"
+expect journal "e7 -> e5 spar_slam -15 (hp 85)"
+
+# --- 8. a roll on the last of the stamina starts, and spends what is left
+step 100
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-1.8 y=0
+act set id=e5 component=Stamina path=current value=5
+session --agent bot
+act dodge
+expect result contains "ok: spar_roll"
+session --agent scenario
+step 2
+expect field e5 Stamina.current == 0
+step 40
+
+# --- 9. a crusher breaks a raised guard whatever the stamina: the guard-broken action, no stamina
+step 100
+act heal id=e5
+act heal id=e7
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-1.8 y=0
+step 2
+session --agent bot
+act block
+expect result contains "holding block"
+session --agent scenario
+step 30
+mark
+session --agent skeleton
+act use_technique slot=1
+session --agent scenario
+step 40 --until "journal:broke"
+expect journal "e7 broke e5's guard with spar_crusher -5 (hp 95)"
+expect journal "e5 staggered (guard broken)"
+step 2
+expect shows e5 "spar_guard_broken"
+expect field e5 Stamina.current == 0
+session --agent bot
+act block on=false
+session --agent scenario
+
+# --- 10. the same crusher on a body that is not guarding knocks it down (tier 3)
+step 150
+act heal id=e5
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-1.8 y=0
+step 2
+mark
+session --agent skeleton
+act use_technique slot=1
+session --agent scenario
+step 40 --until "journal:e5 reacts"
+expect journal "e7 -> e5 spar_crusher -10 (hp 90)"
+expect journal "e5 reacts knockdown (e7 spar_react_down)"
+expect shows e5 "spar_react_down"
+
+# --- 11. reaction armour: a jab that lands while the slam winds up does its damage and no more
+step 150
+act heal id=e5
+act heal id=e7
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-1.8 y=0
+step 2
+mark
+session --agent skeleton
+act heavy_attack
+session --agent scenario
+step 4
+session --agent bot
+act light_attack
+session --agent scenario
+step 20
+expect journal "e5 -> e7 spar_jab -6"
+expect !journal "e7 reacts"
+
+# --- the arena as it was: movesets back, nobody locked on, everybody healed, every timer run out
+session --agent skeleton
+act lock_on off=true
+session --agent bot
+act lock_on off=true
+act block on=false
+session --agent scenario
+act set id=e5 component=Fighter path=moveset value=player
+act set id=e7 component=Fighter path=moveset value=skeleton
+act heal id=e5
+act heal id=e6
+act heal id=e7
+act teleport id=e5 x=0 z=12 y=0
+act teleport id=e7 x=-12 z=2 y=0
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e8 x=12 z=-2 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+step 150
+act inspect id=e5
+expect result !contains "Protection"
+expect result !contains "Knockback"
+act inspect id=e7
+expect result !contains "Protection"
+expect result !contains "Knockback"

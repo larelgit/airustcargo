@@ -10,9 +10,9 @@
     "seed": 42,
     "tick_hz": 59.99999880000003,
     "engine": "0.2.0",
-    "state_hash": "3e8fe2cb5f0a206a",
+    "state_hash": "b6e5282e170f04c7",
     "checks": {
-      "content": "798dc3d9b4806037",
+      "content": "7873792dbaa8f017",
       "levels": "cbf29ce484222325",
       "static_colliders": "b16a4682932b69b4"
     },
@@ -393,6 +393,19 @@
             "volumes": [],
             "water_surface": null
           },
+          "shards_motion::modifiers::MoveModifiers": {
+            "acceleration": null,
+            "cap": null,
+            "deceleration": null,
+            "factor": 1.0,
+            "ground_factor": 1.0,
+            "no_sprint": false,
+            "rooted": false,
+            "sprint_cost": 1.0,
+            "stance": null,
+            "unsprinted_cap": null,
+            "wade": 1.0
+          },
           "shards_motion::physics::Body": "Kinematic",
           "shards_motion::physics::Collider": {
             "layers": {
@@ -543,6 +556,19 @@
             ],
             "volumes": [],
             "water_surface": null
+          },
+          "shards_motion::modifiers::MoveModifiers": {
+            "acceleration": null,
+            "cap": null,
+            "deceleration": null,
+            "factor": 1.0,
+            "ground_factor": 1.0,
+            "no_sprint": false,
+            "rooted": false,
+            "sprint_cost": 1.0,
+            "stance": null,
+            "unsprinted_cap": null,
+            "wade": 1.0
           },
           "shards_motion::physics::Body": "Kinematic",
           "shards_motion::physics::Collider": {
@@ -800,6 +826,19 @@
             "volumes": [],
             "water_surface": null
           },
+          "shards_motion::modifiers::MoveModifiers": {
+            "acceleration": null,
+            "cap": null,
+            "deceleration": null,
+            "factor": 1.0,
+            "ground_factor": 1.0,
+            "no_sprint": false,
+            "rooted": false,
+            "sprint_cost": 1.0,
+            "stance": null,
+            "unsprinted_cap": null,
+            "wade": 1.0
+          },
           "shards_motion::physics::Body": "Kinematic",
           "shards_motion::physics::Collider": {
             "layers": {
@@ -1017,6 +1056,19 @@
             ],
             "volumes": [],
             "water_surface": null
+          },
+          "shards_motion::modifiers::MoveModifiers": {
+            "acceleration": null,
+            "cap": null,
+            "deceleration": null,
+            "factor": 1.0,
+            "ground_factor": 1.0,
+            "no_sprint": false,
+            "rooted": false,
+            "sprint_cost": 1.0,
+            "stance": null,
+            "unsprinted_cap": null,
+            "wade": 1.0
           },
           "shards_motion::physics::Body": "Kinematic",
           "shards_motion::physics::Collider": {
@@ -1430,6 +1482,19 @@
             "volumes": [],
             "water_surface": null
           },
+          "shards_motion::modifiers::MoveModifiers": {
+            "acceleration": null,
+            "cap": null,
+            "deceleration": null,
+            "factor": 1.0,
+            "ground_factor": 1.0,
+            "no_sprint": false,
+            "rooted": false,
+            "sprint_cost": 1.0,
+            "stance": null,
+            "unsprinted_cap": null,
+            "wade": 1.0
+          },
           "shards_motion::physics::Body": "Kinematic",
           "shards_motion::physics::Collider": {
             "layers": {
@@ -1537,7 +1602,7 @@
   },
   "end": {
     "tick": 369,
-    "hash": "ed1323571c725e05",
+    "hash": "79899e743c8968c8",
     "parts": {
       "entities": {
         "e1": {
@@ -1760,7 +1825,7 @@
         }
       },
       "game": {
-        "content": "798dc3d9b4806037"
+        "content": "7873792dbaa8f017"
       }
     }
   },
@@ -1843,7 +1908,7 @@
   "checks": [
     {
       "tick": 180,
-      "hash": "7defb96850653e19",
+      "hash": "4fad1338aeb9acd4",
       "parts": {
         "entities": {
           "e1": {
@@ -2066,13 +2131,13 @@
           }
         },
         "game": {
-          "content": "798dc3d9b4806037"
+          "content": "7873792dbaa8f017"
         }
       }
     },
     {
       "tick": 240,
-      "hash": "cae2de90acabde6d",
+      "hash": "ed8cba29bedd5870",
       "parts": {
         "entities": {
           "e1": {
@@ -2295,13 +2360,13 @@
           }
         },
         "game": {
-          "content": "798dc3d9b4806037"
+          "content": "7873792dbaa8f017"
         }
       }
     },
     {
       "tick": 300,
-      "hash": "a3a6ef08a9905272",
+      "hash": "dd8a43386e6ae14f",
       "parts": {
         "entities": {
           "e1": {
@@ -2524,13 +2589,13 @@
           }
         },
         "game": {
-          "content": "798dc3d9b4806037"
+          "content": "7873792dbaa8f017"
         }
       }
     },
     {
       "tick": 360,
-      "hash": "688653eef43b2cb4",
+      "hash": "3b9113dbbfd186fd",
       "parts": {
         "entities": {
           "e1": {
@@ -2753,7 +2818,7 @@
           }
         },
         "game": {
-          "content": "798dc3d9b4806037"
+          "content": "7873792dbaa8f017"
         }
       }
     }
