@@ -78,6 +78,7 @@ pub use shards_content as content;
 pub use shards_core as core;
 pub use shards_dev as dev;
 pub use shards_fx as fx;
+pub use shards_hitstop as hitstop;
 pub use shards_level as level;
 pub use shards_look as look;
 pub use shards_locale as locale;

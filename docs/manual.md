@@ -324,6 +324,7 @@ and it calls their tools by name. `shards_look` (how meshes are drawn) knows onl
 | `crates/shards_scatter` | foliage and small objects (E10.2): the `scatter` content kind (`*.scatter.ron`): what to scatter over the tiles of which regions, how densely, on which ground, with which looks, which meshes up close and far away; the layout follows the region's seed (the same in every run), primitive meshes (a grass tuft, a cone, a rock, a box) or glTF, levels of detail through `VisibilityRange`, the `graphics.foliage` setting, the `scatter` and `scatter_set` tools, the `scatter` field in `ai/status`, two developer menu items; with the `render` feature, instances under the tiles (window or `--offscreen`) |
 | `crates/shards_voxel` | voxel terrain, the core (G1, A2b): `VoxelVolume` (chunked blocks, the chunk size a parameter, edits for generation, the FNV hash), the `voxel_palette` content kind (`*.voxel_palette.ron`), deterministic noise, the registry of generation steps and checks (`add_voxel_step` with a version, `add_voxel_check`) and `generate`, the stock steps `noise_hills` and `fill_water`, and the merged boxes `column_boxes` and `water_boxes`; no region kind, collision, navigation or meshing yet |
 | `crates/shards_fx` | effects (E10.3): effects in the content (`effect`, `*.effect.ron`) and the event table (`fx`, `*.fx.ron`): particles from pools (`max_live` meshes per effect, one mesh and one material, the colour in `MeshTag`), camera-facing quads, cubes and shards, glow, flight that follows a formula on the simulation clock; `PlayEffect`, effects for combat events and clip markers; telegraph decals (`ForwardDecal` with a zone material in WESL: circle, sector, rectangle, "stadium", the fill grows toward the hit), `DepthPrepass` on the `AiCamera` cameras; the `effects`, `effect_play` and `telegraph_decals` tools, the `fx` field in `ai/status`, two developer menu items; with the `render` feature, drawing (window or `--offscreen`) |
+| `crates/shards_hitstop` | hit stop (C2): the `hitstop` content kind (`*.hitstop.ron`, an ordered list of rules over the combat events, the first match gives a hold in seconds), the `HitStopped` event and its `hitstop:` journal line on every machine that sees combat, the real-time clock hold alone with a picture (`ai_core::ClockHold`: virtual speed 0, zero ticks, `speed` masked) and the pictures-only hold in co-op (`ai_core::PresentationHolds`, read by the animation bridge), the accessibility settings `hit_stop` and `hit_stop_local_only`, the tools `hitstop` and `hitstop_play` |
 | `crates/shards_steam` | Steam (E10.5), behind the umbrella crate's `steam` feature (off by default; `steam_sdk` is the real client on `steamworks`): co-op over the Steam relay (`--steam-host` for a lobby with invites, `--steam-server` for an anonymous game server, `--join steam:<id>`, `+connect_lobby`), the `SteamTransport` transport for `shards_net`, achievements from the content (`achievement`, `UnlockAchievement`), copies of saves in Steam Cloud and their check at launch, a fake of the Steam process (`FakeSteam`) for tests, the `steam`, `steam_host`, `steam_join`, `steam_invite` and `achievement_unlock` tools, the `steam` field in `ai/status`, the `steam` section of the developer menu |
 | `crates/shards_dev` | developer menu and console (E11): items from modules (`add_dev_entry`) and from the game (the `devmenu` content kind), a console that takes `tool key=value` lines, the `dev_menu` and `console` tools; with the `render` feature, panels in the window (F10 and `` ` ``), Tab completes names from the schemas, the `dev` input context |
 | `crates/ai_core` | the AI layer, independent of any particular game: ids, the world view, the journal, tools, time, replays, transport |
@@ -442,7 +443,7 @@ line, and tests take `shards::testing::config()`.
 | `exit_with_host` | a client exits when the session ends instead of going back to the menu: with code 0 if the host ended it, 1 for a refusal, a kick, loss of the host, or a world that is not accepted; 2 if the session cannot be opened (an address that cannot be parsed; a busy port for `--host`). A host (`--host`) does not exit on `net_end` |
 | `without` | engine modules the game leaves out (`--without audio,scatter`): their plugins are not added, see below |
 
-**Modules the game leaves out.** `EngineConfig::without` (or `--without`) names modules the way `ai/status` lists them (`engine.modules`), and `EnginePlugins` does not add their plugins: a game without sound does not need `audio`, and a server without graphics does not need `look`, `scatter` or `fx`. You can turn off `level`, `world`, `npc`, `net`, `save`, `coop`, `locale`, `ui`, `audio`, `look`, `scatter`, `voxel`, `fx`, `steam` and `dev` (`shards::modules::OPTIONAL_MODULES`); `core`, `content`, `settings`, `motion` and `action` are in every game. A module that another one needs can only leave together with it: `--without locale` gives ``--without: `ui` (screens, menus and the HUD) needs `locale`: leave out both (`--without locale,ui`) or
+**Modules the game leaves out.** `EngineConfig::without` (or `--without`) names modules the way `ai/status` lists them (`engine.modules`), and `EnginePlugins` does not add their plugins: a game without sound does not need `audio`, and a server without graphics does not need `look`, `scatter` or `fx`. You can turn off `level`, `world`, `npc`, `net`, `save`, `coop`, `locale`, `ui`, `audio`, `look`, `scatter`, `voxel`, `fx`, `hitstop`, `steam` and `dev` (`shards::modules::OPTIONAL_MODULES`); `core`, `content`, `settings`, `motion` and `action` are in every game. A module that another one needs can only leave together with it: `--without locale` gives ``--without: `ui` (screens, menus and the HUD) needs `locale`: leave out both (`--without locale,ui`) or
 neither``, and `steam` (in a build that includes it) needs `net`. Something that only joins two modules goes with either of them: `coop` goes with `net` or `save`, and levels as tiles go with `level` or `world`. The command line checks the rest as well: `--without net` with `--host`, `--join` or `--stand`, `--without save` with `--character` or `--world`, `--without steam` with the Steam flags (`--steam-host`, `--steam-lobby`, `--stand-steam`, `--steam-server`, `--steam-relay-only`, `--steam-app`, `--join steam:…`), and `--without world` with `--worldgen-report`
 is an error with exit code 2; `EnginePlugins` with an invalid `without` panics with the same text. Stand members leave out the same modules as the host: the clients of `--stand N` take its setting, and the child processes of `--stand-udp` get its `--without`. A game that calls the API of a module it left out (`add_ui_action` without `ui`) is responsible for that itself. Without `ui`, the main menu is skipped by default, because there is nothing to draw it with (`--menu` still sets `MainMenu`, and `new_game` leads out of it). The test `a_game_runs_without_each_module_it_may_leave_out` (`crates/shards/tests/engine.rs`) turns off each module (along with the ones that need it) and runs the engine for 60 ticks.
 
@@ -4795,6 +4796,68 @@ Also checked: an effect that starts no particles (neither `count` nor `rate` wit
 --port-file F &`, `shards act god`, `shards step 1800 --until "journal:winds up"`, `shards shot -o shots/fx.png` — in the picture, the decal under the attack and the sparks on the hit.
 
 **What is missing.** Particles run on the CPU, so tens of thousands alive at once are too much for them (an effect's pool is up to 4096). Particles have no textures or animated sprites, no trails, no collisions with the ground, no light from the particles, and no sound (sound is the audio module). Decals are for telegraphs only: there is no general API for spots (blood, tracks). A decal projects straight down, within 0.6 m: on a steep slope its edge fades. Checked on the GPU with `--offscreen` (the `offscreen` test in pixels and the sandbox's screenshots); it has not been checked by eye in a window on a display.
+
+## Hit stop (C2)
+
+When a blow lands, the picture stands still for a beat (60-100 ms). It is what makes a hit feel heavy, and it is a **hold, never slow motion**: the simulation does not pass at a fraction of its speed, and no tick is lost or added. `shards_hitstop` turns the combat events into holds by a table in content, and each machine does with a hold what suits it: alone with a picture it keeps the real-time clock still, in co-op it holds only the pictures of the bodies in the blow, and a headless game, a stepped one and a replay hold nothing at all.
+
+```ron
+// crates/sandbox/assets/content/fx/sandbox.hitstop.ron (abbreviated)
+{
+    "sandbox": (
+        max_seconds: 0.12,
+        cooldown: 0.0,
+        rules: [
+            (name: "finisher", when: (event: Damaged, weight_at_least: Finisher), seconds: 0.10),
+            (name: "poise break", when: (event: Damaged, weight_at_least: Break), seconds: 0.10),
+            (name: "counter", when: (event: Damaged, weight_at_least: Counter), seconds: 0.08),
+            (name: "heavy hit", when: (event: Damaged, reaction_at_least: 2), seconds: 0.08),
+            (name: "hit", when: (event: Damaged), seconds: 0.06),
+            (name: "block", when: (event: Blocked), seconds: 0.06),
+            (name: "parry", when: (event: Parried), seconds: 0.10),
+            (name: "perfect dodge", when: (event: PerfectEvaded), seconds: 0.10),
+        ],
+    ),
+}
+```
+
+**The table (kind `hitstop`, `*.hitstop.ron`, one per game, not simulation content).** The engine has no names from any game: the ladder of a game (which blow holds how long) is its own content, and the sandbox's is a neutral example. `rules` are tried in order and **the first rule that matches an event gives the hold**; an event no rule matches gives none. A rule has an optional `name` (the journal and the tools show it; else `rule 3 damaged`), `when` and `seconds`. `when` asks, all of it at once, of the combat event:
+
+| field | the event has it | matches |
+|---|---|---|
+| `event` | always | `Damaged`, `Blocked`, `Parried`, `PerfectEvaded`, `GuardBroken`, `Staggered` (left out: any event) |
+| `weight_at_least` | `Damaged`, `Blocked`, `GuardBroken` | the hit's `HitWeight` is at least this: `Light < Heavy < Counter < Break < Finisher` (the engine raises it to `Heavy` for a reaction of tier 2 or 3 and to `Break` for a broken poise; a game's hook sets `Counter` and `Finisher`) |
+| `reaction_at_least` | `Damaged` | the reaction tier the hit asks of its target |
+| `cause` | `Staggered` | `PoiseBroken`, `Parried`, `GuardBroken`, `Dev` |
+| `action` | all but `Staggered` | the id of the action that hit |
+| `ignored` | `Damaged` | by default a rule matches only a hit that landed; `ignored: true` matches one that was ignored (god mode, i-frames) |
+
+So "finisher, then poise break, then counter, then a heavy reaction, then the rest" is five rules in that order, and a game that wants a different order writes it. `max_seconds` (at most 0.5 s, the engine's own ceiling) bounds every hold whatever a rule says, and `cooldown` (s) keeps a flurry of hits from turning into a stutter: a hold does not start within that time after the last one ended. Holds that overlap **merge by the later end**: a hold asked for while one runs lasts as long as the longer of the two has left. The content check names what cannot work: a second table, a rule longer than `max_seconds`, a rule the ones before it cover (it can never match), a `weight_at_least` on a parry (it has no weight), a `reaction_at_least` or a `cause` on the wrong event.
+
+**What a machine does with a hold.** Every machine that sees the combat events (it simulates them, or it is a co-op client whose host forwards them) triggers `HitStopped { event, rule, name, seconds, bodies, ids }` and writes `hitstop: finisher 0.10 s (damaged) on e5, e6` to the journal as a `local` line (it is this machine's own, never sent to another and never a gameplay event). The observer changes nothing in the world, so it needs no `simulates` guard. Then:
+
+| machine | the hold |
+|---|---|
+| alone (`NetRole::Single`), a window or `--offscreen`, in real time | the **clock hold** (`ai_core::ClockHold`): the virtual clock's relative speed is forced to 0 for the real time of the hold (not a pause: no pause menu, no muted sound, the gate does not refuse). `Time<Fixed>` gathers nothing, so no tick is due and none is added when it ends; everything on the simulation's clock stands still, the pose and the particles with it; the camera and the input run on real time. A hold lasts its time plus less than a frame. `speed` still reports the player's speed, and a `speed` call during a hold changes what the clock comes back to |
+| a co-op host or client | **no clock hold at all**: the picture of each body in the blow stands still (`ai_core::PresentationHolds`, by `AiId`, read by the animation bridge, which pauses the body's `AnimationPlayer` and switches nothing until it ends). A client decides for itself from the combat events its host forwards; a headless host or stand records the same holds, and nothing draws them |
+| headless, `--paused`, a `step` (it ends a hold that runs), a replay playing back (`--verify`, also with `--windowed`), a stand's driven clocks, a paused clock, a loading gate | nothing is held. The event and the journal line are still there, and `hitstop` says why nothing was held |
+
+A hold is never part of the simulation: `ClockHold` and `PresentationHolds` are not in snapshots or replays, the `hitstop` kind is outside the replay's content hash, and a replay recorded with the clock held verifies identical with hit stop off, headless and in a window that plays it (a test in `crates/sandbox/tests/sandbox/hitstop.rs`).
+
+**The player's settings** (`settings`, group `accessibility`): `hit_stop` is the scale of every hold, 0 to 1 (0 turns hit stop off; the sandbox's settings menu has a slider), and `hit_stop_local_only` holds only for the blows the local player (`LocalPlayer`) is in, not for the fights around them.
+
+**For agents.** `hitstop` (Dev, query; `last=N` lists the last N holds) shows how this machine holds, the settings, the table with each rule's hold, whether the clock is held now (and for how much longer, and the speed it reads), the pictures held, the totals and, for the clock, the real time it held in all and **the ticks that ran inside a hold (0 when it works)**. `hitstop_play` (Dev, control; not recorded in replays) makes a hold as a blow would: `event=damaged weight=Break attacker=e5 target=e6`, or `seconds=0.08` to skip the table; it answers the rule and what this machine did with it. `ai/status` has `hitstop: {mode, rules, events, clock_holds, picture_holds, skipped, clock_held_ms, ticks_inside, clock_held_now}`, and the developer menu has `hitstop` under combat.
+
+```
+$ shards act hitstop_play event=damaged weight=Break attacker=e5 target=e6
+poise break 0.10 s (damaged): clock held (0.10 s)
+$ shards act hitstop
+hit stop: solo: holds the real-time clock (no tick is lost)
+...
+clock: 0.117 s held in all over 1 holds · ticks that ran inside a hold: 0 · the last: 0.117 s real, 0 ticks inside
+```
+
+**Limits.** In co-op only the animation of the bodies stands still; the interpolation of a client's other bodies and what the pictures do on their own clocks (camera, UI) run on. The held time is the time asked for plus up to one frame, since a hold is checked at the start of a frame. The `Time<Virtual>` of a held clock is 0, so presentation that runs on it (a particle's life, `Res<Time>` in `Update`) stands still with the world; what must not stand still reads `Time<Real>`.
 
 ## Voxel terrain (core)
 

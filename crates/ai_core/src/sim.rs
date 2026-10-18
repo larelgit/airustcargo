@@ -24,6 +24,7 @@ use bevy::app::FixedMain;
 use bevy::prelude::*;
 use serde::Serialize;
 
+use crate::hold::{self, ClockHold};
 use crate::journal::{self, JournalKind};
 
 /// Number of completed fixed ticks. Incremented at the very start of every tick,
@@ -181,17 +182,34 @@ pub fn resume(world: &mut World) {
 
 /// Game speed multiplier for real-time play (1.0 = normal). An infinity or NaN changes
 /// nothing (Bevy's clock would panic on it).
+///
+/// During a [`ClockHold`] (a hit stop) this is the speed the clock comes back to: the hold itself
+/// keeps the virtual clock at 0.
 pub fn set_speed(world: &mut World, speed: f32) {
     if speed.is_finite() {
-        world.resource_mut::<Time<Virtual>>().set_relative_speed(speed.max(0.0));
+        let speed = speed.max(0.0);
+        if world.get_resource_mut::<ClockHold>().is_some_and(|mut hold| hold.set_player_speed(speed)) {
+            return;
+        }
+        world.resource_mut::<Time<Virtual>>().set_relative_speed(speed);
     }
 }
 
+/// The speed the player chose, also during a [`ClockHold`] (which only masks it).
 pub fn speed(world: &World) -> f32 {
     match driven(world) {
         Some(clock) => clock.speed,
-        None => world.resource::<Time<Virtual>>().relative_speed(),
+        None => world
+            .get_resource::<ClockHold>()
+            .and_then(ClockHold::player_speed)
+            .unwrap_or_else(|| world.resource::<Time<Virtual>>().relative_speed()),
     }
+}
+
+/// Whether a driver (an in-process stand) runs this world's ticks: it has no real-time clock of
+/// its own to hold.
+pub fn is_driven(world: &World) -> bool {
+    driven(world).is_some()
 }
 
 /// The driver's clock, when a driver runs this world's ticks ([`StepQueue::set_driven`]).
@@ -333,6 +351,8 @@ pub fn step(
     if let Some(loading) = gate_message(world) {
         return Err(loading);
     }
+    // A stepped game never holds its clock.
+    hold::cancel_hold(world);
     pause(world);
     // Failures and violations from before this step are in the journal already; they
     // are not its own.

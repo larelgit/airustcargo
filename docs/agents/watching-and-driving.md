@@ -75,7 +75,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   (remove; `on=true` — scatter again), density — `settings_set group=graphics key=foliage value=0.5`; **effects** —
   `effects` (effects from `*.effect.ron`, their pools, the event table and the telegraph decals on the ground), `effect_play effect=hit_spark
   at=eN` (or `point=[x,y,z]`), `telegraph_decals on=false` (the telegraph fill becomes gizmos again); without a window and `--offscreen` effects
-  do not play, and the tools say so; **Steam** (a game with the `steam` feature) — `steam` (who this machine is in Steam, the lobby and
+  do not play, and the tools say so; **hit stop** — `hitstop` (how this machine holds, the settings, the table, what is held now, the totals and the ticks that ran inside a clock hold, which must be 0, the last holds), `hitstop_play event=damaged weight=Break attacker=e5 target=e6` (a hold as a blow would make; `seconds=0.08` skips the table); headless and stepped games never hold, and the tools say why: the hold is for a window or `--offscreen` in real time (not `--paused`); **Steam** (a game with the `steam` feature) — `steam` (who this machine is in Steam, the lobby and
   its type — `--steam-lobby friends|private|invisible|public` — or the game server, the relay and the route to each peer, achievements,
   cloud), `steam_lobbies` (the lobbies of this build with free seats; `all=true` — and the others), `steam_host`, `steam_join lobby=ID`
   or `host=ID`,
