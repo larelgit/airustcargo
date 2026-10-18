@@ -427,7 +427,7 @@ impl Devices<'_> {
                 let live = if raw.abs() < *deadzone { 0.0 } else { raw };
                 Vec2::new(live * scale, 0.0)
             }
-            Binding::Stick { stick, deadzone, scale } => {
+            Binding::Stick { stick, deadzone, scale, scale_x, scale_y, curve } => {
                 let raw = self
                     .pads
                     .iter()
@@ -436,8 +436,7 @@ impl Devices<'_> {
                         Stick::Right => p.right_stick(),
                     })
                     .fold(Vec2::ZERO, |best, v| if v.length_squared() > best.length_squared() { v } else { best });
-                let len = raw.length();
-                if len <= *deadzone { Vec2::ZERO } else { raw / len * ((len - deadzone) / (1.0 - deadzone).max(1e-3)).min(1.0) * *scale }
+                map::stick_response(raw, *deadzone, *scale, *scale_x, *scale_y, *curve)
             }
             // Mouse deltas are per frame already; a stick's value is a rate, so the look
             // axis multiplies sticks by the frame time (see `read_input`).

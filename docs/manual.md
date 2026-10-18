@@ -149,17 +149,17 @@ are in [template/README.md](../template/README.md).
    ```
 2. **Depend on the engine by tag or commit.** In `Cargo.toml`, use a git dependency instead of the path
    (`../crates/shards`). Versions and tags are described in [CHANGELOG.md](../CHANGELOG.md). The template uses saves,
-   co-op, screens and texts, so it needs the engine of phases C–E (the future `0.4.0`). The earlier versions `0.2.0` and
-   `0.3.0` will not work. Until the maintainer sets a tag, pin a commit:
+   co-op, screens and texts, so it needs the engine of phases C–E (`0.4.0`). The earlier versions `0.2.0` and
+   `0.3.0` will not work. Pin the tag `v0.4.0`:
    ```toml
    [dependencies]
-   shards = { git = "https://github.com/larelgit/airustcargo", rev = "<hash>", default-features = false }
+   shards = { git = "https://github.com/larelgit/shards-engine", tag = "v0.4.0", default-features = false }
    ```
-   After the `v0.4.0` release, replace `rev = "<hash>"` with `tag = "v0.4.0"`. The build does not change until you change
-   `rev` or `tag` yourself. `default-features = false` is needed so that the game turns on the features (`render`,
+   To follow unreleased changes on the main branch instead, pin a commit with `rev = "<hash>"`. The build does not change
+   until you change `tag` or `rev` yourself. `default-features = false` is needed so that the game turns on the features (`render`,
    `remote`, `hot_reload`, `audio`, `gamepad`, …) in its own `[features]`. There are no other dependencies: Bevy, serde
    and schemars come through `shards` (`shards::prelude::*`, `shards::serde`, `shards::schemars`). Install the CLI at the
-   same version: `cargo install shards_cli --git … --rev <hash>` (after the release, `--tag v0.4.0`).
+   same version: `cargo install shards_cli --git … --tag v0.4.0` (or `--rev <hash>` for a pinned commit).
 3. **`main` is one line.** `shards::run` reads the command line (`--headless --seed --port --port-file --no-remote
    --paused --hz --replay --verify --windowed --check-every --check-detail --tick-budget-ms --frame-budget-ms --check-content
    --worldgen-report --seeds --bake-nav --smoke --perf`), catches `kill` and a closed terminal:
@@ -883,6 +883,7 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
 - `InputMap { contexts }`: context (`gameplay`, `menu`, or the game's own) → actions → bindings. A binding is one of: `Key`, `Mouse`,
   `GamepadButton`, `GamepadAxis` (dead zone, scale), `KeyAxis`, `Keys2D` (WASD as a 2D axis), `Buttons2D` (the gamepad's D-pad as a 2D axis), `Stick`,
   `MouseMotion`.
+  `Stick` has `deadzone` (radial, the rest rescaled to 0..1), `scale` for both axes, and three optional fields for stick look (C9): `scale_x` / `scale_y` (`Some(3.2)`; a per-axis scale where set, `scale` where absent) and `curve` (the exponent on the magnitude after the dead zone, `m -> m^curve`, direction kept; default 1.0 is linear; it must be above 0 and finite, otherwise a content error names the file; `rebind` and a saved `controls` string are refused the same way). A look stick that turns 3.2 units per second of yaw and 2.0 of pitch (the scale is in the `look` action's units per second) with a 1.6 response is `Stick(stick: Right, deadzone: 0.2, scale_x: Some(3.2), scale_y: Some(2.0), curve: 1.6)`. The new fields are not written while they are default, so every old `input_map` file and saved `controls` string reads and writes as before; `rebind` takes the same text.
   Action mode: `Press` (one press), `Hold` (while held), `Toggle` (a press turns it on until the next press: "hold or press" for accessibility). `directional: true` — a press carries the direction the player is moving in (a roll towards where the stick points). Slot 0 is the main binding; slot 1 and up are spares.
 - The context stack `InputContexts`: only the top one fires; `menu` blocks `gameplay` until it is removed.
 - Defaults come from content (`*.input_map.ron`, id `default`, hot reload) or from the built-in

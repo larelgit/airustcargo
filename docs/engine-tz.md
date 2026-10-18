@@ -2,7 +2,7 @@
 
 13 Oct 2026 · @Larel
 
-The Shards engine (repository airustcargo) must become a set of crates. A separate game repository builds *Осколки Предела* on it without touching the engine's code. Below are 11 modules, E1–E11: what to do in each one, where the boundary with the game is, what the AI sees, and when the module is ready. The GDD section numbers follow the game's document.
+The Shards engine (repository shards-engine) must become a set of crates. A separate game repository builds *Осколки Предела* on it without touching the engine's code. Below are 11 modules, E1–E11: what to do in each one, where the boundary with the game is, what the AI sees, and when the module is ready. The GDD section numbers follow the game's document.
 
 Progress on this spec is in [engine-progress.md](engine-progress.md).
 

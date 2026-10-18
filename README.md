@@ -190,12 +190,12 @@ A game is a separate repository with one dependency, `shards`. The starting poin
    mkdir -p ~/games && cp -r template ~/games/pit && cd ~/games/pit && git init
    grep -rIl my_game . | grep -v Cargo.lock | xargs sed -i 's/my_game/pit/g'   # the package `pit` and the settings folder `SettingsAppId::new("pit")`; Cargo.lock fixes itself
    ```
-2. **Depend on the engine by git.** In `Cargo.toml`, replace the path (`../crates/shards`) with a git dependency. The template uses saves, co-op, screens and texts, so it needs the engine of phases C–E (the future `0.4.0`); the earlier versions `0.2.0` and `0.3.0` will not do. Until the maintainer sets a tag, pin a commit:
+2. **Depend on the engine by git.** In `Cargo.toml`, replace the path (`../crates/shards`) with a git dependency. The template uses saves, co-op, screens and texts, so it needs the engine of phases C–E (`0.4.0`); the earlier versions `0.2.0` and `0.3.0` will not do. Pin the tag `v0.4.0`:
    ```toml
    [dependencies]
-   shards = { git = "https://github.com/larelgit/airustcargo", rev = "<hash>", default-features = false }
+   shards = { git = "https://github.com/larelgit/shards-engine", tag = "v0.4.0", default-features = false }
    ```
-   After `v0.4.0` is released, replace `rev = "<hash>"` with `tag = "v0.4.0"`. The build does not change until you change `rev` or `tag`. `default-features = false` lets your game switch features (`render`, `remote`, `hot_reload`, `audio`, `gamepad`, …) on in its own `[features]`. There are no other dependencies: Bevy, serde and schemars come through `shards`. Install the CLI of the same version with `cargo install shards_cli --git https://github.com/larelgit/airustcargo --rev <hash>` (after the release: `--tag v0.4.0`). Versions and tags are described in [CHANGELOG.md](CHANGELOG.md).
+   To follow unreleased changes on the main branch instead, pin a commit with `rev = "<hash>"`. The build does not change until you change `tag` or `rev`. `default-features = false` lets your game switch features (`render`, `remote`, `hot_reload`, `audio`, `gamepad`, …) on in its own `[features]`. There are no other dependencies: Bevy, serde and schemars come through `shards`. Install the CLI of the same version with `cargo install shards_cli --git https://github.com/larelgit/shards-engine --tag v0.4.0` (or `--rev <hash>` for a pinned commit). Versions and tags are described in [CHANGELOG.md](CHANGELOG.md).
 3. **`main` is one line, `build_app` assembles the engine and the game.** `shards::run` reads the command line and handles `kill` and a closed terminal; `EnginePlugins` is the whole engine from one `EngineConfig`.
    ```rust
    fn main() -> std::process::ExitCode {
@@ -280,7 +280,7 @@ What remains needs hardware or accounts that these checks cannot reach:
 - the packaged build on a clean Windows machine;
 - two players over the Steam relay from two accounts.
 
-No version is tagged yet, `v0.4.0` included, so games pin a commit (step 2 above). Progress against the spec, item by item, is in [docs/engine-progress.md](docs/engine-progress.md).
+The current release is `v0.4.0`: games pin that tag (step 2 above). Progress against the spec, item by item, is in [docs/engine-progress.md](docs/engine-progress.md).
 
 Shards is being built for the game *Осколки Предела*, which lives in its own repository. Nothing from that game is in the engine code.
 
@@ -299,3 +299,16 @@ Shards is being built for the game *Осколки Предела*, which lives 
 - Code, comments and documentation are in English.
 - Bevy is pinned at `0.20.0`; do not upgrade it as a side effect of another task.
 - Check changes with `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings`; if the template can see the change, also `cargo test --manifest-path template/Cargo.toml`.
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <https://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+
+Third-party assets keep their own licences: the Fira Sans font in `crates/shards_ui/fonts/` is under the SIL Open Font Licence (`FiraSans-OFL.txt`).

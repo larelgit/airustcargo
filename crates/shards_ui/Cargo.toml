@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [features]
 # Drawing the screens with Bevy UI, the mouse (picking) and screen readers (AccessKit). The model,
