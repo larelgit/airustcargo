@@ -91,7 +91,7 @@ fn a_test_app_comes_back_loaded_and_paused_at_tick_zero() {
     let seen = ok(&mut app, "observe", json!({}));
     assert!(seen.result.as_str().unwrap().contains("e1 Totem"), "{}", seen.result);
     let modules: Vec<String> = app.world().resource::<EngineModules>().iter().map(|m| m.name.clone()).collect();
-    let mut expected = vec!["core", "content", "settings", "motion", "action", "level", "world", "npc", "net", "save", "coop", "locale", "ui", "audio", "look", "scatter", "voxel", "fx"];
+    let mut expected = vec!["core", "content", "settings", "motion", "action", "level", "world", "npc", "encounter", "net", "save", "coop", "locale", "ui", "audio", "look", "scatter", "voxel", "fx"];
     // Steam is a module only in a game built with the `steam` feature.
     if cfg!(feature = "steam") {
         expected.push("steam");

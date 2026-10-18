@@ -106,6 +106,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     // shards_audio
     ("shards_audio::", "the mixer, the music's diagnostics and the audio device: sound only reads the world"),
     // shards_content
+    ("shards_encounter::EncounterHooks", "the out rules and despawn hooks games register, set at build time"),
     ("shards_content::ContentAppliedHooks", "what runs after a content change is applied, registered at build time"),
     ("shards_content::ContentGuards", "the content guards, registered at build time"),
     ("shards_content::db::ContentDb", "loaded content: the world is built around it, and snapshots check its hash"),

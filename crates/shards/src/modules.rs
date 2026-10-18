@@ -21,6 +21,7 @@ pub const OPTIONAL_MODULES: &[OptionalModule] = &[
     OptionalModule { name: "level", needs: &[], what: "level files from Blender" },
     OptionalModule { name: "world", needs: &[], what: "regions and their generator" },
     OptionalModule { name: "npc", needs: &[], what: "NPC brains, senses and the navmesh" },
+    OptionalModule { name: "encounter", needs: &["npc", "world"], what: "encounters: waves of enemies at a place (out with npc or world)" },
     OptionalModule { name: "net", needs: &[], what: "co-op sessions" },
     OptionalModule { name: "save", needs: &[], what: "saves" },
     OptionalModule { name: "coop", needs: &["net", "save"], what: "co-op saves (out with net or save)" },
@@ -36,7 +37,7 @@ pub const OPTIONAL_MODULES: &[OptionalModule] = &[
 ];
 
 /// Modules that only join others: out with any of them, without being named.
-const JOINS: &[&str] = &["coop"];
+const JOINS: &[&str] = &["coop", "encounter"];
 
 /// Whether a game can leave out `without`: every name is a module a game may leave out, and
 /// nothing that runs needs one of them. Answers the modules that go, with the joining ones

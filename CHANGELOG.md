@@ -67,6 +67,38 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
 
 ### Added
 
+- Encounters (`shards_encounter`, G9): groups of enemies that come in waves at an anchor, start when the players arrive, end when the
+  last counted member falls, rewind when the group of players is wiped, and reset when they leave. A new crate with two content
+  kinds, `encounter` (`EncounterDef`: `radius`, `start` as `Trigger`, `Near` or `Manual`, `waves` with `delay`, `placed`, a `warn` cue and
+  groups with `count`/`up_to`, `at` as `Offsets`, `Marker`, `Poi` or `Ring`, `face`, `home`, `leash`, `avoid_behind` and JSON-patch
+  `overrides`; `tags`, `budget`, `allowed`, `forbidden`, `rules`, `resume_after`, `reset_after`, `on_reset`, `pull_back`, `lock`, `once`,
+  `net_always`, `blocks_join`; every default is 0, none or off) and `encounter_rules` (`limits` with `unless`, `needs`; not simulation
+  content). Two components: `EncounterAnchor` (a prefab, a tile piece, a level node or `place_encounter` puts an encounter anywhere;
+  `shards_world` does not change) and `EncounterRole` (a prefab's cost and tags for the checks). Content checks name the file, the
+  encounter, the wave, the group and the fix (budget, tags, limits, needs, overrides read like a prefab spawn, `pull_back.state` in each
+  member's behaviour, cue effects, sounds and messages, an anchor's encounter and key on every prefab). The state machine
+  (`Idle`, `Armed`, `Running`, `Between`, `Wiped`, `Resetting`, `Won`) is a pure function with its table in the docs; every timer is a count of whole
+  ticks set and counted down in one tick (1.2 s is 72 ticks, 2.5 s 150, 2.0 s 120), and one transition happens per tick. Counting is level
+  based (a member is out when it is `Dead` or gone, so every death counts); a wipe despawns the wave silently and rewinds one wave (not
+  between waves), pulls back the survivors of a placed wave (`pulled_back` decides what the resume does, not the wave number), the resume
+  comes `resume_after` after someone stands; an absence reset runs in every fighting state. A placed pack that is out, hurt or hunting
+  before its start is pulled into the fight; a placed pack whose members are all out clears and is won instead of waiting for ever. Spawn
+  points are grounded, checked against the navmesh where the region has one, and kept out of the rear cone of a participant's facing
+  (lock-on target, aim, forward: simulation state, never the camera); randomness is a `DetRng` keyed by the seed, tick, run key, wave,
+  group and purpose. Events `EncounterStarted`, `WaveWarned`, `WaveStarted`, `WaveCleared`, `EncounterCompleted`, `EncounterWiped`,
+  `EncounterResumed`, `EncounterReset`; tools `encounters`, `encounter`, `encounter_start`, `encounter_reset`; conditions
+  `encounter_active`, `encounter_between`, `encounter_wiped`, `encounter_won` and the NPC condition `encounter_returning`; the engine
+  rules `encounter.members_tracked`, `encounter.state_sane` and `encounter.lock_matches`; the dev menu entries; the snapshot resource
+  and replay check `encounters` (absent without runs, so other snapshots and replays keep their bytes) and a snapshot prepare that
+  removes stale runs; the world save section `encounters` (the keys of won `once` encounters; a fight in progress is not saved).
+  `EncounterAppExt::add_encounter_out_rule` (a downed state counts as out) and `add_encounter_despawn_hook` (what a member owns is
+  cleaned up before a silent despawn); `adopt`, `start_encounter`, `reset_encounter`, `place_encounter`, `join_blocked`. The umbrella
+  sends the events to clients, plays a warning's effect and sound, keeps `NetAlways` on the members of a `net_always` fight, and holds
+  joiners while a `blocks_join` fight is on. Module `encounter` (out with `npc` or `world`). Manual: "Encounters (G9)".
+- `NetHooks::join_gates`: a list of gates (`fn(&World, &JoinRequest) -> Option<String>`) that the new default `join_policy`
+  (`default_join_policy`) consults; a gate's reason makes a newcomer wait. A request whose player already has a body (a rejoin within the
+  grace) skips them. `gates_say` for a game with a policy of its own.
+
 - Voxel regions (`shards_voxel`, G1, A2c): a region kind of its own behind the same region API as tiles. `shards_world` gains
   `Layout::Volume` (`"volume"`) and a registry of region kinds (`RegionKind`, `app.add_region_kind`, `WorldGen::kinds`,
   `kind::generation_problems`); the manifest gains `steps` (the steps with versions that made it, written only when set, so other

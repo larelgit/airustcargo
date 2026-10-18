@@ -1,0 +1,123 @@
+// Encounters of the tests. Radius 20 m around the anchor; the player stands wherever a test puts it.
+{
+    // Three waves of 1, 2 and 1 members at fixed points, started by a trigger volume that
+    // everyone must stand in; a lock, and a cue on the second wave. Seconds as in the docs:
+    // 1.2 s to the first wave, 2.5 s between, 2.0 s to resume.
+    "ring_waves": (
+        radius: 20.0,
+        start: Trigger(volume: "ring", all_players_in: true),
+        waves: [
+            (delay: 1.2, warn: Some((message: Some("@wave"), effect: None, sound: None)),
+             members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, -6.0)]))]),
+            (delay: 2.5, members: [(prefab: "grunt", count: 2, at: Offsets([(4.0, 0.0, -8.0), (-4.0, 0.0, -8.0)]))]),
+            (delay: 2.5, members: [(prefab: "brute", at: Offsets([(0.0, 0.0, -12.0)]), home: Anchor, leash: Some(18.0))]),
+        ],
+        tags: ["special_arena"],
+        budget: Some(3),
+        rules: Some("default"),
+        resume_after: 2.0,
+        reset_after: Some(30.0),
+        pull_back: (heal: true, state: None, deadline: 6.0),
+        lock: Some("barrier"),
+        once: true,
+        net_always: true,
+        blocks_join: true,
+    ),
+    // One wave, started by distance, no resets: the least an encounter is.
+    "single": (
+        radius: 20.0,
+        start: Near(within: 10.0),
+        waves: [(delay: 0.5, members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, -5.0)]))])],
+    ),
+    // Started only by `start_encounter` / the dev tool.
+    "manual": (
+        radius: 20.0,
+        start: Manual,
+        waves: [
+            (delay: 1.0, members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, -5.0)]))]),
+            (delay: 1.0, members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, -5.0)]))]),
+        ],
+        resume_after: 2.0,
+        reset_after: Some(30.0),
+    ),
+    // A placed pack on markers, which can be disturbed before it starts.
+    "marker_pack": (
+        radius: 12.0,
+        start: Near(within: 10.0),
+        waves: [(placed: true, members: [
+            (prefab: "grunt", count: 2, up_to: Some(3), at: Marker("pack"), avoid_behind: Some((within: 18.0, angle: 90.0))),
+        ])],
+        budget: Some(3),
+        rules: Some("default"),
+        reset_after: Some(30.0),
+        pull_back: (heal: true, state: None, deadline: 6.0),
+    ),
+    // A placed wave and spawned waves after it.
+    "camp": (
+        radius: 15.0,
+        start: Near(within: 8.0),
+        waves: [
+            (placed: true, members: [(prefab: "grunt", at: Offsets([(3.0, 0.0, 0.0)]))]),
+            (delay: 1.0, members: [(prefab: "grunt", at: Offsets([(-3.0, 0.0, 0.0)]))]),
+            (delay: 1.0, members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, -3.0)]))]),
+        ],
+        resume_after: 2.0,
+        reset_after: Some(30.0),
+        pull_back: (heal: true, state: None, deadline: 6.0),
+    ),
+    // One placed wave and nothing else: the pack of the panic path.
+    "lone_pack": (
+        radius: 15.0,
+        start: Near(within: 8.0),
+        waves: [(placed: true, members: [(prefab: "grunt", count: 2, at: Offsets([(3.0, 0.0, 0.0), (-3.0, 0.0, 0.0)]))])],
+        reset_after: Some(30.0),
+    ),
+    // Waves of rings and POIs.
+    "ring_points": (
+        radius: 20.0,
+        start: Manual,
+        waves: [(delay: 0.0, members: [(prefab: "grunt", count: 3, at: Ring(min: 6.0, max: 9.0))])],
+    ),
+    "poi_points": (
+        radius: 20.0,
+        start: Manual,
+        waves: [(delay: 0.0, members: [(prefab: "grunt", count: 2, at: Poi("shrine"))])],
+    ),
+    // Keeps its cleared waves when the players leave.
+    "keeper": (
+        radius: 15.0,
+        start: Manual,
+        waves: [
+            (delay: 0.5, members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, -4.0)]))]),
+            (delay: 0.5, members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, -4.0)]))]),
+            (delay: 0.5, members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, -4.0)]))]),
+        ],
+        reset_after: Some(10.0),
+        on_reset: KeepCleared,
+    ),
+    // Started by anyone in the volume.
+    "trigger_any": (
+        radius: 20.0,
+        start: Trigger(volume: "ring"),
+        waves: [(delay: 1.0, members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, -5.0)]))])],
+        resume_after: 2.0,
+        reset_after: Some(30.0),
+    ),
+    // Started when every player is within 8 m.
+    "near_all": (
+        radius: 20.0,
+        start: Near(within: 8.0, all_players_in: true),
+        waves: [(delay: 1.0, members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, -5.0)]))])],
+    ),
+    // Fields over the prefab's, a leash and a home.
+    "overridden": (
+        radius: 20.0,
+        start: Manual,
+        waves: [(delay: 0.0, members: [
+            (prefab: "grunt", at: Offsets([(0.0, 0.0, -5.0)]), overrides: {"Health": (current: 7.0)}, leash: Some(9.0)),
+            (prefab: "grunt", at: Offsets([(2.0, 0.0, -5.0)]), home: Anchor),
+            (prefab: "grunt", at: Offsets([(4.0, 0.0, -5.0)]), face: Yaw(90.0)),
+            (prefab: "grunt", at: Offsets([(-4.0, 0.0, -5.0)]), face: Anchor),
+        ])],
+    ),
+}
