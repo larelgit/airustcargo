@@ -8,4 +8,8 @@
     "rest_interrupted": (options: [(input: "light")], rest: (0.5, 0.5), rest_interrupted: Some((0.3, 0.3))),
     // A pause of a second at spawn.
     "rest_first": (options: [(input: "light")], rest: (0.5, 0.5), first_rest: Some((1.0, 1.0))),
+    // Two NPCs on this plan keep wanting to strike.
+    "pair": (options: [(input: "light")], rest: (0.1, 0.1)),
+    // A retreat, tagged by its action as a repositioning.
+    "hopper": (options: [(input: "hop", max: Some(5.0))], rest: (0.1, 0.1)),
 }

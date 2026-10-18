@@ -1,0 +1,3 @@
+{
+    "duelist": (inputs: {"light": "jab", "heavy": "smash", "hop": "hop_back"}, stagger: "grunt_stagger"),
+}

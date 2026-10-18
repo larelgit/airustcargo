@@ -33,6 +33,7 @@ use crate::brain::{clamp_to_leash, salt, Home, Npc, NpcBrain, NpcDrive};
 use crate::def::{AttackPlanDef, DirectorDef, Role, WaitRole};
 use crate::perception::Perceived;
 use crate::planner::{feasible, resolve, InFlight, NpcPlan};
+use crate::strike::{note_list, pool, spacing_ticks, waiting, NpcStrike};
 
 /// An NPC's attack token, while it holds one, and its place in the queue while it asks.
 #[derive(Component, Reflect, Clone, Debug, PartialEq, Default)]
@@ -131,6 +132,7 @@ pub(crate) struct Fighting {
     pub drive: &'static mut NpcDrive,
     pub token: &'static mut AttackToken,
     pub plan: &'static mut NpcPlan,
+    pub strike: Option<&'static NpcStrike>,
     pub fighter: &'static Fighter,
     pub state: &'static ActionState,
     pub buffer: &'static InputBuffer,
@@ -317,6 +319,7 @@ pub(crate) fn direct(
 
     // 3. Grants, longest-waiting first.
     let inflight = InFlight::collect(npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
+    let notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref())));
     let mut asking: Vec<(u64, AiId, Entity)> = Vec::new();
     for &(id, entity) in &order {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
@@ -361,7 +364,9 @@ pub(crate) fn direct(
             dead: f.dead,
         };
         let (budget, overlapping) = inflight.on(target, id, &director);
-        let any = options.iter().any(|o| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director));
+        // No token for a strike that would come too soon after another NPC's.
+        let spaced_out = waiting(&notes, id, &d, tick.0, spacing_ticks(director.min_spacing, dt)).is_some();
+        let any = options.iter().any(|o| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director, spaced_out));
         if !any {
             continue;
         }
@@ -412,11 +417,6 @@ pub(crate) fn direct(
         let home = f.home.map(|h| (h.pos.unwrap_or(f.transform.translation), h.leash));
         wait_in_role(&mut f, &role, center, home, dt);
     }
-}
-
-/// The director an NPC fights by: its own, or `default`.
-fn pool(director: &str) -> String {
-    if director.is_empty() { DirectorDef::DEFAULT.to_owned() } else { director.to_owned() }
 }
 
 /// Tokens held per director, in the order directors first come up.

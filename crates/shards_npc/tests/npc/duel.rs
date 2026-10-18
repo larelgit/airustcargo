@@ -3,7 +3,7 @@
 //! `perception.rs`). Counted in ticks, from the actions that start.
 
 use bevy::prelude::*;
-use shards_npc::NpcThink;
+use shards_npc::{NpcStrike, NpcThink};
 use shards_npc::prelude::*;
 use shards_action::{stagger, StaggerCause};
 
@@ -170,4 +170,113 @@ fn a_transition_can_wait_for_a_decision_tick() {
     }
     let names: Vec<(u64, &str)> = changes.iter().map(|(t, s)| (*t, s.as_str())).collect();
     assert_eq!(names, [(1, "a"), (16, "b"), (31, "a"), (46, "b"), (61, "a"), (76, "b")], "a flip per decision, 0.25 s = 15 ticks apart");
+}
+
+// --- N1: strike spacing --------------------------------------------------------------------
+
+/// Two duelists on `plan` facing a hero between them, fighting by `director`.
+fn pair(director: &str, plan: &str, seed: u64, setup: impl FnOnce(&mut App)) -> (App, [Entity; 2]) {
+    let mut app = app_seeded(seed, |app| {
+        record_starts(app);
+        setup(app);
+    });
+    let world = app.world_mut();
+    player(world, 0, Vec3::ZERO);
+    let make = |world: &mut World, z: f32| {
+        npc(world, "duelist", Npc::new("grunt", "grunt").with_plan(plan).with_director(director), Vec3::new(0.0, 0.0, z), if z > 0.0 { N } else { S })
+    };
+    let a = make(world, 1.2);
+    let b = make(world, -1.2);
+    (app, [a, b])
+}
+
+/// Every start of `action` by the two, sorted: `(tick, who)`.
+fn all_starts(app: &App, who: [Entity; 2], action: &str) -> Vec<(u64, usize)> {
+    let mut all: Vec<(u64, usize)> = (0..2).flat_map(|i| starts(app, who[i], action).into_iter().map(move |t| (t, i))).collect();
+    all.sort();
+    all
+}
+
+#[test]
+fn strikes_of_different_npcs_start_at_least_the_spacing_apart() {
+    for seed in [7, 11, 23] {
+        let (mut app, who) = pair("spaced", "pair", seed, |_| {});
+        step(&mut app, 1200);
+        let jabs = all_starts(&app, who, "jab");
+        assert!(jabs.len() >= 12 && jabs.iter().any(|(_, i)| *i == 0) && jabs.iter().any(|(_, i)| *i == 1), "seed {seed}: {jabs:?}");
+        let gaps: Vec<u64> = jabs.windows(2).filter(|w| w[0].1 != w[1].1).map(|w| w[1].0 - w[0].0).collect();
+        assert!(gaps.iter().all(|g| *g >= 42), "seed {seed}: 0.7 s = 42 ticks between different NPCs' strikes: {gaps:?} in {jabs:?}");
+        assert!(gaps.contains(&42), "seed {seed}: and the second goes the tick the spacing runs out: {gaps:?}");
+    }
+}
+
+#[test]
+fn without_a_spacing_two_npcs_strike_in_the_same_tick() {
+    let (mut app, who) = pair("loose", "pair", 7, |_| {});
+    step(&mut app, 600);
+    let jabs = all_starts(&app, who, "jab");
+    assert!(jabs.windows(2).any(|w| w[0].0 == w[1].0 && w[0].1 != w[1].1), "{jabs:?}");
+    // The neutral path leaves no trace: no component, no notes.
+    assert!(who.iter().all(|e| app.world().get::<NpcStrike>(*e).is_none()));
+}
+
+#[test]
+fn an_exempt_action_neither_waits_nor_counts() {
+    let (mut app, who) = pair("spaced", "hopper", 7, |_| {});
+    step(&mut app, 300);
+    let hops = all_starts(&app, who, "hop_back");
+    assert!(hops.windows(2).any(|w| w[0].0 == w[1].0 && w[0].1 != w[1].1), "retreats start together: {hops:?}");
+    assert!(who.iter().all(|e| app.world().get::<NpcStrike>(*e).is_none()), "and are not noted");
+    // A strike right after a retreat is not held back by it either.
+}
+
+#[test]
+fn the_notes_say_who_struck_when_and_the_state_tool_shows_the_wait() {
+    let (mut app, who) = pair("spaced", "pair", 7, |_| {});
+    step(&mut app, 3);
+    let mut seen_wait = false;
+    for _ in 0..120 {
+        step(&mut app, 1);
+        let tick = app.world().resource::<ai_core::SimTick>().0;
+        for i in 0..2 {
+            let note = app.world().get::<NpcStrike>(who[i]);
+            if let Some(n) = note {
+                assert!(n.gated && n.last_start <= tick);
+                assert_eq!(starts(&app, who[i], "jab").last().copied(), Some(n.last_start), "the note is the last start");
+            }
+        }
+        for i in 0..2 {
+            if let Some((by, left)) = shards_npc::wait_of(app.world(), who[i]) {
+                seen_wait = true;
+                assert_eq!(by, aid(&app, who[1 - i]));
+                assert!((1..=42).contains(&left), "{left}");
+            }
+        }
+    }
+    assert!(seen_wait, "one of the duelists waited out the spacing at some point");
+}
+
+/// A hook that presses a strike itself asks `strike_ready` first.
+fn press_when_ready(c: &NpcCtx, _: &Params, out: &mut NpcOutput) {
+    if c.strike_ready() {
+        out.press.push("light".into());
+    }
+}
+
+#[test]
+fn a_state_hook_that_asks_strike_ready_keeps_the_spacing_too() {
+    // The first duelist strikes by token, the second presses by its own hook.
+    let (mut app, who) = pair("spaced", "pair", 7, |app| {
+        app.add_npc_state("press_when_ready", press_when_ready);
+    });
+    app.world_mut().entity_mut(who[1]).insert(Npc::new("presser", "grunt").with_director("spaced"));
+    step(&mut app, 900);
+    let jabs = all_starts(&app, who, "jab");
+    assert!(jabs.iter().filter(|(_, i)| *i == 1).count() >= 5 && jabs.iter().filter(|(_, i)| *i == 0).count() >= 5, "{jabs:?}");
+    let gaps: Vec<u64> = jabs.windows(2).filter(|w| w[0].1 != w[1].1).map(|w| w[1].0 - w[0].0).collect();
+    // Two NPCs that are ready on the same tick both press it (every NPC decides on the same
+    // world, a hook cannot see the other's press of this tick): a tie, not a short gap.
+    assert!(gaps.iter().all(|g| *g == 0 || *g >= 42), "{gaps:?}");
+    // Noted, but not held to the engine rule: the hook is in charge.
+    assert!(app.world().get::<NpcStrike>(who[1]).is_some_and(|n| !n.gated));
 }

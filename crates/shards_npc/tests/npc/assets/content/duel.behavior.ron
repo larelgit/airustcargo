@@ -14,4 +14,6 @@
             "b": (kind: "probe", transitions: [(to: "a", when: ["deciding"])]),
         },
     ),
+    // Presses a strike itself (the test's hook `press_when_ready`), with no token.
+    "presser": (initial: "go", states: {"go": (kind: "press_when_ready")}),
 }

@@ -402,6 +402,19 @@ pub struct DirectorDef {
     pub waiting: Vec<WaitRole>,
     /// A token not used for an attack within this many seconds goes back.
     pub patience: f32,
+    /// Seconds between the starts of strikes of different NPCs of this director (two nearly
+    /// simultaneous blows cannot both be parried). Every strike an NPC starts is noted, the
+    /// planner presses a strike (and the director grants a token for one) only when no other
+    /// NPC began one that recently, and a combo continuation that is not spaced is refused
+    /// and ends its chain. An NPC's own series is not held back by itself. 0: no spacing.
+    /// `budget` and `allowed` are different rules (what may land on a target at once).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub min_spacing: f32,
+    /// Actions that are no strike: neither wait for the spacing nor count for it (a retreat,
+    /// a buff, a repositioning). Matched against the action's tags, the plan option's tags
+    /// and its name.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub spacing_exempt_tags: Vec<String>,
 }
 
 impl Default for DirectorDef {
@@ -412,6 +425,8 @@ impl Default for DirectorDef {
             allowed: Vec::new(),
             waiting: vec![WaitRole::default()],
             patience: 4.0,
+            min_spacing: 0.0,
+            spacing_exempt_tags: Vec::new(),
         }
     }
 }
@@ -443,6 +458,11 @@ impl DirectorDef {
         let matches = |pattern: &str, tags: &[String]| pattern == "*" || tags.iter().any(|t| t == pattern);
         self.allowed.iter().any(|(x, y)| (matches(x, a) && matches(y, b)) || (matches(x, b) && matches(y, a)))
     }
+
+    /// Whether an action with `tags` is a strike for the spacing: none of its tags is exempt.
+    pub fn is_strike(&self, tags: &[String]) -> bool {
+        !tags.iter().any(|t| self.spacing_exempt_tags.contains(t))
+    }
 }
 
 impl ContentDef for DirectorDef {
@@ -461,6 +481,10 @@ impl ContentDef for DirectorDef {
             refs.error(format!("budget must be > 0 (is {b}); leave it out for no limit"));
         }
         non_negative(refs, "patience", self.patience);
+        non_negative(refs, "min_spacing", self.min_spacing);
+        if self.min_spacing == 0.0 && !self.spacing_exempt_tags.is_empty() {
+            refs.error("spacing_exempt_tags without a min_spacing exempts nothing; set `min_spacing` or leave the tags out");
+        }
         for (i, w) in self.waiting.iter().enumerate() {
             non_negative(refs, &format!("waiting[{i}].distance"), w.distance);
             non_negative(refs, &format!("waiting[{i}].orbit"), w.orbit);
@@ -753,6 +777,10 @@ impl ContentDef for NpcTuning {
         }
         self.avoidance.check(refs, "avoidance");
     }
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
 }
 
 fn is_false(v: &bool) -> bool {

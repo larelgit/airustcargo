@@ -1,0 +1,4 @@
+// Actions of the duel rules. `hop_back` is a retreat: no hits, tagged as a repositioning.
+{
+    "hop_back": (net_id: 40, phases: [("hop", 0.3)], tags: ["reposition"]),
+}

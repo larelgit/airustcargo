@@ -25,6 +25,7 @@ use shards_core::flat;
 use crate::brain::{clamp_to_leash, salt};
 use crate::def::{AttackPlanDef, DirectorDef, SequenceBan};
 use crate::director::{order, target_of, Fighting, Grant, Targets};
+use crate::strike::{note_list, pool, spacing_ticks, waiting};
 
 /// An NPC's attack history and timers: gameplay state, kept in replays.
 #[derive(Component, Reflect, Clone, Debug, PartialEq, Default)]
@@ -247,6 +248,7 @@ pub(crate) fn feasible(
     budget_left: Option<f32>,
     overlapping: &[Vec<String>],
     director: &DirectorDef,
+    spaced_out: bool,
 ) -> bool {
     o.weight > 0.0
         && plan.cooldown(&o.name) <= 0.0
@@ -257,6 +259,7 @@ pub(crate) fn feasible(
         }
         && budget_left.is_none_or(|left| o.cost <= left + 1e-4)
         && overlapping.iter().all(|tags| director.may_overlap(&o.tags, tags))
+        && (!spaced_out || !director.is_strike(&o.tags))
 }
 
 /// `NpcSystems::Plan`: every token holder that strikes, in `AiId` order, chooses an attack,
@@ -274,6 +277,8 @@ pub(crate) fn plan_attacks(
 ) {
     let dt = time.delta_secs();
     let mut inflight = InFlight::collect(npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
+    let mut notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref())));
+    let spacing = |director: &DirectorDef| spacing_ticks(director.min_spacing, dt);
     for (id, entity) in order(&npcs) {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         if !f.drive.strike || f.dead || !f.brain.active || f.under_orders() {
@@ -294,6 +299,8 @@ pub(crate) fn plan_attacks(
         let director = DirectorDef::of(&db, &f.npc.director);
         let options = resolve(plan_def, &db, &f.fighter.moveset, radius);
         let (budget, overlapping) = inflight.on(grant.target, id, &director);
+        // Another NPC of its director began a strike less than `min_spacing` ago: its strikes wait.
+        let spaced_out = waiting(&notes, id, &pool(&f.npc.director), tick.0, spacing(&director)).is_some();
         let chosen = {
             let view = FighterView {
                 db: &db,
@@ -305,7 +312,7 @@ pub(crate) fn plan_attacks(
                 held: &f.drive.held,
                 dead: f.dead,
             };
-            let ok = |o: &Resolved| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director);
+            let ok = |o: &Resolved| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director, spaced_out);
             let kept = grant.attack.as_ref().and_then(|name| options.iter().position(|o| o.name == *name));
             // In range only: choose again every tick among what fits (a boss picks what
             // reaches); else keep the choice while it stays possible.
@@ -364,6 +371,7 @@ pub(crate) fn plan_attacks(
                 grant.instance = f.state.started;
                 f.drive.press.push(o.input.clone());
                 inflight.add(grant.target, id, o.cost, o.tags.clone());
+                notes.push((id, pool(&f.npc.director), tick.0));
             }
         }
         f.token.held = Some(grant);

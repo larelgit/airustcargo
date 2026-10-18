@@ -95,6 +95,7 @@ pub mod nav;
 pub mod overlay;
 pub mod perception;
 pub mod planner;
+pub mod strike;
 
 use ai_core::{AiAppExt, SimSet};
 use bevy::prelude::*;
@@ -102,7 +103,7 @@ use shards_action::{ActionPlugin, ActionSystems};
 use shards_content::ContentAppExt;
 use shards_core::EngineAppExt;
 
-pub use invariants::{state_known, tokens_within_limit, TokenAudit};
+pub use invariants::{state_known, strike_spacing, tokens_within_limit, TokenAudit};
 use shards_motion::perception::RoutePlanner;
 use shards_world::{WorldAppExt, WorldSystems};
 
@@ -123,6 +124,7 @@ pub use nav::{
 pub use overlay::NpcOverlay;
 pub use perception::{sees, sees_within, sight_clear, HeardAt, Noise, Perceived, Sensed, Sound};
 pub use planner::{banned, choose, pick_weighted, resolve, NpcPlan, PastAttack, Resolved};
+pub use strike::{spacing_ticks, wait_of, NpcStrike};
 
 /// Version of the NPC module.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -197,7 +199,8 @@ impl Plugin for NpcPlugin {
             .register_type::<NavAgent>()
             .register_type::<AttackToken>()
             .register_type::<NpcPlan>()
-            .register_type::<NpcThink>();
+            .register_type::<NpcThink>()
+            .register_type::<NpcStrike>();
         // Known to the world from the start, so `&World` queries (tools) work before the
         // first NPC.
         let world = app.world_mut();
@@ -230,6 +233,7 @@ impl Plugin for NpcPlugin {
             .add_snapshot_rebuild("navmesh", nav::rebuild)
             .add_engine_module("npc", VERSION)
             .add_engine_invariant("npc.state_known", state_known)
+            .add_engine_invariant("npc.strike_spacing", strike_spacing)
             .configure_sets(
                 FixedUpdate,
                 (
@@ -258,7 +262,8 @@ impl Plugin for NpcPlugin {
                 ),
             )
             .add_observer(perception::hear_noise)
-            .add_observer(perception::hit_noise);
+            .add_observer(perception::hit_noise)
+            .add_observer(strike::strike_started);
         // The token rule judges the director's books right after it closed them.
         if app.engine_invariants_on() {
             app.init_resource::<TokenAudit>()
