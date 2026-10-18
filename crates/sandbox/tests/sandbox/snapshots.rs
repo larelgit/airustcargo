@@ -613,7 +613,7 @@ fn recorded_from_a_snapshot(file: &Scratch) -> (App, replay::Replay) {
 fn a_replay_recorded_after_a_load_starts_from_the_snapshot_and_plays_back() {
     let file = Scratch::new("replay");
     let (original, recording) = recorded_from_a_snapshot(&file);
-    assert_eq!(recording.format, "shards-replay/3");
+    assert_eq!(recording.format, shards::ai_core::replay::FORMAT);
     let start = recording.start.as_ref().expect("the replay carries its start");
     assert_eq!(start.tick, 70 + 2, "the snapshot is the start (the two ticks of the face-to-face setup, then 70)");
     assert_eq!(recording.end.tick, start.tick + 120);

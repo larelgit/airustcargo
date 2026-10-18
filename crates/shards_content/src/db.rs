@@ -475,13 +475,44 @@ impl Clone for Used {
     }
 }
 
-/// What the database knows of a kind besides its definitions.
+/// A kind's definitions by id, with what the database knows of the kind besides them: one
+/// lookup by kind finds both.
 #[derive(Clone, Default)]
-struct KindState {
+struct Table {
+    defs: BTreeMap<String, Entry>,
     /// [`ContentDef::SIMULATION`].
     simulation: bool,
     /// The simulation read the kind whole (its ids, or every definition).
     whole: Used,
+}
+
+impl Table {
+    fn of(simulation: bool) -> Table {
+        Table { simulation, ..default() }
+    }
+}
+
+impl std::ops::Deref for Table {
+    type Target = BTreeMap<String, Entry>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.defs
+    }
+}
+
+impl std::ops::DerefMut for Table {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.defs
+    }
+}
+
+impl<'a> IntoIterator for &'a Table {
+    type Item = (&'a String, &'a Entry);
+    type IntoIter = std::collections::btree_map::Iter<'a, String, Entry>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.defs.iter()
+    }
 }
 
 /// FNV-1a over a definition's kind, id and JSON, each length-terminated, as
@@ -518,8 +549,9 @@ pub struct Source {
 /// is held.
 #[derive(Resource, Clone, Default)]
 pub struct ContentDb {
-    /// Kind → id → entry, every registered kind present.
-    tables: BTreeMap<&'static str, BTreeMap<String, Entry>>,
+    /// Kind → id → entry, every registered kind present, each with whether the simulation depends
+    /// on it and whether it read it whole.
+    tables: BTreeMap<&'static str, Table>,
     /// Asset path → text as applied: the base a changed file is checked against.
     files: BTreeMap<String, String>,
     /// Problems in the files as they are (parse errors, duplicates, unknown kinds).
@@ -527,8 +559,6 @@ pub struct ContentDb {
     /// Problems between definitions (references, validation).
     def_errors: Vec<ContentError>,
     loaded: bool,
-    /// Per registered kind: whether the simulation depends on it, and whether it read it whole.
-    states: BTreeMap<&'static str, KindState>,
     /// The world's scope, while the database is its resource ([`ContentDb::watch`]): reads count
     /// while it is open. `None`: nothing counts (a database built to compare or check files).
     scope: Option<SimScope>,
@@ -548,8 +578,7 @@ impl ContentDb {
     pub(crate) fn build_unchecked(kinds: &ContentKinds, sources: &[Source]) -> ContentDb {
         let mut db = ContentDb { loaded: true, ..default() };
         for kind in &kinds.kinds {
-            db.tables.insert(kind.kind, BTreeMap::new());
-            db.states.insert(kind.kind, KindState { simulation: kind.simulation, whole: Used::default() });
+            db.tables.insert(kind.kind, Table::of(kind.simulation));
         }
         let mut sources: Vec<&Source> = sources.iter().collect();
         sources.sort_by(|a, b| a.path.cmp(&b.path));
@@ -577,7 +606,7 @@ impl ContentDb {
             Ok(defs) => defs,
             Err(failure) => return self.file_errors.push(parse_error(failure)),
         };
-        let table = self.tables.entry(kind.kind).or_default();
+        let table = self.tables.entry(kind.kind).or_insert_with(|| Table::of(kind.simulation));
         for (id, def) in defs {
             // A definition that does not read is an error of its own: the rest of the file loads.
             let def = match def {
@@ -653,19 +682,21 @@ impl ContentDb {
     /// Ids of kind `T`, sorted. In the simulation's scope the kind counts as read whole: a
     /// definition added to it can change what the reader does.
     pub fn ids<T: ContentDef>(&self) -> impl Iterator<Item = &str> {
-        if T::SIMULATION {
-            self.read_whole(T::KIND);
+        let table = self.tables.get(T::KIND);
+        if T::SIMULATION && let Some(table) = table {
+            self.read_whole(table);
         }
-        self.peek_ids::<T>()
+        table.into_iter().flat_map(|t| t.keys().map(String::as_str))
     }
 
     /// Definitions of kind `T` by id, sorted. In the simulation's scope the kind counts as read
     /// whole.
     pub fn iter<T: ContentDef>(&self) -> impl Iterator<Item = (&str, &T)> {
-        if T::SIMULATION {
-            self.read_whole(T::KIND);
+        let table = self.tables.get(T::KIND);
+        if T::SIMULATION && let Some(table) = table {
+            self.read_whole(table);
         }
-        self.peek_iter::<T>()
+        table.into_iter().flat_map(|t| t.iter().filter_map(|(id, e)| Some((id.as_str(), e.def.downcast_ref::<T>()?))))
     }
 
     /// [`get`](Self::get) for a reader that is not the simulation even inside its scope (a screen
@@ -694,14 +725,11 @@ impl ContentDb {
         self.scope.as_ref().is_some_and(SimScope::is_open)
     }
 
-    /// `kind` read whole, if reads count now.
-    fn read_whole(&self, kind: &str) {
-        if let Some(state) = self.states.get(kind)
-            && state.simulation
-            && !state.whole.get()
-            && self.counting()
-        {
-            state.whole.mark();
+    /// `table`'s kind read whole, if reads count now. Once it is, a read only loads the flag.
+    #[inline]
+    fn read_whole(&self, table: &Table) {
+        if !table.whole.get() && table.simulation && self.counting() {
+            table.whole.mark();
         }
     }
 
@@ -717,9 +745,8 @@ impl ContentDb {
     /// on ([`ContentDef::SIMULATION`]) are never listed.
     pub fn used_parts(&self) -> Vec<(String, u64)> {
         let mut parts = Vec::new();
-        for (kind, table) in &self.tables {
-            let Some(state) = self.states.get(kind).filter(|s| s.simulation) else { continue };
-            let whole = state.whole.get();
+        for (kind, table) in self.tables.iter().filter(|(_, t)| t.simulation) {
+            let whole = table.whole.get();
             if whole {
                 parts.push((format!("{kind}{WHOLE_KIND}"), 0));
             }
@@ -735,9 +762,7 @@ impl ContentDb {
     /// session it was taken in had read.
     pub fn set_used(&self, parts: &BTreeSet<&str>) {
         for (kind, table) in &self.tables {
-            if let Some(state) = self.states.get(kind) {
-                state.whole.put(parts.contains(format!("{kind}{WHOLE_KIND}").as_str()));
-            }
+            table.whole.put(parts.contains(format!("{kind}{WHOLE_KIND}").as_str()));
             for (id, entry) in table {
                 entry.used.put(parts.contains(format!("{kind}/{id}").as_str()));
             }
@@ -769,15 +794,16 @@ impl ContentDb {
     /// kind counts as read whole, as with [`ids`](Self::ids).
     pub fn ids_of(&self, kind: &str) -> Option<Vec<&str>> {
         let table = self.tables.get(kind)?;
-        self.read_whole(kind);
+        self.read_whole(table);
         Some(table.keys().map(String::as_str).collect())
     }
 
     /// The definition as JSON, for tools and other untyped readers. In the simulation's scope it
     /// counts as read, as with [`get`](Self::get).
     pub fn get_json(&self, kind: &str, id: &str) -> Option<&Value> {
-        let entry = self.tables.get(kind)?.get(id)?;
-        if !entry.used.get() && self.states.get(kind).is_some_and(|s| s.simulation) && self.counting() {
+        let table = self.tables.get(kind)?;
+        let entry = table.get(id)?;
+        if !entry.used.get() && table.simulation && self.counting() {
             entry.used.mark();
         }
         Some(&entry.json)
@@ -810,7 +836,7 @@ impl ContentDb {
 
     /// Number of definitions.
     pub fn len(&self) -> usize {
-        self.tables.values().map(BTreeMap::len).sum()
+        self.tables.values().map(|t| t.len()).sum()
     }
 
     /// No definitions at all.
@@ -884,8 +910,7 @@ impl ContentDb {
             let info = kinds.get(&change.kind).ok_or_else(|| {
                 format!("no content kind `{}`; registered: {}", change.kind, kinds.names().join(", "))
             })?;
-            db.states.entry(info.kind).or_insert_with(|| KindState { simulation: info.simulation, whole: Used::default() });
-            let table = db.tables.entry(info.kind).or_default();
+            let table = db.tables.entry(info.kind).or_insert_with(|| Table::of(info.simulation));
             match &change.def {
                 Some(json) => {
                     let what = |e: String| format!("{} `{}`: {e}", change.kind, change.id);

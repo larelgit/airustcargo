@@ -1,11 +1,11 @@
 {
-  "format": "shards-replay/3",
+  "format": "shards-replay/4",
   "seed": 42,
   "tick_hz": 59.99999880000003,
   "check_every": 60,
   "check_detail": "components",
   "start": {
-    "format": "shards-snapshot/1",
+    "format": "shards-snapshot/2",
     "tick": 121,
     "seed": 42,
     "tick_hz": 59.99999880000003,

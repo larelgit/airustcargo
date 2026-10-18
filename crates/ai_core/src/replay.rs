@@ -33,12 +33,12 @@
 //! Recording continues during playback, so a branch saves as one whole replay.
 //!
 //! **From a snapshot.** A recording that starts at tick `N` instead of 0 carries the
-//! [`Snapshot`] it started from (`start`, format `shards-replay/3`). Loading a snapshot
+//! [`Snapshot`] it started from (`start`, format `shards-replay/3` or `/4`). Loading a snapshot
 //! into a running game (`snapshot_load`) restarts the recording there: what came before
 //! is not part of it any more, the snapshot is. Playback loads that snapshot as soon as
 //! the game has loaded, then plays the events and compares the checks as usual, so
 //! `--replay FILE --verify` works for such a replay too. Replays without a start are
-//! `shards-replay/2` or `/3` files that begin at tick 0; this build plays both.
+//! `shards-replay/2`, `/3` or `/4` files that begin at tick 0; this build plays them all.
 
 use std::any::TypeId;
 use std::borrow::Cow;
@@ -69,15 +69,21 @@ use crate::sim::{self, SimTick};
 use crate::snapshot::{self, Snapshot};
 use crate::tools::{call_tool, register_tool, Call, ToolKind, ToolResult};
 
-/// Format tag written into every replay file. Version 3 adds, each of them optional: a
-/// starting snapshot (`start`), session rules (`assert` events), the check interval and
-/// a breakdown of every check. A version 3 file without some of them plays as one
-/// without them: from tick 0, no rules, a check every [`CHECK_EVERY`] ticks, hashes
+/// Format tag written into every replay file. Version 4 lists the parts of the checks with
+/// parts (`check_parts`: the definitions the session read, for `content`), whose value then
+/// hashes those parts and not the whole state behind the check: a build that does not know
+/// that refuses the file by its tag instead of reporting a divergence that is not there. A
+/// file of any version without the list for a check is checked by that check's whole state,
+/// as the builds before version 4 did (`content`: every definition). Version 3 adds, each of
+/// them optional: a starting snapshot (`start`), session rules (`assert` events), the check
+/// interval and a breakdown of every check. A version 3 file without some of them plays as
+/// one without them: from tick 0, no rules, a check every [`CHECK_EVERY`] ticks, hashes
 /// alone. Version 2 files (hashes of game data, from tick 0) play as before, checked by
 /// their hashes alone. Version 1 hashed the AI's text and cannot be checked by this
 /// build.
-pub const FORMAT: &str = "shards-replay/3";
+pub const FORMAT: &str = "shards-replay/4";
 
+const FORMAT_V3: &str = "shards-replay/3";
 const FORMAT_V2: &str = "shards-replay/2";
 const FORMAT_V1: &str = "shards-replay/1";
 
@@ -205,7 +211,7 @@ fn parts_change(then: &BTreeMap<String, u64>, now: &[(String, u64)], tick: u64) 
 }
 
 /// What differs between the parts a check had (`then`) and has (`now`), part by part in name
-/// order: `action/light_1 differs`, `prefab/boss missing` (not there now), `tile/swamp extra`
+/// order: `action/swing differs`, `prefab/guard missing` (not there now), `tile/meadow extra`
 /// (not there then). At most [`MAX_LISTED`], then how many more.
 pub fn part_differences(then: &BTreeMap<String, u64>, now: &[(String, u64)]) -> Vec<String> {
     let now_by_name: BTreeMap<&str, u64> = now.iter().map(|(name, hash)| (name.as_str(), *hash)).collect();
@@ -1357,7 +1363,7 @@ fn divergence(world: &World, replay: &Replay, recorded: &Check, live: &Check, li
 }
 
 /// What of check `name`, which has parts, differs at `tick` between the recording and `listed`
-/// (the parts in this run): `action/light_1 differs, tile/swamp extra`. `None` when the check is
+/// (the parts in this run): `action/swing differs, tile/meadow extra`. `None` when the check is
 /// computed whole in this run.
 fn parts_differences(replay: &Replay, name: &str, tick: u64, listed: &[(String, Vec<(String, u64)>)]) -> Option<String> {
     let (_, parts) = listed.iter().find(|(n, _)| n == name)?;
@@ -1465,14 +1471,14 @@ pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
              not the game state), so this build cannot check it; record it again"
         ));
     }
-    if replay.format != FORMAT && replay.format != FORMAT_V2 {
+    if ![FORMAT, FORMAT_V3, FORMAT_V2].contains(&replay.format.as_str()) {
         return Err(format!(
-            "not a replay this build can play: format `{}`, expected `{FORMAT}` (or `{FORMAT_V2}`)",
+            "not a replay this build can play: format `{}`, expected `{FORMAT}` (or `{FORMAT_V3}`, `{FORMAT_V2}`)",
             replay.format
         ));
     }
-    if replay.start.is_some() && replay.format != FORMAT {
-        return Err(format!("a replay that starts from a snapshot is `{FORMAT}`, this one says `{}`", replay.format));
+    if replay.start.is_some() && replay.format == FORMAT_V2 {
+        return Err(format!("a replay that starts from a snapshot is `{FORMAT}` or `{FORMAT_V3}`, this one says `{}`", replay.format));
     }
     if replay.check_every == 0 {
         return Err("the replay says it checks every 0 ticks; it needs at least 1".into());
@@ -2229,7 +2235,7 @@ mod tests {
     #[test]
     fn version_3_files_read_without_what_they_do_not_say() {
         let no_settings = json!({
-            "format": FORMAT, "seed": 7, "tick_hz": 60.0,
+            "format": FORMAT_V3, "seed": 7, "tick_hz": 60.0,
             "end": {"tick": 120, "hash": "02"},
             "events": [{"input": {"at": 0, "id": 1, "component": "Knob", "value": 3}}],
             "checks": [{"tick": 60, "hash": "01"}],
@@ -2237,7 +2243,7 @@ mod tests {
         let replay: Replay = serde_json::from_value(no_settings).unwrap();
         assert_eq!((replay.check_every, replay.check_detail, replay.start.is_none()), (CHECK_EVERY, CheckDetail::None, true));
         let settings = json!({
-            "format": FORMAT, "seed": 7, "tick_hz": 60.0, "check_every": 30, "check_detail": "entities",
+            "format": FORMAT_V3, "seed": 7, "tick_hz": 60.0, "check_every": 30, "check_detail": "entities",
             "end": {"tick": 60, "hash": "02", "parts": {"entities": {"e1": "0a"}}},
             "events": [{"assert": {"at": 0, "op": {"add": {"name": "hp", "when": "error"}}}}],
             "checks": [{"tick": 30, "hash": "01", "parts": {"entities": {"e1": "0b"}}}],
@@ -2442,8 +2448,10 @@ mod tests {
     fn a_recording_without_parts_is_checked_whole_as_the_build_that_made_it_was() {
         let mut old = shelf_game(false);
         turn_and_run(&mut old, 3, CHECK_EVERY * 2);
-        let recording = save(old.world());
+        // As a build before the parts wrote it: version 3, no lists.
+        let mut recording = save(old.world());
         assert!(recording.check_parts.is_empty());
+        recording.format = FORMAT_V3.to_owned();
 
         let mut new = shelf_game(true);
         play(new.world_mut(), recording).unwrap();
@@ -2498,9 +2506,16 @@ mod tests {
         edited.checks.insert("shelf".into(), hex(0xff));
         let refused = crate::snapshot::restore(same.world_mut(), &edited, false).unwrap_err();
         assert!(refused.contains("shelf differs (snapshot 00000000000000ff"), "{refused}");
+        // A part whose hash does not read: the file is damaged, not different.
+        let mut damaged = snapshot.clone();
+        damaged.check_parts.get_mut("shelf").unwrap().insert("a".into(), "zz".into());
+        let refused = crate::snapshot::restore(same.world_mut(), &damaged, false).unwrap_err();
+        assert!(refused.contains("the snapshot's check `shelf` does not read: part `a`"), "{refused}");
 
-        // A snapshot taken whole is compared whole, and the session goes on whole.
+        // A snapshot taken whole (version 1, before the parts) is compared whole, and the session
+        // goes on whole.
         let mut legacy = snapshot.clone();
+        legacy.format = "shards-snapshot/1".to_owned();
         legacy.check_parts.clear();
         legacy.checks.insert("shelf".into(), hex(shelf_whole(app.world())));
         crate::snapshot::restore(same.world_mut(), &legacy, false).unwrap();

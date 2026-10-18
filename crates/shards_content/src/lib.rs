@@ -200,7 +200,7 @@ impl Plugin for ContentPlugin {
             .init_resource::<load::ContentLoading>()
             .require_loaded("content", load::content_status)
             .add_engine_module("content", env!("CARGO_PKG_VERSION"))
-            // The definitions the simulation read, each a part (`action/light_1`): a replay or
+            // The definitions the simulation read, each a part (`action/swing`): a replay or
             // a snapshot names the ones that differ. Files without the parts were made when the
             // check hashed every definition, and a session that plays or loads one does that.
             .add_parts_check("content", CONTENT_HINT, used_parts, whole_hash)

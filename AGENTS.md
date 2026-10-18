@@ -175,7 +175,9 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   scope that is not the simulation (a describer, a picture) reads with `peek`/`peek_iter`; a kind only the picture, the sound or
   services outside the session read sets `const SIMULATION: bool = false;`. A builder called outside a tick or an action opens the
   scope (`ai_core::scope::open`), and what only watches inside one suspends it (`scope::suspend`). The test
-  `content_reads_are_the_same_headless_and_drawn` (GPU, ignored) checks that drawing reads nothing that counts.
+  `content_reads_are_the_same_headless_and_drawn` (GPU, ignored) checks that drawing reads nothing that counts. A read with the
+  scope closed is never counted: content the simulation depends on is read in a fixed tick, an action or a builder, not in
+  `Startup`, a loading state or a cache built at load (a change to it would then show only later, in the entities' hashes, unnamed).
 - **Create the world in `OnEnter(EngineState::InGame)`**, not in `Startup`: content exists only after loading. The order of
   spawning is the same in every run, otherwise `AiId` and `ColliderId` will diverge.
 - All gameplay runs in `FixedUpdate`, in one of the `SimSet` sets; randomness comes only from `SimRng`.
@@ -212,7 +214,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   with `add_snapshot_resource::<R>()` (it needs `Reflect`); a cache built from it goes in `add_snapshot_rebuild`; what the world is built around
   (files, geometry) goes in `add_snapshot_check`. Otherwise `snapshot_load` says `the restored state differs`,
   and a replay from the snapshot will diverge. References to entities without `AiId` go in `add_snapshot_entity_key`.
-- Replay checks (`shards-replay/3`) compare the game components of entities with `AiVisible`, not the text of
+- Replay checks (`shards-replay/4`) compare the game components of entities with `AiVisible`, not the text of
   `observe`. Exclude cosmetics and caches with `replay_ignore::<C>()`; add state outside such entities
   (resources, projectiles without an id) with `add_replay_check(name, |w| …)`. Anything that is only for the window must not change
   the game components.

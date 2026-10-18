@@ -70,8 +70,19 @@ use crate::tools::{register_tool, Call, ToolKind, ToolResult};
 use crate::replay::ReplayCheckParts;
 use crate::{describe::AiKind, replay};
 
-/// Format tag written into every snapshot file.
-pub const FORMAT: &str = "shards-snapshot/1";
+/// Format tag written into every snapshot file. Version 2 lists the parts of the checks with
+/// parts (`check_parts`: the definitions the session read, for `content`), whose value then
+/// hashes those parts: a build that does not know that refuses the file by its tag. A file
+/// without the list for a check (every version 1 file) is compared by that check's whole state.
+pub const FORMAT: &str = "shards-snapshot/2";
+
+/// Snapshots before [`FORMAT`] 2: loaded as they are, every check compared whole.
+const FORMAT_V1: &str = "shards-snapshot/1";
+
+/// Whether this build loads snapshots of `format`.
+fn readable(format: &str) -> bool {
+    format == FORMAT || format == FORMAT_V1
+}
 
 /// Folder for saved snapshots, relative to the game's working directory. Tools read and
 /// write nothing else (see [`paths`](crate::paths)).
@@ -149,9 +160,9 @@ impl Snapshot {
         let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let snapshot: Snapshot =
             serde_json::from_str(&text).map_err(|e| format!("{} is not a snapshot: {e}", path.display()))?;
-        if snapshot.format != FORMAT {
+        if !readable(&snapshot.format) {
             return Err(format!(
-                "{} is not a snapshot this build can load: format `{}`, expected `{FORMAT}`",
+                "{} is not a snapshot this build can load: format `{}`, expected `{FORMAT}` (or `{FORMAT_V1}`)",
                 path.display(),
                 snapshot.format
             ));
@@ -224,17 +235,23 @@ struct SnapshotCheck {
 
 impl SnapshotCheck {
     /// The parts of this check now, unless it has none or this session computes it whole.
-    fn parts_now(&self, world: &World) -> Option<BTreeMap<String, String>> {
+    fn parts_now(&self, world: &World) -> Option<Vec<(String, u64)>> {
         let parts = self.parts?;
         let whole = world.get_resource::<replay::ReplayHashing>().is_some_and(|h| h.hashes_whole(self.name));
-        (!whole).then(|| parts(world).into_iter().map(|(name, hash)| (name, format!("{hash:016x}"))).collect())
+        (!whole).then(|| parts(world))
     }
 }
 
-/// The hash a check's hex parts add up to ([`replay::parts_hash`]).
-fn hex_parts_hash(parts: &BTreeMap<String, String>) -> u64 {
-    let parts: Vec<(String, u64)> = parts.iter().map(|(name, hex)| (name.clone(), u64::from_str_radix(hex, 16).unwrap_or(0))).collect();
-    replay::parts_hash(&parts)
+/// The parts of check `name` as a snapshot keeps them (hex hashes), read back; a hash that does
+/// not read is an error naming it: the file was damaged or edited by hand.
+fn read_parts(name: &str, saved: &BTreeMap<String, String>) -> Result<BTreeMap<String, u64>, String> {
+    saved
+        .iter()
+        .map(|(part, hex)| {
+            let hash = replay::parse_hex(hex).map_err(|e| format!("the snapshot's check `{name}` does not read: part `{part}`: {e}"))?;
+            Ok((part.clone(), hash))
+        })
+        .collect()
 }
 
 /// What modules registered with [`AiAppExt`](crate::AiAppExt)'s `add_snapshot_*`.
@@ -374,8 +391,8 @@ pub fn capture(world: &World) -> Result<Snapshot, String> {
     for check in &modules.checks {
         let value = match check.parts_now(world) {
             Some(parts) => {
-                let value = hex_parts_hash(&parts);
-                check_parts.insert(check.name.to_owned(), parts);
+                let value = replay::parts_hash(&parts);
+                check_parts.insert(check.name.to_owned(), parts.into_iter().map(|(name, hash)| (name, replay::hex(hash))).collect());
                 value
             }
             None => (check.check)(world),
@@ -724,8 +741,11 @@ fn check_compatible(
     if let Some(loading) = sim::gate_message(world) {
         return Err(loading);
     }
-    if snapshot.format != FORMAT {
-        return Err(format!("not a snapshot this build can load: format `{}`, expected `{FORMAT}`", snapshot.format));
+    if !readable(&snapshot.format) {
+        return Err(format!(
+            "not a snapshot this build can load: format `{}`, expected `{FORMAT}` (or `{FORMAT_V1}`)",
+            snapshot.format
+        ));
     }
     let hz = 1.0 / world.resource::<Time<Fixed>>().timestep().as_secs_f64();
     if (hz - snapshot.tick_hz).abs() > 1e-3 {
@@ -762,8 +782,7 @@ fn check_compatible(
         // own parts are what a prepare made them: the snapshot's), whole where it does not.
         if let (Some(parts), Some(saved)) = (check.parts, snapshot.check_parts.get(check.name)) {
             let now: Vec<(String, u64)> = parts(world);
-            let then: BTreeMap<String, u64> =
-                saved.iter().map(|(name, hex)| (name.clone(), u64::from_str_radix(hex, 16).unwrap_or(0))).collect();
+            let then = read_parts(check.name, saved)?;
             let differences = replay::part_differences(&then, &now);
             let hash = format!("{:016x}", replay::parts_hash(&now));
             if !differences.is_empty() {
@@ -1807,7 +1826,7 @@ mod tests {
         assert_eq!(dropped, 0);
         step(&mut original, 25);
         let recording = crate::replay::save(original.world());
-        assert_eq!((recording.format.as_str(), recording.start.as_ref().map(|s| s.tick)), ("shards-replay/3", Some(10)));
+        assert_eq!((recording.format.as_str(), recording.start.as_ref().map(|s| s.tick)), (replay::FORMAT, Some(10)));
         assert_eq!(recording.end.tick, 35);
         assert_eq!(fixed_elapsed(&original), tick_time(35), "the fixed clock follows the ticks");
 

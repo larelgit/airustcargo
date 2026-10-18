@@ -3245,8 +3245,8 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
   (teleport)`).
 - During playback, recording continues, so a branch is saved as one replay.
 - The state of recording and playback is shown in `ai/status` (the `replay` field), and the result is written to the journal.
-- There is one format: JSON `shards-replay/3` — `seed`, `tick_hz`, `check_every`, `check_detail`, an optional `start` (the snapshot the replay starts from), `end`, `events`, `checks`, and `check_parts` (what the `content` check was made of, as it changed: see "What the content check covers"); hashes are hex strings. Events are `call`, `input` and `assert` (rules). A check has `parts` besides `tick` and `hash`: `{"entities": {"e6": {"Health": "…", "Transform":
-  "…"}}, "game": {"content": "…"}}`. Everything added to the format is optional: a `/3` file without `check_every` and `check_detail` (as the build before the breakdown wrote them) is read as checks every 60 ticks without a breakdown, and is checked by the overall hash. A divergence there names only the tick (`no details: the recording keeps hashes only (check detail none)`). The overall hash is computed the same way, byte for byte, at any detail level. This build also plays `shards-replay/2` replays (always from tick 0, with no rules, interval or breakdown) and checks them by the overall hash (`no details: replay format 2`). A `shards-replay/1` replay hashed text, and this build does not check it: `play` replies `this replay was recorded by an older
+- There is one format: JSON `shards-replay/4` — `seed`, `tick_hz`, `check_every`, `check_detail`, an optional `start` (the snapshot the replay starts from), `end`, `events`, `checks`, and `check_parts` (what the `content` check was made of, as it changed: see "What the content check covers"); hashes are hex strings. Events are `call`, `input` and `assert` (rules). A check has `parts` besides `tick` and `hash`: `{"entities": {"e6": {"Health": "…", "Transform":
+  "…"}}, "game": {"content": "…"}}`. Everything added to the format is optional. Version 4 is version 3 with `check_parts`, and this build plays `/3` files as they are, with the `content` check over the whole database (see "Older files" under "What the content check covers"). A `/3` file without `check_every` and `check_detail` (as the build before the breakdown wrote them) is read as checks every 60 ticks without a breakdown, and is checked by the overall hash. A divergence there names only the tick (`no details: the recording keeps hashes only (check detail none)`). The overall hash is computed the same way, byte for byte, at any detail level. This build also plays `shards-replay/2` replays (always from tick 0, with no rules, interval or breakdown) and checks them by the overall hash (`no details: replay format 2`). A `shards-replay/1` replay hashed text, and this build does not check it: `play` replies `this replay was recorded by an older
   build (…); record it again`, and `--verify` exits with code 2.
 - A replay starts at tick 0 or from a snapshot: see "Snapshots (E11.4)". A replay from a snapshot keeps the same breakdown of checks.
 - The reference replays (`tests/replays/` of the sandbox and of the template) are recorded with a breakdown by component: a `--verify` that fails in CI names the entity, the component and the value at once. Because of this the files are larger: the sandbox's are 66–392 KB, the template's 17–250 KB.
@@ -3306,14 +3306,21 @@ replay finished at tick 2307: identical to the recording (39 checks) [2307 ticks
 ```
 
 What still makes a recording diverge: a change to a definition it read (by id, or a kind it read whole), a definition added to or
-removed from a kind it read whole, a definition it read removed, and of course any change to gameplay. What no longer does: a new
-definition of a kind it reads by id, a change to one it never read, and any change to a kind outside the simulation (below).
+removed from a kind it read whole, a definition it read removed, a definition added under an id it looked for and did not find
+(below), and of course any change to gameplay. What no longer does: a new definition of a kind it reads by id, a change to one it
+never read, and any change to a kind outside the simulation (below). A kind read whole is a dependency of every session that reads
+it so: the sandbox builds every layout there is, so `layout (all)` is a part of each of its reference replays and a new layout makes
+all of them diverge (`layout/empty extra`), as it should, since the new layout is in their world; `tile (all)` is a part of
+those that generate a region.
 
 **What counts as read.** Each definition in the database carries a flag, and each kind a second one ("read whole"). A typed read
 (`ContentDb::get`, `Content<T>::get`, `get_json`) sets the definition's flag; going over a kind (`iter`, `ids`, `ids_of`: the
 generator choosing among all tiles, the sandbox building every layout) sets the kind's, and then every definition of the kind
-counts, so a definition added to it counts too. A lookup of an id that does not exist sets nothing: a recording that looked for
-`status/burn` while there was none diverges once there is one, because its playback reads it (`status/burn extra`). The engine's
+counts, so a definition added to it counts too. A lookup of an id that does not exist sets nothing, and no part says it was made: a recording that
+looked for an id while there was none diverges once there is one, because its playback finds and reads it. The engine looks up
+its tunings this way every tick, so a game that defines no `npc_tuning` `default` and then adds one records its replays again, even
+with the numbers the engine used without it (`npc_tuning/default extra`; the test
+`a_definition_added_for_an_id_the_session_looked_for_and_did_not_find_is_extra`). The engine's
 own readers look up by id what they need by id: a spawn reads its prefab and the prefabs it extends, the statuses tick with the
 definitions of the statuses someone carries. A flag is set only while the **simulation's scope** is open (`ai_core::SimScope`, one
 per world), and only for kinds the simulation depends on:
@@ -3334,8 +3341,11 @@ per world), and only for kinds the simulation depends on:
   `scatter`, `animset`, `sound`, `music`, `audio`, `theme`, `locale`, `devmenu`, `input_map` (a replay records `Intent`, not keys),
   `achievement`, `save` and `perf`. What only the picture, the sound, menus and services outside the session read. A game's own
   kind of that sort sets `const SIMULATION: bool = false;` in its `ContentDef`; one the simulation reads keeps the default `true`.
-  `net` counts (the host spawns `player_prefab` for a joining player). `screen` counts only when a screen is pressed (`ui_click`,
-  `ui_navigate`, `ui_set` are recorded, and the screen decides what a press does); showing one reads it with `ContentDb::peek`,
+  `net` counts (the host spawns `player_prefab` for a joining player). `save` stays out because a playback writes no saves and
+  never asks the autosave numbers (`debounce_secs`): if it counted, every recording that autosaved would list `save/world` and its
+  playback would not (`save/world missing`); the test `autosave_numbers_never_change_a_playback` plays the saves replay on other
+  numbers. `screen` counts only when a screen is pressed (`ui_click`, `ui_navigate`, `ui_set` are recorded, and the screen decides
+  what a press does; the press finds its screen from the widget, not from its id); showing one reads it with `ContentDb::peek`,
   the read that never counts. Code that runs inside the scope and is not the simulation (a describer, a picture) reads with `peek`,
   `peek_ids` and `peek_iter`.
 
@@ -3347,7 +3357,19 @@ visuals, a person's or an agent's queries) runs outside the scope, suspends it, 
 frames between the ticks and some 14 700 meshes drawn, and compares what each counted, part by part; every reference replay
 verifies headless (`--verify`) and plays identically in an offscreen game; CI verifies them in a window under Xvfb. Bevy's
 multithreaded executor does not get in the way: the flags are atomics set once (a read after that only loads), and the scope
-belongs to the world (a heavy-mode twin and a stand's players have their own), whose schedules run one at a time.
+belongs to the world (a heavy-mode twin and a stand's players have their own), whose schedules run one at a time. A gameplay system
+that panics does not leave the scope open: the engine's error handler takes the panic inside the schedule, the tick runs to its
+end and closes it (`system_failures.rs` checks it).
+
+**What the check does not see.** The parts are what the simulation read while the scope was open. A definition read with the scope
+closed and used by the simulation later is not one: a read in `Startup`, in a system of a loading state, or a cache built when
+content finishes loading. A change to such a definition does not show as `content differs`; what it changes in the world still
+makes the replay diverge, through the entities' hashes, at a later check and without the definition's name. So a module whose
+simulation depends on content reads it in the scope: in a fixed tick, an action call, or a builder that opens it
+(`ai_core::scope::open`). The engine's readers do: a review build that logged every read of a simulation kind made with the scope
+closed and never inside it, on every reference replay, found only the start-up and asset loading (`tile`, `room`, `level (all)`:
+which files to load; what is built from them is read again, by id, when it is spawned) and a halting invariant (`bounds/world`, in
+a suspension).
 
 **What the replay keeps.** The check's value hashes its parts: `kind/id` → the definition's hash (FNV-1a of its kind, id and JSON)
 for each counted definition, and `kind (all)` for each kind read whole, followed by all of its definitions. Next to `checks`, the
@@ -3365,27 +3387,38 @@ the recording's versions as before. A definition the edit adds or changes and th
 
 **Snapshots** compare the same parts. A snapshot stores the counted parts with their hashes (`check_parts.content`); a load
 compares the loading game's versions of those definitions (others may differ) and refuses one that differs, naming it:
-`content differs (action/light_1 differs): the content the session read differs from this game's: …`. Then it sets the flags to
-exactly the snapshot's, so the restored state hashes as the original did, a heavy-mode twin counts what the original counts, and a
-replay from a snapshot plays in a game whose unread content has changed. A refused load puts the game's own flags back with its
-state.
+`content differs (action/light_1 differs): the content the session read differs from this game's: …`; a part whose hash does not
+read is refused as a damaged file (``the snapshot's check `content` does not read: part …``). Then it sets the flags to exactly the
+snapshot's, so the restored state hashes as the original did, a heavy-mode twin counts what the original counts, and a replay from
+a snapshot plays in a game whose unread content has changed. A refused load puts the game's own flags back with its state. A
+snapshot taken whole (below) makes the session hash every definition from the load on, as the session it was taken in did, and
+leaves it no reads (none count then); a later load of a snapshot with parts makes it check by parts again. The recording restarts
+at a load with the snapshot as its start, so its playback checks the same way. A refused load in a session that hashes every
+definition leaves it so, with no reads.
 
 **Co-op** keeps the hash of the whole database (`ContentDb::hash`): the host and a client compare it when the client joins (and a
 Steam lobby shows it), because a client must be able to run anything the host may read later, not only what was read so far. The
 desync check (`world_hash`) does not include replay checks, so nothing changes there.
 
-**Older files.** The format stays `shards-replay/3`: `check_parts` is optional. A replay or snapshot without it was made when the
-content check hashed the whole database, and it plays, loads and verifies as before: the game computes the check over the whole
-database for that session (and for the snapshots it takes and the branches it saves), and says so in the journal (`replay: the
-recording does not list the parts of check `content`: …`); a divergence there reads `replay check content differs (recorded whole:
-the recording lists no parts of it)`. So old recordings and crash reports keep verifying with the content they were made with, and
-are recorded again only to stop depending on content they never read.
+**Older files.** The value of `content` changed its meaning, so the formats changed their version: replays are `shards-replay/4`
+and snapshots `shards-snapshot/2`, each the version before with `check_parts`. A build from before them refuses such a file by its
+tag (``not a replay this build can play: format `shards-replay/4`, expected `shards-replay/3` …``) instead of computing `content`
+over its whole database and reporting a divergence that is not there (a crash report a player sends from a newer build to an older
+checkout, say). This build reads the older versions (`shards-replay/3` and `/2`, `shards-snapshot/1`). A replay or snapshot without
+`check_parts` (every older file) was made when the content check hashed the whole database, and it plays, loads and verifies as
+before: the game computes the check over the whole database for that session (and for the snapshots it takes and the branches it
+saves), and says so in the journal (`replay: the recording does not list the parts of check `content`: …`); a divergence there
+reads `replay check content differs (recorded whole: the recording lists no parts of it)`. So old recordings and crash reports keep
+verifying with the content they were made with, and are recorded again only to stop depending on content they never read.
 
-**Cost.** A read checks the definition's flag first (one atomic load, set already after the first read), then the scope (two
-atomic loads); no lock. The parts are listed at each check (every 60 ticks), and each definition's hash is computed once, when it
-is loaded or edited, instead of hashing every definition's JSON at every check as before. Measured on the combat prototype (release build, `--replay … --verify`, six runs of each
-build in turns, on a machine busy with other builds): 1.02–1.33 s for its 2307 ticks (median 1.18 s, 0.51 ms a tick), against
-1.05–1.60 s (median 1.20 s) for the build before; this one was not slower in any pair: no difference beyond the noise.
+**Cost.** A read by id checks the definition's flag first (one atomic load, set already after the first read), then the scope (two
+atomic loads); no lock. Going over a kind finds the kind's table and its "read whole" flag in one lookup, as it found the table
+before. The parts are listed at each check (every 60 ticks), and each definition's hash is computed once, when it is loaded or
+edited, instead of hashing every definition's JSON at every check as before. Measured on the combat prototype (release build,
+`--replay … --verify`, six runs of each build in turns, on a machine busy with other builds): 1.02–1.33 s for its 2307 ticks
+(median 1.18 s, 0.51 ms a tick), against 1.05–1.60 s (median 1.20 s) for the build before. The ranges overlap and the machine was
+loaded, so this says only that the difference is within that noise, not that there is none; a clean comparison is the
+`--perf reference` autotest of both builds, from copies of the programs, in turns on an idle machine.
 
 ## Snapshots (E11.4)
 
@@ -3480,7 +3513,7 @@ entity id `0` or `u32::MAX`, and an `AiId` written by hand (the engine sets the 
 `force=true` skips only what the game does not know, and such service records; it does not load a value that cannot be read; a refusal after the region has been prepared puts the world back as it was (see above). A replay recording after a load starts from this snapshot, and everything recorded before it is discarded
 (`save-replay` before the load, if it is needed). A load during replay playback ends the playback.
 
-**Replay from a snapshot** (`shards-replay/3`, field `start`): `cargo sandbox --replay FILE --verify` loads the snapshot right after
+**Replay from a snapshot** (`shards-replay/3` and `/4`, field `start`): `cargo sandbox --replay FILE --verify` loads the snapshot right after
 the game loads, before the first tick, and then plays the events and compares the checks as usual. A snapshot that this build does not accept
 (other content or version) makes it exit with code 2 and give the reason. The region, content edits and levels placed by id go into the snapshot (see above), so a replay of a session that edited content or placed levels before the snapshot plays in a fresh
 game. Files that the replay needs (tile and level files that the edits of its start and its `content_apply` add) are requested by the modules as soon as the replay is set up: `add_playback_hook(fn(&mut World))` runs inside `replay::play`, before the first frame and tick. The module asks for the files and holds the loading gate under its own requirement (`tile levels: 1 level file left`

@@ -14,8 +14,6 @@
 //! { "bleed": (threshold: 100, decay_per_s: 10, duration: 3, effect: "bleed") }
 //! ```
 
-use std::collections::BTreeSet;
-
 use ai_core::AiId;
 use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
@@ -377,15 +375,17 @@ pub fn update_statuses(world: &mut World) {
         .map(|(e, id, _)| (id.map_or(u32::MAX, |i| i.0), e))
         .collect();
     order.sort();
-    // The definitions of the statuses someone carries, each by id: a status nobody has is not
-    // read (one added to content leaves a session that never meets it as it was).
-    let ids: BTreeSet<String> =
-        order.iter().filter_map(|(_, e)| world.get::<Statuses>(*e)).flat_map(|s| s.0.iter().map(|entry| entry.id.clone())).collect();
-    let db = world.resource::<ContentDb>();
-    let limit = CombatTuning::of(db).max_statuses as usize;
-    let defs: Vec<(String, StatusDef)> = ids.into_iter().filter_map(|id| Some((id.clone(), db.get::<StatusDef>(&id)?.clone()))).collect();
-    let def = |id: &str| defs.iter().find(|(d, _)| d == id).map(|(_, d)| d);
+    let limit = CombatTuning::of(world.resource::<ContentDb>()).max_statuses as usize;
     for (_, entity) in order {
+        // The definitions of the statuses this entity carries now, each by id: a status nobody
+        // has is not read (one added to content leaves a session that never meets it as it
+        // was). Read at its turn, not before the loop: a hook of an entity before it this tick
+        // may have given it a status.
+        let Some(statuses) = world.get::<Statuses>(entity) else { continue };
+        let db = world.resource::<ContentDb>();
+        let defs: Vec<(String, StatusDef)> =
+            statuses.0.iter().filter_map(|entry| Some((entry.id.clone(), db.get::<StatusDef>(&entry.id)?.clone()))).collect();
+        let def = |id: &str| defs.iter().find(|(d, _)| d == id).map(|(_, d)| d);
         let Some(mut statuses) = world.get_mut::<Statuses>(entity) else { continue };
         let changes = statuses.tick(def, dt, limit);
         run_changes(world, entity, changes);
@@ -451,6 +451,49 @@ mod tests {
         assert!(changes.contains(&StatusChange::Expired("a".into())));
         assert!(!changes.contains(&StatusChange::Applied("b".into())), "{changes:?}");
         assert_eq!(s.add("b", &def, 10.0, 1), Some(StatusChange::Applied("b".into())));
+    }
+
+    /// The entity that gets a status from a hook.
+    #[derive(Component)]
+    struct Target;
+
+    fn spread(world: &mut World, _: Entity) {
+        let target = world.query_filtered::<Entity, With<Target>>().single(world).unwrap();
+        add_status_buildup(world, target, "b", 50.0);
+    }
+
+    fn quiet(_: &mut World, _: Entity) {}
+
+    #[test]
+    fn a_status_a_hook_gives_an_entity_later_in_the_tick_decays_by_its_definition() {
+        use shards_content::db::Source;
+        use shards_content::{ContentDb, ContentKinds};
+        let mut kinds = ContentKinds::default();
+        kinds.register::<StatusDef>();
+        let text = r#"{
+            "a": (threshold: 100, decay_per_s: 0, duration: 1, effect: "spread"),
+            "b": (threshold: 100, decay_per_s: 10, duration: 1),
+            "c": (threshold: 100, decay_per_s: 10, duration: 1),
+        }"#;
+        let db = ContentDb::build(&kinds, &[Source { path: "content/s.status.ron".into(), text: text.into() }]);
+        assert_eq!(db.errors().count(), 0);
+        let mut world = World::new();
+        world.insert_resource(db);
+        let mut effects = StatusEffects::default();
+        effects.insert("spread", StatusHooks { on_apply: spread, on_tick: quiet, on_expire: quiet });
+        world.insert_resource(effects);
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(100));
+        world.insert_resource(time);
+        // e1's `a` applies this tick, and its hook gives e2 `b`: e2, after e1 in `AiId` order,
+        // carries only `c` when the tick starts.
+        let entry = |id: &str, buildup: f32| StatusEntry { id: id.into(), buildup, threshold: 100.0, active: 0.0, stacks: 0 };
+        let second = world.spawn((AiId(2), Statuses(vec![entry("c", 50.0)]), Target)).id();
+        world.spawn((AiId(1), Statuses(vec![entry("a", 100.0)])));
+        update_statuses(&mut world);
+        let statuses = world.get::<Statuses>(second).unwrap();
+        assert_eq!(statuses.get("b").map(|b| b.buildup), Some(49.0), "decayed 10/s for 0.1 s: {statuses:?}");
+        assert_eq!(statuses.get("c").map(|c| c.buildup), Some(49.0));
     }
 
     #[test]

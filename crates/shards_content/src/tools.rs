@@ -192,7 +192,7 @@ fn apply(world: &mut World, args: ContentApplyArgs) -> ToolResult {
     if !problems.is_empty() {
         return Err(format!("refused, it would break content: {}", problems.join("; ")));
     }
-    world.insert_resource(next);
+    crate::install(world, next);
     crate::edits::refresh(world);
     let n = changes.len();
     let defs = if n == 1 { "definition" } else { "definitions" };

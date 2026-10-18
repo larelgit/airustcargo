@@ -118,11 +118,13 @@ pub(crate) fn snapshot_prepare(world: &mut World, snapshot: &Snapshot) -> Result
 /// What the simulation has read becomes what it had read in the session the snapshot was taken
 /// in, so the `content` check after the prepare compares those definitions, and the session goes
 /// on reading what that one did (a playback from the snapshot, a heavy-mode twin, a refused load
-/// putting the world back). A snapshot without the parts was taken when the check hashed every
-/// definition: what is read does not matter to it, and stays as it is.
+/// putting the world back). A snapshot without the parts was taken where the check hashed every
+/// definition (a file from before them, or a session that went on from one): the session goes
+/// on hashing every definition, what it reads counts for nothing, and it starts from no reads,
+/// whatever the session had read before the load (a refused load puts back the game's own
+/// snapshot, which is such a one when the game hashed every definition).
 fn put_back_reads(world: &World, snapshot: &Snapshot) {
-    let Some(parts) = snapshot.check_parts.get("content") else { return };
-    let names: BTreeSet<&str> = parts.keys().map(String::as_str).collect();
+    let names: BTreeSet<&str> = snapshot.check_parts.get("content").map(|parts| parts.keys().map(String::as_str).collect()).unwrap_or_default();
     world.resource::<ContentDb>().set_used(&names);
 }
 

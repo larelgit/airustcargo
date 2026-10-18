@@ -409,7 +409,7 @@ fn restore_for_playback(world: &mut World) {
     }
     match current.with_changes(&kinds, &[], &restore) {
         Ok(db) => {
-            world.insert_resource(db);
+            crate::install(world, db);
             crate::edits::refresh(world);
             let n = restore.len();
             let defs = if n == 1 { "definition" } else { "definitions" };

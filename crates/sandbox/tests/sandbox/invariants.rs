@@ -287,7 +287,7 @@ fn the_replay_saved_at_a_violation_breaks_the_rule_at_the_same_tick() {
     assert!(journal(&app, JournalKind::Sim).iter().any(|l| l.contains(&format!("invariant replay saved: {file}"))));
     let path = std::env::current_dir().unwrap().join(file);
     let recording = replay::load(&path).unwrap();
-    assert_eq!(recording.format, "shards-replay/3");
+    assert_eq!(recording.format, shards::ai_core::replay::FORMAT);
     assert_eq!(recording.end.tick, 31);
     let ops = serde_json::to_value(&recording.events[0]).unwrap();
     assert_eq!(ops["assert"]["op"]["add"]["name"], "fuse", "the rule travels with the replay: {ops}");

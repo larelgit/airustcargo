@@ -364,6 +364,14 @@ pub fn screen_name(world: &World, root: Entity) -> Option<&str> {
     world.get_resource::<UiStack>()?.screens().find(|(_, e)| *e == root).map(|(name, _)| name)
 }
 
+/// A press on widget `e` ([`mark_pressed`] on the screen it belongs to, found from the widget
+/// itself, not from its id).
+pub fn mark_widget_pressed(world: &World, e: Entity) {
+    if let Some(name) = screen_of(world, e).and_then(|root| screen_name(world, root)) {
+        mark_pressed(world, name);
+    }
+}
+
 /// The screen that takes input: the newest of the highest layer above the HUD.
 pub fn top_screen(world: &World) -> Option<Entity> {
     let stack = world.get_resource::<UiStack>()?;
