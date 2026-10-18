@@ -557,11 +557,18 @@ pub struct ChainDef {
     pub input: String,
     /// The odds, 0 to 1, rolled once when the attack starts.
     pub chance: f32,
+    /// Where the director's `min_spacing` is asked. Off (the default): when the input is pressed,
+    /// at the start of the recovery. On: on the tick the action machine would take the queued
+    /// input into the combo window. The design spaces attack *starts*, and the press and the
+    /// start are some ticks apart; a strike another NPC began in between refuses the continuation,
+    /// which is withdrawn from the queue and ends the chain.
+    #[serde(skip_serializing_if = "is_false")]
+    pub gate_at_start: bool,
 }
 
 impl Default for ChainDef {
     fn default() -> Self {
-        Self { input: String::new(), chance: 1.0 }
+        Self { input: String::new(), chance: 1.0, gate_at_start: false }
     }
 }
 
@@ -957,6 +964,12 @@ mod tests {
         for field in ["rest_interrupted", "first_rest", "press_on_decision"] {
             assert!(!neutral.contains(field), "{field} stays out of a plan that does not use it: {neutral}");
         }
+    }
+
+    #[test]
+    fn a_chain_is_neutral_by_default() {
+        let neutral = serde_json::to_string(&ChainDef { input: "light".into(), ..Default::default() }).unwrap();
+        assert!(!neutral.contains("gate_at_start"), "{neutral}");
     }
 
     #[test]

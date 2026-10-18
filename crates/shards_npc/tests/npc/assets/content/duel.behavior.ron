@@ -53,4 +53,6 @@
             "fight": (kind: "attack", transitions: [(to: "idle", when: ["target_lost"])]),
         },
     ),
+    // Presses a strike a set time after the other NPC began its first swing (test hook `press_after_swing`).
+    "late_presser": (initial: "go", states: {"go": (kind: "press_after_swing")}),
 }

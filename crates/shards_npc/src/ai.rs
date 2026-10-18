@@ -290,7 +290,7 @@ fn extras(world: &World, entity: Entity, npc: &Npc, perceived: &Perceived, here:
         out["think"] = json!({"left": round(t.left), "every": every.map(round), "decided": t.decided});
     }
     if let Some(c) = e.get::<NpcChain>() {
-        out["chain"] = json!({"input": c.input, "pressed": c.pressed.is_some()});
+        out["chain"] = json!({"input": c.input, "pressed": c.pressed.is_some(), "gate_at_start": c.at_start});
     }
     if let Some(o) = e.get::<NpcOptions>() {
         let gated: Vec<String> = world

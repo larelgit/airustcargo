@@ -794,3 +794,80 @@ fn a_decision_cadence_of_nine_ticks_gives_a_press_every_nine_ticks_at_best() {
     let (decided, _, _) = decisions_jabs_grants("decide_press", 120);
     assert!(decided.windows(2).all(|w| w[1] - w[0] >= 9), "{decided:?}");
 }
+
+// --- E31: the continuation is asked when it would start ------------------------------------
+
+/// The test's state hook: presses a strike 25 ticks after the other NPC began its first swing (a tick
+/// after the chain's press, two before its combo window opens), without asking the spacing.
+fn press_after_swing(c: &NpcCtx, _: &Params, out: &mut NpcOutput) {
+    let first = c.world.resource::<Started>().0.iter().find(|(_, e, a)| *e != c.entity && a == "swing_1").map(|(t, ..)| *t);
+    if first.is_some_and(|t| c.tick == t + 25) {
+        out.press.push("light".into());
+    }
+}
+
+/// A planner on `plan` against a presser; the presser strikes between the planner's press and its combo window.
+fn interrupted(plan: &str) -> (App, [Entity; 2]) {
+    let (mut app, who) = pair_of("combo", "spaced", plan, 7, |app| {
+        app.add_npc_state("press_after_swing", press_after_swing);
+    });
+    app.world_mut().entity_mut(who[1]).insert(Npc::new("late_presser", "grunt").with_director("spaced"));
+    (app, who)
+}
+
+#[test]
+fn a_continuation_gated_at_its_start_is_refused_by_a_strike_begun_after_the_press() {
+    // Asked at the press (the default), the continuation passes: nothing had begun yet.
+    let (mut app, who) = interrupted("chain_always");
+    step(&mut app, 120);
+    let names: Vec<(u64, String)> = started(&app, who[0]);
+    assert_eq!(names.iter().map(|(_, a)| a.as_str()).take(2).collect::<Vec<_>>(), ["swing_1", "swing_2"], "{names:?}");
+    let s = names[0].0;
+    assert_eq!(names[1].0, s + 27);
+    assert_eq!(started(&app, who[1]).first().map(|(t, _)| *t), Some(s + 25), "the presser struck between the press and the window");
+    assert!(lines(&app, "refused after swing_1").is_empty());
+    // Asked when the machine would take it (the rule on): the presser's strike, 25 ticks in, is in the way.
+    let (mut app, who) = interrupted("chain_gated");
+    let now = app.world().resource::<ai_core::SimTick>().0;
+    step(&mut app, s + 26 - now);
+    let chain = app.world().get::<shards_npc::NpcChain>(who[0]).cloned().expect("pressed, waiting in the queue");
+    assert!(chain.pressed.is_some() && chain.at_start && chain.cleared.is_none(), "{chain:?}");
+    assert!(app.world().get::<shards_action::InputBuffer>(who[0]).unwrap().queued.iter().any(|q| q.input == "light"));
+    step(&mut app, 3);
+    assert!(app.world().get::<shards_npc::NpcChain>(who[0]).is_none(), "the chain is over");
+    assert!(app.world().get::<shards_action::InputBuffer>(who[0]).unwrap().queued.is_empty(), "and the input is out of the queue");
+    step(&mut app, 100);
+    let names = started(&app, who[0]);
+    assert_eq!(names.iter().map(|(_, a)| a.as_str()).take(2).collect::<Vec<_>>(), ["swing_1", "swing_1"], "the chain ended: {names:?}");
+    let refused = lines(&app, "refused after swing_1");
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert!(refused[0].contains("began a strike less than 42 ticks ago"), "{refused:?}");
+}
+
+#[test]
+fn a_continuation_gated_at_its_start_starts_on_the_same_tick_when_nothing_is_in_the_way() {
+    let (mut app, who) = combo_duel("chain_gated", 7);
+    step(&mut app, 300);
+    let all = started(&app, who);
+    let names: Vec<&str> = all.iter().map(|(_, a)| a.as_str()).collect();
+    assert_eq!(&names[..3], ["swing_1", "swing_2", "swing_3"], "{all:?}");
+    assert_eq!((all[1].0 - all[0].0, all[2].0 - all[1].0), (27, 27), "the same ticks as when asked at the press: {all:?}");
+    assert!(lines(&app, "refused").is_empty());
+}
+
+#[test]
+fn two_planners_gating_their_continuations_at_the_start_keep_the_spacing() {
+    for seed in [7, 11, 23] {
+        let (mut app, who) = pair_of("combo", "spaced", "chain_gated", seed, |_| {});
+        // `step` fails the test if the rule `npc.strike_spacing` is violated on the way.
+        step(&mut app, 2400);
+        let mut all: Vec<(u64, usize, String)> = Vec::new();
+        for (i, e) in who.iter().enumerate() {
+            all.extend(started(&app, *e).into_iter().map(|(t, a)| (t, i, a)));
+        }
+        all.sort();
+        assert!(all.iter().any(|(_, _, a)| a == "swing_2"), "seed {seed}: chains went through");
+        let gaps: Vec<u64> = all.windows(2).filter(|w| w[0].1 != w[1].1).map(|w| w[1].0 - w[0].0).collect();
+        assert!(!gaps.is_empty() && gaps.iter().all(|g| *g >= 42), "seed {seed}: {gaps:?}");
+    }
+}

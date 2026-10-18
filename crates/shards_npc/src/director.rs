@@ -139,7 +139,7 @@ pub(crate) struct Fighting {
     pub think: Option<&'static NpcThink>,
     pub fighter: &'static Fighter,
     pub state: &'static ActionState,
-    pub buffer: &'static InputBuffer,
+    pub buffer: &'static mut InputBuffer,
     pub transform: &'static Transform,
     pub perceived: &'static Perceived,
     pub home: Option<&'static Home>,
