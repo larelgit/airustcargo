@@ -4,6 +4,7 @@
 
 use bevy::prelude::*;
 use shards_action::prelude::*;
+use shards_motion::MotionState;
 use shards_action::{
     end_break, grant_protection, poise_damage, react, reset_poise, ActionAppExt, ActionEnd, ActionEnded, DamageCtx,
     Damaged, Knockback, Protection, Reacted, Reaction,
@@ -255,7 +256,7 @@ fn knockback_moves_the_body_and_stops() {
 #[test]
 fn hook_raised_armor_stops_the_reaction() {
     fn brace(ctx: &mut DamageCtx, _: &World) {
-        ctx.armor = ctx.armor.max(2);
+        ctx.reaction_armor = ctx.reaction_armor.max(2);
     }
     let (mut app, attacker, victim) = bout_with("r_victim", |app| {
         app.add_damage_hook(brace);
@@ -372,4 +373,131 @@ fn the_react_tool_and_condition_and_the_describers() {
     press(&mut app, attacker, "light");
     let out = ok(&mut app, "step", serde_json::json!({"ticks": 30, "until": [{"named": "reacting"}]}));
     assert!(out.contains("reacting"), "{out}");
+}
+
+#[test]
+fn a_knockdown_assigns_the_immunity_it_starts() {
+    // Inside a long protection, a knockdown (which ignores it) leaves the reaction's own 0.2 s.
+    let (mut app, _, victim) = bout("r_victim");
+    grant_protection(app.world_mut(), victim, 1.0, 0.0);
+    assert!(react(app.world_mut(), victim, Reaction::hit(3, None, Vec3::Z, 0.0, 0)));
+    assert_eq!(protection(&app, victim), Some(Protection { reactions: 0.2, poise: 0.0 }));
+    // Out of a reaction, the end of the one it interrupts grants `reaction_protection` after that:
+    // the longer of the two stays.
+    let (mut app, _, victim) = bout("r_victim");
+    assert!(react(app.world_mut(), victim, Reaction::forced(1, None, Vec3::Z)));
+    grant_protection(app.world_mut(), victim, 0.5, 0.0);
+    assert!(react(app.world_mut(), victim, Reaction::hit(3, None, Vec3::Z, 0.0, 0)));
+    assert_eq!(protection(&app, victim), Some(Protection { reactions: 1.0, poise: 0.0 }));
+    // A reaction that does not happen leaves the timer alone.
+    let (mut app, _, victim) = bout("r_heavyweight");
+    grant_protection(app.world_mut(), victim, 0.7, 0.0);
+    assert!(!react(app.world_mut(), victim, Reaction::hit(3, None, Vec3::Z, 0.0, 3)), "armour 3 stops it");
+    assert_eq!(protection(&app, victim), Some(Protection { reactions: 0.7, poise: 0.0 }));
+}
+
+#[test]
+fn a_push_ends_with_its_reaction() {
+    // 20 m/s at 12 m/s per s would run 1.6 s; the reaction (0.55 s) cuts it.
+    let (mut app, _, victim) = bout("r_victim");
+    let fast = Reaction { knockback: 20.0, ..Reaction::forced(2, None, E) };
+    assert!(react(app.world_mut(), victim, fast));
+    step(&mut app, 20);
+    assert!(app.world().get::<Knockback>(victim).is_some(), "still pushed inside the reaction");
+    step(&mut app, 20);
+    assert_eq!(action(&app, victim), "idle");
+    assert!(app.world().get::<Knockback>(victim).is_none(), "the reaction ended, so did the push");
+    // A second reaction in the first replaces the push instead of losing it.
+    let (mut app, _, victim) = bout("r_victim");
+    assert!(react(app.world_mut(), victim, Reaction::forced(1, None, E)));
+    assert!(react(app.world_mut(), victim, Reaction::forced(2, None, Vec3::Z)));
+    assert_eq!(app.world().get::<Knockback>(victim).unwrap().velocity, Vec3::Z * 4.0);
+}
+
+#[test]
+fn a_reaction_replaces_the_body_momentum() {
+    let (mut app, _, victim) = bout("r_victim");
+    let start = feet(&app, victim);
+    app.world_mut().get_mut::<MotionState>(victim).unwrap().velocity = E * 5.0;
+    assert!(react(app.world_mut(), victim, Reaction::forced(1, None, E)));
+    assert_eq!(app.world().get::<MotionState>(victim).unwrap().velocity, Vec3::ZERO, "its own speed is gone");
+    let dt = app.world().resource::<Time<Fixed>>().timestep().as_secs_f32();
+    let (mut v, mut expected) = (2.0_f32, 0.0_f32);
+    while v > 1e-4 {
+        v = (v - 12.0 * dt).max(0.0);
+        expected += v * dt;
+    }
+    step(&mut app, 40);
+    let moved = feet(&app, victim) - start;
+    assert!((moved.x - expected).abs() < 0.01, "moved {} m, the push alone is {expected}", moved.x);
+}
+
+#[test]
+fn a_push_on_a_body_that_cannot_be_pushed_ends() {
+    let (mut app, _, victim) = bout("r_victim");
+    app.world_mut().entity_mut(victim).remove::<shards_motion::LocomotionInput>();
+    app.world_mut().entity_mut(victim).insert(Knockback { velocity: E * 4.0, decel: 12.0 });
+    step(&mut app, 2);
+    assert!(app.world().get::<Knockback>(victim).is_none());
+}
+
+#[test]
+fn the_new_events_survive_the_net_encoding() {
+    use ai_core::state::{decode_value, encode_value};
+    use shards_action::{Died, GuardBroken, HitWeight, IgnoreReason, Parried, PerfectEvaded};
+    let (mut app, a, b) = bout("r_victim");
+    let registry = app.world().resource::<AppTypeRegistry>().clone();
+    {
+        let mut registry = registry.write();
+        registry.register::<Damaged>();
+        registry.register::<Reacted>();
+        registry.register::<PerfectEvaded>();
+        registry.register::<Died>();
+        registry.register::<Parried>();
+        registry.register::<GuardBroken>();
+    }
+    let world = app.world_mut();
+    let damaged = Damaged {
+        attacker: a,
+        target: b,
+        action: "r_hit_heavy".into(),
+        amount: 40.0,
+        poise: 5.0,
+        hp_left: 60.0,
+        invulnerable: true,
+        ignore_reason: Some(IgnoreReason::Grace),
+        weight: HitWeight::Break,
+        reaction: Some(2),
+        absorbed: 3.0,
+        source: Some(a),
+    };
+    let back = decode_value(world, "shards_action::combat::Damaged", &encode_value(world, &damaged).unwrap()).unwrap();
+    assert_eq!(Damaged::from_reflect(&*back).unwrap(), damaged);
+    let plain = Damaged { ignore_reason: None, reaction: None, source: None, ..damaged.clone() };
+    let back = decode_value(world, "shards_action::combat::Damaged", &encode_value(world, &plain).unwrap()).unwrap();
+    assert_eq!(Damaged::from_reflect(&*back).unwrap(), plain);
+    let reacted = Reacted { entity: b, attacker: Some(a), tier: 3, action: "r_react_down".into() };
+    let back = decode_value(world, "shards_action::combat::Reacted", &encode_value(world, &reacted).unwrap()).unwrap();
+    assert_eq!(Reacted::from_reflect(&*back).unwrap(), reacted);
+    let evaded = PerfectEvaded { attacker: a, defender: b, action: "r_hit_plain".into(), source: None };
+    let back = decode_value(world, "shards_action::combat::PerfectEvaded", &encode_value(world, &evaded).unwrap()).unwrap();
+    assert_eq!(PerfectEvaded::from_reflect(&*back).unwrap(), evaded);
+    let died = Died { entity: b, killer: Some(a), action: Some("r_hit_heavy".into()), source: Some(a) };
+    let back = decode_value(world, "shards_action::combat::Died", &encode_value(world, &died).unwrap()).unwrap();
+    assert_eq!(Died::from_reflect(&*back).unwrap(), died);
+    let parried = Parried { attacker: a, defender: b, action: "x".into(), stamina: 4.0, source: Some(b) };
+    let back = decode_value(world, "shards_action::combat::Parried", &encode_value(world, &parried).unwrap()).unwrap();
+    assert_eq!(Parried::from_reflect(&*back).unwrap(), parried);
+    let broken = GuardBroken {
+        attacker: a,
+        defender: b,
+        action: "x".into(),
+        amount: 1.0,
+        hp_left: 9.0,
+        weight: HitWeight::Light,
+        absorbed: 0.5,
+        source: None,
+    };
+    let back = decode_value(world, "shards_action::combat::GuardBroken", &encode_value(world, &broken).unwrap()).unwrap();
+    assert_eq!(GuardBroken::from_reflect(&*back).unwrap(), broken);
 }

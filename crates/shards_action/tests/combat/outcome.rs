@@ -112,12 +112,14 @@ fn guard_broken_push_scales_the_body_velocity() {
     hold(&mut app, victim, "block", true);
     app.world_mut().get_mut::<Intent>(victim).unwrap().move_dir = S * 0.1;
     step(&mut app, 30); // past the perfect window, walking
+    let walking = app.world().get::<MotionState>(victim).unwrap().velocity;
+    assert!(walking.z > 0.05, "the guard walks towards the attacker: {walking}");
     press(&mut app, attacker, "technique.6"); // a guard-breaking hit
     step(&mut app, 6);
-    let velocity = app.world().get::<MotionState>(victim).unwrap().velocity;
-    assert!(velocity.z > 0.05, "the guard walks towards the attacker: {velocity}");
     let push = app.world().get::<Knockback>(victim).expect("the guard break started a push");
-    assert!((push.velocity.z - velocity.z * 0.2).abs() < 1e-3 && push.velocity.y == 0.0, "{push:?} vs {velocity}");
+    assert!(push.velocity.z > 0.0 && push.velocity.z <= walking.z * 0.2 + 1e-3 && push.velocity.y == 0.0, "{push:?} vs {walking}");
+    let velocity = app.world().get::<MotionState>(victim).unwrap().velocity;
+    assert!(velocity.z < walking.z * 0.2 + 1e-3, "the body's own momentum was replaced, not kept: {velocity} vs {walking}");
     assert_eq!(push.decel, 10.0);
     assert_eq!(action(&app, victim), "r_guard_broken");
 }
@@ -186,7 +188,7 @@ fn overdraft_starts_on_any_stamina_and_drains_to_zero() {
 }
 
 /// The roll starts in tick 1 (its i-frames 0.07-0.25 s open in tick 5, its perfect window
-/// 0.105-0.215 s in ticks 7 to 13); the attacker is pressed after `wait` ticks and its hit lands
+/// 0.105-0.215 s, sampled at the instant of each tick, in ticks 7 to 12); the attacker is pressed after `wait` ticks and its hit lands
 /// 5 ticks after its start.
 fn rolled_into(input: &str, wait: u64) -> (App, Entity, Entity) {
     let (mut app, attacker, victim) = bout("r_victim");
@@ -247,7 +249,7 @@ fn ignored_hits_print_their_reason() {
         match ctx.action.as_str() {
             "r_hit_plain" => (ctx.outcome, ctx.ignore_reason) = (Outcome::Ignored, IgnoreReason::Grace),
             "r_hit_light" => (ctx.outcome, ctx.ignore_reason) = (Outcome::Ignored, IgnoreReason::Hook),
-            // No reason set: the default prints the old text.
+            // No reason set: the default says the hook ignored it.
             "r_hit_heavy" => ctx.outcome = Outcome::Ignored,
             _ => {}
         }
@@ -264,11 +266,67 @@ fn ignored_hits_print_their_reason() {
     assert_eq!(hits.len(), 3, "{hits:?}");
     assert!(hits[0].ends_with("r_hit_plain -0 (hp 100, grace)"), "{}", hits[0]);
     assert!(hits[1].ends_with("r_hit_light -0 (hp 100, ignored)"), "{}", hits[1]);
-    assert!(hits[2].ends_with("r_hit_heavy -0 (hp 100, god mode)"), "{}", hits[2]);
+    assert!(hits[2].ends_with("r_hit_heavy -0 (hp 100, ignored)"), "{}", hits[2]);
     assert!(lines(&app, "reacts").is_empty(), "an ignored hit reacts to nothing");
 }
 
 /// The `evaded` lines that are not the `perfectly evaded` ones.
 fn plain_evades(app: &App) -> Vec<String> {
     lines(app, " evaded ").into_iter().filter(|l| !l.contains("perfectly")).collect()
+}
+
+#[test]
+fn the_perfect_window_is_sampled_at_the_tick_not_over_it() {
+    // 0.105-0.215 s: tick 12 (t = 0.2) is inside, tick 13 (t = 0.2167) is not, though the tick
+    // covers (0.2, 0.2167] and the window ends at 0.215.
+    let (app, attacker, victim) = rolled_into("technique.7", 6);
+    let (a, v) = (id(&app, attacker), id(&app, victim));
+    assert_eq!(lines(&app, "perfectly"), [format!("12 {v} perfectly evaded {a} r_hit_plain")], "{:#?}", journal(&app));
+    let (app, attacker, victim) = rolled_into("technique.7", 7);
+    let (a, v) = (id(&app, attacker), id(&app, victim));
+    assert_eq!(plain_evades(&app), [format!("13 {v} evaded {a} r_hit_plain")], "{:#?}", journal(&app));
+    assert!(lines(&app, "perfectly").is_empty());
+}
+
+#[test]
+fn a_hook_credit_names_the_combat_object_as_source() {
+    #[derive(Resource, Default)]
+    struct Log {
+        damaged: Vec<(Entity, Option<Entity>)>,
+        died: Vec<(Option<Entity>, Option<Entity>)>,
+        owner: Option<Entity>,
+    }
+    fn credit(ctx: &mut DamageCtx, world: &World) {
+        ctx.credit = world.resource::<Log>().owner.unwrap();
+        if ctx.action == "r_hit_heavy" {
+            ctx.damage = 1000.0;
+        }
+    }
+    let (mut app, attacker, victim) = bout_with("r_victim", |app| {
+        app.init_resource::<Log>();
+        app.add_damage_hook(credit);
+        app.add_observer(|e: On<shards_action::Damaged>, mut log: ResMut<Log>| log.damaged.push((e.event().attacker, e.event().source)));
+        app.add_observer(|e: On<shards_action::Died>, mut log: ResMut<Log>| {
+            log.died.push((e.event().killer, e.event().source));
+        });
+    });
+    let owner = fighter(app.world_mut(), "Owner", "r_plain", "heroes", Vec3::new(30.0, 0.0, 0.0), N);
+    app.world_mut().resource_mut::<Log>().owner = Some(owner);
+    press(&mut app, attacker, "technique.7");
+    step(&mut app, 8);
+    assert_eq!(app.world().resource::<Log>().damaged, [(owner, Some(attacker))]);
+    step(&mut app, 20);
+    press(&mut app, attacker, "heavy");
+    step(&mut app, 8);
+    assert_eq!(app.world().resource::<Log>().died, [(Some(owner), Some(attacker))], "{:#?}", journal(&app));
+    let _ = victim;
+}
+
+#[test]
+fn a_hit_is_not_ignored_and_an_own_hit_has_no_source() {
+    let (mut app, attacker, _) = bout("r_victim");
+    press(&mut app, attacker, "technique.7");
+    step(&mut app, 8);
+    let hit = seen(&app).damaged.last().unwrap();
+    assert_eq!((hit.ignore_reason, hit.source), (None, None));
 }

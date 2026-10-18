@@ -321,6 +321,35 @@ pub fn grant_protection(world: &mut World, entity: Entity, reactions: f32, poise
     }
 }
 
+/// Sets the reaction-immunity timer of `entity` to `secs`, replacing what ran before (even a longer
+/// timer: a knockdown that lands inside a long protection cuts it to the immunity a reaction starts).
+/// Returns the previous value, to put back with [`set_reaction_immunity`] if the reaction fails.
+/// A timer of 0 on a body with no poise timer removes [`Protection`].
+pub fn set_reaction_immunity(world: &mut World, entity: Entity, secs: f32) -> f32 {
+    if world.get_entity(entity).is_err() {
+        return 0.0;
+    }
+    let secs = secs.max(0.0);
+    let (old, drop) = match world.get_mut::<Protection>(entity) {
+        Some(mut p) => {
+            let old = p.reactions;
+            if old != secs {
+                p.reactions = secs;
+            }
+            (old, secs <= 0.0 && p.poise <= 0.0)
+        }
+        None if secs > 0.0 => {
+            world.entity_mut(entity).insert(Protection { reactions: secs, poise: 0.0 });
+            (0.0, false)
+        }
+        None => (0.0, false),
+    };
+    if drop {
+        world.entity_mut(entity).remove::<Protection>();
+    }
+    old
+}
+
 /// `ActionSystems::Fighters`, after [`update_fighters`] and `finish_actions`: protection timers
 /// run down by the tick, after this tick's checks (a timer of `s` seconds set in tick `N` acts on
 /// the checks of ticks `N` to `N + ceil(60 s) - 1`), and the component goes when both are out.
@@ -351,6 +380,7 @@ pub(crate) fn protect_after_reaction(
     }
     let Ok(fighter) = fighters.get(ended.entity) else { return };
     let Some(m) = db.get::<MovesetDef>(&fighter.moveset) else { return };
+    // The moveset's `guard_broken` is not here: ending it grants no protection (a stagger does).
     if m.reaction_protection > 0.0
         && (m.reactions.iter().any(|r| r.action == ended.action) || m.stagger.as_deref() == Some(ended.action.as_str()))
     {
@@ -365,14 +395,24 @@ fn run_down(left: f32, dt: f32) -> f32 {
 }
 
 /// What `push_bodies` reads and changes on a pushed fighter.
-type Pushed<'a> = (Entity, Option<&'a AiId>, &'a mut Knockback, Option<&'a mut LocomotionInput>, Has<Dead>);
+type Pushed<'a> = (
+    Entity,
+    Option<&'a AiId>,
+    &'a mut Knockback,
+    Option<&'a mut LocomotionInput>,
+    Has<Dead>,
+    &'a Fighter,
+    Option<&'a ActionState>,
+);
 
 /// `ActionSystems::Push`, after the machine and its effects: a pushed body moves by the decayed
 /// speed of the tick (`v1 = max(0, v0 - decel * dt)`, then `external += dir * v1 * dt`, Euler order),
 /// into `LocomotionInput::external` the machine just wrote, so a wall stops the push. Fighters in
-/// `AiId` order; the push ends at `v1 <= EPS`, and with a dead body.
+/// `AiId` order; the push ends at `v1 <= EPS`, with a dead body, and when the fighter is no longer in
+/// one of its moveset's reaction, `stagger` or `guard_broken` actions.
 pub fn push_bodies(
     time: Res<Time>,
+    db: Res<ContentDb>,
     mut commands: Commands,
     mut pushed: Query<Pushed, With<Fighter>>,
 ) {
@@ -383,12 +423,25 @@ pub fn push_bodies(
     let mut order: Vec<(u32, Entity)> = pushed.iter().map(|(e, id, ..)| (id.map_or(u32::MAX, |i| i.0), e)).collect();
     order.sort();
     for (_, entity) in order {
-        let Ok((_, _, mut push, loco, dead)) = pushed.get_mut(entity) else { continue };
-        if dead {
+        let Ok((_, _, mut push, loco, dead, fighter, state)) = pushed.get_mut(entity) else { continue };
+        // A push is the motion of the reaction that started it: it ends with that action, whatever
+        // ended it (the next action starts from the body's own motion).
+        let current = state.and_then(|s| s.current.as_ref()).map(|r| r.action.as_str());
+        let pushing = current.is_some_and(|a| {
+            db.get::<MovesetDef>(&fighter.moveset).is_some_and(|m| {
+                m.reactions.iter().any(|r| r.action == a)
+                    || [&m.stagger, &m.guard_broken].into_iter().flatten().any(|s| s == a)
+            })
+        });
+        if dead || !pushing {
             commands.entity(entity).remove::<Knockback>();
             continue;
         }
-        let Some(mut loco) = loco else { continue };
+        let Some(mut loco) = loco else {
+            // Nothing to push through: the push ends rather than lingering.
+            commands.entity(entity).remove::<Knockback>();
+            continue;
+        };
         let v0 = push.velocity.length();
         let v1 = (v0 - push.decel * dt).max(0.0);
         let dir = push.velocity.normalize_or_zero();

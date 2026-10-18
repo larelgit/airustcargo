@@ -38,7 +38,7 @@ use shards_motion::{
 
 use crate::def::{touches, ActionDef, CombatTuning, HitFlag, MovesetDef, EPS};
 use crate::fighter::{
-    grant_protection, hostile, Armor, Dead, Fighter, Health, Invulnerable, Knockback, Poise, Protection, Stamina, Team,
+    grant_protection, hostile, set_reaction_immunity, Armor, Dead, Fighter, Health, Invulnerable, Knockback, Poise, Protection, Stamina, Team,
 };
 use crate::machine::{force_action, ActionEnd, ActionEnded, ActionState, InputBuffer};
 use crate::status::add_status_buildup;
@@ -68,13 +68,13 @@ pub enum Outcome {
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum IgnoreReason {
     /// `Invulnerable` (the text `god mode`).
-    #[default]
     God,
     /// A grace period, such as a game's hit grace; a hook that sets `Ignored` names itself so.
     Grace,
-    /// A downed body (lethal hook, lane B5).
+    /// A downed body. Reserved: nothing in the engine sets it; a game hook may.
     Downed,
-    /// A game hook; the journal prints `ignored`.
+    /// A game hook that did not name a reason; the journal prints `ignored`. The default for a hit a hook ignores.
+    #[default]
     Hook,
 }
 
@@ -91,19 +91,17 @@ impl IgnoreReason {
 }
 
 /// How heavy a hit felt, for hit stop and camera. Ordered: a heavier weight wins.
-#[derive(
-    Reflect, serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord,
-)]
+#[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HitWeight {
     #[default]
     Light,
     /// The hit asked for reaction tier 2 or 3.
     Heavy,
-    /// The hit came from an action whose `weight` says so (a counterattack).
+    /// Reserved for a game or a later module to set on `DamageCtx::weight` (a counterattack); the engine never sets it.
     Counter,
     /// The hit broke the target's poise.
     Break,
-    /// The hit came from a paired action on its victim.
+    /// Reserved, as `Counter` (a hit from a paired action on its victim); the engine never sets it.
     Finisher,
 }
 
@@ -139,7 +137,7 @@ pub struct DamageCtx {
     /// The target's reaction armour now: the moveset's `reaction_armor` and the running action's
     /// `armor` windows. A hook may raise it (a timed buff). `apply` hands this value to [`react`]
     /// (`Reaction::armor`), so a hook-raised level really stops the reaction.
-    pub armor: u8,
+    pub reaction_armor: u8,
     /// Push speed (m/s) a reaction to this hit starts with (`HitDef::knockback`).
     pub knockback: f32,
     /// Product of the target's damage-taken multipliers (1 until a game or a later module sets it),
@@ -190,8 +188,8 @@ pub struct Damaged {
     pub hp_left: f32,
     /// The hit was ignored (god mode, a grace period...); `ignore_reason` says why.
     pub invulnerable: bool,
-    /// Why the hit was ignored; meaningful when `invulnerable` is set.
-    pub ignore_reason: IgnoreReason,
+    /// Why the hit was ignored; `None` when it was not.
+    pub ignore_reason: Option<IgnoreReason>,
     pub weight: HitWeight,
     /// The reaction tier the target is put into by this hit; `None`: none (or the old flinch).
     pub reaction: Option<u8>,
@@ -405,10 +403,10 @@ fn resolve(world: &mut World, d: Detected) {
         flags: hit.flags.clone(),
         tags: hit.tags.clone(),
         outcome: Outcome::Hit,
-        ignore_reason: IgnoreReason::God,
+        ignore_reason: IgnoreReason::Hook,
         dir,
         reaction: hit.reaction,
-        armor: reaction_armor(world, d.target),
+        reaction_armor: reaction_armor(world, d.target),
         knockback: hit.knockback,
         taken: 1.0,
         guard_mult: None,
@@ -436,7 +434,7 @@ pub fn modifiers(world: &World, ctx: &mut DamageCtx) {
     if let Some(run) = running.filter(|r| r.windows.iframes) {
         let perfect = !ctx.flags.contains(&HitFlag::NoPerfectEvade)
             && ctx.base > 0.0
-            && db.get::<ActionDef>(&run.action).is_some_and(|d| d.any_open(&d.perfect_iframes, run.prev, run.t));
+            && db.get::<ActionDef>(&run.action).is_some_and(|d| d.any_open_at(&d.perfect_iframes, run.t));
         ctx.outcome = if perfect { Outcome::PerfectEvaded } else { Outcome::Evaded };
         return;
     }
@@ -452,7 +450,8 @@ pub fn modifiers(world: &World, ctx: &mut DamageCtx) {
         let have = world.get::<Stamina>(target).map_or(f32::INFINITY, |s| s.current);
         if run.windows.perfect && !ctx.flags.contains(&HitFlag::NoParry) {
             let pcost = cost * guard.perfect_cost_mult;
-            // A perfect guard that cannot be paid falls through to the break below.
+            // A perfect guard that cannot be paid falls through to the ordinary guard below (a block, or a break
+            // when the plain cost cannot be paid either; validation keeps `perfect_cost_mult` at most 1).
             if !(pcost > 0.0 && have + EPS < pcost) {
                 ctx.outcome = Outcome::Parried { stamina: pcost };
                 return;
@@ -505,7 +504,7 @@ fn plan(world: &World, ctx: &DamageCtx) -> Plan {
     let breaks = matches!(ctx.outcome, Outcome::Hit | Outcome::Blocked { .. }) && poise_breaks(world, ctx.target, ctx.poise);
     let reacts = match (ctx.outcome, ctx.reaction) {
         (Outcome::Hit, Some(tier)) if !breaks => {
-            should_react(world, ctx.target, &Reaction::hit(tier, Some(ctx.credit), ctx.dir, ctx.knockback, ctx.armor), ctx.armor)
+            should_react(world, ctx.target, &Reaction::hit(tier, Some(ctx.credit), ctx.dir, ctx.knockback, ctx.reaction_armor), ctx.reaction_armor)
                 .then_some(tier)
         }
         _ => None,
@@ -527,6 +526,8 @@ fn weight_of(ctx: &DamageCtx, breaks: bool) -> HitWeight {
 
 fn apply(world: &mut World, ctx: DamageCtx) {
     let (attacker, credit, target, action) = (ctx.attacker, ctx.credit, ctx.target, ctx.action.clone());
+    // The combat object that hit, when it is not the credited entity.
+    let source = (ctx.attacker != ctx.credit).then_some(ctx.attacker);
     let plan = plan(world, &ctx);
     let weight = weight_of(&ctx, plan.breaks);
     match ctx.outcome {
@@ -540,17 +541,17 @@ fn apply(world: &mut World, ctx: DamageCtx) {
                 poise: 0.0,
                 hp_left,
                 invulnerable: true,
-                ignore_reason: ctx.ignore_reason,
+                ignore_reason: Some(ctx.ignore_reason),
                 weight: HitWeight::Light,
                 reaction: None,
                 absorbed: 0.0,
-                source: None,
+                source,
             });
         }
-        Outcome::Evaded => world.trigger(Evaded { attacker: credit, defender: target, action, source: None }),
+        Outcome::Evaded => world.trigger(Evaded { attacker: credit, defender: target, action, source }),
         Outcome::PerfectEvaded => {
-            world.trigger(Evaded { attacker: credit, defender: target, action: action.clone(), source: None });
-            world.trigger(PerfectEvaded { attacker: credit, defender: target, action, source: None });
+            world.trigger(Evaded { attacker: credit, defender: target, action: action.clone(), source });
+            world.trigger(PerfectEvaded { attacker: credit, defender: target, action, source });
         }
         Outcome::Parried { stamina } => {
             if stamina > 0.0
@@ -558,7 +559,7 @@ fn apply(world: &mut World, ctx: DamageCtx) {
             {
                 s.spend(stamina);
             }
-            world.trigger(Parried { attacker: credit, defender: target, action, stamina, source: None });
+            world.trigger(Parried { attacker: credit, defender: target, action, stamina, source });
             if parry_staggers(world, target) {
                 stagger(world, attacker, StaggerCause::Parried);
             }
@@ -577,9 +578,9 @@ fn apply(world: &mut World, ctx: DamageCtx) {
                 hp_left,
                 weight,
                 absorbed: 0.0,
-                source: None,
+                source,
             });
-            if !finish_if_dead(world, target, credit, &action) {
+            if !finish_if_dead(world, target, credit, &action, source) {
                 apply_statuses(world, target, &ctx.status);
                 take_poise(world, target, ctx.poise);
             }
@@ -598,9 +599,9 @@ fn apply(world: &mut World, ctx: DamageCtx) {
                 hp_left,
                 weight,
                 absorbed: 0.0,
-                source: None,
+                source,
             });
-            if !finish_if_dead(world, target, credit, &action) {
+            if !finish_if_dead(world, target, credit, &action, source) {
                 apply_statuses(world, target, &ctx.status);
                 guard_break(world, target);
             }
@@ -615,13 +616,13 @@ fn apply(world: &mut World, ctx: DamageCtx) {
                 poise: ctx.poise,
                 hp_left,
                 invulnerable: false,
-                ignore_reason: IgnoreReason::God,
+                ignore_reason: None,
                 weight,
                 reaction: plan.reacts,
                 absorbed: 0.0,
-                source: None,
+                source,
             });
-            if finish_if_dead(world, target, credit, &action) {
+            if finish_if_dead(world, target, credit, &action, source) {
                 return;
             }
             apply_statuses(world, target, &ctx.status);
@@ -635,7 +636,7 @@ fn apply(world: &mut World, ctx: DamageCtx) {
                 Some(tier) => {
                     let broke = take_poise(world, target, ctx.poise);
                     if !broke && plan.reacts == Some(tier) {
-                        react(world, target, Reaction::hit(tier, Some(credit), ctx.dir, ctx.knockback, ctx.armor));
+                        react(world, target, Reaction::hit(tier, Some(credit), ctx.dir, ctx.knockback, ctx.reaction_armor));
                     }
                 }
             }
@@ -672,9 +673,9 @@ fn hurt(world: &mut World, target: Entity, damage: f32) -> f32 {
 }
 
 /// Kills `target` if its health ran out; `true` if it is dead now.
-fn finish_if_dead(world: &mut World, target: Entity, killer: Entity, action: &str) -> bool {
+fn finish_if_dead(world: &mut World, target: Entity, killer: Entity, action: &str, source: Option<Entity>) -> bool {
     if world.get::<Health>(target).is_some_and(|h| h.current <= EPS) {
-        kill(world, target, Some(killer), Some(action.to_owned()));
+        kill_with(world, target, Some(killer), Some(action.to_owned()), source);
         return true;
     }
     false
@@ -836,8 +837,8 @@ impl Reaction {
         }
     }
 
-    /// A recoil: it ignores immunity (and starts none) but armour still stops it. A parried
-    /// attacker's recoil, a charge that hits a wall.
+    /// A recoil: it ignores immunity (and starts none) but armour still stops it: a parried
+    /// attacker's recoil. A charge that hits a wall ignores armour too: use [`Reaction::forced`].
     pub fn recoil(tier: u8, from: Option<Entity>, dir: Vec3) -> Self {
         Self { ignore_armor: false, ..Self::forced(tier, from, dir) }
     }
@@ -850,7 +851,7 @@ fn reaction_armor(world: &World, entity: Entity) -> u8 {
     let window = world
         .get::<ActionState>(entity)
         .and_then(|s| s.current.as_ref())
-        .and_then(|r| Some(world.resource::<ContentDb>().get::<ActionDef>(&r.action)?.armor_at(r.prev, r.t)))
+        .and_then(|r| Some(world.resource::<ContentDb>().get::<ActionDef>(&r.action)?.armor_at(r.t)))
         .unwrap_or(0);
     permanent.max(window)
 }
@@ -895,12 +896,18 @@ pub fn react(world: &mut World, entity: Entity, r: Reaction) -> bool {
         return flinch(world, entity);
     };
     let immunity = m.reaction_immunity;
+    // The immunity is assigned (not raised) and before the action is forced: a knockdown inside a
+    // longer protection cuts it to the reaction's immunity, and the end of the reaction it
+    // interrupts then grants its `reaction_protection` on top (the longer of the two).
+    let before = (r.sets_immunity && immunity > 0.0).then(|| set_reaction_immunity(world, entity, immunity));
     if !force_action(world, entity, &entry.action) {
+        if let Some(before) = before {
+            set_reaction_immunity(world, entity, before);
+        }
         return false;
     }
-    if r.sets_immunity && immunity > 0.0 {
-        grant_protection(world, entity, immunity, 0.0);
-    }
+    // The reaction's push replaces the body's own momentum.
+    cancel_momentum(world, entity);
     let speed = entry.push.max(r.knockback);
     match flat(r.dir).try_normalize() {
         Some(dir) if speed > 0.0 => {
@@ -912,6 +919,16 @@ pub fn react(world: &mut World, entity: Entity, r: Reaction) -> bool {
     }
     world.trigger(Reacted { entity, attacker: r.from, tier: r.tier, action: entry.action });
     true
+}
+
+/// Drops the flat part of the body's own velocity: a reaction's push is the whole of its motion.
+fn cancel_momentum(world: &mut World, entity: Entity) {
+    if let Some(mut m) = world.get_mut::<MotionState>(entity)
+        && (m.velocity.x != 0.0 || m.velocity.z != 0.0)
+    {
+        m.velocity.x = 0.0;
+        m.velocity.z = 0.0;
+    }
 }
 
 /// A hit that did not stagger: the moveset's `hit` reaction, unless the fighter is
@@ -944,8 +961,12 @@ fn guard_break(world: &mut World, target: Entity) {
     }
     if let Some((scale, decel)) = push {
         let velocity = world.get::<MotionState>(target).map_or(Vec3::ZERO, |m| flat(m.velocity)) * scale;
-        if velocity.length() > EPS && world.get::<Dead>(target).is_none() {
-            world.entity_mut(target).insert(Knockback { velocity, decel });
+        if world.get::<Dead>(target).is_none() {
+            // The push is read above, then replaces the body's own velocity.
+            cancel_momentum(world, target);
+            if velocity.length() > EPS {
+                world.entity_mut(target).insert(Knockback { velocity, decel });
+            }
         }
     }
 }
@@ -967,6 +988,17 @@ pub fn stagger(world: &mut World, entity: Entity, cause: StaggerCause) -> bool {
 /// `entity` dies: [`Dead`], health 0, its buffer emptied, no push, [`Died`], then its moveset's
 /// `death` action (or nothing).
 pub fn kill(world: &mut World, entity: Entity, killer: Option<Entity>, action: Option<String>) {
+    kill_with(world, entity, killer, action, None);
+}
+
+/// [`kill`], naming the combat object that dealt the blow (`Died::source`) when it is not the killer.
+pub fn kill_with(
+    world: &mut World,
+    entity: Entity,
+    killer: Option<Entity>,
+    action: Option<String>,
+    source: Option<Entity>,
+) {
     // Already dead, or gone (a game hook despawned it earlier in the tick).
     if world.get_entity(entity).is_err() || world.get::<Dead>(entity).is_some() {
         return;
@@ -979,7 +1011,7 @@ pub fn kill(world: &mut World, entity: Entity, killer: Option<Entity>, action: O
     if let Some(mut b) = world.get_mut::<InputBuffer>(entity) {
         b.queued.clear();
     }
-    world.trigger(Died { entity, killer, action, source: None });
+    world.trigger(Died { entity, killer, action, source });
     let death = moveset(world, entity).and_then(|m| m.death.clone());
     match death {
         Some(death) => {

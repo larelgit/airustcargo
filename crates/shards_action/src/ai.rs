@@ -6,7 +6,7 @@ use ai_core::spatial::compass;
 use ai_core::{label, AiAppExt};
 use bevy::prelude::*;
 
-use crate::combat::{Blocked, Damaged, Died, Evaded, GuardBroken, Parried, PerfectEvaded, Reacted, Staggered};
+use crate::combat::{Blocked, Damaged, Died, Evaded, GuardBroken, IgnoreReason, Parried, PerfectEvaded, Reacted, Staggered};
 use crate::def::EPS;
 use crate::fighter::{
     describe_charges, describe_cooldowns, describe_health, describe_poise, describe_stamina, Charges, Cooldowns, Dead,
@@ -37,7 +37,7 @@ pub(crate) fn register(app: &mut App) {
         .journal_event::<Damaged>(|e, w| {
             let (a, t) = (label(w, e.attacker), label(w, e.target));
             Some(match e.invulnerable {
-                true => format!("{a} -> {t} {} -0 (hp {:.0}, {})", e.action, e.hp_left, e.ignore_reason.describe()),
+                true => format!("{a} -> {t} {} -0 (hp {:.0}, {})", e.action, e.hp_left, e.ignore_reason.map_or("ignored", IgnoreReason::describe)),
                 false => format!("{a} -> {t} {} -{:.0} (hp {:.0})", e.action, e.amount, e.hp_left),
             })
         })

@@ -133,7 +133,7 @@ pub use anim::{
     AnimationCue, BodyStatus, ClipChoice, ClipDef, CueDef, GroundSpeeds, LayerChoice, LayerDef, Locomotion, MAX_LAYERS,
 };
 pub use combat::{
-    end_break, kill, poise_damage, react, reset_poise, revive, stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died,
+    end_break, kill, kill_with, poise_damage, react, reset_poise, revive, stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died,
     Evaded, GuardBroken, HitWeight, IgnoreReason, Outcome, Parried, PerfectEvaded, Reacted, Reaction,
     StaggerCause, Staggered,
 };
@@ -144,7 +144,7 @@ pub use def::{
     MovesetDef, Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
 };
 pub use fighter::{
-    grant_protection, Armor, Charge, Charges, Cooldown, Cooldowns, Dead, Fighter, Health, Invulnerable, Knockback, Poise,
+    grant_protection, set_reaction_immunity, Armor, Charge, Charges, Cooldown, Cooldowns, Dead, Fighter, Health, Invulnerable, Knockback, Poise,
     Protection, Stamina, Team,
 };
 pub use machine::{

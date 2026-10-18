@@ -507,11 +507,12 @@ pub struct ActionDef {
     pub anim: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
-    /// Reaction armour while a span is open: hits asking a tier at most `level` cause no
-    /// reaction. Poise damage still lands (`hyper_armor` is the one that ignores poise).
+    /// Reaction armour while a span is open (sampled at the instant of the tick, `start <= t <= end`):
+    /// hits asking a tier at most `level` cause no reaction. Poise damage still lands (`hyper_armor` is the one that ignores poise).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub armor: Vec<(Span, u8)>,
     /// Inside `iframes`: a hit evaded while one of these is open too is a perfect evade.
+    /// Sampled at the instant of the tick (`start <= t <= end`), like `armor`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub perfect_iframes: Vec<Span>,
 }
@@ -568,11 +569,19 @@ impl ActionDef {
         spans.iter().filter_map(|s| self.span(s)).any(|w| touches(w, prev, t))
     }
 
-    /// The highest reaction armour level of the `armor` spans open in the tick `(prev, t]`; 0 if none.
-    pub fn armor_at(&self, prev: f32, t: f32) -> u8 {
+    /// Whether any of `spans` is open at the instant `t` (`start <= t <= end`), not over the whole
+    /// tick that ends there: the sampling the `armor` and `perfect_iframes` windows use, so a window
+    /// whose end falls between two ticks is not open for one more tick than its length says.
+    pub fn any_open_at(&self, spans: &[Span], t: f32) -> bool {
+        spans.iter().filter_map(|s| self.span(s)).any(|w| w.0 <= t + EPS && t <= w.1 + EPS)
+    }
+
+    /// The highest reaction armour level of the `armor` spans open at the instant `t`
+    /// (see [`ActionDef::any_open_at`]); 0 if none.
+    pub fn armor_at(&self, t: f32) -> u8 {
         self.armor
             .iter()
-            .filter(|(span, _)| self.span(span).is_some_and(|w| touches(w, prev, t)))
+            .filter(|(span, _)| self.span(span).is_some_and(|w| w.0 <= t + EPS && t <= w.1 + EPS))
             .map(|(_, level)| *level)
             .max()
             .unwrap_or(0)
@@ -1327,13 +1336,15 @@ mod tests {
             r#"(net_id: 1, phases: [("windup", 0.4), ("active", 0.2), ("recovery", 0.4)],
                 armor: [(Phase("windup"), 1), (Secs(0.3, 0.7), 3), (Phase("recovery"), 2)])"#,
         );
-        assert_eq!(d.armor_at(0.0, 0.1), 1);
-        assert_eq!(d.armor_at(0.29, 0.31), 3, "the higher of the two open at once");
-        assert_eq!(d.armor_at(0.5, 0.52), 3);
-        assert_eq!(d.armor_at(0.69, 0.71), 3, "the tick that closes a window is still inside it");
-        assert_eq!(d.armor_at(0.72, 0.74), 2);
-        assert_eq!(d.armor_at(0.0, 0.0), 1, "open at the very start");
-        assert_eq!(light().armor_at(0.0, 0.5), 0, "no armour windows: 0");
+        assert_eq!(d.armor_at(0.1), 1);
+        assert_eq!(d.armor_at(0.31), 3, "the higher of the two open at once");
+        assert_eq!(d.armor_at(0.5), 3);
+        assert_eq!(d.armor_at(0.7), 3, "the end instant is inside the window");
+        assert_eq!(d.armor_at(0.7167), 2, "a tick past a window that ends between ticks is outside it");
+        assert_eq!(d.armor_at(0.0), 1, "open at the very start");
+        assert_eq!(light().armor_at(0.5), 0, "no armour windows: 0");
+        assert!(d.any_open_at(&[Span::Secs(0.105, 0.215)], 0.2));
+        assert!(!d.any_open_at(&[Span::Secs(0.105, 0.215)], 13.0 / 60.0), "tick 13 is past 0.215");
     }
 
     #[test]

@@ -528,7 +528,7 @@ pub struct ActionEnded {
 
 impl ActionEnded {
     /// The event for `run` ending in `end`; one function for every place a run stops, which
-    /// later lanes extend.
+    /// later modules extend.
     pub(crate) fn of(entity: Entity, run: &Running, end: ActionEnd) -> Self {
         Self { entity, action: run.action.clone(), instance: run.instance, end }
     }
