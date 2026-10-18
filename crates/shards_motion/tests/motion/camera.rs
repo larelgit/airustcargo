@@ -314,9 +314,11 @@ fn a_paused_game_does_not_run_the_flick_cooldown_down() {
 
     // Wall-clock time passes, the game stays paused (Time<Virtual> is paused in these tests): the cooldown is where it was.
     assert!(s.app.world().resource::<Time<Virtual>>().is_paused());
-    std::thread::sleep(Duration::from_millis(400));
+    s.app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(400)));
     s.app.insert_resource(AccumulatedMouseMotion { delta: Vec2::new(-30.0, 0.0) });
     s.app.update();
+    assert!(s.app.world().resource::<Time<Real>>().delta_secs() >= 0.39, "real time did pass");
+    s.app.insert_resource(TimeUpdateStrategy::Automatic);
     assert_eq!(target(&s), Some(side), "paused: the cooldown has not run down, so no switch");
     s.app.insert_resource(AccumulatedMouseMotion::default());
 
@@ -384,6 +386,11 @@ fn the_offsets_add_to_the_base_values_and_leave_no_trace() {
     s.app.insert_resource(CameraOffsets { fov_add_deg: 80.0, ..default() });
     frame(&mut s.app);
     assert!((fov(&s) - 120.0).abs() < 1e-3);
+
+    // A system that wrote a NaN or an infinity does not poison the view.
+    s.app.insert_resource(CameraOffsets { fov_add_deg: f32::NAN, focus_dip_m: f32::INFINITY, ..default() });
+    frame(&mut s.app);
+    assert!((fov(&s) - 70.0).abs() < 1e-3 && camera_at(&s).is_finite(), "{} {}", fov(&s), camera_at(&s));
 
     // A landing dip lowers the view without tilting it, and the focus keeps no dip.
     s.app.insert_resource(CameraOffsets { focus_dip_m: 0.12, ..default() });

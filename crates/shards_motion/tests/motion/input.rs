@@ -367,6 +367,23 @@ fn the_look_stick_is_reported_as_a_deflection_before_its_scale_and_the_frame() {
 }
 
 #[test]
+fn an_inverted_look_stick_keeps_its_flipped_side_in_the_flick() {
+    let mut app = input_app();
+    local_player(&mut app);
+    app.world_mut()
+        .resource_mut::<InputMap>()
+        .rebind("gameplay", "look", 1, Binding::Stick { stick: shards_motion::input::Stick::Right, deadzone: 0.15, scale: -2.8 })
+        .unwrap();
+    let pad = app.world_mut().spawn(Gamepad::default()).id();
+    app.world_mut().get_mut::<Gamepad>(pad).unwrap().analog_mut().set(GamepadInput::Axis(GamepadAxis::RightStickX), 0.9);
+    frame(&mut app);
+    let state = app.world().resource::<ControlState>();
+    assert!(state.look_stick().x < 0.0, "the look axis turns left, so does the flick: {}", state.look_stick());
+    assert!(state.axis("look").x < 0.0);
+    assert!((state.look_stick().x.abs() - (0.9 - 0.15) / 0.85).abs() < 1e-4);
+}
+
+#[test]
 fn rebinding_moves_a_control_and_conflicts_name_the_other_action() {
     let mut app = input_app();
     let e = local_player(&mut app);

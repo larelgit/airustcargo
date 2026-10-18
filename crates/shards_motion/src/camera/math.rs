@@ -244,14 +244,22 @@ pub fn arm_length(current: f32, wanted: f32, arm: &ArmTuning, dt: f32) -> f32 {
     }
 }
 
-/// How far out the camera stands this frame. `free` is how far it could stand along the arm
-/// (the nominal length when nothing is in the way, else where the wall is); `previous` is
-/// where it stood last frame (0: nowhere yet). A wall shortens the arm at once; once it lets
-/// go, the arm grows back at `arm.follow_rate` (at once without one). Never past `free`, so
-/// never into a wall, and never closer than `arm.min_distance` (as far as `free` allows).
-pub fn arm_reach(previous: f32, free: f32, arm: &ArmTuning, dt: f32) -> f32 {
+/// How far out the camera stands this frame. `nominal` is the arm's length this frame and
+/// `previous_nominal` last frame (both after `arm_length`'s own smoothing); `free` is how far
+/// it could stand along the arm (`nominal` when nothing is in the way, else where the wall is);
+/// `previous` is where it stood last frame (0: nowhere yet). A wall shortens the arm at once;
+/// once it lets go, the shortfall below the nominal length shrinks at `arm.follow_rate` (at
+/// once without one). The rate acts on the shortfall, not on the length, so a plain zoom is
+/// smoothed once (by `arm_length`) and a wall release is frame-rate independent. Never past
+/// `free`, so never into a wall, and never closer than `arm.min_distance` (as far as `free`
+/// allows).
+pub fn arm_reach(previous: f32, previous_nominal: f32, nominal: f32, free: f32, arm: &ArmTuning, dt: f32) -> f32 {
     let reach = match arm.follow_rate {
-        Some(rate) if previous > 0.0 && free > previous => damp(previous, free, rate, dt),
+        Some(rate) if previous > 0.0 => {
+            let wall = (nominal - free).max(0.0);
+            let kept = (previous_nominal - previous).max(0.0) * ops::exp(-rate * dt);
+            nominal - wall.max(kept)
+        }
         _ => free,
     };
     reach.max(arm.min_distance.min(free)).min(free)
@@ -559,35 +567,54 @@ mod tests {
     #[test]
     fn the_arm_shortens_at_once_and_grows_back_at_its_rate() {
         let arm = ArmTuning { follow_rate: Some(6.0), ..default() };
-        // A wall: from 5 m to 2 m in one frame.
-        assert_eq!(arm_reach(5.0, 2.0, &arm, 0.016), 2.0);
-        // The wall lets go: back toward 5 m at 6/s, the exact exponential.
-        let one = arm_reach(2.0, 5.0, &arm, 0.1);
-        assert!((one - (2.0 + 3.0 * (1.0 - ops::exp(-0.6)))).abs() < 1e-5, "{one}");
-        let half = arm_reach(arm_reach(2.0, 5.0, &arm, 0.05), 5.0, &arm, 0.05);
+        // A wall: from 5 m to 2 m in one frame (the nominal length stays 5).
+        assert_eq!(arm_reach(5.0, 5.0, 5.0, 2.0, &arm, 0.016), 2.0);
+        // The wall lets go: the shortfall shrinks at 6/s, the exact exponential.
+        let one = arm_reach(2.0, 5.0, 5.0, 5.0, &arm, 0.1);
+        assert!((one - (5.0 - 3.0 * ops::exp(-0.6))).abs() < 1e-5, "{one}");
+        let half = arm_reach(arm_reach(2.0, 5.0, 5.0, 5.0, &arm, 0.05), 5.0, 5.0, 5.0, &arm, 0.05);
         assert!((one - half).abs() < 1e-5, "frame-rate independent");
         // Never past what is free, and at the end exactly there.
         let mut reach = 2.0;
         for _ in 0..600 {
-            reach = arm_reach(reach, 5.0, &arm, 1.0 / 60.0);
+            reach = arm_reach(reach, 5.0, 5.0, 5.0, &arm, 1.0 / 60.0);
             assert!(reach <= 5.0);
         }
         assert!((reach - 5.0).abs() < 1e-3);
         // A wall that comes back while it is growing stops it at once.
-        assert_eq!(arm_reach(3.0, 2.5, &arm, 0.016), 2.5);
+        assert_eq!(arm_reach(3.0, 5.0, 5.0, 2.5, &arm, 0.016), 2.5);
         // Without a rate it grows back at once, as before.
-        assert_eq!(arm_reach(2.0, 5.0, &ArmTuning::default(), 0.016), 5.0);
+        assert_eq!(arm_reach(2.0, 5.0, 5.0, 5.0, &ArmTuning::default(), 0.016), 5.0);
         // Before it has stood anywhere it stands where it is free.
-        assert_eq!(arm_reach(0.0, 4.0, &arm, 0.016), 4.0);
+        assert_eq!(arm_reach(0.0, 0.0, 4.0, 4.0, &arm, 0.016), 4.0);
+    }
+
+    #[test]
+    fn a_plain_zoom_is_smoothed_once_whatever_the_frame_rate() {
+        let arm = ArmTuning { follow_rate: Some(6.0), ..default() };
+        let zoom = |steps: u32| {
+            let dt = 0.5 / steps as f32;
+            let (mut length, mut reach) = (3.0, 3.0);
+            for _ in 0..steps {
+                let next = arm_length(length, 6.0, &arm, dt);
+                reach = arm_reach(reach, length, next, next, &arm, dt);
+                length = next;
+            }
+            (length, reach)
+        };
+        for steps in [1, 4, 30] {
+            let (length, reach) = zoom(steps);
+            assert!((reach - length).abs() < 1e-5, "no second stage at {steps} steps: {reach} vs {length}");
+        }
     }
 
     #[test]
     fn the_arm_is_never_closer_than_its_minimum_unless_the_room_is() {
         let arm = ArmTuning { follow_rate: Some(6.0), min_distance: 0.7, ..default() };
-        assert_eq!(arm_reach(2.0, 0.2, &arm, 0.016), 0.2, "a free room smaller than the minimum is all there is");
-        assert!(arm_reach(2.0, 1.0, &arm, 0.016) >= 0.7);
+        assert_eq!(arm_reach(2.0, 5.0, 5.0, 0.2, &arm, 0.016), 0.2, "a free room smaller than the minimum is all there is");
+        assert!(arm_reach(2.0, 5.0, 5.0, 1.0, &arm, 0.016) >= 0.7);
         // Growing back from a start below the minimum jumps up to it.
-        assert!(arm_reach(0.1, 5.0, &arm, 0.001) >= 0.7);
+        assert!(arm_reach(0.1, 5.0, 5.0, 5.0, &arm, 0.001) >= 0.7);
     }
 
     #[test]

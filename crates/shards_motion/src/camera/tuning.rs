@@ -22,6 +22,7 @@ macro_rules! is_default {
 
 is_default!(pitch_is_default, (f32, f32), (-0.45, 1.35));
 is_default!(release_factor_is_default, f32, 1.3);
+is_default!(snap_distance_is_default, f32, 12.0);
 is_default!(yaw_rate_is_default, f32, 7.0);
 is_default!(pitch_rate_is_default, f32, 7.0);
 is_default!(pitch_clamp_is_default, (f32, f32), (0.15, 0.7));
@@ -196,6 +197,10 @@ pub struct CameraTuning {
     /// A lock-on lets go at this many times its range.
     #[serde(skip_serializing_if = "release_factor_is_default")]
     pub release_factor: f32,
+    /// A followed character farther than this from the focus (m) is a jump (a teleport, a
+    /// respawn): the focus lands on it at once instead of catching up.
+    #[serde(skip_serializing_if = "snap_distance_is_default")]
+    pub snap_distance: f32,
     /// Framing a locked target.
     #[serde(skip_serializing_if = "FramingTuning::is_default")]
     pub framing: FramingTuning,
@@ -216,6 +221,7 @@ impl Default for CameraTuning {
             pitch: (-0.45, 1.35),
             follow_rate: None,
             release_factor: 1.3,
+            snap_distance: 12.0,
             framing: FramingTuning::default(),
             arm: ArmTuning::default(),
             flick: FlickTuning::default(),
@@ -238,9 +244,9 @@ impl_is_default!(FramingTuning, ArmTuning, FlickTuning, TraumaTuning);
 impl ContentDef for CameraTuning {
     const KIND: &'static str = "camera";
 
-    fn validate(&self, id: &str, refs: &mut Refs) {
+    fn validate(&self, _id: &str, refs: &mut Refs) {
         for problem in self.problems() {
-            refs.error(format!("camera `{id}`: {problem}"));
+            refs.error(problem);
         }
     }
 }
@@ -287,6 +293,9 @@ impl CameraTuning {
         if finite("release_factor", self.release_factor, &mut out) && self.release_factor < 1.0 {
             out.push(format!("release_factor is {}, below 1 a lock would let go before it could pick", self.release_factor));
         }
+        if finite("snap_distance", self.snap_distance, &mut out) && self.snap_distance <= 0.0 {
+            out.push(format!("snap_distance is {}, it must be above 0", self.snap_distance));
+        }
         let framing = &self.framing;
         positive_rate("framing.yaw_rate", framing.yaw_rate, &mut out);
         positive_rate("framing.pitch_rate", framing.pitch_rate, &mut out);
@@ -301,6 +310,9 @@ impl CameraTuning {
         let clamp_ok = finite("framing.pitch_clamp.0", clamp_lo, &mut out) & finite("framing.pitch_clamp.1", clamp_hi, &mut out);
         if clamp_ok && clamp_lo > clamp_hi {
             out.push(format!("framing.pitch_clamp ({clamp_lo}, {clamp_hi}) has its low end above its high end"));
+        }
+        if clamp_ok && lo_ok && hi_ok && (clamp_lo < lo || clamp_hi > hi) {
+            out.push(format!("framing.pitch_clamp ({clamp_lo}, {clamp_hi}) is outside the pitch limits ({lo}, {hi})"));
         }
         let arm = &self.arm;
         non_negative("arm.radius", arm.radius, &mut out);
@@ -381,8 +393,6 @@ mod tests {
     use super::*;
 
     fn errors(tuning: &CameraTuning) -> Vec<String> {
-
-
         tuning.problems()
     }
 
@@ -425,6 +435,8 @@ mod tests {
         assert!(bad(|t| t.flick.stick_rearm = Some(0.9))[0].contains("stick_rearm"));
         assert!(bad(|t| t.flick.stick_threshold = 1.5)[0].contains("stick_threshold"));
         assert!(bad(|t| t.release_factor = 0.5)[0].contains("release_factor"));
+        assert!(bad(|t| t.snap_distance = 0.0)[0].contains("snap_distance"));
+        assert!(bad(|t| t.framing.pitch_clamp = (-2.0, 0.7))[0].contains("pitch_clamp"));
         assert!(bad(|t| t.trauma.roll_deg = 90.0)[0].contains("roll_deg"));
         assert!(bad(|t| t.flick.mouse_decay_px_s = Some(f32::NAN))[0].contains("finite"));
     }

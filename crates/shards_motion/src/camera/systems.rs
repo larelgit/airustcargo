@@ -130,7 +130,8 @@ fn lock_on(
     let current = intent.target.and_then(position_of);
     let (px, deflection) = (state.look_pointer_px().x, state.look_stick().x);
     let by_mouse = flick.mouse(&tuning.flick, px, time.delta_secs(), current.is_some());
-    let by_stick = flick.stick(&tuning.flick, deflection, current.is_some());
+    // The stick is asked only when the mouse did not switch: asking it re-arms or latches it.
+    let by_stick = if by_mouse.is_some() { None } else { flick.stick(&tuning.flick, deflection, current.is_some()) };
     let (Some(current), Some(side)) = (current, by_mouse.or(by_stick)) else {
         return;
     };
@@ -190,7 +191,7 @@ fn orbit_camera(
 
         let head = subject_tf.translation + Vec3::Y * camera.height;
         let rate = 1.0 - ops::exp(-tuning.follow_rate.unwrap_or(camera.follow_rate) * dt);
-        if camera.focus == Vec3::ZERO || camera.focus.distance(head) > 12.0 {
+        if camera.focus == Vec3::ZERO || camera.focus.distance(head) > tuning.snap_distance {
             // A jump (a teleport, a respawn): nothing of the old place to catch up from.
             camera.focus = head;
             camera.arm_reach = 0.0;
@@ -219,17 +220,16 @@ fn orbit_camera(
         camera.pitch = camera.pitch.clamp(limits.0, limits.1);
 
         // The dip lowers the camera and what it looks at together: the picture drops without tilting.
-        let focus = camera.focus - Vec3::Y * offsets.focus_dip_m;
+        let focus = camera.focus - Vec3::Y * finite_or_zero(offsets.focus_dip_m);
+        let previous_length = camera.arm_length;
         camera.arm_length = arm_length(camera.arm_length, camera.distance, &tuning.arm, dt);
         let desired = orbit_position(focus, camera.yaw, camera.pitch, camera.arm_length);
         let exclude: Vec<Entity> = subject.into_iter().collect();
         let mut at = resolve_camera_collision(&physics, focus, desired, tuning.arm.radius, tuning.arm.min_distance, &exclude);
         // A wall pulls the arm in at once; when it lets go the arm grows back at the tuning's rate.
         let free = (at - focus).length();
-        let reach = arm_reach(camera.arm_reach, free, &tuning.arm, dt);
-        if camera.arm_reach != reach {
-            camera.arm_reach = reach;
-        }
+        let reach = arm_reach(camera.arm_reach, previous_length, camera.arm_length, free, &tuning.arm, dt);
+        camera.arm_reach = reach;
         if reach < free {
             at = focus + (desired - focus).normalize_or_zero() * reach;
         }
@@ -247,12 +247,18 @@ fn orbit_camera(
         if let Some(mut projection) = projection
             && let Projection::Perspective(perspective) = &mut *projection
         {
-            let fov = (settings.fov_deg + offsets.fov_add_deg).clamp(30.0, 120.0).to_radians();
+            let fov = (settings.fov_deg + finite_or_zero(offsets.fov_add_deg)).clamp(30.0, 120.0).to_radians();
             if (perspective.fov - fov).abs() > 1e-5 {
                 perspective.fov = fov;
             }
         }
     }
+}
+
+/// A number a game system wrote into [`CameraOffsets`] that is not finite counts as 0: one bad
+/// write must not poison the projection or the transform.
+fn finite_or_zero(x: f32) -> f32 {
+    if x.is_finite() { x } else { 0.0 }
 }
 
 /// How much (yaw, pitch) the camera must change to put the lockable target nearest the
