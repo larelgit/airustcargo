@@ -189,11 +189,10 @@ impl<'a> Sampler<'a> {
 
     /// Every floor of every column the body stands on, or swims above.
     fn seed(&mut self) {
-        let solids = self.physics.colliders().filter(|c| c.volume.is_none() && c.layers.memberships.intersects(LayerMask::WORLD));
-        let (top, bottom) = solids.fold((f32::MIN, f32::MAX), |(t, b), c| (t.max(c.aabb_max.y), b.min(c.aabb_min.y)));
-        if top < bottom {
+        // Colliders and voxel fields alike: what the rays below can meet.
+        let Some((bottom, top)) = self.physics.solid_span(LayerMask::WORLD) else {
             return;
-        }
+        };
         let top = top + 1.0;
         let bottom = bottom - 1.0;
         let filter = QueryFilter::new(LayerMask::WORLD);
@@ -208,7 +207,8 @@ impl<'a> Sampler<'a> {
                     let Some(hit) = self.physics.raycast(Vec3::new(x, from, z), Dir3::NEG_Y, from - bottom, &filter) else { break };
                     if hit.distance <= 1e-4 {
                         // Inside a solid: go on below it.
-                        let below = self.physics.collider(hit.entity).map_or(from - 0.25, |c| c.aabb_min.y - 0.01);
+                        // A collider's box bottom; a voxel field's run of cells the ray started in.
+                        let below = self.physics.extent_at(hit.entity, hit.point).map_or(from - 0.25, |(low, _)| low - 0.01);
                         from = below.min(from - 0.01);
                         continue;
                     }
@@ -441,4 +441,51 @@ pub(crate) fn dijkstra(tile: &NavTile, from: u32, disabled: Option<&[bool]>) -> 
         }
     }
     dist
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shards_motion::{Collider, Shape, VoxelCollider, VoxelField};
+
+    fn synced(spawn: impl FnOnce(&mut World)) -> World {
+        let mut world = World::new();
+        world.init_resource::<ColliderIds>();
+        world.init_resource::<PhysicsWorld>();
+        spawn(&mut world);
+        world.run_system_once(sync_physics).unwrap();
+        world
+    }
+
+    /// The nodes the seed finds: cell and floor height (cm), sorted.
+    fn seeded(world: &World, size: [u32; 2]) -> Vec<(i32, i32, i32, bool)> {
+        let settings = NavSettings::default();
+        let mut sampler = Sampler::new(world.resource::<PhysicsWorld>(), &settings, size);
+        sampler.seed();
+        let mut out: Vec<_> = sampler.nodes.iter().map(|n| (n.i, n.j, (n.pos.y * 100.0).round() as i32, n.swim)).collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn the_seed_finds_the_floors_of_a_voxel_field_as_of_the_same_boxes() {
+        // 8 x 8 m of 0.5 m cells: a floor (top 0) and a plateau 2.5..4 over x 2..6, a tunnel
+        // 2.5 m high under it. A field-only world has no collider to span.
+        let field = VoxelField::new(Vec3::new(0.0, -1.0, 0.0), 0.5, UVec3::new(16, 12, 16), |c| c.y < 2 || ((4..12).contains(&c.x) && (7..10).contains(&c.y)));
+        let voxels = synced(|w| {
+            w.spawn(VoxelCollider::new(field));
+        });
+        let boxes = synced(|w| {
+            w.spawn((Collider::new(Shape::cuboid(Vec3::new(4.0, 0.5, 4.0))), Transform::from_xyz(4.0, -0.5, 4.0)));
+            w.spawn((Collider::new(Shape::cuboid(Vec3::new(2.0, 0.75, 4.0))), Transform::from_xyz(4.0, 3.25, 4.0)));
+        });
+        let size = [(8.0 / NavSettings::default().cell) as u32; 2];
+        let found = seeded(&voxels, size);
+        assert_eq!(found, seeded(&boxes, size));
+        let at = |x: f32, z: f32| ((x / NavSettings::default().cell) as i32, (z / NavSettings::default().cell) as i32);
+        let (i, j) = at(4.1, 4.1);
+        assert!(found.contains(&(i, j, 0, false)) && found.contains(&(i, j, 400, false)), "the tunnel's floor and the plateau's top: {found:?}");
+        let (i, j) = at(1.1, 4.1);
+        assert!(found.contains(&(i, j, 0, false)) && !found.iter().any(|n| (n.0, n.1) == (i, j) && n.2 != 0));
+    }
 }
