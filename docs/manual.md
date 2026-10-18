@@ -757,13 +757,18 @@ keeps its horizontal speed with no input. Options, all off by default: `axis_ste
 input; `air_control` 1 makes the speed-up there the full `acceleration`), and per-stance rates from a source: `MoveModifiers::accelerate_at` / `decelerate_at` replace the params
 for that tick (ground and air, also the air braking); the last writer wins, so order the sources.
 
+*Sprint in the air.* The sprint flag (the speed and the stamina drain) is decided on the ground and in the water. With `sprint_in_air` the air decides it every tick as well, by the same
+rule: pressing sprint in the air starts the sprint and letting go ends it on that tick (the take-off value no longer lasts the whole jump), and a glide is no sprint. The host and the client's
+prediction both read the flag from `MotionState`, so they agree. Off by default.
+
 *Statuses.* A body that takes a status but is not slowed by it (a large enemy that gets a chill buildup and its other effects but keeps its speed) carries the marker
 `NoStatusSlow`: the `speed_factor` and `speed_cap` of its statuses are skipped, a `root` is not. `StatusResist` is for a body that should not take the status at all. A game can also leave `speed_factor`
 unset and contribute the slow itself from a `Contribute` system that reads the statuses and the kind of the body.
 
 *Wading depth.* The depth wading reads is `surface - feet + wade_depth_offset` (never below 0), for a game that measures submersion at a reference point under the soles: the value
 to use is the gap from that point to the floor of a standing body, that is its distance below the capsule bottom plus `skin_width` (a point 0.1 m under the capsule bottom with
-the default skin is `0.12`). `wade_in_air` lets the water over the feet slow an airborne or gliding body too. `move_info` shows `wade_depth` (the depth used), `wade_factor` and `wade_depth_offset`, and no wading outside the modes
+the default skin is `0.12`). `wade_in_air` lets the water over the feet slow an airborne or gliding body too. A reference point fixed under the capsule bottom is a skin closer to the feet in the air than for a standing body (the feet
+rest a skin above the floor only on the ground), so `wade_air_depth_offset` (default: the standing `wade_depth_offset`) sets the airborne value, `wade_depth_offset - skin_width` for such a point. `move_info` shows `wade_depth` (the depth used), `wade_factor`, `wade_depth_offset`, `wade_air_depth_offset` and `climb_out_reach`, and no wading outside the modes
 that wade. Wading and the offset affect only the speed, not floating, swimming or landing.
 
 *Stamina after a dry sprint.* `CombatTuning::sprint_resume` (land) and `CharacterParams::swim_fast_resume` (fast swim) are a `SprintResume`: `OnRelease` (the default: the button must be let
@@ -778,7 +783,9 @@ apply) and ends at no stamina or `no_sprint`; `swim_acceleration`, `swim_deceler
 Climbing out of water has two tiers. With `climb_out_auto_height` (above the water surface), pushing against a ledge climbs it by itself up to that height. A jump climbs up to `climb_out_max_height`
 **above the surface** when that is set (the probe reaches that high and the controller, the `jump` tool, `clearance` and the planner agree through `CharacterParams::can_jump_out`), so a game whose ledge window is
 "up to 1.3 m over the water" sets it without raising `mantle_height` (which would also raise the climb on land); without it the jump uses `mantle_height` above the feet, that is `mantle_height - float_depth`
-over the surface. Pushing never climbs higher than `climb_out_auto_height`. *Landing:* `Landed` has `tier` (how many of `landing_tiers` the impact speed reached) and `jumped`
+over the surface. `climb_out_reach` (default 0.3 m) is how far in front of the body the ledge face may be for the water climb-out: the controller's probe and the `jump` tool both read
+`CharacterParams::climb_reach()`, and a larger value also closes the gap to the wall before the step over, so a swimmer half a meter off a deck climbs out. Not covered: a facing test for the jump and a search to the sides of the
+swimmer. Pushing never climbs higher than `climb_out_auto_height`. *Landing:* `Landed` has `tier` (how many of `landing_tiers` the impact speed reached) and `jumped`
 (`landing_drop_tiers` for a fall that did not follow a jump; the controller marks a jump's flight with `JumpedFlight` only when tiers are set, so tiers added by hot reload while a character is airborne apply from its next jump);
 `landing_wade_limit` drops the event where the water over the feet is deeper. The journal says `e5 landed from 0.4m at 4.9m/s, tier 1 (jump)`.
 Coyote time is `coyote_time` (0.12 s by default).

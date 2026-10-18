@@ -15,7 +15,6 @@ use shards_core::input_names::{GLIDE, JUMP, SPRINT};
 use shards_core::{Intent, Order, Target};
 
 use crate::ai::MotionAi;
-use crate::controller::locomotion::CLIMB_OUT_REACH;
 use crate::controller::{CharacterController, CharacterParams, LocomotionInput, MotionMode, MotionState};
 use crate::intent::GlideUntilLanded;
 use crate::perception::{self, reach_toward, Bodies, Hazard, PathPlan};
@@ -269,10 +268,11 @@ fn jump(
             let toward = if intent.move_dir.length_squared() > 1e-4 { intent.move_dir } else { facing };
             let (distance, hazard) =
                 reach_toward(&physics, &params, tf.translation, state.water_surface, toward, 1.2, ai.safe_drop, Some(entity));
+            let reach = params.climb_reach();
             // The one rule for what is climbed (a swimmer's rise counts its skin), the same the
             // controller, the planner and `clearance` ask.
             match hazard {
-                Hazard::Ledge { rise } if params.can_jump_out(rise) && distance <= CLIMB_OUT_REACH + 0.02 => {
+                Hazard::Ledge { rise } if params.can_jump_out(rise) && distance <= reach + 0.02 => {
                     format!("ok: jumping out of the water onto the ledge {distance:.1}m ahead (+{rise:.1}m)")
                 }
                 // The controller climbs out only from right at the ledge: an "ok" here would
@@ -280,7 +280,7 @@ fn jump(
                 Hazard::Ledge { rise } if params.can_jump_out(rise) => {
                     return Err(format!(
                         "the ledge is {distance:.1}m ahead (+{rise:.1}m), out of reach from the water: swim within \
-                         {CLIMB_OUT_REACH:.1}m of it and jump (a low enough ledge is also climbed by swimming into it)"
+                         {reach:.1}m of it and jump (a low enough ledge is also climbed by swimming into it)"
                     ));
                 }
                 _ => {
@@ -379,9 +379,9 @@ fn move_info(In(call): In<Call<MoveInfoArgs>>, world: &World) -> ToolResult<serd
     let depth = e
         .get::<MotionState>()
         .filter(|s| params.wades_in(s.mode))
-        .and_then(|s| s.water_surface)
+        .and_then(|s| s.water_surface.map(|surface| (surface, s.mode)))
         .zip(e.get::<Transform>())
-        .map(|(surface, tf)| params.wade_depth(surface, tf.translation.y));
+        .map(|((surface, mode), tf)| params.wade_depth_for(mode, surface, tf.translation.y));
     let wade = depth.map(|depth| params.wade_scale(depth));
     Ok(serde_json::json!({
         "modifiers": m.describe(),
@@ -404,5 +404,7 @@ fn move_info(In(call): In<Call<MoveInfoArgs>>, world: &World) -> ToolResult<serd
         "wade_factor": wade.map(round),
         "wade_depth": depth.map(round),
         "wade_depth_offset": params.wade_depth_offset,
+        "wade_air_depth_offset": params.wade_air_depth_offset,
+        "climb_out_reach": params.climb_reach(),
     }))
 }

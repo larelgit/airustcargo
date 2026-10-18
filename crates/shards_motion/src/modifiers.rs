@@ -475,7 +475,7 @@ fn wade<F: QueryFilter + 'static>(
             continue;
         }
         if let Some(surface) = state.water_surface {
-            modifiers.wade_by(params.wade_scale(params.wade_depth(surface, tf.translation.y)));
+            modifiers.wade_by(params.wade_scale(params.wade_depth_for(state.mode, surface, tf.translation.y)));
         }
     }
 }

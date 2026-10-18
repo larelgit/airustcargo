@@ -19,8 +19,6 @@ const SHALLOW_MARGIN: f32 = 0.1;
 const FLOAT_RATE: f32 = 4.0;
 /// A ledge is climbed when the input points at it within 60°.
 const PUSH_COS: f32 = 0.5;
-/// A jump in water climbs out onto a ledge this close in front of the body (m).
-pub(crate) const CLIMB_OUT_REACH: f32 = 0.3;
 
 /// What happened, for the events the system triggers afterwards.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -217,6 +215,11 @@ impl Step<'_, '_> {
         let v0 = self.state.velocity;
         let (h0, dt) = (flat(v0), self.dt);
         let wish = self.wish();
+        if p.sprint_in_air {
+            // Sprint is decided every tick, as on the ground: a glide is none.
+            self.state.sprinting = self.state.mode != MotionMode::Glide
+                && self.modifiers.ground_speed(p, wish.length(), self.input.sprint).1;
+        }
         let (h, vy) = if self.state.mode == MotionMode::Glide {
             let dir = wish.try_normalize().or(h0.try_normalize()).unwrap_or(self.facing);
             let h = approach(h0, dir * p.glide_speed, p.glide_accel * dt);
@@ -462,8 +465,15 @@ impl Step<'_, '_> {
         }
         // Prefer standing fully on top; a narrow top takes a shorter step.
         let rise = (height + 0.1).min(reach + 0.1);
+        // A swimmer that reaches farther than a hand's breadth (`climb_out_reach`) first closes
+        // the gap to the wall, then steps over as usual.
+        let gap = if self.state.mode == MotionMode::Water && p.climb_out_reach.is_some() {
+            (flat(wall.point - feet).dot(dir) - m.radius).max(0.0)
+        } else {
+            0.0
+        };
         let (to, corner) = [2.0, 1.0, 0.5].into_iter().find_map(|reach| {
-            let to = m.ledge(feet, dir, rise, m.radius * reach)?;
+            let to = m.ledge(feet, dir, rise, gap + m.radius * reach)?;
             if (to.y - rest).abs() > 0.05 {
                 return None;
             }
@@ -492,7 +502,7 @@ impl Step<'_, '_> {
 
     /// A steep surface right in front (within a hand's reach), as a slide would touch it.
     fn wall_ahead(&self, feet: Vec3, dir: Vec3) -> Option<Touch> {
-        let hit = self.mover.cast(feet, dir, self.mover.skin + CLIMB_OUT_REACH)?;
+        let hit = self.mover.cast(feet, dir, self.mover.skin + self.params.climb_reach())?;
         (!self.mover.walkable(hit.normal)).then_some(Touch {
             plane: hit.normal,
             normal: hit.normal,

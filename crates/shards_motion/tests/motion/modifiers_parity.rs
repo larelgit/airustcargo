@@ -309,6 +309,9 @@ fn the_new_options_are_checked_and_default_ones_do_not_serialize() {
     let json = serde_json::to_value(CharacterParams::default()).unwrap();
     for field in [
         "climb_out_max_height",
+        "climb_out_reach",
+        "wade_air_depth_offset",
+        "sprint_in_air",
         "swim_fast_resume",
         "wade_depth_offset",
         "wade_in_air",
@@ -323,4 +326,77 @@ fn the_new_options_are_checked_and_default_ones_do_not_serialize() {
     let p: CharacterParams = serde_json::from_str(r#"{"swim_fast_resume": {"Fraction": 0.25}, "axis_stepping": true}"#).unwrap();
     assert_eq!(p.swim_fast_resume, SprintResume::Fraction(0.25));
     assert!(p.axis_stepping);
+}
+
+#[test]
+fn the_water_climb_out_reach_is_a_parameter() {
+    // A swimmer 0.9 m off a deck that only a jump climbs (1.2 m over the water, limit 1.3): the
+    // default reach of 0.3 m does nothing, a reach of 1.0 m climbs out.
+    for (reach, climbs) in [(None, false), (Some(1.0), true), (Some(0.3), false)] {
+        let mut app = modded();
+        let params = CharacterParams { climb_out_max_height: Some(1.3), climb_out_reach: reach, ..default() };
+        let e = pond_deck(&mut app, params, 1.2);
+        app.world_mut().get_mut::<Transform>(e).unwrap().translation.x = 2.7;
+        step(&mut app, 1);
+        assert_eq!(state(&app, e).mode, MotionMode::Water);
+        press_jump(app.world_mut(), e);
+        step(&mut app, 60);
+        assert_eq!(!seen(&app).mantled.is_empty(), climbs, "reach {reach:?}");
+    }
+}
+
+#[test]
+fn the_climb_reach_defaults_to_the_old_constant() {
+    assert_eq!(CharacterParams::default().climb_reach(), 0.3);
+    assert_eq!(CharacterParams { climb_out_reach: Some(0.55), ..default() }.climb_reach(), 0.55);
+}
+
+/// Hold sprint on the ground, jump, then change the button in the air.
+fn sprint_jump(sprint_in_air: bool, hold_at_start: bool, hold_in_air: bool) -> (bool, bool) {
+    let (mut app, e) = on_the_run(CharacterParams { sprint_in_air, ..default() });
+    set_input(app.world_mut(), e, LocomotionInput { move_dir: Vec3::X, sprint: hold_at_start, ..default() });
+    step(&mut app, 40);
+    let on_ground = state(&app, e).sprinting;
+    press_jump(app.world_mut(), e);
+    step(&mut app, 3);
+    assert_eq!(state(&app, e).mode, MotionMode::Air);
+    set_input(app.world_mut(), e, LocomotionInput { move_dir: Vec3::X, sprint: hold_in_air, ..default() });
+    step(&mut app, 3);
+    assert_eq!(state(&app, e).mode, MotionMode::Air);
+    (on_ground, state(&app, e).sprinting)
+}
+
+#[test]
+fn sprint_can_be_decided_every_tick_in_the_air() {
+    // Default: the flag is the take-off one for the whole jump, pressed or released in the air.
+    assert_eq!(sprint_jump(false, true, false), (true, true));
+    assert_eq!(sprint_jump(false, false, true), (false, false));
+    // With the option: releasing in the air ends the sprint, pressing there starts it.
+    assert_eq!(sprint_jump(true, true, false), (true, false));
+    assert_eq!(sprint_jump(true, false, true), (false, true));
+    assert_eq!(sprint_jump(true, true, true), (true, true));
+}
+
+#[test]
+fn a_glide_is_no_sprint() {
+    let (mut app, e) = on_the_run(CharacterParams { sprint_in_air: true, ..default() });
+    set_input(app.world_mut(), e, LocomotionInput { move_dir: Vec3::X, sprint: true, ..default() });
+    step(&mut app, 40);
+    press_jump(app.world_mut(), e);
+    step(&mut app, 30);
+    set_input(app.world_mut(), e, LocomotionInput { move_dir: Vec3::X, sprint: true, glide: true, ..default() });
+    step(&mut app, 5);
+    assert_eq!(state(&app, e).mode, MotionMode::Glide);
+    assert!(!state(&app, e).sprinting);
+}
+
+#[test]
+fn the_airborne_wade_offset_can_differ_from_the_standing_one() {
+    let p = CharacterParams { wade_depth_offset: 0.12, wade_air_depth_offset: Some(0.10), ..default() };
+    assert!((p.wade_depth_for(MotionMode::Ground, 1.0, 0.9) - 0.22).abs() < 1e-6);
+    assert!((p.wade_depth_for(MotionMode::Air, 1.0, 0.9) - 0.20).abs() < 1e-6);
+    assert!((p.wade_depth_for(MotionMode::Glide, 1.0, 0.9) - 0.20).abs() < 1e-6);
+    let same = CharacterParams { wade_depth_offset: 0.12, ..default() };
+    assert_eq!(same.wade_depth_for(MotionMode::Air, 1.0, 0.9), same.wade_depth(1.0, 0.9));
+    assert!(CharacterParams { wade_air_depth_offset: Some(-0.1), ..default() }.check().is_err());
 }

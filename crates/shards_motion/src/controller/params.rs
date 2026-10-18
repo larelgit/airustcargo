@@ -12,6 +12,9 @@ use crate::physics::{Collider, CollisionLayers, Shape};
 
 /// How far above `mantle_height` a ledge may stand and still be climbed (m): float noise.
 pub(crate) const MANTLE_SLACK: f32 = 1e-3;
+/// A jump in water climbs out onto a ledge this close in front of the body (m), unless the
+/// params set `climb_out_reach`.
+pub(crate) const DEFAULT_CLIMB_OUT_REACH: f32 = 0.3;
 
 /// When a sprint that ran the stamina dry may start again. The rule is a content choice per kind
 /// of sprint (`CombatTuning::sprint_resume` on land, [`CharacterParams::swim_fast_resume`] in water).
@@ -142,6 +145,12 @@ pub struct CharacterParams {
     /// land climb keeps `mantle_height`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub climb_out_max_height: Option<f32>,
+    /// Horizontal reach of the water climb-out (m): a swimmer that jumps at a ledge climbs onto
+    /// it when the ledge face is within this distance in front of the body. `None`: 0.3 m, as
+    /// before. A game whose swimmers climb out of ledges half a meter away sets it to that
+    /// distance; the `jump` tool and `clearance` ask the same number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub climb_out_reach: Option<f32>,
     /// Fast swim: when it may start again after the stamina ran dry. See [`SprintResume`]; the
     /// land sprint has its own rule in the combat tuning.
     #[serde(skip_serializing_if = "is_on_release")]
@@ -165,6 +174,13 @@ pub struct CharacterParams {
     /// floating or landing. 0: the depth over the feet.
     #[serde(skip_serializing_if = "is_zero")]
     pub wade_depth_offset: f32,
+    /// Wading: the offset while airborne or gliding (with `wade_in_air`), when it differs from
+    /// the standing one. A reference point fixed under the capsule bottom is `skin_width`
+    /// closer to the feet in the air than for a standing body (the feet rest a skin above the
+    /// floor only on the ground), so the in-air value is `wade_depth_offset - skin_width`.
+    /// `None`: `wade_depth_offset` in every mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wade_air_depth_offset: Option<f32>,
     /// Wading also slows a body in the air or gliding over water (the water is over the feet, not
     /// on the ground). `false`: only on the ground.
     #[serde(skip_serializing_if = "is_false")]
@@ -191,6 +207,12 @@ pub struct CharacterParams {
     /// `air_control` scales the speed-up with input; this is the slow-down without it.
     #[serde(skip_serializing_if = "is_zero")]
     pub air_deceleration: f32,
+    /// Sprint is decided every tick in the air too: pressing sprint in the air starts the sprint
+    /// (speed and stamina drain) and letting go stops it, and a sprint that was on at take-off
+    /// ends with the button. A glide is no sprint. `false`: the sprint flag is decided on the
+    /// ground and in the water only, so a take-off sprint lasts the whole jump.
+    #[serde(skip_serializing_if = "is_false")]
+    pub sprint_in_air: bool,
     /// Landing tiers after a jump: impact speeds (m/s, ascending). `Landed::tier` is how many of
     /// them the impact reached (`[4.0, 6.5, 13.0]`: 0 below 4, 3 from 13). Empty (with
     /// `landing_drop_tiers`): tier 0 always, and `Landed::jumped` is not tracked.
@@ -241,17 +263,20 @@ impl Default for CharacterParams {
             swim_turn_speed_deg: 0.0,
             climb_out_auto_height: None,
             climb_out_max_height: None,
+            climb_out_reach: None,
             swim_fast_resume: SprintResume::OnRelease,
             wade_min_depth: 0.0,
             wade_full_depth: 0.0,
             wade_factor: 1.0,
             wade_depth_offset: 0.0,
+            wade_air_depth_offset: None,
             wade_in_air: false,
             sprint_scales_with_input: false,
             caps_scale_with_input: false,
             axis_stepping: false,
             brake_only_without_input: false,
             air_deceleration: 0.0,
+            sprint_in_air: false,
             landing_tiers: Vec::new(),
             landing_drop_tiers: Vec::new(),
             landing_wade_limit: None,
@@ -388,11 +413,23 @@ impl CharacterParams {
     /// The depth wading reads for feet at height `feet_y` in water with this `surface`: the water
     /// over the feet plus [`wade_depth_offset`](Self::wade_depth_offset), never below 0.
     pub fn wade_depth(&self, surface: f32, feet_y: f32) -> f32 {
-        if self.wade_depth_offset == 0.0 {
-            (surface - feet_y).max(0.0)
-        } else {
-            (surface - feet_y + self.wade_depth_offset).max(0.0)
-        }
+        self.wade_depth_for(MotionMode::Ground, surface, feet_y)
+    }
+
+    /// [`wade_depth`](Self::wade_depth) for a body in `mode`: an airborne or gliding body uses
+    /// [`wade_air_depth_offset`](Self::wade_air_depth_offset) when the params have one.
+    pub fn wade_depth_for(&self, mode: MotionMode, surface: f32, feet_y: f32) -> f32 {
+        let offset = match mode {
+            MotionMode::Air | MotionMode::Glide => self.wade_air_depth_offset.unwrap_or(self.wade_depth_offset),
+            _ => self.wade_depth_offset,
+        };
+        if offset == 0.0 { (surface - feet_y).max(0.0) } else { (surface - feet_y + offset).max(0.0) }
+    }
+
+    /// How far in front of the body a water climb-out finds a ledge (m):
+    /// [`climb_out_reach`](Self::climb_out_reach), else 0.3.
+    pub fn climb_reach(&self) -> f32 {
+        self.climb_out_reach.unwrap_or(DEFAULT_CLIMB_OUT_REACH)
     }
 
     /// Whether landings are told apart (any tier thresholds): the controller then tracks
@@ -500,6 +537,8 @@ impl CharacterParams {
         for (name, v) in [
             ("climb_out_auto_height", self.climb_out_auto_height),
             ("climb_out_max_height", self.climb_out_max_height),
+            ("climb_out_reach", self.climb_out_reach),
+            ("wade_air_depth_offset", self.wade_air_depth_offset),
             ("landing_wade_limit", self.landing_wade_limit),
         ] {
             if v.is_some_and(|v| !(v >= 0.0 && v.is_finite())) {

@@ -130,3 +130,34 @@ fn the_sprint_cost_multiplier_scales_the_drain_and_zero_makes_it_free() {
     assert_eq!(stamina(&app, hero), 0.0, "and holds the regeneration back");
     assert!(!app.world().get::<Stamina>(hero).unwrap().exhausted);
 }
+
+/// Stamina lost over one tick in the air, with the sprint button as given at take-off and in the air.
+fn air_drain(sprint_in_air: bool, at_takeoff: bool, in_air: bool) -> f32 {
+    let mut app = arena();
+    let hero = crate::common::hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    app.world_mut()
+        .entity_mut(hero)
+        .insert(shards_motion::CharacterParams { sprint_in_air, ..default() });
+    run_north(&mut app, hero, at_takeoff);
+    step(&mut app, 20);
+    press(&mut app, hero, "jump");
+    step(&mut app, 4);
+    assert_eq!(app.world().get::<MotionState>(hero).unwrap().mode, shards_motion::MotionMode::Air);
+    run_north(&mut app, hero, in_air);
+    step(&mut app, 1);
+    let before = stamina(&app, hero);
+    step(&mut app, 1);
+    before - stamina(&app, hero)
+}
+
+#[test]
+fn sprint_drains_stamina_in_the_air_only_while_the_button_is_held_when_asked() {
+    let tick = 30.0 / 60.0;
+    // Default: the take-off flag drains for the whole jump, a sprint pressed in the air never does.
+    assert!((air_drain(false, true, false) - tick).abs() < 1e-3);
+    assert!(air_drain(false, false, true).abs() < 1e-3);
+    // With the option the drain follows the button on the very tick: released stops it, pressed starts it.
+    assert!(air_drain(true, true, false) <= 0.0, "released in the air, nothing drains");
+    assert!((air_drain(true, false, true) - tick).abs() < 1e-3);
+    assert!((air_drain(true, true, true) - tick).abs() < 1e-3);
+}
