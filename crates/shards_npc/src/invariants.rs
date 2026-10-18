@@ -118,6 +118,8 @@ pub fn tokens_within_limit(world: &World) -> Option<String> {
 /// noted ([`NpcStrike`](crate::strike::NpcStrike)), for the starts that went through the spacing
 /// rule (`gated`: the planner's presses and checked combo continuations).
 ///
+/// A note counts only while the NPC is still in the pool it was made in.
+///
 /// Three carve-outs: an NPC whose plan `ignores_spacing` is never the one held to the rule (its
 /// starts still hold the others to it), a strike a state hook pressed itself is noted but neither held to the rule
 /// nor held against others (a hook may start between a planned press and its start, so a gated start
@@ -133,6 +135,7 @@ pub fn strike_spacing(world: &World) -> Option<String> {
     with_query::<(&AiId, &Npc, &crate::strike::NpcStrike), (), _>(world, |query| {
         let notes: Vec<(AiId, String, u64, bool, u64, bool)> = query
             .iter(world)
+            .filter(|(_, npc, s)| s.pool == crate::strike::pool(&npc.director))
             .map(|(id, npc, s)| {
                 let ticks = crate::strike::spacing_ticks(DirectorDef::of(db, &npc.director).min_spacing, dt);
                 (*id, crate::strike::pool(&npc.director), s.last_start, s.gated, ticks, crate::strike::ignores_spacing(db, npc))
@@ -244,7 +247,7 @@ mod tests {
 
     fn striker(w: &mut World, director: &str, at: u64, gated: bool) -> Entity {
         let npc = Npc { director: director.into(), ..default() };
-        w.spawn((npc, crate::strike::NpcStrike { last_start: at, gated })).id()
+        w.spawn((npc, crate::strike::NpcStrike { last_start: at, gated, pool: crate::strike::pool(director) })).id()
     }
 
     /// The control test: planted notes that break the rule are found, the carve-outs are not.
@@ -276,11 +279,11 @@ mod tests {
         let mut w = spaced_world();
         let boss = |w: &mut World, at| {
             let npc = Npc { director: "arena".into(), plan: Some("boss".into()), ..default() };
-            w.spawn((npc, crate::strike::NpcStrike { last_start: at, gated: true })).id()
+            w.spawn((npc, crate::strike::NpcStrike { last_start: at, gated: true, pool: "arena".into() })).id()
         };
         let add = |w: &mut World, at| {
             let npc = Npc { director: "arena".into(), plan: Some("adds".into()), ..default() };
-            w.spawn((npc, crate::strike::NpcStrike { last_start: at, gated: true })).id()
+            w.spawn((npc, crate::strike::NpcStrike { last_start: at, gated: true, pool: "arena".into() })).id()
         };
         boss(&mut w, 100);
         boss(&mut w, 110);

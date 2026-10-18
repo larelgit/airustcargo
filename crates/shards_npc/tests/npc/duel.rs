@@ -1,4 +1,4 @@
-//! The NPC rules a duel needs: strike spacing between NPCs, conditional plan options, rest
+//! The NPC rules a duel needs: strif let Some(i) = (0..2).find(|i| shards_npc::wait_of(app.world(), who[*i]).is_some_and(|(_, left)| (20..=38).contains(&left))) {ke spacing between NPCs, conditional plan options, rest
 //! semantics, combo continuation, decision cadence (perception's keep range is in
 //! `perception.rs`). Counted in ticks, from the actions that start.
 
@@ -935,4 +935,36 @@ fn the_open_options_stay_as_decided_between_two_decisions() {
         let open = app.world().get::<shards_npc::NpcOptions>(who).map(|o| o.allowed.clone());
         assert_eq!(open, Some(vec!["light".to_owned()]), "tick {}", app.world().resource::<ai_core::SimTick>().0);
     }
+}
+
+#[test]
+fn a_strike_noted_in_one_pool_does_not_space_another_pool_after_the_npc_moves() {
+    let (mut app, who) = pair("spaced", "pair", 7, |_| {});
+    // Play until one duelist has a fresh note and the other is held back by it.
+    let mut held = None;
+    for _ in 0..400 {
+        step(&mut app, 1);
+        // Not on the tick of the press: the grant that pressed it is still unflagged then.
+        if let Some(i) = (0..2).find(|i| shards_npc::wait_of(app.world(), who[*i]).is_some_and(|(_, left)| (20..=38).contains(&left))) {
+            held = Some(i);
+            break;
+        }
+    }
+    let i = held.expect("one duelist waited out the spacing at some point");
+    assert!(app.world().get::<NpcStrike>(who[1 - i]).is_some());
+    // The striker moves to another spaced director, and so does the waiting one: the note is
+    // from the old pool, so it neither delays the new pool nor counts for the rule.
+    for e in who {
+        app.world_mut().get_mut::<Npc>(e).unwrap().director = "spaced_b".into();
+    }
+    assert_eq!(shards_npc::wait_of(app.world(), who[i]), None, "the old pool's strike does not delay the new pool");
+    assert_eq!(shards_npc::strike_spacing(app.world()), None);
+    for _ in 0..300 {
+        step(&mut app, 1);
+        assert_eq!(shards_npc::strike_spacing(app.world()), None);
+    }
+    // And the new pool spaces by its own strikes.
+    let jabs = all_starts(&app, who, "jab");
+    let late: Vec<_> = jabs.iter().filter(|(t, _)| *t > app.world().resource::<ai_core::SimTick>().0 - 300).collect();
+    assert!(late.windows(2).filter(|w| w[0].1 != w[1].1).all(|w| w[1].0 - w[0].0 >= 42), "{late:?}");
 }

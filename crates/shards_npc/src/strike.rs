@@ -42,6 +42,10 @@ pub struct NpcStrike {
     /// continuation that was checked): `npc.strike_spacing` holds it to the rule. A hook's
     /// own press is noted but not held to it.
     pub gated: bool,
+    /// The director pool the NPC fought by when it began the strike. A note counts only while
+    /// this is still the NPC's pool: an NPC moved to another director does not space the new
+    /// pool's NPCs by a strike it began in the old one.
+    pub pool: String,
 }
 
 /// Ticks in `secs` seconds of `dt`-long ticks, rounded up (with a hair of slack for the sum
@@ -115,8 +119,10 @@ pub(crate) fn note_list<'a>(rows: impl Iterator<Item = NoteRow<'a>>) -> Vec<Note
     let mut notes: Vec<Note> = Vec::new();
     for (id, director, strike, grant, continuing) in rows {
         let pending = grant.filter(|g| !g.started).and_then(|g| g.pressed);
-        for at in strike.map(|s| s.last_start).into_iter().chain(pending).chain(continuing) {
-            notes.push((id, pool(director), at));
+        let pool = pool(director);
+        let noted = strike.filter(|s| s.pool == pool).map(|s| s.last_start);
+        for at in noted.into_iter().chain(pending).chain(continuing) {
+            notes.push((id, pool.clone(), at));
         }
     }
     notes.sort();
@@ -220,7 +226,7 @@ pub(crate) fn action_started(
     if director.min_spacing > 0.0 && director.is_strike(&tags_for(&db, npc, &fighter.moveset, &e.action)) {
         let planned = token.and_then(|t| t.held.as_ref()).is_some_and(|g| g.pressed.is_some() && !g.started);
         let continued = chain.is_some_and(|c| c.pressed.is_some());
-        commands.entity(e.entity).insert(NpcStrike { last_start: tick.0, gated: planned || continued });
+        commands.entity(e.entity).insert(NpcStrike { last_start: tick.0, gated: planned || continued, pool: pool(&npc.director) });
     }
     // The attack that began rolls its own continuation; the one it replaces is spent.
     let rolled = state.current.as_ref().and_then(|r| crate::chain::roll(&db, &rng, *id, npc, open, &fighter.moveset, &e.action, r.instance));

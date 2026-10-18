@@ -293,7 +293,7 @@ fn two_planned_strikes_closer_than_the_spacing_stop_the_game() {
     plant(&mut app, 3, |world| {
         for (id, at) in [(7, 100), (8, 110)] {
             let e = body(world, id);
-            world.entity_mut(e).insert(NpcStrike { last_start: at, gated: true });
+            world.entity_mut(e).insert(NpcStrike { last_start: at, gated: true, pool: "default".into() });
         }
     });
     let line = stops_on(&mut app, "npc.strike_spacing", 3);
