@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use shards_content::{ContentDef, Refs};
 use shards_motion::SprintResume;
 
+use crate::combat::HitWeight;
 use crate::status::StatusDef;
 
 /// Slack for comparing times that are sums of tick lengths (s).
@@ -308,6 +309,41 @@ pub struct GuardDef {
     /// Share of the hit's status buildup a guard break lets through (0: none, the old rule).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub break_status_mult: f32,
+    /// The perfect window opens only for a guard a fresh press started ([`GuardPress`]): a held
+    /// guard that comes back after an attack, a dodge or a hit is a plain block, and mashing the
+    /// button parries nothing. `None`: every start of the guard has its perfect window (the old rule).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub perfect_needs_press: Option<GuardPress>,
+}
+
+/// When a press of a guard's input arms its perfect window ([`GuardDef::perfect_needs_press`]).
+/// A press is the button going down: a press in `Intent::pressed` or the input becoming held.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct GuardPress {
+    /// A press is fresh (armed) when it comes at least this long after the previous one (s).
+    #[serde(default = "arm_gap")]
+    pub gap: f32,
+    /// The guard opens its perfect window only if it starts within this long of the fresh press (s).
+    #[serde(default = "arm_entry")]
+    pub entry: f32,
+    /// A parry makes the next press fresh whatever the gap.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub rearm: bool,
+}
+
+fn arm_gap() -> f32 {
+    0.35
+}
+
+fn arm_entry() -> f32 {
+    0.15
+}
+
+impl Default for GuardPress {
+    fn default() -> Self {
+        Self { gap: arm_gap(), entry: arm_entry(), rearm: true }
+    }
 }
 
 fn one() -> f32 {
@@ -650,6 +686,113 @@ pub struct ActionDef {
     /// roll that moves the body without turning it).
     #[serde(default, skip_serializing_if = "Face::is_run")]
     pub face: Face,
+    /// Weight floor of this action's hits (`Counter` for a counterattack): the `weight` of its
+    /// `Damaged`, `Blocked` and `GuardBroken` events is at least this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight: Option<HitWeight>,
+    /// A paired action (a finisher, a revive): it takes a victim when it starts ([`PairDef`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pair: Option<PairDef>,
+}
+
+/// A paired action ([`ActionDef::pair`]): when it starts, the fighter takes a victim that
+/// [`PairSelect`] finds, and the two are held together until the run ends, the victim is lost
+/// or the attacker is cut.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PairDef {
+    pub select: PairSelect,
+    /// Forced on the victim when the pair starts (a held pose); its length only has to outlast the
+    /// strike: the strike's reaction replaces it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub victim_action: Option<String>,
+    /// The attacker's hits find only its victim while the pair lasts (nobody else in their shapes);
+    /// other attackers can still hit the victim.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub only_victim: bool,
+    /// Other attackers find the victim untouchable while the pair lasts (a revive). Off for a
+    /// finisher: there only the attacker is restricted (`only_victim`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub exclusive: bool,
+    /// A broken victim's poise stays broken at least this long from the pair's start (s).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub hold_break: f32,
+    /// The pair's first landed hit on a broken victim ends its break (one pair per break).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub ends_break: bool,
+    /// The pair is lost, and the action cut, when the two are farther apart than this (m, on the
+    /// ground plane).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub break_range: Option<f32>,
+    /// Damage (> 0) to the attacker cuts the action.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub cancel_on_hurt: bool,
+    /// Reaction tier a landed strike forces on a victim that is still in the pair's state and
+    /// survives it, ignoring its armour and immunity and starting none (1 light, 2 heavy, 3
+    /// knockdown; 0: none). It replaces the hit's own reaction.
+    #[serde(default = "knockdown", skip_serializing_if = "is_knockdown")]
+    pub strike_reaction: u8,
+}
+
+fn knockdown() -> u8 {
+    3
+}
+
+fn is_knockdown(v: &u8) -> bool {
+    *v == 3
+}
+
+/// Which fighter a paired action takes ([`PairDef::select`]).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PairSelect {
+    /// Whose side the victim is on.
+    #[serde(default, skip_serializing_if = "PairTeam::is_hostile")]
+    pub team: PairTeam,
+    /// The state it must be in.
+    pub state: PairState,
+    /// Reach (m) on the ground plane, added to the victim's body radius.
+    pub range: f32,
+    /// Largest height difference (m).
+    pub height: f32,
+    /// Largest angle (degrees, half-angle) between where the fighter means to face (toward its
+    /// lock-on target, else its movement input, else its facing) and the victim.
+    pub angle: f32,
+    /// No `LayerMask::WORLD` collider between the two chests (`CombatTuning::sight_height`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub line_of_sight: bool,
+    /// The fighter's lock-on target wins when it qualifies; otherwise the nearest one does.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub prefer_target: bool,
+    /// Offered only if no other player (a fighter with `PlayerId`) of the fighter's team, alive, is
+    /// nearer to the victim by more than this (m, on the ground plane).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slack: Option<f32>,
+}
+
+/// Whose side a pair victim is on ([`PairSelect::team`]).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PairTeam {
+    /// One the fighter may hit (another team, or no team).
+    #[default]
+    Hostile,
+    /// One of its own team (a revive).
+    Ally,
+}
+
+impl PairTeam {
+    fn is_hostile(&self) -> bool {
+        *self == PairTeam::Hostile
+    }
+}
+
+/// The state a pair victim must be in ([`PairSelect::state`]).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PairState {
+    /// Its poise is broken.
+    Broken,
+    /// Any (alive, not paired by another).
+    Any,
 }
 
 /// What a press turns into when a cancel window allows it.
@@ -949,6 +1092,16 @@ impl ContentDef for ActionDef {
             if !(guard.arc > 0.0 && guard.arc <= 360.0) {
                 check.refs.error(format!("guard.arc must be in (0, 360] degrees (is {})", guard.arc));
             }
+            if let Some(press) = &guard.perfect_needs_press {
+                check.number("guard.perfect_needs_press.gap", press.gap);
+                check.number("guard.perfect_needs_press.entry", press.entry);
+                if guard.perfect.is_none() {
+                    check.refs.error("guard.perfect_needs_press arms a perfect window, and the guard has none: give guard.perfect");
+                }
+            }
+        }
+        if let Some(pair) = &self.pair {
+            check.pair(pair);
         }
         for (i, cancel) in self.cancels.iter().enumerate() {
             check.span(&format!("cancels[{i}].span"), &cancel.span);
@@ -1102,6 +1255,33 @@ impl Check<'_, '_, '_> {
                 meters(a),
                 meters(b)
             ));
+        }
+    }
+
+    /// A paired action's numbers and the victim action it forces.
+    fn pair(&mut self, pair: &PairDef) {
+        let s = &pair.select;
+        for (name, v) in [("range", s.range), ("height", s.height), ("angle", s.angle)] {
+            self.number(&format!("pair.select.{name}"), v);
+        }
+        if s.angle > 180.0 {
+            self.refs.error(format!("pair.select.angle is a half-angle, at most 180 degrees (is {})", s.angle));
+        }
+        if let Some(slack) = s.slack {
+            self.number("pair.select.slack", slack);
+        }
+        self.number("pair.hold_break", pair.hold_break);
+        if let Some(range) = pair.break_range {
+            self.number("pair.break_range", range);
+        }
+        if pair.strike_reaction > 3 {
+            self.refs.error(format!(
+                "pair.strike_reaction must be a tier 0 to 3 (is {}): 1 light, 2 heavy, 3 knockdown, 0 none",
+                pair.strike_reaction
+            ));
+        }
+        if let Some(victim) = &pair.victim_action {
+            self.refs.require::<ActionDef>(victim, "pair.victim_action");
         }
     }
 
@@ -1293,6 +1473,87 @@ pub struct MovesetDef {
     /// How presses wait for their action ([`BufferMode`]); default: each input its own.
     #[serde(default, skip_serializing_if = "BufferMode::is_per_input")]
     pub buffer: BufferMode,
+    /// What the fighter remembers, and for how long ([`MemoryDef`]): a parry, the end of a dodge.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remember: Vec<MemoryDef>,
+    /// Inputs that start another action while their conditions hold ([`BindingDef`]): a light
+    /// attack that is a finisher next to a broken enemy, a counter after a parry. For each input
+    /// the first binding whose conditions all hold wins, over `inputs` and over every cancel
+    /// window's transition, a `Combo` one included; an input none of whose bindings holds goes on
+    /// as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context: Vec<BindingDef>,
+}
+
+/// Something a fighter remembers for `seconds` ([`MovesetDef::remember`]): when `on` happens it
+/// remembers `key` (again: the time starts over); when one of `forget` happens it forgets it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryDef {
+    pub key: String,
+    pub on: Recall,
+    pub seconds: f32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forget: Vec<Forget>,
+}
+
+/// What makes a fighter remember ([`MemoryDef::on`]).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum Recall {
+    /// It parried a hit (a perfect guard).
+    Parried,
+    /// It evaded a hit inside a perfect-evade window.
+    PerfectEvaded,
+    /// It blocked a hit.
+    Blocked,
+    /// It evaded a hit (i-frames).
+    Evaded,
+    /// One of its hits landed (a `Damaged` it caused that was not ignored).
+    Landed,
+    /// It took damage (> 0).
+    Hurt,
+    /// An action of its with this tag ended (any end but a charge's turn).
+    Ended(String),
+    /// An action of its with this tag started.
+    Started(String),
+}
+
+/// What makes a fighter forget ([`MemoryDef::forget`]).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum Forget {
+    /// It took damage (> 0).
+    Hurt,
+    /// A reaction, a stagger or a guard break started on it.
+    Reacted,
+    /// An action of its with this tag started.
+    Started(String),
+    /// A binding that needs the memory (`When::Remembers`) started its action.
+    Used,
+}
+
+/// One context binding ([`MovesetDef::context`]): `input` starts `action` while every one of
+/// `when` holds.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BindingDef {
+    pub input: String,
+    pub action: String,
+    /// All must hold. A binding never holds for the action the fighter runs now (a running
+    /// finisher must not restart itself through a cancel window).
+    pub when: Vec<When>,
+}
+
+/// A condition of a binding ([`BindingDef::when`]).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum When {
+    /// A memory with this key is live.
+    Remembers(String),
+    /// The binding's action is paired and its `pair.select` finds a victim now.
+    Pair,
+    /// Stamina above this (a fighter without stamina always has enough).
+    StaminaAbove(f32),
+    /// A game condition registered with `add_context_condition`.
+    Condition(String),
 }
 
 /// How a fighter's presses wait in its [`InputBuffer`](crate::InputBuffer).
@@ -1411,6 +1672,60 @@ impl ContentDef for MovesetDef {
                     refs.error(format!("buffer priority input `{input}` must be a name without spaces, e.g. `dodge`"));
                 } else if priority[..i].iter().any(|(other, _)| other == input) {
                     refs.error(format!("buffer priority lists `{input}` twice; give each input one rank"));
+                }
+            }
+        }
+        self.validate_context(refs);
+    }
+}
+
+impl MovesetDef {
+    /// `remember` and `context`: keys unique, times above 0, bindings naming actions and keys that exist.
+    fn validate_context(&self, refs: &mut Refs) {
+        for (i, memory) in self.remember.iter().enumerate() {
+            let at = format!("remember[{i}]");
+            if memory.key.is_empty() {
+                refs.error(format!("{at}.key is empty; name the memory, e.g. `parried`"));
+            } else if self.remember[..i].iter().any(|m| m.key == memory.key) {
+                refs.error(format!("{at}: key `{}` is remembered twice; give each memory one entry", memory.key));
+            }
+            if !(memory.seconds > 0.0 && memory.seconds.is_finite()) {
+                refs.error(format!("{at}.seconds must be above 0 (is {}): a memory that lasts no time is never seen", memory.seconds));
+            }
+            for tag in memory.forget.iter().filter_map(|f| if let Forget::Started(t) = f { Some(t) } else { None }).chain(match &memory.on {
+                Recall::Ended(t) | Recall::Started(t) => Some(t),
+                _ => None,
+            }) {
+                if tag.is_empty() {
+                    refs.error(format!("{at} names an empty tag; tags are the actions' `tags`, e.g. `dodge`"));
+                }
+            }
+        }
+        for (i, binding) in self.context.iter().enumerate() {
+            let at = format!("context[{i}]");
+            if binding.input.is_empty() || binding.input.contains(char::is_whitespace) {
+                refs.error(format!("{at}.input `{}` must be an input name without spaces, e.g. `light`", binding.input));
+            }
+            let action = refs.require::<ActionDef>(&binding.action, &format!("{at}.action"));
+            let paired = refs.get::<ActionDef>(&binding.action).is_some_and(|d| d.pair.is_some());
+            for when in &binding.when {
+                match when {
+                    When::Pair if action && !paired => refs.error(format!(
+                        "{at}: `Pair` needs a paired action, and `{}` has no `pair`",
+                        binding.action
+                    )),
+                    When::Remembers(key) if !self.remember.iter().any(|m| m.key == *key) => {
+                        let mut keys: Vec<&str> = self.remember.iter().map(|m| m.key.as_str()).filter(|k| !k.is_empty()).collect();
+                        keys.sort_unstable();
+                        keys.dedup();
+                        refs.error(format!(
+                            "{at}: `Remembers(\"{key}\")` names no memory of this moveset; it remembers: {}",
+                            if keys.is_empty() { "nothing".to_owned() } else { keys.join(", ") }
+                        ))
+                    }
+                    When::StaminaAbove(v) if !v.is_finite() => refs.error(format!("{at}: StaminaAbove({v}) must be a number")),
+                    When::Condition(name) if name.is_empty() => refs.error(format!("{at}: Condition names nothing")),
+                    _ => {}
                 }
             }
         }
@@ -1916,5 +2231,88 @@ mod tests {
         // And a field set to something else does show.
         let set: MovesetDef = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME).from_str(r#"(inputs: {}, reaction_immunity: 0.2)"#).unwrap();
         assert!(serde_json::to_string(&set).unwrap().contains("reaction_immunity"));
+    }
+
+    #[test]
+    fn context_fields_keep_old_json() {
+        // Content written before B3 serializes without a trace of its fields: the per-definition
+        // replay checks hash this JSON.
+        let d = def(
+            r#"(net_id: 1, phases: [("windup", 0.2), ("active", 0.1)],
+                hits: [(span: Phase("active"), shape: Sphere(radius: 1), damage: 5)],
+                guard: (span: Phase("windup"), perfect: Phase("windup")))"#,
+        );
+        let json = serde_json::to_string(&d).unwrap();
+        for new in ["weight", "pair", "perfect_needs_press"] {
+            assert!(!json.contains(&format!("\"{new}\"")), "`{new}` leaked into {json}");
+        }
+        let moveset: MovesetDef = ron::Options::default()
+            .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+            .from_str(r#"(inputs: {"light": "a"})"#)
+            .unwrap();
+        let json = serde_json::to_string(&moveset).unwrap();
+        assert!(!json.contains("remember") && !json.contains("context"), "{json}");
+        // The press rule's defaults, and a pair's knockdown, stay out too.
+        let guarded = def(
+            r#"(net_id: 1, phases: [("raise", 0.2)], guard: (span: Phase("raise"), perfect: Phase("raise"), perfect_needs_press: ()),
+                pair: (select: (state: Broken, range: 2, height: 1, angle: 90)))"#,
+        );
+        let press = guarded.guard.as_ref().and_then(|g| g.perfect_needs_press).unwrap();
+        assert_eq!(press, GuardPress { gap: 0.35, entry: 0.15, rearm: true });
+        let pair = guarded.pair.as_ref().unwrap();
+        assert_eq!(pair.strike_reaction, 3);
+        let json = serde_json::to_string(&guarded).unwrap();
+        assert!(!json.contains("rearm") && !json.contains("strike_reaction") && !json.contains("\"team\""), "{json}");
+    }
+
+    fn errors_of(actions: &str, movesets: &str) -> Vec<String> {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<ActionDef>();
+        kinds.register::<MovesetDef>();
+        kinds.register::<crate::status::StatusDef>();
+        let sources = [
+            shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
+            shards_content::db::Source { path: "content/m.moveset.ron".into(), text: movesets.into() },
+        ];
+        shards_content::ContentDb::build(&kinds, &sources).errors().map(|e| e.to_string()).collect()
+    }
+
+    #[test]
+    fn context_content_is_checked() {
+        let actions = r#"{
+            "jab": (net_id: 1, phases: [("a", 0.3)]),
+            "fin": (net_id: 2, phases: [("a", 0.3)], pair: (select: (state: Broken, range: -1, height: 1, angle: 200),
+                    victim_action: "helf", hold_break: -0.5, strike_reaction: 4)),
+            "guard": (net_id: 3, phases: [("a", 0.3)], guard: (span: Phase("a"), perfect_needs_press: (gap: -1))),
+        }"#;
+        let movesets = r#"{
+            "m": (inputs: {"light": "jab"},
+                remember: [(key: "parried", on: Parried, seconds: 0.5), (key: "parried", on: Blocked, seconds: 0),
+                           (key: "", on: Ended(""), seconds: 1)],
+                context: [(input: "light", action: "jab", when: [Pair]), (input: "light", action: "fni", when: [Remembers("dodged")]),
+                          (input: "heavy", action: "fin", when: [Pair, Condition("")])]),
+        }"#;
+        let errors = errors_of(actions, movesets);
+        let expected = [
+            "content/a.action.ron: action `fin`: pair.select.range must be a number >= 0 (is -1)",
+            "content/a.action.ron: action `fin`: pair.select.angle is a half-angle, at most 180 degrees (is 200)",
+            "content/a.action.ron: action `fin`: pair.hold_break must be a number >= 0 (is -0.5)",
+            "content/a.action.ron: action `fin`: pair.strike_reaction must be a tier 0 to 3 (is 4): 1 light, 2 heavy, 3 knockdown, 0 none",
+            "content/a.action.ron: action `fin`: pair.victim_action -> unknown action `helf`",
+            "content/a.action.ron: action `guard`: guard.perfect_needs_press.gap must be a number >= 0 (is -1)",
+            "content/a.action.ron: action `guard`: guard.perfect_needs_press arms a perfect window, and the guard has none: give guard.perfect",
+            "content/m.moveset.ron: moveset `m`: remember[1]: key `parried` is remembered twice; give each memory one entry",
+            "content/m.moveset.ron: moveset `m`: remember[1].seconds must be above 0 (is 0): a memory that lasts no time is never seen",
+            "content/m.moveset.ron: moveset `m`: remember[2].key is empty; name the memory, e.g. `parried`",
+            "content/m.moveset.ron: moveset `m`: remember[2] names an empty tag; tags are the actions' `tags`, e.g. `dodge`",
+            "content/m.moveset.ron: moveset `m`: context[0]: `Pair` needs a paired action, and `jab` has no `pair`",
+            "content/m.moveset.ron: moveset `m`: context[1].action -> unknown action `fni` (did you mean `fin`?)",
+            "content/m.moveset.ron: moveset `m`: context[1]: `Remembers(\"dodged\")` names no memory of this moveset; it remembers: parried",
+            "content/m.moveset.ron: moveset `m`: context[2]: Condition names nothing",
+        ];
+        for line in expected {
+            assert!(errors.iter().any(|e| e == line), "missing `{line}` in {errors:#?}");
+        }
+        assert_eq!(errors.len(), expected.len(), "{errors:#?}");
     }
 }

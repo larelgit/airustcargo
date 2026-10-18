@@ -13,6 +13,7 @@ use shards_motion::Collider;
 
 use crate::def::{ActionDef, MovesetDef};
 use crate::fighter::{Charges, Cooldowns, Dead, Fighter, Stamina};
+use crate::context::ContextInputs;
 use crate::machine::{can_start, ActionRejected, ActionState, FighterView};
 
 /// Walks this close (a share of the action's reach) before attacking.
@@ -33,6 +34,7 @@ type Attackers<'w, 's> = Query<
         Option<&'static Cooldowns>,
         Option<&'static Charges>,
         Has<Dead>,
+        Option<&'static ContextInputs>,
     ),
 >;
 
@@ -47,7 +49,7 @@ pub(crate) fn follow_attack_orders(
     mut fighters: Attackers,
 ) {
     let dt = time.delta_secs();
-    for (entity, fighter, mut intent, state, tf, stamina, cooldowns, charges, dead) in &mut fighters {
+    for (entity, fighter, mut intent, state, tf, stamina, cooldowns, charges, dead, context) in &mut fighters {
         let Some(order) = intent.orders.front().cloned() else { continue };
         let Order::Attack { target, ref input, repeat } = order else { continue };
         if dead {
@@ -74,6 +76,7 @@ pub(crate) fn follow_attack_orders(
             charges,
             held: &intent.held,
             dead,
+            context,
         };
         match can_start(&view, input, dt) {
             Ok(_) => {

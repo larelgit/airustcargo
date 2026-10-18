@@ -15,7 +15,7 @@ Read this when you add a tool, an invariant, a describer, or touch `AiId` or `Ai
   and a Bevy system `In<Call<Args>> -> ToolResult`. Kinds: `query` reads, `action` changes the world
   (journal, diff, replay), `control` manages time and the session. A tool error says how to fix the call.
 - The AI sees only entities with `AiVisible` (`AiKind` gives it). What is said about them is decided by
-  the describe functions (`register_ai_component`, `register_ai_describer`).
+  the describe functions (`register_ai_component`, `register_ai_describer`, and `register_ai_world_describer` for a fragment that needs the world around the entity: `finishable by e5`).
 - The engine assigns `AiId`. Do not write it in place (`get_mut`, `set`, BRP `world.mutate_components`):
   the "id → entity" index is kept by the `on_insert` and `on_discard` hooks. Inserting a new `AiId` renumbers
   the entity, and the old id gets a tombstone `renumbered to eN`.

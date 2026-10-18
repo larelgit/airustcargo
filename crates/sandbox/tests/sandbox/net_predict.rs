@@ -655,3 +655,129 @@ fn host_cut_drops_the_shown_run() {
     assert!(here.distance(there) < 0.05, "{here} vs {there}");
     assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
 }
+
+// --- context and paired actions (B3) ---------------------------------------------------------
+
+/// The client's body gets the `contextual` moveset (light is a finisher next to a broken enemy, a
+/// counter after a parry) and the skeleton e7 the `sparring` one; e7 stands 1.8 m north of the
+/// body, the body locked on to it. The host's agent `skeleton` possesses e7.
+fn context_stand() -> (Stand, String, Entity) {
+    let mut stand = stand_with(1, lossy());
+    calm(&mut stand);
+    let id = body(&stand, C1);
+    for (who, moveset) in [(id.as_str(), "contextual"), ("e7", "sparring")] {
+        let out = stand.call(HOST, "set", json!({"id": who, "component": "Fighter", "path": "moveset", "value": moveset}));
+        assert!(out.ok, "{}", out.result);
+    }
+    stand.world_mut(HOST).resource_mut::<shards::ai_core::AgentSessions>().configure("skeleton", shards::ai_core::Scope::Dev, Some(AiId(7)));
+    stand.run(60);
+    let mine = own(&stand, C1);
+    assert_eq!(stand.world(C1).get::<shards::action::Fighter>(mine).unwrap().moveset, "contextual");
+    face_off(&mut stand, &id);
+    let out = stand.call(C1, "lock_on", json!({"target": "e7"}));
+    assert!(out.ok, "{}", out.result);
+    let out = stand.call_as(HOST, "skeleton", "lock_on", json!({"target": id}));
+    assert!(out.ok, "{}", out.result);
+    stand.run(30);
+    (stand, id, mine)
+}
+
+/// The body at the origin and e7 1.8 m north of it, both healed, settled.
+fn face_off(stand: &mut Stand, id: &str) {
+    for (who, z) in [(id, 0.0), ("e7", -1.8)] {
+        for (tool, args) in [("heal", json!({"id": who})), ("teleport", json!({"id": who, "x": 0, "y": 0, "z": z}))] {
+            let out = stand.call(HOST, tool, args);
+            assert!(out.ok, "{tool}: {}", out.result);
+        }
+    }
+    stand.run(90);
+}
+
+/// Whether the client shows its light attack bound to a finisher (its copy of the host's context).
+fn finisher_shown(stand: &Stand, mine: Entity) -> bool {
+    stand.world(C1).get::<shards::action::ContextInputs>(mine).is_some_and(|c| c.bound("light").is_some_and(|b| b.victim.is_some()))
+}
+
+/// The B3 gate: a client presses light as soon as its copy shows the finisher (normal play, a few
+/// ticks of reaction at most), twelve times over a 150 ms, 2 % loss link. The press is predicted on
+/// the client and resolved on the host's tick it is stamped with; each one the host does not
+/// confirm is a misprediction. The count is reported (`--nocapture`) and must be 0: the window a
+/// broken enemy stays finishable (its stagger, 0.7 s) is longer than the round trip.
+#[test]
+fn client_finishers_are_confirmed_by_the_host() {
+    let (mut stand, id, mine) = context_stand();
+    let trials = 12u64;
+    let mut missed = Vec::new();
+    for trial in 0..trials {
+        face_off(&mut stand, &id);
+        let before = prediction(&stand, C1);
+        let out = stand.call(HOST, "stagger", json!({"id": "e7", "poise": true}));
+        assert!(out.ok, "{}", out.result);
+        run_until(&mut stand, 120, "the client shows the finisher", |s| finisher_shown(s, mine));
+        // A reaction of 0 to 9 ticks (up to 150 ms).
+        stand.run(trial % 4 * 3);
+        let out = stand.call(C1, "light_attack", json!({}));
+        assert_eq!(text(&out), "ok: spar_finisher · predicted, host confirms", "trial {trial}");
+        let takes = format!("{id} takes e7 with spar_finisher");
+        run_until(&mut stand, 120, "the host takes e7", |s| journal(s, HOST).iter().filter(|l| l.contains(&takes)).count() as u64 > trial);
+        stand.run(150);
+        let after = prediction(&stand, C1);
+        assert!(after.predicted > before.predicted, "trial {trial}: predicted");
+        if after.mispredicted > before.mispredicted {
+            missed.push(trial);
+        }
+    }
+    println!("B3 stand: {} client finisher misprediction(s) in {trials} trials at latency 150 ms, loss 2 %", missed.len());
+    assert!(missed.is_empty(), "mispredicted in trials {missed:?}: {:#?}", journal(&stand, C1));
+    assert!(!has_line(&stand, C1, "not confirmed"), "{:#?}", journal(&stand, C1));
+    let downs = journal(&stand, HOST).iter().filter(|l| l.contains("e7 reacts knockdown")).count() as u64;
+    assert_eq!(downs, trials, "every finisher knocked e7 down: {:#?}", journal(&stand, HOST));
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+    verify_host(&stand);
+}
+
+/// A client's guard press against the host's skeleton slam: fresh, so the guard is perfect and
+/// parries; the counter the parry binds to light is pressed from the client's copy of the context
+/// and confirmed.
+#[test]
+fn a_client_parries_and_counters() {
+    let (mut stand, id, _) = context_stand();
+    let before = prediction(&stand, C1);
+    let out = stand.call_as(HOST, "skeleton", "heavy_attack", json!({}));
+    assert!(out.ok, "{}", out.result);
+    // The slam starts on the host's next tick; the client's guard is to start 24 ticks into it (0.4 s,
+    // the raise ends after its hit lands). A press is stamped with the client's tick, which runs ahead.
+    let slam = sim::tick(stand.world(HOST)) + 1;
+    assert!(sim::tick(stand.world(C1)) < slam + 23, "the client is less than 0.38 s ahead");
+    run_until(&mut stand, 60, "the client reaches the guard's tick", |s| sim::tick(s.world(C1)) + 1 >= slam + 24);
+    let out = stand.call(C1, "block", json!({}));
+    assert!(out.ok, "{}", out.result);
+    let parried = format!("{id} parried e7 spar_slam");
+    for _ in 0..120 {
+        if has_line(&stand, HOST, &parried) {
+            break;
+        }
+        stand.run(1);
+    }
+    assert!(has_line(&stand, HOST, &parried), "slam at {slam}: {:#?}", journal(&stand, HOST).iter().rev().take(25).collect::<Vec<_>>());
+    run_until(&mut stand, 60, "the client shows the counter", |s| {
+        let mine = own(s, C1);
+        s.world(C1).get::<shards::action::ContextInputs>(mine).and_then(|c| c.bound("light")).is_some_and(|b| b.action == "spar_counter")
+    });
+    let out = stand.call(C1, "light_attack", json!({}));
+    assert_eq!(text(&out), "ok: spar_counter · predicted, host confirms");
+    assert!(stand.call(C1, "block", json!({"on": false})).ok);
+    let counter = format!("{id} -> e7 spar_counter -14");
+    run_until(&mut stand, 120, "the host's counter", |s| has_line(s, HOST, &counter));
+    stand.run(90);
+    let after = prediction(&stand, C1);
+    println!(
+        "B3 stand: guard and counter from a client: {} predicted, {} confirmed, {} mispredicted",
+        after.predicted - before.predicted,
+        after.confirmed - before.confirmed,
+        after.mispredicted - before.mispredicted
+    );
+    assert_eq!(after.mispredicted, before.mispredicted, "{:#?}", journal(&stand, C1));
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+    verify_host(&stand);
+}

@@ -97,6 +97,8 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("shards::tile_levels::TileLevels", "which level instance is which tile, made again when the region is (snapshot prepare `region`)"),
     ("shards::ui_wiring::MenuControls", "the menus' controls"),
     // shards_action
+    ("shards_action::context::ContextConditions", "the context conditions, registered at build time"),
+    ("shards_action::context::PendingPairs", "paired actions the machine started, taken in the same tick: empty between ticks"),
     ("shards_action::combat::DamageHooks", "the damage hooks, registered at build time"),
     ("shards_action::machine::ActionEffects", "the custom action effects, registered at build time"),
     ("shards_action::machine::PendingEffects", "effects queued and run inside one tick: empty between ticks"),

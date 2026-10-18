@@ -376,6 +376,7 @@ pub(crate) fn direct(
             charges: f.charges,
             held: &f.drive.held,
             dead: f.dead,
+            context: None,
         };
         let (budget, overlapping) = inflight.on(target, id, &director);
         // No token for a strike that would come too soon after another NPC's.

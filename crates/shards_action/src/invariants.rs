@@ -1,10 +1,11 @@
 //! The engine rules `action.resources_in_range`, `action.running_sane`, `action.protection_sane`,
-//! `action.knockback_sane` and `action.extras_follow_run`.
+//! `action.knockback_sane`, `action.extras_follow_run`, `action.pairs_match` and `action.memory_sane`.
 
-use ai_core::{with_query, AiId, Offenders};
+use ai_core::{with_query, AiId, AiIndex, Offenders, SimTick};
 use bevy::prelude::*;
 use shards_content::ContentDb;
 
+use crate::context::{GuardArm, Memory, Paired, Pairing};
 use crate::def::ActionDef;
 use crate::fighter::{Fighter, Health, Knockback, Poise, Protection, Stamina};
 use crate::machine::{ActionState, RunExtras};
@@ -146,6 +147,69 @@ pub fn extras_follow_run(world: &World) -> Option<String> {
                 bad.note(*id, || format!("RunExtras of instance {} while it runs {now}", x.instance));
             } else if !(x.extra.is_finite() && x.extra >= 0.0 && x.closed.is_finite() && x.closed >= 0.0) {
                 bad.note(*id, || format!("RunExtras extra = {}, closed = {}: finite numbers >= 0", x.extra, x.closed));
+            }
+        }
+    });
+    bad.report()
+}
+
+/// The engine rule `action.pairs_match`: a pair's two marks agree. Every [`Pairing`] runs: its
+/// attacker runs `Pairing.action` with `Pairing.instance`, and its victim, while it exists, holds
+/// a [`Paired`] naming the attacker; every `Paired` names an attacker, while it exists, whose
+/// `Pairing` names it. A side that is gone altogether (despawned in the tick) is left to
+/// `tend_pairs`, which lets go of it on the next tick.
+pub fn pairs_match(world: &World) -> Option<String> {
+    let mut bad = Offenders::default();
+    let index = world.get_resource::<AiIndex>()?;
+    with_query::<(&AiId, &Pairing, Option<&ActionState>), (), _>(world, |query| {
+        for (id, p, state) in query.iter(world) {
+            let running = state.and_then(|s| s.current.as_ref());
+            if running.is_none_or(|r| r.instance != p.instance || r.action != p.action) {
+                let now = running.map_or("no action".to_owned(), |r| format!("{} instance {}", r.action, r.instance));
+                bad.note(*id, || format!("Pairing of {} instance {} while it runs {now}", p.action, p.instance));
+            } else if let Some(victim) = index.get(p.victim)
+                && world.get::<Paired>(victim).is_none_or(|v| v.by != *id)
+            {
+                let held = world.get::<Paired>(victim).map_or("nothing".to_owned(), |v| format!("Paired by {}", v.by));
+                bad.note(*id, || format!("Pairing names {} whose mark says {held}", p.victim));
+            }
+        }
+    });
+    with_query::<(&AiId, &Paired), (), _>(world, |query| {
+        for (id, v) in query.iter(world) {
+            if let Some(attacker) = index.get(v.by)
+                && world.get::<Pairing>(attacker).is_none_or(|p| p.victim != *id)
+            {
+                let holds = world.get::<Pairing>(attacker).map_or("no Pairing".to_owned(), |p| format!("Pairing of {}", p.victim));
+                bad.note(*id, || format!("Paired by {} which has {holds}", v.by));
+            }
+        }
+    });
+    bad.report()
+}
+
+/// The engine rule `action.memory_sane`: a [`Memory`] holds finite times above 0, its keys sorted
+/// and unique, and is not empty (an empty one is removed); a [`GuardArm`]'s press is not in the future.
+pub fn memory_sane(world: &World) -> Option<String> {
+    let mut bad = Offenders::default();
+    with_query::<(&AiId, &Memory), (), _>(world, |query| {
+        for (id, m) in query.iter(world) {
+            if m.0.is_empty() {
+                bad.note(*id, || "an empty Memory: it is removed with its last memory".to_owned());
+            }
+            if let Some(r) = m.0.iter().find(|r| !(r.left.is_finite() && r.left > 0.0)) {
+                bad.note(*id, || format!("Memory `{}` left = {}: a finite time above 0", r.key, r.left));
+            }
+            if let Some(w) = m.0.windows(2).find(|w| w[0].key >= w[1].key) {
+                bad.note(*id, || format!("Memory keys `{}`, `{}`: sorted and unique", w[0].key, w[1].key));
+            }
+        }
+    });
+    let now = world.get_resource::<SimTick>().map_or(u64::MAX, |t| t.0);
+    with_query::<(&AiId, &GuardArm), (), _>(world, |query| {
+        for (id, a) in query.iter(world) {
+            if let Some(p) = a.pressed.filter(|p| *p > now) {
+                bad.note(*id, || format!("GuardArm pressed at tick {p}, after tick {now}"));
             }
         }
     });

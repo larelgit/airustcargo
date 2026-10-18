@@ -1,0 +1,98 @@
+// Context and paired actions (B3): a hero whose light attack depends on the moment, a guard
+// that needs a fresh press, finishers and holds. Net ids 150-179.
+{
+    "c_jab": (
+        net_id: 150,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.2)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.5, angle: 120), damage: 5, reaction: 1)],
+        cancels: [(span: Secs(0.15, 0.4), into: [Combo("light", "c_jab_2")])],
+    ),
+    "c_jab_2": (
+        net_id: 151,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.2)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.5, angle: 120), damage: 5, reaction: 1)],
+    ),
+    // A heavy swing whose recovery lets a light through (an `Input` window).
+    "c_swing": (
+        net_id: 152,
+        phases: [("windup", 0.3), ("active", 0.1), ("recovery", 0.4)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.5, angle: 120), damage: 10)],
+        cancels: [(span: Phase("recovery"), into: [Input("light")])],
+    ),
+    // The finisher: a lunge, one strike, a recovery; invulnerable all along.
+    "c_finisher": (
+        net_id: 153,
+        phases: [("lunge", 0.2), ("strike", 0.1), ("recovery", 0.3)],
+        hits: [(span: Phase("strike"), shape: Cone(range: 2.5, angle: 120), damage: 20, knockback: 4.0)],
+        iframes: [Phases("lunge", "recovery")],
+        displacement: [(0.0, 0.0), (0.2, 0.8)],
+        pair: (
+            select: (state: Broken, range: 2.0, height: 1.2, angle: 100, line_of_sight: true, prefer_target: true, slack: 0.3),
+            victim_action: "c_held",
+            only_victim: true,
+            hold_break: 0.5,
+            ends_break: true,
+            break_range: 4.0,
+        ),
+    ),
+    "c_held": (net_id: 154, phases: [("held", 1.0)]),
+    "c_counter": (
+        net_id: 155,
+        phases: [("windup", 0.05), ("active", 0.1), ("recovery", 0.2)],
+        cost: (stamina: 10, stamina_mode: Any),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.5, angle: 120), damage: 12, reaction: 2)],
+        weight: Counter,
+    ),
+    "c_dodge_cut": (
+        net_id: 156,
+        phases: [("windup", 0.05), ("active", 0.1), ("recovery", 0.2)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.5, angle: 120), damage: 7)],
+    ),
+    "c_roll": (
+        net_id: 157,
+        phases: [("roll", 0.3), ("recover", 0.1)],
+        iframes: [Secs(0.05, 0.25)],
+        steer: Move,
+        tags: ["dodge"],
+    ),
+    // A guard whose perfect window needs a fresh press; a light or a roll cuts it.
+    "c_guard": (
+        net_id: 158,
+        phases: [("raise", 0.18), ("hold", 0.3), ("lower", 0.1)],
+        hold: (input: "block", span: Phase("hold")),
+        guard: (span: Phases("raise", "hold"), perfect: Phase("raise"), parry_staggers: false,
+                perfect_needs_press: (gap: 0.35, entry: 0.15)),
+        cancels: [(span: Secs(0.0, 0.58), into: [Input("light"), Input("dodge")])],
+    ),
+    // The same guard with the old rule (every start has its perfect window): a binding's.
+    "c_guard_alt": (
+        net_id: 159,
+        phases: [("raise", 0.18), ("hold", 0.3), ("lower", 0.1)],
+        hold: (input: "block", span: Phase("hold")),
+        guard: (span: Phases("raise", "hold"), perfect: Phase("raise"), parry_staggers: false),
+    ),
+    // The foe's swing: lands 0.2 s after the press.
+    "c_slash": (
+        net_id: 160,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.2)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.5, angle: 120), damage: 10, reaction: 1)],
+    ),
+    "c_stagger": (net_id: 161, phases: [("stagger", 0.8)]),
+    "c_react_light": (net_id: 162, phases: [("react", 0.3)]),
+    "c_react_heavy": (net_id: 163, phases: [("react", 0.5)]),
+    "c_react_down": (net_id: 164, phases: [("down", 0.9)]),
+    // A hold on anyone near (no state asked): exclusive, let go when the holder is hurt, lost
+    // beyond 3 m.
+    "c_grab": (
+        net_id: 165,
+        phases: [("hold", 1.0)],
+        pair: (
+            select: (state: Any, range: 2.0, height: 1.2, angle: 180),
+            victim_action: "c_held",
+            exclusive: true,
+            break_range: 3.0,
+            cancel_on_hurt: true,
+            strike_reaction: 0,
+        ),
+    ),
+}

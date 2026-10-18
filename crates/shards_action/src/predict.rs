@@ -40,10 +40,11 @@ use shards_core::{Intent, NetPrediction, Predicted};
 use shards_motion::{CharacterController, CharacterParams, LocomotionInput, MotionState, MoveModifiers, PhysicsWorld};
 
 use crate::combat::Died;
+use crate::context::{ContextInputs, GuardArm, RunHalted};
 use crate::def::{ActionDef, BufferMode, CombatTuning, MovesetDef, EPS};
 use crate::fighter::{sprint_rule, Charges, Cooldowns, Dead, Fighter, Stamina};
 use crate::machine::{
-    advance, body_height, buffer_press, cap_queue, charge_due, choose_in, free_sprint, in_sight, press_life, start_facing,
+    advance, body_height, buffer_press, cap_queue, charge_due, choose_in, free_sprint, gate_perfect, in_sight, press_life, start_facing,
     steer_locomotion, step_run, tracked, understands, ActionRejected, ActionStarted, ActionState, FighterView, Queued, RunExtras, Running,
 };
 
@@ -139,6 +140,10 @@ pub(crate) struct PredictedBody {
     extras: Option<&'static RunExtras>,
     shown: Option<&'static mut PredictedAction>,
     dead: Has<Dead>,
+    /// The host's, replicated: what this tick binds, the guard press, a halted run.
+    context: Option<&'static ContextInputs>,
+    arm: Option<&'static GuardArm>,
+    halted: Option<&'static RunHalted>,
 }
 
 /// `NetSet::Predict`, after `MotionSystems::PredictIntent`, before the controller: see the
@@ -349,6 +354,7 @@ pub(crate) fn predict_actions(
         charges: b.charges,
         held: &b.intent.held,
         dead: b.dead,
+        context: b.context,
     };
     let choice = (!b.dead).then(|| choose_in(&view, &predictor.queued, dt)).flatten();
     if let Some(choice) = choice
@@ -405,6 +411,9 @@ pub(crate) fn predict_actions(
             Some(mut def) => {
                 let aimed = tracked(def, b.intent, target, sees);
                 (_, external) = step_run(&mut s.run, def, s.extras.as_mut(), b.intent, here, aimed, dt);
+                if b.halted.is_some_and(|h| h.instance == s.run.instance) {
+                    external = Vec3::ZERO;
+                }
                 s.run.refresh(def, RunExtras::extra_of(s.extras.as_ref()));
                 if let Some(into) = charge_due(&s.run, def, s.extras.as_ref())
                     && let Some(into_def) = db.get::<ActionDef>(into)
@@ -454,6 +463,12 @@ pub(crate) fn predict_actions(
         cap_queue(&mut predictor.queued, ttl);
     }
 
+    // A guard that needs a fresh press shows its perfect window only when the host armed this run.
+    if let Some(s) = shown.as_mut()
+        && let Some(def) = db.get::<ActionDef>(&s.run.action)
+    {
+        gate_perfect(&mut s.run, def, b.arm);
+    }
     match (shown, b.shown.as_mut()) {
         (Some(s), Some(there)) => {
             if **there != s {

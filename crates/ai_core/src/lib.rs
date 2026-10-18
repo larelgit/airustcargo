@@ -309,6 +309,9 @@ pub trait AiAppExt {
     /// A fragment computed from the whole entity (several components, conditions).
     fn register_ai_describer(&mut self, key: &'static str, describe: fn(EntityRef) -> Option<String>) -> &mut Self;
 
+    /// A fragment that needs the world around the entity (what others do to it): `finishable by e5`.
+    fn register_ai_world_describer(&mut self, key: &'static str, describe: fn(&World, Entity) -> Option<String>) -> &mut Self;
+
     /// Advice for the subject, computed from the whole world: each line shows in
     /// `observe` as `ALERT <line>` right under `YOU` (`in hit zone of e6 slam (lands in
     /// 0.32s): move 2.1m S to leave it`). Return nothing when there is nothing to say.
@@ -470,13 +473,20 @@ pub trait AiAppExt {
 impl AiAppExt for App {
     fn register_ai_component<C: Component>(&mut self, describe: fn(&C) -> String) -> &mut Self {
         let describer =
-            Describer { key: short_type_name::<C>(), describe: Arc::new(move |e: EntityRef| e.get::<C>().map(describe)) };
+            Describer { key: short_type_name::<C>(), describe: Arc::new(move |_: &World, e: EntityRef| e.get::<C>().map(describe)) };
         self.world_mut().get_resource_or_init::<AiDescribers>().0.push(describer);
         self
     }
 
     fn register_ai_describer(&mut self, key: &'static str, describe: fn(EntityRef) -> Option<String>) -> &mut Self {
-        self.world_mut().get_resource_or_init::<AiDescribers>().0.push(Describer { key, describe: Arc::new(describe) });
+        let describer = Describer { key, describe: Arc::new(move |_: &World, e: EntityRef| describe(e)) };
+        self.world_mut().get_resource_or_init::<AiDescribers>().0.push(describer);
+        self
+    }
+
+    fn register_ai_world_describer(&mut self, key: &'static str, describe: fn(&World, Entity) -> Option<String>) -> &mut Self {
+        let describer = Describer { key, describe: Arc::new(move |w: &World, e: EntityRef| describe(w, e.id())) };
+        self.world_mut().get_resource_or_init::<AiDescribers>().0.push(describer);
         self
     }
 

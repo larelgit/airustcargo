@@ -333,6 +333,7 @@ pub(crate) fn plan_attacks(
                 charges: f.charges,
                 held: &f.drive.held,
                 dead: f.dead,
+                context: None,
             };
             let ok = |o: &Resolved| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director, spaced_out, f.options);
             let kept = grant.attack.as_ref().and_then(|name| options.iter().position(|o| o.name == *name));
@@ -388,6 +389,7 @@ pub(crate) fn plan_attacks(
                 charges: f.charges,
                 held: &f.drive.held,
                 dead: f.dead,
+                context: None,
             };
             let starts = can_start(&view, &o.input, dt).is_ok();
             let fits = budget.is_none_or(|left| o.cost <= left + 1e-4)

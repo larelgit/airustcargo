@@ -7,6 +7,10 @@ use ai_core::{label, AiAppExt};
 use bevy::prelude::*;
 
 use crate::combat::{Blocked, Damaged, Died, Evaded, GuardBroken, IgnoreReason, Parried, PerfectEvaded, Reacted, Staggered};
+use crate::context::{
+    describe_context, describe_guard_arm, describe_memory, describe_paired, describe_pairing, finishable_by, ContextInputs, GuardArm, Memory,
+    PairEnded, PairStarted, Paired, Pairing,
+};
 use crate::def::EPS;
 use crate::fighter::{
     describe_charges, describe_cooldowns, describe_health, describe_poise, describe_stamina, Charges, Cooldowns, Dead,
@@ -30,7 +34,22 @@ pub(crate) fn register(app: &mut App) {
         .register_ai_component::<Protection>(describe_protection)
         .register_ai_component::<Knockback>(describe_knockback)
         .register_ai_describer("run", describe_run)
+        .register_ai_component::<Memory>(describe_memory)
+        .register_ai_component::<ContextInputs>(describe_context)
+        .register_ai_component::<GuardArm>(describe_guard_arm)
+        .register_ai_component::<Pairing>(describe_pairing)
+        .register_ai_component::<Paired>(describe_paired)
+        .register_ai_world_describer("finishable", describe_finishable)
         .add_ai_condition("charging", charging)
+        .add_ai_condition("pair_ready", pair_ready)
+        .add_ai_condition("paired", paired)
+        .journal_event::<PairStarted>(|e, w| Some(format!("{} takes {} with {}", label(w, e.attacker), label(w, e.victim), e.action)))
+        .journal_event::<PairEnded>(|e, w| {
+            Some(match e.victim {
+                Some(v) => format!("{} lets go of {} ({})", label(w, e.attacker), label(w, v), e.end.describe()),
+                None => format!("{} lets go ({})", label(w, e.attacker), e.end.describe()),
+            })
+        })
         .register_ai_advice(advice)
         .journal_event::<Telegraph>(|e, w| {
             let zone = e.zone.map(|z| format!(" {}", z.shape)).unwrap_or_default();
@@ -180,6 +199,22 @@ fn describe_run(e: EntityRef) -> Option<String> {
         parts.push(format!("missed +{:.2}s", x.extra));
     }
     (!parts.is_empty()).then(|| parts.join("  "))
+}
+
+/// `finishable by e5`: the players whose context binds a paired action on this fighter now.
+fn describe_finishable(world: &World, entity: Entity) -> Option<String> {
+    let by = finishable_by(world, entity);
+    (!by.is_empty()).then(|| format!("finishable by {}", by.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")))
+}
+
+/// Some fighter's context binds a paired action on a victim now.
+fn pair_ready(world: &World) -> bool {
+    world.try_query::<&ContextInputs>().is_some_and(|mut q| q.iter(world).any(|c| c.victim().is_some()))
+}
+
+/// Some pair runs.
+fn paired(world: &World) -> bool {
+    world.try_query::<&Pairing>().is_some_and(|mut q| q.iter(world).next().is_some())
 }
 
 /// Some fighter holds the input of an action that may still turn into its charge.

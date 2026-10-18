@@ -190,6 +190,7 @@ pub(crate) fn strike_pressed(db: &ContentDb, f: &crate::director::FightingReadOn
         charges: f.charges,
         held: &f.drive.held,
         dead: f.dead,
+        context: None,
     };
     f.drive.press.iter().any(|input| match can_start(&view, input, dt) {
         Ok(start) => director.is_strike(&tags_for(db, f.npc, &f.fighter.moveset, &start.action)),

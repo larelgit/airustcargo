@@ -189,6 +189,7 @@ fn takes_input(f: &crate::director::FightingItem, db: &ContentDb, input: &str, d
         charges: f.charges,
         held: &f.drive.held,
         dead: f.dead,
+        context: None,
     };
     can_start(&view, input, dt).is_ok()
 }

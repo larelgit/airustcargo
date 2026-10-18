@@ -1,0 +1,40 @@
+{
+    // Light is a finisher next to a broken foe, a counter within 0.5 s of a parry, a cut within
+    // 0.3 s of a roll's end, a jab otherwise.
+    "c_hero": (
+        inputs: {"light": "c_jab", "heavy": "c_swing", "dodge": "c_roll", "block": "c_guard", "technique.1": "c_grab"},
+        stagger: "c_stagger",
+        reactions: [
+            (action: "c_react_light", push: 2.0, decel: 12.0),
+            (action: "c_react_heavy", push: 3.0, decel: 12.0),
+            (action: "c_react_down", push: 4.0, decel: 12.0),
+        ],
+        remember: [
+            (key: "parried", on: Parried, seconds: 0.5, forget: [Reacted, Started("dodge"), Used]),
+            (key: "dodged", on: Ended("dodge"), seconds: 0.3, forget: [Hurt, Used]),
+            (key: "landed", on: Landed, seconds: 1.0),
+            (key: "hurt", on: Hurt, seconds: 1.0),
+            (key: "blocked", on: Blocked, seconds: 1.0),
+            // Only a test makes it remember this.
+            (key: "brace", on: Started("brace"), seconds: 1.0),
+        ],
+        context: [
+            (input: "light", action: "c_finisher", when: [Pair]),
+            (input: "light", action: "c_counter", when: [Remembers("parried"), StaminaAbove(0.0)]),
+            (input: "light", action: "c_dodge_cut", when: [Remembers("dodged")]),
+            (input: "block", action: "c_guard_alt", when: [Remembers("brace")]),
+            (input: "technique.2", action: "c_counter", when: [Condition("brave")]),
+        ],
+    ),
+    "c_foe": (
+        inputs: {"light": "c_slash", "technique.1": "c_grab"},
+        stagger: "c_stagger",
+        reactions: [
+            (action: "c_react_light", push: 2.0, decel: 12.0),
+            (action: "c_react_heavy", push: 3.0, decel: 12.0),
+            (action: "c_react_down", push: 4.0, decel: 12.0),
+        ],
+        reaction_immunity: 0.2,
+        break_protection: 3.0,
+    ),
+}
