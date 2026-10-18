@@ -290,7 +290,7 @@ fn extras(world: &World, entity: Entity, npc: &Npc, perceived: &Perceived, here:
         out["think"] = json!({"left": round(t.left), "every": every.map(round)});
     }
     if let Some(c) = e.get::<NpcChain>() {
-        out["chain"] = json!({"input": c.input, "pressed": c.pressed});
+        out["chain"] = json!({"input": c.input, "pressed": c.pressed.is_some()});
     }
     if let Some(o) = e.get::<NpcOptions>() {
         let gated: Vec<String> = world
@@ -327,7 +327,7 @@ pub(crate) fn extra_parts(world: &World, entity: Entity, npc: &Npc, perceived: &
         parts.push(format!("think {:.2}s", t.left));
     }
     if let Some(c) = e.get::<NpcChain>() {
-        parts.push(format!("chain {}{}", c.input, if c.pressed { " (pressed)" } else { "" }));
+        parts.push(format!("chain {}{}", c.input, if c.pressed.is_some() { " (pressed)" } else { "" }));
     }
     let def = perception_of(world, npc);
     parts.extend(kept(&def, perceived, here).map(|k| format!("keeps {} {}", k.id, relative(here, k.pos))));

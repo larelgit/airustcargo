@@ -25,7 +25,7 @@ use shards_content::ContentDb;
 use crate::brain::{salt, Npc};
 use crate::def::{AttackPlanDef, ChainDef, DirectorDef};
 use crate::director::{order, Fighting};
-use crate::strike::{note_list, pool, spacing_ticks, tags_for, waiting};
+use crate::strike::{note_list, pool, spacing_ticks, strike_pressed, tags_for, waiting};
 
 /// An NPC's pending combo continuation: gameplay state, kept in replays and snapshots. Only an
 /// NPC whose attack rolled a chain carries it, from the roll to the end of the attack.
@@ -36,8 +36,11 @@ pub struct NpcChain {
     pub input: String,
     /// The action instance it belongs to (`Running::instance`): the chain dies with the attack.
     pub instance: u32,
-    /// The press was made (the continuation is on its way, or the press died unused).
-    pub pressed: bool,
+    /// The tick the press was made (the continuation is on its way, or the press died unused).
+    pub pressed: Option<u64>,
+    /// The continuation is a strike for the director's spacing: until it starts, the press
+    /// counts as a start of the pressed tick for the other NPCs.
+    pub strike: bool,
 }
 
 /// An NPC pressed the input of its combo continuation (journaled: `e7 chains light after
@@ -88,7 +91,7 @@ pub(crate) fn definition<'a>(db: &'a ContentDb, npc: &Npc, moveset: &str, action
 /// The roll when `action` starts: a chain, if the option has one and the die falls its way.
 pub(crate) fn roll(db: &ContentDb, rng: &SimRng, id: AiId, npc: &Npc, moveset: &str, action: &str, instance: u32) -> Option<NpcChain> {
     let chain = definition(db, npc, moveset, action)?;
-    rng.stream(id, salt::CHAIN).chance(chain.chance).then(|| NpcChain { input: chain.input.clone(), instance, pressed: false })
+    rng.stream(id, salt::CHAIN).chance(chain.chance).then(|| NpcChain { input: chain.input.clone(), instance, pressed: None, strike: false })
 }
 
 /// `NpcSystems::Plan`, before the planner: every NPC with a chain whose action has reached its
@@ -102,7 +105,13 @@ pub(crate) fn chain_press(
     mut npcs: Query<Fighting>,
 ) {
     let dt = time.delta_secs();
-    let mut notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref())));
+    let mut notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), f.chain)));
+    // Presses already made this tick (a hook's, a continuation's) are starts of this tick.
+    notes.extend(
+        npcs.iter()
+            .filter(|f| strike_pressed(&db, f, dt))
+            .map(|f| (*f.id, pool(&f.npc.director), tick.0)),
+    );
     for (_, entity) in order(&npcs) {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         let Some(chain) = f.chain.as_deref().cloned() else { continue };
@@ -111,7 +120,7 @@ pub(crate) fn chain_press(
             commands.entity(entity).remove::<NpcChain>();
             continue;
         };
-        if chain.pressed {
+        if chain.pressed.is_some() {
             continue;
         }
         let Some(def) = db.get::<ActionDef>(&run.action) else {
@@ -138,7 +147,8 @@ pub(crate) fn chain_press(
         }
         f.drive.press.push(chain.input.clone());
         if let Some(c) = f.chain.as_mut() {
-            c.pressed = true;
+            c.pressed = Some(tick.0);
+            c.strike = strike;
         }
         if strike {
             notes.push((*f.id, pool, tick.0));

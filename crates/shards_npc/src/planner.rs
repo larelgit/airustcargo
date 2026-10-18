@@ -25,7 +25,7 @@ use shards_core::flat;
 use crate::brain::{clamp_to_leash, salt};
 use crate::def::{AttackPlanDef, DirectorDef, SequenceBan};
 use crate::director::{order, target_of, Fighting, Grant, Targets};
-use crate::strike::{note_list, pool, spacing_ticks, waiting};
+use crate::strike::{note_list, pool, spacing_ticks, strike_pressed, waiting};
 
 /// An NPC's attack history and timers: gameplay state, kept in replays.
 #[derive(Component, Reflect, Clone, Debug, PartialEq, Default)]
@@ -291,7 +291,13 @@ pub(crate) fn plan_attacks(
 ) {
     let dt = time.delta_secs();
     let mut inflight = InFlight::collect(npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
-    let mut notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref())));
+    let mut notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), f.chain)));
+    // Presses already made this tick (a hook's, a continuation's) are starts of this tick.
+    notes.extend(
+        npcs.iter()
+            .filter(|f| strike_pressed(&db, f, dt))
+            .map(|f| (*f.id, pool(&f.npc.director), tick.0)),
+    );
     let spacing = |director: &DirectorDef| spacing_ticks(director.min_spacing, dt);
     for (id, entity) in order(&npcs) {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };

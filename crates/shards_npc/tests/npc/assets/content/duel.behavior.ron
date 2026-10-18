@@ -42,4 +42,6 @@
             "fight": (kind: "attack", rest_clamp: Some(0.3)),
         },
     ),
+    // Presses a strike on its second tick, which is when a planner NPC takes its first token (test hook `press_at_two`).
+    "presser_at_two": (initial: "go", states: {"go": (kind: "press_at_two")}),
 }

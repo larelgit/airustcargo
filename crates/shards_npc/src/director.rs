@@ -213,6 +213,10 @@ pub(crate) fn direct(
         let plan_def = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p));
         let counts_busy = plan_def.is_some_and(|p| p.rest_runs_while_busy);
         f.plan.tick(dt, f.state.current.is_none() || counts_busy);
+        // A director that no longer spaces its strikes (a hot reload) leaves no notes behind.
+        if f.strike.is_some() && DirectorDef::of(&db, &f.npc.director).min_spacing <= 0.0 {
+            commands.entity(entity).remove::<NpcStrike>();
+        }
         let Some(mut grant) = f.token.held.clone() else { continue };
         grant.age += dt;
         let running = running_attack(f.state, &grant);
@@ -322,7 +326,7 @@ pub(crate) fn direct(
 
     // 3. Grants, longest-waiting first.
     let inflight = InFlight::collect(npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
-    let notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref())));
+    let notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), f.chain)));
     let mut asking: Vec<(u64, AiId, Entity)> = Vec::new();
     for &(id, entity) in &order {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };

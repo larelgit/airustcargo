@@ -21,7 +21,7 @@
 
 use ai_core::{AiId, SimRng, SimTick};
 use bevy::prelude::*;
-use shards_action::{ActionDef, ActionStarted, ActionState, Fighter};
+use shards_action::{can_start, ActionDef, ActionStarted, ActionState, Fighter, FighterView};
 use shards_content::ContentDb;
 use shards_core::NetRole;
 
@@ -77,16 +77,24 @@ pub(crate) fn waiting(notes: &[Note], me: AiId, pool: &str, now: u64, ticks: u64
 /// The notes in `world`: every noted strike, and every press that has not started yet
 /// (counted from the tick it was pressed).
 pub(crate) fn notes_of(world: &World) -> Vec<Note> {
-    let Some(mut q) = world.try_query::<(&AiId, &Npc, Option<&NpcStrike>, Option<&AttackToken>)>() else { return Vec::new() };
-    note_list(q.iter(world).map(|(id, npc, strike, token)| (*id, npc.director.as_str(), strike, token.and_then(|t| t.held.as_ref()))))
+    let Some(mut q) = world.try_query::<(&AiId, &Npc, Option<&NpcStrike>, Option<&AttackToken>, Option<&NpcChain>)>() else {
+        return Vec::new();
+    };
+    note_list(q.iter(world).map(|(id, npc, strike, token, chain)| (*id, npc.director.as_str(), strike, token.and_then(|t| t.held.as_ref()), chain)))
 }
 
-/// The notes of NPCs given as `(id, director, last strike, token held)`.
-pub(crate) fn note_list<'a>(rows: impl Iterator<Item = (AiId, &'a str, Option<&'a NpcStrike>, Option<&'a Grant>)>) -> Vec<Note> {
+/// What [`note_list`] reads of an NPC: its id, its director, the last strike it noted, the
+/// token it holds, its pending combo continuation.
+pub(crate) type NoteRow<'a> = (AiId, &'a str, Option<&'a NpcStrike>, Option<&'a Grant>, Option<&'a NpcChain>);
+
+/// The notes of NPCs given as [`NoteRow`]s: their noted strikes, and the presses that have not
+/// started yet (a planner press, a combo continuation that is a strike), from the tick pressed.
+pub(crate) fn note_list<'a>(rows: impl Iterator<Item = NoteRow<'a>>) -> Vec<Note> {
     let mut notes: Vec<Note> = Vec::new();
-    for (id, director, strike, grant) in rows {
+    for (id, director, strike, grant, chain) in rows {
         let pending = grant.filter(|g| !g.started).and_then(|g| g.pressed);
-        for at in strike.map(|s| s.last_start).into_iter().chain(pending) {
+        let continuing = chain.filter(|c| c.strike).and_then(|c| c.pressed);
+        for at in strike.map(|s| s.last_start).into_iter().chain(pending).chain(continuing) {
             notes.push((id, pool(director), at));
         }
     }
@@ -129,6 +137,36 @@ pub(crate) fn tags_for(db: &ContentDb, npc: &Npc, moveset: &str, action: &str) -
     tags
 }
 
+/// Whether the presses already in an NPC's `NpcDrive` this tick (a state hook's, a combo
+/// continuation's) start a strike now of a director that spaces its strikes: a press the action
+/// machine would take this tick (`can_start`), whose action is not exempt. The planner counts
+/// them as starts of this tick, so it yields to them instead of starting a second strike on the
+/// same tick. (The reverse cannot be: a hook decides before the planner, so a hook never sees
+/// the planner's press of the tick.)
+pub(crate) fn strike_pressed(db: &ContentDb, f: &crate::director::FightingReadOnlyItem, dt: f32) -> bool {
+    if f.drive.press.is_empty() || f.intent.is_some_and(|i| !i.orders.is_empty()) {
+        return false;
+    }
+    let director = DirectorDef::of(db, &f.npc.director);
+    if director.min_spacing <= 0.0 {
+        return false;
+    }
+    let view = FighterView {
+        db,
+        moveset: &f.fighter.moveset,
+        state: f.state,
+        stamina: f.stamina,
+        cooldowns: f.cooldowns,
+        charges: f.charges,
+        held: &f.drive.held,
+        dead: f.dead,
+    };
+    f.drive.press.iter().any(|input| match can_start(&view, input, dt) {
+        Ok(start) => director.is_strike(&tags_for(db, f.npc, &f.fighter.moveset, &start.action)),
+        Err(_) => false,
+    })
+}
+
 /// An action began on an NPC: a strike of one whose director spaces its strikes is noted, and
 /// the attack rolls its combo continuation ([`crate::chain`]). A forced action (a stagger)
 /// is neither: it ends a chain.
@@ -157,7 +195,7 @@ pub(crate) fn action_started(
     let director = DirectorDef::of(&db, &npc.director);
     if director.min_spacing > 0.0 && director.is_strike(&tags_for(&db, npc, &fighter.moveset, &e.action)) {
         let planned = token.and_then(|t| t.held.as_ref()).is_some_and(|g| g.pressed.is_some() && !g.started);
-        let continued = chain.is_some_and(|c| c.pressed);
+        let continued = chain.is_some_and(|c| c.pressed.is_some());
         commands.entity(e.entity).insert(NpcStrike { last_start: tick.0, gated: planned || continued });
     }
     // The attack that began rolls its own continuation; the one it replaces is spent.

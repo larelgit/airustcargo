@@ -452,7 +452,7 @@ fn a_chain_is_cut_with_its_attack() {
     // Into the first swing: the roll has been made.
     step(&mut app, 8);
     let chain = app.world().get::<shards_npc::NpcChain>(who).cloned().expect("rolled when the attack began");
-    assert_eq!((chain.input.as_str(), chain.pressed), ("light", false));
+    assert_eq!((chain.input.as_str(), chain.pressed), ("light", None));
     // A stagger cuts the attack: the chain goes with it and nothing is pressed.
     assert!(stagger(app.world_mut(), who, StaggerCause::Dev));
     step(&mut app, 60);
@@ -653,4 +653,59 @@ fn a_target_kept_in_sight_beyond_the_sight_range_is_marked() {
     assert_eq!(v["perceived"][0]["kept"], serde_json::json!(true), "{v}");
     let overlay = text(&ok(&mut app, "npc_overlay", serde_json::json!({})));
     assert!(overlay.contains("keeps e2 14.0m N"), "{overlay}");
+}
+
+/// A hook that presses a strike on tick 2, the tick a planner NPC on `pair` takes its first
+/// token and would press.
+fn press_at_two(c: &NpcCtx, _: &Params, out: &mut NpcOutput) {
+    if c.tick == 2 {
+        out.press.push("light".into());
+    }
+}
+
+#[test]
+fn the_planner_yields_to_a_hook_that_pressed_a_strike_on_the_same_tick() {
+    for hooked in [0, 1] {
+        let (mut app, who) = pair("spaced", "pair", 7, |app| {
+            app.add_npc_state("press_at_two", press_at_two);
+        });
+        app.world_mut().entity_mut(who[hooked]).insert(Npc::new("presser_at_two", "grunt").with_director("spaced"));
+        // `step` fails the test if the rule `npc.strike_spacing` is violated on the way.
+        step(&mut app, 200);
+        let hook = starts(&app, who[hooked], "jab");
+        let planner = starts(&app, who[1 - hooked], "jab");
+        assert_eq!(hook, vec![2], "hooked {hooked}: the hook pressed once, on tick 2");
+        assert!(planner[0] >= 2 + 42, "hooked {hooked}: the planner waited out the spacing, it started on {}", planner[0]);
+        assert_eq!(planner[0], 2 + 42, "and went the tick it ran out");
+    }
+}
+
+#[test]
+fn a_director_that_stops_spacing_leaves_no_notes() {
+    let (mut app, who) = pair("spaced", "pair", 7, |_| {});
+    step(&mut app, 120);
+    assert!(who.iter().any(|e| app.world().get::<NpcStrike>(*e).is_some()));
+    // The director is swapped for one without a spacing (a hot reload does the same).
+    for e in who {
+        app.world_mut().get_mut::<Npc>(e).unwrap().director = "loose".into();
+    }
+    step(&mut app, 3);
+    assert!(who.iter().all(|e| app.world().get::<NpcStrike>(*e).is_none()), "the notes went with the spacing");
+}
+
+#[test]
+fn two_chaining_planners_keep_the_spacing_through_their_continuations() {
+    for seed in [7, 11, 23] {
+        let (mut app, who) = pair_of("combo", "spaced", "chain_always", seed, |_| {});
+        // `step` fails the test if the rule `npc.strike_spacing` is violated on the way.
+        step(&mut app, 2400);
+        let mut all: Vec<(u64, usize, String)> = Vec::new();
+        for (i, e) in who.iter().enumerate() {
+            all.extend(started(&app, *e).into_iter().map(|(t, a)| (t, i, a)));
+        }
+        all.sort();
+        assert!(all.iter().any(|(_, _, a)| a == "swing_2") && all.iter().any(|(_, _, a)| a == "swing_3"), "seed {seed}: chains went through");
+        let gaps: Vec<u64> = all.windows(2).filter(|w| w[0].1 != w[1].1).map(|w| w[1].0 - w[0].0).collect();
+        assert!(!gaps.is_empty() && gaps.iter().all(|g| *g >= 42), "seed {seed}: {gaps:?}");
+    }
 }
