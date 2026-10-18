@@ -418,8 +418,11 @@ pub enum Steer {
     Move,
     /// Like `Move`, but with no press direction and no movement input the action goes **backward**,
     /// away from where the body faces (a standing dodge is a backstep). The facing is read when the
-    /// action starts; the body then turns to the action's direction like it does for any action. Until an
-    /// action can keep the body's facing, a standing backstep therefore turns the body around.
+    /// action starts. With `face: Keep` ([`ActionDef::face`]) the body keeps that facing (unless a
+    /// lock-on target or an aim point turns it), so the backstep hops back still looking ahead and a
+    /// second one goes the same way; with `face: Run` (the default) the body turns to the action's
+    /// direction like it does for any action, so a standing backstep turns it around. An action with
+    /// `turn` spans starts from the body's facing whatever its steer says, so a backstep has none.
     MoveOrBack,
 }
 
@@ -583,6 +586,12 @@ pub struct ActionDef {
     /// by [`actions_to_modifiers`](crate::actions_to_modifiers), which sees the action as it was at the
     /// start of the tick (on a client's predicted body, the action it shows). `0` means "turns at
     /// once", as everywhere in the locomotion params, not "cannot turn".
+    ///
+    /// A rate of the body, not of the run: the run's own facing (where its hits, guard and
+    /// displacement point) turns only by [`turn`](Self::turn) (or snaps by `track_until`), and the
+    /// controller then turns the body toward it once a tick at this rate. With both on one action
+    /// each bounds its own: the run turns at the spans' rate and the body follows it no faster than
+    /// this, so a lower rate here leaves the body behind its own swing, never turned twice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_speed_deg: Option<f32>,
     /// While this action runs, stamina does not regenerate; when it ends (a block is let go) the
@@ -616,6 +625,11 @@ pub struct ActionDef {
     /// tick); outside every span the facing holds. The run starts from the body's facing, with no
     /// snap, and turns toward its lock-on target, else the aim point, else the movement input (a
     /// player steering the attack). Empty: `track_until` (the old rule). Not both.
+    ///
+    /// The spans turn the run's facing (`Running::facing`: its hits, guard arc and displacement),
+    /// not the body: the body turns toward it in the controller, once a tick, at the controller's
+    /// rate ([`turn_speed_deg`](Self::turn_speed_deg) of the action, else the locked rate, else the
+    /// free one). A span faster than that rate leaves the body behind its swing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub turn: Vec<(Span, f32)>,
     /// Attack assist: with a lock-on target, the facing stays within `angle` degrees of the
@@ -1188,8 +1202,11 @@ impl Check<'_, '_, '_> {
             }
             if def.turn.is_empty() && def.track_until <= 0.0 {
                 self.refs.error("assist limits how the action tracks its target, and it does not track: give it turn spans or track_until");
-            } else if def.steer == Steer::Move {
-                self.refs.error("assist limits tracking a lock-on target, which a `steer: Move` action never does; leave assist out");
+            } else if matches!(def.steer, Steer::Move | Steer::MoveOrBack) {
+                self.refs.error(format!(
+                    "assist limits tracking a lock-on target, which a `steer: {:?}` action never does; leave assist out",
+                    def.steer
+                ));
             }
         }
         self.number("miss_recovery", def.miss_recovery);
@@ -1779,6 +1796,7 @@ mod tests {
                 cancels: [(span: Secs(0.4, 0.4), into: [Input("light")], queue: Phase("gone"))]),
             "f": (net_id: 7, phases: [("windup", 0.3)], assist: (angle: 20)),
             "g": (net_id: 8, phases: [("roll", 0.3)], steer: Move, track_until: 0.2, assist: (angle: 20)),
+            "i": (net_id: 10, phases: [("roll", 0.3)], steer: MoveOrBack, track_until: 0.2, assist: (angle: 20)),
             "h": (net_id: 9, phases: [("windup", 0.3)], cost: (stamina: 5, cooldown_if_interrupted: 0.4)),
             "ok": (net_id: 6, phases: [("windup", 0.3), ("active", 0.1)],
                 hits: [(span: Phase("active"), shape: Sphere(radius: 1), damage: 5)], charge: (after: 0.35, into: "a", until: 0.38),
@@ -1803,6 +1821,7 @@ mod tests {
         assert!(has("assist.angle must be in (0, 180] degrees (is 200)") && has("assist.close must be a number >= 0"), "{errors:#?}");
         assert!(has("action `f`: assist limits how the action tracks its target, and it does not track"), "{errors:#?}");
         assert!(has("action `g`: assist limits tracking a lock-on target, which a `steer: Move` action never does"), "{errors:#?}");
+        assert!(has("action `i`: assist limits tracking a lock-on target, which a `steer: MoveOrBack` action never does"), "{errors:#?}");
         assert!(has("action `h`: cost.cooldown_if_interrupted is a share of cost.cooldown, which is 0"), "{errors:#?}");
         assert!(has("cost.cooldown_key is empty") && has("cost.cooldown_if_interrupted must be between 0 and 1 (is 1.5)"));
         assert!(has("action `c`: charge.after 0.5 must lie in the action [0, 0.3)"), "{errors:#?}");

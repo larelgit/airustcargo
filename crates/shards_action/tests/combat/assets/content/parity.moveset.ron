@@ -2,4 +2,7 @@
     "stancer": (
         inputs: {"dodge": "back_roll", "block": "stance_block"},
     ),
+    "stancer_keep": (
+        inputs: {"dodge": "back_roll_keep", "technique.1": "span_stance", "technique.2": "span_free"},
+    ),
 }
