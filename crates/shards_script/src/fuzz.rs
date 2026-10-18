@@ -155,9 +155,9 @@ impl FuzzPlan {
 }
 
 /// How much of a tool's credit stays after a round.
-const STEER_DECAY: f64 = 0.97;
+const STEER_DECAY: f64 = 0.995;
 /// The most a tool's weight grows by, as a multiple of its base weight.
-const STEER_CAP: f64 = 8.0;
+const STEER_CAP: f64 = 15.0;
 /// Integer weights per unit of base weight: room for the steered share to be a fraction.
 const STEER_SCALE: f64 = 16.0;
 
@@ -171,7 +171,7 @@ pub struct Steering {
 impl Steering {
     /// A round is over: every credit decays, and each tool called in it is credited with the
     /// `new` signatures that appeared.
-    pub fn credit_round(&mut self, called: &[&str], new: u64) {
+    pub fn credit_round(&mut self, called: &[&str], before: &[&str], new: u64) {
         for credit in self.credit.values_mut() {
             *credit *= STEER_DECAY;
         }
@@ -184,9 +184,17 @@ impl Steering {
         for tool in tools {
             *self.credit.entry(tool.to_owned()).or_default() += new as f64;
         }
+        // What led into the round shares the credit, half of it: a state is often a sequence (a heavy
+        // attack, then a dodge in its windup), and the tool before it opened the way.
+        let mut lead: Vec<&str> = before.to_vec();
+        lead.sort_unstable();
+        lead.dedup();
+        for tool in lead {
+            *self.credit.entry(tool.to_owned()).or_default() += new as f64 / 2.0;
+        }
     }
 
-    /// The weight of `tool` whose base weight is `base`: grows with its credit, up to nine times.
+    /// The weight of `tool` whose base weight is `base`: grows with its credit, up to sixteen times.
     pub fn weight(&self, tool: &str, base: u64) -> u64 {
         let credit = self.credit.get(tool).copied().unwrap_or(0.0).min(STEER_CAP);
         (base as f64 * STEER_SCALE * (1.0 + credit)) as u64
@@ -518,6 +526,8 @@ pub fn run(driver: &mut dyn Driver, plan: &FuzzPlan, tools: &[ToolDesc]) -> Resu
         Alphabet::Classic => Vec::new(),
     };
     let mut steering = Steering::default();
+    // The tools of the round before, which share the credit of the round after.
+    let mut led_into: Vec<String> = Vec::new();
     let mut distinct = match plan.steer {
         true => coverage_poll(&mut *run.driver, &plan.agent, None)?.0,
         false => 0,
@@ -583,7 +593,9 @@ pub fn run(driver: &mut dyn Driver, plan: &FuzzPlan, tools: &[ToolDesc]) -> Resu
             let (now, new) = coverage_poll(&mut *run.driver, &plan.agent, Some(distinct))?;
             distinct = now;
             let called: Vec<&str> = calls.iter().map(|(t, _)| t.as_str()).collect();
-            steering.credit_round(&called, new);
+            let before: Vec<&str> = led_into.iter().map(String::as_str).collect();
+            steering.credit_round(&called, &before, new);
+            led_into = called.iter().map(|t| (*t).to_owned()).collect();
         }
         run.report.played.push(Round { calls, ticks });
         if let Some(tick) = step.tick {
@@ -1018,16 +1030,23 @@ mod tests {
     fn steering_credits_the_tools_called_in_a_round_that_found_something_new() {
         let mut steering = Steering::default();
         assert_eq!(steering.weight("zap", 1), 16);
-        steering.credit_round(&["zap", "aim", "zap"], 2);
+        steering.credit_round(&["zap", "aim", "zap"], &[], 2);
         assert_eq!(steering.credit("zap"), 2.0);
         assert_eq!(steering.credit("hop"), 0.0);
         assert_eq!(steering.weight("zap", 1), 48);
         assert_eq!(steering.weight("zap", 0), 0, "weight 0 drops a tool whatever it earned");
         // Credit fades, and is capped.
-        steering.credit_round(&["aim"], 0);
+        steering.credit_round(&["aim"], &[], 0);
         assert!(steering.credit("zap") < 2.0);
-        steering.credit_round(&["zap"], 1000);
-        assert_eq!(steering.weight("zap", 1), 16 * 9);
+        steering.credit_round(&["zap"], &[], 1000);
+        assert_eq!(steering.weight("zap", 1), 16 * 16);
+    }
+
+    #[test]
+    fn the_tool_before_a_round_that_found_something_new_shares_half_its_credit() {
+        let mut steering = Steering::default();
+        steering.credit_round(&["dodge"], &["heavy_attack"], 4);
+        assert_eq!((steering.credit("dodge"), steering.credit("heavy_attack")), (4.0, 2.0));
     }
 
     #[test]

@@ -15,6 +15,7 @@
 //! | `SHARDS_FUZZ_INPUTS` | 2000 | rounds per run (an input or a chaos call, then a step) |
 //! | `SHARDS_FUZZ_HEAVY` | 300 | heavy mode's period in ticks, 0 = off (60 costs about 4 minutes a run: see "Fuzzing" in docs/manual.md) |
 //! | `SHARDS_FUZZ_MINUTES` | 0 | no run starts after this many minutes (0 = no limit); the nightly passes 85 |
+//! | `SHARDS_FUZZ_STEER` | 1 | 0 plays the plain weights |
 //! | `SHARDS_FUZZ_BUDGET` | 300 | attempts a shrink may make |
 //! | `SHARDS_FUZZ_CHAOS` | 0.02 | share of rounds that make a developer call |
 //! | `SHARDS_FUZZ_SHRINK_SECS` | 300 | wall-clock limit of one shrink |
@@ -169,7 +170,7 @@ fn the_nightly_fuzz_campaign() {
         let plan = FuzzPlan {
             rounds: inputs as u32,
             chaos: env_f64("SHARDS_FUZZ_CHAOS", 0.02),
-            steer: true,
+            steer: env_u64("SHARDS_FUZZ_STEER", 1) != 0,
             save_replay: true,
             stem: format!("campaign-seed{run_seed}"),
             ..FuzzPlan::new(run_seed)
