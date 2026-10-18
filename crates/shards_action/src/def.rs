@@ -405,6 +405,10 @@ pub enum Steer {
     /// The press's direction, else the movement input, the current facing (dodges:
     /// a lock-on target does not pull a roll toward itself).
     Move,
+    /// Like `Move`, but with no press direction and no movement input the action goes **backward**,
+    /// away from where the body faces (a standing dodge is a backstep). The facing is read when the
+    /// action starts; the body then turns to the action's direction like it does for any action.
+    MoveOrBack,
 }
 
 /// Where an action's `displacement` is baked from: clip `clip` of animset `animset`, whose
@@ -500,6 +504,19 @@ pub struct ActionDef {
     /// speed meanwhile (0.5 for a raised block).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub move_speed: Option<f32>,
+    /// Turning speed (degrees per second) of the body while this action runs, instead of the
+    /// locomotion params' (a raised guard turns slower than a free walk). `None`: the params' rate
+    /// (its locked rate while the action names a facing). Written to `MoveModifiers::turn_speed_deg`
+    /// by [`actions_to_modifiers`](crate::actions_to_modifiers), which sees the action as it was at the
+    /// start of the tick.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_speed_deg: Option<f32>,
+    /// While this action runs, stamina does not regenerate; when it ends (a block is let go) the
+    /// regeneration waits this many seconds more. The wait is never shorter than the one the last
+    /// spend left (`Stamina::delay`). `None`: the action holds nothing. A held guard with a
+    /// `1.3` drop delay is `regen_hold: 1.3`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regen_hold: Option<f32>,
     /// Animation clip; the animation follows the action, never the other way round. In a game
     /// with animsets the content check wants one of them to play it ([`AnimSet`](crate::AnimSet)):
     /// leave it out for an action that shows no clip of its own (the locomotion clip plays on).
@@ -686,6 +703,12 @@ impl ContentDef for ActionDef {
         check.number("track_until", self.track_until);
         if let Some(m) = self.move_speed {
             check.number("move_speed", m);
+        }
+        if let Some(t) = self.turn_speed_deg {
+            check.number("turn_speed_deg", t);
+        }
+        if let Some(h) = self.regen_hold {
+            check.number("regen_hold", h);
         }
         for (i, hit) in self.hits.iter().enumerate() {
             let at = format!("hits[{i}]");
@@ -1096,6 +1119,12 @@ pub struct CombatTuning {
     /// `Fraction(0)`: the sprint simply stops at an empty bar and goes on as soon as there is any.
     #[serde(skip_serializing_if = "is_on_release")]
     pub sprint_resume: SprintResume,
+    /// A sprint that costs nothing (the body's `MoveModifiers::sprint_cost` is 0, or a fast swim with
+    /// no drain) holds the stamina regeneration back this many seconds past the last tick of the
+    /// sprint, instead of the full `Stamina::delay` a paid spend sets; never shorter than the wait
+    /// that is already running. `None` (the default): a free sprint restarts the whole delay.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub free_sprint_regen_hold: Option<f32>,
     /// How far `lock_on` looks for a target (m).
     pub lock_on_range: f32,
     /// Share of a body's height where a `LineOfSight` hit's ray starts and ends (a chest).
@@ -1121,6 +1150,7 @@ impl Default for CombatTuning {
             max_statuses: 3,
             sprint_stamina_per_s: 10.0,
             sprint_resume: SprintResume::OnRelease,
+            free_sprint_regen_hold: None,
             lock_on_range: 20.0,
             sight_height: SIGHT_HEIGHT,
         }
@@ -1153,6 +1183,11 @@ impl ContentDef for CombatTuning {
             if !(v >= 0.0 && v.is_finite()) {
                 refs.error(format!("{name} must be a number >= 0 (is {v})"));
             }
+        }
+        if let Some(h) = self.free_sprint_regen_hold
+            && !(h >= 0.0 && h.is_finite())
+        {
+            refs.error(format!("free_sprint_regen_hold must be a number >= 0 (is {h})"));
         }
         if let SprintResume::Fraction(f) = self.sprint_resume
             && !(0.0..=1.0).contains(&f)

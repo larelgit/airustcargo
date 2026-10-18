@@ -103,6 +103,17 @@ impl Stamina {
         self.since_use = 0.0;
     }
 
+    /// Holds the regeneration back for at least `secs` more seconds, counted from now: the wait is
+    /// the longer of what the last spend left and `secs` (`since_use` is moved back to where `secs`
+    /// remain; it goes below zero when `secs` exceeds `delay`, which regeneration and the
+    /// readiness estimate both read as a longer wait). Nothing is spent.
+    pub fn hold_regen(&mut self, secs: f32) {
+        let latest = self.delay - secs;
+        if self.since_use > latest {
+            self.since_use = latest;
+        }
+    }
+
     /// Whether a sprint is held back right now: the bar is empty, or the lock a dry sprint set
     /// has not opened under `rule` (see [`SprintResume`]). `held`: the sprint button is down.
     /// The host's `settle_exhaustion` and a client's prediction agree through this.
@@ -491,7 +502,8 @@ pub fn update_fighters(
     mut fighters: Query<Resources, With<Fighter>>,
 ) {
     let dt = time.delta_secs();
-    let drain = CombatTuning::of(&db).sprint_stamina_per_s;
+    let tuning = CombatTuning::of(&db);
+    let drain = tuning.sprint_stamina_per_s;
     for (entity, fighter, stamina, poise, mut cooldowns, motion, dead, modifiers, body) in &mut fighters {
         if let Some(mut s) = stamina {
             if motion.is_some_and(|m| m.sprinting) && !dead {
@@ -505,7 +517,11 @@ pub fn update_fighters(
                         cost => (drain * cost * dt, cost > 0.0),
                     }
                 };
-                s.spend(amount);
+                match tuning.free_sprint_regen_hold {
+                    // A free sprint holds the regeneration back for its own, shorter time.
+                    Some(hold) if !costly => s.hold_regen(hold),
+                    _ => s.spend(amount),
+                }
                 // A sprint that costs nothing cannot run the stamina dry; a rule with no lock sets none.
                 s.exhausted |= costly && s.current <= EPS && sprint_rule(&db, motion, body).latches();
             } else {

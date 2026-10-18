@@ -384,9 +384,9 @@ pub fn move_characters<F: QueryFilter + 'static>(
         if tf.translation != feet {
             tf.translation = feet;
         }
-        let turn_speed =
-            if state.mode == MotionMode::Water && params.swim_turn_speed_deg > 0.0 { params.swim_turn_speed_deg } else { params.turn_speed_deg };
-        turn(&mut tf, look_dir(&now, &state), turn_speed, dt);
+        let look = look_dir(&now, &state, params.turn_toward_input);
+        let turn_speed = turn_rate(params, modifiers, state.mode, now.face.is_some() && look.is_some());
+        turn(&mut tf, look, turn_speed, dt);
         let tracks = params.tracks_landings();
         for note in notes {
             trigger(&mut commands, entity, note, tracks);
@@ -440,13 +440,37 @@ fn trigger(commands: &mut Commands, entity: Entity, note: Note, tracks: bool) {
     }
 }
 
-/// Where to face: the input's `face`, else the climb, else the way the character moves.
-fn look_dir(input: &LocomotionInput, state: &MotionState) -> Option<Vec3> {
+/// The turning speed (degrees per second) for this tick, by who asks for the facing: a swimmer's own
+/// rate in the water, else a stance's ([`MoveModifiers::turn_speed_deg`], a raised guard), else the
+/// locked rate when the input names a facing (`faced`: a lock-on, an aim point, an action's facing),
+/// else the free rate. A rate the params leave at 0 falls back to the next one.
+fn turn_rate(params: &CharacterParams, modifiers: &MoveModifiers, mode: MotionMode, faced: bool) -> f32 {
+    if mode == MotionMode::Water && params.swim_turn_speed_deg > 0.0 {
+        params.swim_turn_speed_deg
+    } else if let Some(stance) = modifiers.turn_speed_deg {
+        stance
+    } else if faced && params.locked_turn_speed_deg > 0.0 {
+        params.locked_turn_speed_deg
+    } else {
+        params.turn_speed_deg
+    }
+}
+
+/// Where to face: the input's `face`, else the climb, else (`toward_input`) the movement input, else the
+/// way the character moves.
+fn look_dir(input: &LocomotionInput, state: &MotionState, toward_input: bool) -> Option<Vec3> {
     if let Some(face) = input.face.and_then(|f| flat(f).try_normalize()) {
         return Some(face);
     }
     if let Some(climb) = state.mantle {
         return flat(climb.to - climb.from).try_normalize();
+    }
+    // Asked to, a body with a movement input turns to it, even when a wall holds its velocity at zero.
+    if toward_input && !input.locked {
+        let wish = flat(input.move_dir);
+        if wish.length() > 0.1 {
+            return Some(wish.normalize());
+        }
     }
     let moving = flat(state.velocity);
     (!input.locked && moving.length() > 0.1).then(|| moving.normalize())

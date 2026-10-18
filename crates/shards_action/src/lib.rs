@@ -118,6 +118,7 @@ mod orders;
 mod predict;
 #[cfg(feature = "render")]
 pub mod render;
+pub mod stance;
 pub mod status;
 mod tools;
 pub mod zone;
@@ -153,6 +154,7 @@ pub use machine::{
     ActionState, Blocker, FighterView, Healed, InputBuffer, Queued, Running, Start, Telegraph,
 };
 pub use predict::{shown_state, ActionPredictor, PredictedAction, CONFIRM_SLACK};
+pub use stance::{actions_to_modifiers, hold_regen_during_actions};
 pub use status::{
     statuses_to_modifiers, NoStatusSlow,
     add_status_buildup, StatusApplied, StatusDef, StatusEffects, StatusExpired, StatusHook, StatusHooks, StatusResist,
@@ -345,12 +347,17 @@ impl Plugin for ActionPlugin {
                     machine::apply_effects.in_set(ActionSystems::Effects),
                     combat::resolve_hits.in_set(ActionSystems::Hits),
                     fighter::push_bodies.in_set(ActionSystems::Push),
+                    stance::hold_regen_during_actions.in_set(ActionSystems::Fighters).before(fighter::update_fighters),
                     fighter::update_fighters.in_set(ActionSystems::Fighters),
                     machine::finish_actions.in_set(ActionSystems::Fighters).after(fighter::update_fighters),
                     fighter::tick_protection.in_set(ActionSystems::Fighters).after(machine::finish_actions),
                     status::update_statuses.in_set(ActionSystems::Statuses),
                     status::statuses_to_modifiers::<()>.in_set(ModifierSystems::Statuses),
                     status::statuses_to_modifiers::<With<Predicted>>.in_set(ModifierSystems::PredictStatuses),
+                    stance::actions_to_modifiers::<()>.in_set(ModifierSystems::Contribute).after(ModifierSystems::Statuses),
+                    stance::actions_to_modifiers::<With<Predicted>>
+                        .in_set(ModifierSystems::PredictContribute)
+                        .after(ModifierSystems::PredictStatuses),
                     combat::check_deaths.in_set(ActionSystems::Deaths),
                     orders::steer_attack_orders.in_set(ActionSystems::PredictOrders),
                     predict::predict_actions.in_set(ActionSystems::Predict),

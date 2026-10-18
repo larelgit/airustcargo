@@ -8,6 +8,7 @@ mod golden;
 mod hits;
 mod modifiers;
 mod outcome;
+mod parity;
 mod reactions;
 mod replay;
 #[cfg(feature = "render")]
