@@ -11,6 +11,7 @@ use std::f32::consts::{PI, TAU};
 use bevy::math::FloatPow;
 use bevy::prelude::*;
 
+use super::tuning::{ArmTuning, CameraOffsets, FlickTuning, FramingTuning, TraumaTuning};
 use crate::physics::{LayerMask, PhysicsWorld, QueryFilter, Shape};
 
 /// Unit vector from the focus point to the camera.
@@ -150,6 +151,11 @@ pub struct ShakeOffset {
 /// A smooth, repeatable wobble: `trauma` (0..1) is squared so small hits stay subtle,
 /// `t` is time in seconds. The same inputs give the same offset.
 pub fn shake_offset(trauma: f32, t: f32) -> ShakeOffset {
+    shake_offset_with(trauma, t, &TraumaTuning::default())
+}
+
+/// [`shake_offset`] with the amplitudes of `tuning` (its `decay` is the caller's business).
+pub fn shake_offset_with(trauma: f32, t: f32, tuning: &TraumaTuning) -> ShakeOffset {
     let amount = trauma.clamp(0.0, 1.0).squared();
     if amount == 0.0 {
         return ShakeOffset::default();
@@ -159,8 +165,10 @@ pub fn shake_offset(trauma: f32, t: f32) -> ShakeOffset {
         0.5 * (ops::sin(TAU * 7.3 * t + phase) + ops::sin(TAU * 11.7 * t + phase * 1.7))
     };
     ShakeOffset {
-        translation: Vec3::new(noise(1.0), noise(2.0), noise(3.0)) * 0.12 * amount,
-        rotation: Vec3::new(noise(4.0), noise(5.0), noise(6.0)) * Vec3::new(2.0, 2.0, 3.0).map(f32::to_radians) * amount,
+        translation: Vec3::new(noise(1.0), noise(2.0), noise(3.0)) * tuning.shift_m * amount,
+        rotation: Vec3::new(noise(4.0), noise(5.0), noise(6.0))
+            * Vec3::new(tuning.pitch_deg, tuning.yaw_deg, tuning.roll_deg).map(f32::to_radians)
+            * amount,
     }
 }
 
@@ -186,6 +194,150 @@ pub fn aim_assist(look: Vec2, error: Vec2, strength: f32) -> Vec2 {
 /// frame-rate independent.
 pub fn damp(current: f32, target: f32, rate: f32, dt: f32) -> f32 {
     current + (target - current) * (1.0 - ops::exp(-rate * dt))
+}
+
+/// One step of a critically damped spring: `x` (with velocity `v`) settles on `target` at
+/// angular rate `omega` (1/s, no overshoot). The closed form, so it is exact for any `dt` and
+/// frame-rate independent: one step of `2 dt` is the same as two of `dt`. A landing dip is
+/// this with `target` 0 and a kick added to `v`. Returns the new `(x, v)`.
+pub fn critically_damped_step(x: f32, v: f32, target: f32, omega: f32, dt: f32) -> (f32, f32) {
+    let d = x - target;
+    let c = v + omega * d;
+    let decay = ops::exp(-omega * dt);
+    (target + (d + c * dt) * decay, (v - omega * c * dt) * decay)
+}
+
+/// The tilt range in force: the tuning's `base` (lowest, highest) narrowed by the game's
+/// [`CameraOffsets`]. An override outside `base` is held to it, so an override only narrows,
+/// and the lowest never ends above the highest.
+pub fn pitch_limits(base: (f32, f32), offsets: &CameraOffsets) -> (f32, f32) {
+    let (lo, hi) = (base.0.min(base.1), base.0.max(base.1));
+    let pick = |over: Option<f32>, default: f32| over.filter(|v| v.is_finite()).map_or(default, |v| v.clamp(lo, hi));
+    let low = pick(offsets.pitch_min, lo);
+    (low, pick(offsets.pitch_max, hi).max(low))
+}
+
+/// Turns a locked-on camera toward framing `target`: behind the line from the target to
+/// `focus`, the yaw and the pitch each catching up at their own exact exponential rate over
+/// `dt`. A target nearer than `min_horizontal` (on the ground, from `focus`) leaves the camera
+/// as it is. Returns the new `(yaw, pitch)`; the caller clamps the pitch to its limits.
+pub fn lock_framing(yaw: f32, pitch: f32, focus: Vec3, target: Vec3, framing: &FramingTuning, dt: f32) -> (f32, f32) {
+    let offset = focus - target;
+    if Vec2::new(offset.x, offset.z).length() < framing.min_horizontal {
+        return (yaw, pitch);
+    }
+    let (want_yaw, line_pitch) = orbit_angles(offset);
+    let (clamp_lo, clamp_hi) = framing.pitch_clamp;
+    let want_pitch = framing.pitch_target.unwrap_or_else(|| line_pitch.clamp(clamp_lo, clamp_hi.max(clamp_lo)));
+    (
+        wrap_angle(yaw + wrap_angle(want_yaw - yaw) * (1.0 - ops::exp(-framing.yaw_rate * dt))),
+        damp(pitch, want_pitch, framing.pitch_rate, dt),
+    )
+}
+
+/// The nominal length of the arm after a frame: it follows `wanted` (the camera's `distance`)
+/// at `arm.follow_rate`, or is `wanted` at once without one (or before it has a length).
+pub fn arm_length(current: f32, wanted: f32, arm: &ArmTuning, dt: f32) -> f32 {
+    match arm.follow_rate {
+        Some(rate) if current > 0.0 => damp(current, wanted, rate, dt),
+        _ => wanted,
+    }
+}
+
+/// How far out the camera stands this frame. `free` is how far it could stand along the arm
+/// (the nominal length when nothing is in the way, else where the wall is); `previous` is
+/// where it stood last frame (0: nowhere yet). A wall shortens the arm at once; once it lets
+/// go, the arm grows back at `arm.follow_rate` (at once without one). Never past `free`, so
+/// never into a wall, and never closer than `arm.min_distance` (as far as `free` allows).
+pub fn arm_reach(previous: f32, free: f32, arm: &ArmTuning, dt: f32) -> f32 {
+    let reach = match arm.follow_rate {
+        Some(rate) if previous > 0.0 && free > previous => damp(previous, free, rate, dt),
+        _ => free,
+    };
+    reach.max(arm.min_distance.min(free)).min(free)
+}
+
+/// What the look flick has accumulated, for switching the lock-on target. Pure state: the
+/// system feeds it the mouse's pixels, the stick's deflection and the frame times, and acts
+/// on what it returns.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FlickState {
+    /// Horizontal mouse motion summed so far (px, positive right).
+    pub accum_px: f32,
+    /// Seconds of the simulation clock left before the next switch.
+    pub cooldown: f32,
+    /// Whether the stick has come back below its re-arm level since its last switch.
+    pub stick_ready: bool,
+}
+
+impl Default for FlickState {
+    fn default() -> Self {
+        Self { accum_px: 0.0, cooldown: 0.0, stick_ready: true }
+    }
+}
+
+impl FlickState {
+    /// Runs the cooldown down by `sim_dt`, the frame's time on the simulation clock (0 while
+    /// the game is paused).
+    pub fn tick(&mut self, sim_dt: f32) {
+        self.cooldown = (self.cooldown - sim_dt).max(0.0);
+    }
+
+    /// The mouse moved `px` horizontally (right is positive) over a frame of `frame_dt` real
+    /// seconds. Unlocked, the sum is dropped. Locked, the sum drains by the tuning's decay (or
+    /// is dropped every frame without one), `px` is added, and a sum past the threshold with
+    /// the cooldown over is a flick: the side comes back and the sum starts again. The sum
+    /// keeps adding while the cooldown blocks a switch.
+    pub fn mouse(&mut self, flick: &FlickTuning, px: f32, frame_dt: f32, locked: bool) -> Option<Side> {
+        if !locked {
+            self.accum_px = 0.0;
+            return None;
+        }
+        let drained = match flick.mouse_decay_px_s {
+            Some(decay) => self.accum_px.signum() * (self.accum_px.abs() - decay * frame_dt).max(0.0),
+            None => 0.0,
+        };
+        self.accum_px = drained + px;
+        if self.cooldown > 0.0 || self.accum_px.abs() < flick.mouse_threshold_px {
+            return None;
+        }
+        let side = if self.accum_px > 0.0 { Side::Right } else { Side::Left };
+        self.accum_px = 0.0;
+        Some(side)
+    }
+
+    /// The right stick is deflected `x` sideways (right is positive, -1..1). Called every frame
+    /// so the stick can re-arm: it must come back below `stick_rearm` after a switch (no such
+    /// rule without one). A deflection past the threshold on a locked camera with the
+    /// cooldown over is a flick.
+    pub fn stick(&mut self, flick: &FlickTuning, x: f32, locked: bool) -> Option<Side> {
+        if flick.stick_rearm.is_some_and(|rearm| x.abs() < rearm) {
+            self.stick_ready = true;
+        }
+        let ready = flick.stick_rearm.is_none() || self.stick_ready;
+        if !locked || !ready || self.cooldown > 0.0 || x.abs() < flick.stick_threshold {
+            return None;
+        }
+        self.stick_ready = false;
+        Some(if x > 0.0 { Side::Right } else { Side::Left })
+    }
+
+    /// A lock was just taken from nothing, with the stick at `x`: a stick already pushed over
+    /// cannot flick the fresh target (the click that locked on came with it) until it comes
+    /// back below its re-arm level.
+    pub fn lock_taken(&mut self, flick: &FlickTuning, x: f32) {
+        if let Some(rearm) = flick.stick_rearm {
+            self.stick_ready = x.abs() < rearm;
+        }
+    }
+
+    /// A flick was acted on: `switched` says whether it found a target to switch to. The
+    /// cooldown starts after a switch, and after a miss only if the tuning says so.
+    pub fn flicked(&mut self, flick: &FlickTuning, switched: bool) {
+        if switched || flick.cooldown_on_miss {
+            self.cooldown = flick.cooldown_s;
+        }
+    }
 }
 
 /// `angle` turned into -π..π.
@@ -309,5 +461,251 @@ mod tests {
         let two = damp(damp(0.0, 1.0, 5.0, 0.05), 1.0, 5.0, 0.05);
         assert!((one - two).abs() < 1e-5);
         assert!((wrap_angle(3.0 * PI) - PI).abs() < 1e-5 || (wrap_angle(3.0 * PI) + PI).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_critically_damped_step_is_exact_for_any_frame_rate() {
+        let (omega, target) = (12.5, 0.3);
+        let (x, v) = (-0.12, 0.8);
+        let (x1, v1) = critically_damped_step(x, v, target, omega, 0.032);
+        let (xa, va) = critically_damped_step(x, v, target, omega, 0.016);
+        let (x2, v2) = critically_damped_step(xa, va, target, omega, 0.016);
+        assert!((x1 - x2).abs() < 1e-5 && (v1 - v2).abs() < 1e-5, "{x1} {x2} {v1} {v2}");
+        // Eight frames of 4 ms are one frame of 32 ms.
+        let (mut xs, mut vs) = (x, v);
+        for _ in 0..8 {
+            (xs, vs) = critically_damped_step(xs, vs, target, omega, 0.004);
+        }
+        assert!((xs - x1).abs() < 1e-5 && (vs - v1).abs() < 1e-5);
+        // It settles on the target without crossing it, and a zero step changes nothing.
+        let (mut x, mut v) = (1.0, 0.0);
+        for _ in 0..120 {
+            (x, v) = critically_damped_step(x, v, 0.0, 10.0, 1.0 / 60.0);
+            assert!(x >= 0.0, "no overshoot from rest: {x}");
+        }
+        assert!(x < 1e-3 && v.abs() < 1e-2);
+        let (x0, v0) = critically_damped_step(0.4, -2.0, 1.0, 9.0, 0.0);
+        assert!((x0 - 0.4).abs() < 1e-6 && v0 == -2.0);
+    }
+
+    #[test]
+    fn a_landing_kick_dips_by_its_depth_at_its_time() {
+        // A kick of -depth * omega * e at rest reaches exactly `-depth` after 1/omega seconds:
+        // the closed form the dip is built on.
+        let (depth, time) = (0.12, 0.08);
+        let omega = 1.0 / time;
+        let (x, _) = critically_damped_step(0.0, -depth * omega * std::f32::consts::E, 0.0, omega, time);
+        assert!((x + depth).abs() < 1e-5, "{x}");
+    }
+
+    #[test]
+    fn the_pitch_limits_only_narrow_and_never_cross() {
+        let base = (-0.45, 1.35);
+        assert_eq!(pitch_limits(base, &CameraOffsets::default()), base);
+        let swim = CameraOffsets { pitch_max: Some(0.2), ..default() };
+        assert_eq!(pitch_limits(base, &swim), (-0.45, 0.2));
+        let raised = CameraOffsets { pitch_min: Some(0.0), pitch_max: Some(0.5), ..default() };
+        assert_eq!(pitch_limits(base, &raised), (0.0, 0.5));
+        // An override outside the range is held to it: a cap below the lowest tilt pins the pitch there.
+        let deep = CameraOffsets { pitch_max: Some(-2.0), ..default() };
+        assert_eq!(pitch_limits(base, &deep), (-0.45, -0.45));
+        let wide = CameraOffsets { pitch_min: Some(-3.0), pitch_max: Some(3.0), ..default() };
+        assert_eq!(pitch_limits(base, &wide), base);
+        // A lowest above the highest wins; a broken number is ignored.
+        let crossed = CameraOffsets { pitch_min: Some(1.0), pitch_max: Some(0.5), ..default() };
+        assert_eq!(pitch_limits(base, &crossed), (1.0, 1.0));
+        let nan = CameraOffsets { pitch_max: Some(f32::NAN), ..default() };
+        assert_eq!(pitch_limits(base, &nan), base);
+        // The limits applied to a pitch: a swimming cap holds the stored pitch down.
+        let (lo, hi) = pitch_limits(base, &swim);
+        assert_eq!(1.0_f32.clamp(lo, hi), 0.2);
+    }
+
+    #[test]
+    fn lock_framing_catches_up_at_exact_rates_whatever_the_frame_rate() {
+        let framing = FramingTuning { yaw_rate: 4.0, pitch_rate: 2.0, pitch_target: Some(0.25), ..default() };
+        let (focus, target) = (Vec3::new(0.0, 1.5, 0.0), Vec3::new(10.0, 1.0, 0.0));
+        // The camera should stand on the -X side of the focus: yaw -PI/2.
+        let (y1, p1) = lock_framing(0.0, 0.0, focus, target, &framing, 0.1);
+        let (ya, pa) = lock_framing(0.0, 0.0, focus, target, &framing, 0.05);
+        let (y2, p2) = lock_framing(ya, pa, focus, target, &framing, 0.05);
+        assert!((y1 - y2).abs() < 1e-5 && (p1 - p2).abs() < 1e-5, "{y1} {y2} {p1} {p2}");
+        let want = -std::f32::consts::FRAC_PI_2;
+        assert!((y1 - want * (1.0 - ops::exp(-0.4))).abs() < 1e-5, "yaw rate 4/s over 0.1 s: {y1}");
+        assert!((p1 - 0.25 * (1.0 - ops::exp(-0.2))).abs() < 1e-5, "pitch rate 2/s toward the fixed target: {p1}");
+    }
+
+    #[test]
+    fn lock_framing_follows_the_line_to_the_target_within_its_clamp_by_default() {
+        let framing = FramingTuning::default();
+        // A target far below: the line's pitch is large, held to 0.7.
+        let (_, p) = lock_framing(0.0, 0.0, Vec3::new(0.0, 20.0, 0.0), Vec3::new(0.0, 0.0, -2.0), &framing, 1.0);
+        assert!((p - 0.7 * (1.0 - ops::exp(-7.0))).abs() < 1e-4, "{p}");
+        // Level with it: held up to 0.15.
+        let (_, p) = lock_framing(0.0, 0.0, Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 1.0, -9.0), &framing, 1.0);
+        assert!((p - 0.15 * (1.0 - ops::exp(-7.0))).abs() < 1e-4, "{p}");
+    }
+
+    #[test]
+    fn lock_framing_leaves_a_target_too_close_alone() {
+        let framing = FramingTuning { min_horizontal: 0.5, ..default() };
+        let focus = Vec3::new(0.0, 1.5, 0.0);
+        assert_eq!(lock_framing(0.3, 0.2, focus, Vec3::new(0.3, 0.0, 0.0), &framing, 0.1), (0.3, 0.2));
+        assert_ne!(lock_framing(0.3, 0.2, focus, Vec3::new(0.6, 0.0, 0.0), &framing, 0.1), (0.3, 0.2));
+        // By default it always frames, even a target on the focus line.
+        assert_ne!(lock_framing(0.3, 0.2, focus, Vec3::new(0.0, 0.0, 0.0), &FramingTuning::default(), 0.1), (0.3, 0.2));
+    }
+
+    #[test]
+    fn the_arm_shortens_at_once_and_grows_back_at_its_rate() {
+        let arm = ArmTuning { follow_rate: Some(6.0), ..default() };
+        // A wall: from 5 m to 2 m in one frame.
+        assert_eq!(arm_reach(5.0, 2.0, &arm, 0.016), 2.0);
+        // The wall lets go: back toward 5 m at 6/s, the exact exponential.
+        let one = arm_reach(2.0, 5.0, &arm, 0.1);
+        assert!((one - (2.0 + 3.0 * (1.0 - ops::exp(-0.6)))).abs() < 1e-5, "{one}");
+        let half = arm_reach(arm_reach(2.0, 5.0, &arm, 0.05), 5.0, &arm, 0.05);
+        assert!((one - half).abs() < 1e-5, "frame-rate independent");
+        // Never past what is free, and at the end exactly there.
+        let mut reach = 2.0;
+        for _ in 0..600 {
+            reach = arm_reach(reach, 5.0, &arm, 1.0 / 60.0);
+            assert!(reach <= 5.0);
+        }
+        assert!((reach - 5.0).abs() < 1e-3);
+        // A wall that comes back while it is growing stops it at once.
+        assert_eq!(arm_reach(3.0, 2.5, &arm, 0.016), 2.5);
+        // Without a rate it grows back at once, as before.
+        assert_eq!(arm_reach(2.0, 5.0, &ArmTuning::default(), 0.016), 5.0);
+        // Before it has stood anywhere it stands where it is free.
+        assert_eq!(arm_reach(0.0, 4.0, &arm, 0.016), 4.0);
+    }
+
+    #[test]
+    fn the_arm_is_never_closer_than_its_minimum_unless_the_room_is() {
+        let arm = ArmTuning { follow_rate: Some(6.0), min_distance: 0.7, ..default() };
+        assert_eq!(arm_reach(2.0, 0.2, &arm, 0.016), 0.2, "a free room smaller than the minimum is all there is");
+        assert!(arm_reach(2.0, 1.0, &arm, 0.016) >= 0.7);
+        // Growing back from a start below the minimum jumps up to it.
+        assert!(arm_reach(0.1, 5.0, &arm, 0.001) >= 0.7);
+    }
+
+    #[test]
+    fn the_nominal_arm_follows_the_distance_at_its_rate() {
+        let arm = ArmTuning { follow_rate: Some(6.0), ..default() };
+        let next = arm_length(5.0, 3.1, &arm, 0.1);
+        assert!((next - (5.0 + (3.1 - 5.0) * (1.0 - ops::exp(-0.6)))).abs() < 1e-5);
+        assert_eq!(arm_length(5.0, 3.1, &ArmTuning::default(), 0.1), 3.1, "instant without a rate");
+        assert_eq!(arm_length(0.0, 3.1, &arm, 0.1), 3.1, "the first frame stands at the distance");
+    }
+
+    #[test]
+    fn a_mouse_flick_is_a_sum_that_drains_and_waits_out_its_cooldown() {
+        let flick = FlickTuning { mouse_threshold_px: 100.0, mouse_decay_px_s: Some(600.0), cooldown_s: 0.3, ..default() };
+        let mut s = FlickState::default();
+        let dt = 1.0 / 60.0;
+        // 60 px a frame at 60 Hz: 60, then 60 - 10 + 60 = 110, past 100: the second frame is the flick.
+        assert_eq!(s.mouse(&flick, 60.0, dt, true), None);
+        assert_eq!(s.mouse(&flick, 60.0, dt, true), Some(Side::Right));
+        assert_eq!(s.accum_px, 0.0, "a flick starts the sum again");
+        // Slow motion never reaches it: 5 px a frame drains faster than it adds (10 a frame).
+        for _ in 0..200 {
+            assert_eq!(s.mouse(&flick, 5.0, dt, true), None);
+        }
+        assert!(s.accum_px <= 5.0 + 1e-4);
+        // The other way is the other side.
+        let mut s = FlickState::default();
+        assert_eq!(s.mouse(&flick, -200.0, dt, true), Some(Side::Left));
+        // A flick that comes in the cooldown is not lost: the sum keeps adding, and goes off when it ends.
+        s.flicked(&flick, true);
+        assert_eq!(s.cooldown, 0.3);
+        assert_eq!(s.mouse(&flick, 150.0, dt, true), None);
+        assert!(s.accum_px > 100.0);
+        s.tick(0.2);
+        assert_eq!(s.mouse(&flick, 0.0, 0.0, true), None, "0.1 s of cooldown left");
+        s.tick(0.15);
+        assert_eq!(s.mouse(&flick, 0.0, 0.0, true), Some(Side::Right));
+        // Without a lock the sum is dropped.
+        s.accum_px = 90.0;
+        assert_eq!(s.mouse(&flick, 90.0, dt, false), None);
+        assert_eq!(s.accum_px, 0.0);
+    }
+
+    #[test]
+    fn without_a_decay_only_one_frames_motion_counts() {
+        // The camera before it had numbers: a threshold on one frame of look.
+        let flick = FlickTuning::default();
+        let mut s = FlickState::default();
+        assert_eq!(s.mouse(&flick, 10.0, 0.016, true), None);
+        assert_eq!(s.mouse(&flick, 10.0, 0.016, true), None, "10 + 10 is not one 20 px frame");
+        assert_eq!(s.mouse(&flick, 30.0, 0.016, true), Some(Side::Right));
+        assert_eq!(s.mouse(&flick, -30.0, 0.016, true), Some(Side::Left), "no latch of its own");
+    }
+
+    #[test]
+    fn a_cooldown_that_does_not_tick_does_not_run_down() {
+        let flick = FlickTuning::default();
+        let mut s = FlickState::default();
+        s.flicked(&flick, true);
+        for _ in 0..1000 {
+            s.tick(0.0);
+        }
+        assert_eq!(s.cooldown, 0.35, "a paused simulation clock gives it no time");
+        assert_eq!(s.mouse(&flick, 100.0, 0.016, true), None);
+        s.tick(0.36);
+        assert_eq!(s.cooldown, 0.0);
+        assert_eq!(s.mouse(&flick, 100.0, 0.016, true), Some(Side::Right));
+        // A miss starts no cooldown unless asked to.
+        s.flicked(&flick, false);
+        assert_eq!(s.cooldown, 0.0);
+        s.flicked(&FlickTuning { cooldown_on_miss: true, ..default() }, false);
+        assert_eq!(s.cooldown, 0.35);
+    }
+
+    #[test]
+    fn a_stick_flick_needs_the_stick_to_come_back() {
+        let flick = FlickTuning { stick_threshold: 0.8, stick_rearm: Some(0.3), cooldown_s: 0.3, ..default() };
+        let mut s = FlickState::default();
+        assert_eq!(s.stick(&flick, 0.5, true), None, "not far enough");
+        assert_eq!(s.stick(&flick, 0.9, true), Some(Side::Right));
+        s.flicked(&flick, true);
+        s.tick(1.0);
+        assert_eq!(s.stick(&flick, 0.9, true), None, "held over: not re-armed");
+        assert_eq!(s.stick(&flick, 0.4, true), None, "between the two levels is not back");
+        assert_eq!(s.stick(&flick, 0.1, true), None);
+        assert_eq!(s.stick(&flick, -0.9, true), Some(Side::Left));
+        // A fresh lock with the stick already over: not until it comes back.
+        s.tick(1.0);
+        s.lock_taken(&flick, 0.95);
+        assert_eq!(s.stick(&flick, 0.95, true), None);
+        s.lock_taken(&flick, 0.1);
+        assert_eq!(s.stick(&flick, 0.95, true), Some(Side::Right));
+        // Unlocked, a stick does nothing; the cooldown holds it.
+        assert_eq!(s.stick(&flick, 0.0, false), None);
+        s.flicked(&flick, true);
+        assert_eq!(s.stick(&flick, 0.95, true), None);
+    }
+
+    #[test]
+    fn without_a_rearm_a_held_stick_flicks_again_after_each_cooldown() {
+        let flick = FlickTuning::default();
+        let mut s = FlickState::default();
+        assert_eq!(s.stick(&flick, 1.0, true), Some(Side::Right));
+        s.flicked(&flick, true);
+        assert_eq!(s.stick(&flick, 1.0, true), None);
+        s.tick(0.4);
+        assert_eq!(s.stick(&flick, 1.0, true), Some(Side::Right));
+    }
+
+    #[test]
+    fn the_shake_amplitudes_are_the_tunings() {
+        let a = shake_offset_with(1.0, 0.37, &TraumaTuning::default());
+        assert_eq!(a, shake_offset(1.0, 0.37), "the defaults are the old shake");
+        let flat = shake_offset_with(1.0, 0.37, &TraumaTuning { shift_m: 0.0, roll_deg: 0.0, ..default() });
+        assert_eq!(flat.translation, Vec3::ZERO);
+        assert_eq!(flat.rotation.z, 0.0);
+        assert_eq!((flat.rotation.x, flat.rotation.y), (a.rotation.x, a.rotation.y));
+        let big = shake_offset_with(1.0, 0.37, &TraumaTuning { pitch_deg: 4.0, ..default() });
+        assert!((big.rotation.x - 2.0 * a.rotation.x).abs() < 1e-6);
     }
 }

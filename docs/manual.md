@@ -932,6 +932,36 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
 
 **Camera** (`ThirdPersonCamera`, only with a window; the maths without one). Orbit with the mouse and the right stick; collision with walls (a ray from the head to the desired position pulls the camera in); lock-on: the `lock_on` key picks the target closest to the centre of the frame within the cone and range of `CameraSettings::{lock_cone_deg, lock_range}`, a look to one side switches to a neighbour, a target that leaves the range, dies or loses its `LockOnTarget` ends the lock; aim assist, and shake (`AddTrauma`; its strength, and the field of view, sensitivity and Y-axis inversion, come from the player's settings, see "Settings (E8.6)"). The chosen target is written to `Intent.target` between ticks (it is an input, and the replay records it), but the camera never clears someone else's target. **The camera is only a view:** gameplay and `observe` do not read it (`observe` sees through the eyes of the subject), so a window with the camera plays the same game as one without.
 
+**Camera numbers and offsets (C7).** No number the camera decides by is a constant in code. They are the resource `CameraTuning` (content kind `camera`, `*.camera.ron`, one map of ids to definitions; the camera reads the id `default`, hot-reloaded; without one it runs on the code defaults, which are the numbers it always had, so a game without a camera definition sees no change; a definition that is removed puts the defaults back; a game may also set the resource from code, and content that exists wins whenever it loads or changes). Missing fields take the defaults, unknown ones are an error, and `--check-content` names the file and the field of an out-of-range number. A default serializes to nothing, so adding a field never changes the hash of a definition that does not set it.
+
+| field | default (the old constant) | meaning |
+|---|---|---|
+| `pitch` | `(-0.45, 1.35)` (`PITCH`) | lowest and highest tilt, radians, positive looks down from above; within ±(π/2 − 0.02) |
+| `follow_rate` | `None`: each camera's `ThirdPersonCamera::follow_rate` (14) | how fast the focus catches up with the character, 1/s |
+| `release_factor` | `1.3` (`RELEASE_FACTOR`) | a lock the camera picked lets go at this many times its range |
+| `framing.yaw_rate` / `pitch_rate` | `7` / `7` (`LOCK_FRAMING_RATE`) | how fast a locked camera turns to frame its target, 1/s |
+| `framing.pitch_target` | `None`: the pitch of the line from the target to the focus | a fixed pitch to frame at |
+| `framing.pitch_clamp` | `(0.15, 0.7)` | the range that geometric pitch is held to |
+| `framing.min_horizontal` | `0` (always frames) | nearer than this to the target (m, on the ground, from the focus) the camera stops framing |
+| `arm.radius` / `arm.min_distance` | `0.25` / `0.7` (`CAMERA_RADIUS`, `MIN_DISTANCE`) | the sphere a wall pulls in; never closer than this to the focus |
+| `arm.follow_rate` | `None`: at once | how fast the arm grows back after a wall let go of it, and how fast its nominal length follows `ThirdPersonCamera::distance`, 1/s. It always shortens at once |
+| `flick.mouse_threshold_px` | `14` (`FLICK` 0.035 rad at the standard map's 0.0025 rad/px) | horizontal mouse pixels, summed, that switch the lock-on target |
+| `flick.mouse_decay_px_s` | `None`: one frame's motion only | how fast the sum drains, px/s |
+| `flick.cooldown_s` | `0.35` (`FLICK_COOLDOWN`) | seconds before the next switch |
+| `flick.cooldown_on_miss` | `false` | whether a flick that found nobody starts the cooldown |
+| `flick.stick_threshold` | `0.75` | right-stick deflection (0..1, after the dead zone) that switches |
+| `flick.stick_rearm` | `None`: no latch | the stick must come back below this before it can switch again; a lock taken with the stick already over starts disarmed |
+| `trauma.decay` | `1.4` (`TRAUMA_DECAY`, linear) | trauma drained per second |
+| `trauma.shift_m` / `pitch_deg` / `yaw_deg` / `roll_deg` | `0.12` / `2` / `2` / `3` | the most a shake of trauma 1 moves and turns the view (scaled by trauma squared) |
+
+The ranges of `pitch`, `follow_rate`, the rates, thresholds and amplitudes are content errors when out of range (a rate must be above 0, a re-arm level below the threshold, and so on).
+
+*Smoothing.* Every smoothing is the exact exponential `1 - exp(-rate * dt)` through `bevy::math::ops::exp`, so it does not depend on the frame rate (`damp`, `lock_framing`, `arm_reach`). `critically_damped_step(x, v, target, omega, dt)` is the closed form of a critically damped spring (for a landing dip: kick `v`, aim at 0); one step of `2 dt` equals two of `dt`. *The arm*: a wall pulls it in at once; once it lets go it grows back at `arm.follow_rate` (`ThirdPersonCamera::arm_reach` is where it stood last frame, `arm_length` its nominal length), never past what is free and never closer than `arm.min_distance` (as far as the room allows). A jump of the focus (a teleport) resets it.
+
+*Flick.* The mouse is measured in raw pixels and the stick in deflection, both from `ControlState` (`look_pointer_px()`, `look_stick()`); the `look` axis stays the scaled sum. The cooldown runs on the simulation clock, `Time<Virtual>`: a paused game does not run it down, a slowed one runs it down slowly. The mouse's sum drains on the frame clock (`Time<Real>`): that is input, not the game. Follow, framing, arm and shake stay on `Time<Real>`, so a paused game still shows its camera settle. There is no look grace after a spawn. Gameplay reads the stored `ThirdPersonCamera::yaw` (`input` turns the move axes by it): the shake only moves the camera's `Transform`.
+
+*Offsets.* `CameraOffsets` (a resource, neutral by default) is what a game's systems add to the base values; `orbit_camera` reads it after them, every frame: `fov_add_deg` is added to the player's field of view before the engine's 30..120 limit (sprint widening, a finisher's punch); `focus_dip_m` lowers the camera and what it looks at together, so the picture drops without tilting (a landing dip; negative raises); `pitch_min` / `pitch_max` narrow the tuning's pitch range (an override outside it is held to it), and the stored pitch is clamped to the result (a swim cap: the camera stays above the water; lifting the cap does not push the pitch back up). **The writer owns its value**: the system that writes a field sets it on every frame it wants an effect and puts it back to `0.0` / `None` itself when it is done. The camera only reads: it never decays, sums or stores an offset, and it never writes `CameraSettings`, `ThirdPersonCamera::focus` or the stored pitch except through the clamp above, so an offset nobody writes any more is gone the next frame. Two systems that want the same field must be combined by the game into one writer. Write in `PostUpdate` before `CameraSystems::Orbit` to be seen on the same frame (the set is empty without the `render` feature, so the writers run and are testable headless).
+
 **Warnings about attacks off screen** (E2.6): `threat_indicators(world, viewer, forward)` from the combat module gives, for each attack zone, a direction for the indicator; markers at the edge of the screen are drawn by `shards_action::render::hud` (see "Actions and combat (E3)").
 
 **Movement tools** (player, only through `Intent`):

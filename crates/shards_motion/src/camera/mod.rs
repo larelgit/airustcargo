@@ -21,15 +21,19 @@
 pub mod math;
 #[cfg(feature = "render")]
 mod systems;
+pub mod tuning;
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use shards_content::{ContentAppExt, ContentDb};
 use shards_settings::{AccessibilitySettings, ControlSettings};
 
 pub use math::{
-    aim_assist, damp, lock_holds, next_lock_target, orbit_angles, orbit_offset, orbit_position, pick_lock_target,
-    resolve_camera_collision, shake_offset, wrap_angle, LockCandidate, LockView, ShakeOffset, Side,
+    aim_assist, arm_length, arm_reach, critically_damped_step, damp, lock_framing, lock_holds, next_lock_target, orbit_angles,
+    orbit_offset, orbit_position, pick_lock_target, pitch_limits, resolve_camera_collision, shake_offset, shake_offset_with,
+    wrap_angle, FlickState, LockCandidate, LockView, ShakeOffset, Side,
 };
+pub use tuning::{ArmTuning, CameraOffsets, CameraTuning, FlickTuning, FramingTuning, TraumaTuning};
 
 /// A camera that orbits a character. Put it on the camera entity; `yaw` and `pitch` are
 /// where the player looks (`input` turns the move axes by `yaw`).
@@ -49,8 +53,15 @@ pub struct ThirdPersonCamera {
     pub height: f32,
     /// The focus point as smoothed so far.
     pub focus: Vec3,
-    /// How quickly the focus catches up with the character (1/s).
+    /// How quickly the focus catches up with the character (1/s), unless `CameraTuning::follow_rate` says.
     pub follow_rate: f32,
+    /// The arm's nominal length as smoothed so far (m; 0 until the first frame). It follows
+    /// `distance` at `CameraTuning::arm.follow_rate`. A game that needs the reach of a swimming
+    /// camera reads this, not the length a wall left.
+    pub arm_length: f32,
+    /// How far out the camera stood on the last frame (m; 0 until the first frame): `arm_length`,
+    /// or less where a wall pulled it in, growing back at `CameraTuning::arm.follow_rate`.
+    pub arm_reach: f32,
 }
 
 impl Default for ThirdPersonCamera {
@@ -63,6 +74,8 @@ impl Default for ThirdPersonCamera {
             height: 1.5,
             focus: Vec3::ZERO,
             follow_rate: 14.0,
+            arm_length: 0.0,
+            arm_reach: 0.0,
         }
     }
 }
@@ -137,18 +150,32 @@ impl CameraShake {
 #[derive(Event, Clone, Copy, Debug, PartialEq)]
 pub struct AddTrauma(pub f32);
 
+/// The camera's systems, for ordering: a game system that writes [`CameraOffsets`] runs
+/// `.before(CameraSystems::Orbit)` (in `PostUpdate`) to be seen on the same frame. The set is
+/// empty without the `render` feature.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CameraSystems {
+    /// `orbit_camera`: reads the offsets, moves the camera.
+    Orbit,
+}
+
 pub(crate) fn plugin(app: &mut App) {
     app.register_type::<ThirdPersonCamera>()
         .register_type::<CameraSettings>()
+        .register_type::<CameraTuning>()
+        .register_type::<CameraOffsets>()
         .register_type::<LockOnTarget>()
+        .add_content::<CameraTuning>()
         .init_resource::<CameraSettings>()
+        .init_resource::<CameraTuning>()
+        .init_resource::<CameraOffsets>()
         .init_resource::<CameraShake>()
         .add_observer(|trigger: On<AddTrauma>, settings: Res<CameraSettings>, mut shake: ResMut<CameraShake>| {
             if settings.shake {
                 shake.add_trauma(trigger.event().0 * settings.shake_intensity.clamp(0.0, 1.0));
             }
         })
-        .add_systems(PreUpdate, apply_player_settings);
+        .add_systems(PreUpdate, (apply_player_settings, resolve_tuning));
     #[cfg(feature = "render")]
     systems::plugin(app);
 }
@@ -178,5 +205,29 @@ fn apply_player_settings(
     };
     if *camera != next {
         *camera = next;
+    }
+}
+
+/// `PreUpdate`: the `default` definition of the `camera` kind becomes the tuning in force once
+/// content is loaded and whenever it changes (a hot reload). With no such definition the
+/// tuning stays what the game set from code (the code defaults, unless it changed them); a
+/// definition that is removed puts the code defaults back.
+fn resolve_tuning(db: Option<Res<ContentDb>>, mut tuning: ResMut<CameraTuning>, mut from_content: Local<bool>) {
+    let Some(db) = db else { return };
+    if !db.is_loaded() || !db.is_changed() {
+        return;
+    }
+    match db.get::<CameraTuning>("default") {
+        Some(def) => {
+            *from_content = true;
+            if *tuning != *def {
+                *tuning = def.clone();
+            }
+        }
+        None if *from_content => {
+            *from_content = false;
+            *tuning = CameraTuning::default();
+        }
+        None => {}
     }
 }

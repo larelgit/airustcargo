@@ -142,6 +142,25 @@ fn the_move_axis_is_turned_by_the_camera() {
 }
 
 #[test]
+fn the_move_axis_is_turned_by_the_stored_yaw_not_by_a_shake() {
+    // Shake moves the camera's picture (its `Transform`), never `ThirdPersonCamera::yaw`, and
+    // gameplay reads only the yaw: a hit that shakes the view does not bend the walk.
+    let mut app = input_app();
+    let e = local_player(&mut app);
+    let yaw = 0.7;
+    let camera = app.world_mut().spawn((ThirdPersonCamera { yaw, ..default() }, Transform::from_rotation(Quat::from_rotation_y(yaw + 0.3)))).id();
+    app.world_mut().resource_mut::<shards_motion::camera::CameraShake>().add_trauma(1.0);
+    press(&mut app, KeyCode::KeyW);
+    for _ in 0..5 {
+        frame(&mut app);
+    }
+    let want = Quat::from_rotation_y(yaw) * Vec3::NEG_Z;
+    let dir = intent(&app, e).move_dir;
+    assert!((dir - want).length() < 1e-5, "the stored yaw {yaw} turns the walk, not the jittered view: {dir} vs {want}");
+    assert!((app.world().get::<ThirdPersonCamera>(camera).unwrap().yaw - yaw).abs() < 1e-6);
+}
+
+#[test]
 fn keys_held_before_the_player_exists_reach_it_when_it_appears() {
     let mut app = input_app();
     press(&mut app, KeyCode::KeyW);
@@ -323,9 +342,28 @@ fn the_look_axis_collects_mouse_and_stick_for_the_camera() {
     let look = app.world().resource::<ControlState>().axis("look");
     // 40 px right, 20 px up, 0.0025 per pixel.
     assert!((look - Vec2::new(0.1, 0.05)).length() < 1e-5, "{look}");
+    // A flick is measured in the raw pixels, whatever the binding scales them to.
+    assert_eq!(app.world().resource::<ControlState>().look_pointer_px(), Vec2::new(40.0, 20.0));
+    assert_eq!(app.world().resource::<ControlState>().look_stick(), Vec2::ZERO);
     app.insert_resource(AccumulatedMouseMotion::default());
     frame(&mut app);
     assert_eq!(app.world().resource::<ControlState>().axis("look"), Vec2::ZERO);
+    assert_eq!(app.world().resource::<ControlState>().look_pointer_px(), Vec2::ZERO);
+}
+
+#[test]
+fn the_look_stick_is_reported_as_a_deflection_before_its_scale_and_the_frame() {
+    let mut app = input_app();
+    local_player(&mut app);
+    let pad = app.world_mut().spawn(Gamepad::default()).id();
+    app.world_mut().get_mut::<Gamepad>(pad).unwrap().analog_mut().set(GamepadInput::Axis(GamepadAxis::RightStickX), 0.9);
+    frame(&mut app);
+    let state = app.world().resource::<ControlState>();
+    // Past the 0.15 dead zone, rescaled: (0.9 - 0.15) / 0.85; the axis itself is that times the 2.8 rad/s and the frame.
+    let want = (0.9 - 0.15) / 0.85;
+    assert!((state.look_stick().x - want).abs() < 1e-4, "{}", state.look_stick());
+    assert!(state.axis("look").x.abs() < 2.8 * want, "the axis is a per-frame turn, not the deflection");
+    assert_eq!(state.look_pointer_px(), Vec2::ZERO);
 }
 
 #[test]
