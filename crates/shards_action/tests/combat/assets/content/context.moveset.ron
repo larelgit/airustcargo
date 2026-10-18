@@ -2,7 +2,7 @@
     // Light is a finisher next to a broken foe, a counter within 0.5 s of a parry, a cut within
     // 0.3 s of a roll's end, a jab otherwise.
     "c_hero": (
-        inputs: {"light": "c_jab", "heavy": "c_swing", "dodge": "c_roll", "block": "c_guard", "technique.1": "c_grab"},
+        inputs: {"light": "c_jab", "heavy": "c_swing", "dodge": "c_roll", "block": "c_guard", "technique.1": "c_grab", "technique.3": "c_seize"},
         stagger: "c_stagger",
         reactions: [
             (action: "c_react_light", push: 2.0, decel: 12.0),

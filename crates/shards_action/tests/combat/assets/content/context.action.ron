@@ -95,4 +95,19 @@
             strike_reaction: 0,
         ),
     ),
+    // Only a test makes a fighter start this: its tag is what the `brace` memory names.
+    "c_brace": (net_id: 166, phases: [("brace", 0.1)], tags: ["brace"]),
+    // A hold with a strike that asks for no reaction (`strike_reaction: 0`): the damage lands, the
+    // victim keeps its held pose.
+    "c_seize": (
+        net_id: 167,
+        phases: [("windup", 0.1), ("strike", 0.1), ("recovery", 0.3)],
+        hits: [(span: Phase("strike"), shape: Cone(range: 2.5, angle: 120), damage: 5, reaction: 1)],
+        pair: (
+            select: (state: Any, range: 2.0, height: 1.2, angle: 180),
+            victim_action: "c_held",
+            only_victim: true,
+            strike_reaction: 0,
+        ),
+    ),
 }

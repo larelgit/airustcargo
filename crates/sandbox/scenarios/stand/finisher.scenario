@@ -56,7 +56,7 @@ step 6
 @c2 expect result !contains "spar_finisher"
 @c1 session --agent bot
 @c1 act light_attack
-@c1 expect result contains "ok: spar_finisher · predicted, host confirms"
+@c1 expect result contains "ok: spar_finisher · the host starts it"
 @c1 session --agent scenario
 @host step 60 --until "journal:e15 takes e7 with spar_finisher"
 @host expect stopped "e15 takes e7"

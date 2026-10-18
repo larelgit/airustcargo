@@ -43,6 +43,8 @@ session --agent bot --scope player
 act lock_on target=e7
 expect result contains "ok: locked on e7"
 session --agent scenario
+# (the locked body turns to its target at the lock turn speed: let it finish before the pair looks at the angle)
+step 30
 
 # --- 1. the skeleton's poise breaks: the light attack is the finisher, and the skeleton finishable
 mark

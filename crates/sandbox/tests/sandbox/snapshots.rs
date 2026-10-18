@@ -1125,6 +1125,22 @@ fn mid_pair_and_with_a_guard_press_armed() {
         step(app, 90);
     });
 
+    // A live memory, and a run halted by its victim's death.
+    use shards::action::{Memory, RunHalted};
+    let mut app = next_to_a_broken_skeleton();
+    ok(&mut app, "remember", json!({"id": PLAYER, "key": "parried", "seconds": 5}));
+    ok(&mut app, "light_attack", json!({}));
+    step(&mut app, 4);
+    assert_eq!(action(&app, PLAYER), "spar_finisher");
+    let victim = entity(&app, "e7");
+    shards::action::kill(app.world_mut(), victim, None, None);
+    step(&mut app, 2);
+    assert!(app.world().get::<RunHalted>(entity(&app, PLAYER)).is_some(), "the run is halted");
+    assert!(app.world().get::<Memory>(entity(&app, PLAYER)).is_some(), "the memory is live");
+    assert_continues_alike("a halted run and a memory", app, |app| {
+        step(app, 90);
+    });
+
     let mut app = next_to_a_broken_skeleton();
     ok(&mut app, "heal", json!({"id": "e7"}));
     ok(&mut app, "block", json!({}));

@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use serde_json::json;
 use shards_action::prelude::*;
 use shards_action::{
-    pair_victim, remember, ContextInputs, Damaged, GuardArm, HitWeight, Memory, PairEnd, PairEnded, Paired, Pairing,
+    pair_victim, remember, ContextInputs, DamageCtx, Damaged, GuardArm, HitWeight, Memory, PairEnd, PairEnded, Paired, Pairing,
     Protection, RunHalted,
 };
 use shards_action::{forget, ActionAppExt, ActionDef};
@@ -270,10 +270,10 @@ fn pair_selection_rules() {
     assert_eq!(victim(&app), None, "behind");
     put(&mut app, a, Vec3::new(1.5, 0.0, -0.1));
     assert_eq!(victim(&app), Some(a), "to the side, within 100 degrees");
-    // Where the player means to face counts: moving south turns the cone round.
+    // The body's facing counts, not the stick: moving south does not turn the cone round.
     put(&mut app, a, Vec3::new(0.0, 0.0, 1.5));
     app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = S;
-    assert_eq!(victim(&app), Some(a), "moving toward it");
+    assert_eq!(victim(&app), None, "the stick does not turn the cone");
     app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = Vec3::ZERO;
     // Sight: a wall between them.
     put(&mut app, a, Vec3::new(0.0, 0.0, -1.8));
@@ -639,4 +639,105 @@ fn action_ended_of_a_pair_is_its_end() {
     step(&mut app, 1);
     assert_eq!(ends.lock().unwrap().as_slice(), [PairEnd::Cut]);
     assert!(app.world().get::<Paired>(foe).is_none());
+}
+
+#[test]
+fn a_finisher_that_kills_its_victim_does_not_cleave_the_next_foe() {
+    let (mut app, hero, foe) = arena();
+    let other = foe_at(&mut app, Vec3::new(0.6, 0.0, -1.4));
+    // The strike (20) kills; the pair is let go as lost and the run halts, but the run still hits
+    // only the victim it took.
+    app.world_mut().get_mut::<Health>(foe).unwrap().current = 10.0;
+    finisher(&mut app, hero, foe);
+    step(&mut app, 40);
+    assert!(app.world().get::<Dead>(foe).is_some(), "{:#?}", journal(&app));
+    assert!(!lines(&app, "(lost)").is_empty(), "{:#?}", journal(&app));
+    assert_eq!(hp(&app, other), 100.0, "the foe beside it is not hit: {:#?}", journal(&app));
+}
+
+#[test]
+fn a_barrier_and_a_damage_taken_multiplier_leave_the_strike_as_it_is() {
+    let (mut app, hero, foe) = arena();
+    let weights = watch_weights(&mut app);
+    // A barrier that swallows the strike whole and a multiplier that would triple it: the pair's
+    // weight and its forced reaction come from the pair, not from what the hit did to health.
+    shards_action::grant_barrier(app.world_mut(), foe, 100.0, 5.0);
+    shards_action::set_damage_taken(app.world_mut(), foe, "core", 3.0, None);
+    finisher(&mut app, hero, foe);
+    step(&mut app, 20);
+    assert_eq!(weights.lock().unwrap().as_slice(), [HitWeight::Finisher]);
+    assert!(!lines(&app, "reacts knockdown").is_empty(), "{:#?}", journal(&app));
+    assert_eq!(hp(&app, foe), 100.0, "the barrier took it");
+}
+
+#[test]
+fn a_zero_strike_reaction_asks_for_none() {
+    let (mut app, hero, foe) = arena();
+    let weights = watch_weights(&mut app);
+    let reactions = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let into = reactions.clone();
+    app.world_mut().add_observer(move |e: On<Damaged>| into.lock().unwrap().push(e.event().reaction));
+    press(&mut app, hero, "technique.3");
+    step(&mut app, 2);
+    assert_eq!(action(&app, hero), "c_seize", "{:#?}", journal(&app));
+    assert_eq!(action(&app, foe), "c_held");
+    step(&mut app, 12);
+    assert_eq!(hp(&app, foe), 95.0, "{:#?}", journal(&app));
+    assert_eq!(weights.lock().unwrap().as_slice(), [HitWeight::Finisher]);
+    assert_eq!(reactions.lock().unwrap().as_slice(), [None], "no reaction is planned");
+    assert!(lines(&app, "reacts").is_empty(), "{:#?}", journal(&app));
+    assert_eq!(action(&app, foe), "c_held", "it keeps its pose");
+}
+
+static SEEN_PAIR: std::sync::Mutex<Vec<(bool, HitWeight)>> = std::sync::Mutex::new(Vec::new());
+
+#[test]
+fn a_damage_hook_sees_that_the_hit_is_a_pair_strike() {
+    fn watch(ctx: &mut DamageCtx, _: &World) {
+        SEEN_PAIR.lock().unwrap().push((ctx.pair, ctx.weight));
+    }
+    let mut app = app_with(|app| {
+        app.add_damage_hook(watch);
+    });
+    let hero = hero(app.world_mut(), "c_hero", Vec3::ZERO, N);
+    let foe = spawn_foe(app.world_mut(), Vec3::new(0.0, 0.0, -1.8));
+    step(&mut app, 2);
+    SEEN_PAIR.lock().unwrap().clear();
+    finisher(&mut app, hero, foe);
+    step(&mut app, 20);
+    assert_eq!(SEEN_PAIR.lock().unwrap().as_slice(), [(true, HitWeight::Finisher)]);
+    // An ordinary jab on another foe is no pair strike.
+    SEEN_PAIR.lock().unwrap().clear();
+    let other = foe_at(&mut app, Vec3::new(0.0, 0.0, -1.5));
+    step(&mut app, 60);
+    press(&mut app, hero, "light");
+    step(&mut app, 12);
+    assert!(hp(&app, other) < 100.0, "{:#?}", journal(&app));
+    assert!(SEEN_PAIR.lock().unwrap().iter().all(|(pair, _)| !pair), "{:?}", SEEN_PAIR.lock().unwrap());
+}
+
+#[test]
+fn the_body_facing_decides_the_angle_not_the_stick() {
+    let (mut app, hero, foe) = arena();
+    broken(&mut app, foe);
+    let s = select(&app);
+    assert_eq!(pair_victim(app.world(), hero, &s), Some(foe));
+    // The body looks away from the broken foe while the stick points at it: no finisher.
+    app.world_mut().entity_mut(hero).insert(Transform::from_xyz(0.0, 0.0, 0.0).looking_to(S, Vec3::Y));
+    app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = N;
+    assert_eq!(pair_victim(app.world(), hero, &s), None, "facing away");
+    // Running away with the stick, the body still facing the foe: the finisher stays.
+    app.world_mut().entity_mut(hero).insert(Transform::from_xyz(0.0, 0.0, 0.0).looking_to(N, Vec3::Y));
+    app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = S;
+    assert_eq!(pair_victim(app.world(), hero, &s), Some(foe), "the stick does not count");
+}
+
+#[test]
+fn the_remember_tool_takes_a_few_seconds_not_a_billion() {
+    let (mut app, hero, _) = arena();
+    let who = id(&app, hero);
+    let err = fails(&mut app, "remember", json!({"id": who, "key": "parried", "seconds": 1.0e9}));
+    assert!(err.contains("from 0 to"), "{err}");
+    let out = ok(&mut app, "remember", json!({"id": who, "key": "parried", "seconds": 5.0}));
+    assert!(out.contains("remembers parried"), "{out}");
 }

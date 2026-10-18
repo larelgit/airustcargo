@@ -1466,25 +1466,33 @@ finds now. `select: (team, state, range, height, angle, line_of_sight, prefer_ta
 - is of another team (`Hostile`, the default) or of the fighter's own (`Ally`);
 - is in the state (`Broken`: its poise is broken; `Any`);
 - is within `range` plus its body radius on the ground plane, and within `height` up or down;
-- is within `angle` degrees (a half-angle) of where the fighter means to face: toward its lock-on target, else its movement
-  input, else its facing;
+- is within `angle` degrees (a half-angle) of the body's facing. Not the lock-on direction and not the stick, as in the
+  original game's finisher candidate: a player running away from a broken enemy has no finisher on it, and a locked player
+  whose body looks elsewhere is judged by the body (a test pins it);
 - has no world collider between the two chests, when `line_of_sight` is set;
 - with `slack`, has no other living player of the fighter's team nearer to it by more than `slack` metres (two players next to
   one broken enemy: only the nearer gets the finisher).
 
-The lock-on target wins when it qualifies and `prefer_target` is set; otherwise the nearest wins, ties by `AiId`. With no victim
+The lock-on target wins when it qualifies (it must pass the same tests, the angle too) and `prefer_target` is set; otherwise the nearest wins, ties by `AiId`. With no victim
 the action runs on its own.
 
 The pair puts the lazy components `Pairing { victim, action, instance, broke_once }` on the fighter and `Paired { by, exclusive
 }` on the victim. It forces `victim_action` on the victim, keeps a broken victim broken for at least `hold_break` from the
 start, and triggers `PairStarted { attacker, victim, action }`. While it lasts:
 
-- the fighter's hits find only its victim (`only_victim`). Other attackers can still hit the victim unless the pair is
+- the fighter's hits find only its victim (`only_victim`), for the whole run: a finisher that kills its victim, or loses it to
+  a despawn, goes on with its lunge stopped and hits nobody else (`RunHalted` keeps `only_victim` after the `Pairing` is
+  gone). Other attackers can still hit the victim unless the pair is
   `exclusive` (kept for revives: then nobody else's hits find it);
 - **the strike**: the pair's first hit that lands on a victim still in the pair's state ends its break (`ends_break`, once a
-  pair; the break protection starts) and forces the reaction `strike_reaction` (3, a knockdown, by default; 0: none) with
-  `Reaction::forced` and the hit's knockback. It ignores the victim's armour and immunity, starts no immunity, and replaces the
-  held action; no statuses and no poise damage come with it. The hit's weight is at least `Finisher`;
+  pair; the break protection starts) and forces the reaction `strike_reaction` (3, a knockdown, by default; 0: none, the
+  damage lands, `Damaged::reaction` is `None` and the victim keeps its held pose) with `Reaction::forced` and the hit's
+  knockback. It ignores the victim's armour and immunity (`ignore_armor`: confirmed against combat-actor 4.11,
+  `_receive_finisher`, which forces `hit_react` with no armour test, sets no immunity and gives no hit grace), starts no
+  immunity, and replaces the held action; no statuses and no poise damage come with it. The hit's weight is at least
+  `Finisher`, and the pair's weight and reaction hold whatever the barrier, the damage-taken multipliers and the hooks do to the
+  damage (a barrier that swallows the strike, a `DamageTaken` of 3: a test pins both). `DamageCtx::pair` tells a damage hook the
+  hit is such a strike before it runs, with `weight` already raised to `Finisher`: a finisher's formula keys on it;
 - the victim's hold and broken poise refuse every other attacker's reactions, not the holder's;
 - `tend_pairs` (fighter chain, `AiId` order) ends the pair. It is `Cut` when the fighter's run is no longer the pair's. It is
   `Lost` when the victim is gone or dead (the run goes on with its lunge stopped: the lazy `RunHalted { instance }` zeroes the
@@ -1493,19 +1501,42 @@ start, and triggers `PairStarted { attacker, victim, action }`. While it lasts:
 
 Every end goes through `release_pair(world, attacker, end)`. It takes both marks off, cuts the victim's `victim_action` unless
 the pair `Finished` with the victim alive (the strike's reaction already replaced it, or the held pose runs out), and triggers
-`PairEnded { attacker, victim, action, end }` (`Finished`, `Lost`, `Cut`; `victim` is `None` when it no longer exists).
+`PairEnded { attacker, victim, action, end }` (`Finished`, `Lost`, `Cut`; `victim` is `None` when it no longer exists). A
+finisher whose strike kills its victim ends as `Lost` (the victim is dead when `tend_pairs` looks), never `Finished`, and the
+journal says `lets go of e7 (lost)`: a game that keys on the end of a pair (a lane that rewards finishers) listens to `Damaged`
+with `weight: Finisher` or to `Died`, not to `PairEnd::Finished`. When the attacker dies mid-pair the pair is `Cut` and the
+victim's held action is cut with it, so its broken poise ends with that action (the victim is free at once; no ruling asks for
+more).
 `cut_action(world, entity)` ends a run with `ActionEnded { end: Interrupted }`.
 
 **Prediction and co-op.** Bindings, memories, the guard's press and pairs are decided on the host: `ActionSystems::Context` and
 `start_pairs` run in the simulation, and their observers return at once on a machine that does not simulate. Their components
-replicate like any other. A client's prediction starts the bound action from its copy of `ContextInputs` (a light that is a
-finisher there is predicted as the finisher), and the host resolves the press on the tick it is stamped with, from its own
-context and with its own choice of victim; it never takes the client's. On a stand at 150 ms one way and 2 % loss, a client
-that pressed light within 150 ms of its copy showing the finisher, twelve times, was mispredicted 0 times
-(`net_predict.rs`): a broken enemy stays finishable for its stagger, 0.7 s, which is longer than the round trip. A later press
-can be refused by the host like any other prediction (`net: predicted spar_finisher not confirmed`). The client's shown perfect
-window reads the replicated `GuardArm`, which is a round trip old; the host decides the parry. `PairStarted` and `PairEnded`
-travel to clients.
+replicate like any other. A client's prediction starts the bound action from its copy of `ContextInputs` (a light that is plain there is predicted
+as the plain light), and the host resolves the press on the tick it is stamped with, from its own context and with its own
+choice of victim; it never takes the client's.
+
+**A paired action is not predicted** (13a, "Context staleness"). The stand test `context_staleness_around_the_break_is_counted`
+presses light on the client from 9 ticks before to 9 ticks after the host breaks the enemy, and from 30 to 46 ticks after (the
+end of the stagger), over 150 ms and 2 % loss. With the finisher predicted, every press near the end of the stagger was
+mispredicted (the host's break had lapsed before the stamped tick: 10 of 10 from 30 ticks on), and every press in the window
+before the client's copy showed the finisher was a predicted jab the host turned into a finisher (18 of 19). So the client does
+not predict an action with `pair`: the press is let go, the host starts the finisher on its own tick and the client takes
+the run over (the answer of `light_attack` says `the host starts it`). The finisher therefore starts on a client about a round
+trip after the press. What stays: a press made before the client's copy shows the finisher is predicted as the plain light and
+replaced by the host's finisher when it comes (`net: predicted spar_jab not confirmed`, counted in `mispredicted`: 18 of 19
+trials in that window, 0 from 9 ticks on). The test with two players next to one broken enemy
+(`the_slack_handoff_between_two_players_is_counted`, 12 trials, the second player stepping in around the first one's press)
+had exactly one finisher each time, taken by whoever the host found nearer.
+
+Known co-op limitation (the stale window): for about half a round trip after the host's break, a client still shows a jab
+that the host replaces with the finisher through the predictor's reconcile (18 of 19 presses in that window, 0 outside it). It
+is accepted for now, no host-tick resolution is built, and it is an item for the M8 co-op feel check.
+
+**The guard's press, predicted.** A client runs the same press rule on its own `Intent` (`step_arm`, the function the host's
+`arm_guard` calls; its result is the predictor's own `GuardArm`), so a guard it starts shows the perfect window the host will
+give it, from the first tick, whenever the presses agree. Once the host confirms the start, the host's `GuardArm` decides what
+is shown. A test compares the shown window with the host's tick by tick (122 shared ticks, 22 with a perfect window, 0 differ).
+`PairStarted` and `PairEnded` travel to clients.
 
 **What the AI sees.** Describe: `remembers parried 0.32s`, `light -> spar_finisher on e7` (the bound inputs), `pairing e7`,
 `held by e5`, `guard press armed` and `guard armed (perfect window)`, and on a possible victim `finishable by e5`. That last
@@ -1521,10 +1552,19 @@ memory.
 snapshots, replay checks and co-op clients get them by the default rules. `ContextConditions` (registered at build time) and
 `PendingPairs` (the pairs the machine started, taken in the same tick) are not simulation state. The guard's press rule is
 read from content only for the guards that have it (the scan peeks at the others), so the replays of content made before B3
-keep their `content` parts.
+keep their `content` parts. The scan runs for every fighter every tick (a few hash lookups per input of its moveset); it is not
+cached because a content reload could make a cache stale. A guard pressed that never starts leaves a `GuardArm` for
+`gap` seconds, and replay checks read it only through the fighters' hashed state. NPC planning (`shards_npc`) plans the
+moveset's plain action for an input: it does not see `ContextInputs`, so an NPC whose moveset has `context` is planned for the
+plain action while the machine starts the bound one; give such an NPC no bindings, or plan its bound actions as their own
+inputs.
 
-**Not in B3.** A `Downed` pair state (B5) and an "intangible" exclusion (B2c); Godot's "a guard press cancels a queued light or
-heavy" and "a guard cancel from recovery only on a fresh press".
+**Content checks.** `Recall::Ended`, `Recall::Started` and `Forget::Started` name a tag that some action must carry; a tag no
+`ActionDef` has is a content error (a typo would otherwise never fire). The `remember` tool takes 0 to 600 seconds.
+
+**Not in B3.** A `Downed` pair state (B5) and an "intangible" exclusion (B2c). Two parts of Godot's guard behaviour (design
+13.11) are not built and have no ruling: "a guard press cancels a queued light or heavy" and "a guard cancel from recovery only
+on a fresh press". The ledger rows C26-C28 only settle the arming rule and the press-stamp quirk. They wait for a ruling.
 
 ### Body state: barrier, damage taken, status rules (B2b)
 

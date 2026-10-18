@@ -144,7 +144,14 @@ fn press_held(world: &mut World, caller: &Caller, input: &str, dir: Option<Vec3>
         return Ok(format!("ok: {input} released"));
     }
     let when = when(world, me, input)?;
-    let note = predicted_note(world, me);
+    let mut note = predicted_note(world, me);
+    // A paired action is not predicted: the host starts it and the client takes it over.
+    if let When::Now(action) = &when
+        && !note.is_empty()
+        && world.resource::<ContentDb>().get::<ActionDef>(action).is_some_and(|d| d.pair.is_some())
+    {
+        note = " · the host starts it (a paired action is not predicted)";
+    }
     let (displaced, tap) = {
         let view = FighterView::of(world, me).ok_or("your body is not a complete fighter")?;
         let shown = shown_state(world, me);
@@ -740,14 +747,20 @@ pub struct RememberArgs {
     pub seconds: Option<f32>,
 }
 
+/// The longest a developer can make a fighter remember (s): a memory is a few seconds, and one that
+/// outlasts any session is a typo.
+const MAX_REMEMBER_SECONDS: f32 = 600.0;
+
 fn remember_tool(In(call): In<Call<RememberArgs>>, world: &mut World) -> ToolResult {
     let e = call.args.id.entity(world)?;
     let RememberArgs { id, key, seconds } = call.args;
     let moveset = world.get::<Fighter>(e).map(|f| f.moveset.clone()).ok_or_else(|| format!("{id} is not a fighter"))?;
     let def = world.resource::<ContentDb>().get::<MovesetDef>(&moveset).and_then(|m| m.remember.iter().find(|r| r.key == key)).cloned();
     let seconds = match (seconds, &def) {
-        (Some(s), _) if s.is_finite() && s >= 0.0 => s,
-        (Some(s), _) => return Err(format!("seconds={s} is not a time; give a number >= 0 (0 forgets)")),
+        (Some(s), _) if s.is_finite() && (0.0..=MAX_REMEMBER_SECONDS).contains(&s) => s,
+        (Some(s), _) => {
+            return Err(format!("seconds={s} is not a time; give a number from 0 to {MAX_REMEMBER_SECONDS} (0 forgets)"));
+        }
         (None, Some(d)) => d.seconds,
         (None, None) => return Err(format!("the moveset `{moveset}` of {id} remembers no `{key}`, so it has no time for it; give seconds=")),
     };

@@ -1716,6 +1716,9 @@ impl MovesetDef {
             }) {
                 if tag.is_empty() {
                     refs.error(format!("{at} names an empty tag; tags are the actions' `tags`, e.g. `dodge`"));
+                } else if !refs.iter::<ActionDef>().any(|(_, a)| a.tags.iter().any(|t| t == tag)) {
+                    // A tag no action carries never fires: a typo, caught here instead of in play.
+                    refs.error(format!("{at} names the tag `{tag}`, which no action carries; tags are the actions' `tags`, e.g. `dodge`"));
                 }
             }
         }
@@ -1978,6 +1981,31 @@ mod tests {
             "content/m.moveset.ron: moveset `m`: inputs.heavy -> unknown action `hevy`",
         ];
         assert_eq!(errors, expected);
+    }
+
+    #[test]
+    fn a_memory_tag_no_action_carries_is_an_error() {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<ActionDef>();
+        kinds.register::<MovesetDef>();
+        kinds.register::<StatusDef>();
+        let actions = r#"{
+            "roll": (net_id: 1, phases: [("roll", 0.3)], tags: ["dodge"]),
+            "stagger": (net_id: 2, phases: [("stagger", 0.5)]),
+        }"#;
+        let movesets = r#"{ "m": (inputs: {"dodge": "roll"}, stagger: "stagger", remember: [
+            (key: "dodged", on: Ended("dodge"), seconds: 0.3),
+            (key: "typo", on: Ended("dodgee"), seconds: 0.3, forget: [Started("rol")]),
+        ]) }"#;
+        let sources = [
+            shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
+            shards_content::db::Source { path: "content/m.moveset.ron".into(), text: movesets.into() },
+        ];
+        let db = shards_content::ContentDb::build(&kinds, &sources);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        assert_eq!(errors.len(), 2, "{errors:#?}");
+        assert!(errors.iter().any(|e| e.contains("remember[1]") && e.contains("`dodgee`") && e.contains("no action carries")), "{errors:#?}");
+        assert!(errors.iter().any(|e| e.contains("`rol`")), "{errors:#?}");
     }
 
     #[test]

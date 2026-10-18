@@ -281,18 +281,12 @@ pub fn resolve(world: &World, entity: Entity) -> Option<ContextInputs> {
     Some(out)
 }
 
-/// Where `entity` means to face: toward its lock-on target, else along its movement input, else
-/// its facing.
-fn meant_facing(world: &World, entity: Entity, here: Vec3) -> Vec3 {
-    let intent = world.get::<Intent>(entity);
-    let target = intent
-        .and_then(|i| i.target)
-        .and_then(|id| world.resource::<AiIndex>().get(id))
-        .and_then(|e| world.get::<Transform>(e))
-        .and_then(|t| flat(t.translation - here).try_normalize());
-    let moving = intent.and_then(|i| flat(i.move_dir).try_normalize());
-    let ahead = world.get::<Transform>(entity).and_then(|t| flat(*t.forward()).try_normalize());
-    target.or(moving).or(ahead).unwrap_or(Vec3::NEG_Z)
+/// Where `entity` faces for the angle test of a pair's `select`: its body's facing, as design 6.4
+/// and the original game's finisher candidate have it (not the lock-on direction and not the
+/// stick: a player running away from a broken enemy has no finisher on it, and a locked player
+/// whose body looks elsewhere is judged by the body).
+fn meant_facing(world: &World, entity: Entity) -> Vec3 {
+    world.get::<Transform>(entity).and_then(|t| flat(*t.forward()).try_normalize()).unwrap_or(Vec3::NEG_Z)
 }
 
 /// Whether `candidate` is a victim `entity`'s pair `select` may take now (every rule but the
@@ -360,7 +354,7 @@ fn qualifies(world: &World, entity: Entity, candidate: Entity, select: &PairSele
 /// qualifies, else the nearest that qualifies (3D distance, strictly nearer; ties: the lower `AiId`).
 pub fn pair_victim(world: &World, entity: Entity, select: &PairSelect) -> Option<Entity> {
     let here = world.get::<Transform>(entity)?.translation;
-    let face = meant_facing(world, entity, here);
+    let face = meant_facing(world, entity);
     if select.prefer_target
         && let Some(locked) = world.get::<Intent>(entity).and_then(|i| i.target).and_then(|id| world.resource::<AiIndex>().get(id))
         && qualifies(world, entity, locked, select, face)
@@ -417,6 +411,26 @@ pub(crate) fn fresh_press(arm: Option<&GuardArm>, press: &GuardPress, now: u64, 
     arm.is_some_and(|a| a.armed && a.pressed.is_some_and(|p| since(now, p, dt) <= press.entry + EPS))
 }
 
+/// One tick of the press rule on `arm`: `pressed` is a press of a guard input in this tick's
+/// `Intent`, `down` a guard input held, `running` the instance of the action the body runs. The
+/// host's `arm_guard` and a client's prediction both call it, so they agree whenever the presses do.
+pub(crate) fn step_arm(mut arm: GuardArm, press: &GuardPress, pressed: bool, down: bool, running: Option<u32>, now: u64, dt: f32) -> GuardArm {
+    if pressed || (down && !arm.down) {
+        arm.armed = arm.pressed.is_none_or(|p| since(now, p, dt) + EPS >= press.gap);
+        arm.pressed = Some(now);
+    }
+    arm.down = down;
+    if arm.run.is_some() && arm.run != running {
+        arm.run = None;
+    }
+    arm
+}
+
+/// Whether `arm` says nothing an absent component would not.
+pub(crate) fn arm_idle(arm: &GuardArm, press: &GuardPress, now: u64, dt: f32) -> bool {
+    !arm.down && arm.run.is_none() && arm.pressed.is_none_or(|p| since(now, p, dt) + EPS >= press.gap)
+}
+
 /// This tick's guard presses of `entity` (an `Intent` press of a guard input, or one becoming
 /// held): a press is fresh when the one before it is `gap` old (or there was none). The component
 /// goes once it says nothing an absent one would not.
@@ -434,16 +448,8 @@ fn arm_guard(world: &mut World, entity: Entity, now: u64, dt: f32) {
     let pressed = intent.is_some_and(|i| i.pressed.iter().any(|p| inputs.contains(&p.input.as_str())));
     let running = world.get::<ActionState>(entity).and_then(|s| s.current.as_ref()).map(|r| r.instance);
     let old = world.get::<GuardArm>(entity).copied();
-    let mut arm = old.unwrap_or_default();
-    if pressed || (down && !arm.down) {
-        arm.armed = arm.pressed.is_none_or(|p| since(now, p, dt) + EPS >= press.gap);
-        arm.pressed = Some(now);
-    }
-    arm.down = down;
-    if arm.run.is_some() && arm.run != running {
-        arm.run = None;
-    }
-    let idle = !arm.down && arm.run.is_none() && arm.pressed.is_none_or(|p| since(now, p, dt) + EPS >= press.gap);
+    let arm = step_arm(old.unwrap_or_default(), &press, pressed, down, running, now, dt);
+    let idle = arm_idle(&arm, &press, now, dt);
     match (idle, old) {
         (true, Some(_)) => {
             world.entity_mut(entity).remove::<GuardArm>();
@@ -819,13 +825,13 @@ fn on_action_ended(e: On<ActionEnded>, role: Option<Res<NetRole>>, mut commands:
 }
 
 pub(crate) fn plugin(app: &mut App) {
-    use crate::{fighter, machine, ActionSystems};
+    use crate::{machine, ActionSystems};
     app.add_systems(
         FixedUpdate,
         (
             resolve_context.in_set(ActionSystems::Context),
             start_pairs.in_set(ActionSystems::Effects).before(machine::apply_effects),
-            (age_memory, tend_pairs).chain().in_set(ActionSystems::Fighters).after(fighter::tick_protection),
+            (age_memory, tend_pairs).chain().in_set(ActionSystems::Fighters).after(crate::body::tick_body_state),
         ),
     )
     .add_observer(on_parried)
@@ -882,6 +888,17 @@ pub(crate) fn may_hit(world: &World, attacker: Entity, instance: u32, target: En
         && def.only_victim
         && pairing.instance == instance
         && world.get::<AiId>(target) != Some(&pairing.victim)
+    {
+        return false;
+    }
+    // A pair whose victim was lost to its death (or its despawn) leaves the run halted, not free to
+    // swing at whoever else stands in the cone: `only_victim` holds to the end of the run.
+    if world.get::<RunHalted>(attacker).is_some_and(|h| h.instance == instance)
+        && world
+            .get::<ActionState>(attacker)
+            .and_then(|s| s.current.as_ref())
+            .and_then(|r| world.resource::<ContentDb>().get::<ActionDef>(&r.action)?.pair.as_ref().map(|p| p.only_victim))
+            .unwrap_or(false)
     {
         return false;
     }

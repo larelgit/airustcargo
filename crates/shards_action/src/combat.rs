@@ -152,6 +152,10 @@ pub struct DamageCtx {
     pub guard_mult: Option<f32>,
     /// Weight floor; the engine raises it (heavy reaction, break) when it applies the hit.
     pub weight: HitWeight,
+    /// The hit is a paired action's strike on its victim, in the pair's state (B3): it will weigh
+    /// `Finisher` and force the pair's reaction whatever the hooks do to the other fields. A
+    /// finisher's damage hook keys on this.
+    pub pair: bool,
 }
 
 /// A game's step in the damage pipeline: `app.add_damage_hook(crits)`.
@@ -396,6 +400,7 @@ fn resolve(world: &mut World, d: Detected) {
     }
     .or_else(|| facing.and_then(|f| flat(f).try_normalize()))
     .unwrap_or(Vec3::NEG_Z);
+    let pair = pair_strike(world, d.attacker, d.target, &d.action).is_some();
     let mut ctx = DamageCtx {
         attacker: d.attacker,
         credit: d.attacker,
@@ -416,7 +421,8 @@ fn resolve(world: &mut World, d: Detected) {
         knockback: hit.knockback,
         taken: 1.0,
         guard_mult: None,
-        weight: def.weight.unwrap_or_default(),
+        weight: if pair { def.weight.unwrap_or_default().max(HitWeight::Finisher) } else { def.weight.unwrap_or_default() },
+        pair,
     };
     modifiers(world, &mut ctx);
     let hooks = world.resource::<DamageHooks>().0.clone();
@@ -524,7 +530,8 @@ fn plan(world: &World, ctx: &DamageCtx, strike: Option<&Strike>) -> Plan {
     if let (Outcome::Hit, Some(s)) = (ctx.outcome, strike) {
         // A pair's strike: its forced reaction replaces the hit's own.
         let r = Reaction::forced(s.tier, Some(ctx.credit), ctx.dir);
-        return Plan { breaks: false, reacts: should_react(world, ctx.target, &r, 0).then_some(s.tier) };
+        // `strike_reaction: 0` forces nothing.
+        return Plan { breaks: false, reacts: (s.tier > 0 && should_react(world, ctx.target, &r, 0)).then_some(s.tier) };
     }
     let reacts = match (ctx.outcome, ctx.reaction) {
         (Outcome::Hit, Some(tier)) if !breaks => {
