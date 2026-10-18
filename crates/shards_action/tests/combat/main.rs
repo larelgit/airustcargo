@@ -9,6 +9,7 @@ mod hits;
 mod modifiers;
 mod outcome;
 mod reactions;
+mod timeline;
 mod replay;
 #[cfg(feature = "render")]
 mod render;

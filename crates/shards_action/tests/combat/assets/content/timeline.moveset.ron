@@ -1,0 +1,33 @@
+{
+    // A press of each kind waits in its own place (the old buffer).
+    "t_fighter": (
+        inputs: {
+            "light": "t_chain_1",
+            "heavy": "t_heavy",
+            "dodge": "t_roll",
+            "technique.1": "t_tech",
+            "technique.2": "t_beam",
+            "technique.3": "t_lunge",
+            "technique.4": "t_lunge_b",
+            "technique.5": "t_turn",
+            "technique.6": "t_assist",
+            "technique.7": "t_track",
+            "technique.8": "t_quick",
+        },
+        stagger: "t_stagger",
+    ),
+    "t_early": (inputs: {"light": "t_chain_early"}, stagger: "t_stagger"),
+    "t_tail": (inputs: {"light": "t_tail"}, stagger: "t_stagger"),
+    // One press waits at a time, the stronger first; a press tried and refused is dropped.
+    "t_slot": (
+        inputs: {"light": "t_chain_1", "heavy": "t_heavy", "dodge": "t_roll", "technique.1": "t_tech"},
+        stagger: "t_stagger",
+        buffer: SingleSlot(priority: [("dodge", 60), ("technique.1", 55), ("heavy", 40), ("light", 30)], consume_on_refusal: true),
+    ),
+    // The same slot, keeping a refused press until its time runs out.
+    "t_slot_keep": (
+        inputs: {"light": "t_chain_1", "heavy": "t_heavy", "dodge": "t_roll"},
+        stagger: "t_stagger",
+        buffer: SingleSlot(priority: [("dodge", 60), ("heavy", 40), ("light", 30)]),
+    ),
+}

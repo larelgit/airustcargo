@@ -139,7 +139,7 @@ pub use combat::{
 };
 pub use cue::{ActionSound, SoundCue};
 pub use def::{
-    ActionDef, CancelDef, CombatTuning, Cost, Effect, GuardDef, HitDef, HitFlag, HitShape, HoldDef, Local, MotionBake,
+    ActionDef, BufferMode, CancelDef, ChargeDef, CombatTuning, Cost, Effect, GuardDef, HitDef, HitFlag, HitShape, HoldDef, Local, MotionBake,
     ReactionDef, StaminaMode,
     MovesetDef, Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
 };
@@ -148,9 +148,10 @@ pub use fighter::{
     Protection, Stamina, Team,
 };
 pub use machine::{
-    action_progress, apply_effect, can_start, force_action, ActionEffect, ActionEffects, ActionEnd, ActionEnded, ActionRejected,
+    action_progress, apply_effect, can_start, extend_recovery, force_action, press_life, ActionEffect, ActionEffects, ActionEnd, ActionEnded,
+    ActionMissed, ActionRejected,
     ActionStarted,
-    ActionState, Blocker, FighterView, Healed, InputBuffer, Queued, Running, Start, Telegraph,
+    ActionState, Blocker, FighterView, Healed, InputBuffer, Queued, RunExtras, Running, Start, Telegraph,
 };
 pub use predict::{shown_state, ActionPredictor, PredictedAction, CONFIRM_SLACK};
 pub use status::{
@@ -273,7 +274,9 @@ impl Plugin for ActionPlugin {
             .register_type::<NoStatusSlow>()
             .register_type::<Protection>()
             .register_type::<Knockback>()
+            .register_type::<RunExtras>()
             .register_type::<Animated>()
+            .register_type::<ActionMissed>()
             // Typed for the network layer, which forwards them to clients.
             .register_type::<ActionStarted>()
             .register_type::<ActionRejected>()
@@ -310,7 +313,8 @@ impl Plugin for ActionPlugin {
             .add_engine_invariant("action.resources_in_range", invariants::resources_in_range)
             .add_engine_invariant("action.running_sane", invariants::running_sane)
             .add_engine_invariant("action.protection_sane", invariants::protection_sane)
-            .add_engine_invariant("action.knockback_sane", invariants::knockback_sane);
+            .add_engine_invariant("action.knockback_sane", invariants::knockback_sane)
+            .add_engine_invariant("action.extras_follow_run", invariants::extras_follow_run);
         coverage::plugin(app);
         app
             // The machine runs after motion's `Intent → LocomotionInput` step: it
@@ -343,6 +347,7 @@ impl Plugin for ActionPlugin {
                     orders::follow_attack_orders.in_set(ActionSystems::Orders),
                     machine::run_machines.in_set(ActionSystems::Machine),
                     machine::apply_effects.in_set(ActionSystems::Effects),
+                    machine::check_misses.in_set(ActionSystems::Hits).before(combat::resolve_hits),
                     combat::resolve_hits.in_set(ActionSystems::Hits),
                     fighter::push_bodies.in_set(ActionSystems::Push),
                     fighter::update_fighters.in_set(ActionSystems::Fighters),

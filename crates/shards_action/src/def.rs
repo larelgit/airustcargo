@@ -331,6 +331,13 @@ pub enum Transition {
 pub struct CancelDef {
     pub span: Span,
     pub into: Vec<Transition>,
+    /// A press of an input `into` lets through, made while this span is open and before the
+    /// window opens, waits for the window instead of expiring after `input_buffer`: its life is
+    /// the time until the window opens plus `input_buffer`. A window with a `queue` that starts
+    /// where the action ends (`Secs(L, L)`) never cuts the action short: it holds the presses it
+    /// lets through until the action is over, and they start from there as usual.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<Span>,
 }
 
 /// Hold to loop: while `input` is held, time loops inside `span` (a raised block). The
@@ -430,6 +437,29 @@ pub struct Cost {
     /// Whether `stamina` must be there in full to start.
     #[serde(skip_serializing_if = "StaminaMode::is_full")]
     pub stamina_mode: StaminaMode,
+    /// The cooldown slot this action shares with others (variants of one technique); `None`:
+    /// its own id (the old rule).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cooldown_key: Option<String>,
+    /// When the action ends before its windup is over ([`ActionDef::windup_end`]) by anything
+    /// but its own end or a chain restart (forced, killed, released, or cancelled into an action
+    /// that is not a `Combo` continuation; a dodge out of the windup counts), its cooldown is set
+    /// to this share of `cooldown` instead (0.4). `None`: the full cooldown stays.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cooldown_if_interrupted: Option<f32>,
+}
+
+/// Charge by hold ([`ActionDef::charge`]).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ChargeDef {
+    /// Seconds held before it may turn.
+    pub after: f32,
+    /// The charged action.
+    pub into: String,
+    /// The last second it may turn; default: the end of the windup ([`ActionDef::windup_end`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<f32>,
 }
 
 /// How an action's stamina cost gates its start.
@@ -515,6 +545,27 @@ pub struct ActionDef {
     /// Sampled at the instant of the tick (`start <= t <= end`), like `armor`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub perfect_iframes: Vec<Span>,
+    /// Charge by hold: while the input that started this action has been held on every tick,
+    /// from `after` seconds on (until `until`) it turns into `into` at the same time, paying only
+    /// the stamina difference; while that cannot be paid it tries again each tick.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charge: Option<ChargeDef>,
+    /// Turn rate while tracking, per span, in degrees per second (the largest of the spans open
+    /// in a tick); outside every span the facing holds. The run starts from the body's facing,
+    /// with no snap. Empty: `track_until` (the old rule). Not both.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub turn: Vec<(Span, f32)>,
+    /// Attack assist: with a lock-on target, the facing stays within this many degrees of the
+    /// direction to the target when the action started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assist: Option<f32>,
+    /// Seconds added to the action when its last hit window has passed and none of its hits
+    /// landed (a hit, a block, a parry or a guard break).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub miss_recovery: f32,
+    /// The action goes on only while this input is held; letting go ends it (`Released`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub while_held: Option<String>,
 }
 
 /// What a press turns into when a cancel window allows it.
@@ -630,7 +681,7 @@ impl ActionDef {
     pub fn cancel_into(&self, input: &str, prev: f32, t: f32) -> Option<CancelTo> {
         self.cancels
             .iter()
-            .filter(|c| self.span(&c.span).is_some_and(|w| touches(w, prev, t)))
+            .filter(|c| !self.holds_to_end(c) && self.span(&c.span).is_some_and(|w| touches(w, prev, t)))
             .find_map(|c| transition(&c.into, input))
     }
 
@@ -639,10 +690,64 @@ impl ActionDef {
     pub fn next_cancel(&self, input: &str, t: f32) -> Option<(f32, CancelTo)> {
         self.cancels
             .iter()
+            .filter(|c| !self.holds_to_end(c))
             .filter_map(|c| Some((self.span(&c.span)?, transition(&c.into, input)?)))
             .filter(|(w, _)| w.0 > t + EPS)
             .min_by(|a, b| a.0 .0.total_cmp(&b.0 .0))
             .map(|(w, to)| (w.0, to))
+    }
+
+    /// A queue-only window: one with a `queue` that starts where the action ends. It never cuts
+    /// the action short; it holds presses until the action is over ([`CancelDef::queue`]).
+    fn holds_to_end(&self, c: &CancelDef) -> bool {
+        c.queue.is_some() && self.span(&c.span).is_some_and(|w| w.0 >= self.length() - EPS)
+    }
+
+    /// When the window a press of `input` made in the tick `(prev, t]` waits for opens: the
+    /// earliest cancel window that lets `input` through, whose `queue` span is open in that tick
+    /// and which opens after `t`. `None`: the press lives `input_buffer` as usual.
+    pub fn queue_until(&self, input: &str, prev: f32, t: f32) -> Option<f32> {
+        self.cancels
+            .iter()
+            .filter(|c| c.queue.as_ref().and_then(|q| self.span(q)).is_some_and(|q| touches(q, prev, t)))
+            .filter(|c| transition(&c.into, input).is_some())
+            .filter_map(|c| self.span(&c.span).map(|w| w.0))
+            .filter(|open| *open > t + EPS)
+            .min_by(f32::total_cmp)
+    }
+
+    /// When the windup is over: the start of the first hit window, else the end of the first
+    /// phase (an action with no hits). A charge may turn until then, and a cut before it keeps
+    /// only `cost.cooldown_if_interrupted` of the cooldown.
+    pub fn windup_end(&self) -> f32 {
+        let first_hit = self.hits.iter().filter_map(|h| self.span(&h.span)).map(|w| w.0).min_by(f32::total_cmp);
+        first_hit.unwrap_or_else(|| self.phases.first().map_or(0.0, |p| p.1.max(0.0)))
+    }
+
+    /// When the last hit window closes (0 without hits): the miss check comes then.
+    pub fn last_hit_end(&self) -> f32 {
+        self.hits.iter().filter_map(|h| self.span(&h.span)).map(|w| w.1).fold(0.0, f32::max)
+    }
+
+    /// The cooldown slot of this action, whose id is `id`.
+    pub fn cooldown_key<'s>(&'s self, id: &'s str) -> &'s str {
+        self.cost.cooldown_key.as_deref().unwrap_or(id)
+    }
+
+    /// The fastest turn rate (degrees per second) of the `turn` spans open in the tick
+    /// `(prev, t]`; `None` when none is.
+    pub fn turn_rate(&self, prev: f32, t: f32) -> Option<f32> {
+        self.turn
+            .iter()
+            .filter(|(span, _)| self.span(span).is_some_and(|w| touches(w, prev, t)))
+            .map(|(_, rate)| *rate)
+            .max_by(f32::total_cmp)
+    }
+
+    /// Whether a run of this action keeps a [`RunExtras`](crate::RunExtras): it charges, turns
+    /// by spans, assists or has miss recovery.
+    pub fn needs_extras(&self) -> bool {
+        self.charge.is_some() || !self.turn.is_empty() || self.assist.is_some() || self.miss_recovery > 0.0
     }
 
     /// The first hit window that has not ended by `t`.
@@ -762,7 +867,11 @@ impl ContentDef for ActionDef {
                     check.refs.require::<ActionDef>(action, &format!("cancels[{i}].into"));
                 }
             }
+            if let Some(queue) = &cancel.queue {
+                check.span(&format!("cancels[{i}].queue"), queue);
+            }
         }
+        check.timeline(id);
         check.displacement();
         if let Some(bake) = &self.bake {
             crate::bake::check(self, id, bake, check.refs);
@@ -939,6 +1048,87 @@ impl Check<'_, '_, '_> {
             last = t;
         }
     }
+
+    /// Charge, turn spans, assist, miss recovery, `while_held` and the cooldown key and share.
+    fn timeline(&mut self, id: &str) {
+        let def = self.def;
+        if let Some(charge) = &def.charge {
+            if !(charge.after >= 0.0 && charge.after < self.length - EPS) {
+                self.refs.error(format!(
+                    "charge.after {} must lie in the action [0, {}): it is when the held input turns it",
+                    charge.after,
+                    meters(self.length)
+                ));
+            }
+            match &charge.until {
+                Some(until) => {
+                    self.time("charge.until", *until);
+                    if *until < charge.after - EPS {
+                        self.refs.error(format!("charge.until {until} comes before charge.after {}", charge.after));
+                    }
+                }
+                None if def.windup_end() < charge.after - EPS => self.refs.error(format!(
+                    "charge.after {} is past the end of the windup ({}), where a charge stops turning by default; \
+                     give charge.until",
+                    charge.after,
+                    meters(def.windup_end())
+                )),
+                None => {}
+            }
+            if charge.into == id {
+                self.refs.error("charge.into is the action itself: it would turn into itself on every tick");
+            } else if self.refs.require::<ActionDef>(&charge.into, "charge.into") {
+                // a -> b -> a would turn back and forth on every tick it is held.
+                let mut chain = vec![id.to_owned()];
+                let mut next = Some(charge.into.clone());
+                while let Some(at) = next {
+                    if chain.contains(&at) {
+                        if at == id {
+                            chain.push(at);
+                            self.refs.error(format!(
+                                "charge turns in a circle ({}): a held input would turn it on every tick",
+                                chain.join(" -> ")
+                            ));
+                        }
+                        break;
+                    }
+                    next = self.refs.get::<ActionDef>(&at).and_then(|d| d.charge.as_ref()).map(|c| c.into.clone());
+                    chain.push(at);
+                }
+            }
+        }
+        for (i, (span, rate)) in def.turn.iter().enumerate() {
+            self.span(&format!("turn[{i}]"), span);
+            self.number(&format!("turn[{i}] rate"), *rate);
+        }
+        if !def.turn.is_empty() && def.track_until > 0.0 {
+            self.refs.error("turn and track_until both say how the action turns; give one (turn spans, or track_until)");
+        }
+        if let Some(assist) = def.assist
+            && !(assist > 0.0 && assist <= 180.0)
+        {
+            self.refs.error(format!("assist must be in (0, 180] degrees (is {assist})"));
+        }
+        self.number("miss_recovery", def.miss_recovery);
+        if def.miss_recovery > 0.0 && def.hits.is_empty() {
+            self.refs.error("miss_recovery needs hit windows: it is added when none of them landed");
+        }
+        if let Some(input) = &def.while_held
+            && (input.is_empty() || input.contains(char::is_whitespace))
+        {
+            self.refs.error(format!("while_held `{input}` must be an input name without spaces, e.g. `interact`"));
+        }
+        if def.cost.cooldown_key.as_deref() == Some("") {
+            self.refs.error("cost.cooldown_key is empty; name the shared slot, or leave it out for the action's own");
+        }
+        if let Some(share) = def.cost.cooldown_if_interrupted
+            && !(0.0..=1.0).contains(&share)
+        {
+            self.refs.error(format!(
+                "cost.cooldown_if_interrupted must be between 0 and 1 (is {share}): the share of the cooldown that stays"
+            ));
+        }
+    }
 }
 
 /// Which action each input starts (content kind `moveset`), plus the actions the
@@ -991,6 +1181,45 @@ pub struct MovesetDef {
     /// current flat velocity, slowing by `decel` m/s per s. `None`: no push.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guard_broken_push: Option<(f32, f32)>,
+    /// How presses wait for their action ([`BufferMode`]); default: each input its own.
+    #[serde(default, skip_serializing_if = "BufferMode::is_per_input")]
+    pub buffer: BufferMode,
+}
+
+/// How a fighter's presses wait in its [`InputBuffer`](crate::InputBuffer).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub enum BufferMode {
+    /// Every input keeps its newest press, which waits `input_buffer` seconds (or for its
+    /// `queue` window) and is tried again on every tick until it starts or runs out (the old rule).
+    #[default]
+    PerInput,
+    /// One press at a time. `priority` ranks inputs (`[("dodge", 60), ("technique.1", 55),
+    /// ("technique.2", 55), ("light", 30)]`; inputs not listed rank 0): a press that ranks below
+    /// the one waiting is dropped (rejected); an equal or higher one takes the slot; a press of the
+    /// waiting input again keeps the later of the two expiries.
+    /// `consume_on_refusal`: a press that is let through (the fighter is free, or a cancel window
+    /// is open for it) but cannot start (stamina, a cooldown, no charges) is rejected at once
+    /// instead of being tried again.
+    SingleSlot {
+        #[serde(default)]
+        priority: Vec<(String, i32)>,
+        #[serde(default)]
+        consume_on_refusal: bool,
+    },
+}
+
+impl BufferMode {
+    fn is_per_input(&self) -> bool {
+        *self == BufferMode::PerInput
+    }
+
+    /// How `input` ranks in a single slot (0 when it is not listed, and always 0 per input).
+    pub fn rank(&self, input: &str) -> i32 {
+        match self {
+            BufferMode::PerInput => 0,
+            BufferMode::SingleSlot { priority, .. } => priority.iter().find(|(i, _)| i == input).map_or(0, |(_, r)| *r),
+        }
+    }
 }
 
 /// One reaction tier: the forced action (its length is the reaction's duration) and its push.
@@ -1070,6 +1299,15 @@ impl ContentDef for MovesetDef {
             refs.error(format!(
                 "guard_broken_push ({scale}, {decel}) needs a scale >= 0 and a deceleration above 0, or the push never stops"
             ));
+        }
+        if let BufferMode::SingleSlot { priority, .. } = &self.buffer {
+            for (i, (input, _)) in priority.iter().enumerate() {
+                if input.is_empty() || input.contains(char::is_whitespace) {
+                    refs.error(format!("buffer priority input `{input}` must be a name without spaces, e.g. `dodge`"));
+                } else if priority[..i].iter().any(|(other, _)| other == input) {
+                    refs.error(format!("buffer priority lists `{input}` twice; give each input one rank"));
+                }
+            }
         }
     }
 }
@@ -1426,6 +1664,92 @@ mod tests {
         let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
         assert_eq!(errors.len(), 1, "{errors:#?}");
         assert!(errors[0].contains("action `g`: guard.perfect_cost_mult must be between 0 and 1 (is 1.01)"), "{}", errors[0]);
+    }
+
+    #[test]
+    fn validation_names_bad_timelines() {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<ActionDef>();
+        kinds.register::<MovesetDef>();
+        let actions = r#"{
+            "a": (net_id: 1, phases: [("windup", 0.4), ("active", 0.1)],
+                hits: [(span: Phase("active"), shape: Sphere(radius: 1), damage: 5)],
+                charge: (after: 0.2, into: "b"), turn: [(Phase("nope"), -5)], track_until: 0.2, assist: 200,
+                cost: (cooldown: 1, cooldown_key: "", cooldown_if_interrupted: 1.5)),
+            "b": (net_id: 2, phases: [("windup", 0.4), ("active", 0.1)],
+                hits: [(span: Phase("active"), shape: Sphere(radius: 1), damage: 5)], charge: (after: 0.1, into: "a")),
+            "c": (net_id: 3, phases: [("windup", 0.3)], charge: (after: 0.5, into: "c"), miss_recovery: 0.5,
+                while_held: "two words"),
+            "d": (net_id: 4, phases: [("windup", 0.3), ("active", 0.1)],
+                hits: [(span: Phase("active"), shape: Sphere(radius: 1), damage: 5)], charge: (after: 0.35, into: "x")),
+            "e": (net_id: 5, phases: [("windup", 0.3), ("active", 0.1)], charge: (after: 0.2, into: "a", until: 0.1),
+                cancels: [(span: Secs(0.4, 0.4), into: [Input("light")], queue: Phase("gone"))]),
+            "ok": (net_id: 6, phases: [("windup", 0.3), ("active", 0.1)],
+                hits: [(span: Phase("active"), shape: Sphere(radius: 1), damage: 5)], charge: (after: 0.35, into: "a", until: 0.38),
+                turn: [(Phase("windup"), 90)], assist: 30, miss_recovery: 0.4, while_held: "heavy",
+                cancels: [(span: Secs(0.4, 0.4), into: [Input("light")], queue: Phase("windup"))]),
+        }"#;
+        let movesets = r#"{
+            "slot": (inputs: {}, buffer: SingleSlot(priority: [("dodge", 60), ("dodge", 50), ("two words", 1)])),
+            "fine": (inputs: {}, buffer: SingleSlot(priority: [("technique.1", 55), ("technique.2", 55)], consume_on_refusal: true)),
+        }"#;
+        let sources = [
+            shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
+            shards_content::db::Source { path: "content/m.moveset.ron".into(), text: movesets.into() },
+        ];
+        let db = shards_content::ContentDb::build(&kinds, &sources);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        let has = |part: &str| errors.iter().any(|e| e.contains(part));
+        assert!(has("action `a`: charge turns in a circle (a -> b -> a)"), "{errors:#?}");
+        assert!(has("turn[0] names an unknown phase `nope`") && has("turn[0] rate must be a number >= 0"), "{errors:#?}");
+        assert!(has("turn and track_until both say how the action turns"));
+        assert!(has("assist must be in (0, 180] degrees (is 200)"));
+        assert!(has("cost.cooldown_key is empty") && has("cost.cooldown_if_interrupted must be between 0 and 1 (is 1.5)"));
+        assert!(has("action `c`: charge.after 0.5 must lie in the action [0, 0.3)"), "{errors:#?}");
+        assert!(has("charge.into is the action itself") && has("miss_recovery needs hit windows"));
+        assert!(has("while_held `two words` must be an input name without spaces"));
+        assert!(has("action `d`: charge.after 0.35 is past the end of the windup (0.3)"), "{errors:#?}");
+        assert!(has("charge.into -> unknown action `x`"), "{errors:#?}");
+        assert!(has("action `e`: charge.until 0.1 comes before charge.after 0.2"), "{errors:#?}");
+        assert!(has("cancels[0].queue names an unknown phase `gone`"), "{errors:#?}");
+        assert!(!has("action `ok`"), "{errors:#?}");
+        assert!(has("moveset `slot`: buffer priority lists `dodge` twice"), "{errors:#?}");
+        assert!(has("buffer priority input `two words` must be a name without spaces"));
+        assert!(!has("moveset `fine`"), "equal ranks are fine: {errors:#?}");
+    }
+
+    #[test]
+    fn timeline_fields_keep_old_json() {
+        let d = def(
+            r#"(net_id: 1, phases: [("windup", 0.2), ("active", 0.1)], cost: (stamina: 10, cooldown: 1),
+                hits: [(span: Phase("active"), shape: Sphere(radius: 1), damage: 5)],
+                cancels: [(span: Phase("active"), into: [Input("dodge")])])"#,
+        );
+        let json = serde_json::to_string(&d).unwrap();
+        for new in [
+            "charge",
+            "turn",
+            "assist",
+            "miss_recovery",
+            "while_held",
+            "queue",
+            "cooldown_key",
+            "cooldown_if_interrupted",
+        ] {
+            assert!(!json.contains(&format!("\"{new}\"")), "`{new}` leaked into {json}");
+        }
+        let moveset: MovesetDef = ron::Options::default()
+            .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+            .from_str(r#"(inputs: {"light": "a"}, buffer: PerInput)"#)
+            .unwrap();
+        assert_eq!(serde_json::to_string(&moveset).unwrap(), r#"{"inputs":{"light":"a"}}"#);
+        let slot: MovesetDef = ron::Options::default()
+            .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+            .from_str(r#"(inputs: {}, buffer: SingleSlot(priority: [("dodge", 60)]))"#)
+            .unwrap();
+        assert_eq!(slot.buffer.rank("dodge"), 60);
+        assert_eq!(slot.buffer.rank("light"), 0);
+        assert!(serde_json::to_string(&slot).unwrap().contains("SingleSlot"));
     }
 
     #[test]

@@ -12,7 +12,7 @@ use crate::fighter::{
     describe_charges, describe_cooldowns, describe_health, describe_poise, describe_stamina, Charges, Cooldowns, Dead,
     Health, Invulnerable, Knockback, Poise, Protection, Stamina,
 };
-use crate::machine::{describe_action, describe_buffer, ActionRejected, ActionState, Healed, InputBuffer, Telegraph};
+use crate::machine::{describe_action, describe_buffer, ActionMissed, ActionRejected, ActionState, Healed, InputBuffer, RunExtras, Telegraph};
 use crate::status::{describe_statuses, StatusApplied, StatusExpired, Statuses};
 use crate::zone::{body_radius, zones_threatening};
 
@@ -29,6 +29,8 @@ pub(crate) fn register(app: &mut App) {
         .register_ai_component::<Invulnerable>(|_| "god mode".into())
         .register_ai_component::<Protection>(describe_protection)
         .register_ai_component::<Knockback>(describe_knockback)
+        .register_ai_describer("run", describe_run)
+        .add_ai_condition("charging", charging)
         .register_ai_advice(advice)
         .journal_event::<Telegraph>(|e, w| {
             let zone = e.zone.map(|z| format!(" {}", z.shape)).unwrap_or_default();
@@ -90,6 +92,9 @@ pub(crate) fn register(app: &mut App) {
                 (Some(k), None) => format!("{} died (killed by {})", label(w, e.entity), label(w, k)),
                 _ => format!("{} died", label(w, e.entity)),
             })
+        })
+        .journal_event::<ActionMissed>(|e, w| {
+            Some(format!("{} {} missed: +{:.2}s recovery", label(w, e.entity), e.action, e.extra))
         })
         .journal_event::<ActionRejected>(|e, w| {
             Some(format!("{} {} rejected: {}", label(w, e.entity), e.input, e.reason))
@@ -153,4 +158,31 @@ fn describe_protection(p: &Protection) -> String {
 /// `pushed 3.2m/s`.
 fn describe_knockback(k: &Knockback) -> String {
     format!("pushed {:.1}m/s", k.velocity.length())
+}
+
+/// `charging, turns in 0.12s` while the input that started a charging action is held (`turns
+/// when the stamina is there` once it is due and waits for it), `missed +0.60s` after a whiff
+/// lengthened the run.
+fn describe_run(e: EntityRef) -> Option<String> {
+    let x = e.get::<RunExtras>()?;
+    let run = e.get::<ActionState>()?.current.as_ref().filter(|r| r.instance == x.instance)?;
+    let mut parts = Vec::new();
+    if let Some(at) = x.charge_at
+        && x.held
+    {
+        parts.push(if run.t < at - EPS {
+            format!("charging, turns in {:.2}s", at - run.t)
+        } else {
+            "charging, turns when the stamina is there".to_owned()
+        });
+    }
+    if x.checked && !x.landed && x.extra > EPS {
+        parts.push(format!("missed +{:.2}s", x.extra));
+    }
+    (!parts.is_empty()).then(|| parts.join("  "))
+}
+
+/// Some fighter holds the input of an action that may still turn into its charge.
+fn charging(world: &World) -> bool {
+    world.try_query::<&RunExtras>().is_some_and(|mut q| q.iter(world).any(|x| x.held && x.charge_at.is_some()))
 }

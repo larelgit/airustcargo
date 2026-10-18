@@ -1,0 +1,115 @@
+// The action timeline (B2a): charge by hold, turn spans and assist, miss recovery, cooldown keys
+// and shares, the press queue, `while_held`. Net ids 70-89.
+{
+    // Held 0.2 s, it turns into `t_heavy_full` (until the windup ends at 0.4 s); 20 stamina, the
+    // charged one 50 (30 more at the turn).
+    "t_heavy": (
+        net_id: 70,
+        phases: [("windup", 0.4), ("active", 0.1), ("recovery", 0.3)],
+        cost: (stamina: 20),
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 20)],
+        charge: (after: 0.2, into: "t_heavy_full"),
+    ),
+    "t_heavy_full": (
+        net_id: 71,
+        phases: [("windup", 0.4), ("active", 0.1), ("recovery", 0.3)],
+        cost: (stamina: 50),
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 50)],
+    ),
+    // Turns toward its target at 90 degrees a second while it winds up, from where the body faced.
+    "t_turn": (
+        net_id: 72,
+        phases: [("windup", 0.5), ("active", 0.1), ("recovery", 0.2)],
+        hits: [(span: Phase("active"), shape: Cone(range: 1.0, angle: 60), damage: 1)],
+        turn: [(Phase("windup"), 90)],
+    ),
+    // Tracks its target through the windup, but never more than 30 degrees from where it started.
+    "t_assist": (
+        net_id: 73,
+        phases: [("windup", 0.4), ("active", 0.1), ("recovery", 0.2)],
+        hits: [(span: Phase("active"), shape: Cone(range: 1.0, angle: 60), damage: 1)],
+        track_until: 0.4,
+        assist: 30,
+    ),
+    // The old rule, no extras: it snaps to its target until 0.4 s.
+    "t_track": (
+        net_id: 74,
+        phases: [("windup", 0.4), ("active", 0.1), ("recovery", 0.2)],
+        hits: [(span: Phase("active"), shape: Cone(range: 1.0, angle: 60), damage: 1)],
+        track_until: 0.4,
+    ),
+    // A whiff recovers 0.6 s longer. Its cooldown slot `lunge` is shared with `t_lunge_b`; cut in
+    // its windup (a dodge out of it, a stagger), it keeps 40% of the cooldown.
+    "t_lunge": (
+        net_id: 75,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.2)],
+        cost: (cooldown: 3.0, cooldown_key: "lunge", cooldown_if_interrupted: 0.4),
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 10)],
+        miss_recovery: 0.6,
+        cancels: [(span: Phase("windup"), into: [Input("dodge")])],
+    ),
+    "t_lunge_b": (
+        net_id: 76,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.1)],
+        cost: (cooldown: 3.0, cooldown_key: "lunge"),
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 10)],
+    ),
+    // Its hit window opens on its first tick.
+    "t_quick": (
+        net_id: 77,
+        phases: [("active", 0.1), ("recovery", 0.2)],
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 5)],
+        miss_recovery: 0.5,
+    ),
+    // A chain: its continuation opens at 0.5 s, and a press made in the recovery waits for it.
+    // A combo out of its windup keeps the whole cooldown; a dodge out of it keeps 40%.
+    "t_chain_1": (
+        net_id: 78,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.4)],
+        cost: (cooldown: 1.0, cooldown_if_interrupted: 0.4),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 100), damage: 5)],
+        cancels: [
+            (span: Secs(0.5, 0.7), into: [Combo("light", "t_chain_2")], queue: Phase("recovery")),
+            (span: Secs(0.05, 0.15), into: [Combo("technique.1", "t_chain_2"), Input("dodge")]),
+        ],
+    ),
+    "t_chain_2": (
+        net_id: 79,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 100), damage: 5)],
+    ),
+    // The same chain, queued early: a press from its first tick waits for the continuation.
+    "t_chain_early": (
+        net_id: 80,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.4)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 100), damage: 5)],
+        cancels: [(span: Secs(0.5, 0.7), into: [Combo("light", "t_chain_2")], queue: Phases("windup", "recovery"))],
+    ),
+    // No continuation: a press made in its recovery waits until it is over and starts it again.
+    "t_tail": (
+        net_id: 81,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 100), damage: 5)],
+        cancels: [(span: Secs(0.6, 0.6), into: [Input("light")], queue: Phase("recovery"))],
+    ),
+    // A technique another technique may cut from 0.7 s; a press made at any time waits for that.
+    "t_tech": (
+        net_id: 82,
+        phases: [("windup", 0.3), ("active", 0.2), ("recovery", 0.5)],
+        hits: [(span: Phase("active"), shape: Sphere(radius: 1.0), damage: 5)],
+        cancels: [(span: Secs(0.7, 1.0), into: [Input("technique.1"), Input("technique.3")], queue: Secs(0.0, 1.0))],
+    ),
+    // Lasts while its input is held.
+    "t_beam": (
+        net_id: 83,
+        phases: [("beam", 2.0)],
+        while_held: "technique.2",
+    ),
+    "t_roll": (
+        net_id: 84,
+        phases: [("roll", 0.3)],
+        cost: (stamina: 10),
+        steer: Move,
+    ),
+    "t_stagger": (net_id: 85, phases: [("stagger", 0.5)]),
+}

@@ -14,7 +14,16 @@
 //!    shown here decides whether one starts now: a [`PredictedAction`] and a local
 //!    [`ActionStarted`] (`predicted: true`).
 //! 4. The action shown moves the body through `LocomotionInput` the way the machine does
-//!    ([`steer_locomotion`]).
+//!    ([`steer_locomotion`]), turns into its charged action when the hold is long enough (a
+//!    prediction of the charged action, answered as any other), and stops when its `while_held`
+//!    input is let go.
+//!
+//! A host run is new to this machine when its instance is new or when it is the instance shown
+//! here with another action (the host turned a charge this machine did not). The run shown
+//! takes what only the host changes: the extra recovery of a miss, the displacement scale. A run
+//! the host ended with no new one (no event says so) leaves the body to the host's state, and a
+//! charge the host never turned (it had no stamina) goes back to the host's action once the
+//! charge could no longer turn.
 //!
 //! Hits, effects, damage, stamina spent and statuses are never predicted: they come with the
 //! host's state.
@@ -31,11 +40,11 @@ use shards_core::{Intent, NetPrediction, Predicted};
 use shards_motion::{CharacterController, CharacterParams, LocomotionInput, MotionState, MoveModifiers};
 
 use crate::combat::Died;
-use crate::def::{ActionDef, CombatTuning, MovesetDef, EPS};
+use crate::def::{ActionDef, BufferMode, CombatTuning, MovesetDef, EPS};
 use crate::fighter::{sprint_rule, Charges, Cooldowns, Dead, Fighter, Stamina};
 use crate::machine::{
-    advance, choose_in, free_sprint, steer, steer_locomotion, step_run, understands, ActionRejected, ActionStarted, ActionState,
-    FighterView, Queued, Running,
+    advance, buffer_press, cap_queue, charge_due, choose_in, free_sprint, press_life, refused_press, start_facing, steer_locomotion,
+    step_run, understands, ActionRejected, ActionStarted, ActionState, FighterView, Queued, RunExtras, Running,
 };
 
 /// Ticks past a press's tick (and the lead) after which a prediction the host has not
@@ -61,6 +70,9 @@ pub struct PredictedAction {
     pub run: Running,
     /// The host started it too (or started it itself).
     pub confirmed: bool,
+    /// The run's [`RunExtras`] as this machine keeps them (its own hold; the host's extra
+    /// recovery and scale), when its action needs them.
+    pub extras: Option<RunExtras>,
 }
 
 /// A prediction the host has not answered yet.
@@ -70,6 +82,8 @@ struct Pending {
     input: String,
     instance: u32,
     start_tick: u64,
+    /// A charge turned here: the action it turned from (the run keeps its instance).
+    branch_from: Option<String>,
 }
 
 /// What the host said about the own body (forwarded events, with their host tick).
@@ -90,6 +104,9 @@ pub struct ActionPredictor {
     queued: Vec<Queued>,
     /// Forwarded events since the last predicted tick.
     answers: Vec<Answer>,
+    /// The run shown here that last ran out of time, with the extra recovery it had: the host may
+    /// still be in a longer recovery of it.
+    ended: Option<(u32, f32)>,
 }
 
 pub(crate) fn plugin(app: &mut App) {
@@ -118,6 +135,8 @@ pub(crate) struct PredictedBody {
     motion: Option<&'static MotionState>,
     modifiers: Option<&'static MoveModifiers>,
     body: Option<(&'static CharacterController, Option<&'static CharacterParams>)>,
+    /// The host's, replicated.
+    extras: Option<&'static RunExtras>,
     shown: Option<&'static mut PredictedAction>,
     dead: Has<Dead>,
 }
@@ -187,11 +206,20 @@ pub(crate) fn predict_actions(
             settled.push((p, Ok(())));
         }
     }
+    // A charge turned here waits for the host's word while it could still turn there, however late.
     let late = host.saturating_sub(net.lead + CONFIRM_SLACK);
-    while let Some(i) = predictor.pending.iter().position(|p| p.start_tick < late) {
+    let turning = |p: &Pending| {
+        let Some(from) = p.branch_from.as_deref().and_then(|a| db.get::<ActionDef>(a)) else { return false };
+        let until = from.charge.as_ref().and_then(|c| c.until).unwrap_or_else(|| from.windup_end());
+        shown.as_ref().is_some_and(|s| s.run.instance == p.instance && s.run.t <= until + EPS)
+    };
+    while let Some(i) = predictor.pending.iter().position(|p| p.start_tick < late && !turning(p)) {
         let p = predictor.pending.remove(i).expect("found");
         settled.push((p, Err(format!("not started by host tick {host}"))));
     }
+    let behind = now.saturating_sub(1).saturating_sub(host);
+    let host_run = b.state.current.as_ref();
+    let host_extras = b.extras.copied().filter(|x| host_run.is_some_and(|r| r.instance == x.instance));
     for (p, verdict) in settled {
         let mine = shown.as_ref().is_some_and(|s| s.start_tick == p.start_tick && s.action == p.action && !s.confirmed);
         match verdict {
@@ -205,24 +233,36 @@ pub(crate) fn predict_actions(
                 net.mispredicted += 1;
                 lines.push(format!("net: predicted {} not confirmed ({reason})", p.action));
                 if mine {
-                    shown = None;
+                    // A charge the host did not turn: back to the host's action, at the host's time.
+                    let unturned = p.branch_from.is_some().then(|| host_run.filter(|r| r.instance == p.instance)).flatten();
+                    shown = unturned.and_then(|r| take_over(r, host_extras, &db, b.intent, behind, dt, now));
                 }
             }
         }
     }
 
     // 2. Put the action shown where the host has it, or take the host's over.
-    let behind = now.saturating_sub(1).saturating_sub(host);
     if let Some(r) = fresh {
-        let caught_up = catch_up(r.clone(), &db, b.intent, behind, dt);
+        let caught_up = catch_up(r.clone(), RunExtras::extra_of(host_extras.as_ref()), &db, b.intent, behind, dt);
         let same = shown.as_ref().is_some_and(|s| s.action == r.action && s.input == r.input && r.instance >= s.run.instance);
         let older = shown.as_ref().is_some_and(|s| r.instance < s.run.instance);
-        if same {
+        // The host's run of a charge this machine has already turned, before the host's turn: the
+        // start is confirmed, and the turn waits for the host's word on it.
+        let turned_here = shown.as_ref().is_some_and(|s| s.run.instance == r.instance)
+            && predictor.pending.iter().any(|p| p.instance == r.instance && p.branch_from.as_deref() == Some(r.action.as_str()));
+        if turned_here {
+            let s = shown.as_mut().expect("turned here");
+            s.expect_instance = r.instance + 1;
+            adopt(&mut s.extras, host_extras);
+        } else if same {
             let s = shown.as_mut().expect("same");
             s.confirmed = true;
             s.expect_instance = r.instance + 1;
             match caught_up {
-                Some(run) => s.run = run,
+                Some(run) => {
+                    s.run = run;
+                    adopt(&mut s.extras, host_extras);
+                }
                 None => shown = None,
             }
         } else if !older {
@@ -236,20 +276,54 @@ pub(crate) fn predict_actions(
                 start_tick: now,
                 run,
                 confirmed: true,
+                extras: host_extras,
             });
         }
+    } else if let Some(r) = host_run {
+        let shown_here = shown.as_ref().is_some_and(|s| s.run.instance == r.instance);
+        if shown_here && let Some(s) = shown.as_mut() {
+            if s.run.action == r.action {
+                // The same run: it takes what only the host changes (a miss's extra recovery).
+                adopt(&mut s.extras, host_extras);
+            } else if !predictor.pending.iter().any(|p| p.instance == r.instance && p.branch_from.is_some()) {
+                // The host turned a charge this machine did not: its action and time, the hold kept here.
+                let kept = s.extras;
+                shown = take_over(r, host_extras, &db, b.intent, behind, dt, now).map(|mut taken| {
+                    taken.extras = kept.or(taken.extras);
+                    adopt(&mut taken.extras, host_extras);
+                    taken
+                });
+            }
+        } else if shown.is_none()
+            && let Some((instance, extra)) = predictor.ended
+            && r.instance == instance
+            && host_extras.is_some_and(|x| x.extra > extra + EPS)
+        {
+            // Its time ran out here, but the host's recovery is longer (a miss): the host's run again.
+            shown = take_over(r, host_extras, &db, b.intent, behind, dt, now);
+        }
+    }
+    // The host ended the run shown here with no new one and no word (a cut, a release): the body
+    // goes back to the host's state.
+    let host_ended = shown.as_ref().is_some_and(|s| {
+        s.confirmed && b.state.started > s.run.instance && host_run.is_none_or(|r| r.instance != s.run.instance)
+    });
+    if host_ended && predictor.pending.is_empty() {
+        shown = None;
     }
 
     // 3. This tick's presses: buffered as the host buffers them; one may start now.
     let moveset = db.get::<MovesetDef>(&b.fighter.moveset);
+    let mode = moveset.map_or(&BufferMode::PerInput, |m| &m.buffer);
     let ttl = CombatTuning::of(&db).input_buffer;
     if b.dead {
         predictor.queued.clear();
     } else {
         let running = shown.as_ref().and_then(|s| db.get::<ActionDef>(&s.run.action));
+        let run = shown.as_ref().map(|s| &s.run);
         for press in b.intent.pressed.iter().filter(|p| understands(&p.input, moveset, running)) {
-            predictor.queued.retain(|q| q.input != press.input);
-            predictor.queued.push(Queued { input: press.input.clone(), dir: press.dir, left: ttl });
+            let left = press_life(running, run, &press.input, ttl);
+            buffer_press(&mut predictor.queued, mode, Queued { input: press.input.clone(), dir: press.dir, left });
         }
     }
     let here = b.transform.translation;
@@ -267,6 +341,13 @@ pub(crate) fn predict_actions(
         held: &b.intent.held,
         dead: b.dead,
     };
+    // A single slot that drops what is refused drops it here too (the host says why).
+    if !b.dead
+        && !predictor.queued.is_empty()
+        && let Some((i, _)) = refused_press(&view, &predictor.queued, dt)
+    {
+        predictor.queued.remove(i);
+    }
     let choice = (!b.dead).then(|| choose_in(&view, &predictor.queued, dt)).flatten();
     if let Some(choice) = choice
         && let Some(def) = db.get::<ActionDef>(&choice.start.action)
@@ -274,7 +355,10 @@ pub(crate) fn predict_actions(
         if let Some(i) = choice.queued {
             predictor.queued.remove(i);
         }
-        let facing = steer(def, choice.dir, b.intent, here, forward, target);
+        if shown.is_some() {
+            cap_queue(&mut predictor.queued, ttl);
+        }
+        let facing = start_facing(def, choice.dir, b.intent, here, forward, target);
         let run = Running::new(&choice.start.action, def, instance, facing, choice.dir, Some(choice.input.clone()));
         commands.trigger(ActionStarted {
             entity,
@@ -288,10 +372,12 @@ pub(crate) fn predict_actions(
             input: choice.input.clone(),
             instance,
             start_tick: now,
+            branch_from: None,
         });
         while predictor.pending.len() > PENDING_KEPT {
             predictor.pending.pop_front();
         }
+        let extras = def.needs_extras().then(|| RunExtras::start(def, &run, b.intent, here, target));
         shown = Some(PredictedAction {
             action: run.action.clone(),
             input: run.input.clone(),
@@ -299,6 +385,7 @@ pub(crate) fn predict_actions(
             start_tick: now,
             run,
             confirmed: false,
+            extras,
         });
     }
     if !predictor.queued.is_empty() {
@@ -308,13 +395,41 @@ pub(crate) fn predict_actions(
         predictor.queued.retain(|q| q.left >= -EPS);
     }
 
-    // 4. The action shown takes this tick and moves the body.
+    // 4. The action shown takes this tick and moves the body, turns its charge, or is let go.
     let mut external = Vec3::ZERO;
+    let mut ended = false;
     if let Some(s) = shown.as_mut() {
         match db.get::<ActionDef>(&s.run.action) {
-            Some(def) => {
-                (_, external) = step_run(&mut s.run, def, b.intent, here, target, dt);
-                s.run.refresh(def);
+            Some(mut def) => {
+                (_, external) = step_run(&mut s.run, def, s.extras.as_mut(), b.intent, here, target, dt);
+                s.run.refresh(def, RunExtras::extra_of(s.extras.as_ref()));
+                if let Some(into) = charge_due(&s.run, def, s.extras.as_ref())
+                    && let Some(into_def) = db.get::<ActionDef>(into)
+                {
+                    // Turned without paying: the host pays, or refuses (and then this goes back).
+                    predictor.pending.push_back(Pending {
+                        action: into.to_owned(),
+                        input: s.input.clone().unwrap_or_default(),
+                        instance: s.run.instance,
+                        start_tick: now,
+                        branch_from: Some(s.run.action.clone()),
+                    });
+                    while predictor.pending.len() > PENDING_KEPT {
+                        predictor.pending.pop_front();
+                    }
+                    net.predicted += 1;
+                    s.run.action = into.to_owned();
+                    s.run.refresh(into_def, RunExtras::extra_of(s.extras.as_ref()));
+                    s.action = into.to_owned();
+                    s.start_tick = now;
+                    s.confirmed = false;
+                    commands.trigger(ActionStarted { entity, action: into.to_owned(), input: s.input.clone(), predicted: true });
+                    def = into_def;
+                }
+                if let Some(x) = s.extras.as_mut() {
+                    x.settle_charge(&s.run, def);
+                }
+                ended = def.while_held.as_ref().is_some_and(|input| !b.intent.is_held(input));
             }
             None => shown = None,
         }
@@ -325,8 +440,15 @@ pub(crate) fn predict_actions(
     let out_of_stamina = !free_sprint(b.modifiers, b.motion) && b.stamina.is_some_and(|s| s.sprint_blocked(rule, held));
     steer_locomotion(&mut b.loco, shown.as_ref().map(|s| &s.run), &db, b.dead, out_of_stamina, external);
     // It ends in the tick its time runs out, as on the host.
-    if shown.as_ref().is_some_and(|s| s.run.t >= s.run.length - EPS) {
+    if let Some(s) = shown.as_ref()
+        && s.run.t >= s.run.length - EPS
+    {
+        predictor.ended = Some((s.run.instance, RunExtras::extra_of(s.extras.as_ref())));
+        ended = true;
+    }
+    if ended {
         shown = None;
+        cap_queue(&mut predictor.queued, ttl);
     }
 
     match (shown, b.shown.as_mut()) {
@@ -352,8 +474,9 @@ pub(crate) fn predict_actions(
     }
 }
 
-/// The host's run of `ticks` ago, moved on to now; `None` once it would have ended.
-fn catch_up(mut run: Running, db: &ContentDb, intent: &Intent, ticks: u64, dt: f32) -> Option<Running> {
+/// The host's run of `ticks` ago, moved on to now; `None` once it would have ended. `extra`: the
+/// host's extra recovery of it ([`RunExtras::extra`]).
+fn catch_up(mut run: Running, extra: f32, db: &ContentDb, intent: &Intent, ticks: u64, dt: f32) -> Option<Running> {
     let def = db.get::<ActionDef>(&run.action)?;
     let holding = def.hold.as_ref().is_some_and(|h| intent.is_held(&h.input));
     for _ in 0..ticks {
@@ -362,8 +485,47 @@ fn catch_up(mut run: Running, db: &ContentDb, intent: &Intent, ticks: u64, dt: f
         }
         advance(&mut run, def, dt, holding);
     }
-    run.refresh(def);
+    run.refresh(def, extra);
     (run.t < run.length - EPS).then_some(run)
+}
+
+/// The host's run `r` (with its replicated extras), caught up to now and shown as this machine's.
+fn take_over(
+    r: &Running,
+    extras: Option<RunExtras>,
+    db: &ContentDb,
+    intent: &Intent,
+    ticks: u64,
+    dt: f32,
+    now: u64,
+) -> Option<PredictedAction> {
+    let run = catch_up(r.clone(), RunExtras::extra_of(extras.as_ref()), db, intent, ticks, dt)?;
+    Some(PredictedAction {
+        action: r.action.clone(),
+        input: r.input.clone(),
+        expect_instance: r.instance + 1,
+        start_tick: now,
+        run,
+        confirmed: true,
+        extras,
+    })
+}
+
+/// What only the host changes in the extras of a run shown here: the extra recovery of a miss,
+/// the displacement's scale, whether a hit landed and the miss check was made (and the host's
+/// numbering of the run). The hold stays this machine's, which reads the input first.
+fn adopt(mine: &mut Option<RunExtras>, host: Option<RunExtras>) {
+    let Some(h) = host else { return };
+    match mine {
+        Some(x) => {
+            x.instance = h.instance;
+            x.extra = x.extra.max(h.extra);
+            x.scale = h.scale;
+            x.landed |= h.landed;
+            x.checked |= h.checked;
+        }
+        None => *mine = Some(h),
+    }
 }
 
 /// The action the own body shows now, as an `ActionState` for [`can_start`](crate::can_start):

@@ -269,6 +269,16 @@ impl Cooldowns {
             }
         }
     }
+
+    /// Sets the seconds left on slot `action` to `secs`, shorter or longer than now; `secs <= 0`
+    /// removes it (ready).
+    pub fn set(&mut self, action: &str, secs: f32) {
+        if secs <= 0.0 {
+            self.0.retain(|c| c.action != action);
+        } else {
+            self.start(action, secs);
+        }
+    }
 }
 
 /// Health ran out. Dead fighters start no action, take no hit and do not move.

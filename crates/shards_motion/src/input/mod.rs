@@ -497,10 +497,37 @@ fn read_input(
             }
             // "Hold to toggle" (accessibility): a held button is pressed once to hold, again to let go.
             let mode = if hold_to_toggle && action.mode == BindMode::Hold { BindMode::Toggle } else { action.mode };
-            if mode != BindMode::Toggle {
+            // A press-and-hold under "hold to toggle" latches: the first press presses and holds, the next lets go.
+            let latch = hold_to_toggle && mode == BindMode::PressHold;
+            if mode != BindMode::Toggle && !latch {
                 applied.toggled.remove(&action.action);
             }
             match mode {
+                BindMode::PressHold if latch => {
+                    if just {
+                        if applied.toggled.remove(&action.action) {
+                            // The second press lets go and presses nothing: a new press would start it again.
+                        } else {
+                            applied.toggled.insert(action.action.clone());
+                            frame.pressed.insert(action.action.clone());
+                            presses.push((action.action.clone(), action.directional));
+                        }
+                    }
+                    if applied.toggled.contains(&action.action) {
+                        frame.held.insert(action.action.clone());
+                        desired_held.insert(action.action.clone());
+                    }
+                }
+                BindMode::PressHold => {
+                    if just {
+                        frame.pressed.insert(action.action.clone());
+                        presses.push((action.action.clone(), action.directional));
+                    }
+                    if down {
+                        frame.held.insert(action.action.clone());
+                        desired_held.insert(action.action.clone());
+                    }
+                }
                 BindMode::Press => {
                     if just {
                         frame.pressed.insert(action.action.clone());

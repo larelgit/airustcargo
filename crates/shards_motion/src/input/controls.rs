@@ -102,6 +102,7 @@ fn mode_name(mode: BindMode) -> &'static str {
         BindMode::Press => "press",
         BindMode::Hold => "hold",
         BindMode::Toggle => "toggle",
+        BindMode::PressHold => "press_hold",
     }
 }
 
@@ -110,6 +111,7 @@ fn parse_mode(text: &str) -> Option<BindMode> {
         "press" => Some(BindMode::Press),
         "hold" => Some(BindMode::Hold),
         "toggle" => Some(BindMode::Toggle),
+        "press_hold" => Some(BindMode::PressHold),
         _ => None,
     }
 }
@@ -170,7 +172,7 @@ pub fn decode(defaults: &InputMap, settings: &ControlSettings) -> (InputMap, Vec
     }
     for (key, text) in &settings.hold_or_toggle {
         let applied = parse_mode(text)
-            .ok_or_else(|| format!("`{text}` is not press, hold or toggle"))
+            .ok_or_else(|| format!("`{text}` is not press, hold, toggle or press_hold"))
             .and_then(|mode| with_action(&mut map, key, |action| action.mode = mode));
         if let Err(why) = applied {
             problems.push(format!("controls.hold_or_toggle.{key}: {why}"));
@@ -361,7 +363,7 @@ mod tests {
         assert_eq!(problems.len(), 3, "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("controls.bindings.gameplay.fly") && p.contains("no action `fly`")));
         assert!(problems.iter().any(|p| p.contains("gameplay.jump") && p.contains("not a binding")));
-        assert!(problems.iter().any(|p| p.contains("gameplay.block") && p.contains("press, hold or toggle")));
+        assert!(problems.iter().any(|p| p.contains("gameplay.block") && p.contains("press, hold, toggle or press_hold")));
         assert!(check(&settings).unwrap_err().contains("gameplay.jump"));
 
         // An entry for an action this version does not have stays in the file when something else is saved.
