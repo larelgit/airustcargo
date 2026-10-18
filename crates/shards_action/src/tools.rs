@@ -13,6 +13,7 @@ use shards_content::ContentDb;
 use shards_core::input_names::{BLOCK, DODGE, HEAVY, LIGHT, PARRY, TECHNIQUE, USE_ITEM};
 use shards_core::{flat, Intent, Order, Predicted};
 
+use crate::body::{clear_barrier, clear_damage_taken, describe_damage_taken, extend_damage_taken, grant_barrier, set_damage_taken, Barrier, DamageTaken};
 use crate::combat::{react, revive, stagger, Reaction, StaggerCause};
 use crate::def::{ActionDef, BufferMode, CombatTuning, MovesetDef, Steer, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team};
@@ -34,6 +35,8 @@ pub(crate) fn register(app: &mut App) {
         .add_ai_tool("attack", Scope::Player, attack)
         .add_ai_tool("god", Scope::Dev, god)
         .add_ai_tool("heal", Scope::Dev, heal)
+        .add_ai_tool("barrier", Scope::Dev, barrier)
+        .add_ai_tool("damage_taken", Scope::Dev, damage_taken)
         .add_ai_tool("stagger", Scope::Dev, stagger_tool)
         .add_ai_tool("react", Scope::Dev, react_tool)
         .add_ai_condition("reacting", reacting)
@@ -527,6 +530,91 @@ fn heal(In(call): In<Call<HealArgs>>, world: &mut World) -> ToolResult {
     let revived = revive(world, e);
     world.trigger(Healed { entity: e, amount: gained, hp });
     Ok(format!("healed {who} to {hp:.0}{}", if revived { ", revived" } else { "" }))
+}
+
+/// Grant `id` (default: you) a barrier that takes damage before health: the larger of its pool and
+/// `amount`, for `seconds`. `amount=0` removes it.
+#[derive(Deserialize, JsonSchema, Default)]
+pub struct BarrierArgs {
+    pub id: Option<Id>,
+    /// Damage it absorbs (health points, not a share). 0 removes the barrier.
+    pub amount: f32,
+    /// Seconds it lasts. Required unless `amount` is 0.
+    pub seconds: Option<f32>,
+}
+
+fn barrier(In(call): In<Call<BarrierArgs>>, world: &mut World) -> ToolResult {
+    let e = dev_target(world, &call.caller, call.args.id)?;
+    let who = label(world, e);
+    let amount = call.args.amount;
+    if !(amount >= 0.0 && amount.is_finite()) {
+        return Err(format!("amount {amount} must be a number >= 0 (0 removes the barrier)"));
+    }
+    if amount == 0.0 {
+        clear_barrier(world, e);
+        return Ok(format!("{who} has no barrier"));
+    }
+    let seconds = call.args.seconds.ok_or("seconds is required with an amount above 0 (barrier id=e5 amount=20 seconds=8)")?;
+    if !(seconds > 0.0 && seconds.is_finite()) {
+        return Err(format!("seconds {seconds} must be a number above 0"));
+    }
+    if world.get::<Dead>(e).is_some() {
+        return Err(format!("{who} is dead; a barrier is not granted to the dead"));
+    }
+    if world.get::<Health>(e).is_none() {
+        return Err(format!("{who} has no Health; a barrier only guards health (pick a fighter)"));
+    }
+    grant_barrier(world, e, amount, seconds);
+    let b = world.get::<Barrier>(e).copied().unwrap_or_default();
+    Ok(format!("{who} has a barrier of {:.0} for {:.1}s", b.amount, b.left))
+}
+
+/// Set a named multiplier on the damage `id` (default: you) takes. The key is replaced; the product of
+/// all keys multiplies every hit.
+#[derive(Deserialize, JsonSchema, Default)]
+pub struct DamageTakenArgs {
+    pub id: Option<Id>,
+    /// The multiplier's name (`core`).
+    pub key: String,
+    /// The multiplier (1.35: a third more damage). Required unless `clear` is true.
+    pub mult: Option<f32>,
+    /// Seconds it lasts; none: until cleared.
+    pub seconds: Option<f32>,
+    /// true removes the key instead.
+    pub clear: Option<bool>,
+    /// true keeps the later end of a window the key already holds, and a permanent set never cuts a
+    /// timed one short (`extend_damage_taken`). Default false: the key is replaced.
+    pub keep_later: Option<bool>,
+}
+
+fn damage_taken(In(call): In<Call<DamageTakenArgs>>, world: &mut World) -> ToolResult {
+    let e = dev_target(world, &call.caller, call.args.id)?;
+    let who = label(world, e);
+    let key = call.args.key.as_str();
+    if key.is_empty() {
+        return Err("key must be a name, e.g. key=core".into());
+    }
+    if call.args.clear.unwrap_or(false) {
+        clear_damage_taken(world, e, key);
+        return Ok(format!("{who} takes no `{key}` multiplier"));
+    }
+    let mult = call.args.mult.ok_or("mult is required unless clear=true (damage_taken key=core mult=1.35 seconds=3)")?;
+    if !(mult >= 0.0 && mult.is_finite()) {
+        return Err(format!("mult {mult} must be a number >= 0"));
+    }
+    if let Some(s) = call.args.seconds
+        && !(s > 0.0 && s.is_finite())
+    {
+        return Err(format!("seconds {s} must be a number above 0 (clear=true removes the key)"));
+    }
+    let changed = if call.args.keep_later.unwrap_or(false) {
+        extend_damage_taken(world, e, key, mult, call.args.seconds)
+    } else {
+        set_damage_taken(world, e, key, mult, call.args.seconds);
+        true
+    };
+    let now = world.get::<DamageTaken>(e).map(describe_damage_taken).unwrap_or_default();
+    Ok(format!("{who} {}: {now}", if changed { "now" } else { "unchanged, the timed window runs on" }))
 }
 
 /// Stagger a fighter now (its moveset's `stagger` action), as a poise break would.

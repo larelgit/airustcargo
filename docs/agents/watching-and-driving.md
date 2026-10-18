@@ -54,7 +54,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
 - Engine tools (`shards tools`): **movement** — `move_to` (`path=true` follows `path_to`), `move`, `stop`, `jump`,
   `sprint`, `glide`, the `clearance` and `path_to` queries (in a region over the navmesh: `path_to` names the `provider`, `clearance` —
   `closed`, where the navmesh ends before the physics does), `input_bindings`, `rebind`; **combat** — `light_attack`, `heavy_attack`,
-  `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on`, `attack`, `god`, `heal`, `stagger`, `react` (a developer tool: it forces a reaction), `motion_bake`
+  `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on`, `attack`, `god`, `heal`, `stagger`, `react` (a developer tool: it forces a reaction), `barrier` and `damage_taken` (developer tools: a barrier, a named damage multiplier), `motion_bake`
   (the same as `--bake-motion`); **content** —
   `content_list`, `content_get`, `content_check`, `content_reload`, `spawn_prefab`; **world** — `regen`, `region_load`,
   `goto_tile`, `region_info`, `worldgen_report`, `spawn_level`, `level_info`, `level_reload`, and in a voxel region `sea_current_at` (player: the current

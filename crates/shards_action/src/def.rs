@@ -369,6 +369,14 @@ pub enum Effect {
     /// ([`ActionSound`](crate::ActionSound)); a clip's cue sounds only where a model is drawn.
     /// The audio module's content check names a sound that is not defined.
     Sound(String),
+    /// A damage-absorbing pool on the actor ([`Barrier`](crate::Barrier)): the larger of its current and
+    /// `amount`, for `seconds`. `of_max`: `amount` is a share of max health (`0.15` is 15 %).
+    Barrier {
+        amount: f32,
+        seconds: f32,
+        #[serde(default, skip_serializing_if = "is_false")]
+        of_max: bool,
+    },
     /// A game hook registered with `add_action_effect`: `Custom("spawn_fireball")`.
     Custom(String),
 }
@@ -990,6 +998,13 @@ impl ContentDef for ActionDef {
                     check.refs.require::<StatusDef>(status, &format!("effects[{i}]"));
                     check.number(&format!("effects[{i}]"), *v);
                 }
+                Effect::Barrier { amount, seconds, .. } => {
+                    for (name, v) in [("amount", *amount), ("seconds", *seconds)] {
+                        if !(v > 0.0 && v.is_finite()) {
+                            check.refs.error(format!("effects[{i}] Barrier {name} must be a number above 0 (is {v})"));
+                        }
+                    }
+                }
                 // The sound is checked where the mixer is (`AudioDef`), as a telegraph's is.
                 Effect::Sound(_) | Effect::Custom(_) => {}
             }
@@ -1293,6 +1308,9 @@ pub struct MovesetDef {
     /// How presses wait for their action ([`BufferMode`]); default: each input its own.
     #[serde(default, skip_serializing_if = "BufferMode::is_per_input")]
     pub buffer: BufferMode,
+    /// Statuses active at once on this fighter; `None`: `CombatTuning::max_statuses`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_statuses: Option<u32>,
 }
 
 /// How a fighter's presses wait in its [`InputBuffer`](crate::InputBuffer).

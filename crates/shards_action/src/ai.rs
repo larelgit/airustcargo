@@ -6,6 +6,7 @@ use ai_core::spatial::compass;
 use ai_core::{label, AiAppExt};
 use bevy::prelude::*;
 
+use crate::body::{describe_barrier, describe_damage_taken, describe_proc_gates, Barrier, BarrierGranted, DamageTaken, ProcGates};
 use crate::combat::{Blocked, Damaged, Died, Evaded, GuardBroken, IgnoreReason, Parried, PerfectEvaded, Reacted, Staggered};
 use crate::def::EPS;
 use crate::fighter::{
@@ -28,6 +29,9 @@ pub(crate) fn register(app: &mut App) {
         .register_ai_component::<Cooldowns>(describe_cooldowns)
         .register_ai_component::<Invulnerable>(|_| "god mode".into())
         .register_ai_component::<Protection>(describe_protection)
+        .register_ai_component::<Barrier>(describe_barrier)
+        .register_ai_component::<DamageTaken>(describe_damage_taken)
+        .register_ai_component::<ProcGates>(describe_proc_gates)
         .register_ai_component::<Knockback>(describe_knockback)
         .register_ai_describer("run", describe_run)
         .add_ai_condition("charging", charging)
@@ -40,18 +44,20 @@ pub(crate) fn register(app: &mut App) {
             let (a, t) = (label(w, e.attacker), label(w, e.target));
             Some(match e.invulnerable {
                 true => format!("{a} -> {t} {} -0 (hp {:.0}, {})", e.action, e.hp_left, e.ignore_reason.map_or("ignored", IgnoreReason::describe)),
-                false => format!("{a} -> {t} {} -{:.0} (hp {:.0})", e.action, e.amount, e.hp_left),
+                false => format!("{a} -> {t} {} -{:.0} (hp {:.0}){}", e.action, e.amount, e.hp_left, absorbed(e.absorbed)),
             })
         })
         .journal_event::<Blocked>(|e, w| {
             Some(format!(
-                "{} blocked {} {}: -{:.0} hp, -{:.0} stamina (hp {:.0})",
+                "{} blocked {} {}: -{:.0} hp, -{:.0} stamina (hp {:.0}){}",
                 label(w, e.defender),
                 label(w, e.attacker),
                 e.action,
-                e.amount,
+                // What reached health: a barrier took the rest (shown after it).
+                e.amount - e.absorbed,
                 e.stamina,
-                e.hp_left
+                e.hp_left,
+                absorbed(e.absorbed)
             ))
         })
         .journal_event::<Parried>(|e, w| {
@@ -75,12 +81,13 @@ pub(crate) fn register(app: &mut App) {
         })
         .journal_event::<GuardBroken>(|e, w| {
             Some(format!(
-                "{} broke {}'s guard with {} -{:.0} (hp {:.0})",
+                "{} broke {}'s guard with {} -{:.0} (hp {:.0}){}",
                 label(w, e.attacker),
                 label(w, e.defender),
                 e.action,
                 e.amount,
-                e.hp_left
+                e.hp_left,
+                absorbed(e.absorbed)
             ))
         })
         .journal_event::<Staggered>(|e, w| Some(format!("{} staggered ({})", label(w, e.entity), e.cause.describe())))
@@ -106,6 +113,9 @@ pub(crate) fn register(app: &mut App) {
             })
         })
         .journal_event::<StatusExpired>(|e, w| Some(format!("{} {} expired", label(w, e.entity), e.status)))
+        .journal_event::<BarrierGranted>(|e, w| {
+            Some(format!("{} barrier {:.0} for {:.1}s", label(w, e.entity), e.amount, e.seconds))
+        })
         .journal_event::<Healed>(|e, w| {
             Some(format!("{} healed +{:.0} (hp {:.0})", label(w, e.entity), e.amount, e.hp))
         });
@@ -185,4 +195,9 @@ fn describe_run(e: EntityRef) -> Option<String> {
 /// Some fighter holds the input of an action that may still turn into its charge.
 fn charging(world: &World) -> bool {
     world.try_query::<&RunExtras>().is_some_and(|mut q| q.iter(world).any(|x| x.held && x.charge_at.is_some()))
+}
+
+/// ` [barrier -20]` when a barrier took `amount` of a hit, else nothing.
+fn absorbed(amount: f32) -> String {
+    if amount > 0.0 { format!(" [barrier -{amount:.0}]") } else { String::new() }
 }
