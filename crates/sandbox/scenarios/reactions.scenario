@@ -165,8 +165,16 @@ expect !journal "e5 blocked"
 expect field e5 Health.current == 100
 # (the same slam with the pillar out of the way hits: the ray along the pillar's side is clear)
 step 100
+# (behind the pillar for 2 s both locks went: the lock-on rules of `lock.lock_on.ron`)
+expect journal "e5 lock lost: e7 obstructed 2.0s"
+expect journal "e7 lock lost: e5 obstructed 2.0s"
 act teleport id=e5 x=9.5 z=-8.5 y=0
 act teleport id=e7 x=7 z=-8.5 y=0
+session --agent skeleton
+act lock_on target=e5
+session --agent bot
+act lock_on target=e7
+session --agent scenario
 step 2
 mark
 session --agent skeleton

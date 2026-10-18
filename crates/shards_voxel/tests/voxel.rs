@@ -2,6 +2,9 @@
 //! `content_apply`, its errors naming the file, the module in `ai/status`, the registry through
 //! the app, and generation from content. Every test writes its own asset folder (nothing is
 //! added under the sandbox's content: a new content file changes every replay's content hash).
+//! `region`: the voxel region kind.
+
+mod region;
 
 use std::path::{Path, PathBuf};
 

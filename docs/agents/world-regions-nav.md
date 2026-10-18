@@ -20,6 +20,14 @@ Read this when you touch regions, tiles, levels, the generator, the navmesh or t
   see: when you change what a step produces, raise its registered version and the version the content lists, so a client with other step
   code fails content validation instead of desyncing. The volume hash (`VoxelVolume::hash`, `world_hash`) is the backstop; its golden
   tests change only on purpose.
+- **A voxel region is a region kind, behind the region API.** A `*.voxel_region.ron` region is generated, loaded, saved, snapshot and
+  replayed by the same calls as a region of tiles (`regen`, `change_region`, `region_load`, `RegionManifest`, `ActiveRegion`, `Poi`,
+  `Marker`); its manifest has `layout: "volume"` and its cells are chunks. Calls into `shards_voxel` (`VoxelGen`, `VoxelVolume`,
+  `VoxelPalette`) stay inside generation steps and checks: the rest of the game asks the region API, which answers with the same types on
+  both kinds (the test `the_region_api_answers_with_the_same_types_on_tiles_and_on_a_volume`). There is no runtime voxel editing: a built
+  volume is read-only until the region is made again. A new region kind registers itself with `add_region_kind` (`RegionKind`), and
+  a new `Layout` fails to compile in `every_layout_is_named_where_the_engine_matches_on_it` until every place that matches on it is
+  changed (`docs/manual.md`, "Voxel regions (A2c)").
 - **Navmesh.** Baked tiles are in `assets/nav/` (`cargo sandbox --bake-nav`, tool `nav_bake`) and are committed; with
   the `nav` definition, `--check-content` checks them (a stale file is an error that names the command to run). If you change what a tile is baked with
   (the ground probe and the step rule in `shards_motion`, the sampling in `shards_npc::nav`), raise `BAKE_VERSION` and bake everything.

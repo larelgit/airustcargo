@@ -49,6 +49,7 @@ pub mod content;
 pub mod dungeon;
 pub mod generate;
 pub mod grid;
+pub mod kind;
 pub mod manifest;
 #[cfg(feature = "render")]
 pub mod overlay;
@@ -74,6 +75,7 @@ pub use content::{
 };
 pub use generate::{generate, CheckFn, GenContext, GenError, Generated, Stage, StepFn, WorldGen};
 pub use grid::Dir;
+pub use kind::RegionKind;
 pub use manifest::RegionManifest;
 #[cfg(feature = "render")]
 pub use overlay::{TileDraw, TileOverlay};
@@ -148,6 +150,10 @@ pub trait WorldAppExt {
     /// Runs `hook` each time a region has been built, inside the call that builds it
     /// ([`RegionLoadedHooks`]).
     fn on_region_loaded(&mut self, hook: fn(&mut World)) -> &mut Self;
+
+    /// Adds a region content kind of another crate ([`RegionKind`]): its regions are generated,
+    /// built, saved, snapshot and reported like the world module's own.
+    fn add_region_kind(&mut self, kind: RegionKind) -> &mut Self;
 }
 
 impl WorldAppExt for App {
@@ -183,6 +189,11 @@ impl WorldAppExt for App {
 
     fn on_region_loaded(&mut self, hook: fn(&mut World)) -> &mut Self {
         self.world_mut().get_resource_or_init::<RegionLoadedHooks>().0.push(hook);
+        self
+    }
+
+    fn add_region_kind(&mut self, kind: RegionKind) -> &mut Self {
+        self.world_mut().get_resource_or_init::<WorldGen>().add_kind(kind);
         self
     }
 }

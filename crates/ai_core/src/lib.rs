@@ -424,6 +424,12 @@ pub trait AiAppExt {
     /// with the same name replaces the first.
     fn add_snapshot_check(&mut self, name: &'static str, hint: &'static str, check: fn(&World) -> u64) -> &mut Self;
 
+    /// [`add_snapshot_check`](Self::add_snapshot_check) for state that may be absent (a voxel
+    /// region's volume): while `check` returns `None` the snapshot holds no value for it, so
+    /// snapshots of games that never had that state keep their bytes. Loading compares
+    /// presence too: a snapshot with a value refuses a game without one, and the reverse.
+    fn add_optional_snapshot_check(&mut self, name: &'static str, hint: &'static str, check: fn(&World) -> Option<u64>) -> &mut Self;
+
     /// Runs after a snapshot was loaded, to make a cache again that is derived from
     /// components and resources (a spatial index). A second one with the same name
     /// replaces the first.
@@ -606,6 +612,11 @@ impl AiAppExt for App {
 
     fn add_snapshot_check(&mut self, name: &'static str, hint: &'static str, check: fn(&World) -> u64) -> &mut Self {
         self.world_mut().get_resource_or_init::<SnapshotRegistry>().add_check(name, hint, check);
+        self
+    }
+
+    fn add_optional_snapshot_check(&mut self, name: &'static str, hint: &'static str, check: fn(&World) -> Option<u64>) -> &mut Self {
+        self.world_mut().get_resource_or_init::<SnapshotRegistry>().add_optional_check(name, hint, check);
         self
     }
 

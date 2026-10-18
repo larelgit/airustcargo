@@ -40,7 +40,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use ai_core::{journal, AiReplay, JournalKind};
-use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::input::InputSystems;
 use bevy::prelude::*;
 use shards_content::{ContentAppExt, ContentDb};
@@ -387,6 +387,7 @@ struct Devices<'a> {
     keys: Option<&'a ButtonInput<KeyCode>>,
     mouse: Option<&'a ButtonInput<MouseButton>>,
     motion: Vec2,
+    scroll: Vec2,
     pads: Vec<&'a Gamepad>,
     dt: f32,
 }
@@ -441,6 +442,7 @@ impl Devices<'_> {
             // Mouse deltas are per frame already; a stick's value is a rate, so the look
             // axis multiplies sticks by the frame time (see `read_input`).
             Binding::MouseMotion { scale } => Vec2::new(self.motion.x, -self.motion.y) * *scale,
+            Binding::MouseWheel { scale } => self.scroll * *scale,
             Binding::Key(_) | Binding::Mouse(_) | Binding::GamepadButton(_) => Vec2::ZERO,
         }
     }
@@ -468,6 +470,7 @@ fn read_input(
     keys: Option<Res<ButtonInput<KeyCode>>>,
     mouse: Option<Res<ButtonInput<MouseButton>>>,
     motion: Option<Res<AccumulatedMouseMotion>>,
+    scroll: Option<Res<AccumulatedMouseScroll>>,
     gamepads: Query<(Entity, &Gamepad)>,
     cameras: Query<&ThirdPersonCamera>,
     map: Res<InputMap>,
@@ -487,6 +490,7 @@ fn read_input(
         keys: keys.as_deref(),
         mouse: mouse.as_deref(),
         motion: motion.map_or(Vec2::ZERO, |m| m.delta),
+        scroll: scroll.map_or(Vec2::ZERO, |s| s.delta),
         pads: pads.into_iter().map(|(_, g)| g).collect(),
         dt: time.delta_secs(),
     };

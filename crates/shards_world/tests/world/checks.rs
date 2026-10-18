@@ -51,6 +51,7 @@ fn manifest(rows: &[&str], pois: &[(&str, (i32, i32))]) -> RegionManifest {
         pois,
         links: Vec::new(),
         content_hash: String::new(),
+        steps: Vec::new(),
     }
 }
 

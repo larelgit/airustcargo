@@ -327,6 +327,24 @@ impl VoxelPalette {
         h.0
     }
 
+    /// A hash of what the blocks are to the world: their order, names, `solid`, `liquid`,
+    /// `foliage` and tags, not how they look (colours, `emissive`, shade, looks: the picture's).
+    /// What a generated world's hash and a region manifest's content hash fold in, so a palette
+    /// recoloured is the same world. FNV-1a, the same on every run.
+    pub fn semantics(&self) -> u64 {
+        let mut h = crate::volume::Fnv::default();
+        for b in &self.def.blocks {
+            h.bytes(b.name.as_bytes());
+            h.bytes(&[0, b.solid as u8, b.liquid as u8, b.foliage as u8]);
+            for tag in &b.tags {
+                h.bytes(tag.as_bytes());
+                h.bytes(&[1]);
+            }
+            h.bytes(&[2]);
+        }
+        h.0
+    }
+
     /// The id of the block called `name`.
     pub fn id(&self, name: &str) -> Option<u8> {
         self.def.blocks.iter().position(|b| b.name == name).map(|i| i as u8 + 1)

@@ -287,6 +287,7 @@ pub fn manifest(region: &str, rows: &[&str]) -> RegionManifest {
         links: Vec::new(),
         spawn: None,
         content_hash: "test".into(),
+        steps: Vec::new(),
     }
 }
 

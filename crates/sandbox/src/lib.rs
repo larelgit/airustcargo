@@ -8,6 +8,9 @@
 //!   16 m, one of them a level file from Blender, `assets/tiles/ruin.gltf`), with skeleton
 //!   camps and a den in a pillar hall, walked over its navmesh. A dev goes there with
 //!   `regen region=wilds seed=42`; the bake files of its tiles are in `assets/nav/`.
+//! - **The voxel arena** north of it: a voxel region (256 × 32 × 256 cells of 1 m) the sandbox's
+//!   generation steps make from a seed: hills falling to a sea, a lake, trees, and a flat floor with
+//!   steps, a ledge, a pool, an overhang and a cave. `regen region=voxel_arena seed=7` goes there.
 //!
 //! The monsters are the engine's NPCs: their behaviours, perception, the combat director
 //! and attack plans are content (`content/npc/`).

@@ -356,7 +356,7 @@ pub fn generate(db: &ContentDb, worldgen: &WorldGen, id: &str, def: &DungeonDef,
             });
             continue;
         }
-        return Ok(Generated { manifest, failures, remarks });
+        return Ok(Generated { manifest, failures, remarks, counts: BTreeMap::new() });
     }
     let last = failures.last().map(|f| format!("; the last: {}", f.message)).unwrap_or_default();
     Err(GenError {
@@ -467,6 +467,7 @@ fn finish(b: &Builder, def: &DungeonDef, id: &str, seed: u64, attempt: u32, hash
         links,
         spawn,
         content_hash: hash.to_owned(),
+        steps: Vec::new(),
     };
     (manifest, remarks)
 }

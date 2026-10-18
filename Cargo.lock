@@ -5771,12 +5771,15 @@ dependencies = [
  "ai_core",
  "bevy",
  "ron",
+ "schemars",
  "serde",
  "serde_json",
  "shards",
  "shards_content",
  "shards_core",
  "shards_look",
+ "shards_motion",
+ "shards_world",
 ]
 
 [[package]]

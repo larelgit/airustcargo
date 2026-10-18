@@ -10,9 +10,9 @@
     "seed": 42,
     "tick_hz": 59.99999880000003,
     "engine": "0.4.0",
-    "state_hash": "aab4e6bca4e2a5e3",
+    "state_hash": "1885ba56f6608969",
     "checks": {
-      "content": "3108343362490b4b",
+      "content": "b2634ec90ee3ae42",
       "levels": "cbf29ce484222325",
       "static_colliders": "b16a4682932b69b4"
     },
@@ -29,6 +29,7 @@
         "layout/arena": "091851d57d80f2e4",
         "layout/course": "f65397f9b47f46e1",
         "layout/watch": "dc738a5676554d89",
+        "lock_on/default": "0c3315c53fabe323",
         "locomotion/player": "25720e5c56082052",
         "locomotion/skeleton": "ba33bb652bf0630e",
         "locomotion/warden": "9a9e3ea79d7406f7",
@@ -1587,7 +1588,7 @@
   },
   "end": {
     "tick": 157,
-    "hash": "dd5a4326350a6290",
+    "hash": "f787f4d84fb6b30a",
     "parts": {
       "entities": {
         "e1": {
@@ -1810,7 +1811,7 @@
         }
       },
       "game": {
-        "content": "38c9df426708d932"
+        "content": "8bb9eba366c30e51"
       }
     }
   },
@@ -1925,7 +1926,7 @@
   "checks": [
     {
       "tick": 60,
-      "hash": "6171e79ba259f09a",
+      "hash": "5a10b3c4303074ac",
       "parts": {
         "entities": {
           "e1": {
@@ -2148,13 +2149,13 @@
           }
         },
         "game": {
-          "content": "38c9df426708d932"
+          "content": "8bb9eba366c30e51"
         }
       }
     },
     {
       "tick": 120,
-      "hash": "85449bbab593a7da",
+      "hash": "f04e7a2878ee9c6c",
       "parts": {
         "entities": {
           "e1": {
@@ -2377,7 +2378,7 @@
           }
         },
         "game": {
-          "content": "38c9df426708d932"
+          "content": "8bb9eba366c30e51"
         }
       }
     }
@@ -2399,6 +2400,7 @@
           "layout/arena": "091851d57d80f2e4",
           "layout/course": "f65397f9b47f46e1",
           "layout/watch": "dc738a5676554d89",
+          "lock_on/default": "0c3315c53fabe323",
           "locomotion/player": "25720e5c56082052",
           "locomotion/skeleton": "ba33bb652bf0630e",
           "locomotion/warden": "9a9e3ea79d7406f7",

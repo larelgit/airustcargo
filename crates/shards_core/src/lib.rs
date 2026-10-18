@@ -160,9 +160,10 @@ pub struct EngineConfig {
     /// Read when the plugins are built, so set it before.
     pub engine_invariants: bool,
     /// The engine's rules that are off by default, turned on by name (`--engine-invariant NAME`,
-    /// once a rule): `voxel.body_in_solid` (shards_motion), which waits for fuzz runs on voxel
-    /// terrain before it is on by default. Only while [`engine_invariants`](Self::engine_invariants)
-    /// is on. Empty by default.
+    /// once a rule), only while [`engine_invariants`](Self::engine_invariants) is on: none today.
+    /// `voxel.body_in_solid` (shards_motion), the first, is on by default since its fuzz runs on
+    /// voxel terrain, like the other engine rules (off only with `--no-engine-invariants`). Empty by
+    /// default.
     pub opt_in_invariants: Vec<String>,
     /// State coverage (`--coverage`): the `coverage` tool lists the states the session reached and what
     /// content declares that it never did ([`ai_core::coverage`]). Off by default; it only reads the

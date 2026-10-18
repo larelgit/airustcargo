@@ -15,8 +15,9 @@ use shards_content::{asset_root, check_dir, ContentKinds};
 use shards_core::{EngineConfig, MenuLaunch, NetLaunch, SettingsStore, SteamLaunch, SteamLobby};
 
 /// The engine's rules that are off by default, as `--engine-invariant` names them
-/// (`EngineConfig::opt_in_invariants`).
-const OPT_IN_INVARIANTS: [&str; 1] = [shards_motion::BODY_IN_SOLID];
+/// (`EngineConfig::opt_in_invariants`): none today (`voxel.body_in_solid`, the first, is on by
+/// default since its fuzz runs).
+const OPT_IN_INVARIANTS: [&str; 0] = [];
 
 /// A game on the Shards engine.
 #[derive(Parser, Debug)]
@@ -121,7 +122,7 @@ struct Args {
     /// or 1. Runs nothing.
     #[arg(long)]
     check_content: bool,
-    /// Generate REGION (a `region` or `dungeon` content id) for every seed of `--seeds`,
+    /// Generate REGION (a region content id of any kind: `region`, `dungeon`, `voxel_region`) for every seed of `--seeds`,
     /// print the batch report, exit 0 (every seed passed) or 1. Runs no game.
     #[arg(long, value_name = "REGION")]
     worldgen_report: Option<String>,
@@ -195,8 +196,8 @@ struct Args {
     /// rule`). They are on by default and off in a `dist` build; `--verify` always checks them.
     #[arg(long)]
     no_engine_invariants: bool,
-    /// Also check an engine rule that is off by default (the flag once a rule): `voxel.body_in_solid`,
-    /// a character's capsule centre in a solid voxel cell, for fuzz runs on voxel terrain.
+    /// Also check an engine rule that is off by default (the flag once a rule). None is off by
+    /// default today: the flag takes no name yet.
     #[arg(
         long = "engine-invariant",
         value_name = "NAME",
@@ -1216,7 +1217,23 @@ fn check_content(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig) ->
     let missing = picture.filter(|path| !root.join(path).is_file()).map(|path| {
         format!("loading_image: no file `{path}` under the asset folder (the picture the game's EngineConfig names for loading screens)")
     });
-    match (check_dir(&root, &kinds), missing) {
+    // Regions of the kinds other modules add are generated once (their check seeds), so a
+    // step that can never pass is a content error before any report runs.
+    let generated = || -> Vec<shards_content::ContentError> {
+        let Some(worldgen) = app.world().get_resource::<shards_world::WorldGen>() else { return Vec::new() };
+        if worldgen.kinds().is_empty() {
+            return Vec::new();
+        }
+        let Ok(sources) = shards_content::db::read_dir(&root) else { return Vec::new() };
+        let mut kinds = kinds.clone();
+        kinds.set_asset_root(root.clone());
+        shards_world::kind::generation_problems(&shards_content::ContentDb::build(&kinds, &sources), worldgen)
+    };
+    let checked = check_dir(&root, &kinds).and_then(|summary| {
+        let problems = generated();
+        if problems.is_empty() { Ok(summary) } else { Err(problems) }
+    });
+    match (checked, missing) {
         (Ok(summary), None) => {
             println!("{summary}");
             ExitCode::SUCCESS
@@ -1620,16 +1637,13 @@ mod tests {
     }
 
     #[test]
-    fn an_engine_rule_off_by_default_is_turned_on_by_name() {
+    fn the_flag_for_rules_off_by_default_takes_only_the_names_offered() {
         let parse = |args: &[&str]| Args::try_parse_from(args.iter().copied());
-        assert!(parse(&["game"]).unwrap().config().opt_in_invariants.is_empty(), "off by default");
-        let config = parse(&["game", "--engine-invariant", "voxel.body_in_solid"]).unwrap().config();
-        assert_eq!(config.opt_in_invariants, ["voxel.body_in_solid"]);
-        assert!(config.engine_invariants);
-        let typo = parse(&["game", "--engine-invariant", "voxel.body_in_rock"]).unwrap_err().to_string();
-        assert!(typo.contains("invalid value") && typo.contains("voxel.body_in_solid"), "{typo}");
-        let clash = parse(&["game", "--engine-invariant", "voxel.body_in_solid", "--no-engine-invariants"]).unwrap_err().to_string();
-        assert!(clash.contains("cannot be used with"), "{clash}");
+        assert!(parse(&["game"]).unwrap().config().opt_in_invariants.is_empty(), "none named");
+        // `voxel.body_in_solid` is on by default now: it is not offered, and nothing else is.
+        let on = parse(&["game", "--engine-invariant", "voxel.body_in_solid"]).unwrap_err().to_string();
+        assert!(on.contains("invalid value") && on.contains("voxel.body_in_solid"), "{on}");
+        assert!(OPT_IN_INVARIANTS.is_empty());
     }
 
     #[test]

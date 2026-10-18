@@ -54,10 +54,12 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
 - Engine tools (`shards tools`): **movement** — `move_to` (`path=true` follows `path_to`), `move`, `stop`, `jump`,
   `sprint`, `glide`, the `clearance` and `path_to` queries (in a region over the navmesh: `path_to` names the `provider`, `clearance` —
   `closed`, where the navmesh ends before the physics does), `input_bindings`, `rebind`; **combat** — `light_attack`, `heavy_attack`,
-  `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on`, `attack`, `god`, `heal`, `stagger`, `react` (a developer tool: it forces a reaction), `barrier` and `damage_taken` (developer tools: a barrier, a named damage multiplier), `motion_bake`
+  `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on` (`side=left|right` switches), `attack`, `god`, `heal`, `stagger`, `react` (a developer tool: it forces a reaction), `barrier` and `damage_taken` (developer tools: a barrier, a named damage multiplier), `motion_bake`
   (the same as `--bake-motion`); **content** —
   `content_list`, `content_get`, `content_check`, `content_reload`, `spawn_prefab`; **world** — `regen`, `region_load`,
-  `goto_tile`, `region_info`, `worldgen_report`, `spawn_level`, `level_info`, `level_reload`; **NPCs and navigation** —
+  `goto_tile`, `region_info`, `worldgen_report`, `spawn_level`, `level_info`, `level_reload`, and in a voxel region `sea_current_at` (player: the current
+  of the water at a point, toward the middle of the grid) and `voxel_info` (dev: size, chunks, steps with versions, hash, water and sea boxes,
+  wide volumes); **NPCs and navigation** —
   `npc_state` (`nav.routes`: over the navmesh of which body class the NPC plans, or why it plans over the local grid), `npc_set_state`,
   `nav_path` (`body=large` — over the navmesh of a body class), `nav_info` (`bodies` — the body classes and their navmeshes), `nav_bake`, the overlays
   `world_overlay` and `nav_overlay` (window),
@@ -85,7 +87,9 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   the panel for `shot`. The game puts its own items in content (`*.devmenu.ron`), and a module does it with `add_dev_entry`. **Exit** — `quit`
   (`shards quit`: exit hooks run, the token and the port file are removed). Conditions for
   `step --until named:…`: `near_poi`, `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`,
-  `npc_engaged`, `npc_near`, `reacting` (a fighter runs one of its moveset's reaction actions, not a stagger); the game adds its own (in the sandbox `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`; in the template
+  `npc_engaged`, `npc_near`, `reacting` (a fighter runs one of its moveset's reaction actions, not a stagger), `in_water` (the player's feet are in a water
+  volume, any region kind), `in_current` (the water there pushes: a `Current`), `near_grid_edge` (within the voxel region's `near_edge` of the
+  region's edge, or past it; on tiles, past it); the game adds its own (in the sandbox `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`; in the template
   `arena_cleared`, `foe_near`, `in_fight`).
 - Exit codes of `shards`: 0 — done, 1 — a tool refused (the error says why), 2 — `shards` itself failed
   (no game, no token, wrong command), 3 — the game stopped: `step` (or `fuzz`, `soak`) halted on a crashed

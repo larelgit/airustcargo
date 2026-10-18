@@ -118,21 +118,20 @@ fn bury(world: &mut World) {
     world.get_mut::<Transform>(player).unwrap().translation = Vec3::new(120.5, -20.0, 0.5);
 }
 
-/// The sandbox with `voxel.body_in_solid` on (`--engine-invariant voxel.body_in_solid`), or not.
+/// The sandbox with the engine's rules on (the default, `voxel.body_in_solid` among them), or off
+/// (`--no-engine-invariants`).
 fn voxel_rule(on: bool) -> App {
     sandbox::test_app_with(|config| {
         config.seed = 42;
-        if on {
-            config.opt_in_invariants = vec![shards::motion::BODY_IN_SOLID.into()];
-        }
+        config.engine_invariants = on;
     })
 }
 
 #[test]
-fn a_body_in_a_solid_voxel_cell_stops_the_game_once_the_rule_is_on() {
+fn a_body_in_a_solid_voxel_cell_stops_the_game() {
     use shards::motion::{body_in_solid, BODY_IN_SOLID};
     let names = |app: &App| app.world().resource::<AiInvariants>().rule_names().join(",");
-    // Off by default: not even listed, and a body in rock goes unjudged.
+    // With the engine's rules off: not even listed, and a body in rock goes unjudged.
     let mut app = voxel_rule(false);
     assert!(!names(&app).contains(BODY_IN_SOLID), "{}", names(&app));
     block(&mut app);
@@ -140,7 +139,7 @@ fn a_body_in_a_solid_voxel_cell_stops_the_game_once_the_rule_is_on() {
     let out = called(&mut app, "step", json!({"ticks": 20}));
     assert!(out.halted.is_none(), "{}", text(&out));
 
-    // On. A world without fields is not judged.
+    // On, by default. A world without fields is not judged.
     let app = voxel_rule(true);
     assert!(names(&app).starts_with("ai.index_consistent") && names(&app).contains(BODY_IN_SOLID), "{}", names(&app));
     assert_eq!(body_in_solid(app.world()), None);
@@ -321,6 +320,59 @@ fn a_push_that_is_not_flat_or_never_slows_stops_the_game() {
     });
     let line = stops_on(&mut app, "action.knockback_sane", 2);
     assert!(line.contains("e6 Knockback velocity = ") && line.contains("decel = 0"), "{line}");
+}
+
+#[test]
+fn a_lock_on_a_dead_or_missing_target_stops_the_game() {
+    use shards::action::LockSystems;
+    // Set after the lock-on check of tick 2 (which would have let go of it), the way a game
+    // system in `SimSet::Cleanup` that ran later would leave it; or before it.
+    fn lock(app: &mut App, target: u32, after_check: bool) {
+        let corrupt = move |world: &mut World| {
+            if ai_core::sim::tick(world) == 2 {
+                if target == 7 {
+                    let skeleton = body(world, 7);
+                    world.entity_mut(skeleton).insert(Dead);
+                }
+                let player = body(world, 5);
+                world.get_mut::<Intent>(player).unwrap().target = Some(AiId(target));
+            }
+        };
+        match after_check {
+            true => app.add_systems(FixedUpdate, corrupt.in_set(SimSet::Cleanup).after(LockSystems::Check)),
+            false => app.add_systems(FixedUpdate, corrupt.in_set(SimSet::Cleanup).before(LockSystems::Check)),
+        };
+    }
+    let mut app = sandbox::test_app(42);
+    lock(&mut app, 7, true);
+    let line = stops_on(&mut app, "action.lock_on_valid", 2);
+    assert!(line.contains("e5 Intent.target = e7, which is dead"), "{line}");
+
+    let mut app = sandbox::test_app(42);
+    lock(&mut app, 999, true);
+    let line = stops_on(&mut app, "action.lock_on_valid", 2);
+    assert!(line.contains("e5 Intent.target = e999, which no longer exists"), "{line}");
+
+    // Set before the check, the same lock is let go of on the same tick: nothing to report.
+    let mut app = sandbox::test_app(42);
+    lock(&mut app, 7, false);
+    assert_eq!(step(&mut app, 5), "ran 5 ticks (0 → 5)");
+    assert!(journal(&app, JournalKind::Event).iter().any(|l| l.contains("e5 lock lost: e7 dead")), "{:?}", journal(&app, JournalKind::Event));
+}
+
+#[test]
+fn a_living_target_the_engine_despawns_at_the_end_of_a_tick_is_let_go_of_without_a_stop() {
+    // The co-op despawn of a body whose rejoin grace is over runs in `SimSet::Cleanup` before
+    // `CoreSystems::ClearPresses`; the lock-on check runs after it, so it sees the body gone.
+    let mut app = sandbox::test_app(42);
+    let (player, skeleton) = (body(app.world(), 5), body(app.world(), 7));
+    app.world_mut().get_mut::<Intent>(player).unwrap().target = Some(AiId(7));
+    app.world_mut().entity_mut(skeleton).insert(shards::net::NetLeft { since: 0, until: 3 });
+    assert_eq!(step(&mut app, 5), "ran 5 ticks (0 → 5)");
+    assert!(app.world().get_entity(skeleton).is_err(), "the grace is over: the body went");
+    assert_eq!(app.world().get::<Intent>(player).unwrap().target, None);
+    let events = journal(&app, JournalKind::Event);
+    assert!(events.iter().any(|l| l.contains("e5 lock lost: e7 gone")), "{events:?}");
 }
 
 #[test]
