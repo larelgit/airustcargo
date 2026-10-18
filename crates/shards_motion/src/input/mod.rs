@@ -39,7 +39,7 @@ mod tools;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use ai_core::{journal, JournalKind};
+use ai_core::{journal, AiReplay, JournalKind};
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::input::InputSystems;
 use bevy::prelude::*;
@@ -460,6 +460,7 @@ fn read_input(
     contexts: Res<InputContexts>,
     accessibility: Option<Res<AccessibilitySettings>>,
     controls: Option<Res<ControlSettings>>,
+    replay: Option<Res<AiReplay>>,
     mut state: ResMut<ControlState>,
     mut applied: ResMut<Applied>,
     mut players: Query<(Entity, &mut Intent), With<LocalPlayer>>,
@@ -573,8 +574,9 @@ fn read_input(
         move_axis = Vec2::ZERO;
     }
     // The player turned the attack assist off: the body holds `assist_off` (in menus too: it is a
-    // setting, not a button).
-    if controls.is_some_and(|c| !c.attack_assist) {
+    // setting, not a button). Not while a recording plays: the recorded session is the one that
+    // counts, whatever this machine's setting says.
+    if controls.is_some_and(|c| !c.attack_assist) && !replay.is_some_and(|r| r.is_playing()) {
         desired_held.insert(ASSIST_OFF.to_owned());
     }
 

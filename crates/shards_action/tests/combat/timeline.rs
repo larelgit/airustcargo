@@ -403,6 +403,23 @@ fn interrupted_windup_keeps_its_share() {
 }
 
 #[test]
+fn a_cut_never_lengthens_a_cooldown() {
+    let cut_with = |left: f32| {
+        let mut app = arena();
+        let hero = me(&mut app, "t_fighter");
+        press(&mut app, hero, "technique.3");
+        step(&mut app, 5);
+        // The slot has already run below the share (1.2 s of 3 s) when the windup is cut.
+        app.world_mut().get_mut::<Cooldowns>(hero).unwrap().set("lunge", left);
+        assert!(force_action(app.world_mut(), hero, "t_stagger"));
+        cooldown(&app, hero, "lunge")
+    };
+    assert!(close(cut_with(0.5), 0.5), "left alone: {}", cut_with(0.5));
+    assert!(close(cut_with(0.0), 0.0), "a ready slot stays ready: {}", cut_with(0.0));
+    assert!(close(cut_with(2.5), 1.2), "above the share it is cut to it: {}", cut_with(2.5));
+}
+
+#[test]
 fn startup_dodge_cancel_keeps_the_cooldown_share() {
     let mut app = arena();
     let hero = me(&mut app, "t_fighter");

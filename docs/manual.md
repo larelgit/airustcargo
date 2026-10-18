@@ -1185,7 +1185,7 @@ charges when it uses another charge than the action it turns from, and `into`'s 
 is the slot of the action it turns from (this run started that one). When something is not there, nothing is paid and it is
 tried again on the next tick, until `until` (no event: the client cannot see a refusal, see prediction below). It triggers
 `ActionEnded { end: Branched }`, then `ActionStarted { action: into }`; the effects and the telegraph `into` has before the
-turn's `t` do not fire (the run is already past them). A press let go once never charges again in that run. Validation:
+turn's `t` do not fire (the run is already past them; an accepted rule of the design). A press let go once never charges again in that run. Validation:
 `after` inside the action, `until >= after`, `into` exists, is not the action itself, and charges do not form a cycle.
 
 **Turning.** `turn: [(span, degrees_per_second)]`: an action with turn spans starts facing where the body faced (no snap) and
@@ -1227,7 +1227,7 @@ variants of one technique share it (`can_start` names the key: `lunge is on cool
 action's id: the two then share that action's slot. `cost.cooldown_if_interrupted: 0.4` (it needs a `cost.cooldown`): a run cut
 before its windup is over keeps only that share of its cooldown (forced over, killed, revived, released, or cancelled into
 anything but a `Combo` continuation; a dodge out of the windup counts; its own end, a charge's turn and a removal do not). The
-share is set before the action that cut it pays, so a new action on the same slot keeps its own full cooldown. The HUD source
+share never lengthens a slot: a slot already below it (or ready) stays as it is. It is set before the action that cut it pays, so a new action on the same slot keeps its own full cooldown. The HUD source
 `you.cooldown` reads an action's slot through its key.
 
 **The press queue.** A cancel window's `queue: span`: a press of an input the window lets through, made while `span` is open
@@ -1265,7 +1265,7 @@ start_facing, from, closed, charge_at }`, put in when a run whose action needs i
 (every way a run ends; the engine rule `action.extras_follow_run` stops the game on extras of another run). A fighter whose
 actions use none of it never has one, so the replay hash of old content does not change. It is a component of an `AiId` entity:
 snapshots, replay checks and co-op clients get it by the default rules. No resource is added. The setting
-`controls.attack_assist` is not simulation state: what reaches the simulation is the held `assist_off` input.
+`controls.attack_assist` is not simulation state: what reaches the simulation is the held `assist_off` input. While a recording plays, the controls do not hold it: a recording made with the assist on verifies the same on a machine whose setting is off (test `a_replay_with_the_assist_on_verifies_on_a_machine_with_it_off`).
 
 **Prediction.** A client predicts a charge, turning, the assist (with its sight ray), `while_held` and the queue with the same
 functions (`charge_due`, `step_run`, `tracked`, `press_life`, the single slot), and reconciles by `(instance, action)`: a host

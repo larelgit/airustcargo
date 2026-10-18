@@ -784,7 +784,7 @@ pub(crate) fn run_machines(
                     cut_share(old_def, old, ActionEnd::Cancelled, combo).map(|(key, secs)| (key.to_owned(), secs))
                 });
                 if let Some((key, secs)) = cut {
-                    f.cooldowns.set(&key, secs);
+                    f.cooldowns.cut_to(&key, secs);
                 }
                 pay(&mut f, &choice.start.action, def);
                 let facing = start_facing(def, choice.dir, &f.intent, here, forward, target);
@@ -879,7 +879,7 @@ pub(crate) fn run_machines(
             if let Some((key, secs)) =
                 db.get::<ActionDef>(&old.action).and_then(|d| cut_share(d, &old, ActionEnd::Released, false))
             {
-                f.cooldowns.set(key, secs);
+                f.cooldowns.cut_to(key, secs);
             }
             commands.trigger(ActionEnded::of(entity, &old, ActionEnd::Released));
         }
@@ -1062,7 +1062,8 @@ pub(crate) fn cap_queue(queued: &mut [Queued], ttl: f32) {
 /// The cooldown a run of `def` keeps when it ends in `end` (`combo`: it was cancelled into a
 /// `Combo` continuation): `cost.cooldown_if_interrupted` of it, on the slot's key, when it was cut
 /// (`Interrupted`, `Released`, or `Cancelled` into anything but a `Combo`) before its windup was over.
-/// `None`: the cooldown stays as it is.
+/// `None`: the cooldown stays as it is. Apply it with `Cooldowns::cut_to`: a slot already below the
+/// share is left alone.
 pub(crate) fn cut_share<'a>(def: &'a ActionDef, run: &'a Running, end: ActionEnd, combo: bool) -> Option<(&'a str, f32)> {
     let share = def.cost.cooldown_if_interrupted?;
     let cut = match end {
@@ -1089,7 +1090,7 @@ pub(crate) fn interrupted(world: &mut World, entity: Entity, old: &Running) {
     if let Some((key, secs)) = share
         && let Some(mut cooldowns) = world.get_mut::<Cooldowns>(entity)
     {
-        cooldowns.set(&key, secs);
+        cooldowns.cut_to(&key, secs);
     }
     if world.get::<RunExtras>(entity).is_some_and(|x| x.instance == old.instance) {
         world.entity_mut(entity).remove::<RunExtras>();
