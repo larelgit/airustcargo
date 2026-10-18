@@ -18,7 +18,7 @@
 //! | `SHARDS_FUZZ_STEER` | 1 | 0 plays the plain weights |
 //! | `SHARDS_FUZZ_BUDGET` | 600 | attempts a shrink may make |
 //! | `SHARDS_FUZZ_CHAOS` | 0.02 | share of rounds that make a developer call |
-//! | `SHARDS_FUZZ_SHRINK_SECS` | 300 | wall-clock limit of one shrink |
+//! | `SHARDS_FUZZ_SHRINK_SECS` | 900 | wall-clock limit of one shrink |
 //! | `SHARDS_FUZZ_OUT` | `fuzz-campaign` | the coverage report and the unreproduced sessions |
 //! | `SHARDS_FUZZ_REGRESS` | `scenarios/regress` | where the shrunk scenarios go |
 //!
@@ -147,7 +147,7 @@ fn the_nightly_fuzz_campaign() {
     let inputs = env_u64("SHARDS_FUZZ_INPUTS", 2000);
     let heavy = env_u64("SHARDS_FUZZ_HEAVY", 300);
     let budget = env_u64("SHARDS_FUZZ_BUDGET", 600) as u32;
-    let shrink_time = std::time::Duration::from_secs(env_u64("SHARDS_FUZZ_SHRINK_SECS", 300));
+    let shrink_time = std::time::Duration::from_secs(env_u64("SHARDS_FUZZ_SHRINK_SECS", 900));
     let out = env_path("SHARDS_FUZZ_OUT", "fuzz-campaign");
     let regress_dir = env_path("SHARDS_FUZZ_REGRESS", "scenarios/regress");
     std::fs::create_dir_all(&out).unwrap();
