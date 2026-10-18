@@ -291,7 +291,7 @@ Shards is being built for the game *Осколки Предела*, which lives 
 - [docs/engine-tz.md](docs/engine-tz.md): the engine specification
 - [docs/engine-progress.md](docs/engine-progress.md): progress against the specification
 - [CHANGELOG.md](CHANGELOG.md): versions and changes
-- [AGENTS.md](AGENTS.md): rules for coding agents that work in this repository
+- [AGENTS.md](AGENTS.md): the short core of the rules for coding agents that work in this repository, with an index of topic files in [docs/agents/](docs/agents/)
 
 ## Working on the engine with a coding agent
 
