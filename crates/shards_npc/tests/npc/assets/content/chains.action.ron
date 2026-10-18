@@ -1,0 +1,22 @@
+// A two-link chain (B2a): a press from the first link's first tick waits for its continuation,
+// which opens at 0.5 s, the way an enemy's chain presses its next link early. `link_plain` has the
+// same window and no queue span.
+{
+    "link_1": (
+        net_id: 30,
+        phases: [("windup", 0.3), ("active", 0.1), ("recovery", 0.4)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 100), damage: 1)],
+        cancels: [(span: Secs(0.5, 0.8), into: [Combo("light", "link_2")], queue: Phases("windup", "recovery"))],
+    ),
+    "link_plain": (
+        net_id: 31,
+        phases: [("windup", 0.3), ("active", 0.1), ("recovery", 0.4)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 100), damage: 1)],
+        cancels: [(span: Secs(0.5, 0.8), into: [Combo("light", "link_2")])],
+    ),
+    "link_2": (
+        net_id: 32,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 100), damage: 1)],
+    ),
+}

@@ -16,9 +16,10 @@ How this file works: it is the short core that every agent loads. Detail lives i
 - System packages: `pkg-config libasound2-dev libudev-dev` (for a window under Xvfb, also `xvfb mesa-vulkan-drivers
   libxkbcommon-x11-0`).
 - `cargo build --workspace`, `cargo test --workspace`. The first build of Bevy is slow;
-  `.cargo/config.toml` limits it to four threads. `template/` is a separate workspace:
+  `.cargo/config.toml` limits it to 4 jobs (`CARGO_BUILD_JOBS=12` for a faster build when RAM is free). `template/` is a separate workspace:
   `cargo test --manifest-path template/Cargo.toml`. CI runs the tests with `cargo-nextest` (`cargo install cargo-nextest --locked`; a
   process per test, see [checking-changes.md](docs/agents/checking-changes.md)); `cargo test` stays a supported local command.
+- Iterating fast: content, level, locale and scenario edits need no rebuild; Rust builds and options (`rust-lld` on Windows, `--features dynamic`, `sccache`, `CARGO_BUILD_JOBS`): `docs/manual.md`, "Building and iterating fast".
 - The crate map is in [docs/agents/crates.md](docs/agents/crates.md).
 
 ## Watching the game and acting in it (brief)

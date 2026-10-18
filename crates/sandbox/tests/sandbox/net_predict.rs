@@ -504,3 +504,154 @@ fn the_net_overlay_names_the_links_and_the_prediction() {
     assert_eq!(text(&off), "net overlay off");
     assert!(!stand.world(C1).resource::<NetOverlay>().enabled);
 }
+
+// --- the action timeline (B2a) ---------------------------------------------------------------
+
+/// The client's body gets the `timeline` moveset (a heavy that charges, a lunge with miss recovery,
+/// a channel that lasts while held) on the host, and the change reaches the client.
+fn timeline_stand() -> (Stand, String, Entity, Entity) {
+    let mut stand = stand_with(1, lossy());
+    calm(&mut stand);
+    let id = body(&stand, C1);
+    let out = stand.call(HOST, "set", json!({"id": id, "component": "Fighter", "path": "moveset", "value": "timeline"}));
+    assert!(out.ok, "{}", out.result);
+    stand.run(60);
+    let (mine, theirs) = (own(&stand, C1), entity(&stand, HOST, &id).unwrap());
+    assert_eq!(stand.world(C1).get::<shards::action::Fighter>(mine).unwrap().moveset, "timeline");
+    (stand, id, mine, theirs)
+}
+
+fn shown(stand: &Stand, body: Entity) -> Option<PredictedAction> {
+    stand.world(C1).get::<PredictedAction>(body).cloned()
+}
+
+#[test]
+fn predicted_charge_matches_the_host() {
+    let (mut stand, id, mine, theirs) = timeline_stand();
+    watch_starts(&mut stand, C1, mine);
+    watch_starts(&mut stand, HOST, theirs);
+    let out = stand.call(C1, "heavy_attack", json!({"hold": true}));
+    assert_eq!(text(&out), "ok: spar_heavy (holding) · predicted, host confirms");
+    let asked = sim::tick(stand.world(C1));
+    run_until(&mut stand, 200, "the host turns the charge", |s| s.world(HOST).resource::<Started>().0.len() == 2);
+    // Held 0.25 s from the press: the turn falls on the 15th tick of the run, here and there.
+    let turned = [(asked + 1, "spar_heavy".to_owned()), (asked + 15, "spar_heavy_full".to_owned())];
+    // What each one started itself: the client also sees the host's starts, forwarded (`predicted: false`).
+    let seen = |member: usize| -> Vec<(u64, String)> {
+        stand.world(member).resource::<Started>().0.iter().filter(|(_, _, p)| *p == (member == C1)).map(|(t, a, _)| (*t, a.clone())).collect()
+    };
+    assert_eq!(seen(C1), turned, "predicted on its ticks");
+    assert_eq!(seen(HOST), turned, "the host turned it on the same tick");
+    // The host's start of the heavy reaches the client after its own turn: it confirms the start
+    // and leaves the turn shown (no going back to the heavy and turning again).
+    assert!(!has_line(&stand, C1, "cut short"), "{:#?}", journal(&stand, C1));
+    let out = stand.call(C1, "heavy_attack", json!({"hold": false}));
+    assert!(out.ok, "{}", out.result);
+    stand.run(120);
+    let p = prediction(&stand, C1);
+    assert_eq!((p.predicted, p.confirmed, p.mispredicted), (2, 2, 0), "{:#?}", journal(&stand, C1));
+    assert!(shown(&stand, mine).is_none(), "the heavy ended");
+    let (here, there) = (position(&stand, C1, &id), position(&stand, HOST, &id));
+    assert!(here.distance(there) < 0.05, "{here} vs {there}");
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+    verify_host(&stand);
+}
+
+#[test]
+fn predicted_charge_keeps_its_time() {
+    let (mut stand, _, mine, _) = timeline_stand();
+    assert!(stand.call(C1, "heavy_attack", json!({"hold": true})).ok);
+    // The shown run's clock, every client tick until it ends: the turn and the host's word on it
+    // never set it back.
+    let mut clock: Vec<(String, f32)> = Vec::new();
+    for _ in 0..120 {
+        let before = sim::tick(stand.world(C1));
+        run_until(&mut stand, 20, "the client ticks", |s| sim::tick(s.world(C1)) > before);
+        if let Some(s) = shown(&stand, mine) {
+            clock.push((s.action.clone(), s.run.t));
+        }
+    }
+    assert!(clock.iter().any(|(a, _)| a == "spar_heavy") && clock.iter().any(|(a, _)| a == "spar_heavy_full"), "{clock:?}");
+    for pair in clock.windows(2) {
+        assert!(pair[1].1 > pair[0].1, "the clock went back: {pair:?} in {clock:?}");
+    }
+    let p = prediction(&stand, C1);
+    assert_eq!(p.mispredicted, 0, "{:#?}", journal(&stand, C1));
+}
+
+#[test]
+fn predicted_charge_refused_by_the_host_reverts() {
+    let (mut stand, id, mine, _) = timeline_stand();
+    // Enough for the heavy (15), not for the turn (20 more), and none comes back.
+    for (path, value) in [("regen", 0.0), ("current", 25.0)] {
+        let out = stand.call(HOST, "set", json!({"id": id, "component": "Stamina", "path": path, "value": value}));
+        assert!(out.ok, "{}", out.result);
+    }
+    stand.run(60);
+    assert!(stand.call(C1, "heavy_attack", json!({"hold": true})).ok);
+    run_until(&mut stand, 60, "the client turns it", |s| shown(s, mine).is_some_and(|p| p.action == "spar_heavy_full"));
+    // The host never turns it; once the charge could no longer turn there, the client goes back to
+    // the host's heavy at the host's time, not to idle.
+    run_until(&mut stand, 200, "the client takes the host's heavy back", |s| {
+        shown(s, mine).is_some_and(|p| p.action == "spar_heavy")
+    });
+    assert!(has_line(&stand, C1, "net: predicted spar_heavy_full not confirmed"), "{:#?}", journal(&stand, C1));
+    let host = stand.world(HOST).get::<ActionState>(entity(&stand, HOST, &id).unwrap()).unwrap().current.clone();
+    assert_eq!(host.map(|r| r.action), Some("spar_heavy".to_owned()), "the host is still in its heavy");
+    assert!(stand.call(C1, "heavy_attack", json!({"hold": false})).ok);
+    stand.run(120);
+    assert_eq!(prediction(&stand, C1).mispredicted, 1, "{:#?}", journal(&stand, C1));
+    assert!(shown(&stand, mine).is_none());
+    let (here, there) = (position(&stand, C1, &id), position(&stand, HOST, &id));
+    assert!(here.distance(there) < 0.05, "{here} vs {there}");
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+    verify_host(&stand);
+}
+
+#[test]
+fn predicted_run_adopts_host_miss_recovery() {
+    let (mut stand, id, mine, _) = timeline_stand();
+    // Far from everyone: the lunge hits nothing.
+    put(&mut stand, &id, 30.0, 0.0, 0.0);
+    let out = stand.call(C1, "use_technique", json!({"slot": 1}));
+    assert_eq!(text(&out), "ok: spar_lunge · predicted, host confirms");
+    let start = sim::tick(stand.world(C1));
+    // 0.7 s as authored, 1.3 s with the whiff: on the client too it is still the lunge after 1 s.
+    run_until(&mut stand, 200, "a second of the lunge on the client", |s| sim::tick(s.world(C1)) >= start + 60);
+    let s = shown(&stand, mine).expect("still lunging after its authored length");
+    assert_eq!(s.action, "spar_lunge");
+    assert!((s.run.length - 1.3).abs() < 1e-3, "the host's longer recovery: {}", s.run.length);
+    assert!(has_line(&stand, HOST, "spar_lunge missed: +0.60s recovery"), "{:#?}", journal(&stand, HOST));
+    run_until(&mut stand, 120, "the lunge ends", |s| shown(s, mine).is_none());
+    assert!(sim::tick(stand.world(C1)) >= start + 77, "it ended with the host's run, not before");
+    let (here, there) = (position(&stand, C1, &id), position(&stand, HOST, &id));
+    assert!(here.distance(there) < 0.05, "{here} vs {there}");
+    assert_eq!(prediction(&stand, C1).mispredicted, 0, "{:#?}", journal(&stand, C1));
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+}
+
+#[test]
+fn host_cut_drops_the_shown_run() {
+    let (mut stand, id, mine, theirs) = timeline_stand();
+    let out = stand.call(C1, "use_technique", json!({"slot": 3, "hold": true}));
+    assert!(out.ok, "{}", out.result);
+    run_until(&mut stand, 120, "the host channels", |s| {
+        s.world(HOST).get::<ActionState>(theirs).is_some_and(|a| a.is("spar_channel"))
+    });
+    stand.run(20);
+    assert!(shown(&stand, mine).is_some_and(|p| p.action == "spar_channel" && p.confirmed));
+    // The host ends the run by itself, with no new run and no event (as a pair's release will).
+    let world = stand.world_mut(HOST);
+    world.get_mut::<ActionState>(theirs).unwrap().current = None;
+    world.entity_mut(theirs).remove::<shards::action::RunExtras>();
+    // The client still holds the button: only the host's word can end it there.
+    run_until(&mut stand, 120, "the client drops the channel", |s| shown(s, mine).is_none());
+    assert!(stand.world(C1).get::<Intent>(mine).unwrap().is_held("technique.3"));
+    stand.run(30);
+    assert!(shown(&stand, mine).is_none(), "it does not come back");
+    assert!(stand.call(C1, "use_technique", json!({"slot": 3, "hold": false})).ok);
+    stand.run(30);
+    let (here, there) = (position(&stand, C1, &id), position(&stand, HOST, &id));
+    assert!(here.distance(there) < 0.05, "{here} vs {there}");
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+}

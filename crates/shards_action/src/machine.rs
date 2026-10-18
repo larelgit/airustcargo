@@ -18,12 +18,16 @@ use ai_core::{AiId, AiIndex};
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use shards_content::ContentDb;
-use shards_core::input_names::SPRINT;
-use shards_core::{flat, Intent};
-use shards_motion::{CharacterController, CharacterParams, LocomotionInput, MotionMode, MotionState, MoveModifiers};
+use shards_core::input_names::{ASSIST_OFF, SPRINT};
+use shards_core::{flat, Intent, NetRole};
+use shards_motion::{
+    CharacterController, CharacterParams, LayerMask, LocomotionInput, MotionMode, MotionState, MoveModifiers, PhysicsWorld, QueryFilter,
+};
+
+use std::ops::DerefMut;
 
 use crate::cue::ActionSound;
-use crate::def::{touches, ActionDef, CancelTo, CombatTuning, Effect, MovesetDef, StaminaMode, Steer, EPS};
+use crate::def::{touches, ActionDef, BufferMode, CancelTo, CombatTuning, Effect, Face, MovesetDef, StaminaMode, Steer, EPS};
 use crate::fighter::{report_once, sprint_rule, Charges, Cooldowns, Dead, Fighter, Health, Stamina};
 use crate::status::add_status_buildup;
 use crate::zone::{action_zones, WorldShape};
@@ -84,6 +88,83 @@ pub struct Windows {
     pub hyper_armor: bool,
 }
 
+/// What a run needs beyond [`Running`] when its action charges, turns by spans, assists or has
+/// miss recovery ([`ActionDef::needs_extras`]). Inserted when such an action starts, removed when
+/// its run ends; a fighter whose actions need none of it never has one.
+#[derive(Component, Reflect, Clone, Copy, Debug, PartialEq)]
+#[reflect(Component, Default)]
+pub struct RunExtras {
+    /// `Running::instance` of the run these belong to.
+    pub instance: u32,
+    /// The starting input has been held on every tick of the run so far (a charge turns on it).
+    pub held: bool,
+    /// One of this run's hits landed (a hit, a block, a parry or a guard break).
+    pub landed: bool,
+    /// The miss check has been made.
+    pub checked: bool,
+    /// Seconds added to the run's length (miss recovery, [`extend_recovery`]).
+    pub extra: f32,
+    /// The flat direction from the body to its lock-on target when the run started (the run's
+    /// own facing without a target); `assist` keeps the facing within `assist.angle` degrees of it
+    /// while there is a lock-on target.
+    pub start_facing: Vec3,
+    /// The run's facing when it started: the closing cap (`assist.close`) measures the approach
+    /// its turning adds against moving along this.
+    pub from: Vec3,
+    /// Metres of approach to the target the run's turning has added so far (`assist.close` caps
+    /// it).
+    pub closed: f32,
+    /// When the held input turns this run into its charged action (`charge.after`), while it
+    /// still may; `None` once it no longer can (let go, past `until`, turned). For observers.
+    pub charge_at: Option<f32>,
+}
+
+impl Default for RunExtras {
+    fn default() -> Self {
+        Self {
+            instance: 0,
+            held: false,
+            landed: false,
+            checked: false,
+            extra: 0.0,
+            start_facing: Vec3::NEG_Z,
+            from: Vec3::NEG_Z,
+            closed: 0.0,
+            charge_at: None,
+        }
+    }
+}
+
+impl RunExtras {
+    /// The extras a run of `def` starts with: `held` while `intent` holds its input,
+    /// `start_facing` toward `target` (else the run's facing).
+    pub(crate) fn start(def: &ActionDef, run: &Running, intent: &Intent, here: Vec3, target: Option<Vec3>) -> Self {
+        let held = run.input.as_deref().is_some_and(|i| intent.is_held(i));
+        Self {
+            instance: run.instance,
+            held,
+            start_facing: target.and_then(|p| flat(p - here).try_normalize()).unwrap_or(run.facing),
+            from: run.facing,
+            charge_at: def.charge.as_ref().filter(|_| held).map(|c| c.after),
+            ..default()
+        }
+    }
+
+    /// Forgets `charge_at` once the run of `def` can no longer turn: its input was let go, it is
+    /// past `until`, or it turned (`def` is the charged action then).
+    pub(crate) fn settle_charge(&mut self, run: &Running, def: &ActionDef) {
+        let may = def.charge.as_ref().is_some_and(|c| run.t <= c.until.unwrap_or_else(|| def.windup_end()) + EPS);
+        if self.charge_at.is_some() && !(self.held && may) {
+            self.charge_at = None;
+        }
+    }
+
+    /// The seconds the run lasts beyond its definition, if `extras` belongs to it.
+    pub(crate) fn extra_of(extras: Option<&RunExtras>) -> f32 {
+        extras.map_or(0.0, |x| x.extra)
+    }
+}
+
 impl Running {
     pub(crate) fn new(
         id: &str,
@@ -111,15 +192,16 @@ impl Running {
             zone_until: zone_until(def),
             anim: def.anim.clone(),
         };
-        run.refresh(def);
+        run.refresh(def, 0.0);
         run
     }
 
     /// Recomputes the phase and the open windows after `t` moved, and follows a hot reload
     /// of the definition: its length, zone and clip. They are compared first, so a tick that
     /// changes nothing allocates nothing (this runs every tick for every acting fighter).
-    pub(crate) fn refresh(&mut self, def: &ActionDef) {
-        self.length = def.length();
+    /// `extra`: seconds the run lasts beyond the definition ([`RunExtras::extra`]; 0 without).
+    pub(crate) fn refresh(&mut self, def: &ActionDef, extra: f32) {
+        self.length = def.length() + extra;
         self.zone_until = zone_until(def);
         let zone = def.telegraph_zone().map(|(shape, _)| shape);
         let same_zone = match (&self.zone, &zone) {
@@ -449,8 +531,9 @@ pub fn can_start(v: &FighterView, input: &str, dt: f32) -> Result<Start, Blocker
         });
     };
     let def = v.db.get::<ActionDef>(&action).ok_or_else(|| Blocker::NoAction { action: action.clone() })?;
-    if let Some(left) = v.cooldowns.map(|c| c.left(&action)).filter(|l| *l > EPS) {
-        blockers.push(Blocker::Cooldown { action: action.clone(), ready_in: ticks_until(left, dt) as f32 * dt });
+    let key = def.cooldown_key(&action);
+    if let Some(left) = v.cooldowns.map(|c| c.left(key)).filter(|l| *l > EPS) {
+        blockers.push(Blocker::Cooldown { action: key.to_owned(), ready_in: ticks_until(left, dt) as f32 * dt });
     }
     if let Some(charge) = &def.cost.charge {
         let (have, max) = v.charges.and_then(|c| c.get(charge)).map_or((0, 0), |c| (c.current, c.max));
@@ -545,10 +628,10 @@ pub enum ActionEnd {
     Interrupted,
     /// Its definition left content (a hot reload).
     Removed,
-    /// It turned into its charge action (same instance, same time). Nothing ends this way
-    /// yet: the variant is here so the type does not change again.
+    /// It turned into its charge action (same instance, same time); the [`ActionStarted`] of
+    /// the charged action follows.
     Branched,
-    /// Its `while_held` input was let go. Nothing ends this way yet, as `Branched`.
+    /// Its `while_held` input was let go.
     Released,
 }
 
@@ -559,6 +642,17 @@ pub struct ActionRejected {
     pub input: String,
     /// `stamina 10/25`, `busy (windup heavy 0.80s)`.
     pub reason: String,
+}
+
+/// An action with `miss_recovery` passed its last hit window and none of its hits landed: its
+/// run is `extra` seconds longer. Host only; not a net event. An observer may lengthen it again
+/// with [`extend_recovery`].
+#[derive(Event, Reflect, Clone, Debug, PartialEq)]
+pub struct ActionMissed {
+    pub entity: Entity,
+    pub action: String,
+    /// Seconds added.
+    pub extra: f32,
 }
 
 /// An attack's warning: where it lands and when, with the symbol and sound cue from
@@ -612,6 +706,7 @@ pub(crate) struct FighterData {
     motion: Option<&'static MotionState>,
     modifiers: Option<&'static MoveModifiers>,
     body: Option<(&'static CharacterController, Option<&'static CharacterParams>)>,
+    extras: Option<&'static mut RunExtras>,
     dead: Has<Dead>,
 }
 
@@ -632,50 +727,76 @@ pub(crate) fn run_machines(
     time: Res<Time>,
     db: Res<ContentDb>,
     index: Res<AiIndex>,
+    physics: Res<PhysicsWorld>,
     mut pending: ResMut<PendingEffects>,
     mut commands: Commands,
-    positions: Query<&Transform>,
+    positions: Query<(&Transform, Option<&CharacterParams>)>,
     mut fighters: Query<FighterData>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
         return;
     }
-    let ttl = CombatTuning::of(&db).input_buffer;
+    let tuning = CombatTuning::of(&db);
+    let (ttl, sight) = (tuning.input_buffer, tuning.sight_height);
     let mut order: Vec<(u32, Entity)> = fighters.iter().map(|f| (f.id.map_or(u32::MAX, |i| i.0), f.entity)).collect();
     order.sort();
     for (_, entity) in order {
         let Ok(mut f) = fighters.get_mut(entity) else { continue };
         let moveset = db.get::<MovesetDef>(&f.fighter.moveset);
+        let mode = moveset.map_or(&BufferMode::PerInput, |m| &m.buffer);
         let running_def = f.state.current.as_ref().and_then(|r| db.get::<ActionDef>(&r.action));
         if f.dead {
             if !f.buffer.queued.is_empty() {
                 f.buffer.queued.clear();
             }
         } else {
-            take_presses(&mut f.intent, &mut f.buffer, moveset, running_def, ttl);
+            let mut reject = |input, reason| commands.trigger(ActionRejected { entity, input, reason });
+            let run = f.state.current.as_ref();
+            take_presses(&mut f.intent, &mut f.buffer, mode, moveset, run, running_def, ttl, &mut reject);
         }
 
         let choice = choose(&f, &db, dt);
         let here = f.transform.translation;
         let forward = *f.transform.forward();
-        let target =
-            f.intent.target.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok()).map(|t| t.translation);
+        let locked = f.intent.target.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok().map(|p| (e, p)));
+        let target = locked.map(|(_, (t, _))| t.translation);
+        // Whether the lock-on target is in sight of the fighter, for an assist that needs it (asked only then).
+        let mine = body_height(f.body.and_then(|(_, p)| p));
+        let sees = || {
+            let Some((them, (there, params))) = locked else { return true };
+            in_sight(&physics, (entity, here, mine), (them, there.translation, body_height(params)), sight)
+        };
+        // This run's extras, if it has any (a local copy: a run started this tick has none in the world yet).
+        let mut extras: Option<RunExtras> =
+            f.extras.as_deref().copied().filter(|x| f.state.current.as_ref().is_some_and(|r| r.instance == x.instance));
 
         if let Some(choice) = &choice {
             if let Some(i) = choice.queued {
                 f.buffer.queued.remove(i);
             }
             if let Some(def) = db.get::<ActionDef>(&choice.start.action) {
+                // A windup cut short keeps its cooldown share before the new action pays its own: on a
+                // shared key the new action's full cooldown is the one that stays.
+                let cut = f.state.current.as_ref().and_then(|old| {
+                    let old_def = db.get::<ActionDef>(&old.action)?;
+                    let combo = matches!(old_def.cancel_into(&choice.input, old.prev, old.t), Some(CancelTo::Action(_)));
+                    cut_share(old_def, old, ActionEnd::Cancelled, combo).map(|(key, secs)| (key.to_owned(), secs))
+                });
+                if let Some((key, secs)) = cut {
+                    f.cooldowns.cut_to(&key, secs);
+                }
                 pay(&mut f, &choice.start.action, def);
-                let facing = steer(def, choice.dir, &f.intent, here, forward, target);
+                let facing = start_facing(def, choice.dir, &f.intent, here, forward, target);
                 let instance = f.state.started;
                 f.state.started += 1;
                 let run =
                     Running::new(&choice.start.action, def, instance, facing, choice.dir, Some(choice.input.clone()));
-                if let Some(old) = &f.state.current {
-                    commands.trigger(ActionEnded::of(entity, old, ActionEnd::Cancelled));
+                if let Some(old) = f.state.current.take() {
+                    cap_buffer(&mut f.buffer, ttl);
+                    commands.trigger(ActionEnded::of(entity, &old, ActionEnd::Cancelled));
                 }
+                extras = def.needs_extras().then(|| RunExtras::start(def, &run, &f.intent, here, target));
                 begin(entity, def, &run, here, &mut pending.0, &mut |e| commands.trigger(e));
                 commands.trigger(ActionStarted {
                     entity,
@@ -690,11 +811,22 @@ pub(crate) fn run_machines(
         // The running action (perhaps the one just started) takes this tick.
         let mut external = Vec3::ZERO;
         let mut gone = false;
+        let mut released = false;
         if let Some(run) = f.state.current.as_mut() {
             match db.get::<ActionDef>(&run.action) {
-                Some(def) => {
+                Some(mut def) => {
+                    if extras.is_none() && def.needs_extras() {
+                        // A run whose action came to need extras on the way (a hot reload).
+                        extras = Some(RunExtras {
+                            instance: run.instance,
+                            start_facing: run.facing,
+                            from: run.facing,
+                            ..default()
+                        });
+                    }
                     let spans;
-                    (spans, external) = step_run(run, def, &f.intent, here, target, dt);
+                    let aimed = tracked(def, &f.intent, target, sees);
+                    (spans, external) = step_run(run, def, extras.as_mut(), &f.intent, here, aimed, dt);
                     for &(lo, hi) in &spans {
                         for e in def.effects.iter().filter(|e| crosses(e.at, lo, hi)) {
                             pending.0.push((entity, run.action.clone(), e.effect.clone()));
@@ -705,14 +837,67 @@ pub(crate) fn run_machines(
                             commands.trigger(telegraph(entity, def, run, here));
                         }
                     }
-                    run.refresh(def);
+                    run.refresh(def, RunExtras::extra_of(extras.as_ref()));
+                    // Held long enough: it turns into its charged action, if the stamina is there.
+                    if let Some(into) = charge_due(run, def, extras.as_ref()) {
+                        match db.get::<ActionDef>(into) {
+                            Some(into_def) => {
+                                let (from, into) = ((run.action.as_str(), def), (into, into_def));
+                                if pay_branch(f.stamina.as_deref_mut(), &mut f.cooldowns, f.charges.as_deref_mut(), from, into) {
+                                    let into = into.0;
+                                    let ended = ActionEnded::of(entity, run, ActionEnd::Branched);
+                                    run.action = into.to_owned();
+                                    run.refresh(into_def, RunExtras::extra_of(extras.as_ref()));
+                                    commands.trigger(ended);
+                                    commands.trigger(ActionStarted {
+                                        entity,
+                                        action: run.action.clone(),
+                                        input: run.input.clone(),
+                                        predicted: false,
+                                    });
+                                    def = into_def;
+                                }
+                            }
+                            // The charged action left content (a hot reload): the run stops.
+                            None => gone = true,
+                        }
+                    }
+                    if let Some(x) = extras.as_mut() {
+                        x.settle_charge(run, def);
+                    }
+                    released = def.while_held.as_ref().is_some_and(|input| !f.intent.is_held(input));
                 }
                 // Its definition left content (a hot reload): it stops.
                 None => gone = true,
             }
         }
         if gone && let Some(old) = f.state.current.take() {
+            cap_buffer(&mut f.buffer, ttl);
             commands.trigger(ActionEnded::of(entity, &old, ActionEnd::Removed));
+        } else if released && let Some(old) = f.state.current.take() {
+            cap_buffer(&mut f.buffer, ttl);
+            if let Some((key, secs)) =
+                db.get::<ActionDef>(&old.action).and_then(|d| cut_share(d, &old, ActionEnd::Released, false))
+            {
+                f.cooldowns.cut_to(key, secs);
+            }
+            commands.trigger(ActionEnded::of(entity, &old, ActionEnd::Released));
+        }
+        // The extras follow the run: updated in place, put in, or taken out.
+        let extras = extras.filter(|x| f.state.current.as_ref().is_some_and(|r| r.instance == x.instance));
+        match (extras, f.extras.as_mut()) {
+            (Some(x), Some(there)) => {
+                if **there != x {
+                    **there = x;
+                }
+            }
+            (Some(x), None) => {
+                commands.queue(settle_extras(entity, Some(x)));
+            }
+            (None, Some(_)) => {
+                commands.queue(settle_extras(entity, None));
+            }
+            (None, None) => {}
         }
 
         // Presses that did not start age; those out of time are rejected.
@@ -783,14 +968,19 @@ pub(crate) fn choose_in(view: &FighterView, queued: &[Queued], dt: f32) -> Optio
     None
 }
 
-/// Moves this tick's presses of inputs the fighter understands into its buffer (the
-/// newest press of an input replaces an older one). Others stay for other systems.
+/// Moves this tick's presses of inputs the fighter understands into its buffer by the moveset's
+/// [`BufferMode`] (each living [`press_life`]); `reject` hears a press the buffer drops and why.
+/// Others stay for other systems.
+#[allow(clippy::too_many_arguments, reason = "the machine's state for one fighter, passed apart for the borrows")]
 fn take_presses(
     intent: &mut Mut<Intent>,
     buffer: &mut Mut<InputBuffer>,
+    mode: &BufferMode,
     moveset: Option<&MovesetDef>,
+    run: Option<&Running>,
     running: Option<&ActionDef>,
     ttl: f32,
+    reject: &mut impl FnMut(String, String),
 ) {
     let known = |input: &str| understands(input, moveset, running);
     if !intent.pressed.iter().any(|p| known(&p.input)) {
@@ -800,12 +990,188 @@ fn take_presses(
     while i < intent.pressed.len() {
         if known(&intent.pressed[i].input) {
             let press = intent.pressed.remove(i);
-            buffer.queued.retain(|q| q.input != press.input);
-            buffer.queued.push(Queued { input: press.input, dir: press.dir, left: ttl });
+            let left = press_life(running, run, &press.input, ttl);
+            if let Some((input, reason)) = buffer_press(&mut buffer.queued, mode, Queued { input: press.input, dir: press.dir, left })
+            {
+                reject(input, reason);
+            }
         } else {
             i += 1;
         }
     }
+}
+
+/// How long a press of `input` may wait for its action, made while `run` (an action of `def`)
+/// is running: until the window a `queue` span holds it for opens, plus `ttl`; else `ttl`
+/// ([`CancelDef::queue`](crate::def::CancelDef::queue)). The machine, a client's prediction and
+/// the tools' answers all ask it.
+pub fn press_life(def: Option<&ActionDef>, run: Option<&Running>, input: &str, ttl: f32) -> f32 {
+    match (def, run) {
+        (Some(def), Some(run)) => def.queue_until(input, run.prev, run.t).map_or(ttl, |open| open - run.t + ttl),
+        _ => ttl,
+    }
+}
+
+/// Puts `press` into `queued` by the buffer's rules. Returns a press that is dropped (the new
+/// one, or the one it pushed out of a single slot) and why.
+pub(crate) fn buffer_press(queued: &mut Vec<Queued>, mode: &BufferMode, mut press: Queued) -> Option<(String, String)> {
+    match mode {
+        BufferMode::PerInput => {
+            queued.retain(|q| q.input != press.input);
+            queued.push(press);
+            None
+        }
+        BufferMode::SingleSlot { .. } => {
+            let rank = |input: &str| mode.rank(input);
+            let Some(waiting) = queued.first() else {
+                queued.push(press);
+                return None;
+            };
+            if rank(&press.input) < rank(&waiting.input) {
+                let reason = format!("{} is waiting and comes first", waiting.input);
+                return Some((press.input, reason));
+            }
+            let dropped = if waiting.input == press.input {
+                press.left = press.left.max(waiting.left);
+                None
+            } else {
+                Some((waiting.input.clone(), format!("{} took its place", press.input)))
+            };
+            queued.clear();
+            queued.push(press);
+            dropped
+        }
+    }
+}
+
+/// Every end of a run but a charge's turn (`Branched`): presses that waited for one of its
+/// windows lose that wait (`left` at most `ttl`).
+pub(crate) fn cap_buffer(buffer: &mut impl DerefMut<Target = InputBuffer>, ttl: f32) {
+    if buffer.queued.iter().any(|q| q.left > ttl) {
+        cap_queue(&mut buffer.queued, ttl);
+    }
+}
+
+/// [`cap_buffer`] over a list of presses (a client's prediction keeps its own).
+pub(crate) fn cap_queue(queued: &mut [Queued], ttl: f32) {
+    for q in queued {
+        q.left = q.left.min(ttl);
+    }
+}
+
+/// The cooldown a run of `def` keeps when it ends in `end` (`combo`: it was cancelled into a
+/// `Combo` continuation): `cost.cooldown_if_interrupted` of it, on the slot's key, when it was cut
+/// (`Interrupted`, `Released`, or `Cancelled` into anything but a `Combo`) before its windup was over.
+/// `None`: the cooldown stays as it is. Apply it with `Cooldowns::cut_to`: a slot already below the
+/// share is left alone.
+pub(crate) fn cut_share<'a>(def: &'a ActionDef, run: &'a Running, end: ActionEnd, combo: bool) -> Option<(&'a str, f32)> {
+    let share = def.cost.cooldown_if_interrupted?;
+    let cut = match end {
+        ActionEnd::Interrupted | ActionEnd::Released => true,
+        ActionEnd::Cancelled => !combo,
+        ActionEnd::Finished | ActionEnd::Removed | ActionEnd::Branched => false,
+    };
+    (cut && run.t < def.windup_end() - EPS).then(|| (def.cooldown_key(&run.action), def.cost.cooldown * share))
+}
+
+/// What the engine's cut of `old` (`Interrupted`: a forced action, a death, a revive) leaves
+/// behind besides its event: its extras go, the buffer's queue waits end ([`cap_buffer`]) and a
+/// windup cut short keeps only its cooldown share ([`cut_share`]).
+pub(crate) fn interrupted(world: &mut World, entity: Entity, old: &Running) {
+    let db = world.resource::<ContentDb>();
+    let ttl = CombatTuning::of(db).input_buffer;
+    let share = db
+        .get::<ActionDef>(&old.action)
+        .and_then(|d| cut_share(d, old, ActionEnd::Interrupted, false))
+        .map(|(key, secs)| (key.to_owned(), secs));
+    if let Some(mut buffer) = world.get_mut::<InputBuffer>(entity) {
+        cap_buffer(&mut buffer, ttl);
+    }
+    if let Some((key, secs)) = share
+        && let Some(mut cooldowns) = world.get_mut::<Cooldowns>(entity)
+    {
+        cooldowns.cut_to(&key, secs);
+    }
+    if world.get::<RunExtras>(entity).is_some_and(|x| x.instance == old.instance) {
+        world.entity_mut(entity).remove::<RunExtras>();
+    }
+}
+
+/// A command that makes `entity`'s [`RunExtras`] agree with its run when it applies: `extras`
+/// goes in if it belongs to the run running then, and extras of a run no longer running come out
+/// (an observer of this tick's events may have started another run in between).
+fn settle_extras(entity: Entity, extras: Option<RunExtras>) -> impl FnOnce(&mut World) {
+    move |world: &mut World| {
+        let Ok(mut e) = world.get_entity_mut(entity) else { return };
+        let running = e.get::<ActionState>().and_then(|s| s.current.as_ref()).map(|r| r.instance);
+        match extras {
+            Some(x) if running == Some(x.instance) => {
+                e.insert(x);
+            }
+            _ => {
+                if e.get::<RunExtras>().is_some_and(|x| running != Some(x.instance)) {
+                    e.remove::<RunExtras>();
+                }
+            }
+        }
+    }
+}
+
+/// The charged action `run` turns into now, if it is due: its `charge` input has been held on
+/// every tick so far, and `t` lies in `after..=until`.
+pub(crate) fn charge_due<'d>(run: &Running, def: &'d ActionDef, extras: Option<&RunExtras>) -> Option<&'d str> {
+    let charge = def.charge.as_ref()?;
+    let held = extras.is_some_and(|x| x.held && x.instance == run.instance);
+    let until = charge.until.unwrap_or_else(|| def.windup_end());
+    (held && run.t >= charge.after - EPS && run.t <= until + EPS).then_some(charge.into.as_str())
+}
+
+/// What turning the run of `from` into `into` costs, paid only if all of it is there: the stamina
+/// difference (checked under `into`'s stamina mode), one of `into`'s charges when it uses another
+/// charge than `from` (the start paid `from`'s), and `into`'s cooldown, whose slot must be ready
+/// unless it is `from`'s own (this run started it). `false`, and nothing is paid, when something
+/// is missing: the machine tries again on the next tick, while the charge may still turn.
+fn pay_branch(
+    stamina: Option<&mut Stamina>,
+    cooldowns: &mut Cooldowns,
+    charges: Option<&mut Charges>,
+    (from_id, from): (&str, &ActionDef),
+    (into_id, into): (&str, &ActionDef),
+) -> bool {
+    let key = into.cooldown_key(into_id);
+    if key != from.cooldown_key(from_id) && cooldowns.left(key) > EPS {
+        return false;
+    }
+    let charge = into.cost.charge.as_ref().filter(|c| from.cost.charge.as_ref() != Some(*c));
+    if let Some(name) = charge
+        && !charges.as_deref().and_then(|c| c.get(name)).is_some_and(|c| c.current > 0)
+    {
+        return false;
+    }
+    let extra = into.cost.stamina - from.cost.stamina;
+    if extra > 0.0
+        && let Some(s) = stamina.as_deref()
+    {
+        let affordable = match into.cost.stamina_mode {
+            StaminaMode::Full => s.current + EPS >= extra,
+            StaminaMode::Any => s.current > EPS,
+        };
+        if !affordable {
+            return false;
+        }
+    }
+    if extra > 0.0
+        && let Some(s) = stamina
+    {
+        s.spend(extra);
+    }
+    if let Some(name) = charge
+        && let Some(c) = charges.and_then(|c| c.get_mut(name))
+    {
+        c.current = c.current.saturating_sub(1);
+    }
+    cooldowns.start(key, into.cost.cooldown);
+    true
 }
 
 /// Whether a fighter with `moveset`, running `running`, has a use for a press of `input`:
@@ -826,7 +1192,7 @@ fn pay(f: &mut FighterDataItem, action: &str, def: &ActionDef) {
     {
         s.spend(def.cost.stamina);
     }
-    f.cooldowns.start(action, def.cost.cooldown);
+    f.cooldowns.start(def.cooldown_key(action), def.cost.cooldown);
     if let Some(charge) = &def.cost.charge
         && let Some(c) = f.charges.as_mut().and_then(|c| c.get_mut(charge))
     {
@@ -864,13 +1230,32 @@ fn track(def: &ActionDef, intent: &Intent, here: Vec3, target: Option<Vec3>) -> 
     target.and_then(toward).or_else(|| intent.aim.and_then(toward))
 }
 
+/// Where a run of `def` starts pointing: [`steer`]; an action with `turn` spans starts from the
+/// body's facing, with no snap, and turns from there at the spans' rates.
+pub(crate) fn start_facing(
+    def: &ActionDef,
+    dir: Option<Vec3>,
+    intent: &Intent,
+    here: Vec3,
+    forward: Vec3,
+    target: Option<Vec3>,
+) -> Vec3 {
+    if def.turn.is_empty() {
+        steer(def, dir, intent, here, forward, target)
+    } else {
+        flat(forward).try_normalize().unwrap_or(Vec3::NEG_Z)
+    }
+}
+
 /// One tick of a running action: its time moves on (looping a held span while its input
 /// is held), it turns while it tracks, and it moves the body. Returns the stretches of the
 /// timeline the tick covered and the displacement it makes (the machine's and a client's
-/// prediction's).
+/// prediction's). `extras`: the run's [`RunExtras`], when it has them (the hold for a charge,
+/// turn spans, the assist and its closing cap).
 pub(crate) fn step_run(
     run: &mut Running,
     def: &ActionDef,
+    extras: Option<&mut RunExtras>,
     intent: &Intent,
     here: Vec3,
     target: Option<Vec3>,
@@ -878,14 +1263,132 @@ pub(crate) fn step_run(
 ) -> (Vec<(f32, f32)>, Vec3) {
     let holding = def.hold.as_ref().is_some_and(|h| intent.is_held(&h.input));
     let spans = advance(run, def, dt, holding);
-    if run.t <= def.track_until + EPS
-        && let Some(dir) = track(def, intent, here, target)
-    {
-        run.facing = dir;
-    }
-    let external =
-        run.facing * (spans.iter().map(|&(a, b)| def.displacement_at(b) - def.displacement_at(a)).sum::<f32>());
+    let moved = |spans: &[(f32, f32)]| spans.iter().map(|&(a, b)| def.displacement_at(b) - def.displacement_at(a)).sum::<f32>();
+    let external = match extras {
+        None => {
+            if run.t <= def.track_until + EPS
+                && let Some(dir) = track(def, intent, here, target)
+            {
+                run.facing = dir;
+            }
+            run.facing * moved(&spans)
+        }
+        Some(x) => {
+            x.held &= run.input.as_deref().is_some_and(|input| intent.is_held(input));
+            turn_run(run, def, x, intent, here, target, dt);
+            let along = moved(&spans);
+            run.facing * along - over_close(def, x, run.facing, along, here, target)
+        }
+    };
     (spans, external)
+}
+
+/// What of a tick's displacement (`along` metres along `facing`) goes past the closing cap
+/// (`assist.close`), as a vector toward the target to take off it: the approach to `target` that
+/// moving along the turned `facing` gives beyond moving along the run's first facing
+/// ([`RunExtras::from`]), past what is left of the cap. What it lets through adds to
+/// [`RunExtras::closed`]; a tick whose turning gains nothing changes nothing.
+fn over_close(def: &ActionDef, x: &mut RunExtras, facing: Vec3, along: f32, here: Vec3, target: Option<Vec3>) -> Vec3 {
+    let (Some(cap), Some(there)) = (def.assist.as_ref().and_then(|a| a.close), target) else { return Vec3::ZERO };
+    let Some(to) = flat(there - here).try_normalize() else { return Vec3::ZERO };
+    let gain = along * (facing.dot(to) - x.from.dot(to));
+    if gain <= 0.0 {
+        return Vec3::ZERO;
+    }
+    let through = gain.min((cap - x.closed).max(0.0));
+    x.closed += through;
+    to * (gain - through)
+}
+
+/// The height of a body for a line of sight: its `CharacterParams::height`, else 1.7 m.
+pub(crate) fn body_height(params: Option<&CharacterParams>) -> f32 {
+    params.map_or(1.7, |p| p.height)
+}
+
+/// Whether no `LayerMask::WORLD` collider lies between the chests of two bodies, each given as
+/// `(entity, feet, height)`, at `sight` of each one's height; their own colliders never count. The
+/// same ray a `LineOfSight` hit casts; the assist's `sight` asks it.
+pub(crate) fn in_sight(physics: &PhysicsWorld, me: (Entity, Vec3, f32), them: (Entity, Vec3, f32), sight: f32) -> bool {
+    let (from, to) = (me.1 + Vec3::Y * (sight * me.2), them.1 + Vec3::Y * (sight * them.2));
+    let along = to - from;
+    let Ok(dir) = Dir3::new(along) else { return true };
+    let filter = QueryFilter::new(LayerMask::WORLD).excluding(me.0).excluding(them.0);
+    physics.raycast(from, dir, along.length(), &filter).is_none()
+}
+
+/// The lock-on target a run of `def` tracks: none while its assist is off, because the fighter
+/// holds `assist_off` or because the assist needs `sight` and `sees` (asked only then) says the
+/// target is out of it. An action without `assist` tracks its target as it always did.
+pub(crate) fn tracked(def: &ActionDef, intent: &Intent, target: Option<Vec3>, sees: impl FnOnce() -> bool) -> Option<Vec3> {
+    let assist = def.assist.as_ref().filter(|_| target.is_some());
+    let off = assist.is_some_and(|a| intent.is_held(ASSIST_OFF) || (a.sight && !sees()));
+    target.filter(|_| !off)
+}
+
+/// How a run with extras turns this tick: toward the target (or the aim), kept within
+/// `assist.angle` degrees of [`RunExtras::start_facing`] while there is a lock-on target; snapping
+/// while `t <= track_until` (no `turn` spans: the old rule), else at most the open spans' rate,
+/// toward the target, the aim, else the movement input (a player steering the swing).
+fn turn_run(run: &mut Running, def: &ActionDef, x: &RunExtras, intent: &Intent, here: Vec3, target: Option<Vec3>, dt: f32) {
+    let desired = if def.turn.is_empty() {
+        track(def, intent, here, target)
+    } else {
+        track(def, intent, here, target).or_else(|| flat(intent.move_dir).try_normalize())
+    };
+    let Some(desired) = desired else { return };
+    let desired = match (&def.assist, target) {
+        (Some(assist), Some(_)) => clamp_flat(desired, x.start_facing, assist.angle),
+        _ => desired,
+    };
+    if def.turn.is_empty() {
+        if run.t <= def.track_until + EPS {
+            run.facing = desired;
+        }
+    } else if let Some(rate) = def.turn_rate(run.prev, run.t) {
+        run.facing = rotate_flat(run.facing, desired, rate * dt);
+    }
+}
+
+/// The yaw of a flat direction, as the character controller turns bodies (`-Z` is 0).
+fn yaw(d: Vec3) -> f32 {
+    ops::atan2(-d.x, -d.z)
+}
+
+/// The flat direction of yaw `y`.
+fn from_yaw(y: f32) -> Vec3 {
+    let (s, c) = ops::sin_cos(y);
+    Vec3::new(-s, 0.0, -c)
+}
+
+/// An angle wrapped into `[-PI, PI)`.
+fn wrap(a: f32) -> f32 {
+    (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+}
+
+/// `from` turned toward `to` about Y by at most `max_deg` degrees (both flat directions).
+pub(crate) fn rotate_flat(from: Vec3, to: Vec3, max_deg: f32) -> Vec3 {
+    if max_deg <= 0.0 {
+        return from;
+    }
+    let current = yaw(from);
+    let delta = wrap(yaw(to) - current);
+    let max = max_deg.to_radians();
+    if delta.abs() <= max {
+        return to;
+    }
+    from_yaw(current + max.copysign(delta))
+}
+
+/// `dir` kept within `max_deg` degrees of `center` (both flat directions).
+fn clamp_flat(dir: Vec3, center: Vec3, max_deg: f32) -> Vec3 {
+    let c = yaw(center);
+    let delta = wrap(yaw(dir) - c);
+    let max = max_deg.to_radians();
+    if delta.abs() <= max {
+        dir
+    } else {
+        from_yaw(c + max.copysign(delta))
+    }
 }
 
 /// Whether instant `at` lies in the tick span `(lo, hi]`.
@@ -990,7 +1493,9 @@ pub(crate) fn steer_locomotion(
     let owns = dead || (run.is_some() && def.is_none_or(|d| d.move_speed.is_none()));
     loco.external = external;
     loco.locked = owns;
-    if let Some(r) = run {
+    if let Some(r) = run
+        && def.is_none_or(|d| d.face == Face::Run)
+    {
         loco.face = Some(r.facing);
     }
     if let Some(m) = def.filter(|_| run.is_some()).and_then(|d| d.move_speed) {
@@ -1004,21 +1509,98 @@ pub(crate) fn steer_locomotion(
 /// `SimSet::Resolve`, after hits: actions whose time ran out in this tick end now. The
 /// machine leaves them in place so the tick that ends an action still hits and
 /// defends (hit windows, i-frames, guards), as the timing rules say.
-pub(crate) fn finish_actions(mut fighters: Query<(Entity, Option<&AiId>, &mut ActionState)>, mut commands: Commands) {
+#[allow(clippy::type_complexity, reason = "a Bevy query")]
+pub(crate) fn finish_actions(
+    db: Res<ContentDb>,
+    mut fighters: Query<(Entity, Option<&AiId>, &mut ActionState, Option<&mut InputBuffer>, Has<RunExtras>)>,
+    mut commands: Commands,
+) {
     // The query follows `Entity` order, which a window shifts: end them in `AiId` order.
     let mut ending: Vec<(u32, Entity)> = Vec::new();
-    for (entity, id, state) in &fighters {
+    for (entity, id, state, ..) in &fighters {
         if state.current.as_ref().is_some_and(|r| r.t >= r.length - EPS) {
             ending.push((id.map_or(u32::MAX, |i| i.0), entity));
         }
     }
+    if ending.is_empty() {
+        return;
+    }
     ending.sort();
+    let ttl = CombatTuning::of(&db).input_buffer;
     for (_, entity) in ending {
-        let Ok((_, _, mut state)) = fighters.get_mut(entity) else { continue };
+        let Ok((_, _, mut state, buffer, has_extras)) = fighters.get_mut(entity) else { continue };
         if let Some(run) = state.current.take() {
+            if let Some(mut buffer) = buffer {
+                cap_buffer(&mut buffer, ttl);
+            }
+            if has_extras {
+                commands.queue(settle_extras(entity, None));
+            }
             commands.trigger(ActionEnded::of(entity, &run, ActionEnd::Finished));
         }
     }
+}
+
+/// `SimSet::Resolve`, in [`ActionSystems::Hits`](crate::ActionSystems::Hits) after the hits are
+/// resolved: a run with `miss_recovery` whose time reached the end of its last hit window is
+/// checked once; if none of its hits landed by then (the checking tick's own hits count), it lasts
+/// `miss_recovery` longer ([`ActionMissed`]). Before `finish_actions`, so a run whose time runs
+/// out in the checking tick goes on into its extra recovery. In `AiId` order.
+#[allow(clippy::type_complexity, reason = "a Bevy query")]
+pub(crate) fn check_misses(
+    db: Res<ContentDb>,
+    mut fighters: Query<(Entity, Option<&AiId>, &mut ActionState, &mut RunExtras)>,
+    mut commands: Commands,
+) {
+    let mut due: Vec<(u32, Entity)> = Vec::new();
+    for (entity, id, state, x) in &fighters {
+        let Some(run) = state.current.as_ref().filter(|r| r.instance == x.instance && !x.checked) else { continue };
+        let Some(def) = db.get::<ActionDef>(&run.action).filter(|d| d.miss_recovery > 0.0) else { continue };
+        if run.t >= def.last_hit_end() - EPS {
+            due.push((id.map_or(u32::MAX, |i| i.0), entity));
+        }
+    }
+    due.sort();
+    for (_, entity) in due {
+        let Ok((_, _, mut state, mut x)) = fighters.get_mut(entity) else { continue };
+        let Some(run) = state.current.as_mut() else { continue };
+        let Some(def) = db.get::<ActionDef>(&run.action) else { continue };
+        x.checked = true;
+        if !x.landed {
+            x.extra += def.miss_recovery;
+            run.length = def.length() + x.extra;
+            commands.trigger(ActionMissed { entity, action: run.action.clone(), extra: def.miss_recovery });
+        }
+    }
+}
+
+/// Makes `entity`'s running action `seconds` longer (an [`ActionMissed`] observer's bonus, a
+/// game rule). `false`, and nothing changes, when it runs nothing, `seconds` is not a number
+/// `>= 0`, or this machine does not simulate (a co-op client: the host's state brings the longer
+/// run, so an observer that calls it on every machine counts it once). Its cancel windows stay
+/// where they are (they are times of the run).
+pub fn extend_recovery(world: &mut World, entity: Entity, seconds: f32) -> bool {
+    let simulates = world.get_resource::<NetRole>().is_none_or(|r| r.simulates());
+    if !simulates || !(seconds >= 0.0 && seconds.is_finite()) {
+        return false;
+    }
+    let Some(run) = world.get::<ActionState>(entity).and_then(|s| s.current.as_ref()) else { return false };
+    let (instance, action, facing) = (run.instance, run.action.clone(), run.facing);
+    let Some(length) = world.resource::<ContentDb>().get::<ActionDef>(&action).map(ActionDef::length) else {
+        return false;
+    };
+    let mut x = world.get::<RunExtras>(entity).copied().filter(|x| x.instance == instance).unwrap_or(RunExtras {
+        instance,
+        start_facing: facing,
+        from: facing,
+        ..default()
+    });
+    x.extra += seconds;
+    world.entity_mut(entity).insert(x);
+    if let Some(run) = world.get_mut::<ActionState>(entity).and_then(|s| s.into_inner().current.as_mut()) {
+        run.length = length + x.extra;
+    }
+    true
 }
 
 /// `SimSet::Act`, after the machine: the effects actions reached, in order.
@@ -1081,7 +1663,16 @@ pub fn force_action(world: &mut World, entity: Entity, action: &str) -> bool {
     let mut effects = Vec::new();
     let mut telegraphs = Vec::new();
     begin(entity, &def, &run, feet.0, &mut effects, &mut |t| telegraphs.push(t));
+    // `from` is the closing cap's baseline: the run's own facing, as `RunExtras::start` sets it.
+    let extras =
+        def.needs_extras().then(|| RunExtras { instance, start_facing: run.facing, from: run.facing, ..default() });
     let replaced = state.current.replace(run);
+    if let Some(old) = &replaced {
+        interrupted(world, entity, old);
+    }
+    if let Some(x) = extras {
+        world.entity_mut(entity).insert(x);
+    }
     if let Some(old) = replaced {
         world.trigger(ActionEnded::of(entity, &old, ActionEnd::Interrupted));
     }
@@ -1175,7 +1766,7 @@ mod tests {
         let mut run = Running::new(id, def, 0, Vec3::NEG_Z, None, Some("x".into()));
         run.t = t;
         run.prev = (t - DT).max(0.0);
-        run.refresh(def);
+        run.refresh(def, 0.0);
         ActionState { current: Some(run), started: 1 }
     }
 
@@ -1204,16 +1795,16 @@ mod tests {
         assert!((run.zone_until - 0.3).abs() < 1e-6, "{}", run.zone_until);
 
         // The content was reloaded under the running action: the next tick's refresh follows.
-        run.refresh(&second);
+        run.refresh(&second, 0.0);
         assert_eq!((run.zone.as_deref(), run.anim.as_deref()), (Some("circle 4m"), Some("b")));
         assert!((run.zone_until - 0.6).abs() < 1e-6, "the later hit span: {}", run.zone_until);
         let settled = run.clone();
-        run.refresh(&second);
+        run.refresh(&second, 0.0);
         assert_eq!(run, settled, "a tick that changes nothing changes nothing");
 
         // And a definition that lost them.
         let bare = parse(r#"(net_id: 1, phases: [("windup", 0.2), ("recovery", 0.3)])"#);
-        run.refresh(&bare);
+        run.refresh(&bare, 0.0);
         assert_eq!((run.zone.as_deref(), run.anim.as_deref(), run.zone_until), (None, None, 0.0));
     }
 
@@ -1237,9 +1828,9 @@ mod tests {
             let mut run = Running::new("swing", &def, 0, Vec3::NEG_Z, None, Some("light".into()));
             run.t = 0.1;
             run.prev = 0.1 - DT;
-            run.refresh(&def);
+            run.refresh(&def, 0.0);
             assert!(run.zone.is_some(), "{shape}");
-            let allocated = allocations_in(|| run.refresh(&def));
+            let allocated = allocations_in(|| run.refresh(&def, 0.0));
             assert_eq!(allocated, 0, "{shape}: an unchanged tick allocated");
         }
         // The counter does see a string being built, so the zeros above mean something.
@@ -1333,7 +1924,7 @@ mod tests {
         let mut run = Running::new("block", def, 0, Vec3::NEG_Z, None, Some("block".into()));
         for _ in 0..60 {
             advance(&mut run, def, DT, true);
-            run.refresh(def);
+            run.refresh(def, 0.0);
         }
         assert!(run.t > 0.1 - EPS && run.t < 0.3 + EPS, "still in the hold phase: {}", run.t);
         let state = ActionState { current: Some(run.clone()), started: 1 };
@@ -1368,7 +1959,7 @@ mod tests {
             let mut inside = false;
             for tick in 1..=hz * 8 {
                 let spans = advance(&mut run, &def, dt, true);
-                run.refresh(&def);
+                run.refresh(&def, 0.0);
                 inside |= run.t >= a - EPS;
                 assert!(run.t < b - EPS, "{hz} Hz tick {tick}: t {} ran past the hold {a}..{b}", run.t);
                 assert!(!inside || run.t >= a - EPS, "{hz} Hz tick {tick}: t {} fell out of the hold {a}..{b}", run.t);
